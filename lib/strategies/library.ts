@@ -17,6 +17,7 @@ import { fib_speed_fan } from './lib/fib-speed-fan';
 import { fib_retracement } from './lib/fib-retracement';
 import { day_trading_booster } from './lib/day-trading-booster';
 import { volume_pivot_anchored } from './lib/volume-pivot-anchored';
+import { macd_x_overlay } from './lib/macd-x-overlay';
 
 export const strategies: Record<string, Strategy> = {
     sma_crossover,
@@ -36,6 +37,7 @@ export const strategies: Record<string, Strategy> = {
     fib_speed_fan,
     fib_retracement,
     day_trading_booster,
-    volume_pivot_anchored
+    volume_pivot_anchored,
+    macd_x_overlay
 };
 
