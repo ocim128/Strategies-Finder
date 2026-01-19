@@ -236,39 +236,10 @@ export function createCustomStrategy(config: CustomStrategyConfig): boolean {
 // Indicator Helpers (exposed to custom strategies)
 // ============================================================================
 
-import {
-    calculateSMA,
-    calculateEMA,
-    calculateRSI,
-    calculateMACD,
-    calculateBollingerBands,
-    calculateStochastic,
-    calculateVWAP,
-    calculateATR,
-    calculateADX,
-    calculateVolumeProfile,
-    calculateDonchianChannels,
-    calculateSupertrend,
-    calculateParabolicSAR,
-    calculateMomentum
-} from "./lib/strategies/index";
+import * as indicators from "./lib/strategies/indicators";
 
-export const indicatorHelpers = {
-    calculateSMA,
-    calculateEMA,
-    calculateRSI,
-    calculateMACD,
-    calculateBollingerBands,
-    calculateStochastic,
-    calculateVWAP,
-    calculateATR,
-    calculateADX,
-    calculateVolumeProfile,
-    calculateDonchianChannels,
-    calculateSupertrend,
-    calculateParabolicSAR,
-    calculateMomentum
-};
+export const indicatorHelpers = indicators;
+
 
 // ============================================================================
 // Local Storage Persistence

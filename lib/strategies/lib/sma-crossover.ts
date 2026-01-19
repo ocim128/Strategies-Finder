@@ -1,5 +1,5 @@
 import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator } from '../types';
-import { createBuySignal, createSellSignal, checkCrossover, createSignalLoop } from '../strategy-helpers';
+import { createBuySignal, createSellSignal, checkCrossover, createSignalLoop, getCloses } from '../strategy-helpers';
 import { calculateSMA } from '../indicators';
 import { COLORS } from '../constants';
 
@@ -9,7 +9,7 @@ export const sma_crossover: Strategy = {
     defaultParams: { fastPeriod: 10, slowPeriod: 30 },
     paramLabels: { fastPeriod: 'Fast Period', slowPeriod: 'Slow Period' },
     execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
-        const closes = data.map(d => d.close);
+        const closes = getCloses(data);
         const fastSMA = calculateSMA(closes, params.fastPeriod);
         const slowSMA = calculateSMA(closes, params.slowPeriod);
 
@@ -24,10 +24,11 @@ export const sma_crossover: Strategy = {
         });
     },
     indicators: (data: OHLCVData[], params: StrategyParams): StrategyIndicator[] => {
-        const closes = data.map(d => d.close);
+        const closes = getCloses(data);
         return [
             { name: 'Fast SMA', type: 'line', values: calculateSMA(closes, params.fastPeriod), color: COLORS.Fast },
             { name: 'Slow SMA', type: 'line', values: calculateSMA(closes, params.slowPeriod), color: COLORS.Slow }
         ];
     }
 };
+

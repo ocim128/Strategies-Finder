@@ -1,13 +1,18 @@
-/**
- * Utility functions for DOM manipulation and interaction.
- */
+const elementCache: Map<string, HTMLElement> = new Map();
 
 /**
  * Safely get an element by ID and throw an error if not found.
- * Helps with common '!' usage and provides better error messages.
+ * Caches the element for future lookups.
  */
 export function getRequiredElement<T extends HTMLElement>(id: string): T {
-    const element = document.getElementById(id);
+    let element = elementCache.get(id);
+    if (!element) {
+        element = document.getElementById(id) || undefined;
+        if (element) {
+            elementCache.set(id, element);
+        }
+    }
+
     if (!element) {
         throw new Error(`Required element with id "${id}" not found`);
     }
@@ -18,21 +23,36 @@ export function getRequiredElement<T extends HTMLElement>(id: string): T {
  * Set text content of an element and optionally apply a class.
  */
 export function updateTextContent(id: string, text: string, className?: string) {
-    const el = document.getElementById(id);
-    if (el) {
-        el.textContent = text;
+    const cachedEl = getElementByIdCached(id);
+    if (cachedEl) {
+        cachedEl.textContent = text;
         if (className !== undefined) {
-            el.className = className;
+            cachedEl.className = className;
         }
     }
+}
+
+/**
+ * Internal helper for cached lookup
+ */
+function getElementByIdCached(id: string): HTMLElement | null {
+    let element = elementCache.get(id);
+    if (!element) {
+        element = document.getElementById(id) || undefined;
+        if (element) {
+            elementCache.set(id, element);
+        }
+    }
+    return element || null;
 }
 
 /**
  * Toggle display of an element.
  */
 export function setVisible(id: string, visible: boolean, displayMode: string = 'block') {
-    const el = document.getElementById(id);
+    const el = getElementByIdCached(id);
     if (el) {
         el.style.display = visible ? displayMode : 'none';
     }
 }
+

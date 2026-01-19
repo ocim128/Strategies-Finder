@@ -1,5 +1,68 @@
 import { Signal, OHLCVData } from './types';
 
+// ============================================================================
+// Data Mapping & Memoization
+// ============================================================================
+
+const highsCache = new WeakMap<OHLCVData[], number[]>();
+const lowsCache = new WeakMap<OHLCVData[], number[]>();
+const closesCache = new WeakMap<OHLCVData[], number[]>();
+const volumesCache = new WeakMap<OHLCVData[], number[]>();
+
+/**
+ * Gets a memoized array of high prices from OHLCV data.
+ * Useful for ensuring indicator cache hits.
+ */
+export function getHighs(data: OHLCVData[]): number[] {
+    let cached = highsCache.get(data);
+    if (!cached) {
+        cached = data.map(d => d.high);
+        highsCache.set(data, cached);
+    }
+    return cached;
+}
+
+/**
+ * Gets a memoized array of low prices from OHLCV data.
+ */
+export function getLows(data: OHLCVData[]): number[] {
+    let cached = lowsCache.get(data);
+    if (!cached) {
+        cached = data.map(d => d.low);
+        lowsCache.set(data, cached);
+    }
+    return cached;
+}
+
+/**
+ * Gets a memoized array of close prices from OHLCV data.
+ */
+export function getCloses(data: OHLCVData[]): number[] {
+    let cached = closesCache.get(data);
+    if (!cached) {
+        cached = data.map(d => d.close);
+        closesCache.set(data, cached);
+    }
+    return cached;
+}
+
+/**
+ * Gets a memoized array of volume from OHLCV data.
+ */
+export function getVolumes(data: OHLCVData[]): number[] {
+    let cached = volumesCache.get(data);
+    if (!cached) {
+        cached = data.map(d => d.volume);
+        volumesCache.set(data, cached);
+    }
+    return cached;
+}
+
+// ============================================================================
+// Signal Helpers
+// ============================================================================
+
+
 /**
  * Checks if any of the provided values at the specified index or the previous index are null.
  * @param arrays Arrays of numbers (or nulls) to check.

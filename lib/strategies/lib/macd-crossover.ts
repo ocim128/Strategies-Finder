@@ -1,15 +1,15 @@
 import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator } from '../types';
-import { createBuySignal, createSellSignal, checkCrossover, createSignalLoop } from '../strategy-helpers';
+import { createBuySignal, createSellSignal, checkCrossover, createSignalLoop, getCloses } from '../strategy-helpers';
 import { calculateMACD } from '../indicators';
 import { COLORS } from '../constants';
 
 export const macd_crossover: Strategy = {
     name: 'MACD Crossover',
-    description: 'Buy when MACD crosses above signal line, sell when it crosses below',
+    description: 'Standard MACD crossover strategy',
     defaultParams: { fastPeriod: 12, slowPeriod: 26, signalPeriod: 9 },
-    paramLabels: { fastPeriod: 'Fast Period', slowPeriod: 'Slow Period', signalPeriod: 'Signal Period' },
+    paramLabels: { fastPeriod: 'Fast EMA', slowPeriod: 'Slow EMA', signalPeriod: 'Signal EMA' },
     execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
-        const closes = data.map(d => d.close);
+        const closes = getCloses(data);
         const { macd, signal } = calculateMACD(closes, params.fastPeriod, params.slowPeriod, params.signalPeriod);
 
         return createSignalLoop(data, [macd, signal], (i) => {
@@ -23,7 +23,8 @@ export const macd_crossover: Strategy = {
         });
     },
     indicators: (data: OHLCVData[], params: StrategyParams): StrategyIndicator[] => {
-        const closes = data.map(d => d.close);
+        const closes = getCloses(data);
+
         const { macd, signal, histogram } = calculateMACD(closes, params.fastPeriod, params.slowPeriod, params.signalPeriod);
         return [
             { name: 'MACD', type: 'line', values: macd, color: COLORS.Fast },

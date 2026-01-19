@@ -1,10 +1,12 @@
 import { Trade, BacktestResult, OHLCVData, Signal, Time, BacktestSettings, EntryConfirmationMode, TradeDirection } from './types';
 import { calculateATR, calculateEMA, calculateADX, calculateSMA, calculateRSI } from './indicators';
-import { ensureCleanData } from './strategy-helpers';
+import { ensureCleanData, getHighs, getLows, getCloses, getVolumes } from './strategy-helpers';
 
 // ============================================================================
 // Backtesting Engine
 // ============================================================================
+// ... (rest of the file remains same, but I need to replace the local getSeries and its usage)
+
 interface NormalizedSettings {
     atrPeriod: number;
     stopLossAtr: number;
@@ -319,10 +321,12 @@ export function runBacktest(
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
 
-    const highs = data.map(d => d.high);
-    const lows = data.map(d => d.low);
-    const closes = data.map(d => d.close);
-    const volumes = data.map(d => d.volume);
+    const highs = getHighs(data);
+    const lows = getLows(data);
+    const closes = getCloses(data);
+    const volumes = getVolumes(data);
+
+
 
     const needsAtr =
         config.stopLossAtr > 0 ||
