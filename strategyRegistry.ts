@@ -10,7 +10,7 @@
  * - Type-safe strategy management
  */
 
-import type { Strategy, OHLCVData, Signal, StrategyParams } from "../../../src/strategies/index";
+import type { Strategy, OHLCVData, Signal, StrategyParams } from "./lib/strategies/index";
 export type { Strategy, OHLCVData, Signal, StrategyParams };
 
 
@@ -151,7 +151,7 @@ export const strategyRegistry: StrategyRegistry = new StrategyRegistryImpl();
  */
 export async function loadBuiltInStrategies(): Promise<void> {
     // Import strategies module dynamically to support HMR
-    const { strategies: builtInStrategies } = await import("../../../src/strategies/index");
+    const { strategies: builtInStrategies } = await import("./lib/strategies/index");
 
     Object.entries(builtInStrategies).forEach(([key, strategy]) => {
         strategyRegistry.register(key, strategy);
@@ -167,7 +167,7 @@ export async function loadBuiltInStrategies(): Promise<void> {
 // Check if HMR is available (Vite)
 if (import.meta.hot) {
     // Accept updates to the strategies module
-    import.meta.hot.accept("../../../src/strategies/index", async (newModule) => {
+    import.meta.hot.accept("./lib/strategies/index", async (newModule) => {
         if (newModule) {
             console.log('[HMR] Strategies module updated, reloading...');
 
@@ -251,7 +251,7 @@ import {
     calculateSupertrend,
     calculateParabolicSAR,
     calculateMomentum
-} from "../../../src/strategies/index";
+} from "./lib/strategies/index";
 
 export const indicatorHelpers = {
     calculateSMA,

@@ -1,5 +1,5 @@
 import { ISeriesApi, Time, ISeriesMarkersPluginApi, IChartApi } from "lightweight-charts";
-import { BacktestResult, OHLCVData } from "../../../../src/strategies/index";
+import { BacktestResult, OHLCVData } from "./strategies/index";
 
 export interface Indicator {
     id: string;

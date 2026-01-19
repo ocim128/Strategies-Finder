@@ -12,7 +12,7 @@ import {
     WalkForwardConfig,
     WalkForwardResult,
     ParameterRange
-} from "../../../../src/strategies/walk-forward";
+} from "./strategies/walk-forward";
 
 // ============================================================================
 // Walk-Forward Service

@@ -1,4 +1,4 @@
-import { BacktestResult } from "../../../../../src/strategies/index";
+import { BacktestResult } from "../strategies/index";
 import { getRequiredElement, updateTextContent, setVisible } from "../domUtils";
 
 export class ResultsRenderer {

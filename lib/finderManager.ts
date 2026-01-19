@@ -1,4 +1,4 @@
-import { BacktestResult, StrategyParams, runBacktest } from "../../../../src/strategies/index";
+import { BacktestResult, StrategyParams, runBacktest } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtestService";

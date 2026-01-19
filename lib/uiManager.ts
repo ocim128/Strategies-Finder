@@ -1,5 +1,5 @@
 import { Time } from "lightweight-charts";
-import { OHLCVData, BacktestResult, Trade } from "../../../../src/strategies/index";
+import { OHLCVData, BacktestResult, Trade } from "./strategies/index";
 import { state } from "./state";
 import { strategyRegistry, getStrategyList } from "../strategyRegistry";
 import { getRequiredElement, updateTextContent } from "./domUtils";

@@ -1,4 +1,4 @@
-import { StrategyParams, Strategy } from "../../../../src/strategies/index";
+import { StrategyParams, Strategy } from "./strategies/index";
 import { getRequiredElement } from "./domUtils";
 
 export class ParamManager {

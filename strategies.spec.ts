@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, OHLCVData, Signal, Time } from '../../../src/strategies/index';
+import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, OHLCVData, Signal, Time } from './lib/strategies/index';
 
 
 describe('Strategy Calculations', () => {

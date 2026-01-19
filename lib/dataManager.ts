@@ -1,5 +1,5 @@
 import { Time } from "lightweight-charts";
-import { OHLCVData } from "../../../../src/strategies/index";
+import { OHLCVData } from "./strategies/index";
 import { state } from "./state";
 import { debugLogger } from "./debugLogger";
 

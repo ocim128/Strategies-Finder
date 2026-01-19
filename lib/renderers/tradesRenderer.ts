@@ -1,5 +1,5 @@
 import { Time } from "lightweight-charts";
-import { Trade } from "../../../../../src/strategies/index";
+import { Trade } from "../strategies/index";
 import { getRequiredElement, setVisible } from "../domUtils";
 
 export class TradesRenderer {

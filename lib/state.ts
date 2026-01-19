@@ -1,5 +1,5 @@
 import { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, Time } from "lightweight-charts";
-import { BacktestResult, OHLCVData } from "../../../../src/strategies/index";
+import { BacktestResult, OHLCVData } from "./strategies/index";
 import { Indicator } from "./types";
 
 export type StateKey = keyof State;
