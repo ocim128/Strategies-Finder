@@ -15,27 +15,51 @@ export function setupSettingsHandlers() {
         });
     }
 
-    // Save Configuration button
+    // Save Configuration logic
     const saveConfigBtn = document.getElementById('saveConfigBtn');
     const configNameInput = document.getElementById('configNameInput') as HTMLInputElement | null;
+
+    const performSave = () => {
+        if (!configNameInput) return;
+
+        console.log('[UI] Save Config Triggered');
+        try {
+            const name = configNameInput.value.trim();
+            if (!name) {
+                uiManager.showToast('Please enter a configuration name', 'error');
+                configNameInput.focus();
+                return;
+            }
+
+            console.log('[UI] Saving config:', name);
+            settingsManager.saveStrategyConfig(name);
+
+            // Update dropdown and select the new config
+            updateConfigDropdown(name);
+
+            configNameInput.value = '';
+            uiManager.showToast(`Configuration "${name}" saved`, 'success');
+            debugLogger.event('ui.config.saved', { name });
+
+            // Visual feedback on the button
+            if (saveConfigBtn) {
+                saveConfigBtn.classList.add('btn-pulse-success');
+                setTimeout(() => saveConfigBtn.classList.remove('btn-pulse-success'), 1000);
+            }
+        } catch (error) {
+            console.error('[UI] Save Config Error:', error);
+            uiManager.showToast('Failed to save configuration', 'error');
+        }
+    };
+
     if (saveConfigBtn && configNameInput) {
-        saveConfigBtn.addEventListener('click', () => {
-            console.log('[UI] Save Config Clicked');
-            try {
-                const name = configNameInput.value.trim();
-                if (!name) {
-                    uiManager.showToast('Please enter a configuration name', 'error');
-                    return;
-                }
-                console.log('[UI] Saving config:', name);
-                settingsManager.saveStrategyConfig(name);
-                updateConfigDropdown();
-                configNameInput.value = '';
-                uiManager.showToast(`Configuration "${name}" saved`, 'success');
-                debugLogger.event('ui.config.saved', { name });
-            } catch (error) {
-                console.error('[UI] Save Config Error:', error);
-                uiManager.showToast('Failed to save configuration', 'error');
+        saveConfigBtn.addEventListener('click', performSave);
+
+        // Add Enter key support
+        configNameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                performSave();
             }
         });
     }
@@ -81,12 +105,16 @@ export function setupSettingsHandlers() {
     updateConfigDropdown();
 }
 
-export function updateConfigDropdown() {
+/**
+ * Updates the configuration dropdown list from localStorage.
+ * @param selectName Optional name of the configuration to select after updating.
+ */
+export function updateConfigDropdown(selectName?: string) {
     const configSelect = document.getElementById('configSelect') as HTMLSelectElement | null;
     if (!configSelect) return;
 
     const configs = settingsManager.loadAllStrategyConfigs();
-    const currentValue = configSelect.value;
+    const currentValue = selectName || configSelect.value;
 
     // Clear existing options
     configSelect.innerHTML = '<option value="">-- Select configuration --</option>';
@@ -99,8 +127,8 @@ export function updateConfigDropdown() {
         configSelect.appendChild(option);
     });
 
-    // Restore selection if still valid
-    if (configs.some(c => c.name === currentValue)) {
+    // Restore selection if still valid or specifically requested
+    if (currentValue && configs.some(c => c.name === currentValue)) {
         configSelect.value = currentValue;
     }
 }

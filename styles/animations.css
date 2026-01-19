@@ -77,3 +77,21 @@
         transform: translateY(10px);
     }
 }
+
+@keyframes pulseSuccess {
+    0% {
+        box-shadow: 0 0 0 0 hsla(var(--hsl-success), 0.7);
+    }
+
+    70% {
+        box-shadow: 0 0 0 10px hsla(var(--hsl-success), 0);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 hsla(var(--hsl-success), 0);
+    }
+}
+
+.btn-pulse-success {
+    animation: pulseSuccess 0.6s ease-out;
+}
