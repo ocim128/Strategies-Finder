@@ -1,0 +1,89 @@
+<!-- Code Editor Modal -->
+<div class="modal-overlay" id="codeEditorModal">
+    <div class="modal code-editor-modal">
+        <div class="modal-header">
+            <span class="modal-title">Strategy Code Editor</span>
+            <button class="modal-close" id="closeCodeEditor">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                    <path
+                        d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                </svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <div class="editor-sidebar">
+                <div class="sidebar-section">
+                    <div class="sidebar-title">Saved Presets</div>
+                    <button class="btn btn-secondary btn-block btn-compact" id="newPresetBtn">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                        </svg>
+                        New Strategy
+                    </button>
+                </div>
+                <div class="preset-list" id="presetList">
+                    <!-- Presets will be injected here -->
+                </div>
+                <div class="sidebar-section editor-help">
+                    <h4>Available Indicators</h4>
+                    <p><code>indicators.calculateSMA(data, period)</code></p>
+                    <p><code>indicators.calculateEMA(data, period)</code></p>
+                    <p><code>indicators.calculateRSI(data, period)</code></p>
+                    <p><code>indicators.calculateMACD(data, fast, slow, signal)</code></p>
+                    <p><code>indicators.calculateBollingerBands(data, period, stdDev)</code></p>
+                    <p><code>indicators.calculateStochastic(high, low, close, kPeriod, dPeriod)</code></p>
+                    <p><code>indicators.calculateVWAP(ohlcv)</code></p>
+                    <p><code>indicators.calculateATR(high, low, close, period)</code></p>
+                    <p><code>indicators.calculateADX(high, low, close, period)</code></p>
+                    <p><code>indicators.calculateVolumeProfile(data, period, bins)</code></p>
+                    <h4>Data Structure</h4>
+                    <p><code>data[i].time</code> - Timestamp</p>
+                    <p><code>data[i].open/high/low/close</code></p>
+                    <p><code>data[i].volume</code></p>
+                    <h4>Return Format</h4>
+                    <p>Return array of <code>{time, type: 'buy'|'sell', price, reason}</code></p>
+                </div>
+            </div>
+            <div class="editor-main">
+                <div class="editor-toolbar">
+                    <div class="editor-input-group">
+                        <label>Strategy Name</label>
+                        <input type="text" id="strategyName" placeholder="My Custom Strategy" />
+                    </div>
+                    <div class="editor-input-group">
+                        <label>Strategy Key</label>
+                        <input type="text" id="strategyKey" placeholder="my_custom_strategy" />
+                    </div>
+                    <div class="editor-spacer"></div>
+                    <button class="btn btn-secondary" id="validateCodeBtn">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                        </svg>
+                        Validate
+                    </button>
+                </div>
+                <div id="monaco-container"></div>
+                <div class="editor-footer">
+                    <div class="editor-status" id="editorStatus">
+                        Ready to code
+                    </div>
+                    <div class="editor-actions">
+                        <button class="btn btn-secondary" id="savePresetBtn">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                                <path
+                                    d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm2 16H5V5h11.17L19 7.83V19zm-7-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3zM6 6h9v4H6V6z" />
+                            </svg>
+                            Save Preset
+                        </button>
+                        <button class="btn btn-success" id="applyStrategyBtn">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                                <path d="M8 5v14l11-7z" />
+                            </svg>
+                            Apply & Run
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -39,6 +39,14 @@ const METRIC_LABELS: Record<FinderMetric, string> = {
 	maxDrawdownPercent: 'DD %'
 };
 
+/**
+ * Detects if a parameter is a toggle (on/off) parameter.
+ * Toggle params: start with 'use' prefix and have value 0 or 1.
+ */
+function isToggleParam(key: string, value: number): boolean {
+	return /^use[A-Z]/.test(key) && (value === 0 || value === 1);
+}
+
 export class FinderManager {
 	private isRunning = false;
 	private displayResults: FinderResult[] = [];
@@ -274,6 +282,11 @@ export class FinderManager {
 	}
 
 	private buildRangeValues(key: string, baseValue: number, options: FinderOptions): number[] {
+		// Toggle params (use*) always get [0, 1] for grid search
+		if (isToggleParam(key, baseValue)) {
+			return [0, 1];
+		}
+
 		const rangeRatio = Math.max(0, options.rangePercent) / 100;
 		const rawRange = Math.abs(baseValue) * rangeRatio;
 		const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
@@ -352,22 +365,38 @@ export class FinderManager {
 		const normalizedDefault = this.normalizeParams(defaultParams);
 		this.tryAddCombo(normalizedDefault, combos, seen, options.maxRuns);
 
-		const ranges = keys.map((key) => {
+		// Separate toggle params from numeric params
+		const toggleKeys: string[] = [];
+		const numericRanges: { key: string; baseValue: number; min: number; max: number }[] = [];
+
+		for (const key of keys) {
 			const baseValue = defaultParams[key];
-			const rangeRatio = Math.max(0, options.rangePercent) / 100;
-			const rawRange = Math.abs(baseValue) * rangeRatio;
-			const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
-			return { key, baseValue, min: baseValue - range, max: baseValue + range };
-		});
+			if (isToggleParam(key, baseValue)) {
+				toggleKeys.push(key);
+			} else {
+				const rangeRatio = Math.max(0, options.rangePercent) / 100;
+				const rawRange = Math.abs(baseValue) * rangeRatio;
+				const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
+				numericRanges.push({ key, baseValue, min: baseValue - range, max: baseValue + range });
+			}
+		}
 
 		let attempts = 0;
 		const maxAttempts = options.maxRuns * 10;
 		while (combos.length < options.maxRuns && attempts < maxAttempts) {
 			const params: StrategyParams = {};
-			for (const range of ranges) {
+
+			// Randomize toggle params (50% chance on/off)
+			for (const key of toggleKeys) {
+				params[key] = Math.random() < 0.5 ? 0 : 1;
+			}
+
+			// Randomize numeric params within range
+			for (const range of numericRanges) {
 				const raw = range.min + Math.random() * (range.max - range.min);
 				params[range.key] = this.normalizeParamValue(range.key, raw, range.baseValue);
 			}
+
 			this.tryAddCombo(params, combos, seen, options.maxRuns);
 			attempts += 1;
 		}

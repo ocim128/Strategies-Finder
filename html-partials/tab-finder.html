@@ -1,0 +1,114 @@
+<!-- Finder Tab -->
+<div id="finderTab">
+    <div class="section-title">Strategy Finder</div>
+
+    <div class="param-group">
+        <label class="param-label">Sort By</label>
+        <select class="param-input" id="finderSort">
+            <option value="netProfit" selected>Net Profit</option>
+            <option value="profitFactor">Profit Factor</option>
+            <option value="sharpeRatio">Sharpe Ratio</option>
+            <option value="netProfitPercent">Net Profit %</option>
+            <option value="winRate">Win Rate</option>
+            <option value="maxDrawdownPercent">Max Drawdown %</option>
+        </select>
+    </div>
+
+    <div class="param-row">
+        <div class="param-group">
+            <label class="param-label">Top Results</label>
+            <input type="number" class="param-input" id="finderTopN" value="10" min="1" max="100">
+        </div>
+        <div class="param-group">
+            <label class="param-label">Runs / Strategy</label>
+            <input type="number" class="param-input" id="finderMaxRuns" value="50" min="1" max="500">
+        </div>
+    </div>
+
+    <div class="param-row">
+        <div class="param-group">
+            <label class="param-label">Search Mode</label>
+            <select class="param-input" id="finderMode">
+                <option value="default" selected>Defaults Only</option>
+                <option value="grid">Grid Sweep</option>
+                <option value="random">Random Search</option>
+            </select>
+        </div>
+        <div class="param-group">
+            <label class="param-label">Range (%)</label>
+            <input type="number" class="param-input" id="finderRange" value="50" min="0" max="300" step="5">
+        </div>
+    </div>
+
+    <div class="param-row">
+        <div class="param-group">
+            <label class="param-label">Steps / Param</label>
+            <input type="number" class="param-input" id="finderSteps" value="3" min="2" max="7">
+        </div>
+    </div>
+
+    <div class="section-header">
+        <div class="section-title">Strategies</div>
+        <label class="section-toggle" aria-label="Toggle all strategies">
+            <input type="checkbox" id="finderStrategiesToggleAll" checked>
+            <span class="section-toggle-track"></span>
+        </label>
+    </div>
+    <div class="section-body strategy-list-container" id="finderStrategyList">
+        <!-- Strategies will be injected here -->
+    </div>
+
+    <div class="section-header">
+
+        <div class="section-title">Trade Count Filter</div>
+        <label class="section-toggle" aria-label="Toggle trade count filter">
+            <input type="checkbox" id="finderTradesToggle">
+            <span class="section-toggle-track"></span>
+        </label>
+    </div>
+    <div class="section-body" id="finderTradeFilters">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Min Trades</label>
+                <input type="number" class="param-input" id="finderTradesMin" value="0" min="0">
+            </div>
+            <div class="param-group">
+                <label class="param-label">Max Trades</label>
+                <input type="number" class="param-input" id="finderTradesMax" placeholder="No max" min="0">
+            </div>
+        </div>
+    </div>
+
+    <button class="btn btn-primary run-btn" id="runFinder">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z" />
+        </svg>
+        Run Finder
+    </button>
+
+    <div class="progress-container" id="finderProgress">
+        <div class="progress-bar">
+            <div class="progress-fill" id="finderProgressFill"></div>
+        </div>
+        <div class="progress-text" id="finderProgressText">Ready</div>
+    </div>
+
+    <div class="finder-status" id="finderStatus">Idle</div>
+
+    <div class="finder-results">
+        <div class="finder-header">
+            <span>Rank</span>
+            <span>Strategy</span>
+            <span>Use</span>
+        </div>
+        <div class="empty-state" id="finderEmpty">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M3 3h18v2H3V3zm0 16h18v2H3v-2zm0-8h18v2H3v-2zm0-4h18v2H3V7z" />
+            </svg>
+            <h3>No Finder Results</h3>
+            <p>Run the finder to rank strategies</p>
+        </div>
+        <div class="finder-list" id="finderList">
+        </div>
+    </div>
+</div>

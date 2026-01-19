@@ -1,0 +1,283 @@
+<!-- Settings Tab -->
+<div id="settingsTab">
+    <select class="strategy-select" id="strategySelect">
+        <option value="sma_crossover">SMA Crossover</option>
+        <option value="ema_crossover">EMA Crossover</option>
+        <option value="rsi_oversold">RSI Overbought/Oversold</option>
+        <option value="macd_crossover">MACD Crossover</option>
+        <option value="bollinger_bounce">Bollinger Band Bounce</option>
+        <option value="triple_ma">Triple MA Strategy</option>
+    </select>
+
+    <div id="strategyParams">
+        <!-- Parameters will be injected here -->
+    </div>
+
+    <div class="section-header">
+        <div class="section-title">Fixed Trade Amount Mode</div>
+        <label class="section-toggle" aria-label="Toggle fixed trade amount mode">
+            <input type="checkbox" id="fixedTradeToggle" checked>
+            <span class="section-toggle-track"></span>
+        </label>
+    </div>
+    <div class="section-body" id="tradeSizing">
+        <div class="param-row">
+            <div class="param-group" id="initialCapitalGroup">
+                <label class="param-label">Initial Capital ($)</label>
+                <input type="number" class="param-input" id="initialCapital" value="10000" min="100">
+            </div>
+            <div class="param-group" id="fixedTradeGroup">
+                <label class="param-label">Fixed Trade Amount ($)</label>
+                <input type="number" class="param-input" id="fixedTradeAmount" value="1000" min="1">
+            </div>
+        </div>
+
+        <div class="param-row">
+            <div class="param-group" id="positionSizeGroup">
+                <label class="param-label">Position Size (%)</label>
+                <input type="number" class="param-input" id="positionSize" value="100" min="1" max="100">
+            </div>
+            <div class="param-group">
+                <label class="param-label">Commission (%)</label>
+                <input type="number" class="param-input" id="commission" value="0.1" min="0" step="0.01">
+            </div>
+        </div>
+    </div>
+
+    <div class="section-header">
+        <div class="section-title">Short Mode</div>
+        <label class="section-toggle" aria-label="Toggle short mode">
+            <input type="checkbox" id="shortModeToggle" checked>
+            <span class="section-toggle-track"></span>
+        </label>
+    </div>
+
+    <div class="section-header">
+        <div class="section-title">Risk Management</div>
+        <label class="section-toggle" aria-label="Toggle risk management">
+            <input type="checkbox" id="riskSettingsToggle">
+            <span class="section-toggle-track"></span>
+        </label>
+    </div>
+    <div class="section-body" id="riskSettings">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Mode</label>
+                <select class="param-input" id="riskMode">
+                    <option value="simple" selected>Simple</option>
+                    <option value="advanced">Advanced</option>
+                </select>
+                <div class="param-hint">Simple shows core stops. Advanced adds scale-out, break-even, and time stop.
+                </div>
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Volatility Period (ATR)</label>
+                <input type="number" class="param-input" id="atrPeriod" value="14" min="1">
+                <div class="param-hint">ATR measures average movement. Higher = smoother stops.</div>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Stop Loss (ATR x)</label>
+                <input type="number" class="param-input" id="stopLossAtr" value="1.5" min="0" step="0.1">
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Take Profit (ATR x)</label>
+                <input type="number" class="param-input" id="takeProfitAtr" value="3" min="0" step="0.1">
+            </div>
+            <div class="param-group">
+                <label class="param-label">Trailing Stop (ATR x)</label>
+                <input type="number" class="param-input" id="trailingAtr" value="2" min="0" step="0.1">
+            </div>
+        </div>
+        <div class="risk-advanced is-hidden" id="riskAdvanced">
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label">Scale Out at R</label>
+                    <input type="number" class="param-input" id="partialTakeProfitAtR" value="1" min="0" step="0.1">
+                    <div class="param-hint">R = distance from entry to stop loss.</div>
+                </div>
+                <div class="param-group">
+                    <label class="param-label">Scale Out Size (%)</label>
+                    <input type="number" class="param-input" id="partialTakeProfitPercent" value="50" min="0" max="100">
+                </div>
+            </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label">Move Stop to Break-even at R</label>
+                    <input type="number" class="param-input" id="breakEvenAtR" value="1" min="0" step="0.1">
+                </div>
+                <div class="param-group">
+                    <label class="param-label">Exit After N Bars (if losing)</label>
+                    <input type="number" class="param-input" id="timeStopBars" value="0" min="0">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section-header">
+        <div class="section-title">Regime Filters</div>
+        <label class="section-toggle" aria-label="Toggle regime filters">
+            <input type="checkbox" id="regimeSettingsToggle">
+            <span class="section-toggle-track"></span>
+        </label>
+    </div>
+    <div class="section-body" id="regimeSettings">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Trend EMA Period</label>
+                <input type="number" class="param-input" id="trendEmaPeriod" value="200" min="0">
+            </div>
+            <div class="param-group">
+                <label class="param-label">EMA Slope Bars</label>
+                <input type="number" class="param-input" id="trendEmaSlopeBars" value="0" min="0">
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">ATR% Min</label>
+                <input type="number" class="param-input" id="atrPercentMin" value="0" min="0" step="0.1">
+            </div>
+            <div class="param-group">
+                <label class="param-label">ATR% Max</label>
+                <input type="number" class="param-input" id="atrPercentMax" value="0" min="0" step="0.1">
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">ADX Period</label>
+                <input type="number" class="param-input" id="adxPeriod" value="14" min="0">
+            </div>
+            <div class="param-group">
+                <label class="param-label">ADX Min</label>
+                <input type="number" class="param-input" id="adxMin" value="0" min="0" step="0.1">
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">ADX Max</label>
+                <input type="number" class="param-input" id="adxMax" value="0" min="0" step="0.1">
+            </div>
+        </div>
+    </div>
+
+    <div class="section-header">
+        <div class="section-title">Entry Confirmation</div>
+        <label class="section-toggle" aria-label="Toggle entry confirmation">
+            <input type="checkbox" id="entrySettingsToggle">
+            <span class="section-toggle-track"></span>
+        </label>
+    </div>
+    <div class="section-body" id="entrySettings">
+        <div class="param-group">
+            <label class="param-label">Confirmation Mode</label>
+            <select class="param-input" id="entryConfirmation">
+                <option value="none" selected>None</option>
+                <option value="close">Close Breakout</option>
+                <option value="volume">Volume Expansion</option>
+                <option value="rsi">RSI Confirmation</option>
+            </select>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Confirm Lookback (bars)</label>
+                <input type="number" class="param-input" id="confirmLookback" value="1" min="1">
+            </div>
+            <div class="param-group">
+                <label class="param-label">Volume SMA Period</label>
+                <input type="number" class="param-input" id="volumeSmaPeriod" value="20" min="1">
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Volume Multiplier</label>
+                <input type="number" class="param-input" id="volumeMultiplier" value="1.5" min="0" step="0.1">
+            </div>
+            <div class="param-group">
+                <label class="param-label">RSI Period</label>
+                <input type="number" class="param-input" id="confirmRsiPeriod" value="14" min="1">
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">RSI Bullish</label>
+                <input type="number" class="param-input" id="confirmRsiBullish" value="55" min="0" max="100">
+            </div>
+            <div class="param-group">
+                <label class="param-label">RSI Bearish</label>
+                <input type="number" class="param-input" id="confirmRsiBearish" value="45" min="0" max="100">
+            </div>
+        </div>
+    </div>
+
+    <button class="btn btn-primary run-btn" id="runBacktest">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z" />
+        </svg>
+        Run Backtest
+    </button>
+
+    <div class="progress-container" id="progressContainer">
+        <div class="progress-bar">
+            <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-text" id="progressText">Processing...</div>
+    </div>
+
+    <!-- Settings Actions -->
+    <div class="settings-actions">
+        <div class="settings-actions-row">
+            <button class="btn btn-secondary btn-compact" id="resetSettingsBtn"
+                title="Reset all settings to default values">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                    <path
+                        d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z" />
+                </svg>
+                Reset to Default
+            </button>
+        </div>
+
+        <div class="section-header config-header">
+            <div class="section-title">Strategy Configurations</div>
+        </div>
+
+        <div class="config-actions">
+            <div class="config-input-row">
+                <input type="text" class="param-input config-name-input" id="configNameInput"
+                    placeholder="Configuration name..." />
+                <button class="btn btn-success btn-icon" id="saveConfigBtn"
+                    title="Save current settings as configuration">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path
+                            d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm2 16H5V5h11.17L19 7.83V19zm-7-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3zM6 6h9v4H6V6z" />
+                    </svg>
+                </button>
+            </div>
+
+            <div class="config-list-wrapper">
+                <select class="param-input config-select" id="configSelect">
+                    <option value="">-- Select configuration --</option>
+                </select>
+                <button class="btn btn-primary btn-icon" id="loadConfigBtn" title="Load selected configuration">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                    </svg>
+                </button>
+                <button class="btn btn-danger btn-icon" id="deleteConfigBtn" title="Delete selected configuration">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <button class="open-editor-btn" id="openCodeEditor">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z" />
+        </svg>
+        Create Custom Strategy
+    </button>
+</div>

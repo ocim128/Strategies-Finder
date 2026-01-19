@@ -1,0 +1,67 @@
+<!-- Results Tab -->
+<div id="resultsTab">
+    <div class="empty-state" id="emptyResults">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+            <path
+                d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z" />
+        </svg>
+        <h3>No Results Yet</h3>
+        <p>Run a backtest to see performance results</p>
+    </div>
+    <div id="resultsContent">
+        <div class="stats-grid">
+            <div class="stat-card" id="netProfitCard">
+                <div class="stat-label">Net Profit</div>
+                <div class="stat-value" id="netProfit">$0.00</div>
+            </div>
+            <div class="stat-card" id="netProfitPctCard">
+                <div class="stat-label">Net Profit %</div>
+                <div class="stat-value" id="netProfitPct">0.00%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Expectancy</div>
+                <div class="stat-value" id="expectancy">$0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg Trade</div>
+                <div class="stat-value" id="avgTrade">$0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Win Rate</div>
+                <div class="stat-value" id="winRate">0%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Profit Factor</div>
+                <div class="stat-value" id="profitFactor">0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Trades</div>
+                <div class="stat-value" id="totalTrades">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Max Drawdown</div>
+                <div class="stat-value negative" id="maxDrawdown">0%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Winning Trades</div>
+                <div class="stat-value positive" id="winningTrades">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Losing Trades</div>
+                <div class="stat-value negative" id="losingTrades">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg Win</div>
+                <div class="stat-value positive" id="avgWin">$0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg Loss</div>
+                <div class="stat-value negative" id="avgLoss">$0.00</div>
+            </div>
+            <div class="stat-card full-width">
+                <div class="stat-label">Sharpe Ratio</div>
+                <div class="stat-value" id="sharpeRatio">0.00</div>
+            </div>
+        </div>
+    </div>
+</div>

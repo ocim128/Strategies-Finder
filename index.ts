@@ -16,6 +16,7 @@ import { debugLogger } from "./lib/debugLogger";
 import { initDebugPanel } from "./lib/debugPanel";
 import { walkForwardService } from "./lib/walkForwardService";
 import { settingsManager } from "./lib/settingsManager";
+import { injectLayout } from "./lib/layoutManager";
 
 // Handlers
 import { setupGlobalErrorHandlers } from "./lib/handlers/globalErrorHandlers";
@@ -25,6 +26,7 @@ import { setupSettingsHandlers } from "./lib/handlers/settingsHandlers";
 import { handleCrosshairMove } from "./lib/appActions";
 
 async function init() {
+	injectLayout();
 	debugLogger.event('app.init.start');
 	setupGlobalErrorHandlers();
 	await loadBuiltInStrategies();

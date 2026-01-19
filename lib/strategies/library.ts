@@ -15,6 +15,8 @@ import { parabolic_sar } from './lib/parabolic-sar';
 import { momentum_strategy } from './lib/momentum';
 import { fib_speed_fan } from './lib/fib-speed-fan';
 import { fib_retracement } from './lib/fib-retracement';
+import { day_trading_booster } from './lib/day-trading-booster';
+import { volume_pivot_anchored } from './lib/volume-pivot-anchored';
 
 export const strategies: Record<string, Strategy> = {
     sma_crossover,
@@ -32,5 +34,8 @@ export const strategies: Record<string, Strategy> = {
     parabolic_sar,
     momentum_strategy,
     fib_speed_fan,
-    fib_retracement
+    fib_retracement,
+    day_trading_booster,
+    volume_pivot_anchored
 };
+

@@ -1,0 +1,105 @@
+<!-- Walk-Forward Tab -->
+<div id="walkforwardTab">
+    <div class="section-title">Walk-Forward Analysis</div>
+    <p class="section-desc">Test strategy robustness by optimizing on rolling windows and testing on
+        out-of-sample data.</p>
+
+    <div class="section-header">
+        <div class="section-title">Window Settings</div>
+    </div>
+    <div class="section-body">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Optimization Window (bars)</label>
+                <input type="number" class="param-input" id="wf-opt-window" value="200" min="50">
+                <div class="param-hint">In-sample period for parameter optimization</div>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Test Window (bars)</label>
+                <input type="number" class="param-input" id="wf-test-window" value="50" min="10">
+                <div class="param-hint">Out-of-sample period to validate performance</div>
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Step Size (bars)</label>
+                <input type="number" class="param-input" id="wf-step-size" value="50" min="10">
+                <div class="param-hint">How far to advance between windows (= test window for non-overlap)</div>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Min Trades</label>
+                <input type="number" class="param-input" id="wf-min-trades" value="5" min="1">
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Top N (avg params)</label>
+                <input type="number" class="param-input" id="wf-top-n" value="3" min="1" max="10">
+                <div class="param-hint">Average top N parameter sets for robustness</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="wf-actions">
+        <button class="btn btn-primary run-btn" id="wf-run-btn">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8 5v14l11-7z" />
+            </svg>
+            Run Walk-Forward
+            <span class="spinner" id="wf-spinner" style="display:none;"></span>
+        </button>
+        <button class="btn btn-secondary" id="wf-quick-btn">
+            Quick Analysis
+        </button>
+    </div>
+
+    <div class="wf-status-bar">
+        <span id="wf-status">Ready</span>
+    </div>
+
+    <!-- Robustness Gauge -->
+    <div class="wf-robustness">
+        <div class="wf-gauge" id="wf-robustness-gauge">
+            <div class="wf-gauge-fill"></div>
+            <div class="wf-gauge-label">
+                <span class="wf-gauge-score" id="wf-robustness-score">--</span>
+                <span class="wf-gauge-max">/100</span>
+            </div>
+        </div>
+        <div class="wf-robustness-title">Robustness Score</div>
+        <div class="wf-robustness-desc" id="wf-robustness-desc">Run analysis to see robustness score</div>
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="wf-summary" id="wf-summary-panel">
+        <div class="empty-state">
+            <p>Run walk-forward analysis to see results</p>
+        </div>
+    </div>
+
+    <!-- Window Breakdown Table -->
+    <div class="section-header">
+        <div class="section-title">Window Breakdown</div>
+    </div>
+    <div class="wf-table-wrapper">
+        <table class="wf-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>IS %</th>
+                    <th>OOS %</th>
+                    <th>Deg %</th>
+                    <th>IS SR</th>
+                    <th>OOS SR</th>
+                    <th>Params</th>
+                    <th>✓</th>
+                </tr>
+            </thead>
+            <tbody id="wf-window-table-body">
+                <tr>
+                    <td colspan="8" class="empty-cell">No data</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>

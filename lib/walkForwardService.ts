@@ -166,6 +166,13 @@ class WalkForwardService {
                 }
             }
 
+            // Toggle params (use*) get [0, 1] range for walk-forward testing
+            const isToggle = /^use[A-Z]/.test(name) && (value === 0 || value === 1);
+            if (isToggle) {
+                ranges.push({ name, min: 0, max: 1, step: 1 });
+                continue;
+            }
+
             // Auto-generate reasonable range around current value
             const baseValue = value || defaults[name] || 10;
             const min = Math.max(1, Math.floor(baseValue * 0.5));
@@ -177,6 +184,7 @@ class WalkForwardService {
 
         return ranges;
     }
+
 
     /**
      * Get walk-forward config from UI inputs

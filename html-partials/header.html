@@ -1,0 +1,69 @@
+<header class="header">
+    <div class="header-left">
+        <div class="logo">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z" />
+            </svg>
+            Strategy Tester
+        </div>
+
+        <div class="dropdown">
+            <div class="symbol-selector" id="symbolSelector" role="button" tabindex="0">
+                <span class="symbol-name" id="symbolName">ETH/USDT</span>
+                <span class="symbol-price" id="symbolPrice">Loading...</span>
+                <span class="symbol-change" id="symbolChange">+0.00%</span>
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                    <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" stroke-width="1.5" fill="none" />
+                </svg>
+            </div>
+            <div class="dropdown-menu" id="symbolDropdown">
+                <div class="dropdown-item active" data-symbol="ETHUSDT" role="button" tabindex="0">ETH/USDT</div>
+                <div class="dropdown-item" data-symbol="BTCUSDT" role="button" tabindex="0">BTC/USDT</div>
+                <div class="dropdown-item" data-symbol="SOLUSDT" role="button" tabindex="0">SOL/USDT</div>
+                <div class="dropdown-item" data-symbol="BNBUSDT" role="button" tabindex="0">BNB/USDT</div>
+                <div class="dropdown-item" data-symbol="XRPUSDT" role="button" tabindex="0">XRP/USDT</div>
+                <div class="dropdown-item" data-symbol="ADAUSDT" role="button" tabindex="0">ADA/USDT</div>
+                <div class="dropdown-item" data-symbol="DOGEUSDT" role="button" tabindex="0">DOGE/USDT</div>
+                <div class="dropdown-item" data-symbol="AVAXUSDT" role="button" tabindex="0">AVAX/USDT</div>
+                <div class="dropdown-divider"></div>
+                <div class="dropdown-header">Stocks</div>
+                <div class="dropdown-item" data-symbol="AAPL" role="button" tabindex="0">AAPL (Apple)</div>
+                <div class="dropdown-item" data-symbol="GOOGL" role="button" tabindex="0">GOOGL (Google)</div>
+                <div class="dropdown-item" data-symbol="MSFT" role="button" tabindex="0">MSFT (Microsoft)</div>
+                <div class="dropdown-item" data-symbol="TSLA" role="button" tabindex="0">TSLA (Tesla)</div>
+                <div class="dropdown-divider"></div>
+                <div class="dropdown-header">Forex</div>
+                <div class="dropdown-item" data-symbol="EURUSD" role="button" tabindex="0">EUR/USD</div>
+                <div class="dropdown-item" data-symbol="GBPUSD" role="button" tabindex="0">GBP/USD</div>
+                <div class="dropdown-item" data-symbol="USDJPY" role="button" tabindex="0">USD/JPY</div>
+            </div>
+        </div>
+
+        <div class="timeframe-tabs" id="timeframeTabs">
+            <button class="timeframe-tab" data-interval="15m">15m</button>
+            <button class="timeframe-tab" data-interval="1h">1H</button>
+            <button class="timeframe-tab" data-interval="4h">4H</button>
+            <button class="timeframe-tab active" data-interval="1d">1D</button>
+            <button class="timeframe-tab" data-interval="1w">1W</button>
+        </div>
+    </div>
+
+    <div class="header-right">
+        <button class="btn btn-secondary" id="togglePanel">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" />
+            </svg>
+            Strategy Panel
+        </button>
+        <button class="theme-toggle" id="themeToggle" title="Toggle theme">
+            <svg id="moonIcon" viewBox="0 0 24 24" fill="currentColor">
+                <path
+                    d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z" />
+            </svg>
+            <svg id="sunIcon" viewBox="0 0 24 24" fill="currentColor">
+                <path
+                    d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1z" />
+            </svg>
+        </button>
+    </div>
+</header>
