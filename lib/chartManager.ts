@@ -13,15 +13,7 @@ import {
 import { state } from "./state";
 import { darkTheme, lightTheme } from "./constants";
 
-export interface Trade {
-    entryTime: Time;
-    exitTime: Time;
-    entryPrice: number;
-    exitPrice: number;
-    type: 'long' | 'short';
-    pnl: number;
-    pnlPercent: number;
-}
+import { Trade } from "./strategies/index";
 
 
 export class ChartManager {
