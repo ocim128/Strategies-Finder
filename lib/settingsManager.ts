@@ -1,0 +1,535 @@
+/**
+ * Settings Manager - Handles auto-save, load, and reset of all application settings
+ * 
+ * Features:
+ * - Auto-save settings to localStorage on changes
+ * - Auto-load settings on browser open
+ * - Reset to default functionality
+ * - Save/Load named strategy configurations
+ */
+
+import { state } from "./state";
+import { strategyRegistry } from "../strategyRegistry";
+import { paramManager } from "./paramManager";
+import { debugLogger } from "./debugLogger";
+
+// ============================================================================
+// Types
+// ============================================================================
+
+export interface BacktestSettingsData {
+    // Capital settings
+    initialCapital: number;
+    positionSize: number;
+    commission: number;
+    fixedTradeToggle: boolean;
+    fixedTradeAmount: number;
+
+    // Risk management
+    riskSettingsToggle: boolean;
+    riskMode: string;
+    atrPeriod: number;
+    stopLossAtr: number;
+    takeProfitAtr: number;
+    trailingAtr: number;
+    partialTakeProfitAtR: number;
+    partialTakeProfitPercent: number;
+    breakEvenAtR: number;
+    timeStopBars: number;
+
+    // Short mode
+    shortModeToggle: boolean;
+
+    // Regime filters
+    regimeSettingsToggle: boolean;
+    trendEmaPeriod: number;
+    trendEmaSlopeBars: number;
+    atrPercentMin: number;
+    atrPercentMax: number;
+    adxPeriod: number;
+    adxMin: number;
+    adxMax: number;
+
+    // Entry confirmation
+    entrySettingsToggle: boolean;
+    entryConfirmation: string;
+    confirmLookback: number;
+    volumeSmaPeriod: number;
+    volumeMultiplier: number;
+    confirmRsiPeriod: number;
+    confirmRsiBullish: number;
+    confirmRsiBearish: number;
+}
+
+export interface StrategyConfig {
+    name: string;
+    createdAt: string;
+    updatedAt: string;
+    strategyKey: string;
+    strategyParams: Record<string, number>;
+    backtestSettings: BacktestSettingsData;
+}
+
+export interface AppSettings {
+    currentSymbol: string;
+    currentInterval: string;
+    isDarkTheme: boolean;
+    currentStrategyKey: string;
+    backtestSettings: BacktestSettingsData;
+}
+
+// ============================================================================
+// Default Values
+// ============================================================================
+
+const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
+    // Capital settings
+    initialCapital: 10000,
+    positionSize: 100,
+    commission: 0.1,
+    fixedTradeToggle: false,
+    fixedTradeAmount: 1000,
+
+    // Risk management
+    riskSettingsToggle: true,
+    riskMode: 'simple',
+    atrPeriod: 14,
+    stopLossAtr: 1.5,
+    takeProfitAtr: 3,
+    trailingAtr: 2,
+    partialTakeProfitAtR: 1,
+    partialTakeProfitPercent: 50,
+    breakEvenAtR: 1,
+    timeStopBars: 0,
+
+    // Short mode
+    shortModeToggle: true,
+
+    // Regime filters
+    regimeSettingsToggle: true,
+    trendEmaPeriod: 200,
+    trendEmaSlopeBars: 0,
+    atrPercentMin: 0,
+    atrPercentMax: 0,
+    adxPeriod: 14,
+    adxMin: 0,
+    adxMax: 0,
+
+    // Entry confirmation
+    entrySettingsToggle: true,
+    entryConfirmation: 'none',
+    confirmLookback: 1,
+    volumeSmaPeriod: 20,
+    volumeMultiplier: 1.5,
+    confirmRsiPeriod: 14,
+    confirmRsiBullish: 55,
+    confirmRsiBearish: 45,
+};
+
+const DEFAULT_APP_SETTINGS: AppSettings = {
+    currentSymbol: 'ETHUSDT',
+    currentInterval: '1d',
+    isDarkTheme: true,
+    currentStrategyKey: 'sma_crossover',
+    backtestSettings: { ...DEFAULT_BACKTEST_SETTINGS },
+};
+
+// ============================================================================
+// Storage Keys
+// ============================================================================
+
+const STORAGE_KEYS = {
+    APP_SETTINGS: 'playground_app_settings',
+    STRATEGY_CONFIGS: 'playground_strategy_configs',
+};
+
+// ============================================================================
+// Settings Manager
+// ============================================================================
+
+class SettingsManager {
+    private autoSaveEnabled: boolean = true;
+    private saveDebounceTimeout: number | null = null;
+
+    // ========================================================================
+    // Auto-Save Settings
+    // ========================================================================
+
+    public getCurrentSettings(): AppSettings {
+        return {
+            currentSymbol: state.currentSymbol,
+            currentInterval: state.currentInterval,
+            isDarkTheme: state.isDarkTheme,
+            currentStrategyKey: state.currentStrategyKey,
+            backtestSettings: this.getBacktestSettings(),
+        };
+    }
+
+    public getBacktestSettings(): BacktestSettingsData {
+        return {
+            // Capital settings
+            initialCapital: this.readNumber('initialCapital', DEFAULT_BACKTEST_SETTINGS.initialCapital),
+            positionSize: this.readNumber('positionSize', DEFAULT_BACKTEST_SETTINGS.positionSize),
+            commission: this.readNumber('commission', DEFAULT_BACKTEST_SETTINGS.commission),
+            fixedTradeToggle: this.readCheckbox('fixedTradeToggle', DEFAULT_BACKTEST_SETTINGS.fixedTradeToggle),
+            fixedTradeAmount: this.readNumber('fixedTradeAmount', DEFAULT_BACKTEST_SETTINGS.fixedTradeAmount),
+
+            // Risk management
+            riskSettingsToggle: this.readCheckbox('riskSettingsToggle', DEFAULT_BACKTEST_SETTINGS.riskSettingsToggle),
+            riskMode: this.readSelect('riskMode', DEFAULT_BACKTEST_SETTINGS.riskMode),
+            atrPeriod: this.readNumber('atrPeriod', DEFAULT_BACKTEST_SETTINGS.atrPeriod),
+            stopLossAtr: this.readNumber('stopLossAtr', DEFAULT_BACKTEST_SETTINGS.stopLossAtr),
+            takeProfitAtr: this.readNumber('takeProfitAtr', DEFAULT_BACKTEST_SETTINGS.takeProfitAtr),
+            trailingAtr: this.readNumber('trailingAtr', DEFAULT_BACKTEST_SETTINGS.trailingAtr),
+            partialTakeProfitAtR: this.readNumber('partialTakeProfitAtR', DEFAULT_BACKTEST_SETTINGS.partialTakeProfitAtR),
+            partialTakeProfitPercent: this.readNumber('partialTakeProfitPercent', DEFAULT_BACKTEST_SETTINGS.partialTakeProfitPercent),
+            breakEvenAtR: this.readNumber('breakEvenAtR', DEFAULT_BACKTEST_SETTINGS.breakEvenAtR),
+            timeStopBars: this.readNumber('timeStopBars', DEFAULT_BACKTEST_SETTINGS.timeStopBars),
+
+            // Short mode
+            shortModeToggle: this.readCheckbox('shortModeToggle', DEFAULT_BACKTEST_SETTINGS.shortModeToggle),
+
+            // Regime filters
+            regimeSettingsToggle: this.readCheckbox('regimeSettingsToggle', DEFAULT_BACKTEST_SETTINGS.regimeSettingsToggle),
+            trendEmaPeriod: this.readNumber('trendEmaPeriod', DEFAULT_BACKTEST_SETTINGS.trendEmaPeriod),
+            trendEmaSlopeBars: this.readNumber('trendEmaSlopeBars', DEFAULT_BACKTEST_SETTINGS.trendEmaSlopeBars),
+            atrPercentMin: this.readNumber('atrPercentMin', DEFAULT_BACKTEST_SETTINGS.atrPercentMin),
+            atrPercentMax: this.readNumber('atrPercentMax', DEFAULT_BACKTEST_SETTINGS.atrPercentMax),
+            adxPeriod: this.readNumber('adxPeriod', DEFAULT_BACKTEST_SETTINGS.adxPeriod),
+            adxMin: this.readNumber('adxMin', DEFAULT_BACKTEST_SETTINGS.adxMin),
+            adxMax: this.readNumber('adxMax', DEFAULT_BACKTEST_SETTINGS.adxMax),
+
+            // Entry confirmation
+            entrySettingsToggle: this.readCheckbox('entrySettingsToggle', DEFAULT_BACKTEST_SETTINGS.entrySettingsToggle),
+            entryConfirmation: this.readSelect('entryConfirmation', DEFAULT_BACKTEST_SETTINGS.entryConfirmation),
+            confirmLookback: this.readNumber('confirmLookback', DEFAULT_BACKTEST_SETTINGS.confirmLookback),
+            volumeSmaPeriod: this.readNumber('volumeSmaPeriod', DEFAULT_BACKTEST_SETTINGS.volumeSmaPeriod),
+            volumeMultiplier: this.readNumber('volumeMultiplier', DEFAULT_BACKTEST_SETTINGS.volumeMultiplier),
+            confirmRsiPeriod: this.readNumber('confirmRsiPeriod', DEFAULT_BACKTEST_SETTINGS.confirmRsiPeriod),
+            confirmRsiBullish: this.readNumber('confirmRsiBullish', DEFAULT_BACKTEST_SETTINGS.confirmRsiBullish),
+            confirmRsiBearish: this.readNumber('confirmRsiBearish', DEFAULT_BACKTEST_SETTINGS.confirmRsiBearish),
+        };
+    }
+
+    public saveSettings(): void {
+        if (!this.autoSaveEnabled) return;
+
+        const settings = this.getCurrentSettings();
+        try {
+            localStorage.setItem(STORAGE_KEYS.APP_SETTINGS, JSON.stringify(settings));
+            debugLogger.event('settings.saved', { strategy: settings.currentStrategyKey });
+        } catch (e) {
+            console.error('[SettingsManager] Failed to save settings:', e);
+        }
+    }
+
+    public saveSettingsDebounced(): void {
+        if (this.saveDebounceTimeout !== null) {
+            clearTimeout(this.saveDebounceTimeout);
+        }
+        this.saveDebounceTimeout = window.setTimeout(() => {
+            this.saveSettings();
+            this.saveDebounceTimeout = null;
+        }, 500);
+    }
+
+    public loadSettings(): AppSettings | null {
+        try {
+            const data = localStorage.getItem(STORAGE_KEYS.APP_SETTINGS);
+            if (data) {
+                const settings = JSON.parse(data) as AppSettings;
+                if (!settings || typeof settings !== 'object') return null;
+
+                debugLogger.event('settings.loaded', { strategy: settings.currentStrategyKey });
+                return settings;
+            }
+        } catch (e) {
+            console.error('[SettingsManager] Failed to load settings:', e);
+        }
+        return null;
+    }
+
+    public applySettings(settings: AppSettings): void {
+        this.autoSaveEnabled = false;
+        try {
+            // Apply backtest settings to UI
+            this.applyBacktestSettings(settings.backtestSettings);
+
+            // Set state values (these trigger reactive updates)
+            if (settings.isDarkTheme !== state.isDarkTheme) {
+                state.set('isDarkTheme', settings.isDarkTheme);
+            }
+
+            debugLogger.event('settings.applied', { strategy: settings.currentStrategyKey });
+        } finally {
+            this.autoSaveEnabled = true;
+        }
+    }
+
+    public applyBacktestSettings(settings: BacktestSettingsData): void {
+        // Capital settings
+        this.writeNumber('initialCapital', settings.initialCapital);
+        this.writeNumber('positionSize', settings.positionSize);
+        this.writeNumber('commission', settings.commission);
+        this.writeCheckbox('fixedTradeToggle', settings.fixedTradeToggle);
+        this.writeNumber('fixedTradeAmount', settings.fixedTradeAmount);
+
+        // Risk management
+        this.writeCheckbox('riskSettingsToggle', settings.riskSettingsToggle);
+        this.writeSelect('riskMode', settings.riskMode);
+        this.writeNumber('atrPeriod', settings.atrPeriod);
+        this.writeNumber('stopLossAtr', settings.stopLossAtr);
+        this.writeNumber('takeProfitAtr', settings.takeProfitAtr);
+        this.writeNumber('trailingAtr', settings.trailingAtr);
+        this.writeNumber('partialTakeProfitAtR', settings.partialTakeProfitAtR);
+        this.writeNumber('partialTakeProfitPercent', settings.partialTakeProfitPercent);
+        this.writeNumber('breakEvenAtR', settings.breakEvenAtR);
+        this.writeNumber('timeStopBars', settings.timeStopBars);
+
+        // Short mode
+        this.writeCheckbox('shortModeToggle', settings.shortModeToggle);
+
+        // Regime filters
+        this.writeCheckbox('regimeSettingsToggle', settings.regimeSettingsToggle);
+        this.writeNumber('trendEmaPeriod', settings.trendEmaPeriod);
+        this.writeNumber('trendEmaSlopeBars', settings.trendEmaSlopeBars);
+        this.writeNumber('atrPercentMin', settings.atrPercentMin);
+        this.writeNumber('atrPercentMax', settings.atrPercentMax);
+        this.writeNumber('adxPeriod', settings.adxPeriod);
+        this.writeNumber('adxMin', settings.adxMin);
+        this.writeNumber('adxMax', settings.adxMax);
+
+        // Entry confirmation
+        this.writeCheckbox('entrySettingsToggle', settings.entrySettingsToggle);
+        this.writeSelect('entryConfirmation', settings.entryConfirmation);
+        this.writeNumber('confirmLookback', settings.confirmLookback);
+        this.writeNumber('volumeSmaPeriod', settings.volumeSmaPeriod);
+        this.writeNumber('volumeMultiplier', settings.volumeMultiplier);
+        this.writeNumber('confirmRsiPeriod', settings.confirmRsiPeriod);
+        this.writeNumber('confirmRsiBullish', settings.confirmRsiBullish);
+        this.writeNumber('confirmRsiBearish', settings.confirmRsiBearish);
+
+        // Trigger change events so UI updates reflect changes
+        this.triggerChangeEvents();
+    }
+
+    // ========================================================================
+    // Reset to Default
+    // ========================================================================
+
+    public resetToDefault(): void {
+        debugLogger.event('settings.reset');
+        this.applyBacktestSettings(DEFAULT_BACKTEST_SETTINGS);
+
+        // Reset strategy params to defaults
+        const strategy = strategyRegistry.get(state.currentStrategyKey);
+        if (strategy) {
+            paramManager.setValues(strategy, strategy.defaultParams);
+        }
+
+        this.saveSettings();
+    }
+
+    public getDefaultBacktestSettings(): BacktestSettingsData {
+        return { ...DEFAULT_BACKTEST_SETTINGS };
+    }
+
+    public getDefaultAppSettings(): AppSettings {
+        return { ...DEFAULT_APP_SETTINGS, backtestSettings: { ...DEFAULT_BACKTEST_SETTINGS } };
+    }
+
+    // ========================================================================
+    // Strategy Configurations
+    // ========================================================================
+
+    public saveStrategyConfig(name: string): StrategyConfig {
+        const strategy = strategyRegistry.get(state.currentStrategyKey);
+        const strategyParams = strategy ? paramManager.getValues(strategy) : {};
+
+        const config: StrategyConfig = {
+            name,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            strategyKey: state.currentStrategyKey,
+            strategyParams,
+            backtestSettings: this.getBacktestSettings(),
+        };
+
+        const configs = this.loadAllStrategyConfigs();
+        const existingIndex = configs.findIndex(c => c.name === name);
+
+        if (existingIndex >= 0) {
+            config.createdAt = configs[existingIndex].createdAt;
+            configs[existingIndex] = config;
+        } else {
+            configs.push(config);
+        }
+
+        try {
+            localStorage.setItem(STORAGE_KEYS.STRATEGY_CONFIGS, JSON.stringify(configs));
+            debugLogger.event('settings.config.saved', { name, strategy: state.currentStrategyKey });
+        } catch (e) {
+            console.error('[SettingsManager] Failed to save strategy config:', e);
+        }
+
+        return config;
+    }
+
+    public loadStrategyConfig(name: string): StrategyConfig | null {
+        const configs = this.loadAllStrategyConfigs();
+        return configs.find(c => c.name === name) || null;
+    }
+
+    public applyStrategyConfig(config: StrategyConfig): void {
+        this.autoSaveEnabled = false;
+        try {
+            // Apply backtest settings
+            this.applyBacktestSettings(config.backtestSettings);
+
+            // Switch to the strategy if different
+            if (config.strategyKey !== state.currentStrategyKey && strategyRegistry.has(config.strategyKey)) {
+                state.set('currentStrategyKey', config.strategyKey);
+                const strategySelect = document.getElementById('strategySelect') as HTMLSelectElement | null;
+                if (strategySelect) {
+                    strategySelect.value = config.strategyKey;
+                }
+            }
+
+            // Apply strategy params with a slight delay to ensure params are rendered
+            setTimeout(() => {
+                const strategy = strategyRegistry.get(config.strategyKey);
+                if (strategy) {
+                    paramManager.setValues(strategy, config.strategyParams);
+                }
+            }, 50);
+
+            debugLogger.event('settings.config.applied', { name: config.name, strategy: config.strategyKey });
+        } finally {
+            this.autoSaveEnabled = true;
+        }
+    }
+
+    public loadAllStrategyConfigs(): StrategyConfig[] {
+        try {
+            const data = localStorage.getItem(STORAGE_KEYS.STRATEGY_CONFIGS);
+            if (data) {
+                const parsed = JSON.parse(data);
+                if (Array.isArray(parsed)) {
+                    return parsed as StrategyConfig[];
+                }
+                console.warn('[SettingsManager] Invalid strategy configs format, resetting to empty.');
+                return [];
+            }
+        } catch (e) {
+            console.error('[SettingsManager] Failed to load strategy configs:', e);
+        }
+        return [];
+    }
+
+    public deleteStrategyConfig(name: string): boolean {
+        const configs = this.loadAllStrategyConfigs();
+        const index = configs.findIndex(c => c.name === name);
+
+        if (index >= 0) {
+            configs.splice(index, 1);
+            try {
+                localStorage.setItem(STORAGE_KEYS.STRATEGY_CONFIGS, JSON.stringify(configs));
+                debugLogger.event('settings.config.deleted', { name });
+                return true;
+            } catch (e) {
+                console.error('[SettingsManager] Failed to delete strategy config:', e);
+            }
+        }
+        return false;
+    }
+
+    // ========================================================================
+    // Auto-Save Event Listeners
+    // ========================================================================
+
+    public setupAutoSave(): void {
+        // Listen for input changes on settings panel
+        const settingsPanel = document.getElementById('settingsTab');
+        if (settingsPanel) {
+            settingsPanel.addEventListener('change', () => this.saveSettingsDebounced());
+            settingsPanel.addEventListener('input', () => this.saveSettingsDebounced());
+        }
+
+        // Listen for state changes
+        state.subscribe('currentStrategyKey', () => this.saveSettingsDebounced());
+        state.subscribe('isDarkTheme', () => this.saveSettingsDebounced());
+    }
+
+    // ========================================================================
+    // Private Helpers
+    // ========================================================================
+
+    private readNumber(id: string, fallback: number): number {
+        const input = document.getElementById(id) as HTMLInputElement | null;
+        if (!input) return fallback;
+        const value = parseFloat(input.value);
+        return Number.isFinite(value) ? value : fallback;
+    }
+
+    private readCheckbox(id: string, fallback: boolean): boolean {
+        const checkbox = document.getElementById(id) as HTMLInputElement | null;
+        return checkbox ? checkbox.checked : fallback;
+    }
+
+    private readSelect(id: string, fallback: string): string {
+        const select = document.getElementById(id) as HTMLSelectElement | null;
+        return select ? select.value : fallback;
+    }
+
+    private writeNumber(id: string, value: number): void {
+        const input = document.getElementById(id) as HTMLInputElement | null;
+        if (input) {
+            input.value = String(value);
+        }
+    }
+
+    private writeCheckbox(id: string, value: boolean): void {
+        const checkbox = document.getElementById(id) as HTMLInputElement | null;
+        if (checkbox) {
+            checkbox.checked = value;
+        }
+    }
+
+    private writeSelect(id: string, value: string): void {
+        const select = document.getElementById(id) as HTMLSelectElement | null;
+        if (select) {
+            select.value = value;
+        }
+    }
+
+    private triggerChangeEvents(): void {
+        // Trigger change events for toggles to update UI state
+        const toggleIds = [
+            'fixedTradeToggle',
+            'riskSettingsToggle',
+            'regimeSettingsToggle',
+            'entrySettingsToggle',
+            'shortModeToggle'
+        ];
+
+        toggleIds.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        });
+
+        // Trigger riskMode change
+        const riskMode = document.getElementById('riskMode');
+        if (riskMode) {
+            riskMode.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    }
+}
+
+export const settingsManager = new SettingsManager();
+
+// Export for debugging
+if (typeof window !== 'undefined') {
+    (window as any).__settingsManager = settingsManager;
+}

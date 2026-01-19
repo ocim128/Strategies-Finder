@@ -1,0 +1,16 @@
+html,
+body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+body {
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-normal);
+    background: var(--page-gradient), var(--bg-primary);
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}

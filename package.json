@@ -1,0 +1,14 @@
+{
+  "scripts": {
+    "test": "..\\..\\..\\node_modules\\.bin\\esno strategies.spec.ts",
+    "test:strategies": "npm run test",
+    "test:e2e": "..\\..\\..\\node_modules\\.bin\\esno e2e.spec.ts",
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "esno": "^4.8.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

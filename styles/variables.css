@@ -1,0 +1,136 @@
+:root {
+    /* Color tokens */
+    --hsl-surface-1: 222 28% 10%;
+    --hsl-surface-2: 222 24% 14%;
+    --hsl-surface-3: 222 22% 18%;
+    --hsl-surface-4: 222 20% 22%;
+    --hsl-ink-1: 0 0% 92%;
+    --hsl-ink-2: 220 9% 65%;
+    --hsl-border: 222 16% 26%;
+    --hsl-chart: 222 32% 8%;
+    --hsl-accent: 221 96% 60%;
+    --hsl-accent-strong: 221 96% 53%;
+    --hsl-success: 168 62% 40%;
+    --hsl-success-strong: 168 62% 34%;
+    --hsl-danger: 2 79% 58%;
+    --hsl-warning: 35 92% 55%;
+    --hsl-warning-strong: 35 92% 47%;
+    --hsl-shadow: 222 40% 5%;
+    --hsl-glass: 222 30% 12%;
+
+    --bg-primary: hsl(var(--hsl-surface-1));
+    --bg-secondary: hsl(var(--hsl-surface-2));
+    --bg-tertiary: hsl(var(--hsl-surface-3));
+    --bg-elevated: hsl(var(--hsl-surface-4));
+    --text-primary: hsl(var(--hsl-ink-1));
+    --text-secondary: hsl(var(--hsl-ink-2));
+    --border-color: hsl(var(--hsl-border));
+    --chart-bg: hsl(var(--hsl-chart));
+    --accent-color: hsl(var(--hsl-accent));
+    --accent-hover: hsl(var(--hsl-accent-strong));
+    --green: hsl(var(--hsl-success));
+    --green-hover: hsl(var(--hsl-success-strong));
+    --red: hsl(var(--hsl-danger));
+    --warning: hsl(var(--hsl-warning));
+    --warning-hover: hsl(var(--hsl-warning-strong));
+    --text-on-accent: hsl(0 0% 100%);
+
+    --profit-bg: hsl(var(--hsl-success) / 0.18);
+    --loss-bg: hsl(var(--hsl-danger) / 0.18);
+    --accent-soft: hsl(var(--hsl-accent) / 0.14);
+    --accent-soft-strong: hsl(var(--hsl-accent) / 0.26);
+    --success-soft: hsl(var(--hsl-success) / 0.2);
+    --danger-soft: hsl(var(--hsl-danger) / 0.2);
+
+    --overlay-bg: hsl(var(--hsl-shadow) / 0.64);
+    --glass-bg: hsl(var(--hsl-glass) / 0.8);
+    --glass-border: hsl(220 30% 65% / 0.16);
+    --glass-shadow: 0 12px 32px hsl(var(--hsl-shadow) / 0.5);
+    --shadow-elevated: 0 10px 24px hsl(var(--hsl-shadow) / 0.4);
+    --shadow-floating: 0 18px 48px hsl(var(--hsl-shadow) / 0.5);
+    --focus-ring: 0 0 0 2px hsl(var(--hsl-accent) / 0.45);
+    --focus-ring-soft: 0 0 0 4px hsl(var(--hsl-accent) / 0.2);
+
+    --page-gradient: radial-gradient(1200px 800px at 12% -10%,
+            hsl(var(--hsl-accent) / 0.14),
+            transparent 58%),
+        radial-gradient(900px 700px at 92% 8%,
+            hsl(var(--hsl-success) / 0.12),
+            transparent 60%);
+
+    /* Spacing tokens */
+    --space-1: 4px;
+    --space-1-5: 6px;
+    --space-2: 8px;
+    --space-2-5: 10px;
+    --space-3: 12px;
+    --space-3-5: 14px;
+    --space-4: 16px;
+    --space-4-5: 18px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-7: 32px;
+    --space-8: 40px;
+
+    /* Radius tokens */
+    --radius-xs: 4px;
+    --radius-s: 6px;
+    --radius-m: 8px;
+    --radius-l: 10px;
+    --radius-xl: 12px;
+    --radius-pill: 999px;
+
+    /* Typography tokens */
+    --font-family-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-family-mono: 'JetBrains Mono', 'Consolas', monospace;
+    --font-size-2xs: 10px;
+    --font-size-xs: 11px;
+    --font-size-sm: 12px;
+    --font-size-md: 13px;
+    --font-size-base: 14px;
+    --font-size-lg: 16px;
+    --font-size-xl: 18px;
+    --font-size-2xl: 20px;
+    --font-weight-regular: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+    --line-height-tight: 1.2;
+    --line-height-normal: 1.4;
+    --line-height-relaxed: 1.6;
+    --tracking-medium: 0.04em;
+    --tracking-wide: 0.08em;
+}
+
+.light-theme {
+    --hsl-surface-1: 220 33% 98%;
+    --hsl-surface-2: 220 30% 95%;
+    --hsl-surface-3: 220 22% 90%;
+    --hsl-surface-4: 220 18% 86%;
+    --hsl-ink-1: 220 25% 16%;
+    --hsl-ink-2: 220 10% 45%;
+    --hsl-border: 220 16% 84%;
+    --hsl-chart: 0 0% 100%;
+    --hsl-accent: 221 88% 54%;
+    --hsl-accent-strong: 221 88% 47%;
+    --hsl-success: 168 58% 35%;
+    --hsl-success-strong: 168 58% 30%;
+    --hsl-danger: 2 72% 52%;
+    --hsl-warning: 35 92% 50%;
+    --hsl-warning-strong: 35 92% 43%;
+    --hsl-shadow: 220 30% 32%;
+    --hsl-glass: 220 33% 96%;
+
+    --overlay-bg: hsl(220 20% 20% / 0.35);
+    --glass-border: hsl(220 25% 60% / 0.25);
+    --glass-shadow: 0 12px 28px hsl(220 30% 40% / 0.18);
+    --shadow-elevated: 0 10px 24px hsl(220 30% 40% / 0.2);
+    --shadow-floating: 0 18px 48px hsl(220 30% 40% / 0.25);
+
+    --page-gradient: radial-gradient(900px 600px at 10% -10%,
+            hsl(var(--hsl-accent) / 0.16),
+            transparent 60%),
+        radial-gradient(700px 500px at 100% 0%,
+            hsl(var(--hsl-success) / 0.12),
+            transparent 55%);
+}

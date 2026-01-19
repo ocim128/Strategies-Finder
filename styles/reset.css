@@ -1,0 +1,38 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    .header,
+    .toolbar,
+    .chart-wrapper,
+    .strategy-panel,
+    .status-bar,
+    .dropdown-menu.active,
+    .btn.is-loading::after,
+    .progress-container.active .progress-fill {
+        animation: none;
+    }
+}
