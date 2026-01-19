@@ -241,5 +241,15 @@ export function setupEventHandlers() {
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') symbolDropdown.classList.remove('active');
         if (e.key === 'Enter' && e.ctrlKey) backtestService.runCurrentBacktest();
+
+        // Alt + 1-5 for tab switching
+        if (e.altKey && e.key >= '1' && e.key <= '5') {
+            const index = parseInt(e.key) - 1;
+            const tabs = document.querySelectorAll('.panel-tab');
+            if (tabs[index]) {
+                (tabs[index] as HTMLElement).click();
+                debugLogger.event('ui.shortcut.tab_switch', { index });
+            }
+        }
     });
 }

@@ -48,6 +48,15 @@ export class UIManager {
 
     public updateResultsUI(result: BacktestResult) {
         resultsRenderer.render(result);
+
+        // Update status bar badge
+        const badge = document.getElementById('lastBacktestResult');
+        if (badge) {
+            const isPositive = result.netProfit >= 0;
+            badge.textContent = `${isPositive ? '+' : ''}${result.netProfitPercent.toFixed(2)}% ROI`;
+            badge.className = `stat-badge ${isPositive ? 'positive' : 'negative'}`;
+            badge.classList.remove('is-hidden');
+        }
     }
 
     public updateTradesList(trades: Trade[], jumpToTrade: (time: Time) => void) {

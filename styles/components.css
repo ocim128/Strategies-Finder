@@ -210,6 +210,34 @@
     margin: var(--space-1) 0;
 }
 
+.stat-badge {
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-bold);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.stat-badge.positive {
+    color: var(--green);
+    background: var(--success-soft);
+    border-color: hsl(var(--hsl-success) / 0.3);
+}
+
+.stat-badge.negative {
+    color: var(--red);
+    background: var(--danger-soft);
+    border-color: hsl(var(--hsl-danger) / 0.3);
+}
+
+.stat-badge.is-hidden {
+    display: none;
+}
+
 
 /* Symbol Selector */
 .symbol-selector {
@@ -373,6 +401,33 @@
 
 .panel-tab.active::after {
     transform: scaleY(1);
+}
+
+/* Custom Tooltip */
+.panel-tab::before {
+    content: attr(title);
+    position: absolute;
+    left: 100%;
+    top: 50%;
+    transform: translateY(-50%) translateX(10px);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    padding: 6px 10px;
+    border-radius: var(--radius-s);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: var(--shadow-elevated);
+    border: 1px solid var(--border-color);
+    z-index: 1000;
+}
+
+.panel-tab:hover::before {
+    opacity: 1;
+    transform: translateY(-50%) translateX(15px);
 }
 
 .panel-tab .badge {

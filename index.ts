@@ -17,6 +17,7 @@ import { initDebugPanel } from "./lib/debugPanel";
 import { walkForwardService } from "./lib/walkForwardService";
 import { settingsManager } from "./lib/settingsManager";
 import { injectLayout } from "./lib/layoutManager";
+import { commandPaletteManager } from "./lib/commandPalette";
 
 // Handlers
 import { setupGlobalErrorHandlers } from "./lib/handlers/globalErrorHandlers";
@@ -93,4 +94,5 @@ init();
 if (typeof window !== 'undefined') {
 	(window as any).__state = state;
 	(window as any).__debug = debugLogger;
+	(window as any).__commandPalette = commandPaletteManager;
 }
