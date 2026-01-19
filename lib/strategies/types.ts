@@ -1,4 +1,4 @@
-import type { Time } from '../model/horz-scale-behavior-time/types';
+import type { Time } from "lightweight-charts";
 export type { Time };
 
 // ============================================================================
