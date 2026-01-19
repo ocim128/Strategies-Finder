@@ -52,6 +52,15 @@ export class UIManager {
 
     public updateTradesList(trades: Trade[], jumpToTrade: (time: Time) => void) {
         tradesRenderer.render(trades, jumpToTrade, this.formatPrice, this.formatDate);
+        this.updateTradeBadge(trades.length);
+    }
+
+    public updateTradeBadge(count: number) {
+        const badge = document.getElementById('tradeBadge');
+        if (badge) {
+            badge.textContent = count.toString();
+            badge.classList.toggle('active', count > 0);
+        }
     }
 
     public addIndicatorBadge(id: string, type: string, period: number, color: string) {
@@ -98,6 +107,7 @@ export class UIManager {
         getRequiredElement('indicatorsPanel').innerHTML = '';
         resultsRenderer.clear();
         tradesRenderer.clear();
+        this.updateTradeBadge(0);
         updateTextContent('strategyStatus', 'Ready');
     }
 

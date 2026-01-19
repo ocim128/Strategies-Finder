@@ -76,15 +76,23 @@ export function setupEventHandlers() {
     // Panel tabs
     document.querySelectorAll('.panel-tab').forEach(tab => {
         tab.addEventListener('click', (e) => {
-            const tabName = (e.target as HTMLElement).dataset.tab!;
-            document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
-            (e.target as HTMLElement).classList.add('active');
+            const target = e.currentTarget as HTMLElement;
+            const tabName = target.dataset.tab!;
 
-            getRequiredElement('settingsTab').style.display = tabName === 'settings' ? 'block' : 'none';
-            getRequiredElement('finderTab').style.display = tabName === 'finder' ? 'block' : 'none';
-            getRequiredElement('walkforwardTab').style.display = tabName === 'walkforward' ? 'block' : 'none';
-            getRequiredElement('resultsTab').style.display = tabName === 'results' ? 'block' : 'none';
-            getRequiredElement('tradesTab').style.display = tabName === 'trades' ? 'block' : 'none';
+            // Update active state
+            document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+            target.classList.add('active');
+
+            // Toggle visibility dynamically
+            const content = document.getElementById('panelContent');
+            if (content) {
+                const tabDivs = content.querySelectorAll('[id$="Tab"]');
+                tabDivs.forEach(div => {
+                    (div as HTMLElement).style.display = div.id === `${tabName}Tab` ? 'block' : 'none';
+                });
+            }
+
+            debugLogger.event('ui.tab.switch', { tab: tabName });
         });
     });
 
@@ -190,6 +198,44 @@ export function setupEventHandlers() {
 
     fixedTradeToggle.addEventListener('change', applyTradeSizingMode);
     applyTradeSizingMode();
+
+    // Resizable panel
+    const panel = getRequiredElement('strategyPanel');
+    const handle = getRequiredElement('panelResizeHandle');
+    let isResizing = false;
+
+    handle.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        document.body.classList.add('is-resizing');
+        handle.classList.add('is-resizing');
+        e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+
+        // Calculate new width: viewport width - mouse X position
+        const newWidth = window.innerWidth - e.clientX;
+        const minWidth = 280;
+        const maxWidth = window.innerWidth * 0.8;
+
+        if (newWidth >= minWidth && newWidth <= maxWidth) {
+            panel.style.width = `${newWidth}px`;
+            // Trigger chart resize if needed
+            state.chart.resize(0, 0);
+            state.equityChart.resize(0, 0);
+        }
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            document.body.classList.remove('is-resizing');
+            handle.classList.remove('is-resizing');
+            // Final chart sync
+            window.dispatchEvent(new Event('resize'));
+        }
+    });
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {

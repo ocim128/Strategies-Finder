@@ -288,31 +288,113 @@
 
 .panel-tabs {
     display: flex;
-    border-bottom: 1px solid var(--border-color);
+    flex-direction: column;
+    border-right: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    width: 68px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    scrollbar-width: none;
+    z-index: 10;
+}
+
+.panel-tabs::-webkit-scrollbar {
+    display: none;
 }
 
 .panel-tab {
-    flex: 1;
-    padding: var(--space-2-5);
-    text-align: center;
-    font-size: var(--font-size-sm);
-    font-weight: var(--font-weight-medium);
+    width: 100%;
+    min-height: 64px;
+    padding: var(--space-2) var(--space-1);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    font-size: 9px;
+    font-weight: var(--font-weight-bold);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
     color: var(--text-secondary);
     cursor: pointer;
     border: none;
     background: transparent;
-    border-bottom: 2px solid transparent;
-    transition: all 0.15s;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    white-space: nowrap;
+}
+
+.panel-tab span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.panel-tab svg {
+    width: 20px;
+    height: 20px;
+    opacity: 0.8;
+    transition: transform 0.2s, opacity 0.2s, color 0.2s;
 }
 
 .panel-tab:hover {
     color: var(--text-primary);
+    background: var(--bg-elevated);
+}
+
+.panel-tab:hover svg {
+    opacity: 1;
+    transform: scale(1.1);
 }
 
 .panel-tab.active {
     color: var(--accent-color);
-    border-bottom-color: var(--accent-color);
-    font-weight: var(--font-weight-semibold);
+    background: var(--bg-secondary);
+}
+
+.panel-tab.active svg {
+    opacity: 1;
+    color: var(--accent-color);
+}
+
+/* Vertical indicator on the left for active tab */
+.panel-tab::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 15%;
+    bottom: 15%;
+    width: 3px;
+    background: var(--accent-color);
+    border-radius: 0 3px 3px 0;
+    transform: scaleY(0);
+    transition: transform 0.2s ease;
+}
+
+.panel-tab.active::after {
+    transform: scaleY(1);
+}
+
+.panel-tab .badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: var(--accent-color);
+    color: white;
+    font-size: 9px;
+    padding: 2px 4px;
+    border-radius: 6px;
+    min-width: 14px;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    font-weight: bold;
+    display: none;
+    line-height: 1;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.panel-tab .badge.active {
+    display: block;
 }
 
 /* Inputs & Form Elements */

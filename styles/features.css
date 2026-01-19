@@ -157,15 +157,17 @@
 .stat-card {
     background: var(--bg-tertiary);
     border-radius: 0;
-    padding: var(--space-3);
+    padding: var(--space-2) var(--space-2-5);
     border: none;
     border-right: 1px solid var(--border-color);
     border-bottom: 1px solid var(--border-color);
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    min-height: 52px;
+    flex-direction: column;
+    /* Stacked labels to prevent overlap */
+    align-items: flex-start;
+    justify-content: center;
+    gap: 2px;
+    min-height: 58px;
 }
 
 .stat-card:nth-child(2n) {
@@ -199,11 +201,15 @@
 }
 
 .stat-value {
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-md);
+    /* Slightly smaller value text */
+    font-weight: var(--font-weight-bold);
     font-family: var(--font-family-mono);
-    margin-left: auto;
-    text-align: right;
+    text-align: left;
+    width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .stat-value.positive {
@@ -219,76 +225,168 @@
     border-right: none;
 }
 
+/* Trades Header Summary */
+.trades-summary {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+}
+
+.summary-item {
+    flex: 1;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-m);
+    padding: var(--space-2-5) var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.summary-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    font-weight: 700;
+}
+
+.summary-value {
+    font-size: 14px;
+    font-weight: 700;
+    font-family: var(--font-family-mono);
+}
+
 /* Trades List */
 .trades-list {
-    max-height: 300px;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--border-color);
+    border-radius: var(--radius-m);
+    overflow: hidden;
+    border: 1px solid var(--border-color);
 }
 
 .trade-item {
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    padding: var(--space-2-5);
-    border-radius: var(--radius-s);
-    margin-bottom: var(--space-2);
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
+    padding: var(--space-2-5) var(--space-3);
+    background: var(--bg-secondary);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+}
+
+.trade-item:last-child {
+    border-bottom: none;
 }
 
 .trade-item:hover {
-    background: var(--bg-elevated);
+    background: var(--bg-tertiary);
+    z-index: 1;
+}
+
+.trade-item.active {
+    background: var(--accent-soft);
+}
+
+.trade-item::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    opacity: 0;
+    background: var(--accent-color);
+    transition: opacity 0.2s;
+}
+
+.trade-item:hover::before {
+    opacity: 1;
 }
 
 .trade-icon {
-    width: 28px;
-    height: 28px;
-    border-radius: var(--radius-s);
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: var(--font-size-sm);
-    font-weight: var(--font-weight-semibold);
-    font-family: var(--font-family-mono);
+    font-size: 10px;
+    font-weight: 800;
+    flex-shrink: 0;
+    border-width: 1px;
+    border-style: solid;
+    text-transform: uppercase;
 }
 
 .trade-icon.buy {
     background: var(--success-soft);
     color: var(--green);
+    border-color: rgba(var(--hsl-success), 0.2);
 }
 
 .trade-icon.sell {
     background: var(--danger-soft);
     color: var(--red);
+    border-color: rgba(var(--hsl-danger), 0.2);
 }
 
 .trade-info {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.trade-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 10px;
+    color: var(--text-secondary);
+    font-weight: var(--font-weight-medium);
 }
 
 .trade-date {
-    font-size: var(--font-size-sm);
-    font-weight: var(--font-weight-medium);
-    font-family: var(--font-family-mono);
+    font-size: 11px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .trade-prices {
-    font-size: var(--font-size-xs);
+    font-size: 11px;
     color: var(--text-secondary);
     font-family: var(--font-family-mono);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.trade-prices .price-arrow {
+    opacity: 0.5;
+    font-family: sans-serif;
 }
 
 .trade-result {
     text-align: right;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
 }
 
 .trade-pnl {
-    font-size: var(--font-size-md);
-    font-weight: var(--font-weight-semibold);
+    font-size: 13px;
+    font-weight: 700;
     font-family: var(--font-family-mono);
+    letter-spacing: -0.02em;
 }
 
 .trade-pnl.positive {
@@ -300,9 +398,20 @@
 }
 
 .trade-pct {
-    font-size: var(--font-size-xs);
+    font-size: 10px;
     color: var(--text-secondary);
     font-family: var(--font-family-mono);
+    font-weight: var(--font-weight-medium);
+}
+
+.trade-pct.positive {
+    color: var(--green);
+    opacity: 0.8;
+}
+
+.trade-pct.negative {
+    color: var(--red);
+    opacity: 0.8;
 }
 
 /* Settings Actions */
@@ -365,7 +474,8 @@
 
 .finder-header {
     display: grid;
-    grid-template-columns: 40px 1fr 80px;
+    grid-template-columns: 40px 1fr 100px;
+    /* Adjusted for more space for metrics */
     gap: var(--space-3);
     font-size: var(--font-size-xs);
     text-transform: uppercase;
@@ -383,7 +493,8 @@
 
 .finder-row {
     display: grid;
-    grid-template-columns: 40px 1fr 80px;
+    grid-template-columns: 40px 1fr 100px;
+    /* Adjusted for more space for metrics */
     gap: var(--space-3);
     align-items: center;
     padding: var(--space-2-5);
@@ -592,7 +703,8 @@
 
 .wf-summary {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    /* Adjusted for more flexible layout */
     gap: var(--space-2);
     margin-bottom: var(--space-4);
 }
@@ -642,7 +754,10 @@
 .wf-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: var(--font-size-xs);
+    font-size: 11px;
+    /* Uniform font for table */
+    min-width: 450px;
+    /* Force minimum width to enable horizontal scroll */
 }
 
 .wf-table th,
@@ -729,6 +844,15 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
+    background: var(--bg-primary);
+}
+
+.panel-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--space-3);
+    /* Reduced from space-4 for more room */
+    position: relative;
     background: var(--bg-primary);
 }
 
