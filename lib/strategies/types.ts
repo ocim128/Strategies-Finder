@@ -1,0 +1,104 @@
+import type { Time } from '../model/horz-scale-behavior-time/types';
+export type { Time };
+
+// ============================================================================
+// Types & Interfaces
+// ============================================================================
+
+export interface OHLCVData {
+    time: Time;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+}
+
+export interface Trade {
+    id: number;
+    type: 'long' | 'short';
+    entryTime: Time;
+    entryPrice: number;
+    exitTime: Time;
+    exitPrice: number;
+    pnl: number;
+    pnlPercent: number;
+    size: number;
+}
+
+export interface BacktestResult {
+    trades: Trade[];
+    netProfit: number;
+    netProfitPercent: number;
+    winRate: number;
+    expectancy: number;
+    avgTrade: number;
+    profitFactor: number;
+    maxDrawdown: number;
+    maxDrawdownPercent: number;
+    totalTrades: number;
+    winningTrades: number;
+    losingTrades: number;
+    avgWin: number;
+    avgLoss: number;
+    sharpeRatio: number;
+    equityCurve: { time: Time; value: number }[];
+}
+
+export interface StrategyParams {
+    [key: string]: number;
+}
+
+export type EntryConfirmationMode = 'none' | 'close' | 'volume' | 'rsi';
+export type TradeDirection = 'long' | 'short';
+
+export interface BacktestSettings {
+    atrPeriod?: number;
+    stopLossAtr?: number;
+    takeProfitAtr?: number;
+    trailingAtr?: number;
+    partialTakeProfitAtR?: number;
+    partialTakeProfitPercent?: number;
+    breakEvenAtR?: number;
+    timeStopBars?: number;
+
+    trendEmaPeriod?: number;
+    trendEmaSlopeBars?: number;
+    atrPercentMin?: number;
+    atrPercentMax?: number;
+    adxPeriod?: number;
+    adxMin?: number;
+    adxMax?: number;
+
+    entryConfirmation?: EntryConfirmationMode;
+    confirmLookback?: number;
+    volumeSmaPeriod?: number;
+    volumeMultiplier?: number;
+    rsiPeriod?: number;
+    rsiBullish?: number;
+    rsiBearish?: number;
+    tradeDirection?: TradeDirection;
+}
+
+export interface Signal {
+    time: Time;
+    type: 'buy' | 'sell';
+    price: number;
+    reason?: string;
+}
+
+export interface StrategyIndicator {
+    name: string;
+    type: 'line' | 'band' | 'histogram';
+    values: (number | null)[] | { [key: string]: (number | null)[] };
+    color?: string;
+}
+
+export interface Strategy {
+    name: string;
+    description: string;
+    defaultParams: StrategyParams;
+    paramLabels: { [key: string]: string };
+    execute: (data: OHLCVData[], params: StrategyParams) => Signal[];
+    indicators?: (data: OHLCVData[], params: StrategyParams) => StrategyIndicator[];
+}
