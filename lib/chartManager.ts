@@ -12,7 +12,17 @@ import {
 } from "lightweight-charts";
 import { state } from "./state";
 import { darkTheme, lightTheme } from "./constants";
-import { Trade } from "../../../../src/strategies/index";
+
+export interface Trade {
+    entryTime: Time;
+    exitTime: Time;
+    entryPrice: number;
+    exitPrice: number;
+    type: 'long' | 'short';
+    pnl: number;
+    pnlPercent: number;
+}
+
 
 export class ChartManager {
     public initCharts() {

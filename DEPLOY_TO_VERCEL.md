@@ -9,7 +9,8 @@ This directory (`debug/playground/test-chart.d`) is now configured to be deploya
     *   Go to your Vercel dashboard and click "Add New... > Project".
     *   Select your repository.
 3.  **Configure Project Settings**:
-    *   **Root Directory**: Click "Edit" next to Root Directory and select `debug/playground/test-chart.d`.
+    *   **Root Directory**: Leave this as the default (root directory).
+        > **Note**: Since we pushed the `test-chart.d` folder directly to the root of the GitHub repository, you do NOT need to select a subdirectory. The files like `package.json` are already at the top level of this repository.
     *   **Framework Preset**: Select `Vite`.
     *   **Build Command**: `npm run build` (This should auto-detect, but verify).
     *   **Output Directory**: `dist` (This should also auto-detect).
