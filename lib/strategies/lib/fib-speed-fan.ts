@@ -259,7 +259,7 @@ export const fib_speed_fan: Strategy = {
 
         if (pivots.length < 2) return [];
 
-        const fibLevels = calculateFibFanLevels(cleanData, pivots);
+
 
         // Create ZigZag line connecting pivots
         const zigzag: (number | null)[] = new Array(cleanData.length).fill(null);
@@ -280,29 +280,9 @@ export const fib_speed_fan: Strategy = {
             { name: 'ZigZag', type: 'line', values: zigzag, color: COLORS.Trend }
         ];
 
-        // Add Fib fan levels with distinct colors
-        const levelColors: { [key: string]: string } = {
-            '0': '#787b86',      // Gray
-            '0.236': '#f57c00', // Orange
-            '0.382': '#81c784', // Light Green  
-            '0.5': '#4caf50',   // Green
-            '0.618': '#009688', // Teal
-            '0.786': '#2196f3', // Blue
-            '1': '#787b86'      // Gray
-        };
+        // Note: UI fans (rainbow) were removed as requested to declutter the chart.
+        // The strategy continues to use these levels for signal generation internally.
 
-        for (const level of FIB_LEVELS) {
-            const key = level.toString();
-            const values = fibLevels[key];
-            if (values) {
-                indicators.push({
-                    name: `Fib ${level}`,
-                    type: 'line',
-                    values: values,
-                    color: levelColors[key] || COLORS.Neutral
-                });
-            }
-        }
 
         return indicators;
     }
