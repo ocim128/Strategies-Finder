@@ -15,6 +15,7 @@ import { finderManager } from "./lib/finderManager";
 import { debugLogger } from "./lib/debugLogger";
 import { initDebugPanel } from "./lib/debugPanel";
 import { walkForwardService } from "./lib/walkForwardService";
+import { monteCarloService } from "./lib/monteCarloService";
 import { settingsManager } from "./lib/settingsManager";
 import { injectLayout } from "./lib/layoutManager";
 import { commandPaletteManager } from "./lib/commandPalette";
@@ -50,6 +51,7 @@ async function init() {
 	setupEventHandlers();
 	finderManager.init();
 	walkForwardService.initUI();
+	monteCarloService.initUI();
 	initDebugPanel();
 
 	editorManager.init(() => {

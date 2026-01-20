@@ -1,0 +1,135 @@
+<!-- Monte-Carlo Robustness Lab Tab -->
+<div id="montecarloTab">
+    <div class="section-title">Monte-Carlo Robustness Lab</div>
+    <p class="section-desc">Test strategy robustness by running N simulations with resampled trades,
+        random shocks (slippage/spread/latency), and noise perturbations to detect overfitting.</p>
+
+    <div class="section-header">
+        <div class="section-title">Simulation Settings</div>
+    </div>
+    <div class="section-body">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Simulations</label>
+                <input type="number" class="param-input" id="mc-simulations" value="500" min="50" max="2000">
+                <div class="param-hint">Number of Monte-Carlo iterations</div>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Block Size (bars)</label>
+                <input type="number" class="param-input" id="mc-block-size" value="0" min="0" max="100">
+                <div class="param-hint">0 = trade bootstrap, >0 = block bootstrap</div>
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Slippage (bps)</label>
+                <input type="number" class="param-input" id="mc-slippage" value="5" min="0" max="50">
+                <div class="param-hint">Random slippage shock in basis points</div>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Spread (bps)</label>
+                <input type="number" class="param-input" id="mc-spread" value="2" min="0" max="50">
+                <div class="param-hint">Additional spread cost in basis points</div>
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Latency (bars)</label>
+                <input type="number" class="param-input" id="mc-latency" value="0" min="0" max="5">
+                <div class="param-hint">Random signal delay (block mode only)</div>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Min Trades</label>
+                <input type="number" class="param-input" id="mc-min-trades" value="5" min="1">
+                <div class="param-hint">Minimum trades per simulation</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="mc-actions">
+        <button class="btn btn-primary run-btn" id="mc-run-btn">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8 5v14l11-7z" />
+            </svg>
+            Run Monte-Carlo
+            <span class="spinner" id="mc-spinner" style="display:none;"></span>
+        </button>
+        <button class="btn btn-secondary" id="mc-quick-btn">
+            Quick Analysis
+        </button>
+    </div>
+
+    <div class="mc-status-bar">
+        <span id="mc-status">Ready - Run backtest first to enable Monte-Carlo</span>
+    </div>
+
+    <!-- Robustness & Fragility Gauges -->
+    <div class="mc-gauges-row">
+        <div class="mc-robustness">
+            <div class="mc-gauge" id="mc-robustness-gauge">
+                <div class="mc-gauge-fill"></div>
+                <div class="mc-gauge-label">
+                    <span class="mc-gauge-score" id="mc-robustness-score">--</span>
+                    <span class="mc-gauge-max">/100</span>
+                </div>
+            </div>
+            <div class="mc-gauge-title">Robustness Score</div>
+        </div>
+        <div class="mc-fragility">
+            <div class="mc-fragility-badge">
+                <span class="mc-fragility-icon">⚡</span>
+                <span class="mc-fragility-value" id="mc-fragility-score">--</span>
+            </div>
+            <div class="mc-gauge-title">Fragility Index</div>
+        </div>
+    </div>
+
+    <div class="mc-robustness-desc-container">
+        <div class="mc-robustness-desc" id="mc-robustness-desc">Run analysis to see robustness assessment</div>
+    </div>
+
+    <!-- Summary Stats Grid -->
+    <div class="section-header">
+        <div class="section-title">Probability Metrics</div>
+    </div>
+    <div class="mc-summary" id="mc-summary-panel">
+        <div class="empty-state">
+            <p>Run Monte-Carlo analysis to see probability distributions</p>
+        </div>
+    </div>
+
+    <!-- Histogram Chart -->
+    <div class="section-header">
+        <div class="section-title">Profit Distribution</div>
+    </div>
+    <div class="mc-histogram-wrapper" id="mc-histogram">
+        <div class="empty-state">
+            <p>Distribution chart will appear here</p>
+        </div>
+    </div>
+
+    <!-- Distribution Table -->
+    <div class="section-header">
+        <div class="section-title">Percentile Breakdown</div>
+    </div>
+    <div class="mc-table-wrapper">
+        <table class="mc-table">
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th>5%</th>
+                    <th>25%</th>
+                    <th>50%</th>
+                    <th>75%</th>
+                    <th>95%</th>
+                    <th>Original</th>
+                </tr>
+            </thead>
+            <tbody id="mc-dist-table-body">
+                <tr>
+                    <td colspan="7" class="empty-cell">No data</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>

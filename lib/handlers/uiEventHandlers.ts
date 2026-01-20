@@ -242,8 +242,8 @@ export function setupEventHandlers() {
         if (e.key === 'Escape') symbolDropdown.classList.remove('active');
         if (e.key === 'Enter' && e.ctrlKey) backtestService.runCurrentBacktest();
 
-        // Alt + 1-5 for tab switching
-        if (e.altKey && e.key >= '1' && e.key <= '5') {
+        // Alt + 1-6 for tab switching
+        if (e.altKey && e.key >= '1' && e.key <= '6') {
             const index = parseInt(e.key) - 1;
             const tabs = document.querySelectorAll('.panel-tab');
             if (tabs[index]) {

@@ -1098,3 +1098,364 @@
     background: var(--red);
     color: var(--text-on-accent);
 }
+
+/* ============================================================================
+   Monte-Carlo Robustness Lab
+   ============================================================================ */
+
+#montecarloTab {
+    display: none;
+}
+
+#montecarloTab .section-desc {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-4);
+    line-height: var(--line-height-relaxed);
+}
+
+.mc-actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+}
+
+.mc-actions .btn {
+    flex: 1;
+    justify-content: center;
+}
+
+.mc-status-bar {
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-s);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-4);
+    text-align: center;
+}
+
+/* Dual Gauge Row */
+.mc-gauges-row {
+    display: flex;
+    gap: var(--space-4);
+    margin-bottom: var(--space-3);
+}
+
+.mc-robustness {
+    flex: 1;
+    text-align: center;
+    padding: var(--space-4);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--border-color);
+}
+
+.mc-fragility {
+    flex: 0 0 auto;
+    text-align: center;
+    padding: var(--space-4);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--border-color);
+    min-width: 120px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.mc-gauge {
+    position: relative;
+    width: 100px;
+    height: 100px;
+    margin: 0 auto var(--space-3);
+    border-radius: 50%;
+    background: conic-gradient(var(--accent-color) calc(var(--score, 0) * 3.6deg),
+            var(--bg-elevated) calc(var(--score, 0) * 3.6deg));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mc-gauge::before {
+    content: '';
+    position: absolute;
+    inset: 10px;
+    background: var(--bg-tertiary);
+    border-radius: 50%;
+}
+
+.mc-gauge-label {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 2px;
+}
+
+.mc-gauge-score {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-bold);
+    font-family: var(--font-family-mono);
+}
+
+.mc-gauge-max {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.mc-gauge-title {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-secondary);
+}
+
+/* Gauge States */
+.mc-gauge.excellent {
+    background: conic-gradient(var(--green) calc(var(--score, 0) * 3.6deg),
+            var(--bg-elevated) calc(var(--score, 0) * 3.6deg));
+}
+
+.mc-gauge.excellent .mc-gauge-score {
+    color: var(--green);
+}
+
+.mc-gauge.good {
+    background: conic-gradient(hsl(168 50% 50%) calc(var(--score, 0) * 3.6deg),
+            var(--bg-elevated) calc(var(--score, 0) * 3.6deg));
+}
+
+.mc-gauge.good .mc-gauge-score {
+    color: hsl(168 50% 50%);
+}
+
+.mc-gauge.moderate {
+    background: conic-gradient(var(--warning) calc(var(--score, 0) * 3.6deg),
+            var(--bg-elevated) calc(var(--score, 0) * 3.6deg));
+}
+
+.mc-gauge.moderate .mc-gauge-score {
+    color: var(--warning);
+}
+
+.mc-gauge.poor {
+    background: conic-gradient(hsl(20 80% 55%) calc(var(--score, 0) * 3.6deg),
+            var(--bg-elevated) calc(var(--score, 0) * 3.6deg));
+}
+
+.mc-gauge.poor .mc-gauge-score {
+    color: hsl(20 80% 55%);
+}
+
+.mc-gauge.critical {
+    background: conic-gradient(var(--red) calc(var(--score, 0) * 3.6deg),
+            var(--bg-elevated) calc(var(--score, 0) * 3.6deg));
+}
+
+.mc-gauge.critical .mc-gauge-score {
+    color: var(--red);
+}
+
+/* Fragility Badge */
+.mc-fragility-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-elevated);
+    border-radius: var(--radius-m);
+    margin-bottom: var(--space-3);
+}
+
+.mc-fragility-icon {
+    font-size: var(--font-size-lg);
+}
+
+.mc-fragility-value {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-bold);
+    font-family: var(--font-family-mono);
+    color: var(--warning);
+}
+
+.mc-robustness-desc-container {
+    margin-bottom: var(--space-4);
+}
+
+.mc-robustness-desc {
+    text-align: center;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-s);
+    line-height: var(--line-height-relaxed);
+}
+
+/* Summary Stats Grid */
+.mc-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+}
+
+.mc-stat {
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-2);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-s);
+    border: 1px solid var(--border-color);
+}
+
+.mc-label {
+    font-size: var(--font-size-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-medium);
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+}
+
+.mc-value {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    font-family: var(--font-family-mono);
+}
+
+.mc-value.positive {
+    color: var(--green);
+}
+
+.mc-value.negative {
+    color: var(--red);
+}
+
+/* Histogram */
+.mc-histogram-wrapper {
+    margin-bottom: var(--space-4);
+    padding: var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--border-color);
+    min-height: 120px;
+}
+
+.mc-histogram-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 80px;
+    padding: 0 var(--space-2);
+}
+
+.mc-bar-wrapper {
+    flex: 1;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+}
+
+.mc-bar {
+    width: 100%;
+    min-height: 2px;
+    border-radius: 2px 2px 0 0;
+    transition: height 0.3s ease;
+}
+
+.mc-bar.positive {
+    background: linear-gradient(to top, hsl(168 60% 35%), hsl(168 60% 50%));
+}
+
+.mc-bar.negative {
+    background: linear-gradient(to top, hsl(2 70% 45%), hsl(2 70% 55%));
+}
+
+.mc-bar.original {
+    box-shadow: 0 0 0 2px var(--accent-color);
+    position: relative;
+}
+
+.mc-bar.original::after {
+    content: '▼';
+    position: absolute;
+    top: -16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: var(--accent-color);
+}
+
+.mc-histogram-labels {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: var(--space-2);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    font-family: var(--font-family-mono);
+}
+
+.mc-histogram-title {
+    font-weight: var(--font-weight-medium);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-medium);
+}
+
+/* Distribution Table */
+.mc-table-wrapper {
+    overflow-x: auto;
+    margin-bottom: var(--space-4);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-s);
+}
+
+.mc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-xs);
+    min-width: 400px;
+}
+
+.mc-table th,
+.mc-table td {
+    padding: var(--space-2) var(--space-2);
+    text-align: center;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.mc-table th {
+    background: var(--bg-tertiary);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-medium);
+    font-size: var(--font-size-2xs);
+    position: sticky;
+    top: 0;
+}
+
+.mc-table td:first-child {
+    text-align: left;
+    font-weight: var(--font-weight-medium);
+}
+
+.mc-table td:last-child {
+    background: var(--accent-soft);
+    font-weight: var(--font-weight-semibold);
+}
+
+.mc-table tbody tr:hover {
+    background: var(--bg-tertiary);
+}
+
+.mc-table tbody tr.positive td:nth-child(4) {
+    color: var(--green);
+}
+
+.mc-table tbody tr.negative td:nth-child(4) {
+    color: var(--red);
+}

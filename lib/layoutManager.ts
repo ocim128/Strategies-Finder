@@ -5,6 +5,7 @@ import strategyPanelShellHtml from '../html-partials/strategy-panel-shell.html?r
 import tabSettingsHtml from '../html-partials/tab-settings.html?raw';
 import tabFinderHtml from '../html-partials/tab-finder.html?raw';
 import tabWalkforwardHtml from '../html-partials/tab-walkforward.html?raw';
+import tabMontecarloHtml from '../html-partials/tab-montecarlo.html?raw';
 import tabResultsHtml from '../html-partials/tab-results.html?raw';
 import tabTradesHtml from '../html-partials/tab-trades.html?raw';
 import statusBarHtml from '../html-partials/status-bar.html?raw';
@@ -56,6 +57,7 @@ export function injectLayout() {
         tabSettingsHtml +
         tabFinderHtml +
         tabWalkforwardHtml +
+        tabMontecarloHtml +
         tabResultsHtml +
         tabTradesHtml;
 
