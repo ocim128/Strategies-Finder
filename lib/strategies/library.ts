@@ -1,11 +1,6 @@
 import { Strategy } from './types';
-import { sma_crossover } from './lib/sma-crossover';
-import { ema_crossover } from './lib/ema-crossover';
 import { rsi_oversold } from './lib/rsi-oversold';
-import { macd_crossover } from './lib/macd-crossover';
-import { bollinger_bounce } from './lib/bollinger-bounce';
 import { triple_ma } from './lib/triple-ma';
-import { stochastic_crossover } from './lib/stochastic-crossover';
 import { vwap_crossover } from './lib/vwap-crossover';
 import { rsi_macd_combo } from './lib/rsi-macd-combo';
 import { volume_profile } from './lib/volume-profile';
@@ -22,13 +17,8 @@ import { fib_time_zones } from './lib/fib-time-zones';
 import { trend_fib_time } from './lib/trend-fib-time';
 
 export const strategies: Record<string, Strategy> = {
-    sma_crossover,
-    ema_crossover,
     rsi_oversold,
-    macd_crossover,
-    bollinger_bounce,
     triple_ma,
-    stochastic_crossover,
     vwap_crossover,
     rsi_macd_combo,
     volume_profile,
