@@ -23,6 +23,7 @@ import {
 } from './combiner-types';
 import { evaluateNode } from './combiner-engine';
 import { strategies } from '../library';
+import { resampleOHLCV, getIntervalSeconds } from '../resample-utils';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // POSITION STATE
@@ -206,7 +207,7 @@ export function evaluateDirectionSignals(
     // Independent short logic
     const shortSignal = shortHandling.shortLogic
         ? evaluateNode(shortHandling.shortLogic, timeKey, signalMaps)
-        : invertSignal(evaluateNode(openCondition, timeKey, signalMaps));
+        : evaluateNode(openCondition, timeKey, signalMaps);
 
     return {
         longSignal: longSignal === 'BUY' ? 'BUY' : 'NO_SIGNAL',
@@ -214,14 +215,6 @@ export function evaluateDirectionSignals(
     };
 }
 
-/**
- * Inverts a signal (used when no explicit short logic is defined)
- */
-function invertSignal(signal: CombinedSignal): CombinedSignal {
-    if (signal === 'BUY') return 'SELL';
-    if (signal === 'SELL') return 'BUY';
-    return 'NO_SIGNAL';
-}
 
 /**
  * Resolves which direction to trade when both long and short signals fire
@@ -333,18 +326,86 @@ export function executeStrategy(
     // IMPORTANT: Use meta.id as key (string) because object reference equality won't work
     const signalMaps = new Map<string, Map<string, CombinedSignal>>();
 
+    // Infer base interval from data (default to 60s if not detectable)
+    const baseIntervalSeconds = data.length > 1 && typeof data[0].time === 'number' && typeof data[1].time === 'number'
+        ? (data[1].time as number) - (data[0].time as number)
+        : 60;
+
     for (const meta of definition.inputStrategies) {
         const strategy = strategies[meta.strategyId];
         if (!strategy) continue;
 
         const params = meta.params ?? strategy.defaultParams;
-        const strategySignals = strategy.execute(data, params);
+        const strategyTimeframe = meta.timeframe;
+        const strategyIntervalSeconds = strategyTimeframe ? getIntervalSeconds(strategyTimeframe) : baseIntervalSeconds;
 
-        const signalMap = new Map<string, CombinedSignal>();
-        for (const sig of strategySignals) {
-            const key = timeToKey(sig.time);
-            signalMap.set(key, sig.type === 'buy' ? 'BUY' : 'SELL');
+        // Use resampled data if higher timeframe requested
+        let execData = data;
+        let isHTF = strategyIntervalSeconds > baseIntervalSeconds;
+
+        if (isHTF && strategyTimeframe) {
+            execData = resampleOHLCV(data, strategyTimeframe);
         }
+
+        const strategySignals = strategy.execute(execData, params);
+        const signalMap = new Map<string, CombinedSignal>();
+
+        if (isHTF) {
+            // Mapping HTF signals back to base timeframe bars
+            // We expand signals to avoid missing them during AND/OR operations
+            if (meta.role === 'filter') {
+                // FILTER: Persist last signal until next signal arrives
+                // This allows HTF filters to stay active across multiple HTF bars
+                let currentSignal: CombinedSignal = 'NO_SIGNAL';
+                let signalIdx = 0;
+
+                // Sort signals by time
+                const sortedSignals = [...strategySignals].sort((a, b) =>
+                    (typeof a.time === 'number' ? a.time : 0) - (typeof b.time === 'number' ? b.time : 0)
+                );
+
+                for (const bar of data) {
+                    const barTime = typeof bar.time === 'number' ? bar.time : 0;
+
+                    // Check if a new signal should be active
+                    // HTF signals are available AFTER the HTF bar closes
+                    while (signalIdx < sortedSignals.length) {
+                        const sigTime = typeof sortedSignals[signalIdx].time === 'number' ? (sortedSignals[signalIdx].time as number) : 0;
+                        const validFrom = sigTime + strategyIntervalSeconds;
+
+                        if (barTime >= validFrom) {
+                            currentSignal = sortedSignals[signalIdx].type === 'buy' ? 'BUY' : 'SELL';
+                            signalIdx++;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if (currentSignal !== 'NO_SIGNAL') {
+                        signalMap.set(barTime.toString(), currentSignal);
+                    }
+                }
+            } else {
+                // ENTRY: Expand only for the duration of the HTF bar
+                // This allows lower-timeframe filters to coincide with HTF entry triggers
+                for (const sig of strategySignals) {
+                    const sigTime = typeof sig.time === 'number' ? (sig.time as number) : 0;
+                    const sigType: CombinedSignal = sig.type === 'buy' ? 'BUY' : 'SELL';
+                    const validFrom = sigTime + strategyIntervalSeconds;
+
+                    for (let t = validFrom; t < validFrom + strategyIntervalSeconds; t += baseIntervalSeconds) {
+                        signalMap.set(t.toString(), sigType);
+                    }
+                }
+            }
+        } else {
+            // Standard mapping for same timeframe
+            for (const sig of strategySignals) {
+                const key = timeToKey(sig.time);
+                signalMap.set(key, sig.type === 'buy' ? 'BUY' : 'SELL');
+            }
+        }
+
         signalMaps.set(meta.id, signalMap);
     }
 
