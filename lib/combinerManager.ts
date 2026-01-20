@@ -278,15 +278,29 @@ function renderStrategySlots(): void {
 
     container.innerHTML = state.selectedStrategies.map((meta, index) => `
         <div class="combiner-strategy-slot" data-index="${index}">
-            <select class="param-input strategy-select-slot" data-index="${index}">
+            <select class="param-input strategy-select-slot" data-index="${index}" title="Select Strategy">
                 ${getStrategyOptionsHtml(meta.strategyId, meta.configName)}
             </select>
-            <select class="role-select" data-index="${index}">
+            
+            <select class="timeframe-select" data-index="${index}" title="Timeframe">
+                <option value="" ${!meta.timeframe ? 'selected' : ''}>Default (Chart)</option>
+                <option value="1m" ${meta.timeframe === '1m' ? 'selected' : ''}>1m</option>
+                <option value="5m" ${meta.timeframe === '5m' ? 'selected' : ''}>5m</option>
+                <option value="15m" ${meta.timeframe === '15m' ? 'selected' : ''}>15m</option>
+                <option value="30m" ${meta.timeframe === '30m' ? 'selected' : ''}>30m</option>
+                <option value="1h" ${meta.timeframe === '1h' ? 'selected' : ''}>1h</option>
+                <option value="4h" ${meta.timeframe === '4h' ? 'selected' : ''}>4h</option>
+                <option value="1d" ${meta.timeframe === '1d' ? 'selected' : ''}>1d</option>
+                <option value="1w" ${meta.timeframe === '1w' ? 'selected' : ''}>1w</option>
+            </select>
+
+            <select class="role-select" data-index="${index}" title="Role">
                 <option value="entry" ${meta.role === 'entry' ? 'selected' : ''}>Entry</option>
                 <option value="filter" ${meta.role === 'filter' ? 'selected' : ''}>Filter</option>
                 <option value="exit" ${meta.role === 'exit' ? 'selected' : ''}>Exit</option>
                 <option value="regime" ${meta.role === 'regime' ? 'selected' : ''}>Regime</option>
             </select>
+
             <button class="combiner-remove-slot" data-index="${index}" title="Remove">
                 <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
                     <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
@@ -318,6 +332,15 @@ function renderStrategySlots(): void {
 
             updateValidation();
             updatePrimaryStrategyDropdown();
+        });
+    });
+
+    container.querySelectorAll('.timeframe-select').forEach(select => {
+        select.addEventListener('change', (e) => {
+            const target = e.target as HTMLSelectElement;
+            const index = parseInt(target.getAttribute('data-index')!);
+            state.selectedStrategies[index].timeframe = target.value || undefined;
+            updateValidation();
         });
     });
 
@@ -359,7 +382,8 @@ function updatePrimaryStrategyDropdown(): void {
 
     const options = state.selectedStrategies.map((s, index) => {
         const strategy = strategyRegistry.get(s.strategyId);
-        const name = s.configName ? `${s.configName} (${strategy?.name || s.strategyId})` : (strategy?.name || s.strategyId);
+        const tf = s.timeframe ? ` [${s.timeframe}]` : '';
+        const name = s.configName ? `${s.configName} (${strategy?.name || s.strategyId})${tf}` : `${strategy?.name || s.strategyId}${tf}`;
         return `<option value="${index}">${name}</option>`;
     }).join('');
 
