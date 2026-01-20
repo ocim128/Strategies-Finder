@@ -209,19 +209,23 @@ export const fib_speed_fan: Strategy = {
 
             if (entryLevel === null || exitLevel === null || prevEntry === null || prevExit === null) continue;
 
+            let isBuy = false;
+            let isSell = false;
+            let signalReason = '';
+
             // After a swing high (bearish context), look for bullish reversal signals
             // Price crossing above entry level after being below
             if (lastPivotWasHigh) {
                 // Bearish fan context - look for support/buy signals
                 if (close[i - 1] <= prevEntry && close[i] > entryLevel) {
-                    signals.push(createBuySignal(cleanData, i,
-                        `Price crossed above ${params.entryLevel} fan level (support bounce)`));
+                    isBuy = true;
+                    signalReason = `Price crossed above ${params.entryLevel} fan level (support bounce)`;
                 }
             } else {
                 // Bullish fan context (after swing low) - look for resistance/sell signals  
                 if (close[i - 1] >= prevEntry && close[i] < entryLevel) {
-                    signals.push(createSellSignal(cleanData, i,
-                        `Price crossed below ${params.entryLevel} fan level (resistance rejection)`));
+                    isSell = true;
+                    signalReason = `Price crossed below ${params.entryLevel} fan level (resistance rejection)`;
                 }
             }
 
@@ -234,12 +238,25 @@ export const fib_speed_fan: Strategy = {
             if (level0 !== null && level1 !== null && prevLevel0 !== null && prevLevel1 !== null) {
                 // Breakout above 1.0 level (uptrend continuation)
                 if (close[i - 1] <= prevLevel1 && close[i] > level1) {
-                    signals.push(createBuySignal(cleanData, i, 'Breakout above 1.0 Fib fan level'));
+                    isBuy = true;
+                    signalReason = 'Breakout above 1.0 Fib fan level';
                 }
                 // Breakdown below 0 level (downtrend continuation)
                 if (close[i - 1] >= prevLevel0 && close[i] < level0) {
-                    signals.push(createSellSignal(cleanData, i, 'Breakdown below 0 Fib fan level'));
+                    isSell = true;
+                    signalReason = 'Breakdown below 0 Fib fan level';
                 }
+            }
+
+            // Prevent simultaneous buy and sell signals
+            if (isBuy && isSell) {
+                continue;
+            }
+
+            if (isBuy) {
+                signals.push(createBuySignal(cleanData, i, signalReason));
+            } else if (isSell) {
+                signals.push(createSellSignal(cleanData, i, signalReason));
             }
         }
 
