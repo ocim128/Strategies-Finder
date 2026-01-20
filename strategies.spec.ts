@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, OHLCVData, Signal, Time } from './lib/strategies/index';
+import { detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
 
 
 describe('Strategy Calculations', () => {
@@ -140,6 +141,148 @@ describe('Strategy Calculations', () => {
         expect(last).to.be.a('number');
         expect(last).to.be.at.least(0);
         expect(last).to.be.at.most(100);
+    });
+});
+
+describe('Pivot Detection', () => {
+    it('should detect zig-zag pivots correctly', () => {
+        // Construct a clear zig-zag pattern
+        // 0: 100
+        // 1: 110 (High candidate)
+        // 2: 105
+        // 3: 115 (Higher High - should replace previous high) - PIVOT HIGH
+        // 4: 100 
+        // 5: 90 (Low candidate) - PIVOT LOW
+        // 6: 100
+        // 7: 120 (High candidate) - PIVOT HIGH
+        const data: OHLCVData[] = [
+            { time: '1' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 },
+            { time: '2' as Time, open: 110, high: 110, low: 110, close: 110, volume: 100 },
+            { time: '3' as Time, open: 105, high: 105, low: 105, close: 105, volume: 100 },
+            { time: '4' as Time, open: 115, high: 115, low: 115, close: 115, volume: 100 }, // High 115
+            { time: '5' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 },
+            { time: '6' as Time, open: 90, high: 90, low: 90, close: 90, volume: 100 }, // Low 90
+            { time: '7' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 },
+            { time: '8' as Time, open: 120, high: 120, low: 120, close: 120, volume: 100 }, // High 120
+            { time: '9' as Time, open: 110, high: 110, low: 110, close: 110, volume: 100 },
+        ];
+
+        // Depth 2 (halfDepth = 1, look 1 bar left/right)
+        // Deviation 5%
+        const pivots = detectPivotsWithDeviation(data, 5, 2);
+
+        expect(pivots.length).to.be.greaterThan(0);
+
+        // Should find the lowest low at 90
+        const lowPivot = pivots.find(p => !p.isHigh && p.price === 90);
+        expect(lowPivot).to.not.be.undefined;
+        expect(lowPivot?.index).to.equal(5);
+
+        // Should find the highest high at 120
+        const highPivot = pivots.find(p => p.isHigh && p.price === 120);
+        expect(highPivot).to.not.be.undefined;
+        expect(highPivot?.index).to.equal(7);
+    });
+});
+
+import { fib_time_zones } from './lib/strategies/lib/fib-time-zones';
+
+describe('Classic Fib Time Zones Strategy', () => {
+    it('should generate signals at projected time zones', () => {
+        // Generate 50 bars
+        const data: OHLCVData[] = [];
+        for (let i = 0; i < 50; i++) {
+            data.push({
+                time: (i + 1) as unknown as Time, // using number as time for simplicity if type allows, strictly it's string type in test usually but let's check
+                open: 100, high: 100, low: 100, close: 100, volume: 100
+            });
+        }
+
+        // Force Pivot Low at 2: 
+        // Need to ensure it's a local low.
+        // Neighbors (1, 3) are 100 > 80. OK.
+        data[2].low = 80; data[2].close = 80; data[2].high = 80;
+
+        // Force Pivot High at 12:
+        // Neighbors (11, 13) are 100 < 120. OK.
+        data[12].high = 120; data[12].close = 120; data[12].low = 120;
+
+        // Pivot detection uses 'depth'. Let's use depth 2.
+        // Neighbors of 2: 1 (100) > 80. OK.
+        // Neighbors of 12: 11 (100) < 120, 13 (100) < 120. OK.
+
+        // Params: Deviation 5, Depth 2, ZoneWindow 0 (exact)
+        const signals = fib_time_zones.execute(data, { deviation: 5, depth: 2, zoneWindow: 0, trendFilter: 1 });
+
+        // Pivots should be at 2 and 12.
+        // Base = 12 - 2 = 10.
+        // Projections from 12:
+        // Fib 1 * 10 = 10 -> Index 22
+        // Fib 2 * 10 = 20 -> Index 32
+        // Fib 3 * 10 = 30 -> Index 42
+
+        // Since Last Pivot (12) is High, Trend is Down. Reversal is Buy.
+        // Expect Buy signals at 22, 32, 42.
+
+        // data[22] time is 23 (since i=0 time=1)
+        // data[32] time is 33
+        // data[42] time is 43
+
+        expect(signals.length).to.be.at.least(3);
+
+        const sig1 = signals.find(s => s.time === 23 as unknown as Time);
+        expect(sig1).to.not.be.undefined;
+        expect(sig1?.type).to.equal('buy');
+
+        const sig2 = signals.find(s => s.time === 33 as unknown as Time);
+        expect(sig2).to.not.be.undefined;
+
+        const sig3 = signals.find(s => s.time === 43 as unknown as Time);
+        expect(sig3).to.not.be.undefined;
+    });
+});
+
+import { trend_fib_time } from './lib/strategies/lib/trend-fib-time';
+
+describe('Trend-Based Fib Time Strategy', () => {
+    it('should generate signals based on 3-point trend projections', () => {
+        // Generate 50 bars
+        const data: OHLCVData[] = [];
+        for (let i = 0; i < 50; i++) {
+            data.push({
+                time: (i + 1) as unknown as Time,
+                open: 100, high: 100, low: 100, close: 100, volume: 100
+            });
+        }
+
+        // Setup A (Low) -> B (High) -> C (Low)
+        // A at 2
+        data[2].low = 80; data[2].high = 80; data[2].close = 80;
+        // B at 12
+        data[12].high = 120; data[12].low = 120; data[12].close = 120;
+        // C at 16 (Retracement Low)
+        data[16].low = 90; data[16].high = 90; data[16].close = 90;
+
+        // Distance A-B = 12 - 2 = 10 bars.
+        // Projection from C (16):
+        // Ratio 1.0 * 10 = 10 bars. Target = 16 + 10 = 26.
+        // Ratio 2.0 * 10 = 20 bars. Target = 16 + 20 = 36.
+
+        // Pattern: Low -> High -> Low. Next Impulse UP. Target is TOP. -> SELL Signal.
+
+        // Detection Params: Depth 2 (matches our forced pivots locs)
+        const signals = trend_fib_time.execute(data, { deviation: 5, depth: 2, trendFilter: 1 });
+
+        // Indices: 26, 36.
+        // Times: 27, 37.
+
+        const sig1 = signals.find(s => s.time === 27 as unknown as Time);
+        expect(sig1).to.not.be.undefined;
+        expect(sig1?.type).to.equal('sell');
+
+        const sig2 = signals.find(s => s.time === 37 as unknown as Time);
+        expect(sig2).to.not.be.undefined;
+        expect(sig2?.type).to.equal('sell');
     });
 });
 

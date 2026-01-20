@@ -18,6 +18,8 @@ import { fib_retracement } from './lib/fib-retracement';
 import { day_trading_booster } from './lib/day-trading-booster';
 import { volume_pivot_anchored } from './lib/volume-pivot-anchored';
 import { macd_x_overlay } from './lib/macd-x-overlay';
+import { fib_time_zones } from './lib/fib-time-zones';
+import { trend_fib_time } from './lib/trend-fib-time';
 
 export const strategies: Record<string, Strategy> = {
     sma_crossover,
@@ -38,6 +40,8 @@ export const strategies: Record<string, Strategy> = {
     fib_retracement,
     day_trading_booster,
     volume_pivot_anchored,
-    macd_x_overlay
+    macd_x_overlay,
+    fib_time_zones,
+    trend_fib_time
 };
 

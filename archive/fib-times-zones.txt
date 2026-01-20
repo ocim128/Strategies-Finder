@@ -1,0 +1,359 @@
+//@version=5
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+//# *
+//# * Study       : Fib Time Zones and Trend-Based Fib Time
+//# * Author      : © dgtrd
+//# *
+//# * Revision History
+//# *  Release    : Jul 14, 2021
+//# *  Update     : Dec 25, 2021 - thnaks to new linefill function, the tool is made with the same propreties with the manual drawing tool
+//# *  Update     : Apr 30, 2022 - alert functionality added
+//# *
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+
+indicator('Auto Fib Time Zones and Trend-Based Fib Time by DGT', 'FibTime ʙʏ DGT ☼☾', true)
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+// ---------------------------------------------------------------------------------------------- //
+// -Inputs -------------------------------------------------------------------------------------- //
+
+tooltip_threshold = 'Deviation is a multiplier that affects how much the price should deviate from the previous pivot in order for the bar to become a new pivot' + '\n\nDepth affects the minimum number of bars that will be taken into account when building'
+
+tooltip_zigzag = 'The Zig Zag indicator is used to identify price trends then connected by straight lines that help the trader visual the price action' + 'This indicator works to eliminate confusion over small price changes or fluctuations and aims to project trend changes overtime'
+
+group_fib_tool = 'Fibonacci Tool Settings'
+
+
+i_dev_thresh = ta.atr(10) / close * 100 * input.float(3, 'Deviation', minval=0, inline='Pivots', group=group_fib_tool, tooltip=tooltip_threshold)
+i_depth = input.int(11, '       Depth', minval=1, inline='Pivots', group=group_fib_tool)
+
+i_isFib = input.bool(true, 'Trend-Based Fib Time, Historical', inline='FIB', group=group_fib_tool)
+i_histPivot = input.int(0, '', minval=0, inline='FIB', group=group_fib_tool)
+i_levels2 = input.bool(true, 'Levels', inline='FIB', group=group_fib_tool)
+
+i_fibTime = input.bool(false, 'Fib Time Zones', inline='TZ', group=group_fib_tool)
+i_tzColor = input.color(#2196f3, '', inline='TZ', group=group_fib_tool)
+i_histPivot2 = input.int(0, 'Historical', minval=0, inline='TZ', group=group_fib_tool)
+i_levels = input.bool(true, 'Levels', inline='TZ', group=group_fib_tool)
+
+i_zigZag = input.bool(false, 'Zig Zag  ', inline='ZZ', group=group_fib_tool, tooltip=tooltip_zigzag)
+i_zzColor = input.color(#c77a08, '', inline='ZZ', group=group_fib_tool)
+i_zzStyle = input.string('Solid', '', options=['Dashed', 'Dotted', 'Solid'], inline='ZZ', group=group_fib_tool)
+i_zzWidth = input.int(1, '', minval=1, inline='ZZ', group=group_fib_tool)
+
+// ---------------------------------------------------------------------------------------------- //
+// -Calculations -------------------------------------------------------------------------------- //
+
+var line lineLast = na
+var int iLast = 0
+var int iPrev = 0
+var float pLast = 0
+var isHighLast = false  // otherwise the last pivot is a low pivot
+
+var iPrevPivot = 0
+var pPrevPivot = 0.
+var iLastPivot = 0
+var pLastPivot = 0.
+
+pivots(src, length, isHigh) =>
+    l2 = length * 2
+    c = nz(src[length])
+    ok = true
+
+    for i = 0 to l2 by 1
+        if isHigh and src[i] > c
+            ok := false
+            ok
+
+        if not isHigh and src[i] < c
+            ok := false
+            ok
+    if ok
+        [bar_index[length], c]
+    else
+        [int(na), float(na)]
+
+[iH, pH] = pivots(high, i_depth / 2, true)
+[iL, pL] = pivots(low, i_depth / 2, false)
+
+calc_dev(base_price, price) =>
+    100 * (price - base_price) / price
+
+pivotFound(dev, isHigh, index, price) =>
+    if isHighLast == isHigh and not na(lineLast)
+        // same direction
+        if isHighLast ? price > pLast : price < pLast
+            line.set_xy2(lineLast, index, price)
+            [lineLast, isHighLast]
+        else
+            [line(na), bool(na)]
+    else
+        // reverse the direction (or create the very first line)
+        if math.abs(dev) > i_dev_thresh
+            // price move is significant
+            // ---------------------------------------------------------------------------------------- //
+            [zzCol, zzWid, zzSty] = if not i_zigZag
+                [na, 1, line.style_dashed]
+            else
+                [i_zzColor, i_zzWidth, i_zzStyle == 'Solid' ? line.style_solid : i_zzStyle == 'Dotted' ? line.style_dotted : line.style_dashed]
+            // ---------------------------------------------------------------------------------------- //
+
+            id = line.new(iLast, pLast, index, price, color=zzCol, width=zzWid, style=zzSty)
+            [id, isHigh]
+        else
+            [line(na), bool(na)]
+
+if not na(iH)
+    dev = calc_dev(pLast, pH)
+    [id, isHigh] = pivotFound(dev, true, iH, pH)
+
+    if not na(id)
+        if id != lineLast
+            // ---------------------------------------------------------------------------------------- //
+            iPrevPivot := line.get_x1(lineLast)
+            pPrevPivot := line.get_y1(lineLast)
+            iLastPivot := line.get_x2(lineLast)
+            pLastPivot := line.get_y2(lineLast)
+
+            if not i_zigZag
+            // ---------------------------------------------------------------------------------------- //
+                line.delete(lineLast)
+
+        lineLast := id
+        isHighLast := isHigh
+        iPrev := iLast
+        iLast := iH
+        pLast := pH
+        pLast
+else
+    if not na(iL)
+        dev = calc_dev(pLast, pL)
+        [id, isHigh] = pivotFound(dev, false, iL, pL)
+
+        if not na(id)
+            if id != lineLast
+                // ---------------------------------------------------------------------------------------- //
+                iPrevPivot := line.get_x1(lineLast)
+                pPrevPivot := line.get_y1(lineLast)
+                iLastPivot := line.get_x2(lineLast)
+                pLastPivot := line.get_y2(lineLast)
+
+                if not i_zigZag
+                // ---------------------------------------------------------------------------------------- //
+                    line.delete(lineLast)
+
+            lineLast := id
+            isHighLast := isHigh
+            iPrev := iLast
+            iLast := iL
+            pLast := pL
+            pLast
+
+iStartBase = i_histPivot > 0 ? ta.valuewhen(ta.change(iPrevPivot), iPrevPivot, i_histPivot) : ta.valuewhen(ta.change(iPrevPivot), iPrevPivot, 0)
+pStartBase = i_histPivot > 0 ? ta.valuewhen(ta.change(pPrevPivot), pPrevPivot, i_histPivot) : ta.valuewhen(ta.change(pPrevPivot), pPrevPivot, 0)
+iEndBase = i_histPivot > 0 ? ta.valuewhen(ta.change(iLastPivot), iLastPivot, i_histPivot - 1) : line.get_x2(lineLast)
+pEndBase = i_histPivot > 0 ? ta.valuewhen(ta.change(pLastPivot), pLastPivot, i_histPivot - 1) : line.get_y2(lineLast)
+iMidPivot = i_histPivot > 0 ? ta.valuewhen(ta.change(iPrevPivot), iPrevPivot, i_histPivot - 1) : line.get_x1(lineLast)
+pMidPivot = i_histPivot > 0 ? ta.valuewhen(ta.change(pPrevPivot), pPrevPivot, i_histPivot - 1) : line.get_y1(lineLast)
+
+iEndBase2 = i_histPivot2 > 0 ? ta.valuewhen(ta.change(iLastPivot), iLastPivot, i_histPivot2 - 1) : line.get_x2(lineLast)
+pEndBase2 = i_histPivot2 > 0 ? ta.valuewhen(ta.change(pLastPivot), pLastPivot, i_histPivot2 - 1) : line.get_y2(lineLast)
+iMidPivot2 = i_histPivot2 > 0 ? ta.valuewhen(ta.change(iPrevPivot), iPrevPivot, i_histPivot2 - 1) : line.get_x1(lineLast)
+pMidPivot2 = i_histPivot2 > 0 ? ta.valuewhen(ta.change(pPrevPivot), pPrevPivot, i_histPivot2 - 1) : line.get_y1(lineLast)
+
+if ta.change(iLastPivot)
+    alert(syminfo.ticker + ' Fib Time Zones and Trend-Based Fib Time : new pivot high/low detected')
+
+// ---------------------------------------------------------------------------------------------- //
+// -Plotting ------------------------------------------------------------------------------------ //
+
+var ln = array.new_line()
+var lb = array.new_label()
+var lf = array.new_linefill()
+var cl = array.new_color()
+
+
+if ta.change(time) and array.size(ln) > 0
+    for i = 1 to array.size(ln) by 1
+        line.delete(array.shift(ln))
+
+if ta.change(time) and array.size(lb) > 0
+    for i = 1 to array.size(lb) by 1
+        label.delete(array.shift(lb))
+
+if ta.change(time) and array.size(lf) > 0
+    for i = 1 to array.size(lf) by 1
+        linefill.delete(array.shift(lf))
+
+f_drawLine(_x1, _y1, _x2, _y2, _xloc, _extend, _c, _s, _w) =>
+    if _x1 - bar_index < 500
+        array.push(ln, line.new(_x1, _y1, _x2, _y2, _xloc, _extend, _c, _s, _w))
+
+f_drawLineX(_x1, _y1, _x2, _y2, _xloc, _extend, _color, _style, _width, _level) =>
+    var id = line.new(_x1, _y1, _x2, _y2, _xloc, _extend, _color, _style, _width)
+    if _x1 - bar_index < 500
+        line.set_xy1(id, _x1, _y1)
+        line.set_xy2(id, _x2, _y2)
+        line.set_color(id, _color)
+    else
+        line.set_color(id, #00000000)
+
+    if bar_index == _x1
+        priceTxt  = str.tostring(close, format.mintick)
+        alert(syminfo.ticker + ' Fib Time Zones : time level ' + _level + ' reached, price : ' + priceTxt)
+
+f_drawLabel(_x, _y, _text, _xloc, _yloc, _color, _style, _textcolor, _size, _textalign, _tooltip) =>
+    if _x - bar_index < 500
+        array.push(lb, label.new(_x, _y, _text, _xloc, _yloc, _color, _style, _textcolor, _size, _textalign, _tooltip))
+
+if i_fibTime
+    f_drawLineX(iMidPivot2, pMidPivot2, iEndBase2, pEndBase2, xloc.bar_index, extend.none, color.gray, line.style_dashed, 1, '')
+
+    referance = math.round(iEndBase2 - iMidPivot2)
+    f_drawLineX(iMidPivot2 - referance, pEndBase2, iMidPivot2 - referance, pMidPivot2, xloc.bar_index, extend.both, i_tzColor, line.style_solid, 1, '-1')
+    f_drawLineX(iMidPivot2, pEndBase2, iMidPivot2, pMidPivot2, xloc.bar_index, extend.both, color.gray, line.style_solid, 1, '0')
+    //f_drawLineX(iMidPivot2 + referance     , pEndBase2, iMidPivot2 + referance     , pMidPivot2, xloc.bar_index, extend.both, color.gray, line.style_dashed, 1)
+    f_drawLineX(iMidPivot2 + referance * 2, pEndBase2, iMidPivot2 + referance * 2, pMidPivot2, xloc.bar_index, extend.both, i_tzColor, line.style_solid, 1, '2')
+    f_drawLineX(iMidPivot2 + referance * 3, pEndBase2, iMidPivot2 + referance * 3, pMidPivot2, xloc.bar_index, extend.both, i_tzColor, line.style_solid, 1, '3')
+    f_drawLineX(iMidPivot2 + referance * 5, pEndBase2, iMidPivot2 + referance * 5, pMidPivot2, xloc.bar_index, extend.both, i_tzColor, line.style_solid, 1, '5')
+    f_drawLineX(iMidPivot2 + referance * 8, pEndBase2, iMidPivot2 + referance * 8, pMidPivot2, xloc.bar_index, extend.both, i_tzColor, line.style_solid, 1, '8')
+    f_drawLineX(iMidPivot2 + referance * 13, pEndBase2, iMidPivot2 + referance * 13, pMidPivot2, xloc.bar_index, extend.both, i_tzColor, line.style_solid, 1, '13')
+    f_drawLineX(iMidPivot2 + referance * 21, pEndBase2, iMidPivot2 + referance * 21, pMidPivot2, xloc.bar_index, extend.both, i_tzColor, line.style_solid, 1, '21')
+    f_drawLineX(iMidPivot2 + referance * 34, pEndBase2, iMidPivot2 + referance * 34, pMidPivot2, xloc.bar_index, extend.both, i_tzColor, line.style_solid, 1, '34')
+    f_drawLineX(iMidPivot2 + referance * 55, pEndBase2, iMidPivot2 + referance * 55, pMidPivot2, xloc.bar_index, extend.both, i_tzColor, line.style_solid, 1, '55')
+    f_drawLineX(iMidPivot2 + referance * 89, pEndBase2, iMidPivot2 + referance * 89, pMidPivot2, xloc.bar_index, extend.both, i_tzColor, line.style_solid, 1, '89')
+
+    if i_levels
+        f_drawLabel(iMidPivot2 + referance * -1, math.min(pEndBase2, pMidPivot2), '-1', xloc.bar_index, yloc.price, #00000000, label.style_label_left, i_tzColor, size.normal, text.align_center, '')
+        f_drawLabel(iMidPivot2 + referance * 0, math.min(pEndBase2, pMidPivot2), '0', xloc.bar_index, yloc.price, #00000000, label.style_label_left, i_tzColor, size.normal, text.align_center, '')
+        f_drawLabel(iMidPivot2 + referance * 2, math.min(pEndBase2, pMidPivot2), '2', xloc.bar_index, yloc.price, #00000000, label.style_label_left, i_tzColor, size.normal, text.align_center, '')
+        f_drawLabel(iMidPivot2 + referance * 3, math.min(pEndBase2, pMidPivot2), '3', xloc.bar_index, yloc.price, #00000000, label.style_label_left, i_tzColor, size.normal, text.align_center, '')
+        f_drawLabel(iMidPivot2 + referance * 5, math.min(pEndBase2, pMidPivot2), '5', xloc.bar_index, yloc.price, #00000000, label.style_label_left, i_tzColor, size.normal, text.align_center, '')
+        f_drawLabel(iMidPivot2 + referance * 8, math.min(pEndBase2, pMidPivot2), '8', xloc.bar_index, yloc.price, #00000000, label.style_label_left, i_tzColor, size.normal, text.align_center, '')
+        f_drawLabel(iMidPivot2 + referance * 13, math.min(pEndBase2, pMidPivot2), '13', xloc.bar_index, yloc.price, #00000000, label.style_label_left, i_tzColor, size.normal, text.align_center, '')
+        f_drawLabel(iMidPivot2 + referance * 21, math.min(pEndBase2, pMidPivot2), '21', xloc.bar_index, yloc.price, #00000000, label.style_label_left, i_tzColor, size.normal, text.align_center, '')
+        f_drawLabel(iMidPivot2 + referance * 34, math.min(pEndBase2, pMidPivot2), '34', xloc.bar_index, yloc.price, #00000000, label.style_label_left, i_tzColor, size.normal, text.align_center, '')
+        f_drawLabel(iMidPivot2 + referance * 55, math.min(pEndBase2, pMidPivot2), '55', xloc.bar_index, yloc.price, #00000000, label.style_label_left, i_tzColor, size.normal, text.align_center, '')
+        f_drawLabel(iMidPivot2 + referance * 89, math.min(pEndBase2, pMidPivot2), '89', xloc.bar_index, yloc.price, #00000000, label.style_label_left, i_tzColor, size.normal, text.align_center, '')
+
+group_fib_levels = 'Trend-Based Fib Time Settings'
+pshow_bg = input.bool(true, 'Background Color Transparency', inline = 'BG', group=group_fib_levels)
+transparency = input.int(89 , "",  minval = 0, maxval = 100, inline = 'BG', group = group_fib_levels)
+
+f_processLevelX(_show, _level, _color, _width, _style) =>
+    if i_isFib
+        style = _style == 'Solid' ? line.style_solid : _style == 'Dotted' ? line.style_dotted : line.style_dashed
+        referance = math.round(iMidPivot - iStartBase)
+
+        if _show
+            f_drawLine(math.round(iEndBase + referance * _level), pStartBase, math.round(iEndBase + referance * _level), pEndBase, xloc.bar_index, extend.both, _color, style, _width)
+
+            if pshow_bg
+                cLines = array.size(ln)
+
+                if cLines == 3
+                    array.push(cl, color.new(_color, transparency))
+                if cLines > 3
+                    array.push(lf, linefill.new(array.get(ln, cLines - 2), array.get(ln, cLines - 1), color.new(array.pop(cl), transparency)))
+                    array.push(cl, color.new(_color, transparency))
+
+            if i_levels2
+                f_drawLabel(math.round(iEndBase + referance * _level), math.max(pStartBase, pEndBase, pMidPivot), str.tostring(_level), xloc.bar_index, yloc.price, #00000000, label.style_label_left, _color, size.normal, text.align_center, '')
+
+            if bar_index == math.round(iEndBase + referance * _level)
+                priceTxt  = str.tostring(close, format.mintick)
+                alert(syminfo.ticker + ' Trend-Based Fib Time : time level ' + str.tostring(_level) + ' reached, price : ' + priceTxt)
+
+
+pshow = input.bool(true, 'Trend Line', inline='pLevel', group=group_fib_levels)
+pcolor = input.color(#787b86, '', inline='pLevel', group=group_fib_levels)
+pwidth = input.int(1, '', minval=1, inline='pLevel', group=group_fib_levels)
+pstyle = input.string('Dashed', '', options=['Dashed', 'Dotted', 'Solid'], inline='pLevel', group=group_fib_levels)
+
+if pshow and i_isFib
+    style = pstyle == 'Solid' ? line.style_solid : pstyle == 'Dotted' ? line.style_dotted : line.style_dashed
+    f_drawLine(iStartBase, pStartBase, iMidPivot, pMidPivot, xloc.bar_index, extend.none, pcolor, style, pwidth)
+    f_drawLine(iMidPivot, pMidPivot, iEndBase, pEndBase, xloc.bar_index, extend.none, pcolor, style, pwidth)
+
+pshow_0 = input.bool(true, '', inline='pLevel_0', group=group_fib_levels)
+plevel_0 = input.float(0., '', minval=.0, step=.1, inline='pLevel_0', group=group_fib_levels)
+pcolor_0 = input.color(#787b86, '', inline='pLevel_0', group=group_fib_levels)
+pwidth_0 = input.int(1, '', minval=1, inline='pLevel_0', group=group_fib_levels)
+pstyle_0 = input.string('Solid', '', options=['Dashed', 'Dotted', 'Solid'], inline='pLevel_0', group=group_fib_levels)
+f_processLevelX(pshow_0, plevel_0, pcolor_0, pwidth_0, pstyle_0)
+
+pshow_0_382 = input.bool(true, '', inline='pLevel_0_382', group=group_fib_levels)
+plevel_0_382 = input.float(.382, '', minval=.0, step=.1, inline='pLevel_0_382', group=group_fib_levels)
+pcolor_0_382 = input.color(#f44336, '', inline='pLevel_0_382', group=group_fib_levels)
+pwidth_0_382 = input.int(1, '', minval=1, inline='pLevel_0_382', group=group_fib_levels)
+pstyle_0_382 = input.string('Solid', '', options=['Dashed', 'Dotted', 'Solid'], inline='pLevel_0_382', group=group_fib_levels)
+f_processLevelX(pshow_0_382, plevel_0_382, pcolor_0_382, pwidth_0_382, pstyle_0_382)
+
+pshow_0_50 = input.bool(false, '', inline='pLevel_0_50', group=group_fib_levels)
+plevel_0_50 = input.float(.5, '', minval=.0, step=.1, inline='pLevel_0_50', group=group_fib_levels)
+pcolor_0_50 = input.color(#81c784, '', inline='pLevel_0_50', group=group_fib_levels)
+pwidth_0_50 = input.int(1, '', minval=1, inline='pLevel_0_50', group=group_fib_levels)
+pstyle_0_50 = input.string('Solid', '', options=['Dashed', 'Dotted', 'Solid'], inline='pLevel_0_50', group=group_fib_levels)
+f_processLevelX(pshow_0_50, plevel_0_50, pcolor_0_50, pwidth_0_50, pstyle_0_50)
+
+pshow_0_618 = input.bool(true, '', inline='pLevel_0_618', group=group_fib_levels)
+plevel_0_618 = input.float(.618, '', minval=.0, step=.1, inline='pLevel_0_618', group=group_fib_levels)
+pcolor_0_618 = input.color(#4caf50, '', inline='pLevel_0_618', group=group_fib_levels)
+pwidth_0_618 = input.int(1, '', minval=1, inline='pLevel_0_618', group=group_fib_levels)
+pstyle_0_618 = input.string('Solid', '', options=['Dashed', 'Dotted', 'Solid'], inline='pLevel_0_618', group=group_fib_levels)
+f_processLevelX(pshow_0_618, plevel_0_618, pcolor_0_618, pwidth_0_618, pstyle_0_618)
+
+pshow_1 = input.bool(true, '', inline='pLevel_1', group=group_fib_levels)
+plevel_1 = input.float(1, '', minval=.0, step=.1, inline='pLevel_1', group=group_fib_levels)
+pcolor_1 = input.color(#009688, '', inline='pLevel_1', group=group_fib_levels)
+pwidth_1 = input.int(1, '', minval=1, inline='pLevel_1', group=group_fib_levels)
+pstyle_1 = input.string('Solid', '', options=['Dashed', 'Dotted', 'Solid'], inline='pLevel_1', group=group_fib_levels)
+f_processLevelX(pshow_1, plevel_1, pcolor_1, pwidth_1, pstyle_1)
+
+pshow_1_382 = input.bool(true, '', inline='pLevel_1_382', group=group_fib_levels)
+plevel_1_382 = input.float(1.382, '', minval=.0, step=.1, inline='pLevel_1_382', group=group_fib_levels)
+pcolor_1_382 = input.color(#64b5f6, '', inline='pLevel_1_382', group=group_fib_levels)
+pwidth_1_382 = input.int(1, '', minval=1, inline='pLevel_1_382', group=group_fib_levels)
+pstyle_1_382 = input.string('Solid', '', options=['Dashed', 'Dotted', 'Solid'], inline='pLevel_1_382', group=group_fib_levels)
+f_processLevelX(pshow_1_382, plevel_1_382, pcolor_1_382, pwidth_1_382, pstyle_1_382)
+
+pshow_1_618 = input.bool(true, '', inline='pLevel_1_618', group=group_fib_levels)
+plevel_1_618 = input.float(1.618, '', minval=.0, step=.1, inline='pLevel_1_618', group=group_fib_levels)
+pcolor_1_618 = input.color(#787b86, '', inline='pLevel_1_618', group=group_fib_levels)
+pwidth_1_618 = input.int(1, '', minval=1, inline='pLevel_1_618', group=group_fib_levels)
+pstyle_1_618 = input.string('Solid', '', options=['Dashed', 'Dotted', 'Solid'], inline='pLevel_1_618', group=group_fib_levels)
+f_processLevelX(pshow_1_618, plevel_1_618, pcolor_1_618, pwidth_1_618, pstyle_1_618)
+
+pshow_2 = input.bool(true, '', inline='pLevel_2', group=group_fib_levels)
+plevel_2 = input.float(2, '', minval=.0, step=.1, inline='pLevel_2', group=group_fib_levels)
+pcolor_2 = input.color(#2962ff, '', inline='pLevel_2', group=group_fib_levels)
+pwidth_2 = input.int(1, '', minval=1, inline='pLevel_2', group=group_fib_levels)
+pstyle_2 = input.string('Solid', '', options=['Dashed', 'Dotted', 'Solid'], inline='pLevel_2', group=group_fib_levels)
+f_processLevelX(pshow_2, plevel_2, pcolor_2, pwidth_2, pstyle_2)
+
+pshow_2_382 = input.bool(true, '', inline='pLevel_2_382', group=group_fib_levels)
+plevel_2_382 = input.float(2.382, '', minval=.0, step=.1, inline='pLevel_2_382', group=group_fib_levels)
+pcolor_2_382 = input.color(#f44336, '', inline='pLevel_2_382', group=group_fib_levels)
+pwidth_2_382 = input.int(1, '', minval=1, inline='pLevel_2_382', group=group_fib_levels)
+pstyle_2_382 = input.string('Solid', '', options=['Dashed', 'Dotted', 'Solid'], inline='pLevel_2_382', group=group_fib_levels)
+f_processLevelX(pshow_2_382, plevel_2_382, pcolor_2_382, pwidth_2_382, pstyle_2_382)
+
+pshow_2_618 = input.bool(true, '', inline='pLevel_2_618', group=group_fib_levels)
+plevel_2_618 = input.float(2.618, '', minval=.0, step=.1, inline='pLevel_2_618', group=group_fib_levels)
+pcolor_2_618 = input.color(#9c27b0, '', inline='pLevel_2_618', group=group_fib_levels)
+pwidth_2_618 = input.int(1, '', minval=1, inline='pLevel_2_618', group=group_fib_levels)
+pstyle_2_618 = input.string('Solid', '', options=['Dashed', 'Dotted', 'Solid'], inline='pLevel_2_618', group=group_fib_levels)
+f_processLevelX(pshow_2_618, plevel_2_618, pcolor_2_618, pwidth_2_618, pstyle_2_618)
+
+pshow_3 = input.bool(true, '', inline='pLevel_3', group=group_fib_levels)
+plevel_3 = input.float(3, '', minval=.0, step=.1, inline='pLevel_3', group=group_fib_levels)
+pcolor_3 = input.color(#e91e63, '', inline='pLevel_3', group=group_fib_levels)
+pwidth_3 = input.int(1, '', minval=1, inline='pLevel_3', group=group_fib_levels)
+pstyle_3 = input.string('Solid', '', options=['Dashed', 'Dotted', 'Solid'], inline='pLevel_3', group=group_fib_levels)
+f_processLevelX(pshow_3, plevel_3, pcolor_3, pwidth_0, pstyle_3)
+
+var table logo = table.new(position.bottom_right, 1, 1)
+if barstate.islast
+    table.cell(logo, 0, 0, '☼☾  ', text_size=size.normal, text_color=color.teal)

@@ -1,4 +1,4 @@
-import { Signal, OHLCVData } from './types';
+import { Signal, OHLCVData, Time } from './types';
 
 // ============================================================================
 // Data Mapping & Memoization
@@ -173,4 +173,113 @@ export function createSignalLoop(
         }
     }
     return signals;
+}
+
+// ============================================================================
+// Pivot Detection
+// ============================================================================
+
+export interface Pivot {
+    index: number;
+    price: number;
+    isHigh: boolean; // true = high, false = low
+    time: Time;
+}
+
+/**
+ * Detects pivots using a combination of local extrema (depth) and price deviation.
+ * Matches the logic of "Auto Fib Time Zones" Pine Script.
+ * 
+ * @param data OHLCV data array
+ * @param deviationPercent Minimum percentage change to confirm a new pivot direction
+ * @param depth Minimum bars on left/right to be a local candidate (total window ~ depth)
+ */
+export function detectPivotsWithDeviation(
+    data: OHLCVData[],
+    deviationPercent: number,
+    depth: number
+): Pivot[] {
+    const pivots: Pivot[] = [];
+    const highs = getHighs(data);
+    const lows = getLows(data);
+
+    // 1. Find candidate local extrema (standard pivots)
+    // using a rolling window approach
+    const candidates: Pivot[] = [];
+    const halfDepth = Math.floor(depth / 2);
+
+    for (let i = halfDepth; i < data.length - halfDepth; i++) {
+        // Check High
+        let isHigh = true;
+        for (let j = 1; j <= halfDepth; j++) {
+            if (highs[i] < highs[i - j] || highs[i] <= highs[i + j]) {
+                isHigh = false;
+                break;
+            }
+        }
+        if (isHigh) {
+            candidates.push({ index: i, price: highs[i], isHigh: true, time: data[i].time });
+        }
+
+        // Check Low
+        let isLow = true;
+        for (let j = 1; j <= halfDepth; j++) {
+            if (lows[i] > lows[i - j] || lows[i] >= lows[i + j]) {
+                isLow = false;
+                break;
+            }
+        }
+        if (isLow) {
+            candidates.push({ index: i, price: lows[i], isHigh: false, time: data[i].time });
+        }
+    }
+
+    // Sort candidates by index
+    candidates.sort((a, b) => a.index - b.index);
+
+    if (candidates.length === 0) return [];
+
+    // 2. Filter using ZigZag/Deviation logic
+    // Corresponds to 'pivotFound' logic in Pine Script
+    let lastPivot = candidates[0];
+    pivots.push(lastPivot);
+
+    for (const cand of candidates) {
+        if (cand.index <= lastPivot.index) continue;
+
+        const dev = Math.abs((cand.price - lastPivot.price) / lastPivot.price) * 100;
+
+        if (lastPivot.isHigh === cand.isHigh) {
+            // Same direction
+            if (lastPivot.isHigh) {
+                // If we found a HIGHER high, update the current pivot
+                if (cand.price > lastPivot.price) {
+                    lastPivot.price = cand.price;
+                    lastPivot.index = cand.index;
+                    lastPivot.time = cand.time;
+                    lastPivot.isHigh = cand.isHigh; // redundant but safe
+                    // Update in the final list too
+                    pivots[pivots.length - 1] = lastPivot;
+                }
+            } else {
+                // If we found a LOWER low, update the current pivot
+                if (cand.price < lastPivot.price) {
+                    lastPivot.price = cand.price;
+                    lastPivot.index = cand.index;
+                    lastPivot.time = cand.time;
+                    lastPivot.isHigh = cand.isHigh;
+                    pivots[pivots.length - 1] = lastPivot;
+                }
+            }
+        } else {
+            // Reverse direction
+            if (dev >= deviationPercent) {
+                // Confirm new pivot
+                lastPivot = cand;
+                pivots.push(lastPivot);
+            }
+        }
+    }
+
+    return pivots;
 }
