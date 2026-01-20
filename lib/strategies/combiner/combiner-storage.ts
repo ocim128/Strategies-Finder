@@ -325,6 +325,7 @@ export function createStrategyMetadata(
     direction: StrategyMetadata['direction'] = 'both'
 ): StrategyMetadata {
     return {
+        id: Math.random().toString(36).substring(2, 9),
         strategyId,
         role,
         direction,

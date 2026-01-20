@@ -151,7 +151,7 @@ export function evaluateCloseCondition(
     closeCondition: CombinationNode | undefined,
     currentPosition: PositionState,
     timeKey: string,
-    signalMaps: Map<string, Map<string, CombinedSignal>>
+    signalMaps: Map<any, Map<string, CombinedSignal>>
 ): boolean {
     if (!closeCondition) return false;
     if (currentPosition === 'flat') return false;
@@ -187,7 +187,7 @@ export function evaluateDirectionSignals(
     shortHandling: ShortHandling,
     openCondition: CombinationNode,
     timeKey: string,
-    signalMaps: Map<string, Map<string, CombinedSignal>>
+    signalMaps: Map<any, Map<string, CombinedSignal>>
 ): DirectionSignals {
     if (!shortHandling.enabled) {
         // When shorts disabled, only evaluate for long
@@ -330,7 +330,7 @@ export function executeStrategy(
     const actions: Array<{ time: Time; action: ExecutionAction; reason: string }> = [];
 
     // Build signal maps for all input strategies
-    const signalMaps = new Map<string, Map<string, CombinedSignal>>();
+    const signalMaps = new Map<any, Map<string, CombinedSignal>>();
 
     for (const meta of definition.inputStrategies) {
         const strategy = strategies[meta.strategyId];
@@ -344,7 +344,7 @@ export function executeStrategy(
             const key = timeToKey(sig.time);
             signalMap.set(key, sig.type === 'buy' ? 'BUY' : 'SELL');
         }
-        signalMaps.set(meta.strategyId, signalMap);
+        signalMaps.set(meta, signalMap);
     }
 
     // Initialize state

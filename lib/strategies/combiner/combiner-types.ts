@@ -39,6 +39,8 @@ export type StrategyDirection = 'long' | 'short' | 'both';
  * Metadata for a strategy used in combinations
  */
 export interface StrategyMetadata {
+    /** Unique ID for this strategy instance within the combination */
+    id: string;
     /** Reference to the saved strategy identifier */
     strategyId: string;
     /** How this strategy is used in the combination */
@@ -51,6 +53,8 @@ export interface StrategyMetadata {
     isCombined?: boolean;
     /** Parameters to use for this strategy (if different from defaults) */
     params?: Record<string, number>;
+    /** Name of the saved configuration used (if any) */
+    configName?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

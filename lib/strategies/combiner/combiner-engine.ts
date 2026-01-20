@@ -2,7 +2,7 @@
 // Strategy Combiner - Core Engine
 // ═══════════════════════════════════════════════════════════════════════════
 
-import type { Signal, OHLCVData, StrategyParams, Time } from '../types';
+import type { Signal, OHLCVData, StrategyParams, Time, Strategy } from '../types';
 import { strategies } from '../library';
 import {
     CombinedSignal,
@@ -167,12 +167,12 @@ export function evaluateOperator(
 export function evaluateNode(
     node: CombinationNode,
     timeKey: string,
-    signalMaps: Map<string, Map<string, CombinedSignal>>
+    signalMaps: Map<any, Map<string, CombinedSignal>>
 ): CombinedSignal {
     if (node.type === 'strategy') {
         // Leaf node - look up the signal for this strategy at this time
         if (!node.strategyRef) return 'NO_SIGNAL';
-        const strategyMap = signalMaps.get(node.strategyRef.strategyId);
+        const strategyMap = signalMaps.get(node.strategyRef);
         if (!strategyMap) return 'NO_SIGNAL';
         return strategyMap.get(timeKey) ?? 'NO_SIGNAL';
     }
@@ -201,7 +201,7 @@ export function evaluateNode(
  * Resolves conflicts between strategy signals based on resolution mode
  */
 export function resolveConflict(
-    signals: Map<string, CombinedSignal>,
+    signals: Map<any, CombinedSignal>,
     rules: ExecutionRules
 ): CombinedSignal {
     const signalValues = Array.from(signals.values());
@@ -263,15 +263,14 @@ function resolveAllDisagree(signals: CombinedSignal[]): CombinedSignal {
  * subset_agree: Returns signal only if the specified subset all agree
  */
 function resolveSubsetAgree(
-    signals: Map<string, CombinedSignal>,
+    signals: Map<any, CombinedSignal>,
     subsetIds: string[]
 ): CombinedSignal {
     if (subsetIds.length === 0) return 'NO_SIGNAL';
 
     const subsetSignals: CombinedSignal[] = [];
-    for (const id of subsetIds) {
-        const signal = signals.get(id);
-        if (signal && signal !== 'NO_SIGNAL') {
+    for (const [meta, signal] of signals.entries()) {
+        if (subsetIds.includes(meta.id) && signal !== 'NO_SIGNAL') {
             subsetSignals.push(signal);
         }
     }
@@ -283,11 +282,14 @@ function resolveSubsetAgree(
  * follow_primary: Always follow the designated primary strategy
  */
 function resolveFollowPrimary(
-    signals: Map<string, CombinedSignal>,
+    signals: Map<any, CombinedSignal>,
     primaryId: string | undefined
 ): CombinedSignal {
     if (!primaryId) return 'NO_SIGNAL';
-    return signals.get(primaryId) ?? 'NO_SIGNAL';
+    for (const [meta, signal] of signals.entries()) {
+        if (meta.id === primaryId) return signal;
+    }
+    return 'NO_SIGNAL';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -438,8 +440,8 @@ export function validateDefinition(definition: CombinedStrategyDefinition): Vali
 function executeInputStrategies(
     definition: CombinedStrategyDefinition,
     data: OHLCVData[]
-): Map<string, Map<string, CombinedSignal>> {
-    const signalMaps = new Map<string, Map<string, CombinedSignal>>();
+): Map<any, Map<string, CombinedSignal>> {
+    const signalMaps = new Map<any, Map<string, CombinedSignal>>();
 
     for (const meta of definition.inputStrategies) {
         const strategy = strategies[meta.strategyId];
@@ -449,8 +451,7 @@ function executeInputStrategies(
         const params: StrategyParams = meta.params ?? strategy.defaultParams;
         const signals = strategy.execute(data, params);
         const signalMap = createSignalMap(signals);
-
-        signalMaps.set(meta.strategyId, signalMap);
+        signalMaps.set(meta, signalMap);
     }
 
     return signalMaps;
@@ -522,11 +523,7 @@ export function combineStrategies(
     return combinedSignals;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// HELPER: Create Combined Strategy as Standard Strategy
-// ═══════════════════════════════════════════════════════════════════════════
-
-import type { Strategy } from '../types';
+import { executeStrategy } from './combiner-executor';
 
 /**
  * Converts a CombinedStrategyDefinition into a standard Strategy object
@@ -539,7 +536,8 @@ export function toExecutableStrategy(definition: CombinedStrategyDefinition): St
         defaultParams: {},  // Combined strategies have no additional params
         paramLabels: {},
         execute: (data: OHLCVData[], _params: StrategyParams): Signal[] => {
-            return combineStrategies(definition, data);
+            const result = executeStrategy({ definition }, data);
+            return result.signals;
         },
         metadata: {
             isCombined: true,

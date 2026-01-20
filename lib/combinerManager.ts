@@ -4,6 +4,7 @@
 
 import { getStrategyList, strategyRegistry } from '../strategyRegistry';
 import { uiManager } from './uiManager';
+import { settingsManager } from './settingsManager';
 import {
     CombinedStrategyDefinition,
     StrategyMetadata,
@@ -169,13 +170,69 @@ function showBuilder(definition?: CombinedStrategyDefinition): void {
     const conflictSelect = getEl<HTMLSelectElement>('combinerConflictResolution');
     if (conflictSelect) {
         conflictSelect.value = state.currentDefinition.executionRules.conflictResolution;
+        togglePrimaryStrategy(conflictSelect.value);
     }
 
-    // Set short toggle
+    // Set primary strategy
+    const primarySelect = getEl<HTMLSelectElement>('combinerPrimaryStrategy');
+    if (primarySelect && state.currentDefinition.executionRules.primaryStrategyId) {
+        // Find index of primary strategy
+        const primaryId = state.currentDefinition.executionRules.primaryStrategyId;
+        const idx = state.selectedStrategies.findIndex(s => s.id === primaryId);
+        if (idx >= 0) primarySelect.value = idx.toString();
+    }
+
+    // Set close toggle and strategy
+    const closeToggle = getEl<HTMLInputElement>('combinerCloseToggle');
+    const closeSelect = getEl<HTMLSelectElement>('combinerCloseStrategy');
+    if (closeToggle) {
+        const hasClose = !!state.currentDefinition.executionRules.closeCondition;
+        closeToggle.checked = hasClose;
+        toggleCloseSettings(hasClose);
+
+        if (hasClose && closeSelect) {
+            const firstOperand = state.currentDefinition.executionRules.closeCondition?.operands?.[0];
+            if (firstOperand?.type === 'strategy' && firstOperand.strategyRef) {
+                // Find index by exact match of metadata (including configName/params)
+                const meta = firstOperand.strategyRef;
+                const idx = state.selectedStrategies.findIndex(s =>
+                    s.strategyId === meta.strategyId &&
+                    s.configName === meta.configName &&
+                    JSON.stringify(s.params) === JSON.stringify(meta.params)
+                );
+                if (idx >= 0) closeSelect.value = idx.toString();
+            }
+        }
+    }
+
+    // Set short toggle and logic
     const shortToggle = getEl<HTMLInputElement>('combinerShortToggle');
+    const shortLogicSelect = getEl<HTMLSelectElement>('combinerShortLogic');
+    const shortStrategySelect = getEl<HTMLSelectElement>('combinerShortStrategy');
+
     if (shortToggle) {
         shortToggle.checked = state.currentDefinition.shortHandling.enabled;
         toggleShortSettings(shortToggle.checked);
+
+        if (state.currentDefinition.shortHandling.enabled && shortLogicSelect) {
+            const isIndependent = !!state.currentDefinition.shortHandling.shortLogic;
+            shortLogicSelect.value = isIndependent ? 'independent' : 'invert';
+            toggleShortStrategyGroup(isIndependent);
+
+            if (isIndependent && shortStrategySelect) {
+                const firstOperand = state.currentDefinition.shortHandling.shortLogic?.operands?.[0];
+                if (firstOperand?.type === 'strategy' && firstOperand.strategyRef) {
+                    // Find index by exact match of metadata
+                    const meta = firstOperand.strategyRef;
+                    const idx = state.selectedStrategies.findIndex(s =>
+                        s.strategyId === meta.strategyId &&
+                        s.configName === meta.configName &&
+                        JSON.stringify(s.params) === JSON.stringify(meta.params)
+                    );
+                    if (idx >= 0) shortStrategySelect.value = idx.toString();
+                }
+            }
+        }
     }
 
     // Show builder
@@ -190,20 +247,39 @@ function hideBuilder(): void {
     state.selectedStrategies = [];
 }
 
+function getStrategyOptionsHtml(selectedId?: string, selectedConfigName?: string): string {
+    const strategies = getStrategyList();
+    const configs = settingsManager.loadAllStrategyConfigs();
+
+    let html = '<optgroup label="Base Strategies">';
+    html += strategies.map(s => {
+        const value = s.key;
+        const isSelected = !selectedConfigName && value === selectedId;
+        return `<option value="${value}" ${isSelected ? 'selected' : ''}>${s.name}</option>`;
+    }).join('');
+    html += '</optgroup>';
+
+    if (configs.length > 0) {
+        html += '<optgroup label="Saved Configurations">';
+        html += configs.map(c => {
+            const value = `config:${c.name}`;
+            const isSelected = selectedConfigName === c.name;
+            return `<option value="${value}" ${isSelected ? 'selected' : ''}>${c.name} (${c.strategyKey})</option>`;
+        }).join('');
+        html += '</optgroup>';
+    }
+
+    return html;
+}
+
 function renderStrategySlots(): void {
     const container = getEl('combinerStrategies');
     if (!container) return;
 
-    const strategies = getStrategyList();
-
     container.innerHTML = state.selectedStrategies.map((meta, index) => `
         <div class="combiner-strategy-slot" data-index="${index}">
             <select class="param-input strategy-select-slot" data-index="${index}">
-                ${strategies.map(s => `
-                    <option value="${s.key}" ${s.key === meta.strategyId ? 'selected' : ''}>
-                        ${s.name}
-                    </option>
-                `).join('')}
+                ${getStrategyOptionsHtml(meta.strategyId, meta.configName)}
             </select>
             <select class="role-select" data-index="${index}">
                 <option value="entry" ${meta.role === 'entry' ? 'selected' : ''}>Entry</option>
@@ -224,7 +300,22 @@ function renderStrategySlots(): void {
         select.addEventListener('change', (e) => {
             const target = e.target as HTMLSelectElement;
             const index = parseInt(target.getAttribute('data-index')!);
-            state.selectedStrategies[index].strategyId = target.value;
+            const value = target.value;
+
+            if (value.startsWith('config:')) {
+                const configName = value.replace('config:', '');
+                const config = settingsManager.loadStrategyConfig(configName);
+                if (config) {
+                    state.selectedStrategies[index].strategyId = config.strategyKey;
+                    state.selectedStrategies[index].params = config.strategyParams;
+                    state.selectedStrategies[index].configName = config.name;
+                }
+            } else {
+                state.selectedStrategies[index].strategyId = value;
+                state.selectedStrategies[index].params = undefined;
+                state.selectedStrategies[index].configName = undefined;
+            }
+
             updateValidation();
             updatePrimaryStrategyDropdown();
         });
@@ -266,10 +357,10 @@ function updatePrimaryStrategyDropdown(): void {
     const closeSelect = getEl<HTMLSelectElement>('combinerCloseStrategy');
     const shortSelect = getEl<HTMLSelectElement>('combinerShortStrategy');
 
-    const options = state.selectedStrategies.map(s => {
+    const options = state.selectedStrategies.map((s, index) => {
         const strategy = strategyRegistry.get(s.strategyId);
-        const name = strategy?.name || s.strategyId;
-        return `<option value="${s.strategyId}">${name}</option>`;
+        const name = s.configName ? `${s.configName} (${strategy?.name || s.strategyId})` : (strategy?.name || s.strategyId);
+        return `<option value="${index}">${name}</option>`;
     }).join('');
 
     if (primarySelect) primarySelect.innerHTML = options;
@@ -337,12 +428,37 @@ function buildDefinitionFromUI(): CombinedStrategyDefinition | null {
     const operatorSelect = getEl<HTMLSelectElement>('combinerOpenOperator');
     const conflictSelect = getEl<HTMLSelectElement>('combinerConflictResolution');
     const primarySelect = getEl<HTMLSelectElement>('combinerPrimaryStrategy');
+    const closeToggle = getEl<HTMLInputElement>('combinerCloseToggle');
+    const closeSelect = getEl<HTMLSelectElement>('combinerCloseStrategy');
     const shortToggle = getEl<HTMLInputElement>('combinerShortToggle');
+    const shortLogicSelect = getEl<HTMLSelectElement>('combinerShortLogic');
+    const shortStrategySelect = getEl<HTMLSelectElement>('combinerShortStrategy');
 
     if (!nameInput || state.selectedStrategies.length < 2) return null;
 
     const operator = (operatorSelect?.value || 'AND') as LogicOperator;
     const operands = state.selectedStrategies.map(s => createStrategyNode(s));
+
+    // Handle close condition
+    let closeCondition: any = undefined;
+    if (closeToggle?.checked && closeSelect?.value) {
+        const idx = parseInt(closeSelect.value);
+        const strategyMeta = state.selectedStrategies[idx];
+        if (strategyMeta) {
+            closeCondition = createOperatorNode('AND', [createStrategyNode(strategyMeta)]);
+        }
+    }
+
+    // Handle short logic
+    const shortEnabled = shortToggle?.checked || false;
+    let shortLogic: any = undefined;
+    if (shortEnabled && shortLogicSelect?.value === 'independent' && shortStrategySelect?.value) {
+        const idx = parseInt(shortStrategySelect.value);
+        const strategyMeta = state.selectedStrategies[idx];
+        if (strategyMeta) {
+            shortLogic = createOperatorNode('AND', [createStrategyNode(strategyMeta)]);
+        }
+    }
 
     const definition: CombinedStrategyDefinition = {
         id: state.currentDefinition?.id || createEmptyDefinition(nameInput.value).id,
@@ -351,11 +467,14 @@ function buildDefinitionFromUI(): CombinedStrategyDefinition | null {
         inputStrategies: state.selectedStrategies,
         executionRules: {
             openCondition: createOperatorNode(operator, operands),
+            closeCondition,
             conflictResolution: (conflictSelect?.value || 'all_agree') as ConflictResolution,
-            primaryStrategyId: conflictSelect?.value === 'follow_primary' ? primarySelect?.value : undefined,
+            primaryStrategyId: conflictSelect?.value === 'follow_primary' && primarySelect?.value ?
+                state.selectedStrategies[parseInt(primarySelect.value)]?.id : undefined,
         },
         shortHandling: {
-            enabled: shortToggle?.checked || false,
+            enabled: shortEnabled,
+            shortLogic,
         },
         combinationDepth: 0,
         createdAt: state.currentDefinition?.createdAt || Date.now(),
@@ -381,6 +500,11 @@ function toggleCloseSettings(enabled: boolean): void {
 function togglePrimaryStrategy(resolution: string): void {
     const group = getEl('primaryStrategyGroup');
     if (group) group.classList.toggle('is-hidden', resolution !== 'follow_primary');
+}
+
+function toggleShortStrategyGroup(enabled: boolean): void {
+    const group = getEl('shortStrategyGroup');
+    if (group) group.classList.toggle('is-hidden', !enabled);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -536,6 +660,15 @@ export function initCombinerUI(): void {
         });
     }
 
+    // Short logic change
+    const shortLogicSelect = getEl<HTMLSelectElement>('combinerShortLogic');
+    if (shortLogicSelect) {
+        shortLogicSelect.addEventListener('change', () => {
+            toggleShortStrategyGroup(shortLogicSelect.value === 'independent');
+            updateValidation();
+        });
+    }
+
     // Name input
     const nameInput = getEl<HTMLInputElement>('combinerName');
     if (nameInput) {
@@ -547,6 +680,12 @@ export function initCombinerUI(): void {
     if (operatorSelect) {
         operatorSelect.addEventListener('change', updateValidation);
     }
+
+    // Secondary strategy selects
+    ['combinerPrimaryStrategy', 'combinerCloseStrategy', 'combinerShortStrategy'].forEach(id => {
+        const el = getEl(id);
+        if (el) el.addEventListener('change', updateValidation);
+    });
 
     // Render saved list
     renderCombinedList();
