@@ -4,6 +4,7 @@ import { debugLogger } from "../debugLogger";
 
 import { backtestService } from "../backtestService";
 import { clearAll } from "../appActions";
+import { uiManager } from "../uiManager";
 
 export function setupEventHandlers() {
     // Symbol dropdown
@@ -252,4 +253,28 @@ export function setupEventHandlers() {
             }
         }
     });
+
+    // Combined strategy backtest runner
+    window.addEventListener('run-combined-strategy', ((event: CustomEvent<{ strategyKey: string; definition: any; isPreview?: boolean }>) => {
+        const { strategyKey, definition, isPreview } = event.detail;
+
+        // The strategy has already been registered in combinerManager.ts
+        // Now we need to set it as the current strategy and run the backtest
+
+        // Update the current strategy key in state
+        state.set('currentStrategyKey', strategyKey);
+
+        // Update the strategy dropdown to reflect this selection
+        uiManager.updateStrategyDropdown(strategyKey);
+
+        // Log the action
+        debugLogger.event('combiner.run', {
+            strategyKey,
+            strategyName: definition.name,
+            isPreview: !!isPreview,
+        });
+
+        // Run the backtest
+        backtestService.runCurrentBacktest();
+    }) as EventListener);
 }

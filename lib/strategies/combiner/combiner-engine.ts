@@ -167,12 +167,13 @@ export function evaluateOperator(
 export function evaluateNode(
     node: CombinationNode,
     timeKey: string,
-    signalMaps: Map<any, Map<string, CombinedSignal>>
+    signalMaps: Map<string, Map<string, CombinedSignal>>
 ): CombinedSignal {
     if (node.type === 'strategy') {
         // Leaf node - look up the signal for this strategy at this time
         if (!node.strategyRef) return 'NO_SIGNAL';
-        const strategyMap = signalMaps.get(node.strategyRef);
+        // Use strategyRef.id (string) as the key to find the signal map
+        const strategyMap = signalMaps.get(node.strategyRef.id);
         if (!strategyMap) return 'NO_SIGNAL';
         return strategyMap.get(timeKey) ?? 'NO_SIGNAL';
     }
@@ -440,8 +441,8 @@ export function validateDefinition(definition: CombinedStrategyDefinition): Vali
 function executeInputStrategies(
     definition: CombinedStrategyDefinition,
     data: OHLCVData[]
-): Map<any, Map<string, CombinedSignal>> {
-    const signalMaps = new Map<any, Map<string, CombinedSignal>>();
+): Map<string, Map<string, CombinedSignal>> {
+    const signalMaps = new Map<string, Map<string, CombinedSignal>>();
 
     for (const meta of definition.inputStrategies) {
         const strategy = strategies[meta.strategyId];
@@ -451,7 +452,8 @@ function executeInputStrategies(
         const params: StrategyParams = meta.params ?? strategy.defaultParams;
         const signals = strategy.execute(data, params);
         const signalMap = createSignalMap(signals);
-        signalMaps.set(meta, signalMap);
+        // Use meta.id (string) as key for consistent lookup
+        signalMaps.set(meta.id, signalMap);
     }
 
     return signalMaps;
