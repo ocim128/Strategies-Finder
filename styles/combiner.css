@@ -1,0 +1,396 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Strategy Combiner Styles
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Tab Container - acts as positioning context */
+#combinerTab {
+    position: relative;
+    height: 100%;
+    overflow-y: auto;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Intro Section
+   ───────────────────────────────────────────────────────────────────────────── */
+.combiner-intro {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-m);
+    margin-bottom: var(--space-3);
+    border: 1px solid var(--border-color);
+}
+
+.combiner-intro-icon {
+    flex-shrink: 0;
+    color: var(--accent-color);
+    opacity: 0.8;
+}
+
+.combiner-intro-text {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Saved Combinations List
+   ───────────────────────────────────────────────────────────────────────────── */
+.combiner-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.combiner-empty {
+    padding: var(--space-4);
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-m);
+    border: 1px dashed var(--border-color);
+}
+
+.combiner-item {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-s);
+    border: 1px solid var(--border-color);
+    transition: all 0.15s ease;
+}
+
+.combiner-item:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--accent-color);
+}
+
+.combiner-item-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow: hidden;
+}
+
+.combiner-item-name {
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.combiner-item-meta {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    display: flex;
+    gap: var(--space-2);
+}
+
+.combiner-item-meta span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.combiner-item-actions {
+    display: flex;
+    gap: var(--space-1);
+}
+
+.combiner-item-actions .btn {
+    padding: 4px 8px;
+    font-size: var(--font-size-xs);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Builder Panel - Full overlay when visible
+   ───────────────────────────────────────────────────────────────────────────── */
+.combiner-builder {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg-primary);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.combiner-builder.is-hidden {
+    display: none !important;
+}
+
+.combiner-builder-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.combiner-builder-title {
+    font-weight: 600;
+    font-size: var(--font-size-md);
+    color: var(--text-primary);
+}
+
+.combiner-close-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: var(--radius-s);
+    transition: all 0.15s ease;
+}
+
+.combiner-close-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+/* Scrollable content area */
+.combiner-builder-content {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Builder Sections
+   ───────────────────────────────────────────────────────────────────────────── */
+.combiner-section {
+    padding: var(--space-3);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.combiner-section .section-title {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-2);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.combiner-section .section-header {
+    margin-bottom: var(--space-2);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Strategy Slots
+   ───────────────────────────────────────────────────────────────────────────── */
+.combiner-strategies {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+}
+
+.combiner-strategy-slot {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: var(--space-2);
+    align-items: center;
+    padding: var(--space-2);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-s);
+    border: 1px solid var(--border-color);
+}
+
+.combiner-strategy-slot select {
+    flex: 1;
+}
+
+.combiner-strategy-slot .role-badge {
+    font-size: var(--font-size-xs);
+    padding: 2px 6px;
+    border-radius: var(--radius-s);
+    background: var(--accent-color);
+    color: white;
+    text-transform: uppercase;
+    font-weight: 500;
+}
+
+.combiner-strategy-slot .role-badge.entry {
+    background: var(--green);
+}
+
+.combiner-strategy-slot .role-badge.filter {
+    background: var(--warning);
+}
+
+.combiner-strategy-slot .role-badge.exit {
+    background: var(--red);
+}
+
+.combiner-strategy-slot .role-badge.regime {
+    background: var(--accent-color);
+}
+
+.combiner-remove-slot {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: var(--radius-s);
+    transition: all 0.15s ease;
+}
+
+.combiner-remove-slot:hover {
+    background: var(--red);
+    color: white;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Validation
+   ───────────────────────────────────────────────────────────────────────────── */
+.combiner-validation {
+    padding: var(--space-2) var(--space-3);
+    min-height: 40px;
+}
+
+.combiner-validation:empty {
+    display: none;
+}
+
+.combiner-validation-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-s);
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--space-1);
+}
+
+.combiner-validation-item.error {
+    background: var(--danger-soft);
+    color: var(--red);
+    border: 1px solid var(--red);
+}
+
+.combiner-validation-item.warning {
+    background: hsl(35 92% 55% / 0.15);
+    color: var(--warning);
+    border: 1px solid var(--warning);
+}
+
+.combiner-validation-item.success {
+    background: var(--success-soft);
+    color: var(--green);
+    border: 1px solid var(--green);
+}
+
+.combiner-validation-item svg {
+    flex-shrink: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Actions
+   ───────────────────────────────────────────────────────────────────────────── */
+.combiner-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border-color);
+    margin-top: auto;
+    flex-shrink: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Operator Badge
+   ───────────────────────────────────────────────────────────────────────────── */
+.operator-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 8px;
+    border-radius: var(--radius-s);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.operator-badge.and {
+    background: var(--green);
+    color: white;
+}
+
+.operator-badge.or {
+    background: var(--accent-color);
+    color: white;
+}
+
+.operator-badge.xor {
+    background: var(--warning);
+    color: white;
+}
+
+.operator-badge.not {
+    background: var(--red);
+    color: white;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Logic Flow Visual
+   ───────────────────────────────────────────────────────────────────────────── */
+.combiner-logic-flow {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    background: var(--bg-primary);
+    border-radius: var(--radius-s);
+    border: 1px solid var(--border-color);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+}
+
+.combiner-logic-line {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+}
+
+.combiner-logic-line .strategy-name {
+    color: var(--accent-color);
+}
+
+.combiner-logic-line .operator {
+    color: var(--warning);
+    font-weight: 600;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Responsive
+   ───────────────────────────────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+    .combiner-strategy-slot {
+        grid-template-columns: 1fr;
+    }
+
+    .combiner-item {
+        grid-template-columns: 1fr;
+    }
+
+    .combiner-item-actions {
+        justify-content: flex-end;
+    }
+}

@@ -19,6 +19,7 @@ import { monteCarloService } from "./lib/monteCarloService";
 import { settingsManager } from "./lib/settingsManager";
 import { injectLayout } from "./lib/layoutManager";
 import { commandPaletteManager } from "./lib/commandPalette";
+import { combinerManager } from "./lib/combinerManager";
 
 // Handlers
 import { setupGlobalErrorHandlers } from "./lib/handlers/globalErrorHandlers";
@@ -52,6 +53,7 @@ async function init() {
 	finderManager.init();
 	walkForwardService.initUI();
 	monteCarloService.initUI();
+	combinerManager.init();
 	initDebugPanel();
 
 	editorManager.init(() => {
