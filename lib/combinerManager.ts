@@ -285,6 +285,7 @@ function renderStrategySlots(): void {
             <select class="timeframe-select" data-index="${index}" title="Timeframe">
                 <option value="" ${!meta.timeframe ? 'selected' : ''}>Default (Chart)</option>
                 <option value="1m" ${meta.timeframe === '1m' ? 'selected' : ''}>1m</option>
+                <option value="3m" ${meta.timeframe === '3m' ? 'selected' : ''}>3m</option>
                 <option value="5m" ${meta.timeframe === '5m' ? 'selected' : ''}>5m</option>
                 <option value="15m" ${meta.timeframe === '15m' ? 'selected' : ''}>15m</option>
                 <option value="30m" ${meta.timeframe === '30m' ? 'selected' : ''}>30m</option>

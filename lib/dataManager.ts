@@ -157,7 +157,7 @@ export class DataManager {
     }
 
     private generateMockData(symbol: string, interval: string): OHLCVData[] {
-        const count = 1000;
+        const count = this.TOTAL_LIMIT;
         const data: OHLCVData[] = [];
         let price = this.getMockPrice(symbol);
         const now = Math.floor(Date.now() / 1000);
