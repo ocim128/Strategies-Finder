@@ -7,11 +7,13 @@ import { debugLogger } from "./debugLogger";
 import { backtestService } from "./backtestService";
 import {
     runWalkForwardAnalysis,
+    runFixedParamWalkForward,
     quickWalkForward,
     formatWalkForwardSummary,
     WalkForwardConfig,
     WalkForwardResult,
-    ParameterRange
+    ParameterRange,
+    FixedParamWalkForwardConfig
 } from "./strategies/walk-forward";
 
 // ============================================================================
@@ -38,34 +40,79 @@ class WalkForwardService {
             return null;
         }
 
-        // Get current parameters
-        const currentParams = paramManager.getValues(strategy);
-
-        // Build parameter ranges from strategy defaults
-        const parameterRanges = this.buildParameterRanges(strategy.defaultParams, currentParams);
-
-        // Get config from UI
-        const config = this.getConfigFromUI(parameterRanges);
-
         // Get capital settings from backtest service
         const capitalSettings = backtestService.getCapitalSettings();
         const backtestSettings = backtestService.getBacktestSettings();
 
         this.setLoading(true);
-        this.updateStatus('Running walk-forward analysis...');
 
         try {
             const startTime = performance.now();
 
-            const result = await runWalkForwardAnalysis(
-                data,
-                { ...strategy, defaultParams: currentParams },
-                config,
-                capitalSettings.initialCapital,
-                capitalSettings.positionSize,
-                capitalSettings.commission,
-                backtestSettings
-            );
+            // Check if this is explicitly a combo strategy
+            const isComboStrategy = strategy.metadata?.isCombined === true;
+
+            // Get current parameters
+            const currentParams = paramManager.getValues(strategy);
+
+            // Build parameter ranges from strategy defaults
+            const parameterRanges = this.buildParameterRanges(strategy.defaultParams, currentParams);
+
+            // Determine if we should use fixed-param walk-forward:
+            // - Explicitly a combo strategy, OR
+            // - No parameters at all, OR  
+            // - No valid parameter ranges could be built
+            const useFixedParam =
+                isComboStrategy ||
+                Object.keys(strategy.defaultParams).length === 0 ||
+                parameterRanges.length === 0;
+
+            let result: WalkForwardResult;
+
+            if (useFixedParam) {
+                // Use fixed-parameter walk-forward (no optimization)
+                const analysisType = isComboStrategy ? 'combo strategy' : 'fixed parameters';
+                this.updateStatus(`Running walk-forward analysis (${analysisType})...`);
+                debugLogger.info(`[WalkForward] Using fixed-param mode for: ${strategyKey} (${analysisType})`);
+
+                // Get window config from UI
+                const testWindow = this.readNumberInput('wf-test-window', Math.floor(data.length * 0.2));
+                const stepSize = this.readNumberInput('wf-step-size', testWindow);
+                const minTrades = this.readNumberInput('wf-min-trades', 3);
+
+                const fixedConfig: FixedParamWalkForwardConfig = {
+                    testWindow,
+                    stepSize,
+                    minTrades
+                };
+
+                result = await runFixedParamWalkForward(
+                    data,
+                    { ...strategy, defaultParams: currentParams },
+                    fixedConfig,
+                    capitalSettings.initialCapital,
+                    capitalSettings.positionSize,
+                    capitalSettings.commission,
+                    backtestSettings
+                );
+            } else {
+                // Use regular walk-forward with parameter optimization
+                this.updateStatus('Running walk-forward analysis (optimizing parameters)...');
+                debugLogger.info(`[WalkForward] Optimizing ${parameterRanges.length} parameters for: ${strategyKey}`);
+
+                // Get config from UI
+                const config = this.getConfigFromUI(parameterRanges);
+
+                result = await runWalkForwardAnalysis(
+                    data,
+                    { ...strategy, defaultParams: currentParams },
+                    config,
+                    capitalSettings.initialCapital,
+                    capitalSettings.positionSize,
+                    capitalSettings.commission,
+                    backtestSettings
+                );
+            }
 
             const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
             debugLogger.info(`Walk-forward analysis completed in ${elapsed}s`);
@@ -86,6 +133,8 @@ class WalkForwardService {
         }
     }
 
+
+
     /**
      * Quick analysis with auto-detected settings
      */
@@ -104,18 +153,61 @@ class WalkForwardService {
         }
 
         const capitalSettings = backtestService.getCapitalSettings();
+        const backtestSettings = backtestService.getBacktestSettings();
 
         this.setLoading(true);
-        this.updateStatus('Running quick walk-forward analysis...');
 
         try {
-            const result = await quickWalkForward(
-                data,
-                strategy,
-                capitalSettings.initialCapital,
-                capitalSettings.positionSize,
-                capitalSettings.commission
-            );
+            // Check if this is a combo strategy or has no tunable parameters
+            const isComboStrategy = strategy.metadata?.isCombined === true;
+            const currentParams = paramManager.getValues(strategy);
+            const parameterRanges = this.buildParameterRanges(strategy.defaultParams, currentParams);
+            const useFixedParam =
+                isComboStrategy ||
+                Object.keys(strategy.defaultParams).length === 0 ||
+                parameterRanges.length === 0;
+
+            let result: WalkForwardResult;
+
+            if (useFixedParam) {
+                // Use fixed-param walk-forward for combo strategies
+                const analysisType = isComboStrategy ? 'combo' : 'fixed-param';
+                this.updateStatus(`Running quick analysis (${analysisType})...`);
+                debugLogger.info(`[WalkForward] Quick analysis using fixed-param mode for: ${strategyKey}`);
+
+                // Auto-detect window settings: aim for ~5 windows
+                const totalBars = data.length;
+                const targetWindows = 5;
+                const testWindow = Math.max(20, Math.floor(totalBars / targetWindows));
+                const stepSize = testWindow; // Non-overlapping
+
+                const fixedConfig: FixedParamWalkForwardConfig = {
+                    testWindow,
+                    stepSize,
+                    minTrades: 1
+                };
+
+                result = await runFixedParamWalkForward(
+                    data,
+                    { ...strategy, defaultParams: currentParams },
+                    fixedConfig,
+                    capitalSettings.initialCapital,
+                    capitalSettings.positionSize,
+                    capitalSettings.commission,
+                    backtestSettings
+                );
+            } else {
+                // Use regular quick walk-forward with parameter optimization
+                this.updateStatus('Running quick walk-forward analysis...');
+
+                result = await quickWalkForward(
+                    data,
+                    { ...strategy, defaultParams: currentParams },
+                    capitalSettings.initialCapital,
+                    capitalSettings.positionSize,
+                    capitalSettings.commission
+                );
+            }
 
             this.lastResult = result;
             this.displayResults(result);
@@ -131,6 +223,7 @@ class WalkForwardService {
             this.setLoading(false);
         }
     }
+
 
     /**
      * Build parameter ranges from current params with reasonable bounds
@@ -173,13 +266,34 @@ class WalkForwardService {
                 continue;
             }
 
-            // Auto-generate reasonable range around current value
             const baseValue = value || defaults[name] || 10;
-            const min = Math.max(1, Math.floor(baseValue * 0.5));
-            const max = Math.ceil(baseValue * 1.5);
-            const step = Math.max(1, Math.floor((max - min) / 4));
 
-            ranges.push({ name, min, max, step });
+            // Handle decimal parameters (like Fib levels 0.618, 0.382) differently
+            const isSmallDecimal = !Number.isInteger(baseValue) && Math.abs(baseValue) < 2;
+
+            let min: number;
+            let max: number;
+            let step: number;
+
+            if (isSmallDecimal) {
+                // For small decimal params, use proportional range with decimal precision
+                min = Math.max(0.1, baseValue * 0.5);
+                max = Math.max(min + 0.1, baseValue * 1.5);
+                // Ensure at least 2-3 steps
+                const rawStep = (max - min) / 3;
+                step = Math.max(0.05, rawStep);
+            } else {
+                // For integer-like params
+                min = Math.max(1, Math.floor(baseValue * 0.5));
+                max = Math.max(min + 1, Math.ceil(baseValue * 1.5));
+                const rawStep = (max - min) / 4;
+                step = Math.max(1, Math.floor(rawStep));
+            }
+
+            // Only add range if it's valid (min < max)
+            if (min < max) {
+                ranges.push({ name, min, max, step });
+            }
         }
 
         return ranges;

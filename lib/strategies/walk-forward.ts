@@ -357,9 +357,16 @@ function calculateRobustnessScore(
     parameterStability: number,
     windowResults: WalkForwardWindow[]
 ): number {
-    const wfe = avgInSampleSharpe > 0
-        ? Math.min(1, avgOutOfSampleSharpe / avgInSampleSharpe)
-        : 0;
+    // Walk-Forward Efficiency: OOS/IS Sharpe ratio, clamped to [0, 1]
+    // - 1.0 = OOS performance equals or exceeds IS (ideal)
+    // - 0.0 = OOS performance is much worse or negative
+    let wfe = 0;
+    if (avgInSampleSharpe > 0 && Number.isFinite(avgOutOfSampleSharpe)) {
+        wfe = Math.max(0, Math.min(1, avgOutOfSampleSharpe / avgInSampleSharpe));
+    } else if (avgInSampleSharpe <= 0 && avgOutOfSampleSharpe > 0) {
+        // IS was bad but OOS is good - this is actually robust
+        wfe = 0.5;
+    }
     const wfeScore = wfe * 40;
 
     const stabilityScore = (parameterStability / 100) * 25;
@@ -368,14 +375,21 @@ function calculateRobustnessScore(
     const oosWinRate = windowResults.length > 0 ? positiveWindows / windowResults.length : 0;
     const oosWinScore = oosWinRate * 20;
 
+    // Consistency score based on degradation variance
     const degradations = windowResults.map(w => w.performanceDegradationPercent);
-    const avgDegradation = degradations.reduce((a, b) => a + b, 0) / degradations.length;
-    const degVariance = degradations.reduce((sum, d) => sum + Math.pow(d - avgDegradation, 2), 0) / degradations.length;
-    const degStdDev = Math.sqrt(degVariance);
-    const consistencyScore = Math.max(0, 15 - degStdDev / 10);
+    const validDegradations = degradations.filter(d => Number.isFinite(d));
+    let consistencyScore = 0;
+    if (validDegradations.length > 0) {
+        const avgDegradation = validDegradations.reduce((a, b) => a + b, 0) / validDegradations.length;
+        const degVariance = validDegradations.reduce((sum, d) => sum + Math.pow(d - avgDegradation, 2), 0) / validDegradations.length;
+        const degStdDev = Math.sqrt(degVariance);
+        consistencyScore = Math.max(0, 15 - degStdDev / 10);
+    }
 
-    return Math.round(wfeScore + stabilityScore + oosWinScore + consistencyScore);
+    const totalScore = wfeScore + stabilityScore + oosWinScore + consistencyScore;
+    return Math.round(Math.max(0, Math.min(100, totalScore)));
 }
+
 
 // ============================================================================
 // Main Walk-Forward Analysis
@@ -627,6 +641,172 @@ export async function quickWalkForward(
         positionSizePercent,
         commissionPercent
     );
+}
+
+// ============================================================================
+// Fixed-Parameter Walk-Forward (for Combo Strategies)
+// ============================================================================
+//
+// This function runs walk-forward analysis for strategies without tunable
+// parameters (such as combined/combo strategies). Instead of optimizing
+// parameters in each window, it runs the SAME fixed strategy across all
+// windows. This is useful for testing robustness of a combo strategy
+// to see if it performs consistently across different time periods.
+//
+// The key difference from regular WFA:
+// - No parameter optimization grid is generated
+// - The strategy runs with its fixed configuration across all windows
+// - Robustness is measured by consistency across time periods, not
+//   by how well optimized params transfer to OOS periods
+//
+// ============================================================================
+
+export interface FixedParamWalkForwardConfig {
+    /** Number of bars in each test window */
+    testWindow: number;
+    /** Step size for rolling forward (typically = testWindow for non-overlapping) */
+    stepSize: number;
+    /** Minimum trades required to consider a window valid */
+    minTrades?: number;
+}
+
+/**
+ * Run walk-forward analysis for a fixed-parameter strategy (like combo strategies).
+ * Instead of doing parameter optimization, this tests the exact same strategy
+ * configuration across multiple time windows to check for consistency/robustness.
+ */
+export async function runFixedParamWalkForward(
+    data: OHLCVData[],
+    strategy: Strategy,
+    config: FixedParamWalkForwardConfig,
+    initialCapital: number,
+    positionSizePercent: number,
+    commissionPercent: number,
+    backtestSettings: BacktestSettings = {}
+): Promise<WalkForwardResult> {
+    const startTime = performance.now();
+
+    // Clean input data
+    data = ensureCleanData(data);
+
+    const { testWindow, stepSize } = config;
+
+    const totalDataLength = data.length;
+
+    if (totalDataLength < testWindow * 2) {
+        throw new Error(`Insufficient data: need at least ${testWindow * 2} bars for walk-forward, have ${totalDataLength}`);
+    }
+
+    const windows: WalkForwardWindow[] = [];
+    let currentStart = 0;
+    let windowIndex = 0;
+    let runningCapital = initialCapital;
+
+    // Fixed params - use whatever the strategy has
+    const fixedParams = strategy.defaultParams;
+
+    while (currentStart + testWindow <= totalDataLength) {
+        const windowStart = currentStart;
+        const windowEnd = Math.min(currentStart + testWindow, totalDataLength);
+
+        // For fixed-param WFA, we treat "In-Sample" and "Out-of-Sample" differently:
+        // Since there's no optimization, we split each window in half to get IS/OOS metrics
+        // This gives us a way to measure consistency within each window
+        const midPoint = windowStart + Math.floor((windowEnd - windowStart) / 2);
+
+        // First half = "In-Sample" (what we'd train on if we had params)
+        const inSampleResult = runBacktestWithLookback(
+            data,
+            windowStart,
+            midPoint,
+            strategy,
+            fixedParams,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            backtestSettings
+        );
+
+        // Second half = "Out-of-Sample" (the forward test)
+        const outOfSampleResult = runBacktestWithLookback(
+            data,
+            midPoint,
+            windowEnd,
+            strategy,
+            fixedParams,
+            runningCapital,
+            positionSizePercent,
+            commissionPercent,
+            backtestSettings
+        );
+
+        // Update running capital for next window
+        if (outOfSampleResult.equityCurve.length > 0) {
+            runningCapital = outOfSampleResult.equityCurve[outOfSampleResult.equityCurve.length - 1].value;
+        }
+
+        // Calculate degradation metrics
+        const sharpeDegradation = inSampleResult.sharpeRatio - outOfSampleResult.sharpeRatio;
+        const performanceDegradationPercent = inSampleResult.netProfitPercent !== 0
+            ? ((inSampleResult.netProfitPercent - outOfSampleResult.netProfitPercent) /
+                Math.abs(inSampleResult.netProfitPercent)) * 100
+            : 0;
+
+        // Include ALL windows - even 0 trades is valid data (strategy didn't trigger)
+        windows.push({
+            windowIndex,
+            optimizationStart: windowStart,
+            optimizationEnd: midPoint,
+            testStart: midPoint,
+            testEnd: windowEnd,
+            optimizedParams: fixedParams,
+            inSampleResult,
+            outOfSampleResult,
+            sharpeDegradation,
+            performanceDegradationPercent
+        });
+        windowIndex++;
+
+        currentStart += stepSize;
+
+        // Yield to event loop periodically
+        if (windowIndex > 0 && windowIndex % 5 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+    }
+
+    if (windows.length === 0) {
+        throw new Error(`No walk-forward windows could be created. Data length: ${totalDataLength}, window size: ${testWindow}. Try reducing window size.`);
+    }
+
+
+    // Combine OOS results
+    const combinedOOSTrades = combineOOSResults(windows, initialCapital);
+
+    // Calculate aggregate metrics
+    const avgInSampleSharpe = windows.reduce((sum, w) => sum + w.inSampleResult.sharpeRatio, 0) / windows.length;
+    const avgOutOfSampleSharpe = windows.reduce((sum, w) => sum + w.outOfSampleResult.sharpeRatio, 0) / windows.length;
+
+    const walkForwardEfficiency = avgInSampleSharpe > 0 ? avgOutOfSampleSharpe / avgInSampleSharpe : 0;
+
+    // For fixed params, stability is 100% (no variation)
+    const parameterStability = 100;
+
+    const robustnessScore = calculateRobustnessScore(avgInSampleSharpe, avgOutOfSampleSharpe, parameterStability, windows);
+
+    const endTime = performance.now();
+
+    return {
+        windows,
+        combinedOOSTrades,
+        avgInSampleSharpe,
+        avgOutOfSampleSharpe,
+        walkForwardEfficiency,
+        robustnessScore,
+        totalWindows: windows.length,
+        optimizationTimeMs: endTime - startTime,
+        parameterStability
+    };
 }
 
 export function formatWalkForwardSummary(result: WalkForwardResult): string {
