@@ -111,7 +111,10 @@ export class CommandPaletteManager {
             { id: 'SOLUSDT', name: 'Solana' },
             { id: 'AAPL', name: 'Apple Inc.' },
             { id: 'TSLA', name: 'Tesla Inc.' },
-            { id: 'EURUSD', name: 'Euro / US Dollar' }
+            { id: 'EURUSD', name: 'Euro / US Dollar' },
+            { id: 'XAUUSD', name: 'Gold' },
+            { id: 'XAGUSD', name: 'Silver' },
+            { id: 'WTIUSD', name: 'WTI Oil' }
         ];
 
         const tabs = [

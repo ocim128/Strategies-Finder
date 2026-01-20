@@ -16,6 +16,9 @@ export const SYMBOL_MAP: Record<string, string> = {
     'EURUSD': 'EUR/USD',
     'GBPUSD': 'GBP/USD',
     'USDJPY': 'USD/JPY',
+    'XAUUSD': 'XAU/USD (Gold)',
+    'XAGUSD': 'XAG/USD (Silver)',
+    'WTIUSD': 'WTI Oil',
 };
 
 export const darkTheme: DeepPartial<ChartOptions> = {

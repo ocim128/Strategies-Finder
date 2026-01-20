@@ -23,7 +23,7 @@ export class DataManager {
     private readonly MAX_REQUESTS = 15;
     private currentAbort: AbortController | null = null;
     private currentLoadId = 0;
-    private readonly MOCK_SYMBOLS = new Set(['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'EURUSD', 'GBPUSD', 'USDJPY']);
+    private readonly MOCK_SYMBOLS = new Set(['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'EURUSD', 'GBPUSD', 'USDJPY', 'XAUUSD', 'XAGUSD', 'WTIUSD']);
 
 
     public async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
@@ -200,6 +200,9 @@ export class DataManager {
             case 'EURUSD': return 1.09;
             case 'GBPUSD': return 1.27;
             case 'USDJPY': return 148;
+            case 'XAUUSD': return 2050;
+            case 'XAGUSD': return 23.5;
+            case 'WTIUSD': return 75;
             default: return 100;
         }
     }
