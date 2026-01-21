@@ -166,7 +166,7 @@ export function setupEventHandlers() {
         const toggle = getRequiredElement<HTMLInputElement>(toggleId);
         const section = getRequiredElement<HTMLElement>(sectionId);
         const applyState = () => {
-            section.classList.toggle('disabled', !toggle.checked);
+            section.classList.toggle('is-hidden', !toggle.checked);
         };
 
         toggle.addEventListener('change', applyState);
@@ -214,9 +214,10 @@ export function setupEventHandlers() {
 
     const applyTradeSizingMode = () => {
         const useFixedAmount = fixedTradeToggle.checked;
-        initialCapitalGroup.classList.toggle('is-disabled', useFixedAmount);
-        fixedTradeGroup.classList.toggle('is-disabled', !useFixedAmount);
-        positionSizeGroup.classList.toggle('is-disabled', useFixedAmount);
+        initialCapitalGroup.classList.toggle('is-hidden', useFixedAmount);
+        fixedTradeGroup.classList.toggle('is-hidden', !useFixedAmount);
+        positionSizeGroup.classList.toggle('is-hidden', useFixedAmount);
+
         initialCapitalInput.disabled = useFixedAmount;
         fixedTradeAmountInput.disabled = !useFixedAmount;
         positionSizeInput.disabled = useFixedAmount;
