@@ -274,13 +274,14 @@
 
 .trade-item {
     display: flex;
-    align-items: center;
-    gap: var(--space-3);
+    flex-direction: column;
     padding: var(--space-2-5) var(--space-3);
     background: var(--bg-secondary);
     cursor: pointer;
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
+    border-bottom: 1px solid var(--border-color);
+    border-left: 3px solid transparent;
 }
 
 .trade-item:last-child {
@@ -292,130 +293,127 @@
     z-index: 1;
 }
 
+.trade-item.win {
+    border-left-color: var(--green);
+    background: linear-gradient(90deg,
+            hsl(var(--hsl-success) / 0.1) 0%,
+            transparent 100%);
+}
+
+.trade-item.loss {
+    border-left-color: var(--red);
+    background: linear-gradient(90deg,
+            hsl(var(--hsl-danger) / 0.1) 0%,
+            transparent 100%);
+}
+
 .trade-item.active {
     background: var(--accent-soft);
 }
 
-.trade-item::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 3px;
-    opacity: 0;
-    background: var(--accent-color);
-    transition: opacity 0.2s;
+.trade-main-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
 }
 
-.trade-item:hover::before {
-    opacity: 1;
+.trade-left-group {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
 }
 
 .trade-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-s);
+    /* Squared icon for differentiation */
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 800;
     flex-shrink: 0;
-    border-width: 1px;
-    border-style: solid;
     text-transform: uppercase;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
 }
 
 .trade-icon.buy {
-    background: var(--success-soft);
     color: var(--green);
-    border-color: rgba(var(--hsl-success), 0.2);
+    border-color: hsl(var(--hsl-success) / 0.3);
+    background: hsl(var(--hsl-success) / 0.1);
 }
 
 .trade-icon.sell {
-    background: var(--danger-soft);
     color: var(--red);
-    border-color: rgba(var(--hsl-danger), 0.2);
+    border-color: hsl(var(--hsl-danger) / 0.3);
+    background: hsl(var(--hsl-danger) / 0.1);
 }
 
-.trade-info {
-    flex: 1;
-    min-width: 0;
+.trade-price-info {
     display: flex;
     flex-direction: column;
     gap: 2px;
 }
 
-.trade-meta {
+.trade-price-flow {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: 6px;
+    font-family: var(--font-family-mono);
+    font-size: 12px;
+    font-weight: var(--font-weight-medium);
+    color: var(--text-primary);
+}
+
+.price-arrow {
+    font-size: 10px;
+    color: var(--text-tertiary);
+}
+
+.trade-sub-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 10px;
     color: var(--text-secondary);
-    font-weight: var(--font-weight-medium);
 }
 
-.trade-date {
-    font-size: 11px;
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-primary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+.trade-sub-info .separator {
+    color: var(--border-color);
 }
 
-.trade-prices {
-    font-size: 11px;
-    color: var(--text-secondary);
-    font-family: var(--font-family-mono);
-    display: flex;
-    align-items: center;
-    gap: 4px;
+.trade-fees {
+    font-style: italic;
+    opacity: 0.8;
 }
 
-.trade-prices .price-arrow {
-    opacity: 0.5;
-    font-family: sans-serif;
-}
-
-.trade-result {
+.trade-result-group {
     text-align: right;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
 }
 
 .trade-pnl {
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 700;
     font-family: var(--font-family-mono);
-    letter-spacing: -0.02em;
+    letter-spacing: -0.01em;
 }
 
-.trade-pnl.positive {
+.trade-item.win .trade-pnl {
     color: var(--green);
 }
 
-.trade-pnl.negative {
+.trade-item.loss .trade-pnl {
     color: var(--red);
 }
 
 .trade-pct {
-    font-size: 10px;
-    color: var(--text-secondary);
+    font-size: 11px;
     font-family: var(--font-family-mono);
-    font-weight: var(--font-weight-medium);
-}
-
-.trade-pct.positive {
-    color: var(--green);
-    opacity: 0.8;
-}
-
-.trade-pct.negative {
-    color: var(--red);
-    opacity: 0.8;
+    color: var(--text-secondary);
 }
 
 /* Settings Actions */

@@ -19,29 +19,44 @@ export class TradesRenderer {
 
         container.innerHTML = trades.slice().reverse().map(trade => {
             const isProfit = trade.pnl >= 0;
-            const pnlClass = isProfit ? 'positive' : 'negative';
+            const statusClass = isProfit ? 'win' : 'loss';
+            const duration = this.formatDuration(this.getTimestamp(trade.exitTime) - this.getTimestamp(trade.entryTime));
+            const fees = trade.fees ? `Fees: $${trade.fees.toFixed(2)}` : '';
+
+            // Format precise dates for tooltip or subtitle
+            const entryDate = formatDate(trade.entryTime);
 
             return `
-				<div class="trade-item" data-entry-time="${trade.entryTime}" role="button" tabindex="0">
-					<div class="trade-icon ${trade.type === 'long' ? 'buy' : 'sell'}">
-						${trade.type === 'long' ? 'BUY' : 'SELL'}
-					</div>
-					<div class="trade-info">
-						<div class="trade-date">${formatDate(trade.entryTime)}</div>
-						<div class="trade-prices">
-                            <span>${formatPrice(trade.entryPrice)}</span>
-                            <span class="price-arrow">→</span>
-                            <span>${formatPrice(trade.exitPrice)}</span>
+				<div class="trade-item ${statusClass}" data-entry-time="${trade.entryTime}" role="button" tabindex="0">
+                    <div class="trade-main-row">
+                        <div class="trade-left-group">
+					        <div class="trade-icon ${trade.type === 'long' ? 'buy' : 'sell'}">
+						        ${trade.type === 'long' ? 'B' : 'S'}
+					        </div>
+                            <div class="trade-price-info">
+                                <div class="trade-price-flow">
+                                    <span class="price-val">${formatPrice(trade.entryPrice)}</span>
+                                    <span class="price-arrow">➜</span>
+                                    <span class="price-val">${formatPrice(trade.exitPrice)}</span>
+                                </div>
+                                <div class="trade-sub-info">
+                                    <span class="trade-time">${entryDate}</span>
+                                    <span class="separator">•</span>
+                                    <span class="trade-duration">${duration}</span>
+                                    ${fees ? `<span class="separator">•</span><span class="trade-fees">${fees}</span>` : ''}
+                                </div>
+                            </div>
                         </div>
-					</div>
-					<div class="trade-result">
-						<div class="trade-pnl ${pnlClass}">
-							${isProfit ? '+' : ''}$${trade.pnl.toFixed(2)}
-						</div>
-						<div class="trade-pct ${pnlClass}">
-                            ${isProfit ? '▲' : '▼'} ${Math.abs(trade.pnlPercent).toFixed(2)}%
-                        </div>
-					</div>
+                        
+					    <div class="trade-result-group">
+						    <div class="trade-pnl">
+							    ${isProfit ? '+' : ''}$${trade.pnl.toFixed(2)}
+						    </div>
+						    <div class="trade-pct">
+                                ${Math.abs(trade.pnlPercent).toFixed(2)}%
+                            </div>
+					    </div>
+                    </div>
 				</div>
 			`;
         }).join('');
@@ -60,6 +75,33 @@ export class TradesRenderer {
                 }
             });
         });
+    }
+
+    private getTimestamp(time: Time): number {
+        if (typeof time === 'number') {
+            if (time < 1e11) return time * 1000;
+            return time;
+        }
+        if (typeof time === 'string') {
+            return new Date(time).getTime();
+        }
+        if (typeof time === 'object' && 'year' in time) {
+            return Date.UTC(time.year, time.month - 1, time.day);
+        }
+        return 0;
+    }
+
+    private formatDuration(ms: number): string {
+        if (ms < 0) return '-';
+        const seconds = Math.floor(ms / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+        const days = Math.floor(hours / 24);
+
+        if (days > 0) return `${days}d ${hours % 24}h`;
+        if (hours > 0) return `${hours}h ${minutes % 60}m`;
+        if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+        return `${seconds}s`;
     }
 
     private updateSummary(trades: Trade[]) {

@@ -15,8 +15,33 @@ export class UIManager {
     }
 
     public formatDate(timestamp: Time): string {
-        const date = new Date((timestamp as number) * 1000);
-        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        let date: Date;
+        if (typeof timestamp === 'number') {
+            // Assume seconds if small enough, otherwise ms? 
+            // lightweight-charts usually uses seconds.
+            date = new Date(timestamp * 1000);
+        } else if (typeof timestamp === 'string') {
+            date = new Date(timestamp);
+        } else if (typeof timestamp === 'object' && 'year' in timestamp) {
+            date = new Date(Date.UTC(timestamp.year, timestamp.month - 1, timestamp.day));
+        } else {
+            return '';
+        }
+
+        if (isNaN(date.getTime())) return String(timestamp);
+
+        // If time is 00:00, return just date
+        if (date.getHours() === 0 && date.getMinutes() === 0) {
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+
+        return date.toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
     }
 
     public updateOHLCDisplay(data: OHLCVData) {

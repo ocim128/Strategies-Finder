@@ -24,6 +24,7 @@ export interface Trade {
     pnl: number;
     pnlPercent: number;
     size: number;
+    fees?: number;
 }
 
 export interface BacktestResult {

@@ -394,7 +394,8 @@ export function runBacktest(
             exitPrice,
             pnl: totalPnl,
             pnlPercent,
-            size
+            size,
+            fees: entryCommission + commission
         });
 
         position.size -= size;
