@@ -18,6 +18,10 @@ export class State {
     public currentBacktestResult: BacktestResult | null = null;
     public currentStrategyKey = 'sma_crossover';
 
+    // Replay state
+    public replayMode: boolean = false;
+    public replayBarIndex: number = 0;
+
     private listeners: Map<string, Set<(value: any) => void>> = new Map();
 
     public set<K extends StateKey>(key: K, value: this[K]): void {

@@ -86,12 +86,25 @@ export class BacktestService {
                 trades: result.totalTrades,
                 durationMs: Date.now() - startedAt,
             });
+
+            // Enable replay button if there are results
+            const replayStartBtn = document.getElementById('replayStartBtn') as HTMLButtonElement | null;
+            if (replayStartBtn) {
+                replayStartBtn.disabled = result.totalTrades === 0;
+            }
         } catch (error) {
             debugLogger.error('backtest.error', {
                 strategy: state.currentStrategyKey,
                 error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
                 durationMs: Date.now() - startedAt,
             });
+
+            // Disable replay button on error
+            const replayStartBtn = document.getElementById('replayStartBtn') as HTMLButtonElement | null;
+            if (replayStartBtn) {
+                replayStartBtn.disabled = true;
+            }
+
             throw error;
         } finally {
             if (shouldDelayHide) {

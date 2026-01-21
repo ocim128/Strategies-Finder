@@ -1,5 +1,9 @@
 /* Strategy Panel Tabs Initialization */
 #finderTab,
+#combinerTab,
+#walkforwardTab,
+#montecarloTab,
+#replayTab,
 #resultsTab,
 #resultsContent,
 #tradesTab {

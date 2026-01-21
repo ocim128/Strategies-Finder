@@ -1,5 +1,5 @@
 
-import { OHLCVData, Time } from './strategies/types';
+import { OHLCVData, Time } from './types';
 
 /**
  * Gets the number of seconds for a given interval string (e.g., '1m', '1h', '1d').

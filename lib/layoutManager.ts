@@ -7,6 +7,7 @@ import tabFinderHtml from '../html-partials/tab-finder.html?raw';
 import tabCombinerHtml from '../html-partials/tab-combiner.html?raw';
 import tabWalkforwardHtml from '../html-partials/tab-walkforward.html?raw';
 import tabMontecarloHtml from '../html-partials/tab-montecarlo.html?raw';
+import tabReplayHtml from '../html-partials/tab-replay.html?raw';
 import tabResultsHtml from '../html-partials/tab-results.html?raw';
 import tabTradesHtml from '../html-partials/tab-trades.html?raw';
 import statusBarHtml from '../html-partials/status-bar.html?raw';
@@ -60,6 +61,7 @@ export function injectLayout() {
         tabCombinerHtml +
         tabWalkforwardHtml +
         tabMontecarloHtml +
+        tabReplayHtml +
         tabResultsHtml +
         tabTradesHtml;
 

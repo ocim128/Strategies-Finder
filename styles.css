@@ -10,4 +10,5 @@
 @import './styles/features.css';
 @import './styles/command-palette.css';
 @import './styles/combiner.css';
+@import './styles/replay.css';
 @import './styles/media-queries.css';
