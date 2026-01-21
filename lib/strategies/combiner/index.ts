@@ -31,16 +31,9 @@ export {
 
 // Re-export engine functions
 export {
-    // Signal normalization
-    normalizeSignalType,
-    createSignalMap,
-
     // Logic operators
     evaluateOperator,
     evaluateNode,
-
-    // Conflict resolution
-    resolveConflict,
 
     // Validation
     validateDepth,
@@ -50,7 +43,6 @@ export {
     validateDefinition,
 
     // Main combiner
-    combineStrategies,
     toExecutableStrategy,
 } from './combiner-engine';
 
