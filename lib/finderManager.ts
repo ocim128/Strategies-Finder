@@ -24,6 +24,7 @@ const DEFAULT_SORT_PRIORITY: FinderMetric[] = [
 interface FinderOptions {
 	mode: FinderMode;
 	sortPriority: FinderMetric[];
+	useAdvancedSort: boolean;
 	topN: number;
 	steps: number;
 	rangePercent: number;
@@ -99,6 +100,36 @@ export class FinderManager {
 			});
 		});
 
+		this.initSortingUI();
+	}
+
+	private initSortingUI(): void {
+		// Populate Dropdowns
+		const sortPrimary = getRequiredElement<HTMLSelectElement>('finderSort');
+		const sortSecondary = getRequiredElement<HTMLSelectElement>('finderSortSecondary');
+
+		const optionsHtml = DEFAULT_SORT_PRIORITY.map(key =>
+			`<option value="${key}">${METRIC_FULL_LABELS[key]}</option>`
+		).join('');
+
+		sortPrimary.innerHTML = optionsHtml;
+		sortSecondary.innerHTML = optionsHtml;
+
+		// Set defaults
+		sortPrimary.value = 'netProfit';
+		sortSecondary.value = 'sharpeRatio';
+
+		// Advanced Toggle Logic
+		const toggle = getRequiredElement<HTMLInputElement>('finderAdvancedToggle');
+		const simpleSection = getRequiredElement('finderSimpleSort');
+		const advancedSection = getRequiredElement('finderSortList');
+
+		toggle.addEventListener('change', () => {
+			setVisible(simpleSection.id, !toggle.checked);
+			setVisible(advancedSection.id, toggle.checked);
+		});
+
+		// Initialize Advanced List
 		this.initSortList();
 	}
 
@@ -296,15 +327,32 @@ export class FinderManager {
 	}
 
 	private readOptions(): FinderOptions {
-		// Scrape sort priority from the list
-		const sortItems = document.querySelectorAll('#finderSortList .finder-sort-item');
-		const sortPriority: FinderMetric[] = Array.from(sortItems)
-			.map(el => (el as HTMLElement).dataset.value as FinderMetric | undefined)
-			.filter((val): val is FinderMetric => !!val);
+		const useAdvancedSort = this.isToggleEnabled('finderAdvancedToggle', false);
+		let sortPriority: FinderMetric[] = [];
 
-		// Fallback if empty (shouldn't happen)
-		if (sortPriority.length === 0) {
-			sortPriority.push(...DEFAULT_SORT_PRIORITY);
+		if (useAdvancedSort) {
+			// Scrape sort priority from the list
+			const sortItems = document.querySelectorAll('#finderSortList .finder-sort-item');
+			sortPriority = Array.from(sortItems)
+				.map(el => (el as HTMLElement).dataset.value as FinderMetric | undefined)
+				.filter((val): val is FinderMetric => !!val);
+
+			// Fallback
+			if (sortPriority.length === 0) {
+				sortPriority.push(...DEFAULT_SORT_PRIORITY);
+			}
+		} else {
+			// Simple Sort Mode
+			const p1 = getRequiredElement<HTMLSelectElement>('finderSort').value as FinderMetric;
+			const p2 = getRequiredElement<HTMLSelectElement>('finderSortSecondary').value as FinderMetric;
+			sortPriority.push(p1);
+			if (p1 !== p2) {
+				sortPriority.push(p2);
+			}
+			// Append 'netProfit' as fallback if not present, to ensure stable sort for rest (tie breaking)
+			if (!sortPriority.includes('netProfit')) {
+				sortPriority.push('netProfit');
+			}
 		}
 
 		const mode = getRequiredElement<HTMLSelectElement>('finderMode').value as FinderMode;
@@ -320,9 +368,9 @@ export class FinderManager {
 		const maxTrades = Math.max(minTrades, maxTradesRaw);
 
 		return {
-			sortBy: sortPriority[0], // Deprecated but maybe used elsewhere? No, interface updated.
-			sortPriority,
 			mode,
+			sortPriority,
+			useAdvancedSort,
 			topN,
 			steps,
 			rangePercent,
@@ -330,7 +378,7 @@ export class FinderManager {
 			tradeFilterEnabled,
 			minTrades,
 			maxTrades
-		} as FinderOptions;
+		};
 	}
 
 	private readNumberInput(id: string, fallback: number, min: number): number {

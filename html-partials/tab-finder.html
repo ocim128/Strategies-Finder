@@ -3,9 +3,34 @@
     <div class="section-title">Strategy Finder</div>
 
     <div class="section-header">
-        <div class="section-title">Sort Priority</div>
+        <div class="section-title">Sorting</div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 10px; color: var(--text-secondary); font-weight: 600;">ADVANCED</span>
+            <label class="section-toggle" aria-label="Toggle advanced sort">
+                <input type="checkbox" id="finderAdvancedToggle">
+                <span class="section-toggle-track"></span>
+            </label>
+        </div>
     </div>
-    <div class="finder-sort-list" id="finderSortList">
+
+    <!-- Simple Sort Mode -->
+    <div class="param-row" id="finderSimpleSort">
+        <div class="param-group">
+            <label class="param-label">Sort By</label>
+            <select class="param-input" id="finderSort">
+                <!-- Populated by JS -->
+            </select>
+        </div>
+        <div class="param-group">
+            <label class="param-label">Then By</label>
+            <select class="param-input" id="finderSortSecondary">
+                <!-- Populated by JS -->
+            </select>
+        </div>
+    </div>
+
+    <!-- Advanced Sort Mode -->
+    <div class="finder-sort-list" id="finderSortList" style="display: none;">
         <!-- Sort Items injected by JS -->
     </div>
 

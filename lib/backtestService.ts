@@ -132,10 +132,7 @@ export class BacktestService {
         );
         const fixedTradeToggle = document.getElementById('fixedTradeToggle') as HTMLInputElement | null;
         const sizingMode: 'percent' | 'fixed' = fixedTradeToggle?.checked ? 'fixed' : 'percent';
-        const effectiveInitialCapital = sizingMode === 'fixed' && fixedTradeAmount > 0
-            ? fixedTradeAmount
-            : initialCapital;
-        return { initialCapital: effectiveInitialCapital, positionSize, commission, sizingMode, fixedTradeAmount };
+        return { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount };
     }
 
     public getBacktestSettings(): BacktestSettings {

@@ -30,7 +30,8 @@ export class ParamManager {
         for (const key of Object.keys(strategy.defaultParams)) {
             const input = document.getElementById(`param_${key}`) as HTMLInputElement;
             if (input) {
-                params[key] = parseFloat(input.value) || strategy.defaultParams[key];
+                const parsed = parseFloat(input.value);
+                params[key] = isNaN(parsed) ? strategy.defaultParams[key] : parsed;
             } else {
                 params[key] = strategy.defaultParams[key];
             }

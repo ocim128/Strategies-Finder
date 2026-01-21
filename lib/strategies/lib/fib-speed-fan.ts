@@ -92,23 +92,20 @@ function detectPivots(
 /**
  * Fibonacci levels used for the speed fan.
  */
-const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
 
 /**
  * Calculates Fib fan price levels at each bar index based on the last two pivots.
  * Returns an object with levels for each Fib ratio.
  */
-function calculateFibFanLevels(
+/**
+ * Calculates price levels for a single Fib fan level at each bar index based on pivots.
+ */
+function calculateArbitraryFanLevel(
     data: OHLCVData[],
-    pivots: Pivot[]
-): { [level: string]: (number | null)[] } {
-    const levels: { [level: string]: (number | null)[] } = {};
-
-    // Initialize all level arrays
-    for (const level of FIB_LEVELS) {
-        levels[level.toString()] = new Array(data.length).fill(null);
-    }
-
+    pivots: Pivot[],
+    level: number
+): (number | null)[] {
+    const levels: (number | null)[] = new Array(data.length).fill(null);
     if (pivots.length < 2) return levels;
 
     // For each pair of consecutive pivots, calculate fan levels extending forward
@@ -131,15 +128,12 @@ function calculateFibFanLevels(
         for (let i = endPivot.index; i <= extensionEnd; i++) {
             const barsFromEnd = i - endPivot.index;
 
-            // Calculate each Fib level fan line price at this bar
-            for (const level of FIB_LEVELS) {
-                // Fan line: starts at fiblLevel point on the price range, extends with adjusted slope
-                const fibPrice = startPivot.price + priceRange * level;
-                const adjustedSlope = slope * (1 - level); // Speed resistance concept
-                const fanPrice = fibPrice + adjustedSlope * barsFromEnd;
+            // Fan line: starts at fiblLevel point on the price range, extends with adjusted slope
+            const fibPrice = startPivot.price + priceRange * level;
+            const adjustedSlope = slope * (1 - level);
+            const fanPrice = fibPrice + adjustedSlope * barsFromEnd;
 
-                levels[level.toString()][i] = fanPrice;
-            }
+            levels[i] = fanPrice;
         }
     }
 
@@ -181,14 +175,14 @@ export const fib_speed_fan: Strategy = {
 
         if (pivots.length < 2) return [];
 
-        const fibLevels = calculateFibFanLevels(cleanData, pivots);
+        const entryLevels = calculateArbitraryFanLevel(cleanData, pivots, params.entryLevel);
+        const exitLevels = calculateArbitraryFanLevel(cleanData, pivots, params.exitLevel);
+        const levels0 = calculateArbitraryFanLevel(cleanData, pivots, 0);
+        const levels1 = calculateArbitraryFanLevel(cleanData, pivots, 1);
+
+        if (entryLevels.length === 0 || exitLevels.length === 0) return [];
+
         const signals: Signal[] = [];
-
-        const entryKey = params.entryLevel.toString();
-        const exitKey = params.exitLevel.toString();
-
-        const entryLevels = fibLevels[entryKey] || fibLevels['0.618'];
-        const exitLevels = fibLevels[exitKey] || fibLevels['0.382'];
 
         let lastPivotWasHigh = pivots.length > 0 ? pivots[pivots.length - 1].isHigh : false;
 
@@ -230,10 +224,10 @@ export const fib_speed_fan: Strategy = {
             }
 
             // Alternative: Fib level breakout signals
-            const level0 = fibLevels['0'][i];
-            const level1 = fibLevels['1'][i];
-            const prevLevel0 = fibLevels['0'][i - 1];
-            const prevLevel1 = fibLevels['1'][i - 1];
+            const level0 = levels0[i];
+            const level1 = levels1[i];
+            const prevLevel0 = levels0[i - 1];
+            const prevLevel1 = levels1[i - 1];
 
             if (level0 !== null && level1 !== null && prevLevel0 !== null && prevLevel1 !== null) {
                 // Breakout above 1.0 level (uptrend continuation)
