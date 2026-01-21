@@ -152,7 +152,12 @@ function calculateOptimizationScore(result: BacktestResult, minTrades: number): 
 // ============================================================================
 
 
-function runBacktestWithLookback(
+/**
+ * Fast backtest runner for optimization loops.
+ * Assumes data is already cleaned and indices are valid.
+ * Skip validation for speed - caller must ensure correctness.
+ */
+function runBacktestFast(
     data: OHLCVData[],
     startIndex: number,
     endIndex: number,
@@ -164,21 +169,8 @@ function runBacktestWithLookback(
     backtestSettings: BacktestSettings,
     lookback: number = 250
 ): BacktestResult {
-    // Clean data once at the start of the window operation
-    data = ensureCleanData(data);
-
-    // Validate indices
-    if (startIndex < 0 || endIndex > data.length || startIndex >= endIndex) {
-        throw new Error(`Invalid window indices: startIndex=${startIndex}, endIndex=${endIndex}, dataLength=${data.length}`);
-    }
-
     const bufferedStart = Math.max(0, startIndex - lookback);
     const bufferedData = data.slice(bufferedStart, endIndex);
-
-    // Validate buffered data
-    if (bufferedData.length === 0) {
-        throw new Error(`Empty buffered data: bufferedStart=${bufferedStart}, endIndex=${endIndex}`);
-    }
 
     const allSignals = strategy.execute(bufferedData, params);
 
@@ -234,21 +226,37 @@ async function optimizeWindow(
     topN: number
 ): Promise<OptimizationResult[]> {
     const topResults: OptimizationResult[] = [];
-    const BATCH_SIZE = 50; // Process 50 combinations before yielding
+    // PERF: Increased batch size from 50 to 200 for less overhead
+    const BATCH_SIZE = 200;
+    // PERF: Yield every N batches instead of every batch
+    const YIELD_INTERVAL = 3;
+    // PERF: Early termination threshold - if top scores are stable, we can stop early
+    const EARLY_TERM_CHECK_INTERVAL = 500;
+    const EARLY_TERM_STABILITY_THRESHOLD = 5; // Number of stable checks before termination
+
+    let batchCount = 0;
+    let lastTopScore = -Infinity;
+    let stableScoreCount = 0;
+    let processedCount = 0;
 
     for (let i = 0; i < paramGrid.length; i += BATCH_SIZE) {
-        const batch = paramGrid.slice(i, i + BATCH_SIZE);
+        const batchEnd = Math.min(i + BATCH_SIZE, paramGrid.length);
+        batchCount++;
 
-        // Yield to event loop to prevent freezing
-        if (i > 0) {
+        // PERF: Yield less frequently - every YIELD_INTERVAL batches
+        if (batchCount % YIELD_INTERVAL === 0) {
             await new Promise(resolve => setTimeout(resolve, 0));
         }
 
-        for (const paramOverrides of batch) {
+        // Process batch without slice (avoid array allocation)
+        for (let j = i; j < batchEnd; j++) {
+            const paramOverrides = paramGrid[j];
             const params = { ...baseParams, ...paramOverrides };
+            processedCount++;
 
             try {
-                const result = runBacktestWithLookback(
+                // PERF: Use fast version without validation
+                const result = runBacktestFast(
                     data,
                     startIndex,
                     endIndex,
@@ -270,15 +278,33 @@ async function optimizeWindow(
             }
         }
 
-        // Sort and prune intermediate results to keep memory usage low
-        topResults.sort((a, b) => b.score - a.score);
-        if (topResults.length > topN * 2) {
-            // Keep a bit more than topN to allow for some churn, but prune heavily
+        // Prune and sort periodically (less frequent than before)
+        if (topResults.length > topN * 3) {
+            topResults.sort((a, b) => b.score - a.score);
             topResults.splice(topN * 2);
+        }
+
+        // PERF: Early termination check - if we've processed enough and scores are stable
+        if (processedCount >= EARLY_TERM_CHECK_INTERVAL && topResults.length >= topN) {
+            topResults.sort((a, b) => b.score - a.score);
+            const currentTopScore = topResults[0].score;
+
+            // Check if top score has stabilized
+            if (Math.abs(currentTopScore - lastTopScore) < 0.001) {
+                stableScoreCount++;
+                if (stableScoreCount >= EARLY_TERM_STABILITY_THRESHOLD && processedCount > paramGrid.length * 0.3) {
+                    // Top score stable for N checks and we've processed at least 30% - early terminate
+                    break;
+                }
+            } else {
+                stableScoreCount = 0;
+            }
+            lastTopScore = currentTopScore;
         }
     }
 
-    // Final prune
+    // Final sort and prune
+    topResults.sort((a, b) => b.score - a.score);
     if (topResults.length > topN) {
         topResults.length = topN;
     }
@@ -465,7 +491,8 @@ export async function runWalkForwardAnalysis(
         const optimizedParams = averageParameters(topResults, parameterRanges);
         const finalParams = { ...strategy.defaultParams, ...optimizedParams };
 
-        const inSampleResult = runBacktestWithLookback(
+        // PERF: Use fast backtest - data is already cleaned at entry point
+        const inSampleResult = runBacktestFast(
             data,
             optimizationStart,
             optimizationEnd,
@@ -477,7 +504,7 @@ export async function runWalkForwardAnalysis(
             backtestSettings
         );
 
-        const outOfSampleResult = runBacktestWithLookback(
+        const outOfSampleResult = runBacktestFast(
             data,
             testStart,
             testEnd,
@@ -714,8 +741,9 @@ export async function runFixedParamWalkForward(
         // This gives us a way to measure consistency within each window
         const midPoint = windowStart + Math.floor((windowEnd - windowStart) / 2);
 
+        // PERF: Use fast backtest - data is already cleaned at entry point
         // First half = "In-Sample" (what we'd train on if we had params)
-        const inSampleResult = runBacktestWithLookback(
+        const inSampleResult = runBacktestFast(
             data,
             windowStart,
             midPoint,
@@ -728,7 +756,7 @@ export async function runFixedParamWalkForward(
         );
 
         // Second half = "Out-of-Sample" (the forward test)
-        const outOfSampleResult = runBacktestWithLookback(
+        const outOfSampleResult = runBacktestFast(
             data,
             midPoint,
             windowEnd,
@@ -769,8 +797,8 @@ export async function runFixedParamWalkForward(
 
         currentStart += stepSize;
 
-        // Yield to event loop periodically
-        if (windowIndex > 0 && windowIndex % 5 === 0) {
+        // PERF: Yield less frequently - every 10 windows instead of every 5
+        if (windowIndex > 0 && windowIndex % 10 === 0) {
             await new Promise(resolve => setTimeout(resolve, 0));
         }
     }
