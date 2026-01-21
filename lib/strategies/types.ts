@@ -63,6 +63,13 @@ export interface BacktestSettings {
     breakEvenAtR?: number;
     timeStopBars?: number;
 
+    // Risk management percentage mode
+    riskMode?: 'simple' | 'advanced' | 'percentage';
+    stopLossPercent?: number;
+    takeProfitPercent?: number;
+    stopLossEnabled?: boolean;
+    takeProfitEnabled?: boolean;
+
     trendEmaPeriod?: number;
     trendEmaSlopeBars?: number;
     atrPercentMin?: number;

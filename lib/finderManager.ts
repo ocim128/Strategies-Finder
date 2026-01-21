@@ -191,7 +191,7 @@ export class FinderManager {
 			const checkbox = document.createElement('input');
 			checkbox.type = 'checkbox';
 			checkbox.id = `finder-strategy-${key}`;
-			checkbox.checked = true;
+			checkbox.checked = false;
 
 			const label = document.createElement('label');
 			label.htmlFor = `finder-strategy-${key}`;
@@ -250,7 +250,16 @@ export class FinderManager {
 
 			const runsByStrategy: Map<string, number> = new Map();
 			for (const [key, strategy] of strategyEntries) {
-				const paramSets = this.generateParamSets(strategy.defaultParams, options);
+				const extendedDefaults = { ...strategy.defaultParams };
+				if (settings.riskMode === 'percentage') {
+					if (settings.stopLossEnabled) {
+						extendedDefaults['stopLossPercent'] = settings.stopLossPercent ?? 5;
+					}
+					if (settings.takeProfitEnabled) {
+						extendedDefaults['takeProfitPercent'] = settings.takeProfitPercent ?? 10;
+					}
+				}
+				const paramSets = this.generateParamSets(extendedDefaults, options);
 				runsByStrategy.set(key, paramSets.length);
 			}
 			const totalRuns = Array.from(runsByStrategy.values()).reduce((sum, count) => sum + count, 0);
@@ -258,9 +267,27 @@ export class FinderManager {
 			let errorCount = 0;
 
 			for (const [key, strategy] of strategyEntries) {
-				const paramSets = this.generateParamSets(strategy.defaultParams, options);
+				const extendedDefaults = { ...strategy.defaultParams };
+				if (settings.riskMode === 'percentage') {
+					if (settings.stopLossEnabled) {
+						extendedDefaults['stopLossPercent'] = settings.stopLossPercent ?? 5;
+					}
+					if (settings.takeProfitEnabled) {
+						extendedDefaults['takeProfitPercent'] = settings.takeProfitPercent ?? 10;
+					}
+				}
+				const paramSets = this.generateParamSets(extendedDefaults, options);
 				for (const params of paramSets) {
 					try {
+						// Apply percentage risk params to local settings copy for backtest
+						const backtestSettings = { ...settings };
+						if (params['stopLossPercent'] !== undefined) {
+							backtestSettings.stopLossPercent = params['stopLossPercent'];
+						}
+						if (params['takeProfitPercent'] !== undefined) {
+							backtestSettings.takeProfitPercent = params['takeProfitPercent'];
+						}
+
 						const signals = strategy.execute(state.ohlcvData, params);
 						const result = runBacktest(
 							state.ohlcvData,
@@ -268,7 +295,7 @@ export class FinderManager {
 							initialCapital,
 							positionSize,
 							commission,
-							settings,
+							backtestSettings,
 							{ mode: sizingMode, fixedTradeAmount }
 						);
 						results.push({ key, name: strategy.name, params, result });
@@ -563,14 +590,20 @@ export class FinderManager {
 		let next = value;
 		if (periodLike) {
 			next = Math.max(1, Math.round(next));
+		} else if (key === 'stopLossPercent') {
+			next = Math.min(15, Math.max(0, Number(next.toFixed(2))));
+		} else if (key === 'takeProfitPercent') {
+			next = Math.min(100, Math.max(0, Number(next.toFixed(2))));
 		} else if (percentLike) {
 			next = Math.min(100, Math.max(0, next));
 		} else if (nonNegative) {
 			next = Math.max(0, next);
 		}
 
-		if (!periodLike && Number.isInteger(defaultValue) && !percentLike) {
+		if (!periodLike && Number.isInteger(defaultValue) && !percentLike && key !== 'stopLossPercent' && key !== 'takeProfitPercent') {
 			next = Math.round(next);
+		} else if (key === 'stopLossPercent' || key === 'takeProfitPercent') {
+			next = Number(next.toFixed(2));
 		} else if (!Number.isInteger(defaultValue)) {
 			next = Number(next.toFixed(4));
 		}
@@ -756,6 +789,16 @@ export class FinderManager {
 		if (!strategy) return;
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, result.params);
+
+		// Also apply global risk settings if present in result
+		if (result.params['stopLossPercent'] !== undefined) {
+			const input = document.getElementById('stopLossPercent') as HTMLInputElement | null;
+			if (input) input.value = String(result.params['stopLossPercent']);
+		}
+		if (result.params['takeProfitPercent'] !== undefined) {
+			const input = document.getElementById('takeProfitPercent') as HTMLInputElement | null;
+			if (input) input.value = String(result.params['takeProfitPercent']);
+		}
 
 		// Switch to trades tab
 		const tradesTab = document.querySelector('.panel-tab[data-tab="trades"]') as HTMLElement;

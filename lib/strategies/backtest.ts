@@ -17,6 +17,12 @@ interface NormalizedSettings {
     breakEvenAtR: number;
     timeStopBars: number;
 
+    riskMode: 'simple' | 'advanced' | 'percentage';
+    stopLossPercent: number;
+    takeProfitPercent: number;
+    stopLossEnabled: boolean;
+    takeProfitEnabled: boolean;
+
     trendEmaPeriod: number;
     trendEmaSlopeBars: number;
     atrPercentMin: number;
@@ -86,6 +92,12 @@ function normalizeBacktestSettings(settings?: BacktestSettings): NormalizedSetti
         partialTakeProfitPercent: clamp(Math.max(0, toNumberOr(settings?.partialTakeProfitPercent, 0)), 0, 100),
         breakEvenAtR: Math.max(0, toNumberOr(settings?.breakEvenAtR, 0)),
         timeStopBars: Math.max(0, toNumberOr(settings?.timeStopBars, 0)),
+
+        riskMode: settings?.riskMode ?? 'simple',
+        stopLossPercent: Math.max(0, toNumberOr(settings?.stopLossPercent, 0)),
+        takeProfitPercent: Math.max(0, toNumberOr(settings?.takeProfitPercent, 0)),
+        stopLossEnabled: settings?.stopLossEnabled ?? false,
+        takeProfitEnabled: settings?.takeProfitEnabled ?? false,
 
         trendEmaPeriod: Math.max(0, toNumberOr(settings?.trendEmaPeriod, 0)),
         trendEmaSlopeBars: Math.max(0, toNumberOr(settings?.trendEmaSlopeBars, 0)),
@@ -510,21 +522,39 @@ export function runBacktest(
                         ? signal.price + directionFactor * config.takeProfitAtr * atrValue
                         : null;
 
-                    const riskPerShare = (atrValue !== null && atrValue !== undefined && config.stopLossAtr > 0)
-                        ? config.stopLossAtr * atrValue
-                        : 0;
+                    let riskPerShare = 0;
+                    if (config.riskMode === 'percentage') {
+                        if (config.stopLossEnabled && config.stopLossPercent > 0) {
+                            riskPerShare = signal.price * (config.stopLossPercent / 100);
+                        }
+                    } else if (atrValue !== null && atrValue !== undefined && config.stopLossAtr > 0) {
+                        riskPerShare = config.stopLossAtr * atrValue;
+                    }
 
                     const partialTargetPrice = (riskPerShare > 0 && config.partialTakeProfitAtR > 0)
                         ? signal.price + directionFactor * riskPerShare * config.partialTakeProfitAtR
                         : null;
+
+                    // Apply percentage-based stops if in percentage mode
+                    let finalStopLossPrice = stopLossPrice;
+                    let finalTakeProfitPrice = takeProfitPrice;
+
+                    if (config.riskMode === 'percentage') {
+                        if (config.stopLossEnabled && config.stopLossPercent > 0) {
+                            finalStopLossPrice = signal.price * (1 - directionFactor * (config.stopLossPercent / 100));
+                        }
+                        if (config.takeProfitEnabled && config.takeProfitPercent > 0) {
+                            finalTakeProfitPrice = signal.price * (1 + directionFactor * (config.takeProfitPercent / 100));
+                        }
+                    }
 
                     position = {
                         entryTime: signal.time,
                         entryPrice: signal.price,
                         size: shares,
                         entryCommissionPerShare: shares > 0 ? entryCommission / shares : 0,
-                        stopLossPrice,
-                        takeProfitPrice,
+                        stopLossPrice: finalStopLossPrice,
+                        takeProfitPrice: finalTakeProfitPrice,
                         riskPerShare,
                         barsInTrade: 0,
                         extremePrice: signal.price,

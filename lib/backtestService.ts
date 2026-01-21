@@ -181,19 +181,27 @@ export class BacktestService {
         const regimeEnabled = this.isToggleEnabled('regimeSettingsToggle');
         const entryEnabled = this.isToggleEnabled('entrySettingsToggle');
         const shortModeEnabled = this.isToggleEnabled('shortModeToggle', false);
-        const riskMode = (document.getElementById('riskMode') as HTMLSelectElement | null)?.value;
+        const riskMode = (document.getElementById('riskMode') as HTMLSelectElement | null)?.value as 'simple' | 'advanced' | 'percentage';
         const useAdvancedRisk = riskMode === 'advanced';
+        const usePercentageRisk = riskMode === 'percentage';
 
         const entryConfirmation = (document.getElementById('entryConfirmation') as HTMLSelectElement | null)?.value as EntryConfirmationMode | undefined;
         return {
             atrPeriod: this.readNumberInput('atrPeriod', 14),
-            stopLossAtr: riskEnabled ? this.readNumberInput('stopLossAtr', 1.5) : 0,
-            takeProfitAtr: riskEnabled ? this.readNumberInput('takeProfitAtr', 3) : 0,
-            trailingAtr: riskEnabled ? this.readNumberInput('trailingAtr', 2) : 0,
+            stopLossAtr: riskEnabled && (riskMode === 'simple' || riskMode === 'advanced') ? this.readNumberInput('stopLossAtr', 1.5) : 0,
+            takeProfitAtr: riskEnabled && (riskMode === 'simple' || riskMode === 'advanced') ? this.readNumberInput('takeProfitAtr', 3) : 0,
+            trailingAtr: riskEnabled && (riskMode === 'simple' || riskMode === 'advanced') ? this.readNumberInput('trailingAtr', 2) : 0,
             partialTakeProfitAtR: riskEnabled && useAdvancedRisk ? this.readNumberInput('partialTakeProfitAtR', 1) : 0,
             partialTakeProfitPercent: riskEnabled && useAdvancedRisk ? this.readNumberInput('partialTakeProfitPercent', 50) : 0,
             breakEvenAtR: riskEnabled && useAdvancedRisk ? this.readNumberInput('breakEvenAtR', 1) : 0,
             timeStopBars: riskEnabled && useAdvancedRisk ? this.readNumberInput('timeStopBars', 0) : 0,
+
+            // New percentage settings
+            riskMode,
+            stopLossPercent: riskEnabled && usePercentageRisk ? this.readNumberInput('stopLossPercent', 5) : 0,
+            takeProfitPercent: riskEnabled && usePercentageRisk ? this.readNumberInput('takeProfitPercent', 10) : 0,
+            stopLossEnabled: riskEnabled && usePercentageRisk ? this.isToggleEnabled('stopLossToggle', true) : false,
+            takeProfitEnabled: riskEnabled && usePercentageRisk ? this.isToggleEnabled('takeProfitToggle', true) : false,
 
             trendEmaPeriod: regimeEnabled ? this.readNumberInput('trendEmaPeriod', 200) : 0,
             trendEmaSlopeBars: regimeEnabled ? this.readNumberInput('trendEmaSlopeBars', 0) : 0,

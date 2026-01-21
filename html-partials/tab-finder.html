@@ -41,7 +41,7 @@
         </div>
         <div class="param-group">
             <label class="param-label">Runs / Strategy</label>
-            <input type="number" class="param-input" id="finderMaxRuns" value="50" min="1" max="500">
+            <input type="number" class="param-input" id="finderMaxRuns" value="555" min="1" max="1000">
         </div>
     </div>
 
@@ -49,14 +49,13 @@
         <div class="param-group">
             <label class="param-label">Search Mode</label>
             <select class="param-input" id="finderMode">
-                <option value="default" selected>Defaults Only</option>
                 <option value="grid">Grid Sweep</option>
-                <option value="random">Random Search</option>
+                <option value="random" selected>Random Search</option>
             </select>
         </div>
         <div class="param-group">
             <label class="param-label">Range (%)</label>
-            <input type="number" class="param-input" id="finderRange" value="50" min="0" max="300" step="5">
+            <input type="number" class="param-input" id="finderRange" value="555" min="0" max="1000" step="5">
         </div>
     </div>
 
@@ -70,7 +69,7 @@
     <div class="section-header">
         <div class="section-title">Strategies</div>
         <label class="section-toggle" aria-label="Toggle all strategies">
-            <input type="checkbox" id="finderStrategiesToggleAll" checked>
+            <input type="checkbox" id="finderStrategiesToggleAll">
             <span class="section-toggle-track"></span>
         </label>
     </div>

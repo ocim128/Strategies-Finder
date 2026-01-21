@@ -39,6 +39,10 @@ export interface BacktestSettingsData {
     partialTakeProfitPercent: number;
     breakEvenAtR: number;
     timeStopBars: number;
+    stopLossPercent: number;
+    takeProfitPercent: number;
+    stopLossEnabled: boolean;
+    takeProfitEnabled: boolean;
 
     // Short mode
     shortModeToggle: boolean;
@@ -95,7 +99,7 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     fixedTradeAmount: 1000,
 
     // Risk management
-    riskSettingsToggle: true,
+    riskSettingsToggle: false,
     riskMode: 'simple',
     atrPeriod: 14,
     stopLossAtr: 1.5,
@@ -105,6 +109,10 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     partialTakeProfitPercent: 50,
     breakEvenAtR: 1,
     timeStopBars: 0,
+    stopLossPercent: 5,
+    takeProfitPercent: 10,
+    stopLossEnabled: false,
+    takeProfitEnabled: false,
 
     // Short mode
     shortModeToggle: true,
@@ -191,6 +199,10 @@ class SettingsManager {
             partialTakeProfitPercent: this.readNumber('partialTakeProfitPercent', DEFAULT_BACKTEST_SETTINGS.partialTakeProfitPercent),
             breakEvenAtR: this.readNumber('breakEvenAtR', DEFAULT_BACKTEST_SETTINGS.breakEvenAtR),
             timeStopBars: this.readNumber('timeStopBars', DEFAULT_BACKTEST_SETTINGS.timeStopBars),
+            stopLossPercent: this.readNumber('stopLossPercent', DEFAULT_BACKTEST_SETTINGS.stopLossPercent),
+            takeProfitPercent: this.readNumber('takeProfitPercent', DEFAULT_BACKTEST_SETTINGS.takeProfitPercent),
+            stopLossEnabled: this.readCheckbox('stopLossToggle', DEFAULT_BACKTEST_SETTINGS.stopLossEnabled),
+            takeProfitEnabled: this.readCheckbox('takeProfitToggle', DEFAULT_BACKTEST_SETTINGS.takeProfitEnabled),
 
             // Short mode
             shortModeToggle: this.readCheckbox('shortModeToggle', DEFAULT_BACKTEST_SETTINGS.shortModeToggle),
@@ -366,6 +378,10 @@ class SettingsManager {
         this.writeNumber('partialTakeProfitPercent', settings.partialTakeProfitPercent);
         this.writeNumber('breakEvenAtR', settings.breakEvenAtR);
         this.writeNumber('timeStopBars', settings.timeStopBars);
+        this.writeNumber('stopLossPercent', settings.stopLossPercent);
+        this.writeNumber('takeProfitPercent', settings.takeProfitPercent);
+        this.writeCheckbox('stopLossToggle', settings.stopLossEnabled);
+        this.writeCheckbox('takeProfitToggle', settings.takeProfitEnabled);
 
         // Short mode
         this.writeCheckbox('shortModeToggle', settings.shortModeToggle);
@@ -603,7 +619,9 @@ class SettingsManager {
             'regimeSettingsToggle',
             'entrySettingsToggle',
             'shortModeToggle',
-            'webhookEnabledToggle'
+            'webhookEnabledToggle',
+            'stopLossToggle',
+            'takeProfitToggle'
         ];
 
         toggleIds.forEach(id => {

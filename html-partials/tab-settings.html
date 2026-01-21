@@ -66,52 +66,87 @@
                 <select class="param-input" id="riskMode">
                     <option value="simple" selected>Simple</option>
                     <option value="advanced">Advanced</option>
+                    <option value="percentage">Percentage</option>
                 </select>
                 <div class="param-hint">Simple shows core stops. Advanced adds scale-out, break-even, and time stop.
+                    Percentage uses fixed % from entry.
                 </div>
             </div>
         </div>
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">Volatility Period (ATR)</label>
-                <input type="number" class="param-input" id="atrPeriod" value="14" min="1">
-                <div class="param-hint">ATR measures average movement. Higher = smoother stops.</div>
-            </div>
-            <div class="param-group">
-                <label class="param-label">Stop Loss (ATR x)</label>
-                <input type="number" class="param-input" id="stopLossAtr" value="1.5" min="0" step="0.1">
-            </div>
-        </div>
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">Take Profit (ATR x)</label>
-                <input type="number" class="param-input" id="takeProfitAtr" value="3" min="0" step="0.1">
-            </div>
-            <div class="param-group">
-                <label class="param-label">Trailing Stop (ATR x)</label>
-                <input type="number" class="param-input" id="trailingAtr" value="2" min="0" step="0.1">
-            </div>
-        </div>
-        <div class="risk-advanced is-hidden" id="riskAdvanced">
+        <div class="risk-simple-advanced" id="riskSimpleAdvanced">
             <div class="param-row">
                 <div class="param-group">
-                    <label class="param-label">Scale Out at R</label>
-                    <input type="number" class="param-input" id="partialTakeProfitAtR" value="1" min="0" step="0.1">
-                    <div class="param-hint">R = distance from entry to stop loss.</div>
+                    <label class="param-label">Volatility Period (ATR)</label>
+                    <input type="number" class="param-input" id="atrPeriod" value="14" min="1">
+                    <div class="param-hint">ATR measures average movement. Higher = smoother stops.</div>
                 </div>
                 <div class="param-group">
-                    <label class="param-label">Scale Out Size (%)</label>
-                    <input type="number" class="param-input" id="partialTakeProfitPercent" value="50" min="0" max="100">
+                    <label class="param-label">Stop Loss (ATR x)</label>
+                    <input type="number" class="param-input" id="stopLossAtr" value="1.5" min="0" step="0.1">
                 </div>
             </div>
             <div class="param-row">
                 <div class="param-group">
-                    <label class="param-label">Move Stop to Break-even at R</label>
-                    <input type="number" class="param-input" id="breakEvenAtR" value="1" min="0" step="0.1">
+                    <label class="param-label">Take Profit (ATR x)</label>
+                    <input type="number" class="param-input" id="takeProfitAtr" value="3" min="0" step="0.1">
                 </div>
                 <div class="param-group">
-                    <label class="param-label">Exit After N Bars (if losing)</label>
-                    <input type="number" class="param-input" id="timeStopBars" value="0" min="0">
+                    <label class="param-label">Trailing Stop (ATR x)</label>
+                    <input type="number" class="param-input" id="trailingAtr" value="2" min="0" step="0.1">
+                </div>
+            </div>
+            <div class="risk-advanced is-hidden" id="riskAdvanced">
+                <div class="param-row">
+                    <div class="param-group">
+                        <label class="param-label">Scale Out at R</label>
+                        <input type="number" class="param-input" id="partialTakeProfitAtR" value="1" min="0" step="0.1">
+                        <div class="param-hint">R = distance from entry to stop loss.</div>
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label">Scale Out Size (%)</label>
+                        <input type="number" class="param-input" id="partialTakeProfitPercent" value="50" min="0"
+                            max="100">
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <label class="param-label">Move Stop to Break-even at R</label>
+                        <input type="number" class="param-input" id="breakEvenAtR" value="1" min="0" step="0.1">
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label">Exit After N Bars (if losing)</label>
+                        <input type="number" class="param-input" id="timeStopBars" value="0" min="0">
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="risk-percentage is-hidden" id="riskPercentage">
+            <div class="param-row">
+                <div class="param-group">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Stop Loss (%)</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle stop loss">
+                            <input type="checkbox" id="stopLossToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <input type="number" class="param-input" id="stopLossPercent" value="5" min="0.1" max="15"
+                        step="0.1">
+                    <div class="param-hint">Allowed: 0 - 15%</div>
+                </div>
+                <div class="param-group">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Take Profit (%)</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle take profit">
+                            <input type="checkbox" id="takeProfitToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <input type="number" class="param-input" id="takeProfitPercent" value="10" min="0.1" max="100"
+                        step="0.1">
+                    <div class="param-hint">Allowed: 0 - 100%</div>
                 </div>
             </div>
         </div>

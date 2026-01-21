@@ -174,15 +174,37 @@ export function setupEventHandlers() {
     });
 
     const riskModeSelect = getRequiredElement<HTMLSelectElement>('riskMode');
+    const riskSimpleAdvanced = document.getElementById('riskSimpleAdvanced');
+    const riskPercentage = document.getElementById('riskPercentage');
     const riskAdvanced = getRequiredElement<HTMLElement>('riskAdvanced');
     const riskAdvancedGroups = Array.from(riskAdvanced.querySelectorAll<HTMLElement>('.param-group'));
     const riskAdvancedInputs = Array.from(riskAdvanced.querySelectorAll<HTMLInputElement>('input'));
+
+    const riskPercentageGroups = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLElement>('.param-group')) : [];
+    const riskPercentageInputs = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLInputElement>('input')) : [];
+
     const applyRiskMode = () => {
-        const isAdvanced = riskModeSelect.value === 'advanced';
+        const mode = riskModeSelect.value;
+        const isAdvanced = mode === 'advanced';
+        const isPercentage = mode === 'percentage';
+        const isSimpleOrAdvanced = mode === 'simple' || mode === 'advanced';
+
+        if (riskSimpleAdvanced) {
+            riskSimpleAdvanced.classList.toggle('is-hidden', !isSimpleOrAdvanced);
+        }
+        if (riskPercentage) {
+            riskPercentage.classList.toggle('is-hidden', !isPercentage);
+        }
+
         riskAdvanced.classList.toggle('is-hidden', !isAdvanced);
         riskAdvancedGroups.forEach(group => group.classList.toggle('is-disabled', !isAdvanced));
         riskAdvancedInputs.forEach(input => {
             input.disabled = !isAdvanced;
+        });
+
+        riskPercentageGroups.forEach(group => group.classList.toggle('is-disabled', !isPercentage));
+        riskPercentageInputs.forEach(input => {
+            input.disabled = !isPercentage;
         });
     };
 
