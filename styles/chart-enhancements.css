@@ -1,0 +1,659 @@
+/* ============================================================================
+   ENHANCED CHART STYLES
+   Premium trading chart aesthetic improvements
+   ============================================================================ */
+
+/* Enhanced OHLC Panel with glassmorphism */
+.ohlc-panel {
+    position: absolute;
+    top: var(--space-3);
+    left: var(--space-3);
+    display: flex;
+    gap: var(--space-4);
+    font-size: var(--font-size-sm);
+    z-index: 10;
+    background: linear-gradient(135deg,
+            hsl(var(--hsl-glass) / 0.85) 0%,
+            hsl(var(--hsl-glass) / 0.75) 100%);
+    padding: var(--space-2-5) var(--space-4);
+    border-radius: var(--radius-l);
+    border: 1px solid hsl(220 30% 65% / 0.2);
+    box-shadow:
+        0 8px 32px hsl(var(--hsl-shadow) / 0.3),
+        inset 0 1px 0 hsl(220 30% 90% / 0.12);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ohlc-panel:hover {
+    box-shadow:
+        0 12px 40px hsl(var(--hsl-shadow) / 0.4),
+        inset 0 1px 0 hsl(220 30% 90% / 0.15);
+    transform: translateY(-1px);
+}
+
+.ohlc-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 70px;
+}
+
+.ohlc-label {
+    color: var(--text-secondary);
+    font-size: var(--font-size-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: var(--font-weight-semibold);
+}
+
+.ohlc-value {
+    font-weight: var(--font-weight-bold);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-md);
+    transition: color 0.2s ease, text-shadow 0.2s ease;
+}
+
+.ohlc-value.positive {
+    color: var(--green);
+    text-shadow: 0 0 12px hsl(var(--hsl-success) / 0.4);
+}
+
+.ohlc-value.negative {
+    color: var(--red);
+    text-shadow: 0 0 12px hsl(var(--hsl-danger) / 0.4);
+}
+
+/* Enhanced OHLC Panel with Volume & Change */
+.ohlc-panel-enhanced {
+    display: flex;
+    gap: var(--space-3);
+}
+
+.ohlc-change {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-s);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    font-family: var(--font-family-mono);
+}
+
+.ohlc-change.positive {
+    background: hsl(var(--hsl-success) / 0.15);
+    color: var(--green);
+}
+
+.ohlc-change.negative {
+    background: hsl(var(--hsl-danger) / 0.15);
+    color: var(--red);
+}
+
+.ohlc-change-arrow {
+    font-size: 10px;
+}
+
+/* ============================================================================
+   ENHANCED CROSSHAIR TOOLTIP
+   ============================================================================ */
+
+.chart-tooltip {
+    position: absolute;
+    z-index: 1000;
+    pointer-events: none;
+    background: linear-gradient(135deg,
+            hsl(var(--hsl-surface-3) / 0.98) 0%,
+            hsl(var(--hsl-surface-2) / 0.95) 100%);
+    border: 1px solid hsl(220 30% 65% / 0.25);
+    border-radius: var(--radius-l);
+    padding: var(--space-3);
+    min-width: 200px;
+    box-shadow:
+        0 16px 48px hsl(var(--hsl-shadow) / 0.5),
+        inset 0 1px 0 hsl(220 30% 90% / 0.1);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.chart-tooltip.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+.tooltip-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-2);
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tooltip-date {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    font-weight: var(--font-weight-medium);
+}
+
+.tooltip-change {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-bold);
+    font-family: var(--font-family-mono);
+    padding: 2px 6px;
+    border-radius: var(--radius-xs);
+}
+
+.tooltip-change.positive {
+    background: hsl(var(--hsl-success) / 0.2);
+    color: var(--green);
+}
+
+.tooltip-change.negative {
+    background: hsl(var(--hsl-danger) / 0.2);
+    color: var(--red);
+}
+
+.tooltip-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-2);
+}
+
+.tooltip-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.tooltip-label {
+    font-size: var(--font-size-2xs);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.tooltip-value {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    font-family: var(--font-family-mono);
+}
+
+.tooltip-value.open {
+    color: hsl(210 80% 65%);
+}
+
+.tooltip-value.high {
+    color: var(--green);
+}
+
+.tooltip-value.low {
+    color: var(--red);
+}
+
+.tooltip-value.close {
+    color: var(--text-primary);
+}
+
+.tooltip-value.volume {
+    color: hsl(280 60% 65%);
+}
+
+.tooltip-divider {
+    grid-column: span 2;
+    height: 1px;
+    background: var(--border-color);
+    margin: var(--space-1) 0;
+}
+
+.tooltip-indicators {
+    grid-column: span 2;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin-top: var(--space-1);
+}
+
+.tooltip-indicator {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: var(--font-size-xs);
+}
+
+.tooltip-indicator-name {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--text-secondary);
+}
+
+.tooltip-indicator-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 2px;
+}
+
+.tooltip-indicator-value {
+    font-family: var(--font-family-mono);
+    font-weight: var(--font-weight-medium);
+}
+
+/* ============================================================================
+   ENHANCED EQUITY CURVE
+   ============================================================================ */
+
+#equity-chart {
+    height: 120px;
+    position: relative;
+    border-top: 1px solid var(--border-color);
+    background: linear-gradient(180deg,
+            var(--chart-bg) 0%,
+            hsl(var(--hsl-surface-1) / 0.5) 100%);
+}
+
+.equity-overlay {
+    position: absolute;
+    top: var(--space-2);
+    left: var(--space-3);
+    z-index: 10;
+    display: flex;
+    gap: var(--space-3);
+}
+
+.equity-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.equity-stat-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-secondary);
+    font-weight: var(--font-weight-semibold);
+}
+
+.equity-stat-value {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-bold);
+    font-family: var(--font-family-mono);
+}
+
+.equity-stat-value.positive {
+    color: var(--green);
+}
+
+.equity-stat-value.negative {
+    color: var(--red);
+}
+
+/* ============================================================================
+   ENHANCED TRADE MARKERS
+   ============================================================================ */
+
+/* Trade zone highlights (profit/loss regions) */
+.trade-zone-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 5;
+}
+
+/* Trade annotation popups */
+.trade-annotation {
+    position: absolute;
+    z-index: 100;
+    background: linear-gradient(135deg,
+            hsl(var(--hsl-surface-3) / 0.95) 0%,
+            hsl(var(--hsl-surface-2) / 0.9) 100%);
+    border-radius: var(--radius-m);
+    padding: var(--space-2) var(--space-3);
+    box-shadow: 0 8px 24px hsl(var(--hsl-shadow) / 0.4);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: all 0.2s ease;
+}
+
+.trade-annotation.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.trade-annotation.buy {
+    border-left: 3px solid var(--green);
+}
+
+.trade-annotation.sell {
+    border-left: 3px solid var(--red);
+}
+
+.trade-annotation-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-1);
+}
+
+.trade-annotation-type {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-bold);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.trade-annotation-type.buy {
+    color: var(--green);
+}
+
+.trade-annotation-type.sell {
+    color: var(--red);
+}
+
+.trade-annotation-type.close {
+    color: var(--text-primary);
+}
+
+.trade-annotation-pnl {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-bold);
+    font-family: var(--font-family-mono);
+    padding: 2px 6px;
+    border-radius: var(--radius-xs);
+}
+
+.trade-annotation-pnl.positive {
+    background: hsl(var(--hsl-success) / 0.2);
+    color: var(--green);
+}
+
+.trade-annotation-pnl.negative {
+    background: hsl(var(--hsl-danger) / 0.2);
+    color: var(--red);
+}
+
+.trade-annotation-price {
+    font-size: var(--font-size-sm);
+    font-family: var(--font-family-mono);
+    font-weight: var(--font-weight-semibold);
+}
+
+/* ============================================================================
+   CHART TOOLBAR ENHANCEMENTS
+   ============================================================================ */
+
+.toolbar {
+    background: linear-gradient(180deg,
+            var(--bg-secondary) 0%,
+            hsl(var(--hsl-surface-2) / 0.8) 100%);
+}
+
+.tool-btn {
+    width: 36px;
+    height: 36px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    border-radius: var(--radius-m);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+}
+
+.tool-btn svg {
+    width: 18px;
+    height: 18px;
+    transition: transform 0.2s ease;
+}
+
+.tool-btn:hover {
+    background: var(--accent-soft);
+    color: var(--accent-color);
+    transform: scale(1.05);
+}
+
+.tool-btn:hover svg {
+    transform: scale(1.1);
+}
+
+.tool-btn:active {
+    transform: scale(0.95);
+}
+
+.tool-btn.active {
+    background: var(--accent-soft-strong);
+    color: var(--accent-color);
+    box-shadow: inset 0 0 0 1px var(--accent-color);
+}
+
+.tool-btn::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: var(--radius-m);
+    background: var(--accent-color);
+    opacity: 0;
+    transform: scale(0.8);
+    transition: all 0.2s ease;
+    z-index: -1;
+}
+
+.tool-btn:focus-visible::before {
+    opacity: 0.2;
+    transform: scale(1);
+}
+
+.tool-separator {
+    width: 24px;
+    height: 1px;
+    background: linear-gradient(90deg,
+            transparent 0%,
+            var(--border-color) 50%,
+            transparent 100%);
+    margin: var(--space-2) 0;
+}
+
+/* Screenshot button styling */
+.tool-btn.screenshot-btn {
+    position: relative;
+}
+
+.tool-btn.screenshot-btn::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius-m);
+    background: linear-gradient(135deg,
+            hsl(var(--hsl-accent) / 0.3) 0%,
+            transparent 50%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.tool-btn.screenshot-btn:hover::after {
+    opacity: 1;
+}
+
+/* Screenshot flash animation */
+@keyframes screenshot-flash {
+    0% {
+        opacity: 0;
+    }
+
+    20% {
+        opacity: 1;
+    }
+
+    100% {
+        opacity: 0;
+    }
+}
+
+.chart-container.screenshot-flash::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: white;
+    animation: screenshot-flash 0.4s ease-out forwards;
+    pointer-events: none;
+    z-index: 1000;
+}
+
+/* ============================================================================
+   ZOOM/PAN IMPROVEMENTS
+   ============================================================================ */
+
+/* Smooth zoom indicator */
+.zoom-indicator {
+    position: absolute;
+    bottom: var(--space-3);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--glass-bg);
+    padding: var(--space-1-5) var(--space-3);
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--glass-border);
+    font-size: var(--font-size-xs);
+    font-family: var(--font-family-mono);
+    color: var(--text-secondary);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    z-index: 20;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+.zoom-indicator.visible {
+    opacity: 1;
+}
+
+/* Pan mode cursor */
+.chart-container.panning {
+    cursor: grab;
+}
+
+.chart-container.panning:active {
+    cursor: grabbing;
+}
+
+/* ============================================================================
+   SCREENSHOT MODAL
+   ============================================================================ */
+
+.screenshot-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--overlay-bg);
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+}
+
+.screenshot-modal.visible {
+    opacity: 1;
+    visibility: visible;
+}
+
+.screenshot-modal-content {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-floating);
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow: hidden;
+    transform: scale(0.9);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.screenshot-modal.visible .screenshot-modal-content {
+    transform: scale(1);
+}
+
+.screenshot-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.screenshot-modal-title {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+}
+
+.screenshot-modal-actions {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.screenshot-modal-body {
+    padding: var(--space-4);
+    max-height: calc(90vh - 120px);
+    overflow: auto;
+}
+
+.screenshot-preview {
+    border-radius: var(--radius-m);
+    box-shadow: 0 4px 16px hsl(var(--hsl-shadow) / 0.3);
+    max-width: 100%;
+    height: auto;
+}
+
+.screenshot-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-top: 1px solid var(--border-color);
+}
+
+/* ============================================================================
+   LIGHT THEME OVERRIDES
+   ============================================================================ */
+
+.light-theme .ohlc-panel {
+    background: linear-gradient(135deg,
+            hsl(220 33% 98% / 0.9) 0%,
+            hsl(220 33% 96% / 0.85) 100%);
+    border-color: hsl(220 20% 80% / 0.4);
+    box-shadow:
+        0 8px 32px hsl(220 30% 50% / 0.1),
+        inset 0 1px 0 hsl(0 0% 100% / 0.8);
+}
+
+.light-theme .chart-tooltip {
+    background: linear-gradient(135deg,
+            hsl(220 33% 99% / 0.98) 0%,
+            hsl(220 33% 97% / 0.95) 100%);
+    box-shadow:
+        0 16px 48px hsl(220 30% 50% / 0.15),
+        inset 0 1px 0 hsl(0 0% 100% / 0.9);
+}
+
+.light-theme .ohlc-value.positive {
+    text-shadow: 0 0 12px hsl(var(--hsl-success) / 0.2);
+}
+
+.light-theme .ohlc-value.negative {
+    text-shadow: 0 0 12px hsl(var(--hsl-danger) / 0.2);
+}

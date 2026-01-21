@@ -88,3 +88,60 @@ export const lightTheme: DeepPartial<ChartOptions> = {
         secondsVisible: false,
     },
 };
+
+// ============================================================================
+// Enhanced Candlestick Colors - Premium Trading Aesthetic
+// ============================================================================
+
+export const ENHANCED_CANDLE_COLORS = {
+    // Bullish (green) candles - vibrant teal/emerald
+    up: '#00c087',
+    upBorder: '#00a876',
+    wickUp: '#00c087',
+
+    // Bearish (red) candles - vivid coral/crimson  
+    down: '#ff4976',
+    downBorder: '#e83e66',
+    wickDown: '#ff4976',
+};
+
+// Alternative color schemes for customization
+export const CANDLE_COLOR_SCHEMES = {
+    default: ENHANCED_CANDLE_COLORS,
+
+    classic: {
+        up: '#26a69a',
+        upBorder: '#26a69a',
+        wickUp: '#26a69a',
+        down: '#ef5350',
+        downBorder: '#ef5350',
+        wickDown: '#ef5350',
+    },
+
+    tradingView: {
+        up: '#089981',
+        upBorder: '#089981',
+        wickUp: '#089981',
+        down: '#f23645',
+        downBorder: '#f23645',
+        wickDown: '#f23645',
+    },
+
+    binance: {
+        up: '#0ecb81',
+        upBorder: '#0ecb81',
+        wickUp: '#0ecb81',
+        down: '#f6465d',
+        downBorder: '#f6465d',
+        wickDown: '#f6465d',
+    },
+
+    monochrome: {
+        up: '#ffffff',
+        upBorder: '#888888',
+        wickUp: '#cccccc',
+        down: '#444444',
+        downBorder: '#222222',
+        wickDown: '#666666',
+    },
+};

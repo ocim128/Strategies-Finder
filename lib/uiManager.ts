@@ -28,6 +28,35 @@ export class UIManager {
         updateTextContent('ohlcHigh', this.formatPrice(data.high), displayClass);
         updateTextContent('ohlcLow', this.formatPrice(data.low), displayClass);
         updateTextContent('ohlcClose', this.formatPrice(data.close), displayClass);
+
+        // Volume display
+        if (data.volume !== undefined) {
+            const volumeEl = document.getElementById('ohlcVolume');
+            if (volumeEl) {
+                volumeEl.textContent = this.formatVolume(data.volume);
+            }
+        }
+
+        // Change percentage
+        const change = ((data.close - data.open) / data.open) * 100;
+        const changeEl = document.getElementById('ohlcChange');
+        const changeValueEl = document.getElementById('ohlcChangeValue');
+        const arrowEl = changeEl?.querySelector('.ohlc-change-arrow');
+
+        if (changeEl && changeValueEl) {
+            changeValueEl.textContent = `${isPositive ? '+' : ''}${change.toFixed(2)}%`;
+            changeEl.className = `ohlc-change ${isPositive ? 'positive' : 'negative'}`;
+            if (arrowEl) {
+                arrowEl.textContent = isPositive ? '▲' : '▼';
+            }
+        }
+    }
+
+    private formatVolume(volume: number): string {
+        if (volume >= 1e9) return (volume / 1e9).toFixed(2) + 'B';
+        if (volume >= 1e6) return (volume / 1e6).toFixed(2) + 'M';
+        if (volume >= 1e3) return (volume / 1e3).toFixed(2) + 'K';
+        return volume.toFixed(2);
     }
 
     public updatePriceDisplay() {

@@ -5,12 +5,28 @@ import { debugLogger } from "./debugLogger";
 import { chartManager } from "./chartManager";
 
 export function handleCrosshairMove(param: MouseEventParams<Time>) {
-    if (!param.time || !param.seriesData) return;
+    if (!param.time || !param.seriesData) {
+        chartManager.hideTooltip();
+        return;
+    }
+
     const data = param.seriesData.get(state.candlestickSeries) as CandlestickData<Time> | undefined;
-    if (!data) return;
+    if (!data) {
+        chartManager.hideTooltip();
+        return;
+    }
+
     const ohlc = state.ohlcvData.find(d => d.time === data.time);
-    if (!ohlc) return;
+    if (!ohlc) {
+        chartManager.hideTooltip();
+        return;
+    }
+
+    // Update the OHLC display panel
     uiManager.updateOHLCDisplay(ohlc);
+
+    // Update the enhanced tooltip
+    chartManager.updateTooltip(param, ohlc);
 }
 
 export function clearAll() {
@@ -24,3 +40,4 @@ export function clearAll() {
     state.clearTradeResults();
     uiManager.clearUI();
 }
+

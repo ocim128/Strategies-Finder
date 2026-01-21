@@ -5,6 +5,7 @@ import { debugLogger } from "../debugLogger";
 import { backtestService } from "../backtestService";
 import { clearAll } from "../appActions";
 import { uiManager } from "../uiManager";
+import { chartManager } from "../chartManager";
 
 export function setupEventHandlers() {
     // Symbol dropdown
@@ -108,29 +109,53 @@ export function setupEventHandlers() {
         getRequiredElement('strategyPanel').classList.toggle('collapsed');
     });
 
-    // Zoom controls
+    // Zoom controls - using enhanced chartManager methods
     getRequiredElement('zoomInTool').addEventListener('click', () => {
-        const range = state.chart.timeScale().getVisibleLogicalRange();
-        if (range) {
-            const center = (range.from + range.to) / 2;
-            const newWidth = (range.to - range.from) * 0.7;
-            state.chart.timeScale().setVisibleLogicalRange({ from: center - newWidth / 2, to: center + newWidth / 2 });
-        }
+        chartManager.zoomIn(0.7);
     });
 
     getRequiredElement('zoomOutTool').addEventListener('click', () => {
-        const range = state.chart.timeScale().getVisibleLogicalRange();
-        if (range) {
-            const center = (range.from + range.to) / 2;
-            const newWidth = (range.to - range.from) * 1.4;
-            state.chart.timeScale().setVisibleLogicalRange({ from: center - newWidth / 2, to: center + newWidth / 2 });
-        }
+        chartManager.zoomOut(1.4);
     });
 
     getRequiredElement('fitTool').addEventListener('click', () => {
         state.chart.timeScale().fitContent();
         state.equityChart.timeScale().fitContent();
     });
+
+    // Screenshot button
+    const screenshotBtn = document.getElementById('screenshotTool');
+    if (screenshotBtn) {
+        screenshotBtn.addEventListener('click', async () => {
+            try {
+                const dataUrl = await chartManager.captureScreenshot();
+                chartManager.downloadScreenshot(dataUrl);
+                uiManager.showToast('Screenshot saved!', 'success');
+            } catch (error) {
+                console.error('Screenshot failed:', error);
+                uiManager.showToast('Screenshot failed - try again', 'error');
+            }
+        });
+    }
+
+    // Copy chart to clipboard button
+    const copyChartBtn = document.getElementById('copyChartBtn');
+    if (copyChartBtn) {
+        copyChartBtn.addEventListener('click', async () => {
+            try {
+                const dataUrl = await chartManager.captureScreenshot();
+                const success = await chartManager.copyScreenshotToClipboard(dataUrl);
+                if (success) {
+                    uiManager.showToast('Chart copied to clipboard!', 'success');
+                } else {
+                    uiManager.showToast('Copy failed - check browser permissions', 'error');
+                }
+            } catch (error) {
+                console.error('Copy failed:', error);
+                uiManager.showToast('Copy failed - try again', 'error');
+            }
+        });
+    }
 
     // Strategy settings toggles
     [
