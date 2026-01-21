@@ -8,11 +8,22 @@ import { getRequiredElement, setVisible } from "./domUtils";
 import { dataManager } from "./dataManager";
 
 type FinderMode = 'default' | 'grid' | 'random';
-type FinderMetric = 'netProfit' | 'profitFactor' | 'sharpeRatio' | 'netProfitPercent' | 'winRate' | 'maxDrawdownPercent';
+type FinderMetric = 'netProfit' | 'profitFactor' | 'sharpeRatio' | 'netProfitPercent' | 'winRate' | 'maxDrawdownPercent' | 'expectancy' | 'averageGain';
+
+const DEFAULT_SORT_PRIORITY: FinderMetric[] = [
+	'netProfit',
+	'profitFactor',
+	'sharpeRatio',
+	'winRate',
+	'maxDrawdownPercent',
+	'expectancy',
+	'averageGain',
+	'netProfitPercent'
+];
 
 interface FinderOptions {
 	mode: FinderMode;
-	sortBy: FinderMetric;
+	sortPriority: FinderMetric[];
 	topN: number;
 	steps: number;
 	rangePercent: number;
@@ -27,7 +38,6 @@ interface FinderResult {
 	name: string;
 	params: StrategyParams;
 	result: BacktestResult;
-	score: number;
 }
 
 const METRIC_LABELS: Record<FinderMetric, string> = {
@@ -36,7 +46,20 @@ const METRIC_LABELS: Record<FinderMetric, string> = {
 	sharpeRatio: 'Sharpe',
 	netProfitPercent: 'Net %',
 	winRate: 'Win %',
-	maxDrawdownPercent: 'DD %'
+	maxDrawdownPercent: 'DD %',
+	expectancy: 'Exp',
+	averageGain: 'Avg Gain'
+};
+
+const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
+	netProfit: 'Net Profit',
+	profitFactor: 'Profit Factor',
+	sharpeRatio: 'Sharpe Ratio',
+	netProfitPercent: 'Net Profit %',
+	winRate: 'Win Rate',
+	maxDrawdownPercent: 'Max Drawdown %',
+	expectancy: 'Expectancy',
+	averageGain: 'Average Gain'
 };
 
 /**
@@ -74,6 +97,53 @@ export class FinderManager {
 			this.strategyToggles.forEach(toggle => {
 				toggle.checked = checked;
 			});
+		});
+
+		this.initSortList();
+	}
+
+	private initSortList(): void {
+		const list = getRequiredElement('finderSortList');
+
+		// Event delegation for move buttons
+		list.addEventListener('click', (e) => {
+			const target = e.target as HTMLElement;
+			const btn = target.closest('.finder-sort-btn');
+			if (!btn) return;
+
+			const item = btn.closest('.finder-sort-item');
+			if (!item) return;
+
+			if (btn.classList.contains('sort-up')) {
+				if (item.previousElementSibling) {
+					item.parentElement?.insertBefore(item, item.previousElementSibling);
+				}
+			} else if (btn.classList.contains('sort-down')) {
+				if (item.nextElementSibling) {
+					item.parentElement?.insertBefore(item.nextElementSibling, item);
+				}
+			}
+		});
+
+		this.renderSortList();
+	}
+
+	private renderSortList(): void {
+		const container = getRequiredElement('finderSortList');
+		container.innerHTML = '';
+
+		DEFAULT_SORT_PRIORITY.forEach(metric => {
+			const div = document.createElement('div');
+			div.className = 'finder-sort-item';
+			div.dataset.value = metric;
+			div.innerHTML = `
+				<span class="sort-label">${METRIC_FULL_LABELS[metric]}</span>
+				<div class="finder-sort-actions">
+					<button class="finder-sort-btn sort-up" title="Move Up">▲</button>
+					<button class="finder-sort-btn sort-down" title="Move Down">▼</button>
+				</div>
+			`;
+			container.appendChild(div);
 		});
 	}
 
@@ -129,7 +199,7 @@ export class FinderManager {
 		this.setProgress(true, 0, 'Preparing...');
 		this.setStatus('Running strategy finder...');
 		this.displayResults = [];
-		this.renderResults([], options.sortBy);
+		this.renderResults([], options.sortPriority[0]);
 
 		try {
 			const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = backtestService.getCapitalSettings();
@@ -170,8 +240,7 @@ export class FinderManager {
 							settings,
 							{ mode: sizingMode, fixedTradeAmount }
 						);
-						const score = this.getMetricValue(result, options.sortBy);
-						results.push({ key, name: strategy.name, params, result, score });
+						results.push({ key, name: strategy.name, params, result });
 					} catch (err) {
 						errorCount += 1;
 						if (errorCount <= 3) {
@@ -194,15 +263,22 @@ export class FinderManager {
 				)
 				: results;
 
-			const sortAscending = options.sortBy === 'maxDrawdownPercent';
 			filteredResults.sort((a, b) => {
-				const primary = sortAscending ? a.score - b.score : b.score - a.score;
-				if (primary !== 0) return primary;
-				return b.result.netProfit - a.result.netProfit;
+				for (const metric of options.sortPriority) {
+					const valA = this.getMetricValue(a.result, metric);
+					const valB = this.getMetricValue(b.result, metric);
+
+					// Different values determine the order
+					if (Math.abs(valA - valB) > 0.0001) {
+						const isAscending = metric === 'maxDrawdownPercent';
+						return isAscending ? valA - valB : valB - valA;
+					}
+				}
+				return 0;
 			});
 
 			const trimmed = filteredResults.slice(0, Math.max(1, options.topN));
-			this.renderResults(trimmed, options.sortBy);
+			this.renderResults(trimmed, options.sortPriority[0]);
 			this.displayResults = trimmed;
 
 			const progressText = totalRuns > 0 ? `${totalRuns}/${totalRuns} runs` : 'Complete';
@@ -220,7 +296,17 @@ export class FinderManager {
 	}
 
 	private readOptions(): FinderOptions {
-		const sortBy = getRequiredElement<HTMLSelectElement>('finderSort').value as FinderMetric;
+		// Scrape sort priority from the list
+		const sortItems = document.querySelectorAll('#finderSortList .finder-sort-item');
+		const sortPriority: FinderMetric[] = Array.from(sortItems)
+			.map(el => (el as HTMLElement).dataset.value as FinderMetric | undefined)
+			.filter((val): val is FinderMetric => !!val);
+
+		// Fallback if empty (shouldn't happen)
+		if (sortPriority.length === 0) {
+			sortPriority.push(...DEFAULT_SORT_PRIORITY);
+		}
+
 		const mode = getRequiredElement<HTMLSelectElement>('finderMode').value as FinderMode;
 		const topN = Math.round(this.readNumberInput('finderTopN', 10, 1));
 		const steps = Math.round(this.readNumberInput('finderSteps', 3, 2));
@@ -234,7 +320,8 @@ export class FinderManager {
 		const maxTrades = Math.max(minTrades, maxTradesRaw);
 
 		return {
-			sortBy,
+			sortBy: sortPriority[0], // Deprecated but maybe used elsewhere? No, interface updated.
+			sortPriority,
 			mode,
 			topN,
 			steps,
@@ -243,7 +330,7 @@ export class FinderManager {
 			tradeFilterEnabled,
 			minTrades,
 			maxTrades
-		};
+		} as FinderOptions;
 	}
 
 	private readNumberInput(id: string, fallback: number, min: number): number {
@@ -568,6 +655,10 @@ export class FinderManager {
 				return this.formatPercent(result.winRate);
 			case 'maxDrawdownPercent':
 				return `${result.maxDrawdownPercent.toFixed(2)}%`;
+			case 'expectancy':
+				return this.formatCurrency(result.expectancy);
+			case 'averageGain':
+				return this.formatCurrency(result.avgWin);
 			default:
 				return '';
 		}
@@ -587,6 +678,10 @@ export class FinderManager {
 				return result.winRate;
 			case 'maxDrawdownPercent':
 				return result.maxDrawdownPercent;
+			case 'expectancy':
+				return result.expectancy;
+			case 'averageGain':
+				return result.avgWin;
 			default:
 				return 0;
 		}
