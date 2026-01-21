@@ -48,6 +48,8 @@ export function setupStateSubscriptions() {
 
     // Sync backtest results
     state.subscribe('currentBacktestResult', (result) => {
+        if (state.replayMode) return;
+
         if (result) {
             const strategy = strategyRegistry.get(state.currentStrategyKey);
             const params = strategy ? paramManager.getValues(strategy) : {};

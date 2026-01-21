@@ -459,7 +459,10 @@ export class ReplayUI {
         // Clear previous signals and trades
         this.clearSignalLog();
         state.clearTradeResults();
+
+        // CRITICAL: Set replay mode BEFORE starting manager to block backtest updates
         state.set('replayMode', true);
+        console.log('[ReplayUI] Starting replay, set replayMode=true');
 
         // Start replay with current strategy and data
         this.replayManager.start({

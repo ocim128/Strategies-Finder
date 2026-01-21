@@ -2,29 +2,36 @@
  * Replay Chart Adapter
  * 
  * Bridges the ReplayManager and ChartManager, subscribing to replay events
- * and updating the chart accordingly. Handles incremental data display,
+ * and and updating the chart accordingly. Handles incremental data display,
  * signal highlighting, and auto-scrolling.
  */
 
-import type { ChartManager } from '../chartManager';
+
 import type { ReplayManager } from './replayManager';
 import type { ReplayEvent, SignalWithAnnotation } from './replayTypes';
 import type { OHLCVData } from '../strategies/types';
 import { state } from '../state';
+import { chartManager } from '../chartManager';
+import { LineSeries, type SeriesMarker, type Time } from "lightweight-charts";
 
 // ============================================================================
 // Replay Chart Adapter
 // ============================================================================
 
 export class ReplayChartAdapter {
-    private chartManager: ChartManager;
+
     private replayManager: ReplayManager;
     private unsubscribe: (() => void) | null = null;
     private fullData: OHLCVData[] = [];
     private isConnected: boolean = false;
 
-    constructor(chartManager: ChartManager, replayManager: ReplayManager) {
-        this.chartManager = chartManager;
+    /** Reference to current replay highlight line series */
+    private replayHighlightSeries: any = null;
+
+    /** Reference to current replay signal markers */
+    private replayMarkers: SeriesMarker<Time>[] = [];
+
+    constructor(replayManager: ReplayManager) {
         this.replayManager = replayManager;
     }
 
@@ -117,11 +124,11 @@ export class ReplayChartAdapter {
         }
 
         // Update chart with visible data up to current bar
-        this.chartManager.setReplayData(this.fullData, event.barIndex);
+        this.setReplayData(this.fullData, event.barIndex);
 
         // Highlight current bar
         if (event.bar) {
-            this.chartManager.highlightCurrentBar(event.bar);
+            this.highlightCurrentBar(event.bar);
         }
 
         // Update state
@@ -138,7 +145,7 @@ export class ReplayChartAdapter {
         const signal = event.signal;
 
         // Display the signal on the chart with animation
-        this.chartManager.displayReplaySignal({
+        this.displayReplaySignal({
             time: signal.time,
             type: signal.type,
             price: signal.price,
@@ -160,7 +167,7 @@ export class ReplayChartAdapter {
 
         // Restore full data
         if (this.fullData.length > 0) {
-            this.chartManager.restoreFullData(this.fullData);
+            this.restoreFullData(this.fullData);
         }
 
         // Get all signals from replay state
@@ -181,6 +188,10 @@ export class ReplayChartAdapter {
             // Entering replay mode
             state.set('replayMode', true);
 
+            // ALWAYS detach backtest markers when entering replay mode
+            // ALWAYS detach backtest markers when entering replay mode
+            chartManager.clearTradeMarkers();
+
             // Ensure we have data
             if (this.fullData.length === 0) {
                 this.fullData = state.ohlcvData;
@@ -188,9 +199,14 @@ export class ReplayChartAdapter {
 
             // If starting fresh, set initial data
             if (event.barIndex === 0 && this.fullData.length > 0) {
-                this.chartManager.clearReplayState();
-                this.chartManager.setReplayData(this.fullData, 0);
+                this.clearReplayState(); // Fully reset replay state (markers: [])
+                this.setReplayData(this.fullData, 0);
+            } else {
+                // If resuming or starting mid-way, just ensure our Replay markers are active
+                // (In case they were cleared or overwritten)
+                this.updateMarkers();
             }
+
         } else if (event.status === 'stopped' || event.status === 'idle') {
             // Exiting replay mode
             state.set('replayMode', false);
@@ -202,16 +218,18 @@ export class ReplayChartAdapter {
      * Handle seek event - update chart to new position
      */
     private onSeek(event: ReplayEvent): void {
+        chartManager.clearTradeMarkers();
+
         if (this.fullData.length === 0) {
             this.fullData = state.ohlcvData;
         }
 
         // Update chart to show data up to seek position
-        this.chartManager.setReplayData(this.fullData, event.barIndex);
+        this.setReplayData(this.fullData, event.barIndex);
 
         // Highlight current bar
         if (event.bar) {
-            this.chartManager.highlightCurrentBar(event.bar);
+            this.highlightCurrentBar(event.bar);
         }
 
         // Update visible signals
@@ -229,13 +247,13 @@ export class ReplayChartAdapter {
         console.log('[ReplayChartAdapter] Replay reset');
 
         // Clear all replay visuals
-        this.chartManager.clearReplayState();
+        this.clearReplayState();
 
         // Restore full data
         if (this.fullData.length > 0) {
-            this.chartManager.restoreFullData(this.fullData);
+            this.restoreFullData(this.fullData);
         } else if (state.ohlcvData.length > 0) {
-            this.chartManager.restoreFullData(state.ohlcvData);
+            this.restoreFullData(state.ohlcvData);
         }
 
         // Reset state
@@ -254,7 +272,7 @@ export class ReplayChartAdapter {
      * Display all signals on the chart
      */
     private displayAllSignals(signals: SignalWithAnnotation[]): void {
-        this.chartManager.displayReplaySignals(
+        this.displayReplaySignals(
             signals.map(s => ({
                 time: s.time,
                 type: s.type,
@@ -277,5 +295,184 @@ export class ReplayChartAdapter {
     public destroy(): void {
         this.disconnect();
         this.fullData = [];
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Replay Rendering Methods
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Set the visible data for replay mode (incremental reveal)
+     * @param data Full OHLCV dataset
+     * @param endIndex Last bar index to show (0-based, inclusive)
+     */
+    private setReplayData(data: OHLCVData[], endIndex: number): void {
+        if (endIndex < 0 || endIndex >= data.length) {
+            console.warn('[ReplayChartAdapter] Invalid replay endIndex:', endIndex);
+            return;
+        }
+
+        // Show only data up to endIndex (inclusive)
+        const visibleData = data.slice(0, endIndex + 1);
+        state.candlestickSeries.setData(visibleData as any); // Cast to any as OHLCVData might not perfectly match lib types
+
+        // CRITICAL: Markers are cleared when setData is called. We must restore them.
+        this.updateMarkers();
+
+        // Auto-scroll to keep current bar visible
+        this.scrollToBar(endIndex, data.length);
+    }
+
+    /**
+     * Display a signal marker during replay with optional animation
+     */
+    private displayReplaySignal(
+        signal: { time: any; type: 'buy' | 'sell'; price: number; annotation?: string },
+        _animate: boolean = true
+    ): void {
+        const isBuy = signal.type === 'buy';
+
+        const marker: SeriesMarker<Time> = {
+            time: signal.time,
+            position: isBuy ? 'belowBar' : 'aboveBar',
+            color: isBuy ? '#26a69a' : '#ef5350',
+            shape: isBuy ? 'arrowUp' : 'arrowDown',
+            text: signal.annotation || `${isBuy ? 'Buy' : 'Sell'} @ ${this.formatPrice(signal.price)}`,
+        };
+
+        // Add to replay markers collection
+        this.replayMarkers.push(marker);
+
+        // Update markers on chart
+        this.updateMarkers();
+    }
+
+    /**
+     * Display all replay signals up to a certain bar
+     */
+    private displayReplaySignals(
+        signals: { time: any; type: 'buy' | 'sell'; price: number; annotation?: string }[]
+    ): void {
+        this.replayMarkers = signals.map(signal => {
+            const isBuy = signal.type === 'buy';
+            return {
+                time: signal.time,
+                position: isBuy ? 'belowBar' : 'aboveBar',
+                color: isBuy ? '#26a69a' : '#ef5350',
+                shape: isBuy ? 'arrowUp' : 'arrowDown',
+                text: signal.annotation || `${isBuy ? 'Buy' : 'Sell'} @ ${this.formatPrice(signal.price)}`,
+            } as SeriesMarker<Time>;
+        });
+
+        this.updateMarkers();
+    }
+
+    /**
+     * Update markers on the chart via state
+     */
+    private updateMarkers(): void {
+        if (!state.candlestickSeries) return;
+
+        // Ensure backtest markers are cleared
+        chartManager.clearTradeMarkers();
+
+        // Sort markers by time as required by Lightweight Charts
+        const sortedMarkers = [...this.replayMarkers].sort((a, b) => {
+            const timeA = a.time as number; // Assuming numeric timestamps
+            const timeB = b.time as number;
+            return timeA - timeB;
+        });
+
+        // Use any cast since the type definition might be outdated for setMarkers
+        (state.candlestickSeries as any).setMarkers(sortedMarkers);
+    }
+
+
+    /**
+     * Highlight the current replay bar with a vertical line
+     */
+    private highlightCurrentBar(barData: OHLCVData): void {
+        // Remove existing highlight
+        this.clearReplayHighlight();
+
+        // Create a thin vertical line series for the highlight
+        this.replayHighlightSeries = state.chart.addSeries(LineSeries, {
+            color: 'rgba(255, 193, 7, 0.6)', // Amber color
+            lineWidth: 2,
+            lineStyle: 2, // Dashed
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+        });
+
+        // Create vertical line from low to high
+        this.replayHighlightSeries.setData([
+            { time: barData.time, value: barData.low },
+            { time: barData.time, value: barData.high },
+        ]);
+    }
+
+    /**
+     * Scroll the chart to keep a specific bar visible
+     */
+    private scrollToBar(barIndex: number, totalBars: number): void {
+        // Keep the current bar near the right edge with some padding
+        const visibleRange = state.chart.timeScale().getVisibleLogicalRange();
+        if (!visibleRange) return;
+
+        const visibleBars = visibleRange.to - visibleRange.from;
+        const padding = Math.max(5, Math.floor(visibleBars * 0.1)); // 10% padding or at least 5 bars
+
+        // If current bar is near the right edge, shift the view
+        if (barIndex > visibleRange.to - padding) {
+            const newFrom = Math.max(0, barIndex - visibleBars + padding);
+            const newTo = Math.min(totalBars - 1, newFrom + visibleBars);
+            state.chart.timeScale().setVisibleLogicalRange({
+                from: newFrom,
+                to: newTo,
+            });
+        }
+    }
+
+    /**
+     * Clear replay highlight line
+     */
+    private clearReplayHighlight(): void {
+        if (this.replayHighlightSeries) {
+            state.chart.removeSeries(this.replayHighlightSeries);
+            this.replayHighlightSeries = null;
+        }
+    }
+
+    /**
+     * Clear all replay-related state (markers, highlights)
+     */
+    private clearReplayState(): void {
+        // Clear highlight
+        this.clearReplayHighlight();
+
+        // Clear markers
+        this.replayMarkers = [];
+        chartManager.clearTradeMarkers();
+
+        // Also explicitly clear built-in markers if any
+        (state.candlestickSeries as any).setMarkers([]);
+    }
+
+    /**
+     * Restore full data after replay ends
+     */
+    private restoreFullData(fullData: OHLCVData[]): void {
+        state.candlestickSeries.setData(fullData as any);
+        state.chart.timeScale().fitContent();
+    }
+
+    /**
+     * Format price for display
+     */
+    private formatPrice(price: number): string {
+        if (price >= 1000) return price.toFixed(2);
+        if (price >= 1) return price.toFixed(4);
+        return price.toFixed(6);
     }
 }

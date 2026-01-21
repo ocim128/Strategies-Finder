@@ -59,7 +59,7 @@ async function init() {
 
 	// Initialize replay feature
 	const replayUI = new ReplayUI(replayManager);
-	const replayChartAdapter = new ReplayChartAdapter(chartManager, replayManager);
+	const replayChartAdapter = new ReplayChartAdapter(replayManager);
 	replayChartAdapter.connect();
 
 	// Initialize replay UI when tab becomes active

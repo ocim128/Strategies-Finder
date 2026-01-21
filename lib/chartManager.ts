@@ -177,6 +177,13 @@ export class ChartManager {
         state.markersPlugin = createSeriesMarkers(state.candlestickSeries, markers);
     }
 
+    public clearTradeMarkers() {
+        if (state.markersPlugin) {
+            state.markersPlugin.detach();
+            state.markersPlugin = null;
+        }
+    }
+
     public displayEquityCurve(equityCurve: { time: Time; value: number }[]) {
         if (equityCurve.length === 0) {
             state.equitySeries.setData([]);
@@ -194,184 +201,6 @@ export class ChartManager {
         state.equityChart.timeScale().fitContent();
     }
 
-    // =========================================================================
-    // Replay Methods
-    // =========================================================================
-
-    /** Reference to current replay highlight line series */
-    private replayHighlightSeries: any = null;
-
-    /** Reference to current replay signal markers */
-    private replayMarkers: SeriesMarker<Time>[] = [];
-
-    /**
-     * Set the visible data for replay mode (incremental reveal)
-     * @param data Full OHLCV dataset
-     * @param endIndex Last bar index to show (0-based, inclusive)
-     */
-    public setReplayData(data: { time: Time; open: number; high: number; low: number; close: number }[], endIndex: number): void {
-        if (endIndex < 0 || endIndex >= data.length) {
-            console.warn('[ChartManager] Invalid replay endIndex:', endIndex);
-            return;
-        }
-
-        // Show only data up to endIndex (inclusive)
-        const visibleData = data.slice(0, endIndex + 1);
-        state.candlestickSeries.setData(visibleData);
-
-        // Auto-scroll to keep current bar visible
-        this.scrollToBar(endIndex, data.length);
-    }
-
-    /**
-     * Display a signal marker during replay with optional animation
-     * @param signal Signal with annotation
-     * @param animate Whether to add animation effect
-     */
-    public displayReplaySignal(
-        signal: { time: Time; type: 'buy' | 'sell'; price: number; annotation?: string },
-        _animate: boolean = true // Reserved for future animation enhancements
-    ): void {
-        const isBuy = signal.type === 'buy';
-
-        const marker: SeriesMarker<Time> = {
-            time: signal.time,
-            position: isBuy ? 'belowBar' : 'aboveBar',
-            color: isBuy ? '#26a69a' : '#ef5350',
-            shape: isBuy ? 'arrowUp' : 'arrowDown',
-            text: signal.annotation || `${isBuy ? 'Buy' : 'Sell'} @ ${this.formatPriceInternal(signal.price)}`,
-        };
-
-        // Add to replay markers collection
-        this.replayMarkers.push(marker);
-
-        // Update markers on chart
-        if (state.markersPlugin) {
-            state.markersPlugin.detach();
-            state.markersPlugin = null; // Important to null out before re-creating
-        }
-        state.markersPlugin = createSeriesMarkers(state.candlestickSeries, this.replayMarkers);
-    }
-
-    /**
-     * Display all replay signals up to a certain bar
-     * @param signals Array of signals to display
-     */
-    public displayReplaySignals(
-        signals: { time: Time; type: 'buy' | 'sell'; price: number; annotation?: string }[]
-    ): void {
-        this.replayMarkers = signals.map(signal => {
-            const isBuy = signal.type === 'buy';
-            return {
-                time: signal.time,
-                position: isBuy ? 'belowBar' : 'aboveBar',
-                color: isBuy ? '#26a69a' : '#ef5350',
-                shape: isBuy ? 'arrowUp' : 'arrowDown',
-                text: signal.annotation || `${isBuy ? 'Buy' : 'Sell'} @ ${this.formatPriceInternal(signal.price)}`,
-            } as SeriesMarker<Time>;
-        });
-
-        if (state.markersPlugin) {
-            state.markersPlugin.detach();
-        }
-        state.markersPlugin = createSeriesMarkers(state.candlestickSeries, this.replayMarkers);
-    }
-
-    /**
-     * Highlight the current replay bar with a vertical line
-     * @param barIndex Bar index to highlight
-     * @param barData The bar data for price reference
-     */
-    public highlightCurrentBar(barData: { time: Time; high: number; low: number }): void {
-        // Remove existing highlight
-        this.clearReplayHighlight();
-
-        // Create a thin vertical line series for the highlight
-        this.replayHighlightSeries = state.chart.addSeries(LineSeries, {
-            color: 'rgba(255, 193, 7, 0.6)', // Amber color
-            lineWidth: 2,
-            lineStyle: 2, // Dashed
-            priceLineVisible: false,
-            lastValueVisible: false,
-            crosshairMarkerVisible: false,
-        });
-
-        // Create vertical line from low to high
-        this.replayHighlightSeries.setData([
-            { time: barData.time, value: barData.low },
-            { time: barData.time, value: barData.high },
-        ]);
-    }
-
-    /**
-     * Scroll the chart to keep a specific bar visible
-     * @param barIndex Current bar index
-     * @param totalBars Total number of bars
-     */
-    public scrollToBar(barIndex: number, totalBars: number): void {
-        // Keep the current bar near the right edge with some padding
-        const visibleRange = state.chart.timeScale().getVisibleLogicalRange();
-        if (!visibleRange) return;
-
-        const visibleBars = visibleRange.to - visibleRange.from;
-        const padding = Math.max(5, Math.floor(visibleBars * 0.1)); // 10% padding or at least 5 bars
-
-        // If current bar is near the right edge, shift the view
-        if (barIndex > visibleRange.to - padding) {
-            const newFrom = Math.max(0, barIndex - visibleBars + padding);
-            const newTo = Math.min(totalBars - 1, newFrom + visibleBars);
-            state.chart.timeScale().setVisibleLogicalRange({
-                from: newFrom,
-                to: newTo,
-            });
-        }
-    }
-
-    /**
-     * Clear replay highlight line
-     */
-    private clearReplayHighlight(): void {
-        if (this.replayHighlightSeries) {
-            state.chart.removeSeries(this.replayHighlightSeries);
-            this.replayHighlightSeries = null;
-        }
-    }
-
-    /**
-     * Clear all replay-related state (markers, highlights)
-     */
-    public clearReplayState(): void {
-        // Clear highlight
-        this.clearReplayHighlight();
-
-        // Clear markers
-        this.replayMarkers = [];
-        if (state.markersPlugin) {
-            state.markersPlugin.detach();
-            state.markersPlugin = null;
-        }
-
-        // Also explicitly clear built-in markers if any
-        (state.candlestickSeries as any).setMarkers([]);
-    }
-
-    /**
-     * Restore full data after replay ends
-     * @param fullData The complete dataset
-     */
-    public restoreFullData(fullData: { time: Time; open: number; high: number; low: number; close: number }[]): void {
-        state.candlestickSeries.setData(fullData);
-        state.chart.timeScale().fitContent();
-    }
-
-    /**
-     * Format price for display (internal helper)
-     */
-    private formatPriceInternal(price: number): string {
-        if (price >= 1000) return price.toFixed(2);
-        if (price >= 1) return price.toFixed(4);
-        return price.toFixed(6);
-    }
 }
 
 export const chartManager = new ChartManager();
