@@ -164,6 +164,109 @@
     </div>
 
     <div class="section-header">
+        <div class="section-title">Webhook Alerts</div>
+        <label class="section-toggle" aria-label="Toggle webhook alerts">
+            <input type="checkbox" id="webhookEnabledToggle">
+            <span class="section-toggle-track"></span>
+        </label>
+    </div>
+    <div class="section-body" id="webhookSettings">
+        <!-- Webhook Status -->
+        <div class="webhook-status" id="webhookStatus">
+            <span class="webhook-status-dot status-disabled" id="webhookStatusDot"></span>
+            <span class="webhook-status-text" id="webhookStatusText">Webhook disabled</span>
+            <span class="webhook-status-count" id="webhookStatusCount"></span>
+        </div>
+
+        <!-- Webhook URL -->
+        <div class="param-group">
+            <label class="param-label">Webhook URL</label>
+            <div class="webhook-url-wrapper">
+                <input type="url" class="param-input" id="webhookUrl"
+                    placeholder="https://your-webhook-endpoint.com/signal">
+                <span class="webhook-url-validation" id="webhookUrlValidation"></span>
+            </div>
+            <div class="webhook-hint">Enter the URL where signals will be sent via POST request</div>
+        </div>
+
+        <!-- Secret Key -->
+        <div class="param-group">
+            <label class="param-label">Secret Key (Optional)</label>
+            <div class="webhook-secret-wrapper">
+                <input type="password" class="param-input" id="webhookSecretKey"
+                    placeholder="For HMAC-SHA256 payload signing">
+                <button type="button" class="webhook-secret-toggle" id="webhookSecretToggle" title="Toggle visibility">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path
+                            d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
+                    </svg>
+                </button>
+            </div>
+            <div class="webhook-hint">Used to sign payloads so your receiver can verify authenticity</div>
+        </div>
+
+        <!-- Event Types -->
+        <div class="param-group">
+            <label class="param-label">Send Webhook On</label>
+            <div class="webhook-events">
+                <label class="webhook-event-option">
+                    <input type="checkbox" id="webhookSendOnSignal" checked>
+                    <span class="event-label">Strategy Signals</span>
+                </label>
+                <label class="webhook-event-option">
+                    <input type="checkbox" id="webhookSendOnTrade" checked>
+                    <span class="event-label">Trade Entry/Exit</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Test Button and Stats Row -->
+        <div class="webhook-actions-row">
+            <button type="button" class="btn-test-webhook" id="webhookTestBtn" disabled>
+                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                    <path
+                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                </svg>
+                Test Webhook
+            </button>
+            <button type="button" class="btn-clear-queue" id="webhookClearBtn" title="Clear pending queue">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                    <path
+                        d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                </svg>
+            </button>
+        </div>
+
+        <!-- Statistics Panel -->
+        <div class="webhook-stats" id="webhookStats">
+            <div class="webhook-stat">
+                <span class="webhook-stat-value" id="webhookStatSent">0</span>
+                <span class="webhook-stat-label">Sent</span>
+            </div>
+            <div class="webhook-stat">
+                <span class="webhook-stat-value" id="webhookStatPending">0</span>
+                <span class="webhook-stat-label">Pending</span>
+            </div>
+            <div class="webhook-stat webhook-stat-error">
+                <span class="webhook-stat-value" id="webhookStatFailed">0</span>
+                <span class="webhook-stat-label">Failed</span>
+            </div>
+        </div>
+
+        <!-- Activity Log -->
+        <div class="webhook-activity-section">
+            <div class="webhook-activity-header">
+                <span class="webhook-activity-title">Recent Activity</span>
+                <button type="button" class="webhook-activity-clear" id="webhookActivityClearBtn"
+                    title="Clear log">Clear</button>
+            </div>
+            <div class="webhook-activity" id="webhookActivity">
+                <div class="webhook-activity-empty">No webhook activity yet</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section-header">
         <div class="section-title">Entry Confirmation</div>
         <label class="section-toggle" aria-label="Toggle entry confirmation">
             <input type="checkbox" id="entrySettingsToggle">

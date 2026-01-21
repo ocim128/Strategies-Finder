@@ -1,0 +1,468 @@
+/* ============================================================================
+   Webhook Settings Styles
+   ============================================================================ */
+
+/* Utility: Hide webhook settings section when disabled */
+#webhookSettings.is-hidden {
+    display: none !important;
+}
+
+/* Webhook Status Indicator */
+.webhook-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--bg-tertiary, rgba(255, 255, 255, 0.05));
+    font-size: 12px;
+}
+
+.webhook-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.webhook-status-dot.status-disabled {
+    background: var(--text-tertiary, #666);
+}
+
+.webhook-status-dot.status-ready {
+    background: #22c55e;
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+}
+
+.webhook-status-dot.status-error {
+    background: #ef4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+}
+
+.webhook-status-dot.status-pending {
+    background: #f59e0b;
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.webhook-status-text {
+    color: var(--text-secondary, #aaa);
+    flex: 1;
+}
+
+.webhook-status-count {
+    color: var(--text-primary, #fff);
+    font-weight: 500;
+}
+
+/* Webhook URL Input with validation */
+.webhook-url-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.webhook-url-wrapper .param-input {
+    flex: 1;
+    padding-right: 32px;
+}
+
+.webhook-url-validation {
+    position: absolute;
+    right: 10px;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.webhook-url-validation.valid {
+    color: #22c55e;
+}
+
+.webhook-url-validation.invalid {
+    color: #ef4444;
+}
+
+/* Secret Key Input */
+.webhook-secret-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.webhook-secret-wrapper .param-input {
+    flex: 1;
+    padding-right: 36px;
+    font-family: monospace;
+    letter-spacing: 0.5px;
+}
+
+.webhook-secret-toggle {
+    position: absolute;
+    right: 8px;
+    background: none;
+    border: none;
+    color: var(--text-tertiary, #666);
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s ease;
+}
+
+.webhook-secret-toggle:hover {
+    color: var(--text-primary, #fff);
+}
+
+/* Test Webhook Button */
+.btn-test-webhook {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 16px;
+    margin-top: 12px;
+    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    border: none;
+    border-radius: 6px;
+    color: white;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    width: 100%;
+}
+
+.btn-test-webhook:hover:not(:disabled) {
+    background: linear-gradient(135deg, #2563eb, #4f46e5);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+.btn-test-webhook:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-test-webhook .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Webhook event checkboxes */
+.webhook-events {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.webhook-event-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    padding: 6px 12px;
+    border-radius: 6px;
+    background: var(--bg-tertiary, rgba(255, 255, 255, 0.05));
+    transition: background 0.2s ease;
+}
+
+.webhook-event-option:hover {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.1));
+}
+
+.webhook-event-option input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.webhook-event-option .event-label {
+    font-size: 13px;
+    color: var(--text-secondary, #aaa);
+}
+
+.webhook-event-option input:checked+.event-label {
+    color: var(--text-primary, #fff);
+}
+
+/* Webhook Activity Log */
+.webhook-activity {
+    margin-top: 16px;
+    max-height: 150px;
+    overflow-y: auto;
+    border-radius: 6px;
+    background: var(--bg-tertiary, rgba(0, 0, 0, 0.2));
+}
+
+.webhook-activity-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    font-size: 11px;
+    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.05));
+}
+
+.webhook-activity-item:last-child {
+    border-bottom: none;
+}
+
+.webhook-activity-item .activity-time {
+    color: var(--text-tertiary, #666);
+    min-width: 60px;
+}
+
+.webhook-activity-item .activity-event {
+    color: var(--text-primary, #fff);
+    flex: 1;
+}
+
+.webhook-activity-item .activity-status {
+    font-weight: 500;
+}
+
+.webhook-activity-item .activity-status.success {
+    color: #22c55e;
+}
+
+.webhook-activity-item .activity-status.failed {
+    color: #ef4444;
+}
+
+/* Hint text for webhook section */
+.webhook-hint {
+    font-size: 11px;
+    color: var(--text-tertiary, #666);
+    margin-top: 4px;
+    line-height: 1.4;
+}
+
+/* ============================================================================
+   Webhook Actions Row
+   ============================================================================ */
+
+.webhook-actions-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.webhook-actions-row .btn-test-webhook {
+    flex: 1;
+    margin-top: 0;
+}
+
+.btn-clear-queue {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: var(--bg-tertiary, rgba(255, 255, 255, 0.05));
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+    border-radius: 6px;
+    color: var(--text-secondary, #aaa);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-clear-queue:hover {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.1));
+    color: var(--text-primary, #fff);
+    border-color: var(--border-hover, rgba(255, 255, 255, 0.2));
+}
+
+/* ============================================================================
+   Webhook Statistics Panel
+   ============================================================================ */
+
+.webhook-stats {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: var(--bg-tertiary, rgba(0, 0, 0, 0.2));
+    border-radius: 6px;
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.05));
+}
+
+.webhook-stat {
+    flex: 1;
+    text-align: center;
+}
+
+.webhook-stat-value {
+    display: block;
+    font-size: 18px;
+    font-weight: 600;
+    font-family: var(--font-family-mono, monospace);
+    color: var(--text-primary, #fff);
+    line-height: 1.2;
+}
+
+.webhook-stat-label {
+    display: block;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-tertiary, #666);
+    margin-top: 2px;
+}
+
+.webhook-stat.webhook-stat-error .webhook-stat-value {
+    color: #ef4444;
+}
+
+/* Animate pending count when > 0 */
+.webhook-stat:nth-child(2) .webhook-stat-value.has-pending {
+    animation: pulse 1.5s ease-in-out infinite;
+    color: #f59e0b;
+}
+
+/* ============================================================================
+   Enhanced Activity Log
+   ============================================================================ */
+
+.webhook-activity-section {
+    margin-top: 16px;
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.05));
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.webhook-activity-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: var(--bg-tertiary, rgba(0, 0, 0, 0.3));
+    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.05));
+}
+
+.webhook-activity-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary, #aaa);
+}
+
+.webhook-activity-clear {
+    background: none;
+    border: none;
+    color: var(--text-tertiary, #666);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.webhook-activity-clear:hover {
+    color: var(--text-primary, #fff);
+    background: var(--bg-hover, rgba(255, 255, 255, 0.1));
+}
+
+.webhook-activity {
+    max-height: 120px;
+    overflow-y: auto;
+    background: var(--bg-secondary, rgba(0, 0, 0, 0.2));
+}
+
+.webhook-activity-empty {
+    padding: 20px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-tertiary, #666);
+    font-style: italic;
+}
+
+.webhook-activity-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    font-size: 11px;
+    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.03));
+    animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.webhook-activity-item:last-child {
+    border-bottom: none;
+}
+
+.webhook-activity-item .activity-time {
+    color: var(--text-tertiary, #666);
+    min-width: 55px;
+    font-family: var(--font-family-mono, monospace);
+    font-size: 10px;
+}
+
+.webhook-activity-item .activity-event {
+    flex: 1;
+    color: var(--text-secondary, #aaa);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.webhook-activity-item .activity-status {
+    font-weight: 500;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+}
+
+.webhook-activity-item .activity-status.success {
+    color: #22c55e;
+    background: rgba(34, 197, 94, 0.1);
+}
+
+.webhook-activity-item .activity-status.pending {
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.1);
+}
+
+.webhook-activity-item .activity-status.failed {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+}

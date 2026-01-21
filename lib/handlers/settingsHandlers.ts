@@ -101,8 +101,252 @@ export function setupSettingsHandlers() {
         });
     }
 
+    // ========================================================================
+    // Webhook Settings Event Handlers
+    // ========================================================================
+
+    setupWebhookHandlers();
+
     // Initialize dropdown with saved configs
     updateConfigDropdown();
+}
+
+/**
+ * Setup webhook-specific UI event handlers
+ */
+function setupWebhookHandlers() {
+    const webhookToggle = document.getElementById('webhookEnabledToggle') as HTMLInputElement | null;
+    const webhookUrl = document.getElementById('webhookUrl') as HTMLInputElement | null;
+    const webhookSecretKey = document.getElementById('webhookSecretKey') as HTMLInputElement | null;
+    const webhookSecretToggle = document.getElementById('webhookSecretToggle');
+    const webhookTestBtn = document.getElementById('webhookTestBtn') as HTMLButtonElement | null;
+    const webhookSettings = document.getElementById('webhookSettings');
+    const webhookSendOnSignal = document.getElementById('webhookSendOnSignal') as HTMLInputElement | null;
+    const webhookSendOnTrade = document.getElementById('webhookSendOnTrade') as HTMLInputElement | null;
+
+    // Shared function to update webhook status UI
+    const updateWebhookStatus = () => {
+        const settings = settingsManager.getWebhookSettings();
+        const statusDot = document.getElementById('webhookStatusDot');
+        const statusText = document.getElementById('webhookStatusText');
+        const urlValidation = document.getElementById('webhookUrlValidation');
+
+        // Validate URL
+        const isValid = settings.url.trim() !== '' &&
+            (() => { try { const u = new URL(settings.url); return u.protocol === 'http:' || u.protocol === 'https:'; } catch { return false; } })();
+
+        // Update status indicator
+        if (statusDot) {
+            statusDot.className = 'webhook-status-dot ' + (
+                !settings.enabled ? 'status-disabled' :
+                    !isValid ? 'status-error' : 'status-ready'
+            );
+        }
+
+        if (statusText) {
+            statusText.textContent = !settings.enabled ? 'Webhook disabled' :
+                !isValid ? 'Invalid webhook URL' : 'Ready to send';
+        }
+
+        // Update test button state
+        if (webhookTestBtn) {
+            webhookTestBtn.disabled = !settings.enabled || !isValid;
+        }
+
+        // Update URL validation indicator
+        if (urlValidation) {
+            if (settings.url.trim() === '') {
+                urlValidation.innerHTML = '';
+                urlValidation.className = 'webhook-url-validation';
+            } else if (isValid) {
+                urlValidation.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
+                urlValidation.className = 'webhook-url-validation valid';
+            } else {
+                urlValidation.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
+                urlValidation.className = 'webhook-url-validation invalid';
+            }
+        }
+    };
+
+    // Handle webhook section visibility toggle
+    if (webhookToggle && webhookSettings) {
+        const updateVisibility = () => {
+            webhookSettings.classList.toggle('is-hidden', !webhookToggle.checked);
+            // Update status when toggle changes
+            updateWebhookStatus();
+            // Trigger settings save
+            settingsManager.saveSettingsDebounced();
+        };
+        webhookToggle.addEventListener('change', updateVisibility);
+        // Initial state
+        updateVisibility();
+    }
+
+    // Handle URL input with validation feedback
+    if (webhookUrl) {
+        webhookUrl.addEventListener('input', updateWebhookStatus);
+        webhookUrl.addEventListener('change', updateWebhookStatus);
+    }
+
+    // Handle secret key visibility toggle
+    if (webhookSecretToggle && webhookSecretKey) {
+        webhookSecretToggle.addEventListener('click', () => {
+            const isPassword = webhookSecretKey.type === 'password';
+            webhookSecretKey.type = isPassword ? 'text' : 'password';
+            webhookSecretToggle.title = isPassword ? 'Hide secret key' : 'Show secret key';
+        });
+    }
+
+    // Handle test webhook button
+    if (webhookTestBtn) {
+        webhookTestBtn.addEventListener('click', async () => {
+            const settings = settingsManager.getWebhookSettings();
+            if (!settings.url) {
+                uiManager.showToast('Please enter a webhook URL', 'error');
+                return;
+            }
+
+            webhookTestBtn.disabled = true;
+            const originalContent = webhookTestBtn.innerHTML;
+            webhookTestBtn.innerHTML = '<span class="spinner"></span> Testing...';
+
+            try {
+                // Import webhook service dynamically to avoid circular deps
+                const { webhookService } = await import('../webhookService');
+                const result = await webhookService.sendTestWebhook();
+
+                if (result.success) {
+                    uiManager.showToast('Webhook test successful!', 'success');
+                } else {
+                    uiManager.showToast(`Webhook test failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                uiManager.showToast(`Webhook test failed: ${errorMessage}`, 'error');
+                debugLogger.event('webhook.test.error', { url: settings.url, error: errorMessage });
+            } finally {
+                webhookTestBtn.innerHTML = originalContent;
+                webhookTestBtn.disabled = !settingsManager.isWebhookValid();
+            }
+        });
+    }
+
+    // Handle checkbox changes for event types
+    [webhookSendOnSignal, webhookSendOnTrade].forEach(checkbox => {
+        if (checkbox) {
+            checkbox.addEventListener('change', () => {
+                settingsManager.saveSettingsDebounced();
+            });
+        }
+    });
+
+    // Handle clear queue button
+    const clearQueueBtn = document.getElementById('webhookClearBtn');
+    if (clearQueueBtn) {
+        clearQueueBtn.addEventListener('click', async () => {
+            try {
+                const { webhookService } = await import('../webhookService');
+                webhookService.clearQueue();
+                uiManager.showToast('Webhook queue cleared', 'info');
+            } catch (error) {
+                console.error('[Webhook] Failed to clear queue:', error);
+            }
+        });
+    }
+
+    // Handle clear activity log button
+    const clearActivityBtn = document.getElementById('webhookActivityClearBtn');
+    const activityLog = document.getElementById('webhookActivity');
+    if (clearActivityBtn && activityLog) {
+        clearActivityBtn.addEventListener('click', () => {
+            activityLog.innerHTML = '<div class="webhook-activity-empty">No webhook activity yet</div>';
+        });
+    }
+
+    // Subscribe to webhook status updates
+    initWebhookStatusSubscription();
+}
+
+/**
+ * Activity log entries storage (in-memory, limited to last 20)
+ */
+const activityLogEntries: Array<{ time: string; event: string; status: 'success' | 'pending' | 'failed' }> = [];
+const MAX_ACTIVITY_ENTRIES = 20;
+
+/**
+ * Initialize webhook status subscription for live UI updates
+ */
+async function initWebhookStatusSubscription(): Promise<void> {
+    try {
+        const { webhookService } = await import('../webhookService');
+
+        // Subscribe to status updates
+        webhookService.subscribe((status) => {
+            updateWebhookStatsUI(status);
+        });
+
+        // Initial status update
+        const initialStatus = webhookService.getStatus();
+        updateWebhookStatsUI(initialStatus);
+    } catch (error) {
+        console.debug('[Webhook] Status subscription not available:', error);
+    }
+}
+
+/**
+ * Update the webhook statistics UI
+ */
+function updateWebhookStatsUI(status: { pending: number; totalSent: number; totalFailed: number; lastSuccess?: Date; lastError?: string }) {
+    const sentEl = document.getElementById('webhookStatSent');
+    const pendingEl = document.getElementById('webhookStatPending');
+    const failedEl = document.getElementById('webhookStatFailed');
+
+    if (sentEl) sentEl.textContent = String(status.totalSent);
+    if (pendingEl) {
+        pendingEl.textContent = String(status.pending);
+        pendingEl.classList.toggle('has-pending', status.pending > 0);
+    }
+    if (failedEl) failedEl.textContent = String(status.totalFailed);
+}
+
+/**
+ * Add an entry to the activity log (called externally)
+ */
+export function addWebhookActivityEntry(event: string, status: 'success' | 'pending' | 'failed'): void {
+    const activityLog = document.getElementById('webhookActivity');
+    if (!activityLog) return;
+
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+    // Add to in-memory log
+    activityLogEntries.unshift({ time: timeStr, event, status });
+    if (activityLogEntries.length > MAX_ACTIVITY_ENTRIES) {
+        activityLogEntries.pop();
+    }
+
+    // Remove empty state if present
+    const emptyState = activityLog.querySelector('.webhook-activity-empty');
+    if (emptyState) {
+        emptyState.remove();
+    }
+
+    // Create activity item
+    const item = document.createElement('div');
+    item.className = 'webhook-activity-item';
+    item.innerHTML = `
+        <span class="activity-time">${timeStr}</span>
+        <span class="activity-event">${event}</span>
+        <span class="activity-status ${status}">${status}</span>
+    `;
+
+    // Insert at top
+    activityLog.insertBefore(item, activityLog.firstChild);
+
+    // Limit visible entries
+    while (activityLog.children.length > MAX_ACTIVITY_ENTRIES) {
+        activityLog.removeChild(activityLog.lastChild!);
+    }
 }
 
 /**

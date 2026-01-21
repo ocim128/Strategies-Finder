@@ -468,6 +468,31 @@ export class ReplayManager implements IReplayManager {
         const event = this.createEvent('signal-triggered');
         event.signal = signal;
         this.notifyListeners(event);
+
+        // Send webhook for live signal during replay
+        this.sendWebhookForSignal(signal);
+    }
+
+    /**
+     * Send webhook notification for a signal triggered during replay
+     */
+    private async sendWebhookForSignal(signal: SignalWithAnnotation): Promise<void> {
+        try {
+            // Dynamic import to avoid circular dependencies
+            const { webhookService } = await import('../webhookService');
+            const strategy = this.strategy;
+
+            if (strategy) {
+                await webhookService.sendSignal(
+                    signal,
+                    strategy.name,
+                    this.state.strategyParams
+                );
+            }
+        } catch (error) {
+            // Silently fail - webhooks are not critical to replay
+            console.debug('[ReplayManager] Webhook send failed:', error);
+        }
     }
 
     private createEvent(type: ReplayEvent['type']): ReplayEvent {

@@ -75,6 +75,9 @@ export class BacktestService {
             );
             state.set('currentBacktestResult', result);
 
+            // Send webhook notifications for completed trades
+            this.sendWebhookForTrades(result.trades, strategy.name, params);
+
             progressFill.style.width = '100%';
             progressText.textContent = 'Complete!';
             const expectancyText = `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`;
@@ -113,6 +116,44 @@ export class BacktestService {
             progressContainer.classList.remove('active');
             progressFill.style.width = '0%';
             setLoading(false);
+        }
+    }
+
+    /**
+     * Send webhook notifications for completed trades
+     */
+    private async sendWebhookForTrades(
+        trades: import('./strategies/types').Trade[],
+        strategyName: string,
+        params: StrategyParams
+    ): Promise<void> {
+        if (trades.length === 0) return;
+
+        try {
+            // Dynamic import to avoid circular dependencies
+            const { webhookService } = await import('./webhookService');
+
+            // Send just the most recent trade (to avoid flooding webhooks)
+            const lastTrade = trades[trades.length - 1];
+
+            await webhookService.sendTradeExit(
+                {
+                    id: lastTrade.id,
+                    type: lastTrade.type,
+                    entryPrice: lastTrade.entryPrice,
+                    exitPrice: lastTrade.exitPrice,
+                    entryTime: lastTrade.entryTime,
+                    exitTime: lastTrade.exitTime,
+                    pnl: lastTrade.pnl,
+                    pnlPercent: lastTrade.pnlPercent,
+                    size: lastTrade.size
+                },
+                strategyName,
+                params
+            );
+        } catch (error) {
+            // Silently fail - webhooks are not critical to backtest
+            console.debug('[BacktestService] Webhook send failed:', error);
         }
     }
 

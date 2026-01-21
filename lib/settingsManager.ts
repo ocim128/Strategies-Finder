@@ -12,6 +12,9 @@ import { state } from "./state";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./paramManager";
 import { debugLogger } from "./debugLogger";
+import { type WebhookSettings, DEFAULT_WEBHOOK_SETTINGS, isValidWebhookUrl } from "./webhookTypes";
+
+export type { WebhookSettings };
 
 // ============================================================================
 // Types
@@ -76,6 +79,7 @@ export interface AppSettings {
     isDarkTheme: boolean;
     currentStrategyKey: string;
     backtestSettings: BacktestSettingsData;
+    webhookSettings: WebhookSettings;
 }
 
 // ============================================================================
@@ -132,6 +136,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
     isDarkTheme: true,
     currentStrategyKey: 'sma_crossover',
     backtestSettings: { ...DEFAULT_BACKTEST_SETTINGS },
+    webhookSettings: { ...DEFAULT_WEBHOOK_SETTINGS },
 };
 
 // ============================================================================
@@ -162,6 +167,7 @@ class SettingsManager {
             isDarkTheme: state.isDarkTheme,
             currentStrategyKey: state.currentStrategyKey,
             backtestSettings: this.getBacktestSettings(),
+            webhookSettings: this.getWebhookSettings(),
         };
     }
 
@@ -211,6 +217,76 @@ class SettingsManager {
         };
     }
 
+    public getWebhookSettings(): WebhookSettings {
+        return {
+            enabled: this.readCheckbox('webhookEnabledToggle', DEFAULT_WEBHOOK_SETTINGS.enabled),
+            url: this.readText('webhookUrl', DEFAULT_WEBHOOK_SETTINGS.url),
+            secretKey: this.readText('webhookSecretKey', DEFAULT_WEBHOOK_SETTINGS.secretKey),
+            sendOnSignal: this.readCheckbox('webhookSendOnSignal', DEFAULT_WEBHOOK_SETTINGS.sendOnSignal),
+            sendOnTrade: this.readCheckbox('webhookSendOnTrade', DEFAULT_WEBHOOK_SETTINGS.sendOnTrade),
+        };
+    }
+
+    public applyWebhookSettings(settings: WebhookSettings): void {
+        this.writeCheckbox('webhookEnabledToggle', settings.enabled);
+        this.writeText('webhookUrl', settings.url);
+        this.writeText('webhookSecretKey', settings.secretKey);
+        this.writeCheckbox('webhookSendOnSignal', settings.sendOnSignal);
+        this.writeCheckbox('webhookSendOnTrade', settings.sendOnTrade);
+        this.updateWebhookUI();
+    }
+
+    public getDefaultWebhookSettings(): WebhookSettings {
+        return { ...DEFAULT_WEBHOOK_SETTINGS };
+    }
+
+    public isWebhookValid(): boolean {
+        const settings = this.getWebhookSettings();
+        return settings.enabled && isValidWebhookUrl(settings.url);
+    }
+
+    private updateWebhookUI(): void {
+        const statusDot = document.getElementById('webhookStatusDot');
+        const statusText = document.getElementById('webhookStatusText');
+        const testBtn = document.getElementById('webhookTestBtn') as HTMLButtonElement | null;
+        const urlValidation = document.getElementById('webhookUrlValidation');
+
+        const settings = this.getWebhookSettings();
+        const isValid = isValidWebhookUrl(settings.url);
+
+        // Update status indicator
+        if (statusDot) {
+            statusDot.className = 'webhook-status-dot ' + (
+                !settings.enabled ? 'status-disabled' :
+                    !isValid ? 'status-error' : 'status-ready'
+            );
+        }
+
+        if (statusText) {
+            statusText.textContent = !settings.enabled ? 'Webhook disabled' :
+                !isValid ? 'Invalid webhook URL' : 'Ready to send';
+        }
+
+        // Update test button state
+        if (testBtn) {
+            testBtn.disabled = !settings.enabled || !isValid;
+        }
+
+        // Update URL validation indicator
+        if (urlValidation) {
+            if (settings.url.trim() === '') {
+                urlValidation.innerHTML = '';
+                urlValidation.className = 'webhook-url-validation';
+            } else if (isValid) {
+                urlValidation.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
+                urlValidation.className = 'webhook-url-validation valid';
+            } else {
+                urlValidation.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
+                urlValidation.className = 'webhook-url-validation invalid';
+            }
+        }
+    }
+
     public saveSettings(): void {
         if (!this.autoSaveEnabled) return;
 
@@ -254,6 +330,11 @@ class SettingsManager {
         try {
             // Apply backtest settings to UI
             this.applyBacktestSettings(settings.backtestSettings);
+
+            // Apply webhook settings
+            if (settings.webhookSettings) {
+                this.applyWebhookSettings(settings.webhookSettings);
+            }
 
             // Set state values (these trigger reactive updates)
             if (settings.isDarkTheme !== state.isDarkTheme) {
@@ -471,6 +552,11 @@ class SettingsManager {
         return Number.isFinite(value) ? value : fallback;
     }
 
+    private readText(id: string, fallback: string): string {
+        const input = document.getElementById(id) as HTMLInputElement | null;
+        return input ? input.value : fallback;
+    }
+
     private readCheckbox(id: string, fallback: boolean): boolean {
         const checkbox = document.getElementById(id) as HTMLInputElement | null;
         return checkbox ? checkbox.checked : fallback;
@@ -502,6 +588,13 @@ class SettingsManager {
         }
     }
 
+    private writeText(id: string, value: string): void {
+        const input = document.getElementById(id) as HTMLInputElement | null;
+        if (input) {
+            input.value = value;
+        }
+    }
+
     private triggerChangeEvents(): void {
         // Trigger change events for toggles to update UI state
         const toggleIds = [
@@ -509,7 +602,8 @@ class SettingsManager {
             'riskSettingsToggle',
             'regimeSettingsToggle',
             'entrySettingsToggle',
-            'shortModeToggle'
+            'shortModeToggle',
+            'webhookEnabledToggle'
         ];
 
         toggleIds.forEach(id => {
