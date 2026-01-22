@@ -19,7 +19,7 @@ type BinanceKline = [number, string, string, string, string, string, ...any[]];
 
 export class DataManager {
     private readonly LIMIT_PER_REQUEST = 1000;
-    private readonly TOTAL_LIMIT = 10000;
+    private readonly TOTAL_LIMIT = 30000;
     private readonly MAX_REQUESTS = 15;
     private currentAbort: AbortController | null = null;
     private currentLoadId = 0;

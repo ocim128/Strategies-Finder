@@ -422,18 +422,25 @@ export function runBacktest(
         if (position) {
             position.barsInTrade += 1;
 
+            // Check stop loss
             const stopLoss = position.stopLossPrice;
             if (stopLoss !== null) {
                 const stopHit = isShort ? candle.high >= stopLoss : candle.low <= stopLoss;
                 if (stopHit) {
                     exitPosition(stopLoss, candle.time, position.size);
                 }
-            } else if (position && position.takeProfitPrice !== null) {
+            }
+
+            // Check take profit (independent of stop loss)
+            if (position && position.takeProfitPrice !== null) {
                 const takeHit = isShort ? candle.low <= position.takeProfitPrice : candle.high >= position.takeProfitPrice;
                 if (takeHit) {
                     exitPosition(position.takeProfitPrice, candle.time, position.size);
                 }
-            } else if (position && !position.partialTaken && position.partialTargetPrice !== null) {
+            }
+
+            // Check partial take profit
+            if (position && !position.partialTaken && position.partialTargetPrice !== null) {
                 const partialHit = isShort ? candle.low <= position.partialTargetPrice : candle.high >= position.partialTargetPrice;
                 if (partialHit) {
                     const partialSize = position.size * (config.partialTakeProfitPercent / 100);

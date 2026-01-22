@@ -452,8 +452,20 @@ export class FinderManager {
 		const rangeRatio = Math.max(0, options.rangePercent) / 100;
 		const rawRange = Math.abs(baseValue) * rangeRatio;
 		const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
-		const min = baseValue - range;
-		const max = baseValue + range;
+		let min = baseValue - range;
+		let max = baseValue + range;
+
+		// Special clamping for risk management percent params
+		if (key === 'stopLossPercent') {
+			// Clamp to valid range: 0-15%
+			min = Math.max(0, min);
+			max = Math.min(15, max);
+		} else if (key === 'takeProfitPercent') {
+			// Clamp to valid range: 0-100%
+			min = Math.max(0, min);
+			max = Math.min(100, max);
+		}
+
 		const steps = Math.max(2, options.steps);
 		const stepSize = steps > 1 ? (max - min) / (steps - 1) : 0;
 
@@ -539,7 +551,19 @@ export class FinderManager {
 				const rangeRatio = Math.max(0, options.rangePercent) / 100;
 				const rawRange = Math.abs(baseValue) * rangeRatio;
 				const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
-				numericRanges.push({ key, baseValue, min: baseValue - range, max: baseValue + range });
+				let min = baseValue - range;
+				let max = baseValue + range;
+
+				// Special clamping for risk management percent params
+				if (key === 'stopLossPercent') {
+					min = Math.max(0, min);
+					max = Math.min(15, max);
+				} else if (key === 'takeProfitPercent') {
+					min = Math.max(0, min);
+					max = Math.min(100, max);
+				}
+
+				numericRanges.push({ key, baseValue, min, max });
 			}
 		}
 

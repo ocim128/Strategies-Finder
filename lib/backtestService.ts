@@ -164,7 +164,7 @@ export class BacktestService {
         sizingMode: 'percent' | 'fixed';
         fixedTradeAmount: number;
     } {
-        const initialCapital = parseFloat((document.getElementById('initialCapital') as HTMLInputElement).value) || 10000;
+        const initialCapital = parseFloat((document.getElementById('initialCapital') as HTMLInputElement).value) || 30000;
         const positionSize = parseFloat((document.getElementById('positionSize') as HTMLInputElement).value) || 100;
         const commission = parseFloat((document.getElementById('commission') as HTMLInputElement).value) || 0.1;
         const fixedTradeAmount = Math.max(
