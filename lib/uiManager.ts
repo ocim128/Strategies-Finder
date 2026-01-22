@@ -166,6 +166,36 @@ export class UIManager {
         }
     }
 
+    public updateTimeframeUI(interval: string) {
+        const tabs = Array.from(document.querySelectorAll<HTMLElement>('.timeframe-tab'));
+        let matchedTab = false;
+
+        tabs.forEach(tab => {
+            const isActive = tab.dataset.interval === interval;
+            tab.classList.toggle('active', isActive);
+            if (isActive) matchedTab = true;
+        });
+
+        const customContainer = document.getElementById('timeframeCustom');
+        const customInput = document.getElementById('timeframeMinutesInput') as HTMLInputElement | null;
+        const isCustom = !matchedTab;
+
+        if (customContainer) {
+            customContainer.classList.toggle('active', isCustom);
+        }
+
+        if (customInput) {
+            if (interval.endsWith('m')) {
+                const minutes = parseInt(interval.slice(0, -1), 10);
+                if (Number.isFinite(minutes)) {
+                    customInput.value = String(minutes);
+                    return;
+                }
+            }
+            customInput.value = '';
+        }
+    }
+
     public clearUI() {
         getRequiredElement('indicatorsPanel').innerHTML = '';
         resultsRenderer.clear();

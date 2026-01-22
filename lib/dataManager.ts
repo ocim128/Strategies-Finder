@@ -1,5 +1,6 @@
 import { Time } from "lightweight-charts";
 import { OHLCVData } from "./strategies/index";
+import { resampleOHLCV } from "./strategies/resample-utils";
 import { state, type MockChartModel } from "./state";
 import { debugLogger } from "./debugLogger";
 
@@ -28,6 +29,13 @@ export class DataManager {
     private readonly LIMIT_PER_REQUEST = 1000;
     private readonly TOTAL_LIMIT = 30000;
     private readonly MAX_REQUESTS = 15;
+    private readonly MIN_MOCK_BARS = 100;
+    private readonly MAX_MOCK_BARS = 30000000;
+    private readonly BINANCE_INTERVALS = new Set([
+        '1m', '3m', '5m', '15m', '30m',
+        '1h', '2h', '4h', '6h', '8h', '12h',
+        '1d', '3d', '1w', '1M'
+    ]);
     private currentAbort: AbortController | null = null;
     private currentLoadId = 0;
     private readonly MOCK_SYMBOLS = new Set(['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'EURUSD', 'GBPUSD', 'USDJPY', 'XAUUSD', 'XAGUSD', 'WTIUSD']);
@@ -52,6 +60,7 @@ export class DataManager {
 
         try {
             const batches: BinanceKline[][] = [];
+            const { sourceInterval, needsResample } = this.resolveFetchInterval(interval);
             let endTime: number | undefined;
             let requestCount = 0;
             let totalDataLength = 0;
@@ -61,7 +70,7 @@ export class DataManager {
                 const remaining = this.TOTAL_LIMIT - totalDataLength;
                 const limit = Math.min(remaining, this.LIMIT_PER_REQUEST);
 
-                const data = await this.fetchKlinesBatch(symbol, interval, limit, endTime, signal);
+                const data = await this.fetchKlinesBatch(symbol, sourceInterval, limit, endTime, signal);
 
                 if (data.length === 0) break;
 
@@ -74,7 +83,21 @@ export class DataManager {
             }
 
             const allRawData = batches.reverse().flat();
-            return this.mapToOHLCV(allRawData);
+            const mapped = this.mapToOHLCV(allRawData);
+
+            if (needsResample) {
+                const resampled = resampleOHLCV(mapped, interval);
+                debugLogger.info('data.resample', {
+                    symbol,
+                    interval,
+                    sourceInterval,
+                    sourceCandles: mapped.length,
+                    targetCandles: resampled.length,
+                });
+                return resampled;
+            }
+
+            return mapped;
         } catch (error) {
             if (this.isAbortError(error)) {
                 return [];
@@ -181,8 +204,10 @@ export class DataManager {
     }
 
     private generateMockData(symbol: string, interval: string): OHLCVData[] {
+        const rawBars = Number.isFinite(state.mockChartBars) ? Math.floor(state.mockChartBars) : this.TOTAL_LIMIT;
+        const barsCount = Math.min(this.MAX_MOCK_BARS, Math.max(this.MIN_MOCK_BARS, rawBars));
         const config: MockChartConfig = {
-            barsCount: this.TOTAL_LIMIT,
+            barsCount,
             volatility: 1.5,
             startPrice: this.getMockPrice(symbol),
             intervalSeconds: this.getIntervalSeconds(interval),
@@ -621,6 +646,45 @@ export class DataManager {
         return this.MOCK_SYMBOLS.has(symbol);
     }
 
+    private isBinanceInterval(interval: string): boolean {
+        return this.BINANCE_INTERVALS.has(interval);
+    }
+
+    private parseCustomMinutes(interval: string): number | null {
+        if (this.isBinanceInterval(interval)) return null;
+        if (!interval.endsWith('m')) return null;
+        const minutes = parseInt(interval.slice(0, -1), 10);
+        if (!Number.isFinite(minutes) || minutes <= 0) return null;
+        return minutes;
+    }
+
+    private resolveFetchInterval(interval: string): { sourceInterval: string; needsResample: boolean } {
+        if (this.isBinanceInterval(interval)) {
+            return { sourceInterval: interval, needsResample: false };
+        }
+        const customMinutes = this.parseCustomMinutes(interval);
+        if (customMinutes) {
+            const targetSeconds = customMinutes * 60;
+            let bestInterval = '1m';
+            let bestSeconds = 60;
+
+            for (const candidate of this.BINANCE_INTERVALS) {
+                if (candidate === '1M') continue;
+                const seconds = this.getIntervalSeconds(candidate);
+                if (!Number.isFinite(seconds) || seconds <= 0) continue;
+                if (seconds > targetSeconds) continue;
+                if (targetSeconds % seconds !== 0) continue;
+                if (seconds > bestSeconds) {
+                    bestSeconds = seconds;
+                    bestInterval = candidate;
+                }
+            }
+
+            return { sourceInterval: bestInterval, needsResample: true };
+        }
+        return { sourceInterval: interval, needsResample: false };
+    }
+
     private getIntervalSeconds(interval: string): number {
         const unit = interval.slice(-1);
         const value = parseInt(interval.slice(0, -1)) || 1;
@@ -671,6 +735,10 @@ export class DataManager {
         // Don't stream for mock symbols
         if (this.isMockSymbol(symbol)) {
             debugLogger.info('data.stream.skip_mock', { symbol });
+            return;
+        }
+        if (!this.isBinanceInterval(interval)) {
+            debugLogger.info('data.stream.skip_interval', { symbol, interval });
             return;
         }
 

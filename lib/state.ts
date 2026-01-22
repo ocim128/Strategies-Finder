@@ -14,6 +14,7 @@ export class State {
     public currentSymbol = 'ETHUSDT';
     public currentInterval = '1d';
     public mockChartModel: MockChartModel = 'simple';
+    public mockChartBars = 30000;
     public isDarkTheme = true;
     public ohlcvData: OHLCVData[] = [];
     public indicators: Indicator[] = [];

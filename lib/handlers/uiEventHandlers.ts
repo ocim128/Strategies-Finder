@@ -28,6 +28,7 @@ export function setupEventHandlers() {
     const symbolSearchLoading = document.getElementById('symbolSearchLoading');
     const symbolSearchEmpty = document.getElementById('symbolSearchEmpty');
     const mockModelSelect = document.getElementById('mockModelSelect') as HTMLSelectElement | null;
+    const mockBarsInput = document.getElementById('mockBarsInput') as HTMLInputElement | null;
 
     let isSearchInitialized = false;
     let selectedIndex = -1;
@@ -38,6 +39,43 @@ export function setupEventHandlers() {
             const value = mockModelSelect.value;
             if (value === 'simple' || value === 'hard' || value === 'v3') {
                 state.set('mockChartModel', value);
+            }
+        });
+    }
+
+    if (mockBarsInput) {
+        const MIN_MOCK_BARS = 100;
+        const MAX_MOCK_BARS = 30000000;
+
+        mockBarsInput.value = String(state.mockChartBars);
+
+        const applyMockBars = () => {
+            const rawValue = mockBarsInput.value.trim();
+            const bars = parseInt(rawValue, 10);
+
+            if (!Number.isFinite(bars)) {
+                uiManager.showToast('Enter a valid mock candle count.', 'error');
+                mockBarsInput.value = String(state.mockChartBars);
+                return;
+            }
+
+            const clamped = Math.min(MAX_MOCK_BARS, Math.max(MIN_MOCK_BARS, Math.floor(bars)));
+            if (clamped !== bars) {
+                uiManager.showToast(`Mock candles must be between ${MIN_MOCK_BARS} and ${MAX_MOCK_BARS}.`, 'error');
+            }
+
+            mockBarsInput.value = String(clamped);
+            if (clamped !== state.mockChartBars) {
+                debugLogger.event('ui.mock.bars', { bars: clamped });
+                state.set('mockChartBars', clamped);
+            }
+        };
+
+        mockBarsInput.addEventListener('change', applyMockBars);
+        mockBarsInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyMockBars();
             }
         });
     }
@@ -281,14 +319,50 @@ export function setupEventHandlers() {
     // Timeframe tabs
     document.querySelectorAll('.timeframe-tab').forEach(tab => {
         tab.addEventListener('click', async (e) => {
-            const interval = (e.target as HTMLElement).dataset.interval!;
-            document.querySelectorAll('.timeframe-tab').forEach(t => t.classList.remove('active'));
-            (e.target as HTMLElement).classList.add('active');
-
+            const interval = (e.currentTarget as HTMLElement).dataset.interval;
+            if (!interval) return;
             debugLogger.event('ui.interval.select', { interval });
             state.set('currentInterval', interval);
         });
     });
+
+    const timeframeMinutesInput = document.getElementById('timeframeMinutesInput') as HTMLInputElement | null;
+    const timeframeMinutesApply = document.getElementById('timeframeMinutesApply');
+    const MAX_CUSTOM_MINUTES = 60 * 24 * 7;
+
+    const applyCustomMinutes = () => {
+        if (!timeframeMinutesInput) return;
+        const rawValue = timeframeMinutesInput.value.trim();
+        const minutes = parseInt(rawValue, 10);
+
+        if (!Number.isFinite(minutes)) {
+            uiManager.showToast('Enter minutes between 1 and 10080.', 'error');
+            return;
+        }
+
+        const clamped = Math.min(MAX_CUSTOM_MINUTES, Math.max(1, minutes));
+        if (clamped !== minutes) {
+            uiManager.showToast('Minutes must be between 1 and 10080.', 'error');
+            timeframeMinutesInput.value = String(clamped);
+        }
+
+        const interval = `${clamped}m`;
+        debugLogger.event('ui.interval.custom', { interval, minutes: clamped });
+        state.set('currentInterval', interval);
+    };
+
+    if (timeframeMinutesInput) {
+        timeframeMinutesInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyCustomMinutes();
+            }
+        });
+    }
+
+    if (timeframeMinutesApply) {
+        timeframeMinutesApply.addEventListener('click', applyCustomMinutes);
+    }
 
     // Theme toggle
     getRequiredElement('themeToggle').addEventListener('click', () => {

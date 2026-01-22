@@ -108,6 +108,7 @@ export function setupStateSubscriptions() {
 
     state.subscribe('currentInterval', (interval) => {
         debugLogger.event('state.currentInterval', { interval });
+        uiManager.updateTimeframeUI(interval);
         setPriceLoading();
         clearAll();
         dataManager.loadData(state.currentSymbol, interval);
@@ -115,6 +116,18 @@ export function setupStateSubscriptions() {
 
     state.subscribe('mockChartModel', (mockChartModel) => {
         debugLogger.event('state.mockChartModel', { mockChartModel });
+        if (!dataManager.isMockSymbol(state.currentSymbol)) return;
+        setPriceLoading();
+        clearAll();
+        dataManager.loadData(state.currentSymbol, state.currentInterval);
+    });
+
+    state.subscribe('mockChartBars', (mockChartBars) => {
+        debugLogger.event('state.mockChartBars', { mockChartBars });
+        const input = document.getElementById('mockBarsInput') as HTMLInputElement | null;
+        if (input) {
+            input.value = String(mockChartBars);
+        }
         if (!dataManager.isMockSymbol(state.currentSymbol)) return;
         setPriceLoading();
         clearAll();

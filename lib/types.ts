@@ -17,6 +17,8 @@ export interface AppState {
     currentSymbol: string;
     currentInterval: string;
     isDarkTheme: boolean;
+    mockChartModel: string;
+    mockChartBars: number;
     ohlcvData: OHLCVData[];
     indicators: Indicator[];
     currentBacktestResult: BacktestResult | null;

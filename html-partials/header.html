@@ -61,19 +61,24 @@
 
                 <!-- Other Markets Section -->
                 <div class="symbol-search-section">
-                    <div class="dropdown-header">Other Markets (Mock Data)</div>
-                    <div class="mock-model-row">
-                        <label class="mock-model-label" for="mockModelSelect">Mock Model</label>
-                        <select class="mock-model-select" id="mockModelSelect">
-                            <option value="simple">Simple (V1)</option>
-                            <option value="hard">Regime (V2)</option>
-                            <option value="v3">Adversarial (V3)</option>
-                        </select>
-                    </div>
-                    <div class="dropdown-item" data-symbol="AAPL" role="button" tabindex="0">
-                        <span class="symbol-item-badge stock">Stock</span>
-                        AAPL (Apple)
-                    </div>
+                <div class="dropdown-header">Other Markets (Mock Data)</div>
+                <div class="mock-model-row">
+                    <label class="mock-model-label" for="mockModelSelect">Mock Model</label>
+                    <select class="mock-model-select" id="mockModelSelect">
+                        <option value="simple">Simple (V1)</option>
+                        <option value="hard">Regime (V2)</option>
+                        <option value="v3">Adversarial (V3)</option>
+                    </select>
+                </div>
+                <div class="mock-model-row">
+                    <label class="mock-model-label" for="mockBarsInput">Mock Candles</label>
+                    <input type="number" class="mock-model-input" id="mockBarsInput" min="100" max="30000000" step="100" value="30000"
+                        inputmode="numeric" />
+                </div>
+                <div class="dropdown-item" data-symbol="AAPL" role="button" tabindex="0">
+                    <span class="symbol-item-badge stock">Stock</span>
+                    AAPL (Apple)
+                </div>
                     <div class="dropdown-item" data-symbol="GOOGL" role="button" tabindex="0">
                         <span class="symbol-item-badge stock">Stock</span>
                         GOOGL (Google)
@@ -99,6 +104,13 @@
             <button class="timeframe-tab" data-interval="4h">4H</button>
             <button class="timeframe-tab active" data-interval="1d">1D</button>
             <button class="timeframe-tab" data-interval="1w">1W</button>
+            <div class="timeframe-custom" id="timeframeCustom">
+                <input type="number" id="timeframeMinutesInput" class="timeframe-custom-input" min="1" max="10080"
+                    step="1" placeholder="min" inputmode="numeric" aria-label="Custom minutes" />
+                <span class="timeframe-custom-suffix">m</span>
+                <button class="timeframe-custom-apply" id="timeframeMinutesApply" type="button"
+                    title="Apply custom minutes">Set</button>
+            </div>
         </div>
     </div>
 
