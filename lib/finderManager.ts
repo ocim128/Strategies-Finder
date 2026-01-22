@@ -8,7 +8,7 @@ import { getRequiredElement, setVisible } from "./domUtils";
 import { dataManager } from "./dataManager";
 
 type FinderMode = 'default' | 'grid' | 'random';
-type FinderMetric = 'netProfit' | 'profitFactor' | 'sharpeRatio' | 'netProfitPercent' | 'winRate' | 'maxDrawdownPercent' | 'expectancy' | 'averageGain';
+type FinderMetric = 'netProfit' | 'profitFactor' | 'sharpeRatio' | 'netProfitPercent' | 'winRate' | 'maxDrawdownPercent' | 'expectancy' | 'averageGain' | 'totalTrades';
 
 const DEFAULT_SORT_PRIORITY: FinderMetric[] = [
 	'netProfit',
@@ -18,6 +18,7 @@ const DEFAULT_SORT_PRIORITY: FinderMetric[] = [
 	'maxDrawdownPercent',
 	'expectancy',
 	'averageGain',
+	'totalTrades',
 	'netProfitPercent'
 ];
 
@@ -49,7 +50,8 @@ const METRIC_LABELS: Record<FinderMetric, string> = {
 	winRate: 'Win %',
 	maxDrawdownPercent: 'DD %',
 	expectancy: 'Exp',
-	averageGain: 'Avg Gain'
+	averageGain: 'Avg Gain',
+	totalTrades: 'Trades'
 };
 
 const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
@@ -60,7 +62,8 @@ const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
 	winRate: 'Win Rate',
 	maxDrawdownPercent: 'Max Drawdown %',
 	expectancy: 'Expectancy',
-	averageGain: 'Average Gain'
+	averageGain: 'Average Gain',
+	totalTrades: 'Total Trades'
 };
 
 /**
@@ -764,6 +767,8 @@ export class FinderManager {
 				return this.formatCurrency(result.expectancy);
 			case 'averageGain':
 				return this.formatCurrency(result.avgWin);
+			case 'totalTrades':
+				return result.totalTrades.toString();
 			default:
 				return '';
 		}
@@ -787,6 +792,8 @@ export class FinderManager {
 				return result.expectancy;
 			case 'averageGain':
 				return result.avgWin;
+			case 'totalTrades':
+				return result.totalTrades;
 			default:
 				return 0;
 		}
