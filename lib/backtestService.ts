@@ -12,6 +12,8 @@ import { runBacktest, StrategyParams, BacktestSettings, EntryConfirmationMode } 
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./paramManager";
 import { debugLogger } from "./debugLogger";
+import { rustEngine } from "./rustEngineClient";
+import { shouldUseRustEngine } from "./enginePreferences";
 
 export class BacktestService {
     public async runCurrentBacktest() {
@@ -64,15 +66,42 @@ export class BacktestService {
             progressText.textContent = 'Running backtest...';
             await this.sleep(100);
 
-            const result = runBacktest(
-                state.ohlcvData,
-                signals,
-                initialCapital,
-                positionSize,
-                commission,
-                settings,
-                { mode: sizingMode, fixedTradeAmount }
-            );
+            // Try Rust engine first for performance, fallback to TypeScript
+            let result;
+            let engineUsed: 'rust' | 'typescript' = 'typescript';
+
+            if (shouldUseRustEngine()) {
+                const rustResult = await rustEngine.runBacktest(
+                    state.ohlcvData,
+                    signals,
+                    initialCapital,
+                    positionSize,
+                    commission,
+                    settings,
+                    { mode: sizingMode, fixedTradeAmount }
+                );
+
+                if (rustResult) {
+                    result = rustResult;
+                    engineUsed = 'rust';
+                    debugLogger.event('backtest.rust_used', { bars: state.ohlcvData.length });
+                }
+            }
+
+            // Fallback to TypeScript if Rust unavailable or failed
+            if (!result) {
+                result = runBacktest(
+                    state.ohlcvData,
+                    signals,
+                    initialCapital,
+                    positionSize,
+                    commission,
+                    settings,
+                    { mode: sizingMode, fixedTradeAmount }
+                );
+                engineUsed = 'typescript';
+            }
+
             state.set('currentBacktestResult', result);
 
             // Send webhook notifications for completed trades
@@ -82,12 +111,14 @@ export class BacktestService {
             progressText.textContent = 'Complete!';
             const expectancyText = `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`;
             const pfText = result.profitFactor === Infinity ? 'Inf' : result.profitFactor.toFixed(2);
-            statusEl.textContent = `${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}`;
+            const engineBadge = engineUsed === 'rust' ? ' ⚡' : '';
+            statusEl.textContent = `${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}${engineBadge}`;
             shouldDelayHide = true;
             debugLogger.event('backtest.success', {
                 strategy: state.currentStrategyKey,
                 trades: result.totalTrades,
                 durationMs: Date.now() - startedAt,
+                engine: engineUsed,
             });
 
             // Enable replay button if there are results

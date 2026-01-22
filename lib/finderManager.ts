@@ -1,4 +1,4 @@
-import { BacktestResult, StrategyParams, runBacktest } from "./strategies/index";
+﻿import { BacktestResult, StrategyParams, runBacktest, Signal } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtestService";
@@ -6,6 +6,9 @@ import { paramManager } from "./paramManager";
 import { uiManager } from "./uiManager";
 import { getRequiredElement, setVisible } from "./domUtils";
 import { dataManager } from "./dataManager";
+import { rustEngine } from "./rustEngineClient";
+import { debugLogger } from "./debugLogger";
+import { shouldUseRustEngine } from "./enginePreferences";
 
 type FinderMode = 'default' | 'grid' | 'random';
 type FinderMetric = 'netProfit' | 'profitFactor' | 'sharpeRatio' | 'netProfitPercent' | 'winRate' | 'maxDrawdownPercent' | 'expectancy' | 'averageGain' | 'totalTrades';
@@ -173,8 +176,8 @@ export class FinderManager {
 			div.innerHTML = `
 				<span class="sort-label">${METRIC_FULL_LABELS[metric]}</span>
 				<div class="finder-sort-actions">
-					<button class="finder-sort-btn sort-up" title="Move Up">▲</button>
-					<button class="finder-sort-btn sort-down" title="Move Down">▼</button>
+					<button class="finder-sort-btn sort-up" title="Move Up">â–²</button>
+					<button class="finder-sort-btn sort-down" title="Move Down">â–¼</button>
 				</div>
 			`;
 			container.appendChild(div);
@@ -249,25 +252,18 @@ export class FinderManager {
 				this.setStatus('No strategies selected.');
 				return;
 			}
-			const results: FinderResult[] = [];
 
-			const runsByStrategy: Map<string, number> = new Map();
-			for (const [key, strategy] of strategyEntries) {
-				const extendedDefaults = { ...strategy.defaultParams };
-				if (settings.riskMode === 'percentage') {
-					if (settings.stopLossEnabled) {
-						extendedDefaults['stopLossPercent'] = settings.stopLossPercent ?? 5;
-					}
-					if (settings.takeProfitEnabled) {
-						extendedDefaults['takeProfitPercent'] = settings.takeProfitPercent ?? 10;
-					}
-				}
-				const paramSets = this.generateParamSets(extendedDefaults, options);
-				runsByStrategy.set(key, paramSets.length);
-			}
-			const totalRuns = Array.from(runsByStrategy.values()).reduce((sum, count) => sum + count, 0);
-			let completed = 0;
-			let errorCount = 0;
+			// OPTIMIZATION: Collect all parameter/signal combinations first
+			type PreparedRun = {
+				key: string;
+				name: string;
+				params: StrategyParams;
+				signals: Signal[];
+				backtestSettings: typeof settings;
+			};
+			const allRuns: PreparedRun[] = [];
+
+			this.setProgress(true, 5, 'Generating signals...');
 
 			for (const [key, strategy] of strategyEntries) {
 				const extendedDefaults = { ...strategy.defaultParams };
@@ -282,7 +278,6 @@ export class FinderManager {
 				const paramSets = this.generateParamSets(extendedDefaults, options);
 				for (const params of paramSets) {
 					try {
-						// Apply percentage risk params to local settings copy for backtest
 						const backtestSettings = { ...settings };
 						if (params['stopLossPercent'] !== undefined) {
 							backtestSettings.stopLossPercent = params['stopLossPercent'];
@@ -290,29 +285,100 @@ export class FinderManager {
 						if (params['takeProfitPercent'] !== undefined) {
 							backtestSettings.takeProfitPercent = params['takeProfitPercent'];
 						}
-
 						const signals = strategy.execute(state.ohlcvData, params);
+						allRuns.push({ key, name: strategy.name, params, signals, backtestSettings });
+					} catch (err) {
+						console.warn(`[Finder] Signal generation failed for ${key}:`, err);
+					}
+				}
+			}
+
+			const totalRuns = allRuns.length;
+			if (totalRuns === 0) {
+				this.setStatus('No valid parameter combinations generated.');
+				return;
+			}
+
+			this.setProgress(true, 10, `Running ${totalRuns} backtests...`);
+
+			const results: FinderResult[] = [];
+			const rustAvailable = shouldUseRustEngine() && await rustEngine.checkHealth();
+
+			// OPTIMIZATION: Use batch backtest with Rust (single HTTP request, parallel execution)
+			if (rustAvailable) {
+				debugLogger.info(`[Finder] Using Rust batch backtest for ${totalRuns} runs`);
+				this.setStatus(`Running ${totalRuns} backtests via Rust...`);
+
+				const batchItems = allRuns.map((run, idx) => ({
+					id: `${run.key}-${idx}`,
+					signals: run.signals,
+					settings: run.backtestSettings,
+				}));
+
+				const batchResult = await rustEngine.runBatchBacktest(
+					state.ohlcvData,
+					batchItems,
+					initialCapital,
+					positionSize,
+					commission,
+					settings,
+					{ mode: sizingMode, fixedTradeAmount }
+				);
+
+				if (batchResult && batchResult.results.length > 0) {
+					for (let i = 0; i < batchResult.results.length; i++) {
+						const run = allRuns[i];
+						results.push({
+							key: run.key,
+							name: run.name,
+							params: run.params,
+							result: batchResult.results[i].result,
+						});
+					}
+					this.setStatus(`Rust batch: ${totalRuns} runs in ${batchResult.processingTimeMs}ms ⚡`);
+					debugLogger.info(`[Finder] Rust batch completed: ${totalRuns} runs in ${batchResult.processingTimeMs}ms`);
+				} else {
+					debugLogger.warn('[Finder] Rust batch failed, falling back to TypeScript');
+					// Fallback to TypeScript
+					for (const run of allRuns) {
+						try {
+							const result = runBacktest(
+								state.ohlcvData,
+								run.signals,
+								initialCapital,
+								positionSize,
+								commission,
+								run.backtestSettings,
+								{ mode: sizingMode, fixedTradeAmount }
+							);
+							results.push({ key: run.key, name: run.name, params: run.params, result });
+						} catch (err) {
+							console.warn(`[Finder] Backtest failed for ${run.key}:`, err);
+						}
+					}
+				}
+			} else {
+				// TypeScript fallback
+				debugLogger.info(`[Finder] Using TypeScript for ${totalRuns} runs`);
+				let completed = 0;
+				for (const run of allRuns) {
+					try {
 						const result = runBacktest(
 							state.ohlcvData,
-							signals,
+							run.signals,
 							initialCapital,
 							positionSize,
 							commission,
-							backtestSettings,
+							run.backtestSettings,
 							{ mode: sizingMode, fixedTradeAmount }
 						);
-						results.push({ key, name: strategy.name, params, result });
+						results.push({ key: run.key, name: run.name, params: run.params, result });
 					} catch (err) {
-						errorCount += 1;
-						if (errorCount <= 3) {
-							console.warn(`[Finder] Skipping ${key} due to error:`, err);
-						}
+						console.warn(`[Finder] Backtest failed for ${run.key}:`, err);
 					}
-
-					completed += 1;
+					completed++;
 					if (completed % 25 === 0) {
-						const progress = totalRuns > 0 ? (completed / totalRuns) * 100 : 0;
-						this.setProgress(true, progress, `${completed}/${totalRuns} runs`);
+						this.setProgress(true, 10 + (completed / totalRuns) * 85, `${completed}/${totalRuns} runs`);
 						await this.yieldControl();
 					}
 				}
@@ -355,6 +421,7 @@ export class FinderManager {
 			this.isRunning = false;
 		}
 	}
+
 
 	private readOptions(): FinderOptions {
 		const useAdvancedSort = this.isToggleEnabled('finderAdvancedToggle', false);
@@ -861,3 +928,5 @@ export class FinderManager {
 }
 
 export const finderManager = new FinderManager();
+
+

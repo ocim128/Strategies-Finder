@@ -1,6 +1,7 @@
 import { settingsManager } from "../settingsManager";
 import { uiManager } from "../uiManager";
 import { debugLogger } from "../debugLogger";
+import { refreshEngineStatus } from "../engineStatusIndicator";
 
 export function setupSettingsHandlers() {
     // Reset to Default button
@@ -106,9 +107,22 @@ export function setupSettingsHandlers() {
     // ========================================================================
 
     setupWebhookHandlers();
+    setupEnginePreferenceHandlers();
 
     // Initialize dropdown with saved configs
     updateConfigDropdown();
+}
+
+function setupEnginePreferenceHandlers() {
+    const rustToggle = document.getElementById('useRustEngineToggle') as HTMLInputElement | null;
+    if (!rustToggle) return;
+
+    const updateStatus = () => {
+        void refreshEngineStatus();
+    };
+
+    rustToggle.addEventListener('change', updateStatus);
+    updateStatus();
 }
 
 /**

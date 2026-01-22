@@ -28,6 +28,9 @@ export interface BacktestSettingsData {
     fixedTradeToggle: boolean;
     fixedTradeAmount: number;
 
+    // Engine preference
+    useRustEngine: boolean;
+
     // Risk management
     riskSettingsToggle: boolean;
     riskMode: string;
@@ -97,6 +100,7 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     commission: 0.1,
     fixedTradeToggle: false,
     fixedTradeAmount: 1000,
+    useRustEngine: true,
 
     // Risk management
     riskSettingsToggle: false,
@@ -187,6 +191,7 @@ class SettingsManager {
             commission: this.readNumber('commission', DEFAULT_BACKTEST_SETTINGS.commission),
             fixedTradeToggle: this.readCheckbox('fixedTradeToggle', DEFAULT_BACKTEST_SETTINGS.fixedTradeToggle),
             fixedTradeAmount: this.readNumber('fixedTradeAmount', DEFAULT_BACKTEST_SETTINGS.fixedTradeAmount),
+            useRustEngine: this.readCheckbox('useRustEngineToggle', DEFAULT_BACKTEST_SETTINGS.useRustEngine),
 
             // Risk management
             riskSettingsToggle: this.readCheckbox('riskSettingsToggle', DEFAULT_BACKTEST_SETTINGS.riskSettingsToggle),
@@ -366,6 +371,7 @@ class SettingsManager {
         this.writeNumber('commission', settings.commission);
         this.writeCheckbox('fixedTradeToggle', settings.fixedTradeToggle);
         this.writeNumber('fixedTradeAmount', settings.fixedTradeAmount);
+        this.writeCheckbox('useRustEngineToggle', settings.useRustEngine ?? DEFAULT_BACKTEST_SETTINGS.useRustEngine);
 
         // Risk management
         this.writeCheckbox('riskSettingsToggle', settings.riskSettingsToggle);
@@ -619,6 +625,7 @@ class SettingsManager {
             'regimeSettingsToggle',
             'entrySettingsToggle',
             'shortModeToggle',
+            'useRustEngineToggle',
             'webhookEnabledToggle',
             'stopLossToggle',
             'takeProfitToggle'

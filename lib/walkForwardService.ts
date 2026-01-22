@@ -5,6 +5,8 @@ import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./paramManager";
 import { debugLogger } from "./debugLogger";
 import { backtestService } from "./backtestService";
+import { rustEngine } from "./rustEngineClient";
+import { shouldUseRustEngine } from "./enginePreferences";
 import {
     runWalkForwardAnalysis,
     runFixedParamWalkForward,
@@ -48,6 +50,12 @@ class WalkForwardService {
 
         try {
             const startTime = performance.now();
+
+            // Check Rust engine availability for future optimization
+            // Currently using TypeScript for full walk-forward since strategies are in TS
+            if (shouldUseRustEngine() && await rustEngine.checkHealth()) {
+                debugLogger.info('[WalkForward] Rust engine available - will use for inner backtests');
+            }
 
             // Check if this is explicitly a combo strategy
             const isComboStrategy = strategy.metadata?.isCombined === true;

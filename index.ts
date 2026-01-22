@@ -29,6 +29,7 @@ import { setupStateSubscriptions } from "./lib/handlers/stateSubscriptions";
 import { setupEventHandlers } from "./lib/handlers/uiEventHandlers";
 import { setupSettingsHandlers } from "./lib/handlers/settingsHandlers";
 import { handleCrosshairMove } from "./lib/appActions";
+import { initEngineStatusIndicator } from "./lib/engineStatusIndicator";
 
 async function init() {
 	injectLayout();
@@ -58,6 +59,7 @@ async function init() {
 	logicTestService.initUI();
 	combinerManager.init();
 	initDebugPanel();
+	initEngineStatusIndicator(); // Show Rust vs TypeScript engine status
 
 	// Initialize replay feature
 	const replayUI = new ReplayUI(replayManager);

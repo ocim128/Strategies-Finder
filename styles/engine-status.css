@@ -1,0 +1,60 @@
+/**
+ * Engine Status Indicator Styles
+ */
+
+.engine-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.panel-actions .engine-status {
+    margin-left: 0;
+}
+
+.engine-status.engine-rust {
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    color: white;
+    box-shadow: 0 2px 4px rgba(255, 107, 53, 0.3);
+}
+
+.engine-status.engine-rust:hover {
+    box-shadow: 0 4px 8px rgba(255, 107, 53, 0.4);
+    transform: translateY(-1px);
+}
+
+.engine-status.engine-typescript {
+    background: linear-gradient(135deg, #3178c6 0%, #235a97 100%);
+    color: white;
+    box-shadow: 0 2px 4px rgba(49, 120, 198, 0.3);
+}
+
+.engine-status.engine-typescript:hover {
+    box-shadow: 0 4px 8px rgba(49, 120, 198, 0.4);
+    transform: translateY(-1px);
+}
+
+/* Disconnected/checking state */
+.engine-status.engine-checking {
+    background: #666;
+    color: #ccc;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* Performance indicator badge when Rust is used */
+.backtest-status .rust-indicator {
+    color: #ff6b35;
+    margin-left: 4px;
+}

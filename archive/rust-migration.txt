@@ -1,0 +1,335 @@
+Rust Backend Migration for High-Performance Trading Engine
+Migrate computationally intensive operations (backtest, walk-forward, finder) from TypeScript to a Rust backend for 100-500x performance improvement with 5+ million candle bars.
+
+Architecture Overview
+Rust Backend
+Browser (TypeScript)
+WebSocket
+UI Components
+Client Service
+WebSocket Client
+Axum HTTP/WS Server
+Indicator Engine
+Backtest Engine
+Walk-Forward Optimizer
+Strategy Finder
+Thread Pool - Rayon
+Phase 1: Foundation (Days 1-3)
+Goal: Set up Rust project, define data types, establish build pipeline
+
+1.1 Project Setup
+[NEW]
+Cargo.toml
+[package]
+name = "trading-engine"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+# Web framework
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors"] }
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# High-performance data
+polars = { version = "0.36", features = ["lazy"] }
+ndarray = "0.15"
+# Parallelism
+rayon = "1.8"
+# WebSocket
+tokio-tungstenite = "0.21"
+# Utilities
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+1.2 Core Data Types
+[NEW]
+types.rs
+Port TypeScript types to Rust with memory-efficient layout:
+
+TypeScript	Rust Equivalent
+OHLCVData
+struct OHLCV { time: i64, open: f64, high: f64, low: f64, close: f64, volume: f64 }
+Trade
+struct Trade { id: u32, trade_type: TradeType, entry_time: i64, ... }
+BacktestResult
+struct BacktestResult { trades: Vec<Trade>, net_profit: f64, ... }
+Signal
+struct Signal { time: i64, signal_type: SignalType, price: f64 }
+StrategyParams
+HashMap<String, f64>
+BacktestSettings
+struct BacktestSettings { atr_period: u32, stop_loss_atr: f64, ... }
+1.3 Project Structure
+trading-engine/
+├── Cargo.toml
+├── src/
+│   ├── main.rs           # Entry point + Axum server
+│   ├── lib.rs            # Library exports
+│   ├── types.rs          # All data types
+│   ├── indicators/       # Technical indicators
+│   │   ├── mod.rs
+│   │   ├── sma.rs
+│   │   ├── ema.rs
+│   │   ├── rsi.rs
+│   │   ├── macd.rs
+│   │   ├── atr.rs
+│   │   ├── adx.rs
+│   │   ├── bollinger.rs
+│   │   ├── stochastic.rs
+│   │   └── supertrend.rs
+│   ├── backtest/         # Backtesting engine
+│   │   ├── mod.rs
+│   │   └── engine.rs
+│   ├── optimizer/        # Walk-forward + Finder
+│   │   ├── mod.rs
+│   │   ├── walk_forward.rs
+│   │   └── finder.rs
+│   └── api/              # HTTP/WebSocket handlers
+│       ├── mod.rs
+│       ├── routes.rs
+│       └── ws.rs
+Phase 2: Indicator Engine (Days 4-7)
+Goal: Port all indicators from
+indicators.ts
+ to Rust
+
+2.1 Indicators to Port
+Indicator	TypeScript Lines	Rust Implementation
+SMA	7-20	Rolling sum, O(n)
+EMA	25-61	Wilder smoothing
+RSI	63-117	Gain/loss smoothing
+MACD	119-172	Fast/slow EMA + signal
+Bollinger Bands	174-214	SMA ± stddev
+Stochastic	216-281	%K/%D with deques
+VWAP	283-301	Cumulative TPV/volume
+ATR	303-336	True range smoothing
+ADX	338-403	+DI/-DI calculation
+Supertrend	558-639	ATR-based trend
+Parabolic SAR	641-697	Acceleration factor
+2.2 Performance Optimizations
+// Use SIMD via ndarray for vectorized operations
+use ndarray::{Array1, s};
+pub fn calculate_sma_simd(data: &Array1<f64>, period: usize) -> Array1<f64> {
+    let mut result = Array1::from_elem(data.len(), f64::NAN);
+    let inv_period = 1.0 / period as f64;
+
+    // Vectorized rolling sum
+    let windows = data.windows(period);
+    for (i, window) in windows.into_iter().enumerate() {
+        result[i + period - 1] = window.sum() * inv_period;
+    }
+    result
+}
+2.3 Indicator Caching
+Pre-compute all indicators once, share across parameter combinations:
+
+pub struct PrecomputedIndicators {
+    pub atr: HashMap<u32, Vec<f64>>,      // period -> values
+    pub ema: HashMap<u32, Vec<f64>>,      // period -> values
+    pub rsi: HashMap<u32, Vec<f64>>,      // period -> values
+    pub adx: HashMap<u32, Vec<f64>>,      // period -> values
+}
+impl PrecomputedIndicators {
+    pub fn compute_all(data: &[OHLCV], periods: &IndicatorPeriods) -> Self {
+        // Compute all needed indicators in parallel using rayon
+        let atr = periods.atr.par_iter()
+            .map(|&p| (p, calculate_atr(data, p)))
+            .collect();
+        // ... etc
+    }
+}
+Phase 3: Backtest Engine (Days 8-12)
+Goal: Port
+backtest.ts
+ to Rust
+
+3.1 Core Backtest Functions
+Function	Lines	Description
+normalizeBacktestSettings
+83-118	Settings normalization
+passesEntryConfirmation
+156-199	Entry filters
+passesRegimeFilters
+201-245	ADX/trend filters
+prepareSignals
+247-296	Signal processing
+calculateMaxDrawdown
+298-313	Drawdown calculation
+runBacktest
+315-601	Main engine
+calculateBacktestStats
+603-653	Statistics
+3.2 Rust Backtest Engine
+pub fn run_backtest(
+    data: &[OHLCV],
+    signals: &[Signal],
+    initial_capital: f64,
+    position_size_percent: f64,
+    commission_percent: f64,
+    settings: &BacktestSettings,
+    indicators: &PrecomputedIndicators,  // Pre-computed!
+) -> BacktestResult {
+    // Fast iteration with zero allocations in hot path
+    let mut position: Option<Position> = None;
+    let mut trades = Vec::with_capacity(signals.len() / 2);
+    let mut equity_curve = Vec::with_capacity(data.len());
+    // ...
+}
+3.3 Performance Target
+Metric	TypeScript	Rust Target
+1M bars backtest	~2000ms	< 20ms
+5M bars backtest	~10000ms	< 100ms
+Phase 4: Walk-Forward & Finder (Days 13-18)
+Goal: Port
+walk-forward.ts
+ and
+finderManager.ts
+ with parallel optimization
+
+4.1 Walk-Forward Parallelization
+use rayon::prelude::*;
+pub async fn run_walk_forward(
+    data: &[OHLCV],
+    config: WalkForwardConfig,
+    strategy: &dyn Strategy,
+) -> WalkForwardResult {
+    let windows = generate_windows(&data, &config);
+    let indicators = PrecomputedIndicators::compute_all(data, &config.periods);
+
+    // Parallel window optimization
+    let results: Vec<WalkForwardWindow> = windows
+        .par_iter()
+        .map(|window| {
+            optimize_window(data, window, strategy, &indicators)
+        })
+        .collect();
+
+    aggregate_results(results)
+}
+4.2 Finder Grid Search
+pub async fn run_finder(
+    data: &[OHLCV],
+    options: FinderOptions,
+    strategy: &dyn Strategy,
+) -> Vec<FinderResult> {
+    let param_sets = generate_param_sets(&options);
+    let indicators = PrecomputedIndicators::compute_all(data, &options.periods);
+
+    // Parallel parameter evaluation
+    let results: Vec<(StrategyParams, BacktestResult)> = param_sets
+        .par_iter()
+        .map(|params| {
+            let result = run_backtest_fast(data, params, &indicators);
+            (params.clone(), result)
+        })
+        .collect();
+
+    // Sort and return top N
+    sort_and_filter(results, &options.sort_priority, options.top_n)
+}
+4.3 Performance Target
+Operation	TypeScript	Rust Target
+Walk-Forward (5M bars, 8 windows)	~5 min	< 5 sec
+Finder (1000 combinations)	~30 sec	< 300ms
+Phase 5: API & Integration (Days 19-25)
+Goal: Create REST/WebSocket API and TypeScript client
+
+5.1 API Endpoints
+// HTTP Routes
+POST /api/backtest          -> Run single backtest
+POST /api/walk-forward      -> Run walk-forward analysis
+POST /api/finder            -> Run strategy finder
+GET  /api/health            -> Health check
+// WebSocket for streaming progress
+WS /ws/optimizer            -> Stream optimization progress
+5.2 TypeScript Client Service
+[MODIFY]
+backtestService.ts
+Add Rust backend integration:
+
+class BacktestService {
+    private useRustBackend = true;  // Feature flag
+    private rustApiUrl = 'http://localhost:3030';
+
+    async runBacktest(data: OHLCVData[], ...): Promise<BacktestResult> {
+        if (this.useRustBackend) {
+            return this.runBacktestRust(data, ...);
+        }
+        return this.runBacktestLocal(data, ...);  // Fallback
+    }
+
+    private async runBacktestRust(...): Promise<BacktestResult> {
+        const response = await fetch(`${this.rustApiUrl}/api/backtest`, {
+            method: 'POST',
+            body: JSON.stringify({ data, settings, ... }),
+        });
+        return response.json();
+    }
+}
+5.3 Progress Streaming
+// WebSocket for walk-forward/finder progress
+const ws = new WebSocket('ws://localhost:3030/ws/optimizer');
+ws.onmessage = (event) => {
+    const progress = JSON.parse(event.data);
+    updateUI(progress.percent, progress.status);
+};
+Phase 6: Testing & Production (Days 26-30)
+6.1 Testing Strategy
+Test Type	Description
+Unit Tests	Indicator accuracy vs TypeScript
+Property Tests	proptest for edge cases
+Benchmark Tests	criterion for performance
+Integration Tests	API response validation
+6.2 Deployment Options
+Option C: Embedded
+Browser
+WASM Module
+Option B: Docker
+Browser
+Docker Container
+Rust Engine
+Option A: Local
+Browser
+Rust localhost:3030
+TIP
+
+Start with Option A (Local) for development. Docker for production deployment. WASM as future optimization.
+
+Verification Plan
+Automated Tests
+Rust Unit Tests
+
+cd trading-engine && cargo test
+Benchmark Tests
+
+cd trading-engine && cargo bench
+Integration Tests (requires running server)
+
+# Terminal 1: Start Rust server
+cd trading-engine && cargo run --release
+# Terminal 2: Run integration tests
+cd trading-engine && cargo test --test integration
+Manual Verification
+Accuracy Test: Compare Rust vs TypeScript backtest results for same input
+Performance Test: Measure time for 1M/5M bar operations
+UI Integration: Verify all existing features work with Rust backend
+Timeline Summary
+Phase	Duration	Deliverables
+1. Foundation	Days 1-3	Project setup, types, build
+2. Indicators	Days 4-7	All 11 indicators ported
+3. Backtest	Days 8-12	Core engine, 100x speedup
+4. Optimizer	Days 13-18	Walk-forward, Finder parallel
+5. Integration	Days 19-25	API, TypeScript client
+6. Production	Days 26-30	Tests, deployment
+Total: ~30 days for complete migration
+
+Risk Mitigation
+WARNING
+
+Feature Flag Approach: Keep TypeScript implementation as fallback. Toggle between backends via config.
+
+IMPORTANT
+
+Incremental Migration: Each phase is independently testable. Can stop at any phase with working system.
