@@ -80,7 +80,27 @@ export function setupStateSubscriptions() {
     // Symbol/Interval changes
     state.subscribe('currentSymbol', (symbol) => {
         debugLogger.event('state.currentSymbol', { symbol });
-        getRequiredElement('symbolName').textContent = SYMBOL_MAP[symbol];
+
+        // Get display name from map, or generate one for Binance pairs
+        let displayName = SYMBOL_MAP[symbol];
+        if (!displayName) {
+            // For Binance pairs like BTCUSDT, format as BTC/USDT
+            if (symbol.endsWith('USDT')) {
+                displayName = `${symbol.slice(0, -4)}/USDT`;
+            } else if (symbol.endsWith('BUSD')) {
+                displayName = `${symbol.slice(0, -4)}/BUSD`;
+            } else if (symbol.endsWith('BTC')) {
+                displayName = `${symbol.slice(0, -3)}/BTC`;
+            } else if (symbol.endsWith('ETH')) {
+                displayName = `${symbol.slice(0, -3)}/ETH`;
+            } else if (symbol.endsWith('BNB')) {
+                displayName = `${symbol.slice(0, -3)}/BNB`;
+            } else {
+                displayName = symbol;
+            }
+        }
+
+        getRequiredElement('symbolName').textContent = displayName;
         setPriceLoading();
         clearAll();
         dataManager.loadData(symbol, state.currentInterval);

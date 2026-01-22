@@ -6,41 +6,256 @@ import { backtestService } from "../backtestService";
 import { clearAll } from "../appActions";
 import { uiManager } from "../uiManager";
 import { chartManager } from "../chartManager";
+import { binanceSearchService, BinanceSymbol } from "../binanceSearchService";
+
+// Debounce helper for search input
+function debounce<T extends (...args: any[]) => any>(fn: T, delay: number): (...args: Parameters<T>) => void {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    return (...args: Parameters<T>) => {
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => fn(...args), delay);
+    };
+}
 
 export function setupEventHandlers() {
-    // Symbol dropdown
+    // Symbol dropdown with search
     const symbolSelector = getRequiredElement('symbolSelector');
     const symbolDropdown = getRequiredElement('symbolDropdown');
+    const symbolSearchInput = document.getElementById('symbolSearchInput') as HTMLInputElement | null;
+    const symbolSearchResults = document.getElementById('symbolSearchResults');
+    const symbolSearchSpinner = document.getElementById('symbolSearchSpinner');
+    const symbolSearchClear = document.getElementById('symbolSearchClear');
+    const symbolSearchLoading = document.getElementById('symbolSearchLoading');
+    const symbolSearchEmpty = document.getElementById('symbolSearchEmpty');
 
+    let isSearchInitialized = false;
+    let selectedIndex = -1;
+
+    // Render search results
+    const renderSearchResults = (symbols: BinanceSymbol[], query: string = '') => {
+        if (!symbolSearchResults) return;
+
+        // Clear existing results (except loading/empty states)
+        const existingItems = symbolSearchResults.querySelectorAll('.symbol-search-item, .symbol-search-results-header');
+        existingItems.forEach(item => item.remove());
+
+        // Hide loading and empty states
+        symbolSearchLoading?.classList.add('is-hidden');
+        symbolSearchEmpty?.classList.add('is-hidden');
+
+        if (symbols.length === 0) {
+            symbolSearchEmpty?.classList.remove('is-hidden');
+            return;
+        }
+
+        // Add header
+        const header = document.createElement('div');
+        header.className = 'symbol-search-results-header';
+        header.textContent = query ? `Results for "${query}"` : 'Popular Pairs';
+        symbolSearchResults.insertBefore(header, symbolSearchResults.firstChild);
+
+        // Add result items
+        symbols.forEach((symbol) => {
+            const item = document.createElement('div');
+            item.className = 'symbol-search-item';
+            item.dataset.symbol = symbol.symbol;
+            item.role = 'button';
+            item.tabIndex = 0;
+
+            // Mark active if current symbol matches
+            if (symbol.symbol === state.currentSymbol) {
+                item.classList.add('active');
+            }
+
+            // Get first 2-3 letters for icon
+            const iconText = symbol.baseAsset.substring(0, 3);
+
+            item.innerHTML = `
+                <div class="symbol-item-icon">${iconText}</div>
+                <div class="symbol-item-details">
+                    <div class="symbol-item-name">
+                        ${symbol.displayName}
+                        <span class="symbol-item-badge crypto">Binance</span>
+                    </div>
+                    <div class="symbol-item-pair">${symbol.symbol}</div>
+                </div>
+            `;
+
+            // Click handler
+            item.addEventListener('click', () => selectSymbol(symbol.symbol, symbol.displayName));
+
+            // Keyboard handler
+            item.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    selectSymbol(symbol.symbol, symbol.displayName);
+                }
+            });
+
+            symbolSearchResults.insertBefore(item, symbolSearchLoading);
+        });
+
+        selectedIndex = -1;
+    };
+
+    // Select symbol handler
+    const selectSymbol = (symbol: string, displayName?: string) => {
+        // Update UI
+        document.querySelectorAll('.symbol-search-item, .dropdown-item').forEach(i => i.classList.remove('active'));
+        const selectedItem = document.querySelector(`[data-symbol="${symbol}"]`);
+        selectedItem?.classList.add('active');
+
+        // Close dropdown
+        symbolDropdown.classList.remove('active');
+
+        // Clear search input
+        if (symbolSearchInput) {
+            symbolSearchInput.value = '';
+        }
+        symbolSearchClear?.classList.add('is-hidden');
+
+        if (symbol !== state.currentSymbol) {
+            debugLogger.event('ui.symbol.select', { symbol, displayName });
+            state.set('currentSymbol', symbol);
+        }
+    };
+
+    // Search function with debounce
+    const performSearch = debounce(async (query: string) => {
+        symbolSearchSpinner?.classList.remove('is-hidden');
+
+        try {
+            const results = await binanceSearchService.searchSymbols(query, 20);
+            renderSearchResults(results, query);
+        } catch (error) {
+            console.error('Symbol search failed:', error);
+            symbolSearchEmpty?.classList.remove('is-hidden');
+        } finally {
+            symbolSearchSpinner?.classList.add('is-hidden');
+        }
+    }, 250);
+
+    // Initialize search on first open
+    const initializeSearch = async () => {
+        if (isSearchInitialized) return;
+        isSearchInitialized = true;
+
+        symbolSearchLoading?.classList.remove('is-hidden');
+
+        try {
+            const popularPairs = await binanceSearchService.searchSymbols('', 20);
+            renderSearchResults(popularPairs);
+        } catch (error) {
+            console.error('Failed to initialize symbol search:', error);
+        }
+    };
+
+    // Toggle dropdown
     symbolSelector.addEventListener('click', (e) => {
         e.stopPropagation();
         symbolDropdown.classList.toggle('active');
+
+        if (symbolDropdown.classList.contains('active')) {
+            initializeSearch();
+            // Focus search input when opening
+            setTimeout(() => symbolSearchInput?.focus(), 50);
+        }
     });
 
     symbolSelector.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             symbolDropdown.classList.toggle('active');
+            if (symbolDropdown.classList.contains('active')) {
+                initializeSearch();
+                setTimeout(() => symbolSearchInput?.focus(), 50);
+            }
         }
     });
 
-    document.addEventListener('click', () => {
-        symbolDropdown.classList.remove('active');
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!symbolDropdown.contains(e.target as Node) && !symbolSelector.contains(e.target as Node)) {
+            symbolDropdown.classList.remove('active');
+        }
     });
 
+    // Search input handlers
+    if (symbolSearchInput) {
+        // Prevent dropdown from closing when clicking in search
+        symbolSearchInput.addEventListener('click', (e) => e.stopPropagation());
+
+        symbolSearchInput.addEventListener('input', (e) => {
+            const query = (e.target as HTMLInputElement).value;
+
+            // Show/hide clear button
+            if (query) {
+                symbolSearchClear?.classList.remove('is-hidden');
+            } else {
+                symbolSearchClear?.classList.add('is-hidden');
+            }
+
+            performSearch(query);
+        });
+
+        // Keyboard navigation
+        symbolSearchInput.addEventListener('keydown', (e) => {
+            const items = symbolSearchResults?.querySelectorAll('.symbol-search-item');
+            if (!items || items.length === 0) return;
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                selectedIndex = Math.min(selectedIndex + 1, items.length - 1);
+                updateKeyboardSelection(items as NodeListOf<Element>);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                selectedIndex = Math.max(selectedIndex - 1, 0);
+                updateKeyboardSelection(items as NodeListOf<Element>);
+            } else if (e.key === 'Enter' && selectedIndex >= 0) {
+                e.preventDefault();
+                const selected = items[selectedIndex] as HTMLElement;
+                if (selected) {
+                    const symbol = selected.dataset.symbol!;
+                    const displayName = selected.querySelector('.symbol-item-name')?.textContent?.trim();
+                    selectSymbol(symbol, displayName);
+                }
+            } else if (e.key === 'Escape') {
+                symbolDropdown.classList.remove('active');
+            }
+        });
+    }
+
+    // Clear button handler
+    symbolSearchClear?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (symbolSearchInput) {
+            symbolSearchInput.value = '';
+            symbolSearchInput.focus();
+        }
+        symbolSearchClear.classList.add('is-hidden');
+        performSearch('');
+    });
+
+    // Update keyboard selection highlight
+    const updateKeyboardSelection = (items: NodeListOf<Element>) => {
+        items.forEach((item, index) => {
+            item.classList.toggle('keyboard-focus', index === selectedIndex);
+        });
+
+        // Scroll selected item into view
+        if (selectedIndex >= 0 && items[selectedIndex]) {
+            (items[selectedIndex] as HTMLElement).scrollIntoView({ block: 'nearest' });
+        }
+    };
+
+    // Handle clicks on static dropdown items (stocks, forex, etc.)
     document.querySelectorAll('#symbolDropdown .dropdown-item').forEach(item => {
         item.addEventListener('click', (e) => {
+            e.stopPropagation();
             const target = e.currentTarget as HTMLElement;
             const symbol = target.dataset.symbol;
             if (!symbol) return;
-            document.querySelectorAll('#symbolDropdown .dropdown-item').forEach(i => i.classList.remove('active'));
-            target.classList.add('active');
-            symbolDropdown.classList.remove('active');
-
-            if (symbol !== state.currentSymbol) {
-                debugLogger.event('ui.symbol.select', { symbol });
-                state.set('currentSymbol', symbol);
-            }
+            selectSymbol(symbol);
         });
 
         item.addEventListener('keydown', (e: Event) => {

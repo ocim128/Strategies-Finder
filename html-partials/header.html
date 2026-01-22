@@ -16,31 +16,69 @@
                     <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" stroke-width="1.5" fill="none" />
                 </svg>
             </div>
-            <div class="dropdown-menu" id="symbolDropdown">
-                <div class="dropdown-item active" data-symbol="ETHUSDT" role="button" tabindex="0">ETH/USDT</div>
-                <div class="dropdown-item" data-symbol="BTCUSDT" role="button" tabindex="0">BTC/USDT</div>
-                <div class="dropdown-item" data-symbol="SOLUSDT" role="button" tabindex="0">SOL/USDT</div>
-                <div class="dropdown-item" data-symbol="BNBUSDT" role="button" tabindex="0">BNB/USDT</div>
-                <div class="dropdown-item" data-symbol="XRPUSDT" role="button" tabindex="0">XRP/USDT</div>
-                <div class="dropdown-item" data-symbol="ADAUSDT" role="button" tabindex="0">ADA/USDT</div>
-                <div class="dropdown-item" data-symbol="DOGEUSDT" role="button" tabindex="0">DOGE/USDT</div>
-                <div class="dropdown-item" data-symbol="AVAXUSDT" role="button" tabindex="0">AVAX/USDT</div>
+            <div class="dropdown-menu symbol-search-dropdown" id="symbolDropdown">
+                <!-- Search Input Section -->
+                <div class="symbol-search-container">
+                    <div class="symbol-search-input-wrapper">
+                        <svg class="symbol-search-icon" viewBox="0 0 24 24" fill="currentColor">
+                            <path
+                                d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+                        </svg>
+                        <input type="text" id="symbolSearchInput" class="symbol-search-input"
+                            placeholder="Search Binance pairs..." autocomplete="off" spellcheck="false" />
+                        <div class="symbol-search-spinner is-hidden" id="symbolSearchSpinner">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10" opacity="0.25" />
+                                <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round" />
+                            </svg>
+                        </div>
+                        <button class="symbol-search-clear is-hidden" id="symbolSearchClear" type="button"
+                            title="Clear search">
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Search Results Container -->
+                <div class="symbol-search-results" id="symbolSearchResults">
+                    <!-- Dynamic results will be inserted here -->
+                    <div class="symbol-search-loading is-hidden" id="symbolSearchLoading">
+                        <span class="symbol-search-loading-text">Loading pairs...</span>
+                    </div>
+                    <div class="symbol-search-empty is-hidden" id="symbolSearchEmpty">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path
+                                d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+                        </svg>
+                        <span>No pairs found</span>
+                    </div>
+                </div>
+
                 <div class="dropdown-divider"></div>
-                <div class="dropdown-header">Stocks</div>
-                <div class="dropdown-item" data-symbol="AAPL" role="button" tabindex="0">AAPL (Apple)</div>
-                <div class="dropdown-item" data-symbol="GOOGL" role="button" tabindex="0">GOOGL (Google)</div>
-                <div class="dropdown-item" data-symbol="MSFT" role="button" tabindex="0">MSFT (Microsoft)</div>
-                <div class="dropdown-item" data-symbol="TSLA" role="button" tabindex="0">TSLA (Tesla)</div>
-                <div class="dropdown-divider"></div>
-                <div class="dropdown-header">Forex</div>
-                <div class="dropdown-item" data-symbol="EURUSD" role="button" tabindex="0">EUR/USD</div>
-                <div class="dropdown-item" data-symbol="GBPUSD" role="button" tabindex="0">GBP/USD</div>
-                <div class="dropdown-item" data-symbol="USDJPY" role="button" tabindex="0">USD/JPY</div>
-                <div class="dropdown-divider"></div>
-                <div class="dropdown-header">Commodities</div>
-                <div class="dropdown-item" data-symbol="XAUUSD" role="button" tabindex="0">XAU/USD (Gold)</div>
-                <div class="dropdown-item" data-symbol="XAGUSD" role="button" tabindex="0">XAG/USD (Silver)</div>
-                <div class="dropdown-item" data-symbol="WTIUSD" role="button" tabindex="0">WTI Oil</div>
+
+                <!-- Other Markets Section -->
+                <div class="symbol-search-section">
+                    <div class="dropdown-header">Other Markets (Mock Data)</div>
+                    <div class="dropdown-item" data-symbol="AAPL" role="button" tabindex="0">
+                        <span class="symbol-item-badge stock">Stock</span>
+                        AAPL (Apple)
+                    </div>
+                    <div class="dropdown-item" data-symbol="GOOGL" role="button" tabindex="0">
+                        <span class="symbol-item-badge stock">Stock</span>
+                        GOOGL (Google)
+                    </div>
+                    <div class="dropdown-item" data-symbol="EURUSD" role="button" tabindex="0">
+                        <span class="symbol-item-badge forex">Forex</span>
+                        EUR/USD
+                    </div>
+                    <div class="dropdown-item" data-symbol="XAUUSD" role="button" tabindex="0">
+                        <span class="symbol-item-badge commodity">Gold</span>
+                        XAU/USD
+                    </div>
+                </div>
             </div>
         </div>
 
