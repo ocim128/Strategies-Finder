@@ -1,6 +1,6 @@
 import { Time } from "lightweight-charts";
 import { OHLCVData } from "./strategies/index";
-import { state } from "./state";
+import { state, type MockChartModel } from "./state";
 import { debugLogger } from "./debugLogger";
 
 /**
@@ -16,6 +16,13 @@ import { debugLogger } from "./debugLogger";
  * ]
  */
 type BinanceKline = [number, string, string, string, string, string, ...any[]];
+
+type MockChartConfig = {
+    barsCount: number;
+    volatility: number;
+    startPrice: number;
+    intervalSeconds: number;
+};
 
 export class DataManager {
     private readonly LIMIT_PER_REQUEST = 1000;
@@ -37,7 +44,7 @@ export class DataManager {
 
 
     public async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
-        if (this.MOCK_SYMBOLS.has(symbol)) {
+        if (this.isMockSymbol(symbol)) {
             await new Promise(resolve => setTimeout(resolve, 600)); // Simulate latency
             if (signal?.aborted) return [];
             return this.generateMockData(symbol, interval);
@@ -174,17 +181,34 @@ export class DataManager {
     }
 
     private generateMockData(symbol: string, interval: string): OHLCVData[] {
-        const count = this.TOTAL_LIMIT;
+        const config: MockChartConfig = {
+            barsCount: this.TOTAL_LIMIT,
+            volatility: 1.5,
+            startPrice: this.getMockPrice(symbol),
+            intervalSeconds: this.getIntervalSeconds(interval),
+        };
+
+        const model: MockChartModel = state.mockChartModel ?? 'simple';
+        if (model === 'hard') {
+            return this.generateChallengingMockData(config, this.createRandomSeed());
+        }
+        if (model === 'v3') {
+            return this.generateAdversarialMockData(config, this.createRandomSeed());
+        }
+
+        return this.generateSimpleMockData(config);
+    }
+
+    private generateSimpleMockData(config: MockChartConfig): OHLCVData[] {
         const data: OHLCVData[] = [];
-        let price = this.getMockPrice(symbol);
+        let price = config.startPrice;
         const now = Math.floor(Date.now() / 1000);
-        const intervalSeconds = this.getIntervalSeconds(interval);
 
-        // Start 'count' periods ago
-        let time = (now - (count * intervalSeconds)) as Time;
+        // Start 'barsCount' periods ago
+        let time = (now - (config.barsCount * config.intervalSeconds)) as Time;
 
-        for (let i = 0; i < count; i++) {
-            const volatility = price * 0.015; // 1.5% volatility
+        for (let i = 0; i < config.barsCount; i++) {
+            const volatility = price * (config.volatility / 100);
             const change = (Math.random() - 0.5) * volatility;
             const open = price;
             const close = price + change;
@@ -193,7 +217,7 @@ export class DataManager {
             const volume = Math.floor(Math.random() * 1000000) + 100000;
 
             data.push({
-                time: time,
+                time,
                 open,
                 high,
                 low,
@@ -202,7 +226,376 @@ export class DataManager {
             });
 
             price = close;
-            time = (Number(time) + intervalSeconds) as Time;
+            if (price < config.startPrice * 0.1) {
+                price = config.startPrice * 0.1;
+            }
+            time = (Number(time) + config.intervalSeconds) as Time;
+        }
+
+        return data;
+    }
+
+    private generateChallengingMockData(config: MockChartConfig, seed: number): OHLCVData[] {
+        type Regime = {
+            length: number;
+            drift: number;
+            volMult: number;
+            meanReversion: number;
+            jumpProb: number;
+            jumpSize: number;
+            gapProb: number;
+            gapStd: number;
+            anchor: number;
+        };
+
+        const data: OHLCVData[] = [];
+        const now = Math.floor(Date.now() / 1000);
+        let time = (now - (config.barsCount * config.intervalSeconds)) as Time;
+
+        const rng = this.makeRng(seed * 1000003 + 0x9e3779b9);
+        const baseVol = Math.max(0.0001, config.volatility / 100);
+        const floor = Math.max(0.01, config.startPrice * 0.05);
+        const ceiling = Math.max(floor * 2, config.startPrice * 50);
+        const logFloor = Math.log(floor);
+        const logCeil = Math.log(ceiling);
+        const clampLog = (value: number): number => {
+            if (!Number.isFinite(value)) return logFloor;
+            if (value < logFloor) return logFloor;
+            if (value > logCeil) return logCeil;
+            return value;
+        };
+        const clampReturn = (value: number): number => {
+            const limit = 0.35;
+            if (!Number.isFinite(value)) return 0;
+            if (value < -limit) return -limit;
+            if (value > limit) return limit;
+            return value;
+        };
+
+        let logPrice = Math.log(Math.max(config.startPrice, floor));
+        let vol = baseVol;
+        let prevRet = 0;
+
+        const pickRegime = (): Regime => {
+            const roll = rng();
+            const length = this.randInt(rng, 120, 1400);
+            const anchor = clampLog(logPrice + (rng() - 0.5) * baseVol * 10);
+
+            if (roll < 0.25) {
+                const dir = rng() < 0.5 ? -1 : 1;
+                return {
+                    length,
+                    drift: dir * baseVol * 0.15,
+                    volMult: 0.8,
+                    meanReversion: 0.02,
+                    jumpProb: 0.002,
+                    jumpSize: baseVol * 3,
+                    gapProb: 0.003,
+                    gapStd: baseVol * 1.5,
+                    anchor
+                };
+            }
+
+            if (roll < 0.55) {
+                return {
+                    length,
+                    drift: 0,
+                    volMult: 0.7,
+                    meanReversion: 0.08,
+                    jumpProb: 0.001,
+                    jumpSize: baseVol * 2.5,
+                    gapProb: 0.002,
+                    gapStd: baseVol * 1.2,
+                    anchor
+                };
+            }
+
+            if (roll < 0.8) {
+                return {
+                    length,
+                    drift: 0,
+                    volMult: 1.6,
+                    meanReversion: 0.01,
+                    jumpProb: 0.004,
+                    jumpSize: baseVol * 4,
+                    gapProb: 0.006,
+                    gapStd: baseVol * 2.2,
+                    anchor
+                };
+            }
+
+            return {
+                length,
+                drift: 0,
+                volMult: 0.5,
+                meanReversion: 0.03,
+                jumpProb: 0.0005,
+                jumpSize: baseVol * 2,
+                gapProb: 0.001,
+                gapStd: baseVol,
+                anchor
+            };
+        };
+
+        let regime = pickRegime();
+        let regimeLeft = regime.length;
+
+        const omega = baseVol * baseVol * 0.05;
+        const alpha = 0.12;
+        const beta = 0.85;
+
+        for (let i = 0; i < config.barsCount; i++) {
+            if (regimeLeft-- <= 0) {
+                regime = pickRegime();
+                regimeLeft = regime.length;
+            }
+
+            const minuteOfDay = ((Math.floor(Number(time) / 60) % 1440) + 1440) % 1440;
+            const season =
+                0.85 +
+                0.3 * Math.sin((2 * Math.PI * minuteOfDay) / 1440) +
+                0.15 * Math.sin((4 * Math.PI * minuteOfDay) / 1440);
+            const seasonMult = Math.max(0.4, season);
+
+            vol = Math.sqrt(omega + alpha * prevRet * prevRet + beta * vol * vol);
+
+            const gap = rng() < regime.gapProb ? this.randNormal(rng) * regime.gapStd : 0;
+            logPrice = clampLog(logPrice + gap);
+            let open = Math.exp(logPrice);
+
+            const eps = this.randNormal(rng);
+            const meanRevert = regime.meanReversion * (regime.anchor - logPrice);
+            let ret = regime.drift + meanRevert + (vol * regime.volMult * seasonMult) * eps;
+
+            if (rng() < regime.jumpProb) {
+                const jumpDir = rng() < 0.5 ? -1 : 1;
+                ret += jumpDir * regime.jumpSize * (0.5 + rng());
+            }
+
+            ret = clampReturn(ret);
+            logPrice = clampLog(logPrice + ret);
+            let close = Math.exp(logPrice);
+
+            if (close < floor) {
+                close = floor;
+                logPrice = Math.log(close);
+            }
+            if (open < floor) open = floor;
+
+            const rangeBase = Math.max(baseVol * 0.25, Math.abs(ret) + vol * 0.5);
+            const wick = Math.abs(this.randNormal(rng)) * rangeBase * open;
+            let high = Math.max(open, close) + wick;
+            let low = Math.min(open, close) - wick;
+
+            const lowFloor = floor * 0.8;
+            const highCeil = ceiling * 1.2;
+            if (low < lowFloor) low = lowFloor;
+            if (high > highCeil) high = highCeil;
+            if (high < low) high = Math.max(open, close);
+
+            const volFactor = Math.min(5, 0.5 + Math.abs(ret) / baseVol);
+            const volume = Math.floor(100000 * (1 + volFactor) * (0.7 + rng() * 0.6));
+
+            data.push({
+                time,
+                open,
+                high,
+                low,
+                close,
+                volume,
+            });
+
+            prevRet = ret;
+            time = (Number(time) + config.intervalSeconds) as Time;
+        }
+
+        return data;
+    }
+
+    private generateAdversarialMockData(config: MockChartConfig, seed: number): OHLCVData[] {
+        type Regime = {
+            length: number;
+            drift: number;
+            meanReversion: number;
+            volMult: number;
+            antiPersist: number;
+            trapProb: number;
+            spikeProb: number;
+            gapProb: number;
+            gapStd: number;
+        };
+
+        const data: OHLCVData[] = [];
+        const now = Math.floor(Date.now() / 1000);
+        let time = (now - (config.barsCount * config.intervalSeconds)) as Time;
+
+        const rng = this.makeRng(seed * 1000003 + 0x85ebca6b);
+        const baseVol = Math.max(0.0001, config.volatility / 100);
+        const floor = Math.max(0.01, config.startPrice * 0.05);
+        const ceiling = Math.max(floor * 2, config.startPrice * 50);
+        const logFloor = Math.log(floor);
+        const logCeil = Math.log(ceiling);
+        const clampLog = (value: number): number => {
+            if (!Number.isFinite(value)) return logFloor;
+            if (value < logFloor) return logFloor;
+            if (value > logCeil) return logCeil;
+            return value;
+        };
+        const clampReturn = (value: number): number => {
+            const limit = Math.max(0.08, baseVol * 8);
+            if (!Number.isFinite(value)) return 0;
+            if (value < -limit) return -limit;
+            if (value > limit) return limit;
+            return value;
+        };
+
+        let logPrice = Math.log(Math.max(config.startPrice, floor));
+        let anchor = logPrice;
+        let vol = baseVol;
+        let prevRet = 0;
+        let revertBias = 0;
+
+        const pickRegime = (): Regime => {
+            const roll = rng();
+            const length = this.randInt(rng, 30, 220);
+
+            if (roll < 0.45) {
+                return {
+                    length,
+                    drift: 0,
+                    meanReversion: 0.18,
+                    volMult: 1.4,
+                    antiPersist: 0.8,
+                    trapProb: 0.85,
+                    spikeProb: 0.06,
+                    gapProb: 0.02,
+                    gapStd: baseVol * 2.0
+                };
+            }
+
+            if (roll < 0.75) {
+                const dir = rng() < 0.5 ? -1 : 1;
+                return {
+                    length,
+                    drift: dir * baseVol * 0.12,
+                    meanReversion: 0.03,
+                    volMult: 1.0,
+                    antiPersist: 0.25,
+                    trapProb: 0.4,
+                    spikeProb: 0.03,
+                    gapProb: 0.01,
+                    gapStd: baseVol * 1.2
+                };
+            }
+
+            return {
+                length,
+                drift: 0,
+                meanReversion: 0.1,
+                volMult: 1.8,
+                antiPersist: 0.6,
+                trapProb: 0.95,
+                spikeProb: 0.08,
+                gapProb: 0.025,
+                gapStd: baseVol * 2.5
+            };
+        };
+
+        let regime = pickRegime();
+        let regimeLeft = regime.length;
+
+        const omega = baseVol * baseVol * 0.08;
+        const alpha = 0.18;
+        const beta = 0.8;
+
+        for (let i = 0; i < config.barsCount; i++) {
+            if (regimeLeft-- <= 0) {
+                regime = pickRegime();
+                regimeLeft = regime.length;
+            }
+
+            anchor = clampLog(anchor + (rng() - 0.5) * baseVol * 0.25);
+
+            const minuteOfDay = ((Math.floor(Number(time) / 60) % 1440) + 1440) % 1440;
+            const season =
+                0.9 +
+                0.25 * Math.sin((2 * Math.PI * minuteOfDay) / 1440) +
+                0.1 * Math.sin((4 * Math.PI * minuteOfDay) / 1440);
+            const seasonMult = Math.max(0.35, season);
+
+            vol = Math.sqrt(omega + alpha * prevRet * prevRet + beta * vol * vol);
+
+            const gap = rng() < regime.gapProb ? this.randNormal(rng) * regime.gapStd : 0;
+            logPrice = clampLog(logPrice + gap);
+            const open = Math.exp(logPrice);
+
+            const dist = logPrice - anchor;
+            const meanRevert = -regime.meanReversion * dist;
+            let ret = regime.drift + meanRevert + (vol * regime.volMult * seasonMult) * this.randNormal(rng);
+
+            if (revertBias !== 0) {
+                ret += revertBias;
+                revertBias *= 0.45;
+                if (Math.abs(revertBias) < baseVol * 0.005) {
+                    revertBias = 0;
+                }
+            }
+
+            if (rng() < regime.antiPersist) {
+                ret -= 0.6 * prevRet;
+            }
+
+            const band = baseVol * (2.5 + rng() * 3.5);
+            if (dist > band && rng() < regime.trapProb) {
+                ret -= Math.abs(dist) * (0.4 + rng() * 0.5);
+            } else if (dist < -band && rng() < regime.trapProb) {
+                ret += Math.abs(dist) * (0.4 + rng() * 0.5);
+            }
+
+            if (rng() < regime.spikeProb) {
+                const spikeDir = rng() < 0.5 ? -1 : 1;
+                const spike = spikeDir * baseVol * (2 + rng() * 5);
+                ret += spike;
+                revertBias = -spikeDir * baseVol * (1.2 + rng() * 2);
+            }
+
+            ret = clampReturn(ret);
+            logPrice = clampLog(logPrice + ret);
+            let close = Math.exp(logPrice);
+
+            if (close < floor) {
+                close = floor;
+                logPrice = Math.log(close);
+            }
+
+            const rangeBase = Math.max(baseVol * 0.3, Math.abs(ret) + vol * 0.6);
+            const wickNoise = Math.abs(this.randNormal(rng)) * rangeBase * open;
+            const wickBoost = rng() < 0.05 ? 1.5 + rng() * 3 : 0;
+            const wick = wickNoise * (1 + wickBoost);
+
+            let high = Math.max(open, close) + wick;
+            let low = Math.min(open, close) - wick;
+
+            const lowFloor = floor * 0.8;
+            const highCeil = ceiling * 1.2;
+            if (low < lowFloor) low = lowFloor;
+            if (high > highCeil) high = highCeil;
+            if (high < low) high = Math.max(open, close);
+
+            const volFactor = Math.min(6, 0.6 + Math.abs(ret) / baseVol);
+            const volume = Math.floor(120000 * (1 + volFactor) * (0.5 + rng() * 0.7));
+
+            data.push({
+                time,
+                open,
+                high,
+                low,
+                close,
+                volume,
+            });
+
+            prevRet = ret;
+            time = (Number(time) + config.intervalSeconds) as Time;
         }
 
         return data;
@@ -224,6 +617,10 @@ export class DataManager {
         }
     }
 
+    public isMockSymbol(symbol: string): boolean {
+        return this.MOCK_SYMBOLS.has(symbol);
+    }
+
     private getIntervalSeconds(interval: string): number {
         const unit = interval.slice(-1);
         const value = parseInt(interval.slice(0, -1)) || 1;
@@ -236,6 +633,32 @@ export class DataManager {
         }
     }
 
+    private createRandomSeed(): number {
+        return Math.floor(Math.random() * 1000000000);
+    }
+
+    private makeRng(seed: number): () => number {
+        let t = seed >>> 0;
+        return () => {
+            t += 0x6D2B79F5;
+            let r = Math.imul(t ^ (t >>> 15), 1 | t);
+            r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+            return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+
+    private randInt(rng: () => number, min: number, max: number): number {
+        return Math.floor(rng() * (max - min + 1)) + min;
+    }
+
+    private randNormal(rng: () => number): number {
+        let u = 0;
+        let v = 0;
+        while (u === 0) u = rng();
+        while (v === 0) v = rng();
+        return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    }
+
     // ============================================================================
     // Real-time WebSocket Streaming for Live Candle Updates
     // ============================================================================
@@ -246,7 +669,7 @@ export class DataManager {
      */
     public startStreaming(symbol: string = state.currentSymbol, interval: string = state.currentInterval): void {
         // Don't stream for mock symbols
-        if (this.MOCK_SYMBOLS.has(symbol)) {
+        if (this.isMockSymbol(symbol)) {
             debugLogger.info('data.stream.skip_mock', { symbol });
             return;
         }

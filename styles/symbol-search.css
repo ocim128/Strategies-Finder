@@ -321,6 +321,39 @@
     gap: var(--space-3);
 }
 
+.mock-model-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.mock-model-label {
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+}
+
+.mock-model-select {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-s);
+    padding: 4px 8px;
+    font-size: var(--font-size-xs);
+    font-family: var(--font-family-sans);
+}
+
+.mock-model-select:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: var(--focus-ring-soft);
+}
+
 /* Keyboard Navigation Highlight */
 .symbol-search-item.keyboard-focus {
     background: hsl(var(--hsl-accent) / 0.15);

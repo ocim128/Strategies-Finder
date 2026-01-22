@@ -1,0 +1,9 @@
+expectancy
+profit factor
+total trades
+max drawdown %
+sharpe ratio
+average gain
+winrate
+net profit %
+net profit

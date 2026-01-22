@@ -113,6 +113,14 @@ export function setupStateSubscriptions() {
         dataManager.loadData(state.currentSymbol, interval);
     });
 
+    state.subscribe('mockChartModel', (mockChartModel) => {
+        debugLogger.event('state.mockChartModel', { mockChartModel });
+        if (!dataManager.isMockSymbol(state.currentSymbol)) return;
+        setPriceLoading();
+        clearAll();
+        dataManager.loadData(state.currentSymbol, state.currentInterval);
+    });
+
     // Strategy selection
     state.subscribe('currentStrategyKey', (key) => {
         uiManager.updateStrategyParams(key);

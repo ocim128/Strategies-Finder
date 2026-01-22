@@ -3,6 +3,7 @@ import { BacktestResult, OHLCVData } from "./strategies/index";
 import { Indicator } from "./types";
 
 export type StateKey = keyof State;
+export type MockChartModel = 'simple' | 'hard' | 'v3';
 
 export class State {
     public chart!: IChartApi;
@@ -12,6 +13,7 @@ export class State {
     public markersPlugin: ISeriesMarkersPluginApi<Time> | null = null;
     public currentSymbol = 'ETHUSDT';
     public currentInterval = '1d';
+    public mockChartModel: MockChartModel = 'simple';
     public isDarkTheme = true;
     public ohlcvData: OHLCVData[] = [];
     public indicators: Indicator[] = [];

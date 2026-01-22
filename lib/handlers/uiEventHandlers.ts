@@ -27,9 +27,20 @@ export function setupEventHandlers() {
     const symbolSearchClear = document.getElementById('symbolSearchClear');
     const symbolSearchLoading = document.getElementById('symbolSearchLoading');
     const symbolSearchEmpty = document.getElementById('symbolSearchEmpty');
+    const mockModelSelect = document.getElementById('mockModelSelect') as HTMLSelectElement | null;
 
     let isSearchInitialized = false;
     let selectedIndex = -1;
+
+    if (mockModelSelect) {
+        mockModelSelect.value = state.mockChartModel;
+        mockModelSelect.addEventListener('change', () => {
+            const value = mockModelSelect.value;
+            if (value === 'simple' || value === 'hard' || value === 'v3') {
+                state.set('mockChartModel', value);
+            }
+        });
+    }
 
     // Render search results
     const renderSearchResults = (symbols: BinanceSymbol[], query: string = '') => {
