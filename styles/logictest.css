@@ -1,0 +1,316 @@
+/* ============================================================================
+   Logic Test Robustness Feature
+   ============================================================================ */
+
+#logictestTab {
+    display: none;
+}
+
+#logictestTab .section-desc {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-4);
+    line-height: var(--line-height-relaxed);
+}
+
+.lt-actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+}
+
+.lt-actions .btn {
+    flex: 1;
+    justify-content: center;
+}
+
+.lt-status-bar {
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-s);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-4);
+    text-align: center;
+}
+
+/* Progress Bar */
+.lt-progress-container {
+    margin-bottom: var(--space-4);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.lt-progress-container.active {
+    opacity: 1;
+}
+
+.lt-progress-bar {
+    height: 8px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    margin-bottom: var(--space-1);
+}
+
+.lt-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg,
+            var(--accent-color),
+            hsl(230, 80%, 65%));
+    border-radius: var(--radius-full);
+    transition: width 0.3s ease;
+}
+
+.lt-progress-text {
+    text-align: center;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    font-family: var(--font-family-mono);
+}
+
+/* Main Result Gauge */
+.lt-result-main {
+    text-align: center;
+    margin-bottom: var(--space-4);
+    padding: var(--space-4);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--border-color);
+}
+
+.lt-gauge {
+    position: relative;
+    width: 140px;
+    height: 140px;
+    margin: 0 auto var(--space-3);
+    border-radius: 50%;
+    background: conic-gradient(var(--accent-color) calc(var(--score, 0) * 3.6deg),
+            var(--bg-elevated) calc(var(--score, 0) * 3.6deg));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+}
+
+.lt-gauge::before {
+    content: '';
+    position: absolute;
+    inset: 14px;
+    background: var(--bg-tertiary);
+    border-radius: 50%;
+}
+
+.lt-gauge-label {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 2px;
+}
+
+.lt-gauge-score {
+    font-size: var(--font-size-3xl);
+    font-weight: var(--font-weight-bold);
+    font-family: var(--font-family-mono);
+}
+
+.lt-gauge-unit {
+    font-size: var(--font-size-lg);
+    color: var(--text-secondary);
+    font-weight: var(--font-weight-medium);
+}
+
+.lt-gauge-title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-secondary);
+}
+
+/* Gauge State Classes */
+.lt-gauge.excellent {
+    background: conic-gradient(var(--green) calc(var(--score, 0) * 3.6deg),
+            var(--bg-elevated) calc(var(--score, 0) * 3.6deg));
+}
+
+.lt-gauge.excellent .lt-gauge-score {
+    color: var(--green);
+}
+
+.lt-gauge.good {
+    background: conic-gradient(hsl(168 50% 50%) calc(var(--score, 0) * 3.6deg),
+            var(--bg-elevated) calc(var(--score, 0) * 3.6deg));
+}
+
+.lt-gauge.good .lt-gauge-score {
+    color: hsl(168 50% 50%);
+}
+
+.lt-gauge.moderate {
+    background: conic-gradient(var(--warning) calc(var(--score, 0) * 3.6deg),
+            var(--bg-elevated) calc(var(--score, 0) * 3.6deg));
+}
+
+.lt-gauge.moderate .lt-gauge-score {
+    color: var(--warning);
+}
+
+.lt-gauge.poor {
+    background: conic-gradient(hsl(20 80% 55%) calc(var(--score, 0) * 3.6deg),
+            var(--bg-elevated) calc(var(--score, 0) * 3.6deg));
+}
+
+.lt-gauge.poor .lt-gauge-score {
+    color: hsl(20 80% 55%);
+}
+
+.lt-gauge.critical {
+    background: conic-gradient(var(--red) calc(var(--score, 0) * 3.6deg),
+            var(--bg-elevated) calc(var(--score, 0) * 3.6deg));
+}
+
+.lt-gauge.critical .lt-gauge-score {
+    color: var(--red);
+}
+
+/* Result Description */
+.lt-result-desc-container {
+    margin-bottom: var(--space-4);
+}
+
+.lt-result-desc {
+    text-align: center;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-s);
+    line-height: var(--line-height-relaxed);
+}
+
+/* Summary Stats Grid */
+.lt-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+}
+
+.lt-stat {
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-2);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-s);
+    border: 1px solid var(--border-color);
+}
+
+.lt-label {
+    font-size: var(--font-size-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-medium);
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+}
+
+.lt-value {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    font-family: var(--font-family-mono);
+}
+
+.lt-value.positive {
+    color: var(--green);
+}
+
+.lt-value.negative {
+    color: var(--red);
+}
+
+.lt-value.neutral {
+    color: var(--warning);
+}
+
+/* Results Table */
+.lt-table-wrapper {
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 300px;
+    margin-bottom: var(--space-4);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-s);
+}
+
+.lt-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    min-width: 400px;
+}
+
+.lt-table th,
+.lt-table td {
+    padding: var(--space-1-5) var(--space-2);
+    text-align: center;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.lt-table th {
+    background: var(--bg-tertiary);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-medium);
+    font-size: var(--font-size-2xs);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.lt-table tbody tr:hover {
+    background: var(--bg-tertiary);
+}
+
+.lt-table tbody tr.positive td:nth-child(3),
+.lt-table tbody tr.positive td:nth-child(5) {
+    color: var(--green);
+}
+
+.lt-table tbody tr.negative td:nth-child(3),
+.lt-table tbody tr.negative td:nth-child(5) {
+    color: var(--red);
+}
+
+.lt-table td.positive {
+    color: var(--green);
+}
+
+.lt-table td.negative {
+    color: var(--red);
+}
+
+.lt-table .empty-cell {
+    padding: var(--space-4);
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+/* Animation for Running State */
+@keyframes lt-pulse {
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgba(var(--rgb-accent), 0.4);
+    }
+
+    50% {
+        box-shadow: 0 0 0 12px rgba(var(--rgb-accent), 0);
+    }
+}
+
+.lt-gauge.running {
+    animation: lt-pulse 1.5s infinite;
+}

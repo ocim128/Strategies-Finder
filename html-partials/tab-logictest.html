@@ -1,0 +1,114 @@
+<!-- Logic Test Tab -->
+<div id="logictestTab">
+    <div class="section-title">Logic Test</div>
+    <p class="section-desc">Test strategy robustness by running backtests on multiple randomly generated mock datasets.
+        Calculates average winrate across all simulations to validate strategy logic.</p>
+
+    <div class="section-header">
+        <div class="section-title">Test Configuration</div>
+    </div>
+    <div class="section-body">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Mock Datasets</label>
+                <input type="number" class="param-input" id="lt-mock-count" value="10" min="1" max="100">
+                <div class="param-hint">Number of random datasets to test against</div>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Bars Per Dataset</label>
+                <input type="number" class="param-input" id="lt-bars-count" value="5000" min="100" max="30000">
+                <div class="param-hint">Number of candles in each dataset</div>
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Base Volatility %</label>
+                <input type="number" class="param-input" id="lt-volatility" value="1.5" min="0.1" max="10" step="0.1">
+                <div class="param-hint">Price volatility per bar (1.5% default)</div>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Starting Price</label>
+                <input type="number" class="param-input" id="lt-start-price" value="100" min="0.01" step="any">
+                <div class="param-hint">Initial price for mock data generation</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="lt-actions">
+        <button class="btn btn-primary run-btn" id="lt-run-btn">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8 5v14l11-7z" />
+            </svg>
+            Run Logic Test
+            <span class="spinner" id="lt-spinner" style="display:none;"></span>
+        </button>
+        <button class="btn btn-secondary" id="lt-stop-btn" disabled>
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" />
+            </svg>
+            Stop
+        </button>
+    </div>
+
+    <div class="lt-status-bar">
+        <span id="lt-status">Ready - Configure settings and run test</span>
+    </div>
+
+    <!-- Progress Bar -->
+    <div class="lt-progress-container" id="lt-progress-container">
+        <div class="lt-progress-bar">
+            <div class="lt-progress-fill" id="lt-progress-fill"></div>
+        </div>
+        <div class="lt-progress-text" id="lt-progress-text">0 / 0</div>
+    </div>
+
+    <!-- Main Result Gauge -->
+    <div class="lt-result-main">
+        <div class="lt-gauge" id="lt-gauge">
+            <div class="lt-gauge-fill"></div>
+            <div class="lt-gauge-label">
+                <span class="lt-gauge-score" id="lt-score">--</span>
+                <span class="lt-gauge-unit">%</span>
+            </div>
+        </div>
+        <div class="lt-gauge-title">Average Winrate</div>
+    </div>
+
+    <div class="lt-result-desc-container">
+        <div class="lt-result-desc" id="lt-result-desc">Run logic test to see results</div>
+    </div>
+
+    <!-- Summary Stats Grid -->
+    <div class="section-header">
+        <div class="section-title">Test Summary</div>
+    </div>
+    <div class="lt-summary" id="lt-summary-panel">
+        <div class="empty-state">
+            <p>Run logic test to see summary statistics</p>
+        </div>
+    </div>
+
+    <!-- Individual Results Table -->
+    <div class="section-header">
+        <div class="section-title">Individual Results</div>
+    </div>
+    <div class="lt-table-wrapper">
+        <table class="lt-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Trades</th>
+                    <th>Winrate</th>
+                    <th>Profit Factor</th>
+                    <th>Net Profit</th>
+                    <th>Max DD</th>
+                </tr>
+            </thead>
+            <tbody id="lt-results-table-body">
+                <tr>
+                    <td colspan="6" class="empty-cell">No data</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>

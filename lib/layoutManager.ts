@@ -7,12 +7,14 @@ import tabFinderHtml from '../html-partials/tab-finder.html?raw';
 import tabCombinerHtml from '../html-partials/tab-combiner.html?raw';
 import tabWalkforwardHtml from '../html-partials/tab-walkforward.html?raw';
 import tabMontecarloHtml from '../html-partials/tab-montecarlo.html?raw';
+import tabLogictestHtml from '../html-partials/tab-logictest.html?raw';
 import tabReplayHtml from '../html-partials/tab-replay.html?raw';
 import tabResultsHtml from '../html-partials/tab-results.html?raw';
 import tabTradesHtml from '../html-partials/tab-trades.html?raw';
 import statusBarHtml from '../html-partials/status-bar.html?raw';
 import debugPanelHtml from '../html-partials/debug-panel.html?raw';
 import codeEditorHtml from '../html-partials/code-editor.html?raw';
+
 
 /**
  * Injects the extracted HTML layout into the DOM.
@@ -61,6 +63,7 @@ export function injectLayout() {
         tabCombinerHtml +
         tabWalkforwardHtml +
         tabMontecarloHtml +
+        tabLogictestHtml +
         tabReplayHtml +
         tabResultsHtml +
         tabTradesHtml;

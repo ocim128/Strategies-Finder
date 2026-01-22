@@ -16,6 +16,7 @@ import { debugLogger } from "./lib/debugLogger";
 import { initDebugPanel } from "./lib/debugPanel";
 import { walkForwardService } from "./lib/walkForwardService";
 import { monteCarloService } from "./lib/monteCarloService";
+import { logicTestService } from "./lib/logicTestService";
 import { settingsManager } from "./lib/settingsManager";
 import { injectLayout } from "./lib/layoutManager";
 import { commandPaletteManager } from "./lib/commandPalette";
@@ -54,6 +55,7 @@ async function init() {
 	finderManager.init();
 	walkForwardService.initUI();
 	monteCarloService.initUI();
+	logicTestService.initUI();
 	combinerManager.init();
 	initDebugPanel();
 
