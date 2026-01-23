@@ -97,6 +97,8 @@ export interface Signal {
     type: 'buy' | 'sell';
     price: number;
     reason?: string;
+    /** Optional bar index to align execution timing in backtests/replay. */
+    barIndex?: number;
 }
 
 export interface StrategyIndicator {

@@ -288,8 +288,10 @@ function prepareSignals(
         }
         if (signal.type !== entryType) return;
 
-        const signalIndex = timeIndex.get(timeKey(signal.time));
-        if (signalIndex === undefined) return;
+        const signalIndex = Number.isFinite(signal.barIndex)
+            ? Math.trunc(signal.barIndex as number)
+            : timeIndex.get(timeKey(signal.time));
+        if (signalIndex === undefined || signalIndex < 0 || signalIndex >= data.length) return;
 
         let entryIndex = signalIndex;
         if (config.entryConfirmation === 'close') {

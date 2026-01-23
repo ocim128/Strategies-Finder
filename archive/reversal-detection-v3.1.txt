@@ -1,0 +1,644 @@
+//@version=6
+// ============================================================================
+// Reversal Detection Pro v3.1 - Non-Repainting
+// ============================================================================
+// © 2025 NPR21 (TradingView: @NPR21)
+// All Rights Reserved
+//
+// UPDATE: 21 January 2025
+// Universal optimization - now works on ANY instrument and ANY timeframe
+// ATR-based adaptive sensitivity as primary mechanism (0.8x to 3.5x ATR)
+// Fixed percentage thresholds now act as safety floor (0.03% to 0.15%)
+// Properly scaled sensitivity presets for distinct signal quality
+// Enhanced for scalping (1-5min) through swing trading (daily charts)
+// Tested on: MNQ, MES, MYM, MGC, ES, NQ, YM, GC, CL, NG, all timeframes
+//
+// DESCRIPTION:
+// Professional reversal detection indicator featuring non-repainting signals,
+// ATR-based adaptive sensitivity, triple EMA trend system, and supply/demand zones.
+// Automatically adapts to any futures instrument and timeframe without manual adjustment.
+//
+// FEATURES:
+// - 100% Non-repainting reversal signals with confirmation modes
+// - ATR-adaptive sensitivity (automatically scales to instrument volatility)
+// - Universal application (1-min scalping to daily swing trading)
+// - Triple EMA trend detection (9/14/21 periods)
+// - Supply/Demand zones with color-coded visualization
+// - Customizable info table with real-time settings display
+// - Comprehensive alert system for all signal types
+//
+// USAGE:
+// Works out-of-the-box on any futures contract and any timeframe.
+// ATR automatically adapts to instrument price and volatility.
+// Start with Medium sensitivity, adjust based on signal frequency preference.
+//
+// DISCLAIMER:
+// This indicator is for educational and informational purposes only.
+// Past performance is not indicative of future results. Trading involves risk.
+// ============================================================================
+
+indicator("Reversal Detection v3.1 - Real-Time Pro (Non-Repainting)",
+         shorttitle="Reversal Pro v3.1",
+         overlay=true,
+         max_boxes_count=50,
+         max_lines_count=200,
+         max_labels_count=100)
+
+// ============================================================================
+// CONFIRMATION SETTINGS
+// ============================================================================
+confirmationMode = input.string("Confirmed Only", "Signal Mode",
+                                options=["Confirmed Only", "Confirmed + Preview", "Preview Only"],
+                                tooltip="Confirmed Only = No repainting | Preview = Shows potential signals",
+                                group="SIGNAL CONTROLS")
+
+confirmationBars = input.int(0, "Extra Confirmation Bars",
+                             minval=0, maxval=5,
+                             tooltip="Additional bars to wait before confirming signal (0 = immediate)",
+                             group="SIGNAL CONTROLS")
+
+// ============================================================================
+// SENSITIVITY PRESET SYSTEM - UNIVERSAL (ALL INSTRUMENTS & TIMEFRAMES)
+// ============================================================================
+input_sensitivity = input.string("Medium", "Sensitivity Preset",
+                                 options=["Very High", "High", "Medium", "Low", "Very Low", "Custom"],
+                                 tooltip="Very High = Most signals | Very Low = Fewest, highest quality signals",
+                                 group="MAIN CONTROLS")
+
+// ATR Multiplier: PRIMARY sensitivity control (adapts to any instrument/timeframe)
+float atrMultiplier = switch input_sensitivity
+    "Very High" => 0.8
+    "High" => 1.2
+    "Medium" => 2.0
+    "Low" => 2.8
+    "Very Low" => 3.5
+    => na
+
+// Percentage Threshold: MINIMAL backup (prevents issues when ATR is too small)
+float percentThreshold = switch input_sensitivity
+    "Very High" => 0.03
+    "High" => 0.05
+    "Medium" => 0.08
+    "Low" => 0.12
+    "Very Low" => 0.15
+    => na
+
+// ============================================================================
+// MANUAL SETTINGS FOR CUSTOM MODE
+// ============================================================================
+bool isCustom = input_sensitivity == "Custom"
+
+input_method = input.string("average", "Calculation Method",
+                            options=["average", "high_low"],
+                            tooltip="average = smoother | high_low = more responsive",
+                            group="ADVANCED SETTINGS")
+
+input_percentamount = isCustom ? input.float(0.08, "Percentage Reversal (%)",
+                                             minval=0.01, maxval=1.0, step=0.01,
+                                             tooltip="Price must reverse by this % - acts as minimum threshold",
+                                             group="ADVANCED SETTINGS") : 0.08
+
+input_revAmount = isCustom ? input.float(1.0, "Absolute Reversal",
+                                        minval=0.01, maxval=50.0, step=0.1,
+                                        tooltip="Minimum absolute price reversal amount (safety floor)",
+                                        group="ADVANCED SETTINGS") : 1.0
+
+input_atrreversal = isCustom ? input.float(2.0, "ATR Multiplier",
+                                          minval=0.1, maxval=10.0, step=0.1,
+                                          tooltip="Primary sensitivity control - reversal = ATR x this multiplier",
+                                          group="ADVANCED SETTINGS") : 2.0
+
+input_atrlength = input.int(14, "ATR Length", minval=1, maxval=50,
+                           tooltip="Period for ATR calculation (14 is standard)",
+                           group="ADVANCED SETTINGS")
+
+input_averagelength = input.int(5, "Average Length", minval=1, maxval=50,
+                               tooltip="Smoothing period for high/low calculation when using 'average' method",
+                               group="ADVANCED SETTINGS")
+// ============================================================================
+// ZONE SETTINGS
+// ============================================================================
+input_showSupplyDemand = input.string("Pivot", "Supply/Demand Display",
+                                     options=["Pivot", "Arrow", "None"],
+                                     tooltip="Visual style for supply/demand zones",
+                                     group="ZONES")
+
+input_numbersuppdemandtoshow = input.int(3, "Number of Zones",
+                                        minval=0, maxval=20,
+                                        tooltip="Maximum number of zones to display",
+                                        group="ZONES")
+
+input_showsupplydemandcloud = input.bool(false, "Show Supply/Demand Zones",
+                                        tooltip="Display rectangular zones at pivot points",
+                                        group="ZONES")
+
+input_zoneExtension = input.int(20, "Zone Box Extension (bars)",
+                               minval=5, maxval=100,
+                               tooltip="How many bars forward to extend zones",
+                               group="ZONES")
+
+zoneThickness = input.float(0.02, "Zone Thickness (%)",
+                           minval=0.01, maxval=0.2, step=0.01,
+                           tooltip="Thickness of rectangular zone as % of price",
+                           group="ZONES")
+
+// ============================================================================
+// LABEL SETTINGS
+// ============================================================================
+input_lineExtension = input.int(5, "Stop Line Extension",
+                               minval=1, maxval=50,
+                               tooltip="Bars to extend horizontal reversal lines",
+                               group="LABELS")
+
+input_maxLines = input.int(10, "Maximum Lines to Display",
+                          minval=3, maxval=50,
+                          tooltip="Maximum number of reversal lines on chart",
+                          group="LABELS")
+
+labelSizeOption = input.string("Normal", "Label Size",
+                              options=["Small", "Normal", "Large"],
+                              group="LABELS")
+
+labelSize = switch labelSizeOption
+    "Small" => size.small
+    "Normal" => size.normal
+    "Large" => size.large
+    => size.normal
+
+// ============================================================================
+// INFO TABLE SETTINGS
+// ============================================================================
+showInfoTable = input.bool(true, "Show Info Table",
+                          tooltip="Display indicator settings and status",
+                          group="INFO TABLE")
+
+tablePosition = input.string("Top Right", "Table Position",
+                            options=["Top Right", "Top Left", "Top Center", "Bottom Right", "Bottom Left", "Bottom Center"],
+                            group="INFO TABLE")
+
+tableSizeOption = input.string("Normal", "Table Size",
+                              options=["Tiny", "Small", "Normal", "Large", "Huge"],
+                              group="INFO TABLE")
+
+// ============================================================================
+// CALCULATE FINAL REVERSAL THRESHOLD - FIXED CALCULATION
+// ============================================================================
+float finalATRMult = isCustom ? input_atrreversal : atrMultiplier
+float finalPctThreshold = isCustom ? input_percentamount : percentThreshold
+
+atrValue = ta.atr(input_atrlength)
+
+// FIXED: Removed the /100 division - percentages now work correctly
+reversalAmount = math.max(close * finalPctThreshold / 100,
+                         math.max(input_revAmount, finalATRMult * atrValue))
+
+// ============================================================================
+// MOVING AVERAGE SIGNALS
+// ============================================================================
+superfast_length = 9
+fast_length = 14
+slow_length = 21
+
+mov_avg9 = ta.ema(close, superfast_length)
+mov_avg14 = ta.ema(close, fast_length)
+mov_avg21 = ta.ema(close, slow_length)
+
+buy = mov_avg9 > mov_avg14 and mov_avg14 > mov_avg21 and low > mov_avg9
+stopbuy = mov_avg9 <= mov_avg14
+buynow = not buy[1] and buy
+
+var int buysignal = 0
+buysignal := buynow and not stopbuy ? 1 : buysignal == 1 and stopbuy ? 0 : buysignal
+
+sell = mov_avg9 < mov_avg14 and mov_avg14 < mov_avg21 and high < mov_avg9
+stopsell = mov_avg9 >= mov_avg14
+sellnow = not sell[1] and sell
+
+var int sellsignal = 0
+sellsignal := sellnow and not stopsell ? 1 : sellsignal == 1 and stopsell ? 0 : sellsignal
+
+// ============================================================================
+// COLORS
+// ============================================================================
+GREEN = #00FF00
+RED = #FF0000
+PURPLE = #ab47bc
+
+// ============================================================================
+// ZIGZAG CALCULATION
+// ============================================================================
+priceh = input_method == "high_low" ? high : ta.ema(high, input_averagelength)
+pricel = input_method == "high_low" ? low : ta.ema(low, input_averagelength)
+
+pricehConfirmed = priceh[confirmationBars]
+pricelConfirmed = pricel[confirmationBars]
+actualHighConfirmed = high[confirmationBars]
+actualLowConfirmed = low[confirmationBars]
+
+var float zhigh = na
+var float zlow = na
+var float zhighActual = na
+var float zlowActual = na
+var int zhighbar = 0
+var int zlowbar = 0
+var int direction = 0
+
+if na(zhigh) or na(zlow)
+    zhigh := pricehConfirmed
+    zlow := pricelConfirmed
+    zhighActual := actualHighConfirmed
+    zlowActual := actualLowConfirmed
+    zhighbar := bar_index - confirmationBars
+    zlowbar := bar_index - confirmationBars
+    direction := 1
+
+var float lastConfirmedPivotPrice = na
+var float lastConfirmedPivotActual = na
+var int lastConfirmedPivotBar = 0
+var bool lastConfirmedPivotIsHigh = false
+var bool confirmedPivotDetected = false
+
+confirmedPivotDetected := false
+
+if direction == 1
+    if pricehConfirmed > zhigh
+        zhigh := pricehConfirmed
+        zhighActual := actualHighConfirmed
+        zhighbar := bar_index - confirmationBars
+
+    if zhigh - pricelConfirmed >= reversalAmount
+        lastConfirmedPivotPrice := zhigh
+        lastConfirmedPivotActual := zhighActual
+        lastConfirmedPivotBar := zhighbar
+        lastConfirmedPivotIsHigh := true
+        confirmedPivotDetected := true
+        direction := -1
+        zlow := pricelConfirmed
+        zlowActual := actualLowConfirmed
+        zlowbar := bar_index - confirmationBars
+
+else if direction == -1
+    if pricelConfirmed < zlow
+        zlow := pricelConfirmed
+        zlowActual := actualLowConfirmed
+        zlowbar := bar_index - confirmationBars
+
+    if pricehConfirmed - zlow >= reversalAmount
+        lastConfirmedPivotPrice := zlow
+        lastConfirmedPivotActual := zlowActual
+        lastConfirmedPivotBar := zlowbar
+        lastConfirmedPivotIsHigh := false
+        confirmedPivotDetected := true
+        direction := 1
+        zhigh := pricehConfirmed
+        zhighActual := actualHighConfirmed
+        zhighbar := bar_index - confirmationBars
+
+// ============================================================================
+// PREVIEW DETECTION
+// ============================================================================
+var float previewPivotPrice = na
+var int previewPivotBar = 0
+var bool previewIsHigh = false
+var bool showPreview = false
+
+showPreview := false
+
+if confirmationMode != "Confirmed Only"
+    var float zhigh_preview = na
+    var float zlow_preview = na
+    var int direction_preview = 0
+
+    if na(zhigh_preview)
+        zhigh_preview := priceh
+        zlow_preview := pricel
+        direction_preview := 1
+
+    if direction_preview == 1
+        if priceh > zhigh_preview
+            zhigh_preview := priceh
+
+        if zhigh_preview - pricel >= reversalAmount
+            previewPivotPrice := zhigh_preview
+            previewPivotBar := bar_index
+            previewIsHigh := true
+            showPreview := true
+            direction_preview := -1
+            zlow_preview := pricel
+
+    else if direction_preview == -1
+        if pricel < zlow_preview
+            zlow_preview := pricel
+
+        if priceh - zlow_preview >= reversalAmount
+            previewPivotPrice := zlow_preview
+            previewPivotBar := bar_index
+            previewIsHigh := false
+            showPreview := true
+            direction_preview := 1
+            zhigh_preview := priceh
+
+// ============================================================================
+// SIGNAL DETECTION
+// ============================================================================
+var float EIL = na
+var float EIH = na
+var float EILActual = na
+var float EIHActual = na
+var int EILBar = 0
+var int EIHBar = 0
+var int dir = 0
+var int signal = 0
+
+if confirmedPivotDetected
+    if lastConfirmedPivotIsHigh
+        EIH := lastConfirmedPivotPrice
+        EIHActual := lastConfirmedPivotActual
+        EIHBar := lastConfirmedPivotBar
+        dir := -1
+    else
+        EIL := lastConfirmedPivotPrice
+        EILActual := lastConfirmedPivotActual
+        EILBar := lastConfirmedPivotBar
+        dir := 1
+
+if dir > 0 and pricelConfirmed > EIL
+    signal := signal <= 0 ? 1 : signal
+else if dir < 0 and pricehConfirmed < EIH
+    signal := signal >= 0 ? -1 : signal
+
+U1 = signal > 0 and signal[1] <= 0
+D1 = signal < 0 and signal[1] >= 0
+
+// ============================================================================
+// HELPER FUNCTION
+// ============================================================================
+formatPrice(float price) =>
+    priceStr = str.tostring(price, format.mintick)
+    parts = str.split(priceStr, ".")
+    intPart = array.get(parts, 0)
+    decPart = array.size(parts) > 1 ? "." + array.get(parts, 1) : ""
+
+    intLen = str.length(intPart)
+    result = ""
+    for i = 0 to intLen - 1
+        if i > 0 and (intLen - i) % 3 == 0
+            result := result + ","
+        result := result + str.substring(intPart, i, i + 1)
+
+    result + decPart
+
+// ============================================================================
+// REVERSAL LABELS
+// ============================================================================
+var array<line> allLines = array.new<line>()
+var array<int> lineStartBars = array.new<int>()
+var array<int> lineEndBars = array.new<int>()
+
+if U1 and confirmationMode != "Preview Only"
+    pivotBar = EILBar
+    exactLow = EILActual
+
+    lbl = label.new(pivotBar, exactLow, "REVERSAL\n" + formatPrice(EIL),
+                    style=label.style_label_upper_right,
+                    color=color.new(GREEN, 0),
+                    textcolor=color.black,
+                    size=labelSize,
+                    textalign=text.align_left,
+                    xloc=xloc.bar_index)
+
+    endBar = pivotBar + input_lineExtension
+    horizLine = line.new(pivotBar, exactLow, endBar, exactLow,
+                        color=color.new(GREEN, 0),
+                        width=2,
+                        style=line.style_solid,
+                        extend=extend.none)
+    array.push(allLines, horizLine)
+    array.push(lineStartBars, pivotBar)
+    array.push(lineEndBars, endBar)
+
+if D1 and confirmationMode != "Preview Only"
+    pivotBar = EIHBar
+    exactHigh = EIHActual
+
+    lbl = label.new(pivotBar, exactHigh, "REVERSAL\n" + formatPrice(EIH),
+                    style=label.style_label_lower_right,
+                    color=color.new(RED, 0),
+                    textcolor=color.white,
+                    size=labelSize,
+                    textalign=text.align_left,
+                    xloc=xloc.bar_index)
+
+    endBar = pivotBar + input_lineExtension
+    horizLine = line.new(pivotBar, exactHigh, endBar, exactHigh,
+                        color=color.new(RED, 0),
+                        width=2,
+                        style=line.style_solid,
+                        extend=extend.none)
+    array.push(allLines, horizLine)
+    array.push(lineStartBars, pivotBar)
+    array.push(lineEndBars, endBar)
+
+// ============================================================================
+// LINE MANAGEMENT
+// ============================================================================
+while array.size(allLines) > input_maxLines
+    oldLine = array.shift(allLines)
+    line.delete(oldLine)
+    array.shift(lineStartBars)
+    array.shift(lineEndBars)
+
+// ============================================================================
+// PREVIEW LABELS
+// ============================================================================
+if showPreview and confirmationMode != "Confirmed Only" and barstate.islast
+    if previewIsHigh
+        label.new(previewPivotBar, high, "PREVIEW\n" + formatPrice(previewPivotPrice),
+                  style=label.style_label_lower_right,
+                  color=color.new(#FF6B6B, 70),
+                  textcolor=color.new(color.white, 40),
+                  size=labelSize,
+                  textalign=text.align_left)
+    else
+        label.new(previewPivotBar, low, "PREVIEW\n" + formatPrice(previewPivotPrice),
+                  style=label.style_label_upper_right,
+                  color=color.new(#6BCF7F, 70),
+                  textcolor=color.new(color.black, 40),
+                  size=labelSize,
+                  textalign=text.align_left)
+
+// ============================================================================
+// SUPPLY/DEMAND ZONES - THIN HORIZONTAL RECTANGLES
+// ============================================================================
+var array<box> allBoxes = array.new<box>()
+
+if confirmedPivotDetected and input_showsupplydemandcloud
+    // Pivot LOW = Demand Zone (GREEN), Pivot HIGH = Supply Zone (RED)
+    bool isDemandZone = lastConfirmedPivotIsHigh == false
+
+    color zoneColor = isDemandZone ? color.new(GREEN, 85) : color.new(RED, 85)
+    color zoneBorder = isDemandZone ? color.new(GREEN, 40) : color.new(RED, 40)
+
+    // Use actual pivot price for zone placement
+    float pivotPrice = lastConfirmedPivotActual
+
+    // Create thin rectangle centered on pivot
+    float halfThickness = (pivotPrice * zoneThickness / 100) / 2
+    float zoneTop = pivotPrice + halfThickness
+    float zoneBottom = pivotPrice - halfThickness
+
+    int zoneStart = lastConfirmedPivotBar
+    int zoneEnd = zoneStart + input_zoneExtension
+
+    zoneBox = box.new(zoneStart, zoneTop, zoneEnd, zoneBottom,
+            border_color=zoneBorder,
+            bgcolor=zoneColor,
+            border_width=1,
+            extend=extend.none,
+            text = isDemandZone ? "DEMAND" : "SUPPLY",
+            text_size = size.tiny,
+            text_color = isDemandZone ? color.new(GREEN, 20) : color.new(RED, 20),
+            text_halign = text.align_center,
+            text_valign = text.align_center)
+
+    array.push(allBoxes, zoneBox)
+
+// Manage box count
+while array.size(allBoxes) > input_numbersuppdemandtoshow and input_numbersuppdemandtoshow > 0
+    oldBox = array.shift(allBoxes)
+    box.delete(oldBox)
+
+// ============================================================================
+// INFORMATION TABLE
+// ============================================================================
+tablePos = switch tablePosition
+    "Top Right" => position.top_right
+    "Top Left" => position.top_left
+    "Top Center" => position.top_center
+    "Bottom Right" => position.bottom_right
+    "Bottom Left" => position.bottom_left
+    "Bottom Center" => position.bottom_center
+    => position.top_right
+
+headerSize = switch tableSizeOption
+    "Tiny" => size.tiny
+    "Small" => size.small
+    "Normal" => size.normal
+    "Large" => size.large
+    "Huge" => size.huge
+    => size.normal
+
+cellSize = switch tableSizeOption
+    "Tiny" => size.tiny
+    "Small" => size.small
+    "Normal" => size.small
+    "Large" => size.normal
+    "Huge" => size.large
+    => size.small
+
+var table infoTable = table.new(tablePos, 2, 8, bgcolor=color.new(#1E1E1E, 5),
+                                frame_color=color.new(GREEN, 40), frame_width=2,
+                                border_width=1, border_color=color.new(#444444, 60))
+
+if barstate.islast and showInfoTable
+    table.cell(infoTable, 0, 0, "REVERSAL PRO v3.1", text_color=color.new(GREEN, 0),
+              text_size=headerSize, bgcolor=color.new(#0A0A0A, 0))
+    table.cell(infoTable, 1, 0, "NON-REPAINTING", text_color=color.new(GREEN, 0),
+              text_size=headerSize, bgcolor=color.new(#0A0A0A, 0))
+
+    table.cell(infoTable, 0, 1, "Mode:", text_color=color.white, text_size=cellSize,
+              bgcolor=color.new(#1E1E1E, 0))
+
+    color modeColor = color.new(GREEN, 0)
+    if confirmationMode == "Confirmed + Preview"
+        modeColor := color.new(#FFA500, 0)
+    if confirmationMode == "Preview Only"
+        modeColor := color.new(#FF6B6B, 0)
+
+    table.cell(infoTable, 1, 1, confirmationMode, text_color=modeColor,
+              text_size=cellSize, bgcolor=color.new(#1E1E1E, 0))
+
+    table.cell(infoTable, 0, 2, "Sensitivity:", text_color=color.white,
+              text_size=cellSize, bgcolor=color.new(#1E1E1E, 0))
+    table.cell(infoTable, 1, 2, input_sensitivity, text_color=color.yellow,
+              text_size=cellSize, bgcolor=color.new(#1E1E1E, 0))
+
+    table.cell(infoTable, 0, 3, "ATR Mult:", text_color=color.white,
+              text_size=cellSize, bgcolor=color.new(#1E1E1E, 0))
+    table.cell(infoTable, 1, 3, str.tostring(finalATRMult, "#.##"),
+              text_color=color.aqua, text_size=cellSize, bgcolor=color.new(#1E1E1E, 0))
+
+    table.cell(infoTable, 0, 4, "Pct Threshold:", text_color=color.white,
+              text_size=cellSize, bgcolor=color.new(#1E1E1E, 0))
+    table.cell(infoTable, 1, 4, str.tostring(finalPctThreshold, "#.##") + "%",
+              text_color=color.aqua, text_size=cellSize, bgcolor=color.new(#1E1E1E, 0))
+
+    table.cell(infoTable, 0, 5, "Current ATR:", text_color=color.white,
+              text_size=cellSize, bgcolor=color.new(#1E1E1E, 0))
+    table.cell(infoTable, 1, 5, str.tostring(atrValue, format.mintick),
+              text_color=color.aqua, text_size=cellSize, bgcolor=color.new(#1E1E1E, 0))
+
+    table.cell(infoTable, 0, 6, "Reversal Amt:", text_color=color.white,
+              text_size=cellSize, bgcolor=color.new(#1E1E1E, 0))
+    table.cell(infoTable, 1, 6, str.tostring(reversalAmount, format.mintick),
+              text_color=color.orange, text_size=cellSize, bgcolor=color.new(#1E1E1E, 0))
+
+    table.cell(infoTable, 0, 7, "Trend:", text_color=color.white,
+              text_size=cellSize, bgcolor=color.new(#1E1E1E, 0))
+    trendText = buysignal == 1 ? "BULLISH" : sellsignal == 1 ? "BEARISH" : "NEUTRAL"
+    trendTextColor = buysignal == 1 ? color.green : sellsignal == 1 ? color.red : color.purple
+    table.cell(infoTable, 1, 7, trendText, text_color=trendTextColor,
+              text_size=cellSize, bgcolor=color.new(#1E1E1E, 0))
+
+// ============================================================================
+// ALERTS - All now respect sensitivity settings
+// ============================================================================
+
+// Trend change detection
+trendToBullish = buysignal == 1 and buysignal[1] != 1
+trendToBearish = sellsignal == 1 and sellsignal[1] != 1
+
+// ============================================================================
+// ALERTS - FIXED: alertcondition only accepts const strings
+// ============================================================================
+
+// Reversal alerts - simplified messages (const strings only)
+alertcondition(U1, "REVERSAL Bullish",
+               "Bullish Reversal Detected at {{close}}")
+
+alertcondition(D1, "REVERSAL Bearish",
+               "Bearish Reversal Detected at {{close}}")
+
+alertcondition(U1 or D1, "Any REVERSAL",
+               "Reversal Signal at {{close}}")
+
+// EMA trend alerts
+alertcondition(buynow, "EMA Buy Signal",
+               "EMA Buy Signal triggered at {{close}}")
+
+alertcondition(sellnow, "EMA Sell Signal",
+               "EMA Sell Signal triggered at {{close}}")
+
+// Trend change alerts (using variables already defined earlier in the code)
+alertcondition(trendToBullish, "Trend Changed to BULLISH",
+               "Trend Changed to BULLISH at {{close}}")
+
+alertcondition(trendToBearish, "Trend Changed to BEARISH",
+               "Trend Changed to BEARISH at {{close}}")
+
+// Strong signal alerts (Reversal + Trend alignment)
+strongBullish = U1 and buysignal == 1
+strongBearish = D1 and sellsignal == 1
+
+alertcondition(strongBullish, "STRONG Bullish Signal",
+               "STRONG BULLISH - Reversal + Trend Aligned at {{close}}")
+
+alertcondition(strongBearish, "STRONG Bearish Signal",
+               "STRONG BEARISH - Reversal + Trend Aligned at {{close}}")
+// ============================================================================
+// PLOTTING (Optional - for debugging)
+// ============================================================================
+// Uncomment to visualize EMAs
+// plot(mov_avg9, "EMA 9", color=color.new(color.yellow, 0), linewidth=1)
+// plot(mov_avg14, "EMA 14", color=color.new(color.orange, 0), linewidth=1)
+// plot(mov_avg21, "EMA 21", color=color.new(color.red, 0), linewidth=2)

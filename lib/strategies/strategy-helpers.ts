@@ -88,6 +88,7 @@ export function createBuySignal(data: OHLCVData[], index: number, reason: string
         type: 'buy',
         price: data[index].close,
         reason,
+        barIndex: index,
     };
 }
 
@@ -103,6 +104,7 @@ export function createSellSignal(data: OHLCVData[], index: number, reason: strin
         type: 'sell',
         price: data[index].close,
         reason,
+        barIndex: index,
     };
 }
 

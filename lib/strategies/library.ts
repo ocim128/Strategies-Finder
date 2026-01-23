@@ -22,7 +22,6 @@ import { gravity_well } from './lib/gravity-well';
 import { volatility_cycle_rider } from './lib/volatility-cycle-rider';
 import { trap_hunter } from './lib/trap-hunter';
 import { supply_demand_zones } from './lib/supply-demand-zones';
-import { reversal_detection_pro } from './lib/reversal-detection-pro';
 
 export const strategies: Record<string, Strategy> = {
     rsi_oversold,
@@ -48,6 +47,4 @@ export const strategies: Record<string, Strategy> = {
     volatility_cycle_rider,
     trap_hunter,
     supply_demand_zones,
-    reversal_detection_pro,
 };
-
