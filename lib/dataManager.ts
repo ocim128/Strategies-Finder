@@ -38,7 +38,8 @@ export class DataManager {
     ]);
     private currentAbort: AbortController | null = null;
     private currentLoadId = 0;
-    private readonly MOCK_SYMBOLS = new Set(['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'EURUSD', 'GBPUSD', 'USDJPY', 'XAUUSD', 'XAGUSD', 'WTIUSD']);
+    // Only these are truly mock/simulated data now
+    private readonly MOCK_SYMBOLS = new Set(['MOCK_STOCK', 'MOCK_CRYPTO', 'MOCK_FOREX']);
 
     // Real-time WebSocket streaming
     private ws: WebSocket | null = null;
@@ -58,6 +59,22 @@ export class DataManager {
             return this.generateMockData(symbol, interval);
         }
 
+        // Determine provider based on symbol
+        const provider = this.getProvider(symbol);
+
+        if (provider === 'binance') {
+            return this.fetchBinanceData(symbol, interval, signal);
+        } else if (provider === 'twelvedata') {
+            return this.fetchTwelveData(symbol, interval, signal);
+        }
+
+        return [];
+    }
+
+    /**
+     * Fetch data from Binance
+     */
+    private async fetchBinanceData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
         try {
             const batches: BinanceKline[][] = [];
             const { sourceInterval, needsResample } = this.resolveFetchInterval(interval);
@@ -111,6 +128,118 @@ export class DataManager {
             return [];
         }
     }
+
+    /**
+     * Fetch data from Twelve Data (stocks, forex, commodities)
+     * Uses proxy to avoid CORS issues
+     */
+    private async fetchTwelveData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
+        try {
+            // Map our interval format to Twelve Data format
+            const twelveInterval = this.mapToTwelveDataInterval(interval);
+
+            // Use proxy to fetch from Twelve Data
+            const apiUrl = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=${twelveInterval}&outputsize=5000`;
+
+            const proxyUrl = 'http://localhost:3030/api/proxy';
+            const response = await fetch(proxyUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: apiUrl }),
+                signal,
+            });
+
+            if (!response.ok) {
+                throw new Error(`Proxy request failed: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (data.status === 'error') {
+                debugLogger.warn('data.twelvedata.error', {
+                    symbol,
+                    message: data.message,
+                });
+                // Return mock data as fallback for now
+                return this.generateMockData(symbol, interval);
+            }
+
+            if (!data.values || !Array.isArray(data.values)) {
+                return this.generateMockData(symbol, interval);
+            }
+
+            // Convert Twelve Data format to OHLCV
+            const ohlcv: OHLCVData[] = data.values
+                .reverse() // Twelve Data returns newest first
+                .map((bar: any) => ({
+                    time: (new Date(bar.datetime).getTime() / 1000) as Time,
+                    open: parseFloat(bar.open),
+                    high: parseFloat(bar.high),
+                    low: parseFloat(bar.low),
+                    close: parseFloat(bar.close),
+                    volume: parseFloat(bar.volume || '0'),
+                }))
+                .filter((bar: OHLCVData) =>
+                    !isNaN(bar.open) && !isNaN(bar.high) &&
+                    !isNaN(bar.low) && !isNaN(bar.close)
+                );
+
+            debugLogger.info('data.twelvedata.success', {
+                symbol,
+                interval: twelveInterval,
+                bars: ohlcv.length,
+            });
+
+            return ohlcv;
+        } catch (error) {
+            if (this.isAbortError(error)) {
+                return [];
+            }
+            debugLogger.error('data.twelvedata.error', {
+                symbol,
+                interval,
+                error: this.formatError(error),
+            });
+            console.warn('Twelve Data fetch failed, using mock data:', error);
+            // Fallback to mock data
+            return this.generateMockData(symbol, interval);
+        }
+    }
+
+    /**
+     * Map our interval format to Twelve Data interval format
+     */
+    private mapToTwelveDataInterval(interval: string): string {
+        const mapping: { [key: string]: string } = {
+            '1m': '1min',
+            '5m': '5min',
+            '15m': '15min',
+            '30m': '30min',
+            '1h': '1h',
+            '2h': '2h',
+            '4h': '4h',
+            '1d': '1day',
+            '1w': '1week',
+            '1M': '1month',
+        };
+        return mapping[interval] || '1day';
+    }
+
+    /**
+     * Determine which provider to use for a symbol
+     */
+    private getProvider(symbol: string): 'binance' | 'twelvedata' {
+        // Check if it looks like a Binance crypto symbol
+        if (symbol.endsWith('USDT') || symbol.endsWith('BUSD') ||
+            symbol.endsWith('BTC') || symbol.endsWith('ETH') ||
+            symbol.endsWith('BNB')) {
+            return 'binance';
+        }
+
+        // Everything else goes to Twelve Data (stocks, forex, commodities)
+        return 'twelvedata';
+    }
+
 
     private async fetchKlinesBatch(
         symbol: string,

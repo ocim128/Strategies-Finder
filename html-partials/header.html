@@ -25,7 +25,7 @@
                                 d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
                         </svg>
                         <input type="text" id="symbolSearchInput" class="symbol-search-input"
-                            placeholder="Search Binance pairs..." autocomplete="off" spellcheck="false" />
+                            placeholder="Search stocks, crypto, commodities..." autocomplete="off" spellcheck="false" />
                         <div class="symbol-search-spinner is-hidden" id="symbolSearchSpinner">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <circle cx="12" cy="12" r="10" opacity="0.25" />
@@ -61,36 +61,32 @@
 
                 <!-- Other Markets Section -->
                 <div class="symbol-search-section">
-                <div class="dropdown-header">Other Markets (Mock Data)</div>
-                <div class="mock-model-row">
-                    <label class="mock-model-label" for="mockModelSelect">Mock Model</label>
-                    <select class="mock-model-select" id="mockModelSelect">
-                        <option value="simple">Simple (V1)</option>
-                        <option value="hard">Regime (V2)</option>
-                        <option value="v3">Adversarial (V3)</option>
-                        <option value="v4">Market Realism (V4)</option>
-                    </select>
-                </div>
-                <div class="mock-model-row">
-                    <label class="mock-model-label" for="mockBarsInput">Mock Candles</label>
-                    <input type="number" class="mock-model-input" id="mockBarsInput" min="100" max="30000000" step="100" value="30000"
-                        inputmode="numeric" />
-                </div>
-                <div class="dropdown-item" data-symbol="AAPL" role="button" tabindex="0">
-                    <span class="symbol-item-badge stock">Stock</span>
-                    AAPL (Apple)
-                </div>
-                    <div class="dropdown-item" data-symbol="GOOGL" role="button" tabindex="0">
-                        <span class="symbol-item-badge stock">Stock</span>
-                        GOOGL (Google)
+                    <div class="dropdown-header">Mock Data (For Testing)</div>
+                    <div class="mock-model-row">
+                        <label class="mock-model-label" for="mockModelSelect">Mock Model</label>
+                        <select class="mock-model-select" id="mockModelSelect">
+                            <option value="simple">Simple (V1)</option>
+                            <option value="hard">Regime (V2)</option>
+                            <option value="v3">Adversarial (V3)</option>
+                            <option value="v4">Market Realism (V4)</option>
+                        </select>
                     </div>
-                    <div class="dropdown-item" data-symbol="EURUSD" role="button" tabindex="0">
-                        <span class="symbol-item-badge forex">Forex</span>
-                        EUR/USD
+                    <div class="mock-model-row">
+                        <label class="mock-model-label" for="mockBarsInput">Mock Candles</label>
+                        <input type="number" class="mock-model-input" id="mockBarsInput" min="100" max="30000000"
+                            step="100" value="30000" inputmode="numeric" />
                     </div>
-                    <div class="dropdown-item" data-symbol="XAUUSD" role="button" tabindex="0">
-                        <span class="symbol-item-badge commodity">Gold</span>
-                        XAU/USD
+                    <div class="dropdown-item" data-symbol="MOCK_STOCK" role="button" tabindex="0">
+                        <span class="symbol-item-badge stock">Mock</span>
+                        MOCK_STOCK (Test Stock)
+                    </div>
+                    <div class="dropdown-item" data-symbol="MOCK_CRYPTO" role="button" tabindex="0">
+                        <span class="symbol-item-badge crypto">Mock</span>
+                        MOCK_CRYPTO (Test Crypto)
+                    </div>
+                    <div class="dropdown-item" data-symbol="MOCK_FOREX" role="button" tabindex="0">
+                        <span class="symbol-item-badge forex">Mock</span>
+                        MOCK_FOREX (Test Forex)
                     </div>
                 </div>
             </div>

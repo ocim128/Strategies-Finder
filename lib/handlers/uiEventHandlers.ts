@@ -6,7 +6,7 @@ import { backtestService } from "../backtestService";
 import { clearAll } from "../appActions";
 import { uiManager } from "../uiManager";
 import { chartManager } from "../chartManager";
-import { binanceSearchService, BinanceSymbol } from "../binanceSearchService";
+import { assetSearchService, Asset } from "../assetSearchService";
 
 // Debounce helper for search input
 function debounce<T extends (...args: any[]) => any>(fn: T, delay: number): (...args: Parameters<T>) => void {
@@ -81,7 +81,7 @@ export function setupEventHandlers() {
     }
 
     // Render search results
-    const renderSearchResults = (symbols: BinanceSymbol[], query: string = '') => {
+    const renderSearchResults = (assets: Asset[], query: string = '') => {
         if (!symbolSearchResults) return;
 
         // Clear existing results (except loading/empty states)
@@ -92,7 +92,7 @@ export function setupEventHandlers() {
         symbolSearchLoading?.classList.add('is-hidden');
         symbolSearchEmpty?.classList.add('is-hidden');
 
-        if (symbols.length === 0) {
+        if (assets.length === 0) {
             symbolSearchEmpty?.classList.remove('is-hidden');
             return;
         }
@@ -100,44 +100,54 @@ export function setupEventHandlers() {
         // Add header
         const header = document.createElement('div');
         header.className = 'symbol-search-results-header';
-        header.textContent = query ? `Results for "${query}"` : 'Popular Pairs';
+        header.textContent = query ? `Results for "${query}"` : 'Popular Assets';
         symbolSearchResults.insertBefore(header, symbolSearchResults.firstChild);
 
         // Add result items
-        symbols.forEach((symbol) => {
+        assets.forEach((asset) => {
             const item = document.createElement('div');
             item.className = 'symbol-search-item';
-            item.dataset.symbol = symbol.symbol;
+            item.dataset.symbol = asset.symbol;
             item.role = 'button';
             item.tabIndex = 0;
 
             // Mark active if current symbol matches
-            if (symbol.symbol === state.currentSymbol) {
+            if (asset.symbol === state.currentSymbol) {
                 item.classList.add('active');
             }
 
-            // Get first 2-3 letters for icon
-            const iconText = symbol.baseAsset.substring(0, 3);
+            // Get badge class based on asset type
+            const badgeClass = asset.type === 'crypto' ? 'crypto' :
+                asset.type === 'stock' ? 'stock' :
+                    asset.type === 'forex' ? 'forex' : 'commodity';
+
+            // Get icon text (first 2-3 letters)
+            const iconText = asset.baseAsset?.substring(0, 3) || asset.symbol.substring(0, 3);
+
+            // Get badge text
+            const badgeText = asset.type === 'crypto' ? 'Crypto' :
+                asset.type === 'stock' ? 'Stock' :
+                    asset.type === 'forex' ? 'Forex' : 'Commodity';
 
             item.innerHTML = `
                 <div class="symbol-item-icon">${iconText}</div>
                 <div class="symbol-item-details">
                     <div class="symbol-item-name">
-                        ${symbol.displayName}
-                        <span class="symbol-item-badge crypto">Binance</span>
+                        ${asset.displayName}
+                        <span class="symbol-item-badge ${badgeClass}">${badgeText}</span>
                     </div>
-                    <div class="symbol-item-pair">${symbol.symbol}</div>
+                    <div class="symbol-item-pair">${asset.symbol}</div>
                 </div>
             `;
 
             // Click handler
-            item.addEventListener('click', () => selectSymbol(symbol.symbol, symbol.displayName));
+            item.addEventListener('click', () => selectSymbol(asset.symbol, asset.displayName));
 
             // Keyboard handler
             item.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    selectSymbol(symbol.symbol, symbol.displayName);
+                    selectSymbol(asset.symbol, asset.displayName);
                 }
             });
 
@@ -174,10 +184,10 @@ export function setupEventHandlers() {
         symbolSearchSpinner?.classList.remove('is-hidden');
 
         try {
-            const results = await binanceSearchService.searchSymbols(query, 20);
+            const results = await assetSearchService.searchAssets(query, 20);
             renderSearchResults(results, query);
         } catch (error) {
-            console.error('Symbol search failed:', error);
+            console.error('Asset search failed:', error);
             symbolSearchEmpty?.classList.remove('is-hidden');
         } finally {
             symbolSearchSpinner?.classList.add('is-hidden');
@@ -192,10 +202,10 @@ export function setupEventHandlers() {
         symbolSearchLoading?.classList.remove('is-hidden');
 
         try {
-            const popularPairs = await binanceSearchService.searchSymbols('', 20);
-            renderSearchResults(popularPairs);
+            const popularAssets = await assetSearchService.searchAssets('', 20);
+            renderSearchResults(popularAssets);
         } catch (error) {
-            console.error('Failed to initialize symbol search:', error);
+            console.error('Failed to initialize asset search:', error);
         }
     };
 
