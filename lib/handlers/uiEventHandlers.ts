@@ -460,8 +460,8 @@ export function setupEventHandlers() {
     // Strategy settings toggles
     [
         { toggleId: 'riskSettingsToggle', sectionId: 'riskSettings' },
-        { toggleId: 'regimeSettingsToggle', sectionId: 'regimeSettings' },
-        { toggleId: 'entrySettingsToggle', sectionId: 'entrySettings' }
+        { toggleId: 'entrySettingsToggle', sectionId: 'entrySettings' },
+        { toggleId: 'confirmationStrategiesToggle', sectionId: 'confirmationStrategies' }
     ].forEach(({ toggleId, sectionId }) => {
         const toggle = getRequiredElement<HTMLInputElement>(toggleId);
         const section = getRequiredElement<HTMLElement>(sectionId);

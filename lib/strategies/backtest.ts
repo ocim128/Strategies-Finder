@@ -488,7 +488,7 @@ export function runBacktestCompact(
         returnM2 += delta * (pnlPercent - avgReturn);
     };
 
-    const exitPosition = (exitPrice: number, exitTime: Time, exitSize: number) => {
+    const exitPosition = (exitPrice: number, exitSize: number) => {
         if (!position || exitSize <= 0) return;
 
         const size = Math.min(exitSize, position.size);
@@ -522,7 +522,7 @@ export function runBacktestCompact(
             if (stopLoss !== null) {
                 const stopHit = isShort ? candle.high >= stopLoss : candle.low <= stopLoss;
                 if (stopHit) {
-                    exitPosition(stopLoss, candle.time, position.size);
+                    exitPosition(stopLoss, position.size);
                 }
             }
 
@@ -530,7 +530,7 @@ export function runBacktestCompact(
             if (position && position.takeProfitPrice !== null) {
                 const takeHit = isShort ? candle.low <= position.takeProfitPrice : candle.high >= position.takeProfitPrice;
                 if (takeHit) {
-                    exitPosition(position.takeProfitPrice, candle.time, position.size);
+                    exitPosition(position.takeProfitPrice, position.size);
                 }
             }
 
@@ -540,7 +540,7 @@ export function runBacktestCompact(
                 if (partialHit) {
                     const partialSize = position.size * (config.partialTakeProfitPercent / 100);
                     if (partialSize > 0) {
-                        exitPosition(position.partialTargetPrice, candle.time, partialSize);
+                        exitPosition(position.partialTargetPrice, partialSize);
                         if (position) {
                             position.partialTaken = true;
                         }
@@ -551,7 +551,7 @@ export function runBacktestCompact(
             if (position && config.timeStopBars > 0 && position.barsInTrade >= config.timeStopBars) {
                 const isLosing = isShort ? candle.close >= position.entryPrice : candle.close <= position.entryPrice;
                 if (!position.partialTaken && isLosing) {
-                    exitPosition(candle.close, candle.time, position.size);
+                    exitPosition(candle.close, position.size);
                 }
             }
 
@@ -667,7 +667,7 @@ export function runBacktestCompact(
 
                     capital -= entryCommission;
                 } else if (signal.type === exitSignalType && position) {
-                    exitPosition(signal.price, signal.time, position.size);
+                    exitPosition(signal.price, position.size);
                 }
             }
             signalIdx++;
@@ -683,7 +683,7 @@ export function runBacktestCompact(
 
     if (position && data.length > 0) {
         const lastCandle = data[data.length - 1];
-        exitPosition(lastCandle.close, lastCandle.time, position.size);
+        exitPosition(lastCandle.close, position.size);
         updateDrawdown(capital);
     }
 
@@ -1058,3 +1058,4 @@ export function calculateBacktestStats(
         equityCurve
     };
 }
+

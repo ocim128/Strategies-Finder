@@ -576,6 +576,64 @@
     margin-bottom: 0;
 }
 
+.confirmation-strategy-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.confirmation-strategy-slot {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: var(--space-2);
+    align-items: center;
+    padding: var(--space-2);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-s);
+    border: 1px solid var(--border-color);
+}
+
+.confirmation-strategy-params {
+    grid-column: 1 / -1;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.confirmation-strategy-slot .role-badge {
+    font-size: var(--font-size-xs);
+    padding: 2px 6px;
+    border-radius: var(--radius-s);
+    background: var(--warning);
+    color: var(--text-on-accent);
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+}
+
+.confirmation-remove-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: var(--radius-s);
+    transition: all 0.15s ease;
+}
+
+.confirmation-remove-btn:hover {
+    background: var(--red);
+    color: var(--text-on-accent);
+}
+
+.confirmation-actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+    flex-wrap: wrap;
+}
+
 .strategy-select {
     width: 100%;
     padding: var(--space-2-5) var(--space-3);

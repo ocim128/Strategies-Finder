@@ -13,6 +13,8 @@ import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./paramManager";
 import { debugLogger } from "./debugLogger";
 import { type WebhookSettings, DEFAULT_WEBHOOK_SETTINGS, isValidWebhookUrl } from "./webhookTypes";
+import { getConfirmationStrategyParams, getConfirmationStrategyValues, renderConfirmationStrategyList, setConfirmationStrategyParams } from "./confirmationStrategies";
+import type { StrategyParams } from "./strategies/types";
 
 export type { WebhookSettings };
 
@@ -50,16 +52,6 @@ export interface BacktestSettingsData {
     // Short mode
     shortModeToggle: boolean;
 
-    // Regime filters
-    regimeSettingsToggle: boolean;
-    trendEmaPeriod: number;
-    trendEmaSlopeBars: number;
-    atrPercentMin: number;
-    atrPercentMax: number;
-    adxPeriod: number;
-    adxMin: number;
-    adxMax: number;
-
     // Entry confirmation
     entrySettingsToggle: boolean;
     entryConfirmation: string;
@@ -69,6 +61,11 @@ export interface BacktestSettingsData {
     confirmRsiPeriod: number;
     confirmRsiBullish: number;
     confirmRsiBearish: number;
+
+    // Confirmation strategies
+    confirmationStrategiesToggle: boolean;
+    confirmationStrategies: string[];
+    confirmationStrategyParams: Record<string, StrategyParams>;
 }
 
 export interface StrategyConfig {
@@ -98,7 +95,7 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     initialCapital: 10000,
     positionSize: 100,
     commission: 0.1,
-    fixedTradeToggle: false,
+    fixedTradeToggle: true,
     fixedTradeAmount: 1000,
     useRustEngine: true,
 
@@ -121,18 +118,8 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     // Short mode
     shortModeToggle: true,
 
-    // Regime filters
-    regimeSettingsToggle: true,
-    trendEmaPeriod: 200,
-    trendEmaSlopeBars: 0,
-    atrPercentMin: 0,
-    atrPercentMax: 0,
-    adxPeriod: 14,
-    adxMin: 0,
-    adxMax: 0,
-
     // Entry confirmation
-    entrySettingsToggle: true,
+    entrySettingsToggle: false,
     entryConfirmation: 'none',
     confirmLookback: 1,
     volumeSmaPeriod: 20,
@@ -140,6 +127,11 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     confirmRsiPeriod: 14,
     confirmRsiBullish: 55,
     confirmRsiBearish: 45,
+
+    // Confirmation strategies
+    confirmationStrategiesToggle: false,
+    confirmationStrategies: [],
+    confirmationStrategyParams: {},
 };
 
 const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -212,16 +204,6 @@ class SettingsManager {
             // Short mode
             shortModeToggle: this.readCheckbox('shortModeToggle', DEFAULT_BACKTEST_SETTINGS.shortModeToggle),
 
-            // Regime filters
-            regimeSettingsToggle: this.readCheckbox('regimeSettingsToggle', DEFAULT_BACKTEST_SETTINGS.regimeSettingsToggle),
-            trendEmaPeriod: this.readNumber('trendEmaPeriod', DEFAULT_BACKTEST_SETTINGS.trendEmaPeriod),
-            trendEmaSlopeBars: this.readNumber('trendEmaSlopeBars', DEFAULT_BACKTEST_SETTINGS.trendEmaSlopeBars),
-            atrPercentMin: this.readNumber('atrPercentMin', DEFAULT_BACKTEST_SETTINGS.atrPercentMin),
-            atrPercentMax: this.readNumber('atrPercentMax', DEFAULT_BACKTEST_SETTINGS.atrPercentMax),
-            adxPeriod: this.readNumber('adxPeriod', DEFAULT_BACKTEST_SETTINGS.adxPeriod),
-            adxMin: this.readNumber('adxMin', DEFAULT_BACKTEST_SETTINGS.adxMin),
-            adxMax: this.readNumber('adxMax', DEFAULT_BACKTEST_SETTINGS.adxMax),
-
             // Entry confirmation
             entrySettingsToggle: this.readCheckbox('entrySettingsToggle', DEFAULT_BACKTEST_SETTINGS.entrySettingsToggle),
             entryConfirmation: this.readSelect('entryConfirmation', DEFAULT_BACKTEST_SETTINGS.entryConfirmation),
@@ -231,6 +213,11 @@ class SettingsManager {
             confirmRsiPeriod: this.readNumber('confirmRsiPeriod', DEFAULT_BACKTEST_SETTINGS.confirmRsiPeriod),
             confirmRsiBullish: this.readNumber('confirmRsiBullish', DEFAULT_BACKTEST_SETTINGS.confirmRsiBullish),
             confirmRsiBearish: this.readNumber('confirmRsiBearish', DEFAULT_BACKTEST_SETTINGS.confirmRsiBearish),
+
+            // Confirmation strategies
+            confirmationStrategiesToggle: this.readCheckbox('confirmationStrategiesToggle', DEFAULT_BACKTEST_SETTINGS.confirmationStrategiesToggle),
+            confirmationStrategies: getConfirmationStrategyValues(),
+            confirmationStrategyParams: getConfirmationStrategyParams(),
         };
     }
 
@@ -392,16 +379,6 @@ class SettingsManager {
         // Short mode
         this.writeCheckbox('shortModeToggle', settings.shortModeToggle);
 
-        // Regime filters
-        this.writeCheckbox('regimeSettingsToggle', settings.regimeSettingsToggle);
-        this.writeNumber('trendEmaPeriod', settings.trendEmaPeriod);
-        this.writeNumber('trendEmaSlopeBars', settings.trendEmaSlopeBars);
-        this.writeNumber('atrPercentMin', settings.atrPercentMin);
-        this.writeNumber('atrPercentMax', settings.atrPercentMax);
-        this.writeNumber('adxPeriod', settings.adxPeriod);
-        this.writeNumber('adxMin', settings.adxMin);
-        this.writeNumber('adxMax', settings.adxMax);
-
         // Entry confirmation
         this.writeCheckbox('entrySettingsToggle', settings.entrySettingsToggle);
         this.writeSelect('entryConfirmation', settings.entryConfirmation);
@@ -411,6 +388,12 @@ class SettingsManager {
         this.writeNumber('confirmRsiPeriod', settings.confirmRsiPeriod);
         this.writeNumber('confirmRsiBullish', settings.confirmRsiBullish);
         this.writeNumber('confirmRsiBearish', settings.confirmRsiBearish);
+
+        // Confirmation strategies
+        this.writeCheckbox('confirmationStrategiesToggle', settings.confirmationStrategiesToggle ?? DEFAULT_BACKTEST_SETTINGS.confirmationStrategiesToggle);
+        setConfirmationStrategyParams(settings.confirmationStrategyParams ?? {});
+        const confirmationList = Array.isArray(settings.confirmationStrategies) ? settings.confirmationStrategies : [];
+        renderConfirmationStrategyList(confirmationList);
 
         // Trigger change events so UI updates reflect changes
         this.triggerChangeEvents();
@@ -622,8 +605,8 @@ class SettingsManager {
         const toggleIds = [
             'fixedTradeToggle',
             'riskSettingsToggle',
-            'regimeSettingsToggle',
             'entrySettingsToggle',
+            'confirmationStrategiesToggle',
             'shortModeToggle',
             'useRustEngineToggle',
             'webhookEnabledToggle',

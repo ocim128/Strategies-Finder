@@ -9,6 +9,7 @@ import { dataManager } from "./dataManager";
 import { rustEngine } from "./rustEngineClient";
 import { debugLogger } from "./debugLogger";
 import { shouldUseRustEngine } from "./enginePreferences";
+import { buildConfirmationStates, filterSignalsWithConfirmations, getConfirmationStrategyValues, renderConfirmationStrategyList, setConfirmationStrategyParams } from "./confirmationStrategies";
 
 type FinderMode = 'default' | 'grid' | 'random';
 type FinderMetric = 'netProfit' | 'profitFactor' | 'sharpeRatio' | 'netProfitPercent' | 'winRate' | 'maxDrawdownPercent' | 'expectancy' | 'averageGain' | 'totalTrades';
@@ -43,6 +44,7 @@ interface FinderResult {
 	name: string;
 	params: StrategyParams;
 	result: BacktestResult;
+	confirmationParams?: Record<string, StrategyParams>;
 }
 
 const METRIC_LABELS: Record<FinderMetric, string> = {
@@ -255,6 +257,28 @@ export class FinderManager {
 		try {
 			const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = backtestService.getCapitalSettings();
 			const settings = backtestService.getBacktestSettings();
+			const confirmationStrategies = settings.confirmationStrategies ?? [];
+			const shouldRandomizeConfirmations = options.mode === 'random';
+			const hasConfirmationStrategies = confirmationStrategies.length > 0;
+			const baseConfirmationParams = settings.confirmationStrategyParams ?? {};
+			const confirmationStates = !shouldRandomizeConfirmations && hasConfirmationStrategies
+				? buildConfirmationStates(state.ohlcvData, confirmationStrategies, baseConfirmationParams)
+				: [];
+			const buildConfirmationContext = (): { states: Int8Array[]; params?: Record<string, StrategyParams> } => {
+				if (!hasConfirmationStrategies) return { states: [] };
+				if (!shouldRandomizeConfirmations) {
+					return {
+						states: confirmationStates,
+						params: Object.keys(baseConfirmationParams).length > 0 ? baseConfirmationParams : undefined
+					};
+				}
+				const params = this.buildRandomConfirmationParams(confirmationStrategies, options);
+				const states = buildConfirmationStates(state.ohlcvData, confirmationStrategies, params);
+				return { states, params };
+			};
+			const rustSettings: typeof settings = { ...settings };
+			delete (rustSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
+			delete (rustSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
 
 			const strategies = strategyRegistry.getAll();
 			const strategyEntries = Object.entries(strategies).filter(([key]) => {
@@ -426,8 +450,18 @@ export class FinderManager {
 				if (!rustAvailable) {
 					for (const job of batchJobs) {
 						try {
+							const confirmationContext = buildConfirmationContext();
 							// Generate signals - these can be large arrays
 							let signals = job.strategy.execute(state.ohlcvData, job.params);
+							if (confirmationContext.states.length > 0) {
+								signals = filterSignalsWithConfirmations(
+									state.ohlcvData,
+									signals,
+									confirmationContext.states,
+									settings.entryConfirmation ?? 'none',
+									settings.tradeDirection ?? 'long'
+								);
+							}
 
 							const result = backtestFn(
 								state.ohlcvData,
@@ -444,7 +478,13 @@ export class FinderManager {
 							signals.length = 0;
 							(signals as any) = null;
 
-							insertResult({ key: job.key, name: job.name, params: job.params, result });
+							insertResult({
+								key: job.key,
+								name: job.name,
+								params: job.params,
+								result,
+								confirmationParams: confirmationContext.params
+							});
 						} catch (err) {
 							console.warn(`[Finder] Backtest failed for ${job.key}:`, err);
 						}
@@ -470,18 +510,30 @@ export class FinderManager {
 					params: StrategyParams;
 					signals: Signal[];
 					backtestSettings: typeof settings;
+					confirmationParams?: Record<string, StrategyParams>;
 				};
 				const batchRuns: PreparedRun[] = [];
 
 				for (const job of batchJobs) {
 					try {
-						const signals = job.strategy.execute(state.ohlcvData, job.params);
+						const confirmationContext = buildConfirmationContext();
+						let signals = job.strategy.execute(state.ohlcvData, job.params);
+						if (confirmationContext.states.length > 0) {
+							signals = filterSignalsWithConfirmations(
+								state.ohlcvData,
+								signals,
+								confirmationContext.states,
+								settings.entryConfirmation ?? 'none',
+								settings.tradeDirection ?? 'long'
+							);
+						}
 						batchRuns.push({
 							key: job.key,
 							name: job.name,
 							params: job.params,
 							signals,
 							backtestSettings: job.backtestSettings,
+							confirmationParams: confirmationContext.params
 						});
 					} catch (err) {
 						console.warn(`[Finder] Signal generation failed for ${job.key}:`, err);
@@ -495,11 +547,16 @@ export class FinderManager {
 
 				// Run backtests for this batch
 				if (rustAvailable) {
-					const batchItems = batchRuns.map((run, idx) => ({
-						id: `${run.key}-${startIdx + idx}`,
-						signals: run.signals,
-						settings: run.backtestSettings,
-					}));
+					const batchItems = batchRuns.map((run, idx) => {
+						const itemSettings = { ...run.backtestSettings };
+						delete (itemSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
+						delete (itemSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
+						return {
+							id: `${run.key}-${startIdx + idx}`,
+							signals: run.signals,
+							settings: itemSettings,
+						};
+					});
 
 					try {
 						// Use cached endpoint for large datasets, regular for smaller ones
@@ -510,7 +567,7 @@ export class FinderManager {
 								initialCapital,
 								positionSize,
 								commission,
-								settings,
+								rustSettings,
 								{ mode: sizingMode, fixedTradeAmount }
 							)
 							: await rustEngine.runBatchBacktest(
@@ -519,7 +576,7 @@ export class FinderManager {
 								initialCapital,
 								positionSize,
 								commission,
-								settings,
+								rustSettings,
 								{ mode: sizingMode, fixedTradeAmount }
 							);
 
@@ -531,6 +588,7 @@ export class FinderManager {
 									name: run.name,
 									params: run.params,
 									result: batchResult.results[i].result,
+									confirmationParams: run.confirmationParams
 								});
 							}
 						} else {
@@ -546,7 +604,13 @@ export class FinderManager {
 										run.backtestSettings,
 										{ mode: sizingMode, fixedTradeAmount }
 									);
-									insertResult({ key: run.key, name: run.name, params: run.params, result });
+									insertResult({
+										key: run.key,
+										name: run.name,
+										params: run.params,
+										result,
+										confirmationParams: run.confirmationParams
+									});
 								} catch (err) {
 									console.warn(`[Finder] Backtest failed for ${run.key}:`, err);
 								}
@@ -565,7 +629,13 @@ export class FinderManager {
 									run.backtestSettings,
 									{ mode: sizingMode, fixedTradeAmount }
 								);
-								insertResult({ key: run.key, name: run.name, params: run.params, result });
+								insertResult({
+									key: run.key,
+									name: run.name,
+									params: run.params,
+									result,
+									confirmationParams: run.confirmationParams
+								});
 							} catch (innerErr) {
 								console.warn(`[Finder] Backtest failed for ${run.key}:`, innerErr);
 							}
@@ -863,6 +933,70 @@ export class FinderManager {
 		return combos;
 	}
 
+	private buildRandomConfirmationParams(strategyKeys: string[], options: FinderOptions): Record<string, StrategyParams> {
+		const paramsByKey: Record<string, StrategyParams> = {};
+		for (const key of strategyKeys) {
+			const strategy = strategyRegistry.get(key);
+			if (!strategy) continue;
+			paramsByKey[key] = this.generateRandomParams(strategy.defaultParams, options);
+		}
+		return paramsByKey;
+	}
+
+	private generateRandomParams(defaultParams: StrategyParams, options: FinderOptions): StrategyParams {
+		const keys = Object.keys(defaultParams);
+		if (keys.length === 0) return {};
+
+		// Separate toggle params from numeric params
+		const toggleKeys: string[] = [];
+		const numericRanges: { key: string; baseValue: number; min: number; max: number }[] = [];
+
+		for (const key of keys) {
+			const baseValue = defaultParams[key];
+			if (isToggleParam(key, baseValue)) {
+				toggleKeys.push(key);
+				continue;
+			}
+
+			const rangeRatio = Math.max(0, options.rangePercent) / 100;
+			const rawRange = Math.abs(baseValue) * rangeRatio;
+			const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
+			let min = baseValue - range;
+			let max = baseValue + range;
+
+			// Special clamping for risk management percent params
+			if (key === 'stopLossPercent') {
+				min = Math.max(0, min);
+				max = Math.min(15, max);
+			} else if (key === 'takeProfitPercent') {
+				min = Math.max(0, min);
+				max = Math.min(100, max);
+			}
+
+			numericRanges.push({ key, baseValue, min, max });
+		}
+
+		const maxAttempts = Math.max(10, keys.length * 5);
+		for (let attempt = 0; attempt < maxAttempts; attempt++) {
+			const params: StrategyParams = {};
+
+			for (const key of toggleKeys) {
+				params[key] = Math.random() < 0.5 ? 0 : 1;
+			}
+
+			for (const range of numericRanges) {
+				const raw = range.min + Math.random() * (range.max - range.min);
+				params[range.key] = this.normalizeParamValue(range.key, raw, range.baseValue);
+			}
+
+			if (this.validateParams(params)) {
+				return params;
+			}
+		}
+
+		return this.normalizeParams(defaultParams);
+	}
+
 	private tryAddCombo(params: StrategyParams, combos: StrategyParams[], seen: Set<string>, maxRuns: number): void {
 		if (combos.length >= maxRuns) return;
 		if (!this.validateParams(params)) return;
@@ -1137,6 +1271,13 @@ export class FinderManager {
 		if (!strategy) return;
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, result.params);
+
+		if (result.confirmationParams) {
+			setConfirmationStrategyParams(result.confirmationParams);
+		} else {
+			setConfirmationStrategyParams({});
+		}
+		renderConfirmationStrategyList(getConfirmationStrategyValues());
 
 		// Also apply global risk settings if present in result
 		if (result.params['stopLossPercent'] !== undefined) {

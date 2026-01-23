@@ -85,6 +85,10 @@ export interface BacktestSettings {
     rsiPeriod?: number;
     rsiBullish?: number;
     rsiBearish?: number;
+    /** Optional list of strategy keys used as entry confirmation filters */
+    confirmationStrategies?: string[];
+    /** Optional parameter overrides for confirmation strategies */
+    confirmationStrategyParams?: Record<string, StrategyParams>;
     tradeDirection?: TradeDirection;
 }
 

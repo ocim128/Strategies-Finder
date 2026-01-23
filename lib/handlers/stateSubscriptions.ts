@@ -20,6 +20,19 @@ export function setupStateSubscriptions() {
         changeEl.className = 'symbol-change';
     };
 
+    let reloadTimeout: number | null = null;
+    const scheduleDataReload = () => {
+        if (reloadTimeout !== null) {
+            clearTimeout(reloadTimeout);
+        }
+        reloadTimeout = window.setTimeout(() => {
+            reloadTimeout = null;
+            setPriceLoading();
+            clearAll();
+            dataManager.loadData(state.currentSymbol, state.currentInterval);
+        }, 0);
+    };
+
     // Sync chart data
     state.subscribe('ohlcvData', (data) => {
         debugLogger.event('data.apply', {
@@ -37,7 +50,7 @@ export function setupStateSubscriptions() {
         getRequiredElement('lastUpdate').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
 
         state.chart.timeScale().setVisibleLogicalRange({
-            from: data.length - 1000,
+            from: Math.max(0, data.length - 1000),
             to: data.length,
         });
 
@@ -101,25 +114,19 @@ export function setupStateSubscriptions() {
         }
 
         getRequiredElement('symbolName').textContent = displayName;
-        setPriceLoading();
-        clearAll();
-        dataManager.loadData(symbol, state.currentInterval);
+        scheduleDataReload();
     });
 
     state.subscribe('currentInterval', (interval) => {
         debugLogger.event('state.currentInterval', { interval });
         uiManager.updateTimeframeUI(interval);
-        setPriceLoading();
-        clearAll();
-        dataManager.loadData(state.currentSymbol, interval);
+        scheduleDataReload();
     });
 
     state.subscribe('mockChartModel', (mockChartModel) => {
         debugLogger.event('state.mockChartModel', { mockChartModel });
         if (!dataManager.isMockSymbol(state.currentSymbol)) return;
-        setPriceLoading();
-        clearAll();
-        dataManager.loadData(state.currentSymbol, state.currentInterval);
+        scheduleDataReload();
     });
 
     state.subscribe('mockChartBars', (mockChartBars) => {
@@ -129,9 +136,7 @@ export function setupStateSubscriptions() {
             input.value = String(mockChartBars);
         }
         if (!dataManager.isMockSymbol(state.currentSymbol)) return;
-        setPriceLoading();
-        clearAll();
-        dataManager.loadData(state.currentSymbol, state.currentInterval);
+        scheduleDataReload();
     });
 
     // Strategy selection

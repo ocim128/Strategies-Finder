@@ -14,6 +14,7 @@ import { paramManager } from "./paramManager";
 import { debugLogger } from "./debugLogger";
 import { rustEngine } from "./rustEngineClient";
 import { shouldUseRustEngine } from "./enginePreferences";
+import { buildConfirmationStates, filterSignalsWithConfirmations, getConfirmationStrategyParams, getConfirmationStrategyValues } from "./confirmationStrategies";
 
 export class BacktestService {
     public async runCurrentBacktest() {
@@ -66,18 +67,36 @@ export class BacktestService {
             progressText.textContent = 'Running backtest...';
             await this.sleep(100);
 
+            const confirmationStrategies = settings.confirmationStrategies ?? [];
+            const confirmationStates = confirmationStrategies.length > 0
+                ? buildConfirmationStates(state.ohlcvData, confirmationStrategies, settings.confirmationStrategyParams)
+                : [];
+            const filteredSignals = confirmationStates.length > 0
+                ? filterSignalsWithConfirmations(
+                    state.ohlcvData,
+                    signals,
+                    confirmationStates,
+                    settings.entryConfirmation ?? 'none',
+                    settings.tradeDirection ?? 'long'
+                )
+                : signals;
+
             // Try Rust engine first for performance, fallback to TypeScript
             let result;
             let engineUsed: 'rust' | 'typescript' = 'typescript';
 
+            const rustSettings: BacktestSettings = { ...settings };
+            delete (rustSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
+            delete (rustSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
+
             if (shouldUseRustEngine()) {
                 const rustResult = await rustEngine.runBacktest(
                     state.ohlcvData,
-                    signals,
+                    filteredSignals,
                     initialCapital,
                     positionSize,
                     commission,
-                    settings,
+                    rustSettings,
                     { mode: sizingMode, fixedTradeAmount }
                 );
 
@@ -92,7 +111,7 @@ export class BacktestService {
             if (!result) {
                 result = runBacktest(
                     state.ohlcvData,
-                    signals,
+                    filteredSignals,
                     initialCapital,
                     positionSize,
                     commission,
@@ -195,7 +214,7 @@ export class BacktestService {
         sizingMode: 'percent' | 'fixed';
         fixedTradeAmount: number;
     } {
-        const initialCapital = parseFloat((document.getElementById('initialCapital') as HTMLInputElement).value) || 30000;
+        const initialCapital = parseFloat((document.getElementById('initialCapital') as HTMLInputElement).value) || 10000;
         const positionSize = parseFloat((document.getElementById('positionSize') as HTMLInputElement).value) || 100;
         const commission = parseFloat((document.getElementById('commission') as HTMLInputElement).value) || 0.1;
         const fixedTradeAmount = Math.max(
@@ -209,14 +228,16 @@ export class BacktestService {
 
     public getBacktestSettings(): BacktestSettings {
         const riskEnabled = this.isToggleEnabled('riskSettingsToggle');
-        const regimeEnabled = this.isToggleEnabled('regimeSettingsToggle');
         const entryEnabled = this.isToggleEnabled('entrySettingsToggle');
+        const confirmationEnabled = this.isToggleEnabled('confirmationStrategiesToggle', false);
         const shortModeEnabled = this.isToggleEnabled('shortModeToggle', false);
         const riskMode = (document.getElementById('riskMode') as HTMLSelectElement | null)?.value as 'simple' | 'advanced' | 'percentage';
         const useAdvancedRisk = riskMode === 'advanced';
         const usePercentageRisk = riskMode === 'percentage';
 
         const entryConfirmation = (document.getElementById('entryConfirmation') as HTMLSelectElement | null)?.value as EntryConfirmationMode | undefined;
+        const confirmationStrategies = confirmationEnabled ? getConfirmationStrategyValues() : [];
+        const confirmationStrategyParams = confirmationEnabled ? getConfirmationStrategyParams() : {};
         return {
             atrPeriod: this.readNumberInput('atrPeriod', 14),
             stopLossAtr: riskEnabled && (riskMode === 'simple' || riskMode === 'advanced') ? this.readNumberInput('stopLossAtr', 1.5) : 0,
@@ -234,13 +255,14 @@ export class BacktestService {
             stopLossEnabled: riskEnabled && usePercentageRisk ? this.isToggleEnabled('stopLossToggle', true) : false,
             takeProfitEnabled: riskEnabled && usePercentageRisk ? this.isToggleEnabled('takeProfitToggle', true) : false,
 
-            trendEmaPeriod: regimeEnabled ? this.readNumberInput('trendEmaPeriod', 200) : 0,
-            trendEmaSlopeBars: regimeEnabled ? this.readNumberInput('trendEmaSlopeBars', 0) : 0,
-            atrPercentMin: regimeEnabled ? this.readNumberInput('atrPercentMin', 0) : 0,
-            atrPercentMax: regimeEnabled ? this.readNumberInput('atrPercentMax', 0) : 0,
-            adxPeriod: regimeEnabled ? this.readNumberInput('adxPeriod', 14) : 0,
-            adxMin: regimeEnabled ? this.readNumberInput('adxMin', 0) : 0,
-            adxMax: regimeEnabled ? this.readNumberInput('adxMax', 0) : 0,
+            // Regime filters (not exposed in UI here; keep explicit defaults for engine parity)
+            trendEmaPeriod: 0,
+            trendEmaSlopeBars: 0,
+            atrPercentMin: 0,
+            atrPercentMax: 0,
+            adxPeriod: 14,
+            adxMin: 0,
+            adxMax: 0,
 
             entryConfirmation: entryEnabled ? (entryConfirmation ?? 'none') : 'none',
             confirmLookback: entryEnabled ? this.readNumberInput('confirmLookback', 1) : 1,
@@ -249,6 +271,8 @@ export class BacktestService {
             rsiPeriod: entryEnabled ? this.readNumberInput('confirmRsiPeriod', 14) : 14,
             rsiBullish: entryEnabled ? this.readNumberInput('confirmRsiBullish', 55) : 55,
             rsiBearish: entryEnabled ? this.readNumberInput('confirmRsiBearish', 45) : 45,
+            confirmationStrategies,
+            confirmationStrategyParams,
             tradeDirection: shortModeEnabled ? 'short' : 'long'
         };
     }

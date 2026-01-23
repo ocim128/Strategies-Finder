@@ -161,8 +161,9 @@ export class UIManager {
         if (strategyRegistry.has(currentValue)) {
             strategySelect.value = currentValue;
         } else if (strategies.length > 0) {
-            strategySelect.value = strategies[0].key;
-            state.currentStrategyKey = strategies[0].key;
+            const fallbackKey = strategies[0].key;
+            strategySelect.value = fallbackKey;
+            state.set('currentStrategyKey', fallbackKey);
         }
     }
 

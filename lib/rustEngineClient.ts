@@ -238,7 +238,8 @@ export class RustEngineClient {
         positionSizePercent: number,
         commissionPercent: number,
         baseSettings: BacktestSettings,
-        sizing?: { mode: 'percent' | 'fixed'; fixedTradeAmount: number }
+        sizing?: { mode: 'percent' | 'fixed'; fixedTradeAmount: number },
+        compact: boolean = true
     ): Promise<{ results: Array<{ id: string; result: BacktestResult }>; processingTimeMs: number } | null> {
         if (!await this.checkHealth()) {
             return null;
@@ -253,6 +254,7 @@ export class RustEngineClient {
                 commissionPercent,
                 baseSettings,
                 sizing,
+                compact,
             };
 
             const startTime = performance.now();
@@ -349,7 +351,8 @@ export class RustEngineClient {
         positionSizePercent: number,
         commissionPercent: number,
         baseSettings: BacktestSettings,
-        sizing?: { mode: 'percent' | 'fixed'; fixedTradeAmount: number }
+        sizing?: { mode: 'percent' | 'fixed'; fixedTradeAmount: number },
+        compact: boolean = true
     ): Promise<{ results: Array<{ id: string; result: BacktestResult }>; processingTimeMs: number } | null> {
         if (!await this.checkHealth()) {
             return null;
@@ -364,6 +367,7 @@ export class RustEngineClient {
                 commissionPercent,
                 baseSettings,
                 sizing,
+                compact,
             };
 
             const startTime = performance.now();

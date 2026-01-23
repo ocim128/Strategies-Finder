@@ -22,6 +22,7 @@ import { injectLayout } from "./lib/layoutManager";
 import { commandPaletteManager } from "./lib/commandPalette";
 import { combinerManager } from "./lib/combinerManager";
 import { replayManager, ReplayChartAdapter, ReplayUI } from "./lib/replay";
+import { initConfirmationStrategyUI } from "./lib/confirmationStrategies";
 
 // Handlers
 import { setupGlobalErrorHandlers } from "./lib/handlers/globalErrorHandlers";
@@ -58,6 +59,7 @@ async function init() {
 	monteCarloService.initUI();
 	logicTestService.initUI();
 	combinerManager.init();
+	initConfirmationStrategyUI();
 	initDebugPanel();
 	initEngineStatusIndicator(); // Show Rust vs TypeScript engine status
 
@@ -86,6 +88,7 @@ async function init() {
 	uiManager.updateStrategyParams(state.currentStrategyKey); // Load initial params
 
 	// Load saved settings from localStorage
+	let shouldLoadData = true;
 	const savedSettings = settingsManager.loadSettings();
 	if (savedSettings) {
 		// Apply saved strategy key first
@@ -98,6 +101,17 @@ async function init() {
 		}
 		// Apply other settings
 		settingsManager.applySettings(savedSettings);
+
+		if (savedSettings.currentSymbol && savedSettings.currentSymbol !== state.currentSymbol) {
+			state.set('currentSymbol', savedSettings.currentSymbol);
+			shouldLoadData = false;
+		}
+
+		if (savedSettings.currentInterval && savedSettings.currentInterval !== state.currentInterval) {
+			state.set('currentInterval', savedSettings.currentInterval);
+			shouldLoadData = false;
+		}
+
 		debugLogger.event('app.init.settings_restored');
 	} else {
 		state.set('currentStrategyKey', state.currentStrategyKey); // Initial sync
@@ -109,7 +123,9 @@ async function init() {
 	// Setup auto-save for settings changes
 	settingsManager.setupAutoSave();
 
-	await dataManager.loadData();
+	if (shouldLoadData) {
+		await dataManager.loadData();
+	}
 	debugLogger.event('app.init.ready');
 }
 

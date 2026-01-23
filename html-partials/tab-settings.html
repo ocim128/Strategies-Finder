@@ -162,52 +162,6 @@
     </div>
 
     <div class="section-header">
-        <div class="section-title">Regime Filters</div>
-        <label class="section-toggle" aria-label="Toggle regime filters">
-            <input type="checkbox" id="regimeSettingsToggle">
-            <span class="section-toggle-track"></span>
-        </label>
-    </div>
-    <div class="section-body" id="regimeSettings">
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">Trend EMA Period</label>
-                <input type="number" class="param-input" id="trendEmaPeriod" value="200" min="0">
-            </div>
-            <div class="param-group">
-                <label class="param-label">EMA Slope Bars</label>
-                <input type="number" class="param-input" id="trendEmaSlopeBars" value="0" min="0">
-            </div>
-        </div>
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">ATR% Min</label>
-                <input type="number" class="param-input" id="atrPercentMin" value="0" min="0" step="0.1">
-            </div>
-            <div class="param-group">
-                <label class="param-label">ATR% Max</label>
-                <input type="number" class="param-input" id="atrPercentMax" value="0" min="0" step="0.1">
-            </div>
-        </div>
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">ADX Period</label>
-                <input type="number" class="param-input" id="adxPeriod" value="14" min="0">
-            </div>
-            <div class="param-group">
-                <label class="param-label">ADX Min</label>
-                <input type="number" class="param-input" id="adxMin" value="0" min="0" step="0.1">
-            </div>
-        </div>
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">ADX Max</label>
-                <input type="number" class="param-input" id="adxMax" value="0" min="0" step="0.1">
-            </div>
-        </div>
-    </div>
-
-    <div class="section-header">
         <div class="section-title">Webhook Alerts</div>
         <label class="section-toggle" aria-label="Toggle webhook alerts">
             <input type="checkbox" id="webhookEnabledToggle">
@@ -356,6 +310,21 @@
                 <label class="param-label">RSI Bearish</label>
                 <input type="number" class="param-input" id="confirmRsiBearish" value="45" min="0" max="100">
             </div>
+        </div>
+    </div>
+
+    <div class="section-header">
+        <div class="section-title">Confirmation Strategies</div>
+        <label class="section-toggle" aria-label="Toggle confirmation strategies">
+            <input type="checkbox" id="confirmationStrategiesToggle">
+            <span class="section-toggle-track"></span>
+        </label>
+    </div>
+    <div class="section-body" id="confirmationStrategies">
+        <div class="param-hint">Require additional strategy signals to confirm entries (filters persist until flipped). Up to 5.</div>
+        <div class="confirmation-strategy-list" id="confirmationStrategyList"></div>
+        <div class="confirmation-actions">
+            <button class="btn btn-secondary btn-compact" id="confirmationAddBtn" type="button">Add Strategy</button>
         </div>
     </div>
 

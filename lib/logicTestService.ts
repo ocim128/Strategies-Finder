@@ -5,6 +5,7 @@ import { paramManager } from "./paramManager";
 import { backtestService } from "./backtestService";
 import { runBacktest, OHLCVData } from "./strategies/index";
 import { debugLogger } from "./debugLogger";
+import { buildConfirmationStates, filterSignalsWithConfirmations } from "./confirmationStrategies";
 
 // ============================================================================
 // Logic Test Configuration
@@ -84,6 +85,9 @@ class LogicTestService {
             const params = paramManager.getValues(strategy);
             const capitalSettings = backtestService.getCapitalSettings();
             const backtestSettings = backtestService.getBacktestSettings();
+            const confirmationStrategies = backtestSettings.confirmationStrategies ?? [];
+            const confirmationParams = backtestSettings.confirmationStrategyParams;
+            const hasConfirmationFilters = confirmationStrategies.length > 0;
 
             const results: IndividualTestResult[] = [];
             let completedTests = 0;
@@ -103,7 +107,19 @@ class LogicTestService {
                 const mockData = this.generateMockData(config, i);
 
                 // Generate signals
-                const signals = strategy.execute(mockData, params);
+                let signals = strategy.execute(mockData, params);
+                if (hasConfirmationFilters) {
+                    const confirmationStates = buildConfirmationStates(mockData, confirmationStrategies, confirmationParams);
+                    if (confirmationStates.length > 0) {
+                        signals = filterSignalsWithConfirmations(
+                            mockData,
+                            signals,
+                            confirmationStates,
+                            backtestSettings.entryConfirmation ?? 'none',
+                            backtestSettings.tradeDirection ?? 'long'
+                        );
+                    }
+                }
 
                 // Run backtest
                 const backtestResult = runBacktest(
