@@ -3,7 +3,7 @@ import { BacktestResult, OHLCVData } from "./strategies/index";
 import { Indicator } from "./types";
 
 export type StateKey = keyof State;
-export type MockChartModel = 'simple' | 'hard' | 'v3';
+export type MockChartModel = 'simple' | 'hard' | 'v3' | 'v4';
 
 export class State {
     public chart!: IChartApi;

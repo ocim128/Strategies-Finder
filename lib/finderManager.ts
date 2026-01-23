@@ -1,4 +1,4 @@
-﻿import { BacktestResult, StrategyParams, runBacktest, Signal } from "./strategies/index";
+﻿import { BacktestResult, StrategyParams, runBacktest, runBacktestCompact, Signal } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtestService";
@@ -14,15 +14,15 @@ type FinderMode = 'default' | 'grid' | 'random';
 type FinderMetric = 'netProfit' | 'profitFactor' | 'sharpeRatio' | 'netProfitPercent' | 'winRate' | 'maxDrawdownPercent' | 'expectancy' | 'averageGain' | 'totalTrades';
 
 const DEFAULT_SORT_PRIORITY: FinderMetric[] = [
-	'netProfit',
-	'profitFactor',
-	'sharpeRatio',
-	'winRate',
-	'maxDrawdownPercent',
 	'expectancy',
-	'averageGain',
+	'profitFactor',
 	'totalTrades',
-	'netProfitPercent'
+	'maxDrawdownPercent',
+	'sharpeRatio',
+	'averageGain',
+	'winRate',
+	'netProfitPercent',
+	'netProfit'
 ];
 
 interface FinderOptions {
@@ -85,6 +85,12 @@ export class FinderManager {
 	public init() {
 		getRequiredElement('runFinder').addEventListener('click', () => {
 			void this.runFinder();
+		});
+
+		const copyTopButton = getRequiredElement<HTMLButtonElement>('finderCopyTopResults');
+		copyTopButton.disabled = true;
+		copyTopButton.addEventListener('click', () => {
+			void this.copyTopResultsMetadata();
 		});
 
 		getRequiredElement('finderList').addEventListener('click', (event) => {
@@ -211,6 +217,14 @@ export class FinderManager {
 		});
 	}
 
+	/**
+	 * Memory-efficient finder that processes in batches to avoid OOM with large datasets.
+	 * Key optimizations:
+	 * 1. Process parameter combinations in small batches (not all at once)
+	 * 2. Maintain only top-N results at any time (discard worse results early)
+	 * 3. Chunk Rust batch requests for large datasets
+	 * 4. Yield control frequently to prevent UI freeze
+	 */
 	public async runFinder(): Promise<void> {
 		if (this.isRunning) return;
 		if (state.ohlcvData.length === 0) {
@@ -253,17 +267,37 @@ export class FinderManager {
 				return;
 			}
 
-			// OPTIMIZATION: Collect all parameter/signal combinations first
-			type PreparedRun = {
+			// MEMORY OPTIMIZATION: Determine batch size based on data size
+			// For 5M+ candles, use very small batches to avoid OOM
+			const dataSize = state.ohlcvData.length;
+			const isLargeDataset = dataSize > 500000;      // 500K+ candles
+			const isVeryLargeDataset = dataSize > 2000000; // 2M+ candles
+			const isExtremeDataset = dataSize > 4000000;   // 4M+ candles (OOM risk zone)
+			const backtestFn = isLargeDataset ? runBacktestCompact : runBacktest;
+
+			// Smaller batches for larger datasets - CRITICAL for 5M+ bars
+			// For extreme datasets, process ONE job at a time to minimize peak memory
+			const BATCH_SIZE = isExtremeDataset ? 1 : (isVeryLargeDataset ? 2 : (isLargeDataset ? 8 : 50));
+
+			// For very large datasets, warn user
+			if (isExtremeDataset) {
+				debugLogger.warn(`[Finder] EXTREME dataset detected (${dataSize} bars). Using ultra-memory-efficient mode.`);
+				this.setStatus(`Ultra-memory mode: ${(dataSize / 1000000).toFixed(1)}M bars`);
+			} else if (isVeryLargeDataset) {
+				debugLogger.warn(`[Finder] Very large dataset detected (${dataSize} bars). Using memory-efficient mode.`);
+			}
+
+			// Collect parameter combinations WITHOUT generating signals yet
+			type ParamJob = {
 				key: string;
 				name: string;
 				params: StrategyParams;
-				signals: Signal[];
 				backtestSettings: typeof settings;
+				strategy: (typeof strategyEntries)[0][1];
 			};
-			const allRuns: PreparedRun[] = [];
+			const allJobs: ParamJob[] = [];
 
-			this.setProgress(true, 5, 'Generating signals...');
+			this.setProgress(true, 5, 'Preparing parameter combinations...');
 
 			for (const [key, strategy] of strategyEntries) {
 				const extendedDefaults = { ...strategy.defaultParams };
@@ -277,125 +311,292 @@ export class FinderManager {
 				}
 				const paramSets = this.generateParamSets(extendedDefaults, options);
 				for (const params of paramSets) {
-					try {
-						const backtestSettings = { ...settings };
-						if (params['stopLossPercent'] !== undefined) {
-							backtestSettings.stopLossPercent = params['stopLossPercent'];
-						}
-						if (params['takeProfitPercent'] !== undefined) {
-							backtestSettings.takeProfitPercent = params['takeProfitPercent'];
-						}
-						const signals = strategy.execute(state.ohlcvData, params);
-						allRuns.push({ key, name: strategy.name, params, signals, backtestSettings });
-					} catch (err) {
-						console.warn(`[Finder] Signal generation failed for ${key}:`, err);
+					const backtestSettings = { ...settings };
+					if (params['stopLossPercent'] !== undefined) {
+						backtestSettings.stopLossPercent = params['stopLossPercent'];
 					}
+					if (params['takeProfitPercent'] !== undefined) {
+						backtestSettings.takeProfitPercent = params['takeProfitPercent'];
+					}
+					allJobs.push({ key, name: strategy.name, params, backtestSettings, strategy });
 				}
 			}
 
-			const totalRuns = allRuns.length;
+			const totalRuns = allJobs.length;
 			if (totalRuns === 0) {
 				this.setStatus('No valid parameter combinations generated.');
 				return;
 			}
 
-			this.setProgress(true, 10, `Running ${totalRuns} backtests...`);
+			this.setProgress(true, 10, `Running ${totalRuns} backtests (batch mode)...`);
 
-			const results: FinderResult[] = [];
-			const rustAvailable = shouldUseRustEngine() && await rustEngine.checkHealth();
+			// MEMORY OPTIMIZATION: Use a max-heap-like structure to keep only top N results
+			const topResults: FinderResult[] = [];
+			const maxResults = Math.max(options.topN * 2, 50); // Keep 2x topN as buffer
+			let processedCount = 0;
+			let filteredCount = 0;
 
-			// OPTIMIZATION: Use batch backtest with Rust (single HTTP request, parallel execution)
-			if (rustAvailable) {
-				debugLogger.info(`[Finder] Using Rust batch backtest for ${totalRuns} runs`);
-				this.setStatus(`Running ${totalRuns} backtests via Rust...`);
+			// CRITICAL: For very large datasets, use data caching to avoid JSON serialization OOM
+			// SOLUTION: Send OHLCV data ONCE to Rust server, then reference by cache ID
 
-				const batchItems = allRuns.map((run, idx) => ({
-					id: `${run.key}-${idx}`,
-					signals: run.signals,
-					settings: run.backtestSettings,
-				}));
+			// Check if Rust is available
+			const rustHealthy = shouldUseRustEngine() && await rustEngine.checkHealth();
 
-				const batchResult = await rustEngine.runBatchBacktest(
-					state.ohlcvData,
-					batchItems,
-					initialCapital,
-					positionSize,
-					commission,
-					settings,
-					{ mode: sizingMode, fixedTradeAmount }
-				);
+			// For large datasets, use data caching approach (send data once, reference by ID)
+			let cacheId: string | null = null;
+			const useCachedMode = isLargeDataset; // Enable cache mode for 500K+ candles
 
-				if (batchResult && batchResult.results.length > 0) {
-					for (let i = 0; i < batchResult.results.length; i++) {
-						const run = allRuns[i];
-						results.push({
-							key: run.key,
-							name: run.name,
-							params: run.params,
-							result: batchResult.results[i].result,
-						});
-					}
-					this.setStatus(`Rust batch: ${totalRuns} runs in ${batchResult.processingTimeMs}ms ⚡`);
-					debugLogger.info(`[Finder] Rust batch completed: ${totalRuns} runs in ${batchResult.processingTimeMs}ms`);
+			if (useCachedMode && rustHealthy) {
+				this.setStatus('Caching data on Rust engine...');
+				this.setProgress(true, 8, 'Uploading data to Rust...');
+
+				// Cache the OHLCV data on the Rust server (only happens once!)
+				cacheId = await rustEngine.cacheData(state.ohlcvData);
+
+				if (cacheId) {
+					debugLogger.info(`[Finder] Data cached with ID: ${cacheId} (${dataSize} bars)`);
 				} else {
-					debugLogger.warn('[Finder] Rust batch failed, falling back to TypeScript');
-					// Fallback to TypeScript
-					for (const run of allRuns) {
-						try {
-							const result = runBacktest(
-								state.ohlcvData,
-								run.signals,
-								initialCapital,
-								positionSize,
-								commission,
-								run.backtestSettings,
-								{ mode: sizingMode, fixedTradeAmount }
-							);
-							results.push({ key: run.key, name: run.name, params: run.params, result });
-						} catch (err) {
-							console.warn(`[Finder] Backtest failed for ${run.key}:`, err);
-						}
-					}
-				}
-			} else {
-				// TypeScript fallback
-				debugLogger.info(`[Finder] Using TypeScript for ${totalRuns} runs`);
-				let completed = 0;
-				for (const run of allRuns) {
-					try {
-						const result = runBacktest(
-							state.ohlcvData,
-							run.signals,
-							initialCapital,
-							positionSize,
-							commission,
-							run.backtestSettings,
-							{ mode: sizingMode, fixedTradeAmount }
-						);
-						results.push({ key: run.key, name: run.name, params: run.params, result });
-					} catch (err) {
-						console.warn(`[Finder] Backtest failed for ${run.key}:`, err);
-					}
-					completed++;
-					if (completed % 25 === 0) {
-						this.setProgress(true, 10 + (completed / totalRuns) * 85, `${completed}/${totalRuns} runs`);
-						await this.yieldControl();
-					}
+					debugLogger.warn('[Finder] Failed to cache data, falling back to TypeScript');
 				}
 			}
 
-			const filteredResults = options.tradeFilterEnabled
-				? results.filter(({ result }) =>
-					result.totalTrades >= options.minTrades && result.totalTrades <= options.maxTrades
-				)
-				: results;
+			// Determine which mode to use
+			const useRustCached = useCachedMode && cacheId !== null;
+			const useRustDirect = rustHealthy && !isLargeDataset;
+			// CRITICAL: For extreme datasets, disable Rust entirely to avoid JSON serialization OOM
+			// Even cached mode sends signals array which can be huge
+			const rustAvailable = isExtremeDataset ? false : (useRustCached || useRustDirect);
 
-			filteredResults.sort((a, b) => {
+			if (isExtremeDataset) {
+				debugLogger.info(`[Finder] Extreme dataset (${(dataSize / 1000000).toFixed(1)}M bars) - using TypeScript ultra-memory mode`);
+				this.setStatus(`Ultra-memory mode: TypeScript only (${(dataSize / 1000000).toFixed(1)}M bars)`);
+			} else if (isVeryLargeDataset && rustAvailable) {
+				this.setStatus(`Using Rust engine with cached data ⚡`);
+			} else if (!rustAvailable && isLargeDataset) {
+				debugLogger.warn(`[Finder] Using TypeScript for ${dataSize} bars (Rust unavailable)`);
+				this.setStatus('Using TypeScript engine...');
+			}
+
+			// Helper to insert result, maintaining only top N
+			const insertResult = (result: FinderResult) => {
+				// Apply trade filter early to reduce memory
+				if (options.tradeFilterEnabled) {
+					if (result.result.totalTrades < options.minTrades ||
+						result.result.totalTrades > options.maxTrades) {
+						return;
+					}
+				}
+				filteredCount++;
+
+				topResults.push(result);
+
+				// Periodically trim to avoid unbounded growth
+				if (topResults.length > maxResults * 2) {
+					topResults.sort((a, b) => {
+						for (const metric of options.sortPriority) {
+							const valA = this.getMetricValue(a.result, metric);
+							const valB = this.getMetricValue(b.result, metric);
+							if (Math.abs(valA - valB) > 0.0001) {
+								const isAscending = metric === 'maxDrawdownPercent';
+								return isAscending ? valA - valB : valB - valA;
+							}
+						}
+						return 0;
+					});
+					topResults.length = maxResults;
+				}
+			};
+
+			// NOTE: Indicator pre-computation disabled for now
+			// Each job may have different settings (stopLossPercent, takeProfitPercent) which
+			// could require different indicator calculations. Enabling this caused incorrect results.
+			// TODO: Re-enable with proper settings validation for safe precomputation
+
+			// Process in batches
+			const totalBatches = Math.ceil(totalRuns / BATCH_SIZE);
+			let batchNum = 0;
+
+			for (let startIdx = 0; startIdx < totalRuns; startIdx += BATCH_SIZE) {
+				batchNum++;
+				const endIdx = Math.min(startIdx + BATCH_SIZE, totalRuns);
+				const batchJobs = allJobs.slice(startIdx, endIdx);
+
+				// MEMORY OPTIMIZATION: For TypeScript-only mode with extreme datasets
+				// Process jobs one at a time, clearing signals immediately after use
+				if (!rustAvailable) {
+					for (const job of batchJobs) {
+						try {
+							// Generate signals - these can be large arrays
+							let signals = job.strategy.execute(state.ohlcvData, job.params);
+
+							const result = backtestFn(
+								state.ohlcvData,
+								signals,
+								initialCapital,
+								positionSize,
+								commission,
+								job.backtestSettings,
+								{ mode: sizingMode, fixedTradeAmount }
+								// precomputedIndicators disabled - can cause different results
+							);
+
+							// CRITICAL: Clear signals array immediately to free memory
+							signals.length = 0;
+							(signals as any) = null;
+
+							insertResult({ key: job.key, name: job.name, params: job.params, result });
+						} catch (err) {
+							console.warn(`[Finder] Backtest failed for ${job.key}:`, err);
+						}
+
+						// For extreme datasets, yield after EVERY job to allow GC
+						if (isExtremeDataset) {
+							await this.yieldControl();
+						}
+					}
+
+					processedCount += batchJobs.length;
+					const progress = 10 + (processedCount / totalRuns) * 85;
+					this.setProgress(true, progress, `Batch ${batchNum}/${totalBatches} (${processedCount}/${totalRuns})`);
+					this.setStatus(`Processing batch ${batchNum}/${totalBatches}...`);
+					await this.yieldControl();
+					continue;
+				}
+
+				// Generate signals for this batch only
+				type PreparedRun = {
+					key: string;
+					name: string;
+					params: StrategyParams;
+					signals: Signal[];
+					backtestSettings: typeof settings;
+				};
+				const batchRuns: PreparedRun[] = [];
+
+				for (const job of batchJobs) {
+					try {
+						const signals = job.strategy.execute(state.ohlcvData, job.params);
+						batchRuns.push({
+							key: job.key,
+							name: job.name,
+							params: job.params,
+							signals,
+							backtestSettings: job.backtestSettings,
+						});
+					} catch (err) {
+						console.warn(`[Finder] Signal generation failed for ${job.key}:`, err);
+					}
+				}
+
+				if (batchRuns.length === 0) {
+					processedCount += batchJobs.length;
+					continue;
+				}
+
+				// Run backtests for this batch
+				if (rustAvailable) {
+					const batchItems = batchRuns.map((run, idx) => ({
+						id: `${run.key}-${startIdx + idx}`,
+						signals: run.signals,
+						settings: run.backtestSettings,
+					}));
+
+					try {
+						// Use cached endpoint for large datasets, regular for smaller ones
+						const batchResult = cacheId
+							? await rustEngine.runCachedBatchBacktest(
+								cacheId,
+								batchItems,
+								initialCapital,
+								positionSize,
+								commission,
+								settings,
+								{ mode: sizingMode, fixedTradeAmount }
+							)
+							: await rustEngine.runBatchBacktest(
+								state.ohlcvData,
+								batchItems,
+								initialCapital,
+								positionSize,
+								commission,
+								settings,
+								{ mode: sizingMode, fixedTradeAmount }
+							);
+
+						if (batchResult && batchResult.results.length > 0) {
+							for (let i = 0; i < batchResult.results.length; i++) {
+								const run = batchRuns[i];
+								insertResult({
+									key: run.key,
+									name: run.name,
+									params: run.params,
+									result: batchResult.results[i].result,
+								});
+							}
+						} else {
+							// Fallback for this batch
+							for (const run of batchRuns) {
+								try {
+									const result = backtestFn(
+										state.ohlcvData,
+										run.signals,
+										initialCapital,
+										positionSize,
+										commission,
+										run.backtestSettings,
+										{ mode: sizingMode, fixedTradeAmount }
+									);
+									insertResult({ key: run.key, name: run.name, params: run.params, result });
+								} catch (err) {
+									console.warn(`[Finder] Backtest failed for ${run.key}:`, err);
+								}
+							}
+						}
+					} catch (err) {
+						// Fallback for this batch on error
+						for (const run of batchRuns) {
+							try {
+								const result = backtestFn(
+									state.ohlcvData,
+									run.signals,
+									initialCapital,
+									positionSize,
+									commission,
+									run.backtestSettings,
+									{ mode: sizingMode, fixedTradeAmount }
+								);
+								insertResult({ key: run.key, name: run.name, params: run.params, result });
+							} catch (innerErr) {
+								console.warn(`[Finder] Backtest failed for ${run.key}:`, innerErr);
+							}
+						}
+					}
+				}
+
+				// MEMORY: Clear batch arrays after processing
+				batchRuns.length = 0;
+
+				processedCount += batchJobs.length;
+
+				// Update progress and yield control
+				const progress = 10 + (processedCount / totalRuns) * 85;
+				this.setProgress(true, progress, `Batch ${batchNum}/${totalBatches} (${processedCount}/${totalRuns})`);
+				if (isExtremeDataset) {
+					this.setStatus(`Processing ${batchNum}/${totalBatches} (ultra-memory mode)...`);
+				} else {
+					this.setStatus(`Processing batch ${batchNum}/${totalBatches}...`);
+				}
+
+				// Yield more frequently for large datasets to prevent freeze and allow GC
+				await this.yieldControl();
+			}
+
+			// Final sort
+			topResults.sort((a, b) => {
 				for (const metric of options.sortPriority) {
 					const valA = this.getMetricValue(a.result, metric);
 					const valB = this.getMetricValue(b.result, metric);
 
-					// Different values determine the order
 					if (Math.abs(valA - valB) > 0.0001) {
 						const isAscending = metric === 'maxDrawdownPercent';
 						return isAscending ? valA - valB : valB - valA;
@@ -404,17 +605,20 @@ export class FinderManager {
 				return 0;
 			});
 
-			const trimmed = filteredResults.slice(0, Math.max(1, options.topN));
+			const trimmed = topResults.slice(0, Math.max(1, options.topN));
 			this.renderResults(trimmed, options.sortPriority[0]);
 			this.displayResults = trimmed;
 
 			const progressText = totalRuns > 0 ? `${totalRuns}/${totalRuns} runs` : 'Complete';
 			this.setProgress(true, 100, progressText);
-			const statusParts = [`${results.length} runs`];
+			const statusParts = [`${processedCount} runs`];
 			if (options.tradeFilterEnabled) {
-				statusParts.push(`${filteredResults.length} matched`);
+				statusParts.push(`${filteredCount} matched`);
 			}
 			statusParts.push(`${trimmed.length} shown`);
+			if (isVeryLargeDataset) {
+				statusParts.push('(memory-efficient mode)');
+			}
 			this.setStatus(`Complete. ${statusParts.join(', ')}.`);
 		} finally {
 			setLoading(false);
@@ -741,14 +945,17 @@ export class FinderManager {
 
 	private renderResults(results: FinderResult[], sortBy: FinderMetric): void {
 		const list = getRequiredElement('finderList');
+		const copyButton = document.getElementById('finderCopyTopResults') as HTMLButtonElement | null;
 		list.innerHTML = '';
 
 		if (results.length === 0) {
 			setVisible('finderEmpty', true);
+			if (copyButton) copyButton.disabled = true;
 			return;
 		}
 
 		setVisible('finderEmpty', false);
+		if (copyButton) copyButton.disabled = false;
 
 		results.forEach((item, index) => {
 			const row = document.createElement('div');
@@ -878,6 +1085,49 @@ export class FinderManager {
 
 	private formatProfitFactor(value: number): string {
 		return value === Infinity ? 'Inf' : value.toFixed(2);
+	}
+
+	private buildMetadataPayload(result: FinderResult, rank: number) {
+		const strategy = strategyRegistry.get(result.key);
+		return {
+			rank,
+			strategyId: result.key,
+			strategyName: result.name,
+			params: result.params,
+			metadata: strategy?.metadata ?? null,
+			metrics: {
+				netProfit: result.result.netProfit,
+				netProfitPercent: result.result.netProfitPercent,
+				expectancy: result.result.expectancy,
+				avgTrade: result.result.avgTrade,
+				winRate: result.result.winRate,
+				profitFactor: result.result.profitFactor,
+				totalTrades: result.result.totalTrades,
+				maxDrawdownPercent: result.result.maxDrawdownPercent,
+				winningTrades: result.result.winningTrades,
+				losingTrades: result.result.losingTrades,
+				avgWin: result.result.avgWin,
+				avgLoss: result.result.avgLoss,
+				sharpeRatio: result.result.sharpeRatio
+			}
+		};
+	}
+
+	private async copyTopResultsMetadata(): Promise<void> {
+		if (this.displayResults.length === 0) {
+			uiManager.showToast('No results to copy', 'info');
+			return;
+		}
+
+		const payload = this.displayResults.map((result, index) => this.buildMetadataPayload(result, index + 1));
+
+		try {
+			await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+			uiManager.showToast('Top results metadata copied', 'success');
+		} catch (error) {
+			console.error('Failed to copy finder metadata:', error);
+			uiManager.showToast('Copy failed - check browser permissions', 'error');
+		}
 	}
 
 	private applyResult(result: FinderResult): void {

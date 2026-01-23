@@ -149,14 +149,12 @@ export const fib_speed_fan: Strategy = {
     description: 'Generates signals based on price interaction with Fibonacci Speed Resistance Fan levels derived from ZigZag pivots',
     defaultParams: {
         depth: 10,
-        deviation: 3.0,
         atrPeriod: 10,
         entryLevel: 0.618,
         exitLevel: 0.382
     },
     paramLabels: {
         depth: 'Pivot Depth',
-        deviation: 'Deviation Multiplier',
         atrPeriod: 'ATR Period',
         entryLevel: 'Entry Fib Level',
         exitLevel: 'Exit Fib Level'
@@ -170,7 +168,8 @@ export const fib_speed_fan: Strategy = {
         const close = cleanData.map(d => d.close);
 
         const atr = calculateATR(high, low, close, params.atrPeriod);
-        const devThreshold = calculateDeviationThreshold(atr, close, params.deviation);
+        // Deviation multiplier is fixed at 0 (not configurable)
+        const devThreshold = calculateDeviationThreshold(atr, close, 0);
         const pivots = detectPivots(high, low, params.depth, devThreshold);
 
         if (pivots.length < 2) return [];
@@ -265,7 +264,8 @@ export const fib_speed_fan: Strategy = {
         const close = cleanData.map(d => d.close);
 
         const atr = calculateATR(high, low, close, params.atrPeriod);
-        const devThreshold = calculateDeviationThreshold(atr, close, params.deviation);
+        // Deviation multiplier is fixed at 0 (not configurable)
+        const devThreshold = calculateDeviationThreshold(atr, close, 0);
         const pivots = detectPivots(high, low, params.depth, devThreshold);
 
         if (pivots.length < 2) return [];

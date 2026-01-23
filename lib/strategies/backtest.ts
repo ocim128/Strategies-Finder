@@ -48,6 +48,15 @@ interface IndicatorSeries {
     rsi: (number | null)[];
 }
 
+/**
+ * Pre-computed indicators that can be reused across multiple backtest runs.
+ * This saves significant computation time for large datasets in the finder.
+ */
+export interface PrecomputedIndicators extends IndicatorSeries {
+    /** Source data reference for cache validation */
+    readonly dataLength: number;
+}
+
 interface PositionState {
     entryTime: Time;
     entryPrice: number;
@@ -153,6 +162,20 @@ export function compareTime(a: Time, b: Time): number {
     return aKey < bKey ? -1 : 1;
 }
 
+const timeIndexCache = new WeakMap<OHLCVData[], Map<string, number>>();
+
+function getTimeIndex(data: OHLCVData[]): Map<string, number> {
+    let cached = timeIndexCache.get(data);
+    if (!cached) {
+        cached = new Map<string, number>();
+        data.forEach((candle, index) => {
+            cached!.set(timeKey(candle.time), index);
+        });
+        timeIndexCache.set(data, cached);
+    }
+    return cached;
+}
+
 function passesEntryConfirmation(
     data: OHLCVData[],
     entryIndex: number,
@@ -251,10 +274,8 @@ function prepareSignals(
     indicators: IndicatorSeries,
     tradeDirection: TradeDirection
 ): Signal[] {
-    const timeIndex = new Map<string, number>();
-    data.forEach((candle, index) => {
-        timeIndex.set(timeKey(candle.time), index);
-    });
+    if (signals.length === 0) return [];
+    const timeIndex = getTimeIndex(data);
 
     const prepared: PreparedSignal[] = [];
     const entryType: Signal['type'] = tradeDirection === 'short' ? 'sell' : 'buy';
@@ -310,6 +331,392 @@ export function calculateMaxDrawdown(equityCurve: { time: Time; value: number }[
     }
 
     return { maxDrawdown, maxDrawdownPercent };
+}
+
+/**
+ * Pre-computes all indicators needed for backtesting based on settings.
+ * Call this ONCE before running multiple backtests with the same settings.
+ * This dramatic optimization prevents recalculating indicators for each
+ * parameter combination in the finder.
+ * 
+ * @param data OHLCV data array
+ * @param settings Backtest settings that determine which indicators are needed
+ * @returns Pre-computed indicators that can be passed to runBacktestCompact
+ */
+export function precomputeIndicators(
+    data: OHLCVData[],
+    settings: BacktestSettings = {}
+): PrecomputedIndicators {
+    const config = normalizeBacktestSettings(settings);
+
+    const highs = getHighs(data);
+    const lows = getLows(data);
+    const closes = getCloses(data);
+    const volumes = getVolumes(data);
+
+    const needsAtr =
+        config.stopLossAtr > 0 ||
+        config.takeProfitAtr > 0 ||
+        config.trailingAtr > 0 ||
+        config.atrPercentMin > 0 ||
+        config.atrPercentMax > 0 ||
+        config.partialTakeProfitAtR > 0 ||
+        config.breakEvenAtR > 0;
+
+    const atr = needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : [];
+    const emaTrend = config.trendEmaPeriod > 0 ? calculateEMA(closes, config.trendEmaPeriod) : [];
+
+    const useAdx = (config.adxMin > 0 || config.adxMax > 0);
+    const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
+    const adx = useAdx ? calculateADX(highs, lows, closes, adxPeriod) : [];
+
+    const volumeSma = config.entryConfirmation === 'volume'
+        ? calculateSMA(volumes, config.volumeSmaPeriod)
+        : [];
+    const rsi = config.entryConfirmation === 'rsi'
+        ? calculateRSI(closes, config.rsiPeriod)
+        : [];
+
+    return {
+        atr,
+        emaTrend,
+        adx,
+        volumeSma,
+        rsi,
+        dataLength: data.length
+    };
+}
+
+export function runBacktestCompact(
+    data: OHLCVData[],
+    signals: Signal[],
+    initialCapital: number,
+    positionSizePercent: number,
+    commissionPercent: number,
+    settings: BacktestSettings = {},
+    sizing?: Partial<TradeSizingConfig>
+): BacktestResult {
+    const config = normalizeBacktestSettings(settings);
+    const tradeDirection: TradeDirection = settings.tradeDirection === 'short' ? 'short' : 'long';
+    const isShort = tradeDirection === 'short';
+    const directionFactor = isShort ? -1 : 1;
+    const sizingMode = sizing?.mode ?? 'percent';
+    const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
+
+    const highs = getHighs(data);
+    const lows = getLows(data);
+    const closes = getCloses(data);
+    const volumes = getVolumes(data);
+
+    const needsAtr =
+        config.stopLossAtr > 0 ||
+        config.takeProfitAtr > 0 ||
+        config.trailingAtr > 0 ||
+        config.atrPercentMin > 0 ||
+        config.atrPercentMax > 0 ||
+        config.partialTakeProfitAtR > 0 ||
+        config.breakEvenAtR > 0;
+
+    const atr = needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : [];
+    const emaTrend = config.trendEmaPeriod > 0 ? calculateEMA(closes, config.trendEmaPeriod) : [];
+
+    const useAdx = (config.adxMin > 0 || config.adxMax > 0);
+    const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
+    const adx = useAdx ? calculateADX(highs, lows, closes, adxPeriod) : [];
+
+    const volumeSma = config.entryConfirmation === 'volume'
+        ? calculateSMA(volumes, config.volumeSmaPeriod)
+        : [];
+    const rsi = config.entryConfirmation === 'rsi'
+        ? calculateRSI(closes, config.rsiPeriod)
+        : [];
+
+    const indicatorSeries: IndicatorSeries = {
+        atr,
+        emaTrend,
+        adx,
+        volumeSma,
+        rsi
+    };
+
+    const preparedSignals = prepareSignals(data, signals, config, indicatorSeries, tradeDirection);
+
+    let capital = initialCapital;
+    let position: PositionState | null = null;
+
+    const commissionRate = commissionPercent / 100;
+    let signalIdx = 0;
+    const entrySignalType: Signal['type'] = isShort ? 'sell' : 'buy';
+    const exitSignalType: Signal['type'] = isShort ? 'buy' : 'sell';
+
+    let totalTrades = 0;
+    let winningTrades = 0;
+    let losingTrades = 0;
+    let totalProfit = 0;
+    let totalLoss = 0;
+    let avgReturn = 0;
+    let returnM2 = 0;
+
+    let peakEquity = initialCapital;
+    let maxDrawdown = 0;
+    let maxDrawdownPercent = 0;
+
+    const updateDrawdown = (equity: number) => {
+        if (equity > peakEquity) {
+            peakEquity = equity;
+            return;
+        }
+        const drawdown = peakEquity - equity;
+        if (drawdown > maxDrawdown) {
+            maxDrawdown = drawdown;
+            maxDrawdownPercent = peakEquity > 0 ? (drawdown / peakEquity) * 100 : 0;
+        }
+    };
+
+    const recordTrade = (totalPnl: number, pnlPercent: number) => {
+        totalTrades += 1;
+        if (totalPnl > 0) {
+            winningTrades += 1;
+            totalProfit += totalPnl;
+        } else {
+            losingTrades += 1;
+            totalLoss += Math.abs(totalPnl);
+        }
+
+        const delta = pnlPercent - avgReturn;
+        avgReturn += delta / totalTrades;
+        returnM2 += delta * (pnlPercent - avgReturn);
+    };
+
+    const exitPosition = (exitPrice: number, exitTime: Time, exitSize: number) => {
+        if (!position || exitSize <= 0) return;
+
+        const size = Math.min(exitSize, position.size);
+        const exitValue = size * exitPrice;
+        const entryValue = size * position.entryPrice;
+        const commission = exitValue * commissionRate;
+        const entryCommission = position.entryCommissionPerShare * size;
+
+        const rawPnl = (exitValue - entryValue) * directionFactor;
+        const totalPnl = rawPnl - entryCommission - commission;
+        const pnlPercent = entryValue > 0 ? (rawPnl / entryValue) * 100 : 0;
+
+        capital += rawPnl - commission;
+
+        recordTrade(totalPnl, pnlPercent);
+
+        position.size -= size;
+        if (position.size <= 0) {
+            position = null;
+        }
+    };
+
+    for (let i = 0; i < data.length; i++) {
+        const candle = data[i];
+
+        if (position) {
+            position.barsInTrade += 1;
+
+            // Check stop loss
+            const stopLoss = position.stopLossPrice;
+            if (stopLoss !== null) {
+                const stopHit = isShort ? candle.high >= stopLoss : candle.low <= stopLoss;
+                if (stopHit) {
+                    exitPosition(stopLoss, candle.time, position.size);
+                }
+            }
+
+            // Check take profit (independent of stop loss)
+            if (position && position.takeProfitPrice !== null) {
+                const takeHit = isShort ? candle.low <= position.takeProfitPrice : candle.high >= position.takeProfitPrice;
+                if (takeHit) {
+                    exitPosition(position.takeProfitPrice, candle.time, position.size);
+                }
+            }
+
+            // Check partial take profit
+            if (position && !position.partialTaken && position.partialTargetPrice !== null) {
+                const partialHit = isShort ? candle.low <= position.partialTargetPrice : candle.high >= position.partialTargetPrice;
+                if (partialHit) {
+                    const partialSize = position.size * (config.partialTakeProfitPercent / 100);
+                    if (partialSize > 0) {
+                        exitPosition(position.partialTargetPrice, candle.time, partialSize);
+                        if (position) {
+                            position.partialTaken = true;
+                        }
+                    }
+                }
+            }
+
+            if (position && config.timeStopBars > 0 && position.barsInTrade >= config.timeStopBars) {
+                const isLosing = isShort ? candle.close >= position.entryPrice : candle.close <= position.entryPrice;
+                if (!position.partialTaken && isLosing) {
+                    exitPosition(candle.close, candle.time, position.size);
+                }
+            }
+
+            if (position) {
+                const atrValue = atr[i];
+                if (atrValue !== null && atrValue !== undefined) {
+                    if (config.breakEvenAtR > 0 && position.riskPerShare > 0 && !position.breakEvenApplied) {
+                        const breakEvenTarget = position.entryPrice + directionFactor * position.riskPerShare * config.breakEvenAtR;
+                        const breakEvenHit = isShort ? candle.low <= breakEvenTarget : candle.high >= breakEvenTarget;
+                        if (breakEvenHit) {
+                            position.stopLossPrice = position.stopLossPrice === null
+                                ? position.entryPrice
+                                : isShort
+                                    ? Math.min(position.stopLossPrice, position.entryPrice)
+                                    : Math.max(position.stopLossPrice, position.entryPrice);
+                            position.breakEvenApplied = true;
+                        }
+                    }
+
+                    if (config.trailingAtr > 0) {
+                        const trailStop = position.extremePrice - directionFactor * atrValue * config.trailingAtr;
+                        const shouldUpdateStop = position.stopLossPrice === null
+                            || (isShort ? trailStop < position.stopLossPrice : trailStop > position.stopLossPrice);
+                        if (shouldUpdateStop) {
+                            position.stopLossPrice = trailStop;
+                        }
+                    }
+                }
+
+                position.extremePrice = isShort
+                    ? Math.min(position.extremePrice, candle.low)
+                    : Math.max(position.extremePrice, candle.high);
+            }
+        }
+
+        while (signalIdx < preparedSignals.length && compareTime(preparedSignals[signalIdx].time, candle.time) <= 0) {
+            const signal = preparedSignals[signalIdx];
+
+            if (compareTime(signal.time, candle.time) === 0) {
+                if (signal.type === entrySignalType && !position) {
+                    const atrValue = needsAtr ? atr[i] : null;
+                    const requiresAtrForEntry =
+                        config.stopLossAtr > 0 ||
+                        config.takeProfitAtr > 0 ||
+                        config.trailingAtr > 0 ||
+                        config.partialTakeProfitAtR > 0 ||
+                        config.breakEvenAtR > 0;
+
+                    if (requiresAtrForEntry && (atrValue === null || atrValue === undefined)) {
+                        signalIdx++;
+                        continue;
+                    }
+
+                    const allocatedCapital = (sizingMode === 'fixed' && fixedTradeAmount > 0)
+                        ? fixedTradeAmount
+                        : capital * (positionSizePercent / 100);
+                    const tradeValue = allocatedCapital / (1 + commissionRate);
+                    const entryCommission = tradeValue * commissionRate;
+                    const shares = tradeValue / signal.price;
+
+                    const stopLossPrice = (atrValue !== null && atrValue !== undefined)
+                        ? (config.stopLossAtr > 0
+                            ? signal.price - directionFactor * config.stopLossAtr * atrValue
+                            : config.trailingAtr > 0
+                                ? signal.price - directionFactor * config.trailingAtr * atrValue
+                                : null)
+                        : null;
+
+                    const takeProfitPrice = (atrValue !== null && atrValue !== undefined && config.takeProfitAtr > 0)
+                        ? signal.price + directionFactor * config.takeProfitAtr * atrValue
+                        : null;
+
+                    let riskPerShare = 0;
+                    if (config.riskMode === 'percentage') {
+                        if (config.stopLossEnabled && config.stopLossPercent > 0) {
+                            riskPerShare = signal.price * (config.stopLossPercent / 100);
+                        }
+                    } else if (atrValue !== null && atrValue !== undefined && config.stopLossAtr > 0) {
+                        riskPerShare = config.stopLossAtr * atrValue;
+                    }
+
+                    const partialTargetPrice = (riskPerShare > 0 && config.partialTakeProfitAtR > 0)
+                        ? signal.price + directionFactor * riskPerShare * config.partialTakeProfitAtR
+                        : null;
+
+                    // Apply percentage-based stops if in percentage mode
+                    let finalStopLossPrice = stopLossPrice;
+                    let finalTakeProfitPrice = takeProfitPrice;
+
+                    if (config.riskMode === 'percentage') {
+                        if (config.stopLossEnabled && config.stopLossPercent > 0) {
+                            finalStopLossPrice = signal.price * (1 - directionFactor * (config.stopLossPercent / 100));
+                        }
+                        if (config.takeProfitEnabled && config.takeProfitPercent > 0) {
+                            finalTakeProfitPrice = signal.price * (1 + directionFactor * (config.takeProfitPercent / 100));
+                        }
+                    }
+
+                    position = {
+                        entryTime: signal.time,
+                        entryPrice: signal.price,
+                        size: shares,
+                        entryCommissionPerShare: shares > 0 ? entryCommission / shares : 0,
+                        stopLossPrice: finalStopLossPrice,
+                        takeProfitPrice: finalTakeProfitPrice,
+                        riskPerShare,
+                        barsInTrade: 0,
+                        extremePrice: signal.price,
+                        partialTargetPrice,
+                        partialTaken: false,
+                        breakEvenApplied: false
+                    };
+
+                    capital -= entryCommission;
+                } else if (signal.type === exitSignalType && position) {
+                    exitPosition(signal.price, signal.time, position.size);
+                }
+            }
+            signalIdx++;
+        }
+
+        let currentEquity = capital;
+        if (position) {
+            const unrealizedPnL = (candle.close - position.entryPrice) * position.size * directionFactor;
+            currentEquity += unrealizedPnL;
+        }
+        updateDrawdown(currentEquity);
+    }
+
+    if (position && data.length > 0) {
+        const lastCandle = data[data.length - 1];
+        exitPosition(lastCandle.close, lastCandle.time, position.size);
+        updateDrawdown(capital);
+    }
+
+    const netProfit = capital - initialCapital;
+    const netProfitPercent = (netProfit / initialCapital) * 100;
+    const winRate = totalTrades > 0 ? (winningTrades / totalTrades) : 0;
+    const lossRate = totalTrades > 0 ? (losingTrades / totalTrades) : 0;
+    const avgWin = winningTrades > 0 ? totalProfit / winningTrades : 0;
+    const avgLoss = losingTrades > 0 ? totalLoss / losingTrades : 0;
+    const expectancy = (winRate * avgWin) - (lossRate * avgLoss);
+    const avgTrade = totalTrades > 0 ? netProfit / totalTrades : 0;
+    const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
+    const stdReturn = totalTrades > 1 ? Math.sqrt(returnM2 / (totalTrades - 1)) : 0;
+    const sharpeRatio = stdReturn > 0 ? avgReturn / stdReturn : 0;
+
+    return {
+        trades: [],
+        netProfit,
+        netProfitPercent,
+        winRate: winRate * 100,
+        expectancy,
+        avgTrade,
+        profitFactor,
+        maxDrawdown,
+        maxDrawdownPercent,
+        totalTrades,
+        winningTrades,
+        losingTrades,
+        avgWin,
+        avgLoss,
+        sharpeRatio,
+        equityCurve: []
+    };
 }
 
 export function runBacktest(

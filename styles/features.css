@@ -475,6 +475,13 @@
     margin-top: var(--space-3-5);
 }
 
+.finder-actions-bar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: var(--space-2);
+    padding: 0 var(--space-1-5);
+}
+
 .finder-header {
     display: grid;
     grid-template-columns: 40px 1fr 100px;

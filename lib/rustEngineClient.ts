@@ -103,8 +103,22 @@ export class RustEngineClient {
     private readonly healthCheckInterval = 30000; // 30 seconds
     private ws: WebSocket | null = null;
 
+    // Data caching for large datasets
+    private cachedDataId: string | null = null;
+    private cachedDataHash: string | null = null;
+
     constructor(baseUrl: string = 'http://127.0.0.1:3030') {
         this.baseUrl = baseUrl;
+    }
+
+    /**
+     * Generate a simple hash for OHLCV data to detect changes
+     */
+    private generateDataHash(data: OHLCVData[]): string {
+        if (data.length === 0) return 'empty';
+        const first = data[0];
+        const last = data[data.length - 1];
+        return `${first.time}-${last.time}-${data.length}`;
     }
 
     // ========================================================================
@@ -264,6 +278,126 @@ export class RustEngineClient {
             console.error('[RustEngine] Batch backtest error:', error);
             return null;
         }
+    }
+
+    // ========================================================================
+    // Data Caching API (for large datasets)
+    // ========================================================================
+
+    /**
+     * Cache OHLCV data on the Rust server for reuse in subsequent batch requests.
+     * This is critical for large datasets (1M+ bars) where sending data once
+     * is much more efficient than sending it with every batch.
+     * 
+     * Returns cache ID to use in runCachedBatchBacktest.
+     */
+    async cacheData(data: OHLCVData[]): Promise<string | null> {
+        if (!await this.checkHealth()) {
+            return null;
+        }
+
+        const dataHash = this.generateDataHash(data);
+
+        // If we already have this data cached, return existing ID
+        if (this.cachedDataHash === dataHash && this.cachedDataId) {
+            console.log(`[RustEngine] Using existing cache ID: ${this.cachedDataId}`);
+            return this.cachedDataId;
+        }
+
+        try {
+            console.log(`[RustEngine] Caching ${data.length} bars...`);
+            const startTime = performance.now();
+
+            const response = await fetch(`${this.baseUrl}/api/data/cache`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ data }),
+            });
+
+            if (!response.ok) {
+                console.error('[RustEngine] Cache data failed:', response.statusText);
+                return null;
+            }
+
+            const result = await response.json();
+            const elapsed = performance.now() - startTime;
+
+            this.cachedDataId = result.cacheId;
+            this.cachedDataHash = dataHash;
+
+            console.log(`[RustEngine] Cached ${result.barCount} bars in ${elapsed.toFixed(2)}ms, ID: ${result.cacheId}`);
+
+            return result.cacheId;
+        } catch (error) {
+            console.error('[RustEngine] Cache data error:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Run batch backtests using previously cached OHLCV data.
+     * Much faster for large datasets as data is only sent once.
+     */
+    async runCachedBatchBacktest(
+        cacheId: string,
+        items: Array<{
+            id: string;
+            signals: Signal[];
+            settings?: BacktestSettings;
+        }>,
+        initialCapital: number,
+        positionSizePercent: number,
+        commissionPercent: number,
+        baseSettings: BacktestSettings,
+        sizing?: { mode: 'percent' | 'fixed'; fixedTradeAmount: number }
+    ): Promise<{ results: Array<{ id: string; result: BacktestResult }>; processingTimeMs: number } | null> {
+        if (!await this.checkHealth()) {
+            return null;
+        }
+
+        try {
+            const request = {
+                cacheId,
+                items,
+                initialCapital,
+                positionSizePercent,
+                commissionPercent,
+                baseSettings,
+                sizing,
+            };
+
+            const startTime = performance.now();
+
+            const response = await fetch(`${this.baseUrl}/api/backtest/batch/cached`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(request),
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('[RustEngine] Cached batch backtest failed:', response.statusText, errorText);
+                return null;
+            }
+
+            const result = await response.json();
+            const elapsed = performance.now() - startTime;
+
+            console.log(`[RustEngine] Cached batch: ${items.length} runs in ${elapsed.toFixed(2)}ms (Rust: ${result.processingTimeMs}ms)`);
+
+            return result;
+        } catch (error) {
+            console.error('[RustEngine] Cached batch backtest error:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Clear the local cache tracking (server cache is managed automatically)
+     */
+    clearLocalCache(): void {
+        this.cachedDataId = null;
+        this.cachedDataHash = null;
     }
 
     // ========================================================================

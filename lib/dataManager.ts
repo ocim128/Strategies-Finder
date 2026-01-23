@@ -220,6 +220,9 @@ export class DataManager {
         if (model === 'v3') {
             return this.generateAdversarialMockData(config, this.createRandomSeed());
         }
+        if (model === 'v4') {
+            return this.generateMarketRealismMockData(config, this.createRandomSeed());
+        }
 
         return this.generateSimpleMockData(config);
     }
@@ -620,6 +623,333 @@ export class DataManager {
             });
 
             prevRet = ret;
+            time = (Number(time) + config.intervalSeconds) as Time;
+        }
+
+        return data;
+    }
+
+    /**
+     * V4 "Market Realism" - Designed to produce the most realistic market simulation
+     * that benefits strategies which work on live markets.
+     * 
+     * Key features:
+     * - Multi-scale trends (nested higher timeframe bias)
+     * - Realistic autocorrelation (short momentum, mid-term mean reversion)
+     * - Stop hunting patterns (price probes levels before reversing)
+     * - Liquidity events (gaps, sweeps, volatility clusters)
+     * - Volume-price correlation (volume spikes on significant moves)
+     * - Smart money patterns (accumulation/distribution phases)
+     * - False breakouts that trap traders
+     */
+    private generateMarketRealismMockData(config: MockChartConfig, seed: number): OHLCVData[] {
+        type MarketPhase = {
+            length: number;
+            type: 'accumulation' | 'markup' | 'distribution' | 'markdown' | 'ranging';
+            trendStrength: number;      // 0-1 trend intensity
+            volatilityBase: number;     // Base volatility multiplier
+            trapProbability: number;    // Likelihood of false breakouts
+            huntProbability: number;    // Likelihood of stop hunting sweeps
+            gapProbability: number;     // Overnight gap probability
+            momentum: number;           // Short-term momentum strength (0-1)
+        };
+
+        const data: OHLCVData[] = [];
+        const now = Math.floor(Date.now() / 1000);
+        let time = (now - (config.barsCount * config.intervalSeconds)) as Time;
+
+        const rng = this.makeRng(seed * 1000007 + 0xc0ffee42);
+        const baseVol = Math.max(0.0001, config.volatility / 100);
+        const floor = Math.max(0.01, config.startPrice * 0.05);
+        const ceiling = Math.max(floor * 2, config.startPrice * 100);
+        const logFloor = Math.log(floor);
+        const logCeil = Math.log(ceiling);
+
+        const clampLog = (value: number): number => {
+            if (!Number.isFinite(value)) return logFloor;
+            if (value < logFloor) return logFloor;
+            if (value > logCeil) return logCeil;
+            return value;
+        };
+        const clampReturn = (value: number): number => {
+            const limit = Math.max(0.12, baseVol * 12);
+            if (!Number.isFinite(value)) return 0;
+            if (value < -limit) return -limit;
+            if (value > limit) return limit;
+            return value;
+        };
+
+        let logPrice = Math.log(Math.max(config.startPrice, floor));
+        let vol = baseVol;
+
+        // Multi-scale state tracking
+        let higherTfBias = 0;              // -1 to 1, represents higher timeframe trend
+        let higherTfBiasDecay = 0;
+        let mediumTfAnchor = logPrice;
+        let shortTermMomentum = 0;
+
+        // Stop hunting tracking
+        let recentHigh = logPrice;
+        let recentLow = logPrice;
+        let huntDirection = 0;             // +1 for upside hunt, -1 for downside hunt
+        let huntPhase = 0;                 // 0=none, 1=hunting, 2=reverting
+
+        // Accumulation/distribution tracking
+        const priceHistory: number[] = [];
+        const momentumHistory: number[] = [];
+        const returnHistory: number[] = [];
+
+        // GARCH volatility parameters
+        const omega = baseVol * baseVol * 0.06;
+        const alpha = 0.15;
+        const beta = 0.82;
+
+        const pickPhase = (): MarketPhase => {
+            const roll = rng();
+            const length = this.randInt(rng, 50, 400);
+
+            // Accumulation phase - quiet, ranging with hidden buying
+            if (roll < 0.20) {
+                higherTfBias = 0.2 + rng() * 0.3;  // Slight bullish bias building
+                higherTfBiasDecay = 0.0005;
+                return {
+                    length,
+                    type: 'accumulation',
+                    trendStrength: 0.05,
+                    volatilityBase: 0.6,
+                    trapProbability: 0.12,
+                    huntProbability: 0.15,
+                    gapProbability: 0.008,
+                    momentum: 0.2
+                };
+            }
+
+            // Markup phase - trending up with pullbacks
+            if (roll < 0.40) {
+                higherTfBias = 0.4 + rng() * 0.4;
+                higherTfBiasDecay = 0.001;
+                return {
+                    length,
+                    type: 'markup',
+                    trendStrength: 0.12 + rng() * 0.08,
+                    volatilityBase: 1.0,
+                    trapProbability: 0.08,
+                    huntProbability: 0.10,
+                    gapProbability: 0.015,
+                    momentum: 0.6
+                };
+            }
+
+            // Distribution phase - topping, higher volatility, false breakouts
+            if (roll < 0.55) {
+                higherTfBias = -0.1 - rng() * 0.2;  // Bearish bias building
+                higherTfBiasDecay = 0.0003;
+                return {
+                    length,
+                    type: 'distribution',
+                    trendStrength: 0.03,
+                    volatilityBase: 1.3,
+                    trapProbability: 0.25,
+                    huntProbability: 0.20,
+                    gapProbability: 0.02,
+                    momentum: 0.35
+                };
+            }
+
+            // Markdown phase - trending down with bounces
+            if (roll < 0.75) {
+                higherTfBias = -0.4 - rng() * 0.4;
+                higherTfBiasDecay = 0.0012;
+                return {
+                    length,
+                    type: 'markdown',
+                    trendStrength: 0.10 + rng() * 0.10,
+                    volatilityBase: 1.2,
+                    trapProbability: 0.10,
+                    huntProbability: 0.12,
+                    gapProbability: 0.018,
+                    momentum: 0.55
+                };
+            }
+
+            // Ranging phase - choppy, mean reverting, high trap probability
+            higherTfBias = (rng() - 0.5) * 0.2;
+            higherTfBiasDecay = 0.0001;
+            return {
+                length,
+                type: 'ranging',
+                trendStrength: 0.02,
+                volatilityBase: 0.9,
+                trapProbability: 0.35,
+                huntProbability: 0.25,
+                gapProbability: 0.01,
+                momentum: 0.15
+            };
+        };
+
+        let phase = pickPhase();
+        let phaseLeft = phase.length;
+        mediumTfAnchor = logPrice;
+
+        for (let i = 0; i < config.barsCount; i++) {
+            if (phaseLeft-- <= 0) {
+                phase = pickPhase();
+                phaseLeft = phase.length;
+                mediumTfAnchor = logPrice;
+                recentHigh = logPrice;
+                recentLow = logPrice;
+            }
+
+            // Update recent highs/lows for stop hunting
+            if (priceHistory.length >= 20) {
+                const recent = priceHistory.slice(-20);
+                recentHigh = Math.max(...recent);
+                recentLow = Math.min(...recent);
+            }
+
+            // Intraday volatility seasonality
+            const minuteOfDay = ((Math.floor(Number(time) / 60) % 1440) + 1440) % 1440;
+            const hourFactor = Math.sin((2 * Math.PI * minuteOfDay) / 1440);
+            const seasonMult = 0.7 + 0.4 * Math.abs(hourFactor) + 0.2 * (hourFactor > 0.5 ? 1 : 0);
+
+            // GARCH volatility
+            const lastRet = returnHistory.length > 0 ? returnHistory[returnHistory.length - 1] : 0;
+            vol = Math.sqrt(omega + alpha * lastRet * lastRet + beta * vol * vol);
+
+            // Gap generation
+            let gap = 0;
+            if (rng() < phase.gapProbability) {
+                gap = this.randNormal(rng) * baseVol * (2 + rng() * 4);
+            }
+            logPrice = clampLog(logPrice + gap);
+            let open = Math.exp(logPrice);
+
+            // Base return components
+            let ret = 0;
+
+            // 1. Higher timeframe bias (slow trend)
+            const htfContrib = higherTfBias * baseVol * 0.04;
+            higherTfBias = higherTfBias * (1 - higherTfBiasDecay);
+            ret += htfContrib;
+
+            // 2. Medium timeframe mean reversion (anchor drift)
+            const mtfDist = logPrice - mediumTfAnchor;
+            const mtfRevert = -mtfDist * 0.03 * (phase.type === 'ranging' ? 2 : 1);
+            ret += mtfRevert;
+
+            // 3. Short-term momentum (autocorrelation)
+            if (momentumHistory.length > 0) {
+                const recentMom = momentumHistory.slice(-5);
+                const avgMom = recentMom.reduce((a, b) => a + b, 0) / recentMom.length;
+                shortTermMomentum = avgMom * phase.momentum;
+            }
+            ret += shortTermMomentum * 0.4;
+
+            // 4. Phase-specific trend
+            if (phase.type === 'markup') {
+                ret += phase.trendStrength * baseVol;
+            } else if (phase.type === 'markdown') {
+                ret -= phase.trendStrength * baseVol;
+            }
+
+            // 5. Stop hunting behavior
+            if (huntPhase === 0 && rng() < phase.huntProbability) {
+                const upDist = recentHigh - logPrice;
+                const downDist = logPrice - recentLow;
+                huntDirection = upDist > downDist ? 1 : -1;
+                huntPhase = 1;
+            }
+
+            if (huntPhase === 1) {
+                // Hunting - push toward stop levels
+                ret += huntDirection * baseVol * (1.5 + rng() * 2);
+                if (rng() < 0.3) {
+                    huntPhase = 2;  // Start reverting
+                }
+            } else if (huntPhase === 2) {
+                // Reverting after hunt
+                ret -= huntDirection * baseVol * (2 + rng() * 2.5);
+                if (rng() < 0.5) {
+                    huntPhase = 0;  // Back to normal
+                }
+            }
+
+            // 6. False breakout traps
+            if (rng() < phase.trapProbability) {
+                const trapDir = rng() < 0.5 ? 1 : -1;
+                const trapSize = baseVol * (1 + rng() * 2);
+                ret += trapDir * trapSize;
+                // Queue a reversal for next bars
+                shortTermMomentum = -trapDir * trapSize * 0.6;
+            }
+
+            // 7. Random noise
+            const noise = this.randNormal(rng) * vol * phase.volatilityBase * seasonMult;
+            ret += noise;
+
+            // Apply and clamp return
+            ret = clampReturn(ret);
+            logPrice = clampLog(logPrice + ret);
+            let close = Math.exp(logPrice);
+
+            if (close < floor) {
+                close = floor;
+                logPrice = Math.log(close);
+            }
+            if (open < floor) open = floor;
+
+            // Wicks - more pronounced during volatile phases
+            const wickBase = Math.max(baseVol * 0.2, Math.abs(ret) + vol * 0.4);
+            const wickMultiplier = phase.type === 'distribution' ? 1.4 :
+                phase.type === 'ranging' ? 1.2 : 1.0;
+            const wick = Math.abs(this.randNormal(rng)) * wickBase * open * wickMultiplier;
+
+            let high = Math.max(open, close) + wick;
+            let low = Math.min(open, close) - wick;
+
+            // Extra wick extension during hunts
+            if (huntPhase === 1) {
+                if (huntDirection > 0) {
+                    high += wick * 0.5;
+                } else {
+                    low -= wick * 0.5;
+                }
+            }
+
+            const lowFloor = floor * 0.8;
+            const highCeil = ceiling * 1.2;
+            if (low < lowFloor) low = lowFloor;
+            if (high > highCeil) high = highCeil;
+            if (high < low) high = Math.max(open, close);
+
+            // Volume - correlates with price movement and volatility
+            const absRet = Math.abs(ret);
+            const volFactor = Math.min(8, 0.4 + (absRet / baseVol) * 1.5 + (vol / baseVol) * 0.5);
+            const huntVolBoost = huntPhase > 0 ? 1.8 : 1.0;
+            const volume = Math.floor(100000 * (1 + volFactor) * huntVolBoost * (0.6 + rng() * 0.6));
+
+            data.push({
+                time,
+                open,
+                high,
+                low,
+                close,
+                volume,
+            });
+
+            // Update history
+            priceHistory.push(logPrice);
+            momentumHistory.push(ret);
+            returnHistory.push(ret);
+
+            // Keep history bounded
+            if (priceHistory.length > 100) priceHistory.shift();
+            if (momentumHistory.length > 20) momentumHistory.shift();
+            if (returnHistory.length > 50) returnHistory.shift();
+
+            // Slowly drift medium anchor
+            mediumTfAnchor = mediumTfAnchor * 0.995 + logPrice * 0.005;
+
             time = (Number(time) + config.intervalSeconds) as Time;
         }
 
