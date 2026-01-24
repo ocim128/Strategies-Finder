@@ -57,11 +57,7 @@ export interface ReplayState {
     /** Strategy parameters being used */
     strategyParams: StrategyParams;
 
-    /** Whether this is a combined strategy from the combiner */
-    isCombinedStrategy: boolean;
 
-    /** Combined strategy definition (if isCombinedStrategy is true) */
-    combinedStrategyId?: string;
 }
 
 // ============================================================================
@@ -79,8 +75,7 @@ export interface SignalWithAnnotation extends Signal {
     /** The bar data at the time of the signal */
     bar: OHLCVData;
 
-    /** Strategy that generated this signal (for combined strategies) */
-    sourceStrategy?: string;
+
 }
 
 // ============================================================================
@@ -148,11 +143,7 @@ export interface ReplayStartOptions {
     /** Initial speed (default: 1) */
     initialSpeed?: number;
 
-    /** Whether this is a combined strategy */
-    isCombined?: boolean;
 
-    /** Combined strategy ID (if applicable) */
-    combinedStrategyId?: string;
 }
 
 /** Options for seeking to a specific position */

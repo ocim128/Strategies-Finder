@@ -4,6 +4,7 @@ import { Indicator } from "./types";
 
 export type StateKey = keyof State;
 export type MockChartModel = 'simple' | 'hard' | 'v3' | 'v4';
+export type ChartMode = 'candlestick' | 'heikin-ashi';
 
 export class State {
     public chart!: IChartApi;
@@ -15,6 +16,7 @@ export class State {
     public currentInterval = '1d';
     public mockChartModel: MockChartModel = 'simple';
     public mockChartBars = 30000;
+    public chartMode: ChartMode = 'candlestick';
     public isDarkTheme = true;
     public ohlcvData: OHLCVData[] = [];
     public indicators: Indicator[] = [];

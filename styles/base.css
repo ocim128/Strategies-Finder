@@ -4,6 +4,7 @@ body {
     margin: 0;
     padding: 0;
     overflow: hidden;
+    scroll-behavior: smooth;
 }
 
 body {
@@ -13,4 +14,46 @@ body {
     background: var(--page-gradient), var(--bg-primary);
     color: var(--text-primary);
     font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+/* Premium selection colors */
+::selection {
+    background: hsl(var(--hsl-accent) / 0.35);
+    color: var(--text-primary);
+}
+
+::-moz-selection {
+    background: hsl(var(--hsl-accent) / 0.35);
+    color: var(--text-primary);
+}
+
+/* Custom scrollbar styling */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: hsl(var(--hsl-border) / 0.6);
+    border-radius: var(--radius-pill);
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--hsl-accent) / 0.5);
+    background-clip: content-box;
+}
+
+/* Firefox scrollbar */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--hsl-border) / 0.6) transparent;
 }

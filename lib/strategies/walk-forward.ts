@@ -671,14 +671,14 @@ export async function quickWalkForward(
 }
 
 // ============================================================================
-// Fixed-Parameter Walk-Forward (for Combo Strategies)
+// Fixed-Parameter Walk-Forward (for strategies without tunable parameters)
 // ============================================================================
 //
 // This function runs walk-forward analysis for strategies without tunable
-// parameters (such as combined/combo strategies). Instead of optimizing
-// parameters in each window, it runs the SAME fixed strategy across all
-// windows. This is useful for testing robustness of a combo strategy
-// to see if it performs consistently across different time periods.
+// parameters. Instead of optimizing parameters in each window, it runs 
+// the SAME fixed strategy across all windows. This is useful for testing 
+// robustness of a strategy to see if it performs consistently across 
+// different time periods.
 //
 // The key difference from regular WFA:
 // - No parameter optimization grid is generated
@@ -698,7 +698,7 @@ export interface FixedParamWalkForwardConfig {
 }
 
 /**
- * Run walk-forward analysis for a fixed-parameter strategy (like combo strategies).
+ * Run walk-forward analysis for a fixed-parameter strategy.
  * Instead of doing parameter optimization, this tests the exact same strategy
  * configuration across multiple time windows to check for consistency/robustness.
  */

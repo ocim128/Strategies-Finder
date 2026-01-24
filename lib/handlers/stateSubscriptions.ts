@@ -40,10 +40,8 @@ export function setupStateSubscriptions() {
             interval: state.currentInterval,
             candles: data.length,
         });
-        const candleData = data.map(d => ({
-            time: d.time, open: d.open, high: d.high, low: d.low, close: d.close,
-        }));
-        state.candlestickSeries.setData(candleData);
+        // Use chartManager to apply chart mode transformation (Heikin Ashi if enabled)
+        chartManager.updateChartData();
         uiManager.updatePriceDisplay();
 
         getRequiredElement('dataPoints').textContent = `${data.length} candles`;
@@ -137,6 +135,20 @@ export function setupStateSubscriptions() {
         }
         if (!dataManager.isMockSymbol(state.currentSymbol)) return;
         scheduleDataReload();
+    });
+
+    // Chart mode changes (Candlestick / Heikin Ashi)
+    state.subscribe('chartMode', (chartMode) => {
+        debugLogger.event('state.chartMode', { chartMode });
+        // Update dropdown to reflect current state
+        const select = document.getElementById('chartModeSelect') as HTMLSelectElement | null;
+        if (select && select.value !== chartMode) {
+            select.value = chartMode;
+        }
+        // Re-render chart with appropriate transformation
+        if (state.ohlcvData.length > 0) {
+            chartManager.updateChartData();
+        }
     });
 
     // Strategy selection

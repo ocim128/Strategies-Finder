@@ -115,14 +115,12 @@ export interface Strategy {
     paramLabels: { [key: string]: string };
     execute: (data: OHLCVData[], params: StrategyParams) => Signal[];
     indicators?: (data: OHLCVData[], params: StrategyParams) => StrategyIndicator[];
-    /** Optional metadata for strategy combiner integration */
+    /** Optional metadata for strategy */
     metadata?: {
         /** Role this strategy plays (entry, filter, exit, regime) */
         role?: 'entry' | 'filter' | 'exit' | 'regime';
         /** Trading direction capability (long, short, both) */
         direction?: 'long' | 'short' | 'both';
-        /** True if this is a combined strategy */
-        isCombined?: boolean;
     };
 }
 

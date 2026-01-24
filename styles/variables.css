@@ -4,36 +4,68 @@
     --hsl-surface-2: 222 24% 14%;
     --hsl-surface-3: 222 22% 18%;
     --hsl-surface-4: 222 20% 22%;
+    --hsl-surface-5: 222 18% 26%;
     --hsl-ink-1: 0 0% 92%;
     --hsl-ink-2: 220 9% 65%;
+    --hsl-ink-3: 220 8% 48%;
     --hsl-border: 222 16% 26%;
+    --hsl-border-subtle: 222 14% 20%;
     --hsl-chart: 222 32% 8%;
     --hsl-accent: 221 96% 60%;
     --hsl-accent-strong: 221 96% 53%;
+    --hsl-accent-light: 221 96% 72%;
     --hsl-success: 168 62% 40%;
     --hsl-success-strong: 168 62% 34%;
+    --hsl-success-light: 168 62% 52%;
     --hsl-danger: 2 79% 58%;
+    --hsl-danger-light: 2 79% 68%;
     --hsl-warning: 35 92% 55%;
     --hsl-warning-strong: 35 92% 47%;
     --hsl-shadow: 222 40% 5%;
     --hsl-glass: 222 30% 12%;
 
+    /* Premium purple accent for special elements */
+    --hsl-premium: 265 85% 58%;
+    --hsl-premium-strong: 265 85% 50%;
+
+    /* Trading signal strength colors */
+    --hsl-buy-strong: 145 72% 42%;
+    --hsl-buy-weak: 145 52% 55%;
+    --hsl-sell-strong: 0 82% 55%;
+    --hsl-sell-weak: 0 62% 65%;
+    --hsl-neutral: 220 12% 50%;
+
     --bg-primary: hsl(var(--hsl-surface-1));
     --bg-secondary: hsl(var(--hsl-surface-2));
     --bg-tertiary: hsl(var(--hsl-surface-3));
     --bg-elevated: hsl(var(--hsl-surface-4));
+    --bg-highest: hsl(var(--hsl-surface-5));
     --text-primary: hsl(var(--hsl-ink-1));
     --text-secondary: hsl(var(--hsl-ink-2));
+    --text-tertiary: hsl(var(--hsl-ink-3));
     --border-color: hsl(var(--hsl-border));
+    --border-subtle: hsl(var(--hsl-border-subtle));
     --chart-bg: hsl(var(--hsl-chart));
     --accent-color: hsl(var(--hsl-accent));
     --accent-hover: hsl(var(--hsl-accent-strong));
+    --accent-light: hsl(var(--hsl-accent-light));
     --green: hsl(var(--hsl-success));
     --green-hover: hsl(var(--hsl-success-strong));
+    --green-light: hsl(var(--hsl-success-light));
     --red: hsl(var(--hsl-danger));
+    --red-light: hsl(var(--hsl-danger-light));
     --warning: hsl(var(--hsl-warning));
     --warning-hover: hsl(var(--hsl-warning-strong));
     --text-on-accent: hsl(0 0% 100%);
+    --premium-color: hsl(var(--hsl-premium));
+    --premium-hover: hsl(var(--hsl-premium-strong));
+
+    /* Semantic trading colors */
+    --buy-strong: hsl(var(--hsl-buy-strong));
+    --buy-weak: hsl(var(--hsl-buy-weak));
+    --sell-strong: hsl(var(--hsl-sell-strong));
+    --sell-weak: hsl(var(--hsl-sell-weak));
+    --neutral: hsl(var(--hsl-neutral));
 
     --profit-bg: hsl(var(--hsl-success) / 0.18);
     --loss-bg: hsl(var(--hsl-danger) / 0.18);
@@ -41,22 +73,50 @@
     --accent-soft-strong: hsl(var(--hsl-accent) / 0.26);
     --success-soft: hsl(var(--hsl-success) / 0.2);
     --danger-soft: hsl(var(--hsl-danger) / 0.2);
+    --premium-soft: hsl(var(--hsl-premium) / 0.16);
 
     --overlay-bg: hsl(var(--hsl-shadow) / 0.64);
     --glass-bg: hsl(var(--hsl-glass) / 0.8);
+    --glass-bg-strong: hsl(var(--hsl-glass) / 0.92);
     --glass-border: hsl(220 30% 65% / 0.16);
+    --glass-border-strong: hsl(220 30% 70% / 0.24);
     --glass-shadow: 0 12px 32px hsl(var(--hsl-shadow) / 0.5);
+
+    /* Layered shadow system */
+    --shadow-xs: 0 1px 2px hsl(var(--hsl-shadow) / 0.2);
+    --shadow-sm: 0 2px 6px hsl(var(--hsl-shadow) / 0.25);
+    --shadow-md: 0 6px 16px hsl(var(--hsl-shadow) / 0.35);
     --shadow-elevated: 0 10px 24px hsl(var(--hsl-shadow) / 0.4);
     --shadow-floating: 0 18px 48px hsl(var(--hsl-shadow) / 0.5);
+    --shadow-dramatic: 0 25px 60px hsl(var(--hsl-shadow) / 0.6);
+
+    /* Glow effects */
+    --glow-accent: 0 0 20px hsl(var(--hsl-accent) / 0.4);
+    --glow-success: 0 0 20px hsl(var(--hsl-success) / 0.4);
+    --glow-danger: 0 0 20px hsl(var(--hsl-danger) / 0.4);
+    --glow-premium: 0 0 24px hsl(var(--hsl-premium) / 0.5);
+    --glow-subtle: 0 0 12px hsl(var(--hsl-accent) / 0.25);
+
     --focus-ring: 0 0 0 2px hsl(var(--hsl-accent) / 0.45);
     --focus-ring-soft: 0 0 0 4px hsl(var(--hsl-accent) / 0.2);
+
+    /* Gradient accents */
+    --gradient-accent: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-accent-strong)));
+    --gradient-success: linear-gradient(135deg, hsl(var(--hsl-success)), hsl(var(--hsl-success-strong)));
+    --gradient-danger: linear-gradient(135deg, hsl(var(--hsl-danger-light)), hsl(var(--hsl-danger)));
+    --gradient-premium: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-premium)));
+    --gradient-warm: linear-gradient(135deg, hsl(var(--hsl-warning)), hsl(var(--hsl-danger)));
+    --gradient-cool: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-success)));
 
     --page-gradient: radial-gradient(1200px 800px at 12% -10%,
             hsl(var(--hsl-accent) / 0.14),
             transparent 58%),
         radial-gradient(900px 700px at 92% 8%,
             hsl(var(--hsl-success) / 0.12),
-            transparent 60%);
+            transparent 60%),
+        radial-gradient(600px 400px at 50% 100%,
+            hsl(var(--hsl-premium) / 0.08),
+            transparent 50%);
 
     /* Spacing tokens */
     --space-1: 4px;
@@ -107,30 +167,55 @@
     --hsl-surface-2: 220 30% 95%;
     --hsl-surface-3: 220 22% 90%;
     --hsl-surface-4: 220 18% 86%;
+    --hsl-surface-5: 220 15% 82%;
     --hsl-ink-1: 220 25% 16%;
     --hsl-ink-2: 220 10% 45%;
+    --hsl-ink-3: 220 8% 60%;
     --hsl-border: 220 16% 84%;
+    --hsl-border-subtle: 220 14% 88%;
     --hsl-chart: 0 0% 100%;
     --hsl-accent: 221 88% 54%;
     --hsl-accent-strong: 221 88% 47%;
+    --hsl-accent-light: 221 88% 65%;
     --hsl-success: 168 58% 35%;
     --hsl-success-strong: 168 58% 30%;
+    --hsl-success-light: 168 58% 45%;
     --hsl-danger: 2 72% 52%;
+    --hsl-danger-light: 2 72% 62%;
     --hsl-warning: 35 92% 50%;
     --hsl-warning-strong: 35 92% 43%;
     --hsl-shadow: 220 30% 32%;
     --hsl-glass: 220 33% 96%;
+    --hsl-premium: 265 75% 52%;
+    --hsl-premium-strong: 265 75% 45%;
 
     --overlay-bg: hsl(220 20% 20% / 0.35);
     --glass-border: hsl(220 25% 60% / 0.25);
+    --glass-border-strong: hsl(220 25% 55% / 0.35);
     --glass-shadow: 0 12px 28px hsl(220 30% 40% / 0.18);
+
+    /* Layered shadow system - lighter for light theme */
+    --shadow-xs: 0 1px 2px hsl(var(--hsl-shadow) / 0.08);
+    --shadow-sm: 0 2px 6px hsl(var(--hsl-shadow) / 0.1);
+    --shadow-md: 0 6px 16px hsl(var(--hsl-shadow) / 0.12);
     --shadow-elevated: 0 10px 24px hsl(220 30% 40% / 0.2);
     --shadow-floating: 0 18px 48px hsl(220 30% 40% / 0.25);
+    --shadow-dramatic: 0 25px 60px hsl(220 30% 40% / 0.3);
+
+    /* Glow effects - softer for light theme */
+    --glow-accent: 0 0 16px hsl(var(--hsl-accent) / 0.25);
+    --glow-success: 0 0 16px hsl(var(--hsl-success) / 0.25);
+    --glow-danger: 0 0 16px hsl(var(--hsl-danger) / 0.25);
+    --glow-premium: 0 0 20px hsl(var(--hsl-premium) / 0.3);
+    --glow-subtle: 0 0 10px hsl(var(--hsl-accent) / 0.15);
 
     --page-gradient: radial-gradient(900px 600px at 10% -10%,
-            hsl(var(--hsl-accent) / 0.16),
+            hsl(var(--hsl-accent) / 0.12),
             transparent 60%),
         radial-gradient(700px 500px at 100% 0%,
-            hsl(var(--hsl-success) / 0.12),
-            transparent 55%);
+            hsl(var(--hsl-success) / 0.1),
+            transparent 55%),
+        radial-gradient(500px 350px at 50% 100%,
+            hsl(var(--hsl-premium) / 0.06),
+            transparent 50%);
 }

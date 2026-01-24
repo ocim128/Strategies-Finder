@@ -2,8 +2,7 @@
  * Replay Manager - Core Replay Engine
  * 
  * Controls bar-by-bar playback of historical data to visualize
- * how strategies generate signals. Supports both individual strategies
- * and combined strategies from the combiner.
+ * how strategies generate signals.
  */
 
 import type {
@@ -93,7 +92,7 @@ export class ReplayManager implements IReplayManager {
 
         // Get strategy
         const strategy = strategyRegistry.get(options.strategyKey);
-        if (!strategy && !options.isCombined) {
+        if (!strategy) {
             console.error(`[ReplayManager] Strategy not found: ${options.strategyKey}`);
             return;
         }
@@ -110,8 +109,6 @@ export class ReplayManager implements IReplayManager {
             visibleSignals: [],
             strategyKey: options.strategyKey,
             strategyParams: options.params,
-            isCombinedStrategy: options.isCombined ?? false,
-            combinedStrategyId: options.combinedStrategyId,
         };
 
         // Pre-compute all signals from the strategy
@@ -449,9 +446,6 @@ export class ReplayManager implements IReplayManager {
             annotation,
             barIndex,
             bar,
-            sourceStrategy: this.state.isCombinedStrategy
-                ? this.state.strategyKey
-                : undefined,
         };
     }
 
@@ -532,7 +526,6 @@ export class ReplayManager implements IReplayManager {
             visibleSignals: [],
             strategyKey: '',
             strategyParams: {},
-            isCombinedStrategy: false,
         };
     }
 

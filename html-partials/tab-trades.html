@@ -1,11 +1,16 @@
 <!-- Trades Tab -->
 <div id="tradesTab">
-    <div class="empty-state" id="emptyTrades">
-        <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" />
-        </svg>
-        <h3>No Trades</h3>
-        <p>Run a backtest to see trade history</p>
+    <div class="empty-state empty-state-illustrated" id="emptyTrades">
+        <div class="empty-state-icon">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z" />
+            </svg>
+        </div>
+        <h3 class="empty-state-title">Trade History</h3>
+        <p class="empty-state-description">
+            Your executed trades will appear here after running a backtest. Click any trade to highlight it on the
+            chart.
+        </p>
     </div>
     <div class="trades-summary" id="tradesSummary" style="display: none;">
         <div class="summary-item">

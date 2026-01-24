@@ -20,7 +20,7 @@ import { logicTestService } from "./lib/logicTestService";
 import { settingsManager } from "./lib/settingsManager";
 import { injectLayout } from "./lib/layoutManager";
 import { commandPaletteManager } from "./lib/commandPalette";
-import { combinerManager } from "./lib/combinerManager";
+
 import { replayManager, ReplayChartAdapter, ReplayUI } from "./lib/replay";
 import { initConfirmationStrategyUI } from "./lib/confirmationStrategies";
 
@@ -58,7 +58,7 @@ async function init() {
 	walkForwardService.initUI();
 	monteCarloService.initUI();
 	logicTestService.initUI();
-	combinerManager.init();
+
 	initConfirmationStrategyUI();
 	initDebugPanel();
 	initEngineStatusIndicator(); // Show Rust vs TypeScript engine status

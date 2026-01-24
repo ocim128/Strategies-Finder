@@ -13,6 +13,7 @@ import {
 } from "lightweight-charts";
 import { state } from "./state";
 import { darkTheme, lightTheme, ENHANCED_CANDLE_COLORS } from "./constants";
+import { toHeikinAshi } from "./heikinAshiUtils";
 
 import { Trade, OHLCVData } from "./strategies/index";
 
@@ -524,6 +525,30 @@ export class ChartManager {
             wickUpColor: colors.wickUp,
             wickDownColor: colors.wickDown,
         });
+    }
+
+    /**
+     * Updates chart candlestick data with appropriate transformation based on chart mode.
+     * When chartMode is 'heikin-ashi', applies Heikin Ashi transformation to the raw data.
+     * This is purely visual - the underlying state.ohlcvData remains unchanged for strategies.
+     */
+    public updateChartData() {
+        const rawData = state.ohlcvData;
+        if (rawData.length === 0) return;
+
+        // Apply transformation if Heikin Ashi mode is active
+        const displayData = state.chartMode === 'heikin-ashi'
+            ? toHeikinAshi(rawData)
+            : rawData;
+
+        // Update candlestick series with transformed data
+        state.candlestickSeries.setData(displayData.map(d => ({
+            time: d.time,
+            open: d.open,
+            high: d.high,
+            low: d.low,
+            close: d.close,
+        })));
     }
 
     public clearIndicators() {

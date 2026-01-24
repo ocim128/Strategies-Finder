@@ -19,13 +19,28 @@
     align-items: center;
     justify-content: space-between;
     padding: var(--space-2) var(--space-4);
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border-color);
+    background: hsl(var(--hsl-surface-2) / 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--glass-border);
     height: 52px;
     flex-shrink: 0;
     animation: panelEnter 0.5s ease both;
     position: relative;
     z-index: 20;
+    box-shadow: var(--shadow-xs);
+}
+
+/* Subtle gradient accent line at top of header */
+.header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--gradient-premium);
+    opacity: 0.7;
 }
 
 .header-left {
@@ -37,16 +52,28 @@
 .logo {
     font-weight: var(--font-weight-bold);
     font-size: var(--font-size-xl);
-    color: var(--accent-color);
+    background: var(--gradient-accent);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
     display: flex;
     align-items: center;
     gap: var(--space-2);
     letter-spacing: 0.01em;
+    transition: all 0.2s ease;
+}
+
+.logo:hover {
+    opacity: 0.9;
+    transform: translateX(2px);
 }
 
 .logo svg {
     width: 24px;
     height: 24px;
+    color: var(--accent-color);
+    -webkit-text-fill-color: initial;
+    filter: drop-shadow(0 0 6px hsl(var(--hsl-accent) / 0.4));
 }
 
 /* Header Right */
@@ -102,19 +129,26 @@
     width: 400px;
     min-width: 280px;
     max-width: 80vw;
-    background: var(--bg-secondary);
-    border-left: 1px solid var(--border-color);
+    background: hsl(var(--hsl-surface-2) / 0.92);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-left: 1px solid var(--glass-border);
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
     overflow: hidden;
     animation: panelEnter 0.55s ease 0.12s both;
     position: relative;
+    box-shadow: -4px 0 24px hsl(var(--hsl-shadow) / 0.15);
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+        box-shadow 0.3s ease,
+        border-left 0.3s ease;
 }
 
 .strategy-panel.collapsed {
     width: 0;
     border-left: none;
+    box-shadow: none;
 }
 
 .panel-header {
@@ -123,6 +157,25 @@
     justify-content: space-between;
     padding: var(--space-3) var(--space-4);
     border-bottom: 1px solid var(--border-color);
+    background: linear-gradient(180deg,
+            hsl(var(--hsl-surface-3) / 0.5) 0%,
+            transparent 100%);
+    position: relative;
+}
+
+/* Subtle accent line under panel header */
+.panel-header::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: var(--space-4);
+    right: var(--space-4);
+    height: 1px;
+    background: linear-gradient(90deg,
+            transparent,
+            hsl(var(--hsl-accent) / 0.3) 20%,
+            hsl(var(--hsl-accent) / 0.3) 80%,
+            transparent);
 }
 
 .panel-actions {
@@ -208,8 +261,10 @@
     align-items: center;
     justify-content: space-between;
     padding: var(--space-1-5) var(--space-4);
-    background: var(--bg-secondary);
-    border-top: 1px solid var(--border-color);
+    background: hsl(var(--hsl-surface-2) / 0.8);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-top: 1px solid var(--glass-border);
     font-size: var(--font-size-xs);
     color: var(--text-secondary);
     height: 32px;
@@ -228,6 +283,11 @@
     display: flex;
     align-items: center;
     gap: var(--space-1);
+    transition: color 0.2s ease;
+}
+
+.status-item:hover {
+    color: var(--text-primary);
 }
 
 .status-dot {
@@ -236,4 +296,15 @@
     border-radius: 50%;
     background: var(--green);
     animation: pulse 2s infinite;
+    box-shadow: 0 0 8px hsl(var(--hsl-success) / 0.6);
+}
+
+.status-dot.disconnected {
+    background: var(--red);
+    box-shadow: 0 0 8px hsl(var(--hsl-danger) / 0.5);
+}
+
+.status-dot.warning {
+    background: var(--warning);
+    box-shadow: 0 0 8px hsl(var(--hsl-warning) / 0.5);
 }

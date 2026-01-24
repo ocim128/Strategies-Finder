@@ -1,0 +1,312 @@
+/* Glassmorphism Effects - Premium visual styling */
+
+/* Glass panel - frosted effect with backdrop blur */
+.glass-panel {
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--glass-shadow);
+}
+
+.glass-panel-strong {
+    background: var(--glass-bg-strong);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border-strong);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-elevated);
+}
+
+/* Glass card - for elevated content cards */
+.glass-card {
+    background: linear-gradient(135deg,
+            hsl(var(--hsl-surface-3) / 0.6),
+            hsl(var(--hsl-surface-2) / 0.4));
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-l);
+    box-shadow: var(--shadow-sm);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+    background: linear-gradient(135deg,
+            hsl(var(--hsl-surface-3) / 0.75),
+            hsl(var(--hsl-surface-2) / 0.55));
+    border-color: var(--glass-border-strong);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+}
+
+/* Glass overlay - for modals and dropdowns */
+.glass-overlay {
+    background: var(--overlay-bg);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+/* Glass button - transparent with frosted effect */
+.btn-glass {
+    background: hsl(var(--hsl-surface-3) / 0.5);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--glass-border);
+    color: var(--text-primary);
+    transition: all 0.2s ease;
+}
+
+.btn-glass:hover {
+    background: hsl(var(--hsl-surface-4) / 0.65);
+    border-color: var(--glass-border-strong);
+    box-shadow: var(--glow-subtle);
+}
+
+.btn-glass:active {
+    transform: scale(0.98);
+}
+
+/* Glass input - for form elements */
+.glass-input {
+    background: hsl(var(--hsl-surface-2) / 0.5);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    color: var(--text-primary);
+    transition: all 0.2s ease;
+}
+
+.glass-input:focus {
+    background: hsl(var(--hsl-surface-2) / 0.7);
+    border-color: hsl(var(--hsl-accent) / 0.5);
+    box-shadow: var(--focus-ring-soft);
+    outline: none;
+}
+
+/* Premium gradient button */
+.btn-gradient {
+    background: var(--gradient-accent);
+    color: var(--text-on-accent);
+    border: none;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.25s ease;
+}
+
+.btn-gradient::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg,
+            hsl(0 0% 100% / 0.15),
+            transparent 50%);
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+
+.btn-gradient:hover {
+    box-shadow: var(--glow-accent);
+    transform: translateY(-1px);
+}
+
+.btn-gradient:hover::before {
+    opacity: 1;
+}
+
+.btn-gradient:active {
+    transform: translateY(0);
+}
+
+/* Premium gradient - purple accent */
+.btn-gradient-premium {
+    background: var(--gradient-premium);
+    color: var(--text-on-accent);
+    border: none;
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-gradient-premium:hover {
+    box-shadow: var(--glow-premium);
+}
+
+/* Success gradient button */
+.btn-gradient-success {
+    background: var(--gradient-success);
+    color: var(--text-on-accent);
+    border: none;
+}
+
+.btn-gradient-success:hover {
+    box-shadow: var(--glow-success);
+}
+
+/* Glow effects utility classes */
+.glow-accent {
+    box-shadow: var(--glow-accent);
+}
+
+.glow-success {
+    box-shadow: var(--glow-success);
+}
+
+.glow-danger {
+    box-shadow: var(--glow-danger);
+}
+
+.glow-premium {
+    box-shadow: var(--glow-premium);
+}
+
+/* Subtle shine animation on glass elements */
+@keyframes glassShine {
+    0% {
+        background-position: -200% 0;
+    }
+
+    100% {
+        background-position: 200% 0;
+    }
+}
+
+.glass-shine {
+    position: relative;
+    overflow: hidden;
+}
+
+.glass-shine::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg,
+            transparent 0%,
+            hsl(0 0% 100% / 0.08) 50%,
+            transparent 100%);
+    background-size: 200% 100%;
+    animation: glassShine 3s ease-in-out infinite;
+    pointer-events: none;
+}
+
+/* Frosted border effect */
+.frosted-border {
+    position: relative;
+}
+
+.frosted-border::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    background: linear-gradient(135deg,
+            hsl(var(--hsl-accent) / 0.2),
+            transparent 30%,
+            transparent 70%,
+            hsl(var(--hsl-success) / 0.15));
+    border-radius: inherit;
+    z-index: -1;
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    padding: 1px;
+}
+
+/* Elevated glow card */
+.glow-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-l);
+    position: relative;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glow-card::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    background: var(--gradient-accent);
+    border-radius: inherit;
+    opacity: 0;
+    z-index: -1;
+    filter: blur(8px);
+    transition: opacity 0.3s ease;
+}
+
+.glow-card:hover::before {
+    opacity: 0.5;
+}
+
+.glow-card:hover {
+    border-color: hsl(var(--hsl-accent) / 0.4);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-elevated);
+}
+
+/* Trading signal strength indicators */
+.signal-strong-buy {
+    background: linear-gradient(135deg, var(--buy-strong), var(--green));
+    color: var(--text-on-accent);
+}
+
+.signal-weak-buy {
+    background: hsl(var(--hsl-buy-weak) / 0.2);
+    color: var(--buy-weak);
+    border: 1px solid hsl(var(--hsl-buy-weak) / 0.3);
+}
+
+.signal-strong-sell {
+    background: linear-gradient(135deg, var(--sell-strong), var(--red));
+    color: var(--text-on-accent);
+}
+
+.signal-weak-sell {
+    background: hsl(var(--hsl-sell-weak) / 0.2);
+    color: var(--sell-weak);
+    border: 1px solid hsl(var(--hsl-sell-weak) / 0.3);
+}
+
+.signal-neutral {
+    background: hsl(var(--hsl-neutral) / 0.15);
+    color: var(--neutral);
+    border: 1px solid hsl(var(--hsl-neutral) / 0.25);
+}
+
+/* Premium stat card with gradient border */
+.stat-card-premium {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-l);
+    padding: var(--space-4);
+    position: relative;
+    overflow: hidden;
+}
+
+.stat-card-premium::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--gradient-premium);
+}
+
+/* Light theme adjustments for glass effects */
+.light-theme .glass-panel {
+    background: hsl(var(--hsl-glass) / 0.7);
+    border-color: hsl(220 20% 70% / 0.3);
+}
+
+.light-theme .glass-card {
+    background: linear-gradient(135deg,
+            hsl(var(--hsl-surface-2) / 0.7),
+            hsl(var(--hsl-surface-1) / 0.5));
+}
+
+.light-theme .glass-shine::after {
+    background: linear-gradient(90deg,
+            transparent 0%,
+            hsl(0 0% 100% / 0.4) 50%,
+            transparent 100%);
+}

@@ -57,9 +57,6 @@ class WalkForwardService {
                 debugLogger.info('[WalkForward] Rust engine available - will use for inner backtests');
             }
 
-            // Check if this is explicitly a combo strategy
-            const isComboStrategy = strategy.metadata?.isCombined === true;
-
             // Get current parameters
             const currentParams = paramManager.getValues(strategy);
 
@@ -67,11 +64,9 @@ class WalkForwardService {
             const parameterRanges = this.buildParameterRanges(strategy.defaultParams, currentParams);
 
             // Determine if we should use fixed-param walk-forward:
-            // - Explicitly a combo strategy, OR
             // - No parameters at all, OR  
             // - No valid parameter ranges could be built
             const useFixedParam =
-                isComboStrategy ||
                 Object.keys(strategy.defaultParams).length === 0 ||
                 parameterRanges.length === 0;
 
@@ -79,9 +74,8 @@ class WalkForwardService {
 
             if (useFixedParam) {
                 // Use fixed-parameter walk-forward (no optimization)
-                const analysisType = isComboStrategy ? 'combo strategy' : 'fixed parameters';
-                this.updateStatus(`Running walk-forward analysis (${analysisType})...`);
-                debugLogger.info(`[WalkForward] Using fixed-param mode for: ${strategyKey} (${analysisType})`);
+                this.updateStatus('Running walk-forward analysis (fixed parameters)...');
+                debugLogger.info(`[WalkForward] Using fixed-param mode for: ${strategyKey}`);
 
                 // Get window config from UI
                 const testWindow = this.readNumberInput('wf-test-window', Math.floor(data.length * 0.2));
@@ -166,21 +160,18 @@ class WalkForwardService {
         this.setLoading(true);
 
         try {
-            // Check if this is a combo strategy or has no tunable parameters
-            const isComboStrategy = strategy.metadata?.isCombined === true;
+            // Check if has no tunable parameters
             const currentParams = paramManager.getValues(strategy);
             const parameterRanges = this.buildParameterRanges(strategy.defaultParams, currentParams);
             const useFixedParam =
-                isComboStrategy ||
                 Object.keys(strategy.defaultParams).length === 0 ||
                 parameterRanges.length === 0;
 
             let result: WalkForwardResult;
 
             if (useFixedParam) {
-                // Use fixed-param walk-forward for combo strategies
-                const analysisType = isComboStrategy ? 'combo' : 'fixed-param';
-                this.updateStatus(`Running quick analysis (${analysisType})...`);
+                // Use fixed-param walk-forward for strategies without tunable parameters
+                this.updateStatus('Running quick analysis (fixed-param)...');
                 debugLogger.info(`[WalkForward] Quick analysis using fixed-param mode for: ${strategyKey}`);
 
                 // Auto-detect window settings: aim for ~5 windows

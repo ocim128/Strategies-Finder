@@ -8,7 +8,6 @@
 import type { ReplayManager } from './replayManager';
 import type { ReplayEvent, ReplayStatus, SignalWithAnnotation } from './replayTypes';
 import { state } from '../state';
-import { strategyRegistry } from '../../strategyRegistry';
 
 // ============================================================================
 // ReplayUI Class
@@ -451,11 +450,6 @@ export class ReplayUI {
             return;
         }
 
-        // Detect if this is a combined strategy
-        const strategy = strategyRegistry.get(state.currentStrategyKey);
-        const isCombined = strategy?.metadata?.isCombined ?? false;
-        const combinedId = isCombined ? state.currentStrategyKey : undefined;
-
         // Clear previous signals and trades
         this.clearSignalLog();
         state.clearTradeResults();
@@ -470,8 +464,6 @@ export class ReplayUI {
             params: this.getCurrentStrategyParams(),
             data: state.ohlcvData,
             initialSpeed: parseFloat(this.elements.speedSlider?.value || '1'),
-            isCombined,
-            combinedStrategyId: combinedId,
         });
     }
 

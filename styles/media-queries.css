@@ -1,14 +1,42 @@
+/* ========================================
+   Responsive Design System
+   Breakpoints: 1400px, 1200px, 960px, 720px, 480px
+   ======================================== */
+
+/* Large desktop - Wider panel */
+@media (min-width: 1400px) {
+    .strategy-panel {
+        width: 400px;
+    }
+}
+
+/* Desktop - Standard layout */
 @media (max-width: 1200px) {
     .strategy-panel {
-        width: 280px;
+        width: 300px;
     }
 
     .panel-content {
         padding: var(--space-3);
     }
+
+    /* Reduce spacing on smaller desktops */
+    .stats-grid {
+        gap: 0;
+    }
+
+    .stat-card {
+        padding: var(--space-2);
+    }
 }
 
+/* Tablet landscape / Small desktop */
 @media (max-width: 960px) {
+    :root {
+        /* Increase touch targets */
+        --min-touch-target: 44px;
+    }
+
     .header {
         flex-wrap: wrap;
         height: auto;
@@ -30,18 +58,28 @@
         flex-wrap: wrap;
     }
 
+    .timeframe-tab {
+        min-height: var(--min-touch-target);
+        padding: var(--space-2) var(--space-3);
+    }
+
     .main-content {
         flex-direction: column;
     }
 
     .toolbar {
         width: 100%;
-        height: 48px;
+        height: 52px;
         flex-direction: row;
         padding: 0 var(--space-3);
         border-right: none;
         border-bottom: 1px solid var(--border-color);
         justify-content: center;
+    }
+
+    .tool-btn {
+        min-width: var(--min-touch-target);
+        min-height: var(--min-touch-target);
     }
 
     .tool-separator {
@@ -55,47 +93,99 @@
     }
 
     .chart-wrapper {
-        min-height: 280px;
+        min-height: 300px;
     }
 
     .strategy-panel {
         width: 100%;
         border-left: none;
         border-top: 1px solid var(--border-color);
-        max-height: 45vh;
+        max-height: 50vh;
     }
 
     .strategy-panel.collapsed {
         width: 100%;
         max-height: 0;
         border-top: none;
+        overflow: hidden;
+    }
+
+    /* Hide resize handle on mobile */
+    .panel-resize-handle {
+        display: none;
     }
 
     #equity-chart {
-        height: 90px;
+        height: 100px;
+    }
+
+    /* Tab group labels become horizontal on tablet */
+    .tab-group-label {
+        display: none;
+    }
+
+    .tab-group-separator {
+        display: none;
     }
 
     .panel-tabs {
         flex-wrap: wrap;
+        flex-direction: row;
+        gap: var(--space-1);
+        padding: var(--space-2);
     }
 
     .panel-tab {
-        flex: 1 1 50%;
+        flex: 1 1 auto;
+        min-width: 60px;
+        min-height: var(--min-touch-target);
+        justify-content: center;
+    }
+
+    .panel-tab span {
+        display: none;
+    }
+
+    .panel-tab svg {
+        width: 22px;
+        height: 22px;
     }
 
     .status-bar {
         flex-wrap: wrap;
         height: auto;
         gap: var(--space-2);
+        padding: var(--space-2) var(--space-4);
     }
 
     .status-left,
     .status-right {
         flex-wrap: wrap;
     }
+
+    /* Larger touch targets for buttons */
+    .btn {
+        min-height: var(--min-touch-target);
+    }
+
+    /* Finder adjustments */
+    .finder-row {
+        grid-template-columns: 36px 1fr;
+        gap: var(--space-2);
+    }
+
+    .finder-apply {
+        grid-column: span 2;
+        margin-top: var(--space-2);
+    }
 }
 
+/* Tablet portrait / Large phone */
 @media (max-width: 720px) {
+    :root {
+        --min-touch-target: 48px;
+    }
+
     .header {
         padding: var(--space-2) var(--space-3);
     }
@@ -110,19 +200,23 @@
     }
 
     .symbol-selector {
-        padding: var(--space-1-5) var(--space-2-5);
+        padding: var(--space-2) var(--space-3);
+        min-height: var(--min-touch-target);
     }
 
     .btn {
         padding: var(--space-2) var(--space-3);
+        min-height: var(--min-touch-target);
     }
 
+    /* Stack stats on mobile */
     .stats-grid {
         grid-template-columns: 1fr;
     }
 
     .stat-card {
         border-right: none;
+        min-height: 64px;
     }
 
     .stat-card.full-width {
@@ -137,11 +231,205 @@
         grid-template-columns: 1fr;
     }
 
+    /* Trades list adjustments */
+    .trade-item {
+        padding: var(--space-3);
+    }
+
+    .trade-icon {
+        width: 36px;
+        height: 36px;
+    }
+
+    /* OHLC panel - horizontal scroll on mobile */
+    .ohlc-panel {
+        max-width: calc(100vw - var(--space-6));
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Toast positioning */
+    .toast-container {
+        left: var(--space-3);
+        right: var(--space-3);
+        bottom: var(--space-3);
+    }
+
+    .toast {
+        min-width: auto;
+        width: 100%;
+    }
+
     .debug-panel {
         left: var(--space-3);
         right: var(--space-3);
         width: auto;
-        bottom: 56px;
+        bottom: 60px;
+        max-height: 50vh;
+    }
+
+    /* Modal adjustments */
+    .modal {
+        width: calc(100vw - var(--space-6));
+        max-width: none;
+    }
+
+    /* Command palette full width */
+    .command-palette {
+        width: calc(100vw - var(--space-6));
+        max-width: none;
+    }
+}
+
+/* Small phone */
+@media (max-width: 480px) {
+    :root {
+        --space-base: 3px;
+    }
+
+    .header {
+        padding: var(--space-2);
+    }
+
+    .panel-header {
+        padding: var(--space-2) var(--space-3);
+    }
+
+    .panel-title {
+        font-size: var(--font-size-sm);
+    }
+
+    /* Hide panel title text, show only icon */
+    .panel-title span {
+        display: none;
+    }
+
+    .run-btn span {
+        display: none;
+    }
+
+    /* Simplified tabs - icons only */
+    .panel-tab {
+        flex: 1;
+        padding: var(--space-2);
+    }
+
+    /* Stack symbol info */
+    .symbol-info {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+    }
+
+    .symbol-price {
+        font-size: var(--font-size-sm);
+    }
+
+    /* Reduce stat card padding */
+    .stat-card {
+        padding: var(--space-2);
+    }
+
+    .stat-value {
+        font-size: var(--font-size-base);
+    }
+
+    /* Trade list compact */
+    .trade-main-row {
+        flex-wrap: wrap;
+        gap: var(--space-2);
+    }
+
+    .trade-result-group {
+        width: 100%;
+        text-align: left;
+        margin-top: var(--space-1);
+        padding-top: var(--space-1);
+        border-top: 1px solid var(--border-color);
+    }
+}
+
+/* Landscape mode on phones */
+@media (max-height: 500px) and (orientation: landscape) {
+    .strategy-panel {
         max-height: 60vh;
+    }
+
+    .panel-tabs {
+        max-height: 48px;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+    }
+
+    .panel-content {
+        max-height: calc(60vh - 100px);
+        overflow-y: auto;
+    }
+
+    /* Reduce chart height in landscape */
+    .chart-wrapper {
+        min-height: 200px;
+    }
+
+    #equity-chart {
+        height: 60px;
+    }
+}
+
+/* High DPI / Retina displays */
+@media (-webkit-min-device-pixel-ratio: 2),
+(min-resolution: 192dpi) {
+
+    /* Sharper borders */
+    .stat-card,
+    .trade-item,
+    .finder-row {
+        border-width: 0.5px;
+    }
+}
+
+/* Hover capability detection */
+@media (hover: none) {
+
+    /* Remove hover effects on touch devices */
+    .btn:hover,
+    .tool-btn:hover,
+    .trade-item:hover,
+    .finder-row:hover,
+    .stat-card:hover {
+        transform: none;
+    }
+
+    /* Add active states instead */
+    .btn:active,
+    .tool-btn:active {
+        transform: scale(0.97);
+    }
+
+    .trade-item:active,
+    .finder-row:active {
+        background: var(--bg-elevated);
+    }
+}
+
+/* Pointer coarse (touch) devices */
+@media (pointer: coarse) {
+
+    /* Ensure minimum touch targets */
+    .btn,
+    .tool-btn,
+    .panel-tab,
+    .timeframe-tab,
+    .dropdown-item {
+        min-height: 44px;
+    }
+
+    /* Increase spacing between clickable items */
+    .finder-list {
+        gap: var(--space-3);
+    }
+
+    .trades-list .trade-item {
+        padding: var(--space-3-5);
     }
 }

@@ -1,5 +1,5 @@
 import { getRequiredElement } from "../domUtils";
-import { state } from "../state";
+import { state, type ChartMode } from "../state";
 import { debugLogger } from "../debugLogger";
 
 import { backtestService } from "../backtestService";
@@ -29,6 +29,7 @@ export function setupEventHandlers() {
     const symbolSearchEmpty = document.getElementById('symbolSearchEmpty');
     const mockModelSelect = document.getElementById('mockModelSelect') as HTMLSelectElement | null;
     const mockBarsInput = document.getElementById('mockBarsInput') as HTMLInputElement | null;
+    const chartModeSelect = document.getElementById('chartModeSelect') as HTMLSelectElement | null;
 
     let isSearchInitialized = false;
     let selectedIndex = -1;
@@ -39,6 +40,18 @@ export function setupEventHandlers() {
             const value = mockModelSelect.value;
             if (value === 'simple' || value === 'hard' || value === 'v3' || value === 'v4') {
                 state.set('mockChartModel', value);
+            }
+        });
+    }
+
+    // Chart mode selector (Candlestick / Heikin Ashi)
+    if (chartModeSelect) {
+        chartModeSelect.value = state.chartMode;
+        chartModeSelect.addEventListener('change', () => {
+            const value = chartModeSelect.value as ChartMode;
+            if (value === 'candlestick' || value === 'heikin-ashi') {
+                debugLogger.event('ui.chartMode.select', { mode: value });
+                state.set('chartMode', value);
             }
         });
     }
@@ -391,9 +404,13 @@ export function setupEventHandlers() {
             const target = e.currentTarget as HTMLElement;
             const tabName = target.dataset.tab!;
 
-            // Update active state
-            document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+            // Update active state and ARIA
+            document.querySelectorAll('.panel-tab').forEach(t => {
+                t.classList.remove('active');
+                t.setAttribute('aria-selected', 'false');
+            });
             target.classList.add('active');
+            target.setAttribute('aria-selected', 'true');
 
             // Toggle visibility dynamically
             const content = document.getElementById('panelContent');
@@ -405,6 +422,29 @@ export function setupEventHandlers() {
             }
 
             debugLogger.event('ui.tab.switch', { tab: tabName });
+        });
+
+        // Keyboard navigation within tab list
+        tab.addEventListener('keydown', (e) => {
+            const keyboardEvent = e as KeyboardEvent;
+            const tabs = Array.from(document.querySelectorAll('.panel-tab')) as HTMLElement[];
+            const currentIndex = tabs.indexOf(e.currentTarget as HTMLElement);
+
+            if (keyboardEvent.key === 'ArrowDown' || keyboardEvent.key === 'ArrowRight') {
+                e.preventDefault();
+                const nextIndex = (currentIndex + 1) % tabs.length;
+                tabs[nextIndex].focus();
+            } else if (keyboardEvent.key === 'ArrowUp' || keyboardEvent.key === 'ArrowLeft') {
+                e.preventDefault();
+                const prevIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+                tabs[prevIndex].focus();
+            } else if (keyboardEvent.key === 'Home') {
+                e.preventDefault();
+                tabs[0].focus();
+            } else if (keyboardEvent.key === 'End') {
+                e.preventDefault();
+                tabs[tabs.length - 1].focus();
+            }
         });
     });
 
@@ -601,38 +641,17 @@ export function setupEventHandlers() {
         if (e.key === 'Escape') symbolDropdown.classList.remove('active');
         if (e.key === 'Enter' && e.ctrlKey) backtestService.runCurrentBacktest();
 
-        // Alt + 1-6 for tab switching
-        if (e.altKey && e.key >= '1' && e.key <= '6') {
-            const index = parseInt(e.key) - 1;
-            const tabs = document.querySelectorAll('.panel-tab');
-            if (tabs[index]) {
-                (tabs[index] as HTMLElement).click();
-                debugLogger.event('ui.shortcut.tab_switch', { index });
+        // Alt + 1-8 for tab switching (uses data-shortcut attribute)
+        if (e.altKey && e.key >= '1' && e.key <= '8') {
+            e.preventDefault();
+            const shortcut = e.key;
+            const tab = document.querySelector(`.panel-tab[data-shortcut="${shortcut}"]`) as HTMLElement;
+            if (tab) {
+                tab.click();
+                tab.focus();
+                debugLogger.event('ui.shortcut.tab_switch', { shortcut, tab: tab.dataset.tab });
             }
         }
     });
 
-    // Combined strategy backtest runner
-    window.addEventListener('run-combined-strategy', ((event: CustomEvent<{ strategyKey: string; definition: any; isPreview?: boolean }>) => {
-        const { strategyKey, definition, isPreview } = event.detail;
-
-        // The strategy has already been registered in combinerManager.ts
-        // Now we need to set it as the current strategy and run the backtest
-
-        // Update the current strategy key in state
-        state.set('currentStrategyKey', strategyKey);
-
-        // Update the strategy dropdown to reflect this selection
-        uiManager.updateStrategyDropdown(strategyKey);
-
-        // Log the action
-        debugLogger.event('combiner.run', {
-            strategyKey,
-            strategyName: definition.name,
-            isPreview: !!isPreview,
-        });
-
-        // Run the backtest
-        backtestService.runCurrentBacktest();
-    }) as EventListener);
 }

@@ -1,0 +1,106 @@
+/* ========================================
+   Tab Groups - Visual organization for panel tabs
+   ======================================== */
+
+/* Tab group label */
+.tab-group-label {
+    padding: var(--space-1) var(--space-2);
+    font-size: 8px;
+    font-weight: var(--font-weight-bold);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-tertiary);
+    text-align: center;
+    user-select: none;
+    position: relative;
+}
+
+/* First label doesn't need top padding */
+.tab-group-label:first-child {
+    padding-top: var(--space-2);
+}
+
+/* Tab group separator */
+.tab-group-separator {
+    height: 1px;
+    margin: var(--space-2) var(--space-3);
+    background: linear-gradient(90deg,
+            transparent,
+            var(--border-color) 30%,
+            var(--border-color) 70%,
+            transparent);
+    position: relative;
+}
+
+/* Subtle glow line on separator */
+.tab-group-separator::after {
+    content: '';
+    position: absolute;
+    left: 30%;
+    right: 30%;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(90deg,
+            transparent,
+            hsl(var(--hsl-accent) / 0.3),
+            transparent);
+}
+
+/* Compact mode for narrow panels */
+@media (max-height: 600px) {
+    .tab-group-label {
+        font-size: 7px;
+        padding: var(--space-1) var(--space-1);
+    }
+
+    .tab-group-separator {
+        margin: var(--space-1) var(--space-3);
+    }
+
+    .panel-tab {
+        min-height: 52px;
+    }
+}
+
+/* Keyboard shortcut indicator in tooltip */
+.panel-tab[data-shortcut]::before {
+    content: attr(title);
+}
+
+/* Keyboard navigation focus state */
+.panel-tabs:focus-within .panel-tab:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--accent-color);
+}
+
+/* Active group indicator - show which group has active tab */
+.tab-group-label.has-active {
+    color: var(--accent-color);
+}
+
+/* Hover effect on group label */
+.tab-group-label:hover {
+    color: var(--text-secondary);
+}
+
+/* Animation for group transitions */
+.tab-group-separator,
+.tab-group-label {
+    animation: fadeIn 0.3s ease-out both;
+}
+
+.tab-group-label:nth-of-type(1) {
+    animation-delay: 0s;
+}
+
+.tab-group-label:nth-of-type(2) {
+    animation-delay: 0.05s;
+}
+
+.tab-group-label:nth-of-type(3) {
+    animation-delay: 0.1s;
+}
+
+.tab-group-label:nth-of-type(4) {
+    animation-delay: 0.15s;
+}

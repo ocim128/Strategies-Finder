@@ -2,7 +2,7 @@ import { Strategy } from './types';
 import { rsi_oversold } from './lib/rsi-oversold';
 import { triple_ma } from './lib/triple-ma';
 import { vwap_crossover } from './lib/vwap-crossover';
-import { rsi_macd_combo } from './lib/rsi-macd-combo';
+
 import { volume_profile } from './lib/volume-profile';
 import { donchian_breakout } from './lib/donchian-breakout';
 import { supertrend_strategy } from './lib/supertrend';
@@ -29,7 +29,7 @@ export const strategies: Record<string, Strategy> = {
     rsi_oversold,
     triple_ma,
     vwap_crossover,
-    rsi_macd_combo,
+
     volume_profile,
     donchian_breakout,
     supertrend_strategy,

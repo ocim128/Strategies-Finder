@@ -4,7 +4,7 @@ import chartWrapperHtml from '../html-partials/chart-wrapper.html?raw';
 import strategyPanelShellHtml from '../html-partials/strategy-panel-shell.html?raw';
 import tabSettingsHtml from '../html-partials/tab-settings.html?raw';
 import tabFinderHtml from '../html-partials/tab-finder.html?raw';
-import tabCombinerHtml from '../html-partials/tab-combiner.html?raw';
+
 import tabWalkforwardHtml from '../html-partials/tab-walkforward.html?raw';
 import tabMontecarloHtml from '../html-partials/tab-montecarlo.html?raw';
 import tabLogictestHtml from '../html-partials/tab-logictest.html?raw';
@@ -56,11 +56,9 @@ export function injectLayout() {
     chartArea.insertAdjacentHTML('beforeend', chartWrapperHtml);
 
     // Strategy Panel
-    // First, combine the tabs content
     const tabsContent =
         tabSettingsHtml +
         tabFinderHtml +
-        tabCombinerHtml +
         tabWalkforwardHtml +
         tabMontecarloHtml +
         tabLogictestHtml +

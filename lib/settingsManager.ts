@@ -8,7 +8,7 @@
  * - Save/Load named strategy configurations
  */
 
-import { state } from "./state";
+import { state, type ChartMode } from "./state";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./paramManager";
 import { debugLogger } from "./debugLogger";
@@ -82,6 +82,7 @@ export interface AppSettings {
     currentInterval: string;
     isDarkTheme: boolean;
     currentStrategyKey: string;
+    chartMode: ChartMode;
     backtestSettings: BacktestSettingsData;
     webhookSettings: WebhookSettings;
 }
@@ -139,6 +140,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
     currentInterval: '1d',
     isDarkTheme: true,
     currentStrategyKey: 'sma_crossover',
+    chartMode: 'candlestick',
     backtestSettings: { ...DEFAULT_BACKTEST_SETTINGS },
     webhookSettings: { ...DEFAULT_WEBHOOK_SETTINGS },
 };
@@ -170,6 +172,7 @@ class SettingsManager {
             currentInterval: state.currentInterval,
             isDarkTheme: state.isDarkTheme,
             currentStrategyKey: state.currentStrategyKey,
+            chartMode: state.chartMode,
             backtestSettings: this.getBacktestSettings(),
             webhookSettings: this.getWebhookSettings(),
         };
@@ -343,6 +346,11 @@ class SettingsManager {
             // Set state values (these trigger reactive updates)
             if (settings.isDarkTheme !== state.isDarkTheme) {
                 state.set('isDarkTheme', settings.isDarkTheme);
+            }
+
+            // Apply chart mode
+            if (settings.chartMode && settings.chartMode !== state.chartMode) {
+                state.set('chartMode', settings.chartMode);
             }
 
             debugLogger.event('settings.applied', { strategy: settings.currentStrategyKey });

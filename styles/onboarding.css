@@ -1,0 +1,629 @@
+/* ========================================
+   Empty States & Onboarding
+   Better empty states, first-run hints, placeholders
+   ======================================== */
+
+/* ----------------------------------------
+   Enhanced Empty States
+   ---------------------------------------- */
+
+/* Base empty state */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: var(--space-8) var(--space-6);
+    color: var(--text-secondary);
+    min-height: 200px;
+}
+
+.empty-state-icon {
+    width: 64px;
+    height: 64px;
+    margin-bottom: var(--space-4);
+    color: var(--accent-color);
+    opacity: 0.5;
+    animation: pulse 3s ease-in-out infinite;
+}
+
+.empty-state-icon svg {
+    width: 100%;
+    height: 100%;
+}
+
+.empty-state-title {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin-bottom: var(--space-2);
+}
+
+.empty-state-description {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    max-width: 280px;
+    margin: 0 auto;
+    line-height: var(--line-height-relaxed);
+}
+
+.empty-state-action {
+    margin-top: var(--space-5);
+}
+
+/* Illustrated empty state (with graphic) */
+.empty-state-illustrated {
+    position: relative;
+}
+
+.empty-state-illustrated::before {
+    content: '';
+    position: absolute;
+    width: 200px;
+    height: 200px;
+    background: radial-gradient(circle,
+            hsl(var(--hsl-accent) / 0.08) 0%,
+            transparent 70%);
+    border-radius: 50%;
+    z-index: -1;
+}
+
+/* Compact empty state for small areas */
+.empty-state-compact {
+    padding: var(--space-4) var(--space-3);
+    min-height: 100px;
+}
+
+.empty-state-compact .empty-state-icon {
+    width: 40px;
+    height: 40px;
+    margin-bottom: var(--space-2);
+}
+
+.empty-state-compact .empty-state-title {
+    font-size: var(--font-size-base);
+}
+
+.empty-state-compact .empty-state-description {
+    font-size: var(--font-size-xs);
+}
+
+/* ----------------------------------------
+   Specific Empty State Types
+   ---------------------------------------- */
+
+/* No results state */
+.empty-state-no-results .empty-state-icon {
+    color: var(--text-tertiary);
+}
+
+/* Error state */
+.empty-state-error .empty-state-icon {
+    color: var(--red);
+    animation: shakeSubtle 0.5s ease;
+}
+
+.empty-state-error .empty-state-title {
+    color: var(--red);
+}
+
+/* Success/complete state */
+.empty-state-success .empty-state-icon {
+    color: var(--green);
+    animation: bounceIn 0.5s ease;
+}
+
+/* Loading placeholder state */
+.empty-state-loading .empty-state-icon {
+    animation: spin 1s linear infinite;
+}
+
+/* ----------------------------------------
+   First-Run Onboarding Hints
+   ---------------------------------------- */
+
+/* Hint tooltip */
+.onboarding-hint {
+    position: relative;
+}
+
+.onboarding-hint::after {
+    content: attr(data-hint);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%) scale(0.95);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    font-size: var(--font-size-xs);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow-floating);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.2s ease;
+    z-index: 100;
+}
+
+.onboarding-hint::before {
+    content: '';
+    position: absolute;
+    bottom: calc(100% + 2px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: var(--bg-elevated);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 101;
+}
+
+.onboarding-hint:hover::after,
+.onboarding-hint:hover::before,
+.onboarding-hint:focus::after,
+.onboarding-hint:focus::before {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+}
+
+/* Pulsing indicator for new features */
+.onboarding-pulse {
+    position: relative;
+}
+
+.onboarding-pulse::after {
+    content: '';
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    width: 10px;
+    height: 10px;
+    background: var(--accent-color);
+    border-radius: 50%;
+    animation: pulseGlow 2s ease-in-out infinite;
+}
+
+/* Step indicator for multi-step onboarding */
+.onboarding-steps {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-5);
+}
+
+.onboarding-step {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--bg-tertiary);
+    border: 2px solid var(--border-color);
+    transition: all 0.2s ease;
+}
+
+.onboarding-step.active {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    transform: scale(1.2);
+}
+
+.onboarding-step.completed {
+    background: var(--green);
+    border-color: var(--green);
+}
+
+/* ----------------------------------------
+   Welcome Card
+   ---------------------------------------- */
+
+.welcome-card {
+    background: linear-gradient(135deg,
+            hsl(var(--hsl-accent) / 0.1) 0%,
+            hsl(var(--hsl-premium) / 0.08) 100%);
+    border: 1px solid hsl(var(--hsl-accent) / 0.2);
+    border-radius: var(--radius-xl);
+    padding: var(--space-6);
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.welcome-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--gradient-accent);
+}
+
+.welcome-card-icon {
+    width: 56px;
+    height: 56px;
+    margin: 0 auto var(--space-4);
+    padding: var(--space-3);
+    background: var(--accent-soft);
+    border-radius: var(--radius-l);
+    color: var(--accent-color);
+}
+
+.welcome-card-icon svg {
+    width: 100%;
+    height: 100%;
+}
+
+.welcome-card-title {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+    margin-bottom: var(--space-2);
+}
+
+.welcome-card-description {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    line-height: var(--line-height-relaxed);
+    max-width: 320px;
+    margin: 0 auto var(--space-5);
+}
+
+.welcome-card-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+/* ----------------------------------------
+   Quick Tips
+   ---------------------------------------- */
+
+.tip-card {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    background: hsl(var(--hsl-accent) / 0.08);
+    border: 1px solid hsl(var(--hsl-accent) / 0.2);
+    border-radius: var(--radius-m);
+    margin-bottom: var(--space-3);
+}
+
+.tip-card-icon {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    color: var(--accent-color);
+}
+
+.tip-card-content {
+    flex: 1;
+}
+
+.tip-card-title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.tip-card-text {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    line-height: var(--line-height-relaxed);
+}
+
+.tip-card-dismiss {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    padding: 0;
+    border-radius: var(--radius-xs);
+    transition: all 0.15s ease;
+}
+
+.tip-card-dismiss:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+}
+
+/* Keyboard shortcut tip */
+.tip-keyboard {
+    background: var(--bg-tertiary);
+    border-color: var(--border-color);
+}
+
+.tip-keyboard kbd {
+    display: inline-block;
+    padding: 2px 6px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-xs);
+    font-family: var(--font-family-mono);
+    font-size: 10px;
+    box-shadow: 0 1px 0 var(--border-color);
+    margin: 0 2px;
+}
+
+/* ----------------------------------------
+   Feature Spotlight
+   ---------------------------------------- */
+
+.feature-spotlight {
+    position: fixed;
+    inset: 0;
+    background: var(--overlay-bg);
+    z-index: 9000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.feature-spotlight.active {
+    display: flex;
+    animation: fadeIn 0.3s ease;
+}
+
+.feature-spotlight-card {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-xl);
+    padding: var(--space-6);
+    max-width: 400px;
+    text-align: center;
+    box-shadow: var(--shadow-dramatic);
+    animation: slideDownFade 0.3s ease;
+}
+
+.feature-spotlight-badge {
+    display: inline-block;
+    padding: var(--space-1) var(--space-3);
+    background: var(--gradient-premium);
+    color: white;
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-bold);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-radius: var(--radius-pill);
+    margin-bottom: var(--space-4);
+}
+
+.feature-spotlight-title {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-bold);
+    margin-bottom: var(--space-3);
+}
+
+.feature-spotlight-description {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    line-height: var(--line-height-relaxed);
+    margin-bottom: var(--space-5);
+}
+
+.feature-spotlight-actions {
+    display: flex;
+    gap: var(--space-3);
+    justify-content: center;
+}
+
+/* ----------------------------------------
+   Progress Indicator
+   ---------------------------------------- */
+
+.getting-started-progress {
+    margin-bottom: var(--space-4);
+}
+
+.getting-started-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-2);
+}
+
+.getting-started-label {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-secondary);
+}
+
+.getting-started-count {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+}
+
+.getting-started-bar {
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+}
+
+.getting-started-fill {
+    height: 100%;
+    background: var(--gradient-accent);
+    border-radius: var(--radius-pill);
+    transition: width 0.5s ease;
+}
+
+/* ----------------------------------------
+   Checklist
+   ---------------------------------------- */
+
+.onboarding-checklist {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.checklist-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2-5) var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-m);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.checklist-item:hover {
+    background: var(--bg-elevated);
+}
+
+.checklist-item.completed {
+    background: hsl(var(--hsl-success) / 0.1);
+}
+
+.checklist-icon {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--bg-secondary);
+    border: 2px solid var(--border-color);
+    color: transparent;
+    transition: all 0.2s ease;
+}
+
+.checklist-item.completed .checklist-icon {
+    background: var(--green);
+    border-color: var(--green);
+    color: white;
+}
+
+.checklist-icon svg {
+    width: 12px;
+    height: 12px;
+}
+
+.checklist-content {
+    flex: 1;
+}
+
+.checklist-title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-primary);
+}
+
+.checklist-item.completed .checklist-title {
+    text-decoration: line-through;
+    color: var(--text-secondary);
+}
+
+.checklist-description {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    margin-top: 2px;
+}
+
+/* ----------------------------------------
+   Contextual Help
+   ---------------------------------------- */
+
+.help-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: var(--font-weight-bold);
+    cursor: help;
+    transition: all 0.15s ease;
+}
+
+.help-trigger:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+/* Help popover */
+.help-popover {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 250px;
+    padding: var(--space-3);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-m);
+    box-shadow: var(--shadow-floating);
+    z-index: 100;
+    display: none;
+}
+
+.help-popover.active {
+    display: block;
+    animation: fadeInUp 0.2s ease;
+}
+
+.help-popover-title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    margin-bottom: var(--space-2);
+}
+
+.help-popover-content {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    line-height: var(--line-height-relaxed);
+}
+
+/* ----------------------------------------
+   No Data Placeholders
+   ---------------------------------------- */
+
+.placeholder-chart {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: 200px;
+    background: linear-gradient(180deg,
+            var(--bg-secondary) 0%,
+            var(--bg-tertiary) 100%);
+    border-radius: var(--radius-m);
+}
+
+.placeholder-chart-icon {
+    width: 80px;
+    height: 80px;
+    margin-bottom: var(--space-4);
+    opacity: 0.3;
+}
+
+.placeholder-chart-text {
+    font-size: var(--font-size-sm);
+    color: var(--text-tertiary);
+}
+
+/* Table empty row */
+.table-empty-row {
+    padding: var(--space-6);
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.table-empty-row td {
+    padding: var(--space-6);
+}

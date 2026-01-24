@@ -1,0 +1,339 @@
+/* ========================================
+   Data Visualization Utilities
+   Number formatting, indicators, sparklines
+   ======================================== */
+
+/* Numeric value formatting */
+.num {
+    font-family: var(--font-family-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.num-lg {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-bold);
+}
+
+.num-xl {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-bold);
+}
+
+.num-2xl {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-bold);
+}
+
+/* Colored numbers */
+.num-positive {
+    color: var(--green);
+}
+
+.num-negative {
+    color: var(--red);
+}
+
+.num-neutral {
+    color: var(--text-secondary);
+}
+
+/* Numbers with background badges */
+.num-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: var(--radius-s);
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-xs);
+}
+
+.num-badge-positive {
+    background: hsl(var(--hsl-success) / 0.15);
+    color: var(--green);
+    border: 1px solid hsl(var(--hsl-success) / 0.3);
+}
+
+.num-badge-negative {
+    background: hsl(var(--hsl-danger) / 0.15);
+    color: var(--red);
+    border: 1px solid hsl(var(--hsl-danger) / 0.3);
+}
+
+.num-badge-neutral {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+}
+
+/* Percentage indicators with arrows */
+.pct-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+}
+
+.pct-indicator::before {
+    content: '';
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+}
+
+.pct-indicator.up::before {
+    border-bottom: 6px solid var(--green);
+}
+
+.pct-indicator.down::before {
+    border-top: 6px solid var(--red);
+}
+
+.pct-indicator.up {
+    color: var(--green);
+}
+
+.pct-indicator.down {
+    color: var(--red);
+}
+
+/* Value change animation */
+.value-updated {
+    animation: highlightSuccess 0.6s ease-out;
+}
+
+.value-updated-negative {
+    animation: highlightDanger 0.6s ease-out;
+}
+
+/* Mini sparkline container */
+.sparkline {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    min-width: 60px;
+}
+
+.sparkline-bar {
+    flex: 1;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    gap: 1px;
+}
+
+.sparkline-bar span {
+    flex: 1;
+    background: hsl(var(--hsl-accent) / 0.6);
+    border-radius: 1px 1px 0 0;
+    transition: height 0.2s ease;
+}
+
+.sparkline-bar span.positive {
+    background: hsl(var(--hsl-success) / 0.7);
+}
+
+.sparkline-bar span.negative {
+    background: hsl(var(--hsl-danger) / 0.7);
+}
+
+/* Progress mini bar */
+.progress-mini {
+    height: 4px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+}
+
+.progress-mini-fill {
+    height: 100%;
+    background: var(--gradient-accent);
+    border-radius: var(--radius-pill);
+    transition: width 0.3s ease;
+}
+
+.progress-mini-fill.success {
+    background: var(--gradient-success);
+}
+
+.progress-mini-fill.danger {
+    background: var(--gradient-danger);
+}
+
+/* Win rate visualization */
+.winrate-bar {
+    display: flex;
+    height: 6px;
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+    background: var(--bg-tertiary);
+}
+
+.winrate-bar-win {
+    background: var(--green);
+    transition: width 0.3s ease;
+}
+
+.winrate-bar-loss {
+    background: var(--red);
+    transition: width 0.3s ease;
+}
+
+/* Metric card with icon */
+.metric-card {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--border-color);
+    transition: all 0.2s ease;
+}
+
+.metric-card:hover {
+    background: var(--bg-elevated);
+    transform: translateY(-1px);
+}
+
+.metric-card-icon {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-m);
+    background: var(--accent-soft);
+    color: var(--accent-color);
+}
+
+.metric-card-icon svg {
+    width: 20px;
+    height: 20px;
+}
+
+.metric-card-content {
+    flex: 1;
+}
+
+.metric-card-label {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+}
+
+.metric-card-value {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-bold);
+    font-family: var(--font-family-mono);
+}
+
+/* Trend indicator */
+.trend {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.trend-icon {
+    width: 16px;
+    height: 16px;
+}
+
+.trend.up .trend-icon {
+    color: var(--green);
+}
+
+.trend.down .trend-icon {
+    color: var(--red);
+}
+
+.trend.neutral .trend-icon {
+    color: var(--text-tertiary);
+}
+
+/* Ratio display (e.g., 3:1) */
+.ratio-display {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-family-mono);
+    font-weight: var(--font-weight-semibold);
+}
+
+.ratio-display-win {
+    color: var(--green);
+}
+
+.ratio-display-separator {
+    color: var(--text-tertiary);
+}
+
+.ratio-display-loss {
+    color: var(--red);
+}
+
+/* Heat indicator (0-100 scale) */
+.heat-indicator {
+    width: 100%;
+    height: 8px;
+    background: linear-gradient(90deg,
+            hsl(var(--hsl-danger)),
+            hsl(var(--hsl-warning)),
+            hsl(var(--hsl-success)));
+    border-radius: var(--radius-pill);
+    position: relative;
+}
+
+.heat-indicator::after {
+    content: '';
+    position: absolute;
+    width: 4px;
+    height: 12px;
+    background: white;
+    border-radius: 2px;
+    top: -2px;
+    left: var(--heat-value, 50%);
+    transform: translateX(-50%);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Comparison bars */
+.compare-bar {
+    display: flex;
+    align-items: center;
+    height: 20px;
+    gap: 2px;
+}
+
+.compare-bar-negative {
+    flex: 1;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.compare-bar-positive {
+    flex: 1;
+}
+
+.compare-bar-fill {
+    height: 8px;
+    border-radius: var(--radius-xs);
+    transition: width 0.3s ease;
+}
+
+.compare-bar-negative .compare-bar-fill {
+    background: var(--red);
+}
+
+.compare-bar-positive .compare-bar-fill {
+    background: var(--green);
+}
+
+.compare-bar-center {
+    width: 2px;
+    height: 100%;
+    background: var(--border-color);
+}
