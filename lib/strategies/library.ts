@@ -6,6 +6,7 @@ import { rsi_macd_combo } from './lib/rsi-macd-combo';
 import { volume_profile } from './lib/volume-profile';
 import { donchian_breakout } from './lib/donchian-breakout';
 import { supertrend_strategy } from './lib/supertrend';
+import { supertrend_confirmed } from './lib/supertrend-confirmed';
 import { parabolic_sar } from './lib/parabolic-sar';
 import { momentum_strategy } from './lib/momentum';
 import { fib_speed_fan } from './lib/fib-speed-fan';
@@ -32,6 +33,7 @@ export const strategies: Record<string, Strategy> = {
     volume_profile,
     donchian_breakout,
     supertrend_strategy,
+    supertrend_confirmed,
     parabolic_sar,
     momentum_strategy,
     fib_speed_fan,

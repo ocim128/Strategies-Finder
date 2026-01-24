@@ -1,0 +1,864 @@
+// ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+//   ----------------------------------------------------------------------------
+//     🚀    RAVM     Matrix - The Educational Trading
+//   ----------------------------------------------------------------------------
+//   Copyright (c) 2025 Ata
+//   ----------------------------------------------------------------------------
+//   CONCEPT :
+//   1. Hierarchical State Machine: Context (RSI 30/70) + Trigger (Z-AoT).
+//   2. Geometric Primacy: Geometry (Z-AoT) confirms the reversal; RSI levels are warnings.
+//   3. Educational Capping (Geometric Veto):     Score capped at 49% if Geometry does not confirm.
+//   4. Volume Engine &  Matrix (VSA Interpretation).
+//   5. UI/UX: Differentiated Smart Labels (Weak vs Confirmed) with dynamic styling.
+// ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+// @version=6
+indicator("RSI Analytic Volume Matrix [RAVM] ", shorttitle="RAVM", overlay=true, max_labels_count=500, max_lines_count=500)
+import TradingView/ta/10 as tvta
+
+//═══════════════════════════════════════════════
+// 1. SETTINGS & CONFIGURATION
+//═══════════════════════════════════════════════
+// --- Language Setup ---
+string LANG_EN = "English", LANG_FA = "فارسی", LANG_TR = "Türkçe", LANG_RU = "Русский"
+string GRP_LANG = "Language / زبان / Dil / Язык"
+string user_lang = input.string(LANG_EN, "Select Language", options=[LANG_EN, LANG_FA, LANG_TR, LANG_RU], group=GRP_LANG)
+
+// --- RSI Core Settings (Context)
+string GRP_RSI = "RSI Core Engine (Context)"
+int rsi_len = input.int(14, "RSI Length", minval=1, group=GRP_RSI)
+float rsi_src = input.source(close, "RSI Source", group=GRP_RSI)
+float rsi_ob = input.float(70.0, "Overbought Level", group=GRP_RSI)
+float rsi_os = input.float(30.0, "Oversold Level", group=GRP_RSI)
+
+// --- Geometric Engine Settings (Trigger) ---
+string GRP_GEO = "Geometric Engine (Trigger & Confirmation)"
+bool use_geo = input.bool(true, "Enable Geometric Triggers (Hidden Reversals)", group=GRP_GEO)
+float aot_sigma = input.float(2.5, "Z-AoT Sigma Threshold (Hidden Reversals)", step=0.1, tooltip="Angle of Turn Z-Score threshold for Geometric Triggers (Hidden Reversals outside 30/70).", group=GRP_GEO)
+
+//  Confirmation Threshold for Classic Levels
+float confirmation_ratio = input.float(0.6, "Confirmation Ratio (Inside 30/70)", step=0.1, tooltip="Defines the Z-AoT threshold required to confirm a reversal INSIDE the 30/70 zones.\nThreshold = Sigma * Ratio.\nExample: 2.5 * 0.6 = 1.5 Sigma required for confirmation.", group=GRP_GEO)
+int norm_len_mult = input.int(2, "Normalization Period (x RSI Len)", minval=1, tooltip="Final Statistical Period = RSI Length * This Multiplier.\nExample: 14 * 2 = 28 bars.\nThis period is used to calculate the Z-Score for both Volume Analysis and Geometric Acceleration.", group=GRP_GEO)
+
+// --- Volume Matrix Settings ---
+string GRP_VOL = "Volume Matrix Engine"
+string calc_mod = input.string("Geometry (Approx)", "Volume Calculation", options=["Geometry (Approx)", "Intrabar (Precise)"], group=GRP_VOL)
+string ltf_res = input.timeframe("1S", "Intrabar Precision", group=GRP_VOL)
+float z_thresh = input.float(2.0, "Volume Z-Score Threshold (Sigma)", step=0.1, group=GRP_VOL)
+
+// --- Visual Interface ---
+string GRP_VIS = "Visual Interface & Dashboard"
+bool show_lbl = input.bool(true, "Show Smart Connector Labels", group=GRP_VIS)
+bool show_tbl = input.bool(true, "Show     Matrix Dashboard", group=GRP_VIS)
+string txt_size = input.string("Small", "Label Size", options=["Tiny", "Small", "Normal", "Large"], group=GRP_VIS)
+string tbl_pos = input.string(position.top_right, "Table Position", options=[position.top_right, position.top_left, position.top_center, position.bottom_right, position.bottom_left, position.bottom_center, position.middle_right, position.middle_left, position.middle_center], group=GRP_VIS)
+string tbl_txt_size = input.string("Small", "Table Text Size", options=["Tiny", "Small", "Normal", "Large"], group=GRP_VIS)
+color col_bull = input.color(#00E676, "Bullish Confirmed Color", group=GRP_VIS)
+color col_bear = input.color(color.red, "Bearish Confirmed Color", group=GRP_VIS)
+// Color for unconfirmed signals
+color col_warn = input.color(color.gray, "Warning/Weak Color (Unconfirmed)", group=GRP_VIS)
+
+//═══════════════════════════════════════════════
+// 1.5. LOCALIZATION ENGINE (DSRTL STYLE)
+//═══════════════════════════════════════════════
+// Keys (K_)
+string K_DASH_TITLE = "K_DASH_TITLE", K_DASH_BIAS = "K_DASH_BIAS", K_DASH_SIGNAL = "K_DASH_SIGNAL"
+string K_MOMENTUM = "K_MOMENTUM", K_VOLUME = "K_VOLUME"
+string K_LBL_SCORE = "K_LBL_SCORE"
+string K_GEO_BULL = "K_GEO_BULL", K_GEO_BEAR = "K_GEO_BEAR"
+string K_CLASSIC_OS = "K_CLASSIC_OS", K_CLASSIC_OB = "K_CLASSIC_OB"
+//  Confirmation Status Keys
+string K_STATUS_CONF = "K_STATUS_CONF", K_STATUS_WARN = "K_STATUS_WARN"
+
+// Matrix Scenarios (S_)
+string S_ABSORPTION = "S_ABSORPTION", S_STOPPING_VOL = "S_STOPPING_VOL", S_STRONG_REVERSAL = "S_STRONG_REVERSAL"
+string S_DISTRIBUTION = "S_DISTRIBUTION", S_BUYING_CLIMAX = "S_BUYING_CLIMAX", S_STRONG_DROP = "S_STRONG_DROP"
+string S_EXHAUSTION_UP = "S_EXHAUSTION_UP", S_EXHAUSTION_DN = "S_EXHAUSTION_DN"
+string S_NO_DEMAND = "S_NO_DEMAND", S_NO_SUPPLY = "S_NO_SUPPLY"
+string S_EFFORT_VS_RESULT_BULL = "S_EFFORT_VS_RESULT_BULL", S_EFFORT_VS_RESULT_BEAR = "S_EFFORT_VS_RESULT_BEAR"
+string S_NEUTRAL = "S_NEUTRAL", S_CONFIRMATION_BULL = "S_CONFIRMATION_BULL", S_CONFIRMATION_BEAR = "S_CONFIRMATION_BEAR"
+string S_WEAK_REVERSAL = "S_WEAK_REVERSAL"
+
+T(string key) =>
+    string s = key
+    if user_lang == LANG_FA
+        s := switch key
+            K_DASH_TITLE => "سناریوی فعال VSA"
+            K_DASH_BIAS => "گرایش غالب:"
+            K_DASH_SIGNAL => "تحلیل هوشمند:"
+            K_MOMENTUM => "مومنتوم (M)"
+            K_VOLUME => "حجم (V)"
+            K_LBL_SCORE => "امتیاز     "
+            K_GEO_BULL => "چرخش صعودی (هندسی)"
+            K_GEO_BEAR => "چرخش نزولی (هندسی)"
+            K_CLASSIC_OS => "اشباع فروش"
+            K_CLASSIC_OB => "اشباع خرید"
+            K_STATUS_CONF => "(تأیید شده ✅)"
+            K_STATUS_WARN => "(هشدار ⚠️)"
+            // Scenarios FA
+            S_ABSORPTION => "جذب (Absorption)"
+            S_STOPPING_VOL => "حجم متوقف کننده (Stopping Vol)"
+            S_STRONG_REVERSAL => "بازگشت قوی (احتمال بالا)"
+            S_DISTRIBUTION => "توزیع (Distribution)"
+            S_BUYING_CLIMAX => "اوج خرید (Buying Climax)"
+            S_STRONG_DROP => "ریزش قوی (احتمال بالا)"
+            S_EXHAUSTION_UP => "خستگی روند صعودی"
+            S_EXHAUSTION_DN => "خستگی روند نزولی"
+            S_NO_DEMAND => "عدم تقاضا (No Demand)"
+            S_NO_SUPPLY => "عدم عرضه (No Supply)"
+            S_EFFORT_VS_RESULT_BULL => "تلاش صعودی بدون نتیجه"
+            S_EFFORT_VS_RESULT_BEAR => "تلاش نزولی بدون نتیجه"
+            S_NEUTRAL => "خنثی / بازار کم عمق"
+            S_CONFIRMATION_BULL => "تایید حرکت صعودی"
+            S_CONFIRMATION_BEAR => "تایید حرکت نزولی"
+            S_WEAK_REVERSAL => "بازگشت ضعیف (ریسک بالا)"
+            => key
+    else if user_lang == LANG_TR
+        s := switch key
+            K_DASH_TITLE => "Aktif VSA Senaryosu"
+            K_DASH_BIAS => "Baskın Eğilim:"
+            K_DASH_SIGNAL => "Akıllı Analiz:"
+            K_MOMENTUM => "Momentum (M)"
+            K_VOLUME => "Hacim (V)"
+            K_LBL_SCORE => "  Puanı"
+            K_GEO_BULL => "Boğa Dönüşü (Geometrik)"
+            K_GEO_BEAR => "Ayı Dönüşü (Geometrik)"
+            K_CLASSIC_OS => "Aşırı Satım"
+            K_CLASSIC_OB => "Aşırı Alım"
+            K_STATUS_CONF => "(Onaylandı ✅)"
+            K_STATUS_WARN => "(Uyarı ⚠️)"
+            // Scenarios TR
+            S_ABSORPTION => "Emilim (Absorption)"
+            S_STOPPING_VOL => "Durdurucu Hacim (Stopping Vol)"
+            S_STRONG_REVERSAL => "Güçlü Dönüş (Yüksek Olasılık)"
+            S_DISTRIBUTION => "Dağıtım (Distribution)"
+            S_BUYING_CLIMAX => "Alış Zirvesi (Buying Climax)"
+            S_STRONG_DROP => "Güçlü Düşüş (Yüksek Olasılık)"
+            S_EXHAUSTION_UP => "Yükseliş Tükenmesi"
+            S_EXHAUSTION_DN => "Düşüş Tükenmesi"
+            S_NO_DEMAND => "Talep Yok (No Demand)"
+            S_NO_SUPPLY => "Arz Yok (No Supply)"
+            S_EFFORT_VS_RESULT_BULL => "Sonuçsuz Boğa Çabası"
+            S_EFFORT_VS_RESULT_BEAR => "Sonuçsuz Ayı Çabası"
+            S_NEUTRAL => "Nötr / Sığ Piyasa"
+            S_CONFIRMATION_BULL => "Boğa Hareketi Teyidi"
+            S_CONFIRMATION_BEAR => "Ayı Hareketi Teyidi"
+            S_WEAK_REVERSAL => "Zayıf Dönüş (Yüksek Risk)"
+            => key
+    else if user_lang == LANG_RU
+        s := switch key
+            K_DASH_TITLE => "Активный Сценарий VSA"
+            K_DASH_BIAS => "Доминирующий Настрой:"
+            K_DASH_SIGNAL => "Умный Анализ:"
+            K_MOMENTUM => "Импульс (M)"
+            K_VOLUME => "Объем (V)"
+            K_LBL_SCORE => "Квантовый Счет"
+            K_GEO_BULL => "Бычий Разворот (Геометр.)"
+            K_GEO_BEAR => "Медвежий Разворот (Геометр.)"
+            K_CLASSIC_OS => "Перепроданность"
+            K_CLASSIC_OB => "Перекупленность"
+            K_STATUS_CONF => "(Подтверждено ✅)"
+            K_STATUS_WARN => "(Предупреждение ⚠️)"
+            // Scenarios RU
+            S_ABSORPTION => "Поглощение (Absorption)"
+            S_STOPPING_VOL => "Останавливающий Объем (Stopping Vol)"
+            S_STRONG_REVERSAL => "Сильный Разворот (Высокая Вероятн.)"
+            S_DISTRIBUTION => "Распределение (Distribution)"
+            S_BUYING_CLIMAX => "Кульминация Покупок (Buying Climax)"
+            S_STRONG_DROP => "Сильное Падение (Высокая Вероятн.)"
+            S_EXHAUSTION_UP => "Истощение Роста"
+            S_EXHAUSTION_DN => "Истощение Падения"
+            S_NO_DEMAND => "Нет Спроса (No Demand)"
+            S_NO_SUPPLY => "Нет Предложения (No Supply)"
+            S_EFFORT_VS_RESULT_BULL => "Бычье Усилие без Результата"
+            S_EFFORT_VS_RESULT_BEAR => "Медвежье Усилие без Результата"
+            S_NEUTRAL => "Нейтрально / Тонкий Рынок"
+            S_CONFIRMATION_BULL => "Подтверждение Роста"
+            S_CONFIRMATION_BEAR => "Подтверждение Падения"
+            S_WEAK_REVERSAL => "Слабый Разворот (Высокий Риск)"
+            => key
+    else // English (Default)
+        s := switch key
+            K_DASH_TITLE => "Active VSA Scenario"
+            K_DASH_BIAS => "Dominant Bias:"
+            K_DASH_SIGNAL => "Smart Analysis:"
+            K_MOMENTUM => "Momentum (M)"
+            K_VOLUME => "Volume (V)"
+            K_LBL_SCORE => "    Score"
+            K_GEO_BULL => "Bullish Turn (Geometric)"
+            K_GEO_BEAR => "Bearish Turn (Geometric)"
+            K_CLASSIC_OS => "Oversold"
+            K_CLASSIC_OB => "Overbought"
+            K_STATUS_CONF => "(Confirmed ✅)"
+            K_STATUS_WARN => "(Warning ⚠️)"
+            // Scenarios EN
+            S_ABSORPTION => "Absorption"
+            S_STOPPING_VOL => "Stopping Volume"
+            S_STRONG_REVERSAL => "Strong Reversal (High Prob.)"
+            S_DISTRIBUTION => "Distribution"
+            S_BUYING_CLIMAX => "Buying Climax"
+            S_STRONG_DROP => "Strong Drop (High Prob.)"
+            S_EXHAUSTION_UP => "Uptrend Exhaustion"
+            S_EXHAUSTION_DN => "Downtrend Exhaustion"
+            S_NO_DEMAND => "No Demand"
+            S_NO_SUPPLY => "No Supply"
+            S_EFFORT_VS_RESULT_BULL => "Bullish Effort, No Result"
+            S_EFFORT_VS_RESULT_BEAR => "Bearish Effort, No Result"
+            S_NEUTRAL => "Neutral / Thin Market"
+            S_CONFIRMATION_BULL => "Bullish Confirmation"
+            S_CONFIRMATION_BEAR => "Bearish Confirmation"
+            S_WEAK_REVERSAL => "Weak Reversal (High Risk)"
+            => key
+    s
+
+//═══════════════════════════════════════════════
+// 2. CORE CALCULATIONS (RSI & VOLUME)
+//═══════════════════════════════════════════════
+// --- RSI ---
+float rsi_val = ta.rsi(rsi_src, rsi_len)
+
+// --- Volume Engine (Dual Mode) ---
+type VolPack
+    float v_total
+    float v_buy
+    float v_sell
+    float v_delta
+
+f_get_geo_vol() =>
+    float range_i = high - low
+    float vb = 0.0, float vs = 0.0
+    if range_i == 0
+        vb := volume * 0.5
+        vs := volume * 0.5
+    else
+        // Proportional distribution based on candle body position
+        vb := volume * ((close - low) / range_i)
+        vs := volume * ((high - close) / range_i)
+    VolPack.new(volume, vb, vs, vb - vs)
+
+f_get_ltf_vol() =>
+    [u, d, dl] = tvta.requestUpAndDownVolume(ltf_res)
+    float vb = math.abs(u), float vs = math.abs(d)
+    VolPack.new(vb + vs, vb, vs, vb - vs)
+
+VolPack curr_vol = calc_mod == "Geometry (Approx)" ? f_get_geo_vol() : f_get_ltf_vol()
+
+//═══════════════════════════════════════════════
+// 3. GEOMETRIC ENGINE (RSI Acceleration Analysis)
+//═══════════════════════════════════════════════
+// Goal: Detect sharp changes in momentum (V-Shapes).
+// 1. Velocity
+float rsi_velocity = ta.change(rsi_val) // RSI[0] - RSI[1]
+// 2. Acceleration
+float rsi_acceleration = ta.change(rsi_velocity) // Velocity[0] - Velocity[1]
+
+// 3. Adaptive Z-Score Normalization
+int normalization_period = rsi_len * norm_len_mult
+float avg_accel = ta.sma(rsi_acceleration, normalization_period)
+float std_accel = ta.stdev(rsi_acceleration, normalization_period)
+
+// The Key Metric: Z-Score of Angle of Turn (Z-AoT)
+float z_score_aot = std_accel != 0 ? (rsi_acceleration - avg_accel) / std_accel : 0.0
+
+// Helper: Normalize Z-Score (0 to 1). Capped at the defined sigma threshold for stability.
+f_normalize_z(float z_score, float cap) => math.min(math.abs(z_score), cap) / cap
+// Momentum Shift Intensity (MSI)
+float msi = f_normalize_z(z_score_aot, aot_sigma)
+
+//═══════════════════════════════════════════════
+// 4. STATISTICAL ENGINE (Volume Analysis)
+//═══════════════════════════════════════════════
+f_calc_stats(float series_val, int length, float z_limit) =>
+    float avg = ta.sma(series_val, length)
+    float std = ta.stdev(series_val, length)
+    float z_scr = std != 0 ? (series_val - avg) / std : 0.0
+    bool is_z_brk = math.abs(z_scr) > z_limit
+    [z_scr, is_z_brk]
+
+// Run Stats (Using normalization_period for consistency)
+[z_t, zbrk_t] = f_calc_stats(curr_vol.v_total, normalization_period, z_thresh)
+[z_b, zbrk_b] = f_calc_stats(curr_vol.v_buy, normalization_period, z_thresh)
+[z_s, zbrk_s] = f_calc_stats(curr_vol.v_sell, normalization_period, z_thresh)
+// Absolute delta for magnitude analysis
+[z_d, zbrk_d] = f_calc_stats(math.abs(curr_vol.v_delta), normalization_period, z_thresh)
+
+// Volume Power
+float volume_power = f_normalize_z(z_t, z_thresh)
+
+//═══════════════════════════════════════════════
+// 5. TRIGGER LOGIC (HIERARCHICAL STATE MACHINE)
+//═══════════════════════════════════════════════
+// GOAL: Implement the new hierarchy: Warning on entry (Context), Confirmed on geometric turn (Trigger).
+
+// --- Context (RSI Zones - State) ---
+bool in_ob_zone = rsi_val >= rsi_ob
+bool in_os_zone = rsi_val <= rsi_os
+
+// --- Triggers (Geometric Acceleration - Events)
+// Calculate the threshold required for confirmation inside the 30/70 zones.
+float CONFIRMATION_THRESHOLD = aot_sigma * confirmation_ratio
+
+// 1. Contextual Triggers (Inside 30/70 zones - uses lower threshold for confirmation)
+// Detects the *start* of the turn (the cross of the threshold).
+bool  contextual_bull_trigger = ta.crossover(z_score_aot, CONFIRMATION_THRESHOLD)
+bool  contextual_bear_trigger = ta.crossunder(z_score_aot, -CONFIRMATION_THRESHOLD)
+
+// 2. Hidden Triggers (Outside 30/70 zones - uses higher threshold for standalone signals)
+bool  _raw_bull_geo = ta.crossover(z_score_aot, aot_sigma)
+bool  _raw_bear_geo = ta.crossunder(z_score_aot, -aot_sigma)
+
+bool  hidden_bull_trigger = use_geo and _raw_bull_geo
+bool  hidden_bear_trigger = use_geo and _raw_bear_geo
+
+// Used for the Matrix Engine (Section 6) - instantaneous state check (retained from v2.0)
+// Note: We use the full sigma here for the Matrix M-State definition.
+bool is_sharp_bullish_turn = use_geo and z_score_aot > aot_sigma
+bool is_sharp_bearish_turn = use_geo and z_score_aot < -aot_sigma
+
+// --- State Machine Variables (For Label Drawing) ---
+var bool is_bullish_setup = false
+var bool is_bearish_setup = false
+//  Differentiates Warning (Context only) from Setup (Context + Trigger)
+var bool is_confirmed = false
+var string trigger_source = ""
+var string trigger_status = "" // Textual status (Warning/Confirmed)
+
+// Reset state on new bar
+is_bullish_setup := false
+is_bearish_setup := false
+is_confirmed := false
+trigger_source := ""
+trigger_status := ""
+
+// --- Logic Hierarchy
+
+bool just_entered_os = ta.crossunder(rsi_val, rsi_os)
+bool just_entered_ob = ta.crossover(rsi_val, rsi_ob)
+
+// 1. Bullish Scenarios
+if in_os_zone
+    // 1a. Context Met (In OS Zone). Check if the Trigger fires NOW, or if we just entered the zone.
+    if contextual_bull_trigger
+        // TRIGGER FIRED: A sufficient turn occurred while in the OS zone.
+        is_bullish_setup := true
+        is_confirmed := true
+        trigger_source := K_CLASSIC_OS
+        trigger_status := K_STATUS_CONF
+    else if just_entered_os
+        // Just entered the zone (Event), no sufficient turn yet: WARNING (Educational)
+        // We only issue the warning if the trigger didn't also fire on the same bar.
+        is_bullish_setup := true
+        is_confirmed := false
+        trigger_source := K_CLASSIC_OS
+        trigger_status := K_STATUS_WARN
+// 1b. Hidden Reversal (Geometry Trigger outside the classic context)
+else if hidden_bull_trigger
+    // Filter: Ensure we are not already deep in OB territory
+    if rsi_val < rsi_ob - 5
+        is_bullish_setup := true
+        is_confirmed := true // Geometric signals are always confirmed by definition
+        trigger_source := K_GEO_BULL
+        trigger_status := K_STATUS_CONF
+
+// 2. Bearish Scenarios
+if in_ob_zone
+    // 2a. Context Met (In OB Zone).
+    if contextual_bear_trigger
+        // TRIGGER FIRED: A sufficient turn occurred while in the OB zone.
+        is_bearish_setup := true
+        is_confirmed := true
+        trigger_source := K_CLASSIC_OB
+        trigger_status := K_STATUS_CONF
+    else if just_entered_ob
+        // Just entered the zone (Event), no sufficient turn yet: WARNING
+        is_bearish_setup := true
+        is_confirmed := false
+        trigger_source := K_CLASSIC_OB
+        trigger_status := K_STATUS_WARN
+// 2b. Hidden Reversal
+else if hidden_bear_trigger
+    // Filter: Ensure we are not already deep in OS territory
+    if rsi_val > rsi_os + 5
+        is_bearish_setup := true
+        is_confirmed := true
+        trigger_source := K_GEO_BEAR
+        trigger_status := K_STATUS_CONF
+
+
+bool trigger_analysis = is_bullish_setup or is_bearish_setup
+
+//═══════════════════════════════════════════════
+// 6. THE     MATRIX ENGINE (VSA Interpretation)
+//═══════════════════════════════════════════════
+// UDT for Interpretation
+type MatrixInterpretation
+    string title_key
+    string bias_key
+    string signal_key
+    color m_col
+    color bias_col
+
+// --- State Definitions (5x5 Matrix) ---
+// M-State (Momentum Axis): Based on RSI Level and Z-Score AoT
+// 1=Strong Up/Reversal, 3=Neutral, 5=Strong Down/Reversal
+f_get_momentum_state() =>
+    int m_state = 3 // Default Neutral
+    // Prioritize strong signals (Classic or Geometric)
+    if rsi_val > rsi_ob or is_sharp_bearish_turn
+        m_state := 5 // Strong Down
+    else if rsi_val < rsi_os or is_sharp_bullish_turn
+        m_state := 1 // Strong Up
+    else if rsi_val > 55
+        m_state := 2 // Moderate Up
+    else if rsi_val < 45
+        m_state := 4 // Moderate Down
+    m_state
+
+// V-State (Volume Dynamics Axis): Based on Volume Z-Scores and Delta
+// 1=Aggressive Buying, 3=Low Activity, 5=Aggressive Selling
+f_get_volume_state() =>
+    int v_state = 3 // Default Low Activity
+    bool high_activity = zbrk_t // Total volume is significant
+    bool strong_delta = zbrk_d // Delta magnitude is significant
+    if high_activity
+        if curr_vol.v_delta > 0
+            if strong_delta and zbrk_b
+                v_state := 1 // Aggressive Buying
+            else
+                v_state := 2 // Moderate Buying Pressure
+        else
+            if strong_delta and zbrk_s
+                v_state := 5 // Aggressive Selling
+            else
+                v_state := 4 // Moderate Selling Pressure
+    v_state
+
+// --- The Interpretation Brain ---
+f_interpret_quantum_matrix(int M, int V) =>
+    string title = S_NEUTRAL, string bias = S_NEUTRAL, string signal = S_NEUTRAL
+    color m_col = color.gray, color bias_col = color.gray
+    // Color Palette
+    color C_BULL_S = #00C853, C_BULL_W = #69F0AE
+    color C_BEAR_S = #D50000, C_BEAR_W = #FF8A80
+    color C_CONFLICT = #FFD600, C_NEUTRAL_C = #78909C
+    // The 25 Scenarios Mapping (Smart Money Hunting Logic)
+    if M == 1 // M1: Strong Up Momentum/Reversal
+        if V == 1 // Strong Confirmation
+            title := S_CONFIRMATION_BULL
+            bias := S_CONFIRMATION_BULL
+            signal := S_STRONG_REVERSAL
+            m_col := C_BULL_S
+            bias_col := C_BULL_S
+        else if V == 2 // Moderate Confirmation
+            title := S_CONFIRMATION_BULL
+            bias := S_CONFIRMATION_BULL
+            signal := S_STRONG_REVERSAL
+            m_col := C_BULL_W
+            bias_col := C_BULL_W
+        else if V == 3 // No Supply (Exhaustion Down)
+            title := S_NO_SUPPLY
+            bias := S_EXHAUSTION_DN
+            signal := S_WEAK_REVERSAL
+            m_col := C_BULL_W
+            bias_col := C_BULL_W
+        else if V == 4 // Absorption
+            title := S_ABSORPTION
+            bias := S_ABSORPTION
+            signal := S_STRONG_REVERSAL
+            m_col := C_BULL_S
+            bias_col := C_BULL_S
+        else // V == 5: Stopping Volume (Major Absorption)
+            title := S_STOPPING_VOL
+            bias := S_ABSORPTION
+            signal := S_STRONG_REVERSAL
+            m_col := C_BULL_S
+            bias_col := C_BULL_S
+
+    else if M == 2 // M2: Moderate Up
+        if V == 1 // Strong Buying
+            title := S_CONFIRMATION_BULL
+            bias := S_CONFIRMATION_BULL
+            signal := S_CONFIRMATION_BULL
+            m_col := C_BULL_S
+            bias_col := C_BULL_S
+        else if V == 2 // Moderate Buying
+            title := S_CONFIRMATION_BULL
+            bias := S_CONFIRMATION_BULL
+            signal := S_CONFIRMATION_BULL
+            m_col := C_BULL_W
+            bias_col := C_BULL_W
+        else if V == 3 // No Demand (Exhaustion Up) - Note: Market Psychology shift here
+            title := S_NO_DEMAND
+            bias := S_EXHAUSTION_UP
+            signal := S_EXHAUSTION_UP
+            m_col := C_BEAR_W
+            bias_col := C_BEAR_W
+        else // V == 4 or 5: Conflict/Distribution
+            title := S_DISTRIBUTION
+            bias := S_DISTRIBUTION
+            signal := S_EFFORT_VS_RESULT_BULL
+            m_col := C_CONFLICT
+            bias_col := C_BEAR_S
+
+    else if M == 3 // M3: Neutral
+        if V == 1 or V == 5 // High activity in neutral zone -> Conflict/Volatility
+            title := S_NEUTRAL
+            bias := S_NEUTRAL
+            signal := "High Volume Churn / Volatility"
+            m_col := C_CONFLICT
+            bias_col := C_CONFLICT
+        else // Low/Moderate activity
+            title := S_NEUTRAL
+            bias := S_NEUTRAL
+            signal := S_NEUTRAL
+            m_col := C_NEUTRAL_C
+            bias_col := C_NEUTRAL_C
+
+    else if M == 4 // M4: Moderate Down
+        if V == 5 // Strong Selling
+            title := S_CONFIRMATION_BEAR
+            bias := S_CONFIRMATION_BEAR
+            signal := S_CONFIRMATION_BEAR
+            m_col := C_BEAR_S
+            bias_col := C_BEAR_S
+        else if V == 4 // Moderate Selling
+            title := S_CONFIRMATION_BEAR
+            bias := S_CONFIRMATION_BEAR
+            signal := S_CONFIRMATION_BEAR
+            m_col := C_BEAR_W
+            bias_col := C_BEAR_W
+        else if V == 3 // No Supply (Exhaustion Down) - Note: Market Psychology shift here
+            title := S_NO_SUPPLY
+            bias := S_EXHAUSTION_DN
+            signal := S_EXHAUSTION_DN
+            m_col := C_BULL_W
+            bias_col := C_BULL_W
+        else // V == 1 or 2: Conflict/Absorption
+            title := S_ABSORPTION
+            bias := S_ABSORPTION
+            signal := S_EFFORT_VS_RESULT_BEAR
+            m_col := C_CONFLICT
+            bias_col := C_BULL_S
+
+    else if M == 5 // M5: Strong Down Momentum/Reversal
+        if V == 5 // Strong Confirmation
+            title := S_CONFIRMATION_BEAR
+            bias := S_CONFIRMATION_BEAR
+            signal := S_STRONG_DROP
+            m_col := C_BEAR_S
+            bias_col := C_BEAR_S
+        else if V == 4 // Moderate Confirmation
+            title := S_CONFIRMATION_BEAR
+            bias := S_CONFIRMATION_BEAR
+            signal := S_STRONG_DROP
+            m_col := C_BEAR_W
+            bias_col := C_BEAR_W
+        else if V == 3 // No Demand (Exhaustion Up)
+            title := S_NO_DEMAND
+            bias := S_EXHAUSTION_UP
+            signal := S_WEAK_REVERSAL
+            m_col := C_BEAR_W
+            bias_col := C_BEAR_W
+        else if V == 2 // Distribution
+            title := S_DISTRIBUTION
+            bias := S_DISTRIBUTION
+            signal := S_STRONG_DROP
+            m_col := C_BEAR_S
+            bias_col := C_BEAR_S
+        else // V == 1: Buying Climax (Major Distribution)
+            title := S_BUYING_CLIMAX
+            bias := S_DISTRIBUTION
+            signal := S_STRONG_DROP
+            m_col := C_BEAR_S
+            bias_col := C_BEAR_S
+
+    MatrixInterpretation.new(title, bias, signal, m_col, bias_col)
+
+// Calculate Current States
+int current_M_state = f_get_momentum_state()
+int current_V_state = f_get_volume_state()
+MatrixInterpretation current_interp = f_interpret_quantum_matrix(current_M_state, current_V_state)
+
+//═══════════════════════════════════════════════
+// 7. SCORING SYSTEM (Geometric Primacy & Volume Story)
+//═══════════════════════════════════════════════
+
+// Goal: Implement Ata's pipeline:
+// 1) RSI Angle of Turn (Geometry)
+// 2) Check if total volume expanded
+// 3) See if expansion is from buy or sell side (without using delta power yet)
+// 4) Finally, use delta only for "power" of that expansion
+f_calculate_quantum_score(bool is_bullish, bool setup_is_confirmed) =>
+    float score = 0.0
+
+    // Weights (Total ≈ 100)
+    float W_VOL_POWER      = 40.0
+    float W_MSI            = 30.0
+    float W_DELTA_CONTEXT  = 30.0
+
+    //────────────────────────────
+    // 1. Volume Power (Total Volume Expansion)
+    //────────────────────────────
+    float vol_component = volume_power           // 0..1
+    score += vol_component * W_VOL_POWER
+
+    //────────────────────────────
+    // 2. Geometry + RSI Zone Context
+    //   - MSI: pure angle-of-turn strength
+    //   - zone_score: being in 30/70 only a partial bonus, not absolute OS/OB
+    //────────────────────────────
+    float zone_score = 0.0
+
+    if is_bullish
+        if rsi_val <= rsi_os
+            // Best context for bullish reversal (deep low RSI)
+            zone_score := 1.0
+        else if rsi_val < 50
+            // Still supportive (RSI below midline but not extreme)
+            zone_score := 0.5
+    else
+        if rsi_val >= rsi_ob
+            // Best context for bearish reversal (deep high RSI)
+            zone_score := 1.0
+        else if rsi_val > 50
+            // Still supportive for bearish bias
+            zone_score := 0.5
+
+    // Combine: geometry has primacy, zone is only a partial bonus
+    float geo_zone_score = (msi * 0.7) + (zone_score * 0.3)
+    score += geo_zone_score * W_MSI
+
+    //────────────────────────────
+    // 3. Volume Story: which side is active + how powerful?
+    //   (follows the pipeline you described)
+    //────────────────────────────
+    float delta_score = 0.0
+
+    bool high_activity = volume_power > 0.6   // significant total volume
+    bool buy_expanded  = zbrk_b and z_b > 0   // buy volume broke its own sigma
+    bool sell_expanded = zbrk_s and z_s > 0   // sell volume broke its own sigma
+
+    // 3.1 – Side Score: from which side is the expansion?
+    float side_score = 0.0
+
+    if high_activity
+        if is_bullish
+            if buy_expanded and not sell_expanded
+                // Clean confirmation: volume expansion mostly from buyers
+                side_score := 1.0
+            else if buy_expanded and sell_expanded
+                // Both sides active -> churn / conflict in volume
+                side_score := 0.5
+            else if sell_expanded and not buy_expanded
+                // Your absorption case:
+                // volume expanded mainly from selling side during bullish context
+                side_score := 1.0
+        else
+            if sell_expanded and not buy_expanded
+                // Clean confirmation: volume expansion mostly from sellers
+                side_score := 1.0
+            else if buy_expanded and sell_expanded
+                // Churn / conflict
+                side_score := 0.5
+            else if buy_expanded and not sell_expanded
+                // Your distribution / buying climax case:
+                // volume expanded mainly from buyers during bearish context
+                side_score := 1.0
+
+    // 3.2 – Delta Power: only at the final stage we use |delta|
+    float power_score = high_activity ? f_normalize_z(z_d, z_thresh) : 0.0
+
+    // Combine: side story has a bit more weight than raw delta power
+    delta_score := side_score * 0.6 + power_score * 0.4
+
+    score += delta_score * W_DELTA_CONTEXT
+
+    //────────────────────────────
+    // 4. Educational Capping (Geometric Veto)
+    //────────────────────────────
+    // If the setup is NOT confirmed (Warning only),
+    // cap the score at 49% – geometry must confirm for higher confidence.
+    if not setup_is_confirmed
+        score := math.min(score, 49.0)
+
+    // Clamp score to [0, 100]
+    math.max(0.0, math.min(score, 100.0))
+
+
+//═══════════════════════════════════════════════
+// 8. VISUALIZATION (Smart Connector Labels)
+//═══════════════════════════════════════════════
+// UDT for managing labels and lines together (Modern Pine v6 approach)
+type SmartLabel
+    label lbl
+    line connector
+var SmartLabel[] managed_smart_labels = array.new<SmartLabel>()
+
+// Helper for Text Size
+f_get_size(string s) =>
+    s == "Tiny"   ? size.tiny  :
+     s == "Small"  ? size.small :
+     s == "Normal" ? size.normal:
+                      size.large
+
+// --- Smart Connector Drawing Function
+f_draw_smart_connector(int x, float y_anchor, float y_label_pos, string txt, color col, string style, bool is_confirmed) =>
+    // Formula: (0.299*R + 0.587*G + 0.114*B). If result > 150 (Bright), use Black text.
+    float brightness = (0.299 * color.r(col)) + (0.587 * color.g(col)) + (0.114 * color.b(col))
+    color txt_col = brightness > 150 ? color.black : color.white
+
+    // Adjust transparency based on confirmation
+    int bg_transp = is_confirmed ? 10 : 20
+
+    // 1. Create Label at Offset Position
+    label lbl = label.new(x, y_label_pos, txt, color=color.new(col, bg_transp), textcolor=txt_col, style=style, size=f_get_size(txt_size))
+
+    // Confirmed signals get a solid line, Weak signals get a dotted line.
+    string line_style = is_confirmed ? line.style_solid : line.style_dotted
+    int line_width = is_confirmed ? 2 : 1
+    int line_transp = is_confirmed ? 40 : 60
+
+    line conn = line.new(x, y_anchor, x, y_label_pos, color=color.new(col, line_transp), style=line_style, width=line_width)
+
+    // 3. Store UDT
+    array.push(managed_smart_labels, SmartLabel.new(lbl, conn))
+
+// --- Stacking Logic (Anti-Overlap) ---
+var float last_y_up = na, var int last_x_up = -999
+var float last_y_dn = na, var int last_x_dn = -999
+float spacer = ta.atr(14) * 1.5 // Dynamic spacer based on volatility
+
+// --- Label Drawing Logic
+if show_lbl and trigger_analysis
+    //  Unified variables for drawing
+    color signal_color = na
+    float quantum_score = na
+    string style = na
+    float y_anchor = na
+    float y_label_pos = na
+
+    // 1. Determine Parameters based on Setup Type and Confirmation Status
+    if is_bearish_setup
+        //  Calculate score, passing the confirmation status
+        quantum_score := f_calculate_quantum_score(false, is_confirmed)
+        //  Select color: Warning color if not confirmed, Bearish color if confirmed
+        signal_color := is_confirmed ? col_bear : col_warn
+        style := label.style_label_down
+        y_anchor := high
+        y_label_pos := high + spacer
+
+        // Stacking Adjustment (Bearish)
+        if (bar_index - last_x_up) < 8 // Check proximity within 8 bars
+            if y_label_pos <= last_y_up
+                y_label_pos := last_y_up + (spacer * 0.7)
+
+    if is_bullish_setup
+        //  Calculate score, passing the confirmation status
+        quantum_score := f_calculate_quantum_score(true, is_confirmed)
+        //  Select color: Warning color if not confirmed, Bullish color if confirmed
+        signal_color := is_confirmed ? col_bull : col_warn
+        style := label.style_label_up
+        y_anchor := low
+        y_label_pos := low - spacer
+
+        // Stacking Adjustment (Bullish)
+        if (bar_index - last_x_dn) < 8
+            if y_label_pos >= last_y_dn
+                y_label_pos := last_y_dn - (spacer * 0.7)
+
+    // 2. Draw the Label
+    if not na(quantum_score)
+        //  Construct the text: Source + Status + Score
+        string txt = T(trigger_source) + " " + T(trigger_status) + "\n" + T(K_LBL_SCORE) + ": " + str.tostring(quantum_score, "#") + "%"
+
+        // Pass the confirmation status for dynamic styling
+        f_draw_smart_connector(bar_index, y_anchor, y_label_pos, txt, signal_color, style, is_confirmed)
+
+        // Update Stacking Trackers
+        if is_bearish_setup
+            last_x_up := bar_index
+            last_y_up := y_label_pos
+        if is_bullish_setup
+            last_x_dn := bar_index
+            last_y_dn := y_label_pos
+
+// Cleanup old labels (Must delete both label and line)
+if array.size(managed_smart_labels) > 450
+    SmartLabel old = array.shift(managed_smart_labels)
+    label.delete(old.lbl)
+    line.delete(old.connector)
+
+//═══════════════════════════════════════════════
+// 9. DASHBOARD (    Matrix Heatmap)
+//═══════════════════════════════════════════════
+
+var table matrix_tbl = table.new(tbl_pos, 6, 10, border_width=1, frame_color=color.gray)
+
+// Helper function for spanned cells (for single-column info rows)
+f_cell_span(table _tbl, int _row, string _text, color _txt_color, color _bg_color, _txt_size) =>
+    table.cell(_tbl, 0, _row, _text, text_color=_txt_color, bgcolor=_bg_color, text_size=_txt_size, text_halign=text.align_center)
+    table.merge_cells(_tbl, 0, _row, 5, _row)
+
+if show_tbl and barstate.islast
+    color C_BG_TBL = color.new(color.black, 80)
+    color C_TXT    = color.white
+        // Unified size handling for table text (same logic as labels)
+    var _size        = f_get_size(tbl_txt_size)
+    var _size_detail = tbl_txt_size == "Large"  ? size.normal :
+                       tbl_txt_size == "Normal" ? size.small :
+                                                  size.tiny
+    int row_cursor   = 0
+
+    // ─── 1. VSA Interpretation Display ───
+        // Translate keys just before rendering (Optimization)
+    string t_title = T(current_interp.title_key)
+    string t_bias = T(current_interp.bias_key)
+    string t_signal = T(current_interp.signal_key)
+    // Title (Active Scenario)
+    f_cell_span(matrix_tbl, row_cursor, "RAVM: " + t_title, C_TXT, color.new(current_interp.m_col, 30), _size)
+    row_cursor += 1
+    // Bias (Strategic Overview)
+    string bias_text = T(K_DASH_BIAS) + " " + t_bias
+    f_cell_span(matrix_tbl, row_cursor, bias_text, current_interp.bias_col, C_BG_TBL, _size)
+    row_cursor += 1
+    // Smart Analysis (Actionable Insight)
+    // Using tiny size for detailed analysis text
+    f_cell_span(matrix_tbl, row_cursor, T(K_DASH_SIGNAL) + "\n" + t_signal, C_TXT, C_BG_TBL, _size_detail)
+    row_cursor += 1
+    // ─── 2.     Matrix Heatmap (5x5 Visualization) ───
+    int map_start_row = row_cursor
+    // Headers (Technical Codes M/V)
+    table.cell(matrix_tbl, 0, map_start_row, "M \\ V", bgcolor=C_BG_TBL, text_color=C_TXT, text_size=_size)
+    // V-States (Volume)
+    table.cell(matrix_tbl, 1, map_start_row, "V1  ▲▲ ", tooltip="Aggressive Buying", bgcolor=C_BG_TBL, text_color=C_TXT, text_size=_size)
+    table.cell(matrix_tbl, 2, map_start_row, "V2  ▲ ", tooltip="Buying Pressure", bgcolor=C_BG_TBL, text_color=C_TXT, text_size=_size)
+    table.cell(matrix_tbl, 3, map_start_row, "V3 =", tooltip="Normal Activity", bgcolor=C_BG_TBL, text_color=C_TXT, text_size=_size)
+    table.cell(matrix_tbl, 4, map_start_row, "V4  ▼ ", tooltip="Selling Pressure", bgcolor=C_BG_TBL, text_color=C_TXT, text_size=_size)
+    table.cell(matrix_tbl, 5, map_start_row, "V5  ▼▼ ", tooltip="Aggressive Selling", bgcolor=C_BG_TBL, text_color=C_TXT, text_size=_size)
+    // M-States (Momentum)
+    table.cell(matrix_tbl, 0, map_start_row+1, "M1  ▲▲ ", tooltip="Strong Bullish Shift/OS", bgcolor=C_BG_TBL, text_color=C_TXT, text_size=_size)
+    table.cell(matrix_tbl, 0, map_start_row+2, "M2  ▲ ", tooltip="Moderate Bullish", bgcolor=C_BG_TBL, text_color=C_TXT, text_size=_size)
+    table.cell(matrix_tbl, 0, map_start_row+3, "M3 =", tooltip="Neutral Momentum", bgcolor=C_BG_TBL, text_color=C_TXT, text_size=_size)
+    table.cell(matrix_tbl, 0, map_start_row+4, "M4  ▼ ", tooltip="Moderate Bearish", bgcolor=C_BG_TBL, text_color=C_TXT, text_size=_size)
+    table.cell(matrix_tbl, 0, map_start_row+5, "M5  ▼▼ ", tooltip="Strong Bearish Shift/OB", bgcolor=C_BG_TBL, text_color=C_TXT, text_size=_size)
+
+    // Populate the Matrix Cells (The Heatmap)
+    for m = 1 to 5 // Rows (Momentum)
+        for v = 1 to 5 // Cols (Volume)
+            // Recalculate interpretation for the cell visualization (Efficient as it uses keys)
+            MatrixInterpretation cell_data = f_interpret_quantum_matrix(m, v)
+            // Use the bias color for the heatmap background
+            color bg_color = cell_data.bias_col
+            string txt = ""
+            int transp = 85 // High transparency for inactive cells
+            // Highlight the Active Cell
+            if m == current_M_state and v == current_V_state
+                transp := 50 // Less transparent (brighter) for active cell
+                txt := " ⬤ " // Active marker (Unicode Circle)
+            table.cell(matrix_tbl, v, map_start_row+m, txt, bgcolor=color.new(bg_color, transp), text_color=color.white, text_size=_size, text_halign=text.align_center, text_valign=text.align_center)
+
+    // ─── 3. Key Metrics Footer ───
+    row_cursor += 6
+    // Displaying core normalized metrics
+    string metrics_text = str.format("RSI: {0,number,#.##} | MSI (Z-AoT): {1,number,#.##}%\nVolume Power (Z-Vol): {2,number,#.##}%",
+         rsi_val, msi * 100, volume_power * 100)
+    f_cell_span(matrix_tbl, row_cursor, metrics_text, color.gray, C_BG_TBL, _size_detail)
