@@ -20,6 +20,8 @@ export function setupStateSubscriptions() {
         changeEl.className = 'symbol-change';
     };
 
+    let lastDataLength = 0;
+
     let reloadTimeout: number | null = null;
     const scheduleDataReload = () => {
         if (reloadTimeout !== null) {
@@ -47,10 +49,21 @@ export function setupStateSubscriptions() {
         getRequiredElement('dataPoints').textContent = `${data.length} candles`;
         getRequiredElement('lastUpdate').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
 
-        state.chart.timeScale().setVisibleLogicalRange({
-            from: Math.max(0, data.length - 1000),
-            to: data.length,
-        });
+        const timeScale = state.chart.timeScale();
+        const prevLength = lastDataLength;
+        lastDataLength = data.length;
+        const isRealtimeUpdate = prevLength > 0 && Math.abs(data.length - prevLength) <= 2;
+        if (isRealtimeUpdate) {
+            const scrollPos = timeScale.scrollPosition();
+            if (scrollPos <= 1) {
+                timeScale.scrollToPosition(0, false);
+            }
+        } else {
+            timeScale.setVisibleLogicalRange({
+                from: Math.max(0, data.length - 1000),
+                to: data.length,
+            });
+        }
 
         if (state.currentBacktestResult) {
             backtestService.runCurrentBacktest();

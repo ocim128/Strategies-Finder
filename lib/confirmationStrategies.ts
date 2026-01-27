@@ -320,3 +320,45 @@ export function filterSignalsWithConfirmations(
 
     return filtered;
 }
+
+export function filterSignalsWithConfirmationsBoth(
+    data: OHLCVData[],
+    signals: Signal[],
+    confirmationStates: Int8Array[],
+    entryConfirmation: EntryConfirmationMode
+): Signal[] {
+    if (confirmationStates.length === 0 || signals.length === 0) return signals;
+
+    const timeIndex = getTimeIndex(data);
+    const useCloseConfirm = entryConfirmation === "close";
+
+    const filtered: Signal[] = [];
+
+    for (const signal of signals) {
+        const signalIndex = timeIndex.get(timeKey(signal.time));
+        if (signalIndex === undefined) {
+            filtered.push(signal);
+            continue;
+        }
+
+        const entryIndex = useCloseConfirm ? signalIndex + 1 : signalIndex;
+        if (entryIndex >= data.length) {
+            continue;
+        }
+
+        const requiredState = signal.type === "buy" ? 1 : -1;
+        let confirmed = true;
+        for (const state of confirmationStates) {
+            if (state[entryIndex] !== requiredState) {
+                confirmed = false;
+                break;
+            }
+        }
+
+        if (confirmed) {
+            filtered.push(signal);
+        }
+    }
+
+    return filtered;
+}

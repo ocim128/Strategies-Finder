@@ -20,6 +20,7 @@ import { logicTestService } from "./lib/logicTestService";
 import { settingsManager } from "./lib/settingsManager";
 import { injectLayout } from "./lib/layoutManager";
 import { commandPaletteManager } from "./lib/commandPalette";
+import { pairCombinerManager } from "./lib/pairCombinerManager";
 
 import { replayManager, ReplayChartAdapter, ReplayUI } from "./lib/replay";
 import { initConfirmationStrategyUI } from "./lib/confirmationStrategies";
@@ -55,6 +56,7 @@ async function init() {
 	setupStateSubscriptions();
 	setupEventHandlers();
 	finderManager.init();
+	pairCombinerManager.init();
 	walkForwardService.initUI();
 	monteCarloService.initUI();
 	logicTestService.initUI();

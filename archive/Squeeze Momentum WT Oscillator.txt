@@ -1,0 +1,252 @@
+//@version=5
+
+indicator(title='Squeeze Momentum WT Oscillator',overlay=false,max_lines_count = 100)
+
+// Wave Trend Oscillator Parameters
+n1 = input(10, 'Channel Length')
+n2 = input(21, 'Average Length')
+obLevel1 = input(60, 'Over Bought Level 1')
+obLevel2 = input(53, 'Over Bought Level 2')
+osLevel1 = input(-60, 'Over Sold Level 1')
+osLevel2 = input(-53, 'Over Sold Level 2')
+
+// Wave Trend Oscillator Calculations
+ap = hlc3
+esa = ta.ema(ap, n1)
+d = ta.ema(math.abs(ap - esa), n1)
+ci = (ap - esa) / (0.015 * d)
+tci = ta.ema(ci, n2)
+
+wt1 = tci
+wt2 = ta.sma(wt1, 4)
+
+// Wave Trend Oscillator Plots
+plot(0, color=color.new(color.gray, 0))
+ob1  = plot(obLevel1, color=color.new(color.maroon, 90))
+os1 = plot(osLevel1, color=color.new(color.aqua, 90))
+ob2 = plot(obLevel2, color=color.new(color.maroon, 90))
+os2 = plot(osLevel2, color=color.new(color.aqua, 90))
+ 
+p1 = plot(wt1, color=color.new(color.aqua, 0))
+p2 = plot(wt2, color=color.new(color.maroon, 0))
+plot(wt1 - wt2, color=wt2 - wt1 > 0 ? color.new(color.maroon, 50) : color.new(color.aqua, 50), style=plot.style_histogram)
+plot(ta.cross(wt1, wt2) ? wt2 : na, color=color.new(color.black, 0), style=plot.style_circles, linewidth=3)
+plot(ta.cross(wt1, wt2) ? wt2 : na, color=wt2 - wt1 > 0 ? color.maroon : color.aqua, style=plot.style_circles, linewidth=2)
+
+fill(p1,p2,color = wt2 - wt1 > 0 ? color.new(color.red, 50) : color.new(color.aqua, 50))
+fill(ob1,ob2,color = color.new(color.maroon, 20))
+fill(os1,os2,color = color.new(color.aqua, 20))
+
+// Supertrend Parameters
+atrPeriod = input.int(10, 'ATR Length', minval = 1)
+factor = input.float(2.5, 'Factor', minval = 0.01, step = 0.01)
+
+// Squeeze Momentum Parameters
+source = input(close, 'Source')
+bbLength = input.int(20, 'Bollinger Bands Length', minval = 1)
+bbMult = input.float(2, 'Bollinger Bands MultFactor', step = 0.25)
+kcLength = input(20, 'Keltner\'s Channel Length')
+kcMult = input.float(1.5, 'Keltner\'s Channel MultFactor', step = 0.25)
+useTrueRange = input(true, 'Use TrueRange (Keltner\'s Channel)')
+signalLength = input(5, 'Signal Length')
+tooltip_sqz = 'The Squeeze Indicator measures the relationship between Bollinger Bands and Keltner\'s Channels to help identify consolidations and signal when prices are likely to break out (whether up or down). ' + 'The Squeeze Indicator finds sections of the Bollinger Bands which fall inside the Keltner\'s Channels and in this case the market is said to be in a squeeze (indicator turns off, displayed with grey diamond shapes in this study). ' + 'When the volatility increases, so does the distance between the bands, conversely, when the volatility declines, the distance also decreases and in such cases the squeeze is said to be released (indicator turns on, displayed with triangle up or triangle down shapes)'
+components = input.bool(false, 'Components of the Squeeze Indicator', tooltip = tooltip_sqz)
+
+// Threshold Parameters
+lowerThreshold = input(-1.0, title = 'Lower Threshold')
+upperThreshold = input(1.0, title = 'Upper Threshold')
+
+// Risk Management Multipliers
+targetMultiplier1 = 1
+targetMultiplier2 = 2
+targetMultiplier3 = 3
+stopLossMultiplier = 3
+
+// Alert Configuration
+alertTrendChange = input.bool(true, title='Enable Trend Change Alert')
+
+// Supertrend Calculation
+[supertrend, direction] = ta.supertrend(factor, atrPeriod)
+
+// Supertrend Visualization
+plot(supertrend, color = direction < 0 ? color.green : color.red, title = 'ST', style = plot.style_stepline_diamond,force_overlay=true)
+
+// Trend Direction Logic
+upTrend = direction < 0
+downTrend = direction > 0
+
+// Previous Direction Tracking
+var int previousDirection = na
+previousDirection := upTrend ? 1 : -1
+
+// ATR Calculation for Risk Management
+atrValue = ta.atr(atrPeriod)
+
+// Risk Level Variables
+var float entryPrice = na
+var float targetLevel1 = na
+var float targetLevel2 = na
+var float targetLevel3 = na
+var float stopLossLevel = na
+
+// Counter Variables
+var int count_up = 0
+var int count_down = 0
+var bool newLinesDrawn = false
+
+// Risk Level Calculations
+if upTrend
+    entryPrice := close
+    targetLevel1 := close + atrValue * targetMultiplier1
+    targetLevel2 := close + atrValue * targetMultiplier2
+    targetLevel3 := close + atrValue * targetMultiplier3
+    stopLossLevel := close - atrValue * stopLossMultiplier
+    count_up := count_up + 1
+    count_down := 0
+else if downTrend
+    entryPrice := close
+    targetLevel1 := close - atrValue * targetMultiplier1
+    targetLevel2 := close - atrValue * targetMultiplier2
+    targetLevel3 := close - atrValue * targetMultiplier3
+    stopLossLevel := close + atrValue * stopLossMultiplier
+    count_down := count_down + 1
+    count_up := 0
+
+// Bollinger Bands Calculation
+basis = ta.sma(source, bbLength)
+dev = kcMult * ta.stdev(source, bbLength)
+bbUpper = basis + dev
+bbLower = basis - dev
+
+// Keltner Channels Calculation
+ma = ta.sma(source, kcLength)
+trRange = useTrueRange ? ta.tr : high - low
+rangema = ta.sma(trRange, kcLength)
+kcUpper = ma + rangema * kcMult
+kcLower = ma - rangema * kcMult
+
+// Squeeze Logic
+sqzOn = bbLower > kcLower and bbUpper < kcUpper
+sqzOff = bbLower < kcLower and bbUpper > kcUpper
+noSqz = sqzOn == false and sqzOff == false
+
+val = ta.linreg(source - math.avg(math.avg(ta.highest(high, kcLength), ta.lowest(low, kcLength)), ta.sma(source, kcLength)), kcLength, 0)
+signal = ta.sma(val, signalLength)
+dir = val
+
+// Squeeze Momentum Signals
+segitigaUp      = sqzOff and dir > dir[1] and dir >= upperThreshold
+segitigaDown    = sqzOff and dir < dir[1] and dir <= lowerThreshold
+
+// Squeeze Visualization
+plotshape(sqzOn or noSqz ? true : false, 'In Squeeze', shape.square, location.top, color.new(color.black, 0), show_last = 500,force_overlay=true)
+plotshape(segitigaUp ? true : false, 'Squeeze Release UpTrend', shape.triangleup, location.top, color.new(color.green, 0), show_last = 500,force_overlay=true)
+plotshape(segitigaDown ? true : false, 'Squeeze Release DownTrend', shape.triangledown, location.top, color.new(color.red, 0), show_last = 500,force_overlay=true)
+
+// Risk Management Visualization Variables
+var line stopLossLine = na
+var line entryLine = na
+var line targetLine1 = na
+var line targetLine2 = na
+var line targetLine3 = na
+var label stopLossLabel = na
+var label entryLabel = na
+var label targetLabel1 = na
+var label targetLabel2 = na
+var label targetLabel3 = na
+
+// Uptrend Risk Management Display
+if upTrend and count_up == 1
+    // Clear Previous Elements
+    line.delete(stopLossLine)
+    line.delete(entryLine)
+    line.delete(targetLine1)
+    line.delete(targetLine2)
+    line.delete(targetLine3)
+    label.delete(stopLossLabel)
+    label.delete(entryLabel)
+    label.delete(targetLabel1)
+    label.delete(targetLabel2)
+    label.delete(targetLabel3)
+
+    // Create New Risk Lines
+    stopLossLine := line.new(bar_index, stopLossLevel, last_bar_index + 5, stopLossLevel, color = color.red, width = 2,force_overlay=true)
+    entryLine := line.new(bar_index, close, last_bar_index + 5, close, color = color.green, width = 2,force_overlay=true)
+    targetLine1 := line.new(bar_index, targetLevel1, last_bar_index + 5, targetLevel1, color = color.blue, width = 2,force_overlay=true)
+    targetLine2 := line.new(bar_index, targetLevel2, last_bar_index + 5, targetLevel2, color = color.blue, width = 2,force_overlay=true)
+    targetLine3 := line.new(bar_index, targetLevel3, last_bar_index + 5, targetLevel3, color = color.blue, width = 2,force_overlay=true)
+
+    newLinesDrawn := true
+
+    // Create Risk Labels
+    stopLossLabel := label.new(last_bar_index + 5, stopLossLevel, 'Stop Loss: ' + str.tostring(stopLossLevel, '#.###'), style = label.style_label_left, color = color.red, textcolor = color.white,force_overlay=true)
+    entryLabel := label.new(last_bar_index + 5, close, 'Entry: ' + str.tostring(close, '#.###'), style = label.style_label_left, color = color.green, textcolor = color.white,force_overlay=true)
+    targetLabel1 := label.new(last_bar_index + 5, targetLevel1, 'Target 1: ' + str.tostring(targetLevel1, '#.###'), style = label.style_label_left, color = color.blue, textcolor = color.white,force_overlay=true)
+    targetLabel2 := label.new(last_bar_index + 5, targetLevel2, 'Target 2: ' + str.tostring(targetLevel2, '#.###'), style = label.style_label_left, color = color.blue, textcolor = color.white,force_overlay=true)
+    targetLabel3 := label.new(last_bar_index + 5, targetLevel3, 'Target 3: ' + str.tostring(targetLevel3, '#.###'), style = label.style_label_left, color = color.blue, textcolor = color.white,force_overlay=true)
+
+// Downtrend Risk Management Display
+if downTrend and count_down == 1
+    // Clear Previous Elements
+    line.delete(stopLossLine)
+    line.delete(entryLine)
+    line.delete(targetLine1)
+    line.delete(targetLine2)
+    line.delete(targetLine3)
+    label.delete(stopLossLabel)
+    label.delete(entryLabel)
+    label.delete(targetLabel1)
+    label.delete(targetLabel2)
+    label.delete(targetLabel3)
+
+    // Create New Risk Lines
+    stopLossLine := line.new(bar_index, stopLossLevel, last_bar_index + 5, stopLossLevel, color = color.red, width = 2,force_overlay=true)
+    entryLine := line.new(bar_index, close, last_bar_index + 5, close, color = color.green, width = 2,force_overlay=true)
+    targetLine1 := line.new(bar_index, targetLevel1, last_bar_index + 5, targetLevel1, color = color.blue, width = 2,force_overlay=true)
+    targetLine2 := line.new(bar_index, targetLevel2, last_bar_index + 5, targetLevel2, color = color.blue, width = 2,force_overlay=true)
+    targetLine3 := line.new(bar_index, targetLevel3, last_bar_index + 5, targetLevel3, color = color.blue, width = 2,force_overlay=true)
+
+    newLinesDrawn := true
+
+    // Create Risk Labels
+    stopLossLabel := label.new(last_bar_index + 5, stopLossLevel, 'SL: ' + str.tostring(stopLossLevel, '#.###'), style = label.style_label_left, color = color.red, textcolor = color.white,force_overlay=true)
+    entryLabel := label.new(last_bar_index + 5, close, 'Entry: ' + str.tostring(close, '#.###'), style = label.style_label_left, color = color.green, textcolor = color.white,force_overlay=true)
+    targetLabel1 := label.new(last_bar_index + 5, targetLevel1, 'TP 1: ' + str.tostring(targetLevel1, '#.###'), style = label.style_label_left, color = color.blue, textcolor = color.white,force_overlay=true)
+    targetLabel2 := label.new(last_bar_index + 5, targetLevel2, 'TP 2: ' + str.tostring(targetLevel2, '#.###'), style = label.style_label_left, color = color.blue, textcolor = color.white,force_overlay=true)
+    targetLabel3 := label.new(last_bar_index + 5, targetLevel3, 'TP 3: ' + str.tostring(targetLevel3, '#.###'), style = label.style_label_left, color = color.blue, textcolor = color.white,force_overlay=true)
+
+// Alert System
+if sqzOff and not sqzOff[1]
+    alert('Squeeze Release : '+ syminfo.tickerid + ' | ' + timeframe.period, alert.freq_once_per_bar)
+if segitigaDown[2] and not segitigaDown
+    alert('Weak Trend or Reverse : '+ syminfo.tickerid + ' | ' + timeframe.period, alert.freq_once_per_bar)
+if segitigaUp[2] and not segitigaUp
+    alert('Weak Trend or Reverse : '+ syminfo.tickerid + ' | ' + timeframe.period, alert.freq_once_per_bar)
+
+// Additional Visualization
+plotarrow(dir, 'Momentum Strength/Direction', color.new(color.aqua, 75), color.new(color.orange, 75), show_last = 500,force_overlay=true)
+plot(components ? bbUpper : na, 'BBUpper', color.new(color.blue, 25), show_last = 500,force_overlay=true)
+plot(components ? bbLower : na, 'BBLower', color.new(color.blue, 25), show_last = 500,force_overlay=true)
+plot(components ? kcUpper : na, 'KCUpper', color.new(color.red, 25), show_last = 500,force_overlay=true)
+plot(components ? kcLower : na, 'KCLower', color.new(color.red, 25), show_last = 500,force_overlay=true)
+
+// Comprehensive Alert System
+if newLinesDrawn
+    trendType       = upTrend ? "Buy" : "Sell"
+    stopLossValue   = str.tostring(stopLossLevel, '#.###')
+    entryValue      = str.tostring(close, '#.###')
+    targetValue1    = str.tostring(targetLevel1, '#.###')
+    targetValue2    = str.tostring(targetLevel2, '#.###')
+    targetValue3    = str.tostring(targetLevel3, '#.###')
+    
+    alertMessage = 'Pair : ' + syminfo.tickerid + ' | ' + timeframe.period + '\n' +
+                   'Trend : ' + trendType + '\n' +
+                   'SL : ' + stopLossValue + '\n' +
+                   'Ent : ' + entryValue + '\n' +
+                   'TP1 : ' + targetValue1 + '\n' +
+                   'TP2 : ' + targetValue2 + '\n' +
+                   'TP3 : ' + targetValue3
+    
+    alert(alertMessage, alert.freq_once_per_bar_close)
+    
+    newLinesDrawn := false

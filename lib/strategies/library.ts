@@ -12,6 +12,7 @@ import { momentum_strategy } from './lib/momentum';
 import { fib_speed_fan } from './lib/fib-speed-fan';
 import { fib_speed_fan_corrected } from './lib/fib-speed-fan-corrected';
 import { fib_speed_fan_corrected2 } from './lib/fib-speed-fan-corrected2';
+import { fib_speed_fan_entry } from './lib/fib-speed-fan-entry';
 import { fib_retracement } from './lib/fib-retracement';
 import { day_trading_booster } from './lib/day-trading-booster';
 import { volume_pivot_anchored } from './lib/volume-pivot-anchored';
@@ -24,6 +25,10 @@ import { volatility_cycle_rider } from './lib/volatility-cycle-rider';
 import { trap_hunter } from './lib/trap-hunter';
 import { supply_demand_zones } from './lib/supply-demand-zones';
 import { mtf_impulse_zone_reversal, mtf_impulse_zone_breakout } from './lib/mtf-impulse-zones';
+import { chandelier_rsi_ema } from './lib/chandelier_rsi_ema';
+import { adaptive_supertrend_kmeans } from './lib/adaptive_supertrend_kmeans';
+import { mean_reversion_zscore } from './lib/mean_reversion_zscore';
+import { failed_breakout } from './lib/failed_breakout';
 
 export const strategies: Record<string, Strategy> = {
     rsi_oversold,
@@ -39,6 +44,7 @@ export const strategies: Record<string, Strategy> = {
     fib_speed_fan,
     fib_speed_fan_corrected,
     fib_speed_fan_corrected2,
+    fib_speed_fan_entry,
     fib_retracement,
     day_trading_booster,
     volume_pivot_anchored,
@@ -52,4 +58,8 @@ export const strategies: Record<string, Strategy> = {
     supply_demand_zones,
     mtf_impulse_zone_reversal,
     mtf_impulse_zone_breakout,
+    chandelier_rsi_ema,
+    adaptive_supertrend_kmeans,
+    mean_reversion_zscore,
+    failed_breakout,
 };

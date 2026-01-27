@@ -1,4 +1,4 @@
-﻿import { BacktestResult, StrategyParams, runBacktest, runBacktestCompact, Signal } from "./strategies/index";
+import { BacktestResult, StrategyParams, runBacktest, runBacktestCompact, Signal, buildEntryBacktestResult } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtestService";
@@ -9,7 +9,7 @@ import { dataManager } from "./dataManager";
 import { rustEngine } from "./rustEngineClient";
 import { debugLogger } from "./debugLogger";
 import { shouldUseRustEngine } from "./enginePreferences";
-import { buildConfirmationStates, filterSignalsWithConfirmations, getConfirmationStrategyValues, renderConfirmationStrategyList, setConfirmationStrategyParams } from "./confirmationStrategies";
+import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth, getConfirmationStrategyValues, renderConfirmationStrategyList, setConfirmationStrategyParams } from "./confirmationStrategies";
 
 type FinderMode = 'default' | 'grid' | 'random';
 type FinderMetric = 'netProfit' | 'profitFactor' | 'sharpeRatio' | 'netProfitPercent' | 'winRate' | 'maxDrawdownPercent' | 'expectancy' | 'averageGain' | 'totalTrades';
@@ -184,8 +184,8 @@ export class FinderManager {
 			div.innerHTML = `
 				<span class="sort-label">${METRIC_FULL_LABELS[metric]}</span>
 				<div class="finder-sort-actions">
-					<button class="finder-sort-btn sort-up" title="Move Up">â–²</button>
-					<button class="finder-sort-btn sort-down" title="Move Down">â–¼</button>
+					<button class="finder-sort-btn sort-up" title="Move Up">▲</button>
+					<button class="finder-sort-btn sort-down" title="Move Down">▼</button>
 				</div>
 			`;
 			container.appendChild(div);
@@ -257,6 +257,7 @@ export class FinderManager {
 		try {
 			const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = backtestService.getCapitalSettings();
 			const settings = backtestService.getBacktestSettings();
+			const requiresTsEngine = backtestService.requiresTypescriptEngine(settings);
 			const confirmationStrategies = settings.confirmationStrategies ?? [];
 			const shouldRandomizeConfirmations = options.mode === 'random';
 			const hasConfirmationStrategies = confirmationStrategies.length > 0;
@@ -279,6 +280,9 @@ export class FinderManager {
 			const rustSettings: typeof settings = { ...settings };
 			delete (rustSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
 			delete (rustSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
+			delete (rustSettings as { executionModel?: string }).executionModel;
+			delete (rustSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
+			delete (rustSettings as { slippageBps?: number }).slippageBps;
 
 			const strategies = strategyRegistry.getAll();
 			const strategyEntries = Object.entries(strategies).filter(([key]) => {
@@ -364,7 +368,11 @@ export class FinderManager {
 			// SOLUTION: Send OHLCV data ONCE to Rust server, then reference by cache ID
 
 			// Check if Rust is available
-			const rustHealthy = shouldUseRustEngine() && await rustEngine.checkHealth();
+			const rustHealthy = !requiresTsEngine && shouldUseRustEngine() && await rustEngine.checkHealth();
+			if (requiresTsEngine) {
+				debugLogger.info('[Finder] Realism settings enabled - forcing TypeScript engine.');
+				this.setStatus('Realism settings enabled - using TypeScript engine.');
+			}
 
 			// For large datasets, use data caching approach (send data once, reference by ID)
 			let cacheId: string | null = null;
@@ -395,7 +403,7 @@ export class FinderManager {
 				debugLogger.info(`[Finder] Extreme dataset (${(dataSize / 1000000).toFixed(1)}M bars) - using TypeScript ultra-memory mode`);
 				this.setStatus(`Ultra-memory mode: TypeScript only (${(dataSize / 1000000).toFixed(1)}M bars)`);
 			} else if (isVeryLargeDataset && rustAvailable) {
-				this.setStatus(`Using Rust engine with cached data ⚡`);
+				this.setStatus(`Using Rust engine with cached data ?`);
 			} else if (!rustAvailable && isLargeDataset) {
 				debugLogger.warn(`[Finder] Using TypeScript for ${dataSize} bars (Rust unavailable)`);
 				this.setStatus('Using TypeScript engine...');
@@ -454,25 +462,36 @@ export class FinderManager {
 							// Generate signals - these can be large arrays
 							let signals = job.strategy.execute(state.ohlcvData, job.params);
 							if (confirmationContext.states.length > 0) {
-								signals = filterSignalsWithConfirmations(
-									state.ohlcvData,
-									signals,
-									confirmationContext.states,
-									settings.entryConfirmation ?? 'none',
-									settings.tradeDirection ?? 'long'
-								);
+								signals = job.strategy.metadata?.role === 'entry'
+									? filterSignalsWithConfirmationsBoth(
+										state.ohlcvData,
+										signals,
+										confirmationContext.states,
+										settings.entryConfirmation ?? 'none'
+									)
+									: filterSignalsWithConfirmations(
+										state.ohlcvData,
+										signals,
+										confirmationContext.states,
+										settings.entryConfirmation ?? 'none',
+										settings.tradeDirection ?? 'long'
+									);
 							}
 
-							const result = backtestFn(
-								state.ohlcvData,
-								signals,
-								initialCapital,
-								positionSize,
-								commission,
-								job.backtestSettings,
-								{ mode: sizingMode, fixedTradeAmount }
-								// precomputedIndicators disabled - can cause different results
-							);
+							const evaluation = job.strategy.evaluate?.(state.ohlcvData, job.params, signals);
+							const entryStats = evaluation?.entryStats;
+							const result = job.strategy.metadata?.role === 'entry' && entryStats
+								? buildEntryBacktestResult(entryStats)
+								: backtestFn(
+									state.ohlcvData,
+									signals,
+									initialCapital,
+									positionSize,
+									commission,
+									job.backtestSettings,
+									{ mode: sizingMode, fixedTradeAmount }
+									// precomputedIndicators disabled - can cause different results
+								);
 
 							// CRITICAL: Clear signals array immediately to free memory
 							signals.length = 0;
@@ -519,13 +538,34 @@ export class FinderManager {
 						const confirmationContext = buildConfirmationContext();
 						let signals = job.strategy.execute(state.ohlcvData, job.params);
 						if (confirmationContext.states.length > 0) {
-							signals = filterSignalsWithConfirmations(
-								state.ohlcvData,
-								signals,
-								confirmationContext.states,
-								settings.entryConfirmation ?? 'none',
-								settings.tradeDirection ?? 'long'
-							);
+							signals = job.strategy.metadata?.role === 'entry'
+								? filterSignalsWithConfirmationsBoth(
+									state.ohlcvData,
+									signals,
+									confirmationContext.states,
+									settings.entryConfirmation ?? 'none'
+								)
+								: filterSignalsWithConfirmations(
+									state.ohlcvData,
+									signals,
+									confirmationContext.states,
+									settings.entryConfirmation ?? 'none',
+									settings.tradeDirection ?? 'long'
+								);
+						}
+						const evaluation = job.strategy.evaluate?.(state.ohlcvData, job.params, signals);
+						const entryStats = evaluation?.entryStats;
+						if (job.strategy.metadata?.role === 'entry' && entryStats) {
+							const result = buildEntryBacktestResult(entryStats);
+							insertResult({
+								key: job.key,
+								name: job.name,
+								params: job.params,
+								result,
+								confirmationParams: confirmationContext.params
+							});
+							signals.length = 0;
+							continue;
 						}
 						batchRuns.push({
 							key: job.key,
@@ -551,6 +591,9 @@ export class FinderManager {
 						const itemSettings = { ...run.backtestSettings };
 						delete (itemSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
 						delete (itemSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
+						delete (itemSettings as { executionModel?: string }).executionModel;
+						delete (itemSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
+						delete (itemSettings as { slippageBps?: number }).slippageBps;
 						return {
 							id: `${run.key}-${startIdx + idx}`,
 							signals: run.signals,
@@ -799,11 +842,23 @@ export class FinderManager {
 		let min = baseValue - range;
 		let max = baseValue + range;
 
-		// Special clamping for risk management percent params
+		if (key === 'clusterChoice') {
+			min = 0;
+			max = 2;
+		} else if (/(iteration|iterations|interval|alpha)/i.test(key)) {
+			min = Math.max(1, min);
+		} else if (key === 'warmupBars') {
+			min = Math.max(0, min);
+		}
+
+		// Special clamping for percent params
 		if (key === 'stopLossPercent') {
 			// Clamp to valid range: 0-15%
 			min = Math.max(0, min);
 			max = Math.min(15, max);
+		} else if (key === 'targetPct') {
+			min = 0;
+			max = 2;
 		} else if (key === 'takeProfitPercent') {
 			// Clamp to valid range: 0-100%
 			min = Math.max(0, min);
@@ -898,10 +953,13 @@ export class FinderManager {
 				let min = baseValue - range;
 				let max = baseValue + range;
 
-				// Special clamping for risk management percent params
+				// Special clamping for percent params
 				if (key === 'stopLossPercent') {
 					min = Math.max(0, min);
 					max = Math.min(15, max);
+				} else if (key === 'targetPct') {
+					min = 0;
+					max = 2;
 				} else if (key === 'takeProfitPercent') {
 					min = Math.max(0, min);
 					max = Math.min(100, max);
@@ -964,10 +1022,13 @@ export class FinderManager {
 			let min = baseValue - range;
 			let max = baseValue + range;
 
-			// Special clamping for risk management percent params
+			// Special clamping for percent params
 			if (key === 'stopLossPercent') {
 				min = Math.max(0, min);
 				max = Math.min(15, max);
+			} else if (key === 'targetPct') {
+				min = 0;
+				max = 2;
 			} else if (key === 'takeProfitPercent') {
 				min = Math.max(0, min);
 				max = Math.min(100, max);
@@ -1015,13 +1076,23 @@ export class FinderManager {
 	}
 
 	private normalizeParamValue(key: string, value: number, defaultValue: number): number {
-		const periodLike = /(period|lookback|bars|bins|length)/i.test(key);
-		const percentLike = /(percent|pct|overbought|oversold|rsi)/i.test(key);
+		const isRsiThreshold = /(rsi(bullish|bearish|overbought|oversold)|overbought|oversold)/i.test(key);
+		const isRsiPeriod = /rsi/i.test(key) && !isRsiThreshold;
+		const iterationLike = /(iteration|iterations|interval)/i.test(key);
+		const alphaLike = /alpha/i.test(key);
+		const periodLike = /(period|lookback|bars|bins|length)/i.test(key) || isRsiPeriod || iterationLike || alphaLike;
+		const percentLike = /(percent|pct)/i.test(key) || isRsiThreshold;
 		const nonNegative = /(std|dev|factor|multiplier|atr|adx)/i.test(key);
 
 		let next = value;
-		if (periodLike) {
+		if (key === 'warmupBars') {
+			next = Math.max(0, Math.round(next));
+		} else if (key === 'clusterChoice') {
+			next = Math.min(2, Math.max(0, Math.round(next)));
+		} else if (periodLike) {
 			next = Math.max(1, Math.round(next));
+		} else if (key === 'targetPct') {
+			next = Math.min(2, Math.max(0, Number(next.toFixed(2))));
 		} else if (key === 'stopLossPercent') {
 			next = Math.min(15, Math.max(0, Number(next.toFixed(2))));
 		} else if (key === 'takeProfitPercent') {
@@ -1032,9 +1103,23 @@ export class FinderManager {
 			next = Math.max(0, next);
 		}
 
-		if (!periodLike && Number.isInteger(defaultValue) && !percentLike && key !== 'stopLossPercent' && key !== 'takeProfitPercent') {
+		if (/(multiplier|factor)/i.test(key) && defaultValue > 0) {
+			next = Math.max(0.1, next);
+		}
+
+		if (/z(entry|exit)/i.test(key)) {
+			next = Math.max(0, next);
+		}
+
+		if (key === 'bufferAtr') {
+			next = Math.max(0, next);
+		}
+
+		if (!periodLike && Number.isInteger(defaultValue) && !percentLike && key !== 'stopLossPercent' && key !== 'takeProfitPercent' && key !== 'targetPct') {
 			next = Math.round(next);
 		} else if (key === 'stopLossPercent' || key === 'takeProfitPercent') {
+			next = Number(next.toFixed(2));
+		} else if (key === 'targetPct') {
 			next = Number(next.toFixed(2));
 		} else if (!Number.isInteger(defaultValue)) {
 			next = Number(next.toFixed(4));
@@ -1066,6 +1151,20 @@ export class FinderManager {
 		const macdFast = params.macdFast;
 		const macdSlow = params.macdSlow;
 		if (macdFast !== undefined && macdSlow !== undefined && macdFast >= macdSlow) return false;
+
+		const minFactor = params.minFactor;
+		const maxFactor = params.maxFactor;
+		if (minFactor !== undefined && maxFactor !== undefined && minFactor > maxFactor) return false;
+		if (params.factorStep !== undefined && params.factorStep <= 0) return false;
+
+		if (params.kMeansIterations !== undefined && params.kMeansIterations <= 0) return false;
+		if (params.kMeansInterval !== undefined && params.kMeansInterval <= 0) return false;
+		if (params.perfAlpha !== undefined && params.perfAlpha <= 0) return false;
+		if (params.clusterChoice !== undefined && (params.clusterChoice < 0 || params.clusterChoice > 2)) return false;
+
+		const zEntry = params.zEntry;
+		const zExit = params.zExit;
+		if (zEntry !== undefined && zExit !== undefined && zExit >= zEntry) return false;
 
 		return true;
 	}
@@ -1319,5 +1418,7 @@ export class FinderManager {
 }
 
 export const finderManager = new FinderManager();
+
+
 
 

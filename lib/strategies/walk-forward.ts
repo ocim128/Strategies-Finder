@@ -111,9 +111,21 @@ function generateParameterGrid(ranges: ParameterRange[]): StrategyParams[] {
         }
 
         const range = ranges[index];
+        if (!Number.isFinite(range.step) || range.step <= 0) {
+            throw new Error(`Invalid parameter step for ${range.name}: ${range.step}`);
+        }
+        if (!Number.isFinite(range.min) || !Number.isFinite(range.max) || range.min >= range.max) {
+            throw new Error(`Invalid parameter range for ${range.name}: ${range.min} to ${range.max}`);
+        }
+
+        // Guard against runaway loops on floating point ranges
+        const maxIterations = Math.ceil((range.max - range.min) / range.step) + 2;
+        let iterations = 0;
         for (let value = range.min; value <= range.max; value += range.step) {
             current[range.name] = Math.round(value * 1000) / 1000; // Avoid floating point issues
             generate(index + 1, current);
+            iterations++;
+            if (iterations > maxIterations) break;
         }
     }
 
@@ -444,6 +456,16 @@ export async function runWalkForwardAnalysis(
         minTrades = 5
     } = config;
 
+    if (!Number.isFinite(optimizationWindow) || optimizationWindow <= 0) {
+        throw new Error(`Invalid optimization window: ${optimizationWindow}`);
+    }
+    if (!Number.isFinite(testWindow) || testWindow <= 0) {
+        throw new Error(`Invalid test window: ${testWindow}`);
+    }
+    if (!Number.isFinite(stepSize) || stepSize <= 0) {
+        throw new Error(`Invalid step size: ${stepSize}`);
+    }
+
     const paramGrid = generateParameterGrid(parameterRanges);
 
     if (paramGrid.length === 0) {
@@ -621,8 +643,11 @@ export async function quickWalkForward(
     // effectiveSteps takes into account that we iterate all params.
     const stepsPerParam = Math.max(2, Math.floor(Math.pow(targetTotalIterations, 1 / Math.max(1, numParams))));
 
+    const allowedParams = strategy.metadata?.walkForwardParams;
+    const allowSet = allowedParams ? new Set(allowedParams) : null;
     const parameterRanges: ParameterRange[] = [];
     for (const [name, defaultValue] of Object.entries(strategy.defaultParams)) {
+        if (allowSet && !allowSet.has(name)) continue;
         // Handle decimal parameters (like Fib levels 0.618, 0.382) differently from integer params
         const isDecimal = !Number.isInteger(defaultValue) && defaultValue < 1;
 
@@ -717,6 +742,12 @@ export async function runFixedParamWalkForward(
     data = ensureCleanData(data);
 
     const { testWindow, stepSize } = config;
+    if (!Number.isFinite(testWindow) || testWindow <= 0) {
+        throw new Error(`Invalid test window: ${testWindow}`);
+    }
+    if (!Number.isFinite(stepSize) || stepSize <= 0) {
+        throw new Error(`Invalid step size: ${stepSize}`);
+    }
 
     const totalDataLength = data.length;
 

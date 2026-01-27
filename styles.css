@@ -11,6 +11,7 @@
 @import './styles/components.css';
 @import './styles/tab-groups.css';
 @import './styles/features.css';
+@import './styles/pair-combiner.css';
 @import './styles/data-viz.css';
 @import './styles/chart-enhancements.css';
 @import './styles/command-palette.css';

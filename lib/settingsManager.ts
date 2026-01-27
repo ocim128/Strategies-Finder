@@ -66,6 +66,11 @@ export interface BacktestSettingsData {
     confirmationStrategiesToggle: boolean;
     confirmationStrategies: string[];
     confirmationStrategyParams: Record<string, StrategyParams>;
+
+    // Execution realism
+    executionModel: string;
+    allowSameBarExit: boolean;
+    slippageBps: number;
 }
 
 export interface StrategyConfig {
@@ -133,6 +138,11 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     confirmationStrategiesToggle: false,
     confirmationStrategies: [],
     confirmationStrategyParams: {},
+
+    // Execution realism
+    executionModel: 'next_open',
+    allowSameBarExit: false,
+    slippageBps: 5,
 };
 
 const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -221,6 +231,11 @@ class SettingsManager {
             confirmationStrategiesToggle: this.readCheckbox('confirmationStrategiesToggle', DEFAULT_BACKTEST_SETTINGS.confirmationStrategiesToggle),
             confirmationStrategies: getConfirmationStrategyValues(),
             confirmationStrategyParams: getConfirmationStrategyParams(),
+
+            // Execution realism
+            executionModel: this.readSelect('executionModel', DEFAULT_BACKTEST_SETTINGS.executionModel),
+            allowSameBarExit: this.readCheckbox('allowSameBarExitToggle', DEFAULT_BACKTEST_SETTINGS.allowSameBarExit),
+            slippageBps: this.readNumber('slippageBps', DEFAULT_BACKTEST_SETTINGS.slippageBps),
         };
     }
 
@@ -402,6 +417,11 @@ class SettingsManager {
         setConfirmationStrategyParams(settings.confirmationStrategyParams ?? {});
         const confirmationList = Array.isArray(settings.confirmationStrategies) ? settings.confirmationStrategies : [];
         renderConfirmationStrategyList(confirmationList);
+
+        // Execution realism
+        this.writeSelect('executionModel', settings.executionModel ?? DEFAULT_BACKTEST_SETTINGS.executionModel);
+        this.writeCheckbox('allowSameBarExitToggle', settings.allowSameBarExit ?? DEFAULT_BACKTEST_SETTINGS.allowSameBarExit);
+        this.writeNumber('slippageBps', settings.slippageBps ?? DEFAULT_BACKTEST_SETTINGS.slippageBps);
 
         // Trigger change events so UI updates reflect changes
         this.triggerChangeEvents();

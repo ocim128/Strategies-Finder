@@ -1,5 +1,6 @@
 import { ISeriesApi, Time, ISeriesMarkersPluginApi, IChartApi } from "lightweight-charts";
 import { BacktestResult, OHLCVData } from "./strategies/index";
+import type { PairAnalysisResults } from "./pairCombiner";
 
 export interface Indicator {
     id: string;
@@ -23,4 +24,9 @@ export interface AppState {
     indicators: Indicator[];
     currentBacktestResult: BacktestResult | null;
     currentStrategyKey: string;
+    pairCombinerEnabled: boolean;
+    secondarySymbol: string | null;
+    secondaryInterval: string | null;
+    secondaryOhlcvData: OHLCVData[];
+    pairAnalysisResults: PairAnalysisResults | null;
 }

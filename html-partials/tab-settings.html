@@ -23,6 +23,41 @@
     <div class="param-hint">Prefer Rust for faster backtests when available. Turn off to force TypeScript.</div>
 
     <div class="section-header">
+        <div class="section-title">Backtest Realism</div>
+    </div>
+    <div class="section-body">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Execution Model</label>
+                <select class="param-input" id="executionModel">
+                    <option value="next_open" selected>Next Bar Open (realistic)</option>
+                    <option value="next_close">Next Bar Close (conservative)</option>
+                    <option value="signal_close">Signal Bar Close (optimistic)</option>
+                </select>
+                <div class="param-hint">Next-bar execution reduces look-ahead bias.</div>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Slippage (bps)</label>
+                <input type="number" class="param-input" id="slippageBps" value="5" min="0" max="100" step="1">
+                <div class="param-hint">Applied on entry and exit fills.</div>
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                    <label class="param-label" style="margin-bottom: 0;">Allow Same-Bar Exits</label>
+                    <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle same-bar exits">
+                        <input type="checkbox" id="allowSameBarExitToggle">
+                        <span class="section-toggle-track"></span>
+                    </label>
+                </div>
+                <div class="param-hint">Disable to avoid entry/exit on the same bar.</div>
+            </div>
+        </div>
+        <div class="param-hint">Realism settings use the TypeScript engine (Rust skipped for accuracy).</div>
+    </div>
+
+    <div class="section-header">
         <div class="section-title">Fixed Trade Amount Mode</div>
         <label class="section-toggle" aria-label="Toggle fixed trade amount mode">
             <input type="checkbox" id="fixedTradeToggle" checked>

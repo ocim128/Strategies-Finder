@@ -3,6 +3,7 @@ import { OHLCVData } from "./strategies/index";
 import { resampleOHLCV } from "./strategies/resample-utils";
 import { state, type MockChartModel } from "./state";
 import { debugLogger } from "./debugLogger";
+import { uiManager } from "./uiManager";
 
 /**
  * Binance API Kline data format:
@@ -36,10 +37,18 @@ export class DataManager {
         '1h', '2h', '4h', '6h', '8h', '12h',
         '1d', '3d', '1w', '1M'
     ]);
+    private readonly TWELVE_DATA_INTERVALS = new Set([
+        '1m', '5m', '15m', '30m', '45m',
+        '1h', '2h', '4h', '8h',
+        '1d', '1w', '1M'
+    ]);
     private currentAbort: AbortController | null = null;
     private currentLoadId = 0;
     // Only these are truly mock/simulated data now
     private readonly MOCK_SYMBOLS = new Set(['MOCK_STOCK', 'MOCK_CRYPTO', 'MOCK_FOREX']);
+    private readonly nonBinanceProviderOverride = new Map<string, 'twelvedata' | 'yahoo'>();
+    private lastDataFallbackKey: string | null = null;
+    private readonly TWELVE_DATA_API_KEY_STORAGE = 'twelvedataApiKey';
 
     // Real-time WebSocket streaming
     private ws: WebSocket | null = null;
@@ -47,9 +56,14 @@ export class DataManager {
     private isStreaming = false;
     private streamSymbol: string = '';
     private streamInterval: string = '';
+    private streamProvider: 'binance' | 'twelvedata' | '' = '';
     private reconnectAttempts = 0;
     private readonly MAX_RECONNECT_ATTEMPTS = 10;
     private readonly RECONNECT_DELAY_BASE = 1000; // Base delay in ms
+    private pollTimeout: ReturnType<typeof setTimeout> | null = null;
+    private pollAbort: AbortController | null = null;
+    private pollingInFlight = false;
+    private isPolling = false;
 
 
     public async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
@@ -64,11 +78,16 @@ export class DataManager {
 
         if (provider === 'binance') {
             return this.fetchBinanceData(symbol, interval, signal);
-        } else if (provider === 'twelvedata') {
-            return this.fetchTwelveData(symbol, interval, signal);
         }
 
-        return [];
+        const { data, provider: resolvedProvider } = await this.fetchNonBinanceData(symbol, interval, signal);
+        if (data.length > 0 && resolvedProvider) {
+            this.nonBinanceProviderOverride.set(symbol, resolvedProvider);
+            return data;
+        }
+
+        this.notifyDataFallback(symbol, interval);
+        return this.generateMockData(symbol, interval);
     }
 
     /**
@@ -135,62 +154,18 @@ export class DataManager {
      */
     private async fetchTwelveData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
         try {
-            // Map our interval format to Twelve Data format
-            const twelveInterval = this.mapToTwelveDataInterval(interval);
-
-            // Use proxy to fetch from Twelve Data
-            const apiUrl = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=${twelveInterval}&outputsize=5000`;
-
-            const proxyUrl = 'http://localhost:3030/api/proxy';
-            const response = await fetch(proxyUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: apiUrl }),
-                signal,
-            });
-
-            if (!response.ok) {
-                throw new Error(`Proxy request failed: ${response.status}`);
-            }
-
-            const data = await response.json();
-
-            if (data.status === 'error') {
-                debugLogger.warn('data.twelvedata.error', {
-                    symbol,
-                    message: data.message,
-                });
-                // Return mock data as fallback for now
-                return this.generateMockData(symbol, interval);
-            }
-
-            if (!data.values || !Array.isArray(data.values)) {
-                return this.generateMockData(symbol, interval);
-            }
-
-            // Convert Twelve Data format to OHLCV
-            const ohlcv: OHLCVData[] = data.values
-                .reverse() // Twelve Data returns newest first
-                .map((bar: any) => ({
-                    time: (new Date(bar.datetime).getTime() / 1000) as Time,
-                    open: parseFloat(bar.open),
-                    high: parseFloat(bar.high),
-                    low: parseFloat(bar.low),
-                    close: parseFloat(bar.close),
-                    volume: parseFloat(bar.volume || '0'),
-                }))
-                .filter((bar: OHLCVData) =>
-                    !isNaN(bar.open) && !isNaN(bar.high) &&
-                    !isNaN(bar.low) && !isNaN(bar.close)
-                );
+            const { sourceInterval, needsResample } = this.resolveTwelveDataInterval(interval);
+            const ohlcv = await this.fetchTwelveDataSeries(symbol, sourceInterval, 5000, signal);
+            const result = needsResample ? resampleOHLCV(ohlcv, interval) : ohlcv;
 
             debugLogger.info('data.twelvedata.success', {
                 symbol,
-                interval: twelveInterval,
-                bars: ohlcv.length,
+                interval,
+                sourceInterval,
+                bars: result.length,
             });
 
-            return ohlcv;
+            return result;
         } catch (error) {
             if (this.isAbortError(error)) {
                 return [];
@@ -200,10 +175,89 @@ export class DataManager {
                 interval,
                 error: this.formatError(error),
             });
-            console.warn('Twelve Data fetch failed, using mock data:', error);
-            // Fallback to mock data
-            return this.generateMockData(symbol, interval);
+            console.warn('Twelve Data fetch failed:', error);
+            return [];
         }
+    }
+
+    private async fetchTwelveDataSeries(
+        symbol: string,
+        interval: string,
+        outputsize: number,
+        signal?: AbortSignal
+    ): Promise<OHLCVData[]> {
+        const apiKey = this.getTwelveDataApiKey();
+        if (!apiKey) {
+            debugLogger.warn('data.twelvedata.missing_key', { symbol });
+            return [];
+        }
+        const twelveInterval = this.mapToTwelveDataInterval(interval);
+        const resolvedSymbol = this.normalizeTwelveDataSymbol(symbol);
+        const size = Math.max(1, Math.floor(outputsize));
+
+        // Use proxy to fetch from Twelve Data
+        const apiUrl = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(resolvedSymbol)}&interval=${twelveInterval}&outputsize=${size}&apikey=${encodeURIComponent(apiKey)}`;
+        const proxyUrl = 'http://localhost:3030/api/proxy';
+        const response = await fetch(proxyUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: apiUrl }),
+            signal,
+        });
+
+        if (!response.ok) {
+            throw new Error(`Proxy request failed: ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (data.status === 'error') {
+            const message = typeof data.message === 'string' ? data.message : 'Twelve Data error';
+            throw new Error(message);
+        }
+        if (!data.values || !Array.isArray(data.values)) {
+            return [];
+        }
+
+        return data.values
+            .reverse() // Twelve Data returns newest first
+            .map((bar: any) => ({
+                time: (new Date(bar.datetime).getTime() / 1000) as Time,
+                open: parseFloat(bar.open),
+                high: parseFloat(bar.high),
+                low: parseFloat(bar.low),
+                close: parseFloat(bar.close),
+                volume: parseFloat(bar.volume || '0'),
+            }))
+            .filter((bar: OHLCVData) =>
+                !isNaN(bar.open) && !isNaN(bar.high) &&
+                !isNaN(bar.low) && !isNaN(bar.close)
+            );
+    }
+
+    private normalizeTwelveDataSymbol(symbol: string): string {
+        const upper = symbol.toUpperCase();
+        if (upper.includes('/')) return upper;
+        if (/^[A-Z]{6}$/.test(upper)) {
+            return `${upper.slice(0, 3)}/${upper.slice(3)}`;
+        }
+        if (upper === 'XAUUSD') return 'XAU/USD';
+        if (upper === 'XAGUSD') return 'XAG/USD';
+        if (upper === 'WTIUSD') return 'WTI/USD';
+        return symbol;
+    }
+
+    private getTwelveDataApiKey(): string | null {
+        try {
+            const envKey = (import.meta as ImportMeta).env?.VITE_TWELVE_DATA_API_KEY;
+            if (envKey && envKey.trim()) return envKey.trim();
+            if (typeof window !== 'undefined' && window.localStorage) {
+                const key = window.localStorage.getItem(this.TWELVE_DATA_API_KEY_STORAGE);
+                if (key && key.trim()) return key.trim();
+            }
+        } catch {
+            // Ignore storage access errors
+        }
+        return null;
     }
 
     /**
@@ -212,17 +266,278 @@ export class DataManager {
     private mapToTwelveDataInterval(interval: string): string {
         const mapping: { [key: string]: string } = {
             '1m': '1min',
+            '3m': '3min',
             '5m': '5min',
             '15m': '15min',
             '30m': '30min',
+            '45m': '45min',
             '1h': '1h',
             '2h': '2h',
             '4h': '4h',
+            '8h': '8h',
             '1d': '1day',
             '1w': '1week',
             '1M': '1month',
         };
         return mapping[interval] || '1day';
+    }
+
+    private async fetchYahooData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
+        try {
+            const { sourceInterval, needsResample } = this.resolveYahooInterval(interval);
+            const ranges = this.getYahooRangeCandidates(sourceInterval, false);
+            for (const range of ranges) {
+                if (signal?.aborted) return [];
+                const ohlcv = await this.fetchYahooSeries(symbol, sourceInterval, range, signal);
+                if (ohlcv.length === 0) continue;
+                const result = needsResample ? resampleOHLCV(ohlcv, interval) : ohlcv;
+                if (result.length > 0) {
+                    debugLogger.info('data.yahoo.success', {
+                        symbol,
+                        interval,
+                        sourceInterval,
+                        range,
+                        bars: result.length,
+                    });
+                    return result;
+                }
+            }
+            return [];
+        } catch (error) {
+            if (this.isAbortError(error)) {
+                return [];
+            }
+            debugLogger.error('data.yahoo.error', {
+                symbol,
+                interval,
+                error: this.formatError(error),
+            });
+            return [];
+        }
+    }
+
+    private async fetchYahooSeries(
+        symbol: string,
+        interval: string,
+        range: string,
+        signal?: AbortSignal
+    ): Promise<OHLCVData[]> {
+        const yahooSymbol = this.mapToYahooSymbol(symbol);
+        const yahooInterval = this.mapToYahooInterval(interval);
+        const apiUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=${encodeURIComponent(yahooInterval)}&range=${encodeURIComponent(range)}&includePrePost=false&events=div%2Csplit`;
+        const proxyUrl = 'http://localhost:3030/api/proxy';
+        const response = await fetch(proxyUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: apiUrl }),
+            signal,
+        });
+
+        if (!response.ok) {
+            return [];
+        }
+
+        const data = await response.json();
+        const result = data?.chart?.result?.[0];
+        if (!result || result.error) {
+            return [];
+        }
+
+        const timestamps: number[] = Array.isArray(result.timestamp) ? result.timestamp : [];
+        const quote = result.indicators?.quote?.[0];
+        if (!quote || timestamps.length === 0) {
+            return [];
+        }
+
+        const ohlcv: OHLCVData[] = [];
+        for (let i = 0; i < timestamps.length; i++) {
+            const time = timestamps[i];
+            const open = quote.open?.[i];
+            const high = quote.high?.[i];
+            const low = quote.low?.[i];
+            const close = quote.close?.[i];
+            const volume = quote.volume?.[i] ?? 0;
+            if (!Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) {
+                continue;
+            }
+            ohlcv.push({
+                time: time as Time,
+                open: Number(open),
+                high: Number(high),
+                low: Number(low),
+                close: Number(close),
+                volume: Number(volume ?? 0),
+            });
+        }
+
+        return ohlcv;
+    }
+
+    private mapToYahooSymbol(symbol: string): string {
+        const upper = symbol.toUpperCase();
+        if (upper.includes('/')) {
+            const compact = upper.replace('/', '');
+            return `${compact}=X`;
+        }
+        if (upper.endsWith('USD') && /^[A-Z]{6}$/.test(upper)) {
+            return `${upper}=X`;
+        }
+        if (upper === 'XAUUSD') return 'XAUUSD=X';
+        if (upper === 'XAGUSD') return 'XAGUSD=X';
+        if (upper === 'WTIUSD') return 'CL=F';
+        return symbol;
+    }
+
+    private mapToYahooInterval(interval: string): string {
+        const mapping: { [key: string]: string } = {
+            '1m': '1m',
+            '2m': '2m',
+            '5m': '5m',
+            '15m': '15m',
+            '30m': '30m',
+            '60m': '60m',
+            '1h': '1h',
+            '1d': '1d',
+            '1w': '1wk',
+            '1M': '1mo',
+        };
+        return mapping[interval] || '1d';
+    }
+
+    private resolveYahooInterval(interval: string): { sourceInterval: string; needsResample: boolean } {
+        const supported = new Set(['1m', '2m', '5m', '15m', '30m', '60m', '1h', '1d', '1w', '1M']);
+        if (supported.has(interval)) {
+            return { sourceInterval: interval, needsResample: false };
+        }
+
+        const targetSeconds = this.getIntervalSeconds(interval);
+        if (!Number.isFinite(targetSeconds) || targetSeconds <= 0) {
+            return { sourceInterval: '1d', needsResample: false };
+        }
+
+        let bestInterval: string | null = null;
+        let bestSeconds = 0;
+        for (const candidate of supported) {
+            if (candidate === '1M') continue;
+            const seconds = this.getYahooIntervalSeconds(candidate);
+            if (!Number.isFinite(seconds) || seconds <= 0) continue;
+            if (seconds > targetSeconds) continue;
+            if (targetSeconds % seconds !== 0) continue;
+            if (seconds > bestSeconds) {
+                bestSeconds = seconds;
+                bestInterval = candidate;
+            }
+        }
+
+        if (bestInterval) {
+            return { sourceInterval: bestInterval, needsResample: true };
+        }
+
+        return { sourceInterval: '1m', needsResample: true };
+    }
+
+    private getYahooIntervalSeconds(interval: string): number {
+        switch (interval) {
+            case '1m': return 60;
+            case '2m': return 120;
+            case '5m': return 300;
+            case '15m': return 900;
+            case '30m': return 1800;
+            case '60m': return 3600;
+            case '1h': return 3600;
+            case '1d': return 86400;
+            case '1w': return 604800;
+            case '1M': return 2592000;
+            default: return this.getIntervalSeconds(interval);
+        }
+    }
+
+    private getYahooRangeCandidates(interval: string, minimal: boolean): string[] {
+        if (interval === '1m') {
+            return minimal ? ['1d', '5d'] : ['5d', '1mo'];
+        }
+        if (interval === '2m' || interval === '5m' || interval === '15m' || interval === '30m' || interval === '60m' || interval === '1h') {
+            return minimal ? ['5d', '1mo'] : ['1mo', '3mo', '6mo'];
+        }
+        if (interval === '1d') {
+            return minimal ? ['6mo', '1y'] : ['5y', '2y', '1y'];
+        }
+        if (interval === '1w') {
+            return minimal ? ['2y', '5y'] : ['10y', '5y'];
+        }
+        if (interval === '1M') {
+            return minimal ? ['10y', 'max'] : ['max', '10y'];
+        }
+        return minimal ? ['1mo'] : ['1y', '6mo'];
+    }
+
+    private async fetchNonBinanceData(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal
+    ): Promise<{ data: OHLCVData[]; provider: 'twelvedata' | 'yahoo' | null }> {
+        const order = this.getNonBinanceProviderOrder(symbol);
+        for (const provider of order) {
+            if (signal?.aborted) return { data: [], provider: null };
+            const data = provider === 'twelvedata'
+                ? await this.fetchTwelveData(symbol, interval, signal)
+                : await this.fetchYahooData(symbol, interval, signal);
+            if (data.length > 0) {
+                return { data, provider };
+            }
+        }
+        return { data: [], provider: null };
+    }
+
+    private getNonBinanceProviderOrder(symbol: string): Array<'twelvedata' | 'yahoo'> {
+        const hasTwelveKey = !!this.getTwelveDataApiKey();
+        const override = this.nonBinanceProviderOverride.get(symbol);
+        if (override === 'yahoo') {
+            return ['yahoo', 'twelvedata'];
+        }
+        if (override === 'twelvedata') {
+            return ['twelvedata', 'yahoo'];
+        }
+        return hasTwelveKey ? ['twelvedata', 'yahoo'] : ['yahoo', 'twelvedata'];
+    }
+
+    private notifyDataFallback(symbol: string, interval: string): void {
+        const key = `${symbol}|${interval}`;
+        if (this.lastDataFallbackKey === key) return;
+        this.lastDataFallbackKey = key;
+        uiManager.showToast('Live data unavailable, showing simulated data.', 'error');
+    }
+
+    private resolveTwelveDataInterval(interval: string): { sourceInterval: string; needsResample: boolean } {
+        if (this.TWELVE_DATA_INTERVALS.has(interval)) {
+            return { sourceInterval: interval, needsResample: false };
+        }
+
+        const targetSeconds = this.getIntervalSeconds(interval);
+        if (!Number.isFinite(targetSeconds) || targetSeconds <= 0) {
+            return { sourceInterval: '1d', needsResample: false };
+        }
+
+        let bestInterval: string | null = null;
+        let bestSeconds = 0;
+
+        for (const candidate of this.TWELVE_DATA_INTERVALS) {
+            if (candidate === '1M') continue;
+            const seconds = this.getIntervalSeconds(candidate);
+            if (!Number.isFinite(seconds) || seconds <= 0) continue;
+            if (seconds > targetSeconds) continue;
+            if (targetSeconds % seconds !== 0) continue;
+            if (seconds > bestSeconds) {
+                bestSeconds = seconds;
+                bestInterval = candidate;
+            }
+        }
+
+        if (bestInterval) {
+            return { sourceInterval: bestInterval, needsResample: true };
+        }
+
+        return { sourceInterval: '1m', needsResample: true };
     }
 
     /**
@@ -1196,14 +1511,15 @@ export class DataManager {
             debugLogger.info('data.stream.skip_mock', { symbol });
             return;
         }
-        if (!this.isBinanceInterval(interval)) {
-            debugLogger.info('data.stream.skip_interval', { symbol, interval });
+        const provider = this.getProvider(symbol);
+        if (provider === 'binance' && !this.isBinanceInterval(interval)) {
+            debugLogger.info('data.stream.skip_interval', { symbol, interval, provider });
             return;
         }
 
         // If already streaming the same symbol/interval, do nothing
-        if (this.isStreaming && this.streamSymbol === symbol && this.streamInterval === interval) {
-            debugLogger.info('data.stream.already_active', { symbol, interval });
+        if (this.isStreaming && this.streamSymbol === symbol && this.streamInterval === interval && this.streamProvider === provider) {
+            debugLogger.info('data.stream.already_active', { symbol, interval, provider });
             return;
         }
 
@@ -1212,8 +1528,15 @@ export class DataManager {
 
         this.streamSymbol = symbol;
         this.streamInterval = interval;
+        this.streamProvider = provider;
         this.reconnectAttempts = 0;
-        this.connectWebSocket();
+
+        if (provider === 'binance') {
+            this.connectWebSocket();
+            return;
+        }
+
+        this.startTwelveDataPolling();
     }
 
     /**
@@ -1224,6 +1547,16 @@ export class DataManager {
             clearTimeout(this.reconnectTimeout);
             this.reconnectTimeout = null;
         }
+        if (this.pollTimeout) {
+            clearTimeout(this.pollTimeout);
+            this.pollTimeout = null;
+        }
+        if (this.pollAbort) {
+            this.pollAbort.abort();
+            this.pollAbort = null;
+        }
+        this.pollingInFlight = false;
+        this.isPolling = false;
 
         if (this.ws) {
             this.isStreaming = false;
@@ -1235,8 +1568,10 @@ export class DataManager {
             });
         }
 
+        this.isStreaming = false;
         this.streamSymbol = '';
         this.streamInterval = '';
+        this.streamProvider = '';
         this.reconnectAttempts = 0;
     }
 
@@ -1323,6 +1658,135 @@ export class DataManager {
         }, delay);
     }
 
+    private startTwelveDataPolling(): void {
+        this.isStreaming = true;
+        this.isPolling = true;
+        this.pollingInFlight = false;
+        this.scheduleNextPoll(0);
+        debugLogger.event('data.stream.polling_started', {
+            symbol: this.streamSymbol,
+            interval: this.streamInterval
+        });
+    }
+
+    private scheduleNextPoll(delayMs?: number): void {
+        if (!this.isPolling || !this.streamSymbol || !this.streamInterval) return;
+        if (this.pollTimeout) {
+            clearTimeout(this.pollTimeout);
+        }
+        const delay = delayMs ?? this.getPollingDelayMs(this.streamInterval);
+        this.pollTimeout = setTimeout(() => {
+            this.pollTwelveDataLatest();
+        }, delay);
+    }
+
+    private getPollingDelayMs(interval: string): number {
+        const seconds = this.getIntervalSeconds(interval);
+        if (!Number.isFinite(seconds) || seconds <= 0) {
+            return 30000;
+        }
+        if (seconds <= 60) return 15000;
+        if (seconds <= 300) return 30000;
+        if (seconds <= 3600) return 60000;
+        if (seconds <= 86400) return 300000;
+        return 900000;
+    }
+
+    private async pollTwelveDataLatest(): Promise<void> {
+        if (!this.isPolling || !this.streamSymbol || !this.streamInterval) return;
+        if (this.pollingInFlight) {
+            this.scheduleNextPoll();
+            return;
+        }
+
+        const symbol = this.streamSymbol;
+        const interval = this.streamInterval;
+
+        this.pollingInFlight = true;
+        if (this.pollAbort) {
+            this.pollAbort.abort();
+        }
+        const abort = new AbortController();
+        this.pollAbort = abort;
+
+        try {
+            const { candle, provider } = await this.fetchNonBinanceLatest(symbol, interval, abort.signal);
+            if (abort.signal.aborted) return;
+            if (!this.isPolling || symbol !== this.streamSymbol || interval !== this.streamInterval) return;
+            if (candle) {
+                if (provider) {
+                    this.nonBinanceProviderOverride.set(symbol, provider);
+                }
+                this.applyRealtimeCandle(candle);
+            }
+        } catch (error) {
+            if (!this.isAbortError(error)) {
+                debugLogger.warn('data.stream.poll_error', {
+                    symbol,
+                    interval,
+                    error: this.formatError(error)
+                });
+            }
+        } finally {
+            this.pollingInFlight = false;
+            this.scheduleNextPoll();
+        }
+    }
+
+    private async fetchNonBinanceLatest(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal
+    ): Promise<{ candle: OHLCVData | null; provider: 'twelvedata' | 'yahoo' | null }> {
+        const order = this.getNonBinanceProviderOrder(symbol);
+        for (const provider of order) {
+            if (signal?.aborted) return { candle: null, provider: null };
+            const candle = provider === 'twelvedata'
+                ? await this.fetchTwelveDataLatest(symbol, interval, signal)
+                : await this.fetchYahooLatest(symbol, interval, signal);
+            if (candle) {
+                return { candle, provider };
+            }
+        }
+        return { candle: null, provider: null };
+    }
+
+    private async fetchTwelveDataLatest(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal
+    ): Promise<OHLCVData | null> {
+        const { sourceInterval, needsResample } = this.resolveTwelveDataInterval(interval);
+        const targetSeconds = this.getIntervalSeconds(interval);
+        const sourceSeconds = this.getIntervalSeconds(sourceInterval);
+        const ratio = Number.isFinite(targetSeconds) && Number.isFinite(sourceSeconds) && sourceSeconds > 0
+            ? Math.max(1, Math.round(targetSeconds / sourceSeconds))
+            : 1;
+        const outputsize = needsResample ? Math.max(6, ratio * 4) : 2;
+        const series = await this.fetchTwelveDataSeries(symbol, sourceInterval, outputsize, signal);
+        if (series.length === 0) return null;
+        const updatedSeries = needsResample ? resampleOHLCV(series, interval) : series;
+        return updatedSeries[updatedSeries.length - 1] ?? null;
+    }
+
+    private async fetchYahooLatest(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal
+    ): Promise<OHLCVData | null> {
+        const { sourceInterval, needsResample } = this.resolveYahooInterval(interval);
+        const ranges = this.getYahooRangeCandidates(sourceInterval, true);
+        for (const range of ranges) {
+            if (signal?.aborted) return null;
+            const series = await this.fetchYahooSeries(symbol, sourceInterval, range, signal);
+            if (series.length === 0) continue;
+            const updatedSeries = needsResample ? resampleOHLCV(series, interval) : series;
+            const latest = updatedSeries[updatedSeries.length - 1];
+            if (latest) return latest;
+        }
+        return null;
+    }
+
     /**
      * Handle incoming WebSocket message and update chart data
      */
@@ -1354,34 +1818,7 @@ export class DataManager {
                     return;
                 }
 
-                // Update the candlestick series directly for real-time updates
-                if (state.candlestickSeries) {
-                    state.candlestickSeries.update(updatedCandle);
-                }
-
-                // Also update the state data array
-                const currentData = [...state.ohlcvData];
-                if (currentData.length > 0) {
-                    const lastCandle = currentData[currentData.length - 1];
-
-                    // Check if this is the same candle (update) or a new candle
-                    if (lastCandle.time === updatedCandle.time) {
-                        // Update the last candle
-                        currentData[currentData.length - 1] = updatedCandle;
-                    } else if (updatedCandle.time > lastCandle.time) {
-                        // This is a new candle, append it
-                        currentData.push(updatedCandle);
-
-                        // Keep the array size manageable (optional: trim old data)
-                        if (currentData.length > this.TOTAL_LIMIT) {
-                            currentData.shift();
-                        }
-                    }
-
-                    // Update state without triggering full re-render
-                    // Using direct assignment to avoid state listener overhead for high-frequency updates
-                    (state as any).ohlcvData = currentData;
-                }
+                this.applyRealtimeCandle(updatedCandle);
 
                 // Log occasional updates (every 10 seconds based on time)
                 const now = Date.now();
@@ -1403,6 +1840,40 @@ export class DataManager {
     }
 
     private lastLogTime: number = 0;
+    private lastUiUpdateTime: number = 0;
+
+    private applyRealtimeCandle(updatedCandle: OHLCVData): void {
+        if (state.replayMode) {
+            return;
+        }
+
+        if (state.candlestickSeries) {
+            state.candlestickSeries.update(updatedCandle);
+        }
+
+        const currentData = [...state.ohlcvData];
+        if (currentData.length === 0) {
+            currentData.push(updatedCandle);
+        } else {
+            const lastCandle = currentData[currentData.length - 1];
+            if (lastCandle.time === updatedCandle.time) {
+                currentData[currentData.length - 1] = updatedCandle;
+            } else if (updatedCandle.time > lastCandle.time) {
+                currentData.push(updatedCandle);
+                if (currentData.length > this.TOTAL_LIMIT) {
+                    currentData.shift();
+                }
+            }
+        }
+
+        (state as any).ohlcvData = currentData;
+
+        const now = Date.now();
+        if (!this.lastUiUpdateTime || now - this.lastUiUpdateTime > 1000) {
+            this.lastUiUpdateTime = now;
+            uiManager.updatePriceDisplay();
+        }
+    }
 
 }
 

@@ -61,7 +61,11 @@ class WalkForwardService {
             const currentParams = paramManager.getValues(strategy);
 
             // Build parameter ranges from strategy defaults
-            const parameterRanges = this.buildParameterRanges(strategy.defaultParams, currentParams);
+            const parameterRanges = this.buildParameterRanges(
+                strategy.defaultParams,
+                currentParams,
+                strategy.metadata?.walkForwardParams
+            );
 
             // Determine if we should use fixed-param walk-forward:
             // - No parameters at all, OR  
@@ -162,7 +166,11 @@ class WalkForwardService {
         try {
             // Check if has no tunable parameters
             const currentParams = paramManager.getValues(strategy);
-            const parameterRanges = this.buildParameterRanges(strategy.defaultParams, currentParams);
+            const parameterRanges = this.buildParameterRanges(
+                strategy.defaultParams,
+                currentParams,
+                strategy.metadata?.walkForwardParams
+            );
             const useFixedParam =
                 Object.keys(strategy.defaultParams).length === 0 ||
                 parameterRanges.length === 0;
@@ -227,8 +235,13 @@ class WalkForwardService {
     /**
      * Build parameter ranges from current params with reasonable bounds
      */
-    private buildParameterRanges(defaults: Record<string, number>, current: Record<string, number>): ParameterRange[] {
+    private buildParameterRanges(
+        defaults: Record<string, number>,
+        current: Record<string, number>,
+        allowedParams?: string[]
+    ): ParameterRange[] {
         const ranges: ParameterRange[] = [];
+        const allowSet = allowedParams ? new Set(allowedParams) : null;
 
         // Get custom ranges from UI if available
         const rangeInputs = document.querySelectorAll('[data-param-range]');
@@ -250,9 +263,12 @@ class WalkForwardService {
         });
 
         for (const [name, value] of Object.entries(current)) {
+            if (allowSet && !allowSet.has(name)) {
+                continue;
+            }
             if (customRanges.has(name)) {
                 const custom = customRanges.get(name)!;
-                if (custom.min < custom.max) {
+                if (custom.min < custom.max && Number.isFinite(custom.step) && custom.step > 0) {
                     ranges.push({ name, ...custom });
                     continue;
                 }
@@ -310,11 +326,11 @@ class WalkForwardService {
         const defaultOptWindow = Math.floor(totalBars * 0.14);  // ~14% per window IS
         const defaultTestWindow = Math.floor(totalBars * 0.06); // ~6% per window OOS
 
-        const optimizationWindow = this.readNumberInput('wf-opt-window', defaultOptWindow);
-        const testWindow = this.readNumberInput('wf-test-window', defaultTestWindow);
-        const stepSize = this.readNumberInput('wf-step-size', testWindow);
-        const topN = this.readNumberInput('wf-top-n', 3);
-        const minTrades = this.readNumberInput('wf-min-trades', 5);
+        const optimizationWindow = Math.max(1, this.readNumberInput('wf-opt-window', defaultOptWindow));
+        const testWindow = Math.max(1, this.readNumberInput('wf-test-window', defaultTestWindow));
+        const stepSize = Math.max(1, this.readNumberInput('wf-step-size', testWindow));
+        const topN = Math.max(1, this.readNumberInput('wf-top-n', 3));
+        const minTrades = Math.max(0, this.readNumberInput('wf-min-trades', 5));
 
         return {
             optimizationWindow,

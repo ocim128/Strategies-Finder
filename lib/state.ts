@@ -1,5 +1,6 @@
 import { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, Time } from "lightweight-charts";
 import { BacktestResult, OHLCVData } from "./strategies/index";
+import type { PairAnalysisResults } from "./pairCombiner";
 import { Indicator } from "./types";
 
 export type StateKey = keyof State;
@@ -22,6 +23,13 @@ export class State {
     public indicators: Indicator[] = [];
     public currentBacktestResult: BacktestResult | null = null;
     public currentStrategyKey = 'sma_crossover';
+
+    // Pair Combiner state
+    public pairCombinerEnabled = false;
+    public secondarySymbol: string | null = null;
+    public secondaryInterval: string | null = null;
+    public secondaryOhlcvData: OHLCVData[] = [];
+    public pairAnalysisResults: PairAnalysisResults | null = null;
 
     // Replay state
     public replayMode: boolean = false;

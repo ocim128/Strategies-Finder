@@ -8,15 +8,17 @@ import { chartManager } from "./chartManager";
 //     EntryConfirmationMode
 // } from "../../../../src/strategies/index";
 
-import { runBacktest, StrategyParams, BacktestSettings, EntryConfirmationMode } from "./strategies/index";
+import { runBacktest, StrategyParams, BacktestSettings, EntryConfirmationMode, ExecutionModel, buildEntryBacktestResult } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./paramManager";
 import { debugLogger } from "./debugLogger";
 import { rustEngine } from "./rustEngineClient";
 import { shouldUseRustEngine } from "./enginePreferences";
-import { buildConfirmationStates, filterSignalsWithConfirmations, getConfirmationStrategyParams, getConfirmationStrategyValues } from "./confirmationStrategies";
+import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth, getConfirmationStrategyParams, getConfirmationStrategyValues } from "./confirmationStrategies";
 
 export class BacktestService {
+    private warnedStrictEngine = false;
+
     public async runCurrentBacktest() {
         const startedAt = Date.now();
         debugLogger.event('backtest.start', {
@@ -56,6 +58,7 @@ export class BacktestService {
             const params = paramManager.getValues(strategy);
             const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = this.getCapitalSettings();
             const settings = this.getBacktestSettings();
+            const requiresTsEngine = this.requiresTypescriptEngine(settings);
 
             progressFill.style.width = '40%';
             progressText.textContent = 'Generating signals...';
@@ -72,24 +75,42 @@ export class BacktestService {
                 ? buildConfirmationStates(state.ohlcvData, confirmationStrategies, settings.confirmationStrategyParams)
                 : [];
             const filteredSignals = confirmationStates.length > 0
-                ? filterSignalsWithConfirmations(
-                    state.ohlcvData,
-                    signals,
-                    confirmationStates,
-                    settings.entryConfirmation ?? 'none',
-                    settings.tradeDirection ?? 'long'
-                )
+                ? (strategy.metadata?.role === 'entry'
+                    ? filterSignalsWithConfirmationsBoth(
+                        state.ohlcvData,
+                        signals,
+                        confirmationStates,
+                        settings.entryConfirmation ?? 'none'
+                    )
+                    : filterSignalsWithConfirmations(
+                        state.ohlcvData,
+                        signals,
+                        confirmationStates,
+                        settings.entryConfirmation ?? 'none',
+                        settings.tradeDirection ?? 'long'
+                    ))
                 : signals;
 
             // Try Rust engine first for performance, fallback to TypeScript
             let result;
             let engineUsed: 'rust' | 'typescript' = 'typescript';
 
+            const evaluation = strategy.evaluate?.(state.ohlcvData, params, filteredSignals);
+            const entryStats = evaluation?.entryStats;
+
             const rustSettings: BacktestSettings = { ...settings };
             delete (rustSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
             delete (rustSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
+            delete (rustSettings as { executionModel?: string }).executionModel;
+            delete (rustSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
+            delete (rustSettings as { slippageBps?: number }).slippageBps;
 
-            if (shouldUseRustEngine()) {
+            if (strategy.metadata?.role === 'entry' && entryStats) {
+                result = buildEntryBacktestResult(entryStats);
+                engineUsed = 'typescript';
+            }
+
+            if (!result && shouldUseRustEngine() && !requiresTsEngine) {
                 const rustResult = await rustEngine.runBacktest(
                     state.ohlcvData,
                     filteredSignals,
@@ -101,14 +122,23 @@ export class BacktestService {
                 );
 
                 if (rustResult) {
-                    result = rustResult;
-                    engineUsed = 'rust';
-                    debugLogger.event('backtest.rust_used', { bars: state.ohlcvData.length });
+                    if (this.isResultConsistent(rustResult)) {
+                        result = rustResult;
+                        engineUsed = 'rust';
+                        debugLogger.event('backtest.rust_used', { bars: state.ohlcvData.length });
+                    } else {
+                        debugLogger.warn('[Backtest] Rust result failed consistency checks, falling back to TypeScript');
+                        uiManager.showToast('Rust backtest result inconsistent, rerunning in TypeScript', 'info');
+                    }
                 }
             }
 
             // Fallback to TypeScript if Rust unavailable or failed
             if (!result) {
+                if (requiresTsEngine && shouldUseRustEngine() && !this.warnedStrictEngine) {
+                    this.warnedStrictEngine = true;
+                    uiManager.showToast('Backtest realism settings require TypeScript engine (Rust skipped).', 'info');
+                }
                 result = runBacktest(
                     state.ohlcvData,
                     filteredSignals,
@@ -124,14 +154,26 @@ export class BacktestService {
             state.set('currentBacktestResult', result);
 
             // Send webhook notifications for completed trades
-            this.sendWebhookForTrades(result.trades, strategy.name, params);
+            if (result.trades.length > 0) {
+                this.sendWebhookForTrades(result.trades, strategy.name, params);
+            }
 
             progressFill.style.width = '100%';
             progressText.textContent = 'Complete!';
-            const expectancyText = `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`;
-            const pfText = result.profitFactor === Infinity ? 'Inf' : result.profitFactor.toFixed(2);
-            const engineBadge = engineUsed === 'rust' ? ' ⚡' : '';
-            statusEl.textContent = `${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}${engineBadge}`;
+            if (result.entryStats) {
+                const entryWin = result.entryStats.winRate.toFixed(1);
+                const useTarget = result.entryStats.winDefinition === 'target' && (result.entryStats.targetPct ?? 0) > 0;
+                const avgBars = useTarget
+                    ? (result.entryStats.avgTargetBars ?? result.entryStats.avgRetestBars)
+                    : result.entryStats.avgRetestBars;
+                const label = useTarget ? 'Avg Target' : 'Avg Retest';
+                statusEl.textContent = `${result.entryStats.totalEntries} entries | Win ${entryWin}% | ${label} ${avgBars.toFixed(1)} bars`;
+            } else {
+                const expectancyText = `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`;
+                const pfText = result.profitFactor === Infinity ? 'Inf' : result.profitFactor.toFixed(2);
+                const engineBadge = engineUsed === 'rust' ? ' ⚡' : '';
+                statusEl.textContent = `${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}${engineBadge}`;
+            }
             shouldDelayHide = true;
             debugLogger.event('backtest.success', {
                 strategy: state.currentStrategyKey,
@@ -238,6 +280,8 @@ export class BacktestService {
         const entryConfirmation = (document.getElementById('entryConfirmation') as HTMLSelectElement | null)?.value as EntryConfirmationMode | undefined;
         const confirmationStrategies = confirmationEnabled ? getConfirmationStrategyValues() : [];
         const confirmationStrategyParams = confirmationEnabled ? getConfirmationStrategyParams() : {};
+        const executionModel = (document.getElementById('executionModel') as HTMLSelectElement | null)?.value as ExecutionModel | undefined;
+        const resolvedExecutionModel: ExecutionModel = executionModel ?? 'signal_close';
         return {
             atrPeriod: this.readNumberInput('atrPeriod', 14),
             stopLossAtr: riskEnabled && (riskMode === 'simple' || riskMode === 'advanced') ? this.readNumberInput('stopLossAtr', 1.5) : 0,
@@ -273,7 +317,10 @@ export class BacktestService {
             rsiBearish: entryEnabled ? this.readNumberInput('confirmRsiBearish', 45) : 45,
             confirmationStrategies,
             confirmationStrategyParams,
-            tradeDirection: shortModeEnabled ? 'short' : 'long'
+            tradeDirection: shortModeEnabled ? 'short' : 'long',
+            executionModel: resolvedExecutionModel,
+            allowSameBarExit: this.isToggleEnabled('allowSameBarExitToggle', false),
+            slippageBps: this.readNumberInput('slippageBps', 5)
         };
     }
 
@@ -293,17 +340,40 @@ export class BacktestService {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
+    private isResultConsistent(result: BacktestResult): boolean {
+        const totalTrades = result.totalTrades;
+        if (totalTrades !== result.winningTrades + result.losingTrades) return false;
+        if (totalTrades <= 0) return true;
+
+        const expectedWinRate = (result.winningTrades / totalTrades) * 100;
+        if (Math.abs(expectedWinRate - result.winRate) > 1) return false;
+
+        const expectedAvgTrade = result.netProfit / totalTrades;
+        const tolerance = Math.max(0.01, Math.abs(expectedAvgTrade) * 0.15);
+        if (Math.abs(expectedAvgTrade - result.avgTrade) > tolerance) return false;
+
+        return true;
+    }
+
+    public requiresTypescriptEngine(settings: BacktestSettings): boolean {
+        const executionModel = settings.executionModel ?? 'signal_close';
+        const allowSameBarExit = settings.allowSameBarExit ?? true;
+        const slippageBps = settings.slippageBps ?? 0;
+        return executionModel !== 'signal_close' || slippageBps > 0 || !allowSameBarExit;
+    }
+
     public addStrategyIndicators(params: StrategyParams) {
         chartManager.clearIndicators();
         const indicatorsPanel = document.getElementById('indicatorsPanel');
         if (indicatorsPanel) indicatorsPanel.innerHTML = '';
 
         const strategy = strategyRegistry.get(state.currentStrategyKey);
-        if (!strategy || !strategy.indicators) {
+        if (!strategy) {
+            uiManager.updateEntryPreview(null);
             return;
         }
 
-        const indicators = strategy.indicators(state.ohlcvData, params);
+        const indicators = strategy.indicators ? strategy.indicators(state.ohlcvData, params) : [];
         const times = state.ohlcvData.map(d => d.time);
 
         indicators.forEach(ind => {
@@ -313,6 +383,9 @@ export class BacktestService {
                 this.addIndicatorToChart(ind.name, values, times, color, ind.type);
             }
         });
+
+        const preview = strategy.entryPreview ? strategy.entryPreview(state.ohlcvData, params) : null;
+        uiManager.updateEntryPreview(preview);
     }
 
     private addIndicatorToChart(name: string, values: (number | null)[], times: any[], color: string, type: 'line' | 'band' | 'histogram') {

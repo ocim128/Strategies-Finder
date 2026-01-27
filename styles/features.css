@@ -1,5 +1,6 @@
 /* Strategy Panel Tabs Initialization */
 #finderTab,
+#paircombinerTab,
 #walkforwardTab,
 #montecarloTab,
 #logictestTab,
@@ -162,6 +163,81 @@
     color: var(--text-on-accent);
 }
 
+.entry-preview-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    min-width: 210px;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-s);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    box-shadow: var(--glass-shadow);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+}
+
+.entry-preview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: 2px;
+}
+
+.entry-preview-title {
+    font-size: var(--font-size-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
+}
+
+.entry-preview-status {
+    font-size: 10px;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: var(--radius-xs);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.entry-preview-status.triggered {
+    background: hsl(var(--hsl-success) / 0.2);
+    color: var(--green);
+}
+
+.entry-preview-status.waiting {
+    background: var(--accent-soft);
+    color: var(--accent-color);
+}
+
+.entry-preview-status.unavailable {
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+}
+
+.entry-preview-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-2);
+    font-family: var(--font-family-mono);
+}
+
+.entry-preview-row span:first-child {
+    color: var(--text-tertiary);
+    font-family: inherit;
+}
+
+.entry-preview-note {
+    margin-top: 2px;
+    font-size: var(--font-size-2xs);
+    color: var(--text-tertiary);
+}
+
 /* Equity curve */
 #equity-chart {
     height: 100px;
@@ -294,6 +370,70 @@
 .stat-card.full-width {
     grid-column: span 2;
     border-right: none;
+}
+
+.entry-stats-hint {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    margin-top: calc(var(--space-2) * -0.5);
+    margin-bottom: var(--space-4);
+    padding: 0 var(--space-2);
+}
+
+.entry-levels-table {
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    overflow-x: auto;
+    background: hsl(var(--hsl-surface-2) / 0.5);
+    margin-bottom: var(--space-2);
+}
+
+.entry-levels-header,
+.entry-levels-row {
+    display: grid;
+    grid-template-columns: minmax(64px, 0.7fr) minmax(72px, 0.8fr) minmax(70px, 0.8fr) minmax(110px, 1fr) minmax(96px, 1fr);
+    gap: var(--space-2);
+    align-items: center;
+    padding: var(--space-2) var(--space-3);
+    min-width: 430px;
+}
+
+.entry-levels-header {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.entry-levels-row {
+    background: var(--bg-secondary);
+    font-size: var(--font-size-xs);
+    font-family: var(--font-family-mono);
+    border-top: 1px solid var(--border-color);
+}
+
+.entry-levels-row:nth-child(even) {
+    background: var(--bg-tertiary);
+}
+
+.entry-levels-row.is-selected {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent-color);
+}
+
+.entry-levels-cell {
+    text-align: left;
+}
+
+.entry-levels-cell.positive {
+    color: var(--green);
+}
+
+.entry-levels-cell.negative {
+    color: var(--red);
 }
 
 /* Trades Header Summary - Enhanced */

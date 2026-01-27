@@ -44,6 +44,7 @@ export interface BacktestResult {
     avgLoss: number;
     sharpeRatio: number;
     equityCurve: { time: Time; value: number }[];
+    entryStats?: EntryStats;
 }
 
 export interface StrategyParams {
@@ -52,6 +53,7 @@ export interface StrategyParams {
 
 export type EntryConfirmationMode = 'none' | 'close' | 'volume' | 'rsi';
 export type TradeDirection = 'long' | 'short';
+export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
 
 export interface BacktestSettings {
     atrPeriod?: number;
@@ -90,6 +92,12 @@ export interface BacktestSettings {
     /** Optional parameter overrides for confirmation strategies */
     confirmationStrategyParams?: Record<string, StrategyParams>;
     tradeDirection?: TradeDirection;
+    /** Execution timing model for signal fills */
+    executionModel?: ExecutionModel;
+    /** Allow exits on the same bar as entry */
+    allowSameBarExit?: boolean;
+    /** Slippage in basis points (bps) applied to entry/exit fills */
+    slippageBps?: number;
 }
 
 export interface Signal {
@@ -99,6 +107,57 @@ export interface Signal {
     reason?: string;
     /** Optional bar index to align execution timing in backtests/replay. */
     barIndex?: number;
+}
+
+export interface EntryStats {
+    mode: 'fan_retest';
+    winDefinition?: 'retest' | 'target';
+    targetPct?: number;
+    avgTargetBars?: number;
+    levels?: EntryLevelStat[];
+    selectedLevel?: number;
+    selectedLevelIndex?: number;
+    totalEntries: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+    avgRetestBars: number;
+    avgRetests: number;
+    maxBars: number;
+    maxRetests: number;
+    minRetestsForWin: number;
+    entryMode: number;
+    retestMode: number;
+    useWick: boolean;
+    touchTolerancePct: number;
+}
+
+export interface EntryLevelStat {
+    level: number;
+    totalEntries: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+    avgRetestBars: number;
+    avgRetests: number;
+    avgTargetBars?: number;
+}
+
+export interface EntryPreview {
+    mode: number;
+    direction: 'long' | 'short' | 'both' | 'none';
+    level: number;
+    fanPrice: number | null;
+    lastClose: number | null;
+    distance: number | null;
+    distancePct: number | null;
+    status: 'triggered' | 'waiting' | 'unavailable';
+    note?: string;
+}
+
+export interface StrategyEvaluation {
+    signals: Signal[];
+    entryStats?: EntryStats;
 }
 
 export interface StrategyIndicator {
@@ -114,13 +173,18 @@ export interface Strategy {
     defaultParams: StrategyParams;
     paramLabels: { [key: string]: string };
     execute: (data: OHLCVData[], params: StrategyParams) => Signal[];
+    evaluate?: (data: OHLCVData[], params: StrategyParams, signals?: Signal[]) => StrategyEvaluation;
     indicators?: (data: OHLCVData[], params: StrategyParams) => StrategyIndicator[];
+    /** Optional entry preview for live chart hinting */
+    entryPreview?: (data: OHLCVData[], params: StrategyParams) => EntryPreview | null;
     /** Optional metadata for strategy */
     metadata?: {
         /** Role this strategy plays (entry, filter, exit, regime) */
         role?: 'entry' | 'filter' | 'exit' | 'regime';
         /** Trading direction capability (long, short, both) */
         direction?: 'long' | 'short' | 'both';
+        /** Optional allowlist for walk-forward/quick analysis parameter optimization */
+        walkForwardParams?: string[];
     };
 }
 

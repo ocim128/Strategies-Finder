@@ -10,6 +10,7 @@ import {
     createSeriesMarkers,
     SeriesMarker,
     MouseEventParams,
+    ISeriesApi,
 } from "lightweight-charts";
 import { state } from "./state";
 import { darkTheme, lightTheme, ENHANCED_CANDLE_COLORS } from "./constants";
@@ -27,6 +28,11 @@ export class ChartManager {
     private equityOverlay: HTMLElement | null = null;
     private zoomTimeout: ReturnType<typeof setTimeout> | null = null;
     private lastZoomLevel: number = 0;
+    private secondarySeries: ISeriesApi<"Line"> | null = null;
+    private spreadSeries: ISeriesApi<"Line"> | null = null;
+    private correlationUpperSeries: ISeriesApi<"Line"> | null = null;
+    private correlationLowerSeries: ISeriesApi<"Line"> | null = null;
+    private readonly MIN_BAR_SPACING = 2;
 
     public initCharts() {
         const container = document.getElementById('main-chart')!;
@@ -354,9 +360,10 @@ export class ChartManager {
             const minWidth = 10; // Minimum 10 bars visible
 
             if (newWidth >= minWidth) {
+                const clampedWidth = Math.max(minWidth, this.clampVisibleBars(newWidth));
                 state.chart.timeScale().setVisibleLogicalRange({
-                    from: center - newWidth / 2,
-                    to: center + newWidth / 2
+                    from: center - clampedWidth / 2,
+                    to: center + clampedWidth / 2
                 });
             }
         }
@@ -367,12 +374,13 @@ export class ChartManager {
         if (range) {
             const center = (range.from + range.to) / 2;
             const newWidth = (range.to - range.from) * factor;
-            const maxWidth = state.ohlcvData.length;
+            const maxWidth = this.clampVisibleBars(state.ohlcvData.length);
 
             if (newWidth <= maxWidth * 1.1) {
+                const clampedWidth = Math.min(newWidth, maxWidth);
                 state.chart.timeScale().setVisibleLogicalRange({
-                    from: center - newWidth / 2,
-                    to: center + newWidth / 2
+                    from: center - clampedWidth / 2,
+                    to: center + clampedWidth / 2
                 });
             }
         }
@@ -383,6 +391,13 @@ export class ChartManager {
             from: startIndex,
             to: endIndex
         });
+    }
+
+    private clampVisibleBars(targetBars: number): number {
+        const width = state.chart.timeScale().width();
+        if (!Number.isFinite(width) || width <= 0) return targetBars;
+        const maxBars = Math.max(10, Math.floor(width / this.MIN_BAR_SPACING));
+        return Math.min(targetBars, maxBars);
     }
 
     // ========================================================================
@@ -549,6 +564,117 @@ export class ChartManager {
             low: d.low,
             close: d.close,
         })));
+    }
+
+    // ========================================================================
+    // Pair Overlay & Spread Visualization
+    // ========================================================================
+
+    public addSecondaryPairOverlay(data: OHLCVData[]): void {
+        if (!data || data.length === 0) {
+            this.removeSecondaryPairOverlay();
+            return;
+        }
+
+        if (this.secondarySeries) {
+            state.chart.removeSeries(this.secondarySeries);
+            this.secondarySeries = null;
+        }
+
+        const series = state.chart.addSeries(LineSeries, {
+            color: 'rgba(246, 195, 67, 0.9)',
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+            priceScaleId: 'pair',
+        });
+
+        series.setData(data.map(d => ({ time: d.time, value: d.close })));
+        this.secondarySeries = series;
+
+        state.chart.priceScale('pair').applyOptions({
+            scaleMargins: { top: 0.1, bottom: 0.1 },
+            borderColor: 'rgba(255,255,255,0.1)',
+            visible: false,
+        });
+    }
+
+    public removeSecondaryPairOverlay(): void {
+        if (this.secondarySeries) {
+            state.chart.removeSeries(this.secondarySeries);
+            this.secondarySeries = null;
+        }
+    }
+
+    public displaySpreadChart(spread: number[], timestamps: Time[]): void {
+        if (!this.spreadSeries) {
+            this.spreadSeries = state.equityChart.addSeries(LineSeries, {
+                color: 'rgba(0, 192, 135, 0.85)',
+                lineWidth: 2,
+                priceLineVisible: false,
+                lastValueVisible: false,
+                priceScaleId: 'spread',
+            });
+            state.equityChart.priceScale('spread').applyOptions({
+                scaleMargins: { top: 0.2, bottom: 0.2 },
+                borderColor: 'rgba(255,255,255,0.1)',
+                visible: false,
+            });
+        }
+
+        if (spread.length === 0 || timestamps.length === 0) {
+            this.spreadSeries.setData([]);
+            return;
+        }
+
+        const length = Math.min(spread.length, timestamps.length);
+        const data = new Array(length);
+        for (let i = 0; i < length; i++) {
+            data[i] = { time: timestamps[i], value: spread[i] };
+        }
+        this.spreadSeries.setData(data);
+        state.equityChart.timeScale().fitContent();
+    }
+
+    public displayCorrelationBand(upper: number[], lower: number[], timestamps?: Time[]): void {
+        if (!this.correlationUpperSeries) {
+            this.correlationUpperSeries = state.equityChart.addSeries(LineSeries, {
+                color: 'rgba(100, 149, 237, 0.6)',
+                lineWidth: 1,
+                priceLineVisible: false,
+                lastValueVisible: false,
+                lineStyle: 1,
+                priceScaleId: 'spread',
+            });
+        }
+        if (!this.correlationLowerSeries) {
+            this.correlationLowerSeries = state.equityChart.addSeries(LineSeries, {
+                color: 'rgba(100, 149, 237, 0.35)',
+                lineWidth: 1,
+                priceLineVisible: false,
+                lastValueVisible: false,
+                lineStyle: 1,
+                priceScaleId: 'spread',
+            });
+        }
+
+        const timeSeries = timestamps ?? state.ohlcvData.map(d => d.time);
+        if (upper.length === 0 || lower.length === 0 || timeSeries.length === 0) {
+            this.correlationUpperSeries.setData([]);
+            this.correlationLowerSeries.setData([]);
+            return;
+        }
+
+        const length = Math.min(upper.length, lower.length, timeSeries.length);
+        const upperData = new Array(length);
+        const lowerData = new Array(length);
+        for (let i = 0; i < length; i++) {
+            upperData[i] = { time: timeSeries[i], value: upper[i] };
+            lowerData[i] = { time: timeSeries[i], value: lower[i] };
+        }
+        this.correlationUpperSeries.setData(upperData);
+        this.correlationLowerSeries.setData(lowerData);
     }
 
     public clearIndicators() {

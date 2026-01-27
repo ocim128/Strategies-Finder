@@ -52,6 +52,10 @@ export const darkTheme: DeepPartial<ChartOptions> = {
         borderColor: '#2a2e39',
         timeVisible: true,
         secondsVisible: false,
+        minBarSpacing: 2,
+        fixLeftEdge: true,
+        fixRightEdge: true,
+        rightBarStaysOnScroll: true,
     },
 };
 
@@ -86,6 +90,10 @@ export const lightTheme: DeepPartial<ChartOptions> = {
         borderColor: '#e0e3eb',
         timeVisible: true,
         secondsVisible: false,
+        minBarSpacing: 2,
+        fixLeftEdge: true,
+        fixRightEdge: true,
+        rightBarStaysOnScroll: true,
     },
 };
 

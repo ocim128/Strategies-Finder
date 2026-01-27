@@ -641,8 +641,8 @@ export function setupEventHandlers() {
         if (e.key === 'Escape') symbolDropdown.classList.remove('active');
         if (e.key === 'Enter' && e.ctrlKey) backtestService.runCurrentBacktest();
 
-        // Alt + 1-8 for tab switching (uses data-shortcut attribute)
-        if (e.altKey && e.key >= '1' && e.key <= '8') {
+        // Alt + 1-9 for tab switching (uses data-shortcut attribute)
+        if (e.altKey && e.key >= '1' && e.key <= '9') {
             e.preventDefault();
             const shortcut = e.key;
             const tab = document.querySelector(`.panel-tab[data-shortcut="${shortcut}"]`) as HTMLElement;

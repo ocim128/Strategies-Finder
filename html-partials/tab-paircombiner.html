@@ -1,0 +1,222 @@
+<!-- Pair Combiner Tab -->
+<div id="paircombinerTab">
+    <div class="section-title">Pair Combiner</div>
+
+    <div class="pair-combiner-grid">
+        <div class="pair-card">
+            <div class="section-header">
+                <div class="section-title">Secondary Pair</div>
+            </div>
+            <div class="pair-search-panel">
+                <div class="symbol-search-container">
+                    <div class="symbol-search-input-wrapper">
+                        <svg class="symbol-search-icon" viewBox="0 0 24 24" fill="currentColor">
+                            <path
+                                d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+                        </svg>
+                        <input type="text" id="pairSearchInput" class="symbol-search-input"
+                            placeholder="Search secondary pair..." autocomplete="off" spellcheck="false" />
+                        <div class="symbol-search-spinner is-hidden" id="pairSearchSpinner">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10" opacity="0.25" />
+                                <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round" />
+                            </svg>
+                        </div>
+                        <button class="symbol-search-clear is-hidden" id="pairSearchClear" type="button"
+                            title="Clear search">
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="symbol-search-results" id="pairSearchResults">
+                    <div class="symbol-search-loading is-hidden" id="pairSearchLoading">
+                        <span class="symbol-search-loading-text">Loading pairs...</span>
+                    </div>
+                    <div class="symbol-search-empty is-hidden" id="pairSearchEmpty">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path
+                                d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+                        </svg>
+                        <span>No pairs found</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pair-selected">
+                <div class="pair-selected-label">Selected</div>
+                <div class="pair-selected-value" id="pairSelectedSymbol">None selected</div>
+                <div class="pair-selected-sub">Interval: <span id="pairSelectedInterval">1d</span></div>
+                <button class="btn btn-secondary btn-compact" id="pairClearBtn" type="button">Clear</button>
+            </div>
+        </div>
+
+        <div class="pair-card">
+            <div class="section-header">
+                <div class="section-title">Analysis Controls</div>
+            </div>
+
+            <div class="pair-interval">
+                <div class="pair-interval-header">
+                    <span class="param-label">Secondary Interval</span>
+                    <label class="section-toggle" title="Match primary interval">
+                        <input type="checkbox" id="pairLinkInterval" checked>
+                        <span class="section-toggle-track"></span>
+                    </label>
+                </div>
+                <select class="param-input" id="pairIntervalSelect"></select>
+                <div class="pair-interval-note">Primary interval: <span id="pairPrimaryInterval">1d</span></div>
+            </div>
+
+            <div class="pair-methods">
+                <div class="param-label">Methods</div>
+                <label class="pair-method">
+                    <input type="checkbox" id="pairMethodCopula" checked>
+                    <span>Copula Dependence</span>
+                </label>
+                <label class="pair-method">
+                    <input type="checkbox" id="pairMethodWavelet" checked>
+                    <span>Wavelet Decomposition</span>
+                </label>
+                <label class="pair-method">
+                    <input type="checkbox" id="pairMethodEntropy" checked>
+                    <span>Transfer Entropy</span>
+                </label>
+            </div>
+
+            <div class="pair-actions">
+                <button class="btn btn-primary" id="pairAnalyzeBtn" type="button">Analyze</button>
+                <span class="pair-status" id="pairStatus">Idle</span>
+            </div>
+
+            <div class="pair-warning is-hidden" id="pairWarning"></div>
+            <div class="pair-note">
+                Fetching two symbols uses additional API calls. Consider provider rate limits.
+            </div>
+        </div>
+    </div>
+
+    <div class="pair-results">
+        <div class="empty-state" id="pairResultsEmpty">
+            <div class="empty-state-icon">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path
+                        d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z" />
+                </svg>
+            </div>
+            <h3 class="empty-state-title">Ready to Combine</h3>
+            <p class="empty-state-description">
+                Select a secondary pair and run analysis to surface divergence and lead/lag opportunities.
+            </p>
+        </div>
+
+        <div class="pair-results-content is-hidden" id="pairResultsContent">
+            <div class="section-title">Overview</div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Opportunity</div>
+                    <div class="stat-value" id="pairOpportunityScore">0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Correlation</div>
+                    <div class="stat-value" id="pairCorrelationValue">0.00</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Spread Z</div>
+                    <div class="stat-value" id="pairSpreadZValue">0.00</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Ratio</div>
+                    <div class="stat-value" id="pairRatioValue">0.00</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Aligned Bars</div>
+                    <div class="stat-value" id="pairAlignedBars">0</div>
+                </div>
+            </div>
+
+            <div id="pairCopulaSection">
+                <div class="section-title">Copula Dependence</div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Kendall Tau</div>
+                        <div class="stat-value" id="pairCopulaTau">0.00</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Upper Tail</div>
+                        <div class="stat-value" id="pairCopulaUpper">0.00</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Lower Tail</div>
+                        <div class="stat-value" id="pairCopulaLower">0.00</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Copula Type</div>
+                        <div class="stat-value" id="pairCopulaType">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Opportunity</div>
+                        <div class="stat-value" id="pairCopulaScore">0%</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="pairWaveletSection">
+                <div class="section-title">Wavelet Signals</div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Dominant Cycle</div>
+                        <div class="stat-value" id="pairWaveletCycle">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Noise Ratio</div>
+                        <div class="stat-value" id="pairWaveletNoise">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Spread Z</div>
+                        <div class="stat-value" id="pairWaveletSpreadZ">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Signal Score</div>
+                        <div class="stat-value" id="pairWaveletSignal">-</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="pairEntropySection">
+                <div class="section-title">Transfer Entropy</div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">TE 1 -> 2</div>
+                        <div class="stat-value" id="pairEntropy12">0.000</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">TE 2 -> 1</div>
+                        <div class="stat-value" id="pairEntropy21">0.000</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Net Flow</div>
+                        <div class="stat-value" id="pairEntropyNet">0.00</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Leader</div>
+                        <div class="stat-value" id="pairEntropyLeader">neutral</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Lag</div>
+                        <div class="stat-value" id="pairEntropyLag">0 bars</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Confidence</div>
+                        <div class="stat-value" id="pairEntropySignificance">0%</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-title">Notes</div>
+            <ul class="pair-notes" id="pairNotes"></ul>
+        </div>
+    </div>
+</div>
