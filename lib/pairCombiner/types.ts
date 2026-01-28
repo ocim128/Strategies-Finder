@@ -11,6 +11,7 @@ export interface CopulaResult {
     };
     copulaType: 'gaussian' | 'clayton' | 'gumbel';
     opportunityScore: number;
+    rollingTau?: { time: Time; value: number }[];
 }
 
 export interface WaveletLevel {
@@ -37,12 +38,19 @@ export interface TransferEntropyResult {
     significance: number;
 }
 
+export interface AlignmentStats {
+    matchRate: number;
+    primaryMissing: number;
+    secondaryMissing: number;
+}
+
 export interface AlignedPairData {
     primary: OHLCVData[];
     secondary: OHLCVData[];
     spread: number[];
     ratio: number[];
     alignedTimestamps: Time[];
+    alignmentStats: AlignmentStats;
 }
 
 export interface PairAnalysisResults {

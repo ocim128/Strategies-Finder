@@ -1,36 +1,8 @@
 import type { CopulaResult } from "./types";
+import type { Time } from "lightweight-charts";
+import { clamp, pearsonCorrelation } from "./utils";
 
 const DEFAULT_TAIL_THRESHOLD = 0.95;
-
-function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
-}
-
-function pearsonCorrelation(a: number[], b: number[]): number {
-    const n = Math.min(a.length, b.length);
-    if (n < 2) return 0;
-    let sumA = 0;
-    let sumB = 0;
-    let sumA2 = 0;
-    let sumB2 = 0;
-    let sumAB = 0;
-
-    for (let i = 0; i < n; i++) {
-        const x = a[i];
-        const y = b[i];
-        sumA += x;
-        sumB += y;
-        sumA2 += x * x;
-        sumB2 += y * y;
-        sumAB += x * y;
-    }
-
-    const numerator = (n * sumAB) - (sumA * sumB);
-    const denomA = (n * sumA2) - (sumA * sumA);
-    const denomB = (n * sumB2) - (sumB * sumB);
-    if (denomA <= 0 || denomB <= 0) return 0;
-    return numerator / Math.sqrt(denomA * denomB);
-}
 
 function rankData(values: number[]): number[] {
     const indexed = values.map((value, index) => ({ value, index }));
@@ -63,10 +35,25 @@ function toPseudoObservations(ranks: number[]): number[] {
 export function calculateCopulaDependence(
     returns1: number[],
     returns2: number[],
-    windowSize?: number
+    windowSize?: number,
+    timestamps?: Time[]
 ): CopulaResult {
+    const clean1: number[] = [];
+    const clean2: number[] = [];
+    const cleanTimes: Time[] = [];
     const length = Math.min(returns1.length, returns2.length);
-    if (length < 5) {
+    for (let i = 0; i < length; i++) {
+        const a = returns1[i];
+        const b = returns2[i];
+        if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+        clean1.push(a);
+        clean2.push(b);
+        if (timestamps && timestamps[i] !== undefined) {
+            cleanTimes.push(timestamps[i]);
+        }
+    }
+
+    if (clean1.length < 5) {
         return {
             kendallTau: 0,
             tailDependence: { upper: 0, lower: 0 },
@@ -75,10 +62,10 @@ export function calculateCopulaDependence(
         };
     }
 
-    const window = windowSize && windowSize > 10 ? Math.min(windowSize, length) : length;
-    const start = length - window;
-    const slice1 = returns1.slice(start);
-    const slice2 = returns2.slice(start);
+    const window = windowSize && windowSize > 10 ? Math.min(windowSize, clean1.length) : clean1.length;
+    const start = clean1.length - window;
+    const slice1 = clean1.slice(start);
+    const slice2 = clean2.slice(start);
 
     const ranks1 = rankData(slice1);
     const ranks2 = rankData(slice2);
@@ -118,6 +105,22 @@ export function calculateCopulaDependence(
         100
     );
 
+    let rollingTau: { time: Time; value: number }[] | undefined;
+    if (cleanTimes.length === clean1.length && clean1.length >= 20) {
+        const rollWindow = Math.max(12, Math.min(60, Math.floor(clean1.length / 3)));
+        rollingTau = [];
+        for (let end = rollWindow - 1; end < clean1.length; end++) {
+            const startIdx = end - rollWindow + 1;
+            const window1 = clean1.slice(startIdx, end + 1);
+            const window2 = clean2.slice(startIdx, end + 1);
+            const ranks1 = rankData(window1);
+            const ranks2 = rankData(window2);
+            const spearman = clamp(pearsonCorrelation(ranks1, ranks2), -1, 1);
+            const tau = clamp((2 / Math.PI) * Math.asin(spearman), -1, 1);
+            rollingTau.push({ time: cleanTimes[end], value: tau });
+        }
+    }
+
     return {
         kendallTau,
         tailDependence: {
@@ -126,5 +129,6 @@ export function calculateCopulaDependence(
         },
         copulaType,
         opportunityScore,
+        rollingTau,
     };
 }

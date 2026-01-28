@@ -88,6 +88,7 @@
 
             <div class="pair-actions">
                 <button class="btn btn-primary" id="pairAnalyzeBtn" type="button">Analyze</button>
+                <button class="btn btn-secondary btn-compact" id="pairExportBtn" type="button">Export JSON</button>
                 <span class="pair-status" id="pairStatus">Idle</span>
             </div>
 
@@ -141,15 +142,15 @@
                 <div class="section-title">Copula Dependence</div>
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <div class="stat-label">Kendall Tau</div>
+                        <div class="stat-label" title="Kendall's tau: rank correlation (-1 to 1)">Kendall Tau</div>
                         <div class="stat-value" id="pairCopulaTau">0.00</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-label">Upper Tail</div>
+                        <div class="stat-label" title="Probability of joint extreme gains">Upper Tail</div>
                         <div class="stat-value" id="pairCopulaUpper">0.00</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-label">Lower Tail</div>
+                        <div class="stat-label" title="Probability of joint extreme losses">Lower Tail</div>
                         <div class="stat-value" id="pairCopulaLower">0.00</div>
                     </div>
                     <div class="stat-card">
@@ -217,6 +218,18 @@
 
             <div class="section-title">Notes</div>
             <ul class="pair-notes" id="pairNotes"></ul>
+
+            <div class="section-title">Batch Scan</div>
+            <div class="pair-scan">
+                <div class="pair-scan-controls">
+                    <button class="btn btn-secondary btn-compact" id="pairScanBtn" type="button">Scan Top 100</button>
+                    <button class="btn btn-secondary btn-compact is-hidden" id="pairScanStopBtn" type="button">Stop</button>
+                    <span class="pair-scan-status" id="pairScanStatus">Idle</span>
+                </div>
+                <div class="pair-scan-results" id="pairScanResults">
+                    <div class="pair-scan-empty">Run a scan to see ranked opportunities.</div>
+                </div>
+            </div>
         </div>
     </div>
 </div>

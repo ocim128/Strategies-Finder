@@ -2,7 +2,7 @@ import { Time } from "lightweight-charts";
 import { OHLCVData } from "../strategies/index";
 import { dataManager } from "../dataManager";
 import { debugLogger } from "../debugLogger";
-import type { AlignedPairData } from "./types";
+import type { AlignedPairData, AlignmentStats } from "./types";
 
 function timeKey(time: Time): string {
     if (typeof time === 'number') return `n:${time}`;
@@ -54,6 +54,12 @@ export function alignPairData(primaryData: OHLCVData[], secondaryData: OHLCVData
 
     const spread = computeSpread(primaryAligned, secondaryAligned);
     const ratio = computeRatio(primaryAligned, secondaryAligned);
+    const overlap = primaryAligned.length;
+    const alignmentStats: AlignmentStats = {
+        matchRate: overlap / Math.max(1, Math.min(primaryData.length, secondaryData.length)),
+        primaryMissing: Math.max(0, primaryData.length - overlap),
+        secondaryMissing: Math.max(0, secondaryData.length - overlap),
+    };
 
     return {
         primary: primaryAligned,
@@ -61,6 +67,7 @@ export function alignPairData(primaryData: OHLCVData[], secondaryData: OHLCVData
         spread,
         ratio,
         alignedTimestamps,
+        alignmentStats,
     };
 }
 

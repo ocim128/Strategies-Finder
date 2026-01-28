@@ -570,7 +570,7 @@ export class ChartManager {
     // Pair Overlay & Spread Visualization
     // ========================================================================
 
-    public addSecondaryPairOverlay(data: OHLCVData[]): void {
+    public addSecondaryPairOverlay(data: OHLCVData[], color?: string): void {
         if (!data || data.length === 0) {
             this.removeSecondaryPairOverlay();
             return;
@@ -582,7 +582,7 @@ export class ChartManager {
         }
 
         const series = state.chart.addSeries(LineSeries, {
-            color: 'rgba(246, 195, 67, 0.9)',
+            color: color ?? 'rgba(246, 195, 67, 0.9)',
             lineWidth: 1,
             priceLineVisible: false,
             lastValueVisible: false,
@@ -605,6 +605,14 @@ export class ChartManager {
             state.chart.removeSeries(this.secondarySeries);
             this.secondarySeries = null;
         }
+    }
+
+    public addSecondaryPairLine(data: OHLCVData[], color?: string): void {
+        this.addSecondaryPairOverlay(data, color);
+    }
+
+    public removeSecondaryPairLine(): void {
+        this.removeSecondaryPairOverlay();
     }
 
     public displaySpreadChart(spread: number[], timestamps: Time[]): void {
@@ -635,6 +643,14 @@ export class ChartManager {
         }
         this.spreadSeries.setData(data);
         state.equityChart.timeScale().fitContent();
+    }
+
+    public displaySpreadSeries(spread: number[], timestamps: Time[]): void {
+        this.displaySpreadChart(spread, timestamps);
+    }
+
+    public displayDivergenceBands(upper: number[], lower: number[], timestamps?: Time[]): void {
+        this.displayCorrelationBand(upper, lower, timestamps);
     }
 
     public displayCorrelationBand(upper: number[], lower: number[], timestamps?: Time[]): void {

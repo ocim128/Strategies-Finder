@@ -1,0 +1,280 @@
+# Pair Combiner Quality Improvements
+
+## Current State Assessment
+
+After reviewing the implementation, the feature is functional with:
+- ✅ Secondary pair search and selection
+- ✅ Interval sync controls
+- ✅ Three analysis engines (copula, wavelet, transfer entropy)
+- ✅ Results display with metrics
+- ✅ Basic test coverage (3 tests)
+
+---
+
+## Improvement Areas Identified
+
+| Area | Current State | Improvement Needed |
+|------|--------------|-------------------|
+| Wavelets | Haar only, db4/coif2 are stubs | Implement real wavelets |
+| Transfer Entropy | historyLength=1 only | Multi-step history |
+| Chart | No visualization | Overlay + spread chart |
+| Tests | 3 basic tests | Edge cases + more assertions |
+| UX | Raw metric display | Tooltips, color-coding |
+
+---
+
+## Proposed Changes
+
+### Phase 1: Algorithm Enhancements
+
+#### [MODIFY] [waveletDecomposition.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombiner/waveletDecomposition.ts)
+
+Implement **Daubechies-4** wavelet (smoother than Haar):
+
+```typescript
+// Daubechies-4 filter coefficients
+const DB4_LO = [0.4829, 0.8365, 0.2241, -0.1294];
+const DB4_HI = [-0.1294, -0.2241, 0.8365, -0.4829];
+
+function db4Dwt(values: number[]): { approximation: number[]; detail: number[] } {
+    // Convolution with DB4 filters + downsampling
+}
+```
+
+**Benefit**: Better frequency localization for detecting cycle lengths.
+
+---
+
+#### [MODIFY] [transferEntropy.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombiner/transferEntropy.ts)
+
+Add higher-order history (currently ignored):
+
+```typescript
+// Change from:
+if (historyLength !== 1) { /* stub */ }
+
+// To: Build joint probability tables with k-step history
+function computeTransferEntropyK(xBins, yBins, bins, k): number {
+    // Estimate P(Y_t | Y_{t-1}...Y_{t-k}, X_{t-1}...X_{t-k})
+}
+```
+
+**Benefit**: Captures slower information propagation between assets.
+
+---
+
+#### [MODIFY] [copulaDependence.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombiner/copulaDependence.ts)
+
+Add rolling window output for visualization:
+
+```typescript
+interface CopulaResult {
+    // ... existing fields
+    rollingTau?: { time: Time; value: number }[]; // NEW
+}
+```
+
+---
+
+### Phase 2: Chart Visualization
+
+#### [MODIFY] [chartManager.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/chartManager.ts)
+
+Add new methods:
+
+```typescript
+// Secondary pair overlay (different color candlesticks or line)
+addSecondaryPairLine(data: OHLCVData[], color?: string): void;
+removeSecondaryPairLine(): void;
+
+// Spread visualization in sub-chart
+displaySpreadSeries(spread: number[], timestamps: Time[]): void;
+displayDivergenceBands(upper: number[], lower: number[]): void;
+```
+
+#### [MODIFY] [pairCombinerManager.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombinerManager.ts)
+
+After [runAnalysis()](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombinerManager.ts#459-581), call chart visualization:
+
+```typescript
+// In runAnalysis() after computing results:
+chartManager.addSecondaryPairLine(aligned.secondary, 'rgba(100, 181, 246, 0.7)');
+chartManager.displaySpreadSeries(aligned.spread, aligned.alignedTimestamps);
+```
+
+---
+
+### Phase 3: Input Validation & Error Handling
+
+#### [MODIFY] [pairCombinerManager.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombinerManager.ts)
+
+Add validation in [runAnalysis()](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombinerManager.ts#459-581):
+
+```typescript
+// Minimum bars check
+const MIN_BARS = 30;
+if (aligned.primary.length < MIN_BARS) {
+    this.setStatus(`Need at least ${MIN_BARS} aligned bars (got ${aligned.primary.length})`, 'warning');
+    return;
+}
+
+// Cross-provider warning
+if (this.isCrossProvider(primary, secondary)) {
+    this.showWarning('Cross-provider pairs may have timestamp alignment gaps');
+}
+```
+
+#### [MODIFY] [pairDataManager.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombiner/pairDataManager.ts)
+
+Improve alignment diagnostics:
+
+```typescript
+export function alignPairData(...): AlignedPairData & { alignmentStats: AlignmentStats } {
+    // Return stats: { matchRate, primaryMissing, secondaryMissing }
+}
+```
+
+---
+
+### Phase 4: Test Coverage
+
+#### [MODIFY] [pairCombiner.spec.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/pairCombiner.spec.ts)
+
+Add comprehensive tests:
+
+```typescript
+describe('Edge Cases', () => {
+    it('handles empty arrays gracefully');
+    it('handles single-element arrays');
+    it('handles NaN/Infinity values');
+    it('handles identical series (perfect correlation)');
+});
+
+describe('Copula', () => {
+    it('returns kendallTau near +1 for identical rankings');
+    it('returns kendallTau near -1 for inverse rankings');
+    it('detects upper tail dependence in joint extreme gains');
+});
+
+describe('Wavelets', () => {
+    it('preserves total energy across levels');
+    it('reconstructs original signal approximately');
+    it('db4 produces smoother output than haar');
+});
+
+describe('Transfer Entropy', () => {
+    it('detects X leads Y when X is lagged copy of Y');
+    it('significance increases with sample size');
+});
+```
+
+---
+
+### Phase 5: UX Polish
+
+#### [MODIFY] [tab-paircombiner.html](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/html-partials/tab-paircombiner.html)
+
+Add tooltips:
+
+```html
+<div class="stat-label" title="Kendall's tau: rank correlation (-1 to 1)">Kendall Tau</div>
+<div class="stat-label" title="Probability of joint extreme gains">Upper Tail</div>
+```
+
+Add export button:
+
+```html
+<button class="btn btn-secondary btn-compact" id="pairExportBtn">Export JSON</button>
+```
+
+#### [MODIFY] [pairCombinerManager.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombinerManager.ts)
+
+Color-code opportunity scores:
+
+```typescript
+scoreClass(score: number): string {
+    if (score >= 70) return 'text-green';
+    if (score >= 40) return 'text-warning';
+    return 'text-secondary';
+}
+```
+
+Generate actionable notes:
+
+```typescript
+buildNotes(): string[] {
+    // Example: "Spread Z-score 2.1σ: consider mean-reversion entry"
+    // Example: "ETH leads BTC by ~3 bars: monitor for follow-through"
+}
+```
+
+---
+
+### Phase 6: Performance (Optional)
+
+#### [NEW] [lib/pairCombiner/analysisWorker.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombiner/analysisWorker.ts)
+
+Move heavy computation to Web Worker:
+
+```typescript
+// Worker thread
+self.onmessage = (e) => {
+    const { method, data } = e.data;
+    let result;
+    switch (method) {
+        case 'copula': result = calculateCopulaDependence(...data); break;
+        case 'wavelet': result = waveletDecompose(...data); break;
+        case 'entropy': result = calculateTransferEntropy(...data); break;
+    }
+    self.postMessage(result);
+};
+```
+
+---
+
+## Implementation Priority
+
+| Phase | Priority | Effort | Impact |
+|-------|----------|--------|--------|
+| Phase 2: Chart Viz | High | Medium | High - visual feedback |
+| Phase 3: Validation | High | Small | Medium - prevents confusion |
+| Phase 4: Tests | Medium | Medium | High - reliability |
+| Phase 5: UX | Medium | Small | Medium - usability |
+| Phase 1: Algorithms | Low | Large | Medium - accuracy |
+| Phase 6: Performance | Low | Medium | Low - only for large data |
+
+---
+
+## Verification Plan
+
+### Automated Tests
+
+```bash
+npx vitest run pairCombiner.spec.ts
+```
+
+### Manual Testing
+
+1. **Chart Visualization**
+   - Load BTC/USDT → Select ETH/USDT → Analyze
+   - Verify: overlay line appears, spread chart shows
+
+2. **Validation Messages**
+   - Select pair with < 30 aligned bars
+   - Verify: warning message appears
+
+3. **Cross-Provider**
+   - Primary: BTCUSDT → Secondary: AAPL
+   - Verify: alignment warning, results still compute
+
+4. **Export**
+   - Run analysis → Click Export
+   - Verify: JSON file downloads with all metrics
+
+---
+
+## Open Questions
+
+1. **Chart overlay style**: Line overlay vs. colored candlesticks for secondary pair?
+2. **Spread chart position**: Below main chart or in separate "Results" area?
+3. **Priority phases**: Start with Phase 2 (visuals) or Phase 4 (tests)?

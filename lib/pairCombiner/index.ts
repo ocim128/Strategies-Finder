@@ -10,4 +10,5 @@ export type {
     TransferEntropyResult,
     PairAnalysisResults,
     AlignedPairData,
+    AlignmentStats,
 } from "./types";

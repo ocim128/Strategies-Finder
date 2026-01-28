@@ -1,0 +1,40 @@
+# Pair Combiner Feature - Task Breakdown
+
+## Planning Phase
+- [x] Explore existing codebase architecture
+- [x] Understand panel tabs system and state management
+- [x] Review indicators library patterns
+- [/] Create implementation plan
+- [ ] Get user approval on plan
+
+## Implementation Phase (After Approval)
+- [ ] **Phase 1: State & Infrastructure**
+  - [ ] Create `pairCombiner` state in [state.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/state.ts)
+  - [ ] Create `lib/pairCombiner/` module directory
+
+- [ ] **Phase 2: UI - Pair Combiner Tab**
+  - [ ] Add new tab to strategy panel (`tab-paircombiner.html`)
+  - [ ] Create pair selector UI (primary + secondary symbol)
+  - [ ] Add analysis method toggles (copula, wavelets, transfer entropy)
+
+- [ ] **Phase 3: Core Analysis Engines**
+  - [ ] `lib/pairCombiner/copulaDependence.ts` - Copula-based analysis
+  - [ ] `lib/pairCombiner/waveletDecomposition.ts` - Signal decomposition
+  - [ ] `lib/pairCombiner/transferEntropy.ts` - Information flow analysis
+
+- [ ] **Phase 4: Data Management**
+  - [ ] `lib/pairCombiner/pairDataManager.ts` - Dual pair data handling
+
+- [ ] **Phase 5: Chart Visualization**
+  - [ ] Overlay secondary pair on main chart
+  - [ ] Display analysis metrics overlay
+  - [ ] Add correlation/spread visualization
+
+- [ ] **Phase 6: Manager Integration**
+  - [ ] `lib/pairCombinerManager.ts` - Main orchestrator
+  - [ ] Integrate with existing panel system
+
+## Verification Phase
+- [ ] Manual testing with two crypto pairs
+- [ ] Test with mixed asset types (crypto + stock)
+- [ ] Verify analysis calculations produce valid output

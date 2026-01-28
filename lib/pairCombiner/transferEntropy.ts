@@ -1,34 +1,5 @@
 import type { TransferEntropyResult } from "./types";
-
-function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
-}
-
-function mean(values: number[]): number {
-    if (values.length === 0) return 0;
-    let sum = 0;
-    for (const v of values) sum += v;
-    return sum / values.length;
-}
-
-function pearsonCorrelation(a: number[], b: number[]): number {
-    const n = Math.min(a.length, b.length);
-    if (n < 2) return 0;
-    const avgA = mean(a);
-    const avgB = mean(b);
-    let num = 0;
-    let denA = 0;
-    let denB = 0;
-    for (let i = 0; i < n; i++) {
-        const da = a[i] - avgA;
-        const db = b[i] - avgB;
-        num += da * db;
-        denA += da * da;
-        denB += db * db;
-    }
-    if (denA <= 0 || denB <= 0) return 0;
-    return num / Math.sqrt(denA * denB);
-}
+import { clamp, pearsonCorrelation } from "./utils";
 
 function quantileThresholds(values: number[], bins: number): number[] {
     if (values.length === 0) return [];
@@ -97,6 +68,71 @@ function computeTransferEntropy(xBins: number[], yBins: number[], bins: number):
     return Math.max(0, te);
 }
 
+function computeTransferEntropyK(xBins: number[], yBins: number[], bins: number, k: number): number {
+    const n = Math.min(xBins.length, yBins.length);
+    if (n < k + 2) return 0;
+
+    const maxStates = 50000;
+    let effectiveK = Math.max(1, k);
+    while (Math.pow(bins, effectiveK) > maxStates && effectiveK > 1) {
+        effectiveK--;
+    }
+
+    if (effectiveK === 1) {
+        return computeTransferEntropy(xBins, yBins, bins);
+    }
+
+    const stateCount = Math.pow(bins, effectiveK);
+    const total = n - effectiveK;
+    const count3 = new Map<number, number>();
+    const countYX = new Map<number, number>();
+    const countYtY = new Map<number, number>();
+    const countY = new Map<number, number>();
+
+    for (let t = effectiveK; t < n; t++) {
+        let yState = 0;
+        let xState = 0;
+        for (let i = 0; i < effectiveK; i++) {
+            yState = yState * bins + yBins[t - 1 - i];
+            xState = xState * bins + xBins[t - 1 - i];
+        }
+        const yt = yBins[t];
+        const key3 = ((yt * stateCount + yState) * stateCount + xState);
+        const keyYX = yState * stateCount + xState;
+        const keyYtY = yt * stateCount + yState;
+
+        count3.set(key3, (count3.get(key3) ?? 0) + 1);
+        countYX.set(keyYX, (countYX.get(keyYX) ?? 0) + 1);
+        countYtY.set(keyYtY, (countYtY.get(keyYtY) ?? 0) + 1);
+        countY.set(yState, (countY.get(yState) ?? 0) + 1);
+    }
+
+    const alpha = 1e-6;
+    let te = 0;
+
+    for (const [key3, c3] of count3.entries()) {
+        const xState = key3 % stateCount;
+        const temp = (key3 - xState) / stateCount;
+        const yState = temp % stateCount;
+        const yt = (temp - yState) / stateCount;
+
+        const keyYX = yState * stateCount + xState;
+        const keyYtY = yt * stateCount + yState;
+        const countYXVal = countYX.get(keyYX) ?? 0;
+        const countYtYVal = countYtY.get(keyYtY) ?? 0;
+        const countYVal = countY.get(yState) ?? 0;
+
+        if (countYXVal === 0 || countYVal === 0) continue;
+
+        const joint = c3 / total;
+        const p1 = (c3 + alpha) / (countYXVal + alpha * bins);
+        const p2 = (countYtYVal + alpha) / (countYVal + alpha * bins);
+        te += joint * Math.log2(p1 / p2);
+    }
+
+    return Math.max(0, te);
+}
+
 function estimateLag(returns1: number[], returns2: number[], maxLag: number): { lag: number; correlation: number } {
     const n = Math.min(returns1.length, returns2.length);
     if (n < 5) return { lag: 0, correlation: 0 };
@@ -140,7 +176,17 @@ export function calculateTransferEntropy(
     bins: number = 8
 ): TransferEntropyResult {
     const length = Math.min(returns1.length, returns2.length);
-    if (length < 6) {
+    const clean1: number[] = [];
+    const clean2: number[] = [];
+    for (let i = 0; i < length; i++) {
+        const a = returns1[i];
+        const b = returns2[i];
+        if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+        clean1.push(a);
+        clean2.push(b);
+    }
+
+    if (clean1.length < 6) {
         return {
             te_1_to_2: 0,
             te_2_to_1: 0,
@@ -151,20 +197,15 @@ export function calculateTransferEntropy(
         };
     }
 
-    if (historyLength !== 1) {
-        // Current implementation uses historyLength=1. Additional history can be added later.
-    }
-
-    const clean1 = returns1.slice(-length);
-    const clean2 = returns2.slice(-length);
+    const effectiveHistory = Math.max(1, Math.floor(historyLength));
 
     const thresholds1 = quantileThresholds(clean1, bins);
     const thresholds2 = quantileThresholds(clean2, bins);
     const bins1 = discretize(clean1, thresholds1);
     const bins2 = discretize(clean2, thresholds2);
 
-    const te_1_to_2 = computeTransferEntropy(bins1, bins2, bins);
-    const te_2_to_1 = computeTransferEntropy(bins2, bins1, bins);
+    const te_1_to_2 = computeTransferEntropyK(bins1, bins2, bins, effectiveHistory);
+    const te_2_to_1 = computeTransferEntropyK(bins2, bins1, bins, effectiveHistory);
 
     const denom = te_1_to_2 + te_2_to_1 + 1e-9;
     const netFlow = clamp((te_1_to_2 - te_2_to_1) / denom, -1, 1);

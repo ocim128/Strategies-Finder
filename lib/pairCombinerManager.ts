@@ -1,5 +1,6 @@
 import { state } from "./state";
 import { assetSearchService, Asset } from "./assetSearchService";
+import { binanceSearchService } from "./binanceSearchService";
 import { uiManager } from "./uiManager";
 import { debugLogger } from "./debugLogger";
 import { chartManager } from "./chartManager";
@@ -8,6 +9,7 @@ import { alignPairData } from "./pairCombiner";
 import { calculateCopulaDependence } from "./pairCombiner";
 import { waveletDecompose } from "./pairCombiner";
 import { calculateTransferEntropy } from "./pairCombiner";
+import { clamp, mean, std, pearsonCorrelation } from "./pairCombiner/utils";
 import type {
     AnalysisMethod,
     PairAnalysisResults,
@@ -18,36 +20,6 @@ import type {
 
 const DEFAULT_INTERVALS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d', '1w', '1M'];
 
-function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
-}
-
-function pearsonCorrelation(a: number[], b: number[]): number {
-    const n = Math.min(a.length, b.length);
-    if (n < 2) return 0;
-    let sumA = 0;
-    let sumB = 0;
-    let sumA2 = 0;
-    let sumB2 = 0;
-    let sumAB = 0;
-
-    for (let i = 0; i < n; i++) {
-        const x = a[i];
-        const y = b[i];
-        sumA += x;
-        sumB += y;
-        sumA2 += x * x;
-        sumB2 += y * y;
-        sumAB += x * y;
-    }
-
-    const numerator = (n * sumAB) - (sumA * sumB);
-    const denomA = (n * sumA2) - (sumA * sumA);
-    const denomB = (n * sumB2) - (sumB * sumB);
-    if (denomA <= 0 || denomB <= 0) return 0;
-    return numerator / Math.sqrt(denomA * denomB);
-}
-
 function calculateReturns(closes: number[]): number[] {
     const returns: number[] = [];
     for (let i = 1; i < closes.length; i++) {
@@ -56,23 +28,6 @@ function calculateReturns(closes: number[]): number[] {
         returns.push(Math.log(current / prev));
     }
     return returns;
-}
-
-function mean(values: number[]): number {
-    if (values.length === 0) return 0;
-    let sum = 0;
-    for (const v of values) sum += v;
-    return sum / values.length;
-}
-
-function std(values: number[], avg: number): number {
-    if (values.length === 0) return 0;
-    let sum = 0;
-    for (const v of values) {
-        const diff = v - avg;
-        sum += diff * diff;
-    }
-    return Math.sqrt(sum / values.length);
 }
 
 function scoreWavelet(wavelet: WaveletResult): number {
@@ -116,6 +71,13 @@ export class PairCombinerManager {
     private resultsEmpty: HTMLElement | null = null;
     private resultsContent: HTMLElement | null = null;
     private notesList: HTMLElement | null = null;
+    private exportButton: HTMLButtonElement | null = null;
+    private scanButton: HTMLButtonElement | null = null;
+    private scanStopButton: HTMLButtonElement | null = null;
+    private scanStatusLabel: HTMLElement | null = null;
+    private scanResults: HTMLElement | null = null;
+    private isScanning = false;
+    private scanCancelled = false;
 
     public init() {
         const tab = document.getElementById('paircombinerTab');
@@ -139,6 +101,11 @@ export class PairCombinerManager {
         this.resultsEmpty = document.getElementById('pairResultsEmpty');
         this.resultsContent = document.getElementById('pairResultsContent');
         this.notesList = document.getElementById('pairNotes');
+        this.exportButton = document.getElementById('pairExportBtn') as HTMLButtonElement | null;
+        this.scanButton = document.getElementById('pairScanBtn') as HTMLButtonElement | null;
+        this.scanStopButton = document.getElementById('pairScanStopBtn') as HTMLButtonElement | null;
+        this.scanStatusLabel = document.getElementById('pairScanStatus');
+        this.scanResults = document.getElementById('pairScanResults');
 
         this.setupIntervalSelect();
         this.updateIntervalLabels();
@@ -187,7 +154,7 @@ export class PairCombinerManager {
             if (state.secondarySymbol) {
                 this.setStatus('Primary interval changed. Reload secondary or re-run analysis.', 'warning');
                 this.clearResults();
-                chartManager.removeSecondaryPairOverlay();
+                chartManager.removeSecondaryPairLine();
                 state.set('secondaryOhlcvData', []);
                 state.set('pairCombinerEnabled', false);
             }
@@ -198,7 +165,7 @@ export class PairCombinerManager {
             if (state.secondarySymbol) {
                 this.setStatus('Primary symbol changed. Re-run analysis for accurate results.', 'warning');
                 this.clearResults();
-                chartManager.removeSecondaryPairOverlay();
+                chartManager.removeSecondaryPairLine();
                 state.set('secondaryOhlcvData', []);
                 state.set('pairCombinerEnabled', false);
             }
@@ -274,6 +241,18 @@ export class PairCombinerManager {
 
         this.clearButton?.addEventListener('click', () => {
             this.clearSecondaryPair();
+        });
+
+        this.exportButton?.addEventListener('click', () => {
+            this.exportResults();
+        });
+
+        this.scanButton?.addEventListener('click', () => {
+            void this.runBatchScan();
+        });
+
+        this.scanStopButton?.addEventListener('click', () => {
+            this.stopBatchScan();
         });
 
         this.linkIntervalToggle?.addEventListener('change', () => {
@@ -388,7 +367,7 @@ export class PairCombinerManager {
         }
     }
 
-    private async loadSecondaryPair(symbol: string) {
+    private async loadSecondaryPair(symbol: string, options?: { skipOverlay?: boolean }) {
         if (this.isLoadingSecondary) return;
         const interval = this.getSecondaryInterval();
         if (!interval) return;
@@ -441,10 +420,12 @@ export class PairCombinerManager {
             this.updateSelectedDisplay();
 
             if (alignedSecondary.length > 0) {
-                chartManager.addSecondaryPairOverlay(alignedSecondary);
+                if (!options?.skipOverlay) {
+                    chartManager.addSecondaryPairLine(alignedSecondary, 'rgba(246, 195, 67, 0.9)');
+                }
             } else if (state.ohlcvData.length > 0) {
                 this.showWarning('No overlapping timestamps found. Check interval alignment.');
-                chartManager.removeSecondaryPairOverlay();
+                chartManager.removeSecondaryPairLine();
             }
         } catch (error) {
             console.error('Failed to load secondary pair:', error);
@@ -464,7 +445,7 @@ export class PairCombinerManager {
         }
 
         if (state.secondaryOhlcvData.length === 0) {
-            await this.loadSecondaryPair(state.secondarySymbol);
+            await this.loadSecondaryPair(state.secondarySymbol, { skipOverlay: true });
         }
 
         if (state.secondaryOhlcvData.length === 0 || state.ohlcvData.length === 0) {
@@ -484,9 +465,10 @@ export class PairCombinerManager {
 
         try {
             const aligned = alignPairData(state.ohlcvData, state.secondaryOhlcvData);
-            if (aligned.primary.length < 20) {
-                uiManager.showToast('Pairs have too few overlapping bars.', 'error');
-                this.setStatus('Not enough overlapping bars.', 'error');
+            const MIN_BARS = 30;
+            if (aligned.primary.length < MIN_BARS) {
+                uiManager.showToast(`Need at least ${MIN_BARS} aligned bars.`, 'error');
+                this.setStatus(`Need at least ${MIN_BARS} aligned bars (got ${aligned.primary.length}).`, 'warning');
                 this.clearResults();
                 return;
             }
@@ -499,6 +481,10 @@ export class PairCombinerManager {
 
             if (aligned.primary.length > 12000) {
                 this.showWarning(`Using the most recent ${analysisWindow} bars to keep calculations fast.`);
+            } else if (this.isCrossProvider(state.currentSymbol, state.secondarySymbol)) {
+                this.showWarning('Cross-provider pairs may have timestamp alignment gaps.');
+            } else if (aligned.alignmentStats.matchRate < 0.85) {
+                this.showWarning(`Alignment match rate ${(aligned.alignmentStats.matchRate * 100).toFixed(1)}% (${aligned.alignmentStats.primaryMissing} primary, ${aligned.alignmentStats.secondaryMissing} secondary missing).`);
             } else {
                 this.hideWarning();
             }
@@ -525,13 +511,13 @@ export class PairCombinerManager {
             let transferEntropy: TransferEntropyResult | undefined;
 
             if (methods.includes('copula')) {
-                copula = calculateCopulaDependence(returns1, returns2);
+                copula = calculateCopulaDependence(returns1, returns2, undefined, trimmedTimestamps.slice(1));
             }
             if (methods.includes('wavelet')) {
-                wavelet = waveletDecompose(trimmedSpread, 'haar', 4);
+                wavelet = waveletDecompose(trimmedSpread, 'db4', 4);
             }
             if (methods.includes('transferEntropy')) {
-                transferEntropy = calculateTransferEntropy(returns1, returns2, 1, 8);
+                transferEntropy = calculateTransferEntropy(returns1, returns2, 2, 8);
             }
 
             const methodScores: number[] = [];
@@ -566,8 +552,11 @@ export class PairCombinerManager {
             state.set('pairAnalysisResults', result);
             this.renderResults(result, methods);
 
-            chartManager.addSecondaryPairOverlay(trimmedSecondary);
-            chartManager.displaySpreadChart(trimmedSpread, trimmedTimestamps);
+            const divergenceUpper = trimmedSpread.map(() => spreadMean + 2 * spreadStd);
+            const divergenceLower = trimmedSpread.map(() => spreadMean - 2 * spreadStd);
+            chartManager.addSecondaryPairLine(trimmedSecondary, 'rgba(100, 181, 246, 0.7)');
+            chartManager.displaySpreadSeries(trimmedSpread, trimmedTimestamps);
+            chartManager.displayDivergenceBands(divergenceUpper, divergenceLower, trimmedTimestamps);
             this.setStatus('Analysis complete.', 'success');
         } catch (error) {
             console.error('Pair analysis failed:', error);
@@ -586,22 +575,25 @@ export class PairCombinerManager {
     ): string[] {
         const notes: string[] = [];
         const z = spreadZ;
-        if (Math.abs(z) >= 1) {
-            const direction = z > 0 ? 'primary rich vs secondary' : 'secondary rich vs primary';
-            notes.push(`Spread is ${formatSigned(z, 2)} z-score (${direction}).`);
+        if (Math.abs(z) >= 2) {
+            notes.push(`Spread Z-score ${formatSigned(z, 2)}σ: consider mean-reversion entry.`);
+        } else if (Math.abs(z) >= 1) {
+            notes.push(`Spread Z-score ${formatSigned(z, 2)}σ: divergence building.`);
         } else {
             notes.push('Spread is near its mean; low divergence right now.');
         }
 
-        if (Math.abs(correlation) >= 0.6) {
+        if (Math.abs(correlation) >= 0.7) {
             notes.push(`Returns correlation is strong (${formatSigned(correlation, 2)}).`);
-        } else {
+        } else if (Math.abs(correlation) >= 0.4) {
             notes.push(`Returns correlation is moderate (${formatSigned(correlation, 2)}).`);
+        } else {
+            notes.push(`Returns correlation is weak (${formatSigned(correlation, 2)}).`);
         }
 
         if (entropy && Math.abs(entropy.netFlow) > 0.1) {
             const leader = entropy.leadingAsset === 'primary' ? 'Primary' : 'Secondary';
-            notes.push(`${leader} asset leads flow (lag ~${entropy.lagBars} bars).`);
+            notes.push(`${leader} leads by ~${entropy.lagBars} bars: monitor for follow-through.`);
         }
 
         return notes;
@@ -665,9 +657,9 @@ export class PairCombinerManager {
     }
 
     private scoreClass(score: number): string {
-        if (score >= 70) return 'stat-value positive';
-        if (score <= 30) return 'stat-value negative';
-        return 'stat-value';
+        if (score >= 70) return 'stat-value text-green';
+        if (score >= 40) return 'stat-value text-warning';
+        return 'stat-value text-secondary';
     }
 
     private signedClass(value: number): string {
@@ -722,6 +714,19 @@ export class PairCombinerManager {
         this.analyzeButton.classList.toggle('is-loading', isLoading);
     }
 
+    private setScanStatus(message: string) {
+        if (this.scanStatusLabel) {
+            this.scanStatusLabel.textContent = message;
+        }
+    }
+
+    private toggleScanButtons(isScanning: boolean) {
+        if (this.scanButton) this.scanButton.disabled = isScanning;
+        if (this.scanStopButton) {
+            this.scanStopButton.classList.toggle('is-hidden', !isScanning);
+        }
+    }
+
     private clearResults() {
         state.set('pairAnalysisResults', null);
         this.resultsContent?.classList.add('is-hidden');
@@ -739,8 +744,223 @@ export class PairCombinerManager {
         this.setStatus('Secondary pair cleared.', 'info');
         this.hideWarning();
         this.clearResults();
-        chartManager.removeSecondaryPairOverlay();
-        chartManager.displaySpreadChart([], []);
+        chartManager.removeSecondaryPairLine();
+        chartManager.displaySpreadSeries([], []);
+        chartManager.displayDivergenceBands([], []);
+    }
+
+    private isCrossProvider(primary: string, secondary: string): boolean {
+        const primaryProvider = assetSearchService.getProvider(primary);
+        const secondaryProvider = assetSearchService.getProvider(secondary);
+        return primaryProvider !== secondaryProvider;
+    }
+
+    private exportResults() {
+        const results = state.pairAnalysisResults;
+        if (!results) {
+            uiManager.showToast('Run analysis before exporting.', 'error');
+            return;
+        }
+
+        const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `pair-analysis-${results.primarySymbol}-${results.secondarySymbol}-${Date.now()}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }
+
+    private stopBatchScan() {
+        this.scanCancelled = true;
+        this.setScanStatus('Stopping...');
+    }
+
+    private async runBatchScan() {
+        if (this.isScanning) return;
+        if (state.ohlcvData.length === 0) {
+            uiManager.showToast('Load primary data before scanning.', 'error');
+            return;
+        }
+
+        const interval = this.getSecondaryInterval() || state.currentInterval;
+        const provider = assetSearchService.getProvider(state.currentSymbol);
+        const minAlignedBars = interval.includes('m') ? 300 : 80;
+        const thresholds = {
+            minAlignedBars,
+            minMatchRate: 0.85,
+            minAbsZ: 2.0,
+            minOpportunity: 65,
+            minWaveletScore: 70,
+            minEntropySignificance: 0.5,
+        };
+
+        this.isScanning = true;
+        this.scanCancelled = false;
+        this.toggleScanButtons(true);
+        this.setScanStatus('Preparing scan...');
+        this.renderScanResults([]);
+
+        try {
+            const symbols = await this.getScanUniverse(provider, 120, state.currentSymbol);
+            const total = symbols.length;
+            const results: PairAnalysisResults[] = [];
+            let processed = 0;
+
+            for (const symbol of symbols) {
+                if (this.scanCancelled) break;
+                processed++;
+                this.setScanStatus(`Scanning ${processed}/${total} (${symbol})...`);
+
+                try {
+                    const secondaryData = await dataManager.fetchData(symbol, interval);
+                    const aligned = alignPairData(state.ohlcvData, secondaryData);
+                    if (aligned.primary.length < thresholds.minAlignedBars) continue;
+                    if (aligned.alignmentStats.matchRate < thresholds.minMatchRate) continue;
+
+                    const analysisWindow = aligned.primary.length > 12000 ? 12000 : aligned.primary.length;
+                    const trimmedPrimary = aligned.primary.slice(-analysisWindow);
+                    const trimmedSecondary = aligned.secondary.slice(-analysisWindow);
+                    const trimmedSpread = aligned.spread.slice(-analysisWindow);
+
+                    const closes1 = trimmedPrimary.map(d => d.close);
+                    const closes2 = trimmedSecondary.map(d => d.close);
+                    const returns1 = calculateReturns(closes1);
+                    const returns2 = calculateReturns(closes2);
+                    const correlation = pearsonCorrelation(returns1, returns2);
+
+                    const spreadMean = mean(trimmedSpread);
+                    const spreadStd = std(trimmedSpread, spreadMean);
+                    const spreadZScore = spreadStd > 0
+                        ? (trimmedSpread[trimmedSpread.length - 1] - spreadMean) / spreadStd
+                        : 0;
+
+                    const copula = calculateCopulaDependence(returns1, returns2);
+                    const wavelet = waveletDecompose(trimmedSpread, 'db4', 4);
+                    const transferEntropy = calculateTransferEntropy(returns1, returns2, 2, 8);
+
+                    const methodScores: number[] = [];
+                    methodScores.push(copula.opportunityScore);
+                    methodScores.push(scoreWavelet(wavelet));
+                    methodScores.push(scoreTransferEntropy(transferEntropy));
+                    const methodAverage = methodScores.reduce((sum, score) => sum + score, 0) / methodScores.length;
+                    const spreadOpportunity = clamp((Math.min(3, Math.abs(spreadZScore)) / 3) * 100, 0, 100);
+                    const overallOpportunity = Math.round(spreadOpportunity * 0.6 + methodAverage * 0.4);
+
+                    if (Math.abs(spreadZScore) < thresholds.minAbsZ) continue;
+                    if (overallOpportunity < thresholds.minOpportunity) continue;
+                    if (scoreWavelet(wavelet) < thresholds.minWaveletScore) continue;
+                    if (transferEntropy.significance < thresholds.minEntropySignificance) continue;
+
+                    const ratioSeries = trimmedPrimary.map((bar, idx) => {
+                        const second = trimmedSecondary[idx]?.close ?? 0;
+                        return second > 0 ? bar.close / second : 0;
+                    });
+
+                    const result: PairAnalysisResults = {
+                        primarySymbol: state.currentSymbol,
+                        secondarySymbol: symbol,
+                        interval,
+                        alignedBars: trimmedPrimary.length,
+                        correlation,
+                        spreadMean,
+                        spreadStd,
+                        spreadZScore,
+                        ratio: ratioSeries[ratioSeries.length - 1] ?? 0,
+                        opportunityScore: overallOpportunity,
+                        generatedAt: Date.now(),
+                        copula,
+                        wavelet,
+                        transferEntropy,
+                        notes: this.buildNotes(spreadZScore, correlation, transferEntropy),
+                    };
+
+                    results.push(result);
+                } catch (error) {
+                    console.warn('Batch scan failed for symbol', symbol, error);
+                }
+            }
+
+            const sorted = results.sort((a, b) => b.opportunityScore - a.opportunityScore);
+            this.renderScanResults(sorted.slice(0, 20));
+            const status = this.scanCancelled ? 'Scan stopped.' : `Scan complete. ${sorted.length} matches.`;
+            this.setScanStatus(status);
+        } catch (error) {
+            console.error('Batch scan failed:', error);
+            this.setScanStatus('Scan failed.');
+        } finally {
+            this.isScanning = false;
+            this.toggleScanButtons(false);
+            this.scanCancelled = false;
+        }
+    }
+
+    private async getScanUniverse(
+        provider: 'binance' | 'twelvedata' | 'mock',
+        limit: number,
+        primarySymbol: string
+    ): Promise<string[]> {
+        if (provider === 'binance') {
+            const symbols = await binanceSearchService.getAllSymbols();
+            return symbols
+                .filter(sym => sym.quoteAsset === 'USDT' && sym.symbol !== primarySymbol)
+                .slice(0, limit)
+                .map(sym => sym.symbol);
+        }
+
+        const assets = await assetSearchService.searchAssets('', limit + 5);
+        return assets
+            .filter(asset => asset.provider === provider && asset.symbol !== primarySymbol)
+            .slice(0, limit)
+            .map(asset => asset.symbol);
+    }
+
+    private renderScanResults(results: PairAnalysisResults[]) {
+        if (!this.scanResults) return;
+        if (results.length === 0) {
+            this.scanResults.innerHTML = '<div class="pair-scan-empty">Run a scan to see ranked opportunities.</div>';
+            return;
+        }
+
+        const rows = results.map((result, index) => {
+            const scoreClass = this.scoreClass(result.opportunityScore);
+            const correlationClass = this.signedClass(result.correlation);
+            const spreadClass = this.signedClass(result.spreadZScore);
+            const highlight = index < 5 ? 'pair-scan-row-highlight' : '';
+            const leader = result.transferEntropy?.leadingAsset ?? 'neutral';
+            return `
+                <tr class="${highlight}">
+                    <td>${index + 1}</td>
+                    <td>${result.secondarySymbol}</td>
+                    <td class="${scoreClass}">${result.opportunityScore}%</td>
+                    <td class="${spreadClass}">${formatSigned(result.spreadZScore, 2)}</td>
+                    <td class="${correlationClass}">${result.correlation.toFixed(2)}</td>
+                    <td>${leader}</td>
+                    <td>${result.alignedBars}</td>
+                </tr>
+            `;
+        }).join('');
+
+        this.scanResults.innerHTML = `
+            <table class="pair-scan-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Pair</th>
+                        <th>Opp</th>
+                        <th>Spread Z</th>
+                        <th>Corr</th>
+                        <th>Leader</th>
+                        <th>Bars</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows}
+                </tbody>
+            </table>
+        `;
     }
 
     private debounce<T extends (...args: any[]) => void>(fn: T, delay: number): (...args: Parameters<T>) => void {

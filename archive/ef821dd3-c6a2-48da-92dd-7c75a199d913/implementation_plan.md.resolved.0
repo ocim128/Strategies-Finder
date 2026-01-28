@@ -1,0 +1,364 @@
+# Pair Combiner Feature: Statistical Pair Analysis Tool
+
+## Overview
+
+Add a new **"Pair Combiner"** menu/tab to analyze the relationship between two trading pairs, identifying opportunities through advanced statistical methods:
+
+1. **Copula-Based Dependence** - Measures non-linear tail dependencies
+2. **Wavelet Signal Decomposition** - Multi-scale trend/noise separation
+3. **Transfer Entropy** - Information flow direction between pairs
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Data Requirements**: Fetching two pairs simultaneously requires handling twice the API calls. Need to confirm if the existing Binance/TwelveData rate limits can support this.
+
+> [!IMPORTANT]
+> **Analysis Complexity**: Should all three analysis methods (copula, wavelets, transfer entropy) be implemented in Phase 1, or should we prioritize one method first?
+
+> [!NOTE]
+> **Performance Consideration**: Wavelet decomposition and transfer entropy can be computationally expensive for large datasets (30k+ bars). Should we add a recommended data limit warning in the UI?
+
+---
+
+## Proposed Changes
+
+### State & Types
+
+#### [MODIFY] [state.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/state.ts)
+
+Add pair combiner state management:
+
+```typescript
+// New state fields
+public pairCombinerEnabled = false;
+public secondarySymbol: string | null = null;
+public secondaryInterval: string | null = null;
+public secondaryOhlcvData: OHLCVData[] = [];
+public pairAnalysisResults: PairAnalysisResults | null = null;
+```
+
+---
+
+### HTML/UI Components
+
+#### [NEW] [tab-paircombiner.html](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/html-partials/tab-paircombiner.html)
+
+New tab content with:
+- Secondary pair selector (reuses symbol search pattern from [header.html](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/html-partials/header.html))
+- Analysis method checkboxes (copula, wavelets, transfer entropy)
+- "Analyze" button to trigger computation
+- Results display panel with metrics
+
+#### [MODIFY] [strategy-panel-shell.html](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/html-partials/strategy-panel-shell.html)
+
+Add new tab button in "Analysis" group:
+
+```html
+<button class="panel-tab" data-tab="paircombiner" title="Pair Combiner Analysis">
+    <svg><!-- Pair icon --></svg>
+    <span>Pairs</span>
+</button>
+```
+
+---
+
+### Core Analysis Modules
+
+#### [NEW] [lib/pairCombiner/](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombiner/)
+
+New directory containing analysis engines:
+
+---
+
+#### [NEW] [copulaDependence.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombiner/copulaDependence.ts)
+
+Measures non-linear dependence between two return series:
+
+```typescript
+interface CopulaResult {
+    kendallTau: number;        // Rank correlation
+    tailDependence: {
+        upper: number;         // Joint extreme gains
+        lower: number;         // Joint extreme losses
+    };
+    copulaType: 'gaussian' | 'clayton' | 'gumbel'; // Best fit
+    opportunityScore: number;  // 0-100 divergence opportunity
+}
+
+export function calculateCopulaDependence(
+    returns1: number[],
+    returns2: number[],
+    windowSize?: number
+): CopulaResult;
+```
+
+**Key Features:**
+- Empirical copula construction from pseudo-observations
+- Kendall's tau calculation for rank correlation
+- Tail dependence coefficients (upper/lower)
+- Rolling window analysis for dynamic dependence
+
+---
+
+#### [NEW] [waveletDecomposition.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombiner/waveletDecomposition.ts)
+
+Decomposes price spread into multi-scale components:
+
+```typescript
+interface WaveletResult {
+    levels: WaveletLevel[];    // Decomposition levels
+    dominantCycle: number;     // Primary cycle length in bars
+    noiseRatio: number;        // Noise-to-signal ratio
+    smoothedSpread: number[];  // Denoised spread series
+    spreadZScore: number;      // Current normalized position
+}
+
+interface WaveletLevel {
+    scale: number;             // Time scale (bars)
+    detail: number[];          // Detail coefficients
+    approximation: number[];   // Smoothed component
+    energy: number;            // % of total signal energy
+}
+
+export function waveletDecompose(
+    spread: number[],
+    waveletType?: 'haar' | 'db4' | 'coif2',
+    maxLevels?: number
+): WaveletResult;
+```
+
+**Key Features:**
+- Haar wavelet (fast) or Daubechies-4 (smoother)
+- Multi-resolution analysis (MRA)
+- Cycle detection for mean-reversion timing
+- Denoised spread for cleaner signals
+
+---
+
+#### [NEW] [transferEntropy.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombiner/transferEntropy.ts)
+
+Measures directional information flow:
+
+```typescript
+interface TransferEntropyResult {
+    te_1_to_2: number;         // Info flow: pair1 → pair2
+    te_2_to_1: number;         // Info flow: pair2 → pair1
+    netFlow: number;           // Net direction (-1 to 1)
+    leadingAsset: 'primary' | 'secondary' | 'neutral';
+    lagBars: number;           // Optimal lead/lag
+    significance: number;      // Statistical confidence
+}
+
+export function calculateTransferEntropy(
+    returns1: number[],
+    returns2: number[],
+    historyLength?: number,
+    bins?: number
+): TransferEntropyResult;
+```
+
+**Key Features:**
+- Binned probability estimation (discretization)
+- Conditional entropy calculation
+- Lead-lag detection for alpha generation
+- Bootstrap significance testing
+
+---
+
+#### [NEW] [pairDataManager.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombiner/pairDataManager.ts)
+
+Handles synchronized dual-pair data:
+
+```typescript
+interface AlignedPairData {
+    primary: OHLCVData[];
+    secondary: OHLCVData[];
+    spread: number[];          // log(P1) - log(P2)
+    ratio: number[];           // P1 / P2
+    alignedTimestamps: Time[];
+}
+
+export async function fetchAndAlignPairs(
+    primary: { symbol: string; interval: string },
+    secondary: { symbol: string; interval: string }
+): Promise<AlignedPairData>;
+```
+
+---
+
+#### [NEW] [types.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombiner/types.ts)
+
+Shared type definitions for pair analysis.
+
+---
+
+#### [NEW] [index.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombiner/index.ts)
+
+Module barrel export.
+
+---
+
+### Manager / Integration
+
+#### [NEW] [pairCombinerManager.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/pairCombinerManager.ts)
+
+Main orchestrator class:
+
+```typescript
+class PairCombinerManager {
+    init(): void;                    // Setup event listeners
+    loadSecondaryPair(symbol: string, interval?: string): Promise<void>;
+    runAnalysis(methods: AnalysisMethod[]): Promise<void>;
+    displayResults(results: PairAnalysisResults): void;
+    clearSecondaryPair(): void;
+}
+```
+
+---
+
+### Chart Visualization
+
+#### [MODIFY] [chartManager.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/lib/chartManager.ts)
+
+Add methods for pair overlay visualization:
+
+```typescript
+// New methods
+addSecondaryPairOverlay(data: OHLCVData[]): void;
+removeSecondaryPairOverlay(): void;
+displaySpreadChart(spread: number[], timestamps: Time[]): void;
+displayCorrelationBand(upper: number[], lower: number[]): void;
+```
+
+---
+
+### Styling
+
+#### [NEW] [pair-combiner.css](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/styles/pair-combiner.css)
+
+Styling for:
+- Pair selector components
+- Analysis results cards
+- Metric visualizations
+- Loading/progress states
+
+---
+
+## Architecture Diagram
+
+```mermaid
+flowchart TB
+    subgraph UI["UI Layer"]
+        TAB[Pair Combiner Tab]
+        SEARCH[Secondary Pair Selector]
+        CONTROLS[Analysis Controls]
+    end
+    
+    subgraph State["State Management"]
+        STATE[state.ts]
+    end
+    
+    subgraph Manager["Orchestration"]
+        PCM[pairCombinerManager.ts]
+    end
+    
+    subgraph Data["Data Layer"]
+        PDM[pairDataManager.ts]
+        DM[dataManager.ts]
+    end
+    
+    subgraph Analysis["Analysis Engines"]
+        COP[copulaDependence.ts]
+        WAV[waveletDecomposition.ts]
+        TE[transferEntropy.ts]
+    end
+    
+    subgraph Chart["Visualization"]
+        CM[chartManager.ts]
+    end
+    
+    TAB --> PCM
+    SEARCH --> PCM
+    CONTROLS --> PCM
+    PCM --> STATE
+    PCM --> PDM
+    PDM --> DM
+    PCM --> COP
+    PCM --> WAV
+    PCM --> TE
+    PCM --> CM
+```
+
+---
+
+## Verification Plan
+
+### Automated Tests
+
+No existing automated tests specifically for pair analysis. Will add:
+
+#### [NEW] [pairCombiner.spec.ts](file:///c:/Users/user/Documents/Repo/Experimental/lightweight-charts/debug/playground/Strategies-Finder/pairCombiner.spec.ts)
+
+Unit tests for analysis functions with known input/output pairs:
+
+```bash
+npx vitest run pairCombiner.spec.ts
+```
+
+Test cases:
+- Copula: Verify known correlation scenarios
+- Wavelets: Test decomposition energy preservation
+- Transfer Entropy: Confirm asymmetry detection
+
+---
+
+### Manual Verification
+
+1. **Pair Selection Test**
+   - Open application: `npm run dev`
+   - Navigate to Strategy Panel → Pairs tab
+   - Load primary: `BTCUSDT` (1D)
+   - Select secondary: `ETHUSDT` (1D)
+   - Verify both pairs load without errors
+
+2. **Analysis Execution**
+   - Enable all three analysis methods
+   - Click "Analyze"
+   - Verify results panel shows metrics for each method
+   - Check console for any calculation errors
+
+3. **Chart Overlay**
+   - Confirm secondary pair appears as overlay line
+   - Verify spread chart displays below main chart
+   - Test zoom/pan synchronization
+
+4. **Cross-Provider Test**
+   - Primary: `BTCUSDT` (Binance crypto)
+   - Secondary: `AAPL` (TwelveData stock)
+   - Verify alignment handles different timestamps gracefully
+
+---
+
+## Implementation Order
+
+| Phase | Component | Priority | Estimated Effort |
+|-------|-----------|----------|------------------|
+| 1 | State & Types | High | Small |
+| 2 | Tab UI (basic) | High | Medium |
+| 3 | pairDataManager | High | Medium |
+| 4 | copulaDependence | Medium | Medium |
+| 5 | waveletDecomposition | Medium | Large |
+| 6 | transferEntropy | Medium | Large |
+| 7 | Chart visualization | Low | Medium |
+| 8 | Styling polish | Low | Small |
+
+---
+
+## Open Questions for User
+
+1. Should the secondary pair always match the primary's timeframe, or allow independent intervals?
+2. Preferred method for displaying spread: separate sub-chart or overlay histogram?
+3. Any specific copula models preferred beyond Gaussian/Clayton/Gumbel?
