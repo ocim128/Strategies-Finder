@@ -86,7 +86,7 @@ function calculateChandelierExit(
         longStop[i] = adjLong;
         shortStop[i] = adjShort;
 
-        let dir = prevDir;
+        let dir: 1 | -1 = prevDir;
         if (closes[i] > shortPrev) dir = 1;
         else if (closes[i] < longPrev) dir = -1;
         direction[i] = dir;

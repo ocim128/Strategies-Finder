@@ -8,7 +8,7 @@ import { chartManager } from "./chartManager";
 //     EntryConfirmationMode
 // } from "../../../../src/strategies/index";
 
-import { runBacktest, StrategyParams, BacktestSettings, EntryConfirmationMode, ExecutionModel, buildEntryBacktestResult } from "./strategies/index";
+import { runBacktest, StrategyParams, BacktestSettings, EntryConfirmationMode, ExecutionModel, buildEntryBacktestResult, BacktestResult } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./paramManager";
 import { debugLogger } from "./debugLogger";
@@ -256,13 +256,10 @@ export class BacktestService {
         sizingMode: 'percent' | 'fixed';
         fixedTradeAmount: number;
     } {
-        const initialCapital = parseFloat((document.getElementById('initialCapital') as HTMLInputElement).value) || 10000;
-        const positionSize = parseFloat((document.getElementById('positionSize') as HTMLInputElement).value) || 100;
-        const commission = parseFloat((document.getElementById('commission') as HTMLInputElement).value) || 0.1;
-        const fixedTradeAmount = Math.max(
-            0,
-            parseFloat((document.getElementById('fixedTradeAmount') as HTMLInputElement).value) || 0
-        );
+        const initialCapital = Math.max(0, this.readNumberInput('initialCapital', 10000));
+        const positionSize = Math.max(0, this.readNumberInput('positionSize', 100));
+        const commission = Math.max(0, this.readNumberInput('commission', 0.1));
+        const fixedTradeAmount = Math.max(0, this.readNumberInput('fixedTradeAmount', 0));
         const fixedTradeToggle = document.getElementById('fixedTradeToggle') as HTMLInputElement | null;
         const sizingMode: 'percent' | 'fixed' = fixedTradeToggle?.checked ? 'fixed' : 'percent';
         return { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount };

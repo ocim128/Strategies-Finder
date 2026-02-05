@@ -1,46 +1,56 @@
 /**
  * Asset Search Service - Unified search across multiple providers
- * Supports Binance (Crypto), Twelve Data (Stocks, Forex, Commodities)
+ * Supports Binance (Crypto), Bybit TradFi, and Twelve Data fallback assets
  */
 
 import { binanceSearchService, BinanceSymbol } from './binanceSearchService';
+import { tradfiSearchService, type TradFiSymbol } from './tradfiSearchService';
 
 export type AssetType = 'crypto' | 'stock' | 'forex' | 'commodity';
+export type AssetProvider = 'binance' | 'bybit-tradfi' | 'twelvedata' | 'mock';
 
 export interface Asset {
     symbol: string;          // e.g., "AAPL", "ETHUSDT", "EURUSD"
     displayName: string;     // e.g., "Apple Inc.", "ETH/USDT"
     type: AssetType;         // Asset classification
-    provider: 'binance' | 'twelvedata' | 'mock';  // Data source
+    provider: AssetProvider;  // Data source
     baseAsset?: string;      // e.g., "ETH" for crypto
     quoteAsset?: string;     // e.g., "USDT" for crypto
 }
 
-// Popular non-crypto assets
+// Additional fallback assets when not available in Bybit TradFi catalog
 const POPULAR_ASSETS: Asset[] = [
-    // US Stocks
-    { symbol: 'AAPL', displayName: 'Apple Inc.', type: 'stock', provider: 'twelvedata' },
-    { symbol: 'MSFT', displayName: 'Microsoft Corp.', type: 'stock', provider: 'twelvedata' },
-    { symbol: 'GOOGL', displayName: 'Alphabet Inc.', type: 'stock', provider: 'twelvedata' },
-    { symbol: 'AMZN', displayName: 'Amazon.com Inc.', type: 'stock', provider: 'twelvedata' },
-    { symbol: 'TSLA', displayName: 'Tesla Inc.', type: 'stock', provider: 'twelvedata' },
-    { symbol: 'NVDA', displayName: 'NVIDIA Corp.', type: 'stock', provider: 'twelvedata' },
-    { symbol: 'META', displayName: 'Meta Platforms Inc.', type: 'stock', provider: 'twelvedata' },
-    { symbol: 'JPM', displayName: 'JPMorgan Chase', type: 'stock', provider: 'twelvedata' },
-
-    // Forex Majors
+    { symbol: 'SPY', displayName: 'SPDR S&P 500 ETF', type: 'stock', provider: 'twelvedata' },
+    { symbol: 'QQQ', displayName: 'Invesco QQQ Trust', type: 'stock', provider: 'twelvedata' },
+    { symbol: 'IWM', displayName: 'iShares Russell 2000 ETF', type: 'stock', provider: 'twelvedata' },
     { symbol: 'EUR/USD', displayName: 'Euro / US Dollar', type: 'forex', provider: 'twelvedata' },
     { symbol: 'GBP/USD', displayName: 'British Pound / US Dollar', type: 'forex', provider: 'twelvedata' },
     { symbol: 'USD/JPY', displayName: 'US Dollar / Japanese Yen', type: 'forex', provider: 'twelvedata' },
-    { symbol: 'AUD/USD', displayName: 'Australian Dollar / US Dollar', type: 'forex', provider: 'twelvedata' },
-
-    // Commodities
     { symbol: 'XAUUSD', displayName: 'Gold / US Dollar', type: 'commodity', provider: 'twelvedata' },
     { symbol: 'XAGUSD', displayName: 'Silver / US Dollar', type: 'commodity', provider: 'twelvedata' },
-    { symbol: 'WTIUSD', displayName: 'Crude Oil WTI / US Dollar', type: 'commodity', provider: 'twelvedata' },
 ];
 
 class AssetSearchService {
+    private mapTradFiAsset(symbol: TradFiSymbol): Asset {
+        return {
+            symbol: symbol.symbol,
+            displayName: symbol.displayName,
+            type: symbol.type,
+            provider: 'bybit-tradfi',
+        };
+    }
+
+    private dedupeAssets(assets: Asset[]): Asset[] {
+        const deduped = new Map<string, Asset>();
+        for (const asset of assets) {
+            const key = asset.symbol.toUpperCase();
+            if (!deduped.has(key)) {
+                deduped.set(key, asset);
+            }
+        }
+        return Array.from(deduped.values());
+    }
+
     /**
      * Search for assets across all providers
      */
@@ -51,6 +61,14 @@ class AssetSearchService {
 
         const results: Asset[] = [];
         const searchTerm = query.toUpperCase();
+
+        // Search Bybit TradFi pairs
+        try {
+            const tradfiResults = tradfiSearchService.searchSymbols(query, Math.floor(limit / 2) + 10);
+            results.push(...tradfiResults.map(symbol => this.mapTradFiAsset(symbol)));
+        } catch (error) {
+            console.warn('Bybit TradFi search failed:', error);
+        }
 
         // Search Binance (crypto)
         try {
@@ -75,9 +93,10 @@ class AssetSearchService {
             return sym.includes(searchTerm) || name.includes(searchTerm);
         });
         results.push(...matchingPopular);
+        const uniqueResults = this.dedupeAssets(results);
 
         // Score and sort by relevance
-        const scored = results.map(asset => {
+        const scored = uniqueResults.map(asset => {
             let score = 0;
             const sym = asset.symbol.toUpperCase();
             const name = asset.displayName.toUpperCase();
@@ -99,6 +118,7 @@ class AssetSearchService {
 
             // Prioritize stocks and popular assets
             if (asset.type === 'stock') score += 5;
+            if (asset.provider === 'bybit-tradfi') score += 8;
             if (asset.type === 'crypto' && asset.quoteAsset === 'USDT') score += 3;
 
             return { asset, score };
@@ -126,17 +146,26 @@ class AssetSearchService {
             { symbol: 'XRPUSDT', displayName: 'XRP/USDT', type: 'crypto', provider: 'binance', baseAsset: 'XRP', quoteAsset: 'USDT' },
         ];
 
-        // Interleave crypto and traditional assets
-        popular.push(...topCrypto.slice(0, Math.min(5, limit)));
-        popular.push(...POPULAR_ASSETS.slice(0, Math.min(limit - popular.length, POPULAR_ASSETS.length)));
+        const bybitTradFi = tradfiSearchService
+            .getPopularSymbols(Math.max(0, limit))
+            .map(symbol => this.mapTradFiAsset(symbol));
 
-        return popular.slice(0, limit);
+        // Show crypto first, then TradFi list, then Twelve Data fallback assets
+        popular.push(...topCrypto);
+        popular.push(...bybitTradFi);
+        popular.push(...POPULAR_ASSETS);
+
+        return this.dedupeAssets(popular).slice(0, limit);
     }
 
     /**
      * Check if a symbol is valid
      */
     async isValidAsset(symbol: string): Promise<boolean> {
+        if (tradfiSearchService.isTradFiSymbol(symbol)) {
+            return true;
+        }
+
         // Check if it's a known popular asset
         if (POPULAR_ASSETS.some(a => a.symbol === symbol)) {
             return true;
@@ -157,6 +186,11 @@ class AssetSearchService {
      * Get asset info
      */
     async getAssetInfo(symbol: string): Promise<Asset | null> {
+        const tradfiAsset = tradfiSearchService.getSymbolInfo(symbol);
+        if (tradfiAsset) {
+            return this.mapTradFiAsset(tradfiAsset);
+        }
+
         // Check popular assets first
         const popularAsset = POPULAR_ASSETS.find(a => a.symbol === symbol);
         if (popularAsset) return popularAsset;
@@ -185,6 +219,9 @@ class AssetSearchService {
      * Determine asset type from symbol
      */
     getAssetType(symbol: string): AssetType {
+        const tradfiAsset = tradfiSearchService.getSymbolInfo(symbol);
+        if (tradfiAsset) return tradfiAsset.type;
+
         const asset = POPULAR_ASSETS.find(a => a.symbol === symbol);
         if (asset) return asset.type;
 
@@ -199,7 +236,11 @@ class AssetSearchService {
     /**
      * Determine provider from symbol
      */
-    getProvider(symbol: string): 'binance' | 'twelvedata' | 'mock' {
+    getProvider(symbol: string): AssetProvider {
+        if (tradfiSearchService.isTradFiSymbol(symbol)) {
+            return 'bybit-tradfi';
+        }
+
         const asset = POPULAR_ASSETS.find(a => a.symbol === symbol);
         if (asset) return asset.provider;
 

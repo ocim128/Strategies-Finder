@@ -524,6 +524,7 @@ export class FinderManager {
 
 				// Generate signals for this batch only
 				type PreparedRun = {
+					id: string;
 					key: string;
 					name: string;
 					params: StrategyParams;
@@ -533,7 +534,31 @@ export class FinderManager {
 				};
 				const batchRuns: PreparedRun[] = [];
 
-				for (const job of batchJobs) {
+				const runBacktestFallback = (run: PreparedRun) => {
+					try {
+						const result = backtestFn(
+							state.ohlcvData,
+							run.signals,
+							initialCapital,
+							positionSize,
+							commission,
+							run.backtestSettings,
+							{ mode: sizingMode, fixedTradeAmount }
+						);
+						insertResult({
+							key: run.key,
+							name: run.name,
+							params: run.params,
+							result,
+							confirmationParams: run.confirmationParams
+						});
+					} catch (err) {
+						console.warn(`[Finder] Backtest failed for ${run.key}:`, err);
+					}
+				};
+
+				for (let jobOffset = 0; jobOffset < batchJobs.length; jobOffset++) {
+					const job = batchJobs[jobOffset];
 					try {
 						const confirmationContext = buildConfirmationContext();
 						let signals = job.strategy.execute(state.ohlcvData, job.params);
@@ -568,6 +593,7 @@ export class FinderManager {
 							continue;
 						}
 						batchRuns.push({
+							id: `${job.key}-${startIdx + jobOffset}`,
 							key: job.key,
 							name: job.name,
 							params: job.params,
@@ -587,7 +613,7 @@ export class FinderManager {
 
 				// Run backtests for this batch
 				if (rustAvailable) {
-					const batchItems = batchRuns.map((run, idx) => {
+					const batchItems = batchRuns.map((run) => {
 						const itemSettings = { ...run.backtestSettings };
 						delete (itemSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
 						delete (itemSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
@@ -595,7 +621,7 @@ export class FinderManager {
 						delete (itemSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
 						delete (itemSettings as { slippageBps?: number }).slippageBps;
 						return {
-							id: `${run.key}-${startIdx + idx}`,
+							id: run.id,
 							signals: run.signals,
 							settings: itemSettings,
 						};
@@ -624,69 +650,50 @@ export class FinderManager {
 							);
 
 						if (batchResult && batchResult.results.length > 0) {
-							for (let i = 0; i < batchResult.results.length; i++) {
-								const run = batchRuns[i];
+							const runById = new Map(batchRuns.map(run => [run.id, run]));
+							const completedRunIds = new Set<string>();
+
+							for (const batchEntry of batchResult.results) {
+								const run = runById.get(batchEntry.id);
+								if (!run) {
+									console.warn(`[Finder] Rust batch returned unknown run id: ${batchEntry.id}`);
+									continue;
+								}
 								insertResult({
 									key: run.key,
 									name: run.name,
 									params: run.params,
-									result: batchResult.results[i].result,
+									result: batchEntry.result,
 									confirmationParams: run.confirmationParams
 								});
+								completedRunIds.add(run.id);
+							}
+
+							// If Rust skipped any jobs, run TypeScript fallback for those jobs only.
+							if (completedRunIds.size < batchRuns.length) {
+								for (const run of batchRuns) {
+									if (completedRunIds.has(run.id)) continue;
+									runBacktestFallback(run);
+								}
 							}
 						} else {
 							// Fallback for this batch
 							for (const run of batchRuns) {
-								try {
-									const result = backtestFn(
-										state.ohlcvData,
-										run.signals,
-										initialCapital,
-										positionSize,
-										commission,
-										run.backtestSettings,
-										{ mode: sizingMode, fixedTradeAmount }
-									);
-									insertResult({
-										key: run.key,
-										name: run.name,
-										params: run.params,
-										result,
-										confirmationParams: run.confirmationParams
-									});
-								} catch (err) {
-									console.warn(`[Finder] Backtest failed for ${run.key}:`, err);
-								}
+								runBacktestFallback(run);
 							}
 						}
 					} catch (err) {
 						// Fallback for this batch on error
 						for (const run of batchRuns) {
-							try {
-								const result = backtestFn(
-									state.ohlcvData,
-									run.signals,
-									initialCapital,
-									positionSize,
-									commission,
-									run.backtestSettings,
-									{ mode: sizingMode, fixedTradeAmount }
-								);
-								insertResult({
-									key: run.key,
-									name: run.name,
-									params: run.params,
-									result,
-									confirmationParams: run.confirmationParams
-								});
-							} catch (innerErr) {
-								console.warn(`[Finder] Backtest failed for ${run.key}:`, innerErr);
-							}
+							runBacktestFallback(run);
 						}
 					}
 				}
 
 				// MEMORY: Clear batch arrays after processing
+				for (const run of batchRuns) {
+					run.signals.length = 0;
+				}
 				batchRuns.length = 0;
 
 				processedCount += batchJobs.length;

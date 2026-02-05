@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, OHLCVData, Signal, Time } from './lib/strategies/index';
+import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time } from './lib/strategies/index';
 import { detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
 
 
@@ -384,5 +384,55 @@ describe('Backtesting Engine', () => {
         expect(result.netProfit).to.equal(80); // -100 + 180
         expect(result.profitFactor).to.equal(1.8); // 180 / 100
         expect(result.maxDrawdownPercent).to.be.greaterThan(0);
+    });
+
+    it('compact and full backtests should stay in sync for summary metrics', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 102, low: 98, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 108, low: 99, close: 106, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 106, high: 109, low: 101, close: 103, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 103, high: 112, low: 102, close: 110, volume: 1000 },
+            { time: '2023-01-05' as Time, open: 110, high: 111, low: 104, close: 105, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'buy', price: 106 },
+            { time: '2023-01-03' as Time, type: 'sell', price: 103 },
+            { time: '2023-01-04' as Time, type: 'buy', price: 110 },
+            { time: '2023-01-05' as Time, type: 'sell', price: 105 },
+        ];
+
+        const full = runBacktest(data, signals, 10000, 100, 0.1);
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0.1);
+
+        expect(compact.totalTrades).to.equal(full.totalTrades);
+        expect(compact.winningTrades).to.equal(full.winningTrades);
+        expect(compact.losingTrades).to.equal(full.losingTrades);
+        expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-8);
+        expect(compact.avgTrade).to.be.closeTo(full.avgTrade, 1e-8);
+        expect(compact.expectancy).to.be.closeTo(full.expectancy, 1e-8);
+        expect(compact.profitFactor).to.be.closeTo(full.profitFactor, 1e-8);
+        expect(compact.maxDrawdownPercent).to.be.closeTo(full.maxDrawdownPercent, 1e-8);
+    });
+
+    it('should skip invalid entries with non-positive fill prices', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 102, low: 98, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 103, low: 97, close: 100, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'buy', price: 0 },
+            { time: '2023-01-03' as Time, type: 'sell', price: 100 },
+        ];
+
+        const full = runBacktest(data, signals, 1000, 100, 0);
+        const compact = runBacktestCompact(data, signals, 1000, 100, 0);
+
+        expect(full.totalTrades).to.equal(0);
+        expect(compact.totalTrades).to.equal(0);
+        expect(Number.isFinite(full.netProfit)).to.equal(true);
+        expect(Number.isFinite(compact.netProfit)).to.equal(true);
     });
 });

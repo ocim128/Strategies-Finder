@@ -898,7 +898,7 @@ export class PairCombinerManager {
     }
 
     private async getScanUniverse(
-        provider: 'binance' | 'twelvedata' | 'mock',
+        provider: 'binance' | 'bybit-tradfi' | 'twelvedata' | 'mock',
         limit: number,
         primarySymbol: string
     ): Promise<string[]> {

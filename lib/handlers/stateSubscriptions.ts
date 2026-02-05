@@ -119,6 +119,13 @@ export function setupStateSubscriptions() {
                 displayName = `${symbol.slice(0, -3)}/ETH`;
             } else if (symbol.endsWith('BNB')) {
                 displayName = `${symbol.slice(0, -3)}/BNB`;
+            } else if (symbol.endsWith('+')) {
+                const base = symbol.slice(0, -1);
+                displayName = /^[A-Z]{6}$/.test(base)
+                    ? `${base.slice(0, 3)}/${base.slice(3, 6)}`
+                    : base;
+            } else if (symbol.toUpperCase().endsWith('.S')) {
+                displayName = symbol.slice(0, -2);
             } else {
                 displayName = symbol;
             }

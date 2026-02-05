@@ -661,10 +661,24 @@ export function runBacktestCompact(
                     const allocatedCapital = (sizingMode === 'fixed' && fixedTradeAmount > 0)
                         ? fixedTradeAmount
                         : capital * (positionSizePercent / 100);
+                    if (!Number.isFinite(allocatedCapital) || allocatedCapital <= 0) {
+                        signalIdx++;
+                        continue;
+                    }
+
                     const tradeValue = allocatedCapital / (1 + commissionRate);
                     const entryCommission = tradeValue * commissionRate;
                     const entryFillPrice = applySlippage(signal.price, entrySide, slippageRate);
+                    if (!Number.isFinite(entryFillPrice) || entryFillPrice <= 0 || !Number.isFinite(tradeValue) || tradeValue <= 0) {
+                        signalIdx++;
+                        continue;
+                    }
+
                     const shares = tradeValue / entryFillPrice;
+                    if (!Number.isFinite(shares) || shares <= 0) {
+                        signalIdx++;
+                        continue;
+                    }
 
                     const stopLossPrice = (atrValue !== null && atrValue !== undefined)
                         ? (config.stopLossAtr > 0
@@ -748,7 +762,7 @@ export function runBacktestCompact(
     }
 
     const netProfit = capital - initialCapital;
-    const netProfitPercent = (netProfit / initialCapital) * 100;
+    const netProfitPercent = initialCapital > 0 ? (netProfit / initialCapital) * 100 : 0;
     const winRate = totalTrades > 0 ? (winningTrades / totalTrades) : 0;
     const lossRate = totalTrades > 0 ? (losingTrades / totalTrades) : 0;
     const avgWin = winningTrades > 0 ? totalProfit / winningTrades : 0;
@@ -987,10 +1001,24 @@ export function runBacktest(
                     const allocatedCapital = (sizingMode === 'fixed' && fixedTradeAmount > 0)
                         ? fixedTradeAmount
                         : capital * (positionSizePercent / 100);
+                    if (!Number.isFinite(allocatedCapital) || allocatedCapital <= 0) {
+                        signalIdx++;
+                        continue;
+                    }
+
                     const tradeValue = allocatedCapital / (1 + commissionRate);
                     const entryCommission = tradeValue * commissionRate;
                     const entryFillPrice = applySlippage(signal.price, entrySide, slippageRate);
+                    if (!Number.isFinite(entryFillPrice) || entryFillPrice <= 0 || !Number.isFinite(tradeValue) || tradeValue <= 0) {
+                        signalIdx++;
+                        continue;
+                    }
+
                     const shares = tradeValue / entryFillPrice;
+                    if (!Number.isFinite(shares) || shares <= 0) {
+                        signalIdx++;
+                        continue;
+                    }
 
                     const stopLossPrice = (atrValue !== null && atrValue !== undefined)
                         ? (config.stopLossAtr > 0
@@ -1099,7 +1127,7 @@ export function calculateBacktestStats(
     const avgLoss = losingTrades.length > 0 ? totalLoss / losingTrades.length : 0;
 
     const netProfit = finalCapital - initialCapital;
-    const netProfitPercent = (netProfit / initialCapital) * 100;
+    const netProfitPercent = initialCapital > 0 ? (netProfit / initialCapital) * 100 : 0;
     const winRate = trades.length > 0 ? (winningTrades.length / trades.length) : 0;
     const lossRate = trades.length > 0 ? (losingTrades.length / trades.length) : 0;
     const expectancy = (winRate * avgWin) - (lossRate * avgLoss);

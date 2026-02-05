@@ -4,6 +4,7 @@ import { resampleOHLCV } from "./strategies/resample-utils";
 import { state, type MockChartModel } from "./state";
 import { debugLogger } from "./debugLogger";
 import { uiManager } from "./uiManager";
+import { tradfiSearchService } from "./tradfiSearchService";
 
 /**
  * Binance API Kline data format:
@@ -18,6 +19,18 @@ import { uiManager } from "./uiManager";
  * ]
  */
 type BinanceKline = [number, string, string, string, string, string, ...any[]];
+type BybitTradFiKline = [string, string, string, string, string];
+type DataProvider = 'binance' | 'bybit-tradfi' | 'twelvedata';
+
+interface BybitTradFiKlineResponse {
+    ret_code?: number;
+    ret_msg?: string;
+    retCode?: number;
+    retMsg?: string;
+    result?: {
+        list?: BybitTradFiKline[];
+    };
+}
 
 type MockChartConfig = {
     barsCount: number;
@@ -28,6 +41,7 @@ type MockChartConfig = {
 
 export class DataManager {
     private readonly LIMIT_PER_REQUEST = 1000;
+    private readonly BYBIT_LIMIT_PER_REQUEST = 200;
     private readonly TOTAL_LIMIT = 30000;
     private readonly MAX_REQUESTS = 15;
     private readonly MIN_MOCK_BARS = 100;
@@ -42,13 +56,18 @@ export class DataManager {
         '1h', '2h', '4h', '8h',
         '1d', '1w', '1M'
     ]);
+    private readonly BYBIT_TRADFI_INTERVALS = new Set([
+        '1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'
+    ]);
     private currentAbort: AbortController | null = null;
     private currentLoadId = 0;
     // Only these are truly mock/simulated data now
     private readonly MOCK_SYMBOLS = new Set(['MOCK_STOCK', 'MOCK_CRYPTO', 'MOCK_FOREX']);
     private readonly nonBinanceProviderOverride = new Map<string, 'twelvedata' | 'yahoo'>();
+    private readonly bybitTradFiSymbolOverride = new Map<string, string>();
     private lastDataFallbackKey: string | null = null;
     private readonly TWELVE_DATA_API_KEY_STORAGE = 'twelvedataApiKey';
+    private readonly BYBIT_TRADFI_KLINE_URL = '/api/tradfi-kline';
 
     // Real-time WebSocket streaming
     private ws: WebSocket | null = null;
@@ -56,7 +75,7 @@ export class DataManager {
     private isStreaming = false;
     private streamSymbol: string = '';
     private streamInterval: string = '';
-    private streamProvider: 'binance' | 'twelvedata' | '' = '';
+    private streamProvider: DataProvider | '' = '';
     private reconnectAttempts = 0;
     private readonly MAX_RECONNECT_ATTEMPTS = 10;
     private readonly RECONNECT_DELAY_BASE = 1000; // Base delay in ms
@@ -78,6 +97,15 @@ export class DataManager {
 
         if (provider === 'binance') {
             return this.fetchBinanceData(symbol, interval, signal);
+        }
+
+        if (provider === 'bybit-tradfi') {
+            const tradFiData = await this.fetchBybitTradFiData(symbol, interval, signal);
+            if (tradFiData.length > 0) {
+                return tradFiData;
+            }
+            uiManager.showToast('Bybit TradFi returned no data for this symbol/interval.', 'error');
+            return [];
         }
 
         const { data, provider: resolvedProvider } = await this.fetchNonBinanceData(symbol, interval, signal);
@@ -146,6 +174,134 @@ export class DataManager {
             console.error('Failed to fetch data:', error);
             return [];
         }
+    }
+
+    /**
+     * Fetch data from Bybit TradFi feed
+     */
+    private async fetchBybitTradFiData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
+        try {
+            const batches: BybitTradFiKline[][] = [];
+            const { sourceInterval, needsResample } = this.resolveBybitTradFiInterval(interval);
+            let endTime: number | undefined;
+            let requestCount = 0;
+            let totalDataLength = 0;
+
+            while (totalDataLength < this.TOTAL_LIMIT && requestCount < this.MAX_REQUESTS) {
+                if (signal?.aborted) return [];
+                const remaining = this.TOTAL_LIMIT - totalDataLength;
+                const limit = Math.min(remaining, this.BYBIT_LIMIT_PER_REQUEST);
+
+                const data = await this.fetchBybitTradFiBatch(symbol, sourceInterval, limit, endTime, signal);
+                if (data.length === 0) break;
+
+                batches.push(data);
+                totalDataLength += data.length;
+                endTime = Number(data[0][0]) - 1;
+                requestCount++;
+
+                if (data.length < limit) break;
+            }
+
+            const allRawData = batches.reverse().flat();
+            const mapped = this.mapBybitTradFiToOHLCV(allRawData);
+            return needsResample ? resampleOHLCV(mapped, interval) : mapped;
+        } catch (error) {
+            if (this.isAbortError(error)) {
+                return [];
+            }
+            debugLogger.error('data.bybit_tradfi.error', {
+                symbol,
+                interval,
+                error: this.formatError(error),
+            });
+            return [];
+        }
+    }
+
+    private async fetchBybitTradFiBatch(
+        symbol: string,
+        interval: string,
+        limit: number,
+        to?: number,
+        signal?: AbortSignal
+    ): Promise<BybitTradFiKline[]> {
+        const intervalValue = this.mapToBybitTradFiInterval(interval);
+        const intervalMs = Math.max(60_000, this.getIntervalSeconds(interval) * 1000);
+        const effectiveTo = Number.isFinite(to)
+            ? Math.floor(Number(to))
+            : Math.floor(Date.now() / intervalMs) * intervalMs;
+        const resolvedSymbols = this.getBybitTradFiSymbolCandidates(symbol);
+        const requestLimit = String(Math.min(this.BYBIT_LIMIT_PER_REQUEST, Math.max(1, Math.floor(limit))));
+
+        for (const requestSymbol of resolvedSymbols) {
+            const params = new URLSearchParams({
+                timeStamp: Date.now().toString(),
+                symbol: requestSymbol,
+                interval: intervalValue,
+                limit: requestLimit,
+                to: String(effectiveTo),
+            });
+
+            const response = await fetch(`${this.BYBIT_TRADFI_KLINE_URL}?${params.toString()}`, {
+                signal,
+                headers: {
+                    Accept: 'application/json',
+                },
+            });
+            if (!response.ok) {
+                throw new Error(`Bybit TradFi request failed: ${response.status}`);
+            }
+
+            const data: BybitTradFiKlineResponse = await response.json();
+            const retCode = this.getBybitTradFiRetCode(data);
+            const retMsg = this.getBybitTradFiRetMsg(data);
+
+            if (retCode === 0) {
+                const list = data.result?.list;
+                if (!Array.isArray(list)) {
+                    return [];
+                }
+
+                const symbolKey = this.getBybitTradFiSymbolKey(symbol);
+                const normalizedInput = symbol.trim();
+                if (requestSymbol !== normalizedInput) {
+                    this.bybitTradFiSymbolOverride.set(normalizedInput.toUpperCase(), requestSymbol);
+                    this.bybitTradFiSymbolOverride.set(symbolKey, requestSymbol);
+                }
+
+                return list.filter((item): item is BybitTradFiKline =>
+                    Array.isArray(item) && item.length >= 5
+                );
+            }
+
+            // Invalid symbol on one alias -> try next candidate alias.
+            if (retCode === 10001 && resolvedSymbols.length > 1) {
+                continue;
+            }
+
+            throw new Error(retMsg || `Bybit TradFi API error (${retCode})`);
+        }
+
+        throw new Error(`Bybit TradFi symbol is invalid: ${symbol}`);
+    }
+
+    private mapBybitTradFiToOHLCV(rawData: BybitTradFiKline[]): OHLCVData[] {
+        return rawData
+            .map(d => ({
+                time: (Number(d[0]) / 1000) as Time,
+                open: parseFloat(d[1]),
+                high: parseFloat(d[2]),
+                low: parseFloat(d[3]),
+                close: parseFloat(d[4]),
+                volume: 0,
+            }))
+            .filter(bar =>
+                Number.isFinite(bar.open) &&
+                Number.isFinite(bar.high) &&
+                Number.isFinite(bar.low) &&
+                Number.isFinite(bar.close)
+            );
     }
 
     /**
@@ -540,10 +696,122 @@ export class DataManager {
         return { sourceInterval: '1m', needsResample: true };
     }
 
+    private resolveBybitTradFiInterval(interval: string): { sourceInterval: string; needsResample: boolean } {
+        if (this.BYBIT_TRADFI_INTERVALS.has(interval)) {
+            return { sourceInterval: interval, needsResample: false };
+        }
+
+        const targetSeconds = this.getIntervalSeconds(interval);
+        if (!Number.isFinite(targetSeconds) || targetSeconds <= 0) {
+            return { sourceInterval: '1d', needsResample: false };
+        }
+
+        let bestInterval: string | null = null;
+        let bestSeconds = 0;
+
+        for (const candidate of this.BYBIT_TRADFI_INTERVALS) {
+            const seconds = this.getIntervalSeconds(candidate);
+            if (!Number.isFinite(seconds) || seconds <= 0) continue;
+            if (seconds > targetSeconds) continue;
+            if (targetSeconds % seconds !== 0) continue;
+            if (seconds > bestSeconds) {
+                bestSeconds = seconds;
+                bestInterval = candidate;
+            }
+        }
+
+        if (bestInterval) {
+            return { sourceInterval: bestInterval, needsResample: true };
+        }
+
+        return { sourceInterval: '1m', needsResample: true };
+    }
+
+    private mapToBybitTradFiInterval(interval: string): string {
+        const minutes = Math.max(1, Math.floor(this.getIntervalSeconds(interval) / 60));
+        return String(minutes);
+    }
+
+    private getBybitTradFiRetCode(response: BybitTradFiKlineResponse): number {
+        if (typeof response.ret_code === 'number') return response.ret_code;
+        if (typeof response.retCode === 'number') return response.retCode;
+        return -1;
+    }
+
+    private getBybitTradFiRetMsg(response: BybitTradFiKlineResponse): string {
+        if (typeof response.ret_msg === 'string' && response.ret_msg) return response.ret_msg;
+        if (typeof response.retMsg === 'string' && response.retMsg) return response.retMsg;
+        return 'Bybit TradFi API error';
+    }
+
+    private getBybitTradFiSymbolCandidates(symbol: string): string[] {
+        const raw = symbol.trim();
+        const normalized = raw.toUpperCase();
+        const candidates: string[] = [];
+        const seen = new Set<string>();
+
+        const push = (candidate: string) => {
+            const clean = candidate.trim();
+            const key = clean.toUpperCase();
+            if (!clean || seen.has(key)) return;
+            seen.add(key);
+            candidates.push(clean);
+        };
+
+        const override = this.bybitTradFiSymbolOverride.get(normalized)
+            || this.bybitTradFiSymbolOverride.get(this.getBybitTradFiSymbolKey(normalized));
+        if (override) {
+            push(override);
+        }
+
+        const isFxOrMetal = this.isBybitPlusPreferredSymbol(raw);
+
+        if (raw.toLowerCase().endsWith('.s')) {
+            const base = raw.slice(0, -2);
+            push(raw);
+            if (this.isBybitPlusPreferredSymbol(base)) {
+                push(`${base}+`);
+            }
+            push(`${base}.s`);
+            push(base);
+        } else if (raw.endsWith('+')) {
+            const base = raw.slice(0, -1);
+            push(raw);
+            push(`${base}.s`);
+            push(`${base}+`);
+            push(`${base}.S`);
+            push(base);
+        } else {
+            if (isFxOrMetal) {
+                push(`${raw}+`);
+            }
+            push(`${raw}.s`);
+            push(raw);
+            push(`${raw}.S`);
+        }
+
+        return candidates;
+    }
+
+    private isBybitPlusPreferredSymbol(symbol: string): boolean {
+        const base = symbol.replace(/(\.S|\+)$/i, '');
+        if (!base) return false;
+        if (base.startsWith('XAU') || base.startsWith('XAG')) return true;
+        return base.length === 6;
+    }
+
+    private getBybitTradFiSymbolKey(symbol: string): string {
+        return symbol.trim().toUpperCase().replace(/(\.S|\+)$/i, '');
+    }
+
     /**
      * Determine which provider to use for a symbol
      */
-    private getProvider(symbol: string): 'binance' | 'twelvedata' {
+    private getProvider(symbol: string): DataProvider {
+        if (tradfiSearchService.isTradFiSymbol(symbol)) {
+            return 'bybit-tradfi';
+        }
+
         // Check if it looks like a Binance crypto symbol
         if (symbol.endsWith('USDT') || symbol.endsWith('BUSD') ||
             symbol.endsWith('BTC') || symbol.endsWith('ETH') ||
@@ -1710,7 +1978,9 @@ export class DataManager {
         this.pollAbort = abort;
 
         try {
-            const { candle, provider } = await this.fetchNonBinanceLatest(symbol, interval, abort.signal);
+            const { candle, provider } = this.streamProvider === 'bybit-tradfi'
+                ? { candle: await this.fetchBybitTradFiLatest(symbol, interval, abort.signal), provider: null }
+                : await this.fetchNonBinanceLatest(symbol, interval, abort.signal);
             if (abort.signal.aborted) return;
             if (!this.isPolling || symbol !== this.streamSymbol || interval !== this.streamInterval) return;
             if (candle) {
@@ -1766,6 +2036,26 @@ export class DataManager {
         const series = await this.fetchTwelveDataSeries(symbol, sourceInterval, outputsize, signal);
         if (series.length === 0) return null;
         const updatedSeries = needsResample ? resampleOHLCV(series, interval) : series;
+        return updatedSeries[updatedSeries.length - 1] ?? null;
+    }
+
+    private async fetchBybitTradFiLatest(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal
+    ): Promise<OHLCVData | null> {
+        const { sourceInterval, needsResample } = this.resolveBybitTradFiInterval(interval);
+        const targetSeconds = this.getIntervalSeconds(interval);
+        const sourceSeconds = this.getIntervalSeconds(sourceInterval);
+        const ratio = Number.isFinite(targetSeconds) && Number.isFinite(sourceSeconds) && sourceSeconds > 0
+            ? Math.max(1, Math.round(targetSeconds / sourceSeconds))
+            : 1;
+        const limit = needsResample ? Math.max(8, ratio * 4) : 2;
+        const batch = await this.fetchBybitTradFiBatch(symbol, sourceInterval, limit, undefined, signal);
+        if (batch.length === 0) return null;
+        const ohlcv = this.mapBybitTradFiToOHLCV(batch);
+        if (ohlcv.length === 0) return null;
+        const updatedSeries = needsResample ? resampleOHLCV(ohlcv, interval) : ohlcv;
         return updatedSeries[updatedSeries.length - 1] ?? null;
     }
 
