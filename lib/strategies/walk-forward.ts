@@ -1,5 +1,5 @@
 import { OHLCVData, BacktestResult, StrategyParams, BacktestSettings, Strategy, Time } from './types';
-import { runBacktest, calculateBacktestStats, calculateMaxDrawdown, compareTime } from './backtest';
+import { runBacktest, runBacktestCompact, calculateBacktestStats, calculateMaxDrawdown, compareTime } from './backtest';
 import { ensureCleanData } from './strategy-helpers';
 
 // ============================================================================
@@ -36,6 +36,12 @@ export interface WalkForwardConfig {
     topN?: number;
     /** Minimum trades required to consider a parameter set valid */
     minTrades?: number;
+    /** Hard cap for generated parameter combinations (auto-sampled when exceeded) */
+    maxCombinations?: number;
+    /** Minimum OOS trades required for a window to count in robustness scoring */
+    minOOSTradesPerWindow?: number;
+    /** Minimum total OOS trades required before a result can be considered robust */
+    minTotalOOSTrades?: number;
 }
 
 export interface ParameterRange {
@@ -91,7 +97,6 @@ export interface WalkForwardResult {
 
 export interface OptimizationResult {
     params: StrategyParams;
-    result: BacktestResult;
     score: number;
 }
 
@@ -130,6 +135,76 @@ function generateParameterGrid(ranges: ParameterRange[]): StrategyParams[] {
     }
 
     generate(0, {});
+    return grid;
+}
+
+function estimateParameterGridSize(ranges: ParameterRange[]): number {
+    if (ranges.length === 0) return 1;
+    let estimate = 1;
+    for (const range of ranges) {
+        if (!Number.isFinite(range.step) || range.step <= 0) {
+            throw new Error(`Invalid parameter step for ${range.name}: ${range.step}`);
+        }
+        if (!Number.isFinite(range.min) || !Number.isFinite(range.max) || range.min >= range.max) {
+            throw new Error(`Invalid parameter range for ${range.name}: ${range.min} to ${range.max}`);
+        }
+        const steps = Math.floor((range.max - range.min) / range.step) + 1;
+        estimate *= Math.max(1, steps);
+        if (!Number.isFinite(estimate)) {
+            return Number.MAX_SAFE_INTEGER;
+        }
+    }
+    return estimate;
+}
+
+function getRangeStepCount(range: ParameterRange): number {
+    if (!Number.isFinite(range.step) || range.step <= 0) {
+        throw new Error(`Invalid parameter step for ${range.name}: ${range.step}`);
+    }
+    if (!Number.isFinite(range.min) || !Number.isFinite(range.max) || range.min >= range.max) {
+        throw new Error(`Invalid parameter range for ${range.name}: ${range.min} to ${range.max}`);
+    }
+    return Math.max(1, Math.floor((range.max - range.min) / range.step) + 1);
+}
+
+function generateSampledParameterGrid(ranges: ParameterRange[], maxCombinations: number): StrategyParams[] {
+    if (ranges.length === 0) return [{}];
+
+    const target = Math.max(1, Math.floor(maxCombinations));
+    const grid: StrategyParams[] = [];
+    const seen = new Set<string>();
+    const stepCounts = ranges.map(getRangeStepCount);
+
+    const add = (params: StrategyParams) => {
+        const key = ranges.map(range => `${range.name}:${params[range.name]}`).join('|');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        grid.push(params);
+        return true;
+    };
+
+    // Seed with a deterministic midpoint combo.
+    const midpoint: StrategyParams = {};
+    for (const range of ranges) {
+        midpoint[range.name] = Math.round((((range.min + range.max) / 2) * 1000)) / 1000;
+    }
+    add(midpoint);
+
+    let attempts = 0;
+    const maxAttempts = target * 30;
+    while (grid.length < target && attempts < maxAttempts) {
+        const params: StrategyParams = {};
+        for (let i = 0; i < ranges.length; i++) {
+            const range = ranges[i];
+            const count = stepCounts[i];
+            const idx = Math.floor(Math.random() * count);
+            const value = range.min + idx * range.step;
+            params[range.name] = Math.round(Math.min(range.max, value) * 1000) / 1000;
+        }
+        add(params);
+        attempts++;
+    }
+
     return grid;
 }
 
@@ -219,6 +294,66 @@ function runBacktestFast(
     );
 }
 
+function runBacktestFastCompact(
+    data: OHLCVData[],
+    startIndex: number,
+    endIndex: number,
+    strategy: Strategy,
+    params: StrategyParams,
+    initialCapital: number,
+    positionSizePercent: number,
+    commissionPercent: number,
+    backtestSettings: BacktestSettings,
+    lookback: number = 250
+): BacktestResult {
+    const bufferedStart = Math.max(0, startIndex - lookback);
+    const bufferedData = data.slice(bufferedStart, endIndex);
+
+    const allSignals = strategy.execute(bufferedData, params);
+    const windowStartBar = data[startIndex];
+    const windowEndBar = data[endIndex - 1];
+
+    const windowSignals = allSignals.filter(signal =>
+        compareTime(signal.time, windowStartBar.time) >= 0 &&
+        compareTime(signal.time, windowEndBar.time) <= 0
+    );
+
+    return runBacktestCompact(
+        bufferedData,
+        windowSignals,
+        initialCapital,
+        positionSizePercent,
+        commissionPercent,
+        backtestSettings
+    );
+}
+
+function toSummaryResult(result: BacktestResult): BacktestResult {
+    return {
+        ...result,
+        trades: [],
+        equityCurve: []
+    };
+}
+
+function selectScoringWindows(windows: WalkForwardWindow[], minOOSTradesPerWindow: number): WalkForwardWindow[] {
+    const threshold = Math.max(0, Math.floor(minOOSTradesPerWindow));
+    if (threshold <= 0) return windows;
+    return windows.filter(window => window.outOfSampleResult.totalTrades >= threshold);
+}
+
+function averageSharpe(windows: WalkForwardWindow[], side: 'in' | 'out'): number {
+    if (windows.length === 0) return 0;
+    const values = windows.map(window =>
+        side === 'in'
+            ? window.inSampleResult.sharpeRatio
+            : window.outOfSampleResult.sharpeRatio
+    );
+    const finite = values.filter(value => Number.isFinite(value));
+    if (finite.length === 0) return 0;
+    return finite.reduce((sum, value) => sum + value, 0) / finite.length;
+}
+
 // ============================================================================
 // Window Optimization
 // ============================================================================
@@ -267,8 +402,8 @@ async function optimizeWindow(
             processedCount++;
 
             try {
-                // PERF: Use fast version without validation
-                const result = runBacktestFast(
+                // Use compact backtest during optimization to keep memory stable.
+                const result = runBacktestFastCompact(
                     data,
                     startIndex,
                     endIndex,
@@ -283,7 +418,7 @@ async function optimizeWindow(
                 const score = calculateOptimizationScore(result, minTrades);
 
                 if (Number.isFinite(score)) {
-                    topResults.push({ params, result, score });
+                    topResults.push({ params, score });
                 }
             } catch (e) {
                 continue;
@@ -393,8 +528,16 @@ function calculateRobustnessScore(
     avgInSampleSharpe: number,
     avgOutOfSampleSharpe: number,
     parameterStability: number,
-    windowResults: WalkForwardWindow[]
+    windowResults: WalkForwardWindow[],
+    combinedOOS: BacktestResult,
+    minTotalOOSTrades: number
 ): number {
+    if (windowResults.length === 0) return 0;
+    if (combinedOOS.totalTrades <= 0) return 0;
+
+    const requiredTrades = Math.max(1, Math.floor(minTotalOOSTrades));
+    const tradeSufficiency = Math.min(1, combinedOOS.totalTrades / requiredTrades);
+
     // Walk-Forward Efficiency: OOS/IS Sharpe ratio, clamped to [0, 1]
     // - 1.0 = OOS performance equals or exceeds IS (ideal)
     // - 0.0 = OOS performance is much worse or negative
@@ -424,8 +567,9 @@ function calculateRobustnessScore(
         consistencyScore = Math.max(0, 15 - degStdDev / 10);
     }
 
-    const totalScore = wfeScore + stabilityScore + oosWinScore + consistencyScore;
-    return Math.round(Math.max(0, Math.min(100, totalScore)));
+    const rawScore = wfeScore + stabilityScore + oosWinScore + consistencyScore;
+    const adjustedScore = rawScore * tradeSufficiency;
+    return Math.round(Math.max(0, Math.min(100, adjustedScore)));
 }
 
 
@@ -453,7 +597,10 @@ export async function runWalkForwardAnalysis(
         stepSize,
         parameterRanges,
         topN = 3,
-        minTrades = 5
+        minTrades = 5,
+        maxCombinations = 5000,
+        minOOSTradesPerWindow = 1,
+        minTotalOOSTrades = 50
     } = config;
 
     if (!Number.isFinite(optimizationWindow) || optimizationWindow <= 0) {
@@ -466,15 +613,17 @@ export async function runWalkForwardAnalysis(
         throw new Error(`Invalid step size: ${stepSize}`);
     }
 
-    const paramGrid = generateParameterGrid(parameterRanges);
-
+    const estimatedGridSize = estimateParameterGridSize(parameterRanges);
+    const comboCap = Math.max(100, Math.floor(maxCombinations));
+    const shouldSample = estimatedGridSize > comboCap;
+    const paramGrid = shouldSample
+        ? generateSampledParameterGrid(parameterRanges, comboCap)
+        : generateParameterGrid(parameterRanges);
     if (paramGrid.length === 0) {
         throw new Error('No parameter combinations generated. Check parameter ranges.');
     }
-
-    // Safety check - increased limit because we are now async/chunked
-    if (paramGrid.length > 200000) {
-        throw new Error(`Optimization grid too large: ${paramGrid.length} combinations. This will take too long. Please reduce parameter ranges.`);
+    if (shouldSample) {
+        console.warn(`[WalkForward] Grid estimate ${estimatedGridSize} exceeds cap ${comboCap}; using random sample of ${paramGrid.length} combinations.`);
     }
 
     const totalDataLength = data.length;
@@ -488,6 +637,8 @@ export async function runWalkForwardAnalysis(
     let currentStart = 0;
     let windowIndex = 0;
     let runningCapital = initialCapital;
+    const combinedTrades: BacktestResult['trades'] = [];
+    const combinedEquityCurve: { time: Time; value: number }[] = [];
 
     while (currentStart + windowSize <= totalDataLength) {
         const optimizationStart = currentStart;
@@ -513,8 +664,7 @@ export async function runWalkForwardAnalysis(
         const optimizedParams = averageParameters(topResults, parameterRanges);
         const finalParams = { ...strategy.defaultParams, ...optimizedParams };
 
-        // PERF: Use fast backtest - data is already cleaned at entry point
-        const inSampleResult = runBacktestFast(
+        const inSampleResult = runBacktestFastCompact(
             data,
             optimizationStart,
             optimizationEnd,
@@ -526,7 +676,7 @@ export async function runWalkForwardAnalysis(
             backtestSettings
         );
 
-        const outOfSampleResult = runBacktestFast(
+        const outOfSampleDetailed = runBacktestFast(
             data,
             testStart,
             testEnd,
@@ -538,9 +688,13 @@ export async function runWalkForwardAnalysis(
             backtestSettings
         );
 
-        if (outOfSampleResult.equityCurve.length > 0) {
-            runningCapital = outOfSampleResult.equityCurve[outOfSampleResult.equityCurve.length - 1].value;
+        if (outOfSampleDetailed.equityCurve.length > 0) {
+            runningCapital = outOfSampleDetailed.equityCurve[outOfSampleDetailed.equityCurve.length - 1].value;
         }
+        combinedTrades.push(...outOfSampleDetailed.trades);
+        combinedEquityCurve.push(...outOfSampleDetailed.equityCurve);
+
+        const outOfSampleResult = toSummaryResult(outOfSampleDetailed);
 
         const sharpeDegradation = inSampleResult.sharpeRatio - outOfSampleResult.sharpeRatio;
         const performanceDegradationPercent = inSampleResult.netProfitPercent !== 0
@@ -555,7 +709,7 @@ export async function runWalkForwardAnalysis(
             testStart,
             testEnd,
             optimizedParams: finalParams,
-            inSampleResult,
+            inSampleResult: toSummaryResult(inSampleResult),
             outOfSampleResult,
             sharpeDegradation,
             performanceDegradationPercent
@@ -569,14 +723,33 @@ export async function runWalkForwardAnalysis(
         throw new Error('No walk-forward windows could be created.');
     }
 
-    const combinedOOSTrades = combineOOSResults(windows, initialCapital);
+    const finalCapital = combinedEquityCurve.length > 0
+        ? combinedEquityCurve[combinedEquityCurve.length - 1].value
+        : initialCapital;
+    const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(combinedEquityCurve, initialCapital);
+    const combinedOOSTrades = calculateBacktestStats(
+        combinedTrades,
+        combinedEquityCurve,
+        initialCapital,
+        finalCapital,
+        maxDrawdown,
+        maxDrawdownPercent
+    );
 
-    const avgInSampleSharpe = windows.reduce((sum, w) => sum + w.inSampleResult.sharpeRatio, 0) / windows.length;
-    const avgOutOfSampleSharpe = windows.reduce((sum, w) => sum + w.outOfSampleResult.sharpeRatio, 0) / windows.length;
+    const scoringWindows = selectScoringWindows(windows, minOOSTradesPerWindow);
+    const avgInSampleSharpe = averageSharpe(scoringWindows, 'in');
+    const avgOutOfSampleSharpe = averageSharpe(scoringWindows, 'out');
 
     const walkForwardEfficiency = avgInSampleSharpe > 0 ? avgOutOfSampleSharpe / avgInSampleSharpe : 0;
-    const parameterStability = calculateParameterStability(windows, parameterRanges);
-    const robustnessScore = calculateRobustnessScore(avgInSampleSharpe, avgOutOfSampleSharpe, parameterStability, windows);
+    const parameterStability = calculateParameterStability(scoringWindows, parameterRanges);
+    const robustnessScore = calculateRobustnessScore(
+        avgInSampleSharpe,
+        avgOutOfSampleSharpe,
+        parameterStability,
+        scoringWindows,
+        combinedOOSTrades,
+        minTotalOOSTrades
+    );
 
     const endTime = performance.now();
 
@@ -591,28 +764,6 @@ export async function runWalkForwardAnalysis(
         optimizationTimeMs: endTime - startTime,
         parameterStability
     };
-}
-
-function combineOOSResults(windows: WalkForwardWindow[], initialCapital: number): BacktestResult {
-    const allTrades = windows.flatMap(w => w.outOfSampleResult.trades);
-    const combinedEquityCurve: { time: Time; value: number }[] = [];
-
-    // The outOfSampleResults already have continuous capital because we passed runningCapital
-    for (const window of windows) {
-        combinedEquityCurve.push(...window.outOfSampleResult.equityCurve);
-    }
-
-    const finalCapital = combinedEquityCurve.length > 0 ? combinedEquityCurve[combinedEquityCurve.length - 1].value : initialCapital;
-    const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(combinedEquityCurve, initialCapital);
-
-    return calculateBacktestStats(
-        allTrades,
-        combinedEquityCurve,
-        initialCapital,
-        finalCapital,
-        maxDrawdown,
-        maxDrawdownPercent
-    );
 }
 
 export async function quickWalkForward(
@@ -741,7 +892,7 @@ export async function runFixedParamWalkForward(
     // Clean input data
     data = ensureCleanData(data);
 
-    const { testWindow, stepSize } = config;
+    const { testWindow, stepSize, minTrades = 1 } = config;
     if (!Number.isFinite(testWindow) || testWindow <= 0) {
         throw new Error(`Invalid test window: ${testWindow}`);
     }
@@ -759,6 +910,8 @@ export async function runFixedParamWalkForward(
     let currentStart = 0;
     let windowIndex = 0;
     let runningCapital = initialCapital;
+    const combinedTrades: BacktestResult['trades'] = [];
+    const combinedEquityCurve: { time: Time; value: number }[] = [];
 
     // Fixed params - use whatever the strategy has
     const fixedParams = strategy.defaultParams;
@@ -774,7 +927,7 @@ export async function runFixedParamWalkForward(
 
         // PERF: Use fast backtest - data is already cleaned at entry point
         // First half = "In-Sample" (what we'd train on if we had params)
-        const inSampleResult = runBacktestFast(
+        const inSampleResult = runBacktestFastCompact(
             data,
             windowStart,
             midPoint,
@@ -787,7 +940,7 @@ export async function runFixedParamWalkForward(
         );
 
         // Second half = "Out-of-Sample" (the forward test)
-        const outOfSampleResult = runBacktestFast(
+        const outOfSampleDetailed = runBacktestFast(
             data,
             midPoint,
             windowEnd,
@@ -800,9 +953,12 @@ export async function runFixedParamWalkForward(
         );
 
         // Update running capital for next window
-        if (outOfSampleResult.equityCurve.length > 0) {
-            runningCapital = outOfSampleResult.equityCurve[outOfSampleResult.equityCurve.length - 1].value;
+        if (outOfSampleDetailed.equityCurve.length > 0) {
+            runningCapital = outOfSampleDetailed.equityCurve[outOfSampleDetailed.equityCurve.length - 1].value;
         }
+        combinedTrades.push(...outOfSampleDetailed.trades);
+        combinedEquityCurve.push(...outOfSampleDetailed.equityCurve);
+        const outOfSampleResult = toSummaryResult(outOfSampleDetailed);
 
         // Calculate degradation metrics
         const sharpeDegradation = inSampleResult.sharpeRatio - outOfSampleResult.sharpeRatio;
@@ -819,7 +975,7 @@ export async function runFixedParamWalkForward(
             testStart: midPoint,
             testEnd: windowEnd,
             optimizedParams: fixedParams,
-            inSampleResult,
+            inSampleResult: toSummaryResult(inSampleResult),
             outOfSampleResult,
             sharpeDegradation,
             performanceDegradationPercent
@@ -839,19 +995,37 @@ export async function runFixedParamWalkForward(
     }
 
 
-    // Combine OOS results
-    const combinedOOSTrades = combineOOSResults(windows, initialCapital);
+    const finalCapital = combinedEquityCurve.length > 0
+        ? combinedEquityCurve[combinedEquityCurve.length - 1].value
+        : initialCapital;
+    const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(combinedEquityCurve, initialCapital);
+    const combinedOOSTrades = calculateBacktestStats(
+        combinedTrades,
+        combinedEquityCurve,
+        initialCapital,
+        finalCapital,
+        maxDrawdown,
+        maxDrawdownPercent
+    );
 
-    // Calculate aggregate metrics
-    const avgInSampleSharpe = windows.reduce((sum, w) => sum + w.inSampleResult.sharpeRatio, 0) / windows.length;
-    const avgOutOfSampleSharpe = windows.reduce((sum, w) => sum + w.outOfSampleResult.sharpeRatio, 0) / windows.length;
+    // Calculate aggregate metrics on trade-active windows only.
+    const scoringWindows = selectScoringWindows(windows, minTrades);
+    const avgInSampleSharpe = averageSharpe(scoringWindows, 'in');
+    const avgOutOfSampleSharpe = averageSharpe(scoringWindows, 'out');
 
     const walkForwardEfficiency = avgInSampleSharpe > 0 ? avgOutOfSampleSharpe / avgInSampleSharpe : 0;
 
     // For fixed params, stability is 100% (no variation)
     const parameterStability = 100;
 
-    const robustnessScore = calculateRobustnessScore(avgInSampleSharpe, avgOutOfSampleSharpe, parameterStability, windows);
+    const robustnessScore = calculateRobustnessScore(
+        avgInSampleSharpe,
+        avgOutOfSampleSharpe,
+        parameterStability,
+        scoringWindows,
+        combinedOOSTrades,
+        20
+    );
 
     const endTime = performance.now();
 

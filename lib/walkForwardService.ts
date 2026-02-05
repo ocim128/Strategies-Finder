@@ -7,6 +7,8 @@ import { debugLogger } from "./debugLogger";
 import { backtestService } from "./backtestService";
 import { rustEngine } from "./rustEngineClient";
 import { shouldUseRustEngine } from "./enginePreferences";
+import { runBacktestCompact } from "./strategies/backtest";
+import type { Strategy, StrategyParams, BacktestSettings, OHLCVData } from "./strategies/index";
 import {
     runWalkForwardAnalysis,
     runFixedParamWalkForward,
@@ -24,6 +26,156 @@ import {
 
 class WalkForwardService {
     private lastResult: WalkForwardResult | null = null;
+
+    private estimateWindowCount(totalBars: number, optimizationWindow: number, testWindow: number, stepSize: number): number {
+        if (totalBars <= 0 || optimizationWindow <= 0 || testWindow <= 0 || stepSize <= 0) return 0;
+        const windowSize = optimizationWindow + testWindow;
+        if (windowSize > totalBars) return 0;
+        return Math.floor((totalBars - windowSize) / stepSize) + 1;
+    }
+
+    private setNumberInput(id: string, value: number): void {
+        const el = document.getElementById(id) as HTMLInputElement | null;
+        if (!el) return;
+        el.value = String(Math.max(1, Math.round(value)));
+    }
+
+    private estimateTradeFrequency(
+        data: OHLCVData[],
+        strategy: Strategy,
+        params: StrategyParams,
+        capitalSettings: ReturnType<typeof backtestService.getCapitalSettings>,
+        backtestSettings: BacktestSettings
+    ): { totalTrades: number; tradesPerBar: number } | null {
+        try {
+            const signals = strategy.execute(data, params);
+            const result = runBacktestCompact(
+                data,
+                signals,
+                capitalSettings.initialCapital,
+                capitalSettings.positionSize,
+                capitalSettings.commission,
+                backtestSettings,
+                { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount }
+            );
+            const totalTrades = Math.max(0, result.totalTrades);
+            return {
+                totalTrades,
+                tradesPerBar: totalTrades / Math.max(1, data.length)
+            };
+        } catch (error) {
+            debugLogger.warn(`[WalkForward] Trade frequency estimation failed: ${error}`);
+            return null;
+        }
+    }
+
+    private suggestWindowsFromTradeFrequency(
+        totalBars: number,
+        totalTrades: number,
+        tradesPerBar: number
+    ): {
+        optimizationWindow: number;
+        testWindow: number;
+        stepSize: number;
+        estimatedWindows: number;
+        expectedOOSTradesPerWindow: number;
+        minTrades: number;
+        minOOSTradesPerWindow: number;
+        minTotalOOSTrades: number;
+    } {
+        const minWindows = 8;
+        const maxWindows = 60;
+        const minTestByWindows = Math.max(20, Math.floor(totalBars / maxWindows));
+        const maxTestByWindows = Math.max(minTestByWindows, Math.floor(totalBars / minWindows));
+        const desiredOOSTradesPerWindow = 8;
+
+        let testWindow = tradesPerBar > 0
+            ? Math.ceil(desiredOOSTradesPerWindow / tradesPerBar)
+            : maxTestByWindows;
+        testWindow = Math.max(minTestByWindows, Math.min(maxTestByWindows, testWindow));
+
+        let optimizationWindow = Math.max(testWindow * 2, Math.floor(testWindow * 3));
+        optimizationWindow = Math.min(totalBars - testWindow, optimizationWindow);
+        if (optimizationWindow < testWindow) {
+            optimizationWindow = testWindow;
+        }
+
+        let stepSize = testWindow;
+        let estimatedWindows = this.estimateWindowCount(totalBars, optimizationWindow, testWindow, stepSize);
+
+        if (estimatedWindows > maxWindows) {
+            const scale = Math.ceil(estimatedWindows / maxWindows);
+            testWindow = Math.min(maxTestByWindows, testWindow * scale);
+            stepSize = testWindow;
+            optimizationWindow = Math.min(totalBars - testWindow, Math.max(testWindow * 2, optimizationWindow * scale));
+            estimatedWindows = this.estimateWindowCount(totalBars, optimizationWindow, testWindow, stepSize);
+        }
+
+        if (estimatedWindows < 3 && totalBars >= 3) {
+            testWindow = Math.max(minTestByWindows, Math.floor(totalBars / 5));
+            stepSize = testWindow;
+            optimizationWindow = Math.min(totalBars - testWindow, Math.max(testWindow * 2, Math.floor(totalBars / 2)));
+            estimatedWindows = this.estimateWindowCount(totalBars, optimizationWindow, testWindow, stepSize);
+        }
+
+        const expectedOOSTradesPerWindow = tradesPerBar * testWindow;
+        const minOOSTradesPerWindow = Math.max(1, Math.floor(expectedOOSTradesPerWindow * 0.5));
+        const minTotalOOSTrades = Math.max(20, Math.min(totalTrades, Math.floor(minOOSTradesPerWindow * Math.max(5, estimatedWindows * 0.5))));
+
+        return {
+            optimizationWindow,
+            testWindow,
+            stepSize,
+            estimatedWindows,
+            expectedOOSTradesPerWindow,
+            minTrades: Math.max(1, minOOSTradesPerWindow),
+            minOOSTradesPerWindow,
+            minTotalOOSTrades
+        };
+    }
+
+    private autoSuggestWindowSettings(
+        data: OHLCVData[],
+        strategy: Strategy,
+        params: StrategyParams,
+        capitalSettings: ReturnType<typeof backtestService.getCapitalSettings>,
+        backtestSettings: BacktestSettings
+    ): {
+        minOOSTradesPerWindow: number;
+        minTotalOOSTrades: number;
+    } | null {
+        const tradeStats = this.estimateTradeFrequency(data, strategy, params, capitalSettings, backtestSettings);
+        if (!tradeStats) return null;
+
+        const currentOptWindow = this.readNumberInput('wf-opt-window', Math.max(50, Math.floor(data.length * 0.2)));
+        const currentTestWindow = this.readNumberInput('wf-test-window', Math.max(20, Math.floor(data.length * 0.1)));
+        const currentStep = this.readNumberInput('wf-step-size', currentTestWindow);
+
+        const currentWindows = this.estimateWindowCount(data.length, currentOptWindow, currentTestWindow, currentStep);
+        const currentExpectedOOSTrades = tradeStats.tradesPerBar * currentTestWindow;
+
+        const suggestion = this.suggestWindowsFromTradeFrequency(data.length, tradeStats.totalTrades, tradeStats.tradesPerBar);
+        const shouldAdjust = currentWindows > 120 || currentExpectedOOSTrades < 2 || currentWindows < 3;
+
+        if (shouldAdjust) {
+            this.setNumberInput('wf-opt-window', suggestion.optimizationWindow);
+            this.setNumberInput('wf-test-window', suggestion.testWindow);
+            this.setNumberInput('wf-step-size', suggestion.stepSize);
+            this.setNumberInput('wf-min-trades', suggestion.minTrades);
+
+            this.updateStatus(
+                `Auto window suggestion applied: ${suggestion.estimatedWindows} windows, ~${suggestion.expectedOOSTradesPerWindow.toFixed(1)} OOS trades/window`
+            );
+            debugLogger.info(
+                `[WalkForward] Auto-suggested windows | trades=${tradeStats.totalTrades} | opt=${suggestion.optimizationWindow} | test=${suggestion.testWindow} | step=${suggestion.stepSize} | windows=${suggestion.estimatedWindows}`
+            );
+        }
+
+        return {
+            minOOSTradesPerWindow: suggestion.minOOSTradesPerWindow,
+            minTotalOOSTrades: suggestion.minTotalOOSTrades
+        };
+    }
 
     /**
      * Run walk-forward analysis with current strategy and data
@@ -59,6 +211,13 @@ class WalkForwardService {
 
             // Get current parameters
             const currentParams = paramManager.getValues(strategy);
+            const tradeAwareThresholds = this.autoSuggestWindowSettings(
+                data,
+                strategy,
+                currentParams,
+                capitalSettings,
+                backtestSettings
+            );
 
             // Build parameter ranges from strategy defaults
             const parameterRanges = this.buildParameterRanges(
@@ -84,7 +243,7 @@ class WalkForwardService {
                 // Get window config from UI
                 const testWindow = this.readNumberInput('wf-test-window', Math.floor(data.length * 0.2));
                 const stepSize = this.readNumberInput('wf-step-size', testWindow);
-                const minTrades = this.readNumberInput('wf-min-trades', 3);
+                const minTrades = this.readNumberInput('wf-min-trades', tradeAwareThresholds?.minOOSTradesPerWindow ?? 3);
 
                 const fixedConfig: FixedParamWalkForwardConfig = {
                     testWindow,
@@ -107,7 +266,7 @@ class WalkForwardService {
                 debugLogger.info(`[WalkForward] Optimizing ${parameterRanges.length} parameters for: ${strategyKey}`);
 
                 // Get config from UI
-                const config = this.getConfigFromUI(parameterRanges);
+                const config = this.getConfigFromUI(parameterRanges, tradeAwareThresholds);
 
                 result = await runWalkForwardAnalysis(
                     data,
@@ -318,7 +477,10 @@ class WalkForwardService {
     /**
      * Get walk-forward config from UI inputs
      */
-    private getConfigFromUI(parameterRanges: ParameterRange[]): WalkForwardConfig {
+    private getConfigFromUI(
+        parameterRanges: ParameterRange[],
+        tradeAwareThresholds?: { minOOSTradesPerWindow: number; minTotalOOSTrades: number } | null
+    ): WalkForwardConfig {
         const data = state.ohlcvData || [];
         const totalBars = data.length;
 
@@ -330,7 +492,8 @@ class WalkForwardService {
         const testWindow = Math.max(1, this.readNumberInput('wf-test-window', defaultTestWindow));
         const stepSize = Math.max(1, this.readNumberInput('wf-step-size', testWindow));
         const topN = Math.max(1, this.readNumberInput('wf-top-n', 3));
-        const minTrades = Math.max(0, this.readNumberInput('wf-min-trades', 5));
+        const minTradesFallback = tradeAwareThresholds?.minOOSTradesPerWindow ?? 5;
+        const minTrades = Math.max(0, this.readNumberInput('wf-min-trades', minTradesFallback));
 
         return {
             optimizationWindow,
@@ -338,7 +501,9 @@ class WalkForwardService {
             stepSize,
             parameterRanges,
             topN,
-            minTrades
+            minTrades,
+            minOOSTradesPerWindow: tradeAwareThresholds?.minOOSTradesPerWindow ?? 1,
+            minTotalOOSTrades: tradeAwareThresholds?.minTotalOOSTrades ?? 50
         };
     }
 

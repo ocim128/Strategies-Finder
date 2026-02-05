@@ -734,6 +734,7 @@ export class ChartManager {
     public displayTradeMarkers(trades: Trade[], formatPrice: (p: number) => string) {
         const markers: SeriesMarker<Time>[] = [];
         const entryMarkerTimes = new Set<string>();
+        const compactLabels = state.currentStrategyKey === 'dynamic_vix_regime';
 
         for (const trade of trades) {
             const isShort = trade.type === 'short';
@@ -748,7 +749,7 @@ export class ChartManager {
                     position: isShort ? 'aboveBar' : 'belowBar',
                     color: isShort ? ENHANCED_CANDLE_COLORS.down : ENHANCED_CANDLE_COLORS.up,
                     shape: isShort ? 'arrowDown' : 'arrowUp',
-                    text: `${isShort ? '🔻 SELL' : '🔹 BUY'} @ ${formatPrice(trade.entryPrice)}`,
+                    text: compactLabels ? '' : `${isShort ? '🔻 SELL' : '🔹 BUY'} @ ${formatPrice(trade.entryPrice)}`,
                     size: 2,
                 });
                 entryMarkerTimes.add(entryKey);
@@ -764,7 +765,7 @@ export class ChartManager {
                 position: isShort ? 'belowBar' : 'aboveBar',
                 color: isProfit ? ENHANCED_CANDLE_COLORS.up : ENHANCED_CANDLE_COLORS.down,
                 shape: isShort ? 'arrowUp' : 'arrowDown',
-                text: `${exitEmoji} ${isShort ? 'COVER' : 'CLOSE'} @ ${formatPrice(trade.exitPrice)} (${pnlText})`,
+                text: compactLabels ? '' : `${exitEmoji} ${isShort ? 'COVER' : 'CLOSE'} @ ${formatPrice(trade.exitPrice)} (${pnlText})`,
                 size: 2,
             });
         }

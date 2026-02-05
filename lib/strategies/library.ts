@@ -29,6 +29,8 @@ import { chandelier_rsi_ema } from './lib/chandelier_rsi_ema';
 import { adaptive_supertrend_kmeans } from './lib/adaptive_supertrend_kmeans';
 import { mean_reversion_zscore } from './lib/mean_reversion_zscore';
 import { failed_breakout } from './lib/failed_breakout';
+import { long_short_harvest } from './lib/long-short-harvest';
+import { dynamic_vix_regime } from './lib/dynamic-vix-regime';
 
 export const strategies: Record<string, Strategy> = {
     rsi_oversold,
@@ -62,4 +64,6 @@ export const strategies: Record<string, Strategy> = {
     adaptive_supertrend_kmeans,
     mean_reversion_zscore,
     failed_breakout,
+    long_short_harvest,
+    dynamic_vix_regime,
 };

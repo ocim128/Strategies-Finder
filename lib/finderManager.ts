@@ -1173,6 +1173,10 @@ export class FinderManager {
 		const zExit = params.zExit;
 		if (zEntry !== undefined && zExit !== undefined && zExit >= zEntry) return false;
 
+		const entryExposurePct = params.entryExposurePct;
+		const exitExposurePct = params.exitExposurePct;
+		if (entryExposurePct !== undefined && exitExposurePct !== undefined && exitExposurePct >= entryExposurePct) return false;
+
 		return true;
 	}
 
