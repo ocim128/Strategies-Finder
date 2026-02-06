@@ -1,0 +1,95 @@
+<!-- Data Mining Tab -->
+<div id="dataminingTab">
+    <div class="section-title">Data Mining</div>
+    <p class="section-desc">Review the active dataset and download raw price data for analysis.</p>
+
+    <div class="stats-grid data-mining-stats">
+        <div class="stat-card">
+            <div class="stat-label">Pair</div>
+            <div class="stat-value" id="dataMiningPair">--</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Timeframe</div>
+            <div class="stat-value" id="dataMiningInterval">--</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Bars Loaded</div>
+            <div class="stat-value" id="dataMiningBars">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Provider</div>
+            <div class="stat-value" id="dataMiningProvider">--</div>
+        </div>
+    </div>
+
+    <div class="data-mining-details">
+        <div class="data-mining-detail">
+            <div class="data-mining-label">Range Start</div>
+            <div class="data-mining-value" id="dataMiningRangeStart">--</div>
+        </div>
+        <div class="data-mining-detail">
+            <div class="data-mining-label">Range End</div>
+            <div class="data-mining-value" id="dataMiningRangeEnd">--</div>
+        </div>
+        <div class="data-mining-detail">
+            <div class="data-mining-label">Last Update</div>
+            <div class="data-mining-value" id="dataMiningLastUpdate">--</div>
+        </div>
+        <div class="data-mining-detail">
+            <div class="data-mining-label">Chart Mode</div>
+            <div class="data-mining-value" id="dataMiningChartMode">--</div>
+        </div>
+    </div>
+
+    <div class="data-mining-actions">
+        <button class="btn btn-primary" id="dataMiningDownloadCsv" type="button">Download CSV</button>
+        <button class="btn btn-secondary" id="dataMiningDownloadJson" type="button">Download JSON</button>
+    </div>
+
+    <div class="section-header">
+        <div class="section-title">Historical Download</div>
+    </div>
+    <div class="section-body">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Symbol</label>
+                <input class="param-input" id="dataMiningSymbolInput" type="text" readonly>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Interval</label>
+                <input class="param-input" id="dataMiningIntervalInput" type="text" placeholder="1m">
+                <div class="param-hint">Example: 1m, 5m, 1h, 1d</div>
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Bars to Download</label>
+                <input class="param-input" id="dataMiningBarsInput" type="number" min="1000" max="1000000" value="200000">
+                <div class="param-hint">Large downloads supported for Binance / Bybit TradFi.</div>
+            </div>
+        </div>
+        <div class="data-mining-actions">
+            <button class="btn btn-primary" id="dataMiningFetchCsv" type="button">Fetch & Download CSV</button>
+            <button class="btn btn-secondary" id="dataMiningFetchJson" type="button">Fetch & Download JSON</button>
+        </div>
+    </div>
+
+    <div class="section-header">
+        <div class="section-title">Import JSON</div>
+    </div>
+    <div class="section-body">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">File</label>
+                <input class="param-input data-mining-file" id="dataMiningImportFile" type="file"
+                    accept=".json,application/json">
+                <div class="param-hint">Supports exported JSON or arrays of {time, open, high, low, close, volume}.</div>
+            </div>
+        </div>
+        <div class="data-mining-actions">
+            <button class="btn btn-primary" id="dataMiningImportBtn" type="button">Load JSON to Chart</button>
+        </div>
+    </div>
+
+    <div class="data-mining-status" id="dataMiningStatus">Ready</div>
+</div>

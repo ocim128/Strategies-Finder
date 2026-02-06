@@ -21,6 +21,7 @@ import { settingsManager } from "./lib/settingsManager";
 import { injectLayout } from "./lib/layoutManager";
 import { commandPaletteManager } from "./lib/commandPalette";
 import { pairCombinerManager } from "./lib/pairCombinerManager";
+import { dataMiningManager } from "./lib/dataMiningManager";
 
 import { replayManager, ReplayChartAdapter, ReplayUI } from "./lib/replay";
 import { initConfirmationStrategyUI } from "./lib/confirmationStrategies";
@@ -57,6 +58,7 @@ async function init() {
 	setupEventHandlers();
 	finderManager.init();
 	pairCombinerManager.init();
+	dataMiningManager.init();
 	walkForwardService.initUI();
 	monteCarloService.initUI();
 	logicTestService.initUI();

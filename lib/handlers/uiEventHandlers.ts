@@ -38,7 +38,7 @@ export function setupEventHandlers() {
         mockModelSelect.value = state.mockChartModel;
         mockModelSelect.addEventListener('change', () => {
             const value = mockModelSelect.value;
-            if (value === 'simple' || value === 'hard' || value === 'v3' || value === 'v4') {
+            if (value === 'simple' || value === 'hard' || value === 'v3' || value === 'v4' || value === 'v5') {
                 state.set('mockChartModel', value);
             }
         });

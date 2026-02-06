@@ -1,0 +1,85 @@
+/* Data Mining Tab */
+#dataminingTab {
+    display: none;
+}
+
+.data-mining-stats {
+    margin-bottom: var(--space-4);
+}
+
+.data-mining-details {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+}
+
+.data-mining-detail {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-s);
+    padding: var(--space-2);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.data-mining-label {
+    font-size: var(--font-size-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-medium);
+    color: var(--text-secondary);
+}
+
+.data-mining-value {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    font-family: var(--font-family-mono);
+    color: var(--text-primary);
+}
+
+.data-mining-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+}
+
+.data-mining-actions .btn {
+    flex: 1;
+    min-width: 140px;
+    justify-content: center;
+}
+
+.data-mining-file {
+    width: 100%;
+    padding: 6px 8px;
+}
+
+.data-mining-status {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    text-align: center;
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-s);
+}
+
+.data-mining-status.success {
+    color: var(--green);
+    background: hsl(var(--hsl-success) / 0.12);
+    border-color: hsl(var(--hsl-success) / 0.3);
+}
+
+.data-mining-status.warning {
+    color: var(--warning);
+    background: hsl(var(--hsl-warning) / 0.16);
+    border-color: hsl(var(--hsl-warning) / 0.35);
+}
+
+.data-mining-status.error {
+    color: var(--red);
+    background: var(--danger-soft);
+    border-color: hsl(var(--hsl-danger) / 0.35);
+}

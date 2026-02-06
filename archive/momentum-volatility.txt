@@ -1,0 +1,83 @@
+The strategy is a monthly cross asset rotation model that seeks to capture medium term momentum while penalizing recent realized volatility. The tradable universe is a small set of liquid ETFs spanning US mid caps (MDY), developed ex US equities (IEV), emerging markets (EEM), Latin America (ILF), Asia Pacific ex Japan (EPP), long duration US Treasuries (EDV), and short duration US Treasuries (SHY). At each rebalance it computes a trailing return over roughly one quarter (about 72 trading days) and an estimate of average 20 day realized volatility scaled to the same horizon, then ranks assets using a composite score that is 70 percent normalized return and 30 percent normalized volatility.
+
+Rebalances occur once per month shortly after the US equity open using daily price data, and the portfolio is rotated into the single top scoring ETF with a 100 percent notional allocation. Positions are only changed when the current holding is not the newly selected leader, implying a concentrated, winner takes all implementation. Risk control is implicit via the volatility penalty and the inclusion of Treasury ETFs as potential defensive allocations; there are no explicit stop losses, leverage, or volatility targeting beyond the ranking heuristic.
+
+
+code .ipynb:
+qb = QuantBook()
+spy = qb.add_equity("SPY")
+history = qb.history(qb.securities.keys(), 360, Resolution.DAILY)
+
+# Indicator Analysis
+bbdf = qb.indicator(BollingerBands(30, 2), spy.symbol, 360, Resolution.DAILY)
+bbdf.drop('standarddeviation', axis=1).plot()
+
+code .py:
+# region imports
+from AlgorithmImports import *
+# endregion
+
+
+class BasicTemplateAlgorithm(QCAlgorithm):
+
+    def initialize(self):
+        self.set_cash(100_000)
+        self.set_start_date(self.end_date - timedelta(5*365))
+        # Define some parameters.
+        lookback = 73
+        self._vol_factor = np.sqrt(lookback/20)
+        # Add the Equities to trade.
+        for ticker in ['MDY', 'IEV', 'EEM', 'ILF', 'EPP', 'EDV', 'SHY']:
+            equity = self.add_equity(ticker)
+            equity.session.size = lookback + 1
+            equity.roc = self.roc(equity, lookback-1, Resolution.DAILY)
+        # Schedule portfolio rebalances.
+        self.schedule.on(
+            self.date_rules.month_start('SPY'),
+            self.time_rules.after_market_open('SPY', 5),
+            self._rebalance
+        )
+        self.set_warm_up(timedelta(150))
+
+    def _rebalance(self):
+        # Wait until we have sufficient data.
+        if self.is_warming_up:
+            return
+        # Get the trailing return and volatility of each Equtiy.
+        volatilities = []
+        returns = []
+        for equity in self.securities.values():
+            if not equity.session.is_ready:
+                continue
+            bars = list(equity.session)[::-1][:-1]
+            prices = pd.Series(
+                [b.close for b in bars],
+                index=[b.end_time for b in bars]
+            )
+            equity.vol = (prices.rolling(20).std() * self._vol_factor).mean() / prices[0]
+            volatilities.append(equity.vol)
+            returns.append(equity.roc.current.value)
+
+        # vol_min is actually the max volatility. min means low score on this.
+        if not returns:
+            return
+        return_min = min(returns)
+        return_max = max(returns)
+        vol_min = max(volatilities)
+        vol_max = min(volatilities)
+        return_range = return_max - return_min
+        vol_range = vol_max - vol_min
+
+        # Calculate the score of each asset.
+        score_by_equity = {}
+        for equity in self.securities.values():
+            if not equity.session.is_ready:
+                continue
+            return_score = (equity.roc.current.value - return_min) / return_range
+            vol_score = (equity.vol - vol_min) / vol_range
+            score_by_equity[equity] = 0.7*return_score + 0.3*vol_score
+
+        # Rotate to the asset with the greatest score.
+        target = max(score_by_equity, key=lambda eq: score_by_equity[eq])
+        if not target.holdings.invested:
+            self.set_holdings(target, 1, True)

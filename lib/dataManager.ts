@@ -22,6 +22,19 @@ type BinanceKline = [number, string, string, string, string, string, ...any[]];
 type BybitTradFiKline = [string, string, string, string, string];
 type DataProvider = 'binance' | 'bybit-tradfi' | 'twelvedata';
 
+type HistoricalFetchProgress = {
+    fetched: number;
+    total: number;
+    requestCount: number;
+};
+
+type HistoricalFetchOptions = {
+    signal?: AbortSignal;
+    onProgress?: (progress: HistoricalFetchProgress) => void;
+    requestDelayMs?: number;
+    maxRequests?: number;
+};
+
 interface BybitTradFiKlineResponse {
     ret_code?: number;
     ret_msg?: string;
@@ -119,6 +132,31 @@ export class DataManager {
     }
 
     /**
+     * Fetch a large historical dataset for export without modifying chart state.
+     */
+    public async fetchHistoricalData(
+        symbol: string,
+        interval: string,
+        totalBars: number,
+        options?: HistoricalFetchOptions
+    ): Promise<OHLCVData[]> {
+        if (this.isMockSymbol(symbol)) {
+            throw new Error('Historical download is not available for mock symbols.');
+        }
+
+        const provider = this.getProvider(symbol);
+        if (provider === 'binance') {
+            return this.fetchBinanceDataWithLimit(symbol, interval, totalBars, options);
+        }
+
+        if (provider === 'bybit-tradfi') {
+            return this.fetchBybitTradFiDataWithLimit(symbol, interval, totalBars, options);
+        }
+
+        throw new Error('Historical download is not supported for this provider.');
+    }
+
+    /**
      * Fetch data from Binance
      */
     private async fetchBinanceData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
@@ -176,6 +214,71 @@ export class DataManager {
         }
     }
 
+    private async fetchBinanceDataWithLimit(
+        symbol: string,
+        interval: string,
+        totalBars: number,
+        options?: HistoricalFetchOptions
+    ): Promise<OHLCVData[]> {
+        try {
+            const targetBars = Math.max(1, Math.floor(totalBars));
+            const { sourceInterval, needsResample } = this.resolveFetchInterval(interval);
+            const { rawLimit, ratio } = this.resolveRawFetchLimit(targetBars, interval, sourceInterval, needsResample);
+            const batches: BinanceKline[][] = [];
+            let endTime: number | undefined;
+            let requestCount = 0;
+            let totalDataLength = 0;
+            const maxRequests = Math.min(
+                options?.maxRequests ?? Math.ceil(rawLimit / this.LIMIT_PER_REQUEST),
+                5000
+            );
+
+            while (totalDataLength < rawLimit && requestCount < maxRequests) {
+                if (options?.signal?.aborted) return [];
+                const remaining = rawLimit - totalDataLength;
+                const limit = Math.min(remaining, this.LIMIT_PER_REQUEST);
+
+                const data = await this.fetchKlinesBatch(symbol, sourceInterval, limit, endTime, options?.signal);
+                if (data.length === 0) break;
+
+                batches.push(data);
+                totalDataLength += data.length;
+                endTime = data[0][0] - 1;
+                requestCount++;
+
+                const fetchedTarget = needsResample
+                    ? Math.min(targetBars, Math.floor(totalDataLength / Math.max(1, ratio)))
+                    : Math.min(targetBars, totalDataLength);
+                options?.onProgress?.({ fetched: fetchedTarget, total: targetBars, requestCount });
+
+                if (data.length < limit) break;
+                if (options?.requestDelayMs) {
+                    await this.wait(options.requestDelayMs);
+                }
+            }
+
+            const allRawData = batches.reverse().flat();
+            const mapped = this.mapToOHLCV(allRawData);
+
+            if (needsResample) {
+                const resampled = resampleOHLCV(mapped, interval);
+                return resampled.slice(-targetBars);
+            }
+
+            return mapped.slice(-targetBars);
+        } catch (error) {
+            if (this.isAbortError(error)) {
+                return [];
+            }
+            debugLogger.error('data.fetch.historical_error', {
+                symbol,
+                interval,
+                error: this.formatError(error),
+            });
+            throw error;
+        }
+    }
+
     /**
      * Fetch data from Bybit TradFi feed
      */
@@ -216,6 +319,69 @@ export class DataManager {
                 error: this.formatError(error),
             });
             return [];
+        }
+    }
+
+    private async fetchBybitTradFiDataWithLimit(
+        symbol: string,
+        interval: string,
+        totalBars: number,
+        options?: HistoricalFetchOptions
+    ): Promise<OHLCVData[]> {
+        try {
+            const targetBars = Math.max(1, Math.floor(totalBars));
+            const { sourceInterval, needsResample } = this.resolveBybitTradFiInterval(interval);
+            const { rawLimit, ratio } = this.resolveRawFetchLimit(targetBars, interval, sourceInterval, needsResample);
+            const batches: BybitTradFiKline[][] = [];
+            let endTime: number | undefined;
+            let requestCount = 0;
+            let totalDataLength = 0;
+            const maxRequests = Math.min(
+                options?.maxRequests ?? Math.ceil(rawLimit / this.BYBIT_LIMIT_PER_REQUEST),
+                8000
+            );
+
+            while (totalDataLength < rawLimit && requestCount < maxRequests) {
+                if (options?.signal?.aborted) return [];
+                const remaining = rawLimit - totalDataLength;
+                const limit = Math.min(remaining, this.BYBIT_LIMIT_PER_REQUEST);
+
+                const data = await this.fetchBybitTradFiBatch(symbol, sourceInterval, limit, endTime, options?.signal);
+                if (data.length === 0) break;
+
+                batches.push(data);
+                totalDataLength += data.length;
+                endTime = Number(data[0][0]) - 1;
+                requestCount++;
+
+                const fetchedTarget = needsResample
+                    ? Math.min(targetBars, Math.floor(totalDataLength / Math.max(1, ratio)))
+                    : Math.min(targetBars, totalDataLength);
+                options?.onProgress?.({ fetched: fetchedTarget, total: targetBars, requestCount });
+
+                if (data.length < limit) break;
+                if (options?.requestDelayMs) {
+                    await this.wait(options.requestDelayMs);
+                }
+            }
+
+            const allRawData = batches.reverse().flat();
+            const mapped = this.mapBybitTradFiToOHLCV(allRawData);
+            if (needsResample) {
+                const resampled = resampleOHLCV(mapped, interval);
+                return resampled.slice(-targetBars);
+            }
+            return mapped.slice(-targetBars);
+        } catch (error) {
+            if (this.isAbortError(error)) {
+                return [];
+            }
+            debugLogger.error('data.bybit_tradfi.historical_error', {
+                symbol,
+                interval,
+                error: this.formatError(error),
+            });
+            throw error;
         }
     }
 
@@ -935,6 +1101,9 @@ export class DataManager {
         if (model === 'v4') {
             return this.generateMarketRealismMockData(config, this.createRandomSeed());
         }
+        if (model === 'v5') {
+            return this.generateMarketRealismMockDataV5(config, this.createRandomSeed());
+        }
 
         return this.generateSimpleMockData(config);
     }
@@ -1005,7 +1174,8 @@ export class DataManager {
             return value;
         };
         const clampReturn = (value: number): number => {
-            const limit = 0.35;
+            // Reduce extreme single-bar moves vs earlier versions.
+            const limit = 0.22;
             if (!Number.isFinite(value)) return 0;
             if (value < -limit) return -limit;
             if (value > limit) return limit;
@@ -1025,13 +1195,13 @@ export class DataManager {
                 const dir = rng() < 0.5 ? -1 : 1;
                 return {
                     length,
-                    drift: dir * baseVol * 0.15,
-                    volMult: 0.8,
+                    drift: dir * baseVol * 0.12,
+                    volMult: 0.75,
                     meanReversion: 0.02,
-                    jumpProb: 0.002,
-                    jumpSize: baseVol * 3,
-                    gapProb: 0.003,
-                    gapStd: baseVol * 1.5,
+                    jumpProb: 0.0015,
+                    jumpSize: baseVol * 2.2,
+                    gapProb: 0.002,
+                    gapStd: baseVol * 1.1,
                     anchor
                 };
             }
@@ -1040,12 +1210,12 @@ export class DataManager {
                 return {
                     length,
                     drift: 0,
-                    volMult: 0.7,
+                    volMult: 0.65,
                     meanReversion: 0.08,
-                    jumpProb: 0.001,
-                    jumpSize: baseVol * 2.5,
-                    gapProb: 0.002,
-                    gapStd: baseVol * 1.2,
+                    jumpProb: 0.0006,
+                    jumpSize: baseVol * 1.8,
+                    gapProb: 0.0015,
+                    gapStd: baseVol * 0.9,
                     anchor
                 };
             }
@@ -1054,12 +1224,12 @@ export class DataManager {
                 return {
                     length,
                     drift: 0,
-                    volMult: 1.6,
+                    volMult: 1.2,
                     meanReversion: 0.01,
-                    jumpProb: 0.004,
-                    jumpSize: baseVol * 4,
-                    gapProb: 0.006,
-                    gapStd: baseVol * 2.2,
+                    jumpProb: 0.0025,
+                    jumpSize: baseVol * 3,
+                    gapProb: 0.0035,
+                    gapStd: baseVol * 1.6,
                     anchor
                 };
             }
@@ -1067,12 +1237,12 @@ export class DataManager {
             return {
                 length,
                 drift: 0,
-                volMult: 0.5,
+                volMult: 0.45,
                 meanReversion: 0.03,
-                jumpProb: 0.0005,
-                jumpSize: baseVol * 2,
-                gapProb: 0.001,
-                gapStd: baseVol,
+                jumpProb: 0.0003,
+                jumpSize: baseVol * 1.5,
+                gapProb: 0.0008,
+                gapStd: baseVol * 0.8,
                 anchor
             };
         };
@@ -1384,7 +1554,7 @@ export class DataManager {
             return value;
         };
         const clampReturn = (value: number): number => {
-            const limit = Math.max(0.12, baseVol * 12);
+            const limit = Math.max(0.10, baseVol * 9);
             if (!Number.isFinite(value)) return 0;
             if (value < -limit) return -limit;
             if (value > limit) return limit;
@@ -1427,11 +1597,11 @@ export class DataManager {
                 return {
                     length,
                     type: 'accumulation',
-                    trendStrength: 0.05,
-                    volatilityBase: 0.6,
-                    trapProbability: 0.12,
-                    huntProbability: 0.15,
-                    gapProbability: 0.008,
+                    trendStrength: 0.04,
+                    volatilityBase: 0.55,
+                    trapProbability: 0.08,
+                    huntProbability: 0.10,
+                    gapProbability: 0.005,
                     momentum: 0.2
                 };
             }
@@ -1443,11 +1613,11 @@ export class DataManager {
                 return {
                     length,
                     type: 'markup',
-                    trendStrength: 0.12 + rng() * 0.08,
-                    volatilityBase: 1.0,
-                    trapProbability: 0.08,
-                    huntProbability: 0.10,
-                    gapProbability: 0.015,
+                    trendStrength: 0.10 + rng() * 0.06,
+                    volatilityBase: 0.9,
+                    trapProbability: 0.06,
+                    huntProbability: 0.08,
+                    gapProbability: 0.01,
                     momentum: 0.6
                 };
             }
@@ -1460,10 +1630,10 @@ export class DataManager {
                     length,
                     type: 'distribution',
                     trendStrength: 0.03,
-                    volatilityBase: 1.3,
-                    trapProbability: 0.25,
-                    huntProbability: 0.20,
-                    gapProbability: 0.02,
+                    volatilityBase: 1.1,
+                    trapProbability: 0.16,
+                    huntProbability: 0.14,
+                    gapProbability: 0.012,
                     momentum: 0.35
                 };
             }
@@ -1475,11 +1645,11 @@ export class DataManager {
                 return {
                     length,
                     type: 'markdown',
-                    trendStrength: 0.10 + rng() * 0.10,
-                    volatilityBase: 1.2,
-                    trapProbability: 0.10,
-                    huntProbability: 0.12,
-                    gapProbability: 0.018,
+                    trendStrength: 0.08 + rng() * 0.08,
+                    volatilityBase: 1.05,
+                    trapProbability: 0.07,
+                    huntProbability: 0.09,
+                    gapProbability: 0.012,
                     momentum: 0.55
                 };
             }
@@ -1491,10 +1661,10 @@ export class DataManager {
                 length,
                 type: 'ranging',
                 trendStrength: 0.02,
-                volatilityBase: 0.9,
-                trapProbability: 0.35,
-                huntProbability: 0.25,
-                gapProbability: 0.01,
+                volatilityBase: 0.8,
+                trapProbability: 0.22,
+                huntProbability: 0.16,
+                gapProbability: 0.007,
                 momentum: 0.15
             };
         };
@@ -1531,7 +1701,7 @@ export class DataManager {
             // Gap generation
             let gap = 0;
             if (rng() < phase.gapProbability) {
-                gap = this.randNormal(rng) * baseVol * (2 + rng() * 4);
+                gap = this.randNormal(rng) * baseVol * (1.2 + rng() * 2.5);
             }
             logPrice = clampLog(logPrice + gap);
             let open = Math.exp(logPrice);
@@ -1540,7 +1710,7 @@ export class DataManager {
             let ret = 0;
 
             // 1. Higher timeframe bias (slow trend)
-            const htfContrib = higherTfBias * baseVol * 0.04;
+            const htfContrib = higherTfBias * baseVol * 0.03;
             higherTfBias = higherTfBias * (1 - higherTfBiasDecay);
             ret += htfContrib;
 
@@ -1574,13 +1744,13 @@ export class DataManager {
 
             if (huntPhase === 1) {
                 // Hunting - push toward stop levels
-                ret += huntDirection * baseVol * (1.5 + rng() * 2);
+                ret += huntDirection * baseVol * (1.0 + rng() * 1.5);
                 if (rng() < 0.3) {
                     huntPhase = 2;  // Start reverting
                 }
             } else if (huntPhase === 2) {
                 // Reverting after hunt
-                ret -= huntDirection * baseVol * (2 + rng() * 2.5);
+                ret -= huntDirection * baseVol * (1.4 + rng() * 1.8);
                 if (rng() < 0.5) {
                     huntPhase = 0;  // Back to normal
                 }
@@ -1589,10 +1759,10 @@ export class DataManager {
             // 6. False breakout traps
             if (rng() < phase.trapProbability) {
                 const trapDir = rng() < 0.5 ? 1 : -1;
-                const trapSize = baseVol * (1 + rng() * 2);
+                const trapSize = baseVol * (0.7 + rng() * 1.4);
                 ret += trapDir * trapSize;
                 // Queue a reversal for next bars
-                shortTermMomentum = -trapDir * trapSize * 0.6;
+                shortTermMomentum = -trapDir * trapSize * 0.5;
             }
 
             // 7. Random noise
@@ -1611,9 +1781,9 @@ export class DataManager {
             if (open < floor) open = floor;
 
             // Wicks - more pronounced during volatile phases
-            const wickBase = Math.max(baseVol * 0.2, Math.abs(ret) + vol * 0.4);
-            const wickMultiplier = phase.type === 'distribution' ? 1.4 :
-                phase.type === 'ranging' ? 1.2 : 1.0;
+            const wickBase = Math.max(baseVol * 0.15, Math.abs(ret) + vol * 0.3);
+            const wickMultiplier = phase.type === 'distribution' ? 1.3 :
+                phase.type === 'ranging' ? 1.1 : 1.0;
             const wick = Math.abs(this.randNormal(rng)) * wickBase * open * wickMultiplier;
 
             let high = Math.max(open, close) + wick;
@@ -1622,9 +1792,9 @@ export class DataManager {
             // Extra wick extension during hunts
             if (huntPhase === 1) {
                 if (huntDirection > 0) {
-                    high += wick * 0.5;
+                    high += wick * 0.4;
                 } else {
-                    low -= wick * 0.5;
+                    low -= wick * 0.4;
                 }
             }
 
@@ -1662,6 +1832,219 @@ export class DataManager {
             // Slowly drift medium anchor
             mediumTfAnchor = mediumTfAnchor * 0.995 + logPrice * 0.005;
 
+            time = (Number(time) + config.intervalSeconds) as Time;
+        }
+
+        return data;
+    }
+
+    /**
+     * V5 "Market Realism" - Less stylized, more like noisy live crypto/FX:
+     * - Volatility clustering (GARCH-like)
+     * - Regime switching between trend / range / chop
+     * - Mild mean reversion around a drifting anchor
+     * - Fat tails (jumps) without contrived stop-hunt patterns
+     * - Volume correlated with absolute returns
+     */
+    private generateMarketRealismMockDataV5(config: MockChartConfig, seed: number): OHLCVData[] {
+        type Regime = {
+            length: number;
+            drift: number;
+            volTarget: number;
+            meanReversion: number;
+            ar: number;
+            jumpProb: number;
+            jumpScale: number;
+            gapProb: number;
+            sweepProb: number;
+            volumeBias: number;
+        };
+
+        const data: OHLCVData[] = [];
+        const now = Math.floor(Date.now() / 1000);
+        let time = (now - (config.barsCount * config.intervalSeconds)) as Time;
+
+        const rng = this.makeRng(seed * 1000013 + 0xa7f3c2b1);
+        const baseVol = Math.max(0.00005, config.volatility / 100);
+        const intervalMinutes = Math.max(1, config.intervalSeconds / 60);
+        const volScale = Math.min(3, Math.pow(intervalMinutes, 0.45));
+        const floor = Math.max(0.01, config.startPrice * 0.05);
+        const ceiling = Math.max(floor * 2, config.startPrice * 80);
+        const logFloor = Math.log(floor);
+        const logCeil = Math.log(ceiling);
+        const baseVolume = 110000;
+
+        const clampLog = (value: number): number => {
+            if (!Number.isFinite(value)) return logFloor;
+            if (value < logFloor) return logFloor;
+            if (value > logCeil) return logCeil;
+            return value;
+        };
+        const clampReturn = (value: number): number => {
+            const limit = Math.min(0.35, Math.max(0.08, baseVol * 10 * volScale));
+            if (!Number.isFinite(value)) return 0;
+            if (value < -limit) return -limit;
+            if (value > limit) return limit;
+            return value;
+        };
+
+        let logPrice = Math.log(Math.max(config.startPrice, floor));
+        let vol = baseVol;
+        let prevRet = 0;
+        let anchor = logPrice;
+        let macroTrend = (rng() - 0.5) * 0.4;
+        let shortMom = 0;
+
+        const omega = baseVol * baseVol * 0.08;
+        const alpha = 0.08;
+        const beta = 0.78;
+
+        const regimeBars = (minMinutes: number, maxMinutes: number): number => {
+            const minBars = Math.max(20, Math.round(minMinutes / intervalMinutes));
+            const maxBars = Math.max(minBars + 5, Math.round(maxMinutes / intervalMinutes));
+            return this.randInt(rng, minBars, maxBars);
+        };
+
+        const pickRegime = (): Regime => {
+            const roll = rng();
+            if (roll < 0.30) {
+                return {
+                    length: regimeBars(180, 2200),
+                    drift: 0,
+                    volTarget: 0.6,
+                    meanReversion: 0.08,
+                    ar: -0.15,
+                    jumpProb: 0.001,
+                    jumpScale: 1.2,
+                    gapProb: 0.003,
+                    sweepProb: 0.015,
+                    volumeBias: 0.85,
+                };
+            }
+            if (roll < 0.60) {
+                const dir = rng() < 0.5 ? -1 : 1;
+                return {
+                    length: regimeBars(240, 3000),
+                    drift: dir * baseVol * (0.04 + rng() * 0.03),
+                    volTarget: 0.85,
+                    meanReversion: 0.02,
+                    ar: 0.18,
+                    jumpProb: 0.0015,
+                    jumpScale: 1.4,
+                    gapProb: 0.004,
+                    sweepProb: 0.025,
+                    volumeBias: 1.05,
+                };
+            }
+            if (roll < 0.85) {
+                return {
+                    length: regimeBars(120, 1400),
+                    drift: 0,
+                    volTarget: 1.05,
+                    meanReversion: 0.03,
+                    ar: 0.05,
+                    jumpProb: 0.003,
+                    jumpScale: 1.8,
+                    gapProb: 0.006,
+                    sweepProb: 0.035,
+                    volumeBias: 1.15,
+                };
+            }
+            return {
+                length: regimeBars(60, 900),
+                drift: 0,
+                volTarget: 1.35,
+                meanReversion: 0.04,
+                ar: -0.05,
+                jumpProb: 0.004,
+                jumpScale: 2.2,
+                gapProb: 0.008,
+                sweepProb: 0.05,
+                volumeBias: 1.35,
+            };
+        };
+
+        let regime = pickRegime();
+        let regimeLeft = regime.length;
+
+        for (let i = 0; i < config.barsCount; i++) {
+            if (regimeLeft-- <= 0) {
+                regime = pickRegime();
+                regimeLeft = regime.length;
+                anchor = logPrice;
+            }
+
+            const minuteOfDay = ((Math.floor(Number(time) / 60) % 1440) + 1440) % 1440;
+            const intraday = 0.75 + 0.35 * Math.sin((2 * Math.PI * minuteOfDay) / 1440);
+            const seasonMult = config.intervalSeconds <= 3600 ? Math.max(0.5, intraday) : 1.0;
+
+            vol = Math.sqrt(omega + alpha * prevRet * prevRet + beta * vol * vol);
+            const targetVol = baseVol * regime.volTarget;
+            vol = vol * 0.85 + targetVol * 0.15;
+
+            macroTrend = macroTrend * 0.998 + this.randNormal(rng) * 0.0016;
+            if (macroTrend > 1) macroTrend = 1;
+            if (macroTrend < -1) macroTrend = -1;
+
+            const gap = rng() < regime.gapProb ? this.randNormal(rng) * baseVol * 0.6 * volScale : 0;
+            logPrice = clampLog(logPrice + gap);
+            const open = Math.exp(logPrice);
+
+            shortMom = shortMom * 0.7 + prevRet * 0.3;
+            const meanRevert = -regime.meanReversion * (logPrice - anchor);
+            const macroDrift = macroTrend * baseVol * 0.03;
+            const noise = this.randNormal(rng) * vol * regime.volTarget * seasonMult * volScale;
+
+            let ret = regime.drift + meanRevert + regime.ar * shortMom + macroDrift + noise;
+            if (rng() < regime.jumpProb) {
+                ret += this.randNormal(rng) * baseVol * regime.jumpScale * volScale;
+            }
+
+            ret = clampReturn(ret);
+            logPrice = clampLog(logPrice + ret);
+            let close = Math.exp(logPrice);
+
+            if (close < floor) {
+                close = floor;
+                logPrice = Math.log(close);
+            }
+
+            const rangeBase = Math.max(baseVol * 0.15, Math.abs(ret) + vol * 0.35);
+            const wick = Math.abs(this.randNormal(rng)) * rangeBase * open * 0.7;
+            let high = Math.max(open, close) + wick;
+            let low = Math.min(open, close) - wick;
+
+            if (rng() < regime.sweepProb) {
+                const sweep = Math.abs(this.randNormal(rng)) * rangeBase * open * (0.8 + rng());
+                if (rng() < 0.5) {
+                    high += sweep;
+                } else {
+                    low -= sweep;
+                }
+            }
+
+            const lowFloor = floor * 0.8;
+            const highCeil = ceiling * 1.2;
+            if (low < lowFloor) low = lowFloor;
+            if (high > highCeil) high = highCeil;
+            if (high < low) high = Math.max(open, close);
+
+            const absRet = Math.abs(ret);
+            const volFactor = Math.min(8, 0.5 + (absRet / baseVol) * 1.1 + (vol / baseVol) * 0.5);
+            const jumpBoost = absRet > baseVol * 3 ? 1.3 : 1.0;
+            const volume = Math.floor(baseVolume * regime.volumeBias * (1 + volFactor) * jumpBoost * (0.6 + rng() * 0.6));
+
+            data.push({
+                time,
+                open,
+                high,
+                low,
+                close,
+                volume,
+            });
+
+            prevRet = ret;
+            anchor = anchor * 0.995 + logPrice * 0.005;
             time = (Number(time) + config.intervalSeconds) as Time;
         }
 
@@ -1727,6 +2110,25 @@ export class DataManager {
         return { sourceInterval: interval, needsResample: false };
     }
 
+    private resolveRawFetchLimit(
+        targetBars: number,
+        targetInterval: string,
+        sourceInterval: string,
+        needsResample: boolean
+    ): { rawLimit: number; ratio: number } {
+        if (!needsResample) {
+            return { rawLimit: targetBars, ratio: 1 };
+        }
+
+        const targetSeconds = this.getIntervalSeconds(targetInterval);
+        const sourceSeconds = this.getIntervalSeconds(sourceInterval);
+        const ratio = Number.isFinite(targetSeconds) && Number.isFinite(sourceSeconds) && sourceSeconds > 0
+            ? Math.max(1, Math.round(targetSeconds / sourceSeconds))
+            : 1;
+
+        return { rawLimit: Math.max(targetBars, Math.ceil(targetBars * ratio)), ratio };
+    }
+
     private getIntervalSeconds(interval: string): number {
         const unit = interval.slice(-1);
         const value = parseInt(interval.slice(0, -1)) || 1;
@@ -1737,6 +2139,11 @@ export class DataManager {
             case 'w': return value * 604800;
             default: return 86400; // Default to 1d
         }
+    }
+
+    private async wait(ms: number): Promise<void> {
+        if (!Number.isFinite(ms) || ms <= 0) return;
+        await new Promise(resolve => setTimeout(resolve, ms));
     }
 
     private createRandomSeed(): number {

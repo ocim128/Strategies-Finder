@@ -17,7 +17,8 @@ import {
     WalkForwardConfig,
     WalkForwardResult,
     ParameterRange,
-    FixedParamWalkForwardConfig
+    FixedParamWalkForwardConfig,
+    WalkForwardProgress
 } from "./strategies/walk-forward";
 
 // ============================================================================
@@ -157,7 +158,8 @@ class WalkForwardService {
         const suggestion = this.suggestWindowsFromTradeFrequency(data.length, tradeStats.totalTrades, tradeStats.tradesPerBar);
         const shouldAdjust = currentWindows > 120 || currentExpectedOOSTrades < 2 || currentWindows < 3;
 
-        if (shouldAdjust) {
+        const autoApply = this.isToggleEnabled('wf-auto-suggest', false);
+        if (shouldAdjust && autoApply) {
             this.setNumberInput('wf-opt-window', suggestion.optimizationWindow);
             this.setNumberInput('wf-test-window', suggestion.testWindow);
             this.setNumberInput('wf-step-size', suggestion.stepSize);
@@ -168,6 +170,10 @@ class WalkForwardService {
             );
             debugLogger.info(
                 `[WalkForward] Auto-suggested windows | trades=${tradeStats.totalTrades} | opt=${suggestion.optimizationWindow} | test=${suggestion.testWindow} | step=${suggestion.stepSize} | windows=${suggestion.estimatedWindows}`
+            );
+        } else if (shouldAdjust && !autoApply) {
+            debugLogger.info(
+                `[WalkForward] Auto-suggest available (disabled) | trades=${tradeStats.totalTrades} | suggested opt=${suggestion.optimizationWindow} | test=${suggestion.testWindow} | step=${suggestion.stepSize} | windows=${suggestion.estimatedWindows}`
             );
         }
 
@@ -197,6 +203,7 @@ class WalkForwardService {
         // Get capital settings from backtest service
         const capitalSettings = backtestService.getCapitalSettings();
         const backtestSettings = backtestService.getBacktestSettings();
+        const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
 
         this.setLoading(true);
 
@@ -234,6 +241,7 @@ class WalkForwardService {
                 parameterRanges.length === 0;
 
             let result: WalkForwardResult;
+            const progressReporter = this.createProgressReporter();
 
             if (useFixedParam) {
                 // Use fixed-parameter walk-forward (no optimization)
@@ -248,7 +256,8 @@ class WalkForwardService {
                 const fixedConfig: FixedParamWalkForwardConfig = {
                     testWindow,
                     stepSize,
-                    minTrades
+                    minTrades,
+                    onProgress: progressReporter
                 };
 
                 result = await runFixedParamWalkForward(
@@ -258,7 +267,8 @@ class WalkForwardService {
                     capitalSettings.initialCapital,
                     capitalSettings.positionSize,
                     capitalSettings.commission,
-                    backtestSettings
+                    backtestSettings,
+                    sizing
                 );
             } else {
                 // Use regular walk-forward with parameter optimization
@@ -266,7 +276,10 @@ class WalkForwardService {
                 debugLogger.info(`[WalkForward] Optimizing ${parameterRanges.length} parameters for: ${strategyKey}`);
 
                 // Get config from UI
-                const config = this.getConfigFromUI(parameterRanges, tradeAwareThresholds);
+                const config: WalkForwardConfig = {
+                    ...this.getConfigFromUI(parameterRanges, tradeAwareThresholds),
+                    onProgress: progressReporter
+                };
 
                 result = await runWalkForwardAnalysis(
                     data,
@@ -275,7 +288,8 @@ class WalkForwardService {
                     capitalSettings.initialCapital,
                     capitalSettings.positionSize,
                     capitalSettings.commission,
-                    backtestSettings
+                    backtestSettings,
+                    sizing
                 );
             }
 
@@ -319,6 +333,7 @@ class WalkForwardService {
 
         const capitalSettings = backtestService.getCapitalSettings();
         const backtestSettings = backtestService.getBacktestSettings();
+        const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
 
         this.setLoading(true);
 
@@ -335,6 +350,7 @@ class WalkForwardService {
                 parameterRanges.length === 0;
 
             let result: WalkForwardResult;
+            const progressReporter = this.createProgressReporter();
 
             if (useFixedParam) {
                 // Use fixed-param walk-forward for strategies without tunable parameters
@@ -350,7 +366,8 @@ class WalkForwardService {
                 const fixedConfig: FixedParamWalkForwardConfig = {
                     testWindow,
                     stepSize,
-                    minTrades: 1
+                    minTrades: 1,
+                    onProgress: progressReporter
                 };
 
                 result = await runFixedParamWalkForward(
@@ -360,7 +377,8 @@ class WalkForwardService {
                     capitalSettings.initialCapital,
                     capitalSettings.positionSize,
                     capitalSettings.commission,
-                    backtestSettings
+                    backtestSettings,
+                    sizing
                 );
             } else {
                 // Use regular quick walk-forward with parameter optimization
@@ -371,7 +389,9 @@ class WalkForwardService {
                     { ...strategy, defaultParams: currentParams },
                     capitalSettings.initialCapital,
                     capitalSettings.positionSize,
-                    capitalSettings.commission
+                    capitalSettings.commission,
+                    sizing,
+                    progressReporter
                 );
             }
 
@@ -512,6 +532,11 @@ class WalkForwardService {
         if (!el) return fallback;
         const val = parseFloat(el.value);
         return Number.isFinite(val) ? val : fallback;
+    }
+
+    private isToggleEnabled(id: string, fallback: boolean): boolean {
+        const toggle = document.getElementById(id) as HTMLInputElement | null;
+        return toggle ? toggle.checked : fallback;
     }
 
     /**
@@ -673,6 +698,37 @@ class WalkForwardService {
         const statusEl = document.getElementById('wf-status');
         if (statusEl) statusEl.textContent = message;
         debugLogger.info(`[WalkForward] ${message}`);
+    }
+
+    private createProgressReporter(): (progress: WalkForwardProgress) => void {
+        let lastUpdate = 0;
+        const minIntervalMs = 350;
+
+        return (progress: WalkForwardProgress) => {
+            const now = performance.now();
+            if (progress.phase === 'optimize' && now - lastUpdate < minIntervalMs) return;
+            lastUpdate = now;
+
+            const windowLabel = `${progress.windowIndex + 1}/${progress.totalWindows}`;
+            if (progress.phase === 'optimize') {
+                const comboLabel = progress.comboTotal
+                    ? ` (${progress.comboIndex}/${progress.comboTotal})`
+                    : '';
+                this.updateStatus(`Optimizing window ${windowLabel}${comboLabel}...`);
+                return;
+            }
+            if (progress.phase === 'test') {
+                this.updateStatus(`Running OOS for window ${windowLabel}...`);
+                return;
+            }
+            if (progress.phase === 'window') {
+                this.updateStatus(`Completed window ${windowLabel}.`);
+                return;
+            }
+            if (progress.phase === 'complete') {
+                this.updateStatus('Finalizing results...');
+            }
+        };
     }
 
     /**

@@ -3,6 +3,7 @@ import toolbarHtml from '../html-partials/toolbar.html?raw';
 import chartWrapperHtml from '../html-partials/chart-wrapper.html?raw';
 import strategyPanelShellHtml from '../html-partials/strategy-panel-shell.html?raw';
 import tabSettingsHtml from '../html-partials/tab-settings.html?raw';
+import tabDataminingHtml from '../html-partials/tab-datamining.html?raw';
 import tabFinderHtml from '../html-partials/tab-finder.html?raw';
 import tabPairCombinerHtml from '../html-partials/tab-paircombiner.html?raw';
 
@@ -59,6 +60,7 @@ export function injectLayout() {
     // Strategy Panel
     const tabsContent =
         tabSettingsHtml +
+        tabDataminingHtml +
         tabFinderHtml +
         tabPairCombinerHtml +
         tabWalkforwardHtml +

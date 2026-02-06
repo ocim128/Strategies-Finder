@@ -42,6 +42,8 @@ export interface WalkForwardConfig {
     minOOSTradesPerWindow?: number;
     /** Minimum total OOS trades required before a result can be considered robust */
     minTotalOOSTrades?: number;
+    /** Optional progress callback for UI feedback */
+    onProgress?: (progress: WalkForwardProgress) => void;
 }
 
 export interface ParameterRange {
@@ -95,10 +97,25 @@ export interface WalkForwardResult {
     parameterStability: number;
 }
 
+export type WalkForwardProgressPhase = 'optimize' | 'test' | 'window' | 'complete';
+
+export interface WalkForwardProgress {
+    phase: WalkForwardProgressPhase;
+    windowIndex: number;
+    totalWindows: number;
+    comboIndex?: number;
+    comboTotal?: number;
+}
+
 export interface OptimizationResult {
     params: StrategyParams;
     score: number;
 }
+
+type TradeSizing = {
+    mode: 'percent' | 'fixed';
+    fixedTradeAmount: number;
+};
 
 // ============================================================================
 // Parameter Grid Generation
@@ -254,6 +271,7 @@ function runBacktestFast(
     positionSizePercent: number,
     commissionPercent: number,
     backtestSettings: BacktestSettings,
+    sizing?: TradeSizing,
     lookback: number = 250
 ): BacktestResult {
     const bufferedStart = Math.max(0, startIndex - lookback);
@@ -274,7 +292,8 @@ function runBacktestFast(
         initialCapital,
         positionSizePercent,
         commissionPercent,
-        backtestSettings
+        backtestSettings,
+        sizing
     );
 
     const windowTrades = fullResult.trades.filter(t => compareTime(t.entryTime, windowStartBar.time) >= 0);
@@ -304,6 +323,7 @@ function runBacktestFastCompact(
     positionSizePercent: number,
     commissionPercent: number,
     backtestSettings: BacktestSettings,
+    sizing?: TradeSizing,
     lookback: number = 250
 ): BacktestResult {
     const bufferedStart = Math.max(0, startIndex - lookback);
@@ -324,7 +344,8 @@ function runBacktestFastCompact(
         initialCapital,
         positionSizePercent,
         commissionPercent,
-        backtestSettings
+        backtestSettings,
+        sizing
     );
 }
 
@@ -369,8 +390,10 @@ async function optimizeWindow(
     positionSizePercent: number,
     commissionPercent: number,
     backtestSettings: BacktestSettings,
+    sizing: TradeSizing | undefined,
     minTrades: number,
-    topN: number
+    topN: number,
+    onProgress?: (processed: number, total: number) => void
 ): Promise<OptimizationResult[]> {
     const topResults: OptimizationResult[] = [];
     // PERF: Increased batch size from 50 to 200 for less overhead
@@ -393,6 +416,9 @@ async function optimizeWindow(
         // PERF: Yield less frequently - every YIELD_INTERVAL batches
         if (batchCount % YIELD_INTERVAL === 0) {
             await new Promise(resolve => setTimeout(resolve, 0));
+            if (onProgress) {
+                onProgress(Math.min(batchEnd, paramGrid.length), paramGrid.length);
+            }
         }
 
         // Process batch without slice (avoid array allocation)
@@ -412,7 +438,8 @@ async function optimizeWindow(
                     initialCapital,
                     positionSizePercent,
                     commissionPercent,
-                    backtestSettings
+                    backtestSettings,
+                    sizing
                 );
 
                 const score = calculateOptimizationScore(result, minTrades);
@@ -454,6 +481,10 @@ async function optimizeWindow(
     topResults.sort((a, b) => b.score - a.score);
     if (topResults.length > topN) {
         topResults.length = topN;
+    }
+
+    if (onProgress) {
+        onProgress(paramGrid.length, paramGrid.length);
     }
 
     return topResults;
@@ -584,7 +615,8 @@ export async function runWalkForwardAnalysis(
     initialCapital: number,
     positionSizePercent: number,
     commissionPercent: number,
-    backtestSettings: BacktestSettings = {}
+    backtestSettings: BacktestSettings = {},
+    sizing?: TradeSizing
 ): Promise<WalkForwardResult> {
     const startTime = performance.now();
 
@@ -600,7 +632,8 @@ export async function runWalkForwardAnalysis(
         minTrades = 5,
         maxCombinations = 5000,
         minOOSTradesPerWindow = 1,
-        minTotalOOSTrades = 50
+        minTotalOOSTrades = 50,
+        onProgress
     } = config;
 
     if (!Number.isFinite(optimizationWindow) || optimizationWindow <= 0) {
@@ -628,6 +661,7 @@ export async function runWalkForwardAnalysis(
 
     const totalDataLength = data.length;
     const windowSize = optimizationWindow + testWindow;
+    const totalWindows = Math.floor((totalDataLength - windowSize) / stepSize) + 1;
 
     if (totalDataLength < windowSize) {
         throw new Error(`Insufficient data: need ${windowSize} bars minimum, have ${totalDataLength}`);
@@ -646,6 +680,12 @@ export async function runWalkForwardAnalysis(
         const testStart = optimizationEnd;
         const testEnd = Math.min(testStart + testWindow, totalDataLength);
 
+        onProgress?.({
+            phase: 'optimize',
+            windowIndex,
+            totalWindows
+        });
+
         const topResults = await optimizeWindow(
             data,
             optimizationStart,
@@ -657,8 +697,16 @@ export async function runWalkForwardAnalysis(
             positionSizePercent,
             commissionPercent,
             backtestSettings,
+            sizing,
             minTrades,
-            topN
+            topN,
+            (processed, total) => onProgress?.({
+                phase: 'optimize',
+                windowIndex,
+                totalWindows,
+                comboIndex: processed,
+                comboTotal: total
+            })
         );
 
         const optimizedParams = averageParameters(topResults, parameterRanges);
@@ -673,8 +721,15 @@ export async function runWalkForwardAnalysis(
             initialCapital,
             positionSizePercent,
             commissionPercent,
-            backtestSettings
+            backtestSettings,
+            sizing
         );
+
+        onProgress?.({
+            phase: 'test',
+            windowIndex,
+            totalWindows
+        });
 
         const outOfSampleDetailed = runBacktestFast(
             data,
@@ -685,7 +740,8 @@ export async function runWalkForwardAnalysis(
             runningCapital,
             positionSizePercent,
             commissionPercent,
-            backtestSettings
+            backtestSettings,
+            sizing
         );
 
         if (outOfSampleDetailed.equityCurve.length > 0) {
@@ -713,6 +769,12 @@ export async function runWalkForwardAnalysis(
             outOfSampleResult,
             sharpeDegradation,
             performanceDegradationPercent
+        });
+
+        onProgress?.({
+            phase: 'window',
+            windowIndex,
+            totalWindows
         });
 
         currentStart += stepSize;
@@ -753,6 +815,12 @@ export async function runWalkForwardAnalysis(
 
     const endTime = performance.now();
 
+    onProgress?.({
+        phase: 'complete',
+        windowIndex: Math.max(0, totalWindows - 1),
+        totalWindows
+    });
+
     return {
         windows,
         combinedOOSTrades,
@@ -771,7 +839,9 @@ export async function quickWalkForward(
     strategy: Strategy,
     initialCapital: number = 10000,
     positionSizePercent: number = 100,
-    commissionPercent: number = 0.1
+    commissionPercent: number = 0.1,
+    sizing?: TradeSizing,
+    onProgress?: (progress: WalkForwardProgress) => void
 ): Promise<WalkForwardResult> {
     // Clean data at the entry point
     data = ensureCleanData(data);
@@ -838,11 +908,14 @@ export async function quickWalkForward(
             stepSize: testWindow,
             parameterRanges,
             topN: 3,
-            minTrades: 3
+            minTrades: 3,
+            onProgress
         },
         initialCapital,
         positionSizePercent,
-        commissionPercent
+        commissionPercent,
+        undefined,
+        sizing
     );
 }
 
@@ -871,6 +944,8 @@ export interface FixedParamWalkForwardConfig {
     stepSize: number;
     /** Minimum trades required to consider a window valid */
     minTrades?: number;
+    /** Optional progress callback for UI feedback */
+    onProgress?: (progress: WalkForwardProgress) => void;
 }
 
 /**
@@ -885,14 +960,15 @@ export async function runFixedParamWalkForward(
     initialCapital: number,
     positionSizePercent: number,
     commissionPercent: number,
-    backtestSettings: BacktestSettings = {}
+    backtestSettings: BacktestSettings = {},
+    sizing?: TradeSizing
 ): Promise<WalkForwardResult> {
     const startTime = performance.now();
 
     // Clean input data
     data = ensureCleanData(data);
 
-    const { testWindow, stepSize, minTrades = 1 } = config;
+    const { testWindow, stepSize, minTrades = 1, onProgress } = config;
     if (!Number.isFinite(testWindow) || testWindow <= 0) {
         throw new Error(`Invalid test window: ${testWindow}`);
     }
@@ -916,6 +992,8 @@ export async function runFixedParamWalkForward(
     // Fixed params - use whatever the strategy has
     const fixedParams = strategy.defaultParams;
 
+    const totalWindows = Math.floor((totalDataLength - testWindow) / stepSize) + 1;
+
     while (currentStart + testWindow <= totalDataLength) {
         const windowStart = currentStart;
         const windowEnd = Math.min(currentStart + testWindow, totalDataLength);
@@ -936,7 +1014,8 @@ export async function runFixedParamWalkForward(
             initialCapital,
             positionSizePercent,
             commissionPercent,
-            backtestSettings
+            backtestSettings,
+            sizing
         );
 
         // Second half = "Out-of-Sample" (the forward test)
@@ -949,7 +1028,8 @@ export async function runFixedParamWalkForward(
             runningCapital,
             positionSizePercent,
             commissionPercent,
-            backtestSettings
+            backtestSettings,
+            sizing
         );
 
         // Update running capital for next window
@@ -979,6 +1059,12 @@ export async function runFixedParamWalkForward(
             outOfSampleResult,
             sharpeDegradation,
             performanceDegradationPercent
+        });
+
+        onProgress?.({
+            phase: 'window',
+            windowIndex,
+            totalWindows
         });
         windowIndex++;
 
@@ -1028,6 +1114,12 @@ export async function runFixedParamWalkForward(
     );
 
     const endTime = performance.now();
+
+    onProgress?.({
+        phase: 'complete',
+        windowIndex: Math.max(0, totalWindows - 1),
+        totalWindows
+    });
 
     return {
         windows,

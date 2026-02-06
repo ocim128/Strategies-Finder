@@ -1,0 +1,58 @@
+The strategy is a monthly dual momentum allocation overlay across broad equity beta with a defensive regime switch. It computes approximately four month trailing total return momentum on US equities (SPY), developed and emerging ex US equities (VEU), and short dated T bills (SHV) using daily prices, and makes allocation decisions once per month shortly after the US market opens (with a short warm up period to seed indicators). The thesis is that relative strength across major equity regions persists in risk on regimes, while a simple absolute momentum filter versus cash identifies risk off periods when equities are likely to underperform.
+
+At each rebalance the portfolio holds a single ETF at a time: if US equity momentum is below T bill momentum, the strategy exits equity risk and rotates into the US aggregate bond market (BND) as a defensive carry and duration exposure; otherwise it holds the equity region with higher momentum between SPY and VEU. Positions are implemented as a full allocation with a fixed 1.3x target exposure (gross leverage) and are only traded when the selected ETF is not already held. The intended edge is trend and cross sectional momentum plus a cash based risk regime filter to reduce exposure during equity drawdowns.
+
+.ipynb:
+qb = QuantBook()
+spy = qb.add_equity("SPY")
+history = qb.history(qb.securities.keys(), 360, Resolution.DAILY)
+
+# Indicator Analysis
+bbdf = qb.indicator(BollingerBands(30, 2), spy.symbol, 360, Resolution.DAILY)
+bbdf.drop('standarddeviation', axis=1).plot()
+
+.py:
+# region imports
+from AlgorithmImports import *
+# endregion
+
+
+class DualMomentum(QCAlgorithm):
+
+    def initialize(self):
+        self.set_start_date(self.end_date - timedelta(5*365))
+        self.set_cash(100_000)
+        self._leverage = 1.3
+        # Add the assets we want to trade.
+        self._us = self.add_equity('SPY')
+        self._world_ex_us = self.add_equity('VEU')
+        self._tbill = self.add_equity('SHV')
+        self._agg = self.add_equity('BND')
+        # Add indicators to track the trailing return of the ETFs.
+        self.settings.automatic_indicator_warm_up = True
+        for equity in [self._us, self._world_ex_us, self._tbill]:
+            equity.roc = self.roc(equity, 4*21, Resolution.DAILY)
+        # Add a Scheduled Event to rebalance the portfolio.
+        self.schedule.on(
+            self.date_rules.month_start(self._us),
+            self.time_rules.after_market_open(self._us, 1),
+            self._rebalance
+        )
+        self.set_warmup(timedelta(45))
+
+    def on_warmup_finished(self):
+        self._rebalance()
+
+    def _rebalance(self):
+        if self.is_warming_up:
+            return
+        # Determine which ETF to hold.
+        if self._us.roc < self._tbill.roc:
+            equity = self._agg
+        elif self._us.roc > self._world_ex_us.roc:
+            equity = self._us
+        else:
+            equity = self._world_ex_us
+        # Place orders to rebalance the portfolio.
+        if not equity.invested:
+            self.set_holdings(equity, self._leverage, True)

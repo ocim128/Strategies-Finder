@@ -31,6 +31,7 @@ import { mean_reversion_zscore } from './lib/mean_reversion_zscore';
 import { failed_breakout } from './lib/failed_breakout';
 import { long_short_harvest } from './lib/long-short-harvest';
 import { dynamic_vix_regime } from './lib/dynamic-vix-regime';
+import { momentum_volatility_rotation } from './lib/momentum-volatility-rotation';
 
 export const strategies: Record<string, Strategy> = {
     rsi_oversold,
@@ -66,4 +67,5 @@ export const strategies: Record<string, Strategy> = {
     failed_breakout,
     long_short_harvest,
     dynamic_vix_regime,
+    momentum_volatility_rotation,
 };
