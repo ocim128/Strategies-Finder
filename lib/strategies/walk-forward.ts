@@ -840,6 +840,7 @@ export async function quickWalkForward(
     initialCapital: number = 10000,
     positionSizePercent: number = 100,
     commissionPercent: number = 0.1,
+    backtestSettings: BacktestSettings = {},
     sizing?: TradeSizing,
     onProgress?: (progress: WalkForwardProgress) => void
 ): Promise<WalkForwardResult> {
@@ -914,7 +915,7 @@ export async function quickWalkForward(
         initialCapital,
         positionSizePercent,
         commissionPercent,
-        undefined,
+        backtestSettings,
         sizing
     );
 }

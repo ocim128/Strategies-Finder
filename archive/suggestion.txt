@@ -1,0 +1,36 @@
+New Strategy Lib Concepts (Finder-friendly)
+
+regime_donchian_breakout
+Logic: trade 55-bar breakout only when trend is positive and volatility is not extreme.
+Exit: 20-bar channel exit + ATR trail + time stop.
+Params (7): breakoutLen, exitLen, trendLen, volLen, volMinPct, volMaxPct, maxHoldBars.
+Why robust: broad structural edge, few thresholds, no tiny TP tricks.
+vol_compression_expansion
+Logic: detect ATR compression, enter on range expansion in trend direction.
+Exit: volatility fades or ATR trail hit.
+Params (7): compressionLen, compressionPct, rangeLen, breakoutAtrBuffer, trendLen, trailAtr, maxHoldBars.
+Why robust: regime transition model (quiet -> expansion), usually transferable.
+shock_reversion_trend_gate
+Logic: buy shock-down events only if long-term trend is up and vol spike confirms panic.
+Exit: mean reversion target or time stop.
+Params (7): shockLookback, shockZ, trendLen, volSpikePct, reversionLen, stopAtr, maxHoldBars.
+Why robust: avoids blind dip-buying; entries only in controlled context.
+dual_horizon_momentum_guard
+Logic: require both fast and slow momentum alignment; go defensive on vol spike + momentum decay.
+Exit: momentum breakdown.
+Params (6): fastMomLen, slowMomLen, fastMomThr, slowMomThr, volSpikePct, cooldownBars.
+Why robust: fewer discrete events, smoother behavior.
+Rules for all new libs
+
+Keep tunables at <= 8.
+Avoid tiny fixed TP/SL as primary edge.
+Use walkForwardParams allowlist to limit optimization scope.
+Force entry/exit confirmation bars and time stops.
+Rank by OOS durability first, not in-sample profit.
+Deployment gate (minimum)
+
+OOS durability score >= 55.
+OOS PF >= 1.15.
+OOS net profit % > 0.
+OOS max DD under your risk cap.
+Passes both normal and quick walk-forward without collapse.

@@ -31,6 +31,10 @@ import { mean_reversion_zscore } from './lib/mean_reversion_zscore';
 import { failed_breakout } from './lib/failed_breakout';
 import { long_short_harvest } from './lib/long-short-harvest';
 import { dynamic_vix_regime } from './lib/dynamic-vix-regime';
+import { dynamic_vix_regime_finder } from './lib/dynamic-vix-regime-finder';
+import { drawdown_regime_gate } from './lib/drawdown-regime-gate';
+import { regime_donchian_breakout } from './lib/regime-donchian-breakout';
+import { shock_reversion_trend_gate } from './lib/shock-reversion-trend-gate';
 import { momentum_volatility_rotation } from './lib/momentum-volatility-rotation';
 
 export const strategies: Record<string, Strategy> = {
@@ -67,5 +71,9 @@ export const strategies: Record<string, Strategy> = {
     failed_breakout,
     long_short_harvest,
     dynamic_vix_regime,
+    dynamic_vix_regime_finder,
+    drawdown_regime_gate,
+    regime_donchian_breakout,
+    shock_reversion_trend_gate,
     momentum_volatility_rotation,
 };

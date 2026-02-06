@@ -390,6 +390,7 @@ class WalkForwardService {
                     capitalSettings.initialCapital,
                     capitalSettings.positionSize,
                     capitalSettings.commission,
+                    backtestSettings,
                     sizing,
                     progressReporter
                 );
