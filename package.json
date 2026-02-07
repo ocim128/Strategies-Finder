@@ -2,6 +2,7 @@
   "scripts": {
     "test": "..\\..\\..\\node_modules\\.bin\\esno strategies.spec.ts",
     "test:strategies": "npm run test",
+    "test:featurelab": "..\\..\\..\\node_modules\\.bin\\esno featureLab.spec.ts",
     "test:e2e": "..\\..\\..\\node_modules\\.bin\\esno e2e.spec.ts",
     "dev": "vite",
     "build": "vite build"

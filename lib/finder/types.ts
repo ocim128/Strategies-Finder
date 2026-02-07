@@ -1,0 +1,78 @@
+import type { BacktestResult, OHLCVData, StrategyParams, Time } from "../strategies/index";
+
+export type FinderMode = 'default' | 'grid' | 'random';
+export type FinderMetric =
+	| 'oosDurabilityScore'
+	| 'oosProfitFactor'
+	| 'oosNetProfitPercent'
+	| 'netProfit'
+	| 'profitFactor'
+	| 'sharpeRatio'
+	| 'netProfitPercent'
+	| 'winRate'
+	| 'maxDrawdownPercent'
+	| 'expectancy'
+	| 'averageGain'
+	| 'totalTrades';
+
+export interface FinderOptions {
+	mode: FinderMode;
+	sortPriority: FinderMetric[];
+	useAdvancedSort: boolean;
+	topN: number;
+	steps: number;
+	rangePercent: number;
+	maxRuns: number;
+	tradeFilterEnabled: boolean;
+	minTrades: number;
+	maxTrades: number;
+	durabilityEnabled: boolean;
+	durabilityHoldoutPercent: number;
+	durabilityMinOOSTrades: number;
+	durabilityMinScore: number;
+}
+
+export interface FinderDurabilityMetrics {
+	enabled: boolean;
+	score: number;
+	inSampleNetProfitPercent: number;
+	inSampleProfitFactor: number;
+	outOfSampleNetProfitPercent: number;
+	outOfSampleProfitFactor: number;
+	outOfSampleSharpeRatio: number;
+	outOfSampleMaxDrawdownPercent: number;
+	outOfSampleTrades: number;
+	pass: boolean;
+}
+
+export interface FinderDurabilityContext {
+	enabled: boolean;
+	inSampleData: OHLCVData[];
+	outOfSampleData: OHLCVData[];
+	inSampleStartTime: Time | null;
+	inSampleEndTime: Time | null;
+	outOfSampleStartTime: Time | null;
+	outOfSampleEndTime: Time | null;
+	minOOSTrades: number;
+	minScore: number;
+}
+
+export interface EndpointSelectionAdjustment {
+	result: BacktestResult;
+	adjusted: boolean;
+	removedTrades: number;
+}
+
+export interface FinderResult {
+	key: string;
+	name: string;
+	params: StrategyParams;
+	/** Raw backtest result (includes any final forced liquidation). */
+	result: BacktestResult;
+	/** Selection result with endpoint-bias trades removed. */
+	selectionResult: BacktestResult;
+	endpointAdjusted: boolean;
+	endpointRemovedTrades: number;
+	confirmationParams?: Record<string, StrategyParams>;
+	durability: FinderDurabilityMetrics;
+}

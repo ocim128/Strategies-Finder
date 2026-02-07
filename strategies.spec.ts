@@ -2,6 +2,9 @@ import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time } from './lib/strategies/index';
 import { detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
+const durabilityModule = require('./lib/finder/durability');
+
+const { createDurabilityContext, evaluateDurability } = durabilityModule;
 
 
 describe('Strategy Calculations', () => {
@@ -434,5 +437,61 @@ describe('Backtesting Engine', () => {
         expect(compact.totalTrades).to.equal(0);
         expect(Number.isFinite(full.netProfit)).to.equal(true);
         expect(Number.isFinite(compact.netProfit)).to.equal(true);
+    });
+});
+
+describe('Finder Durability', () => {
+    it('should evaluate OOS trades correctly even when signals carry global barIndex values', () => {
+        const data: OHLCVData[] = [];
+        for (let i = 0; i < 300; i++) {
+            const close = 100 + i * 0.5;
+            data.push({
+                time: (i + 1) as unknown as Time,
+                open: close - 0.1,
+                high: close + 0.2,
+                low: close - 0.2,
+                close,
+                volume: 1000
+            });
+        }
+
+        const signals: Signal[] = [
+            { time: 220 as unknown as Time, type: 'buy', price: data[219].close, barIndex: 219 },
+            { time: 230 as unknown as Time, type: 'sell', price: data[229].close, barIndex: 229 },
+            { time: 240 as unknown as Time, type: 'buy', price: data[239].close, barIndex: 239 },
+            { time: 250 as unknown as Time, type: 'sell', price: data[249].close, barIndex: 249 },
+        ];
+
+        const context = createDurabilityContext({
+            mode: 'random',
+            sortPriority: ['oosDurabilityScore'],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 3,
+            rangePercent: 20,
+            maxRuns: 50,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            durabilityEnabled: true,
+            durabilityHoldoutPercent: 30,
+            durabilityMinOOSTrades: 1,
+            durabilityMinScore: 0
+        }, data);
+
+        const metrics = evaluateDurability(
+            signals,
+            {},
+            context,
+            10000,
+            100,
+            0,
+            'percent',
+            0
+        );
+
+        expect(metrics.enabled).to.equal(true);
+        expect(metrics.outOfSampleTrades).to.equal(2);
+        expect(metrics.outOfSampleNetProfitPercent).to.be.greaterThan(0);
     });
 });

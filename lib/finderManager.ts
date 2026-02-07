@@ -1,4 +1,4 @@
-import { BacktestResult, BacktestSettings, StrategyParams, runBacktest, runBacktestCompact, Signal, Time, buildEntryBacktestResult, compareTime } from "./strategies/index";
+import { BacktestResult, BacktestSettings, StrategyParams, runBacktest, runBacktestCompact, Signal, Time, buildEntryBacktestResult } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtestService";
@@ -10,116 +10,17 @@ import { rustEngine } from "./rustEngineClient";
 import { debugLogger } from "./debugLogger";
 import { shouldUseRustEngine } from "./enginePreferences";
 import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth, getConfirmationStrategyValues, renderConfirmationStrategyList, setConfirmationStrategyParams } from "./confirmationStrategies";
-
-type FinderMode = 'default' | 'grid' | 'random';
-type FinderMetric = 'oosDurabilityScore' | 'oosProfitFactor' | 'oosNetProfitPercent' | 'netProfit' | 'profitFactor' | 'sharpeRatio' | 'netProfitPercent' | 'winRate' | 'maxDrawdownPercent' | 'expectancy' | 'averageGain' | 'totalTrades';
-
-const DEFAULT_SORT_PRIORITY: FinderMetric[] = [
-	'oosDurabilityScore',
-	'oosProfitFactor',
-	'oosNetProfitPercent',
-	'expectancy',
-	'profitFactor',
-	'totalTrades',
-	'maxDrawdownPercent',
-	'sharpeRatio',
-	'averageGain',
-	'winRate',
-	'netProfitPercent',
-	'netProfit'
-];
-
-interface FinderOptions {
-	mode: FinderMode;
-	sortPriority: FinderMetric[];
-	useAdvancedSort: boolean;
-	topN: number;
-	steps: number;
-	rangePercent: number;
-	maxRuns: number;
-	tradeFilterEnabled: boolean;
-	minTrades: number;
-	maxTrades: number;
-	durabilityEnabled: boolean;
-	durabilityHoldoutPercent: number;
-	durabilityMinOOSTrades: number;
-	durabilityMinScore: number;
-}
-
-interface FinderDurabilityMetrics {
-	enabled: boolean;
-	score: number;
-	inSampleNetProfitPercent: number;
-	inSampleProfitFactor: number;
-	outOfSampleNetProfitPercent: number;
-	outOfSampleProfitFactor: number;
-	outOfSampleSharpeRatio: number;
-	outOfSampleMaxDrawdownPercent: number;
-	outOfSampleTrades: number;
-	pass: boolean;
-}
-
-interface FinderDurabilityContext {
-	enabled: boolean;
-	inSampleData: typeof state.ohlcvData;
-	outOfSampleData: typeof state.ohlcvData;
-	inSampleStartTime: Time | null;
-	inSampleEndTime: Time | null;
-	outOfSampleStartTime: Time | null;
-	outOfSampleEndTime: Time | null;
-	minOOSTrades: number;
-	minScore: number;
-}
-
-interface EndpointSelectionAdjustment {
-	result: BacktestResult;
-	adjusted: boolean;
-	removedTrades: number;
-}
-
-interface FinderResult {
-	key: string;
-	name: string;
-	params: StrategyParams;
-	/** Raw backtest result (includes any final forced liquidation). */
-	result: BacktestResult;
-	/** Selection result with endpoint-bias trades removed. */
-	selectionResult: BacktestResult;
-	endpointAdjusted: boolean;
-	endpointRemovedTrades: number;
-	confirmationParams?: Record<string, StrategyParams>;
-	durability: FinderDurabilityMetrics;
-}
-
-const METRIC_LABELS: Record<FinderMetric, string> = {
-	oosDurabilityScore: 'OOS Dur',
-	oosProfitFactor: 'OOS PF',
-	oosNetProfitPercent: 'OOS %',
-	netProfit: 'Net',
-	profitFactor: 'PF',
-	sharpeRatio: 'Sharpe',
-	netProfitPercent: 'Net %',
-	winRate: 'Win %',
-	maxDrawdownPercent: 'DD %',
-	expectancy: 'Exp',
-	averageGain: 'Avg Gain',
-	totalTrades: 'Trades'
-};
-
-const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
-	oosDurabilityScore: 'OOS Durability Score',
-	oosProfitFactor: 'OOS Profit Factor',
-	oosNetProfitPercent: 'OOS Net Profit %',
-	netProfit: 'Net Profit',
-	profitFactor: 'Profit Factor',
-	sharpeRatio: 'Sharpe Ratio',
-	netProfitPercent: 'Net Profit %',
-	winRate: 'Win Rate',
-	maxDrawdownPercent: 'Max Drawdown %',
-	expectancy: 'Expectancy',
-	averageGain: 'Average Gain',
-	totalTrades: 'Total Trades'
-};
+import { DEFAULT_SORT_PRIORITY, METRIC_FULL_LABELS, METRIC_LABELS } from "./finder/constants";
+import { buildSelectionResult, createDurabilityContext, evaluateDurability } from "./finder/durability";
+import type {
+	EndpointSelectionAdjustment,
+	FinderDurabilityContext,
+	FinderDurabilityMetrics,
+	FinderMetric,
+	FinderMode,
+	FinderOptions,
+	FinderResult
+} from "./finder/types";
 
 /**
  * Detects if a parameter is a toggle (on/off) parameter.
@@ -127,10 +28,6 @@ const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
  */
 function isToggleParam(key: string, value: number): boolean {
 	return /^use[A-Z]/.test(key) && (value === 0 || value === 1);
-}
-
-function clamp(value: number, min: number, max: number): number {
-	return Math.max(min, Math.min(max, value));
 }
 
 export class FinderManager {
@@ -189,8 +86,8 @@ export class FinderManager {
 		sortSecondary.innerHTML = optionsHtml;
 
 		// Set defaults
-		sortPrimary.value = 'netProfit';
-		sortSecondary.value = 'sharpeRatio';
+		sortPrimary.value = 'oosDurabilityScore';
+		sortSecondary.value = 'oosProfitFactor';
 
 		// Advanced Toggle Logic
 		const toggle = getRequiredElement<HTMLInputElement>('finderAdvancedToggle');
@@ -298,134 +195,11 @@ export class FinderManager {
 		lastDataTime: Time | null,
 		initialCapital: number
 	): EndpointSelectionAdjustment {
-		if (lastDataTime === null || raw.trades.length === 0) {
-			return { result: raw, adjusted: false, removedTrades: 0 };
-		}
-
-		const filteredTrades = raw.trades.filter(trade => compareTime(trade.exitTime, lastDataTime) < 0);
-		const removedTrades = raw.trades.length - filteredTrades.length;
-		if (removedTrades <= 0) {
-			return { result: raw, adjusted: false, removedTrades: 0 };
-		}
-
-		const winningTrades = filteredTrades.filter(t => t.pnl > 0);
-		const losingTrades = filteredTrades.filter(t => t.pnl <= 0);
-		const totalProfit = winningTrades.reduce((sum, t) => sum + t.pnl, 0);
-		const totalLoss = Math.abs(losingTrades.reduce((sum, t) => sum + t.pnl, 0));
-		const totalTrades = filteredTrades.length;
-
-		const avgWin = winningTrades.length > 0 ? totalProfit / winningTrades.length : 0;
-		const avgLoss = losingTrades.length > 0 ? totalLoss / losingTrades.length : 0;
-		const winRate = totalTrades > 0 ? winningTrades.length / totalTrades : 0;
-		const lossRate = totalTrades > 0 ? losingTrades.length / totalTrades : 0;
-		const netProfit = filteredTrades.reduce((sum, t) => sum + t.pnl, 0);
-		const netProfitPercent = initialCapital > 0 ? (netProfit / initialCapital) * 100 : 0;
-		const expectancy = (winRate * avgWin) - (lossRate * avgLoss);
-		const avgTrade = totalTrades > 0 ? netProfit / totalTrades : 0;
-		const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
-
-		const returns = filteredTrades.map(t => t.pnlPercent);
-		const avgReturn = returns.length > 0
-			? returns.reduce((sum, value) => sum + value, 0) / returns.length
-			: 0;
-		const stdReturn = returns.length > 1
-			? Math.sqrt(returns.reduce((sum, value) => sum + Math.pow(value - avgReturn, 2), 0) / (returns.length - 1))
-			: 0;
-		const sharpeRatio = stdReturn > 0 ? avgReturn / stdReturn : 0;
-
-		return {
-			result: {
-				...raw,
-				trades: filteredTrades,
-				netProfit,
-				netProfitPercent,
-				winRate: winRate * 100,
-				expectancy,
-				avgTrade,
-				profitFactor,
-				totalTrades,
-				winningTrades: winningTrades.length,
-				losingTrades: losingTrades.length,
-				avgWin,
-				avgLoss,
-				sharpeRatio
-			},
-			adjusted: true,
-			removedTrades
-		};
-	}
-
-	private disabledDurability(): FinderDurabilityMetrics {
-		return {
-			enabled: false,
-			score: 0,
-			inSampleNetProfitPercent: 0,
-			inSampleProfitFactor: 0,
-			outOfSampleNetProfitPercent: 0,
-			outOfSampleProfitFactor: 0,
-			outOfSampleSharpeRatio: 0,
-			outOfSampleMaxDrawdownPercent: 0,
-			outOfSampleTrades: 0,
-			pass: false
-		};
+		return buildSelectionResult(raw, lastDataTime, initialCapital);
 	}
 
 	private createDurabilityContext(options: FinderOptions, data: typeof state.ohlcvData): FinderDurabilityContext {
-		if (!options.durabilityEnabled || data.length < 200 || data.length > 500000) {
-			return {
-				enabled: false,
-				inSampleData: [],
-				outOfSampleData: [],
-				inSampleStartTime: null,
-				inSampleEndTime: null,
-				outOfSampleStartTime: null,
-				outOfSampleEndTime: null,
-				minOOSTrades: options.durabilityMinOOSTrades,
-				minScore: options.durabilityMinScore
-			};
-		}
-
-		const holdoutRatio = Math.max(0.1, Math.min(0.5, options.durabilityHoldoutPercent / 100));
-		const minInSampleBars = 120;
-		const minOutOfSampleBars = 60;
-		const rawSplitIndex = Math.floor(data.length * (1 - holdoutRatio));
-		const splitIndex = Math.max(minInSampleBars, Math.min(data.length - minOutOfSampleBars, rawSplitIndex));
-
-		if (splitIndex <= 0 || splitIndex >= data.length - 1) {
-			return {
-				enabled: false,
-				inSampleData: [],
-				outOfSampleData: [],
-				inSampleStartTime: null,
-				inSampleEndTime: null,
-				outOfSampleStartTime: null,
-				outOfSampleEndTime: null,
-				minOOSTrades: options.durabilityMinOOSTrades,
-				minScore: options.durabilityMinScore
-			};
-		}
-
-		const inSampleData = data.slice(0, splitIndex);
-		const outOfSampleData = data.slice(splitIndex);
-		return {
-			enabled: inSampleData.length > 0 && outOfSampleData.length > 0,
-			inSampleData,
-			outOfSampleData,
-			inSampleStartTime: inSampleData[0]?.time ?? null,
-			inSampleEndTime: inSampleData[inSampleData.length - 1]?.time ?? null,
-			outOfSampleStartTime: outOfSampleData[0]?.time ?? null,
-			outOfSampleEndTime: outOfSampleData[outOfSampleData.length - 1]?.time ?? null,
-			minOOSTrades: options.durabilityMinOOSTrades,
-			minScore: options.durabilityMinScore
-		};
-	}
-
-	private filterSignalsInRange(signals: Signal[], startTime: Time | null, endTime: Time | null): Signal[] {
-		if (startTime === null || endTime === null) return [];
-		return signals.filter(signal =>
-			compareTime(signal.time, startTime) >= 0 &&
-			compareTime(signal.time, endTime) <= 0
-		);
+		return createDurabilityContext(options, data);
 	}
 
 	private evaluateDurability(
@@ -438,74 +212,16 @@ export class FinderManager {
 		sizingMode: 'percent' | 'fixed',
 		fixedTradeAmount: number
 	): FinderDurabilityMetrics {
-		if (!context.enabled) return this.disabledDurability();
-
-		const inSampleSignals = this.filterSignalsInRange(signals, context.inSampleStartTime, context.inSampleEndTime);
-		const outOfSampleSignals = this.filterSignalsInRange(signals, context.outOfSampleStartTime, context.outOfSampleEndTime);
-		const sizing = { mode: sizingMode, fixedTradeAmount };
-		const inSample = runBacktestCompact(
-			context.inSampleData,
-			inSampleSignals,
+		return evaluateDurability(
+			signals,
+			backtestSettings,
+			context,
 			initialCapital,
 			positionSize,
 			commission,
-			backtestSettings,
-			sizing
+			sizingMode,
+			fixedTradeAmount
 		);
-		const outOfSample = runBacktestCompact(
-			context.outOfSampleData,
-			outOfSampleSignals,
-			initialCapital,
-			positionSize,
-			commission,
-			backtestSettings,
-			sizing
-		);
-
-		const inPf = Number.isFinite(inSample.profitFactor)
-			? Math.min(4, Math.max(0, inSample.profitFactor))
-			: 4;
-		const outPf = Number.isFinite(outOfSample.profitFactor)
-			? Math.min(4, Math.max(0, outOfSample.profitFactor))
-			: 4;
-		const pfScore = clamp((outPf - 0.8) / 1.7, 0, 1);
-		const netScore = clamp((outOfSample.netProfitPercent + 2) / 8, 0, 1);
-		const ddScore = 1 - clamp(outOfSample.maxDrawdownPercent / 12, 0, 1);
-		const sharpeScore = clamp((outOfSample.sharpeRatio + 0.4) / 1.4, 0, 1);
-		const consistency = inPf > 0 ? clamp(outPf / Math.max(1, inPf), 0, 1.25) / 1.25 : 0;
-		const tradeSufficiency = Math.min(1, outOfSample.totalTrades / Math.max(1, context.minOOSTrades));
-
-		let rawScore = 100 * (
-			0.35 * pfScore +
-			0.25 * netScore +
-			0.15 * ddScore +
-			0.15 * consistency +
-			0.10 * sharpeScore
-		);
-		rawScore *= tradeSufficiency;
-
-		if (outOfSample.netProfitPercent <= 0) rawScore *= 0.75;
-		if (outPf < 1) rawScore *= 0.75;
-		const finalScore = Math.round(clamp(rawScore, 0, 100));
-		const pass = (
-			outOfSample.totalTrades >= context.minOOSTrades &&
-			finalScore >= context.minScore &&
-			outOfSample.netProfitPercent >= 0 &&
-			outPf >= 1
-		);
-
-		return {
-			enabled: true,
-			score: finalScore,
-			inSampleNetProfitPercent: inSample.netProfitPercent,
-			inSampleProfitFactor: inPf,
-			outOfSampleNetProfitPercent: outOfSample.netProfitPercent,
-			outOfSampleProfitFactor: outPf,
-			outOfSampleSharpeRatio: outOfSample.sharpeRatio,
-			outOfSampleMaxDrawdownPercent: outOfSample.maxDrawdownPercent,
-			outOfSampleTrades: outOfSample.totalTrades,
-			pass
-		};
 	}
 
 	/**
@@ -653,6 +369,7 @@ export class FinderManager {
 			let processedCount = 0;
 			let filteredCount = 0;
 			let durabilityPassCount = 0;
+			let durabilityRejectedCount = 0;
 			let endpointAdjustedCount = 0;
 			const durabilityContext = this.createDurabilityContext(options, state.ohlcvData);
 			const lastDataTime = state.ohlcvData.length > 0 ? state.ohlcvData[state.ohlcvData.length - 1].time : null;
@@ -722,6 +439,10 @@ export class FinderManager {
 						enriched.selectionResult.totalTrades > options.maxTrades) {
 						return;
 					}
+				}
+				if (options.durabilityEnabled && durabilityContext.enabled && !enriched.durability.pass) {
+					durabilityRejectedCount++;
+					return;
 				}
 				filteredCount++;
 				if (enriched.endpointAdjusted) {
@@ -1070,6 +791,9 @@ export class FinderManager {
 			}
 			if (durabilityContext.enabled) {
 				statusParts.push(`${durabilityPassCount} durability-pass`);
+				if (options.durabilityEnabled) {
+					statusParts.push(`${durabilityRejectedCount} durability-rejected`);
+				}
 			}
 			if (endpointAdjustedCount > 0) {
 				statusParts.push(`${endpointAdjustedCount} endpoint-adjusted`);
@@ -1118,18 +842,18 @@ export class FinderManager {
 		const mode = getRequiredElement<HTMLSelectElement>('finderMode').value as FinderMode;
 		const topN = Math.round(this.readNumberInput('finderTopN', 10, 1));
 		const steps = Math.round(this.readNumberInput('finderSteps', 3, 2));
-		const rangePercent = this.readNumberInput('finderRange', 50, 0);
-		const maxRuns = Math.round(this.readNumberInput('finderMaxRuns', 50, 1));
-		const tradeFilterEnabled = this.isToggleEnabled('finderTradesToggle', false);
-		const minTrades = tradeFilterEnabled ? Math.round(this.readNumberInput('finderTradesMin', 0, 0)) : 0;
+		const rangePercent = this.readNumberInput('finderRange', 35, 0);
+		const maxRuns = Math.round(this.readNumberInput('finderMaxRuns', 120, 1));
+		const tradeFilterEnabled = this.isToggleEnabled('finderTradesToggle', true);
+		const minTrades = tradeFilterEnabled ? Math.round(this.readNumberInput('finderTradesMin', 40, 0)) : 0;
 		const maxTradesRaw = tradeFilterEnabled
 			? Math.round(this.readNumberInput('finderTradesMax', Number.POSITIVE_INFINITY, 0))
 			: Number.POSITIVE_INFINITY;
 		const maxTrades = Math.max(minTrades, maxTradesRaw);
 		const durabilityEnabled = this.isToggleEnabled('finderDurabilityToggle', true);
-		const durabilityHoldoutPercent = this.readNumberInput('finderDurabilityHoldout', 30, 10);
-		const durabilityMinOOSTrades = Math.round(this.readNumberInput('finderDurabilityMinTrades', 3, 1));
-		const durabilityMinScore = this.readNumberInput('finderDurabilityMinScore', 25, 0);
+		const durabilityHoldoutPercent = this.readNumberInput('finderDurabilityHoldout', 35, 10);
+		const durabilityMinOOSTrades = Math.round(this.readNumberInput('finderDurabilityMinTrades', 10, 1));
+		const durabilityMinScore = this.readNumberInput('finderDurabilityMinScore', 60, 0);
 
 		return {
 			mode,

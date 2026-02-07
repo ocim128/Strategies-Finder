@@ -7,6 +7,7 @@ import { SYMBOL_MAP } from "./constants";
 import { debugLogger } from "./debugLogger";
 import { clearAll } from "./appActions";
 import { OHLCVData } from "./strategies/index";
+import { buildFeatureLabDataset, buildFeatureLabMetadata, buildFeatureLabVerdictReport } from "./featureLab/featureLabService";
 
 interface NormalizedCandle {
     time: number;
@@ -30,6 +31,8 @@ export class DataMiningManager {
     private statusEl: HTMLElement | null = null;
     private downloadCsvButton: HTMLButtonElement | null = null;
     private downloadJsonButton: HTMLButtonElement | null = null;
+    private exportFeatureDatasetButton: HTMLButtonElement | null = null;
+    private exportVerdictReportButton: HTMLButtonElement | null = null;
     private symbolInput: HTMLInputElement | null = null;
     private intervalInput: HTMLInputElement | null = null;
     private barsInput: HTMLInputElement | null = null;
@@ -58,6 +61,8 @@ export class DataMiningManager {
         this.statusEl = document.getElementById('dataMiningStatus');
         this.downloadCsvButton = document.getElementById('dataMiningDownloadCsv') as HTMLButtonElement | null;
         this.downloadJsonButton = document.getElementById('dataMiningDownloadJson') as HTMLButtonElement | null;
+        this.exportFeatureDatasetButton = document.getElementById('dataMiningExportFeatures') as HTMLButtonElement | null;
+        this.exportVerdictReportButton = document.getElementById('dataMiningExportVerdict') as HTMLButtonElement | null;
         this.symbolInput = document.getElementById('dataMiningSymbolInput') as HTMLInputElement | null;
         this.intervalInput = document.getElementById('dataMiningIntervalInput') as HTMLInputElement | null;
         this.barsInput = document.getElementById('dataMiningBarsInput') as HTMLInputElement | null;
@@ -74,6 +79,8 @@ export class DataMiningManager {
     private bindActions(): void {
         this.downloadCsvButton?.addEventListener('click', () => this.downloadCsv());
         this.downloadJsonButton?.addEventListener('click', () => this.downloadJson());
+        this.exportFeatureDatasetButton?.addEventListener('click', () => this.exportFeatureDataset());
+        this.exportVerdictReportButton?.addEventListener('click', () => this.exportVerdictReport());
         this.fetchCsvButton?.addEventListener('click', () => this.fetchHistorical('csv'));
         this.fetchJsonButton?.addEventListener('click', () => this.fetchHistorical('json'));
         this.importButton?.addEventListener('click', () => this.importJsonFile());
@@ -195,6 +202,88 @@ export class DataMiningManager {
         this.setStatus('JSON download prepared.', 'success');
     }
 
+    private exportFeatureDataset(): void {
+        if (!this.ensureDataReady()) return;
+
+        try {
+            const dataset = buildFeatureLabDataset(state.ohlcvData);
+            if (dataset.rows.length === 0) {
+                uiManager.showToast('Not enough valid data to build feature dataset.', 'error');
+                this.setStatus('Feature export skipped: insufficient valid rows.', 'warning');
+                return;
+            }
+
+            const metadata = buildFeatureLabMetadata(dataset, state.currentSymbol, state.currentInterval);
+            const content = JSON.stringify({
+                metadata,
+                rows: dataset.rows,
+            }, null, 2);
+            this.triggerDownload(
+                content,
+                'application/json',
+                'json',
+                state.currentSymbol,
+                state.currentInterval,
+                dataset.rows.length,
+                'features_labels'
+            );
+            this.setStatus(`Feature dataset exported as JSON (${dataset.rows.length.toLocaleString()} rows).`, 'success');
+            debugLogger.event('featureLab.export.dataset', {
+                sourceBars: dataset.sourceBars,
+                rows: dataset.rows.length,
+                format: 'json',
+            });
+        } catch (error) {
+            console.error('Feature dataset export failed:', error);
+            uiManager.showToast('Feature dataset export failed. See console for details.', 'error');
+            this.setStatus('Feature dataset export failed.', 'error');
+        }
+    }
+
+    private exportVerdictReport(): void {
+        if (!this.ensureDataReady()) return;
+
+        try {
+            const dataset = buildFeatureLabDataset(state.ohlcvData);
+            if (dataset.rows.length === 0) {
+                uiManager.showToast('Not enough valid data to build verdict report.', 'error');
+                this.setStatus('Verdict export skipped: insufficient valid rows.', 'warning');
+                return;
+            }
+
+            const report = buildFeatureLabVerdictReport(dataset.rows);
+            const content = JSON.stringify({
+                symbol: state.currentSymbol,
+                interval: state.currentInterval,
+                sourceBars: dataset.sourceBars,
+                analyzedRows: dataset.rows.length,
+                featureConfig: dataset.config,
+                report,
+            }, null, 2);
+
+            this.triggerDownload(
+                content,
+                'application/json',
+                'json',
+                state.currentSymbol,
+                state.currentInterval,
+                dataset.rows.length,
+                'verdict'
+            );
+            this.setStatus('Verdict report exported.', 'success');
+            debugLogger.event('featureLab.export.verdict', {
+                sourceBars: dataset.sourceBars,
+                rows: dataset.rows.length,
+                longTopBins: report.longTopBins.length,
+                shortTopBins: report.shortTopBins.length,
+            });
+        } catch (error) {
+            console.error('Verdict report export failed:', error);
+            uiManager.showToast('Verdict export failed. See console for details.', 'error');
+            this.setStatus('Verdict report export failed.', 'error');
+        }
+    }
+
     private async fetchHistorical(format: 'csv' | 'json'): Promise<void> {
         if (this.isFetching) return;
 
@@ -308,25 +397,27 @@ export class DataMiningManager {
         extension: string,
         symbol: string = state.currentSymbol,
         interval: string = state.currentInterval,
-        bars: number = state.ohlcvData.length
+        bars: number = state.ohlcvData.length,
+        prefix: string = 'data'
     ): void {
         const blob = new Blob([content], { type: mime });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = this.buildFilename(extension, symbol, interval, bars);
+        link.download = this.buildFilename(extension, symbol, interval, bars, prefix);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        debugLogger.event('data.export', { extension, bars });
+        debugLogger.event('data.export', { extension, bars, prefix });
     }
 
-    private buildFilename(extension: string, symbol: string, interval: string, bars: number): string {
+    private buildFilename(extension: string, symbol: string, interval: string, bars: number, prefix: string): string {
         const safeSymbol = symbol.replace(/[^a-z0-9_-]+/gi, '-');
         const safeInterval = interval.replace(/[^a-z0-9_-]+/gi, '-');
+        const safePrefix = prefix.replace(/[^a-z0-9_-]+/gi, '-');
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-        return `data-${safeSymbol}-${safeInterval}-${bars}bars-${stamp}.${extension}`;
+        return `${safePrefix}-${safeSymbol}-${safeInterval}-${bars}bars-${stamp}.${extension}`;
     }
 
     private formatSymbolDisplay(symbol: string): string {
@@ -418,7 +509,7 @@ export class DataMiningManager {
         try {
             const text = await file.text();
             const parsed = JSON.parse(text);
-            const { bars, meta } = this.extractBarsFromJson(parsed);
+            const { bars, meta, symbol, interval } = this.extractBarsFromJson(parsed);
 
             if (bars.length === 0) {
                 uiManager.showToast('No valid candles found in JSON.', 'error');
@@ -428,6 +519,12 @@ export class DataMiningManager {
 
             dataManager.stopStreaming();
             clearAll();
+            if (symbol && symbol !== state.currentSymbol) {
+                state.set('currentSymbol', symbol);
+            }
+            if (interval && interval !== state.currentInterval) {
+                state.set('currentInterval', interval);
+            }
             state.set('ohlcvData', bars);
 
             const metaNote = meta ? ` (${meta})` : '';
@@ -443,16 +540,30 @@ export class DataMiningManager {
         }
     }
 
-    private extractBarsFromJson(payload: any): { bars: OHLCVData[]; meta: string | null } {
+    private extractBarsFromJson(payload: any): {
+        bars: OHLCVData[];
+        meta: string | null;
+        symbol: string | null;
+        interval: string | null;
+    } {
         let rawData: any[] = [];
         let meta: string | null = null;
+        let symbol: string | null = null;
+        let interval: string | null = null;
+
+        if (payload && typeof payload.symbol === 'string') {
+            const value = payload.symbol.trim();
+            symbol = value.length > 0 ? value : null;
+        }
+        if (payload && typeof payload.interval === 'string') {
+            const value = payload.interval.trim();
+            interval = value.length > 0 ? value : null;
+        }
 
         if (Array.isArray(payload)) {
             rawData = payload;
         } else if (payload && Array.isArray(payload.data)) {
             rawData = payload.data;
-            const symbol = typeof payload.symbol === 'string' ? payload.symbol : null;
-            const interval = typeof payload.interval === 'string' ? payload.interval : null;
             if (symbol || interval) {
                 meta = `${symbol ?? 'unknown'} ${interval ?? ''}`.trim();
             }
@@ -460,6 +571,10 @@ export class DataMiningManager {
             rawData = payload.ohlcv;
         } else if (payload && Array.isArray(payload.candles)) {
             rawData = payload.candles;
+        }
+
+        if (!meta && (symbol || interval)) {
+            meta = `${symbol ?? 'unknown'} ${interval ?? ''}`.trim();
         }
 
         const bars = rawData
@@ -477,7 +592,7 @@ export class DataMiningManager {
             }
         }
 
-        return { bars: deduped, meta };
+        return { bars: deduped, meta, symbol, interval };
     }
 
     private parseBar(row: any): OHLCVData | null {
