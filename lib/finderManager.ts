@@ -30,10 +30,24 @@ function isToggleParam(key: string, value: number): boolean {
 	return /^use[A-Z]/.test(key) && (value === 0 || value === 1);
 }
 
+type FinderDataset = {
+	interval: string;
+	data: typeof state.ohlcvData;
+};
+
 export class FinderManager {
+	private static readonly MAX_MULTI_TIMEFRAMES = 10;
+	private static readonly MULTI_TIMEFRAME_DEFAULTS = ['1m', '2m', '3m', '4m', '5m', '6m', '7m', '8m', '9m', '10m'];
+	private static readonly MULTI_TIMEFRAME_PRESETS = [
+		...FinderManager.MULTI_TIMEFRAME_DEFAULTS,
+		'15m', '30m', '1h', '4h', '1d', '1w', '1M'
+	];
+
 	private isRunning = false;
 	private displayResults: FinderResult[] = [];
 	private strategyToggles: Map<string, HTMLInputElement> = new Map();
+	private selectedFinderTimeframes: string[] = [];
+	private multiTimeframeDatasetCache: Map<string, typeof state.ohlcvData> = new Map();
 
 	public init() {
 		getRequiredElement('runFinder').addEventListener('click', () => {
@@ -66,11 +80,19 @@ export class FinderManager {
 		});
 
 		this.initSortingUI();
+		this.initMultiTimeframeUI();
 		const durabilityToggle = getRequiredElement<HTMLInputElement>('finderDurabilityToggle');
 		durabilityToggle.addEventListener('change', () => {
 			setVisible('finderDurabilitySettings', durabilityToggle.checked);
 		});
 		setVisible('finderDurabilitySettings', durabilityToggle.checked);
+
+		state.subscribe('currentInterval', () => {
+			this.populateMultiTimeframePresets();
+		});
+		state.subscribe('currentSymbol', () => {
+			this.applyMockRestrictionToMultiTimeframe();
+		});
 	}
 
 	private initSortingUI(): void {
@@ -146,6 +168,264 @@ export class FinderManager {
 			`;
 			container.appendChild(div);
 		});
+	}
+
+	private initMultiTimeframeUI(): void {
+		const toggle = getRequiredElement<HTMLInputElement>('finderMultiTimeframeToggle');
+		const addPresetBtn = getRequiredElement<HTMLButtonElement>('finderMultiTimeframeAdd');
+		const addCustomBtn = getRequiredElement<HTMLButtonElement>('finderMultiTimeframeCustomAdd');
+		const customInput = getRequiredElement<HTMLInputElement>('finderMultiTimeframeCustom');
+
+		this.populateMultiTimeframePresets();
+		this.renderSelectedFinderTimeframes();
+
+		toggle.addEventListener('change', () => {
+			if (toggle.checked) {
+				this.applyDefaultFinderTimeframes();
+			}
+			this.applyMockRestrictionToMultiTimeframe();
+		});
+
+		addPresetBtn.addEventListener('click', () => {
+			const select = getRequiredElement<HTMLSelectElement>('finderMultiTimeframeSelect');
+			this.addFinderTimeframe(select.value, false);
+		});
+
+		const submitCustom = () => {
+			const value = customInput.value.trim();
+			if (!value) return;
+			this.addFinderTimeframe(value, false);
+			customInput.value = '';
+		};
+
+		addCustomBtn.addEventListener('click', submitCustom);
+		customInput.addEventListener('keydown', (event) => {
+			if (event.key === 'Enter') {
+				event.preventDefault();
+				submitCustom();
+			}
+		});
+
+		getRequiredElement('finderMultiTimeframeSelected').addEventListener('click', (event) => {
+			const target = event.target as HTMLElement | null;
+			const removeBtn = target?.closest<HTMLButtonElement>('.finder-timeframe-chip-remove');
+			if (!removeBtn) return;
+			const interval = removeBtn.dataset.interval;
+			if (!interval) return;
+			this.removeFinderTimeframe(interval);
+		});
+
+		this.applyMockRestrictionToMultiTimeframe();
+	}
+
+	private populateMultiTimeframePresets(): void {
+		const select = document.getElementById('finderMultiTimeframeSelect') as HTMLSelectElement | null;
+		if (!select) return;
+
+		const intervals = [...FinderManager.MULTI_TIMEFRAME_PRESETS];
+		if (!intervals.includes(state.currentInterval)) {
+			intervals.push(state.currentInterval);
+		}
+
+		select.innerHTML = '';
+		intervals.forEach(interval => {
+			const option = document.createElement('option');
+			option.value = interval;
+			option.textContent = interval;
+			select.appendChild(option);
+		});
+
+		if (intervals.includes(state.currentInterval)) {
+			select.value = state.currentInterval;
+		}
+	}
+
+	private applyMockRestrictionToMultiTimeframe(): void {
+		const toggle = getRequiredElement<HTMLInputElement>('finderMultiTimeframeToggle');
+		const note = getRequiredElement('finderMultiTimeframeNote');
+		const isMock = dataManager.isMockSymbol(state.currentSymbol);
+		const enabled = !isMock;
+
+		if (isMock) {
+			toggle.checked = false;
+			note.textContent = 'Multi timeframe is disabled for mock chart symbols.';
+		} else {
+			note.textContent = `Select up to ${FinderManager.MAX_MULTI_TIMEFRAMES} timeframes.`;
+		}
+
+		toggle.disabled = !enabled;
+		this.setMultiTimeframeControlsEnabled(enabled && toggle.checked);
+	}
+
+	private setMultiTimeframeControlsEnabled(enabled: boolean): void {
+		const settings = getRequiredElement('finderMultiTimeframeSettings');
+		const select = getRequiredElement<HTMLSelectElement>('finderMultiTimeframeSelect');
+		const addPresetBtn = getRequiredElement<HTMLButtonElement>('finderMultiTimeframeAdd');
+		const customInput = getRequiredElement<HTMLInputElement>('finderMultiTimeframeCustom');
+		const addCustomBtn = getRequiredElement<HTMLButtonElement>('finderMultiTimeframeCustomAdd');
+
+		settings.classList.toggle('is-disabled', !enabled);
+		select.disabled = !enabled;
+		addPresetBtn.disabled = !enabled;
+		customInput.disabled = !enabled;
+		addCustomBtn.disabled = !enabled;
+	}
+
+	private applyDefaultFinderTimeframes(): void {
+		this.selectedFinderTimeframes = [...FinderManager.MULTI_TIMEFRAME_DEFAULTS];
+		this.renderSelectedFinderTimeframes();
+	}
+
+	private getDatasetCacheKey(symbol: string, interval: string): string {
+		return `${symbol}|${interval}`;
+	}
+
+	private getCachedDataset(symbol: string, interval: string): typeof state.ohlcvData | null {
+		const key = this.getDatasetCacheKey(symbol, interval);
+		const cached = this.multiTimeframeDatasetCache.get(key);
+		return cached && cached.length > 0 ? cached : null;
+	}
+
+	private setCachedDataset(symbol: string, interval: string, data: typeof state.ohlcvData): void {
+		const key = this.getDatasetCacheKey(symbol, interval);
+		this.multiTimeframeDatasetCache.set(key, data);
+	}
+
+	private async loadMultiTimeframeDatasets(symbol: string, intervals: string[]): Promise<FinderDataset[]> {
+		const deduped = Array.from(new Set(intervals));
+		const datasetsByInterval = new Map<string, FinderDataset>();
+		const missingIntervals: string[] = [];
+
+		for (const interval of deduped) {
+			const cached = this.getCachedDataset(symbol, interval);
+			if (cached) {
+				datasetsByInterval.set(interval, { interval, data: cached });
+				continue;
+			}
+			missingIntervals.push(interval);
+		}
+
+		const currentIntervalInList = deduped.includes(state.currentInterval);
+		if (currentIntervalInList && state.currentSymbol === symbol && state.ohlcvData.length > 0) {
+			datasetsByInterval.set(state.currentInterval, { interval: state.currentInterval, data: state.ohlcvData });
+			this.setCachedDataset(symbol, state.currentInterval, state.ohlcvData);
+		}
+
+		const trulyMissing = missingIntervals.filter(interval => !datasetsByInterval.has(interval));
+		if (trulyMissing.length > 0) {
+			const fetchResults = await Promise.allSettled(
+				trulyMissing.map(async (interval) => {
+					const data = await dataManager.fetchData(symbol, interval);
+					return { interval, data };
+				})
+			);
+
+			for (const result of fetchResults) {
+				if (result.status !== 'fulfilled') {
+					continue;
+				}
+				const { interval, data } = result.value;
+				if (data.length === 0) {
+					debugLogger.warn(`[Finder] Skipping timeframe ${interval} - no data returned.`);
+					continue;
+				}
+				this.setCachedDataset(symbol, interval, data);
+				datasetsByInterval.set(interval, { interval, data });
+			}
+		}
+
+		return deduped
+			.map(interval => datasetsByInterval.get(interval))
+			.filter((dataset): dataset is FinderDataset => !!dataset);
+	}
+
+	private normalizeFinderInterval(rawInterval: string): string | null {
+		const raw = rawInterval.trim();
+		const match = raw.match(/^(\d+)\s*([mhdwM])$/);
+		if (!match) return null;
+		const value = parseInt(match[1], 10);
+		if (!Number.isFinite(value) || value <= 0) return null;
+
+		const unit = match[2] === 'M' ? 'M' : match[2].toLowerCase();
+		return `${value}${unit}`;
+	}
+
+	private addFinderTimeframe(interval: string, silent: boolean): void {
+		const normalized = this.normalizeFinderInterval(interval);
+		if (!normalized) {
+			if (!silent) {
+				uiManager.showToast('Invalid timeframe. Use format like 2m, 4m, 7m, 1h, 1d.', 'error');
+			}
+			return;
+		}
+		if (this.selectedFinderTimeframes.includes(normalized)) {
+			if (!silent) {
+				uiManager.showToast(`${normalized} is already selected.`, 'info');
+			}
+			return;
+		}
+		if (this.selectedFinderTimeframes.length >= FinderManager.MAX_MULTI_TIMEFRAMES) {
+			uiManager.showToast(`Max ${FinderManager.MAX_MULTI_TIMEFRAMES} timeframes allowed.`, 'error');
+			return;
+		}
+
+		this.selectedFinderTimeframes.push(normalized);
+		this.renderSelectedFinderTimeframes();
+	}
+
+	private removeFinderTimeframe(interval: string): void {
+		this.selectedFinderTimeframes = this.selectedFinderTimeframes.filter(value => value !== interval);
+		this.renderSelectedFinderTimeframes();
+	}
+
+	private renderSelectedFinderTimeframes(): void {
+		const container = getRequiredElement('finderMultiTimeframeSelected');
+		container.innerHTML = '';
+
+		if (this.selectedFinderTimeframes.length === 0) {
+			const empty = document.createElement('span');
+			empty.className = 'finder-timeframe-empty';
+			empty.textContent = 'No timeframe selected.';
+			container.appendChild(empty);
+			return;
+		}
+
+		this.selectedFinderTimeframes.forEach(interval => {
+			const chip = document.createElement('span');
+			chip.className = 'finder-timeframe-chip';
+			chip.textContent = interval;
+
+			const remove = document.createElement('button');
+			remove.type = 'button';
+			remove.className = 'finder-timeframe-chip-remove';
+			remove.dataset.interval = interval;
+			remove.textContent = 'x';
+			remove.title = `Remove ${interval}`;
+
+			chip.appendChild(remove);
+			container.appendChild(chip);
+		});
+	}
+
+	private getFinderTimeframesForRun(options: FinderOptions): string[] {
+		if (!options.multiTimeframeEnabled) return [state.currentInterval];
+
+		const deduped: string[] = [];
+		const intervals = options.timeframes ?? [];
+		for (const interval of intervals) {
+			const normalized = this.normalizeFinderInterval(interval);
+			if (!normalized) continue;
+			if (!deduped.includes(normalized)) {
+				deduped.push(normalized);
+			}
+			if (deduped.length >= FinderManager.MAX_MULTI_TIMEFRAMES) break;
+		}
+
+		if (deduped.length === 0) {
+			return [state.currentInterval];
+		}
+
+		return deduped;
 	}
 
 	private renderStrategySelection(): void {
@@ -267,38 +547,33 @@ export class FinderManager {
 			const shouldRandomizeConfirmations = options.mode === 'random';
 			const hasConfirmationStrategies = confirmationStrategies.length > 0;
 			const baseConfirmationParams = settings.confirmationStrategyParams ?? {};
-			const confirmationStates = !shouldRandomizeConfirmations && hasConfirmationStrategies
-				? buildConfirmationStates(state.ohlcvData, confirmationStrategies, baseConfirmationParams)
-				: [];
-			const buildConfirmationContext = (): { states: Int8Array[]; params?: Record<string, StrategyParams> } => {
-				if (!hasConfirmationStrategies) return { states: [] };
-				if (!shouldRandomizeConfirmations) {
-					return {
-						states: confirmationStates,
-						params: Object.keys(baseConfirmationParams).length > 0 ? baseConfirmationParams : undefined
-					};
-				}
-				const params = this.buildRandomConfirmationParams(confirmationStrategies, options);
-				const states = buildConfirmationStates(state.ohlcvData, confirmationStrategies, params);
-				return { states, params };
-			};
+			const runTimeframes = this.getFinderTimeframesForRun(options);
+			const usingMultiTimeframe = options.multiTimeframeEnabled === true;
+			if (usingMultiTimeframe && dataManager.isMockSymbol(state.currentSymbol)) {
+				uiManager.showToast('Multi timeframe finder is not available for mock chart symbols.', 'error');
+				this.setStatus('Multi timeframe finder is disabled for mock chart symbols.');
+				return;
+			}
 			const rustSettings: typeof settings = { ...settings };
 			delete (rustSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
 			delete (rustSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
 			delete (rustSettings as { executionModel?: string }).executionModel;
 			delete (rustSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
 			delete (rustSettings as { slippageBps?: number }).slippageBps;
+			delete (rustSettings as { marketMode?: string }).marketMode;
 
 			const strategies = strategyRegistry.getAll();
-			const strategyEntries = Object.entries(strategies).filter(([key]) => {
+			const selectedStrategyEntries = Object.entries(strategies).filter(([key]) => {
 				const toggle = this.strategyToggles.get(key);
 				return toggle ? toggle.checked : false;
 			});
 
-			if (strategyEntries.length === 0) {
+			if (selectedStrategyEntries.length === 0) {
 				this.setStatus('No strategies selected.');
 				return;
 			}
+
+			const strategyEntries = selectedStrategyEntries;
 
 			// MEMORY OPTIMIZATION: Determine batch size based on data size
 			// For 5M+ candles, use very small batches to avoid OOM
@@ -360,6 +635,215 @@ export class FinderManager {
 				this.setStatus('No valid parameter combinations generated.');
 				return;
 			}
+
+			if (usingMultiTimeframe) {
+				this.setProgress(true, 8, `Loading ${runTimeframes.length} timeframe datasets...`);
+				this.setStatus(`Loading timeframe datasets (${runTimeframes.length})...`);
+				const datasets = await this.loadMultiTimeframeDatasets(state.currentSymbol, runTimeframes);
+
+				if (datasets.length === 0) {
+					this.setStatus('No data available for selected timeframes.');
+					return;
+				}
+
+				this.setProgress(true, 12, `Running ${totalRuns} runs across ${datasets.length} timeframes...`);
+
+				const fixedConfirmationStatesByInterval = new Map<string, Int8Array[]>();
+				if (hasConfirmationStrategies && !shouldRandomizeConfirmations) {
+					for (const dataset of datasets) {
+						const states = buildConfirmationStates(dataset.data, confirmationStrategies, baseConfirmationParams);
+						fixedConfirmationStatesByInterval.set(dataset.interval, states);
+					}
+				}
+
+				const topResults: FinderResult[] = [];
+				const maxResults = Math.max(options.topN * 2, 50);
+				let processedCount = 0;
+				let filteredCount = 0;
+				let durabilityPassCount = 0;
+				let durabilityRejectedCount = 0;
+				let endpointAdjustedCount = 0;
+
+				for (const job of allJobs) {
+					let confirmationParamsForJob: Record<string, StrategyParams> | undefined;
+					if (hasConfirmationStrategies) {
+						if (shouldRandomizeConfirmations) {
+							confirmationParamsForJob = this.buildRandomConfirmationParams(confirmationStrategies, options);
+						} else if (Object.keys(baseConfirmationParams).length > 0) {
+							confirmationParamsForJob = baseConfirmationParams;
+						}
+					}
+
+					const timeframeResults: BacktestResult[] = [];
+					const timeframeDurability: FinderDurabilityMetrics[] = [];
+
+					for (const dataset of datasets) {
+						try {
+							let signals = job.strategy.execute(dataset.data, job.params);
+							const confirmationStates = !hasConfirmationStrategies
+								? []
+								: shouldRandomizeConfirmations
+									? buildConfirmationStates(dataset.data, confirmationStrategies, confirmationParamsForJob ?? {})
+									: (fixedConfirmationStatesByInterval.get(dataset.interval) ?? []);
+
+							if (confirmationStates.length > 0) {
+								signals = (job.strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both')
+									? filterSignalsWithConfirmationsBoth(
+										dataset.data,
+										signals,
+										confirmationStates,
+										settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none'
+									)
+									: filterSignalsWithConfirmations(
+										dataset.data,
+										signals,
+										confirmationStates,
+										settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none',
+										settings.tradeDirection ?? 'long'
+									);
+							}
+
+							const evaluation = job.strategy.evaluate?.(dataset.data, job.params, signals);
+							const entryStats = evaluation?.entryStats;
+							const backtestFn = dataset.data.length > 500000 ? runBacktestCompact : runBacktest;
+							const result = job.strategy.metadata?.role === 'entry' && entryStats
+								? buildEntryBacktestResult(entryStats)
+								: backtestFn(
+									dataset.data,
+									signals,
+									initialCapital,
+									positionSize,
+									commission,
+									job.backtestSettings,
+									{ mode: sizingMode, fixedTradeAmount }
+								);
+
+							const durabilityContext = this.createDurabilityContext(options, dataset.data);
+							const durability = this.evaluateDurability(
+								signals,
+								job.backtestSettings,
+								durabilityContext,
+								initialCapital,
+								positionSize,
+								commission,
+								sizingMode,
+								fixedTradeAmount
+							);
+							timeframeResults.push(result);
+							timeframeDurability.push(durability);
+
+							signals.length = 0;
+						} catch (error) {
+							console.warn(`[Finder] Multi timeframe run failed for ${job.key} @ ${dataset.interval}:`, error);
+						}
+					}
+
+					if (timeframeResults.length === 0) {
+						processedCount++;
+						continue;
+					}
+
+					const aggregatedResult = this.aggregateBacktestResults(timeframeResults, initialCapital);
+					const aggregatedDurability = this.aggregateDurabilityMetrics(timeframeDurability);
+					const lastDataTime = datasets.length === 1
+						? datasets[0].data[datasets[0].data.length - 1]?.time ?? null
+						: null;
+					const adjustment = this.buildSelectionResult(aggregatedResult, lastDataTime, initialCapital);
+					const enriched: FinderResult = {
+						key: job.key,
+						name: job.name,
+						timeframes: datasets.map(dataset => dataset.interval),
+						params: job.params,
+						result: aggregatedResult,
+						selectionResult: adjustment.result,
+						endpointAdjusted: adjustment.adjusted,
+						endpointRemovedTrades: adjustment.removedTrades,
+						confirmationParams: confirmationParamsForJob,
+						durability: aggregatedDurability
+					};
+
+					if (options.tradeFilterEnabled) {
+						if (enriched.selectionResult.totalTrades < options.minTrades ||
+							enriched.selectionResult.totalTrades > options.maxTrades) {
+							processedCount++;
+							continue;
+						}
+					}
+
+					if (options.durabilityEnabled && aggregatedDurability.enabled && !aggregatedDurability.pass) {
+						durabilityRejectedCount++;
+						processedCount++;
+						continue;
+					}
+
+					filteredCount++;
+					if (enriched.endpointAdjusted) {
+						endpointAdjustedCount++;
+					}
+					if (aggregatedDurability.enabled && aggregatedDurability.pass) {
+						durabilityPassCount++;
+					}
+
+					topResults.push(enriched);
+					if (topResults.length > maxResults * 2) {
+						topResults.sort((a, b) => this.compareResults(a, b, options.sortPriority));
+						topResults.length = maxResults;
+					}
+
+					processedCount++;
+					if (processedCount % 5 === 0 || processedCount === totalRuns) {
+						const progress = 12 + (processedCount / totalRuns) * 84;
+						this.setProgress(
+							true,
+							progress,
+							`${processedCount}/${totalRuns} runs (${datasets.length} TF)`
+						);
+						this.setStatus(`Processing ${processedCount}/${totalRuns} runs across ${datasets.length} timeframes...`);
+						await this.yieldControl();
+					}
+				}
+
+				topResults.sort((a, b) => this.compareResults(a, b, options.sortPriority));
+				const trimmed = topResults.slice(0, Math.max(1, options.topN));
+				this.renderResults(trimmed, options.sortPriority[0]);
+				this.displayResults = trimmed;
+
+				const statusParts = [
+					`${processedCount} runs`,
+					`${datasets.length} timeframes`
+				];
+				if (options.tradeFilterEnabled) {
+					statusParts.push(`${filteredCount} matched`);
+				}
+				if (options.durabilityEnabled) {
+					statusParts.push(`${durabilityPassCount} durability-pass`);
+					statusParts.push(`${durabilityRejectedCount} durability-rejected`);
+				}
+				if (endpointAdjustedCount > 0) {
+					statusParts.push(`${endpointAdjustedCount} endpoint-adjusted`);
+				}
+				statusParts.push(`${trimmed.length} shown`);
+
+				this.setProgress(true, 100, `${totalRuns}/${totalRuns} runs`);
+				this.setStatus(`Complete. ${statusParts.join(', ')}.`);
+				return;
+			}
+
+			const confirmationStates = !shouldRandomizeConfirmations && hasConfirmationStrategies
+				? buildConfirmationStates(state.ohlcvData, confirmationStrategies, baseConfirmationParams)
+				: [];
+			const buildConfirmationContext = (): { states: Int8Array[]; params?: Record<string, StrategyParams> } => {
+				if (!hasConfirmationStrategies) return { states: [] };
+				if (!shouldRandomizeConfirmations) {
+					return {
+						states: confirmationStates,
+						params: Object.keys(baseConfirmationParams).length > 0 ? baseConfirmationParams : undefined
+					};
+				}
+				const params = this.buildRandomConfirmationParams(confirmationStrategies, options);
+				const states = buildConfirmationStates(state.ohlcvData, confirmationStrategies, params);
+				return { states, params };
+			};
 
 			this.setProgress(true, 10, `Running ${totalRuns} backtests (batch mode)...`);
 
@@ -489,13 +973,13 @@ export class FinderManager {
 										state.ohlcvData,
 										signals,
 										confirmationContext.states,
-										settings.entryConfirmation ?? 'none'
+										settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none'
 									)
 									: filterSignalsWithConfirmations(
 										state.ohlcvData,
 										signals,
 										confirmationContext.states,
-										settings.entryConfirmation ?? 'none',
+										settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none',
 										settings.tradeDirection ?? 'long'
 									);
 							}
@@ -612,13 +1096,13 @@ export class FinderManager {
 									state.ohlcvData,
 									signals,
 									confirmationContext.states,
-									settings.entryConfirmation ?? 'none'
+									settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none'
 								)
 								: filterSignalsWithConfirmations(
 									state.ohlcvData,
 									signals,
 									confirmationContext.states,
-									settings.entryConfirmation ?? 'none',
+									settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none',
 									settings.tradeDirection ?? 'long'
 								);
 						}
@@ -840,6 +1324,11 @@ export class FinderManager {
 		}
 
 		const mode = getRequiredElement<HTMLSelectElement>('finderMode').value as FinderMode;
+		const multiTimeframeRequested = this.isToggleEnabled('finderMultiTimeframeToggle', false);
+		const multiTimeframeEnabled = multiTimeframeRequested && !dataManager.isMockSymbol(state.currentSymbol);
+		const timeframes = multiTimeframeEnabled
+			? this.selectedFinderTimeframes.slice(0, FinderManager.MAX_MULTI_TIMEFRAMES)
+			: [];
 		const topN = Math.round(this.readNumberInput('finderTopN', 10, 1));
 		const steps = Math.round(this.readNumberInput('finderSteps', 3, 2));
 		const rangePercent = this.readNumberInput('finderRange', 35, 0);
@@ -859,6 +1348,8 @@ export class FinderManager {
 			mode,
 			sortPriority,
 			useAdvancedSort,
+			multiTimeframeEnabled,
+			timeframes,
 			topN,
 			steps,
 			rangePercent,
@@ -1299,6 +1790,9 @@ export class FinderManager {
 			metrics.className = 'finder-metrics';
 			const selection = item.selectionResult;
 			metrics.appendChild(this.createMetricChip(`${METRIC_LABELS[sortBy]} ${this.formatMetric(item, sortBy)}`));
+			if (item.timeframes && item.timeframes.length > 0) {
+				metrics.appendChild(this.createMetricChip(`TF ${item.timeframes.join(', ')}`));
+			}
 			if (item.durability.enabled) {
 				metrics.appendChild(this.createMetricChip(`OOS Dur ${item.durability.score}`));
 				metrics.appendChild(this.createMetricChip(`OOS PF ${this.formatProfitFactor(item.durability.outOfSampleProfitFactor)}`));
@@ -1414,6 +1908,101 @@ export class FinderManager {
 		}
 	}
 
+	private average(values: number[]): number {
+		if (values.length === 0) return 0;
+		return values.reduce((sum, value) => sum + value, 0) / values.length;
+	}
+
+	private aggregateBacktestResults(results: BacktestResult[], initialCapital: number): BacktestResult {
+		if (results.length === 0) {
+			return {
+				trades: [],
+				netProfit: 0,
+				netProfitPercent: 0,
+				winRate: 0,
+				expectancy: 0,
+				avgTrade: 0,
+				profitFactor: 0,
+				maxDrawdown: 0,
+				maxDrawdownPercent: 0,
+				totalTrades: 0,
+				winningTrades: 0,
+				losingTrades: 0,
+				avgWin: 0,
+				avgLoss: 0,
+				sharpeRatio: 0,
+				equityCurve: [],
+			};
+		}
+
+		if (results.length === 1) {
+			return results[0];
+		}
+
+		const avgNetProfit = this.average(results.map(result => result.netProfit));
+		const avgNetProfitPercent = initialCapital > 0
+			? (avgNetProfit / initialCapital) * 100
+			: this.average(results.map(result => result.netProfitPercent));
+		const avgTrades = Math.max(0, Math.round(this.average(results.map(result => result.totalTrades))));
+		const avgWinRate = this.average(results.map(result => result.winRate));
+		const winningTrades = Math.max(0, Math.round((avgWinRate / 100) * avgTrades));
+		const losingTrades = Math.max(0, avgTrades - winningTrades);
+		const finiteProfitFactors = results.map(result => result.profitFactor).map(value => {
+			if (Number.isFinite(value)) return Math.max(0, value);
+			return 4;
+		});
+
+		return {
+			trades: [],
+			netProfit: avgNetProfit,
+			netProfitPercent: avgNetProfitPercent,
+			winRate: avgWinRate,
+			expectancy: this.average(results.map(result => result.expectancy)),
+			avgTrade: this.average(results.map(result => result.avgTrade)),
+			profitFactor: this.average(finiteProfitFactors),
+			maxDrawdown: this.average(results.map(result => result.maxDrawdown)),
+			maxDrawdownPercent: this.average(results.map(result => result.maxDrawdownPercent)),
+			totalTrades: avgTrades,
+			winningTrades,
+			losingTrades,
+			avgWin: this.average(results.map(result => result.avgWin)),
+			avgLoss: this.average(results.map(result => result.avgLoss)),
+			sharpeRatio: this.average(results.map(result => result.sharpeRatio)),
+			equityCurve: [],
+		};
+	}
+
+	private aggregateDurabilityMetrics(metrics: FinderDurabilityMetrics[]): FinderDurabilityMetrics {
+		const enabledMetrics = metrics.filter(metric => metric.enabled);
+		if (enabledMetrics.length === 0) {
+			return {
+				enabled: false,
+				score: 0,
+				inSampleNetProfitPercent: 0,
+				inSampleProfitFactor: 0,
+				outOfSampleNetProfitPercent: 0,
+				outOfSampleProfitFactor: 0,
+				outOfSampleSharpeRatio: 0,
+				outOfSampleMaxDrawdownPercent: 0,
+				outOfSampleTrades: 0,
+				pass: false
+			};
+		}
+
+		return {
+			enabled: true,
+			score: Math.round(this.average(enabledMetrics.map(metric => metric.score))),
+			inSampleNetProfitPercent: this.average(enabledMetrics.map(metric => metric.inSampleNetProfitPercent)),
+			inSampleProfitFactor: this.average(enabledMetrics.map(metric => metric.inSampleProfitFactor)),
+			outOfSampleNetProfitPercent: this.average(enabledMetrics.map(metric => metric.outOfSampleNetProfitPercent)),
+			outOfSampleProfitFactor: this.average(enabledMetrics.map(metric => metric.outOfSampleProfitFactor)),
+			outOfSampleSharpeRatio: this.average(enabledMetrics.map(metric => metric.outOfSampleSharpeRatio)),
+			outOfSampleMaxDrawdownPercent: this.average(enabledMetrics.map(metric => metric.outOfSampleMaxDrawdownPercent)),
+			outOfSampleTrades: Math.max(0, Math.round(this.average(enabledMetrics.map(metric => metric.outOfSampleTrades)))),
+			pass: enabledMetrics.every(metric => metric.pass)
+		};
+	}
+
 	private formatCurrency(value: number): string {
 		const sign = value >= 0 ? '+' : '';
 		return `${sign}$${value.toFixed(2)}`;
@@ -1434,6 +2023,7 @@ export class FinderManager {
 			rank,
 			strategyId: result.key,
 			strategyName: result.name,
+			timeframes: result.timeframes ?? [state.currentInterval],
 			params: result.params,
 			metadata: strategy?.metadata ?? null,
 			metrics: {

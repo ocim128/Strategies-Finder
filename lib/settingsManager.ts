@@ -14,7 +14,7 @@ import { paramManager } from "./paramManager";
 import { debugLogger } from "./debugLogger";
 import { type WebhookSettings, DEFAULT_WEBHOOK_SETTINGS, isValidWebhookUrl } from "./webhookTypes";
 import { getConfirmationStrategyParams, getConfirmationStrategyValues, renderConfirmationStrategyList, setConfirmationStrategyParams } from "./confirmationStrategies";
-import type { StrategyParams } from "./strategies/types";
+import type { MarketMode, StrategyParams, TradeDirection } from "./strategies/types";
 
 export type { WebhookSettings };
 
@@ -48,13 +48,18 @@ export interface BacktestSettingsData {
     takeProfitPercent: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
+    marketMode: MarketMode;
 
-    // Short mode
-    shortModeToggle: boolean;
+    // Trade direction
+    tradeDirection: TradeDirection;
 
-    // Entry confirmation
-    entrySettingsToggle: boolean;
-    entryConfirmation: string;
+    // Trade filter
+    tradeFilterSettingsToggle: boolean;
+    tradeFilterMode: string;
+    /** @deprecated Legacy key retained for backward compatibility when loading old configs */
+    entrySettingsToggle?: boolean;
+    /** @deprecated Legacy key retained for backward compatibility when loading old configs */
+    entryConfirmation?: string;
     confirmLookback: number;
     volumeSmaPeriod: number;
     volumeMultiplier: number;
@@ -120,13 +125,14 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     takeProfitPercent: 10,
     stopLossEnabled: false,
     takeProfitEnabled: false,
+    marketMode: 'all',
 
-    // Short mode
-    shortModeToggle: true,
+    // Trade direction
+    tradeDirection: 'short',
 
-    // Entry confirmation
-    entrySettingsToggle: false,
-    entryConfirmation: 'none',
+    // Trade filter
+    tradeFilterSettingsToggle: false,
+    tradeFilterMode: 'none',
     confirmLookback: 1,
     volumeSmaPeriod: 20,
     volumeMultiplier: 1.5,
@@ -213,13 +219,14 @@ class SettingsManager {
             takeProfitPercent: this.readNumber('takeProfitPercent', DEFAULT_BACKTEST_SETTINGS.takeProfitPercent),
             stopLossEnabled: this.readCheckbox('stopLossToggle', DEFAULT_BACKTEST_SETTINGS.stopLossEnabled),
             takeProfitEnabled: this.readCheckbox('takeProfitToggle', DEFAULT_BACKTEST_SETTINGS.takeProfitEnabled),
+            marketMode: this.readSelect('marketMode', DEFAULT_BACKTEST_SETTINGS.marketMode) as MarketMode,
 
-            // Short mode
-            shortModeToggle: this.readCheckbox('shortModeToggle', DEFAULT_BACKTEST_SETTINGS.shortModeToggle),
+            // Trade direction
+            tradeDirection: this.readSelect('tradeDirection', DEFAULT_BACKTEST_SETTINGS.tradeDirection) as TradeDirection,
 
-            // Entry confirmation
-            entrySettingsToggle: this.readCheckbox('entrySettingsToggle', DEFAULT_BACKTEST_SETTINGS.entrySettingsToggle),
-            entryConfirmation: this.readSelect('entryConfirmation', DEFAULT_BACKTEST_SETTINGS.entryConfirmation),
+            // Trade filter
+            tradeFilterSettingsToggle: this.readCheckbox('tradeFilterSettingsToggle', DEFAULT_BACKTEST_SETTINGS.tradeFilterSettingsToggle),
+            tradeFilterMode: this.readSelect('tradeFilterMode', DEFAULT_BACKTEST_SETTINGS.tradeFilterMode),
             confirmLookback: this.readNumber('confirmLookback', DEFAULT_BACKTEST_SETTINGS.confirmLookback),
             volumeSmaPeriod: this.readNumber('volumeSmaPeriod', DEFAULT_BACKTEST_SETTINGS.volumeSmaPeriod),
             volumeMultiplier: this.readNumber('volumeMultiplier', DEFAULT_BACKTEST_SETTINGS.volumeMultiplier),
@@ -398,13 +405,14 @@ class SettingsManager {
         this.writeNumber('takeProfitPercent', settings.takeProfitPercent);
         this.writeCheckbox('stopLossToggle', settings.stopLossEnabled);
         this.writeCheckbox('takeProfitToggle', settings.takeProfitEnabled);
+        this.writeSelect('marketMode', this.resolveMarketMode(settings));
 
-        // Short mode
-        this.writeCheckbox('shortModeToggle', settings.shortModeToggle);
+        // Trade direction
+        this.writeSelect('tradeDirection', this.resolveTradeDirection(settings));
 
-        // Entry confirmation
-        this.writeCheckbox('entrySettingsToggle', settings.entrySettingsToggle);
-        this.writeSelect('entryConfirmation', settings.entryConfirmation);
+        // Trade filter
+        this.writeCheckbox('tradeFilterSettingsToggle', this.resolveTradeFilterToggle(settings));
+        this.writeSelect('tradeFilterMode', this.resolveTradeFilterMode(settings));
         this.writeNumber('confirmLookback', settings.confirmLookback);
         this.writeNumber('volumeSmaPeriod', settings.volumeSmaPeriod);
         this.writeNumber('volumeMultiplier', settings.volumeMultiplier);
@@ -628,14 +636,50 @@ class SettingsManager {
         }
     }
 
+    private resolveTradeDirection(settings: Partial<BacktestSettingsData>): TradeDirection {
+        if (settings.tradeDirection === 'long' || settings.tradeDirection === 'short' || settings.tradeDirection === 'both') {
+            return settings.tradeDirection;
+        }
+
+        const legacyShortMode = (settings as { shortModeToggle?: boolean }).shortModeToggle;
+        if (legacyShortMode === true) return 'short';
+        if (legacyShortMode === false) return 'long';
+
+        return DEFAULT_BACKTEST_SETTINGS.tradeDirection;
+    }
+
+    private resolveMarketMode(settings: Partial<BacktestSettingsData>): MarketMode {
+        if (settings.marketMode === 'all' || settings.marketMode === 'uptrend' || settings.marketMode === 'downtrend' || settings.marketMode === 'sideway') {
+            return settings.marketMode;
+        }
+        return DEFAULT_BACKTEST_SETTINGS.marketMode;
+    }
+
+    private resolveTradeFilterMode(settings: Partial<BacktestSettingsData>): string {
+        const mode = settings.tradeFilterMode ?? settings.entryConfirmation;
+        if (mode === 'none' || mode === 'close' || mode === 'volume' || mode === 'rsi' || mode === 'trend' || mode === 'adx') {
+            return mode;
+        }
+        return DEFAULT_BACKTEST_SETTINGS.tradeFilterMode;
+    }
+
+    private resolveTradeFilterToggle(settings: Partial<BacktestSettingsData>): boolean {
+        if (typeof settings.tradeFilterSettingsToggle === 'boolean') {
+            return settings.tradeFilterSettingsToggle;
+        }
+        if (typeof settings.entrySettingsToggle === 'boolean') {
+            return settings.entrySettingsToggle;
+        }
+        return DEFAULT_BACKTEST_SETTINGS.tradeFilterSettingsToggle;
+    }
+
     private triggerChangeEvents(): void {
         // Trigger change events for toggles to update UI state
         const toggleIds = [
             'fixedTradeToggle',
             'riskSettingsToggle',
-            'entrySettingsToggle',
+            'tradeFilterSettingsToggle',
             'confirmationStrategiesToggle',
-            'shortModeToggle',
             'useRustEngineToggle',
             'webhookEnabledToggle',
             'stopLossToggle',
@@ -653,6 +697,10 @@ class SettingsManager {
         const riskMode = document.getElementById('riskMode');
         if (riskMode) {
             riskMode.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        const tradeDirection = document.getElementById('tradeDirection');
+        if (tradeDirection) {
+            tradeDirection.dispatchEvent(new Event('change', { bubbles: true }));
         }
     }
 }

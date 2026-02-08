@@ -755,6 +755,56 @@
     margin-top: var(--space-2);
 }
 
+#finderMultiTimeframeSettings.is-disabled {
+    opacity: 0.55;
+    pointer-events: none;
+    user-select: none;
+}
+
+.finder-timeframe-selected {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1-5);
+    margin-top: var(--space-1);
+}
+
+.finder-timeframe-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 4px 8px;
+    border-radius: var(--radius-pill);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    font-size: var(--font-size-xs);
+    color: var(--text-primary);
+}
+
+.finder-timeframe-chip-remove {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+}
+
+.finder-timeframe-chip-remove:hover {
+    color: var(--text-primary);
+}
+
+.finder-timeframe-empty {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+}
+
+.finder-timeframe-note {
+    margin-top: var(--space-2);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
 .finder-results {
     margin-top: var(--space-3-5);
 }

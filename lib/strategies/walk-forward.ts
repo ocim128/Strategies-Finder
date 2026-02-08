@@ -1,6 +1,7 @@
 import { OHLCVData, BacktestResult, StrategyParams, BacktestSettings, Strategy, Time } from './types';
 import { runBacktest, runBacktestCompact, calculateBacktestStats, calculateMaxDrawdown, compareTime } from './backtest';
 import { ensureCleanData } from './strategy-helpers';
+import { sanitizeSharpeRatio } from './performance-metrics';
 
 // ============================================================================
 // Walk-Forward Analysis (WFA) Module
@@ -234,7 +235,7 @@ function calculateOptimizationScore(result: BacktestResult, minTrades: number): 
         return -Infinity;
     }
 
-    const sharpe = Number.isFinite(result.sharpeRatio) ? result.sharpeRatio : 0;
+    const sharpe = Math.max(-2, Math.min(2, sanitizeSharpeRatio(result.sharpeRatio)));
     const profitFactor = Number.isFinite(result.profitFactor)
         ? Math.min(result.profitFactor, 5) // Cap to avoid infinity skew
         : 0;
@@ -370,7 +371,9 @@ function averageSharpe(windows: WalkForwardWindow[], side: 'in' | 'out'): number
             ? window.inSampleResult.sharpeRatio
             : window.outOfSampleResult.sharpeRatio
     );
-    const finite = values.filter(value => Number.isFinite(value));
+    const finite = values
+        .filter(value => Number.isFinite(value))
+        .map(value => sanitizeSharpeRatio(value));
     if (finite.length === 0) return 0;
     return finite.reduce((sum, value) => sum + value, 0) / finite.length;
 }
@@ -569,17 +572,9 @@ function calculateRobustnessScore(
     const requiredTrades = Math.max(1, Math.floor(minTotalOOSTrades));
     const tradeSufficiency = Math.min(1, combinedOOS.totalTrades / requiredTrades);
 
-    // Walk-Forward Efficiency: OOS/IS Sharpe ratio, clamped to [0, 1]
-    // - 1.0 = OOS performance equals or exceeds IS (ideal)
-    // - 0.0 = OOS performance is much worse or negative
-    let wfe = 0;
-    if (avgInSampleSharpe > 0 && Number.isFinite(avgOutOfSampleSharpe)) {
-        wfe = Math.max(0, Math.min(1, avgOutOfSampleSharpe / avgInSampleSharpe));
-    } else if (avgInSampleSharpe <= 0 && avgOutOfSampleSharpe > 0) {
-        // IS was bad but OOS is good - this is actually robust
-        wfe = 0.5;
-    }
-    const wfeScore = wfe * 40;
+    // Walk-Forward Efficiency: OOS/IS Sharpe ratio with stability guards.
+    const wfe = calculateWalkForwardEfficiency(avgInSampleSharpe, avgOutOfSampleSharpe);
+    const wfeScore = Math.min(1, wfe) * 40;
 
     const stabilityScore = (parameterStability / 100) * 25;
 
@@ -601,6 +596,22 @@ function calculateRobustnessScore(
     const rawScore = wfeScore + stabilityScore + oosWinScore + consistencyScore;
     const adjustedScore = rawScore * tradeSufficiency;
     return Math.round(Math.max(0, Math.min(100, adjustedScore)));
+}
+
+function calculateWalkForwardEfficiency(avgInSampleSharpe: number, avgOutOfSampleSharpe: number): number {
+    const inSharpe = sanitizeSharpeRatio(avgInSampleSharpe);
+    const outSharpe = sanitizeSharpeRatio(avgOutOfSampleSharpe);
+
+    if (inSharpe > 0.05) {
+        return Math.max(0, Math.min(2, outSharpe / inSharpe));
+    }
+
+    if (inSharpe <= 0.05 && outSharpe > 0.05) {
+        // If IS was flat/weak but OOS is genuinely positive, assign neutral efficiency.
+        return 0.5;
+    }
+
+    return 0;
 }
 
 
@@ -802,7 +813,7 @@ export async function runWalkForwardAnalysis(
     const avgInSampleSharpe = averageSharpe(scoringWindows, 'in');
     const avgOutOfSampleSharpe = averageSharpe(scoringWindows, 'out');
 
-    const walkForwardEfficiency = avgInSampleSharpe > 0 ? avgOutOfSampleSharpe / avgInSampleSharpe : 0;
+    const walkForwardEfficiency = calculateWalkForwardEfficiency(avgInSampleSharpe, avgOutOfSampleSharpe);
     const parameterStability = calculateParameterStability(scoringWindows, parameterRanges);
     const robustnessScore = calculateRobustnessScore(
         avgInSampleSharpe,
@@ -848,28 +859,34 @@ export async function quickWalkForward(
     data = ensureCleanData(data);
 
     const totalBars = data.length;
-    const targetWindows = 5;
+    // Keep quick mode bounded on very large datasets.
+    const targetWindows = totalBars >= 6000 ? 4 : 5;
     const testRatio = 0.30;
 
     const windowSize = Math.floor(totalBars / targetWindows);
     const testWindow = Math.max(20, Math.floor(windowSize * testRatio));
     const optimizationWindow = Math.max(50, windowSize - testWindow);
 
-    // Dynamic step calculation to prevent explosion
-    const numParams = Object.keys(strategy.defaultParams).length;
-    // Target approx 100-200 iterations total to be "quick"
-    const targetTotalIterations = 200;
-
-    // Steps = Target ^ (1/KPI)
-    // We want at least 2 steps per param usually, but if many params, strictly limit.
-    // effectiveSteps takes into account that we iterate all params.
-    const stepsPerParam = Math.max(2, Math.floor(Math.pow(targetTotalIterations, 1 / Math.max(1, numParams))));
-
     const allowedParams = strategy.metadata?.walkForwardParams;
     const allowSet = allowedParams ? new Set(allowedParams) : null;
+    const tunableParamEntries = Object.entries(strategy.defaultParams)
+        .filter(([name]) => !allowSet || allowSet.has(name));
+
+    // Strict quick-mode optimization budget.
+    const tunableParamCount = Math.max(1, tunableParamEntries.length);
+    const maxCombinations = Math.min(600, Math.max(150, tunableParamCount * 40));
+    // Steps = TargetIterations ^ (1 / paramCount).
+    const targetTotalIterations = Math.max(60, Math.floor(maxCombinations * 0.6));
+    const stepsPerParam = Math.max(2, Math.floor(Math.pow(targetTotalIterations, 1 / tunableParamCount)));
+
     const parameterRanges: ParameterRange[] = [];
-    for (const [name, defaultValue] of Object.entries(strategy.defaultParams)) {
-        if (allowSet && !allowSet.has(name)) continue;
+    for (const [name, defaultValue] of tunableParamEntries) {
+        const isToggle = /^use[A-Z]/.test(name) && (defaultValue === 0 || defaultValue === 1);
+        if (isToggle) {
+            parameterRanges.push({ name, min: 0, max: 1, step: 1 });
+            continue;
+        }
+
         // Handle decimal parameters (like Fib levels 0.618, 0.382) differently from integer params
         const isDecimal = !Number.isInteger(defaultValue) && defaultValue < 1;
 
@@ -908,8 +925,9 @@ export async function quickWalkForward(
             testWindow,
             stepSize: testWindow,
             parameterRanges,
-            topN: 3,
-            minTrades: 3,
+            topN: 2,
+            minTrades: 2,
+            maxCombinations,
             onProgress
         },
         initialCapital,
@@ -1100,7 +1118,7 @@ export async function runFixedParamWalkForward(
     const avgInSampleSharpe = averageSharpe(scoringWindows, 'in');
     const avgOutOfSampleSharpe = averageSharpe(scoringWindows, 'out');
 
-    const walkForwardEfficiency = avgInSampleSharpe > 0 ? avgOutOfSampleSharpe / avgInSampleSharpe : 0;
+    const walkForwardEfficiency = calculateWalkForwardEfficiency(avgInSampleSharpe, avgOutOfSampleSharpe);
 
     // For fixed params, stability is 100% (no variation)
     const parameterStability = 100;

@@ -5,7 +5,7 @@ import { paramManager } from "./paramManager";
 import { backtestService } from "./backtestService";
 import { runBacktest, OHLCVData } from "./strategies/index";
 import { debugLogger } from "./debugLogger";
-import { buildConfirmationStates, filterSignalsWithConfirmations } from "./confirmationStrategies";
+import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth } from "./confirmationStrategies";
 
 // ============================================================================
 // Logic Test Configuration
@@ -111,13 +111,20 @@ class LogicTestService {
                 if (hasConfirmationFilters) {
                     const confirmationStates = buildConfirmationStates(mockData, confirmationStrategies, confirmationParams);
                     if (confirmationStates.length > 0) {
-                        signals = filterSignalsWithConfirmations(
-                            mockData,
-                            signals,
-                            confirmationStates,
-                            backtestSettings.entryConfirmation ?? 'none',
-                            backtestSettings.tradeDirection ?? 'long'
-                        );
+                        signals = backtestSettings.tradeDirection === 'both'
+                            ? filterSignalsWithConfirmationsBoth(
+                                mockData,
+                                signals,
+                                confirmationStates,
+                                backtestSettings.tradeFilterMode ?? backtestSettings.entryConfirmation ?? 'none'
+                            )
+                            : filterSignalsWithConfirmations(
+                                mockData,
+                                signals,
+                                confirmationStates,
+                                backtestSettings.tradeFilterMode ?? backtestSettings.entryConfirmation ?? 'none',
+                                backtestSettings.tradeDirection ?? 'long'
+                            );
                     }
                 }
 

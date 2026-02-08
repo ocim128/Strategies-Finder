@@ -19,6 +19,8 @@ export interface FinderOptions {
 	mode: FinderMode;
 	sortPriority: FinderMetric[];
 	useAdvancedSort: boolean;
+	multiTimeframeEnabled?: boolean;
+	timeframes?: string[];
 	topN: number;
 	steps: number;
 	rangePercent: number;
@@ -66,6 +68,7 @@ export interface EndpointSelectionAdjustment {
 export interface FinderResult {
 	key: string;
 	name: string;
+	timeframes?: string[];
 	params: StrategyParams;
 	/** Raw backtest result (includes any final forced liquidation). */
 	result: BacktestResult;

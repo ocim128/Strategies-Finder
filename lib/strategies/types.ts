@@ -51,9 +51,12 @@ export interface StrategyParams {
     [key: string]: number;
 }
 
-export type EntryConfirmationMode = 'none' | 'close' | 'volume' | 'rsi';
-export type TradeDirection = 'long' | 'short';
+export type TradeFilterMode = 'none' | 'close' | 'volume' | 'rsi' | 'trend' | 'adx';
+/** @deprecated Use TradeFilterMode. */
+export type EntryConfirmationMode = TradeFilterMode;
+export type TradeDirection = 'long' | 'short' | 'both';
 export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
+export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';
 
 export interface BacktestSettings {
     atrPeriod?: number;
@@ -80,14 +83,17 @@ export interface BacktestSettings {
     adxMin?: number;
     adxMax?: number;
 
-    entryConfirmation?: EntryConfirmationMode;
+    tradeFilterMode?: TradeFilterMode;
+    /** @deprecated Use tradeFilterMode. */
+    entryConfirmation?: TradeFilterMode;
     confirmLookback?: number;
     volumeSmaPeriod?: number;
     volumeMultiplier?: number;
     rsiPeriod?: number;
     rsiBullish?: number;
     rsiBearish?: number;
-    /** Optional list of strategy keys used as entry confirmation filters */
+    marketMode?: MarketMode;
+    /** Optional list of strategy keys used as additional trade filters */
     confirmationStrategies?: string[];
     /** Optional parameter overrides for confirmation strategies */
     confirmationStrategyParams?: Record<string, StrategyParams>;

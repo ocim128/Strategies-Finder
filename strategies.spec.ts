@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time } from './lib/strategies/index';
 import { detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
+import { simple_regression_line } from './lib/strategies/lib/simple-regression-line';
 const durabilityModule = require('./lib/finder/durability');
 
 const { createDurabilityContext, evaluateDurability } = durabilityModule;
@@ -335,6 +336,31 @@ describe('Backtesting Engine', () => {
         expect(result.netProfit).to.equal(200);
     });
 
+    it('should flip position on opposite signals when trade direction is both', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 101, low: 95, close: 100, volume: 1000 }, // Short entry
+            { time: '2023-01-03' as Time, open: 90, high: 91, low: 88, close: 90, volume: 1000 },   // Flip to long
+            { time: '2023-01-04' as Time, open: 95, high: 96, low: 94, close: 95, volume: 1000 },   // Final close
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'sell', price: 100 },
+            { time: '2023-01-03' as Time, type: 'buy', price: 90 },
+        ];
+
+        const settings = { tradeDirection: 'both' as const };
+        const full = runBacktest(data, signals, 1000, 100, 0, settings);
+        const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings);
+
+        expect(full.totalTrades).to.equal(2);
+        expect(full.trades[0].type).to.equal('short');
+        expect(full.trades[1].type).to.equal('long');
+        expect(full.netProfit).to.be.closeTo(161.1111, 1e-4);
+        expect(compact.totalTrades).to.equal(full.totalTrades);
+        expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-8);
+    });
+
     it('should handle commission correctly', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 105, low: 95, close: 100, volume: 1000 },
@@ -493,5 +519,55 @@ describe('Finder Durability', () => {
         expect(metrics.enabled).to.equal(true);
         expect(metrics.outOfSampleTrades).to.equal(2);
         expect(metrics.outOfSampleNetProfitPercent).to.be.greaterThan(0);
+    });
+});
+
+describe('Simple Regression Line Strategy', () => {
+    it('should produce stable signals and expose walk-forward metadata', () => {
+        const data: OHLCVData[] = [];
+
+        for (let i = 0; i < 320; i++) {
+            const trend = i < 160 ? (100 + (i * 0.28)) : (145 - ((i - 160) * 0.24));
+            const cycle = Math.sin(i / 6) * 2.2;
+            const shock =
+                i % 37 === 0 ? -4.5 :
+                    i % 41 === 0 ? 4.2 :
+                        i % 23 === 0 ? -2.8 :
+                            0;
+            const close = trend + cycle + shock;
+
+            data.push({
+                time: (i + 1) as unknown as Time,
+                open: close - 0.4,
+                high: close + 0.9,
+                low: close - 0.9,
+                close,
+                volume: 1000 + (i % 15) * 25
+            });
+        }
+
+        const params = {
+            lookback: 50,
+            slopeThresholdPct: 0.015,
+            zEntry: 1.05,
+            zExit: 0.3,
+            maxHoldBars: 45,
+            cooldownBars: 3,
+            useShorts: 1
+        };
+
+        const signals = simple_regression_line.execute(data, params);
+        expect(signals.length).to.be.greaterThan(4);
+        expect(signals.some(s => s.type === 'buy')).to.equal(true);
+        expect(signals.some(s => s.type === 'sell')).to.equal(true);
+        expect(signals.every(s => Number.isFinite(s.price))).to.equal(true);
+
+        const indicators = simple_regression_line.indicators?.(data, params) ?? [];
+        expect(indicators.length).to.equal(3);
+        expect((indicators[0].values as (number | null)[]).length).to.equal(data.length);
+
+        expect(simple_regression_line.metadata?.walkForwardParams).to.include('lookback');
+        expect(simple_regression_line.metadata?.walkForwardParams).to.include('zEntry');
+        expect(simple_regression_line.metadata?.walkForwardParams).to.include('zExit');
     });
 });

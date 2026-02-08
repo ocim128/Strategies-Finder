@@ -89,11 +89,20 @@
     </div>
 
     <div class="section-header">
-        <div class="section-title">Short Mode</div>
-        <label class="section-toggle" aria-label="Toggle short mode">
-            <input type="checkbox" id="shortModeToggle" checked>
-            <span class="section-toggle-track"></span>
-        </label>
+        <div class="section-title">Trade Direction</div>
+    </div>
+    <div class="section-body">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Direction Mode</label>
+                <select class="param-input" id="tradeDirection">
+                    <option value="long">Long</option>
+                    <option value="short" selected>Short</option>
+                    <option value="both">Both (Flip)</option>
+                </select>
+                <div class="param-hint">Both mode exits and reverses on opposite entry signals.</div>
+            </div>
+        </div>
     </div>
 
     <div class="section-header">
@@ -115,6 +124,16 @@
                 <div class="param-hint">Simple shows core stops. Advanced adds scale-out, break-even, and time stop.
                     Percentage uses fixed % from entry.
                 </div>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Market Mode</label>
+                <select class="param-input" id="marketMode">
+                    <option value="all" selected>All Markets</option>
+                    <option value="uptrend">Uptrend</option>
+                    <option value="downtrend">Downtrend</option>
+                    <option value="sideway">Sideway / Range</option>
+                </select>
+                <div class="param-hint">Trade filter by market regime before opening positions.</div>
             </div>
         </div>
         <div class="risk-simple-advanced" id="riskSimpleAdvanced">
@@ -300,25 +319,28 @@
     </div>
 
     <div class="section-header">
-        <div class="section-title">Entry Confirmation</div>
-        <label class="section-toggle" aria-label="Toggle entry confirmation">
-            <input type="checkbox" id="entrySettingsToggle">
+        <div class="section-title">Trade Filter</div>
+        <label class="section-toggle" aria-label="Toggle trade filter">
+            <input type="checkbox" id="tradeFilterSettingsToggle">
             <span class="section-toggle-track"></span>
         </label>
     </div>
-    <div class="section-body" id="entrySettings">
+    <div class="section-body" id="tradeFilterSettings">
         <div class="param-group">
-            <label class="param-label">Confirmation Mode</label>
-            <select class="param-input" id="entryConfirmation">
+            <label class="param-label">Filter Mode</label>
+            <select class="param-input" id="tradeFilterMode">
                 <option value="none" selected>None</option>
                 <option value="close">Close Breakout</option>
                 <option value="volume">Volume Expansion</option>
                 <option value="rsi">RSI Confirmation</option>
+                <option value="trend">Trend Alignment (EMA)</option>
+                <option value="adx">ADX Strength</option>
             </select>
+            <div class="param-hint">Simple trade-quality filter applied before opening positions.</div>
         </div>
         <div class="param-row">
             <div class="param-group">
-                <label class="param-label">Confirm Lookback (bars)</label>
+                <label class="param-label">Filter Lookback (bars)</label>
                 <input type="number" class="param-input" id="confirmLookback" value="1" min="1">
             </div>
             <div class="param-group">

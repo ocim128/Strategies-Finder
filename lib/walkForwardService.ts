@@ -684,11 +684,15 @@ class WalkForwardService {
 
     private setLoading(loading: boolean): void {
         const btn = document.getElementById('wf-run-btn') as HTMLButtonElement | null;
+        const quickBtn = document.getElementById('wf-quick-btn') as HTMLButtonElement | null;
         const spinner = document.getElementById('wf-spinner');
 
         if (btn) {
             btn.disabled = loading;
             btn.textContent = loading ? 'Analyzing...' : 'Run Walk-Forward';
+        }
+        if (quickBtn) {
+            quickBtn.disabled = loading;
         }
         if (spinner) {
             spinner.style.display = loading ? 'inline-block' : 'none';

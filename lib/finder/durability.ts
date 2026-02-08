@@ -6,6 +6,7 @@ import {
 	compareTime,
 	runBacktestCompact
 } from "../strategies/index";
+import { calculateSharpeRatioFromReturns, sanitizeSharpeRatio } from "../strategies/performance-metrics";
 import type {
 	EndpointSelectionAdjustment,
 	FinderDurabilityContext,
@@ -81,13 +82,7 @@ export function buildSelectionResult(
 	const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
 
 	const returns = filteredTrades.map(t => t.pnlPercent);
-	const avgReturn = returns.length > 0
-		? returns.reduce((sum, value) => sum + value, 0) / returns.length
-		: 0;
-	const stdReturn = returns.length > 1
-		? Math.sqrt(returns.reduce((sum, value) => sum + Math.pow(value - avgReturn, 2), 0) / (returns.length - 1))
-		: 0;
-	const sharpeRatio = stdReturn > 0 ? avgReturn / stdReturn : 0;
+	const sharpeRatio = calculateSharpeRatioFromReturns(returns);
 
 	return {
 		result: {
@@ -204,7 +199,8 @@ export function evaluateDurability(
 	const pfScore = clamp((outPf - 0.8) / 1.7, 0, 1);
 	const netScore = clamp((outOfSample.netProfitPercent + 2) / 8, 0, 1);
 	const ddScore = 1 - clamp(outOfSample.maxDrawdownPercent / 12, 0, 1);
-	const sharpeScore = clamp((outOfSample.sharpeRatio + 0.4) / 1.4, 0, 1);
+	const oosSharpe = sanitizeSharpeRatio(outOfSample.sharpeRatio);
+	const sharpeScore = clamp((oosSharpe + 0.4) / 1.4, 0, 1);
 	const consistency = inPf > 0 ? clamp(outPf / Math.max(1, inPf), 0, 1.25) / 1.25 : 0;
 	const tradeSufficiency = Math.min(1, outOfSample.totalTrades / Math.max(1, context.minOOSTrades));
 
@@ -234,7 +230,7 @@ export function evaluateDurability(
 		inSampleProfitFactor: inPf,
 		outOfSampleNetProfitPercent: outOfSample.netProfitPercent,
 		outOfSampleProfitFactor: outPf,
-		outOfSampleSharpeRatio: outOfSample.sharpeRatio,
+		outOfSampleSharpeRatio: oosSharpe,
 		outOfSampleMaxDrawdownPercent: outOfSample.maxDrawdownPercent,
 		outOfSampleTrades: outOfSample.totalTrades,
 		pass

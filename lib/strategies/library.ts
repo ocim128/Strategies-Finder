@@ -1,14 +1,4 @@
 import { Strategy } from './types';
-import { rsi_oversold } from './lib/rsi-oversold';
-import { triple_ma } from './lib/triple-ma';
-import { vwap_crossover } from './lib/vwap-crossover';
-
-import { volume_profile } from './lib/volume-profile';
-import { donchian_breakout } from './lib/donchian-breakout';
-import { supertrend_strategy } from './lib/supertrend';
-import { supertrend_confirmed } from './lib/supertrend-confirmed';
-import { parabolic_sar } from './lib/parabolic-sar';
-import { momentum_strategy } from './lib/momentum';
 import { fib_speed_fan } from './lib/fib-speed-fan';
 import { fib_speed_fan_corrected } from './lib/fib-speed-fan-corrected';
 import { fib_speed_fan_corrected2 } from './lib/fib-speed-fan-corrected2';
@@ -36,18 +26,15 @@ import { drawdown_regime_gate } from './lib/drawdown-regime-gate';
 import { regime_donchian_breakout } from './lib/regime-donchian-breakout';
 import { shock_reversion_trend_gate } from './lib/shock-reversion-trend-gate';
 import { momentum_volatility_rotation } from './lib/momentum-volatility-rotation';
+import { adx_atr_no_trade_zone } from './lib/adx-atr-no-trade-zone';
+import { simple_regression_line } from './lib/simple-regression-line';
+import { liquidity_sweep_reclaim } from './lib/liquidity-sweep-reclaim';
+import { volatility_compression_break } from './lib/volatility-compression-break';
+import { gap_fail_reversal } from './lib/gap-fail-reversal';
+import { exhaustion_spike_pullback } from './lib/exhaustion-spike-pullback';
+import { session_open_fakeout } from './lib/session-open-fakeout';
 
 export const strategies: Record<string, Strategy> = {
-    rsi_oversold,
-    triple_ma,
-    vwap_crossover,
-
-    volume_profile,
-    donchian_breakout,
-    supertrend_strategy,
-    supertrend_confirmed,
-    parabolic_sar,
-    momentum_strategy,
     fib_speed_fan,
     fib_speed_fan_corrected,
     fib_speed_fan_corrected2,
@@ -76,4 +63,11 @@ export const strategies: Record<string, Strategy> = {
     regime_donchian_breakout,
     shock_reversion_trend_gate,
     momentum_volatility_rotation,
+    adx_atr_no_trade_zone,
+    simple_regression_line,
+    liquidity_sweep_reclaim,
+    volatility_compression_break,
+    gap_fail_reversal,
+    exhaustion_spike_pullback,
+    session_open_fakeout,
 };

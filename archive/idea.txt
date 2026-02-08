@@ -1,45 +1,82 @@
-The strategy is a cross-country and regional ETF momentum rotation model that seeks to capture intermediate-term trend persistence across global equity index proxies. Each month it measures 6-month momentum (approximately 126 trading days) for a fixed universe of liquid, exchange-traded funds representing developed and emerging equity markets and select regional exposures. The core thesis is that relative strength across country and regional equity indexes tends to persist, so concentrating in the strongest recent performers should outperform a static global allocation over time.
+Buy long time frame RSI<30 events on high performing stocks and sell at 3% take profit. I built an algo alert system that does this and it’s free of charge for anyone who wants to use it. RSI<30 on a long time frame only occurs 10-15 times per stock on average.
 
-Portfolio construction is rules-based: at the start of each month, the strategy ranks all eligible ETFs by their 6-month momentum signal and holds an equal-weighted basket of the top 5. Rebalancing fully refreshes the portfolio to the current top-ranked set, selling positions that fall out of the top 5 and reallocating proceeds to new entrants. Decisions are made on daily price data but executed on a monthly schedule, with no explicit volatility targeting, stop-loss, sector or country caps, or cash filter; risk control is primarily via diversification across five positions and periodic re-ranking (turnover control via monthly frequency).
-==================================
+The Momentum Effect states that stocks that outperform in 6-12 months will out perform in the next 1 - 3 months. The algo updates the list of stocks based on that Momentum Effect moving window, filtering on stocks that perform 25% in past 3 months, 45% in past 6 months and 75% in past 12 months. Stocks must achieve at least one of these then get ranked based on how many they achieve and the size of each gain. The current list, 93 stocks achieve all 3, the next 45 met 2.
+
+The 3% TP doesn’t seem like much but the system alerts on up to 2000 events a year. And gaining just 3% after oversold for high performing stock is easy. Imagine compounding your $$ even 100 times in a year at 3%, that’s an effective gain of 1,822%.
+
+The current win rate is 86%
+
+============================
+How long is long time frame?
+
+It's definitely not intraday RSI. If you open a chart to 12 months, overlay RSI(14) with 5 minute candles you'll see RSI<30 crosses happen roughly 10 - 15 times per stock. The data base has over 50 million candles so we can calculate performance on stocks for Universe inclusion then track RSI oversold events on the 100 - 200 stocks in the Universe which is updated every 2-4 weeks. That's our Ram Jet channel. The Big Dipper channel is a smart DCA strategy for high performing ETF.
+
+For Ram Jet we track RSI events for those roughly 100 - 200 stocks (the current universe is 153). Each stock experiences roughly 10 - 15 RSI<30 oversold events every year. With 153 stocks that's up to 2,295 events which you can take advantage of for compounding. Even if you only trade 100 of the events per lot, imagine compounding that lot 3% x 100 times a year, essentially 1,822% annually.
+=============================
+Win rate is 86%. 3% TP is the exit criteria or max hold 10 days.
+
+Additive Performance - adding the % gain or loss of every alert (not performance)
+
+Gain: +811.5%
+
+Loss: -263.5%
+
+Net: +548.0%
+
+Since December 3rd 2025
+Simulated Trading ($10K / 3 Lots): • Starting: $10,000 • Current: $11,681.52 (+16.8%) • L3: $4,848 (14) | L2: $3,377 (5) | L1: $3,457 (10) • Trades Executed: 29 | Skipped: 308
+
+My personal results in my primary account since December 3rd is 37%.
+A second account I trade for my sister and started December 26th is 13.37%
+
+A third account I trade for my daughter since January 12th is 1.3%.
 ==================================
 
-The strategy is a monthly dual momentum allocation overlay across broad equity beta with a defensive regime switch. It computes approximately four month trailing total return momentum on US equities (SPY), developed and emerging ex US equities (VEU), and short dated T bills (SHV) using daily prices, and makes allocation decisions once per month shortly after the US market opens (with a short warm up period to seed indicators). The thesis is that relative strength across major equity regions persists in risk on regimes, while a simple absolute momentum filter versus cash identifies risk off periods when equities are likely to underperform.
+Interesting. Where did you see the hedge against the momentum effect or overlaying the 5-minute RSI on a 12-month chart?
 
-At each rebalance the portfolio holds a single ETF at a time: if US equity momentum is below T bill momentum, the strategy exits equity risk and rotates into the US aggregate bond market (BND) as a defensive carry and duration exposure; otherwise it holds the equity region with higher momentum between SPY and VEU. Positions are implemented as a full allocation with a fixed 1.3x target exposure (gross leverage) and are only traded when the selected ETF is not already held. The intended edge is trend and cross sectional momentum plus a cash based risk regime filter to reduce exposure during equity drawdowns.
+Hmm. Not sure I understand the question. I don't hedge against the momentum effect, I ride it. It's just a way to pick stocks with the highest probability of rising the fastest after an oversold event. I use Stock Charts and I trade on 2 min candles for granularity. What I've noticed is when I'm on a 12 month charting using 2 min candles up to 1 hour candles the RSI is the same. So my 12 month chart on Stock Charts is actually built on 1 hour candles. I developed a method on my own to use a 1 hour polling time frame for RSI, but because I'm using 5 min candles, I can get a calculation that detects intraday dips within 5 min. If I strictly policed every hour, I would miss a lot of price action. I could essentially move to 2 min or 1 min candles and be even more accurate. That's coming later but, for now, I've already downloaded 40 million candles to accomplish this, 1 min candles would require 200 million candles. Not sure my database is ready for that yet, nor my pocketbook.
 ==================================
-==================================
-The strategy seeks equity diversification and risk-adjusted outperformance by exploiting the evolving cross-sectional dependence structure of large-cap US equities. It builds a topology-based relationship graph from daily log returns of the largest SPY constituents (top 200 by index weight) over a rolling historical lookback window, projecting returns into a low-dimensional manifold and clustering securities using correlation distance. The core alpha thesis is that allocating capital across distinct, persistent connectivity regimes (clusters) and de-emphasizing noisy, weakly connected names improves diversification versus naive market-cap or equal weighting and adapts to changing correlation structure.
 
-The investable universe is SPY constituents only, with decisions made on daily data; the topology and clustering are recalibrated periodically (approximately every few months, parameterized). Portfolio construction assigns capital first across clusters and then within clusters using a hierarchical equal-risk style heuristic: each cluster receives similar budget, with progressively smaller allocations to deeper/secondary cluster groupings; securities not belonging to identified clusters (outliers/noise) are effectively excluded. The portfolio is rebalanced each trading day shortly after the open to the latest cluster-derived weights, with full liquidation of prior holdings implied at each rebalance.
-==================================
-==================================
-The strategy harvests the value premium via a book-to-market signal within large cap US Equities, assuming firms with higher book-to-market (low price to book) are systematically underpriced relative to fundamentals and earn excess returns over long horizons. Each year it screens the US Equity universe using daily fundamental data and selects the largest 20% of stocks by market cap to target liquid, scalable stocks. Within that large cap subset, it selects the top 20% of stocks by their book-to-market values as the final universe. At the start of year, it forms a market-cap weighted portfolio and holds positions until the following year.
-==================================
-==================================
-This algorithm implements a multi-factor long/short Equity strategy that blends value, momentum, and quality signals to select US stocks. Each month, the universe is narrowed to the 250 most liquid securities, then the strategy evaluates three fundamental factors: one-month price change as a momentum indicator, book value per share as a measure of value, and operating margin as a proxy for quality.
-==================================
-==================================
-The strategy is a simple time series momentum or trend following overlay applied across major asset class ETFs, going long only when price is above a long term moving average. It targets persistent directional trends and attempts to avoid prolonged drawdowns by holding risk assets primarily during positive trend regimes, using a 210 trading day simple moving average (approximately 10 months) computed on daily data as the regime filter.
+Which of the 100+ stocks do you actually trade ?
 
-The investable universe is a fixed set of liquid US listed ETFs representing US equities (SPY), developed ex US equities (EFA), US bonds (BND), US REITs (VNQ), and broad commodities (GSG). Each trading day, for each ETF with a ready SMA, the strategy issues a one day long signal if the ETF close is above its SMA; ETFs not meeting the filter receive no long signal and are effectively held at zero weight. Portfolio construction equal weights all currently eligible long positions, rebalancing as signals change, with immediate execution. There are no explicit risk management overlays, volatility scaling, leverage controls, stop losses, or drawdown limits beyond the implicit de risking that occurs when an ETF falls below its moving average.
-==================================
-==================================
-The strategy expresses a contrarian country rotation thesis: each year it allocates 100 percent of capital to the single country equity ETF with the lowest trailing 12 month total return, betting on mean reversion in country level equity performance after prolonged underperformance. The investable universe is a predefined list of liquid, US listed country and region index ETFs spanning developed and emerging markets (including SPY for the US), so the portfolio is always long one national equity beta exposure rather than individual securities.
 
-Signals are computed from daily prices using a 252 trading day rate of change, with an initial warmup period to ensure the one year momentum measure is available before trading. The portfolio is rebalanced once per year on the first trading day of the year shortly after the US market opens, at which point the strategy ranks all eligible ETFs by trailing 12 month return and buys the worst performer at full notional, liquidating any prior holding. Risk controls are minimal: the approach is fully concentrated (single name, 100 percent long), implicitly relying on diversification at the country index level and the low turnover annual rebalance to manage transaction costs; there are no explicit volatility targeting, drawdown limits, or stop loss rules.
-==================================
-==================================
-The strategy seeks to capture a liquidity or turnover effect within the small cap segment by exploiting the empirical tendency for the least traded (lowest share turnover) small caps to outperform the most actively traded (highest turnover) small caps over longer horizons. Each year, it builds an equity long short portfolio from US stocks with fundamental data and prices above 5, first restricting the investable set to the top 500 names by dollar trading volume (a practical tradability screen) and then focusing on the lowest quartile by market capitalization (small caps). Within this small cap subset, it computes trailing 12 month turnover using daily volume averaged over approximately 252 trading days divided by shares outstanding, and forms two tails: a long basket in the bottom 5th percentile of turnover and a short basket in the top 95th percentile.
+The list of stock is updated every 2-4 weeks. The system allows us to filter based on market cap first so we’re primarily dealing with companies that more likely have good revenue and profits. From there we download candles for 12 months and filter on performance. Our current universe filters on 45%, 65% and 75% gain performance for 3, 6, and 12 months respectively. To make the list a stock has to meet at least one of these but we rank them and most of the stocks meet all three and the rest 2 of the criteria.
+===================================
+I've been investing since the 90's, Swing trading since 2000, and day trading since 2017. I blended the strategies into a swing trading, scalping strategy for revenue and DCA in to ETF and Big / Mega caps for long term hold with DCA. The foundation for all this is RSI<30 events which I then add a rating for each of the stock that experience an RSI<30 cross over. I rate the stocks based on a weighting of performance gain, mean reversion, consensus price target distance, beta, PEG and price. The backtesting performs consistently above 100% over 12 months.
 
-Rebalancing occurs annually at the start of the year using daily data inputs, equal weighting positions within each side and targeting approximately 40 percent gross long and 40 percent gross short exposure, with the remainder left in cash. All holdings are fully refreshed at rebalance (existing positions are liquidated and replaced). The alpha source is cross sectional mispricing or risk premia linked to liquidity and trading activity in small caps, expressed via a diversified tail spread between extremely illiquid and extremely high turnover names.
-==================================
-==================================
-The strategy is a defensive allocation model that times exposure between US equities and gold using a drawdown regime signal. It assumes equity downside risk clusters into regimes and that gold provides convex protection when the probability of entering a large drawdown regime rises. The signal is derived from SPY weekly drawdowns computed over a rolling window and augmented with the weekly change in drawdown to capture momentum in downside stress. A two state Gaussian mixture hidden Markov model estimates the latent regime and transition dynamics, and the strategy interprets one state as the high drawdown regime based on the state with the worse drawdown characteristics.
+I like the idea of using an algo system to create alerts because a computer can track many more things than a human. However, I still believe a human can still trade better than a computer so I don't automate my trades, but instead consider each alert and only trade some of them. This allows me to choose the best entry point, waiting for dips on my charts. For example, if the VIX is high, I will usually wait until the end of the day to buy since most stocks will continue to decline. If the VIX is high enough, I'll wait a day before I buy.
 
-Portfolio weights are updated weekly (and once immediately after warmup). The position in GLD is set to the model implied probability of transitioning into the high drawdown regime over the next step, with the remaining weight allocated to SPY, producing a continuous 0 to 100 percent hedge ratio rather than binary switching. The approach targets improved drawdown control and crisis resilience by systematically increasing gold exposure when equity drawdown risk is elevated, using only historical price data and no leverage or explicit stop loss beyond the dynamic reallocation.
-==================================
-==================================
-The strategy trades SVXY (short volatility exposure) using a single tactical long position intended to harvest the volatility risk premium when near term downside momentum appears to be decelerating. The core signal is a short term rate of change inflection filter: the system enters only when the 5 day rate of change is falling versus the prior day, consistent with seeking entry after a brief weakening phase rather than chasing strength. Decisions are evaluated daily using end of day price based indicators, with trading and stop management triggered by a scheduled daily rebalance.
+I can also choose when to exit. I always set a small % sell limit, but may choose to exit earlier or sometimes later. My strategy takes advantage of compounding events so I don't mind earning a small gain on each trade, but do it over and over again. With an automated alert system, the algo handles the time consuming part and I can concentrate on making the trade.
 
-Upon a valid entry signal, the strategy buys SVXY and sizes the position to target approximately 25 percent annualized portfolio volatility, using a 30 day standard deviation of 1 day returns annualized; the allocation is capped at 100 percent notional. Risk is controlled with an ATR based trailing stop: an initial stop is set 2 times the 20 day ATR below the entry price, then ratcheted upward whenever a new post entry high is made (never loosened), forcing exit on adverse moves while allowing gains to run. The alpha source is exposure timing and volatility scaled sizing in a structurally carry favorable instrument.
+I use API's to collect price information on a few thousand stocks which I then manipulate to calculate stock performance and calculate mean reversion. I also use the API's to get price targets analyst ratings, PEG Ratio, beta, and volume. I use all of the information to rate each stock each time an alert is created so all the data is fresh and timely. The rating lets me know which stocks might do better than others.
+
+https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fi-ported-my-trading-strategy-in-to-an-algo-alerting-system-v0-thqhkyk5hfag1.png%3Fwidth%3D1080%26crop%3Dsmart%26auto%3Dwebp%26s%3D24c5341ed753bb344c2d62dede6c3e278a184950
+I made a change to the system for a more accurate RSI Crossover threshold the beginning of December and forward testing (paper) achieved ~16%.
+https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fi-ported-my-trading-strategy-in-to-an-algo-alerting-system-v0-iu2706xmhfag1.png%3Fwidth%3D1080%26crop%3Dsmart%26auto%3Dwebp%26s%3D7907064de3e420b6471d07d043fd1a97c1ab29bc
+I started trading my alerts mid-November and have gained 82%. I started out with smaller lots and slowly worked my way up to $5000 per trade.
+https://www.reddit.com/media?url=https%3A%2F%2Fpreview.redd.it%2Fi-ported-my-trading-strategy-in-to-an-algo-alerting-system-v0-qqela4f4chag1.jpg%3Fwidth%3D1080%26crop%3Dsmart%26auto%3Dwebp%26s%3Dd7fe76e4259f5fd186e03b2b079626932822aa55
+The system calculates a rating for each stock using Performance (Gain%), PEG Ratio, Mean Reversion Distance, Consensus Price Target distance, Beta, Volume, and Price (lower priced stocks can reach 3% faster). They only need to post a 3% gain to close. Out of 222 events only 27 were traded - that's only 1 trade every 11 days. In forward, real trading, sure, very hard to achieve 100% close rate, but the close rate is still very high. In my forward trading I'm at slightly higher than a 90% close rate.
+==========================
+The system I developed creates the alerts. It downloads 5 min candles using an API with AlphaVantage, downloads stock info from the SEC, and VIX info from indices-API.
+
+I change my list of stocks every couple of weeks because the info is always changing. I rerun the picker with different criteria taking in to consideration market trends and most weight is placed on recent performance 3 months or less. After the list of stocks is created, the system downloads price data for each stock in the list daily - 5 min candles. The system also checks up to date info for a stock when it is alerted. It checks analyst ratings, distance from price target, distance from mean reversion, PEG ratio, volume, beta, along with the performance data to calculate a score. Each alerted stock is given a rating that predicts it ability to post at least 3% gain from an oversold condition.
+===========================
+You have to couple trading strategy with specific stocks. The best strategy in bad stocks will fail.
+
+This is why my algo service tracks and finds the best out performers of the past 6-12 months. The momentum effect states that stocks that perform well in 6-12 months continue to perform well in the next 1-3. The system rebuilds the list of stocks every 2-4 weeks.
+
+The stocks perform at 45%, 65%, and 75% for 3, 6, and 12 months.
+
+The system alerts when the list of stocks which is usually between 100 and 200 stocks reaches RSI<30 for a long timeframe, not intraday timeframe.
+
+Set a TP sell limit for 3%.
+
+The system sends roughly 2,000 alerts in a year. Imagine compounding at 3% hundreds of times a year. 3% is easily reached.
+
+Here are the results since December 3rd 2025.
+
+All Time (since Dec 3): • Alerts: 477 | Closed: 424 | Open: 53 • Avg Hold: 3.8 trading days • Win Rate: 82.8% • Mature Win Rate: 81.7% (excl. last 4d) • Max Hold: 10 trading days (auto-close)
+
+💰 Simulated Trading ($10K / 3 Lots): • Starting: $10,000 • Current: $15,541.53 (+55.4%) • L1: $5,932 (22) | L2: $4,949 (17) | L3: $4,661 (16) • Trades Executed: 55 | Skipped: 369
+
+

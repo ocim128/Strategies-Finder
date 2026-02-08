@@ -8,7 +8,7 @@ import { chartManager } from "./chartManager";
 //     EntryConfirmationMode
 // } from "../../../../src/strategies/index";
 
-import { runBacktest, StrategyParams, BacktestSettings, EntryConfirmationMode, ExecutionModel, buildEntryBacktestResult, BacktestResult } from "./strategies/index";
+import { runBacktest, StrategyParams, BacktestSettings, TradeFilterMode, ExecutionModel, buildEntryBacktestResult, BacktestResult } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./paramManager";
 import { debugLogger } from "./debugLogger";
@@ -18,6 +18,10 @@ import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsW
 
 export class BacktestService {
     private warnedStrictEngine = false;
+
+    private resolveTradeFilterMode(settings: BacktestSettings): TradeFilterMode {
+        return (settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none') as TradeFilterMode;
+    }
 
     public async runCurrentBacktest() {
         const startedAt = Date.now();
@@ -71,22 +75,23 @@ export class BacktestService {
             await this.sleep(100);
 
             const confirmationStrategies = settings.confirmationStrategies ?? [];
+            const tradeFilterMode = this.resolveTradeFilterMode(settings);
             const confirmationStates = confirmationStrategies.length > 0
                 ? buildConfirmationStates(state.ohlcvData, confirmationStrategies, settings.confirmationStrategyParams)
                 : [];
             const filteredSignals = confirmationStates.length > 0
-                ? (strategy.metadata?.role === 'entry'
+                ? ((strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both')
                     ? filterSignalsWithConfirmationsBoth(
                         state.ohlcvData,
                         signals,
                         confirmationStates,
-                        settings.entryConfirmation ?? 'none'
+                        tradeFilterMode
                     )
                     : filterSignalsWithConfirmations(
                         state.ohlcvData,
                         signals,
                         confirmationStates,
-                        settings.entryConfirmation ?? 'none',
+                        tradeFilterMode,
                         settings.tradeDirection ?? 'long'
                     ))
                 : signals;
@@ -104,6 +109,7 @@ export class BacktestService {
             delete (rustSettings as { executionModel?: string }).executionModel;
             delete (rustSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
             delete (rustSettings as { slippageBps?: number }).slippageBps;
+            delete (rustSettings as { marketMode?: string }).marketMode;
 
             if (strategy.metadata?.role === 'entry' && entryStats) {
                 result = buildEntryBacktestResult(entryStats);
@@ -267,18 +273,23 @@ export class BacktestService {
 
     public getBacktestSettings(): BacktestSettings {
         const riskEnabled = this.isToggleEnabled('riskSettingsToggle');
-        const entryEnabled = this.isToggleEnabled('entrySettingsToggle');
+        const tradeFilterEnabled = this.isToggleEnabled('tradeFilterSettingsToggle');
         const confirmationEnabled = this.isToggleEnabled('confirmationStrategiesToggle', false);
-        const shortModeEnabled = this.isToggleEnabled('shortModeToggle', false);
         const riskMode = (document.getElementById('riskMode') as HTMLSelectElement | null)?.value as 'simple' | 'advanced' | 'percentage';
         const useAdvancedRisk = riskMode === 'advanced';
         const usePercentageRisk = riskMode === 'percentage';
 
-        const entryConfirmation = (document.getElementById('entryConfirmation') as HTMLSelectElement | null)?.value as EntryConfirmationMode | undefined;
+        const tradeFilterMode = (document.getElementById('tradeFilterMode') as HTMLSelectElement | null)?.value as TradeFilterMode | undefined;
         const confirmationStrategies = confirmationEnabled ? getConfirmationStrategyValues() : [];
         const confirmationStrategyParams = confirmationEnabled ? getConfirmationStrategyParams() : {};
         const executionModel = (document.getElementById('executionModel') as HTMLSelectElement | null)?.value as ExecutionModel | undefined;
         const resolvedExecutionModel: ExecutionModel = executionModel ?? 'signal_close';
+        const tradeDirectionRaw = (document.getElementById('tradeDirection') as HTMLSelectElement | null)?.value;
+        const tradeDirection = tradeDirectionRaw === 'short' || tradeDirectionRaw === 'both' ? tradeDirectionRaw : 'long';
+        const marketModeRaw = (document.getElementById('marketMode') as HTMLSelectElement | null)?.value;
+        const marketMode = marketModeRaw === 'uptrend' || marketModeRaw === 'downtrend' || marketModeRaw === 'sideway'
+            ? marketModeRaw
+            : 'all';
         return {
             atrPeriod: this.readNumberInput('atrPeriod', 14),
             stopLossAtr: riskEnabled && (riskMode === 'simple' || riskMode === 'advanced') ? this.readNumberInput('stopLossAtr', 1.5) : 0,
@@ -295,6 +306,7 @@ export class BacktestService {
             takeProfitPercent: riskEnabled && usePercentageRisk ? this.readNumberInput('takeProfitPercent', 10) : 0,
             stopLossEnabled: riskEnabled && usePercentageRisk ? this.isToggleEnabled('stopLossToggle', true) : false,
             takeProfitEnabled: riskEnabled && usePercentageRisk ? this.isToggleEnabled('takeProfitToggle', true) : false,
+            marketMode,
 
             // Regime filters (not exposed in UI here; keep explicit defaults for engine parity)
             trendEmaPeriod: 0,
@@ -305,16 +317,18 @@ export class BacktestService {
             adxMin: 0,
             adxMax: 0,
 
-            entryConfirmation: entryEnabled ? (entryConfirmation ?? 'none') : 'none',
-            confirmLookback: entryEnabled ? this.readNumberInput('confirmLookback', 1) : 1,
-            volumeSmaPeriod: entryEnabled ? this.readNumberInput('volumeSmaPeriod', 20) : 20,
-            volumeMultiplier: entryEnabled ? this.readNumberInput('volumeMultiplier', 1.5) : 1.5,
-            rsiPeriod: entryEnabled ? this.readNumberInput('confirmRsiPeriod', 14) : 14,
-            rsiBullish: entryEnabled ? this.readNumberInput('confirmRsiBullish', 55) : 55,
-            rsiBearish: entryEnabled ? this.readNumberInput('confirmRsiBearish', 45) : 45,
+            tradeFilterMode: tradeFilterEnabled ? (tradeFilterMode ?? 'none') : 'none',
+            // Legacy field for compatibility with existing Rust payloads and old saved configs.
+            entryConfirmation: tradeFilterEnabled ? (tradeFilterMode ?? 'none') : 'none',
+            confirmLookback: tradeFilterEnabled ? this.readNumberInput('confirmLookback', 1) : 1,
+            volumeSmaPeriod: tradeFilterEnabled ? this.readNumberInput('volumeSmaPeriod', 20) : 20,
+            volumeMultiplier: tradeFilterEnabled ? this.readNumberInput('volumeMultiplier', 1.5) : 1.5,
+            rsiPeriod: tradeFilterEnabled ? this.readNumberInput('confirmRsiPeriod', 14) : 14,
+            rsiBullish: tradeFilterEnabled ? this.readNumberInput('confirmRsiBullish', 55) : 55,
+            rsiBearish: tradeFilterEnabled ? this.readNumberInput('confirmRsiBearish', 45) : 45,
             confirmationStrategies,
             confirmationStrategyParams,
-            tradeDirection: shortModeEnabled ? 'short' : 'long',
+            tradeDirection,
             executionModel: resolvedExecutionModel,
             allowSameBarExit: this.isToggleEnabled('allowSameBarExitToggle', false),
             slippageBps: this.readNumberInput('slippageBps', 5)
@@ -356,7 +370,7 @@ export class BacktestService {
         const executionModel = settings.executionModel ?? 'signal_close';
         const allowSameBarExit = settings.allowSameBarExit ?? true;
         const slippageBps = settings.slippageBps ?? 0;
-        return executionModel !== 'signal_close' || slippageBps > 0 || !allowSameBarExit;
+        return executionModel !== 'signal_close' || slippageBps > 0 || !allowSameBarExit || settings.tradeDirection === 'both';
     }
 
     public addStrategyIndicators(params: StrategyParams) {

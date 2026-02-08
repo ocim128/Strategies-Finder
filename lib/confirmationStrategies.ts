@@ -1,5 +1,5 @@
 import { strategyRegistry } from "../strategyRegistry";
-import { type OHLCVData, type Signal, type Time, type EntryConfirmationMode, type TradeDirection, type StrategyParams } from "./strategies/types";
+import { type OHLCVData, type Signal, type Time, type TradeFilterMode, type TradeDirection, type StrategyParams } from "./strategies/types";
 
 export const MAX_CONFIRMATION_STRATEGIES = 5;
 
@@ -276,15 +276,18 @@ export function filterSignalsWithConfirmations(
     data: OHLCVData[],
     signals: Signal[],
     confirmationStates: Int8Array[],
-    entryConfirmation: EntryConfirmationMode,
+    tradeFilterMode: TradeFilterMode,
     tradeDirection: TradeDirection
 ): Signal[] {
+    if (tradeDirection === "both") {
+        return filterSignalsWithConfirmationsBoth(data, signals, confirmationStates, tradeFilterMode);
+    }
     if (confirmationStates.length === 0 || signals.length === 0) return signals;
 
     const timeIndex = getTimeIndex(data);
     const entryType: Signal["type"] = tradeDirection === "short" ? "sell" : "buy";
     const requiredState = tradeDirection === "short" ? -1 : 1;
-    const useCloseConfirm = entryConfirmation === "close";
+    const useCloseConfirm = tradeFilterMode === "close";
 
     const filtered: Signal[] = [];
 
@@ -325,12 +328,12 @@ export function filterSignalsWithConfirmationsBoth(
     data: OHLCVData[],
     signals: Signal[],
     confirmationStates: Int8Array[],
-    entryConfirmation: EntryConfirmationMode
+    tradeFilterMode: TradeFilterMode
 ): Signal[] {
     if (confirmationStates.length === 0 || signals.length === 0) return signals;
 
     const timeIndex = getTimeIndex(data);
-    const useCloseConfirm = entryConfirmation === "close";
+    const useCloseConfirm = tradeFilterMode === "close";
 
     const filtered: Signal[] = [];
 

@@ -1,6 +1,7 @@
-import { Trade, BacktestResult, OHLCVData, Signal, Time, BacktestSettings, EntryConfirmationMode, TradeDirection } from './types';
+import { Trade, BacktestResult, OHLCVData, Signal, Time, BacktestSettings, TradeFilterMode, MarketMode, TradeDirection } from './types';
 import { calculateATR, calculateEMA, calculateADX, calculateSMA, calculateRSI } from './indicators';
 import { ensureCleanData, getHighs, getLows, getCloses, getVolumes } from './strategy-helpers';
+import { calculateSharpeRatioFromMoments, calculateSharpeRatioFromReturns } from './performance-metrics';
 
 // ============================================================================
 // Backtesting Engine
@@ -31,13 +32,14 @@ interface NormalizedSettings {
     adxMin: number;
     adxMax: number;
 
-    entryConfirmation: EntryConfirmationMode;
+    tradeFilterMode: TradeFilterMode;
     confirmLookback: number;
     volumeSmaPeriod: number;
     volumeMultiplier: number;
     rsiPeriod: number;
     rsiBullish: number;
     rsiBearish: number;
+    marketMode: MarketMode;
     executionModel: 'signal_close' | 'next_open' | 'next_close';
     allowSameBarExit: boolean;
     slippageBps: number;
@@ -61,6 +63,7 @@ export interface PrecomputedIndicators extends IndicatorSeries {
 }
 
 interface PositionState {
+    direction: 'long' | 'short';
     entryTime: Time;
     entryPrice: number;
     size: number;
@@ -93,7 +96,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function normalizeBacktestSettings(settings?: BacktestSettings): NormalizedSettings {
-    const entryConfirmation = settings?.entryConfirmation ?? 'none';
+    const tradeFilterMode = settings?.tradeFilterMode ?? settings?.entryConfirmation ?? 'none';
     const rawExecutionModel = settings?.executionModel;
     const executionModel = rawExecutionModel === 'next_open' || rawExecutionModel === 'next_close' || rawExecutionModel === 'signal_close'
         ? rawExecutionModel
@@ -123,13 +126,16 @@ function normalizeBacktestSettings(settings?: BacktestSettings): NormalizedSetti
         adxMin: Math.max(0, toNumberOr(settings?.adxMin, 0)),
         adxMax: Math.max(0, toNumberOr(settings?.adxMax, 0)),
 
-        entryConfirmation,
+        tradeFilterMode,
         confirmLookback: Math.max(1, toNumberOr(settings?.confirmLookback, 1)),
         volumeSmaPeriod: Math.max(1, toNumberOr(settings?.volumeSmaPeriod, 20)),
         volumeMultiplier: Math.max(0, toNumberOr(settings?.volumeMultiplier, 1)),
         rsiPeriod: Math.max(1, toNumberOr(settings?.rsiPeriod, 14)),
         rsiBullish: clamp(toNumberOr(settings?.rsiBullish, 55), 0, 100),
         rsiBearish: clamp(toNumberOr(settings?.rsiBearish, 45), 0, 100),
+        marketMode: settings?.marketMode === 'uptrend' || settings?.marketMode === 'downtrend' || settings?.marketMode === 'sideway'
+            ? settings.marketMode
+            : 'all',
         executionModel,
         allowSameBarExit: settings?.allowSameBarExit ?? true,
         slippageBps: Math.max(0, toNumberOr(settings?.slippageBps, 0))
@@ -195,6 +201,49 @@ function applySlippage(price: number, side: 'buy' | 'sell', slippageRate: number
     return side === 'buy' ? price * (1 + slippageRate) : price * (1 - slippageRate);
 }
 
+function normalizeTradeDirection(settings?: BacktestSettings): TradeDirection {
+    return settings?.tradeDirection === 'short' || settings?.tradeDirection === 'both' ? settings.tradeDirection : 'long';
+}
+
+const MARKET_MODE_DEFAULT_EMA_PERIOD = 200;
+const MARKET_MODE_SLOPE_LOOKBACK = 20;
+const MARKET_MODE_SLOPE_THRESHOLD = 0.0008;
+const MARKET_MODE_SIDEWAY_DISTANCE = 0.015;
+const TRADE_FILTER_DEFAULT_TREND_EMA_PERIOD = 50;
+const TRADE_FILTER_DEFAULT_ADX_MIN = 20;
+
+function resolveTrendPeriod(config: NormalizedSettings): number {
+    if (config.trendEmaPeriod > 0) return config.trendEmaPeriod;
+    if (config.tradeFilterMode === 'trend') return TRADE_FILTER_DEFAULT_TREND_EMA_PERIOD;
+    return config.marketMode === 'all' ? 0 : MARKET_MODE_DEFAULT_EMA_PERIOD;
+}
+
+function signalToPositionDirection(type: Signal['type']): 'long' | 'short' {
+    return type === 'buy' ? 'long' : 'short';
+}
+
+function directionToSignalType(direction: 'long' | 'short'): Signal['type'] {
+    return direction === 'short' ? 'sell' : 'buy';
+}
+
+function entrySideForDirection(direction: 'long' | 'short'): 'buy' | 'sell' {
+    return direction === 'short' ? 'sell' : 'buy';
+}
+
+function exitSideForDirection(direction: 'long' | 'short'): 'buy' | 'sell' {
+    return direction === 'short' ? 'buy' : 'sell';
+}
+
+function directionFactorFor(direction: 'long' | 'short'): number {
+    return direction === 'short' ? -1 : 1;
+}
+
+function allowsSignalAsEntry(signalType: Signal['type'], tradeDirection: TradeDirection): boolean {
+    if (tradeDirection === 'both') return true;
+    if (tradeDirection === 'short') return signalType === 'sell';
+    return signalType === 'buy';
+}
+
 const timeIndexCache = new WeakMap<OHLCVData[], Map<string, number>>();
 
 function getTimeIndex(data: OHLCVData[]): Map<string, number> {
@@ -209,16 +258,16 @@ function getTimeIndex(data: OHLCVData[]): Map<string, number> {
     return cached;
 }
 
-function passesEntryConfirmation(
+function passesTradeFilter(
     data: OHLCVData[],
     entryIndex: number,
     config: NormalizedSettings,
     indicators: IndicatorSeries,
-    tradeDirection: TradeDirection
+    tradeDirection: 'long' | 'short'
 ): boolean {
-    if (config.entryConfirmation === 'none') return true;
+    if (config.tradeFilterMode === 'none') return true;
 
-    if (config.entryConfirmation === 'close') {
+    if (config.tradeFilterMode === 'close') {
         if (entryIndex <= 0) return false;
 
         const lookback = config.confirmLookback;
@@ -239,16 +288,39 @@ function passesEntryConfirmation(
         return data[entryIndex].close > highestHigh;
     }
 
-    if (config.entryConfirmation === 'volume') {
+    if (config.tradeFilterMode === 'volume') {
         const volumeSma = indicators.volumeSma[entryIndex];
         if (volumeSma === null || volumeSma === undefined) return false;
         return data[entryIndex].volume >= volumeSma * config.volumeMultiplier;
     }
 
-    if (config.entryConfirmation === 'rsi') {
+    if (config.tradeFilterMode === 'rsi') {
         const rsi = indicators.rsi[entryIndex];
         if (rsi === null || rsi === undefined) return false;
         return tradeDirection === 'short' ? rsi <= config.rsiBearish : rsi >= config.rsiBullish;
+    }
+
+    if (config.tradeFilterMode === 'trend') {
+        const ema = indicators.emaTrend[entryIndex];
+        if (ema === null || ema === undefined) return false;
+
+        const slopeLookback = Math.max(1, config.confirmLookback);
+        const slopeIndex = entryIndex - slopeLookback;
+        if (slopeIndex < 0) return false;
+        const prevEma = indicators.emaTrend[slopeIndex];
+        if (prevEma === null || prevEma === undefined) return false;
+
+        if (tradeDirection === 'short') {
+            return data[entryIndex].close < ema && ema < prevEma;
+        }
+        return data[entryIndex].close > ema && ema > prevEma;
+    }
+
+    if (config.tradeFilterMode === 'adx') {
+        const adx = indicators.adx[entryIndex];
+        if (adx === null || adx === undefined) return false;
+        const minAdx = config.adxMin > 0 ? config.adxMin : TRADE_FILTER_DEFAULT_ADX_MIN;
+        return adx >= minAdx;
     }
 
     return true;
@@ -259,9 +331,34 @@ function passesRegimeFilters(
     entryIndex: number,
     config: NormalizedSettings,
     indicators: IndicatorSeries,
-    tradeDirection: TradeDirection
+    tradeDirection: 'long' | 'short'
 ): boolean {
     const isShort = tradeDirection === 'short';
+    if (config.marketMode !== 'all') {
+        const ema = indicators.emaTrend[entryIndex];
+        if (ema === null || ema === undefined || ema === 0) return false;
+
+        const slopeIndex = entryIndex - MARKET_MODE_SLOPE_LOOKBACK;
+        if (slopeIndex < 0) return false;
+        const prevEma = indicators.emaTrend[slopeIndex];
+        if (prevEma === null || prevEma === undefined || prevEma === 0) return false;
+
+        const close = data[entryIndex].close;
+        const slope = (ema - prevEma) / prevEma;
+        const distance = Math.abs((close - ema) / ema);
+        const isUptrend = close > ema && slope >= MARKET_MODE_SLOPE_THRESHOLD;
+        const isDowntrend = close < ema && slope <= -MARKET_MODE_SLOPE_THRESHOLD;
+        const isSideway = Math.abs(slope) <= MARKET_MODE_SLOPE_THRESHOLD && distance <= MARKET_MODE_SIDEWAY_DISTANCE;
+
+        if (config.marketMode === 'uptrend') {
+            if (isShort || !isUptrend) return false;
+        } else if (config.marketMode === 'downtrend') {
+            if (!isShort || !isDowntrend) return false;
+        } else if (!isSideway) {
+            return false;
+        }
+    }
+
     if (config.trendEmaPeriod > 0) {
         const ema = indicators.emaTrend[entryIndex];
         if (ema === null || ema === undefined) return false;
@@ -311,8 +408,6 @@ function prepareSignals(
     const timeIndex = getTimeIndex(data);
 
     const prepared: PreparedSignal[] = [];
-    const entryType: Signal['type'] = tradeDirection === 'short' ? 'sell' : 'buy';
-    const exitType: Signal['type'] = tradeDirection === 'short' ? 'buy' : 'sell';
     const executionShift = getExecutionShift(config);
 
     signals.forEach((signal, order) => {
@@ -321,36 +416,64 @@ function prepareSignals(
             : timeIndex.get(timeKey(signal.time));
         if (signalIndex === undefined || signalIndex < 0 || signalIndex >= data.length) return;
 
-        if (signal.type === exitType) {
-            const exitIndex = signalIndex + executionShift;
-            if (exitIndex < 0 || exitIndex >= data.length) return;
-            const exitPrice = resolveExecutionPrice(data, signal, signalIndex, exitIndex, config);
+        if (tradeDirection !== 'both') {
+            const entryType: Signal['type'] = tradeDirection === 'short' ? 'sell' : 'buy';
+            const exitType: Signal['type'] = tradeDirection === 'short' ? 'buy' : 'sell';
+
+            if (signal.type === exitType) {
+                const exitIndex = signalIndex + executionShift;
+                if (exitIndex < 0 || exitIndex >= data.length) return;
+                const exitPrice = resolveExecutionPrice(data, signal, signalIndex, exitIndex, config);
+                prepared.push({
+                    time: data[exitIndex].time,
+                    type: exitType,
+                    price: exitPrice,
+                    reason: signal.reason,
+                    order
+                });
+                return;
+            }
+
+            if (signal.type !== entryType) return;
+
+            let entryIndex = signalIndex + executionShift;
+            if (config.tradeFilterMode === 'close') {
+                entryIndex = Math.max(entryIndex, signalIndex + 1);
+            }
+            if (entryIndex >= data.length) return;
+
+            if (!passesTradeFilter(data, entryIndex, config, indicators, tradeDirection)) return;
+            if (!passesRegimeFilters(data, entryIndex, config, indicators, tradeDirection)) return;
+
+            const entryPrice = resolveExecutionPrice(data, signal, signalIndex, entryIndex, config);
+
             prepared.push({
-                time: data[exitIndex].time,
-                type: exitType,
-                price: exitPrice,
+                time: data[entryIndex].time,
+                type: entryType,
+                price: entryPrice,
                 reason: signal.reason,
                 order
             });
             return;
         }
 
-        if (signal.type !== entryType) return;
+        if (signal.type !== 'buy' && signal.type !== 'sell') return;
 
         let entryIndex = signalIndex + executionShift;
-        if (config.entryConfirmation === 'close') {
+        if (config.tradeFilterMode === 'close') {
             entryIndex = Math.max(entryIndex, signalIndex + 1);
         }
         if (entryIndex >= data.length) return;
 
-        if (!passesEntryConfirmation(data, entryIndex, config, indicators, tradeDirection)) return;
-        if (!passesRegimeFilters(data, entryIndex, config, indicators, tradeDirection)) return;
+        const signalDirection = signalToPositionDirection(signal.type);
+        if (!passesTradeFilter(data, entryIndex, config, indicators, signalDirection)) return;
+        if (!passesRegimeFilters(data, entryIndex, config, indicators, signalDirection)) return;
 
         const entryPrice = resolveExecutionPrice(data, signal, signalIndex, entryIndex, config);
 
         prepared.push({
             time: data[entryIndex].time,
-            type: entryType,
+            type: signal.type,
             price: entryPrice,
             reason: signal.reason,
             order
@@ -410,16 +533,17 @@ export function precomputeIndicators(
         config.breakEvenAtR > 0;
 
     const atr = needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : [];
-    const emaTrend = config.trendEmaPeriod > 0 ? calculateEMA(closes, config.trendEmaPeriod) : [];
+    const trendPeriod = resolveTrendPeriod(config);
+    const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
 
-    const useAdx = (config.adxMin > 0 || config.adxMax > 0);
+    const useAdx = config.tradeFilterMode === 'adx' || config.adxMin > 0 || config.adxMax > 0;
     const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
     const adx = useAdx ? calculateADX(highs, lows, closes, adxPeriod) : [];
 
-    const volumeSma = config.entryConfirmation === 'volume'
+    const volumeSma = config.tradeFilterMode === 'volume'
         ? calculateSMA(volumes, config.volumeSmaPeriod)
         : [];
-    const rsi = config.entryConfirmation === 'rsi'
+    const rsi = config.tradeFilterMode === 'rsi'
         ? calculateRSI(closes, config.rsiPeriod)
         : [];
 
@@ -443,9 +567,7 @@ export function runBacktestCompact(
     sizing?: Partial<TradeSizingConfig>
 ): BacktestResult {
     const config = normalizeBacktestSettings(settings);
-    const tradeDirection: TradeDirection = settings.tradeDirection === 'short' ? 'short' : 'long';
-    const isShort = tradeDirection === 'short';
-    const directionFactor = isShort ? -1 : 1;
+    const tradeDirection = normalizeTradeDirection(settings);
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
 
@@ -464,16 +586,17 @@ export function runBacktestCompact(
         config.breakEvenAtR > 0;
 
     const atr = needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : [];
-    const emaTrend = config.trendEmaPeriod > 0 ? calculateEMA(closes, config.trendEmaPeriod) : [];
+    const trendPeriod = resolveTrendPeriod(config);
+    const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
 
-    const useAdx = (config.adxMin > 0 || config.adxMax > 0);
+    const useAdx = config.tradeFilterMode === 'adx' || config.adxMin > 0 || config.adxMax > 0;
     const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
     const adx = useAdx ? calculateADX(highs, lows, closes, adxPeriod) : [];
 
-    const volumeSma = config.entryConfirmation === 'volume'
+    const volumeSma = config.tradeFilterMode === 'volume'
         ? calculateSMA(volumes, config.volumeSmaPeriod)
         : [];
-    const rsi = config.entryConfirmation === 'rsi'
+    const rsi = config.tradeFilterMode === 'rsi'
         ? calculateRSI(closes, config.rsiPeriod)
         : [];
 
@@ -493,10 +616,6 @@ export function runBacktestCompact(
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
     let signalIdx = 0;
-    const entrySignalType: Signal['type'] = isShort ? 'sell' : 'buy';
-    const exitSignalType: Signal['type'] = isShort ? 'buy' : 'sell';
-    const entrySide: 'buy' | 'sell' = isShort ? 'sell' : 'buy';
-    const exitSide: 'buy' | 'sell' = isShort ? 'buy' : 'sell';
 
     let totalTrades = 0;
     let winningTrades = 0;
@@ -540,6 +659,8 @@ export function runBacktestCompact(
     const exitPosition = (exitPrice: number, exitSize: number) => {
         if (!position || exitSize <= 0) return;
 
+        const positionDirection = position.direction;
+        const directionFactor = directionFactorFor(positionDirection);
         const size = Math.min(exitSize, position.size);
         const exitValue = size * exitPrice;
         const entryValue = size * position.entryPrice;
@@ -560,16 +681,106 @@ export function runBacktestCompact(
         }
     };
 
+    const buildPositionFromSignal = (signal: Signal, barIndex: number): { nextPosition: PositionState; entryCommission: number } | null => {
+        if (!allowsSignalAsEntry(signal.type, tradeDirection)) return null;
+
+        const atrValue = needsAtr ? atr[barIndex] : null;
+        const requiresAtrForEntry =
+            config.stopLossAtr > 0 ||
+            config.takeProfitAtr > 0 ||
+            config.trailingAtr > 0 ||
+            config.partialTakeProfitAtR > 0 ||
+            config.breakEvenAtR > 0;
+
+        if (requiresAtrForEntry && (atrValue === null || atrValue === undefined)) return null;
+
+        const allocatedCapital = (sizingMode === 'fixed' && fixedTradeAmount > 0)
+            ? fixedTradeAmount
+            : capital * (positionSizePercent / 100);
+        if (!Number.isFinite(allocatedCapital) || allocatedCapital <= 0) return null;
+
+        const tradeValue = allocatedCapital / (1 + commissionRate);
+        const entryCommission = tradeValue * commissionRate;
+        const direction = signalToPositionDirection(signal.type);
+        const directionFactor = directionFactorFor(direction);
+        const entrySide = entrySideForDirection(direction);
+        const entryFillPrice = applySlippage(signal.price, entrySide, slippageRate);
+        if (!Number.isFinite(entryFillPrice) || entryFillPrice <= 0 || !Number.isFinite(tradeValue) || tradeValue <= 0) return null;
+
+        const shares = tradeValue / entryFillPrice;
+        if (!Number.isFinite(shares) || shares <= 0) return null;
+
+        const stopLossPrice = (atrValue !== null && atrValue !== undefined)
+            ? (config.stopLossAtr > 0
+                ? entryFillPrice - directionFactor * config.stopLossAtr * atrValue
+                : config.trailingAtr > 0
+                    ? entryFillPrice - directionFactor * config.trailingAtr * atrValue
+                    : null)
+            : null;
+
+        const takeProfitPrice = (atrValue !== null && atrValue !== undefined && config.takeProfitAtr > 0)
+            ? entryFillPrice + directionFactor * config.takeProfitAtr * atrValue
+            : null;
+
+        let riskPerShare = 0;
+        if (config.riskMode === 'percentage') {
+            if (config.stopLossEnabled && config.stopLossPercent > 0) {
+                riskPerShare = entryFillPrice * (config.stopLossPercent / 100);
+            }
+        } else if (atrValue !== null && atrValue !== undefined && config.stopLossAtr > 0) {
+            riskPerShare = config.stopLossAtr * atrValue;
+        }
+
+        const partialTargetPrice = (riskPerShare > 0 && config.partialTakeProfitAtR > 0)
+            ? entryFillPrice + directionFactor * riskPerShare * config.partialTakeProfitAtR
+            : null;
+
+        let finalStopLossPrice = stopLossPrice;
+        let finalTakeProfitPrice = takeProfitPrice;
+
+        if (config.riskMode === 'percentage') {
+            if (config.stopLossEnabled && config.stopLossPercent > 0) {
+                finalStopLossPrice = entryFillPrice * (1 - directionFactor * (config.stopLossPercent / 100));
+            }
+            if (config.takeProfitEnabled && config.takeProfitPercent > 0) {
+                finalTakeProfitPrice = entryFillPrice * (1 + directionFactor * (config.takeProfitPercent / 100));
+            }
+        }
+
+        return {
+            nextPosition: {
+                direction,
+                entryTime: signal.time,
+                entryPrice: entryFillPrice,
+                size: shares,
+                entryCommissionPerShare: shares > 0 ? entryCommission / shares : 0,
+                stopLossPrice: finalStopLossPrice,
+                takeProfitPrice: finalTakeProfitPrice,
+                riskPerShare,
+                barsInTrade: 0,
+                extremePrice: entryFillPrice,
+                partialTargetPrice,
+                partialTaken: false,
+                breakEvenApplied: false
+            },
+            entryCommission
+        };
+    };
+
     for (let i = 0; i < data.length; i++) {
         const candle = data[i];
 
         if (position) {
             position.barsInTrade += 1;
+            const positionDirection = position.direction;
+            const directionFactor = directionFactorFor(positionDirection);
+            const isShortPosition = positionDirection === 'short';
+            const exitSide = exitSideForDirection(positionDirection);
 
             // Check stop loss
             const stopLoss = position.stopLossPrice;
             if (stopLoss !== null) {
-                const stopHit = isShort ? candle.high >= stopLoss : candle.low <= stopLoss;
+                const stopHit = isShortPosition ? candle.high >= stopLoss : candle.low <= stopLoss;
                 if (stopHit) {
                     const exitPrice = applySlippage(stopLoss, exitSide, slippageRate);
                     exitPosition(exitPrice, position.size);
@@ -578,7 +789,7 @@ export function runBacktestCompact(
 
             // Check take profit (independent of stop loss)
             if (position && position.takeProfitPrice !== null) {
-                const takeHit = isShort ? candle.low <= position.takeProfitPrice : candle.high >= position.takeProfitPrice;
+                const takeHit = isShortPosition ? candle.low <= position.takeProfitPrice : candle.high >= position.takeProfitPrice;
                 if (takeHit) {
                     const exitPrice = applySlippage(position.takeProfitPrice, exitSide, slippageRate);
                     exitPosition(exitPrice, position.size);
@@ -587,7 +798,7 @@ export function runBacktestCompact(
 
             // Check partial take profit
             if (position && !position.partialTaken && position.partialTargetPrice !== null) {
-                const partialHit = isShort ? candle.low <= position.partialTargetPrice : candle.high >= position.partialTargetPrice;
+                const partialHit = isShortPosition ? candle.low <= position.partialTargetPrice : candle.high >= position.partialTargetPrice;
                 if (partialHit) {
                     const partialSize = position.size * (config.partialTakeProfitPercent / 100);
                     if (partialSize > 0) {
@@ -601,7 +812,7 @@ export function runBacktestCompact(
             }
 
             if (position && config.timeStopBars > 0 && position.barsInTrade >= config.timeStopBars) {
-                const isLosing = isShort ? candle.close >= position.entryPrice : candle.close <= position.entryPrice;
+                const isLosing = isShortPosition ? candle.close >= position.entryPrice : candle.close <= position.entryPrice;
                 if (!position.partialTaken && isLosing) {
                     const exitPrice = applySlippage(candle.close, exitSide, slippageRate);
                     exitPosition(exitPrice, position.size);
@@ -613,11 +824,11 @@ export function runBacktestCompact(
                 if (atrValue !== null && atrValue !== undefined) {
                     if (config.breakEvenAtR > 0 && position.riskPerShare > 0 && !position.breakEvenApplied) {
                         const breakEvenTarget = position.entryPrice + directionFactor * position.riskPerShare * config.breakEvenAtR;
-                        const breakEvenHit = isShort ? candle.low <= breakEvenTarget : candle.high >= breakEvenTarget;
+                        const breakEvenHit = isShortPosition ? candle.low <= breakEvenTarget : candle.high >= breakEvenTarget;
                         if (breakEvenHit) {
                             position.stopLossPrice = position.stopLossPrice === null
                                 ? position.entryPrice
-                                : isShort
+                                : isShortPosition
                                     ? Math.min(position.stopLossPrice, position.entryPrice)
                                     : Math.max(position.stopLossPrice, position.entryPrice);
                             position.breakEvenApplied = true;
@@ -627,14 +838,14 @@ export function runBacktestCompact(
                     if (config.trailingAtr > 0) {
                         const trailStop = position.extremePrice - directionFactor * atrValue * config.trailingAtr;
                         const shouldUpdateStop = position.stopLossPrice === null
-                            || (isShort ? trailStop < position.stopLossPrice : trailStop > position.stopLossPrice);
+                            || (isShortPosition ? trailStop < position.stopLossPrice : trailStop > position.stopLossPrice);
                         if (shouldUpdateStop) {
                             position.stopLossPrice = trailStop;
                         }
                     }
                 }
 
-                position.extremePrice = isShort
+                position.extremePrice = isShortPosition
                     ? Math.min(position.extremePrice, candle.low)
                     : Math.max(position.extremePrice, candle.high);
             }
@@ -644,103 +855,28 @@ export function runBacktestCompact(
             const signal = preparedSignals[signalIdx];
 
             if (compareTime(signal.time, candle.time) === 0) {
-                if (signal.type === entrySignalType && !position) {
-                    const atrValue = needsAtr ? atr[i] : null;
-                    const requiresAtrForEntry =
-                        config.stopLossAtr > 0 ||
-                        config.takeProfitAtr > 0 ||
-                        config.trailingAtr > 0 ||
-                        config.partialTakeProfitAtR > 0 ||
-                        config.breakEvenAtR > 0;
-
-                    if (requiresAtrForEntry && (atrValue === null || atrValue === undefined)) {
-                        signalIdx++;
-                        continue;
+                if (!position) {
+                    const opened = buildPositionFromSignal(signal, i);
+                    if (opened) {
+                        position = opened.nextPosition;
+                        capital -= opened.entryCommission;
                     }
-
-                    const allocatedCapital = (sizingMode === 'fixed' && fixedTradeAmount > 0)
-                        ? fixedTradeAmount
-                        : capital * (positionSizePercent / 100);
-                    if (!Number.isFinite(allocatedCapital) || allocatedCapital <= 0) {
-                        signalIdx++;
-                        continue;
-                    }
-
-                    const tradeValue = allocatedCapital / (1 + commissionRate);
-                    const entryCommission = tradeValue * commissionRate;
-                    const entryFillPrice = applySlippage(signal.price, entrySide, slippageRate);
-                    if (!Number.isFinite(entryFillPrice) || entryFillPrice <= 0 || !Number.isFinite(tradeValue) || tradeValue <= 0) {
-                        signalIdx++;
-                        continue;
-                    }
-
-                    const shares = tradeValue / entryFillPrice;
-                    if (!Number.isFinite(shares) || shares <= 0) {
-                        signalIdx++;
-                        continue;
-                    }
-
-                    const stopLossPrice = (atrValue !== null && atrValue !== undefined)
-                        ? (config.stopLossAtr > 0
-                            ? entryFillPrice - directionFactor * config.stopLossAtr * atrValue
-                            : config.trailingAtr > 0
-                                ? entryFillPrice - directionFactor * config.trailingAtr * atrValue
-                                : null)
-                        : null;
-
-                    const takeProfitPrice = (atrValue !== null && atrValue !== undefined && config.takeProfitAtr > 0)
-                        ? entryFillPrice + directionFactor * config.takeProfitAtr * atrValue
-                        : null;
-
-                    let riskPerShare = 0;
-                    if (config.riskMode === 'percentage') {
-                        if (config.stopLossEnabled && config.stopLossPercent > 0) {
-                            riskPerShare = entryFillPrice * (config.stopLossPercent / 100);
-                        }
-                    } else if (atrValue !== null && atrValue !== undefined && config.stopLossAtr > 0) {
-                        riskPerShare = config.stopLossAtr * atrValue;
-                    }
-
-                    const partialTargetPrice = (riskPerShare > 0 && config.partialTakeProfitAtR > 0)
-                        ? entryFillPrice + directionFactor * riskPerShare * config.partialTakeProfitAtR
-                        : null;
-
-                    // Apply percentage-based stops if in percentage mode
-                    let finalStopLossPrice = stopLossPrice;
-                    let finalTakeProfitPrice = takeProfitPrice;
-
-                    if (config.riskMode === 'percentage') {
-                        if (config.stopLossEnabled && config.stopLossPercent > 0) {
-                            finalStopLossPrice = entryFillPrice * (1 - directionFactor * (config.stopLossPercent / 100));
-                        }
-                        if (config.takeProfitEnabled && config.takeProfitPercent > 0) {
-                            finalTakeProfitPrice = entryFillPrice * (1 + directionFactor * (config.takeProfitPercent / 100));
+                } else {
+                    const oppositeSignalType = directionToSignalType(position.direction === 'long' ? 'short' : 'long');
+                    if (signal.type === oppositeSignalType) {
+                        const blockedSameBarExit = !config.allowSameBarExit && compareTime(signal.time, position.entryTime) === 0;
+                        if (!blockedSameBarExit) {
+                            const exitPrice = applySlippage(signal.price, exitSideForDirection(position.direction), slippageRate);
+                            exitPosition(exitPrice, position.size);
+                            if (tradeDirection === 'both') {
+                                const opened = buildPositionFromSignal(signal, i);
+                                if (opened) {
+                                    position = opened.nextPosition;
+                                    capital -= opened.entryCommission;
+                                }
+                            }
                         }
                     }
-
-                    position = {
-                        entryTime: signal.time,
-                        entryPrice: entryFillPrice,
-                        size: shares,
-                        entryCommissionPerShare: shares > 0 ? entryCommission / shares : 0,
-                        stopLossPrice: finalStopLossPrice,
-                        takeProfitPrice: finalTakeProfitPrice,
-                        riskPerShare,
-                        barsInTrade: 0,
-                        extremePrice: entryFillPrice,
-                        partialTargetPrice,
-                        partialTaken: false,
-                        breakEvenApplied: false
-                    };
-
-                    capital -= entryCommission;
-                } else if (signal.type === exitSignalType && position) {
-                    if (!config.allowSameBarExit && compareTime(signal.time, position.entryTime) === 0) {
-                        signalIdx++;
-                        continue;
-                    }
-                    const exitPrice = applySlippage(signal.price, exitSide, slippageRate);
-                    exitPosition(exitPrice, position.size);
                 }
             }
             signalIdx++;
@@ -748,6 +884,7 @@ export function runBacktestCompact(
 
         let currentEquity = capital;
         if (position) {
+            const directionFactor = directionFactorFor(position.direction);
             const unrealizedPnL = (candle.close - position.entryPrice) * position.size * directionFactor;
             currentEquity += unrealizedPnL;
         }
@@ -756,7 +893,7 @@ export function runBacktestCompact(
 
     if (position && data.length > 0) {
         const lastCandle = data[data.length - 1];
-        const exitPrice = applySlippage(lastCandle.close, exitSide, slippageRate);
+        const exitPrice = applySlippage(lastCandle.close, exitSideForDirection(position.direction), slippageRate);
         exitPosition(exitPrice, position.size);
         updateDrawdown(capital);
     }
@@ -771,7 +908,7 @@ export function runBacktestCompact(
     const avgTrade = totalTrades > 0 ? netProfit / totalTrades : 0;
     const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
     const stdReturn = totalTrades > 1 ? Math.sqrt(returnM2 / (totalTrades - 1)) : 0;
-    const sharpeRatio = stdReturn > 0 ? avgReturn / stdReturn : 0;
+    const sharpeRatio = calculateSharpeRatioFromMoments(avgReturn, stdReturn, totalTrades);
 
     return {
         trades: [],
@@ -808,9 +945,7 @@ export function runBacktest(
     const trades: Trade[] = [];
     const equityCurve: { time: Time; value: number }[] = [];
     const config = normalizeBacktestSettings(settings);
-    const tradeDirection: TradeDirection = settings.tradeDirection === 'short' ? 'short' : 'long';
-    const isShort = tradeDirection === 'short';
-    const directionFactor = isShort ? -1 : 1;
+    const tradeDirection = normalizeTradeDirection(settings);
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
 
@@ -831,16 +966,17 @@ export function runBacktest(
         config.breakEvenAtR > 0;
 
     const atr = needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : [];
-    const emaTrend = config.trendEmaPeriod > 0 ? calculateEMA(closes, config.trendEmaPeriod) : [];
+    const trendPeriod = resolveTrendPeriod(config);
+    const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
 
-    const useAdx = (config.adxMin > 0 || config.adxMax > 0);
+    const useAdx = config.tradeFilterMode === 'adx' || config.adxMin > 0 || config.adxMax > 0;
     const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
     const adx = useAdx ? calculateADX(highs, lows, closes, adxPeriod) : [];
 
-    const volumeSma = config.entryConfirmation === 'volume'
+    const volumeSma = config.tradeFilterMode === 'volume'
         ? calculateSMA(volumes, config.volumeSmaPeriod)
         : [];
-    const rsi = config.entryConfirmation === 'rsi'
+    const rsi = config.tradeFilterMode === 'rsi'
         ? calculateRSI(closes, config.rsiPeriod)
         : [];
 
@@ -861,14 +997,12 @@ export function runBacktest(
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
     let signalIdx = 0;
-    const entrySignalType: Signal['type'] = isShort ? 'sell' : 'buy';
-    const exitSignalType: Signal['type'] = isShort ? 'buy' : 'sell';
-    const entrySide: 'buy' | 'sell' = isShort ? 'sell' : 'buy';
-    const exitSide: 'buy' | 'sell' = isShort ? 'buy' : 'sell';
 
     const exitPosition = (exitPrice: number, exitTime: Time, exitSize: number) => {
         if (!position || exitSize <= 0) return;
 
+        const positionDirection = position.direction;
+        const directionFactor = directionFactorFor(positionDirection);
         const size = Math.min(exitSize, position.size);
         const exitValue = size * exitPrice;
         const entryValue = size * position.entryPrice;
@@ -883,7 +1017,7 @@ export function runBacktest(
 
         trades.push({
             id: ++tradeId,
-            type: isShort ? 'short' : 'long',
+            type: positionDirection,
             entryTime: position.entryTime,
             entryPrice: position.entryPrice,
             exitTime,
@@ -900,16 +1034,106 @@ export function runBacktest(
         }
     };
 
+    const buildPositionFromSignal = (signal: Signal, barIndex: number): { nextPosition: PositionState; entryCommission: number } | null => {
+        if (!allowsSignalAsEntry(signal.type, tradeDirection)) return null;
+
+        const atrValue = needsAtr ? atr[barIndex] : null;
+        const requiresAtrForEntry =
+            config.stopLossAtr > 0 ||
+            config.takeProfitAtr > 0 ||
+            config.trailingAtr > 0 ||
+            config.partialTakeProfitAtR > 0 ||
+            config.breakEvenAtR > 0;
+
+        if (requiresAtrForEntry && (atrValue === null || atrValue === undefined)) return null;
+
+        const allocatedCapital = (sizingMode === 'fixed' && fixedTradeAmount > 0)
+            ? fixedTradeAmount
+            : capital * (positionSizePercent / 100);
+        if (!Number.isFinite(allocatedCapital) || allocatedCapital <= 0) return null;
+
+        const tradeValue = allocatedCapital / (1 + commissionRate);
+        const entryCommission = tradeValue * commissionRate;
+        const direction = signalToPositionDirection(signal.type);
+        const directionFactor = directionFactorFor(direction);
+        const entrySide = entrySideForDirection(direction);
+        const entryFillPrice = applySlippage(signal.price, entrySide, slippageRate);
+        if (!Number.isFinite(entryFillPrice) || entryFillPrice <= 0 || !Number.isFinite(tradeValue) || tradeValue <= 0) return null;
+
+        const shares = tradeValue / entryFillPrice;
+        if (!Number.isFinite(shares) || shares <= 0) return null;
+
+        const stopLossPrice = (atrValue !== null && atrValue !== undefined)
+            ? (config.stopLossAtr > 0
+                ? entryFillPrice - directionFactor * config.stopLossAtr * atrValue
+                : config.trailingAtr > 0
+                    ? entryFillPrice - directionFactor * config.trailingAtr * atrValue
+                    : null)
+            : null;
+
+        const takeProfitPrice = (atrValue !== null && atrValue !== undefined && config.takeProfitAtr > 0)
+            ? entryFillPrice + directionFactor * config.takeProfitAtr * atrValue
+            : null;
+
+        let riskPerShare = 0;
+        if (config.riskMode === 'percentage') {
+            if (config.stopLossEnabled && config.stopLossPercent > 0) {
+                riskPerShare = entryFillPrice * (config.stopLossPercent / 100);
+            }
+        } else if (atrValue !== null && atrValue !== undefined && config.stopLossAtr > 0) {
+            riskPerShare = config.stopLossAtr * atrValue;
+        }
+
+        const partialTargetPrice = (riskPerShare > 0 && config.partialTakeProfitAtR > 0)
+            ? entryFillPrice + directionFactor * riskPerShare * config.partialTakeProfitAtR
+            : null;
+
+        let finalStopLossPrice = stopLossPrice;
+        let finalTakeProfitPrice = takeProfitPrice;
+
+        if (config.riskMode === 'percentage') {
+            if (config.stopLossEnabled && config.stopLossPercent > 0) {
+                finalStopLossPrice = entryFillPrice * (1 - directionFactor * (config.stopLossPercent / 100));
+            }
+            if (config.takeProfitEnabled && config.takeProfitPercent > 0) {
+                finalTakeProfitPrice = entryFillPrice * (1 + directionFactor * (config.takeProfitPercent / 100));
+            }
+        }
+
+        return {
+            nextPosition: {
+                direction,
+                entryTime: signal.time,
+                entryPrice: entryFillPrice,
+                size: shares,
+                entryCommissionPerShare: shares > 0 ? entryCommission / shares : 0,
+                stopLossPrice: finalStopLossPrice,
+                takeProfitPrice: finalTakeProfitPrice,
+                riskPerShare,
+                barsInTrade: 0,
+                extremePrice: entryFillPrice,
+                partialTargetPrice,
+                partialTaken: false,
+                breakEvenApplied: false
+            },
+            entryCommission
+        };
+    };
+
     for (let i = 0; i < data.length; i++) {
         const candle = data[i];
 
         if (position) {
             position.barsInTrade += 1;
+            const positionDirection = position.direction;
+            const directionFactor = directionFactorFor(positionDirection);
+            const isShortPosition = positionDirection === 'short';
+            const exitSide = exitSideForDirection(positionDirection);
 
             // Check stop loss
             const stopLoss = position.stopLossPrice;
             if (stopLoss !== null) {
-                const stopHit = isShort ? candle.high >= stopLoss : candle.low <= stopLoss;
+                const stopHit = isShortPosition ? candle.high >= stopLoss : candle.low <= stopLoss;
                 if (stopHit) {
                     const exitPrice = applySlippage(stopLoss, exitSide, slippageRate);
                     exitPosition(exitPrice, candle.time, position.size);
@@ -918,7 +1142,7 @@ export function runBacktest(
 
             // Check take profit (independent of stop loss)
             if (position && position.takeProfitPrice !== null) {
-                const takeHit = isShort ? candle.low <= position.takeProfitPrice : candle.high >= position.takeProfitPrice;
+                const takeHit = isShortPosition ? candle.low <= position.takeProfitPrice : candle.high >= position.takeProfitPrice;
                 if (takeHit) {
                     const exitPrice = applySlippage(position.takeProfitPrice, exitSide, slippageRate);
                     exitPosition(exitPrice, candle.time, position.size);
@@ -927,7 +1151,7 @@ export function runBacktest(
 
             // Check partial take profit
             if (position && !position.partialTaken && position.partialTargetPrice !== null) {
-                const partialHit = isShort ? candle.low <= position.partialTargetPrice : candle.high >= position.partialTargetPrice;
+                const partialHit = isShortPosition ? candle.low <= position.partialTargetPrice : candle.high >= position.partialTargetPrice;
                 if (partialHit) {
                     const partialSize = position.size * (config.partialTakeProfitPercent / 100);
                     if (partialSize > 0) {
@@ -941,7 +1165,7 @@ export function runBacktest(
             }
 
             if (position && config.timeStopBars > 0 && position.barsInTrade >= config.timeStopBars) {
-                const isLosing = isShort ? candle.close >= position.entryPrice : candle.close <= position.entryPrice;
+                const isLosing = isShortPosition ? candle.close >= position.entryPrice : candle.close <= position.entryPrice;
                 if (!position.partialTaken && isLosing) {
                     const exitPrice = applySlippage(candle.close, exitSide, slippageRate);
                     exitPosition(exitPrice, candle.time, position.size);
@@ -953,11 +1177,11 @@ export function runBacktest(
                 if (atrValue !== null && atrValue !== undefined) {
                     if (config.breakEvenAtR > 0 && position.riskPerShare > 0 && !position.breakEvenApplied) {
                         const breakEvenTarget = position.entryPrice + directionFactor * position.riskPerShare * config.breakEvenAtR;
-                        const breakEvenHit = isShort ? candle.low <= breakEvenTarget : candle.high >= breakEvenTarget;
+                        const breakEvenHit = isShortPosition ? candle.low <= breakEvenTarget : candle.high >= breakEvenTarget;
                         if (breakEvenHit) {
                             position.stopLossPrice = position.stopLossPrice === null
                                 ? position.entryPrice
-                                : isShort
+                                : isShortPosition
                                     ? Math.min(position.stopLossPrice, position.entryPrice)
                                     : Math.max(position.stopLossPrice, position.entryPrice);
                             position.breakEvenApplied = true;
@@ -967,14 +1191,14 @@ export function runBacktest(
                     if (config.trailingAtr > 0) {
                         const trailStop = position.extremePrice - directionFactor * atrValue * config.trailingAtr;
                         const shouldUpdateStop = position.stopLossPrice === null
-                            || (isShort ? trailStop < position.stopLossPrice : trailStop > position.stopLossPrice);
+                            || (isShortPosition ? trailStop < position.stopLossPrice : trailStop > position.stopLossPrice);
                         if (shouldUpdateStop) {
                             position.stopLossPrice = trailStop;
                         }
                     }
                 }
 
-                position.extremePrice = isShort
+                position.extremePrice = isShortPosition
                     ? Math.min(position.extremePrice, candle.low)
                     : Math.max(position.extremePrice, candle.high);
             }
@@ -984,103 +1208,28 @@ export function runBacktest(
             const signal = preparedSignals[signalIdx];
 
             if (compareTime(signal.time, candle.time) === 0) {
-                if (signal.type === entrySignalType && !position) {
-                    const atrValue = needsAtr ? atr[i] : null;
-                    const requiresAtrForEntry =
-                        config.stopLossAtr > 0 ||
-                        config.takeProfitAtr > 0 ||
-                        config.trailingAtr > 0 ||
-                        config.partialTakeProfitAtR > 0 ||
-                        config.breakEvenAtR > 0;
-
-                    if (requiresAtrForEntry && (atrValue === null || atrValue === undefined)) {
-                        signalIdx++;
-                        continue;
+                if (!position) {
+                    const opened = buildPositionFromSignal(signal, i);
+                    if (opened) {
+                        position = opened.nextPosition;
+                        capital -= opened.entryCommission;
                     }
-
-                    const allocatedCapital = (sizingMode === 'fixed' && fixedTradeAmount > 0)
-                        ? fixedTradeAmount
-                        : capital * (positionSizePercent / 100);
-                    if (!Number.isFinite(allocatedCapital) || allocatedCapital <= 0) {
-                        signalIdx++;
-                        continue;
-                    }
-
-                    const tradeValue = allocatedCapital / (1 + commissionRate);
-                    const entryCommission = tradeValue * commissionRate;
-                    const entryFillPrice = applySlippage(signal.price, entrySide, slippageRate);
-                    if (!Number.isFinite(entryFillPrice) || entryFillPrice <= 0 || !Number.isFinite(tradeValue) || tradeValue <= 0) {
-                        signalIdx++;
-                        continue;
-                    }
-
-                    const shares = tradeValue / entryFillPrice;
-                    if (!Number.isFinite(shares) || shares <= 0) {
-                        signalIdx++;
-                        continue;
-                    }
-
-                    const stopLossPrice = (atrValue !== null && atrValue !== undefined)
-                        ? (config.stopLossAtr > 0
-                            ? entryFillPrice - directionFactor * config.stopLossAtr * atrValue
-                            : config.trailingAtr > 0
-                                ? entryFillPrice - directionFactor * config.trailingAtr * atrValue
-                                : null)
-                        : null;
-
-                    const takeProfitPrice = (atrValue !== null && atrValue !== undefined && config.takeProfitAtr > 0)
-                        ? entryFillPrice + directionFactor * config.takeProfitAtr * atrValue
-                        : null;
-
-                    let riskPerShare = 0;
-                    if (config.riskMode === 'percentage') {
-                        if (config.stopLossEnabled && config.stopLossPercent > 0) {
-                            riskPerShare = entryFillPrice * (config.stopLossPercent / 100);
-                        }
-                    } else if (atrValue !== null && atrValue !== undefined && config.stopLossAtr > 0) {
-                        riskPerShare = config.stopLossAtr * atrValue;
-                    }
-
-                    const partialTargetPrice = (riskPerShare > 0 && config.partialTakeProfitAtR > 0)
-                        ? entryFillPrice + directionFactor * riskPerShare * config.partialTakeProfitAtR
-                        : null;
-
-                    // Apply percentage-based stops if in percentage mode
-                    let finalStopLossPrice = stopLossPrice;
-                    let finalTakeProfitPrice = takeProfitPrice;
-
-                    if (config.riskMode === 'percentage') {
-                        if (config.stopLossEnabled && config.stopLossPercent > 0) {
-                            finalStopLossPrice = entryFillPrice * (1 - directionFactor * (config.stopLossPercent / 100));
-                        }
-                        if (config.takeProfitEnabled && config.takeProfitPercent > 0) {
-                            finalTakeProfitPrice = entryFillPrice * (1 + directionFactor * (config.takeProfitPercent / 100));
+                } else {
+                    const oppositeSignalType = directionToSignalType(position.direction === 'long' ? 'short' : 'long');
+                    if (signal.type === oppositeSignalType) {
+                        const blockedSameBarExit = !config.allowSameBarExit && compareTime(signal.time, position.entryTime) === 0;
+                        if (!blockedSameBarExit) {
+                            const exitPrice = applySlippage(signal.price, exitSideForDirection(position.direction), slippageRate);
+                            exitPosition(exitPrice, signal.time, position.size);
+                            if (tradeDirection === 'both') {
+                                const opened = buildPositionFromSignal(signal, i);
+                                if (opened) {
+                                    position = opened.nextPosition;
+                                    capital -= opened.entryCommission;
+                                }
+                            }
                         }
                     }
-
-                    position = {
-                        entryTime: signal.time,
-                        entryPrice: entryFillPrice,
-                        size: shares,
-                        entryCommissionPerShare: shares > 0 ? entryCommission / shares : 0,
-                        stopLossPrice: finalStopLossPrice,
-                        takeProfitPrice: finalTakeProfitPrice,
-                        riskPerShare,
-                        barsInTrade: 0,
-                        extremePrice: entryFillPrice,
-                        partialTargetPrice,
-                        partialTaken: false,
-                        breakEvenApplied: false
-                    };
-
-                    capital -= entryCommission;
-                } else if (signal.type === exitSignalType && position) {
-                    if (!config.allowSameBarExit && compareTime(signal.time, position.entryTime) === 0) {
-                        signalIdx++;
-                        continue;
-                    }
-                    const exitPrice = applySlippage(signal.price, exitSide, slippageRate);
-                    exitPosition(exitPrice, signal.time, position.size);
                 }
             }
             signalIdx++;
@@ -1088,6 +1237,7 @@ export function runBacktest(
 
         let currentEquity = capital;
         if (position) {
+            const directionFactor = directionFactorFor(position.direction);
             const unrealizedPnL = (candle.close - position.entryPrice) * position.size * directionFactor;
             currentEquity += unrealizedPnL;
         }
@@ -1096,7 +1246,7 @@ export function runBacktest(
 
     if (position && data.length > 0) {
         const lastCandle = data[data.length - 1];
-        const exitPrice = applySlippage(lastCandle.close, exitSide, slippageRate);
+        const exitPrice = applySlippage(lastCandle.close, exitSideForDirection(position.direction), slippageRate);
         exitPosition(exitPrice, lastCandle.time, position.size);
 
         if (equityCurve.length > 0) {
@@ -1135,11 +1285,7 @@ export function calculateBacktestStats(
     const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
 
     const returns = trades.map(t => t.pnlPercent);
-    const avgReturn = returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
-    const stdReturn = returns.length > 1
-        ? Math.sqrt(returns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / (returns.length - 1))
-        : 0;
-    const sharpeRatio = stdReturn > 0 ? avgReturn / stdReturn : 0;
+    const sharpeRatio = calculateSharpeRatioFromReturns(returns);
 
     return {
         trades,
