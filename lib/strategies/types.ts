@@ -104,6 +104,10 @@ export interface BacktestSettings {
     allowSameBarExit?: boolean;
     /** Slippage in basis points (bps) applied to entry/exit fills */
     slippageBps?: number;
+    /** Run strategy logic on a global higher timeframe and map signals back to chart bars */
+    strategyTimeframeEnabled?: boolean;
+    /** Higher timeframe in minutes for global strategy execution */
+    strategyTimeframeMinutes?: number;
 }
 
 export interface Signal {

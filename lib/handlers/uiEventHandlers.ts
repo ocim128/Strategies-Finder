@@ -561,6 +561,21 @@ export function setupEventHandlers() {
     riskModeSelect.addEventListener('change', applyRiskMode);
     applyRiskMode();
 
+    const strategyTimeframeToggle = getRequiredElement<HTMLInputElement>('strategyTimeframeToggle');
+    const strategyTimeframeMinutes = getRequiredElement<HTMLInputElement>('strategyTimeframeMinutes');
+    const strategyTimeframeMinutesGroup = document.getElementById('strategyTimeframeMinutesGroup');
+
+    const applyStrategyTimeframeMode = () => {
+        const enabled = strategyTimeframeToggle.checked;
+        strategyTimeframeMinutes.disabled = !enabled;
+        if (strategyTimeframeMinutesGroup) {
+            strategyTimeframeMinutesGroup.classList.toggle('is-disabled', !enabled);
+        }
+    };
+
+    strategyTimeframeToggle.addEventListener('change', applyStrategyTimeframeMode);
+    applyStrategyTimeframeMode();
+
     // Finder settings toggles
     [
         { toggleId: 'finderTradesToggle', sectionId: 'finderTradeFilters' }

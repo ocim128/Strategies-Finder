@@ -561,6 +561,8 @@ export class FinderManager {
 			delete (rustSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
 			delete (rustSettings as { slippageBps?: number }).slippageBps;
 			delete (rustSettings as { marketMode?: string }).marketMode;
+			delete (rustSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
+			delete (rustSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
 
 			const strategies = strategyRegistry.getAll();
 			const selectedStrategyEntries = Object.entries(strategies).filter(([key]) => {
@@ -1159,6 +1161,8 @@ export class FinderManager {
 						delete (itemSettings as { executionModel?: string }).executionModel;
 						delete (itemSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
 						delete (itemSettings as { slippageBps?: number }).slippageBps;
+						delete (itemSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
+						delete (itemSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
 						return {
 							id: run.id,
 							signals: run.signals,

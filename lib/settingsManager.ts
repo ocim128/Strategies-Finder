@@ -76,6 +76,8 @@ export interface BacktestSettingsData {
     executionModel: string;
     allowSameBarExit: boolean;
     slippageBps: number;
+    strategyTimeframeEnabled: boolean;
+    strategyTimeframeMinutes: number;
 }
 
 export interface StrategyConfig {
@@ -149,6 +151,8 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     executionModel: 'next_open',
     allowSameBarExit: false,
     slippageBps: 5,
+    strategyTimeframeEnabled: false,
+    strategyTimeframeMinutes: 120,
 };
 
 const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -243,6 +247,8 @@ class SettingsManager {
             executionModel: this.readSelect('executionModel', DEFAULT_BACKTEST_SETTINGS.executionModel),
             allowSameBarExit: this.readCheckbox('allowSameBarExitToggle', DEFAULT_BACKTEST_SETTINGS.allowSameBarExit),
             slippageBps: this.readNumber('slippageBps', DEFAULT_BACKTEST_SETTINGS.slippageBps),
+            strategyTimeframeEnabled: this.readCheckbox('strategyTimeframeToggle', DEFAULT_BACKTEST_SETTINGS.strategyTimeframeEnabled),
+            strategyTimeframeMinutes: this.readNumber('strategyTimeframeMinutes', DEFAULT_BACKTEST_SETTINGS.strategyTimeframeMinutes),
         };
     }
 
@@ -430,6 +436,8 @@ class SettingsManager {
         this.writeSelect('executionModel', settings.executionModel ?? DEFAULT_BACKTEST_SETTINGS.executionModel);
         this.writeCheckbox('allowSameBarExitToggle', settings.allowSameBarExit ?? DEFAULT_BACKTEST_SETTINGS.allowSameBarExit);
         this.writeNumber('slippageBps', settings.slippageBps ?? DEFAULT_BACKTEST_SETTINGS.slippageBps);
+        this.writeCheckbox('strategyTimeframeToggle', settings.strategyTimeframeEnabled ?? DEFAULT_BACKTEST_SETTINGS.strategyTimeframeEnabled);
+        this.writeNumber('strategyTimeframeMinutes', settings.strategyTimeframeMinutes ?? DEFAULT_BACKTEST_SETTINGS.strategyTimeframeMinutes);
 
         // Trigger change events so UI updates reflect changes
         this.triggerChangeEvents();

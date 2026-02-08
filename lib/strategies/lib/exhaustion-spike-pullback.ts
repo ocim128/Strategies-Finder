@@ -1,7 +1,6 @@
-import { Strategy, OHLCVData, StrategyParams, StrategyIndicator } from '../types';
+import { Strategy, OHLCVData, StrategyParams } from '../types';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows, getCloses, getVolumes } from '../strategy-helpers';
 import { calculateATR, calculateEMA, calculateSMA } from '../indicators';
-import { COLORS } from '../constants';
 
 export const exhaustion_spike_pullback: Strategy = {
     name: 'Exhaustion Spike Pullback',
@@ -88,22 +87,6 @@ export const exhaustion_spike_pullback: Strategy = {
 
             return null;
         });
-    },
-    indicators: (data: OHLCVData[], params: StrategyParams): StrategyIndicator[] => {
-        const cleanData = ensureCleanData(data);
-        if (cleanData.length === 0) return [];
-
-        const pullbackEma = Math.max(3, Math.round(params.pullbackEma ?? 20));
-        const closes = getCloses(cleanData);
-        const highs = getHighs(cleanData);
-        const lows = getLows(cleanData);
-        const ema = calculateEMA(closes, pullbackEma);
-        const atr = calculateATR(highs, lows, closes, 14);
-
-        return [
-            { name: 'Pullback EMA', type: 'line', values: ema, color: COLORS.Fast },
-            { name: 'ATR', type: 'line', values: atr, color: COLORS.Neutral }
-        ];
     },
     metadata: {
         role: 'entry',

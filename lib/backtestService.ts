@@ -110,6 +110,8 @@ export class BacktestService {
             delete (rustSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
             delete (rustSettings as { slippageBps?: number }).slippageBps;
             delete (rustSettings as { marketMode?: string }).marketMode;
+            delete (rustSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
+            delete (rustSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
 
             if (strategy.metadata?.role === 'entry' && entryStats) {
                 result = buildEntryBacktestResult(entryStats);
@@ -331,7 +333,9 @@ export class BacktestService {
             tradeDirection,
             executionModel: resolvedExecutionModel,
             allowSameBarExit: this.isToggleEnabled('allowSameBarExitToggle', false),
-            slippageBps: this.readNumberInput('slippageBps', 5)
+            slippageBps: this.readNumberInput('slippageBps', 5),
+            strategyTimeframeEnabled: this.isToggleEnabled('strategyTimeframeToggle', false),
+            strategyTimeframeMinutes: this.readNumberInput('strategyTimeframeMinutes', 120),
         };
     }
 

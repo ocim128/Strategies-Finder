@@ -10,7 +10,8 @@
  * - Type-safe strategy management
  */
 
-import type { Strategy, OHLCVData, Signal, StrategyParams } from "./lib/strategies/index";
+import type { Strategy, OHLCVData, Signal, StrategyParams, Time } from "./lib/strategies/index";
+import { getIntervalSeconds, resampleOHLCV } from "./lib/strategies/resample-utils";
 export type { Strategy, OHLCVData, Signal, StrategyParams };
 
 
@@ -62,6 +63,136 @@ export interface StrategyRegistry {
 class StrategyRegistryImpl implements StrategyRegistry {
     private strategies: Map<string, Strategy> = new Map();
     private listeners: Set<StrategyRegistryListener> = new Set();
+    private readonly wrappedFlag = '__global_timeframe_wrapped__';
+
+    private toUnixSeconds(time: Time): number | null {
+        if (typeof time === 'number') return time;
+        if (typeof time === 'string') {
+            const parsed = Date.parse(time);
+            return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
+        }
+        if (time && typeof time === 'object' && 'year' in time) {
+            const day = time as { year: number; month: number; day: number };
+            return Math.floor(Date.UTC(day.year, day.month - 1, day.day) / 1000);
+        }
+        return null;
+    }
+
+    private toNumericTimeData(data: OHLCVData[]): OHLCVData[] | null {
+        const mapped: OHLCVData[] = [];
+        for (const bar of data) {
+            const t = this.toUnixSeconds(bar.time);
+            if (t === null) return null;
+            mapped.push({
+                ...bar,
+                time: t as Time
+            });
+        }
+        return mapped;
+    }
+
+    private readGlobalStrategyTfSettings(): { enabled: boolean; minutes: number } {
+        if (typeof document === 'undefined') {
+            return { enabled: false, minutes: 120 };
+        }
+
+        const toggle = document.getElementById('strategyTimeframeToggle') as HTMLInputElement | null;
+        const minutesInput = document.getElementById('strategyTimeframeMinutes') as HTMLInputElement | null;
+
+        const enabled = toggle?.checked ?? false;
+        const parsedMinutes = parseInt(minutesInput?.value ?? '120', 10);
+        const minutes = Number.isFinite(parsedMinutes) ? Math.max(1, Math.floor(parsedMinutes)) : 120;
+        return { enabled, minutes };
+    }
+
+    private mapSignalsFromHigherTimeframe(
+        baseData: OHLCVData[],
+        numericBaseData: OHLCVData[],
+        higherData: OHLCVData[],
+        higherSignals: Signal[],
+        tfMinutes: number
+    ): Signal[] {
+        if (higherSignals.length === 0) return [];
+
+        const interval = `${tfMinutes}m`;
+        const intervalSeconds = getIntervalSeconds(interval);
+        const lastBaseIndexByBucket = new Map<number, number>();
+
+        for (let i = 0; i < numericBaseData.length; i++) {
+            const t = numericBaseData[i].time as number;
+            const bucketStart = Math.floor(t / intervalSeconds) * intervalSeconds;
+            lastBaseIndexByBucket.set(bucketStart, i);
+        }
+
+        const mapped: Signal[] = [];
+        for (const signal of higherSignals) {
+            let bucketStart: number | null = null;
+
+            if (Number.isFinite(signal.barIndex)) {
+                const idx = Math.trunc(signal.barIndex as number);
+                if (idx >= 0 && idx < higherData.length) {
+                    const timeValue = higherData[idx].time;
+                    bucketStart = typeof timeValue === 'number' ? timeValue : this.toUnixSeconds(timeValue);
+                }
+            }
+
+            if (bucketStart === null) {
+                const signalTime = this.toUnixSeconds(signal.time);
+                if (signalTime !== null) {
+                    bucketStart = Math.floor(signalTime / intervalSeconds) * intervalSeconds;
+                }
+            }
+
+            if (bucketStart === null) continue;
+
+            const baseIndex = lastBaseIndexByBucket.get(bucketStart);
+            if (baseIndex === undefined) continue;
+
+            mapped.push({
+                ...signal,
+                time: baseData[baseIndex].time,
+                price: baseData[baseIndex].close,
+                barIndex: baseIndex
+            });
+        }
+
+        return mapped;
+    }
+
+    private wrapStrategyWithGlobalTimeframe(strategy: Strategy): Strategy {
+        const maybeWrapped = strategy as Strategy & { [key: string]: unknown };
+        if (maybeWrapped[this.wrappedFlag] === true) {
+            return strategy;
+        }
+
+        const originalExecute = strategy.execute.bind(strategy);
+        const wrapped: Strategy = {
+            ...strategy,
+            execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
+                const { enabled, minutes } = this.readGlobalStrategyTfSettings();
+                if (!enabled || data.length === 0) {
+                    return originalExecute(data, params);
+                }
+
+                const numericData = this.toNumericTimeData(data);
+                if (!numericData) {
+                    return originalExecute(data, params);
+                }
+
+                const interval = `${minutes}m`;
+                const higherData = resampleOHLCV(numericData, interval);
+                if (higherData.length === 0) {
+                    return [];
+                }
+
+                const higherSignals = originalExecute(higherData, params);
+                return this.mapSignalsFromHigherTimeframe(data, numericData, higherData, higherSignals, minutes);
+            }
+        };
+
+        (wrapped as Strategy & { [key: string]: unknown })[this.wrappedFlag] = true;
+        return wrapped;
+    }
 
     private emit(event: StrategyRegistryEvent): void {
         this.listeners.forEach(listener => {
@@ -75,14 +206,15 @@ class StrategyRegistryImpl implements StrategyRegistry {
 
     register(key: string, strategy: Strategy): void {
         const isUpdate = this.strategies.has(key);
-        this.strategies.set(key, strategy);
+        const wrappedStrategy = this.wrapStrategyWithGlobalTimeframe(strategy);
+        this.strategies.set(key, wrappedStrategy);
 
         console.log(`[StrategyRegistry] ${isUpdate ? 'Updated' : 'Registered'}: ${key} - "${strategy.name}"`);
 
         this.emit({
             type: isUpdate ? 'update' : 'register',
             strategyKey: key,
-            strategy
+            strategy: wrappedStrategy
         });
     }
 

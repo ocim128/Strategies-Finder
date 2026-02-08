@@ -1,6 +1,5 @@
-import { Strategy, OHLCVData, StrategyParams, StrategyIndicator } from '../types';
+import { Strategy, OHLCVData, StrategyParams } from '../types';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows } from '../strategy-helpers';
-import { COLORS } from '../constants';
 
 export const gap_fail_reversal: Strategy = {
     name: 'Gap Fail Reversal',
@@ -67,18 +66,6 @@ export const gap_fail_reversal: Strategy = {
 
             return null;
         });
-    },
-    indicators: (data: OHLCVData[]): StrategyIndicator[] => {
-        const cleanData = ensureCleanData(data);
-        if (cleanData.length === 0) return [];
-
-        const prevHigh: (number | null)[] = cleanData.map((_, i) => i === 0 ? null : cleanData[i - 1].high);
-        const prevLow: (number | null)[] = cleanData.map((_, i) => i === 0 ? null : cleanData[i - 1].low);
-
-        return [
-            { name: 'Prev High', type: 'line', values: prevHigh, color: COLORS.Channel },
-            { name: 'Prev Low', type: 'line', values: prevLow, color: COLORS.Channel }
-        ];
     },
     metadata: {
         role: 'entry',

@@ -54,6 +54,23 @@
                 <div class="param-hint">Disable to avoid entry/exit on the same bar.</div>
             </div>
         </div>
+        <div class="param-row">
+            <div class="param-group">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                    <label class="param-label" style="margin-bottom: 0;">Use Strategy Timeframe</label>
+                    <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle global strategy timeframe">
+                        <input type="checkbox" id="strategyTimeframeToggle">
+                        <span class="section-toggle-track"></span>
+                    </label>
+                </div>
+                <div class="param-hint">Run signal logic on higher timeframe, map entries back to current chart bars.</div>
+            </div>
+            <div class="param-group" id="strategyTimeframeMinutesGroup">
+                <label class="param-label">Strategy TF (minutes)</label>
+                <input type="number" class="param-input" id="strategyTimeframeMinutes" value="120" min="1" step="1">
+                <div class="param-hint">Example: chart 5m + strategy 120m.</div>
+            </div>
+        </div>
         <div class="param-hint">Realism settings use the TypeScript engine (Rust skipped for accuracy).</div>
     </div>
 

@@ -1,7 +1,6 @@
-import { Strategy, OHLCVData, StrategyParams, StrategyIndicator } from '../types';
+import { Strategy, OHLCVData, StrategyParams } from '../types';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows, getCloses } from '../strategy-helpers';
 import { calculateATR, calculateDonchianChannels } from '../indicators';
-import { COLORS } from '../constants';
 
 export const liquidity_sweep_reclaim: Strategy = {
     name: 'Liquidity Sweep Reclaim',
@@ -60,21 +59,6 @@ export const liquidity_sweep_reclaim: Strategy = {
 
             return null;
         });
-    },
-    indicators: (data: OHLCVData[], params: StrategyParams): StrategyIndicator[] => {
-        const cleanData = ensureCleanData(data);
-        if (cleanData.length === 0) return [];
-
-        const lookback = Math.max(5, Math.round(params.lookback ?? 24));
-        const highs = getHighs(cleanData);
-        const lows = getLows(cleanData);
-        const { upper, lower, middle } = calculateDonchianChannels(highs, lows, lookback);
-
-        return [
-            { name: 'Range High', type: 'line', values: upper, color: COLORS.Channel },
-            { name: 'Range Mid', type: 'line', values: middle, color: COLORS.Neutral },
-            { name: 'Range Low', type: 'line', values: lower, color: COLORS.Channel }
-        ];
     },
     metadata: {
         role: 'entry',
