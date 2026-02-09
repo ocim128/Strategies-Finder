@@ -5,7 +5,7 @@ import {
 import { calculateSharpeRatioFromReturns } from "../strategies/performance-metrics";
 import type {
     EndpointSelectionAdjustment
-} from "./types";
+} from '../types/index';
 
 /**
  * Endpoint Selection Adjustment
@@ -68,3 +68,5 @@ export function buildSelectionResult(
         removedTrades
     };
 }
+
+

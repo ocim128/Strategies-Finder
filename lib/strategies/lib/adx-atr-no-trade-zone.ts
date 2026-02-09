@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator } from '../types';
+import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator } from '../../types/strategies';
 import { createBuySignal, createSellSignal, ensureCleanData, getCloses, getHighs, getLows } from '../strategy-helpers';
 import { calculateATR, calculateEMA } from '../indicators';
 import { COLORS } from '../constants';
@@ -446,3 +446,5 @@ export const adx_atr_no_trade_zone: Strategy = {
         ],
     },
 };
+
+

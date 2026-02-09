@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, Signal } from '../types';
+import { Strategy, OHLCVData, StrategyParams, Signal } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from '../strategy-helpers';
 
 function clamp(value: number, min: number, max: number): number {
@@ -179,3 +179,5 @@ export const momentum_volatility_rotation: Strategy = {
         ],
     },
 };
+
+

@@ -1,7 +1,7 @@
-export { calculateCopulaDependence } from "./copulaDependence";
-export { waveletDecompose } from "./waveletDecomposition";
-export { calculateTransferEntropy } from "./transferEntropy";
-export { fetchAndAlignPairs, alignPairData } from "./pairDataManager";
+export { calculateCopulaDependence } from "./copula-dependence";
+export { waveletDecompose } from "./wavelet-decomposition";
+export { calculateTransferEntropy } from "./transfer-entropy";
+export { fetchAndAlignPairs, alignPairData } from "./pair-data-manager";
 export type {
     AnalysisMethod,
     CopulaResult,
@@ -11,4 +11,6 @@ export type {
     PairAnalysisResults,
     AlignedPairData,
     AlignmentStats,
-} from "./types";
+} from '../types/index';
+
+

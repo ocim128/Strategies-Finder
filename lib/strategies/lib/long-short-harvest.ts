@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, Signal } from '../types';
+import { Strategy, OHLCVData, StrategyParams, Signal } from '../../types/strategies';
 import { createBuySignal, createSellSignal, ensureCleanData, getCloses, getHighs, getLows } from '../strategy-helpers';
 import { calculateATR, calculateEMA, calculateRSI, calculateSMA } from '../indicators';
 
@@ -452,3 +452,5 @@ export const long_short_harvest: Strategy = {
         ]
     }
 };
+
+

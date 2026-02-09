@@ -10,8 +10,8 @@ import type {
     ScanResult,
     ScannerEvent,
     ScannerEventListener,
-} from './scanner-types';
-import { INITIAL_SCANNER_STATE } from './scanner-types';
+} from '../types/scanner';
+import { INITIAL_SCANNER_STATE } from '../types/scanner';
 
 // ============================================================================
 // Scanner Manager Class
@@ -202,3 +202,4 @@ export class ScannerManager {
 
 // Export singleton instance
 export const scannerManager = new ScannerManager();
+

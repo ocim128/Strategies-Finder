@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, Signal } from '../types';
+import { Strategy, OHLCVData, StrategyParams, Signal } from '../../types/strategies';
 import { createBuySignal, createSellSignal, ensureCleanData, getCloses, getHighs, getLows } from '../strategy-helpers';
 import { calculateATR, calculateDonchianChannels, calculateEMA } from '../indicators';
 
@@ -194,3 +194,5 @@ export const regime_donchian_breakout: Strategy = {
         ],
     },
 };
+
+

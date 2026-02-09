@@ -1,7 +1,7 @@
 import { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, Time } from "lightweight-charts";
 import { BacktestResult, OHLCVData } from "./strategies/index";
 import type { PairAnalysisResults } from "./pairCombiner";
-import { Indicator } from "./types";
+import { Indicator } from './types/index';
 
 export type StateKey = keyof State;
 export type MockChartModel = 'simple' | 'hard' | 'v3' | 'v4' | 'v5' | 'v6';
@@ -66,3 +66,4 @@ export class State {
 }
 
 export const state = new State();
+

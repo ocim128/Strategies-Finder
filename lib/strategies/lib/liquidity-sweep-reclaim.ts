@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from '../types';
+import { Strategy, OHLCVData, StrategyParams } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows, getCloses } from '../strategy-helpers';
 import { calculateATR, calculateDonchianChannels } from '../indicators';
 
@@ -66,3 +66,5 @@ export const liquidity_sweep_reclaim: Strategy = {
         walkForwardParams: ['lookback', 'bufferAtr', 'cooldownBars']
     }
 };
+
+

@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, StrategyIndicator } from '../types';
+import { Strategy, OHLCVData, StrategyParams, StrategyIndicator } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows, getCloses } from '../strategy-helpers';
 import { calculateATR, calculateDonchianChannels } from '../indicators';
 import { COLORS } from '../constants';
@@ -129,3 +129,5 @@ export const failed_breakout: Strategy = {
         walkForwardParams: ['lookback', 'revertBars', 'bufferAtr', 'useRevertWindow', 'maxHoldBars']
     }
 };
+
+

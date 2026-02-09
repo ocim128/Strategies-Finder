@@ -6,34 +6,34 @@ import {
 } from "./strategyRegistry";
 
 import { state } from "./lib/state";
-import { chartManager } from "./lib/chartManager";
-import { dataManager } from "./lib/dataManager";
-import { uiManager } from "./lib/uiManager";
-import { backtestService } from "./lib/backtestService";
-import { editorManager } from "./lib/editorManager";
-import { finderManager } from "./lib/finderManager";
-import { debugLogger } from "./lib/debugLogger";
-import { initDebugPanel } from "./lib/debugPanel";
-import { walkForwardService } from "./lib/walkForwardService";
-import { monteCarloService } from "./lib/monteCarloService";
-import { logicTestService } from "./lib/logicTestService";
-import { settingsManager } from "./lib/settingsManager";
-import { injectLayout } from "./lib/layoutManager";
-import { commandPaletteManager } from "./lib/commandPalette";
-import { pairCombinerManager } from "./lib/pairCombinerManager";
-import { dataMiningManager } from "./lib/dataMiningManager";
+import { chartManager } from "./lib/chart-manager";
+import { dataManager } from "./lib/data-manager";
+import { uiManager } from "./lib/ui-manager";
+import { backtestService } from "./lib/backtest-service";
+import { editorManager } from "./lib/editor-manager";
+import { finderManager } from "./lib/finder-manager";
+import { debugLogger } from "./lib/debug-logger";
+import { initDebugPanel } from "./lib/debug-panel";
+import { walkForwardService } from "./lib/walk-forward-service";
+import { monteCarloService } from "./lib/monte-carlo-service";
+import { logicTestService } from "./lib/logic-test-service";
+import { settingsManager } from "./lib/settings-manager";
+import { injectLayout } from "./lib/layout-manager";
+import { commandPaletteManager } from "./lib/command-palette";
+import { pairCombinerManager } from "./lib/pair-combiner-manager";
+import { dataMiningManager } from "./lib/data-mining-manager";
 
 import { replayManager, ReplayChartAdapter, ReplayUI } from "./lib/replay";
-import { initConfirmationStrategyUI } from "./lib/confirmationStrategies";
+import { initConfirmationStrategyUI } from "./lib/confirmation-strategies";
 import { scannerPanel, scannerManager } from "./lib/scanner";
 
 // Handlers
-import { setupGlobalErrorHandlers } from "./lib/handlers/globalErrorHandlers";
-import { setupStateSubscriptions } from "./lib/handlers/stateSubscriptions";
-import { setupEventHandlers } from "./lib/handlers/uiEventHandlers";
-import { setupSettingsHandlers } from "./lib/handlers/settingsHandlers";
-import { handleCrosshairMove } from "./lib/appActions";
-import { initEngineStatusIndicator } from "./lib/engineStatusIndicator";
+import { setupGlobalErrorHandlers } from "./lib/handlers/global-error-handlers";
+import { setupStateSubscriptions } from "./lib/handlers/state-subscriptions";
+import { setupEventHandlers } from "./lib/handlers/ui-event-handlers";
+import { setupSettingsHandlers } from "./lib/handlers/settings-handlers";
+import { handleCrosshairMove } from "./lib/app-actions";
+import { initEngineStatusIndicator } from "./lib/engine-status-indicator";
 
 async function init() {
 	injectLayout();

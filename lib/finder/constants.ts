@@ -1,4 +1,4 @@
-import type { FinderMetric } from "./types";
+import type { FinderMetric } from '../types/index';
 
 export const DEFAULT_SORT_PRIORITY: FinderMetric[] = [
 	'expectancy',
@@ -35,3 +35,5 @@ export const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
 	averageGain: 'Average Gain',
 	totalTrades: 'Total Trades'
 };
+
+

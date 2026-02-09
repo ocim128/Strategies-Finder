@@ -1,4 +1,4 @@
-import { OHLCVData, BacktestResult, StrategyParams, BacktestSettings, Strategy, Time } from './types';
+import { OHLCVData, BacktestResult, StrategyParams, BacktestSettings, Strategy, Time } from '../types/strategies';
 import { runBacktest, runBacktestCompact, calculateBacktestStats, calculateMaxDrawdown, compareTime } from './backtest';
 import { ensureCleanData } from './strategy-helpers';
 import { sanitizeSharpeRatio } from './performance-metrics';
@@ -1210,3 +1210,5 @@ function getScoreInterpretation(score: number): string {
     if (score >= 20) return '🔴 POOR: Significant overfitting. Strategy may not perform forward.';
     return '⛔ CRITICAL: Severe overfitting. Strategy is curve-fitted and unreliable.';
 }
+
+

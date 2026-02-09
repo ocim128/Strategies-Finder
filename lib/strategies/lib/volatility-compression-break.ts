@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from '../types';
+import { Strategy, OHLCVData, StrategyParams } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows, getCloses } from '../strategy-helpers';
 import { calculateATR, calculateDonchianChannels } from '../indicators';
 
@@ -62,3 +62,5 @@ export const volatility_compression_break: Strategy = {
         walkForwardParams: ['lookback', 'compressionRatio', 'breakoutBufferAtr']
     }
 };
+
+

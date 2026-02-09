@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from '../types';
+import { Strategy, OHLCVData, StrategyParams } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows } from '../strategy-helpers';
 
 export const gap_fail_reversal: Strategy = {
@@ -73,3 +73,5 @@ export const gap_fail_reversal: Strategy = {
         walkForwardParams: ['minGapPct', 'maxFailBars']
     }
 };
+
+

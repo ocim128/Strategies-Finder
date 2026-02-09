@@ -1,0 +1,8 @@
+name = "strategy-entry-signal-worker"
+main = "workers/entry-signal-worker.ts"
+compatibility_date = "2026-02-09"
+
+[[d1_databases]]
+binding = "SIGNALS_DB"
+database_name = "strategy_signals"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"

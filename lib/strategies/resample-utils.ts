@@ -1,5 +1,5 @@
 
-import { OHLCVData, Time } from './types';
+import { OHLCVData, Time } from '../types/strategies';
 
 /**
  * Gets the number of seconds for a given interval string (e.g., '1m', '1h', '1d').
@@ -78,3 +78,5 @@ export function mapToBaseTimeframe(time: number, higherInterval: string): number
     const intervalSeconds = getIntervalSeconds(higherInterval);
     return Math.floor(time / intervalSeconds) * intervalSeconds;
 }
+
+

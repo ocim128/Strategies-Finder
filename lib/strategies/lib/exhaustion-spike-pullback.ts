@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from '../types';
+import { Strategy, OHLCVData, StrategyParams } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows, getCloses, getVolumes } from '../strategy-helpers';
 import { calculateATR, calculateEMA, calculateSMA } from '../indicators';
 
@@ -94,3 +94,5 @@ export const exhaustion_spike_pullback: Strategy = {
         walkForwardParams: ['spikeAtrMult', 'pullbackEma', 'maxWaitBars']
     }
 };
+
+

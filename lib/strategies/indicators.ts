@@ -1,4 +1,4 @@
-import { OHLCVData } from './types';
+import { OHLCVData } from '../types/strategies';
 
 // ============================================================================
 // Indicator Calculations
@@ -775,3 +775,5 @@ export function calculateMomentum(data: number[], period: number): (number | nul
     }
     return result;
 }
+
+

@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from '../types';
+import { Strategy, OHLCVData, StrategyParams } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows } from '../strategy-helpers';
 
 export const session_open_fakeout: Strategy = {
@@ -66,3 +66,5 @@ export const session_open_fakeout: Strategy = {
         walkForwardParams: ['sessionBars', 'openingRangeBars', 'fakeoutWindowBars']
     }
 };
+
+

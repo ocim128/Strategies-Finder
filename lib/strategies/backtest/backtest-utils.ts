@@ -1,6 +1,6 @@
 
-import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../types';
-import { NormalizedSettings } from './backtest-types';
+import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../../types/index';
+import { NormalizedSettings } from '../../types/backtest';
 
 export function toNumberOr(value: number | undefined, fallback: number): number {
     return Number.isFinite(value) ? value! : fallback;
@@ -159,3 +159,7 @@ export function getTimeIndex(data: OHLCVData[]): Map<string, number> {
     }
     return cached;
 }
+
+
+
+

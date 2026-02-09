@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator } from '../types';
+import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows, getCloses } from '../strategy-helpers';
 import { calculateATR, calculateEMA, calculateRSI } from '../indicators';
 import { COLORS } from '../constants';
@@ -167,3 +167,5 @@ export const chandelier_rsi_ema: Strategy = {
         direction: 'both'
     }
 };
+
+

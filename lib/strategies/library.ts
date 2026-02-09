@@ -1,4 +1,4 @@
-import { Strategy } from './types';
+import { Strategy } from '../types/strategies';
 
 import { fib_speed_fan_entry } from './lib/fib-speed-fan-entry';
 
@@ -49,3 +49,5 @@ export const strategies: Record<string, Strategy> = {
     exhaustion_spike_pullback,
     session_open_fakeout,
 };
+
+

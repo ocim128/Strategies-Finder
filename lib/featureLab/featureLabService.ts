@@ -1,5 +1,5 @@
 import type { Time } from "lightweight-charts";
-import type { OHLCVData } from "../strategies/types";
+import type { OHLCVData } from '../types/strategies';
 import { calculateADX, calculateATR, calculateEMA, calculateRSI, calculateSMA } from "../strategies/indicators";
 import {
     DEFAULT_FEATURE_LAB_CONFIG,
@@ -14,7 +14,7 @@ import {
     FeatureLabSplit,
     FeatureLabVerdictConfig,
     FeatureLabVerdictReport,
-} from "./types";
+} from '../types/index';
 
 const FEATURE_KEYS: FeatureLabFeatureKey[] = [
     'ret_1',
@@ -557,3 +557,7 @@ function clampRatio(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(1, value));
 }
+
+
+
+

@@ -4,8 +4,8 @@
  */
 
 import { scannerManager } from './scanner-manager';
-import { settingsManager } from '../settingsManager';
-import type { ScanResult, ScanProgress, StrategyConfigEntry } from './scanner-types';
+import { settingsManager } from '../settings-manager';
+import type { ScanResult, ScanProgress, StrategyConfigEntry } from '../types/scanner';
 
 // ============================================================================
 // Scanner Panel Class
@@ -126,8 +126,9 @@ export class ScannerPanel {
                                 <th>Pair</th>
                                 <th>Dir</th>
                                 <th>Strategy</th>
-                                <th>Signal $</th>
-                                <th>Current $</th>
+                                <th>Entry $</th>
+                                <th>Now $</th>
+                                <th>Target $</th>
                                 <th>uPnL</th>
                                 <th>Age</th>
                             </tr>
@@ -401,6 +402,22 @@ export class ScannerPanel {
                 const pnlClass = pnl >= 0 ? 'scanner-panel__cell-pnl--profit' : 'scanner-panel__cell-pnl--loss';
                 const pnlSign = pnl >= 0 ? '+' : '';
 
+                // Format target price with appropriate styling
+                let targetHtml = '<span class="scanner-panel__cell-target--none">—</span>';
+                if (r.targetPrice !== null) {
+                    // Calculate how close we are to target (0 = at entry, 100 = at target)
+                    const entryPrice = r.signal.price;
+                    const targetDistance = Math.abs(r.targetPrice - entryPrice);
+                    const currentProgress = Math.abs(r.currentPrice - entryPrice);
+                    const progressPercent = targetDistance > 0 ? (currentProgress / targetDistance) * 100 : 0;
+
+                    // Color gradient: farther = dimmer, closer = brighter green
+                    const targetClass = progressPercent >= 75 ? 'scanner-panel__cell-target--close' :
+                        progressPercent >= 50 ? 'scanner-panel__cell-target--mid' :
+                            'scanner-panel__cell-target--far';
+                    targetHtml = `<span class="${targetClass}">${r.targetPrice.toFixed(4)}</span>`;
+                }
+
                 return `
                 <tr class="scanner-panel__result-row" data-symbol="${r.symbol}">
                     <td class="scanner-panel__cell-pair">${r.displayName}</td>
@@ -410,6 +427,7 @@ export class ScannerPanel {
                     <td class="scanner-panel__cell-strategy">${r.strategy.replace(/_/g, ' ')}</td>
                     <td class="scanner-panel__cell-price">${r.signal.price.toFixed(4)}</td>
                     <td class="scanner-panel__cell-price">${r.currentPrice.toFixed(4)}</td>
+                    <td class="scanner-panel__cell-target">${targetHtml}</td>
                     <td class="scanner-panel__cell-pnl ${pnlClass}">${pnlSign}${pnl.toFixed(2)}%</td>
                     <td class="scanner-panel__cell-age">${r.signalAge} bar${r.signalAge !== 1 ? 's' : ''}</td>
                 </tr>
@@ -445,10 +463,11 @@ export class ScannerPanel {
     private showError(message: string): void {
         const tbody = this.container.querySelector('.scanner-panel__results-body') as HTMLTableSectionElement;
         if (tbody) {
-            tbody.innerHTML = `<tr><td colspan="7" class="scanner-panel__error">Error: ${message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="8" class="scanner-panel__error">Error: ${message}</td></tr>`;
         }
     }
 }
 
 // Export singleton instance
 export const scannerPanel = new ScannerPanel();
+

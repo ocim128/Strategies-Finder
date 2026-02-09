@@ -2,8 +2,8 @@
 import { Time } from "lightweight-charts";
 import { OHLCVData } from "../strategies/index";
 import { resampleOHLCV } from "../strategies/resample-utils";
-import { debugLogger } from "../debugLogger";
-import { BinanceKline, HistoricalFetchOptions } from "./types";
+import { debugLogger } from "../debug-logger";
+import { BinanceKline, HistoricalFetchOptions } from '../types/index';
 import { getIntervalSeconds, wait } from "./utils";
 
 const LIMIT_PER_REQUEST = 1000;
@@ -278,3 +278,5 @@ export function startBinanceStream(
 
     return ws;
 }
+
+

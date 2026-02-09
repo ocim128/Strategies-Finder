@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, Signal } from '../types';
+import { Strategy, OHLCVData, StrategyParams, Signal } from '../../types/strategies';
 import { createBuySignal, createSellSignal, ensureCleanData, getCloses } from '../strategy-helpers';
 import { calculateEMA } from '../indicators';
 
@@ -217,3 +217,5 @@ export const drawdown_regime_gate: Strategy = {
         ],
     },
 };
+
+

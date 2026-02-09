@@ -5,9 +5,9 @@
  * strategy signal visualization.
  */
 
-export { ReplayManager, replayManager } from './replayManager';
-export { ReplayChartAdapter } from './replayChartAdapter';
-export { ReplayUI } from './replayUI';
+export { ReplayManager, replayManager } from './replay-manager';
+export { ReplayChartAdapter } from './replay-chart-adapter';
+export { ReplayUI } from './replay-ui';
 
 export type {
     // Status & Speed
@@ -29,6 +29,7 @@ export type {
 
     // Interface
     IReplayManager,
-} from './replayTypes';
+} from '../types/replay';
 
-export { DEFAULT_SPEED_CONFIG } from './replayTypes';
+export { DEFAULT_SPEED_CONFIG } from '../types/replay';
+

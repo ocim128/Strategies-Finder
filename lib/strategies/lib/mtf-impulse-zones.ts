@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator, Time } from '../types';
+import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator, Time } from '../../types/strategies';
 import { createBuySignal, createSellSignal, ensureCleanData, getCloses, getHighs, getLows } from '../strategy-helpers';
 import { calculateATR, calculateEMA } from '../indicators';
 import { resampleOHLCV } from '../resample-utils';
@@ -494,3 +494,5 @@ export const mtf_impulse_zone_breakout: Strategy = {
         direction: 'both',
     },
 };
+
+

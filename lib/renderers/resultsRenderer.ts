@@ -1,5 +1,5 @@
 import { BacktestResult } from "../strategies/index";
-import { getRequiredElement, updateTextContent, setVisible } from "../domUtils";
+import { getRequiredElement, updateTextContent, setVisible } from "../dom-utils";
 
 export class ResultsRenderer {
     public render(result: BacktestResult) {

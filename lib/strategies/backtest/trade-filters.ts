@@ -1,6 +1,6 @@
 
-import { OHLCVData } from '../types';
-import { NormalizedSettings, IndicatorSeries } from './backtest-types';
+import { OHLCVData } from '../../types/index';
+import { NormalizedSettings, IndicatorSeries } from '../../types/backtest';
 
 export const MARKET_MODE_DEFAULT_EMA_PERIOD = 200;
 export const MARKET_MODE_SLOPE_LOOKBACK = 20;
@@ -153,3 +153,7 @@ export function passesRegimeFilters(
 
     return true;
 }
+
+
+
+

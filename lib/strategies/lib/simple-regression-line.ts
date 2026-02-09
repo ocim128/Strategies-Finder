@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator } from '../types';
+import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator } from '../../types/strategies';
 import { createBuySignal, createSellSignal, ensureCleanData, getCloses } from '../strategy-helpers';
 import { COLORS } from '../constants';
 
@@ -380,3 +380,5 @@ export const simple_regression_line: Strategy = {
         ],
     },
 };
+
+

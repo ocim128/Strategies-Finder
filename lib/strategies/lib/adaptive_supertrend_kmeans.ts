@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, StrategyIndicator, Signal } from '../types';
+import { Strategy, OHLCVData, StrategyParams, StrategyIndicator, Signal } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows, getCloses } from '../strategy-helpers';
 import { calculateATR, calculateEMA } from '../indicators';
 import { COLORS } from '../constants';
@@ -381,3 +381,5 @@ export const adaptive_supertrend_kmeans: Strategy = {
         walkForwardParams: ['atrPeriod', 'minFactor', 'maxFactor', 'factorStep']
     }
 };
+
+

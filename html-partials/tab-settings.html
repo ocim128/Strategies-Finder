@@ -451,7 +451,31 @@
                 </button>
                 <button class="btn btn-danger btn-icon" id="deleteConfigBtn" title="Delete selected configuration">
                     <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                        <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                </svg>
+            </button>
+            </div>
+
+            <div class="config-share-actions">
+                <button class="btn btn-secondary btn-compact" id="generateShareLinkBtn"
+                    title="Generate unique link for selected configuration">
+                    Generate Share Link
+                </button>
+                <button class="btn btn-primary btn-compact" id="copyShareLinkBtn" disabled
+                    title="Copy generated share link">
+                    Copy Link
+                </button>
+            </div>
+
+            <input type="text" class="param-input config-share-link-input" id="shareConfigLinkInput"
+                placeholder="Generated share link will appear here" readonly />
+
+            <div class="config-import-row">
+                <input type="text" class="param-input config-share-import-input" id="shareConfigImportInput"
+                    placeholder="Paste shared strategy link (or token)..." />
+                <button class="btn btn-primary btn-icon" id="loadShareLinkBtn" title="Load shared configuration">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
                     </svg>
                 </button>
             </div>

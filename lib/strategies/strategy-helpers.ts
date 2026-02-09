@@ -1,4 +1,4 @@
-import { Signal, OHLCVData, Time } from './types';
+import { Signal, OHLCVData, Time } from '../types/strategies';
 
 // ============================================================================
 // Data Mapping & Memoization
@@ -285,3 +285,5 @@ export function detectPivotsWithDeviation(
 
     return pivots;
 }
+
+

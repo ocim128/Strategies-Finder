@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, Signal } from '../types';
+import { Strategy, OHLCVData, StrategyParams, Signal } from '../../types/strategies';
 import { createBuySignal, createSellSignal, ensureCleanData, getCloses, getHighs, getLows } from '../strategy-helpers';
 import { calculateATR, calculateSMA } from '../indicators';
 
@@ -476,3 +476,5 @@ export const dynamic_vix_regime: Strategy = {
         ],
     },
 };
+
+

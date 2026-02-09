@@ -1,4 +1,4 @@
-import { OHLCVData, BacktestResult, Trade, StrategyParams, BacktestSettings, Strategy } from './types';
+import { OHLCVData, BacktestResult, Trade, StrategyParams, BacktestSettings, Strategy } from '../types/strategies';
 import { runBacktest } from './backtest';
 import { ensureCleanData } from './strategy-helpers';
 
@@ -678,3 +678,5 @@ function getMonteCarloInterpretation(robustness: number, fragility: number): str
     }
     return '⛔ CRITICAL: Strategy is extremely fragile. Likely curve-fitted. Not recommended.';
 }
+
+

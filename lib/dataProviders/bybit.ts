@@ -2,8 +2,8 @@
 import { Time } from "lightweight-charts";
 import { OHLCVData } from "../strategies/index";
 import { resampleOHLCV } from "../strategies/resample-utils";
-import { debugLogger } from "../debugLogger";
-import { BybitTradFiKline, BybitTradFiKlineResponse, HistoricalFetchOptions } from "./types";
+import { debugLogger } from "../debug-logger";
+import { BybitTradFiKline, BybitTradFiKlineResponse, HistoricalFetchOptions } from '../types/index';
 import { getIntervalSeconds, wait } from "./utils";
 
 const BYBIT_LIMIT_PER_REQUEST = 200;
@@ -365,3 +365,5 @@ export async function fetchBybitTradFiLatest(
     const updatedSeries = needsResample ? resampleOHLCV(ohlcv, interval) : ohlcv;
     return updatedSeries[updatedSeries.length - 1] ?? null;
 }
+
+

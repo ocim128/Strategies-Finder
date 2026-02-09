@@ -774,6 +774,30 @@
     min-width: 0;
 }
 
+.config-share-actions {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.config-share-actions .btn {
+    flex: 1;
+}
+
+.config-share-link-input {
+    width: 100%;
+    font-size: var(--font-size-xs);
+    font-family: var(--font-family-mono);
+}
+
+.config-import-row {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.config-share-import-input {
+    flex: 1;
+}
+
 /* Strategy Finder - Enhanced */
 .finder-status {
     font-size: var(--font-size-xs);

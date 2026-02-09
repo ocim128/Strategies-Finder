@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator, EntryStats, StrategyEvaluation, EntryLevelStat, EntryPreview } from '../types';
+import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator, EntryStats, StrategyEvaluation, EntryLevelStat, EntryPreview } from '../../types/strategies';
 import { createBuySignal, createSellSignal, ensureCleanData } from '../strategy-helpers';
 import { calculateATR } from '../indicators';
 import { COLORS } from '../constants';
@@ -835,3 +835,5 @@ export const fib_speed_fan_entry: Strategy = {
         return buildEntryPreview(data, params);
     },
 };
+
+

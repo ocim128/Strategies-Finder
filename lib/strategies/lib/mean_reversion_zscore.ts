@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, StrategyIndicator } from '../types';
+import { Strategy, OHLCVData, StrategyParams, StrategyIndicator } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from '../strategy-helpers';
 import { COLORS } from '../constants';
 
@@ -109,3 +109,5 @@ export const mean_reversion_zscore: Strategy = {
         direction: 'both'
     }
 };
+
+

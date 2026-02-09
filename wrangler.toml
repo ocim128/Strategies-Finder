@@ -1,0 +1,9 @@
+name = "strategy-entry-signal-worker"
+main = "workers/entry-signal-worker.ts"
+compatibility_date = "2026-02-09"
+
+[[d1_databases]]
+binding = "SIGNALS_DB"
+database_name = "signal"
+database_id = "ba727aeb-077a-4fed-a526-e07e97c61f6b"
+migrations_dir = "workers/migrations"

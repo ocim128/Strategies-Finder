@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, Signal } from '../types';
+import { Strategy, OHLCVData, StrategyParams, Signal } from '../../types/strategies';
 import { createBuySignal, createSellSignal, ensureCleanData, getCloses, getHighs, getLows } from '../strategy-helpers';
 import { calculateATR, calculateEMA, calculateSMA } from '../indicators';
 
@@ -242,3 +242,5 @@ export const shock_reversion_trend_gate: Strategy = {
         ],
     },
 };
+
+

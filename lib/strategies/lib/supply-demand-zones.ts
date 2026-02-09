@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator } from '../types';
+import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator } from '../../types/strategies';
 import { createBuySignal, createSellSignal, ensureCleanData, getHighs, getLows, getCloses } from '../strategy-helpers';
 import { calculateATR } from '../indicators';
 import { COLORS } from '../constants';
@@ -453,3 +453,5 @@ export const supply_demand_zones: Strategy = {
         direction: 'both',
     },
 };
+
+

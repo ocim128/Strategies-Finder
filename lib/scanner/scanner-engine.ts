@@ -3,17 +3,17 @@
  * Core scanning logic for multi-pair signal detection
  */
 
-import { binanceSearchService, type BinanceSymbol } from '../binanceSearchService';
-import { dataManager } from '../dataManager';
+import { binanceSearchService, type BinanceSymbol } from '../binance-search-service';
+import { dataManager } from '../data-manager';
 import { strategyRegistry } from '../../strategyRegistry';
-import type { Signal } from '../strategies/types';
+import type { Signal } from '../types/strategies';
 import { getOpenPositionForScanner } from '../strategies/backtest';
 import type {
     ScannerConfig,
     ScanResult,
     ScanProgress,
     PairScanData,
-} from './scanner-types';
+} from '../types/scanner';
 
 // ============================================================================
 // Constants
@@ -210,6 +210,7 @@ export class ScannerEngine {
                         currentPrice: openPosition.currentPrice,
                         signalAge: openPosition.barsInTrade,
                         direction: openPosition.direction,
+                        targetPrice: openPosition.takeProfitPrice,
                     });
                 }
             } catch (err) {
@@ -244,3 +245,6 @@ export class ScannerEngine {
 
 // Export singleton instance
 export const scannerEngine = new ScannerEngine();
+
+
+

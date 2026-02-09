@@ -1,4 +1,4 @@
-import type { BacktestResult, EntryStats } from './types';
+import type { BacktestResult, EntryStats } from '../types/strategies';
 
 export function buildEntryBacktestResult(entryStats: EntryStats): BacktestResult {
     const totalEntries = entryStats.totalEntries;
@@ -29,4 +29,6 @@ export function buildEntryBacktestResult(entryStats: EntryStats): BacktestResult
         entryStats
     };
 }
+
+
 

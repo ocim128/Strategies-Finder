@@ -1,11 +1,11 @@
 
-import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../types';
+import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../../types/index';
 import { calculateADX, calculateATR, calculateEMA, calculateRSI, calculateSMA } from '../indicators';
 import { getCloses, getHighs, getLows, getVolumes } from '../strategy-helpers';
-import { IndicatorSeries, NormalizedSettings, PreparedSignal } from './backtest-types';
+import { IndicatorSeries, NormalizedSettings, PreparedSignal } from '../../types/backtest';
 import { getTimeIndex, getExecutionShift, resolveExecutionPrice, compareTime, normalizeBacktestSettings, normalizeTradeDirection, timeToNumber, timeKey, signalToPositionDirection } from './backtest-utils';
 import { resolveTrendPeriod, passesTradeFilter, passesRegimeFilters } from './trade-filters';
-import { runBacktestCompact } from './backtest-engine';
+import { runBacktest } from './backtest-engine';
 
 export function prepareSignals(
     data: OHLCVData[],
@@ -179,7 +179,7 @@ export function getOpenPositionForScanner(
     if (signals.length === 0 || data.length === 0) return null;
 
     // Run backtest to get trades
-    const result = runBacktestCompact(
+    const result = runBacktest(
         data,
         signals,
         10000, // Initial capital (doesn't affect position detection)
@@ -230,6 +230,13 @@ export function getOpenPositionForScanner(
     }
     const barsInTrade = data.length - 1 - entryBarIndex;
 
+    // Calculate take profit price from settings
+    let takeProfitPrice: number | null = null;
+    if (settings.takeProfitEnabled && settings.takeProfitPercent && settings.takeProfitPercent > 0) {
+        // Calculate TP based on percentage: entry * (1 + direction * tp%)
+        takeProfitPrice = lastTrade.entryPrice * (1 + directionFactor * (settings.takeProfitPercent / 100));
+    }
+
     return {
         direction: lastTrade.type,
         entryTime: lastTrade.entryTime,
@@ -238,6 +245,10 @@ export function getOpenPositionForScanner(
         unrealizedPnlPercent,
         barsInTrade,
         stopLossPrice: null, // Would need more complex tracking to get these
-        takeProfitPrice: null,
+        takeProfitPrice,
     };
 }
+
+
+
+

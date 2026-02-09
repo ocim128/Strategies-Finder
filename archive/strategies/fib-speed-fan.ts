@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator } from '../types';
+import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator } from './lib/types/index';
 import { createBuySignal, createSellSignal, ensureCleanData } from '../strategy-helpers';
 import { calculateATR } from '../indicators';
 import { COLORS } from '../constants';
@@ -298,3 +298,4 @@ export const fib_speed_fan: Strategy = {
         return indicators;
     }
 };
+

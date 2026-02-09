@@ -1,6 +1,6 @@
 import { Time } from "lightweight-charts";
 import { Trade } from "../strategies/index";
-import { getRequiredElement, setVisible } from "../domUtils";
+import { getRequiredElement, setVisible } from "../dom-utils";
 
 export class TradesRenderer {
     public render(trades: Trade[], jumpToTrade: (time: Time) => void, formatPrice: (p: number) => string, formatDate: (t: Time) => string) {

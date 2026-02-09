@@ -1,3 +1,81 @@
-i need you to solve: the backtest result is different using 5m with calculation 120m compared to chart only 120m
+Phase 1: Large File Refactoring
+IMPORTANT
 
-for example: on 5m Use Strategy Timeframe 120m is execute trade that is not exist on 120m alone
+These files are the most critical to refactor. Each file handles multiple responsibilities that should be separated.
+
+1.1 Refactor
+finderManager.ts
+ (1,927 lines → ~4 files)
+Currently this file handles: UI initialization, timeframe management, parameter generation, backtest execution, and result rendering.
+
+[MODIFY]
+finderManager.ts
+Keep core finder orchestration logic only
+Remove UI logic to new files
+Target: <500 lines
+[NEW]
+finder-ui.ts
+All DOM manipulation and event handlers
+initSortingUI
+,
+initSortList
+,
+renderSortList
+,
+renderSelectedFinderTimeframes
+,
+renderStrategySelection
+[NEW]
+finder-timeframes.ts
+Multi-timeframe management:
+initMultiTimeframeUI
+,
+addFinderTimeframe
+,
+removeFinderTimeframe
+,
+loadMultiTimeframeDatasets
+[NEW]
+finder-param-generator.ts
+Parameter combination generation logic extracted from
+runFinder
+1.2 Refactor
+pairCombinerManager.ts
+ (976 lines → ~3 files)
+[MODIFY]
+pairCombinerManager.ts
+Keep core analysis orchestration
+Target: <400 lines
+[NEW]
+pairCombiner/pair-combiner-ui.ts
+renderSearchResults
+,
+updateSelectedDisplay
+,
+renderResults
+,
+setValue
+,
+toggleSection
+[NEW]
+pairCombiner/pair-combiner-scan.ts
+Scan-related methods: runScan, loadUniverse, renderScanResults
+1.3 Refactor
+chartManager.ts
+ (849 lines → ~3 files)
+[MODIFY]
+chartManager.ts
+Keep core chart creation and data updates
+Target: <400 lines
+[NEW]
+chart-tooltip.ts
+initTooltip
+,
+updateTooltip
+,
+updateTooltipIndicators
+,
+hideTooltip
+[NEW]
+chart-overlays.ts
+Secondary pair overlay, spread chart, divergence bands, correlation bands
