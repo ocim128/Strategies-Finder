@@ -211,6 +211,11 @@ export function setupSettingsHandlers() {
     const sharedConfig = parseStrategyConfigFromCurrentUrl();
     if (sharedConfig) {
         const sharedChartContext = getSharedChartContextFromUrl();
+        const previousDataFingerprint = getDataFingerprint(state.ohlcvData);
+        const requiresDataReload =
+            state.currentSymbol !== sharedChartContext.symbol ||
+            state.currentInterval !== sharedChartContext.interval;
+
         const imported = settingsManager.upsertStrategyConfig(sharedConfig);
         settingsManager.applyStrategyConfig(imported);
         if (state.currentSymbol !== sharedChartContext.symbol) {
@@ -221,7 +226,12 @@ export function setupSettingsHandlers() {
         }
         updateConfigDropdown(imported.name);
         activateSharedLinkViewMode();
-        scheduleSharedAutoBacktest();
+        scheduleSharedAutoBacktest({
+            expectedSymbol: sharedChartContext.symbol,
+            expectedInterval: sharedChartContext.interval,
+            previousDataFingerprint,
+            requiresDataReload,
+        });
         uiManager.showToast(`Shared configuration "${imported.name}" loaded`, 'success');
         debugLogger.event('ui.config.shared.loaded', { name: imported.name, source: 'url' });
     }
@@ -550,18 +560,37 @@ function activateSharedLinkViewMode(): void {
     }
 }
 
-function scheduleSharedAutoBacktest(): void {
+interface SharedBacktestWaitOptions {
+    expectedSymbol: string;
+    expectedInterval: string;
+    previousDataFingerprint: string;
+    requiresDataReload: boolean;
+}
+
+function getDataFingerprint(data: Array<{ time: unknown }>): string {
+    const length = data.length;
+    if (length === 0) return '0';
+    const first = String(data[0]?.time ?? '');
+    const last = String(data[length - 1]?.time ?? '');
+    return `${length}:${first}:${last}`;
+}
+
+function scheduleSharedAutoBacktest(options: SharedBacktestWaitOptions): void {
     const maxAttempts = 40;
     const pollMs = 250;
     let attempt = 0;
 
     const runWhenReady = () => {
         attempt += 1;
+        const symbolReady = state.currentSymbol === options.expectedSymbol;
+        const intervalReady = state.currentInterval === options.expectedInterval;
         const hasData = state.ohlcvData.length > 0;
+        const dataFingerprint = getDataFingerprint(state.ohlcvData);
+        const dataReloaded = !options.requiresDataReload || dataFingerprint !== options.previousDataFingerprint;
         const runButton = document.getElementById('runBacktest') as HTMLButtonElement | null;
         const isBusy = runButton?.disabled ?? false;
 
-        if (hasData && !isBusy) {
+        if (symbolReady && intervalReady && hasData && dataReloaded && !isBusy) {
             void backtestService.runCurrentBacktest().catch((error) => {
                 console.error('[SharedConfig] Auto backtest failed:', error);
                 uiManager.showToast('Auto backtest failed. Run manually.', 'error');

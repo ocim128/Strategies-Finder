@@ -201,7 +201,9 @@ function buildTelegramMessage(signal: StoredSignalPayload): string {
 async function sendTelegramAlert(env: Env, signal: StoredSignalPayload): Promise<void> {
     const token = env.TELEGRAM_BOT_TOKEN;
     const chatId = env.TELEGRAM_CHAT_ID;
-    if (!token || !chatId) return;
+    if (!token || !chatId) {
+        throw new Error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID secret");
+    }
 
     const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: "POST",
@@ -349,21 +351,16 @@ async function handleStreamSignal(request: Request, env: Env): Promise<Response>
         .run();
 
     const inserted = (insert.meta?.changes ?? 0) > 0;
+    let telegramSent: boolean | undefined;
+    let telegramError: string | undefined;
 
     if (inserted && payload.notifyTelegram) {
         try {
             await sendTelegramAlert(env, entryPayload);
+            telegramSent = true;
         } catch (error) {
-            return toJsonResponse(
-                {
-                    ok: true,
-                    newEntry: true,
-                    telegramSent: false,
-                    telegramError: error instanceof Error ? error.message : String(error),
-                    entry: entryPayload,
-                },
-                200
-            );
+            telegramSent = false;
+            telegramError = error instanceof Error ? error.message : String(error);
         }
     }
 
@@ -371,6 +368,8 @@ async function handleStreamSignal(request: Request, env: Env): Promise<Response>
         ok: true,
         newEntry: inserted,
         duplicate: !inserted,
+        telegramSent,
+        telegramError,
         entry: entryPayload,
         rawSignalCount: evaluation.rawSignalCount,
         preparedSignalCount: evaluation.preparedSignalCount,
