@@ -10,6 +10,9 @@ import {
     parseStrategyConfigFromSharedInput,
 } from "../strategy-share-service";
 
+const SHARED_DEFAULT_SYMBOL = 'ETHUSDT';
+const SHARED_DEFAULT_INTERVAL = '120m';
+
 export function setupSettingsHandlers() {
     // Reset to Default button
     const resetBtn = document.getElementById('resetSettingsBtn');
@@ -161,8 +164,11 @@ export function setupSettingsHandlers() {
                 return;
             }
 
-            const link = createStrategyShareLink(config);
-            setShareLinkOutput(link);
+            const baseLink = createStrategyShareLink(config);
+            const withChartContext = new URL(baseLink);
+            withChartContext.searchParams.set('symbol', state.currentSymbol);
+            withChartContext.searchParams.set('interval', state.currentInterval);
+            setShareLinkOutput(withChartContext.toString());
             uiManager.showToast('Share link generated', 'success');
             debugLogger.event('ui.config.shared.link_generated', { name });
         });
@@ -204,8 +210,15 @@ export function setupSettingsHandlers() {
 
     const sharedConfig = parseStrategyConfigFromCurrentUrl();
     if (sharedConfig) {
+        const sharedChartContext = getSharedChartContextFromUrl();
         const imported = settingsManager.upsertStrategyConfig(sharedConfig);
         settingsManager.applyStrategyConfig(imported);
+        if (state.currentSymbol !== sharedChartContext.symbol) {
+            state.set('currentSymbol', sharedChartContext.symbol);
+        }
+        if (state.currentInterval !== sharedChartContext.interval) {
+            state.set('currentInterval', sharedChartContext.interval);
+        }
         updateConfigDropdown(imported.name);
         activateSharedLinkViewMode();
         scheduleSharedAutoBacktest();
@@ -489,6 +502,26 @@ async function copyToClipboard(text: string): Promise<boolean> {
         document.body.removeChild(textarea);
         return copied;
     }
+}
+
+function normalizeSharedInterval(value: string | null): string {
+    if (!value) return SHARED_DEFAULT_INTERVAL;
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) return SHARED_DEFAULT_INTERVAL;
+    if (/^\d+$/.test(trimmed)) {
+        return `${trimmed}m`;
+    }
+    if (/^\d+(m|h|d|w)$/.test(trimmed)) {
+        return trimmed;
+    }
+    return SHARED_DEFAULT_INTERVAL;
+}
+
+function getSharedChartContextFromUrl(): { symbol: string; interval: string } {
+    const url = new URL(window.location.href);
+    const symbol = (url.searchParams.get('symbol') || SHARED_DEFAULT_SYMBOL).trim().toUpperCase();
+    const interval = normalizeSharedInterval(url.searchParams.get('interval'));
+    return { symbol, interval };
 }
 
 function activateSharedLinkViewMode(): void {
