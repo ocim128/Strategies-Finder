@@ -1,10 +1,7 @@
-import type { BacktestResult, OHLCVData, StrategyParams, Time } from "../strategies/index";
+import type { BacktestResult, StrategyParams } from "../strategies/index";
 
 export type FinderMode = 'default' | 'grid' | 'random';
 export type FinderMetric =
-	| 'oosDurabilityScore'
-	| 'oosProfitFactor'
-	| 'oosNetProfitPercent'
 	| 'netProfit'
 	| 'profitFactor'
 	| 'sharpeRatio'
@@ -28,36 +25,9 @@ export interface FinderOptions {
 	tradeFilterEnabled: boolean;
 	minTrades: number;
 	maxTrades: number;
-	durabilityEnabled: boolean;
-	durabilityHoldoutPercent: number;
-	durabilityMinOOSTrades: number;
-	durabilityMinScore: number;
 }
 
-export interface FinderDurabilityMetrics {
-	enabled: boolean;
-	score: number;
-	inSampleNetProfitPercent: number;
-	inSampleProfitFactor: number;
-	outOfSampleNetProfitPercent: number;
-	outOfSampleProfitFactor: number;
-	outOfSampleSharpeRatio: number;
-	outOfSampleMaxDrawdownPercent: number;
-	outOfSampleTrades: number;
-	pass: boolean;
-}
 
-export interface FinderDurabilityContext {
-	enabled: boolean;
-	inSampleData: OHLCVData[];
-	outOfSampleData: OHLCVData[];
-	inSampleStartTime: Time | null;
-	inSampleEndTime: Time | null;
-	outOfSampleStartTime: Time | null;
-	outOfSampleEndTime: Time | null;
-	minOOSTrades: number;
-	minScore: number;
-}
 
 export interface EndpointSelectionAdjustment {
 	result: BacktestResult;
@@ -77,5 +47,4 @@ export interface FinderResult {
 	endpointAdjusted: boolean;
 	endpointRemovedTrades: number;
 	confirmationParams?: Record<string, StrategyParams>;
-	durability: FinderDurabilityMetrics;
 }

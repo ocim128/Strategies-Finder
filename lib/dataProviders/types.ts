@@ -2,7 +2,7 @@
 
 
 
-export type DataProvider = 'binance' | 'bybit-tradfi' | 'twelvedata' | 'yahoo';
+export type DataProvider = 'binance' | 'bybit-tradfi';
 
 export type HistoricalFetchProgress = {
     fetched: number;

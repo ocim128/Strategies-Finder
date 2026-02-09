@@ -1,16 +1,7 @@
 import { Strategy } from './types';
 
 import { fib_speed_fan_entry } from './lib/fib-speed-fan-entry';
-import { fib_retracement } from './lib/fib-retracement';
-import { day_trading_booster } from './lib/day-trading-booster';
-import { volume_pivot_anchored } from './lib/volume-pivot-anchored';
-import { macd_x_overlay } from './lib/macd-x-overlay';
-import { fib_time_zones } from './lib/fib-time-zones';
-import { trend_fib_time } from './lib/trend-fib-time';
-import { vol_targeted_trend } from './lib/vol-targeted-trend';
-import { gravity_well } from './lib/gravity-well';
-import { volatility_cycle_rider } from './lib/volatility-cycle-rider';
-import { trap_hunter } from './lib/trap-hunter';
+
 import { supply_demand_zones } from './lib/supply-demand-zones';
 import { mtf_impulse_zone_reversal, mtf_impulse_zone_breakout } from './lib/mtf-impulse-zones';
 import { chandelier_rsi_ema } from './lib/chandelier_rsi_ema';
@@ -35,16 +26,7 @@ import { session_open_fakeout } from './lib/session-open-fakeout';
 export const strategies: Record<string, Strategy> = {
 
     fib_speed_fan_entry,
-    fib_retracement,
-    day_trading_booster,
-    volume_pivot_anchored,
-    macd_x_overlay,
-    fib_time_zones,
-    trend_fib_time,
-    vol_targeted_trend,
-    gravity_well,
-    volatility_cycle_rider,
-    trap_hunter,
+
     supply_demand_zones,
     mtf_impulse_zone_reversal,
     mtf_impulse_zone_breakout,

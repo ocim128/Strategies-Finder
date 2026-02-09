@@ -446,7 +446,7 @@ export class DataMiningManager {
         const provider = assetSearchService.getProvider(symbol);
         if (provider === 'binance') return 'Binance';
         if (provider === 'bybit-tradfi') return 'Bybit TradFi';
-        if (provider === 'twelvedata') return 'Twelve Data';
+
         if (provider === 'mock') return 'Mock';
         return provider;
     }

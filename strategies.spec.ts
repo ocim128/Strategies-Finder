@@ -3,9 +3,6 @@ import { describe, it } from 'node:test';
 import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time } from './lib/strategies/index';
 import { detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
 import { simple_regression_line } from './lib/strategies/lib/simple-regression-line';
-const durabilityModule = require('./lib/finder/durability');
-
-const { createDurabilityContext, evaluateDurability } = durabilityModule;
 
 
 describe('Strategy Calculations', () => {
@@ -189,106 +186,9 @@ describe('Pivot Detection', () => {
     });
 });
 
-import { fib_time_zones } from './lib/strategies/lib/fib-time-zones';
 
-describe('Classic Fib Time Zones Strategy', () => {
-    it('should generate signals at projected time zones', () => {
-        // Generate 50 bars
-        const data: OHLCVData[] = [];
-        for (let i = 0; i < 50; i++) {
-            data.push({
-                time: (i + 1) as unknown as Time, // using number as time for simplicity if type allows, strictly it's string type in test usually but let's check
-                open: 100, high: 100, low: 100, close: 100, volume: 100
-            });
-        }
 
-        // Force Pivot Low at 2: 
-        // Need to ensure it's a local low.
-        // Neighbors (1, 3) are 100 > 80. OK.
-        data[2].low = 80; data[2].close = 80; data[2].high = 80;
 
-        // Force Pivot High at 12:
-        // Neighbors (11, 13) are 100 < 120. OK.
-        data[12].high = 120; data[12].close = 120; data[12].low = 120;
-
-        // Pivot detection uses 'depth'. Let's use depth 2.
-        // Neighbors of 2: 1 (100) > 80. OK.
-        // Neighbors of 12: 11 (100) < 120, 13 (100) < 120. OK.
-
-        // Params: Deviation 5, Depth 2, ZoneWindow 0 (exact)
-        const signals = fib_time_zones.execute(data, { deviation: 5, depth: 2, zoneWindow: 0, trendFilter: 1 });
-
-        // Pivots should be at 2 and 12.
-        // Base = 12 - 2 = 10.
-        // Projections from 12:
-        // Fib 1 * 10 = 10 -> Index 22
-        // Fib 2 * 10 = 20 -> Index 32
-        // Fib 3 * 10 = 30 -> Index 42
-
-        // Since Last Pivot (12) is High, Trend is Down. Reversal is Buy.
-        // Expect Buy signals at 22, 32, 42.
-
-        // data[22] time is 23 (since i=0 time=1)
-        // data[32] time is 33
-        // data[42] time is 43
-
-        expect(signals.length).to.be.at.least(3);
-
-        const sig1 = signals.find(s => s.time === 23 as unknown as Time);
-        expect(sig1).to.not.be.undefined;
-        expect(sig1?.type).to.equal('buy');
-
-        const sig2 = signals.find(s => s.time === 33 as unknown as Time);
-        expect(sig2).to.not.be.undefined;
-
-        const sig3 = signals.find(s => s.time === 43 as unknown as Time);
-        expect(sig3).to.not.be.undefined;
-    });
-});
-
-import { trend_fib_time } from './lib/strategies/lib/trend-fib-time';
-
-describe('Trend-Based Fib Time Strategy', () => {
-    it('should generate signals based on 3-point trend projections', () => {
-        // Generate 50 bars
-        const data: OHLCVData[] = [];
-        for (let i = 0; i < 50; i++) {
-            data.push({
-                time: (i + 1) as unknown as Time,
-                open: 100, high: 100, low: 100, close: 100, volume: 100
-            });
-        }
-
-        // Setup A (Low) -> B (High) -> C (Low)
-        // A at 2
-        data[2].low = 80; data[2].high = 80; data[2].close = 80;
-        // B at 12
-        data[12].high = 120; data[12].low = 120; data[12].close = 120;
-        // C at 16 (Retracement Low)
-        data[16].low = 90; data[16].high = 90; data[16].close = 90;
-
-        // Distance A-B = 12 - 2 = 10 bars.
-        // Projection from C (16):
-        // Ratio 1.0 * 10 = 10 bars. Target = 16 + 10 = 26.
-        // Ratio 2.0 * 10 = 20 bars. Target = 16 + 20 = 36.
-
-        // Pattern: Low -> High -> Low. Next Impulse UP. Target is TOP. -> SELL Signal.
-
-        // Detection Params: Depth 2 (matches our forced pivots locs)
-        const signals = trend_fib_time.execute(data, { deviation: 5, depth: 2, trendFilter: 1 });
-
-        // Indices: 26, 36.
-        // Times: 27, 37.
-
-        const sig1 = signals.find(s => s.time === 27 as unknown as Time);
-        expect(sig1).to.not.be.undefined;
-        expect(sig1?.type).to.equal('sell');
-
-        const sig2 = signals.find(s => s.time === 37 as unknown as Time);
-        expect(sig2).to.not.be.undefined;
-        expect(sig2?.type).to.equal('sell');
-    });
-});
 
 describe('Backtesting Engine', () => {
     it('should execute trades and calculate profit correctly', () => {
@@ -463,62 +363,6 @@ describe('Backtesting Engine', () => {
         expect(compact.totalTrades).to.equal(0);
         expect(Number.isFinite(full.netProfit)).to.equal(true);
         expect(Number.isFinite(compact.netProfit)).to.equal(true);
-    });
-});
-
-describe('Finder Durability', () => {
-    it('should evaluate OOS trades correctly even when signals carry global barIndex values', () => {
-        const data: OHLCVData[] = [];
-        for (let i = 0; i < 300; i++) {
-            const close = 100 + i * 0.5;
-            data.push({
-                time: (i + 1) as unknown as Time,
-                open: close - 0.1,
-                high: close + 0.2,
-                low: close - 0.2,
-                close,
-                volume: 1000
-            });
-        }
-
-        const signals: Signal[] = [
-            { time: 220 as unknown as Time, type: 'buy', price: data[219].close, barIndex: 219 },
-            { time: 230 as unknown as Time, type: 'sell', price: data[229].close, barIndex: 229 },
-            { time: 240 as unknown as Time, type: 'buy', price: data[239].close, barIndex: 239 },
-            { time: 250 as unknown as Time, type: 'sell', price: data[249].close, barIndex: 249 },
-        ];
-
-        const context = createDurabilityContext({
-            mode: 'random',
-            sortPriority: ['oosDurabilityScore'],
-            useAdvancedSort: false,
-            topN: 5,
-            steps: 3,
-            rangePercent: 20,
-            maxRuns: 50,
-            tradeFilterEnabled: false,
-            minTrades: 0,
-            maxTrades: Number.POSITIVE_INFINITY,
-            durabilityEnabled: true,
-            durabilityHoldoutPercent: 30,
-            durabilityMinOOSTrades: 1,
-            durabilityMinScore: 0
-        }, data);
-
-        const metrics = evaluateDurability(
-            signals,
-            {},
-            context,
-            10000,
-            100,
-            0,
-            'percent',
-            0
-        );
-
-        expect(metrics.enabled).to.equal(true);
-        expect(metrics.outOfSampleTrades).to.equal(2);
-        expect(metrics.outOfSampleNetProfitPercent).to.be.greaterThan(0);
     });
 });
 

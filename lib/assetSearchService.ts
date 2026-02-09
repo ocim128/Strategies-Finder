@@ -7,7 +7,7 @@ import { binanceSearchService, BinanceSymbol } from './binanceSearchService';
 import { tradfiSearchService, type TradFiSymbol } from './tradfiSearchService';
 
 export type AssetType = 'crypto' | 'stock' | 'forex' | 'commodity';
-export type AssetProvider = 'binance' | 'bybit-tradfi' | 'twelvedata' | 'mock';
+export type AssetProvider = 'binance' | 'bybit-tradfi' | 'mock';
 
 export interface Asset {
     symbol: string;          // e.g., "AAPL", "ETHUSDT", "EURUSD"
@@ -19,16 +19,7 @@ export interface Asset {
 }
 
 // Additional fallback assets when not available in Bybit TradFi catalog
-const POPULAR_ASSETS: Asset[] = [
-    { symbol: 'SPY', displayName: 'SPDR S&P 500 ETF', type: 'stock', provider: 'twelvedata' },
-    { symbol: 'QQQ', displayName: 'Invesco QQQ Trust', type: 'stock', provider: 'twelvedata' },
-    { symbol: 'IWM', displayName: 'iShares Russell 2000 ETF', type: 'stock', provider: 'twelvedata' },
-    { symbol: 'EUR/USD', displayName: 'Euro / US Dollar', type: 'forex', provider: 'twelvedata' },
-    { symbol: 'GBP/USD', displayName: 'British Pound / US Dollar', type: 'forex', provider: 'twelvedata' },
-    { symbol: 'USD/JPY', displayName: 'US Dollar / Japanese Yen', type: 'forex', provider: 'twelvedata' },
-    { symbol: 'XAUUSD', displayName: 'Gold / US Dollar', type: 'commodity', provider: 'twelvedata' },
-    { symbol: 'XAGUSD', displayName: 'Silver / US Dollar', type: 'commodity', provider: 'twelvedata' },
-];
+const POPULAR_ASSETS: Asset[] = [];
 
 class AssetSearchService {
     private mapTradFiAsset(symbol: TradFiSymbol): Asset {
@@ -249,8 +240,8 @@ class AssetSearchService {
             return 'binance';
         }
 
-        // Default to twelvedata for stocks/forex/commodities
-        return 'twelvedata';
+        // Default to binance
+        return 'binance';
     }
 }
 

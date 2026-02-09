@@ -1,4 +1,4 @@
-import { BacktestResult, BacktestSettings, StrategyParams, runBacktest, runBacktestCompact, Signal, Time, buildEntryBacktestResult } from "./strategies/index";
+import { BacktestResult, StrategyParams, runBacktest, runBacktestCompact, Signal, Time, buildEntryBacktestResult } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtestService";
@@ -10,12 +10,10 @@ import { rustEngine } from "./rustEngineClient";
 import { debugLogger } from "./debugLogger";
 import { shouldUseRustEngine } from "./enginePreferences";
 import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth, getConfirmationStrategyValues, renderConfirmationStrategyList, setConfirmationStrategyParams } from "./confirmationStrategies";
-import { DEFAULT_SORT_PRIORITY, METRIC_FULL_LABELS, METRIC_LABELS } from "./finder/constants";
-import { buildSelectionResult, createDurabilityContext, evaluateDurability } from "./finder/durability";
+import { DEFAULT_SORT_PRIORITY, METRIC_FULL_LABELS } from "./finder/constants";
+import { buildSelectionResult } from "./finder/endpoint";
 import type {
 	EndpointSelectionAdjustment,
-	FinderDurabilityContext,
-	FinderDurabilityMetrics,
 	FinderMetric,
 	FinderMode,
 	FinderOptions,
@@ -81,11 +79,7 @@ export class FinderManager {
 
 		this.initSortingUI();
 		this.initMultiTimeframeUI();
-		const durabilityToggle = getRequiredElement<HTMLInputElement>('finderDurabilityToggle');
-		durabilityToggle.addEventListener('change', () => {
-			setVisible('finderDurabilitySettings', durabilityToggle.checked);
-		});
-		setVisible('finderDurabilitySettings', durabilityToggle.checked);
+
 
 		state.subscribe('currentInterval', () => {
 			this.populateMultiTimeframePresets();
@@ -108,7 +102,7 @@ export class FinderManager {
 		sortSecondary.innerHTML = optionsHtml;
 
 		// Set defaults
-		sortPrimary.value = 'oosDurabilityScore';
+		sortPrimary.value = 'expectancy';
 		sortSecondary.value = 'oosProfitFactor';
 
 		// Advanced Toggle Logic
@@ -478,31 +472,7 @@ export class FinderManager {
 		return buildSelectionResult(raw, lastDataTime, initialCapital);
 	}
 
-	private createDurabilityContext(options: FinderOptions, data: typeof state.ohlcvData): FinderDurabilityContext {
-		return createDurabilityContext(options, data);
-	}
 
-	private evaluateDurability(
-		signals: Signal[],
-		backtestSettings: BacktestSettings,
-		context: FinderDurabilityContext,
-		initialCapital: number,
-		positionSize: number,
-		commission: number,
-		sizingMode: 'percent' | 'fixed',
-		fixedTradeAmount: number
-	): FinderDurabilityMetrics {
-		return evaluateDurability(
-			signals,
-			backtestSettings,
-			context,
-			initialCapital,
-			positionSize,
-			commission,
-			sizingMode,
-			fixedTradeAmount
-		);
-	}
 
 	/**
 	 * Memory-efficient finder that processes in batches to avoid OOM with large datasets.
@@ -662,8 +632,6 @@ export class FinderManager {
 				const maxResults = Math.max(options.topN * 2, 50);
 				let processedCount = 0;
 				let filteredCount = 0;
-				let durabilityPassCount = 0;
-				let durabilityRejectedCount = 0;
 				let endpointAdjustedCount = 0;
 
 				for (const job of allJobs) {
@@ -677,7 +645,6 @@ export class FinderManager {
 					}
 
 					const timeframeResults: BacktestResult[] = [];
-					const timeframeDurability: FinderDurabilityMetrics[] = [];
 
 					for (const dataset of datasets) {
 						try {
@@ -720,19 +687,7 @@ export class FinderManager {
 									{ mode: sizingMode, fixedTradeAmount }
 								);
 
-							const durabilityContext = this.createDurabilityContext(options, dataset.data);
-							const durability = this.evaluateDurability(
-								signals,
-								job.backtestSettings,
-								durabilityContext,
-								initialCapital,
-								positionSize,
-								commission,
-								sizingMode,
-								fixedTradeAmount
-							);
 							timeframeResults.push(result);
-							timeframeDurability.push(durability);
 
 							signals.length = 0;
 						} catch (error) {
@@ -746,7 +701,6 @@ export class FinderManager {
 					}
 
 					const aggregatedResult = this.aggregateBacktestResults(timeframeResults, initialCapital);
-					const aggregatedDurability = this.aggregateDurabilityMetrics(timeframeDurability);
 					const lastDataTime = datasets.length === 1
 						? datasets[0].data[datasets[0].data.length - 1]?.time ?? null
 						: null;
@@ -760,8 +714,7 @@ export class FinderManager {
 						selectionResult: adjustment.result,
 						endpointAdjusted: adjustment.adjusted,
 						endpointRemovedTrades: adjustment.removedTrades,
-						confirmationParams: confirmationParamsForJob,
-						durability: aggregatedDurability
+						confirmationParams: confirmationParamsForJob
 					};
 
 					if (options.tradeFilterEnabled) {
@@ -772,19 +725,13 @@ export class FinderManager {
 						}
 					}
 
-					if (options.durabilityEnabled && aggregatedDurability.enabled && !aggregatedDurability.pass) {
-						durabilityRejectedCount++;
-						processedCount++;
-						continue;
-					}
+
 
 					filteredCount++;
 					if (enriched.endpointAdjusted) {
 						endpointAdjustedCount++;
 					}
-					if (aggregatedDurability.enabled && aggregatedDurability.pass) {
-						durabilityPassCount++;
-					}
+
 
 					topResults.push(enriched);
 					if (topResults.length > maxResults * 2) {
@@ -817,13 +764,6 @@ export class FinderManager {
 				if (options.tradeFilterEnabled) {
 					statusParts.push(`${filteredCount} matched`);
 				}
-				if (options.durabilityEnabled) {
-					statusParts.push(`${durabilityPassCount} durability-pass`);
-					statusParts.push(`${durabilityRejectedCount} durability-rejected`);
-				}
-				if (endpointAdjustedCount > 0) {
-					statusParts.push(`${endpointAdjustedCount} endpoint-adjusted`);
-				}
 				statusParts.push(`${trimmed.length} shown`);
 
 				this.setProgress(true, 100, `${totalRuns}/${totalRuns} runs`);
@@ -854,14 +794,9 @@ export class FinderManager {
 			const maxResults = Math.max(options.topN * 2, 50); // Keep 2x topN as buffer
 			let processedCount = 0;
 			let filteredCount = 0;
-			let durabilityPassCount = 0;
-			let durabilityRejectedCount = 0;
 			let endpointAdjustedCount = 0;
-			const durabilityContext = this.createDurabilityContext(options, state.ohlcvData);
 			const lastDataTime = state.ohlcvData.length > 0 ? state.ohlcvData[state.ohlcvData.length - 1].time : null;
-			if (options.durabilityEnabled && !durabilityContext.enabled) {
-				debugLogger.warn('[Finder] OOS durability scoring disabled (insufficient bars for holdout split).');
-			}
+
 
 			// CRITICAL: For very large datasets, use data caching to avoid JSON serialization OOM
 			// SOLUTION: Send OHLCV data ONCE to Rust server, then reference by cache ID
@@ -926,16 +861,8 @@ export class FinderManager {
 						return;
 					}
 				}
-				if (options.durabilityEnabled && durabilityContext.enabled && !enriched.durability.pass) {
-					durabilityRejectedCount++;
-					return;
-				}
-				filteredCount++;
 				if (enriched.endpointAdjusted) {
 					endpointAdjustedCount++;
-				}
-				if (durabilityContext.enabled && enriched.durability.pass) {
-					durabilityPassCount++;
 				}
 
 				topResults.push(enriched);
@@ -1000,28 +927,12 @@ export class FinderManager {
 									{ mode: sizingMode, fixedTradeAmount }
 									// precomputedIndicators disabled - can cause different results
 								);
-							const durability = this.evaluateDurability(
-								signals,
-								job.backtestSettings,
-								durabilityContext,
-								initialCapital,
-								positionSize,
-								commission,
-								sizingMode,
-								fixedTradeAmount
-							);
-
-							// CRITICAL: Clear signals array immediately to free memory
-							signals.length = 0;
-							(signals as any) = null;
-
 							insertResult({
 								key: job.key,
 								name: job.name,
 								params: job.params,
 								result,
-								confirmationParams: confirmationContext.params,
-								durability
+								confirmationParams: confirmationContext.params
 							});
 						} catch (err) {
 							console.warn(`[Finder] Backtest failed for ${job.key}:`, err);
@@ -1064,23 +975,12 @@ export class FinderManager {
 							run.backtestSettings,
 							{ mode: sizingMode, fixedTradeAmount }
 						);
-						const durability = this.evaluateDurability(
-							run.signals,
-							run.backtestSettings,
-							durabilityContext,
-							initialCapital,
-							positionSize,
-							commission,
-							sizingMode,
-							fixedTradeAmount
-						);
 						insertResult({
 							key: run.key,
 							name: run.name,
 							params: run.params,
 							result,
-							confirmationParams: run.confirmationParams,
-							durability
+							confirmationParams: run.confirmationParams
 						});
 					} catch (err) {
 						console.warn(`[Finder] Backtest failed for ${run.key}:`, err);
@@ -1112,23 +1012,12 @@ export class FinderManager {
 						const entryStats = evaluation?.entryStats;
 						if (job.strategy.metadata?.role === 'entry' && entryStats) {
 							const result = buildEntryBacktestResult(entryStats);
-							const durability = this.evaluateDurability(
-								signals,
-								job.backtestSettings,
-								durabilityContext,
-								initialCapital,
-								positionSize,
-								commission,
-								sizingMode,
-								fixedTradeAmount
-							);
 							insertResult({
 								key: job.key,
 								name: job.name,
 								params: job.params,
 								result,
-								confirmationParams: confirmationContext.params,
-								durability
+								confirmationParams: confirmationContext.params
 							});
 							signals.length = 0;
 							continue;
@@ -1207,17 +1096,7 @@ export class FinderManager {
 									name: run.name,
 									params: run.params,
 									result: batchEntry.result,
-									confirmationParams: run.confirmationParams,
-									durability: this.evaluateDurability(
-										run.signals,
-										run.backtestSettings,
-										durabilityContext,
-										initialCapital,
-										positionSize,
-										commission,
-										sizingMode,
-										fixedTradeAmount
-									)
+									confirmationParams: run.confirmationParams
 								});
 								completedRunIds.add(run.id);
 							}
@@ -1276,12 +1155,6 @@ export class FinderManager {
 			const statusParts = [`${processedCount} runs`];
 			if (options.tradeFilterEnabled) {
 				statusParts.push(`${filteredCount} matched`);
-			}
-			if (durabilityContext.enabled) {
-				statusParts.push(`${durabilityPassCount} durability-pass`);
-				if (options.durabilityEnabled) {
-					statusParts.push(`${durabilityRejectedCount} durability-rejected`);
-				}
 			}
 			if (endpointAdjustedCount > 0) {
 				statusParts.push(`${endpointAdjustedCount} endpoint-adjusted`);
@@ -1343,11 +1216,6 @@ export class FinderManager {
 			? Math.round(this.readNumberInput('finderTradesMax', Number.POSITIVE_INFINITY, 0))
 			: Number.POSITIVE_INFINITY;
 		const maxTrades = Math.max(minTrades, maxTradesRaw);
-		const durabilityEnabled = this.isToggleEnabled('finderDurabilityToggle', true);
-		const durabilityHoldoutPercent = this.readNumberInput('finderDurabilityHoldout', 35, 10);
-		const durabilityMinOOSTrades = Math.round(this.readNumberInput('finderDurabilityMinTrades', 10, 1));
-		const durabilityMinScore = this.readNumberInput('finderDurabilityMinScore', 60, 0);
-
 		return {
 			mode,
 			sortPriority,
@@ -1360,11 +1228,7 @@ export class FinderManager {
 			maxRuns,
 			tradeFilterEnabled,
 			minTrades,
-			maxTrades,
-			durabilityEnabled,
-			durabilityHoldoutPercent,
-			durabilityMinOOSTrades,
-			durabilityMinScore
+			maxTrades
 		};
 	}
 
@@ -1753,7 +1617,7 @@ export class FinderManager {
 			.join('|');
 	}
 
-	private renderResults(results: FinderResult[], sortBy: FinderMetric): void {
+	private renderResults(results: FinderResult[], _sortBy: FinderMetric): void {
 		const list = getRequiredElement('finderList');
 		const copyButton = document.getElementById('finderCopyTopResults') as HTMLButtonElement | null;
 		list.innerHTML = '';
@@ -1789,20 +1653,10 @@ export class FinderManager {
 			const params = document.createElement('div');
 			params.className = 'finder-params';
 			params.textContent = this.formatParams(item.params);
-
 			const metrics = document.createElement('div');
 			metrics.className = 'finder-metrics';
 			const selection = item.selectionResult;
-			metrics.appendChild(this.createMetricChip(`${METRIC_LABELS[sortBy]} ${this.formatMetric(item, sortBy)}`));
-			if (item.timeframes && item.timeframes.length > 0) {
-				metrics.appendChild(this.createMetricChip(`TF ${item.timeframes.join(', ')}`));
-			}
-			if (item.durability.enabled) {
-				metrics.appendChild(this.createMetricChip(`OOS Dur ${item.durability.score}`));
-				metrics.appendChild(this.createMetricChip(`OOS PF ${this.formatProfitFactor(item.durability.outOfSampleProfitFactor)}`));
-				metrics.appendChild(this.createMetricChip(`OOS Net ${this.formatPercent(item.durability.outOfSampleNetProfitPercent)}`));
-				metrics.appendChild(this.createMetricChip(item.durability.pass ? 'Durability PASS' : 'Durability weak'));
-			}
+
 			metrics.appendChild(this.createMetricChip(`Net ${this.formatCurrency(selection.netProfit)}`));
 			metrics.appendChild(this.createMetricChip(`PF ${this.formatProfitFactor(selection.profitFactor)}`));
 			metrics.appendChild(this.createMetricChip(`Sharpe ${selection.sharpeRatio.toFixed(2)}`));
@@ -1846,49 +1700,12 @@ export class FinderManager {
 		return value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
 	}
 
-	private formatMetric(item: FinderResult, metric: FinderMetric): string {
-		const result = item.selectionResult;
-		switch (metric) {
-			case 'oosDurabilityScore':
-				return item.durability.score.toString();
-			case 'oosProfitFactor':
-				return this.formatProfitFactor(item.durability.outOfSampleProfitFactor);
-			case 'oosNetProfitPercent':
-				return this.formatPercent(item.durability.outOfSampleNetProfitPercent);
-			case 'netProfit':
-				return this.formatCurrency(result.netProfit);
-			case 'netProfitPercent':
-				return this.formatPercent(result.netProfitPercent);
-			case 'profitFactor':
-				return this.formatProfitFactor(result.profitFactor);
-			case 'sharpeRatio':
-				return result.sharpeRatio.toFixed(2);
-			case 'winRate':
-				return this.formatPercent(result.winRate);
-			case 'maxDrawdownPercent':
-				return `${result.maxDrawdownPercent.toFixed(2)}%`;
-			case 'expectancy':
-				return this.formatCurrency(result.expectancy);
-			case 'averageGain':
-				return this.formatCurrency(result.avgWin);
-			case 'totalTrades':
-				return result.totalTrades.toString();
-			default:
-				return '';
-		}
-	}
+
 
 	private getMetricValue(item: FinderResult, metric: FinderMetric): number {
 		const result = item.selectionResult;
 		switch (metric) {
-			case 'oosDurabilityScore':
-				return item.durability.score;
-			case 'oosProfitFactor':
-				return item.durability.outOfSampleProfitFactor === Infinity
-					? Number.MAX_SAFE_INTEGER
-					: item.durability.outOfSampleProfitFactor;
-			case 'oosNetProfitPercent':
-				return item.durability.outOfSampleNetProfitPercent;
+
 			case 'netProfit':
 				return result.netProfit;
 			case 'netProfitPercent':
@@ -1976,45 +1793,11 @@ export class FinderManager {
 		};
 	}
 
-	private aggregateDurabilityMetrics(metrics: FinderDurabilityMetrics[]): FinderDurabilityMetrics {
-		const enabledMetrics = metrics.filter(metric => metric.enabled);
-		if (enabledMetrics.length === 0) {
-			return {
-				enabled: false,
-				score: 0,
-				inSampleNetProfitPercent: 0,
-				inSampleProfitFactor: 0,
-				outOfSampleNetProfitPercent: 0,
-				outOfSampleProfitFactor: 0,
-				outOfSampleSharpeRatio: 0,
-				outOfSampleMaxDrawdownPercent: 0,
-				outOfSampleTrades: 0,
-				pass: false
-			};
-		}
 
-		return {
-			enabled: true,
-			score: Math.round(this.average(enabledMetrics.map(metric => metric.score))),
-			inSampleNetProfitPercent: this.average(enabledMetrics.map(metric => metric.inSampleNetProfitPercent)),
-			inSampleProfitFactor: this.average(enabledMetrics.map(metric => metric.inSampleProfitFactor)),
-			outOfSampleNetProfitPercent: this.average(enabledMetrics.map(metric => metric.outOfSampleNetProfitPercent)),
-			outOfSampleProfitFactor: this.average(enabledMetrics.map(metric => metric.outOfSampleProfitFactor)),
-			outOfSampleSharpeRatio: this.average(enabledMetrics.map(metric => metric.outOfSampleSharpeRatio)),
-			outOfSampleMaxDrawdownPercent: this.average(enabledMetrics.map(metric => metric.outOfSampleMaxDrawdownPercent)),
-			outOfSampleTrades: Math.max(0, Math.round(this.average(enabledMetrics.map(metric => metric.outOfSampleTrades)))),
-			pass: enabledMetrics.every(metric => metric.pass)
-		};
-	}
 
 	private formatCurrency(value: number): string {
 		const sign = value >= 0 ? '+' : '';
 		return `${sign}$${value.toFixed(2)}`;
-	}
-
-	private formatPercent(value: number): string {
-		const sign = value >= 0 ? '+' : '';
-		return `${sign}${value.toFixed(2)}%`;
 	}
 
 	private formatProfitFactor(value: number): string {
@@ -2061,8 +1844,7 @@ export class FinderManager {
 				sharpeRatio: result.result.sharpeRatio
 			},
 			endpointAdjusted: result.endpointAdjusted,
-			endpointRemovedTrades: result.endpointRemovedTrades,
-			durability: result.durability
+			endpointRemovedTrades: result.endpointRemovedTrades
 		};
 	}
 

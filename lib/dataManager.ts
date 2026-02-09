@@ -15,14 +15,7 @@ import {
     fetchBybitTradFiDataWithLimit,
     fetchBybitTradFiLatest
 } from "./dataProviders/bybit";
-import {
-    fetchTwelveData,
-    fetchTwelveDataLatest
-} from "./dataProviders/twelvedata";
-import {
-    fetchYahooData,
-    fetchYahooLatest
-} from "./dataProviders/yahoo";
+
 import {
     generateMockData,
     isMockSymbol
@@ -30,7 +23,7 @@ import {
 import { HistoricalFetchOptions } from "./dataProviders/types";
 import { getIntervalSeconds } from "./dataProviders/utils";
 
-type DataProvider = 'binance' | 'bybit-tradfi' | 'twelvedata' | 'yahoo';
+type DataProvider = 'binance' | 'bybit-tradfi';
 
 export class DataManager {
     private nonBinanceProviderOverride: Map<string, DataProvider> = new Map();
@@ -224,29 +217,8 @@ export class DataManager {
     // Internal Logic
     // ============================================================================
 
-    private async fetchNonBinanceData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
-        // Try cached provider first if any (logic inside getProvider handles explicit overrides)
-        // If getting here, it means provider was 'twelvedata' or 'yahoo' or undefined (defaults to 'binance' but we are in fallback logic?)
-        // Wait, fetchData calls this if 'getProvider' returns something else?
-        // Let's refine:
-
-        // Priority: Twelve Data -> Yahoo -> Fallback to Mock
-
-        // Try Twelve Data
-        const tdData = await fetchTwelveData(symbol, interval, signal);
-        if (tdData.length > 0) {
-            this.nonBinanceProviderOverride.set(symbol, 'twelvedata');
-            return tdData;
-        }
-
-        // Try Yahoo
-        const yData = await fetchYahooData(symbol, interval, signal);
-        if (yData.length > 0) {
-            this.nonBinanceProviderOverride.set(symbol, 'yahoo');
-            return yData;
-        }
-
-        // Only notify fallback if we really failed
+    private async fetchNonBinanceData(symbol: string, interval: string, _signal?: AbortSignal): Promise<OHLCVData[]> {
+        // Priority: Fallback to Mock
         this.notifyDataFallback(symbol, interval);
         return generateMockData(symbol, interval);
     }
@@ -370,15 +342,6 @@ export class DataManager {
 
             if (this.streamProvider === 'bybit-tradfi') {
                 candle = await fetchBybitTradFiLatest(symbol, interval, abort.signal);
-            } else {
-                // Try TwelveData then Yahoo
-                candle = await fetchTwelveDataLatest(symbol, interval, abort.signal);
-                if (candle) {
-                    provider = 'twelvedata';
-                } else {
-                    candle = await fetchYahooLatest(symbol, interval, abort.signal);
-                    if (candle) provider = 'yahoo';
-                }
             }
 
             if (abort.signal.aborted) return;

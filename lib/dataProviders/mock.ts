@@ -85,6 +85,9 @@ export function generateMockData(symbol: string, interval: string): OHLCVData[] 
     if (model === 'v5') {
         return generateMarketRealismMockDataV5(config, createRandomSeed());
     }
+    if (model === 'v6') {
+        return generateVolatileCryptoMockData(config, createRandomSeed());
+    }
 
     return generateSimpleMockData(config);
 }
@@ -1005,6 +1008,352 @@ function generateMarketRealismMockDataV5(config: MockChartConfig, seed: number):
 
         prevRet = ret;
         anchor = anchor * 0.995 + logPrice * 0.005;
+        time = (Number(time) + config.intervalSeconds) as Time;
+    }
+
+    return data;
+}
+
+/**
+ * V6 - Volatile Crypto Market Mock Data Generator
+ * 
+ * Designed for training strategies that excel in volatile markets.
+ * Features:
+ * - Explosive volatility clusters with momentum cascades
+ * - Flash crash and flash pump scenarios (realistic crypto behavior)
+ * - Compression periods (low volatility) for contrast
+ * - High reward for trend-following during volatile phases
+ * - Less consistent during quiet/ranging periods
+ */
+function generateVolatileCryptoMockData(config: MockChartConfig, seed: number): OHLCVData[] {
+    type VolatileRegime = {
+        length: number;
+        type: 'compression' | 'expansion' | 'cascade' | 'flash' | 'recovery';
+        volatilityMult: number;
+        trendBias: number;          // -1 to 1, directional bias
+        momentumFactor: number;     // How much previous move influences next
+        revertStrength: number;     // Mean reversion strength
+        cascadeProb: number;        // Probability of momentum cascade
+        flashProb: number;          // Probability of flash move
+        gapProb: number;            // Gap probability
+        wickExtension: number;      // How long wicks extend
+    };
+
+    const data: OHLCVData[] = [];
+    const now = Math.floor(Date.now() / 1000);
+    let time = (now - (config.barsCount * config.intervalSeconds)) as Time;
+
+    const rng = makeRng(seed * 1000019 + 0xdeadbeef);
+    const baseVol = Math.max(0.00008, config.volatility / 100);
+    const intervalMinutes = Math.max(1, config.intervalSeconds / 60);
+    const volScale = Math.min(2.5, Math.pow(intervalMinutes, 0.42));
+    const floor = Math.max(0.01, config.startPrice * 0.03);
+    const ceiling = Math.max(floor * 2, config.startPrice * 120);
+    const logFloor = Math.log(floor);
+    const logCeil = Math.log(ceiling);
+    const baseVolume = 125000;
+
+    const clampLog = (value: number): number => {
+        if (!Number.isFinite(value)) return logFloor;
+        if (value < logFloor) return logFloor;
+        if (value > logCeil) return logCeil;
+        return value;
+    };
+    const clampReturn = (value: number): number => {
+        // Allow larger moves for crypto volatility
+        const limit = Math.min(0.45, Math.max(0.12, baseVol * 14 * volScale));
+        if (!Number.isFinite(value)) return 0;
+        if (value < -limit) return -limit;
+        if (value > limit) return limit;
+        return value;
+    };
+
+    let logPrice = Math.log(Math.max(config.startPrice, floor));
+    let vol = baseVol * 1.2;
+    let prevRet = 0;
+    let prevPrevRet = 0;
+    let anchor = logPrice;
+    let cascadeDirection = 0;
+    let cascadeMomentum = 0;
+    let flashRecoveryTarget = 0;
+    let inFlashRecovery = false;
+
+    // GARCH parameters tuned for crypto volatility clustering
+    const omega = baseVol * baseVol * 0.12;
+    const alpha = 0.18;
+    const beta = 0.75;
+
+    // Recent price history for local extremes
+    const priceHistory: number[] = [];
+    const returnHistory: number[] = [];
+
+    const regimeBars = (minMinutes: number, maxMinutes: number): number => {
+        const minBars = Math.max(15, Math.round(minMinutes / intervalMinutes));
+        const maxBars = Math.max(minBars + 10, Math.round(maxMinutes / intervalMinutes));
+        return randInt(rng, minBars, maxBars);
+    };
+
+    const pickRegime = (): VolatileRegime => {
+        const roll = rng();
+
+        // Compression phase (20%) - low volatility, choppy, hard for momentum strategies
+        if (roll < 0.20) {
+            return {
+                length: regimeBars(90, 600),
+                type: 'compression',
+                volatilityMult: 0.45,
+                trendBias: (rng() - 0.5) * 0.1,
+                momentumFactor: -0.3,  // Anti-persistence
+                revertStrength: 0.12,
+                cascadeProb: 0.005,
+                flashProb: 0.002,
+                gapProb: 0.003,
+                wickExtension: 0.8,
+            };
+        }
+
+        // Expansion phase (35%) - building volatility, moderate trends
+        if (roll < 0.55) {
+            const dir = rng() < 0.5 ? -1 : 1;
+            return {
+                length: regimeBars(120, 900),
+                type: 'expansion',
+                volatilityMult: 1.2,
+                trendBias: dir * (0.2 + rng() * 0.25),
+                momentumFactor: 0.35,
+                revertStrength: 0.03,
+                cascadeProb: 0.04,
+                flashProb: 0.008,
+                gapProb: 0.008,
+                wickExtension: 1.2,
+            };
+        }
+
+        // Cascade phase (25%) - strong momentum, rewards trend-following
+        if (roll < 0.80) {
+            const dir = rng() < 0.5 ? -1 : 1;
+            return {
+                length: regimeBars(60, 400),
+                type: 'cascade',
+                volatilityMult: 1.8,
+                trendBias: dir * (0.4 + rng() * 0.35),
+                momentumFactor: 0.55,
+                revertStrength: 0.01,
+                cascadeProb: 0.12,
+                flashProb: 0.015,
+                gapProb: 0.015,
+                wickExtension: 1.5,
+            };
+        }
+
+        // Flash event phase (12%) - extreme volatility spikes
+        if (roll < 0.92) {
+            const dir = rng() < 0.5 ? -1 : 1;
+            return {
+                length: regimeBars(20, 120),
+                type: 'flash',
+                volatilityMult: 2.8,
+                trendBias: dir * (0.5 + rng() * 0.4),
+                momentumFactor: 0.65,
+                revertStrength: 0.005,
+                cascadeProb: 0.08,
+                flashProb: 0.06,
+                gapProb: 0.025,
+                wickExtension: 2.2,
+            };
+        }
+
+        // Recovery phase (8%) - after flash events, mean reverting with volatility
+        return {
+            length: regimeBars(40, 250),
+            type: 'recovery',
+            volatilityMult: 1.4,
+            trendBias: 0,
+            momentumFactor: -0.2,
+            revertStrength: 0.08,
+            cascadeProb: 0.02,
+            flashProb: 0.003,
+            gapProb: 0.006,
+            wickExtension: 1.3,
+        };
+    };
+
+    let regime = pickRegime();
+    let regimeLeft = regime.length;
+
+    for (let i = 0; i < config.barsCount; i++) {
+        if (regimeLeft-- <= 0) {
+            const prevType = regime.type;
+            regime = pickRegime();
+            regimeLeft = regime.length;
+            anchor = logPrice;
+
+            // Flash events often lead to recovery
+            if (prevType === 'flash' && rng() < 0.6) {
+                regime = {
+                    length: regimeBars(40, 200),
+                    type: 'recovery',
+                    volatilityMult: 1.3,
+                    trendBias: 0,
+                    momentumFactor: -0.25,
+                    revertStrength: 0.1,
+                    cascadeProb: 0.015,
+                    flashProb: 0.002,
+                    gapProb: 0.004,
+                    wickExtension: 1.2,
+                };
+                flashRecoveryTarget = anchor;
+                inFlashRecovery = true;
+            }
+        }
+
+        // Intraday volatility pattern (crypto trades 24/7 but has patterns)
+        const minuteOfDay = ((Math.floor(Number(time) / 60) % 1440) + 1440) % 1440;
+        // Higher volatility during Asia-US overlap and US trading hours
+        const hourFactor = Math.sin((2 * Math.PI * (minuteOfDay - 360)) / 1440);
+        const seasonMult = 0.75 + 0.35 * Math.max(0, hourFactor);
+
+        // GARCH volatility with faster response
+        vol = Math.sqrt(omega + alpha * prevRet * prevRet + beta * vol * vol);
+        const targetVol = baseVol * regime.volatilityMult;
+        vol = vol * 0.8 + targetVol * 0.2;
+
+        // Gap handling
+        const gap = rng() < regime.gapProb
+            ? randNormal(rng) * baseVol * regime.volatilityMult * 0.8 * volScale
+            : 0;
+        logPrice = clampLog(logPrice + gap);
+        const open = Math.exp(logPrice);
+
+        // Build return components
+        let ret = 0;
+
+        // 1. Trend bias (directional force)
+        ret += regime.trendBias * baseVol * 0.12;
+
+        // 2. Momentum from previous bars (cascade effect)
+        const momentum = prevRet * 0.6 + prevPrevRet * 0.3;
+        ret += momentum * regime.momentumFactor;
+
+        // 3. Active cascade amplification
+        if (cascadeMomentum !== 0) {
+            ret += cascadeMomentum;
+            cascadeMomentum *= (0.75 + rng() * 0.15);
+            if (Math.abs(cascadeMomentum) < baseVol * 0.15) {
+                cascadeMomentum = 0;
+                cascadeDirection = 0;
+            }
+        }
+
+        // 4. Flash recovery mean reversion
+        if (inFlashRecovery) {
+            const distToTarget = flashRecoveryTarget - logPrice;
+            ret += distToTarget * 0.08;
+            if (Math.abs(distToTarget) < baseVol * 2) {
+                inFlashRecovery = false;
+            }
+        }
+
+        // 5. Standard mean reversion
+        const distFromAnchor = logPrice - anchor;
+        ret -= distFromAnchor * regime.revertStrength;
+
+        // 6. Trigger new cascade
+        if (rng() < regime.cascadeProb && cascadeMomentum === 0) {
+            cascadeDirection = rng() < 0.5 ? -1 : 1;
+            // Bias cascade direction toward regime trend
+            if (regime.trendBias * cascadeDirection < 0 && rng() < 0.7) {
+                cascadeDirection *= -1;
+            }
+            cascadeMomentum = cascadeDirection * baseVol * (1.5 + rng() * 2.5) * volScale;
+            ret += cascadeMomentum;
+        }
+
+        // 7. Flash move event
+        if (rng() < regime.flashProb) {
+            const flashDir = rng() < 0.5 ? -1 : 1;
+            const flashMagnitude = baseVol * (4 + rng() * 8) * volScale;
+            ret += flashDir * flashMagnitude;
+            // Set up recovery
+            flashRecoveryTarget = logPrice;
+            inFlashRecovery = true;
+        }
+
+        // 8. Random noise
+        const noise = randNormal(rng) * vol * seasonMult * volScale;
+        ret += noise;
+
+        // Apply and clamp return
+        ret = clampReturn(ret);
+        logPrice = clampLog(logPrice + ret);
+        let close = Math.exp(logPrice);
+
+        if (close < floor) {
+            close = floor;
+            logPrice = Math.log(close);
+        }
+
+        // Wick generation - crypto has long wicks during volatile periods
+        const rangeBase = Math.max(baseVol * 0.2, Math.abs(ret) * 0.6 + vol * 0.4);
+        const wickNoise = Math.abs(randNormal(rng)) * rangeBase * open * regime.wickExtension;
+
+        // Extra wick during cascades
+        const cascadeWickBoost = cascadeMomentum !== 0 ? 1.4 : 1.0;
+        const wick = wickNoise * cascadeWickBoost;
+
+        let high = Math.max(open, close) + wick;
+        let low = Math.min(open, close) - wick;
+
+        // Occasional extreme wicks (stop hunts / liquidity sweeps)
+        if (rng() < 0.025 * regime.volatilityMult) {
+            const extremeWick = Math.abs(randNormal(rng)) * rangeBase * open * 2.5;
+            if (rng() < 0.5) {
+                high += extremeWick;
+            } else {
+                low -= extremeWick;
+            }
+        }
+
+        const lowFloor = floor * 0.75;
+        const highCeil = ceiling * 1.25;
+        if (low < lowFloor) low = lowFloor;
+        if (high > highCeil) high = highCeil;
+        if (high < low) high = Math.max(open, close);
+
+        // Volume correlates strongly with volatility in crypto
+        const absRet = Math.abs(ret);
+        const baseVolFactor = 0.6 + (absRet / baseVol) * 1.8 + (vol / baseVol) * 0.7;
+        const volFactor = Math.min(12, baseVolFactor);
+        const cascadeVolBoost = cascadeMomentum !== 0 ? (1.5 + Math.abs(cascadeMomentum) / baseVol * 0.3) : 1.0;
+        const flashVolBoost = absRet > baseVol * 5 ? 2.5 : 1.0;
+        const regimeVolBias = regime.type === 'compression' ? 0.6 :
+            regime.type === 'flash' ? 2.0 :
+                regime.type === 'cascade' ? 1.5 : 1.0;
+
+        const volume = Math.floor(
+            baseVolume * regimeVolBias * (1 + volFactor) *
+            cascadeVolBoost * flashVolBoost * (0.5 + rng() * 0.7)
+        );
+
+        data.push({
+            time,
+            open,
+            high,
+            low,
+            close,
+            volume,
+        });
+
+        // Update history
+        priceHistory.push(logPrice);
+        returnHistory.push(ret);
+        if (priceHistory.length > 60) priceHistory.shift();
+        if (returnHistory.length > 30) returnHistory.shift();
+
+        // Update state
+        prevPrevRet = prevRet;
+        prevRet = ret;
+        anchor = anchor * 0.992 + logPrice * 0.008;
         time = (Number(time) + config.intervalSeconds) as Time;
     }
 
