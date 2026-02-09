@@ -19,8 +19,14 @@ export function calculateSMA(data: number[], period: number): (number | null)[] 
     return result;
 }
 
+
 // EMA results cache to avoid recomputation across repeated calls on the same data
 const __emaCache: WeakMap<number[], Map<number, (number | null)[]>> = new WeakMap();
+const __rsiCache: WeakMap<number[], Map<number, (number | null)[]>> = new WeakMap();
+const __macDCache: WeakMap<number[], Map<string, { macd: (number | null)[]; signal: (number | null)[]; histogram: (number | null)[]; }>> = new WeakMap();
+const __bbCache: WeakMap<number[], Map<string, { upper: (number | null)[]; middle: (number | null)[]; lower: (number | null)[]; }>> = new WeakMap();
+const __atrCache: WeakMap<number[], Map<number, (number | null)[]>> = new WeakMap();
+const __adxCache: WeakMap<number[], Map<number, (number | null)[]>> = new WeakMap();
 
 export function calculateEMA(data: number[], period: number): (number | null)[] {
     // Cache hit
@@ -61,10 +67,21 @@ export function calculateEMA(data: number[], period: number): (number | null)[] 
 }
 
 export function calculateRSI(data: number[], period: number): (number | null)[] {
-    const result: (number | null)[] = [];
+    // Cache check
+    let periodMap = __rsiCache.get(data);
+    if (!periodMap) {
+        periodMap = new Map();
+        __rsiCache.set(data, periodMap);
+    }
+    const cached = periodMap.get(period);
+    if (cached) return cached;
 
-    if (data.length < period + 1) {
-        return data.map(() => null);
+    const length = data.length;
+    const result: (number | null)[] = new Array(length).fill(null);
+
+    if (length < period + 1) {
+        periodMap.set(period, result);
+        return result;
     }
 
     // Calculate initial gains and losses
@@ -83,21 +100,18 @@ export function calculateRSI(data: number[], period: number): (number | null)[] 
     avgGain /= period;
     avgLoss /= period;
 
-    // Fill initial nulls
-    for (let i = 0; i < period; i++) {
-        result.push(null);
-    }
-
     // First RSI value
+    let firstRSI: number;
     if (avgLoss === 0) {
-        result.push(100);
+        firstRSI = 100;
     } else {
         const rs = avgGain / avgLoss;
-        result.push(100 - (100 / (1 + rs)));
+        firstRSI = 100 - (100 / (1 + rs));
     }
+    result[period] = firstRSI;
 
     // Calculate remaining RSI values using Wilder's smoothing
-    for (let i = period + 1; i < data.length; i++) {
+    for (let i = period + 1; i < length; i++) {
         const change = data[i] - data[i - 1];
         const gain = change > 0 ? change : 0;
         const loss = change < 0 ? Math.abs(change) : 0;
@@ -106,13 +120,14 @@ export function calculateRSI(data: number[], period: number): (number | null)[] 
         avgLoss = (avgLoss * (period - 1) + loss) / period;
 
         if (avgLoss === 0) {
-            result.push(100);
+            result[i] = 100;
         } else {
             const rs = avgGain / avgLoss;
-            result.push(100 - (100 / (1 + rs)));
+            result[i] = 100 - (100 / (1 + rs));
         }
     }
 
+    periodMap.set(period, result);
     return result;
 }
 
@@ -121,27 +136,40 @@ export function calculateMACD(data: number[], fastPeriod: number, slowPeriod: nu
     signal: (number | null)[];
     histogram: (number | null)[];
 } {
+    const cacheKey = `${fastPeriod}-${slowPeriod}-${signalPeriod}`;
+
+    // Cache check
+    let paramsMap = __macDCache.get(data);
+    if (!paramsMap) {
+        paramsMap = new Map();
+        __macDCache.set(data, paramsMap);
+    }
+    const cached = paramsMap.get(cacheKey);
+    if (cached) return cached;
+
     // Use cached EMA to avoid redundant allocations
     const fastEMA = calculateEMA(data, fastPeriod);
     const slowEMA = calculateEMA(data, slowPeriod);
 
-    const macd: (number | null)[] = new Array(data.length).fill(null);
-    for (let i = 0; i < data.length; i++) {
+    const length = data.length;
+    const macd: (number | null)[] = new Array(length).fill(null);
+
+    for (let i = 0; i < length; i++) {
         const f = fastEMA[i];
         const s = slowEMA[i];
         macd[i] = (f === null || s === null) ? null : (f - s);
     }
 
     // Compute signal line inline without filtering/allocations
-    const signal: (number | null)[] = new Array(data.length).fill(null);
-    const histogram: (number | null)[] = new Array(data.length).fill(null);
+    const signal: (number | null)[] = new Array(length).fill(null);
+    const histogram: (number | null)[] = new Array(length).fill(null);
     const multiplier = 2 / (signalPeriod + 1);
 
     let validMacdCount = 0;
     let initSum = 0;
     let prevSignal: number | null = null;
 
-    for (let i = 0; i < data.length; i++) {
+    for (let i = 0; i < length; i++) {
         const m = macd[i];
         if (m === null) {
             // Keep signal and histogram as null until MACD becomes available
@@ -168,7 +196,9 @@ export function calculateMACD(data: number[], fastPeriod: number, slowPeriod: nu
         }
     }
 
-    return { macd, signal, histogram };
+    const result = { macd, signal, histogram };
+    paramsMap.set(cacheKey, result);
+    return result;
 }
 
 export function calculateBollingerBands(data: number[], period: number, stdDev: number = 2): {
@@ -176,23 +206,31 @@ export function calculateBollingerBands(data: number[], period: number, stdDev: 
     middle: (number | null)[];
     lower: (number | null)[];
 } {
-    const upper: (number | null)[] = [];
-    const middle: (number | null)[] = [];
-    const lower: (number | null)[] = [];
+    const cacheKey = `${period}-${stdDev}`;
+
+    // Cache check
+    let paramsMap = __bbCache.get(data);
+    if (!paramsMap) {
+        paramsMap = new Map();
+        __bbCache.set(data, paramsMap);
+    }
+    const cached = paramsMap.get(cacheKey);
+    if (cached) return cached;
+
+    const length = data.length;
+    const upper: (number | null)[] = new Array(length).fill(null);
+    const middle: (number | null)[] = new Array(length).fill(null);
+    const lower: (number | null)[] = new Array(length).fill(null);
 
     let sum = 0;
     let sumSq = 0;
 
-    for (let i = 0; i < data.length; i++) {
+    for (let i = 0; i < length; i++) {
         const val = data[i];
         sum += val;
         sumSq += val * val;
 
-        if (i < period - 1) {
-            middle.push(null);
-            upper.push(null);
-            lower.push(null);
-        } else {
+        if (i >= period - 1) {
             if (i >= period) {
                 const oldVal = data[i - period];
                 sum -= oldVal;
@@ -204,13 +242,15 @@ export function calculateBollingerBands(data: number[], period: number, stdDev: 
             const variance = Math.max(0, (sumSq - (sum * sum) / period) / period);
             const std = Math.sqrt(variance);
 
-            middle.push(avg);
-            upper.push(avg + stdDev * std);
-            lower.push(avg - stdDev * std);
+            middle[i] = avg;
+            upper[i] = avg + stdDev * std;
+            lower[i] = avg - stdDev * std;
         }
     }
 
-    return { upper, middle, lower };
+    const result = { upper, middle, lower };
+    paramsMap.set(cacheKey, result);
+    return result;
 }
 
 export function calculateStochastic(
@@ -306,11 +346,23 @@ export function calculateATR(
     close: number[],
     period: number
 ): (number | null)[] {
-    const atr: (number | null)[] = [];
-    const trueRanges: number[] = [];
+    // Cache check using 'close' array as ID for the dataset
+    let periodMap = __atrCache.get(close);
+    if (!periodMap) {
+        periodMap = new Map();
+        __atrCache.set(close, periodMap);
+    }
+    const cached = periodMap.get(period);
+    if (cached) return cached;
+
+    const length = close.length;
+    const atr: (number | null)[] = new Array(length).fill(null);
     let initialTRSum = 0;
 
-    for (let i = 0; i < close.length; i++) {
+    // Use a previous ATR variable to avoid array lookups
+    let prevATR = 0;
+
+    for (let i = 0; i < length; i++) {
         const tr = i === 0
             ? high[i] - low[i]
             : Math.max(
@@ -318,20 +370,20 @@ export function calculateATR(
                 Math.abs(high[i] - close[i - 1]),
                 Math.abs(low[i] - close[i - 1])
             );
-        trueRanges.push(tr);
 
         if (i < period - 1) {
             initialTRSum += tr;
-            atr.push(null);
         } else if (i === period - 1) {
             initialTRSum += tr;
-            atr.push(initialTRSum / period);
+            prevATR = initialTRSum / period;
+            atr[i] = prevATR;
         } else {
-            const prevATR = atr[i - 1]!;
-            atr.push((prevATR * (period - 1) + tr) / period);
+            prevATR = (prevATR * (period - 1) + tr) / period;
+            atr[i] = prevATR;
         }
     }
 
+    periodMap.set(period, atr);
     return atr;
 }
 
@@ -341,10 +393,22 @@ export function calculateADX(
     close: number[],
     period: number
 ): (number | null)[] {
+    // Cache check using 'close' array as ID for the dataset
+    let periodMap = __adxCache.get(close);
+    if (!periodMap) {
+        periodMap = new Map();
+        __adxCache.set(close, periodMap);
+    }
+    const cached = periodMap.get(period);
+    if (cached) return cached;
+
     const length = close.length;
     const adx: (number | null)[] = new Array(length).fill(null);
 
-    if (length < period * 2 || period < 1) return adx;
+    if (length < period * 2 || period < 1) {
+        periodMap.set(period, adx);
+        return adx;
+    }
 
     const tr: number[] = new Array(length).fill(0);
     const plusDM: number[] = new Array(length).fill(0);
@@ -375,6 +439,7 @@ export function calculateADX(
     }
 
     const dx: number[] = new Array(length).fill(0);
+    // Optimized loop merging
     for (let i = period; i < length; i++) {
         if (i > period) {
             trSmooth = trSmooth - trSmooth / period + tr[i];
@@ -393,12 +458,15 @@ export function calculateADX(
         dxSum += dx[i];
     }
 
-    adx[period * 2 - 1] = dxSum / period;
+    let prevADX = dxSum / period;
+    adx[period * 2 - 1] = prevADX;
 
     for (let i = period * 2; i < length; i++) {
-        adx[i] = ((adx[i - 1]! * (period - 1)) + dx[i]) / period;
+        prevADX = ((prevADX * (period - 1)) + dx[i]) / period;
+        adx[i] = prevADX;
     }
 
+    periodMap.set(period, adx);
     return adx;
 }
 

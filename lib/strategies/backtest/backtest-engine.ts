@@ -70,8 +70,31 @@ export function runBacktestCompact(
     positionSizePercent: number,
     commissionPercent: number,
     settings: BacktestSettings = {},
-    sizing?: Partial<TradeSizingConfig>
+    sizing?: Partial<TradeSizingConfig>,
+    precomputed?: PrecomputedIndicators
 ): BacktestResult {
+    // fast-fail for no signals
+    if (signals.length === 0) {
+        return {
+            trades: [],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: []
+        };
+    }
+
     const config = normalizeBacktestSettings(settings);
     const tradeDirection = normalizeTradeDirection(settings);
     const sizingMode = sizing?.mode ?? 'percent';
@@ -81,6 +104,7 @@ export function runBacktestCompact(
     const lows = getLows(data);
     const closes = getCloses(data);
     const volumes = getVolumes(data);
+    const dataLen = data.length;
 
     const needsAtr =
         config.stopLossAtr > 0 ||
@@ -91,20 +115,32 @@ export function runBacktestCompact(
         config.partialTakeProfitAtR > 0 ||
         config.breakEvenAtR > 0;
 
-    const atr = needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : [];
+    const atr = (precomputed?.atr?.length === dataLen)
+        ? precomputed.atr
+        : (needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : []);
+
     const trendPeriod = resolveTrendPeriod(config);
-    const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
+    const emaTrend = (precomputed?.emaTrend?.length === dataLen && trendPeriod > 0) // Validation is tricky here, assuming precomputed logic matches
+        ? precomputed.emaTrend
+        : (trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : []);
 
     const useAdx = config.tradeFilterMode === 'adx' || config.adxMin > 0 || config.adxMax > 0;
     const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
-    const adx = useAdx ? calculateADX(highs, lows, closes, adxPeriod) : [];
+    const adx = (precomputed?.adx?.length === dataLen && useAdx)
+        ? precomputed.adx
+        : (useAdx ? calculateADX(highs, lows, closes, adxPeriod) : []);
 
-    const volumeSma = config.tradeFilterMode === 'volume'
-        ? calculateSMA(volumes, config.volumeSmaPeriod)
-        : [];
-    const rsi = config.tradeFilterMode === 'rsi'
-        ? calculateRSI(closes, config.rsiPeriod)
-        : [];
+    const volumeSma = (precomputed?.volumeSma?.length === dataLen && config.tradeFilterMode === 'volume')
+        ? precomputed.volumeSma
+        : (config.tradeFilterMode === 'volume'
+            ? calculateSMA(volumes, config.volumeSmaPeriod)
+            : []);
+
+    const rsi = (precomputed?.rsi?.length === dataLen && config.tradeFilterMode === 'rsi')
+        ? precomputed.rsi
+        : (config.tradeFilterMode === 'rsi'
+            ? calculateRSI(closes, config.rsiPeriod)
+            : []);
 
     const indicatorSeries: IndicatorSeries = {
         atr,
@@ -446,8 +482,31 @@ export function runBacktest(
     positionSizePercent: number,
     commissionPercent: number,
     settings: BacktestSettings = {},
-    sizing?: Partial<TradeSizingConfig>
+    sizing?: Partial<TradeSizingConfig>,
+    precomputed?: PrecomputedIndicators
 ): BacktestResult {
+    // fast-fail for no signals
+    if (signals.length === 0) {
+        return {
+            trades: [],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: []
+        };
+    }
+
     // Clean input data to handle potential undefined/null elements
     data = ensureCleanData(data);
 
@@ -462,8 +521,7 @@ export function runBacktest(
     const lows = getLows(data);
     const closes = getCloses(data);
     const volumes = getVolumes(data);
-
-
+    const dataLen = data.length;
 
     const needsAtr =
         config.stopLossAtr > 0 ||
@@ -474,20 +532,32 @@ export function runBacktest(
         config.partialTakeProfitAtR > 0 ||
         config.breakEvenAtR > 0;
 
-    const atr = needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : [];
+    const atr = (precomputed?.atr?.length === dataLen)
+        ? precomputed.atr
+        : (needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : []);
+
     const trendPeriod = resolveTrendPeriod(config);
-    const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
+    const emaTrend = (precomputed?.emaTrend?.length === dataLen && trendPeriod > 0)
+        ? precomputed.emaTrend
+        : (trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : []);
 
     const useAdx = config.tradeFilterMode === 'adx' || config.adxMin > 0 || config.adxMax > 0;
     const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
-    const adx = useAdx ? calculateADX(highs, lows, closes, adxPeriod) : [];
+    const adx = (precomputed?.adx?.length === dataLen && useAdx)
+        ? precomputed.adx
+        : (useAdx ? calculateADX(highs, lows, closes, adxPeriod) : []);
 
-    const volumeSma = config.tradeFilterMode === 'volume'
-        ? calculateSMA(volumes, config.volumeSmaPeriod)
-        : [];
-    const rsi = config.tradeFilterMode === 'rsi'
-        ? calculateRSI(closes, config.rsiPeriod)
-        : [];
+    const volumeSma = (precomputed?.volumeSma?.length === dataLen && config.tradeFilterMode === 'volume')
+        ? precomputed.volumeSma
+        : (config.tradeFilterMode === 'volume'
+            ? calculateSMA(volumes, config.volumeSmaPeriod)
+            : []);
+
+    const rsi = (precomputed?.rsi?.length === dataLen && config.tradeFilterMode === 'rsi')
+        ? precomputed.rsi
+        : (config.tradeFilterMode === 'rsi'
+            ? calculateRSI(closes, config.rsiPeriod)
+            : []);
 
     const indicatorSeries: IndicatorSeries = {
         atr,

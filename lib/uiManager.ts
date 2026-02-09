@@ -211,7 +211,7 @@ export class UIManager {
         this.updateEntryPreview(null);
     }
 
-    public showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
+    public showToast(message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') {
         let container = document.getElementById('toast-container');
         if (!container) {
             container = document.createElement('div');
