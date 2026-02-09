@@ -25,6 +25,8 @@ interface Env {
     SIGNALS_DB: D1Database;
     TELEGRAM_BOT_TOKEN?: string;
     TELEGRAM_CHAT_ID?: string;
+    BINANCE_API_BASES?: string;
+    BYBIT_API_BASES?: string;
 }
 
 interface StreamSignalRequest {
@@ -44,6 +46,19 @@ interface StreamSignalRequest {
         volume: unknown;
     }>;
     notifyTelegram?: boolean;
+}
+
+interface SubscriptionUpsertRequest {
+    streamId?: string;
+    symbol: string;
+    interval: string;
+    strategyKey: string;
+    strategyParams?: Record<string, number>;
+    backtestSettings?: BacktestSettings;
+    freshnessBars?: number;
+    notifyTelegram?: boolean;
+    enabled?: boolean;
+    candleLimit?: number;
 }
 
 interface StoredSignalRow {
@@ -74,9 +89,76 @@ interface StoredSignalPayload {
     fingerprint: string;
 }
 
+interface SubscriptionRow {
+    id: number;
+    stream_id: string;
+    enabled: number;
+    symbol: string;
+    interval: string;
+    strategy_key: string;
+    strategy_params_json: string;
+    backtest_settings_json: string;
+    freshness_bars: number;
+    notify_telegram: number;
+    candle_limit: number;
+    last_processed_closed_candle_time: number;
+    last_run_at: string | null;
+    last_status: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+interface ProcessSignalPayload {
+    streamId: string;
+    symbol: string;
+    interval: string;
+    strategyKey: string;
+    strategyParams: Record<string, number>;
+    backtestSettings: BacktestSettings;
+    freshnessBars: number;
+    notifyTelegram: boolean;
+    candles: OHLCVData[];
+}
+
+interface ProcessSignalResult {
+    ok: boolean;
+    newEntry: boolean;
+    duplicate?: boolean;
+    reason?: string;
+    signalAgeBars?: number;
+    rawSignalCount: number;
+    preparedSignalCount: number;
+    latestEntry?: unknown;
+    entry?: StoredSignalPayload;
+    telegramSent?: boolean;
+    telegramError?: string;
+    error?: string;
+}
+
 const MIN_CANDLES = 200;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+const DEFAULT_SUBSCRIPTION_CANDLE_LIMIT = 350;
+const MAX_SUBSCRIPTION_CANDLE_LIMIT = 1000;
+const STATUS_TEXT_MAX = 240;
+const RESPONSE_SNIPPET_MAX = 160;
+const BINANCE_INTERVALS = new Set([
+    "1m", "3m", "5m", "15m", "30m",
+    "1h", "2h", "4h", "6h", "8h", "12h",
+    "1d", "3d", "1w", "1M",
+]);
+const DEFAULT_BINANCE_API_BASES = [
+    "https://data-api.binance.vision",
+    "https://api.binance.com",
+    "https://api1.binance.com",
+    "https://api2.binance.com",
+    "https://api3.binance.com",
+    "https://api4.binance.com",
+    "https://api.binance.us",
+];
+const DEFAULT_BYBIT_API_BASES = [
+    "https://api.bybit.com",
+];
 
 const CORS_HEADERS: Record<string, string> = {
     "access-control-allow-origin": "*",
@@ -183,6 +265,304 @@ function buildChannelKey(payload: {
     return `${payload.symbol}:${payload.interval}:${payload.strategyKey}`.toLowerCase();
 }
 
+function buildDefaultStreamId(symbol: string, interval: string, strategyKey: string): string {
+    return `${symbol}:${interval}:${strategyKey}`.toLowerCase();
+}
+
+function safeJsonParse<T>(value: string, fallback: T): T {
+    try {
+        return JSON.parse(value) as T;
+    } catch {
+        return fallback;
+    }
+}
+
+function normalizeStatusText(value: string, maxLen = STATUS_TEXT_MAX): string {
+    return value.replace(/\s+/g, " ").trim().slice(0, maxLen);
+}
+
+function readBinanceApiBases(env: Env): string[] {
+    const configured = (env.BINANCE_API_BASES ?? "")
+        .split(",")
+        .map((x) => x.trim().replace(/\/+$/, ""))
+        .filter(Boolean);
+
+    return configured.length > 0 ? configured : DEFAULT_BINANCE_API_BASES;
+}
+
+function readBybitApiBases(env: Env): string[] {
+    const configured = (env.BYBIT_API_BASES ?? "")
+        .split(",")
+        .map((x) => x.trim().replace(/\/+$/, ""))
+        .filter(Boolean);
+
+    return configured.length > 0 ? configured : DEFAULT_BYBIT_API_BASES;
+}
+
+function normalizeBinanceResponseSnippet(value: string): string {
+    return value
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, RESPONSE_SNIPPET_MAX);
+}
+
+function parseBybitKlineList(
+    rows: Array<[string, string, string, string, string, string, string]>
+): OHLCVData[] {
+    return rows
+        .map((kline) => ({
+            time: Math.floor(Number(kline[0]) / 1000),
+            open: Number(kline[1]),
+            high: Number(kline[2]),
+            low: Number(kline[3]),
+            close: Number(kline[4]),
+            volume: Number(kline[5]),
+        }))
+        .filter((row) =>
+            Number.isFinite(row.time) &&
+            Number.isFinite(row.open) &&
+            Number.isFinite(row.high) &&
+            Number.isFinite(row.low) &&
+            Number.isFinite(row.close) &&
+            Number.isFinite(row.volume)
+        )
+        .sort((a, b) => Number(a.time) - Number(b.time));
+}
+
+function intervalToSeconds(interval: string): number | null {
+    const trimmed = interval.trim();
+    if (!trimmed) return null;
+    const m = /^(\d+)(m|h|d|w|M)$/.exec(trimmed);
+    if (!m) return null;
+    const value = Number(m[1]);
+    if (!Number.isFinite(value) || value <= 0) return null;
+    const unit = m[2];
+
+    if (unit === "m") return value * 60;
+    if (unit === "h") return value * 60 * 60;
+    if (unit === "d") return value * 24 * 60 * 60;
+    if (unit === "w") return value * 7 * 24 * 60 * 60;
+    if (unit === "M") return value * 30 * 24 * 60 * 60;
+    return null;
+}
+
+function toBinanceInterval(interval: string): string | null {
+    const trimmed = interval.trim();
+    if (BINANCE_INTERVALS.has(trimmed)) return trimmed;
+
+    const minutesMatch = /^(\d+)m$/.exec(trimmed);
+    if (minutesMatch) {
+        const mins = Number(minutesMatch[1]);
+        const map: Record<number, string> = {
+            1: "1m",
+            3: "3m",
+            5: "5m",
+            15: "15m",
+            30: "30m",
+            60: "1h",
+            120: "2h",
+            240: "4h",
+            360: "6h",
+            480: "8h",
+            720: "12h",
+            1440: "1d",
+            4320: "3d",
+            10080: "1w",
+        };
+        return map[mins] ?? null;
+    }
+
+    const hoursMatch = /^(\d+)h$/.exec(trimmed);
+    if (hoursMatch) {
+        const hours = Number(hoursMatch[1]);
+        const map: Record<number, string> = {
+            1: "1h",
+            2: "2h",
+            4: "4h",
+            6: "6h",
+            8: "8h",
+            12: "12h",
+            24: "1d",
+            72: "3d",
+            168: "1w",
+        };
+        return map[hours] ?? null;
+    }
+
+    return null;
+}
+
+async function fetchBinanceCandles(symbol: string, interval: string, limit: number, env: Env): Promise<OHLCVData[]> {
+    const binanceInterval = toBinanceInterval(interval);
+    if (!binanceInterval) {
+        throw new Error(`Unsupported interval for Binance: ${interval}`);
+    }
+    const clampedLimit = Math.max(MIN_CANDLES, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, Math.floor(limit)));
+    const bases = readBinanceApiBases(env);
+    const endpointErrors: string[] = [];
+
+    for (const base of bases) {
+        const endpoint = `${base}/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(binanceInterval)}&limit=${clampedLimit}`;
+        try {
+            const res = await fetch(endpoint, {
+                headers: {
+                    accept: "application/json",
+                    "user-agent": "strategy-entry-signal-worker/1.0",
+                },
+            });
+
+            if (!res.ok) {
+                const body = normalizeBinanceResponseSnippet(await res.text());
+                endpointErrors.push(`${base} -> ${res.status}${body ? ` ${body}` : ""}`);
+                continue;
+            }
+
+            const rows = (await res.json()) as Array<[number, string, string, string, string, string]>;
+            if (!Array.isArray(rows) || rows.length === 0) {
+                endpointErrors.push(`${base} -> empty_response`);
+                continue;
+            }
+
+            return rows.map((kline) => ({
+                time: Math.floor(kline[0] / 1000),
+                open: Number(kline[1]),
+                high: Number(kline[2]),
+                low: Number(kline[3]),
+                close: Number(kline[4]),
+                volume: Number(kline[5]),
+            }));
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            endpointErrors.push(`${base} -> ${normalizeStatusText(detail, 120)}`);
+        }
+    }
+
+    const summary = normalizeStatusText(endpointErrors.join(" | "), 900);
+    throw new Error(`Binance API unavailable: ${summary}`);
+}
+
+function toBybitInterval(interval: string): string | null {
+    const trimmed = interval.trim();
+    if (/^\d+m$/.test(trimmed)) {
+        const mins = Number(trimmed.slice(0, -1));
+        const supported = new Set([1, 3, 5, 15, 30, 60, 120, 240, 360, 720]);
+        return supported.has(mins) ? String(mins) : null;
+    }
+    if (/^\d+h$/.test(trimmed)) {
+        const hours = Number(trimmed.slice(0, -1));
+        const mins = hours * 60;
+        const supported = new Set([60, 120, 240, 360, 720]);
+        return supported.has(mins) ? String(mins) : null;
+    }
+    if (trimmed === "1d" || trimmed === "24h") return "D";
+    if (trimmed === "1w" || trimmed === "7d") return "W";
+    if (trimmed === "1M" || trimmed === "30d") return "M";
+    return null;
+}
+
+async function fetchBybitCandles(symbol: string, interval: string, limit: number, env: Env): Promise<OHLCVData[]> {
+    const bybitInterval = toBybitInterval(interval);
+    if (!bybitInterval) {
+        throw new Error(`Unsupported interval for Bybit: ${interval}`);
+    }
+
+    const clampedLimit = Math.max(MIN_CANDLES, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, Math.floor(limit)));
+    const bases = readBybitApiBases(env);
+    const endpointErrors: string[] = [];
+
+    for (const base of bases) {
+        for (const category of ["spot", "linear"]) {
+            const endpoint = `${base}/v5/market/kline?category=${category}&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(bybitInterval)}&limit=${clampedLimit}`;
+            try {
+                const res = await fetch(endpoint, {
+                    headers: {
+                        accept: "application/json",
+                        "user-agent": "strategy-entry-signal-worker/1.0",
+                    },
+                });
+                if (!res.ok) {
+                    endpointErrors.push(`${base}/${category} -> ${res.status}`);
+                    continue;
+                }
+
+                const body = (await res.json()) as {
+                    retCode?: number;
+                    retMsg?: string;
+                    result?: { list?: Array<[string, string, string, string, string, string, string]> };
+                };
+
+                if (body.retCode !== 0) {
+                    endpointErrors.push(`${base}/${category} -> code:${body.retCode ?? "?"} ${body.retMsg ?? ""}`.trim());
+                    continue;
+                }
+
+                const list = body.result?.list ?? [];
+                const candles = parseBybitKlineList(list);
+                if (candles.length === 0) {
+                    endpointErrors.push(`${base}/${category} -> empty_response`);
+                    continue;
+                }
+
+                return candles;
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                endpointErrors.push(`${base}/${category} -> ${normalizeStatusText(detail, 120)}`);
+            }
+        }
+    }
+
+    const summary = normalizeStatusText(endpointErrors.join(" | "), 900);
+    throw new Error(`Bybit API unavailable: ${summary}`);
+}
+
+async function fetchMarketCandles(symbol: string, interval: string, limit: number, env: Env): Promise<OHLCVData[]> {
+    try {
+        return await fetchBinanceCandles(symbol, interval, limit, env);
+    } catch (binanceError) {
+        try {
+            return await fetchBybitCandles(symbol, interval, limit, env);
+        } catch (bybitError) {
+            const binanceMessage = binanceError instanceof Error ? binanceError.message : String(binanceError);
+            const bybitMessage = bybitError instanceof Error ? bybitError.message : String(bybitError);
+            throw new Error(
+                normalizeStatusText(
+                    `Binance failed: ${binanceMessage} | Bybit failed: ${bybitMessage}`,
+                    1000
+                )
+            );
+        }
+    }
+}
+
+function selectClosedCandleWindow(
+    candles: OHLCVData[],
+    interval: string,
+    nowSec: number = Math.floor(Date.now() / 1000)
+): { candles: OHLCVData[]; closedCandleTimeSec: number } | null {
+    if (candles.length < 2) return null;
+    const intervalSeconds = intervalToSeconds(interval);
+    if (!intervalSeconds || intervalSeconds <= 0) return null;
+
+    let closedIdx = candles.length - 1;
+    const lastOpenSec = Number(candles[closedIdx].time);
+    if (!Number.isFinite(lastOpenSec)) return null;
+
+    // If last kline is still open, use the previous candle as latest closed candle.
+    if (nowSec < lastOpenSec + intervalSeconds) {
+        closedIdx -= 1;
+    }
+    if (closedIdx < MIN_CANDLES - 1) return null;
+
+    const closedTime = Number(candles[closedIdx].time);
+    if (!Number.isFinite(closedTime)) return null;
+
+    return {
+        candles: candles.slice(0, closedIdx + 1),
+        closedCandleTimeSec: closedTime,
+    };
+}
+
 function buildTelegramMessage(signal: StoredSignalPayload): string {
     return [
         "New Entry Signal",
@@ -220,78 +600,53 @@ async function sendTelegramAlert(env: Env, signal: StoredSignalPayload): Promise
     }
 }
 
-async function handleStreamSignal(request: Request, env: Env): Promise<Response> {
-    if (!env.SIGNALS_DB) {
-        return toJsonResponse({ ok: false, error: "Missing SIGNALS_DB binding" }, 500);
-    }
-
-    let payload: StreamSignalRequest;
-    try {
-        payload = (await request.json()) as StreamSignalRequest;
-    } catch {
-        return toJsonResponse({ ok: false, error: "Invalid JSON body" }, 400);
-    }
-
-    if (!payload || !payload.symbol || !payload.interval || !payload.strategyKey || !Array.isArray(payload.candles)) {
-        return toJsonResponse(
-            {
-                ok: false,
-                error: "Required fields: symbol, interval, strategyKey, candles[]",
-            },
-            400
-        );
-    }
-
-    const normalizedCandles = normalizeCandles(payload.candles);
-    if (normalizedCandles.length < MIN_CANDLES) {
-        return toJsonResponse(
-            {
-                ok: false,
-                error: `Not enough candles. Need at least ${MIN_CANDLES}.`,
-                candleCount: normalizedCandles.length,
-            },
-            400
-        );
+async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Promise<ProcessSignalResult> {
+    if (payload.candles.length < MIN_CANDLES) {
+        return {
+            ok: false,
+            newEntry: false,
+            error: `Not enough candles. Need at least ${MIN_CANDLES}.`,
+            rawSignalCount: 0,
+            preparedSignalCount: 0,
+        };
     }
 
     const symbol = normalizeText(payload.symbol).toUpperCase();
     const interval = normalizeText(payload.interval);
     const strategyKey = normalizeText(payload.strategyKey);
-    const streamId = payload.streamId ? normalizeText(payload.streamId) : "";
+    const streamId = normalizeText(payload.streamId);
     const channelKey = buildChannelKey({ streamId, symbol, interval, strategyKey });
 
     const evaluation = evaluateLatestEntrySignal({
         strategyKey,
-        candles: normalizedCandles,
-        strategyParams: payload.strategyParams ?? {},
-        backtestSettings: payload.backtestSettings ?? {},
-        freshnessBars: payload.freshnessBars ?? 1,
+        candles: payload.candles,
+        strategyParams: payload.strategyParams,
+        backtestSettings: payload.backtestSettings,
+        freshnessBars: payload.freshnessBars,
     });
 
     if (!evaluation.ok) {
-        return toJsonResponse(
-            {
-                ok: false,
-                error: evaluation.reason ?? "evaluation_failed",
-                rawSignalCount: evaluation.rawSignalCount,
-                preparedSignalCount: evaluation.preparedSignalCount,
-            },
-            422
-        );
+        return {
+            ok: false,
+            newEntry: false,
+            error: evaluation.reason ?? "evaluation_failed",
+            rawSignalCount: evaluation.rawSignalCount,
+            preparedSignalCount: evaluation.preparedSignalCount,
+        };
     }
 
     if (!evaluation.latestEntry) {
-        return toJsonResponse({
+        return {
             ok: true,
             newEntry: false,
             reason: evaluation.reason ?? "no_signals",
             rawSignalCount: evaluation.rawSignalCount,
             preparedSignalCount: evaluation.preparedSignalCount,
-        });
+        };
     }
 
     if (!evaluation.latestEntry.isFresh) {
-        return toJsonResponse({
+        return {
             ok: true,
             newEntry: false,
             reason: "stale_signal",
@@ -299,11 +654,11 @@ async function handleStreamSignal(request: Request, env: Env): Promise<Response>
             rawSignalCount: evaluation.rawSignalCount,
             preparedSignalCount: evaluation.preparedSignalCount,
             latestEntry: evaluation.latestEntry,
-        });
+        };
     }
 
     const entryPayload: StoredSignalPayload = {
-        streamId: streamId || channelKey,
+        streamId,
         symbol,
         interval,
         strategyKey,
@@ -364,7 +719,7 @@ async function handleStreamSignal(request: Request, env: Env): Promise<Response>
         }
     }
 
-    return toJsonResponse({
+    return {
         ok: true,
         newEntry: inserted,
         duplicate: !inserted,
@@ -373,7 +728,53 @@ async function handleStreamSignal(request: Request, env: Env): Promise<Response>
         entry: entryPayload,
         rawSignalCount: evaluation.rawSignalCount,
         preparedSignalCount: evaluation.preparedSignalCount,
-    });
+    };
+}
+
+async function handleStreamSignal(request: Request, env: Env): Promise<Response> {
+    if (!env.SIGNALS_DB) {
+        return toJsonResponse({ ok: false, error: "Missing SIGNALS_DB binding" }, 500);
+    }
+
+    let payload: StreamSignalRequest;
+    try {
+        payload = (await request.json()) as StreamSignalRequest;
+    } catch {
+        return toJsonResponse({ ok: false, error: "Invalid JSON body" }, 400);
+    }
+
+    if (!payload || !payload.symbol || !payload.interval || !payload.strategyKey || !Array.isArray(payload.candles)) {
+        return toJsonResponse(
+            {
+                ok: false,
+                error: "Required fields: symbol, interval, strategyKey, candles[]",
+            },
+            400
+        );
+    }
+
+    const normalizedCandles = normalizeCandles(payload.candles);
+    const streamId = payload.streamId
+        ? normalizeText(payload.streamId)
+        : buildDefaultStreamId(payload.symbol.toUpperCase(), payload.interval, payload.strategyKey);
+
+    const result = await processSignalPayload(
+        {
+            streamId,
+            symbol: payload.symbol,
+            interval: payload.interval,
+            strategyKey: payload.strategyKey,
+            strategyParams: payload.strategyParams ?? {},
+            backtestSettings: payload.backtestSettings ?? {},
+            freshnessBars: Math.max(0, Math.floor(payload.freshnessBars ?? 1)),
+            notifyTelegram: payload.notifyTelegram === true,
+            candles: normalizedCandles,
+        },
+        env
+    );
+
+    const status = result.ok ? 200 : 422;
+    return toJsonResponse(result, status);
 }
 
 async function handleSignalHistory(request: Request, env: Env): Promise<Response> {
@@ -438,17 +839,257 @@ async function handleSignalHistory(request: Request, env: Env): Promise<Response
         count: rows.length,
         items: rows.map((row) => ({
             ...row,
-            payload: safeJsonParse(row.payload_json),
+            payload: safeJsonParse(row.payload_json, null as unknown),
         })),
     });
 }
 
-function safeJsonParse(value: string): unknown {
+async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Response> {
+    let payload: SubscriptionUpsertRequest;
     try {
-        return JSON.parse(value);
+        payload = (await request.json()) as SubscriptionUpsertRequest;
     } catch {
-        return null;
+        return toJsonResponse({ ok: false, error: "Invalid JSON body" }, 400);
     }
+
+    if (!payload.symbol || !payload.interval || !payload.strategyKey) {
+        return toJsonResponse(
+            { ok: false, error: "Required fields: symbol, interval, strategyKey" },
+            400
+        );
+    }
+
+    const symbol = normalizeText(payload.symbol).toUpperCase();
+    const interval = normalizeText(payload.interval);
+    const strategyKey = normalizeText(payload.strategyKey);
+    const streamId = payload.streamId
+        ? normalizeText(payload.streamId)
+        : buildDefaultStreamId(symbol, interval, strategyKey);
+    const enabled = payload.enabled === false ? 0 : 1;
+    const notifyTelegram = payload.notifyTelegram === false ? 0 : 1;
+    const freshnessBars = Math.max(0, Math.floor(payload.freshnessBars ?? 1));
+    const candleLimit = Math.max(
+        MIN_CANDLES,
+        Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, Math.floor(payload.candleLimit ?? DEFAULT_SUBSCRIPTION_CANDLE_LIMIT))
+    );
+
+    await env.SIGNALS_DB.prepare(
+        `
+        INSERT INTO signal_subscriptions (
+            stream_id,
+            enabled,
+            symbol,
+            interval,
+            strategy_key,
+            strategy_params_json,
+            backtest_settings_json,
+            freshness_bars,
+            notify_telegram,
+            candle_limit,
+            last_processed_closed_candle_time
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        ON CONFLICT(stream_id) DO UPDATE SET
+            enabled = excluded.enabled,
+            symbol = excluded.symbol,
+            interval = excluded.interval,
+            strategy_key = excluded.strategy_key,
+            strategy_params_json = excluded.strategy_params_json,
+            backtest_settings_json = excluded.backtest_settings_json,
+            freshness_bars = excluded.freshness_bars,
+            notify_telegram = excluded.notify_telegram,
+            candle_limit = excluded.candle_limit,
+            updated_at = CURRENT_TIMESTAMP
+        `
+    )
+        .bind(
+            streamId,
+            enabled,
+            symbol,
+            interval,
+            strategyKey,
+            JSON.stringify(payload.strategyParams ?? {}),
+            JSON.stringify(payload.backtestSettings ?? {}),
+            freshnessBars,
+            notifyTelegram,
+            candleLimit
+        )
+        .run();
+
+    const subscription = await env.SIGNALS_DB.prepare(
+        `SELECT * FROM signal_subscriptions WHERE stream_id = ? LIMIT 1`
+    )
+        .bind(streamId)
+        .first<SubscriptionRow>();
+
+    return toJsonResponse({
+        ok: true,
+        streamId,
+        subscription,
+    });
+}
+
+async function handleSubscriptionList(_request: Request, env: Env): Promise<Response> {
+    const result = await env.SIGNALS_DB.prepare(
+        `SELECT * FROM signal_subscriptions ORDER BY updated_at DESC`
+    ).all<SubscriptionRow>();
+
+    return toJsonResponse({
+        ok: true,
+        count: (result.results ?? []).length,
+        items: result.results ?? [],
+    });
+}
+
+async function updateSubscriptionStatus(
+    env: Env,
+    streamId: string,
+    status: string,
+    closedCandleTimeSec?: number
+): Promise<void> {
+    const safeStatus = normalizeStatusText(status);
+
+    if (typeof closedCandleTimeSec === "number") {
+        await env.SIGNALS_DB.prepare(
+            `
+            UPDATE signal_subscriptions
+            SET
+                last_processed_closed_candle_time = ?,
+                last_run_at = CURRENT_TIMESTAMP,
+                last_status = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE stream_id = ?
+            `
+        )
+            .bind(closedCandleTimeSec, safeStatus, streamId)
+            .run();
+        return;
+    }
+
+    await env.SIGNALS_DB.prepare(
+        `
+        UPDATE signal_subscriptions
+        SET
+            last_run_at = CURRENT_TIMESTAMP,
+            last_status = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE stream_id = ?
+        `
+    )
+        .bind(safeStatus, streamId)
+        .run();
+}
+
+async function runSubscription(
+    env: Env,
+    subscription: SubscriptionRow,
+    force = false
+): Promise<Record<string, unknown>> {
+    const streamId = subscription.stream_id;
+
+    try {
+        const candles = await fetchMarketCandles(
+            subscription.symbol,
+            subscription.interval,
+            subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT,
+            env
+        );
+
+        const closed = selectClosedCandleWindow(candles, subscription.interval);
+        if (!closed) {
+            await updateSubscriptionStatus(env, streamId, "insufficient_candles");
+            return { streamId, status: "insufficient_candles" };
+        }
+
+        if (!force && closed.closedCandleTimeSec <= (subscription.last_processed_closed_candle_time || 0)) {
+            await updateSubscriptionStatus(env, streamId, "no_new_closed_candle");
+            return {
+                streamId,
+                status: "no_new_closed_candle",
+                closedCandleTimeSec: closed.closedCandleTimeSec,
+            };
+        }
+
+        const result = await processSignalPayload(
+            {
+                streamId,
+                symbol: subscription.symbol,
+                interval: subscription.interval,
+                strategyKey: subscription.strategy_key,
+                strategyParams: safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>),
+                backtestSettings: safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings),
+                freshnessBars: Math.max(0, subscription.freshness_bars ?? 1),
+                notifyTelegram: subscription.notify_telegram === 1,
+                candles: closed.candles,
+            },
+            env
+        );
+
+        const status = result.ok
+            ? result.newEntry
+                ? "new_entry"
+                : result.reason ?? "no_entry"
+            : result.error ?? "processing_error";
+
+        if (result.ok) {
+            await updateSubscriptionStatus(env, streamId, status, closed.closedCandleTimeSec);
+        } else {
+            await updateSubscriptionStatus(env, streamId, status);
+        }
+
+        return {
+            streamId,
+            status,
+            closedCandleTimeSec: closed.closedCandleTimeSec,
+            result,
+        };
+    } catch (error) {
+        const status = normalizeStatusText(error instanceof Error ? error.message : String(error), 200);
+        await updateSubscriptionStatus(env, streamId, `error:${status}`);
+        return { streamId, status: `error:${status}` };
+    }
+}
+
+async function handleRunNow(request: Request, env: Env): Promise<Response> {
+    const body = await request.json().catch(() => ({}));
+    const payload = body as { streamId?: string; force?: boolean };
+    const streamId = payload.streamId?.trim();
+    if (!streamId) {
+        return toJsonResponse({ ok: false, error: "streamId is required" }, 400);
+    }
+
+    const subscription = await env.SIGNALS_DB.prepare(
+        `SELECT * FROM signal_subscriptions WHERE stream_id = ? LIMIT 1`
+    )
+        .bind(streamId)
+        .first<SubscriptionRow>();
+
+    if (!subscription) {
+        return toJsonResponse({ ok: false, error: "Subscription not found" }, 404);
+    }
+
+    const run = await runSubscription(env, subscription, payload.force === true);
+    return toJsonResponse({ ok: true, run });
+}
+
+async function runScheduledSubscriptions(env: Env): Promise<Record<string, unknown>> {
+    const result = await env.SIGNALS_DB.prepare(
+        `SELECT * FROM signal_subscriptions WHERE enabled = 1 ORDER BY updated_at DESC`
+    ).all<SubscriptionRow>();
+
+    const subscriptions = result.results ?? [];
+    const runs: Record<string, unknown>[] = [];
+
+    for (const subscription of subscriptions) {
+        const run = await runSubscription(env, subscription, false);
+        runs.push(run);
+    }
+
+    return {
+        ok: true,
+        scanned: subscriptions.length,
+        runs,
+        at: new Date().toISOString(),
+    };
 }
 
 export default {
@@ -476,6 +1117,23 @@ export default {
             return handleSignalHistory(request, env);
         }
 
+        if (request.method === "POST" && pathname === "/api/subscriptions/upsert") {
+            return handleSubscriptionUpsert(request, env);
+        }
+
+        if (request.method === "GET" && pathname === "/api/subscriptions") {
+            return handleSubscriptionList(request, env);
+        }
+
+        if (request.method === "POST" && pathname === "/api/subscriptions/run-now") {
+            return handleRunNow(request, env);
+        }
+
         return toJsonResponse({ ok: false, error: "Not found" }, 404);
+    },
+
+    async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+        const summary = await runScheduledSubscriptions(env);
+        console.log(JSON.stringify(summary));
     },
 };

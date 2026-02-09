@@ -10,6 +10,12 @@ It deduplicates signals in D1, so the same entry is only produced once.
   - Output: `newEntry: true|false` and latest signal payload
 - `GET /api/stream/signals?streamId=...&limit=50`
   - Returns recent stored entry signals for a stream
+- `POST /api/subscriptions/upsert`
+  - Stores/updates an auto-run subscription (pair + timeframe + strategy config)
+- `GET /api/subscriptions`
+  - Lists configured subscriptions
+- `POST /api/subscriptions/run-now`
+  - Runs one subscription immediately for testing
 - `GET /health`
 
 ## Request Example
@@ -40,6 +46,39 @@ Notes:
 - Send at least 200 candles per call (worker validates this).
 - `time` can be unix seconds, unix milliseconds, ISO string, or business-day object.
 
+## Automatic 2h Runs (new candle only)
+
+Cron is configured in `wrangler.toml`:
+
+```toml
+[triggers]
+crons = ["1 */2 * * *"]
+```
+
+Behavior:
+- Runs every 2 hours at minute `01` UTC.
+- For each enabled subscription, worker fetches Binance candles.
+- It only evaluates when a **new closed candle** exists (`last_processed_closed_candle_time` guard).
+- This avoids duplicate alerts between candle closes.
+- Worker now auto-fallbacks across multiple Binance hosts (`data-api.binance.vision`, `api.binance.com`, `api1..4`, `api.binance.us`).
+- If Binance is fully blocked from Worker egress, it falls back to Bybit klines (`spot` then `linear`) for continuity.
+
+Create subscription example:
+
+```json
+{
+  "streamId": "ethusdt-120m-testa2",
+  "symbol": "ETHUSDT",
+  "interval": "120m",
+  "strategyKey": "exhaustion_spike_pullback",
+  "strategyParams": { "spikeAtrMult": 0, "pullbackEma": -28, "maxWaitBars": 32 },
+  "backtestSettings": { "tradeDirection": "both", "executionModel": "next_open", "tradeFilterMode": "close" },
+  "freshnessBars": 1,
+  "notifyTelegram": true,
+  "enabled": true
+}
+```
+
 ## D1 Setup
 
 1. Create D1 DB and bind it as `SIGNALS_DB` in Wrangler config.
@@ -52,6 +91,7 @@ wrangler d1 migrations apply strategy_signals --remote
 
 Migration file:
 - `workers/migrations/0001_entry_signals.sql`
+- `workers/migrations/0002_signal_subscriptions.sql`
 
 ## Telegram (Optional)
 
@@ -60,3 +100,20 @@ Set worker secrets:
 - `TELEGRAM_CHAT_ID`
 
 Then send `notifyTelegram: true` in request body.
+
+## Optional Env: Binance Endpoint Override
+
+If your Worker region still gets blocked, set a custom CSV of API bases:
+
+- `BINANCE_API_BASES`
+- `BYBIT_API_BASES`
+
+Example value:
+
+```text
+https://data-api.binance.vision,https://api.binance.us
+```
+
+```text
+https://api.bybit.com
+```

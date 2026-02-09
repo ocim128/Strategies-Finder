@@ -7,3 +7,7 @@ binding = "SIGNALS_DB"
 database_name = "signal"
 database_id = "ba727aeb-077a-4fed-a526-e07e97c61f6b"
 migrations_dir = "workers/migrations"
+
+[triggers]
+# Run shortly after each 2-hour candle opens, so previous 2h candle is closed.
+crons = ["1 */2 * * *"]
