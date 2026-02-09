@@ -6,7 +6,8 @@
  */
 
 
-import type { OHLCVData, Signal, StrategyParams } from "../strategies/types";
+import type { OHLCVData, Signal, StrategyParams, Trade } from "../strategies/types";
+import type { OpenPosition } from "./liveTradeTypes";
 
 // ============================================================================
 // Replay Status & Speed
@@ -57,7 +58,21 @@ export interface ReplayState {
     /** Strategy parameters being used */
     strategyParams: StrategyParams;
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Live Trade Tracking (Phase 2)
+    // ─────────────────────────────────────────────────────────────────────────
 
+    /** Currently open position (null if flat) */
+    position: OpenPosition | null;
+
+    /** Current account equity (capital + unrealized PnL) */
+    equity: number;
+
+    /** Current unrealized PnL (0 if no position) */
+    unrealizedPnL: number;
+
+    /** List of completed trades during this replay */
+    completedTrades: Trade[];
 }
 
 // ============================================================================
@@ -90,7 +105,10 @@ export type ReplayEventType =
     | 'status-change'     // Playback status changed
     | 'speed-change'      // Speed was adjusted
     | 'seek'              // User seeked to a different position
-    | 'reset';            // Replay was reset/stopped
+    | 'reset'             // Replay was reset/stopped
+    | 'position-opened'   // New trade opened
+    | 'position-closed'   // Trade closed (SL/TP/signal)
+    | 'pnl-update';       // Unrealized PnL changed
 
 /** Event object emitted by the replay system */
 export interface ReplayEvent {
@@ -117,6 +135,18 @@ export interface ReplayEvent {
 
     /** Timestamp of the event */
     timestamp: number;
+
+    /** Current position state (for position events) */
+    position?: OpenPosition | null;
+
+    /** Trade that was just closed (for position-closed events) */
+    trade?: Trade;
+
+    /** Current equity */
+    equity?: number;
+
+    /** Current unrealized PnL */
+    unrealizedPnL?: number;
 }
 
 /** Callback type for replay event listeners */
@@ -143,7 +173,21 @@ export interface ReplayStartOptions {
     /** Initial speed (default: 1) */
     initialSpeed?: number;
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Trade Engine Configuration (Phase 2)
+    // ─────────────────────────────────────────────────────────────────────────
 
+    /** Initial capital for simulated trading */
+    initialCapital?: number;
+
+    /** Position size as percentage of capital */
+    positionSizePercent?: number;
+
+    /** Commission rate in percentage */
+    commissionPercent?: number;
+
+    /** Backtest settings for SL/TP/trailing configuration */
+    backtestSettings?: import('../strategies/types').BacktestSettings;
 }
 
 /** Options for seeking to a specific position */

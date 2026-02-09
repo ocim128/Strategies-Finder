@@ -503,6 +503,153 @@ export function calculateMaxDrawdown(equityCurve: { time: Time; value: number }[
 }
 
 /**
+ * Prepare signals for the scanner using the same logic as the backtest engine.
+ * This ensures the scanner shows the same entry prices and filters as the backtest.
+ * 
+ * @param data OHLCV data array
+ * @param signals Raw signals from strategy execution
+ * @param settings Backtest settings for filtering and price resolution
+ * @returns Prepared signals with resolved execution prices
+ */
+export function prepareSignalsForScanner(
+    data: OHLCVData[],
+    signals: Signal[],
+    settings: BacktestSettings = {}
+): Signal[] {
+    if (signals.length === 0 || data.length === 0) return [];
+
+    const config = normalizeBacktestSettings(settings);
+    const tradeDirection = normalizeTradeDirection(settings);
+
+    // Compute indicators needed for trade filters
+    const highs = getHighs(data);
+    const lows = getLows(data);
+    const closes = getCloses(data);
+    const volumes = getVolumes(data);
+
+    const needsAtr = config.atrPercentMin > 0 || config.atrPercentMax > 0;
+    const atr = needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : [];
+    const trendPeriod = resolveTrendPeriod(config);
+    const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
+
+    const useAdx = config.tradeFilterMode === 'adx' || config.adxMin > 0 || config.adxMax > 0;
+    const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
+    const adx = useAdx ? calculateADX(highs, lows, closes, adxPeriod) : [];
+
+    const volumeSma = config.tradeFilterMode === 'volume'
+        ? calculateSMA(volumes, config.volumeSmaPeriod)
+        : [];
+    const rsi = config.tradeFilterMode === 'rsi'
+        ? calculateRSI(closes, config.rsiPeriod)
+        : [];
+
+    const indicators: IndicatorSeries = {
+        atr,
+        emaTrend,
+        adx,
+        volumeSma,
+        rsi
+    };
+
+    // Use the same prepareSignals logic
+    return prepareSignals(data, signals, config, indicators, tradeDirection);
+}
+
+/**
+ * Represents an open position returned by getOpenPositionForScanner
+ */
+export interface OpenPosition {
+    direction: 'long' | 'short';
+    entryTime: Time;
+    entryPrice: number;
+    currentPrice: number;
+    unrealizedPnlPercent: number;
+    barsInTrade: number;
+    stopLossPrice: number | null;
+    takeProfitPrice: number | null;
+}
+
+/**
+ * Get the current open position (if any) for the scanner.
+ * This runs a lightweight backtest to determine position state.
+ * 
+ * @param data OHLCV data array
+ * @param signals Raw signals from strategy execution
+ * @param settings Backtest settings 
+ * @returns OpenPosition if there's a currently open position, null otherwise
+ */
+export function getOpenPositionForScanner(
+    data: OHLCVData[],
+    signals: Signal[],
+    settings: BacktestSettings = {}
+): OpenPosition | null {
+    if (signals.length === 0 || data.length === 0) return null;
+
+    // Run backtest to get trades
+    const result = runBacktestCompact(
+        data,
+        signals,
+        10000, // Initial capital (doesn't affect position detection)
+        100,   // 100% position size
+        0,     // No commission for this check
+        settings
+    );
+
+    // Check if the last trade is still open (exited at end_of_data with current bar)
+    if (result.trades.length === 0) return null;
+
+    const lastTrade = result.trades[result.trades.length - 1];
+    const lastBar = data[data.length - 1];
+
+    // A trade is "open" if it exited due to end_of_data AND the exit time is the last bar
+    // This means the backtest closed it artificially, so it's really still open
+    if (lastTrade.exitReason !== 'end_of_data') {
+        return null; // Trade was closed by SL/TP/signal, not open
+    }
+
+    // Compare exit time with last bar time
+    const exitTimeNum = timeToNumber(lastTrade.exitTime);
+    const lastBarTimeNum = timeToNumber(lastBar.time);
+
+    // If exit time is the last bar, position is open
+    if (exitTimeNum === null || lastBarTimeNum === null) {
+        return null;
+    }
+    if (Math.abs(exitTimeNum - lastBarTimeNum) > 60000) { // 60 seconds in milliseconds
+        return null; // Exit wasn't at last bar, position was closed before
+    }
+
+    const currentPrice = lastBar.close;
+    const directionFactor = lastTrade.type === 'long' ? 1 : -1;
+    const unrealizedPnlPercent = directionFactor * ((currentPrice - lastTrade.entryPrice) / lastTrade.entryPrice) * 100;
+
+    // Calculate bars in trade
+    const entryTimeNum = timeToNumber(lastTrade.entryTime);
+    if (entryTimeNum === null) return null;
+
+    let entryBarIndex = 0;
+    for (let i = 0; i < data.length; i++) {
+        const barTime = timeToNumber(data[i].time);
+        if (barTime !== null && barTime >= entryTimeNum) {
+            entryBarIndex = i;
+            break;
+        }
+    }
+    const barsInTrade = data.length - 1 - entryBarIndex;
+
+    return {
+        direction: lastTrade.type,
+        entryTime: lastTrade.entryTime,
+        entryPrice: lastTrade.entryPrice,
+        currentPrice,
+        unrealizedPnlPercent,
+        barsInTrade,
+        stopLossPrice: null, // Would need more complex tracking to get these
+        takeProfitPrice: null,
+    };
+}
+
+/**
  * Pre-computes all indicators needed for backtesting based on settings.
  * Call this ONCE before running multiple backtests with the same settings.
  * This dramatic optimization prevents recalculating indicators for each
@@ -998,7 +1145,7 @@ export function runBacktest(
     const slippageRate = config.slippageBps / 10000;
     let signalIdx = 0;
 
-    const exitPosition = (exitPrice: number, exitTime: Time, exitSize: number) => {
+    const exitPosition = (exitPrice: number, exitTime: Time, exitSize: number, exitReason: Trade['exitReason'] = 'signal') => {
         if (!position || exitSize <= 0) return;
 
         const positionDirection = position.direction;
@@ -1025,7 +1172,8 @@ export function runBacktest(
             pnl: totalPnl,
             pnlPercent,
             size,
-            fees: entryCommission + commission
+            fees: entryCommission + commission,
+            exitReason
         });
 
         position.size -= size;
@@ -1136,7 +1284,7 @@ export function runBacktest(
                 const stopHit = isShortPosition ? candle.high >= stopLoss : candle.low <= stopLoss;
                 if (stopHit) {
                     const exitPrice = applySlippage(stopLoss, exitSide, slippageRate);
-                    exitPosition(exitPrice, candle.time, position.size);
+                    exitPosition(exitPrice, candle.time, position.size, 'stop_loss');
                 }
             }
 
@@ -1145,7 +1293,7 @@ export function runBacktest(
                 const takeHit = isShortPosition ? candle.low <= position.takeProfitPrice : candle.high >= position.takeProfitPrice;
                 if (takeHit) {
                     const exitPrice = applySlippage(position.takeProfitPrice, exitSide, slippageRate);
-                    exitPosition(exitPrice, candle.time, position.size);
+                    exitPosition(exitPrice, candle.time, position.size, 'take_profit');
                 }
             }
 
@@ -1156,7 +1304,7 @@ export function runBacktest(
                     const partialSize = position.size * (config.partialTakeProfitPercent / 100);
                     if (partialSize > 0) {
                         const exitPrice = applySlippage(position.partialTargetPrice, exitSide, slippageRate);
-                        exitPosition(exitPrice, candle.time, partialSize);
+                        exitPosition(exitPrice, candle.time, partialSize, 'partial');
                         if (position) {
                             position.partialTaken = true;
                         }
@@ -1168,7 +1316,7 @@ export function runBacktest(
                 const isLosing = isShortPosition ? candle.close >= position.entryPrice : candle.close <= position.entryPrice;
                 if (!position.partialTaken && isLosing) {
                     const exitPrice = applySlippage(candle.close, exitSide, slippageRate);
-                    exitPosition(exitPrice, candle.time, position.size);
+                    exitPosition(exitPrice, candle.time, position.size, 'time_stop');
                 }
             }
 
@@ -1220,7 +1368,7 @@ export function runBacktest(
                         const blockedSameBarExit = !config.allowSameBarExit && compareTime(signal.time, position.entryTime) === 0;
                         if (!blockedSameBarExit) {
                             const exitPrice = applySlippage(signal.price, exitSideForDirection(position.direction), slippageRate);
-                            exitPosition(exitPrice, signal.time, position.size);
+                            exitPosition(exitPrice, signal.time, position.size, 'signal');
                             if (tradeDirection === 'both') {
                                 const opened = buildPositionFromSignal(signal, i);
                                 if (opened) {
@@ -1247,7 +1395,7 @@ export function runBacktest(
     if (position && data.length > 0) {
         const lastCandle = data[data.length - 1];
         const exitPrice = applySlippage(lastCandle.close, exitSideForDirection(position.direction), slippageRate);
-        exitPosition(exitPrice, lastCandle.time, position.size);
+        exitPosition(exitPrice, lastCandle.time, position.size, 'end_of_data');
 
         if (equityCurve.length > 0) {
             equityCurve[equityCurve.length - 1].value = capital;

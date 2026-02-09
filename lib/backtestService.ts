@@ -1,12 +1,6 @@
 import { state } from "./state";
 import { uiManager } from "./uiManager";
 import { chartManager } from "./chartManager";
-// import {
-//     runBacktest,
-//     StrategyParams,
-//     BacktestSettings,
-//     EntryConfirmationMode
-// } from "../../../../src/strategies/index";
 
 import { runBacktest, StrategyParams, BacktestSettings, TradeFilterMode, ExecutionModel, buildEntryBacktestResult, BacktestResult } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";

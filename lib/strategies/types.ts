@@ -25,6 +25,8 @@ export interface Trade {
     pnlPercent: number;
     size: number;
     fees?: number;
+    /** Exit reason: how the trade was closed */
+    exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'end_of_data';
 }
 
 export interface BacktestResult {
@@ -52,8 +54,6 @@ export interface StrategyParams {
 }
 
 export type TradeFilterMode = 'none' | 'close' | 'volume' | 'rsi' | 'trend' | 'adx';
-/** @deprecated Use TradeFilterMode. */
-export type EntryConfirmationMode = TradeFilterMode;
 export type TradeDirection = 'long' | 'short' | 'both';
 export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';
@@ -84,7 +84,7 @@ export interface BacktestSettings {
     adxMax?: number;
 
     tradeFilterMode?: TradeFilterMode;
-    /** @deprecated Use tradeFilterMode. */
+    // Internal field for Rust engine and legacy config compatibility. Use tradeFilterMode.
     entryConfirmation?: TradeFilterMode;
     confirmLookback?: number;
     volumeSmaPeriod?: number;

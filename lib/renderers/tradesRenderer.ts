@@ -22,6 +22,7 @@ export class TradesRenderer {
             const statusClass = isProfit ? 'win' : 'loss';
             const duration = this.formatDuration(this.getTimestamp(trade.exitTime) - this.getTimestamp(trade.entryTime));
             const fees = trade.fees ? `Fees: $${trade.fees.toFixed(2)}` : '';
+            const exitReasonBadge = this.getExitReasonBadge(trade.exitReason);
 
             // Format precise dates for tooltip or subtitle
             const entryDate = formatDate(trade.entryTime);
@@ -43,6 +44,7 @@ export class TradesRenderer {
                                     <span class="trade-time">${entryDate}</span>
                                     <span class="separator">•</span>
                                     <span class="trade-duration">${duration}</span>
+                                    ${exitReasonBadge}
                                     ${fees ? `<span class="separator">•</span><span class="trade-fees">${fees}</span>` : ''}
                                 </div>
                             </div>
@@ -102,6 +104,25 @@ export class TradesRenderer {
         if (hours > 0) return `${hours}h ${minutes % 60}m`;
         if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
         return `${seconds}s`;
+    }
+
+    private getExitReasonBadge(exitReason: Trade['exitReason']): string {
+        if (!exitReason) return '';
+
+        const reasonMap: Record<NonNullable<Trade['exitReason']>, { label: string; color: string; icon: string }> = {
+            'signal': { label: 'Signal', color: '#3b82f6', icon: '📊' },
+            'stop_loss': { label: 'SL', color: '#ef4444', icon: '🛑' },
+            'take_profit': { label: 'TP', color: '#22c55e', icon: '🎯' },
+            'trailing_stop': { label: 'Trail', color: '#f59e0b', icon: '📈' },
+            'time_stop': { label: 'Time', color: '#8b5cf6', icon: '⏰' },
+            'partial': { label: 'Partial', color: '#06b6d4', icon: '½' },
+            'end_of_data': { label: 'EOD', color: '#f97316', icon: '⚠️' },
+        };
+
+        const info = reasonMap[exitReason];
+        if (!info) return '';
+
+        return `<span class="exit-reason-badge" style="background: ${info.color}20; color: ${info.color}; border: 1px solid ${info.color}40;" title="Exit: ${info.label}">${info.icon}</span>`;
     }
 
     private updateSummary(trades: Trade[]) {

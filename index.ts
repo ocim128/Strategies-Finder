@@ -25,6 +25,7 @@ import { dataMiningManager } from "./lib/dataMiningManager";
 
 import { replayManager, ReplayChartAdapter, ReplayUI } from "./lib/replay";
 import { initConfirmationStrategyUI } from "./lib/confirmationStrategies";
+import { scannerPanel, scannerManager } from "./lib/scanner";
 
 // Handlers
 import { setupGlobalErrorHandlers } from "./lib/handlers/globalErrorHandlers";
@@ -66,6 +67,22 @@ async function init() {
 	initConfirmationStrategyUI();
 	initDebugPanel();
 	initEngineStatusIndicator(); // Show Rust vs TypeScript engine status
+
+	// Initialize scanner panel with keyboard shortcut
+	window.addEventListener('keydown', (e) => {
+		if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+			e.preventDefault();
+			scannerPanel.toggle();
+		}
+	});
+
+	// Handle scanner symbol load events
+	window.addEventListener('scanner:load-symbol', ((e: CustomEvent<{ symbol: string }>) => {
+		const { symbol } = e.detail;
+		state.set('currentSymbol', symbol);
+		dataManager.loadData();
+		scannerPanel.hide();
+	}) as EventListener);
 
 	// Initialize replay feature
 	const replayUI = new ReplayUI(replayManager);
@@ -142,4 +159,6 @@ if (typeof window !== 'undefined') {
 	(window as any).__debug = debugLogger;
 	(window as any).__commandPalette = commandPaletteManager;
 	(window as any).__replayManager = replayManager;
+	(window as any).__scannerPanel = scannerPanel;
+	(window as any).__scannerManager = scannerManager;
 }

@@ -1,7 +1,5 @@
 import { Strategy } from './types';
-import { fib_speed_fan } from './lib/fib-speed-fan';
-import { fib_speed_fan_corrected } from './lib/fib-speed-fan-corrected';
-import { fib_speed_fan_corrected2 } from './lib/fib-speed-fan-corrected2';
+
 import { fib_speed_fan_entry } from './lib/fib-speed-fan-entry';
 import { fib_retracement } from './lib/fib-retracement';
 import { day_trading_booster } from './lib/day-trading-booster';
@@ -35,9 +33,7 @@ import { exhaustion_spike_pullback } from './lib/exhaustion-spike-pullback';
 import { session_open_fakeout } from './lib/session-open-fakeout';
 
 export const strategies: Record<string, Strategy> = {
-    fib_speed_fan,
-    fib_speed_fan_corrected,
-    fib_speed_fan_corrected2,
+
     fib_speed_fan_entry,
     fib_retracement,
     day_trading_booster,

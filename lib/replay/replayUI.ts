@@ -7,6 +7,7 @@
 
 import type { ReplayManager } from './replayManager';
 import type { ReplayEvent, ReplayStatus, SignalWithAnnotation } from './replayTypes';
+import type { OpenPosition } from './liveTradeTypes';
 import { state } from '../state';
 
 // ============================================================================
@@ -37,6 +38,15 @@ export class ReplayUI {
         startBtn?: HTMLButtonElement;
         signalList?: HTMLElement;
         signalCount?: HTMLElement;
+        // Position panel elements
+        positionPanel?: HTMLElement;
+        positionDirection?: HTMLElement;
+        positionEntry?: HTMLElement;
+        positionSize?: HTMLElement;
+        positionPnL?: HTMLElement;
+        positionStopLoss?: HTMLElement;
+        positionTakeProfit?: HTMLElement;
+        equityDisplay?: HTMLElement;
     } = {};
 
     constructor(replayManager: ReplayManager) {
@@ -94,6 +104,15 @@ export class ReplayUI {
             startBtn: document.getElementById('replayStartBtn') as HTMLButtonElement || undefined,
             signalList: document.getElementById('replaySignalList') || undefined,
             signalCount: document.getElementById('replaySignalCount') || undefined,
+            // Position panel elements
+            positionPanel: document.getElementById('replayPositionPanel') || undefined,
+            positionDirection: document.getElementById('replayPositionDirection') || undefined,
+            positionEntry: document.getElementById('replayPositionEntry') || undefined,
+            positionSize: document.getElementById('replayPositionSize') || undefined,
+            positionPnL: document.getElementById('replayPositionPnL') || undefined,
+            positionStopLoss: document.getElementById('replayPositionStopLoss') || undefined,
+            positionTakeProfit: document.getElementById('replayPositionTakeProfit') || undefined,
+            equityDisplay: document.getElementById('replayEquityDisplay') || undefined,
         };
     }
 
@@ -177,6 +196,11 @@ export class ReplayUI {
                 break;
             case 'reset':
                 this.resetUI();
+                break;
+            case 'position-opened':
+            case 'position-closed':
+            case 'pnl-update':
+                this.updatePositionPanel(event.position, event.equity, event.unrealizedPnL);
                 break;
         }
     };
@@ -428,10 +452,116 @@ export class ReplayUI {
         this.elements.signalCount.textContent = count.toString();
     }
 
+    /**
+     * Update position panel with current trade info and PnL
+     */
+    private updatePositionPanel(
+        position: OpenPosition | null | undefined,
+        equity: number | undefined,
+        unrealizedPnL: number | undefined
+    ): void {
+        // Update equity display
+        if (this.elements.equityDisplay && equity !== undefined) {
+            this.elements.equityDisplay.textContent = this.formatPrice(equity);
+        }
+
+        // Show/hide position panel based on whether we have an open position
+        if (!position) {
+            this.clearPositionPanel();
+            return;
+        }
+
+        // Show the position panel
+        if (this.elements.positionPanel) {
+            this.elements.positionPanel.classList.add('active');
+            this.elements.positionPanel.classList.remove('long', 'short');
+            this.elements.positionPanel.classList.add(position.direction);
+        }
+
+        // Update direction
+        if (this.elements.positionDirection) {
+            this.elements.positionDirection.textContent = position.direction.toUpperCase();
+            this.elements.positionDirection.className = `position-direction ${position.direction}`;
+        }
+
+        // Update entry price
+        if (this.elements.positionEntry) {
+            this.elements.positionEntry.textContent = this.formatPrice(position.entryPrice);
+        }
+
+        // Update size
+        if (this.elements.positionSize) {
+            this.elements.positionSize.textContent = position.size.toFixed(4);
+        }
+
+        // Update unrealized PnL with color coding
+        if (this.elements.positionPnL) {
+            const pnl = unrealizedPnL ?? position.unrealizedPnL;
+            const pnlPercent = position.unrealizedPnLPercent;
+            const sign = pnl >= 0 ? '+' : '';
+            this.elements.positionPnL.textContent = `${sign}${this.formatPrice(pnl)} (${sign}${pnlPercent.toFixed(2)}%)`;
+            this.elements.positionPnL.className = `position-pnl ${pnl >= 0 ? 'positive' : 'negative'}`;
+        }
+
+        // Update stop loss
+        if (this.elements.positionStopLoss) {
+            if (position.stopLossPrice !== null) {
+                this.elements.positionStopLoss.textContent = this.formatPrice(position.stopLossPrice);
+                this.elements.positionStopLoss.classList.remove('disabled');
+            } else {
+                this.elements.positionStopLoss.textContent = '-';
+                this.elements.positionStopLoss.classList.add('disabled');
+            }
+        }
+
+        // Update take profit
+        if (this.elements.positionTakeProfit) {
+            if (position.takeProfitPrice !== null) {
+                this.elements.positionTakeProfit.textContent = this.formatPrice(position.takeProfitPrice);
+                this.elements.positionTakeProfit.classList.remove('disabled');
+            } else {
+                this.elements.positionTakeProfit.textContent = '-';
+                this.elements.positionTakeProfit.classList.add('disabled');
+            }
+        }
+    }
+
+    /**
+     * Clear the position panel (when no open position)
+     */
+    private clearPositionPanel(): void {
+        if (this.elements.positionPanel) {
+            this.elements.positionPanel.classList.remove('active', 'long', 'short');
+        }
+        if (this.elements.positionDirection) {
+            this.elements.positionDirection.textContent = '-';
+            this.elements.positionDirection.className = 'position-direction';
+        }
+        if (this.elements.positionEntry) {
+            this.elements.positionEntry.textContent = '-';
+        }
+        if (this.elements.positionSize) {
+            this.elements.positionSize.textContent = '-';
+        }
+        if (this.elements.positionPnL) {
+            this.elements.positionPnL.textContent = '-';
+            this.elements.positionPnL.className = 'position-pnl';
+        }
+        if (this.elements.positionStopLoss) {
+            this.elements.positionStopLoss.textContent = '-';
+            this.elements.positionStopLoss.classList.add('disabled');
+        }
+        if (this.elements.positionTakeProfit) {
+            this.elements.positionTakeProfit.textContent = '-';
+            this.elements.positionTakeProfit.classList.add('disabled');
+        }
+    }
+
     private resetUI(): void {
         this.updateStatus('idle');
         this.updateProgress(0, 0);
         this.clearSignalLog();
+        this.clearPositionPanel();
         this.updateStartButtonState();
         state.set('replayMode', false);
     }

@@ -9,6 +9,7 @@
 
 import type { ReplayManager } from './replayManager';
 import type { ReplayEvent, SignalWithAnnotation } from './replayTypes';
+import type { OpenPosition } from './liveTradeTypes';
 import type { OHLCVData } from '../strategies/types';
 import { state } from '../state';
 import { chartManager } from '../chartManager';
@@ -30,6 +31,11 @@ export class ReplayChartAdapter {
 
     /** Reference to current replay signal markers */
     private replayMarkers: SeriesMarker<Time>[] = [];
+
+    /** Price line series for SL/TP/Entry visualization */
+    private entryPriceLine: any = null;
+    private stopLossPriceLine: any = null;
+    private takeProfitPriceLine: any = null;
 
     constructor(replayManager: ReplayManager) {
         this.replayManager = replayManager;
@@ -101,6 +107,13 @@ export class ReplayChartAdapter {
                 break;
             case 'speed-change':
                 // Speed changes don't affect chart display
+                break;
+            case 'position-opened':
+            case 'pnl-update':
+                this.onPositionUpdate(event);
+                break;
+            case 'position-closed':
+                this.onPositionClosed();
                 break;
         }
     };
@@ -188,9 +201,14 @@ export class ReplayChartAdapter {
             // Entering replay mode
             state.set('replayMode', true);
 
-            // ALWAYS detach backtest markers when entering replay mode
-            // ALWAYS detach backtest markers when entering replay mode
+            // Clear ALL backtest markers (plugin and series)
             chartManager.clearTradeMarkers();
+            if (state.candlestickSeries) {
+                (state.candlestickSeries as any).setMarkers([]);
+            }
+
+            // Clear any previous position lines
+            this.clearPositionLines();
 
             // Ensure we have data
             if (this.fullData.length === 0) {
@@ -262,6 +280,89 @@ export class ReplayChartAdapter {
 
         // Clear stored data
         this.fullData = [];
+    }
+
+    /**
+     * Handle position opened/updated event - render SL/TP lines
+     */
+    private onPositionUpdate(event: ReplayEvent): void {
+        const position = event.position;
+        if (!position) {
+            this.clearPositionLines();
+            return;
+        }
+
+        this.drawPositionLines(position);
+    }
+
+    /**
+     * Handle position closed event - clear lines
+     */
+    private onPositionClosed(): void {
+        this.clearPositionLines();
+    }
+
+    /**
+     * Draw entry, stop loss, and take profit price lines
+     */
+    private drawPositionLines(position: OpenPosition): void {
+        this.clearPositionLines();
+
+        if (!state.candlestickSeries) return;
+
+        // Entry price line (amber/gold)
+        this.entryPriceLine = (state.candlestickSeries as any).createPriceLine({
+            price: position.entryPrice,
+            color: '#ffc107',
+            lineWidth: 1,
+            lineStyle: 0, // Solid
+            axisLabelVisible: true,
+            title: `Entry`,
+        });
+
+        // Stop loss line (red)
+        if (position.stopLossPrice !== null) {
+            this.stopLossPriceLine = (state.candlestickSeries as any).createPriceLine({
+                price: position.stopLossPrice,
+                color: '#ef5350',
+                lineWidth: 1,
+                lineStyle: 2, // Dashed
+                axisLabelVisible: true,
+                title: `SL`,
+            });
+        }
+
+        // Take profit line (green)
+        if (position.takeProfitPrice !== null) {
+            this.takeProfitPriceLine = (state.candlestickSeries as any).createPriceLine({
+                price: position.takeProfitPrice,
+                color: '#26a69a',
+                lineWidth: 1,
+                lineStyle: 2, // Dashed
+                axisLabelVisible: true,
+                title: `TP`,
+            });
+        }
+    }
+
+    /**
+     * Clear all position price lines
+     */
+    private clearPositionLines(): void {
+        if (!state.candlestickSeries) return;
+
+        if (this.entryPriceLine) {
+            (state.candlestickSeries as any).removePriceLine(this.entryPriceLine);
+            this.entryPriceLine = null;
+        }
+        if (this.stopLossPriceLine) {
+            (state.candlestickSeries as any).removePriceLine(this.stopLossPriceLine);
+            this.stopLossPriceLine = null;
+        }
+        if (this.takeProfitPriceLine) {
+            (state.candlestickSeries as any).removePriceLine(this.takeProfitPriceLine);
+            this.takeProfitPriceLine = null;
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

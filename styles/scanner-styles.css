@@ -1,0 +1,344 @@
+/**
+ * Scanner Panel Styles
+ * Premium glassmorphism design for the multi-pair scanner
+ */
+
+/* ============================================================================
+   Panel Container
+   ============================================================================ */
+
+.scanner-panel {
+    position: fixed;
+    top: 60px;
+    right: 20px;
+    width: 520px;
+    max-height: calc(100vh - 100px);
+    background: linear-gradient(135deg,
+            rgba(20, 25, 35, 0.95) 0%,
+            rgba(15, 20, 30, 0.98) 100%);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(100, 150, 255, 0.2);
+    border-radius: 16px;
+    box-shadow:
+        0 8px 32px rgba(0, 0, 0, 0.4),
+        0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateX(20px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.scanner-panel--visible {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+/* ============================================================================
+   Header
+   ============================================================================ */
+
+.scanner-panel__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    background: linear-gradient(135deg,
+            rgba(60, 100, 180, 0.2) 0%,
+            rgba(40, 80, 160, 0.1) 100%);
+    border-bottom: 1px solid rgba(100, 150, 255, 0.15);
+    cursor: grab;
+    user-select: none;
+}
+
+.scanner-panel__header:active {
+    cursor: grabbing;
+}
+
+.scanner-panel__title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #e8ecf4;
+    letter-spacing: 0.5px;
+}
+
+.scanner-panel__close {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: rgba(255, 100, 100, 0.15);
+    color: #ff7070;
+    border-radius: 8px;
+    font-size: 18px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.scanner-panel__close:hover {
+    background: rgba(255, 100, 100, 0.3);
+    color: #ff9090;
+}
+
+/* ============================================================================
+   Controls
+   ============================================================================ */
+
+.scanner-panel__controls {
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(100, 150, 255, 0.1);
+}
+
+.scanner-panel__control-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.scanner-panel__control-row:last-child {
+    margin-bottom: 0;
+}
+
+.scanner-panel__control-row label {
+    flex: 0 0 120px;
+    font-size: 13px;
+    color: #a0a8b8;
+}
+
+.scanner-panel__strategy-select,
+.scanner-panel__interval-select,
+.scanner-panel__max-pairs,
+.scanner-panel__freshness {
+    flex: 1;
+    padding: 8px 12px;
+    background: rgba(30, 35, 50, 0.8);
+    border: 1px solid rgba(100, 150, 255, 0.2);
+    border-radius: 8px;
+    color: #e0e4ec;
+    font-size: 13px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.scanner-panel__strategy-select {
+    min-height: 60px;
+}
+
+.scanner-panel__strategy-select:focus,
+.scanner-panel__interval-select:focus,
+.scanner-panel__max-pairs:focus,
+.scanner-panel__freshness:focus {
+    outline: none;
+    border-color: rgba(100, 150, 255, 0.5);
+    box-shadow: 0 0 0 3px rgba(100, 150, 255, 0.1);
+}
+
+.scanner-panel__scan-btn {
+    width: 100%;
+    margin-top: 16px;
+    padding: 12px 20px;
+    background: linear-gradient(135deg, #4080ff 0%, #3060cc 100%);
+    border: none;
+    border-radius: 10px;
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.scanner-panel__scan-btn:hover {
+    background: linear-gradient(135deg, #5090ff 0%, #4070dd 100%);
+    box-shadow: 0 4px 15px rgba(64, 128, 255, 0.3);
+}
+
+.scanner-panel__scan-btn--cancel {
+    background: linear-gradient(135deg, #ff6060 0%, #cc4040 100%);
+}
+
+.scanner-panel__scan-btn--cancel:hover {
+    background: linear-gradient(135deg, #ff7070 0%, #dd5050 100%);
+    box-shadow: 0 4px 15px rgba(255, 96, 96, 0.3);
+}
+
+/* ============================================================================
+   Progress Bar
+   ============================================================================ */
+
+.scanner-panel__progress {
+    padding: 12px 20px;
+    background: rgba(40, 80, 160, 0.1);
+    border-bottom: 1px solid rgba(100, 150, 255, 0.1);
+}
+
+.scanner-panel__progress-bar {
+    height: 6px;
+    background: rgba(30, 35, 50, 0.8);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.scanner-panel__progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #4080ff 0%, #60a0ff 100%);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.scanner-panel__progress-text {
+    font-size: 12px;
+    color: #8090b0;
+}
+
+/* ============================================================================
+   Results
+   ============================================================================ */
+
+.scanner-panel__results {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.scanner-panel__results-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    background: rgba(30, 35, 50, 0.5);
+    border-bottom: 1px solid rgba(100, 150, 255, 0.1);
+    font-size: 13px;
+    color: #a0a8b8;
+}
+
+.scanner-panel__last-scan {
+    font-size: 11px;
+    color: #6070a0;
+}
+
+.scanner-panel__results-table {
+    flex: 1;
+    overflow-y: auto;
+    max-height: 400px;
+}
+
+.scanner-panel__results-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.scanner-panel__results-table thead {
+    position: sticky;
+    top: 0;
+    background: rgba(25, 30, 45, 0.98);
+    z-index: 1;
+}
+
+.scanner-panel__results-table th {
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 500;
+    color: #8090b0;
+    border-bottom: 1px solid rgba(100, 150, 255, 0.15);
+}
+
+.scanner-panel__result-row {
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.scanner-panel__result-row:hover {
+    background: rgba(60, 100, 180, 0.15);
+}
+
+.scanner-panel__result-row td {
+    padding: 10px 12px;
+    color: #d0d4dc;
+    border-bottom: 1px solid rgba(100, 150, 255, 0.08);
+}
+
+.scanner-panel__cell-pair {
+    font-weight: 600;
+    color: #e8ecf4;
+}
+
+.scanner-panel__cell-dir--long {
+    color: #40dd80;
+}
+
+.scanner-panel__cell-dir--short {
+    color: #ff6060;
+}
+
+.scanner-panel__cell-strategy {
+    color: #90a0c0;
+    font-size: 11px;
+    text-transform: capitalize;
+}
+
+.scanner-panel__cell-price {
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-size: 11px;
+}
+
+.scanner-panel__cell-age {
+    color: #7080a0;
+}
+
+.scanner-panel__cell-pnl {
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.scanner-panel__cell-pnl--profit {
+    color: #40dd80;
+}
+
+.scanner-panel__cell-pnl--loss {
+    color: #ff6060;
+}
+
+.scanner-panel__empty {
+    padding: 40px 20px;
+    text-align: center;
+    color: #6070a0;
+    font-size: 13px;
+}
+
+.scanner-panel__error {
+    padding: 20px;
+    text-align: center;
+    color: #ff7070;
+    font-size: 13px;
+}
+
+/* ============================================================================
+   Scrollbar
+   ============================================================================ */
+
+.scanner-panel__results-table::-webkit-scrollbar {
+    width: 6px;
+}
+
+.scanner-panel__results-table::-webkit-scrollbar-track {
+    background: rgba(20, 25, 35, 0.5);
+}
+
+.scanner-panel__results-table::-webkit-scrollbar-thumb {
+    background: rgba(100, 150, 255, 0.3);
+    border-radius: 3px;
+}
+
+.scanner-panel__results-table::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 150, 255, 0.5);
+}

@@ -17,6 +17,8 @@ import type {
 } from './replayTypes';
 import type { OHLCVData, Signal, StrategyParams, Strategy } from '../strategies/types';
 import { strategyRegistry } from '../../strategyRegistry';
+import { ReplayTradeEngine } from './replayTradeEngine';
+import { createTradeEngineConfig } from './liveTradeTypes';
 
 // ============================================================================
 // Constants
@@ -65,6 +67,9 @@ export class ReplayManager implements IReplayManager {
     /** Event listeners */
     private listeners: Set<ReplayEventListener> = new Set();
 
+    /** Trade engine for position tracking */
+    private tradeEngine: ReplayTradeEngine | null = null;
+
     // ─────────────────────────────────────────────────────────────────────────
     // Constructor
     // ─────────────────────────────────────────────────────────────────────────
@@ -109,13 +114,35 @@ export class ReplayManager implements IReplayManager {
             visibleSignals: [],
             strategyKey: options.strategyKey,
             strategyParams: options.params,
+            position: null,
+            equity: options.initialCapital ?? 10000,
+            unrealizedPnL: 0,
+            completedTrades: [],
         };
+
+        // Initialize trade engine for position tracking
+        const engineConfig = createTradeEngineConfig(
+            options.backtestSettings ?? {},
+            options.initialCapital ?? 10000,
+            options.positionSizePercent ?? 100,
+            options.commissionPercent ?? 0.1
+        );
+        this.tradeEngine = new ReplayTradeEngine(engineConfig);
+        this.tradeEngine.precompute(options.data);
 
         // Pre-compute all signals from the strategy
         this.computeAllSignals(options.params);
 
         // Compute visible signals up to current bar
         this.updateVisibleSignals();
+
+        // Process bars up to start index through trade engine
+        for (let i = 0; i <= this.state.currentBarIndex; i++) {
+            const bar = this.fullData[i];
+            const signalsAtBar = this.getSignalsAtBar(i).map(s => ({ time: s.time, type: s.type, price: s.price, reason: s.reason }));
+            this.tradeEngine.processBar(bar, i, signalsAtBar);
+        }
+        this.syncTradeState();
 
         // Emit status change
         this.emit('status-change');
@@ -158,6 +185,8 @@ export class ReplayManager implements IReplayManager {
         this.fullData = [];
         this.allSignals = [];
         this.strategy = null;
+        this.tradeEngine?.reset();
+        this.tradeEngine = null;
 
         if (wasPlaying) {
             this.emit('reset');
@@ -346,6 +375,12 @@ export class ReplayManager implements IReplayManager {
 
     private advanceBar(): boolean {
         if (this.state.currentBarIndex >= this.state.totalBars - 1) {
+            // Close any open position at end
+            if (this.tradeEngine) {
+                const lastBar = this.fullData[this.state.currentBarIndex];
+                this.tradeEngine.closePositionAtMarket(lastBar, this.state.currentBarIndex);
+                this.syncTradeState();
+            }
             // Reached end
             this.state.status = 'stopped';
             this.stopAnimationLoop();
@@ -354,6 +389,7 @@ export class ReplayManager implements IReplayManager {
         }
 
         this.state.currentBarIndex++;
+        const currentBar = this.fullData[this.state.currentBarIndex];
 
         // Check for new signals at this bar
         const newSignals = this.getSignalsAtBar(this.state.currentBarIndex);
@@ -365,6 +401,23 @@ export class ReplayManager implements IReplayManager {
             // Emit signal events for each new signal
             for (const signal of newSignals) {
                 this.emitSignal(signal);
+            }
+        }
+
+        // Process bar through trade engine
+        if (this.tradeEngine) {
+            const rawSignals = newSignals.map(s => ({ time: s.time, type: s.type, price: s.price, reason: s.reason }));
+            const prevPosition = this.state.position;
+            this.tradeEngine.processBar(currentBar, this.state.currentBarIndex, rawSignals);
+            this.syncTradeState();
+
+            // Emit position events if state changed
+            if (!prevPosition && this.state.position) {
+                this.emitPositionEvent('position-opened');
+            } else if (prevPosition && !this.state.position) {
+                this.emitPositionEvent('position-closed');
+            } else if (this.state.position) {
+                this.emitPositionEvent('pnl-update');
             }
         }
 
@@ -458,6 +511,33 @@ export class ReplayManager implements IReplayManager {
         this.notifyListeners(event);
     }
 
+    /**
+     * Sync state from trade engine to replay state
+     */
+    private syncTradeState(): void {
+        if (!this.tradeEngine) return;
+
+        const engineState = this.tradeEngine.getState();
+        this.state.position = engineState.position;
+        this.state.equity = engineState.equity;
+        this.state.unrealizedPnL = engineState.unrealizedPnL;
+        this.state.completedTrades = [...engineState.trades];
+    }
+
+    /**
+     * Emit a position-related event
+     */
+    private emitPositionEvent(type: 'position-opened' | 'position-closed' | 'pnl-update'): void {
+        const event = this.createEvent(type);
+        event.position = this.state.position;
+        event.equity = this.state.equity;
+        event.unrealizedPnL = this.state.unrealizedPnL;
+        if (type === 'position-closed' && this.state.completedTrades.length > 0) {
+            event.trade = this.state.completedTrades[this.state.completedTrades.length - 1];
+        }
+        this.notifyListeners(event);
+    }
+
     private emitSignal(signal: SignalWithAnnotation): void {
         const event = this.createEvent('signal-triggered');
         event.signal = signal;
@@ -526,6 +606,10 @@ export class ReplayManager implements IReplayManager {
             visibleSignals: [],
             strategyKey: '',
             strategyParams: {},
+            position: null,
+            equity: 0,
+            unrealizedPnL: 0,
+            completedTrades: [],
         };
     }
 
