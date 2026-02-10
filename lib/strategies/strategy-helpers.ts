@@ -123,6 +123,147 @@ export interface Pivot {
     price: number;
     isHigh: boolean; // true = high, false = low
     time: Time;
+    /**
+     * Optional bar index when the pivot becomes confirmable without look-ahead.
+     * For centered-window pivots this is typically index + halfDepth.
+     */
+    confirmationIndex?: number;
+}
+
+export type PivotExtremaMode = 'strict' | 'pine';
+
+export interface DetectPivotsOptions {
+    depth: number;
+    deviationThreshold: number | number[];
+    extremaMode?: PivotExtremaMode;
+    includeConfirmationIndex?: boolean;
+    /**
+     * Inclusive means deviation >= threshold confirms reversal.
+     * Exclusive means deviation > threshold confirms reversal.
+     */
+    deviationInclusive?: boolean;
+}
+
+export function buildPivotFlags(
+    highs: number[],
+    lows: number[],
+    swingLength: number,
+    extremaMode: PivotExtremaMode = 'strict'
+): { pivotHighs: boolean[]; pivotLows: boolean[] } {
+    const length = highs.length;
+    const pivotHighs = new Array(length).fill(false);
+    const pivotLows = new Array(length).fill(false);
+
+    if (length === 0 || swingLength <= 0) {
+        return { pivotHighs, pivotLows };
+    }
+
+    for (let i = swingLength; i < length - swingLength; i++) {
+        let isHigh = true;
+        let isLow = true;
+        const high = highs[i];
+        const low = lows[i];
+
+        for (let j = i - swingLength; j <= i + swingLength; j++) {
+            if (j === i) continue;
+
+            if (extremaMode === 'strict') {
+                if (highs[j] >= high) isHigh = false;
+                if (lows[j] <= low) isLow = false;
+            } else {
+                // Pine-like asymmetric ties: strict-left/non-strict-right.
+                if (j < i) {
+                    if (highs[j] > high) isHigh = false;
+                    if (lows[j] < low) isLow = false;
+                } else {
+                    if (highs[j] >= high) isHigh = false;
+                    if (lows[j] <= low) isLow = false;
+                }
+            }
+
+            if (!isHigh && !isLow) break;
+        }
+
+        if (isHigh) pivotHighs[i] = true;
+        if (isLow) pivotLows[i] = true;
+    }
+
+    return { pivotHighs, pivotLows };
+}
+
+export function detectPivots(
+    data: OHLCVData[],
+    options: DetectPivotsOptions
+): Pivot[] {
+    const pivots: Pivot[] = [];
+    if (data.length === 0) return pivots;
+
+    const highs = getHighs(data);
+    const lows = getLows(data);
+    const halfDepth = Math.floor(options.depth / 2);
+    if (halfDepth <= 0 || data.length < (halfDepth * 2 + 1)) return pivots;
+
+    const extremaMode = options.extremaMode ?? 'strict';
+    const includeConfirmationIndex = options.includeConfirmationIndex === true;
+    const deviationInclusive = options.deviationInclusive !== false;
+    const thresholds = options.deviationThreshold;
+    const thresholdAt = (index: number): number => {
+        if (Array.isArray(thresholds)) return thresholds[index] ?? 0;
+        return thresholds;
+    };
+
+    const { pivotHighs, pivotLows } = buildPivotFlags(highs, lows, halfDepth, extremaMode);
+
+    const candidates: Pivot[] = [];
+    for (let i = halfDepth; i < data.length - halfDepth; i++) {
+        if (pivotHighs[i]) {
+            candidates.push({
+                index: i,
+                price: highs[i],
+                isHigh: true,
+                time: data[i].time,
+                confirmationIndex: includeConfirmationIndex ? i + halfDepth : undefined
+            });
+        }
+        if (pivotLows[i]) {
+            candidates.push({
+                index: i,
+                price: lows[i],
+                isHigh: false,
+                time: data[i].time,
+                confirmationIndex: includeConfirmationIndex ? i + halfDepth : undefined
+            });
+        }
+    }
+
+    candidates.sort((a, b) => a.index - b.index);
+    if (candidates.length === 0) return pivots;
+
+    let lastPivot = candidates[0];
+    pivots.push(lastPivot);
+
+    for (const cand of candidates) {
+        if (cand.index <= lastPivot.index) continue;
+
+        const dev = Math.abs((cand.price - lastPivot.price) / lastPivot.price) * 100;
+        const threshold = thresholdAt(cand.index);
+
+        if (lastPivot.isHigh === cand.isHigh) {
+            if ((cand.isHigh && cand.price > lastPivot.price) || (!cand.isHigh && cand.price < lastPivot.price)) {
+                lastPivot = cand;
+                pivots[pivots.length - 1] = lastPivot;
+            }
+            continue;
+        }
+
+        const passesThreshold = deviationInclusive ? dev >= threshold : dev > threshold;
+        if (passesThreshold) {
+            lastPivot = cand;
+            pivots.push(lastPivot);
+        }
+    }
+
+    return pivots;
 }
 
 /**
@@ -138,89 +279,13 @@ export function detectPivotsWithDeviation(
     deviationPercent: number,
     depth: number
 ): Pivot[] {
-    const pivots: Pivot[] = [];
-    const highs = getHighs(data);
-    const lows = getLows(data);
-
-    // 1. Find candidate local extrema (standard pivots)
-    // using a rolling window approach
-    const candidates: Pivot[] = [];
-    const halfDepth = Math.floor(depth / 2);
-
-    for (let i = halfDepth; i < data.length - halfDepth; i++) {
-        // Check High
-        let isHigh = true;
-        for (let j = 1; j <= halfDepth; j++) {
-            if (highs[i] < highs[i - j] || highs[i] <= highs[i + j]) {
-                isHigh = false;
-                break;
-            }
-        }
-        if (isHigh) {
-            candidates.push({ index: i, price: highs[i], isHigh: true, time: data[i].time });
-        }
-
-        // Check Low
-        let isLow = true;
-        for (let j = 1; j <= halfDepth; j++) {
-            if (lows[i] > lows[i - j] || lows[i] >= lows[i + j]) {
-                isLow = false;
-                break;
-            }
-        }
-        if (isLow) {
-            candidates.push({ index: i, price: lows[i], isHigh: false, time: data[i].time });
-        }
-    }
-
-    // Sort candidates by index
-    candidates.sort((a, b) => a.index - b.index);
-
-    if (candidates.length === 0) return [];
-
-    // 2. Filter using ZigZag/Deviation logic
-    // Corresponds to 'pivotFound' logic in Pine Script
-    let lastPivot = candidates[0];
-    pivots.push(lastPivot);
-
-    for (const cand of candidates) {
-        if (cand.index <= lastPivot.index) continue;
-
-        const dev = Math.abs((cand.price - lastPivot.price) / lastPivot.price) * 100;
-
-        if (lastPivot.isHigh === cand.isHigh) {
-            // Same direction
-            if (lastPivot.isHigh) {
-                // If we found a HIGHER high, update the current pivot
-                if (cand.price > lastPivot.price) {
-                    lastPivot.price = cand.price;
-                    lastPivot.index = cand.index;
-                    lastPivot.time = cand.time;
-                    lastPivot.isHigh = cand.isHigh; // redundant but safe
-                    // Update in the final list too
-                    pivots[pivots.length - 1] = lastPivot;
-                }
-            } else {
-                // If we found a LOWER low, update the current pivot
-                if (cand.price < lastPivot.price) {
-                    lastPivot.price = cand.price;
-                    lastPivot.index = cand.index;
-                    lastPivot.time = cand.time;
-                    lastPivot.isHigh = cand.isHigh;
-                    pivots[pivots.length - 1] = lastPivot;
-                }
-            }
-        } else {
-            // Reverse direction
-            if (dev >= deviationPercent) {
-                // Confirm new pivot
-                lastPivot = cand;
-                pivots.push(lastPivot);
-            }
-        }
-    }
-
-    return pivots;
+    return detectPivots(data, {
+        depth,
+        deviationThreshold: deviationPercent,
+        extremaMode: 'pine',
+        includeConfirmationIndex: false,
+        deviationInclusive: true
+    });
 }
 
 

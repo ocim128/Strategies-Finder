@@ -30,6 +30,14 @@ export interface TradeSnapshot {
     barsFromHigh: number | null;
     /** bars since recent low */
     barsFromLow: number | null;
+    /** Kaufman efficiency ratio over recent bars (0 = choppy, 1 = directional) */
+    trendEfficiency: number | null;
+    /** ATR regime ratio (current ATR / ATR lookback average) */
+    atrRegimeRatio: number | null;
+    /** Candle body size as % of bar range (0-100) */
+    bodyPercent: number | null;
+    /** Wick imbalance % (-100..100): positive upper-wick bias, negative lower-wick bias */
+    wickSkew: number | null;
 }
 
 export interface Trade {
@@ -164,6 +172,22 @@ export interface BacktestSettings {
     snapshotBarsFromHighMax?: number;
     /** Max bars from recent low (0 = disabled) */
     snapshotBarsFromLowMax?: number;
+    /** Minimum trend efficiency at entry (0 = disabled) */
+    snapshotTrendEfficiencyMin?: number;
+    /** Maximum trend efficiency at entry (0 = disabled) */
+    snapshotTrendEfficiencyMax?: number;
+    /** Minimum ATR regime ratio at entry (0 = disabled) */
+    snapshotAtrRegimeRatioMin?: number;
+    /** Maximum ATR regime ratio at entry (0 = disabled) */
+    snapshotAtrRegimeRatioMax?: number;
+    /** Minimum candle body percent at entry (0 = disabled) */
+    snapshotBodyPercentMin?: number;
+    /** Maximum candle body percent at entry (0 = disabled) */
+    snapshotBodyPercentMax?: number;
+    /** Minimum wick skew at entry (-100..100, 0 = disabled) */
+    snapshotWickSkewMin?: number;
+    /** Maximum wick skew at entry (-100..100, 0 = disabled) */
+    snapshotWickSkewMax?: number;
 }
 
 export interface Signal {

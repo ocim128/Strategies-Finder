@@ -1,6 +1,6 @@
 
 import { state } from './state';
-import { analyzeTradePatterns, simulateFilter, findBestComboFilter, FeatureAnalysis } from './strategies/backtest/trade-analyzer';
+import { analyzeTradePatterns, simulateFilter, findBestComboFilter, FeatureAnalysis, AnalysisOptions } from './strategies/backtest/trade-analyzer';
 import { Trade, TradeSnapshot } from './types/index';
 
 /**
@@ -24,6 +24,10 @@ const FEATURE_TO_SETTINGS: Record<keyof TradeSnapshot, {
     priceRangePos: { toggleId: 'snapshotPriceRangePosFilterToggle', minInputId: 'snapshotPriceRangePosMin', maxInputId: 'snapshotPriceRangePosMax' },
     barsFromHigh: { toggleId: 'snapshotBarsFromHighFilterToggle', inputId: 'snapshotBarsFromHighMax' },
     barsFromLow: { toggleId: 'snapshotBarsFromLowFilterToggle', inputId: 'snapshotBarsFromLowMax' },
+    trendEfficiency: { toggleId: 'snapshotTrendEfficiencyFilterToggle', minInputId: 'snapshotTrendEfficiencyMin', maxInputId: 'snapshotTrendEfficiencyMax' },
+    atrRegimeRatio: { toggleId: 'snapshotAtrRegimeFilterToggle', minInputId: 'snapshotAtrRegimeRatioMin', maxInputId: 'snapshotAtrRegimeRatioMax' },
+    bodyPercent: { toggleId: 'snapshotBodyPercentFilterToggle', minInputId: 'snapshotBodyPercentMin', maxInputId: 'snapshotBodyPercentMax' },
+    wickSkew: { toggleId: 'snapshotWickSkewFilterToggle', minInputId: 'snapshotWickSkewMin', maxInputId: 'snapshotWickSkewMax' },
 };
 
 /**
@@ -63,7 +67,8 @@ class AnalysisPanel {
         }
 
         // Run analysis
-        const analyses = analyzeTradePatterns(result.trades);
+        const options = this.readAnalysisOptions();
+        const analyses = analyzeTradePatterns(result.trades, options);
         this.lastResults = analyses;
 
         if (emptyEl) emptyEl.style.display = 'none';
@@ -83,7 +88,7 @@ class AnalysisPanel {
         this.renderTable(analyses, result.trades);
 
         // Auto-compute and render combo filter
-        this.renderComboFilter(analyses, result.trades);
+        this.renderComboFilter(analyses, result.trades, options);
 
         // Hide single-filter simulation initially
         const simEl = document.getElementById('analysisSimulation');
@@ -175,11 +180,12 @@ class AnalysisPanel {
         });
     }
 
-    private renderComboFilter(analyses: FeatureAnalysis[], trades: Trade[]) {
+    private renderComboFilter(analyses: FeatureAnalysis[], trades: Trade[], options: AnalysisOptions) {
         const comboEl = document.getElementById('comboFilterSection');
         if (!comboEl) return;
 
-        const best = findBestComboFilter(trades, analyses);
+        const comboMaxRemoval = this.resolveComboMaxRemoval(options);
+        const best = findBestComboFilter(trades, analyses, comboMaxRemoval);
         if (!best || best.expectancyImprovement <= 0) {
             comboEl.style.display = 'none';
             return;
@@ -323,6 +329,36 @@ class AnalysisPanel {
         return val.toFixed(2);
     }
 
+    private readAnalysisOptions(): AnalysisOptions {
+        const relaxToggle = document.getElementById('analysisRelaxModeToggle') as HTMLInputElement | null;
+        const maxRemovalInput = document.getElementById('analysisMaxRemovalPercent') as HTMLInputElement | null;
+
+        if (!relaxToggle?.checked) {
+            return { mode: 'quality' };
+        }
+
+        const parsed = maxRemovalInput ? parseFloat(maxRemovalInput.value) : NaN;
+        const maxSingleRemoval = Number.isFinite(parsed) ? Math.max(5, Math.min(90, parsed)) : 20;
+        return {
+            mode: 'relax_aware',
+            maxSingleRemoval,
+            relaxExpectancyTolerancePct: 0.1
+        };
+    }
+
+    private resolveComboMaxRemoval(options: AnalysisOptions): number {
+        if (options.mode !== 'relax_aware') return 40;
+        const base = options.maxSingleRemoval ?? 20;
+        return Math.max(base, Math.min(50, base + 10));
+    }
+
+    private applyRelaxModeControlState() {
+        const relaxToggle = document.getElementById('analysisRelaxModeToggle') as HTMLInputElement | null;
+        const maxRemovalInput = document.getElementById('analysisMaxRemovalPercent') as HTMLInputElement | null;
+        if (!relaxToggle || !maxRemovalInput) return;
+        maxRemovalInput.disabled = !relaxToggle.checked;
+    }
+
     /**
      * Apply a suggested filter threshold to the Entry Quality Filters in settings.
      * Sets the value in the corresponding input and enables its toggle.
@@ -386,6 +422,23 @@ class AnalysisPanel {
         if (btn) {
             btn.addEventListener('click', () => this.runAnalysis());
         }
+
+        const relaxToggle = document.getElementById('analysisRelaxModeToggle') as HTMLInputElement | null;
+        const maxRemovalInput = document.getElementById('analysisMaxRemovalPercent') as HTMLInputElement | null;
+        if (relaxToggle) {
+            relaxToggle.addEventListener('change', () => {
+                this.applyRelaxModeControlState();
+                this.runAnalysis();
+            });
+        }
+        if (maxRemovalInput) {
+            maxRemovalInput.addEventListener('input', () => {
+                if ((document.getElementById('analysisRelaxModeToggle') as HTMLInputElement | null)?.checked) {
+                    this.runAnalysis();
+                }
+            });
+        }
+        this.applyRelaxModeControlState();
 
         // Auto-run analysis when backtest completes
         state.subscribe('currentBacktestResult', () => {

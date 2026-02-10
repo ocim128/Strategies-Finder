@@ -121,6 +121,14 @@ export class BacktestService {
             delete (rustSettings as { snapshotPriceRangePosMax?: number }).snapshotPriceRangePosMax;
             delete (rustSettings as { snapshotBarsFromHighMax?: number }).snapshotBarsFromHighMax;
             delete (rustSettings as { snapshotBarsFromLowMax?: number }).snapshotBarsFromLowMax;
+            delete (rustSettings as { snapshotTrendEfficiencyMin?: number }).snapshotTrendEfficiencyMin;
+            delete (rustSettings as { snapshotTrendEfficiencyMax?: number }).snapshotTrendEfficiencyMax;
+            delete (rustSettings as { snapshotAtrRegimeRatioMin?: number }).snapshotAtrRegimeRatioMin;
+            delete (rustSettings as { snapshotAtrRegimeRatioMax?: number }).snapshotAtrRegimeRatioMax;
+            delete (rustSettings as { snapshotBodyPercentMin?: number }).snapshotBodyPercentMin;
+            delete (rustSettings as { snapshotBodyPercentMax?: number }).snapshotBodyPercentMax;
+            delete (rustSettings as { snapshotWickSkewMin?: number }).snapshotWickSkewMin;
+            delete (rustSettings as { snapshotWickSkewMax?: number }).snapshotWickSkewMax;
 
             if (strategy.metadata?.role === 'entry' && entryStats) {
                 result = buildEntryBacktestResult(entryStats);
@@ -323,6 +331,14 @@ export class BacktestService {
             snapshotPriceRangePosMax: this.isToggleEnabled('snapshotPriceRangePosFilterToggle', false) ? this.readNumberInput('snapshotPriceRangePosMax', 0) : 0,
             snapshotBarsFromHighMax: this.isToggleEnabled('snapshotBarsFromHighFilterToggle', false) ? this.readNumberInput('snapshotBarsFromHighMax', 0) : 0,
             snapshotBarsFromLowMax: this.isToggleEnabled('snapshotBarsFromLowFilterToggle', false) ? this.readNumberInput('snapshotBarsFromLowMax', 0) : 0,
+            snapshotTrendEfficiencyMin: this.isToggleEnabled('snapshotTrendEfficiencyFilterToggle', false) ? this.readNumberInput('snapshotTrendEfficiencyMin', 0) : 0,
+            snapshotTrendEfficiencyMax: this.isToggleEnabled('snapshotTrendEfficiencyFilterToggle', false) ? this.readNumberInput('snapshotTrendEfficiencyMax', 0) : 0,
+            snapshotAtrRegimeRatioMin: this.isToggleEnabled('snapshotAtrRegimeFilterToggle', false) ? this.readNumberInput('snapshotAtrRegimeRatioMin', 0) : 0,
+            snapshotAtrRegimeRatioMax: this.isToggleEnabled('snapshotAtrRegimeFilterToggle', false) ? this.readNumberInput('snapshotAtrRegimeRatioMax', 0) : 0,
+            snapshotBodyPercentMin: this.isToggleEnabled('snapshotBodyPercentFilterToggle', false) ? this.readNumberInput('snapshotBodyPercentMin', 0) : 0,
+            snapshotBodyPercentMax: this.isToggleEnabled('snapshotBodyPercentFilterToggle', false) ? this.readNumberInput('snapshotBodyPercentMax', 0) : 0,
+            snapshotWickSkewMin: this.isToggleEnabled('snapshotWickSkewFilterToggle', false) ? this.readNumberInput('snapshotWickSkewMin', 0) : 0,
+            snapshotWickSkewMax: this.isToggleEnabled('snapshotWickSkewFilterToggle', false) ? this.readNumberInput('snapshotWickSkewMax', 0) : 0,
         };
     }
 
@@ -375,7 +391,15 @@ export class BacktestService {
             (settings.snapshotPriceRangePosMin ?? 0) > 0 ||
             (settings.snapshotPriceRangePosMax ?? 0) > 0 ||
             (settings.snapshotBarsFromHighMax ?? 0) > 0 ||
-            (settings.snapshotBarsFromLowMax ?? 0) > 0;
+            (settings.snapshotBarsFromLowMax ?? 0) > 0 ||
+            (settings.snapshotTrendEfficiencyMin ?? 0) > 0 ||
+            (settings.snapshotTrendEfficiencyMax ?? 0) > 0 ||
+            (settings.snapshotAtrRegimeRatioMin ?? 0) > 0 ||
+            (settings.snapshotAtrRegimeRatioMax ?? 0) > 0 ||
+            (settings.snapshotBodyPercentMin ?? 0) > 0 ||
+            (settings.snapshotBodyPercentMax ?? 0) > 0 ||
+            (settings.snapshotWickSkewMin ?? 0) !== 0 ||
+            (settings.snapshotWickSkewMax ?? 0) !== 0;
         return executionModel !== 'signal_close' || slippageBps > 0 || !allowSameBarExit || settings.tradeDirection === 'both' || hasSnapshotFilters;
     }
 

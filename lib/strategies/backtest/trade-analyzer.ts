@@ -31,6 +31,12 @@ export interface FeatureAnalysis {
     tradesRemovedPercent: number;
 }
 
+export interface AnalysisOptions {
+    mode?: 'quality' | 'relax_aware';
+    maxSingleRemoval?: number;
+    relaxExpectancyTolerancePct?: number;
+}
+
 export interface FilterSimulationResult {
     feature: keyof TradeSnapshot;
     direction: 'above' | 'below';
@@ -73,7 +79,11 @@ const FEATURE_LABELS: Record<keyof TradeSnapshot, string> = {
     volumeRatio: 'Volume Ratio',
     priceRangePos: 'Price Range Pos',
     barsFromHigh: 'Bars from High',
-    barsFromLow: 'Bars from Low'
+    barsFromLow: 'Bars from Low',
+    trendEfficiency: 'Trend Efficiency',
+    atrRegimeRatio: 'ATR Regime Ratio',
+    bodyPercent: 'Body % of Range',
+    wickSkew: 'Wick Skew %'
 };
 
 // ============================================================================
@@ -84,7 +94,7 @@ const FEATURE_LABELS: Record<keyof TradeSnapshot, string> = {
  * Analyze trade patterns by comparing indicator snapshots of winning vs losing trades.
  * Returns features sorted by how well they discriminate wins from losses.
  */
-export function analyzeTradePatterns(trades: Trade[]): FeatureAnalysis[] {
+export function analyzeTradePatterns(trades: Trade[], options: AnalysisOptions = {}): FeatureAnalysis[] {
     const tradesWithSnapshots = trades.filter(t => t.entrySnapshot);
     if (tradesWithSnapshots.length < 4) return []; // Need minimum sample
 
@@ -117,7 +127,7 @@ export function analyzeTradePatterns(trades: Trade[]): FeatureAnalysis[] {
             : 0;
 
         // Determine suggested filter (now optimized for expectancy)
-        const suggestedFilter = findBestThreshold(tradesWithSnapshots, feature, winStats, lossStats);
+        const suggestedFilter = findBestThreshold(tradesWithSnapshots, feature, winStats, lossStats, options);
 
         // Simulate the filter to get projected metrics
         let winRateIfFiltered = 0;
@@ -265,7 +275,8 @@ function findBestThreshold(
     trades: Trade[],
     feature: keyof TradeSnapshot,
     _winStats: FeatureStats,
-    _lossStats: FeatureStats
+    _lossStats: FeatureStats,
+    options: AnalysisOptions
 ): { direction: 'above' | 'below'; threshold: number } | null {
     // Collect all feature values to build percentile-based candidates
     const allValues = extractFeatureValues(trades, feature);
@@ -279,29 +290,49 @@ function findBestThreshold(
         const idx = Math.min(Math.floor((p / 100) * sorted.length), sorted.length - 1);
         candidates.push(sorted[idx]);
     }
-    // Deduplicate (common in discrete features like barsFromHigh)
     const uniqueCandidates = [...new Set(candidates)];
 
     let bestDirection: 'above' | 'below' = 'above';
     let bestThreshold = 0;
     let bestScore = -Infinity;
 
+    const mode = options.mode ?? 'quality';
+    const maxRemoval = clamp(options.maxSingleRemoval ?? (mode === 'relax_aware' ? 20 : MAX_SINGLE_REMOVAL), 5, 90);
+    const relaxTolerance = clamp(options.relaxExpectancyTolerancePct ?? 0.1, 0, 0.6);
     const directions: ('above' | 'below')[] = ['above', 'below'];
 
     for (const dir of directions) {
         for (const candidate of uniqueCandidates) {
             const sim = simulateFilter(trades, feature, dir, candidate);
 
-            // Hard constraints
             if (sim.remainingTrades < MIN_TRADES_FOR_FILTER) continue;
-            if (sim.removedPercent > MAX_SINGLE_REMOVAL) continue;
-            if (sim.expectancyImprovement <= 0) continue;
+            if (sim.removedPercent > maxRemoval) continue;
 
-            // Score: expectancy improvement × (keep ratio)²
-            // Quadratic penalty: removing 20% → (0.8)² = 0.64, removing 30% → (0.7)² = 0.49
-            // This strongly prefers filters that remove fewer trades
             const keepRatio = 1 - sim.removedPercent / 100;
-            const score = sim.expectancyImprovement * (keepRatio * keepRatio);
+            let score = -Infinity;
+
+            if (mode === 'quality') {
+                if (sim.expectancyImprovement <= 0) continue;
+                score = sim.expectancyImprovement * (keepRatio * keepRatio);
+            } else {
+                const baselineExp = sim.originalExpectancy;
+                const minAllowedExpectancy = baselineExp - Math.max(0.05, Math.abs(baselineExp) * relaxTolerance);
+                if (sim.filteredExpectancy < minAllowedExpectancy) continue;
+
+                const expectancyRetention = baselineExp === 0
+                    ? (sim.filteredExpectancy >= 0 ? 1 : 0)
+                    : sim.filteredExpectancy / baselineExp;
+                const baselineNetPnl = baselineExp * sim.originalTrades;
+                const netPnlRetention = baselineNetPnl <= 0
+                    ? 0
+                    : sim.filteredNetPnl / baselineNetPnl;
+
+                const expTerm = clamp(expectancyRetention, 0, 1.5);
+                const pnlTerm = clamp(netPnlRetention, 0, 1.5);
+
+                // Relax-aware score: strongly reward retention while maintaining expectancy.
+                score = (keepRatio ** 4) * ((0.7 * expTerm) + (0.3 * pnlTerm)) + Math.max(0, sim.expectancyImprovement) * 0.05;
+            }
 
             if (score > bestScore) {
                 bestScore = score;
@@ -313,12 +344,16 @@ function findBestThreshold(
 
     if (bestScore <= 0) return null;
 
-    // Final validation
     const finalSim = simulateFilter(trades, feature, bestDirection, bestThreshold);
-    if (finalSim.expectancyImprovement <= 0) return null;
+    if (mode === 'quality' && finalSim.expectancyImprovement <= 0) return null;
     if (finalSim.remainingTrades < MIN_TRADES_FOR_FILTER) return null;
+    if (finalSim.removedPercent > maxRemoval) return null;
 
     return { direction: bestDirection, threshold: Math.round(bestThreshold * 100) / 100 };
+}
+
+function clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
 }
 
 // ============================================================================
@@ -484,3 +519,4 @@ export function findBestComboFilter(
 
     return candidates[0];
 }
+

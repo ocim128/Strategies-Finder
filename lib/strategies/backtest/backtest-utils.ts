@@ -69,6 +69,14 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         snapshotPriceRangePosMax: Math.max(0, toNumberOr(settings?.snapshotPriceRangePosMax, 0)),
         snapshotBarsFromHighMax: Math.max(0, toNumberOr(settings?.snapshotBarsFromHighMax, 0)),
         snapshotBarsFromLowMax: Math.max(0, toNumberOr(settings?.snapshotBarsFromLowMax, 0)),
+        snapshotTrendEfficiencyMin: clamp(toNumberOr(settings?.snapshotTrendEfficiencyMin, 0), 0, 1),
+        snapshotTrendEfficiencyMax: clamp(toNumberOr(settings?.snapshotTrendEfficiencyMax, 0), 0, 1),
+        snapshotAtrRegimeRatioMin: Math.max(0, toNumberOr(settings?.snapshotAtrRegimeRatioMin, 0)),
+        snapshotAtrRegimeRatioMax: Math.max(0, toNumberOr(settings?.snapshotAtrRegimeRatioMax, 0)),
+        snapshotBodyPercentMin: clamp(toNumberOr(settings?.snapshotBodyPercentMin, 0), 0, 100),
+        snapshotBodyPercentMax: clamp(toNumberOr(settings?.snapshotBodyPercentMax, 0), 0, 100),
+        snapshotWickSkewMin: clamp(toNumberOr(settings?.snapshotWickSkewMin, 0), -100, 100),
+        snapshotWickSkewMax: clamp(toNumberOr(settings?.snapshotWickSkewMax, 0), -100, 100),
     };
 }
 
@@ -183,7 +191,11 @@ export function needsSnapshotIndicators(config: NormalizedSettings, captureSnaps
         config.snapshotEmaDistanceMin !== 0 || config.snapshotEmaDistanceMax !== 0 ||
         config.snapshotRsiMin > 0 || config.snapshotRsiMax > 0 ||
         config.snapshotPriceRangePosMin > 0 || config.snapshotPriceRangePosMax > 0 ||
-        config.snapshotBarsFromHighMax > 0 || config.snapshotBarsFromLowMax > 0;
+        config.snapshotBarsFromHighMax > 0 || config.snapshotBarsFromLowMax > 0 ||
+        config.snapshotTrendEfficiencyMin > 0 || config.snapshotTrendEfficiencyMax > 0 ||
+        config.snapshotAtrRegimeRatioMin > 0 || config.snapshotAtrRegimeRatioMax > 0 ||
+        config.snapshotBodyPercentMin > 0 || config.snapshotBodyPercentMax > 0 ||
+        config.snapshotWickSkewMin !== 0 || config.snapshotWickSkewMax !== 0;
 }
 
 

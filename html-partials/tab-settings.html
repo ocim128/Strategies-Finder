@@ -558,6 +558,105 @@
                     <div class="param-hint">Only enter within N bars of recent 20-bar low.</div>
                 </div>
             </div>
+
+            <!-- Advanced Snapshot Filters -->
+            <div class="param-row snapshot-filter-row">
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Trend Efficiency</label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Trend Efficiency filter">
+                            <input type="checkbox" id="snapshotTrendEfficiencyFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotTrendEfficiencyMin" value="0" min="0"
+                                max="1" step="0.05">
+                            <div class="param-hint">Min (0-1)</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotTrendEfficiencyMax" value="0" min="0"
+                                max="1" step="0.05">
+                            <div class="param-hint">Max (0-1)</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">ATR Regime Ratio</label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle ATR Regime Ratio filter">
+                            <input type="checkbox" id="snapshotAtrRegimeFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotAtrRegimeRatioMin" value="0" min="0"
+                                step="0.1">
+                            <div class="param-hint">Min ratio</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotAtrRegimeRatioMax" value="0" min="0"
+                                step="0.1">
+                            <div class="param-hint">Max ratio</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="param-row snapshot-filter-row">
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Body % of Range</label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Body Percent filter">
+                            <input type="checkbox" id="snapshotBodyPercentFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotBodyPercentMin" value="0" min="0"
+                                max="100" step="1">
+                            <div class="param-hint">Min %</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotBodyPercentMax" value="0" min="0"
+                                max="100" step="1">
+                            <div class="param-hint">Max %</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Wick Skew %</label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Wick Skew filter">
+                            <input type="checkbox" id="snapshotWickSkewFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotWickSkewMin" value="0" min="-100"
+                                max="100" step="1">
+                            <div class="param-hint">Min (-100 to 100)</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotWickSkewMax" value="0" min="-100"
+                                max="100" step="1">
+                            <div class="param-hint">Max (-100 to 100)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

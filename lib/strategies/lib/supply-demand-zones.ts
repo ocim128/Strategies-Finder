@@ -1,5 +1,5 @@
 import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator } from '../../types/strategies';
-import { createBuySignal, createSellSignal, ensureCleanData, getHighs, getLows, getCloses } from '../strategy-helpers';
+import { buildPivotFlags, createBuySignal, createSellSignal, ensureCleanData, getHighs, getLows, getCloses } from '../strategy-helpers';
 import { calculateATR } from '../indicators';
 import { COLORS } from '../constants';
 
@@ -24,31 +24,6 @@ const RETEST_COOLDOWN = 3;
 
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
-}
-
-function buildPivotFlags(highs: number[], lows: number[], swingLength: number): { pivotHighs: boolean[]; pivotLows: boolean[] } {
-    const length = highs.length;
-    const pivotHighs = new Array(length).fill(false);
-    const pivotLows = new Array(length).fill(false);
-
-    for (let i = swingLength; i < length - swingLength; i++) {
-        let isHigh = true;
-        let isLow = true;
-        const high = highs[i];
-        const low = lows[i];
-
-        for (let j = i - swingLength; j <= i + swingLength; j++) {
-            if (j === i) continue;
-            if (highs[j] >= high) isHigh = false;
-            if (lows[j] <= low) isLow = false;
-            if (!isHigh && !isLow) break;
-        }
-
-        if (isHigh) pivotHighs[i] = true;
-        if (isLow) pivotLows[i] = true;
-    }
-
-    return { pivotHighs, pivotLows };
 }
 
 function computeStrength(zone: Zone, index: number, decayBars: number, retestPenalty: number): number {

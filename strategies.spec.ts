@@ -1,8 +1,9 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time } from './lib/strategies/index';
-import { detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
+import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade } from './lib/strategies/index';
+import { buildPivotFlags, detectPivots, detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
 import { simple_regression_line } from './lib/strategies/lib/simple-regression-line';
+import { analyzeTradePatterns } from './lib/strategies/backtest/trade-analyzer';
 
 
 describe('Strategy Calculations', () => {
@@ -184,6 +185,79 @@ describe('Pivot Detection', () => {
         expect(highPivot).to.not.be.undefined;
         expect(highPivot?.index).to.equal(7);
     });
+
+    it('should support dynamic deviation thresholds', () => {
+        const data: OHLCVData[] = [
+            { time: '1' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 },
+            { time: '2' as Time, open: 110, high: 110, low: 110, close: 110, volume: 100 },
+            { time: '3' as Time, open: 105, high: 105, low: 105, close: 105, volume: 100 },
+            { time: '4' as Time, open: 115, high: 115, low: 115, close: 115, volume: 100 },
+            { time: '5' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 },
+            { time: '6' as Time, open: 90, high: 90, low: 90, close: 90, volume: 100 },
+            { time: '7' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 },
+            { time: '8' as Time, open: 120, high: 120, low: 120, close: 120, volume: 100 },
+            { time: '9' as Time, open: 110, high: 110, low: 110, close: 110, volume: 100 },
+        ];
+
+        const staticThresholds = new Array(data.length).fill(30);
+        const dynamicThresholds = new Array(data.length).fill(30);
+        dynamicThresholds[5] = 5;
+        dynamicThresholds[7] = 5;
+
+        const staticPivots = detectPivots(data, {
+            depth: 2,
+            deviationThreshold: staticThresholds,
+            extremaMode: 'strict',
+            includeConfirmationIndex: true,
+            deviationInclusive: false,
+        });
+        const dynamicPivots = detectPivots(data, {
+            depth: 2,
+            deviationThreshold: dynamicThresholds,
+            extremaMode: 'strict',
+            includeConfirmationIndex: true,
+            deviationInclusive: false,
+        });
+
+        expect(staticPivots.length).to.equal(1);
+        expect(dynamicPivots.length).to.be.greaterThan(staticPivots.length);
+    });
+
+    it('should expose confirmation indices when requested', () => {
+        const data: OHLCVData[] = [
+            { time: '1' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 },
+            { time: '2' as Time, open: 110, high: 110, low: 110, close: 110, volume: 100 },
+            { time: '3' as Time, open: 105, high: 105, low: 105, close: 105, volume: 100 },
+            { time: '4' as Time, open: 115, high: 115, low: 115, close: 115, volume: 100 },
+            { time: '5' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 },
+            { time: '6' as Time, open: 90, high: 90, low: 90, close: 90, volume: 100 },
+            { time: '7' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 },
+            { time: '8' as Time, open: 120, high: 120, low: 120, close: 120, volume: 100 },
+            { time: '9' as Time, open: 110, high: 110, low: 110, close: 110, volume: 100 },
+        ];
+
+        const pivots = detectPivots(data, {
+            depth: 2,
+            deviationThreshold: 5,
+            extremaMode: 'strict',
+            includeConfirmationIndex: true,
+        });
+
+        expect(pivots.length).to.be.greaterThan(0);
+        pivots.forEach((pivot) => {
+            expect(pivot.confirmationIndex).to.equal(pivot.index + 1);
+        });
+    });
+
+    it('strict pivot flags should match expected extrema behavior', () => {
+        const highs = [100, 110, 105, 115, 100, 90, 100, 120, 110];
+        const lows = [100, 110, 105, 115, 100, 90, 100, 120, 110];
+        const flags = buildPivotFlags(highs, lows, 1, 'strict');
+
+        expect(flags.pivotHighs[3]).to.equal(true);
+        expect(flags.pivotLows[5]).to.equal(true);
+        expect(flags.pivotHighs[7]).to.equal(true);
+    });
 });
 
 
@@ -364,6 +438,90 @@ describe('Backtesting Engine', () => {
         expect(Number.isFinite(full.netProfit)).to.equal(true);
         expect(Number.isFinite(compact.netProfit)).to.equal(true);
     });
+
+    it('should filter low-efficiency entries when trend efficiency filter is enabled', () => {
+        const data: OHLCVData[] = [];
+        const closes = [
+            100, 101, 100, 101, 100, 101, 100, 101, 100, 101, 100, 101,
+            102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113
+        ];
+        for (let i = 0; i < closes.length; i++) {
+            const close = closes[i];
+            data.push({
+                time: (`2023-02-${String(i + 1).padStart(2, '0')}`) as Time,
+                open: close - 0.4,
+                high: close + 1,
+                low: close - 1,
+                close,
+                volume: 1000
+            });
+        }
+
+        const signals: Signal[] = [
+            { time: '2023-02-12' as Time, type: 'buy', price: 101 },
+            { time: '2023-02-14' as Time, type: 'sell', price: 103 },
+            { time: '2023-02-21' as Time, type: 'buy', price: 110 },
+            { time: '2023-02-23' as Time, type: 'sell', price: 112 },
+        ];
+
+        const withoutFilter = runBacktest(data, signals, 10000, 100, 0);
+        const withFilter = runBacktest(data, signals, 10000, 100, 0, {
+            snapshotTrendEfficiencyMin: 0.6
+        });
+
+        expect(withoutFilter.totalTrades).to.equal(2);
+        expect(withFilter.totalTrades).to.equal(1);
+    });
+
+    it('should filter low-conviction candles with body percent filter', () => {
+        const data: OHLCVData[] = [];
+        for (let i = 0; i < 18; i++) {
+            const base = 100 + i;
+            data.push({
+                time: (`2023-03-${String(i + 1).padStart(2, '0')}`) as Time,
+                open: base,
+                high: base + 1,
+                low: base - 1,
+                close: base + 0.2,
+                volume: 1200
+            });
+        }
+
+        // Entry 1: doji-like candle (~5% body of range)
+        data[12] = {
+            time: '2023-03-13' as Time,
+            open: 112,
+            high: 114,
+            low: 110,
+            close: 112.2,
+            volume: 1300
+        };
+
+        // Entry 2: strong body candle (~80% body of range)
+        data[15] = {
+            time: '2023-03-16' as Time,
+            open: 115,
+            high: 117,
+            low: 114,
+            close: 116.6,
+            volume: 1300
+        };
+
+        const signals: Signal[] = [
+            { time: '2023-03-13' as Time, type: 'buy', price: 112.2 },
+            { time: '2023-03-14' as Time, type: 'sell', price: 113 },
+            { time: '2023-03-16' as Time, type: 'buy', price: 116.6 },
+            { time: '2023-03-18' as Time, type: 'sell', price: 117.5 },
+        ];
+
+        const withoutFilter = runBacktest(data, signals, 10000, 100, 0);
+        const withFilter = runBacktest(data, signals, 10000, 100, 0, {
+            snapshotBodyPercentMin: 50
+        });
+
+        expect(withoutFilter.totalTrades).to.equal(2);
+        expect(withFilter.totalTrades).to.equal(1);
+    });
 });
 
 describe('Simple Regression Line Strategy', () => {
@@ -413,5 +571,56 @@ describe('Simple Regression Line Strategy', () => {
         expect(simple_regression_line.metadata?.walkForwardParams).to.include('lookback');
         expect(simple_regression_line.metadata?.walkForwardParams).to.include('zEntry');
         expect(simple_regression_line.metadata?.walkForwardParams).to.include('zExit');
+    });
+});
+
+describe('Trade Analyzer', () => {
+    it('relax-aware mode should honor max removal cap', () => {
+        const trades: Trade[] = [];
+
+        for (let i = 0; i < 100; i++) {
+            const isLowQualityBucket = i < 10;
+            const bodyPercent = isLowQualityBucket ? 15 : 60 + (i % 5);
+            const pnl = isLowQualityBucket
+                ? -12
+                : (i % 3 === 0 ? -6 : 9);
+
+            trades.push({
+                id: i + 1,
+                type: 'long',
+                entryTime: (i + 1) as unknown as Time,
+                entryPrice: 100,
+                exitTime: (i + 2) as unknown as Time,
+                exitPrice: 100 + pnl / 10,
+                pnl,
+                pnlPercent: pnl / 10,
+                size: 1,
+                entrySnapshot: {
+                    rsi: 50 + (i % 7),
+                    adx: 20 + (i % 10),
+                    atrPercent: 1 + (i % 5) * 0.05,
+                    emaDistance: (i % 11) - 5,
+                    volumeRatio: 0.8 + (i % 6) * 0.1,
+                    priceRangePos: 0.3 + (i % 6) * 0.1,
+                    barsFromHigh: i % 12,
+                    barsFromLow: i % 12,
+                    trendEfficiency: 0.2 + (i % 8) * 0.08,
+                    atrRegimeRatio: 0.8 + (i % 6) * 0.1,
+                    bodyPercent,
+                    wickSkew: (i % 21) - 10
+                }
+            });
+        }
+
+        const analyses = analyzeTradePatterns(trades, {
+            mode: 'relax_aware',
+            maxSingleRemoval: 15
+        });
+
+        const suggested = analyses.filter(a => a.suggestedFilter !== null);
+        expect(suggested.length).to.be.greaterThan(0);
+        suggested.forEach(a => {
+            expect(a.tradesRemovedPercent).to.be.at.most(15.0001);
+        });
     });
 });

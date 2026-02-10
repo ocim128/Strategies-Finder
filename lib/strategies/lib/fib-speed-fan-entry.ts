@@ -1,5 +1,5 @@
 import { Strategy, OHLCVData, StrategyParams, Signal, StrategyIndicator, EntryStats, StrategyEvaluation, EntryLevelStat, EntryPreview } from '../../types/strategies';
-import { createBuySignal, createSellSignal, ensureCleanData } from '../strategy-helpers';
+import { createBuySignal, createSellSignal, detectPivots as detectSharedPivots, ensureCleanData } from '../strategy-helpers';
 import { calculateATR } from '../indicators';
 import { COLORS } from '../constants';
 
@@ -39,62 +39,6 @@ function calculateDeviationThreshold(atr: (number | null)[], close: number[], mu
         }
     }
     return threshold;
-}
-
-/**
- * Detect pivots with confirmation to avoid look-ahead bias.
- * Pivot at `index` is confirmed at `confirmationIndex`.
- */
-function detectPivots(
-    high: number[],
-    low: number[],
-    depth: number,
-    devThreshold: number[]
-): Pivot[] {
-    const pivots: Pivot[] = [];
-    const halfDepth = Math.floor(depth / 2);
-
-    if (high.length < depth + 1) return pivots;
-
-    let lastPivot: Pivot | null = null;
-
-    for (let currentBar = 2 * halfDepth; currentBar < high.length; currentBar++) {
-        const index = currentBar - halfDepth;
-        let isHigh = true;
-        let isLow = true;
-
-        for (let j = index - halfDepth; j <= index + halfDepth; j++) {
-            if (j === index) continue;
-            if (high[j] >= high[index]) isHigh = false;
-            if (low[j] <= low[index]) isLow = false;
-            if (!isHigh && !isLow) break;
-        }
-
-        if (isHigh || isLow) {
-            const price = isHigh ? high[index] : low[index];
-            const currentThreshold = devThreshold[index] || 0;
-            const newPivot: Pivot = { index, price, isHigh, confirmationIndex: currentBar };
-
-            if (lastPivot) {
-                const deviation = Math.abs((price - lastPivot.price) / lastPivot.price) * 100;
-
-                if (isHigh === lastPivot.isHigh) {
-                    if ((isHigh && price > lastPivot.price) || (!isHigh && price < lastPivot.price)) {
-                        pivots[pivots.length - 1] = newPivot;
-                        lastPivot = newPivot;
-                    }
-                } else if (deviation > currentThreshold) {
-                    pivots.push(newPivot);
-                    lastPivot = newPivot;
-                }
-            } else {
-                pivots.push(newPivot);
-                lastPivot = newPivot;
-            }
-        }
-    }
-
-    return pivots;
 }
 
 function resolveLevelIndex(params: StrategyParams): number {
@@ -327,7 +271,18 @@ function buildSignalsAndContext(
 
     const atr = calculateATR(high, low, close, atrPeriod);
     const devThreshold = calculateDeviationThreshold(atr, close, deviation);
-    const pivots = detectPivots(high, low, depth, devThreshold);
+    const pivots = detectSharedPivots(cleanData, {
+        depth,
+        deviationThreshold: devThreshold,
+        extremaMode: 'strict',
+        includeConfirmationIndex: true,
+        deviationInclusive: false
+    }).map((pivot): Pivot => ({
+        index: pivot.index,
+        price: pivot.price,
+        isHigh: pivot.isHigh,
+        confirmationIndex: pivot.confirmationIndex ?? pivot.index
+    }));
 
     const fanSeriesByLevel = FIB_LEVELS.map(level => buildFanSeries(cleanData, pivots, level));
     const selectedSeries = fanSeriesByLevel[selectedLevelIndex] ?? { levels: [], base: [], slope: [], endIndex: [], pivotIsHigh: [] };

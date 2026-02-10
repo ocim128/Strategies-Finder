@@ -81,7 +81,7 @@ export function runBacktestCompact(
                     if (opened) { position = opened.nextPosition; capital -= opened.entryCommission; }
                 } else if (signal.type === directionToSignalType(position.direction === 'long' ? 'short' : 'long') && (config.allowSameBarExit || compareTime(signal.time, position.entryTime) !== 0)) {
                     // Signal exit
-                    const exitPrice = (candle.close + candle.open) / 2;
+                    const exitPrice = signal.price;
                     recordExit(exitPrice, position.size);
                     if (tradeDirection === 'both') {
                         const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
@@ -96,6 +96,12 @@ export function runBacktestCompact(
             const dd = peakEquity - equity;
             if (dd > maxDrawdown) { maxDrawdown = dd; maxDrawdownPercent = (dd / peakEquity) * 100; }
         }
+    }
+
+    // Match full backtest behavior: close any remaining position at the final close.
+    if (position && data.length > 0) {
+        const finalCandle = data[data.length - 1];
+        recordExit(finalCandle.close, position.size);
     }
 
     return finalizeBacktestMetrics(initialCapital, capital, totalTrades, winningTrades, totalProfit, totalLoss, avgReturn, returnM2, maxDrawdown, maxDrawdownPercent) as BacktestResult;

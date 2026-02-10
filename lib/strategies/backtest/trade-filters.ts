@@ -1,6 +1,12 @@
 
 import { OHLCVData } from '../../types/index';
 import { NormalizedSettings, IndicatorSeries } from '../../types/backtest';
+import {
+    computeAtrRegimeRatio,
+    computeBodyPercent,
+    computeTrendEfficiency,
+    computeWickSkew
+} from './snapshot-derived-metrics';
 
 export const MARKET_MODE_DEFAULT_EMA_PERIOD = 200;
 export const MARKET_MODE_SLOPE_LOOKBACK = 20;
@@ -189,7 +195,15 @@ export function passesSnapshotFilters(
         config.snapshotPriceRangePosMin > 0 ||
         config.snapshotPriceRangePosMax > 0 ||
         config.snapshotBarsFromHighMax > 0 ||
-        config.snapshotBarsFromLowMax > 0;
+        config.snapshotBarsFromLowMax > 0 ||
+        config.snapshotTrendEfficiencyMin > 0 ||
+        config.snapshotTrendEfficiencyMax > 0 ||
+        config.snapshotAtrRegimeRatioMin > 0 ||
+        config.snapshotAtrRegimeRatioMax > 0 ||
+        config.snapshotBodyPercentMin > 0 ||
+        config.snapshotBodyPercentMax > 0 ||
+        config.snapshotWickSkewMin !== 0 ||
+        config.snapshotWickSkewMax !== 0;
     if (!hasAny || !snapshotIndicators) return true;
 
     const close = data[entryIndex].close;
@@ -272,6 +286,38 @@ export function passesSnapshotFilters(
             if (data[i].low < lowest) { lowest = data[i].low; lowBar = i; }
         }
         if (entryIndex - lowBar > config.snapshotBarsFromLowMax) return false;
+    }
+
+    // Trend efficiency filter (0-1, min and/or max)
+    if (config.snapshotTrendEfficiencyMin > 0 || config.snapshotTrendEfficiencyMax > 0) {
+        const trendEfficiency = computeTrendEfficiency(data, entryIndex);
+        if (trendEfficiency === null || trendEfficiency === undefined) return false;
+        if (config.snapshotTrendEfficiencyMin > 0 && trendEfficiency < config.snapshotTrendEfficiencyMin) return false;
+        if (config.snapshotTrendEfficiencyMax > 0 && trendEfficiency > config.snapshotTrendEfficiencyMax) return false;
+    }
+
+    // ATR regime ratio filter (min and/or max)
+    if (config.snapshotAtrRegimeRatioMin > 0 || config.snapshotAtrRegimeRatioMax > 0) {
+        const atrRegimeRatio = computeAtrRegimeRatio(snapshotIndicators.atr, entryIndex);
+        if (atrRegimeRatio === null || atrRegimeRatio === undefined) return false;
+        if (config.snapshotAtrRegimeRatioMin > 0 && atrRegimeRatio < config.snapshotAtrRegimeRatioMin) return false;
+        if (config.snapshotAtrRegimeRatioMax > 0 && atrRegimeRatio > config.snapshotAtrRegimeRatioMax) return false;
+    }
+
+    // Candle body conviction filter (% of bar range, min and/or max)
+    if (config.snapshotBodyPercentMin > 0 || config.snapshotBodyPercentMax > 0) {
+        const bodyPercent = computeBodyPercent(data[entryIndex]);
+        if (bodyPercent === null || bodyPercent === undefined) return false;
+        if (config.snapshotBodyPercentMin > 0 && bodyPercent < config.snapshotBodyPercentMin) return false;
+        if (config.snapshotBodyPercentMax > 0 && bodyPercent > config.snapshotBodyPercentMax) return false;
+    }
+
+    // Wick skew filter (-100..100, min and/or max)
+    if (config.snapshotWickSkewMin !== 0 || config.snapshotWickSkewMax !== 0) {
+        const wickSkew = computeWickSkew(data[entryIndex]);
+        if (wickSkew === null || wickSkew === undefined) return false;
+        if (config.snapshotWickSkewMin !== 0 && wickSkew < config.snapshotWickSkewMin) return false;
+        if (config.snapshotWickSkewMax !== 0 && wickSkew > config.snapshotWickSkewMax) return false;
     }
 
     return true;

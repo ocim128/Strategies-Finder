@@ -51,6 +51,14 @@ export interface NormalizedSettings {
     snapshotPriceRangePosMax: number;
     snapshotBarsFromHighMax: number;
     snapshotBarsFromLowMax: number;
+    snapshotTrendEfficiencyMin: number;
+    snapshotTrendEfficiencyMax: number;
+    snapshotAtrRegimeRatioMin: number;
+    snapshotAtrRegimeRatioMax: number;
+    snapshotBodyPercentMin: number;
+    snapshotBodyPercentMax: number;
+    snapshotWickSkewMin: number;
+    snapshotWickSkewMax: number;
 }
 
 export interface IndicatorSeries {

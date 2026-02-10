@@ -3,6 +3,12 @@ import { OHLCVData, TradeSnapshot } from '../../types/index';
 import { IndicatorSeries } from '../../types/backtest';
 import { calculateADX, calculateATR, calculateEMA, calculateRSI, calculateSMA } from '../indicators';
 import { getCloses, getHighs, getLows, getVolumes } from '../strategy-helpers';
+import {
+    computeAtrRegimeRatio,
+    computeBodyPercent,
+    computeTrendEfficiency,
+    computeWickSkew
+} from './snapshot-derived-metrics';
 
 /** Lookback for price range position and bars-from-high/low */
 const RANGE_LOOKBACK = 20;
@@ -130,6 +136,11 @@ export function captureTradeSnapshot(
         barsFromLow = barIndex - lowBar;
     }
 
+    const trendEfficiency = computeTrendEfficiency(data, barIndex);
+    const atrRegimeRatio = computeAtrRegimeRatio(snapshotIndicators.atr, barIndex);
+    const bodyPercent = computeBodyPercent(data[barIndex]);
+    const wickSkew = computeWickSkew(data[barIndex]);
+
     return {
         rsi,
         adx,
@@ -138,6 +149,10 @@ export function captureTradeSnapshot(
         volumeRatio,
         priceRangePos,
         barsFromHigh,
-        barsFromLow
+        barsFromLow,
+        trendEfficiency,
+        atrRegimeRatio,
+        bodyPercent,
+        wickSkew
     };
 }

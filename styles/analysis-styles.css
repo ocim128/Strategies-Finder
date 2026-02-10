@@ -16,6 +16,14 @@
     gap: 2px;
 }
 
+.analysis-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
 .analysis-title {
     margin: 0;
     font-size: 13px;
@@ -26,6 +34,33 @@
 .analysis-subtitle {
     font-size: 11px;
     color: var(--text-secondary);
+}
+
+.analysis-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--text-secondary);
+}
+
+.analysis-control input[type="number"] {
+    width: 62px;
+    height: 24px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface, rgba(128, 128, 128, 0.04));
+    color: var(--text-primary);
+    font-size: 11px;
+    padding: 2px 6px;
+}
+
+.analysis-control input[type="number"]:disabled {
+    opacity: 0.45;
+}
+
+.analysis-control-toggle {
+    user-select: none;
 }
 
 /* Feature Table */

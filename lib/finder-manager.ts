@@ -12,6 +12,10 @@ import { shouldUseRustEngine } from "./engine-preferences";
 import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth, getConfirmationStrategyValues, renderConfirmationStrategyList, setConfirmationStrategyParams } from "./confirmation-strategies";
 import { DEFAULT_SORT_PRIORITY, METRIC_FULL_LABELS } from "./finder/constants";
 import { buildSelectionResult } from "./finder/endpoint";
+import { FinderParamSpace } from "./finder/finder-param-space";
+import { FinderTimeframeLoader, type FinderDataset } from "./finder/finder-timeframe-loader";
+import { FinderUI } from "./finder/finder-ui";
+import { aggregateFinderBacktestResults, compareFinderResults } from "./finder/finder-engine";
 import type {
 	EndpointSelectionAdjustment,
 	FinderMetric,
@@ -19,19 +23,6 @@ import type {
 	FinderOptions,
 	FinderResult
 } from './types/finder';
-
-/**
- * Detects if a parameter is a toggle (on/off) parameter.
- * Toggle params: start with 'use' prefix and have value 0 or 1.
- */
-function isToggleParam(key: string, value: number): boolean {
-	return /^use[A-Z]/.test(key) && (value === 0 || value === 1);
-}
-
-type FinderDataset = {
-	interval: string;
-	data: typeof state.ohlcvData;
-};
 
 export class FinderManager {
 	private static readonly MAX_MULTI_TIMEFRAMES = 10;
@@ -45,7 +36,9 @@ export class FinderManager {
 	private displayResults: FinderResult[] = [];
 	private strategyToggles: Map<string, HTMLInputElement> = new Map();
 	private selectedFinderTimeframes: string[] = [];
-	private multiTimeframeDatasetCache: Map<string, typeof state.ohlcvData> = new Map();
+	private readonly ui = new FinderUI();
+	private readonly paramSpace = new FinderParamSpace();
+	private readonly timeframeLoader = new FinderTimeframeLoader(FinderManager.MAX_MULTI_TIMEFRAMES);
 
 	public init() {
 		getRequiredElement('runFinder').addEventListener('click', () => {
@@ -270,78 +263,16 @@ export class FinderManager {
 		this.renderSelectedFinderTimeframes();
 	}
 
-	private getDatasetCacheKey(symbol: string, interval: string): string {
-		return `${symbol}|${interval}`;
-	}
-
-	private getCachedDataset(symbol: string, interval: string): typeof state.ohlcvData | null {
-		const key = this.getDatasetCacheKey(symbol, interval);
-		const cached = this.multiTimeframeDatasetCache.get(key);
-		return cached && cached.length > 0 ? cached : null;
-	}
-
-	private setCachedDataset(symbol: string, interval: string, data: typeof state.ohlcvData): void {
-		const key = this.getDatasetCacheKey(symbol, interval);
-		this.multiTimeframeDatasetCache.set(key, data);
-	}
-
 	private async loadMultiTimeframeDatasets(symbol: string, intervals: string[]): Promise<FinderDataset[]> {
-		const deduped = Array.from(new Set(intervals));
-		const datasetsByInterval = new Map<string, FinderDataset>();
-		const missingIntervals: string[] = [];
-
-		for (const interval of deduped) {
-			const cached = this.getCachedDataset(symbol, interval);
-			if (cached) {
-				datasetsByInterval.set(interval, { interval, data: cached });
-				continue;
-			}
-			missingIntervals.push(interval);
-		}
-
-		const currentIntervalInList = deduped.includes(state.currentInterval);
-		if (currentIntervalInList && state.currentSymbol === symbol && state.ohlcvData.length > 0) {
-			datasetsByInterval.set(state.currentInterval, { interval: state.currentInterval, data: state.ohlcvData });
-			this.setCachedDataset(symbol, state.currentInterval, state.ohlcvData);
-		}
-
-		const trulyMissing = missingIntervals.filter(interval => !datasetsByInterval.has(interval));
-		if (trulyMissing.length > 0) {
-			const fetchResults = await Promise.allSettled(
-				trulyMissing.map(async (interval) => {
-					const data = await dataManager.fetchData(symbol, interval);
-					return { interval, data };
-				})
-			);
-
-			for (const result of fetchResults) {
-				if (result.status !== 'fulfilled') {
-					continue;
-				}
-				const { interval, data } = result.value;
-				if (data.length === 0) {
-					debugLogger.warn(`[Finder] Skipping timeframe ${interval} - no data returned.`);
-					continue;
-				}
-				this.setCachedDataset(symbol, interval, data);
-				datasetsByInterval.set(interval, { interval, data });
-			}
-		}
-
-		return deduped
-			.map(interval => datasetsByInterval.get(interval))
-			.filter((dataset): dataset is FinderDataset => !!dataset);
+		return this.timeframeLoader.loadMultiTimeframeDatasets(symbol, intervals, {
+			currentSymbol: state.currentSymbol,
+			currentInterval: state.currentInterval,
+			currentData: state.ohlcvData
+		});
 	}
 
 	private normalizeFinderInterval(rawInterval: string): string | null {
-		const raw = rawInterval.trim();
-		const match = raw.match(/^(\d+)\s*([mhdwM])$/);
-		if (!match) return null;
-		const value = parseInt(match[1], 10);
-		if (!Number.isFinite(value) || value <= 0) return null;
-
-		const unit = match[2] === 'M' ? 'M' : match[2].toLowerCase();
-		return `${value}${unit}`;
+		return this.timeframeLoader.normalizeInterval(rawInterval);
 	}
 
 	private addFinderTimeframe(interval: string, silent: boolean): void {
@@ -402,24 +333,7 @@ export class FinderManager {
 	}
 
 	private getFinderTimeframesForRun(options: FinderOptions): string[] {
-		if (!options.multiTimeframeEnabled) return [state.currentInterval];
-
-		const deduped: string[] = [];
-		const intervals = options.timeframes ?? [];
-		for (const interval of intervals) {
-			const normalized = this.normalizeFinderInterval(interval);
-			if (!normalized) continue;
-			if (!deduped.includes(normalized)) {
-				deduped.push(normalized);
-			}
-			if (deduped.length >= FinderManager.MAX_MULTI_TIMEFRAMES) break;
-		}
-
-		if (deduped.length === 0) {
-			return [state.currentInterval];
-		}
-
-		return deduped;
+		return this.timeframeLoader.getFinderTimeframesForRun(options, state.currentInterval);
 	}
 
 	private renderStrategySelection(): void {
@@ -449,19 +363,8 @@ export class FinderManager {
 		});
 	}
 
-	private isAscendingMetric(metric: FinderMetric): boolean {
-		return metric === 'maxDrawdownPercent';
-	}
-
 	private compareResults(a: FinderResult, b: FinderResult, sortPriority: FinderMetric[]): number {
-		for (const metric of sortPriority) {
-			const valA = this.getMetricValue(a, metric);
-			const valB = this.getMetricValue(b, metric);
-			if (Math.abs(valA - valB) > 0.0001) {
-				return this.isAscendingMetric(metric) ? valA - valB : valB - valA;
-			}
-		}
-		return 0;
+		return compareFinderResults(a, b, sortPriority);
 	}
 
 	private buildSelectionResult(
@@ -533,6 +436,29 @@ export class FinderManager {
 			delete (rustSettings as { marketMode?: string }).marketMode;
 			delete (rustSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
 			delete (rustSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
+			delete (rustSettings as { captureSnapshots?: boolean }).captureSnapshots;
+			delete (rustSettings as { snapshotAtrPercentMin?: number }).snapshotAtrPercentMin;
+			delete (rustSettings as { snapshotAtrPercentMax?: number }).snapshotAtrPercentMax;
+			delete (rustSettings as { snapshotVolumeRatioMin?: number }).snapshotVolumeRatioMin;
+			delete (rustSettings as { snapshotVolumeRatioMax?: number }).snapshotVolumeRatioMax;
+			delete (rustSettings as { snapshotAdxMin?: number }).snapshotAdxMin;
+			delete (rustSettings as { snapshotAdxMax?: number }).snapshotAdxMax;
+			delete (rustSettings as { snapshotEmaDistanceMin?: number }).snapshotEmaDistanceMin;
+			delete (rustSettings as { snapshotEmaDistanceMax?: number }).snapshotEmaDistanceMax;
+			delete (rustSettings as { snapshotRsiMin?: number }).snapshotRsiMin;
+			delete (rustSettings as { snapshotRsiMax?: number }).snapshotRsiMax;
+			delete (rustSettings as { snapshotPriceRangePosMin?: number }).snapshotPriceRangePosMin;
+			delete (rustSettings as { snapshotPriceRangePosMax?: number }).snapshotPriceRangePosMax;
+			delete (rustSettings as { snapshotBarsFromHighMax?: number }).snapshotBarsFromHighMax;
+			delete (rustSettings as { snapshotBarsFromLowMax?: number }).snapshotBarsFromLowMax;
+			delete (rustSettings as { snapshotTrendEfficiencyMin?: number }).snapshotTrendEfficiencyMin;
+			delete (rustSettings as { snapshotTrendEfficiencyMax?: number }).snapshotTrendEfficiencyMax;
+			delete (rustSettings as { snapshotAtrRegimeRatioMin?: number }).snapshotAtrRegimeRatioMin;
+			delete (rustSettings as { snapshotAtrRegimeRatioMax?: number }).snapshotAtrRegimeRatioMax;
+			delete (rustSettings as { snapshotBodyPercentMin?: number }).snapshotBodyPercentMin;
+			delete (rustSettings as { snapshotBodyPercentMax?: number }).snapshotBodyPercentMax;
+			delete (rustSettings as { snapshotWickSkewMin?: number }).snapshotWickSkewMin;
+			delete (rustSettings as { snapshotWickSkewMax?: number }).snapshotWickSkewMax;
 
 			const strategies = strategyRegistry.getAll();
 			const selectedStrategyEntries = Object.entries(strategies).filter(([key]) => {
@@ -861,6 +787,7 @@ export class FinderManager {
 						return;
 					}
 				}
+				filteredCount++;
 				if (enriched.endpointAdjusted) {
 					endpointAdjustedCount++;
 				}
@@ -1052,6 +979,29 @@ export class FinderManager {
 						delete (itemSettings as { slippageBps?: number }).slippageBps;
 						delete (itemSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
 						delete (itemSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
+						delete (itemSettings as { captureSnapshots?: boolean }).captureSnapshots;
+						delete (itemSettings as { snapshotAtrPercentMin?: number }).snapshotAtrPercentMin;
+						delete (itemSettings as { snapshotAtrPercentMax?: number }).snapshotAtrPercentMax;
+						delete (itemSettings as { snapshotVolumeRatioMin?: number }).snapshotVolumeRatioMin;
+						delete (itemSettings as { snapshotVolumeRatioMax?: number }).snapshotVolumeRatioMax;
+						delete (itemSettings as { snapshotAdxMin?: number }).snapshotAdxMin;
+						delete (itemSettings as { snapshotAdxMax?: number }).snapshotAdxMax;
+						delete (itemSettings as { snapshotEmaDistanceMin?: number }).snapshotEmaDistanceMin;
+						delete (itemSettings as { snapshotEmaDistanceMax?: number }).snapshotEmaDistanceMax;
+						delete (itemSettings as { snapshotRsiMin?: number }).snapshotRsiMin;
+						delete (itemSettings as { snapshotRsiMax?: number }).snapshotRsiMax;
+						delete (itemSettings as { snapshotPriceRangePosMin?: number }).snapshotPriceRangePosMin;
+						delete (itemSettings as { snapshotPriceRangePosMax?: number }).snapshotPriceRangePosMax;
+						delete (itemSettings as { snapshotBarsFromHighMax?: number }).snapshotBarsFromHighMax;
+						delete (itemSettings as { snapshotBarsFromLowMax?: number }).snapshotBarsFromLowMax;
+						delete (itemSettings as { snapshotTrendEfficiencyMin?: number }).snapshotTrendEfficiencyMin;
+						delete (itemSettings as { snapshotTrendEfficiencyMax?: number }).snapshotTrendEfficiencyMax;
+						delete (itemSettings as { snapshotAtrRegimeRatioMin?: number }).snapshotAtrRegimeRatioMin;
+						delete (itemSettings as { snapshotAtrRegimeRatioMax?: number }).snapshotAtrRegimeRatioMax;
+						delete (itemSettings as { snapshotBodyPercentMin?: number }).snapshotBodyPercentMin;
+						delete (itemSettings as { snapshotBodyPercentMax?: number }).snapshotBodyPercentMax;
+						delete (itemSettings as { snapshotWickSkewMin?: number }).snapshotWickSkewMin;
+						delete (itemSettings as { snapshotWickSkewMax?: number }).snapshotWickSkewMax;
 						return {
 							id: run.id,
 							signals: run.signals,
@@ -1246,562 +1196,19 @@ export class FinderManager {
 	}
 
 	private generateParamSets(defaultParams: StrategyParams, options: FinderOptions): StrategyParams[] {
-		const keys = Object.keys(defaultParams);
-		if (keys.length === 0 || options.mode === 'default') {
-			return [this.normalizeParams(defaultParams)];
-		}
-
-		const valuesByKey = keys.map(key => this.buildRangeValues(key, defaultParams[key], options));
-		const totalCombos = valuesByKey.reduce((product, values) => product * values.length, 1);
-
-		if (options.mode === 'grid' && totalCombos <= options.maxRuns) {
-			const combos: StrategyParams[] = [];
-			this.buildGridCombos(keys, valuesByKey, 0, {}, combos, options.maxRuns);
-			return combos.length > 0 ? combos : [this.normalizeParams(defaultParams)];
-		}
-
-		if (options.mode === 'grid') {
-			return this.sampleGridCombos(keys, valuesByKey, defaultParams, options.maxRuns);
-		}
-
-		return this.generateRandomCombos(keys, defaultParams, options);
-	}
-
-	private buildRangeValues(key: string, baseValue: number, options: FinderOptions): number[] {
-		// Toggle params (use*) always get [0, 1] for grid search
-		if (isToggleParam(key, baseValue)) {
-			return [0, 1];
-		}
-
-		const rangeRatio = Math.max(0, options.rangePercent) / 100;
-		const rawRange = Math.abs(baseValue) * rangeRatio;
-		const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
-		let min = baseValue - range;
-		let max = baseValue + range;
-
-		if (key === 'clusterChoice') {
-			min = 0;
-			max = 2;
-		} else if (/(iteration|iterations|interval|alpha)/i.test(key)) {
-			min = Math.max(1, min);
-		} else if (key === 'warmupBars') {
-			min = Math.max(0, min);
-		}
-
-		// Special clamping for percent params
-		if (key === 'stopLossPercent') {
-			// Clamp to valid range: 0-15%
-			min = Math.max(0, min);
-			max = Math.min(15, max);
-		} else if (key === 'targetPct') {
-			min = 0;
-			max = 2;
-		} else if (key === 'takeProfitPercent') {
-			// Clamp to valid range: 0-100%
-			min = Math.max(0, min);
-			max = Math.min(100, max);
-		}
-
-		const steps = Math.max(2, options.steps);
-		const stepSize = steps > 1 ? (max - min) / (steps - 1) : 0;
-
-		const values = new Set<number>();
-		for (let i = 0; i < steps; i++) {
-			const rawValue = min + stepSize * i;
-			values.add(this.normalizeParamValue(key, rawValue, baseValue));
-		}
-
-		values.add(this.normalizeParamValue(key, baseValue, baseValue));
-		return Array.from(values).sort((a, b) => a - b);
-	}
-
-	private buildGridCombos(
-		keys: string[],
-		valuesByKey: number[][],
-		index: number,
-		current: StrategyParams,
-		combos: StrategyParams[],
-		maxRuns: number
-	): void {
-		if (combos.length >= maxRuns) return;
-		if (index >= keys.length) {
-			if (this.validateParams(current)) {
-				combos.push({ ...current });
-			}
-			return;
-		}
-
-		const key = keys[index];
-		for (const value of valuesByKey[index]) {
-			current[key] = value;
-			this.buildGridCombos(keys, valuesByKey, index + 1, current, combos, maxRuns);
-			if (combos.length >= maxRuns) break;
-		}
-	}
-
-	private sampleGridCombos(
-		keys: string[],
-		valuesByKey: number[][],
-		defaultParams: StrategyParams,
-		maxRuns: number
-	): StrategyParams[] {
-		const combos: StrategyParams[] = [];
-		const seen = new Set<string>();
-		const normalizedDefault = this.normalizeParams(defaultParams);
-		this.tryAddCombo(normalizedDefault, combos, seen, maxRuns);
-
-		let attempts = 0;
-		const maxAttempts = maxRuns * 10;
-		while (combos.length < maxRuns && attempts < maxAttempts) {
-			const params: StrategyParams = {};
-			for (let i = 0; i < keys.length; i++) {
-				const values = valuesByKey[i];
-				const pick = values[Math.floor(Math.random() * values.length)];
-				params[keys[i]] = pick;
-			}
-			this.tryAddCombo(params, combos, seen, maxRuns);
-			attempts += 1;
-		}
-		return combos;
-	}
-
-	private generateRandomCombos(
-		keys: string[],
-		defaultParams: StrategyParams,
-		options: FinderOptions
-	): StrategyParams[] {
-		const combos: StrategyParams[] = [];
-		const seen = new Set<string>();
-		const normalizedDefault = this.normalizeParams(defaultParams);
-		this.tryAddCombo(normalizedDefault, combos, seen, options.maxRuns);
-
-		// Separate toggle params from numeric params
-		const toggleKeys: string[] = [];
-		const numericRanges: { key: string; baseValue: number; min: number; max: number }[] = [];
-
-		for (const key of keys) {
-			const baseValue = defaultParams[key];
-			if (isToggleParam(key, baseValue)) {
-				toggleKeys.push(key);
-			} else {
-				const rangeRatio = Math.max(0, options.rangePercent) / 100;
-				const rawRange = Math.abs(baseValue) * rangeRatio;
-				const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
-				let min = baseValue - range;
-				let max = baseValue + range;
-
-				// Special clamping for percent params
-				if (key === 'stopLossPercent') {
-					min = Math.max(0, min);
-					max = Math.min(15, max);
-				} else if (key === 'targetPct') {
-					min = 0;
-					max = 2;
-				} else if (key === 'takeProfitPercent') {
-					min = Math.max(0, min);
-					max = Math.min(100, max);
-				}
-
-				numericRanges.push({ key, baseValue, min, max });
-			}
-		}
-
-		let attempts = 0;
-		const maxAttempts = options.maxRuns * 10;
-		while (combos.length < options.maxRuns && attempts < maxAttempts) {
-			const params: StrategyParams = {};
-
-			// Randomize toggle params (50% chance on/off)
-			for (const key of toggleKeys) {
-				params[key] = Math.random() < 0.5 ? 0 : 1;
-			}
-
-			// Randomize numeric params within range
-			for (const range of numericRanges) {
-				const raw = range.min + Math.random() * (range.max - range.min);
-				params[range.key] = this.normalizeParamValue(range.key, raw, range.baseValue);
-			}
-
-			this.tryAddCombo(params, combos, seen, options.maxRuns);
-			attempts += 1;
-		}
-		return combos;
+		return this.paramSpace.generateParamSets(defaultParams, options);
 	}
 
 	private buildRandomConfirmationParams(strategyKeys: string[], options: FinderOptions): Record<string, StrategyParams> {
-		const paramsByKey: Record<string, StrategyParams> = {};
-		for (const key of strategyKeys) {
-			const strategy = strategyRegistry.get(key);
-			if (!strategy) continue;
-			paramsByKey[key] = this.generateRandomParams(strategy.defaultParams, options);
-		}
-		return paramsByKey;
-	}
-
-	private generateRandomParams(defaultParams: StrategyParams, options: FinderOptions): StrategyParams {
-		const keys = Object.keys(defaultParams);
-		if (keys.length === 0) return {};
-
-		// Separate toggle params from numeric params
-		const toggleKeys: string[] = [];
-		const numericRanges: { key: string; baseValue: number; min: number; max: number }[] = [];
-
-		for (const key of keys) {
-			const baseValue = defaultParams[key];
-			if (isToggleParam(key, baseValue)) {
-				toggleKeys.push(key);
-				continue;
-			}
-
-			const rangeRatio = Math.max(0, options.rangePercent) / 100;
-			const rawRange = Math.abs(baseValue) * rangeRatio;
-			const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
-			let min = baseValue - range;
-			let max = baseValue + range;
-
-			// Special clamping for percent params
-			if (key === 'stopLossPercent') {
-				min = Math.max(0, min);
-				max = Math.min(15, max);
-			} else if (key === 'targetPct') {
-				min = 0;
-				max = 2;
-			} else if (key === 'takeProfitPercent') {
-				min = Math.max(0, min);
-				max = Math.min(100, max);
-			}
-
-			numericRanges.push({ key, baseValue, min, max });
-		}
-
-		const maxAttempts = Math.max(10, keys.length * 5);
-		for (let attempt = 0; attempt < maxAttempts; attempt++) {
-			const params: StrategyParams = {};
-
-			for (const key of toggleKeys) {
-				params[key] = Math.random() < 0.5 ? 0 : 1;
-			}
-
-			for (const range of numericRanges) {
-				const raw = range.min + Math.random() * (range.max - range.min);
-				params[range.key] = this.normalizeParamValue(range.key, raw, range.baseValue);
-			}
-
-			if (this.validateParams(params)) {
-				return params;
-			}
-		}
-
-		return this.normalizeParams(defaultParams);
-	}
-
-	private tryAddCombo(params: StrategyParams, combos: StrategyParams[], seen: Set<string>, maxRuns: number): void {
-		if (combos.length >= maxRuns) return;
-		if (!this.validateParams(params)) return;
-		const key = this.serializeParams(params);
-		if (seen.has(key)) return;
-		seen.add(key);
-		combos.push({ ...params });
-	}
-
-	private normalizeParams(params: StrategyParams): StrategyParams {
-		const normalized: StrategyParams = {};
-		Object.entries(params).forEach(([key, value]) => {
-			normalized[key] = this.normalizeParamValue(key, value, value);
-		});
-		return normalized;
-	}
-
-	private normalizeParamValue(key: string, value: number, defaultValue: number): number {
-		const isRsiThreshold = /(rsi(bullish|bearish|overbought|oversold)|overbought|oversold)/i.test(key);
-		const isRsiPeriod = /rsi/i.test(key) && !isRsiThreshold;
-		const iterationLike = /(iteration|iterations|interval)/i.test(key);
-		const alphaLike = /alpha/i.test(key);
-		const periodLike = /(period|lookback|bars|bins|length)/i.test(key) || isRsiPeriod || iterationLike || alphaLike;
-		const percentLike = /(percent|pct)/i.test(key) || isRsiThreshold;
-		const nonNegative = /(std|dev|factor|multiplier|atr|adx)/i.test(key);
-
-		let next = value;
-		if (key === 'warmupBars') {
-			next = Math.max(0, Math.round(next));
-		} else if (key === 'clusterChoice') {
-			next = Math.min(2, Math.max(0, Math.round(next)));
-		} else if (periodLike) {
-			next = Math.max(1, Math.round(next));
-		} else if (key === 'targetPct') {
-			next = Math.min(2, Math.max(0, Number(next.toFixed(2))));
-		} else if (key === 'stopLossPercent') {
-			next = Math.min(15, Math.max(0, Number(next.toFixed(2))));
-		} else if (key === 'takeProfitPercent') {
-			next = Math.min(100, Math.max(0, Number(next.toFixed(2))));
-		} else if (percentLike) {
-			next = Math.min(100, Math.max(0, next));
-		} else if (nonNegative) {
-			next = Math.max(0, next);
-		}
-
-		if (/(multiplier|factor)/i.test(key) && defaultValue > 0) {
-			next = Math.max(0.1, next);
-		}
-
-		if (/z(entry|exit)/i.test(key)) {
-			next = Math.max(0, next);
-		}
-
-		if (key === 'bufferAtr') {
-			next = Math.max(0, next);
-		}
-
-		if (!periodLike && Number.isInteger(defaultValue) && !percentLike && key !== 'stopLossPercent' && key !== 'takeProfitPercent' && key !== 'targetPct') {
-			next = Math.round(next);
-		} else if (key === 'stopLossPercent' || key === 'takeProfitPercent') {
-			next = Number(next.toFixed(2));
-		} else if (key === 'targetPct') {
-			next = Number(next.toFixed(2));
-		} else if (!Number.isInteger(defaultValue)) {
-			next = Number(next.toFixed(4));
-		}
-
-		return next;
-	}
-
-	private validateParams(params: StrategyParams): boolean {
-		const fast = params.fastPeriod;
-		const slow = params.slowPeriod;
-		const medium = params.mediumPeriod;
-		if (fast !== undefined && slow !== undefined && fast >= slow) return false;
-		if (fast !== undefined && medium !== undefined && fast >= medium) return false;
-		if (medium !== undefined && slow !== undefined && medium >= slow) return false;
-
-		const oversold = params.oversold;
-		const overbought = params.overbought;
-		if (oversold !== undefined && overbought !== undefined && oversold >= overbought) return false;
-
-		const rsiOversold = params.rsiOversold;
-		const rsiOverbought = params.rsiOverbought;
-		if (rsiOversold !== undefined && rsiOverbought !== undefined && rsiOversold >= rsiOverbought) return false;
-
-		const kPeriod = params.kPeriod;
-		const dPeriod = params.dPeriod;
-		if (kPeriod !== undefined && dPeriod !== undefined && kPeriod < dPeriod) return false;
-
-		const macdFast = params.macdFast;
-		const macdSlow = params.macdSlow;
-		if (macdFast !== undefined && macdSlow !== undefined && macdFast >= macdSlow) return false;
-
-		const minFactor = params.minFactor;
-		const maxFactor = params.maxFactor;
-		if (minFactor !== undefined && maxFactor !== undefined && minFactor > maxFactor) return false;
-		if (params.factorStep !== undefined && params.factorStep <= 0) return false;
-
-		if (params.kMeansIterations !== undefined && params.kMeansIterations <= 0) return false;
-		if (params.kMeansInterval !== undefined && params.kMeansInterval <= 0) return false;
-		if (params.perfAlpha !== undefined && params.perfAlpha <= 0) return false;
-		if (params.clusterChoice !== undefined && (params.clusterChoice < 0 || params.clusterChoice > 2)) return false;
-
-		const zEntry = params.zEntry;
-		const zExit = params.zExit;
-		if (zEntry !== undefined && zExit !== undefined && zExit >= zEntry) return false;
-
-		const entryExposurePct = params.entryExposurePct;
-		const exitExposurePct = params.exitExposurePct;
-		if (entryExposurePct !== undefined && exitExposurePct !== undefined && exitExposurePct >= entryExposurePct) return false;
-
-		return true;
-	}
-
-	private serializeParams(params: StrategyParams): string {
-		return Object.keys(params)
-			.sort()
-			.map((key) => `${key}:${params[key]}`)
-			.join('|');
+		return this.paramSpace.buildRandomConfirmationParams(strategyKeys, options);
 	}
 
 	private renderResults(results: FinderResult[], _sortBy: FinderMetric): void {
-		const list = getRequiredElement('finderList');
-		const copyButton = document.getElementById('finderCopyTopResults') as HTMLButtonElement | null;
-		list.innerHTML = '';
-
-		if (results.length === 0) {
-			setVisible('finderEmpty', true);
-			if (copyButton) copyButton.disabled = true;
-			return;
-		}
-
-		setVisible('finderEmpty', false);
-		if (copyButton) copyButton.disabled = false;
-
-		results.forEach((item, index) => {
-			const row = document.createElement('div');
-			row.className = 'finder-row';
-
-			const rank = document.createElement('div');
-			rank.className = 'finder-rank';
-			rank.textContent = `${index + 1}`;
-
-			const main = document.createElement('div');
-			main.className = 'finder-main';
-
-			const title = document.createElement('div');
-			title.className = 'finder-title';
-			title.textContent = item.name;
-
-			const sub = document.createElement('div');
-			sub.className = 'finder-sub';
-			sub.textContent = item.key;
-
-			const params = document.createElement('div');
-			params.className = 'finder-params';
-			params.textContent = this.formatParams(item.params);
-			const metrics = document.createElement('div');
-			metrics.className = 'finder-metrics';
-			const selection = item.selectionResult;
-
-			metrics.appendChild(this.createMetricChip(`Net ${this.formatCurrency(selection.netProfit)}`));
-			metrics.appendChild(this.createMetricChip(`PF ${this.formatProfitFactor(selection.profitFactor)}`));
-			metrics.appendChild(this.createMetricChip(`Sharpe ${selection.sharpeRatio.toFixed(2)}`));
-			metrics.appendChild(this.createMetricChip(`DD ${selection.maxDrawdownPercent.toFixed(2)}%`));
-			metrics.appendChild(this.createMetricChip(`Trades ${selection.totalTrades}`));
-			if (item.endpointAdjusted) {
-				metrics.appendChild(this.createMetricChip(`Endpoint bias removed (${item.endpointRemovedTrades})`));
-			}
-
-			main.appendChild(title);
-			main.appendChild(sub);
-			main.appendChild(params);
-			main.appendChild(metrics);
-
-			const button = document.createElement('button');
-			button.className = 'btn btn-secondary finder-apply';
-			button.textContent = 'Apply';
-			button.dataset.index = index.toString();
-
-			row.appendChild(rank);
-			row.appendChild(main);
-			row.appendChild(button);
-			list.appendChild(row);
-		});
-	}
-
-	private createMetricChip(text: string): HTMLSpanElement {
-		const span = document.createElement('span');
-		span.textContent = text;
-		return span;
-	}
-
-	private formatParams(params: StrategyParams): string {
-		return Object.entries(params)
-			.map(([key, value]) => `${key}=${this.formatParamValue(value)}`)
-			.join(', ');
-	}
-
-	private formatParamValue(value: number): string {
-		if (Number.isInteger(value)) return value.toString();
-		return value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
-	}
-
-
-
-	private getMetricValue(item: FinderResult, metric: FinderMetric): number {
-		const result = item.selectionResult;
-		switch (metric) {
-
-			case 'netProfit':
-				return result.netProfit;
-			case 'netProfitPercent':
-				return result.netProfitPercent;
-			case 'profitFactor':
-				return result.profitFactor === Infinity ? Number.MAX_SAFE_INTEGER : result.profitFactor;
-			case 'sharpeRatio':
-				return result.sharpeRatio;
-			case 'winRate':
-				return result.winRate;
-			case 'maxDrawdownPercent':
-				return result.maxDrawdownPercent;
-			case 'expectancy':
-				return result.expectancy;
-			case 'averageGain':
-				return result.avgWin;
-			case 'totalTrades':
-				return result.totalTrades;
-			default:
-				return 0;
-		}
-	}
-
-	private average(values: number[]): number {
-		if (values.length === 0) return 0;
-		return values.reduce((sum, value) => sum + value, 0) / values.length;
+		this.ui.renderResults(results);
 	}
 
 	private aggregateBacktestResults(results: BacktestResult[], initialCapital: number): BacktestResult {
-		if (results.length === 0) {
-			return {
-				trades: [],
-				netProfit: 0,
-				netProfitPercent: 0,
-				winRate: 0,
-				expectancy: 0,
-				avgTrade: 0,
-				profitFactor: 0,
-				maxDrawdown: 0,
-				maxDrawdownPercent: 0,
-				totalTrades: 0,
-				winningTrades: 0,
-				losingTrades: 0,
-				avgWin: 0,
-				avgLoss: 0,
-				sharpeRatio: 0,
-				equityCurve: [],
-			};
-		}
-
-		if (results.length === 1) {
-			return results[0];
-		}
-
-		const avgNetProfit = this.average(results.map(result => result.netProfit));
-		const avgNetProfitPercent = initialCapital > 0
-			? (avgNetProfit / initialCapital) * 100
-			: this.average(results.map(result => result.netProfitPercent));
-		const avgTrades = Math.max(0, Math.round(this.average(results.map(result => result.totalTrades))));
-		const avgWinRate = this.average(results.map(result => result.winRate));
-		const winningTrades = Math.max(0, Math.round((avgWinRate / 100) * avgTrades));
-		const losingTrades = Math.max(0, avgTrades - winningTrades);
-		const finiteProfitFactors = results.map(result => result.profitFactor).map(value => {
-			if (Number.isFinite(value)) return Math.max(0, value);
-			return 4;
-		});
-
-		return {
-			trades: [],
-			netProfit: avgNetProfit,
-			netProfitPercent: avgNetProfitPercent,
-			winRate: avgWinRate,
-			expectancy: this.average(results.map(result => result.expectancy)),
-			avgTrade: this.average(results.map(result => result.avgTrade)),
-			profitFactor: this.average(finiteProfitFactors),
-			maxDrawdown: this.average(results.map(result => result.maxDrawdown)),
-			maxDrawdownPercent: this.average(results.map(result => result.maxDrawdownPercent)),
-			totalTrades: avgTrades,
-			winningTrades,
-			losingTrades,
-			avgWin: this.average(results.map(result => result.avgWin)),
-			avgLoss: this.average(results.map(result => result.avgLoss)),
-			sharpeRatio: this.average(results.map(result => result.sharpeRatio)),
-			equityCurve: [],
-		};
-	}
-
-
-
-	private formatCurrency(value: number): string {
-		const sign = value >= 0 ? '+' : '';
-		return `${sign}$${value.toFixed(2)}`;
-	}
-
-	private formatProfitFactor(value: number): string {
-		return value === Infinity ? 'Inf' : value.toFixed(2);
+		return aggregateFinderBacktestResults(results, initialCapital);
 	}
 
 	private buildMetadataPayload(result: FinderResult, rank: number) {
@@ -1902,16 +1309,11 @@ export class FinderManager {
 	}
 
 	private setProgress(active: boolean, percent: number, text: string): void {
-		const container = getRequiredElement('finderProgress');
-		const fill = getRequiredElement('finderProgressFill');
-		const label = getRequiredElement('finderProgressText');
-		container.classList.toggle('active', active);
-		fill.style.width = `${Math.min(100, Math.max(0, percent))}%`;
-		label.textContent = text;
+		this.ui.setProgress(active, percent, text);
 	}
 
 	private setStatus(text: string): void {
-		getRequiredElement('finderStatus').textContent = text;
+		this.ui.setStatus(text);
 	}
 
 	private async yieldControl(): Promise<void> {
