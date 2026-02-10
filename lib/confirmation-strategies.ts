@@ -279,7 +279,7 @@ export function filterSignalsWithConfirmations(
     tradeFilterMode: TradeFilterMode,
     tradeDirection: TradeDirection
 ): Signal[] {
-    if (tradeDirection === "both") {
+    if (tradeDirection === "both" || tradeDirection === "combined") {
         return filterSignalsWithConfirmationsBoth(data, signals, confirmationStates, tradeFilterMode);
     }
     if (confirmationStates.length === 0 || signals.length === 0) return signals;

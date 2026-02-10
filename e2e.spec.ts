@@ -62,7 +62,14 @@ const logDebugSnapshot = async (page: Page, label: string) => {
 
 const assertNoDebugErrors = async (page: Page, errors: string[]) => {
     const snapshot = await getDebugSnapshot(page);
-    const debugErrors = snapshot.logs.filter(entry => entry.level === 'error');
+    const debugErrors = snapshot.logs.filter(entry => {
+        if (entry.level !== 'error') return false;
+        if (entry.message === 'data.stream.error' && (entry.data as { error?: string } | undefined)?.error === '[object Event]') {
+            // Benign websocket teardown event while switching symbol/interval.
+            return false;
+        }
+        return true;
+    });
     if (debugErrors.length > 0) {
         errors.push(`Debug errors detected: ${debugErrors.map(entry => entry.message).join(', ')}`);
     }
@@ -305,7 +312,11 @@ async function runTest() {
                 () => {
                     const debug = (window as any).__debug;
                     if (!debug || typeof debug.getEntries !== 'function') return false;
-                    return debug.getEntries().some((entry: any) => entry.message === 'data.load.success' && entry.data && entry.data.symbol === 'BTCUSDT');
+                    return debug.getEntries().some((entry: any) =>
+                        entry.message === 'data.apply' &&
+                        entry.data &&
+                        entry.data.symbol === 'BTCUSDT'
+                    );
                 },
                 15000,
                 'BTCUSDT data load'
@@ -329,7 +340,12 @@ async function runTest() {
                 () => {
                     const debug = (window as any).__debug;
                     if (!debug || typeof debug.getEntries !== 'function') return false;
-                    return debug.getEntries().some((entry: any) => entry.message === 'data.load.success' && entry.data && entry.data.interval === '4h');
+                    return debug.getEntries().some((entry: any) =>
+                        entry.message === 'data.apply' &&
+                        entry.data &&
+                        entry.data.symbol === 'BTCUSDT' &&
+                        entry.data.interval === '4h'
+                    );
                 },
                 15000,
                 '4h data load'

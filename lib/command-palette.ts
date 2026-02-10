@@ -47,7 +47,7 @@ export class CommandPaletteManager {
                     </div>
                     <div class="command-palette-results" id="commandPaletteResults"></div>
                     <div class="command-palette-footer">
-                        <div class="command-palette-shortcut-hint"><kbd>↑↓</kbd> to navigate</div>
+                        <div class="command-palette-shortcut-hint"><kbd>Up/Down</kbd> to navigate</div>
                         <div class="command-palette-shortcut-hint"><kbd>Enter</kbd> to select</div>
                         <div class="command-palette-shortcut-hint"><kbd>ESC</kbd> to close</div>
                     </div>
@@ -263,35 +263,57 @@ export class CommandPaletteManager {
             return;
         }
 
+        this.resultsContainer.innerHTML = '';
         let currentCategory = '';
-        let html = '';
 
         this.filteredItems.forEach((item, index) => {
             if (item.category !== currentCategory) {
                 currentCategory = item.category;
-                html += `<div class="command-palette-group-title">${currentCategory}</div>`;
+                const groupTitle = document.createElement('div');
+                groupTitle.className = 'command-palette-group-title';
+                groupTitle.textContent = currentCategory;
+                this.resultsContainer!.appendChild(groupTitle);
             }
 
-            const isSelected = index === this.selectedIndex;
-            html += `
-                <div class="command-palette-item ${isSelected ? 'selected' : ''}" data-index="${index}">
-                    <div class="command-palette-item-icon">${item.icon}</div>
-                    <div class="command-palette-item-info">
-                        <div class="command-palette-item-title">${item.title}</div>
-                        ${item.subtitle ? `<div class="command-palette-item-subtitle">${item.subtitle}</div>` : ''}
-                    </div>
-                    ${item.shortcut ? `<div class="command-palette-item-shortcut">${item.shortcut}</div>` : ''}
-                </div>
-            `;
-        });
+            const row = document.createElement('div');
+            row.className = `command-palette-item ${index === this.selectedIndex ? 'selected' : ''}`;
+            row.dataset.index = String(index);
 
-        this.resultsContainer.innerHTML = html;
+            const icon = document.createElement('div');
+            icon.className = 'command-palette-item-icon';
+            icon.innerHTML = item.icon;
 
-        this.resultsContainer.querySelectorAll('.command-palette-item').forEach(el => {
-            el.addEventListener('click', () => {
-                this.selectedIndex = parseInt((el as HTMLElement).dataset.index!);
+            const info = document.createElement('div');
+            info.className = 'command-palette-item-info';
+
+            const title = document.createElement('div');
+            title.className = 'command-palette-item-title';
+            title.textContent = item.title;
+            info.appendChild(title);
+
+            if (item.subtitle) {
+                const subtitle = document.createElement('div');
+                subtitle.className = 'command-palette-item-subtitle';
+                subtitle.textContent = item.subtitle;
+                info.appendChild(subtitle);
+            }
+
+            row.appendChild(icon);
+            row.appendChild(info);
+
+            if (item.shortcut) {
+                const shortcut = document.createElement('div');
+                shortcut.className = 'command-palette-item-shortcut';
+                shortcut.textContent = item.shortcut;
+                row.appendChild(shortcut);
+            }
+
+            row.addEventListener('click', () => {
+                this.selectedIndex = index;
                 this.executeSelected();
             });
+
+            this.resultsContainer!.appendChild(row);
         });
     }
 }

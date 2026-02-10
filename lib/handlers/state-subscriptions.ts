@@ -29,6 +29,9 @@ export function setupStateSubscriptions() {
         }
         reloadTimeout = window.setTimeout(() => {
             reloadTimeout = null;
+            if (dataManager.shouldSkipAutoReload()) {
+                return;
+            }
             setPriceLoading();
             clearAll();
             dataManager.loadData(state.currentSymbol, state.currentInterval);

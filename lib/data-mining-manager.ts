@@ -519,10 +519,16 @@ export class DataMiningManager {
 
             dataManager.stopStreaming();
             clearAll();
-            if (symbol && symbol !== state.currentSymbol) {
+            const symbolChanged = Boolean(symbol && symbol !== state.currentSymbol);
+            const intervalChanged = Boolean(interval && interval !== state.currentInterval);
+            if (symbolChanged || intervalChanged) {
+                dataManager.suppressNextAutoReload();
+            }
+
+            if (symbolChanged && symbol) {
                 state.set('currentSymbol', symbol);
             }
-            if (interval && interval !== state.currentInterval) {
+            if (intervalChanged && interval) {
                 state.set('currentInterval', interval);
             }
             state.set('ohlcvData', bars);

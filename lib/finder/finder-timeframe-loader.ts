@@ -14,10 +14,20 @@ export interface FinderTimeframeContext {
     currentData: OHLCVData[];
 }
 
+interface CachedDataset {
+    data: OHLCVData[];
+    cachedAt: number;
+}
+
 export class FinderTimeframeLoader {
-    private cache: Map<string, OHLCVData[]> = new Map();
+    private static readonly CACHE_TTL_MS = 30_000;
+    private cache: Map<string, CachedDataset> = new Map();
 
     constructor(private readonly maxTimeframes: number) {}
+
+    public clearCache(): void {
+        this.cache.clear();
+    }
 
     public normalizeInterval(rawInterval: string): string | null {
         const raw = rawInterval.trim();
@@ -106,11 +116,16 @@ export class FinderTimeframeLoader {
     private getCachedDataset(symbol: string, interval: string): OHLCVData[] | null {
         const key = this.getDatasetCacheKey(symbol, interval);
         const cached = this.cache.get(key);
-        return cached && cached.length > 0 ? cached : null;
+        if (!cached || cached.data.length === 0) return null;
+        if ((Date.now() - cached.cachedAt) > FinderTimeframeLoader.CACHE_TTL_MS) {
+            this.cache.delete(key);
+            return null;
+        }
+        return cached.data;
     }
 
     private setCachedDataset(symbol: string, interval: string, data: OHLCVData[]): void {
         const key = this.getDatasetCacheKey(symbol, interval);
-        this.cache.set(key, data);
+        this.cache.set(key, { data, cachedAt: Date.now() });
     }
 }

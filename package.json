@@ -3,6 +3,8 @@
     "test": "..\\..\\..\\node_modules\\.bin\\esno strategies.spec.ts",
     "test:strategies": "npm run test",
     "test:e2e": "..\\..\\..\\node_modules\\.bin\\esno e2e.spec.ts",
+    "typecheck": "tsc --noEmit",
+    "build:types": "tsc -p tsconfig.types.json",
     "dev": "vite",
     "build": "vite build"
   },

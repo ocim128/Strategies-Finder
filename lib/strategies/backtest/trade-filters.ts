@@ -4,6 +4,10 @@ import { NormalizedSettings, IndicatorSeries } from '../../types/backtest';
 import {
     computeAtrRegimeRatio,
     computeBodyPercent,
+    computeRelativeVolumeBurst,
+    computeVolumeConsistency,
+    computeVolumePriceDivergence,
+    computeVolumeTrend,
     computeTrendEfficiency,
     computeWickSkew
 } from './snapshot-derived-metrics';
@@ -203,7 +207,15 @@ export function passesSnapshotFilters(
         config.snapshotBodyPercentMin > 0 ||
         config.snapshotBodyPercentMax > 0 ||
         config.snapshotWickSkewMin !== 0 ||
-        config.snapshotWickSkewMax !== 0;
+        config.snapshotWickSkewMax !== 0 ||
+        config.snapshotVolumeTrendMin > 0 ||
+        config.snapshotVolumeTrendMax > 0 ||
+        config.snapshotVolumeBurstMin !== 0 ||
+        config.snapshotVolumeBurstMax !== 0 ||
+        config.snapshotVolumePriceDivergenceMin !== 0 ||
+        config.snapshotVolumePriceDivergenceMax !== 0 ||
+        config.snapshotVolumeConsistencyMin > 0 ||
+        config.snapshotVolumeConsistencyMax > 0;
     if (!hasAny || !snapshotIndicators) return true;
 
     const close = data[entryIndex].close;
@@ -318,6 +330,41 @@ export function passesSnapshotFilters(
         if (wickSkew === null || wickSkew === undefined) return false;
         if (config.snapshotWickSkewMin !== 0 && wickSkew < config.snapshotWickSkewMin) return false;
         if (config.snapshotWickSkewMax !== 0 && wickSkew > config.snapshotWickSkewMax) return false;
+    }
+
+    // Volume trend filter (short/long EMA ratio, min and/or max)
+    if (config.snapshotVolumeTrendMin > 0 || config.snapshotVolumeTrendMax > 0) {
+        const volumes = data.map(d => d.volume);
+        const volumeTrend = computeVolumeTrend(volumes, entryIndex);
+        if (volumeTrend === null || volumeTrend === undefined) return false;
+        if (config.snapshotVolumeTrendMin > 0 && volumeTrend < config.snapshotVolumeTrendMin) return false;
+        if (config.snapshotVolumeTrendMax > 0 && volumeTrend > config.snapshotVolumeTrendMax) return false;
+    }
+
+    // Volume burst filter (z-score, min and/or max)
+    if (config.snapshotVolumeBurstMin !== 0 || config.snapshotVolumeBurstMax !== 0) {
+        const volumes = data.map(d => d.volume);
+        const volumeBurst = computeRelativeVolumeBurst(volumes, entryIndex);
+        if (volumeBurst === null || volumeBurst === undefined) return false;
+        if (config.snapshotVolumeBurstMin !== 0 && volumeBurst < config.snapshotVolumeBurstMin) return false;
+        if (config.snapshotVolumeBurstMax !== 0 && volumeBurst > config.snapshotVolumeBurstMax) return false;
+    }
+
+    // Volume-price divergence filter (-1..1, min and/or max)
+    if (config.snapshotVolumePriceDivergenceMin !== 0 || config.snapshotVolumePriceDivergenceMax !== 0) {
+        const volPriceDiv = computeVolumePriceDivergence(data, entryIndex);
+        if (volPriceDiv === null || volPriceDiv === undefined) return false;
+        if (config.snapshotVolumePriceDivergenceMin !== 0 && volPriceDiv < config.snapshotVolumePriceDivergenceMin) return false;
+        if (config.snapshotVolumePriceDivergenceMax !== 0 && volPriceDiv > config.snapshotVolumePriceDivergenceMax) return false;
+    }
+
+    // Volume consistency filter (coeff of variation, min and/or max)
+    if (config.snapshotVolumeConsistencyMin > 0 || config.snapshotVolumeConsistencyMax > 0) {
+        const volumes = data.map(d => d.volume);
+        const volConsistency = computeVolumeConsistency(volumes, entryIndex);
+        if (volConsistency === null || volConsistency === undefined) return false;
+        if (config.snapshotVolumeConsistencyMin > 0 && volConsistency < config.snapshotVolumeConsistencyMin) return false;
+        if (config.snapshotVolumeConsistencyMax > 0 && volConsistency > config.snapshotVolumeConsistencyMax) return false;
     }
 
     return true;

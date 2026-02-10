@@ -13,9 +13,7 @@
 		"noUnusedParameters": true,
 		"noImplicitReturns": true,
 		"skipLibCheck": true,
-		"declaration": true,
-		"declarationDir": "typings",
-		"emitDeclarationOnly": true
+		"noEmit": true
 	},
 	"include": [
 		"*.ts",

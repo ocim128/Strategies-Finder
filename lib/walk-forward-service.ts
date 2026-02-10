@@ -210,12 +210,6 @@ class WalkForwardService {
         try {
             const startTime = performance.now();
 
-            // Check Rust engine availability for future optimization
-            // Currently using TypeScript for full walk-forward since strategies are in TS
-            if (shouldUseRustEngine() && await rustEngine.checkHealth()) {
-                debugLogger.info('[WalkForward] Rust engine available - will use for inner backtests');
-            }
-
             // Get current parameters
             const currentParams = paramManager.getValues(strategy);
             const tradeAwareThresholds = this.autoSuggestWindowSettings(
@@ -240,10 +234,44 @@ class WalkForwardService {
                 Object.keys(strategy.defaultParams).length === 0 ||
                 parameterRanges.length === 0;
 
-            let result: WalkForwardResult;
+            let result: WalkForwardResult | null = null;
             const progressReporter = this.createProgressReporter();
+            const baseConfig = this.getConfigFromUI(parameterRanges, tradeAwareThresholds);
 
-            if (useFixedParam) {
+            // Try Rust walk-forward first when compatible, then fallback to TypeScript.
+            if (!useFixedParam && shouldUseRustEngine()) {
+                const requiresTsEngine = backtestService.requiresTypescriptEngine(backtestSettings);
+                if (!requiresTsEngine && await rustEngine.checkHealth()) {
+                    const rustConfig = this.toRustWalkForwardConfig(baseConfig);
+                    const rustSettings = this.toRustBacktestSettings(backtestSettings);
+                    this.updateStatus('Running walk-forward analysis on Rust backend...');
+                    const rustResult = await rustEngine.runWalkForward(
+                        data,
+                        strategyKey,
+                        currentParams,
+                        capitalSettings.initialCapital,
+                        capitalSettings.positionSize,
+                        capitalSettings.commission,
+                        rustSettings,
+                        rustConfig,
+                        (update) => {
+                            const percent = Number.isFinite(update.percent) ? `${Math.round(update.percent)}%` : '';
+                            const status = update.status?.trim() || 'Optimizing';
+                            this.updateStatus(percent ? `[Rust ${percent}] ${status}` : `[Rust] ${status}`);
+                        }
+                    );
+                    if (this.isWalkForwardResult(rustResult)) {
+                        result = rustResult;
+                        debugLogger.info('[WalkForward] Rust backend result accepted');
+                    } else {
+                        debugLogger.warn('[WalkForward] Rust walk-forward unavailable or incompatible result; falling back to TypeScript.');
+                    }
+                } else if (requiresTsEngine) {
+                    debugLogger.info('[WalkForward] Realism or snapshot filter settings require TypeScript engine.');
+                }
+            }
+
+            if (!result && useFixedParam) {
                 // Use fixed-parameter walk-forward (no optimization)
                 this.updateStatus('Running walk-forward analysis (fixed parameters)...');
                 debugLogger.info(`[WalkForward] Using fixed-param mode for: ${strategyKey}`);
@@ -270,14 +298,14 @@ class WalkForwardService {
                     backtestSettings,
                     sizing
                 );
-            } else {
+            } else if (!result) {
                 // Use regular walk-forward with parameter optimization
                 this.updateStatus('Running walk-forward analysis (optimizing parameters)...');
                 debugLogger.info(`[WalkForward] Optimizing ${parameterRanges.length} parameters for: ${strategyKey}`);
 
                 // Get config from UI
                 const config: WalkForwardConfig = {
-                    ...this.getConfigFromUI(parameterRanges, tradeAwareThresholds),
+                    ...baseConfig,
                     onProgress: progressReporter
                 };
 
@@ -291,6 +319,10 @@ class WalkForwardService {
                     backtestSettings,
                     sizing
                 );
+            }
+
+            if (!result) {
+                throw new Error('Walk-forward did not produce a result.');
             }
 
             const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
@@ -494,6 +526,88 @@ class WalkForwardService {
         return ranges;
     }
 
+
+    private toRustBacktestSettings(settings: BacktestSettings): BacktestSettings {
+        const rustSettings: BacktestSettings = { ...settings };
+        delete (rustSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
+        delete (rustSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
+        delete (rustSettings as { executionModel?: string }).executionModel;
+        delete (rustSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
+        delete (rustSettings as { slippageBps?: number }).slippageBps;
+        delete (rustSettings as { marketMode?: string }).marketMode;
+        delete (rustSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
+        delete (rustSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
+        delete (rustSettings as { captureSnapshots?: boolean }).captureSnapshots;
+        delete (rustSettings as { snapshotAtrPercentMin?: number }).snapshotAtrPercentMin;
+        delete (rustSettings as { snapshotAtrPercentMax?: number }).snapshotAtrPercentMax;
+        delete (rustSettings as { snapshotVolumeRatioMin?: number }).snapshotVolumeRatioMin;
+        delete (rustSettings as { snapshotVolumeRatioMax?: number }).snapshotVolumeRatioMax;
+        delete (rustSettings as { snapshotAdxMin?: number }).snapshotAdxMin;
+        delete (rustSettings as { snapshotAdxMax?: number }).snapshotAdxMax;
+        delete (rustSettings as { snapshotEmaDistanceMin?: number }).snapshotEmaDistanceMin;
+        delete (rustSettings as { snapshotEmaDistanceMax?: number }).snapshotEmaDistanceMax;
+        delete (rustSettings as { snapshotRsiMin?: number }).snapshotRsiMin;
+        delete (rustSettings as { snapshotRsiMax?: number }).snapshotRsiMax;
+        delete (rustSettings as { snapshotPriceRangePosMin?: number }).snapshotPriceRangePosMin;
+        delete (rustSettings as { snapshotPriceRangePosMax?: number }).snapshotPriceRangePosMax;
+        delete (rustSettings as { snapshotBarsFromHighMax?: number }).snapshotBarsFromHighMax;
+        delete (rustSettings as { snapshotBarsFromLowMax?: number }).snapshotBarsFromLowMax;
+        delete (rustSettings as { snapshotTrendEfficiencyMin?: number }).snapshotTrendEfficiencyMin;
+        delete (rustSettings as { snapshotTrendEfficiencyMax?: number }).snapshotTrendEfficiencyMax;
+        delete (rustSettings as { snapshotAtrRegimeRatioMin?: number }).snapshotAtrRegimeRatioMin;
+        delete (rustSettings as { snapshotAtrRegimeRatioMax?: number }).snapshotAtrRegimeRatioMax;
+        delete (rustSettings as { snapshotBodyPercentMin?: number }).snapshotBodyPercentMin;
+        delete (rustSettings as { snapshotBodyPercentMax?: number }).snapshotBodyPercentMax;
+        delete (rustSettings as { snapshotWickSkewMin?: number }).snapshotWickSkewMin;
+        delete (rustSettings as { snapshotWickSkewMax?: number }).snapshotWickSkewMax;
+        delete (rustSettings as { snapshotVolumeTrendMin?: number }).snapshotVolumeTrendMin;
+        delete (rustSettings as { snapshotVolumeTrendMax?: number }).snapshotVolumeTrendMax;
+        delete (rustSettings as { snapshotVolumeBurstMin?: number }).snapshotVolumeBurstMin;
+        delete (rustSettings as { snapshotVolumeBurstMax?: number }).snapshotVolumeBurstMax;
+        delete (rustSettings as { snapshotVolumePriceDivergenceMin?: number }).snapshotVolumePriceDivergenceMin;
+        delete (rustSettings as { snapshotVolumePriceDivergenceMax?: number }).snapshotVolumePriceDivergenceMax;
+        delete (rustSettings as { snapshotVolumeConsistencyMin?: number }).snapshotVolumeConsistencyMin;
+        delete (rustSettings as { snapshotVolumeConsistencyMax?: number }).snapshotVolumeConsistencyMax;
+        return rustSettings;
+    }
+
+    private toRustWalkForwardConfig(config: WalkForwardConfig): {
+        optimizationWindow: number;
+        testWindow: number;
+        stepSize: number;
+        parameterRanges: Array<{ name: string; min: number; max: number; step: number }>;
+        topN?: number;
+        minTrades?: number;
+    } {
+        return {
+            optimizationWindow: config.optimizationWindow,
+            testWindow: config.testWindow,
+            stepSize: config.stepSize,
+            parameterRanges: config.parameterRanges.map(range => ({
+                name: range.name,
+                min: range.min,
+                max: range.max,
+                step: range.step
+            })),
+            topN: config.topN,
+            minTrades: config.minTrades
+        };
+    }
+
+    private isWalkForwardResult(value: unknown): value is WalkForwardResult {
+        if (!value || typeof value !== 'object') return false;
+        const result = value as Partial<WalkForwardResult>;
+        return (
+            typeof result.totalWindows === 'number' &&
+            typeof result.robustnessScore === 'number' &&
+            typeof result.walkForwardEfficiency === 'number' &&
+            typeof result.parameterStability === 'number' &&
+            typeof result.optimizationTimeMs === 'number' &&
+            Array.isArray(result.windows) &&
+            typeof result.combinedOOSTrades === 'object' &&
+            result.combinedOOSTrades !== null
+        );
+    }
 
     /**
      * Get walk-forward config from UI inputs

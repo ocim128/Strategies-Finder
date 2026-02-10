@@ -13,7 +13,7 @@ export interface PositionBuilderParams {
     slippageRate: number;
     settings: NormalizedSettings;
     atrArray: (number | null)[];
-    tradeDirection: 'long' | 'short' | 'both';
+    tradeDirection: 'long' | 'short' | 'both' | 'combined';
     sizingMode: 'percent' | 'fixed';
     fixedTradeAmount: number;
 }

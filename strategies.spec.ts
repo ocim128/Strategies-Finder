@@ -4,6 +4,8 @@ import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calcula
 import { buildPivotFlags, detectPivots, detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
 import { simple_regression_line } from './lib/strategies/lib/simple-regression-line';
 import { analyzeTradePatterns } from './lib/strategies/backtest/trade-analyzer';
+import { getOpenPositionForScanner } from './lib/strategies/backtest/signal-preparation';
+import { resolveScannerBacktestSettings } from './lib/scanner/scanner-engine';
 
 
 describe('Strategy Calculations', () => {
@@ -310,6 +312,93 @@ describe('Backtesting Engine', () => {
         expect(result.netProfit).to.equal(200);
     });
 
+    it('scanner settings resolver should mirror backtest toggle behavior', () => {
+        const rawScannerSettings = {
+            riskSettingsToggle: false,
+            riskMode: 'simple',
+            atrPeriod: 14,
+            stopLossAtr: 1.5,
+            takeProfitAtr: 3,
+            trailingAtr: 2,
+            stopLossPercent: 5,
+            takeProfitPercent: 10,
+            stopLossEnabled: true,
+            takeProfitEnabled: true,
+            tradeFilterSettingsToggle: false,
+            tradeFilterMode: 'rsi',
+            confirmLookback: 4,
+            volumeSmaPeriod: 25,
+            volumeMultiplier: 2,
+            confirmRsiPeriod: 7,
+            confirmRsiBullish: 60,
+            confirmRsiBearish: 40,
+            confirmationStrategiesToggle: false,
+            confirmationStrategies: ['test-filter'],
+            confirmationStrategyParams: { 'test-filter': { length: 20 } },
+            tradeDirection: 'short',
+            executionModel: 'next_open',
+            allowSameBarExit: false,
+            slippageBps: 5,
+            snapshotAtrFilterToggle: false,
+            snapshotAtrPercentMin: 1.2,
+            snapshotAtrPercentMax: 2.1,
+        };
+
+        const resolved = resolveScannerBacktestSettings(rawScannerSettings as any);
+
+        expect(resolved.stopLossAtr).to.equal(0);
+        expect(resolved.takeProfitAtr).to.equal(0);
+        expect(resolved.trailingAtr).to.equal(0);
+        expect(resolved.stopLossEnabled).to.equal(false);
+        expect(resolved.takeProfitEnabled).to.equal(false);
+        expect(resolved.tradeFilterMode).to.equal('none');
+        expect(resolved.confirmationStrategies).to.deep.equal([]);
+        expect(resolved.confirmationStrategyParams).to.deep.equal({});
+        expect(resolved.snapshotAtrPercentMin).to.equal(0);
+        expect(resolved.snapshotAtrPercentMax).to.equal(0);
+    });
+
+    it('scanner settings resolver should accept combined trade direction', () => {
+        const resolved = resolveScannerBacktestSettings({
+            tradeDirection: 'combined',
+            riskSettingsToggle: false,
+            tradeFilterSettingsToggle: false
+        } as any);
+        expect(resolved.tradeDirection).to.equal('combined');
+    });
+
+    it('scanner open position should reuse TP/SL from backtest open trade state', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 104, high: 106, low: 102, close: 105, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 106, high: 110, low: 104, close: 108, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'buy', price: 105 },
+        ];
+
+        const settings = {
+            tradeDirection: 'long' as const,
+            executionModel: 'signal_close' as const,
+            atrPeriod: 1,
+            stopLossAtr: 1,
+            takeProfitAtr: 2,
+            trailingAtr: 0,
+        };
+
+        const result = runBacktest(data, signals, 10000, 100, 0, settings);
+        const lastTrade = result.trades[result.trades.length - 1];
+        const openPosition = getOpenPositionForScanner(data, signals, settings);
+
+        expect(lastTrade.exitReason).to.equal('end_of_data');
+        expect(lastTrade.takeProfitPrice).to.not.equal(undefined);
+        expect(lastTrade.stopLossPrice).to.not.equal(undefined);
+        expect(openPosition).to.not.equal(null);
+        expect(openPosition?.takeProfitPrice).to.equal(lastTrade.takeProfitPrice ?? null);
+        expect(openPosition?.stopLossPrice).to.equal(lastTrade.stopLossPrice ?? null);
+    });
+
     it('should flip position on opposite signals when trade direction is both', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
@@ -331,6 +420,34 @@ describe('Backtesting Engine', () => {
         expect(full.trades[0].type).to.equal('short');
         expect(full.trades[1].type).to.equal('long');
         expect(full.netProfit).to.be.closeTo(161.1111, 1e-4);
+        expect(compact.totalTrades).to.equal(full.totalTrades);
+        expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-8);
+    });
+
+    it('should support combined direction with same-bar opposite-entry conflicts ignored', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 }, // Conflict bar
+            { time: '2023-01-03' as Time, open: 110, high: 112, low: 108, close: 110, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 120, high: 121, low: 118, close: 120, volume: 1000 },
+            { time: '2023-01-05' as Time, open: 100, high: 102, low: 98, close: 100, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'buy', price: 100 },
+            { time: '2023-01-02' as Time, type: 'sell', price: 100 }, // Conflict pair should be ignored as entries
+            { time: '2023-01-03' as Time, type: 'buy', price: 110 },  // Long entry
+            { time: '2023-01-04' as Time, type: 'sell', price: 120 }, // Long exit + short entry
+            { time: '2023-01-05' as Time, type: 'buy', price: 100 },  // Short exit + long entry
+        ];
+
+        const settings = { tradeDirection: 'combined' as const };
+        const full = runBacktest(data, signals, 1000, 100, 0, settings);
+        const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings);
+
+        expect(full.trades.some(trade => trade.entryTime === ('2023-01-02' as Time))).to.equal(false);
+        expect(full.totalTrades).to.equal(3);
+        expect(full.netProfit).to.be.closeTo(128.787878, 1e-6);
         expect(compact.totalTrades).to.equal(full.totalTrades);
         expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-8);
     });
@@ -607,7 +724,11 @@ describe('Trade Analyzer', () => {
                     trendEfficiency: 0.2 + (i % 8) * 0.08,
                     atrRegimeRatio: 0.8 + (i % 6) * 0.1,
                     bodyPercent,
-                    wickSkew: (i % 21) - 10
+                    wickSkew: (i % 21) - 10,
+                    volumeTrend: 0.8 + (i % 5) * 0.1,
+                    volumeBurst: (i % 7) - 3,
+                    volumePriceDivergence: ((i % 11) - 5) / 5,
+                    volumeConsistency: 0.3 + (i % 8) * 0.1
                 }
             });
         }
@@ -622,5 +743,110 @@ describe('Trade Analyzer', () => {
         suggested.forEach(a => {
             expect(a.tradesRemovedPercent).to.be.at.most(15.0001);
         });
+    });
+
+    it('should only suggest below direction for bars-from-high/low features', () => {
+        const trades: Trade[] = [];
+
+        for (let i = 0; i < 30; i++) {
+            const isLoss = i < 10;
+            const barsValue = isLoss ? 16 + (i % 3) : (i % 4);
+
+            trades.push({
+                id: i + 1,
+                type: 'long',
+                entryTime: (i + 1) as unknown as Time,
+                entryPrice: 100,
+                exitTime: (i + 2) as unknown as Time,
+                exitPrice: 100,
+                pnl: isLoss ? -10 : 6,
+                pnlPercent: isLoss ? -1 : 0.6,
+                size: 1,
+                entrySnapshot: {
+                    rsi: 50,
+                    adx: 25,
+                    atrPercent: 1.2,
+                    emaDistance: 0.5,
+                    volumeRatio: 1.1,
+                    priceRangePos: 0.45,
+                    barsFromHigh: barsValue,
+                    barsFromLow: barsValue,
+                    trendEfficiency: 0.6,
+                    atrRegimeRatio: 1.1,
+                    bodyPercent: 55,
+                    wickSkew: 2,
+                    volumeTrend: 1.0,
+                    volumeBurst: 0.5,
+                    volumePriceDivergence: 0.1,
+                    volumeConsistency: 0.7
+                }
+            });
+        }
+
+        const analyses = analyzeTradePatterns(trades, {
+            mode: 'quality',
+            maxSingleRemoval: 35
+        });
+
+        const barsFromHigh = analyses.find(a => a.feature === 'barsFromHigh');
+        const barsFromLow = analyses.find(a => a.feature === 'barsFromLow');
+
+        expect(barsFromHigh).to.not.be.undefined;
+        expect(barsFromLow).to.not.be.undefined;
+        expect(barsFromHigh?.suggestedFilter).to.not.be.null;
+        expect(barsFromLow?.suggestedFilter).to.not.be.null;
+        expect(barsFromHigh?.suggestedFilter?.direction).to.equal('below');
+        expect(barsFromLow?.suggestedFilter?.direction).to.equal('below');
+    });
+
+    it('should keep tiny non-zero suggested thresholds non-zero', () => {
+        const trades: Trade[] = [];
+
+        for (let i = 0; i < 30; i++) {
+            const isLoss = i < 10;
+            const divergence = isLoss
+                ? (-0.000002 + (i * 0.00000002))
+                : (0.0000005 + ((i - 10) * 0.00000002));
+
+            trades.push({
+                id: i + 1,
+                type: 'long',
+                entryTime: (i + 1) as unknown as Time,
+                entryPrice: 100,
+                exitTime: (i + 2) as unknown as Time,
+                exitPrice: 100,
+                pnl: isLoss ? -8 : 5,
+                pnlPercent: isLoss ? -0.8 : 0.5,
+                size: 1,
+                entrySnapshot: {
+                    rsi: 52,
+                    adx: 24,
+                    atrPercent: 1.15,
+                    emaDistance: 0.4,
+                    volumeRatio: 1.05,
+                    priceRangePos: 0.5,
+                    barsFromHigh: 3,
+                    barsFromLow: 3,
+                    trendEfficiency: 0.62,
+                    atrRegimeRatio: 1.05,
+                    bodyPercent: 58,
+                    wickSkew: 1,
+                    volumeTrend: 1.02,
+                    volumeBurst: 0.2,
+                    volumePriceDivergence: divergence,
+                    volumeConsistency: 0.72
+                }
+            });
+        }
+
+        const analyses = analyzeTradePatterns(trades, {
+            mode: 'quality',
+            maxSingleRemoval: 35
+        });
+        const divergenceFeature = analyses.find(a => a.feature === 'volumePriceDivergence');
+
+        expect(divergenceFeature).to.not.be.undefined;
+        expect(divergenceFeature?.suggestedFilter).to.not.be.null;
+        expect(divergenceFeature?.suggestedFilter?.threshold).to.not.equal(0);
     });
 });

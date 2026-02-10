@@ -74,7 +74,7 @@ export class BacktestService {
                 ? buildConfirmationStates(state.ohlcvData, confirmationStrategies, settings.confirmationStrategyParams)
                 : [];
             const filteredSignals = confirmationStates.length > 0
-                ? ((strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both')
+                ? ((strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined')
                     ? filterSignalsWithConfirmationsBoth(
                         state.ohlcvData,
                         signals,
@@ -129,6 +129,14 @@ export class BacktestService {
             delete (rustSettings as { snapshotBodyPercentMax?: number }).snapshotBodyPercentMax;
             delete (rustSettings as { snapshotWickSkewMin?: number }).snapshotWickSkewMin;
             delete (rustSettings as { snapshotWickSkewMax?: number }).snapshotWickSkewMax;
+            delete (rustSettings as { snapshotVolumeTrendMin?: number }).snapshotVolumeTrendMin;
+            delete (rustSettings as { snapshotVolumeTrendMax?: number }).snapshotVolumeTrendMax;
+            delete (rustSettings as { snapshotVolumeBurstMin?: number }).snapshotVolumeBurstMin;
+            delete (rustSettings as { snapshotVolumeBurstMax?: number }).snapshotVolumeBurstMax;
+            delete (rustSettings as { snapshotVolumePriceDivergenceMin?: number }).snapshotVolumePriceDivergenceMin;
+            delete (rustSettings as { snapshotVolumePriceDivergenceMax?: number }).snapshotVolumePriceDivergenceMax;
+            delete (rustSettings as { snapshotVolumeConsistencyMin?: number }).snapshotVolumeConsistencyMin;
+            delete (rustSettings as { snapshotVolumeConsistencyMax?: number }).snapshotVolumeConsistencyMax;
 
             if (strategy.metadata?.role === 'entry' && entryStats) {
                 result = buildEntryBacktestResult(entryStats);
@@ -162,7 +170,7 @@ export class BacktestService {
             if (!result) {
                 if (requiresTsEngine && shouldUseRustEngine() && !this.warnedStrictEngine) {
                     this.warnedStrictEngine = true;
-                    uiManager.showToast('Backtest realism settings require TypeScript engine (Rust skipped).', 'info');
+                    uiManager.showToast('Realism or snapshot filter settings require TypeScript engine (Rust skipped).', 'info');
                 }
                 result = runBacktest(
                     state.ohlcvData,
@@ -265,7 +273,7 @@ export class BacktestService {
         const executionModel = (document.getElementById('executionModel') as HTMLSelectElement | null)?.value as ExecutionModel | undefined;
         const resolvedExecutionModel: ExecutionModel = executionModel ?? 'signal_close';
         const tradeDirectionRaw = (document.getElementById('tradeDirection') as HTMLSelectElement | null)?.value;
-        const tradeDirection = tradeDirectionRaw === 'short' || tradeDirectionRaw === 'both' ? tradeDirectionRaw : 'long';
+        const tradeDirection = tradeDirectionRaw === 'short' || tradeDirectionRaw === 'both' || tradeDirectionRaw === 'combined' ? tradeDirectionRaw : 'long';
         const marketModeRaw = (document.getElementById('marketMode') as HTMLSelectElement | null)?.value;
         const marketMode = marketModeRaw === 'uptrend' || marketModeRaw === 'downtrend' || marketModeRaw === 'sideway'
             ? marketModeRaw
@@ -339,6 +347,14 @@ export class BacktestService {
             snapshotBodyPercentMax: this.isToggleEnabled('snapshotBodyPercentFilterToggle', false) ? this.readNumberInput('snapshotBodyPercentMax', 0) : 0,
             snapshotWickSkewMin: this.isToggleEnabled('snapshotWickSkewFilterToggle', false) ? this.readNumberInput('snapshotWickSkewMin', 0) : 0,
             snapshotWickSkewMax: this.isToggleEnabled('snapshotWickSkewFilterToggle', false) ? this.readNumberInput('snapshotWickSkewMax', 0) : 0,
+            snapshotVolumeTrendMin: this.isToggleEnabled('snapshotVolumeTrendFilterToggle', false) ? this.readNumberInput('snapshotVolumeTrendMin', 0) : 0,
+            snapshotVolumeTrendMax: this.isToggleEnabled('snapshotVolumeTrendFilterToggle', false) ? this.readNumberInput('snapshotVolumeTrendMax', 0) : 0,
+            snapshotVolumeBurstMin: this.isToggleEnabled('snapshotVolumeBurstFilterToggle', false) ? this.readNumberInput('snapshotVolumeBurstMin', 0) : 0,
+            snapshotVolumeBurstMax: this.isToggleEnabled('snapshotVolumeBurstFilterToggle', false) ? this.readNumberInput('snapshotVolumeBurstMax', 0) : 0,
+            snapshotVolumePriceDivergenceMin: this.isToggleEnabled('snapshotVolumePriceDivergenceFilterToggle', false) ? this.readNumberInput('snapshotVolumePriceDivergenceMin', 0) : 0,
+            snapshotVolumePriceDivergenceMax: this.isToggleEnabled('snapshotVolumePriceDivergenceFilterToggle', false) ? this.readNumberInput('snapshotVolumePriceDivergenceMax', 0) : 0,
+            snapshotVolumeConsistencyMin: this.isToggleEnabled('snapshotVolumeConsistencyFilterToggle', false) ? this.readNumberInput('snapshotVolumeConsistencyMin', 0) : 0,
+            snapshotVolumeConsistencyMax: this.isToggleEnabled('snapshotVolumeConsistencyFilterToggle', false) ? this.readNumberInput('snapshotVolumeConsistencyMax', 0) : 0,
         };
     }
 
@@ -399,8 +415,16 @@ export class BacktestService {
             (settings.snapshotBodyPercentMin ?? 0) > 0 ||
             (settings.snapshotBodyPercentMax ?? 0) > 0 ||
             (settings.snapshotWickSkewMin ?? 0) !== 0 ||
-            (settings.snapshotWickSkewMax ?? 0) !== 0;
-        return executionModel !== 'signal_close' || slippageBps > 0 || !allowSameBarExit || settings.tradeDirection === 'both' || hasSnapshotFilters;
+            (settings.snapshotWickSkewMax ?? 0) !== 0 ||
+            (settings.snapshotVolumeTrendMin ?? 0) > 0 ||
+            (settings.snapshotVolumeTrendMax ?? 0) > 0 ||
+            (settings.snapshotVolumeBurstMin ?? 0) !== 0 ||
+            (settings.snapshotVolumeBurstMax ?? 0) !== 0 ||
+            (settings.snapshotVolumePriceDivergenceMin ?? 0) !== 0 ||
+            (settings.snapshotVolumePriceDivergenceMax ?? 0) !== 0 ||
+            (settings.snapshotVolumeConsistencyMin ?? 0) > 0 ||
+            (settings.snapshotVolumeConsistencyMax ?? 0) > 0;
+        return executionModel !== 'signal_close' || slippageBps > 0 || !allowSameBarExit || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined' || hasSnapshotFilters;
     }
 
     public addStrategyIndicators(params: StrategyParams) {

@@ -119,7 +119,7 @@ export async function getEngineInfo(): Promise<{
     if (status.engine === 'rust') {
         return {
             engine: 'rust',
-            status: `Rust v${status.version || '0.1.0'}`,
+            status: `Rust v${status.version || 'unknown'}`,
             color: '#ff6b35'
         };
     }

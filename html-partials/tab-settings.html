@@ -47,8 +47,9 @@
                         <option value="long">Long</option>
                         <option value="short" selected>Short</option>
                         <option value="both">Both (Flip)</option>
+                        <option value="combined">Combined (L+S)</option>
                     </select>
-                    <div class="param-hint">Both mode exits and reverses on opposite entry signals.</div>
+                    <div class="param-hint">Both flips on opposite signals. Combined runs long+short books in parallel and ignores same-bar opposite entries.</div>
                 </div>
             </div>
         </div>
@@ -653,6 +654,114 @@
                             <input type="number" class="param-input" id="snapshotWickSkewMax" value="0" min="-100"
                                 max="100" step="1">
                             <div class="param-hint">Max (-100 to 100)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Volume Trend & Volume Burst Filters -->
+            <div class="param-row snapshot-filter-row">
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Volume Trend
+                            <span class="tooltip-icon" data-tooltip="Short/long volume EMA ratio. >1 = volume building, <1 = fading.">&#9432;</span>
+                        </label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Volume Trend filter">
+                            <input type="checkbox" id="snapshotVolumeTrendFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotVolumeTrendMin" value="0" min="0"
+                                step="0.05">
+                            <div class="param-hint">Min ratio</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotVolumeTrendMax" value="0" min="0"
+                                step="0.05">
+                            <div class="param-hint">Max ratio</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Volume Burst
+                            <span class="tooltip-icon" data-tooltip="Z-score of current volume vs recent bars. Higher = more unusual spike.">&#9432;</span>
+                        </label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Volume Burst filter">
+                            <input type="checkbox" id="snapshotVolumeBurstFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotVolumeBurstMin" value="0"
+                                step="0.1">
+                            <div class="param-hint">Min z-score</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotVolumeBurstMax" value="0"
+                                step="0.1">
+                            <div class="param-hint">Max z-score</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Vol-Price Agreement & Volume Consistency Filters -->
+            <div class="param-row snapshot-filter-row">
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Vol-Price Agreement
+                            <span class="tooltip-icon" data-tooltip="Price-volume direction agreement (-1 to 1). Negative = divergence, weak move.">&#9432;</span>
+                        </label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Vol-Price Divergence filter">
+                            <input type="checkbox" id="snapshotVolumePriceDivergenceFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotVolumePriceDivergenceMin" value="0"
+                                min="-1" max="1" step="0.1">
+                            <div class="param-hint">Min (-1 to 1)</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotVolumePriceDivergenceMax" value="0"
+                                min="-1" max="1" step="0.1">
+                            <div class="param-hint">Max (-1 to 1)</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Volume Consistency
+                            <span class="tooltip-icon" data-tooltip="Volume stability (CV). Lower = steady institutional flow, higher = erratic retail noise.">&#9432;</span>
+                        </label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Volume Consistency filter">
+                            <input type="checkbox" id="snapshotVolumeConsistencyFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotVolumeConsistencyMin" value="0"
+                                min="0" step="0.1">
+                            <div class="param-hint">Min CV</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotVolumeConsistencyMax" value="0"
+                                min="0" step="0.1">
+                            <div class="param-hint">Max CV</div>
                         </div>
                     </div>
                 </div>

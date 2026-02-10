@@ -97,6 +97,18 @@ export interface BacktestSettingsData {
     snapshotWickSkewFilterToggle: boolean;
     snapshotWickSkewMin: number;
     snapshotWickSkewMax: number;
+    snapshotVolumeTrendFilterToggle: boolean;
+    snapshotVolumeTrendMin: number;
+    snapshotVolumeTrendMax: number;
+    snapshotVolumeBurstFilterToggle: boolean;
+    snapshotVolumeBurstMin: number;
+    snapshotVolumeBurstMax: number;
+    snapshotVolumePriceDivergenceFilterToggle: boolean;
+    snapshotVolumePriceDivergenceMin: number;
+    snapshotVolumePriceDivergenceMax: number;
+    snapshotVolumeConsistencyFilterToggle: boolean;
+    snapshotVolumeConsistencyMin: number;
+    snapshotVolumeConsistencyMax: number;
 
     // Confirmation strategies
     confirmationStrategiesToggle: boolean;
@@ -205,6 +217,18 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     snapshotWickSkewFilterToggle: false,
     snapshotWickSkewMin: 0,
     snapshotWickSkewMax: 0,
+    snapshotVolumeTrendFilterToggle: false,
+    snapshotVolumeTrendMin: 0,
+    snapshotVolumeTrendMax: 0,
+    snapshotVolumeBurstFilterToggle: false,
+    snapshotVolumeBurstMin: 0,
+    snapshotVolumeBurstMax: 0,
+    snapshotVolumePriceDivergenceFilterToggle: false,
+    snapshotVolumePriceDivergenceMin: 0,
+    snapshotVolumePriceDivergenceMax: 0,
+    snapshotVolumeConsistencyFilterToggle: false,
+    snapshotVolumeConsistencyMin: 0,
+    snapshotVolumeConsistencyMax: 0,
 
     // Confirmation strategies
     confirmationStrategiesToggle: false,
@@ -333,6 +357,18 @@ class SettingsManager {
             snapshotWickSkewFilterToggle: this.readCheckbox('snapshotWickSkewFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotWickSkewFilterToggle),
             snapshotWickSkewMin: this.readNumber('snapshotWickSkewMin', DEFAULT_BACKTEST_SETTINGS.snapshotWickSkewMin),
             snapshotWickSkewMax: this.readNumber('snapshotWickSkewMax', DEFAULT_BACKTEST_SETTINGS.snapshotWickSkewMax),
+            snapshotVolumeTrendFilterToggle: this.readCheckbox('snapshotVolumeTrendFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotVolumeTrendFilterToggle),
+            snapshotVolumeTrendMin: this.readNumber('snapshotVolumeTrendMin', DEFAULT_BACKTEST_SETTINGS.snapshotVolumeTrendMin),
+            snapshotVolumeTrendMax: this.readNumber('snapshotVolumeTrendMax', DEFAULT_BACKTEST_SETTINGS.snapshotVolumeTrendMax),
+            snapshotVolumeBurstFilterToggle: this.readCheckbox('snapshotVolumeBurstFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotVolumeBurstFilterToggle),
+            snapshotVolumeBurstMin: this.readNumber('snapshotVolumeBurstMin', DEFAULT_BACKTEST_SETTINGS.snapshotVolumeBurstMin),
+            snapshotVolumeBurstMax: this.readNumber('snapshotVolumeBurstMax', DEFAULT_BACKTEST_SETTINGS.snapshotVolumeBurstMax),
+            snapshotVolumePriceDivergenceFilterToggle: this.readCheckbox('snapshotVolumePriceDivergenceFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotVolumePriceDivergenceFilterToggle),
+            snapshotVolumePriceDivergenceMin: this.readNumber('snapshotVolumePriceDivergenceMin', DEFAULT_BACKTEST_SETTINGS.snapshotVolumePriceDivergenceMin),
+            snapshotVolumePriceDivergenceMax: this.readNumber('snapshotVolumePriceDivergenceMax', DEFAULT_BACKTEST_SETTINGS.snapshotVolumePriceDivergenceMax),
+            snapshotVolumeConsistencyFilterToggle: this.readCheckbox('snapshotVolumeConsistencyFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyFilterToggle),
+            snapshotVolumeConsistencyMin: this.readNumber('snapshotVolumeConsistencyMin', DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyMin),
+            snapshotVolumeConsistencyMax: this.readNumber('snapshotVolumeConsistencyMax', DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyMax),
 
             // Confirmation strategies
             confirmationStrategiesToggle: this.readCheckbox('confirmationStrategiesToggle', DEFAULT_BACKTEST_SETTINGS.confirmationStrategiesToggle),
@@ -484,6 +520,18 @@ class SettingsManager {
         this.writeCheckbox('snapshotWickSkewFilterToggle', settings.snapshotWickSkewFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotWickSkewFilterToggle);
         this.writeNumber('snapshotWickSkewMin', settings.snapshotWickSkewMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotWickSkewMin);
         this.writeNumber('snapshotWickSkewMax', settings.snapshotWickSkewMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotWickSkewMax);
+        this.writeCheckbox('snapshotVolumeTrendFilterToggle', settings.snapshotVolumeTrendFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeTrendFilterToggle);
+        this.writeNumber('snapshotVolumeTrendMin', settings.snapshotVolumeTrendMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeTrendMin);
+        this.writeNumber('snapshotVolumeTrendMax', settings.snapshotVolumeTrendMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeTrendMax);
+        this.writeCheckbox('snapshotVolumeBurstFilterToggle', settings.snapshotVolumeBurstFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeBurstFilterToggle);
+        this.writeNumber('snapshotVolumeBurstMin', settings.snapshotVolumeBurstMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeBurstMin);
+        this.writeNumber('snapshotVolumeBurstMax', settings.snapshotVolumeBurstMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeBurstMax);
+        this.writeCheckbox('snapshotVolumePriceDivergenceFilterToggle', settings.snapshotVolumePriceDivergenceFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumePriceDivergenceFilterToggle);
+        this.writeNumber('snapshotVolumePriceDivergenceMin', settings.snapshotVolumePriceDivergenceMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumePriceDivergenceMin);
+        this.writeNumber('snapshotVolumePriceDivergenceMax', settings.snapshotVolumePriceDivergenceMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumePriceDivergenceMax);
+        this.writeCheckbox('snapshotVolumeConsistencyFilterToggle', settings.snapshotVolumeConsistencyFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyFilterToggle);
+        this.writeNumber('snapshotVolumeConsistencyMin', settings.snapshotVolumeConsistencyMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyMin);
+        this.writeNumber('snapshotVolumeConsistencyMax', settings.snapshotVolumeConsistencyMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyMax);
 
         // Confirmation strategies
         this.writeCheckbox('confirmationStrategiesToggle', settings.confirmationStrategiesToggle ?? DEFAULT_BACKTEST_SETTINGS.confirmationStrategiesToggle);
@@ -708,7 +756,7 @@ class SettingsManager {
 
 
     private resolveTradeDirection(settings: Partial<BacktestSettingsData>): TradeDirection {
-        if (settings.tradeDirection === 'long' || settings.tradeDirection === 'short' || settings.tradeDirection === 'both') {
+        if (settings.tradeDirection === 'long' || settings.tradeDirection === 'short' || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined') {
             return settings.tradeDirection;
         }
 
@@ -764,6 +812,10 @@ class SettingsManager {
             'snapshotAtrRegimeFilterToggle',
             'snapshotBodyPercentFilterToggle',
             'snapshotWickSkewFilterToggle',
+            'snapshotVolumeTrendFilterToggle',
+            'snapshotVolumeBurstFilterToggle',
+            'snapshotVolumePriceDivergenceFilterToggle',
+            'snapshotVolumeConsistencyFilterToggle',
 
             'stopLossToggle',
             'takeProfitToggle'

@@ -6,6 +6,7 @@ import { getRequiredElement, updateTextContent } from "./dom-utils";
 import { resultsRenderer } from "./renderers/resultsRenderer";
 import { tradesRenderer } from "./renderers/tradesRenderer";
 import { paramManager } from "./param-manager";
+import { formatJakartaTime, isBusinessDayTime } from "./timezone-utils";
 
 export class UIManager {
     public formatPrice(price: number): string {
@@ -15,32 +16,21 @@ export class UIManager {
     }
 
     public formatDate(timestamp: Time): string {
-        let date: Date;
-        if (typeof timestamp === 'number') {
-            // Assume seconds if small enough, otherwise ms? 
-            // lightweight-charts usually uses seconds.
-            date = new Date(timestamp * 1000);
-        } else if (typeof timestamp === 'string') {
-            date = new Date(timestamp);
-        } else if (typeof timestamp === 'object' && 'year' in timestamp) {
-            date = new Date(Date.UTC(timestamp.year, timestamp.month - 1, timestamp.day));
-        } else {
-            return '';
+        if (isBusinessDayTime(timestamp)) {
+            return formatJakartaTime(timestamp, {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+            });
         }
 
-        if (isNaN(date.getTime())) return String(timestamp);
-
-        // If time is 00:00, return just date
-        if (date.getHours() === 0 && date.getMinutes() === 0) {
-            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        }
-
-        return date.toLocaleString('en-US', {
+        return formatJakartaTime(timestamp, {
             month: 'short',
             day: 'numeric',
             year: 'numeric',
             hour: '2-digit',
-            minute: '2-digit'
+            minute: '2-digit',
+            hour12: false,
         });
     }
 

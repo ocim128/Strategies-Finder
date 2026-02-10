@@ -38,6 +38,14 @@ export interface TradeSnapshot {
     bodyPercent: number | null;
     /** Wick imbalance % (-100..100): positive upper-wick bias, negative lower-wick bias */
     wickSkew: number | null;
+    /** Volume trend ratio (short EMA / long EMA, >1 = building) */
+    volumeTrend: number | null;
+    /** Relative volume burst z-score */
+    volumeBurst: number | null;
+    /** Volume-price agreement (-1..1, negative = divergence) */
+    volumePriceDivergence: number | null;
+    /** Volume consistency (coeff of variation, lower = steadier) */
+    volumeConsistency: number | null;
 }
 
 export interface Trade {
@@ -86,7 +94,7 @@ export interface StrategyParams {
 }
 
 export type TradeFilterMode = 'none' | 'close' | 'volume' | 'rsi' | 'trend' | 'adx';
-export type TradeDirection = 'long' | 'short' | 'both';
+export type TradeDirection = 'long' | 'short' | 'both' | 'combined';
 export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';
 
@@ -188,6 +196,22 @@ export interface BacktestSettings {
     snapshotWickSkewMin?: number;
     /** Maximum wick skew at entry (-100..100, 0 = disabled) */
     snapshotWickSkewMax?: number;
+    /** Minimum volume trend at entry (0 = disabled) */
+    snapshotVolumeTrendMin?: number;
+    /** Maximum volume trend at entry (0 = disabled) */
+    snapshotVolumeTrendMax?: number;
+    /** Minimum volume burst z-score at entry (0 = disabled) */
+    snapshotVolumeBurstMin?: number;
+    /** Maximum volume burst z-score at entry (0 = disabled) */
+    snapshotVolumeBurstMax?: number;
+    /** Minimum vol-price divergence at entry (0 = disabled, range -1..1) */
+    snapshotVolumePriceDivergenceMin?: number;
+    /** Maximum vol-price divergence at entry (0 = disabled, range -1..1) */
+    snapshotVolumePriceDivergenceMax?: number;
+    /** Minimum volume consistency at entry (0 = disabled) */
+    snapshotVolumeConsistencyMin?: number;
+    /** Maximum volume consistency at entry (0 = disabled) */
+    snapshotVolumeConsistencyMax?: number;
 }
 
 export interface Signal {

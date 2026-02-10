@@ -193,6 +193,10 @@ export function createTradeEngineConfig(
     positionSize: number = 100,
     commission: number = 0.1
 ): TradeEngineConfig {
+    const replayTradeDirection = settings.tradeDirection === 'combined'
+        ? 'both'
+        : (settings.tradeDirection ?? 'both');
+
     return {
         initialCapital: capital,
         positionSizePercent: positionSize,
@@ -213,7 +217,7 @@ export function createTradeEngineConfig(
         takeProfitEnabled: settings.takeProfitEnabled ?? false,
         executionModel: settings.executionModel ?? 'signal_close',
         allowSameBarExit: settings.allowSameBarExit ?? false,
-        tradeDirection: settings.tradeDirection ?? 'both',
+        tradeDirection: replayTradeDirection,
     };
 }
 

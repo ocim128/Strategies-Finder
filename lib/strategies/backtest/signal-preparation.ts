@@ -27,7 +27,7 @@ export function prepareSignals(
             : timeIndex.get(timeKey(signal.time));
         if (signalIndex === undefined || signalIndex < 0 || signalIndex >= data.length) return;
 
-        if (tradeDirection !== 'both') {
+        if (tradeDirection !== 'both' && tradeDirection !== 'combined') {
             const entryType: Signal['type'] = tradeDirection === 'short' ? 'sell' : 'buy';
             const exitType: Signal['type'] = tradeDirection === 'short' ? 'buy' : 'sell';
 
@@ -202,10 +202,15 @@ export function getOpenPositionForScanner(
     }
     const barsInTrade = data.length - 1 - entryBarIndex;
 
-    // Calculate take profit price from settings
-    let takeProfitPrice: number | null = null;
-    if (settings.takeProfitEnabled && settings.takeProfitPercent && settings.takeProfitPercent > 0) {
-        // Calculate TP based on percentage: entry * (1 + direction * tp%)
+    const stopLossPrice = typeof lastTrade.stopLossPrice === 'number' && Number.isFinite(lastTrade.stopLossPrice)
+        ? lastTrade.stopLossPrice
+        : null;
+    let takeProfitPrice = typeof lastTrade.takeProfitPrice === 'number' && Number.isFinite(lastTrade.takeProfitPrice)
+        ? lastTrade.takeProfitPrice
+        : null;
+
+    // Fallback for legacy trades where TP wasn't populated on the EOD trade.
+    if (takeProfitPrice === null && settings.takeProfitEnabled && settings.takeProfitPercent && settings.takeProfitPercent > 0) {
         takeProfitPrice = lastTrade.entryPrice * (1 + directionFactor * (settings.takeProfitPercent / 100));
     }
 
@@ -216,7 +221,7 @@ export function getOpenPositionForScanner(
         currentPrice,
         unrealizedPnlPercent,
         barsInTrade,
-        stopLossPrice: null, // Would need more complex tracking to get these
+        stopLossPrice,
         takeProfitPrice,
     };
 }

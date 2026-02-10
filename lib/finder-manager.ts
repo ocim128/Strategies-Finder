@@ -78,6 +78,7 @@ export class FinderManager {
 			this.populateMultiTimeframePresets();
 		});
 		state.subscribe('currentSymbol', () => {
+			this.timeframeLoader.clearCache();
 			this.applyMockRestrictionToMultiTimeframe();
 		});
 	}
@@ -459,6 +460,14 @@ export class FinderManager {
 			delete (rustSettings as { snapshotBodyPercentMax?: number }).snapshotBodyPercentMax;
 			delete (rustSettings as { snapshotWickSkewMin?: number }).snapshotWickSkewMin;
 			delete (rustSettings as { snapshotWickSkewMax?: number }).snapshotWickSkewMax;
+			delete (rustSettings as { snapshotVolumeTrendMin?: number }).snapshotVolumeTrendMin;
+			delete (rustSettings as { snapshotVolumeTrendMax?: number }).snapshotVolumeTrendMax;
+			delete (rustSettings as { snapshotVolumeBurstMin?: number }).snapshotVolumeBurstMin;
+			delete (rustSettings as { snapshotVolumeBurstMax?: number }).snapshotVolumeBurstMax;
+			delete (rustSettings as { snapshotVolumePriceDivergenceMin?: number }).snapshotVolumePriceDivergenceMin;
+			delete (rustSettings as { snapshotVolumePriceDivergenceMax?: number }).snapshotVolumePriceDivergenceMax;
+			delete (rustSettings as { snapshotVolumeConsistencyMin?: number }).snapshotVolumeConsistencyMin;
+			delete (rustSettings as { snapshotVolumeConsistencyMax?: number }).snapshotVolumeConsistencyMax;
 
 			const strategies = strategyRegistry.getAll();
 			const selectedStrategyEntries = Object.entries(strategies).filter(([key]) => {
@@ -582,7 +591,7 @@ export class FinderManager {
 									: (fixedConfirmationStatesByInterval.get(dataset.interval) ?? []);
 
 							if (confirmationStates.length > 0) {
-								signals = (job.strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both')
+								signals = (job.strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined')
 									? filterSignalsWithConfirmationsBoth(
 										dataset.data,
 										signals,
@@ -824,7 +833,7 @@ export class FinderManager {
 							// Generate signals - these can be large arrays
 							let signals = job.strategy.execute(state.ohlcvData, job.params);
 							if (confirmationContext.states.length > 0) {
-								signals = job.strategy.metadata?.role === 'entry'
+								signals = (job.strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined')
 									? filterSignalsWithConfirmationsBoth(
 										state.ohlcvData,
 										signals,
@@ -920,7 +929,7 @@ export class FinderManager {
 						const confirmationContext = buildConfirmationContext();
 						let signals = job.strategy.execute(state.ohlcvData, job.params);
 						if (confirmationContext.states.length > 0) {
-							signals = job.strategy.metadata?.role === 'entry'
+							signals = (job.strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined')
 								? filterSignalsWithConfirmationsBoth(
 									state.ohlcvData,
 									signals,
@@ -977,6 +986,7 @@ export class FinderManager {
 						delete (itemSettings as { executionModel?: string }).executionModel;
 						delete (itemSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
 						delete (itemSettings as { slippageBps?: number }).slippageBps;
+						delete (itemSettings as { marketMode?: string }).marketMode;
 						delete (itemSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
 						delete (itemSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
 						delete (itemSettings as { captureSnapshots?: boolean }).captureSnapshots;
@@ -1002,6 +1012,14 @@ export class FinderManager {
 						delete (itemSettings as { snapshotBodyPercentMax?: number }).snapshotBodyPercentMax;
 						delete (itemSettings as { snapshotWickSkewMin?: number }).snapshotWickSkewMin;
 						delete (itemSettings as { snapshotWickSkewMax?: number }).snapshotWickSkewMax;
+						delete (itemSettings as { snapshotVolumeTrendMin?: number }).snapshotVolumeTrendMin;
+						delete (itemSettings as { snapshotVolumeTrendMax?: number }).snapshotVolumeTrendMax;
+						delete (itemSettings as { snapshotVolumeBurstMin?: number }).snapshotVolumeBurstMin;
+						delete (itemSettings as { snapshotVolumeBurstMax?: number }).snapshotVolumeBurstMax;
+						delete (itemSettings as { snapshotVolumePriceDivergenceMin?: number }).snapshotVolumePriceDivergenceMin;
+						delete (itemSettings as { snapshotVolumePriceDivergenceMax?: number }).snapshotVolumePriceDivergenceMax;
+						delete (itemSettings as { snapshotVolumeConsistencyMin?: number }).snapshotVolumeConsistencyMin;
+						delete (itemSettings as { snapshotVolumeConsistencyMax?: number }).snapshotVolumeConsistencyMax;
 						return {
 							id: run.id,
 							signals: run.signals,

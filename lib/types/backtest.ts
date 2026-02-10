@@ -59,6 +59,14 @@ export interface NormalizedSettings {
     snapshotBodyPercentMax: number;
     snapshotWickSkewMin: number;
     snapshotWickSkewMax: number;
+    snapshotVolumeTrendMin: number;
+    snapshotVolumeTrendMax: number;
+    snapshotVolumeBurstMin: number;
+    snapshotVolumeBurstMax: number;
+    snapshotVolumePriceDivergenceMin: number;
+    snapshotVolumePriceDivergenceMax: number;
+    snapshotVolumeConsistencyMin: number;
+    snapshotVolumeConsistencyMax: number;
 }
 
 export interface IndicatorSeries {

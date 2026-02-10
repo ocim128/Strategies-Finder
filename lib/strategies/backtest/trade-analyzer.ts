@@ -83,7 +83,34 @@ const FEATURE_LABELS: Record<keyof TradeSnapshot, string> = {
     trendEfficiency: 'Trend Efficiency',
     atrRegimeRatio: 'ATR Regime Ratio',
     bodyPercent: 'Body % of Range',
-    wickSkew: 'Wick Skew %'
+    wickSkew: 'Wick Skew %',
+    volumeTrend: 'Volume Trend',
+    volumeBurst: 'Volume Burst',
+    volumePriceDivergence: 'Vol-Price Agreement',
+    volumeConsistency: 'Volume Consistency'
+};
+
+/**
+ * Some settings only support a single filter direction in the UI/runtime.
+ * barsFromHigh/barsFromLow are max-only (<= threshold), so only "below" is valid.
+ */
+const FEATURE_DIRECTIONS: Record<keyof TradeSnapshot, ('above' | 'below')[]> = {
+    rsi: ['above', 'below'],
+    adx: ['above', 'below'],
+    atrPercent: ['above', 'below'],
+    emaDistance: ['above', 'below'],
+    volumeRatio: ['above', 'below'],
+    priceRangePos: ['above', 'below'],
+    barsFromHigh: ['below'],
+    barsFromLow: ['below'],
+    trendEfficiency: ['above', 'below'],
+    atrRegimeRatio: ['above', 'below'],
+    bodyPercent: ['above', 'below'],
+    wickSkew: ['above', 'below'],
+    volumeTrend: ['above', 'below'],
+    volumeBurst: ['above', 'below'],
+    volumePriceDivergence: ['above', 'below'],
+    volumeConsistency: ['above', 'below']
 };
 
 // ============================================================================
@@ -266,7 +293,7 @@ function computeStats(values: number[]): FeatureStats {
  * 1. Extract all feature values from trades and build percentile candidates
  *    (5th through 95th) — this searches the ACTUAL data distribution, not
  *    just between win/loss means, so it naturally finds gentle thresholds.
- * 2. Try BOTH directions (above & below) for each candidate.
+ * 2. Try supported directions for each candidate.
  * 3. Score with a quadratic trade-preservation penalty:
  *    score = expectancyImprovement × (keepRatio)²
  *    This makes it very hard for aggressive filters (>30% removal) to win.
@@ -299,7 +326,7 @@ function findBestThreshold(
     const mode = options.mode ?? 'quality';
     const maxRemoval = clamp(options.maxSingleRemoval ?? (mode === 'relax_aware' ? 20 : MAX_SINGLE_REMOVAL), 5, 90);
     const relaxTolerance = clamp(options.relaxExpectancyTolerancePct ?? 0.1, 0, 0.6);
-    const directions: ('above' | 'below')[] = ['above', 'below'];
+    const directions = FEATURE_DIRECTIONS[feature] ?? ['above', 'below'];
 
     for (const dir of directions) {
         for (const candidate of uniqueCandidates) {
@@ -349,11 +376,36 @@ function findBestThreshold(
     if (finalSim.remainingTrades < MIN_TRADES_FOR_FILTER) return null;
     if (finalSim.removedPercent > maxRemoval) return null;
 
-    return { direction: bestDirection, threshold: Math.round(bestThreshold * 100) / 100 };
+    return {
+        direction: bestDirection,
+        threshold: normalizeSuggestedThreshold(bestThreshold)
+    };
 }
 
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
+}
+
+function normalizeSuggestedThreshold(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    if (value === 0) return 0;
+
+    const abs = Math.abs(value);
+    const decimals = abs >= 100 ? 2
+        : abs >= 1 ? 3
+            : abs >= 0.1 ? 4
+                : abs >= 0.01 ? 5
+                    : 6;
+
+    let normalized = Number(value.toFixed(decimals));
+
+    // Keep tiny but non-zero thresholds non-zero because zero is "disabled" for many filters.
+    if (normalized === 0) {
+        const epsilon = 10 ** -decimals;
+        normalized = value > 0 ? epsilon : -epsilon;
+    }
+
+    return normalized;
 }
 
 // ============================================================================

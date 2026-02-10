@@ -17,7 +17,7 @@ import { OHLCVData, Signal, BacktestResult, BacktestSettings } from './types/str
 
 interface RustHealthResponse {
     status: string;
-    version: string;
+    version?: string;
     engine: string;
 }
 
@@ -99,8 +99,13 @@ type ProgressCallback = (update: ProgressUpdate) => void;
 export class RustEngineClient {
     private readonly baseUrl: string;
     private isAvailable: boolean = false;
+    private engineVersion: string | null = null;
     private lastHealthCheck: number = 0;
     private readonly healthCheckInterval = 30000; // 30 seconds
+    private readonly backtestTimeoutMs = 30_000;
+    private readonly batchBacktestTimeoutMs = 120_000;
+    private readonly cacheTimeoutMs = 180_000;
+    private readonly optimizerTimeoutMs = 180_000;
     private ws: WebSocket | null = null;
 
     // Data caching for large datasets
@@ -116,9 +121,61 @@ export class RustEngineClient {
      */
     private generateDataHash(data: OHLCVData[]): string {
         if (data.length === 0) return 'empty';
-        const first = data[0];
-        const last = data[data.length - 1];
-        return `${first.time}-${last.time}-${data.length}`;
+        const maxSamples = 200_000;
+        const stride = Math.max(1, Math.floor(data.length / maxSamples));
+        let hash = 0x811c9dc5;
+
+        for (let i = 0; i < data.length; i += stride) {
+            hash = this.hashBar(hash, data[i], i);
+        }
+
+        const lastIndex = data.length - 1;
+        if (lastIndex % stride !== 0) {
+            hash = this.hashBar(hash, data[lastIndex], lastIndex);
+        }
+
+        const firstTime = this.normalizeTimeForHash(data[0].time);
+        const lastTime = this.normalizeTimeForHash(data[lastIndex].time);
+        return `${data.length}-${firstTime}-${lastTime}-${hash.toString(16)}`;
+    }
+
+    private hashBar(hash: number, bar: OHLCVData, index: number): number {
+        let next = hash;
+        next = this.mixHash(next, index);
+        next = this.mixHash(next, this.normalizeTimeForHash(bar.time));
+        next = this.mixHash(next, bar.open);
+        next = this.mixHash(next, bar.high);
+        next = this.mixHash(next, bar.low);
+        next = this.mixHash(next, bar.close);
+        next = this.mixHash(next, bar.volume);
+        return next;
+    }
+
+    private normalizeTimeForHash(time: OHLCVData['time']): number {
+        if (typeof time === 'number' && Number.isFinite(time)) {
+            return Math.round(time);
+        }
+        if (typeof time === 'string') {
+            let hash = 0;
+            for (let i = 0; i < time.length; i++) {
+                hash = ((hash * 31) + time.charCodeAt(i)) >>> 0;
+            }
+            return hash;
+        }
+        if (time && typeof time === 'object') {
+            const businessDay = time as { year?: number; month?: number; day?: number };
+            const year = Number.isFinite(businessDay.year) ? Number(businessDay.year) : 0;
+            const month = Number.isFinite(businessDay.month) ? Number(businessDay.month) : 0;
+            const day = Number.isFinite(businessDay.day) ? Number(businessDay.day) : 0;
+            return (year * 10000) + (month * 100) + day;
+        }
+        return 0;
+    }
+
+    private mixHash(hash: number, value: number): number {
+        const normalized = Number.isFinite(value) ? Math.round(value * 1_000_000) : 0;
+        const mixed = hash ^ (normalized + 0x9e3779b9 + ((hash << 6) >>> 0) + (hash >>> 2));
+        return mixed >>> 0;
     }
 
     // ========================================================================
@@ -145,12 +202,16 @@ export class RustEngineClient {
             if (response.ok) {
                 const data: RustHealthResponse = await response.json();
                 this.isAvailable = data.status === 'healthy';
+                this.engineVersion = typeof data.version === 'string' ? data.version : null;
                 this.lastHealthCheck = now;
-                console.log(`[RustEngine] Connected: v${data.version}`);
+                console.log(`[RustEngine] Connected: v${this.engineVersion ?? 'unknown'}`);
                 return this.isAvailable;
             }
+            this.isAvailable = false;
+            this.engineVersion = null;
         } catch (error) {
             this.isAvailable = false;
+            this.engineVersion = null;
             console.warn('[RustEngine] Server not available, using TypeScript fallback');
         }
 
@@ -162,6 +223,10 @@ export class RustEngineClient {
      */
     get available(): boolean {
         return this.isAvailable;
+    }
+
+    get version(): string | null {
+        return this.engineVersion;
     }
 
     // ========================================================================
@@ -201,6 +266,7 @@ export class RustEngineClient {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(request),
+                signal: AbortSignal.timeout(this.backtestTimeoutMs),
             });
 
             if (!response.ok) {
@@ -263,6 +329,7 @@ export class RustEngineClient {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(request),
+                signal: AbortSignal.timeout(this.batchBacktestTimeoutMs),
             });
 
             if (!response.ok) {
@@ -314,6 +381,7 @@ export class RustEngineClient {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ data }),
+                signal: AbortSignal.timeout(this.cacheTimeoutMs),
             });
 
             if (!response.ok) {
@@ -376,6 +444,7 @@ export class RustEngineClient {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(request),
+                signal: AbortSignal.timeout(this.batchBacktestTimeoutMs),
             });
 
             if (!response.ok) {
@@ -449,6 +518,7 @@ export class RustEngineClient {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(request),
+                signal: AbortSignal.timeout(this.optimizerTimeoutMs),
             });
 
             // Disconnect WebSocket
@@ -517,6 +587,7 @@ export class RustEngineClient {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(request),
+                signal: AbortSignal.timeout(this.optimizerTimeoutMs),
             });
 
             // Disconnect WebSocket
@@ -603,7 +674,7 @@ export async function getEngineStatus(): Promise<{
     version?: string;
 }> {
     if (await rustEngine.checkHealth()) {
-        return { engine: 'rust', version: '0.1.0' };
+        return { engine: 'rust', version: rustEngine.version ?? undefined };
     }
     return { engine: 'typescript' };
 }

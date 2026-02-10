@@ -7,6 +7,10 @@ import {
     computeAtrRegimeRatio,
     computeBodyPercent,
     computeTrendEfficiency,
+    computeRelativeVolumeBurst,
+    computeVolumeConsistency,
+    computeVolumePriceDivergence,
+    computeVolumeTrend,
     computeWickSkew
 } from './snapshot-derived-metrics';
 
@@ -141,6 +145,13 @@ export function captureTradeSnapshot(
     const bodyPercent = computeBodyPercent(data[barIndex]);
     const wickSkew = computeWickSkew(data[barIndex]);
 
+    // Volume-derived metrics
+    const volumes = getVolumes(data);
+    const volumeTrend = computeVolumeTrend(volumes, barIndex);
+    const volumeBurst = computeRelativeVolumeBurst(volumes, barIndex);
+    const volumePriceDivergence = computeVolumePriceDivergence(data, barIndex);
+    const volumeConsistency = computeVolumeConsistency(volumes, barIndex);
+
     return {
         rsi,
         adx,
@@ -153,6 +164,10 @@ export function captureTradeSnapshot(
         trendEfficiency,
         atrRegimeRatio,
         bodyPercent,
-        wickSkew
+        wickSkew,
+        volumeTrend,
+        volumeBurst,
+        volumePriceDivergence,
+        volumeConsistency
     };
 }

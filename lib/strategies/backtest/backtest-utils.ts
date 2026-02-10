@@ -77,6 +77,14 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         snapshotBodyPercentMax: clamp(toNumberOr(settings?.snapshotBodyPercentMax, 0), 0, 100),
         snapshotWickSkewMin: clamp(toNumberOr(settings?.snapshotWickSkewMin, 0), -100, 100),
         snapshotWickSkewMax: clamp(toNumberOr(settings?.snapshotWickSkewMax, 0), -100, 100),
+        snapshotVolumeTrendMin: Math.max(0, toNumberOr(settings?.snapshotVolumeTrendMin, 0)),
+        snapshotVolumeTrendMax: Math.max(0, toNumberOr(settings?.snapshotVolumeTrendMax, 0)),
+        snapshotVolumeBurstMin: toNumberOr(settings?.snapshotVolumeBurstMin, 0),
+        snapshotVolumeBurstMax: toNumberOr(settings?.snapshotVolumeBurstMax, 0),
+        snapshotVolumePriceDivergenceMin: clamp(toNumberOr(settings?.snapshotVolumePriceDivergenceMin, 0), -1, 1),
+        snapshotVolumePriceDivergenceMax: clamp(toNumberOr(settings?.snapshotVolumePriceDivergenceMax, 0), -1, 1),
+        snapshotVolumeConsistencyMin: Math.max(0, toNumberOr(settings?.snapshotVolumeConsistencyMin, 0)),
+        snapshotVolumeConsistencyMax: Math.max(0, toNumberOr(settings?.snapshotVolumeConsistencyMax, 0)),
     };
 }
 
@@ -140,7 +148,9 @@ export function applySlippage(price: number, side: 'buy' | 'sell', slippageRate:
 }
 
 export function normalizeTradeDirection(settings?: BacktestSettings): TradeDirection {
-    return settings?.tradeDirection === 'short' || settings?.tradeDirection === 'both' ? settings.tradeDirection : 'long';
+    return settings?.tradeDirection === 'short' || settings?.tradeDirection === 'both' || settings?.tradeDirection === 'combined'
+        ? settings.tradeDirection
+        : 'long';
 }
 
 export function signalToPositionDirection(type: Signal['type']): 'long' | 'short' {
@@ -164,7 +174,7 @@ export function directionFactorFor(direction: 'long' | 'short'): number {
 }
 
 export function allowsSignalAsEntry(signalType: Signal['type'], tradeDirection: TradeDirection): boolean {
-    if (tradeDirection === 'both') return true;
+    if (tradeDirection === 'both' || tradeDirection === 'combined') return true;
     if (tradeDirection === 'short') return signalType === 'sell';
     return signalType === 'buy';
 }
@@ -195,7 +205,11 @@ export function needsSnapshotIndicators(config: NormalizedSettings, captureSnaps
         config.snapshotTrendEfficiencyMin > 0 || config.snapshotTrendEfficiencyMax > 0 ||
         config.snapshotAtrRegimeRatioMin > 0 || config.snapshotAtrRegimeRatioMax > 0 ||
         config.snapshotBodyPercentMin > 0 || config.snapshotBodyPercentMax > 0 ||
-        config.snapshotWickSkewMin !== 0 || config.snapshotWickSkewMax !== 0;
+        config.snapshotWickSkewMin !== 0 || config.snapshotWickSkewMax !== 0 ||
+        config.snapshotVolumeTrendMin > 0 || config.snapshotVolumeTrendMax > 0 ||
+        config.snapshotVolumeBurstMin !== 0 || config.snapshotVolumeBurstMax !== 0 ||
+        config.snapshotVolumePriceDivergenceMin !== 0 || config.snapshotVolumePriceDivergenceMax !== 0 ||
+        config.snapshotVolumeConsistencyMin > 0 || config.snapshotVolumeConsistencyMax > 0;
 }
 
 

@@ -6,7 +6,8 @@
 import { binanceSearchService, type BinanceSymbol } from '../binance-search-service';
 import { dataManager } from '../data-manager';
 import { strategyRegistry } from '../../strategyRegistry';
-import type { Signal } from '../types/strategies';
+import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth } from '../confirmation-strategies';
+import type { BacktestSettings, Signal, StrategyParams, TradeDirection, TradeFilterMode } from '../types/strategies';
 import { getOpenPositionForScanner } from '../strategies/backtest';
 import type {
     ScannerConfig,
@@ -22,6 +23,195 @@ import type {
 const BATCH_SIZE = 10;
 const BATCH_DELAY_MS = 1500;
 const MIN_DATA_BARS = 200;
+const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>(['none', 'close', 'volume', 'rsi', 'trend', 'adx']);
+const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(['long', 'short', 'both', 'combined']);
+
+function readBoolean(raw: Record<string, unknown>, key: string, fallback: boolean): boolean {
+    const value = raw[key];
+    return typeof value === 'boolean' ? value : fallback;
+}
+
+function readNumber(raw: Record<string, unknown>, key: string, fallback: number): number {
+    const value = raw[key];
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function readTradeFilterMode(rawValue: unknown, fallback: TradeFilterMode = 'none'): TradeFilterMode {
+    if (typeof rawValue === 'string' && VALID_TRADE_FILTER_MODES.has(rawValue as TradeFilterMode)) {
+        return rawValue as TradeFilterMode;
+    }
+    return fallback;
+}
+
+function readTradeDirection(rawValue: unknown, fallback: TradeDirection = 'long'): TradeDirection {
+    if (typeof rawValue === 'string' && VALID_TRADE_DIRECTIONS.has(rawValue as TradeDirection)) {
+        return rawValue as TradeDirection;
+    }
+    return fallback;
+}
+
+function readConfirmationStrategies(rawValue: unknown): string[] {
+    if (!Array.isArray(rawValue)) return [];
+    return rawValue.filter((value): value is string => typeof value === 'string' && value.length > 0);
+}
+
+function readConfirmationParams(rawValue: unknown): Record<string, StrategyParams> {
+    if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) {
+        return {};
+    }
+
+    const normalized: Record<string, StrategyParams> = {};
+    for (const [strategyKey, params] of Object.entries(rawValue as Record<string, unknown>)) {
+        if (!params || typeof params !== 'object' || Array.isArray(params)) continue;
+        const normalizedParams: StrategyParams = {};
+        for (const [paramKey, paramValue] of Object.entries(params as Record<string, unknown>)) {
+            if (typeof paramValue === 'number' && Number.isFinite(paramValue)) {
+                normalizedParams[paramKey] = paramValue;
+            }
+        }
+        normalized[strategyKey] = normalizedParams;
+    }
+    return normalized;
+}
+
+function hasUiToggleSettings(raw: Record<string, unknown>): boolean {
+    return [
+        'riskSettingsToggle',
+        'tradeFilterSettingsToggle',
+        'entrySettingsToggle',
+        'confirmationStrategiesToggle',
+        'snapshotAtrFilterToggle',
+        'snapshotVolumeFilterToggle',
+        'snapshotAdxFilterToggle',
+        'snapshotEmaFilterToggle',
+        'snapshotRsiFilterToggle',
+        'snapshotPriceRangePosFilterToggle',
+        'snapshotBarsFromHighFilterToggle',
+        'snapshotBarsFromLowFilterToggle',
+        'snapshotTrendEfficiencyFilterToggle',
+        'snapshotAtrRegimeFilterToggle',
+        'snapshotBodyPercentFilterToggle',
+        'snapshotWickSkewFilterToggle',
+        'snapshotVolumeTrendFilterToggle',
+        'snapshotVolumeBurstFilterToggle',
+        'snapshotVolumePriceDivergenceFilterToggle',
+        'snapshotVolumeConsistencyFilterToggle',
+    ].some((key) => key in raw);
+}
+
+function readSnapshotValue(
+    raw: Record<string, unknown>,
+    toggleKey: string,
+    valueKey: string
+): number {
+    return readBoolean(raw, toggleKey, false) ? readNumber(raw, valueKey, 0) : 0;
+}
+
+/**
+ * Convert persisted UI config into the same effective BacktestSettings shape
+ * used by BacktestService.getBacktestSettings().
+ */
+export function resolveScannerBacktestSettings(settings?: BacktestSettings): BacktestSettings {
+    if (!settings) return {};
+
+    const raw = settings as Record<string, unknown>;
+    if (!hasUiToggleSettings(raw)) {
+        return { ...settings };
+    }
+
+    const riskEnabled = readBoolean(raw, 'riskSettingsToggle', false);
+    const riskModeRaw = raw['riskMode'];
+    const riskMode = riskModeRaw === 'advanced' || riskModeRaw === 'percentage' ? riskModeRaw : 'simple';
+    const useAtrRisk = riskEnabled && (riskMode === 'simple' || riskMode === 'advanced');
+    const usePercentRisk = riskEnabled && riskMode === 'percentage';
+
+    const tradeFilterEnabled = readBoolean(raw, 'tradeFilterSettingsToggle', readBoolean(raw, 'entrySettingsToggle', false));
+    const modeCandidate = raw['tradeFilterMode'] ?? raw['entryConfirmation'];
+    const tradeFilterMode = tradeFilterEnabled ? readTradeFilterMode(modeCandidate, 'none') : 'none';
+
+    const confirmationEnabled = readBoolean(raw, 'confirmationStrategiesToggle', false);
+    const confirmationStrategies = confirmationEnabled
+        ? readConfirmationStrategies(raw['confirmationStrategies'])
+        : [];
+    const confirmationStrategyParams = confirmationEnabled
+        ? readConfirmationParams(raw['confirmationStrategyParams'])
+        : {};
+
+    const tradeDirection = readTradeDirection(raw['tradeDirection'], 'long');
+    const executionModel = raw['executionModel'];
+    const normalizedExecutionModel = executionModel === 'signal_close' || executionModel === 'next_open' || executionModel === 'next_close'
+        ? executionModel
+        : 'signal_close';
+
+    const marketModeRaw = raw['marketMode'];
+    const marketMode = marketModeRaw === 'uptrend' || marketModeRaw === 'downtrend' || marketModeRaw === 'sideway'
+        ? marketModeRaw
+        : 'all';
+
+    return {
+        atrPeriod: readNumber(raw, 'atrPeriod', 14),
+        stopLossAtr: useAtrRisk ? readNumber(raw, 'stopLossAtr', 1.5) : 0,
+        takeProfitAtr: useAtrRisk ? readNumber(raw, 'takeProfitAtr', 3) : 0,
+        trailingAtr: useAtrRisk ? readNumber(raw, 'trailingAtr', 2) : 0,
+        partialTakeProfitAtR: riskEnabled && riskMode === 'advanced' ? readNumber(raw, 'partialTakeProfitAtR', 1) : 0,
+        partialTakeProfitPercent: riskEnabled && riskMode === 'advanced' ? readNumber(raw, 'partialTakeProfitPercent', 50) : 0,
+        breakEvenAtR: riskEnabled && riskMode === 'advanced' ? readNumber(raw, 'breakEvenAtR', 1) : 0,
+        timeStopBars: riskEnabled && riskMode === 'advanced' ? readNumber(raw, 'timeStopBars', 0) : 0,
+        riskMode,
+        stopLossPercent: usePercentRisk ? readNumber(raw, 'stopLossPercent', 5) : 0,
+        takeProfitPercent: usePercentRisk ? readNumber(raw, 'takeProfitPercent', 10) : 0,
+        stopLossEnabled: usePercentRisk ? readBoolean(raw, 'stopLossEnabled', true) : false,
+        takeProfitEnabled: usePercentRisk ? readBoolean(raw, 'takeProfitEnabled', true) : false,
+        marketMode,
+        tradeFilterMode,
+        entryConfirmation: tradeFilterMode,
+        confirmLookback: tradeFilterEnabled ? readNumber(raw, 'confirmLookback', 1) : 1,
+        volumeSmaPeriod: tradeFilterEnabled ? readNumber(raw, 'volumeSmaPeriod', 20) : 20,
+        volumeMultiplier: tradeFilterEnabled ? readNumber(raw, 'volumeMultiplier', 1.5) : 1.5,
+        rsiPeriod: tradeFilterEnabled ? readNumber(raw, 'rsiPeriod', readNumber(raw, 'confirmRsiPeriod', 14)) : 14,
+        rsiBullish: tradeFilterEnabled ? readNumber(raw, 'rsiBullish', readNumber(raw, 'confirmRsiBullish', 55)) : 55,
+        rsiBearish: tradeFilterEnabled ? readNumber(raw, 'rsiBearish', readNumber(raw, 'confirmRsiBearish', 45)) : 45,
+        confirmationStrategies,
+        confirmationStrategyParams,
+        tradeDirection,
+        executionModel: normalizedExecutionModel,
+        allowSameBarExit: readBoolean(raw, 'allowSameBarExit', false),
+        slippageBps: readNumber(raw, 'slippageBps', 5),
+        strategyTimeframeEnabled: readBoolean(raw, 'strategyTimeframeEnabled', false),
+        strategyTimeframeMinutes: readNumber(raw, 'strategyTimeframeMinutes', 120),
+        captureSnapshots: false,
+        snapshotAtrPercentMin: readSnapshotValue(raw, 'snapshotAtrFilterToggle', 'snapshotAtrPercentMin'),
+        snapshotAtrPercentMax: readSnapshotValue(raw, 'snapshotAtrFilterToggle', 'snapshotAtrPercentMax'),
+        snapshotVolumeRatioMin: readSnapshotValue(raw, 'snapshotVolumeFilterToggle', 'snapshotVolumeRatioMin'),
+        snapshotVolumeRatioMax: readSnapshotValue(raw, 'snapshotVolumeFilterToggle', 'snapshotVolumeRatioMax'),
+        snapshotAdxMin: readSnapshotValue(raw, 'snapshotAdxFilterToggle', 'snapshotAdxMin'),
+        snapshotAdxMax: readSnapshotValue(raw, 'snapshotAdxFilterToggle', 'snapshotAdxMax'),
+        snapshotEmaDistanceMin: readSnapshotValue(raw, 'snapshotEmaFilterToggle', 'snapshotEmaDistanceMin'),
+        snapshotEmaDistanceMax: readSnapshotValue(raw, 'snapshotEmaFilterToggle', 'snapshotEmaDistanceMax'),
+        snapshotRsiMin: readSnapshotValue(raw, 'snapshotRsiFilterToggle', 'snapshotRsiMin'),
+        snapshotRsiMax: readSnapshotValue(raw, 'snapshotRsiFilterToggle', 'snapshotRsiMax'),
+        snapshotPriceRangePosMin: readSnapshotValue(raw, 'snapshotPriceRangePosFilterToggle', 'snapshotPriceRangePosMin'),
+        snapshotPriceRangePosMax: readSnapshotValue(raw, 'snapshotPriceRangePosFilterToggle', 'snapshotPriceRangePosMax'),
+        snapshotBarsFromHighMax: readSnapshotValue(raw, 'snapshotBarsFromHighFilterToggle', 'snapshotBarsFromHighMax'),
+        snapshotBarsFromLowMax: readSnapshotValue(raw, 'snapshotBarsFromLowFilterToggle', 'snapshotBarsFromLowMax'),
+        snapshotTrendEfficiencyMin: readSnapshotValue(raw, 'snapshotTrendEfficiencyFilterToggle', 'snapshotTrendEfficiencyMin'),
+        snapshotTrendEfficiencyMax: readSnapshotValue(raw, 'snapshotTrendEfficiencyFilterToggle', 'snapshotTrendEfficiencyMax'),
+        snapshotAtrRegimeRatioMin: readSnapshotValue(raw, 'snapshotAtrRegimeFilterToggle', 'snapshotAtrRegimeRatioMin'),
+        snapshotAtrRegimeRatioMax: readSnapshotValue(raw, 'snapshotAtrRegimeFilterToggle', 'snapshotAtrRegimeRatioMax'),
+        snapshotBodyPercentMin: readSnapshotValue(raw, 'snapshotBodyPercentFilterToggle', 'snapshotBodyPercentMin'),
+        snapshotBodyPercentMax: readSnapshotValue(raw, 'snapshotBodyPercentFilterToggle', 'snapshotBodyPercentMax'),
+        snapshotWickSkewMin: readSnapshotValue(raw, 'snapshotWickSkewFilterToggle', 'snapshotWickSkewMin'),
+        snapshotWickSkewMax: readSnapshotValue(raw, 'snapshotWickSkewFilterToggle', 'snapshotWickSkewMax'),
+        snapshotVolumeTrendMin: readSnapshotValue(raw, 'snapshotVolumeTrendFilterToggle', 'snapshotVolumeTrendMin'),
+        snapshotVolumeTrendMax: readSnapshotValue(raw, 'snapshotVolumeTrendFilterToggle', 'snapshotVolumeTrendMax'),
+        snapshotVolumeBurstMin: readSnapshotValue(raw, 'snapshotVolumeBurstFilterToggle', 'snapshotVolumeBurstMin'),
+        snapshotVolumeBurstMax: readSnapshotValue(raw, 'snapshotVolumeBurstFilterToggle', 'snapshotVolumeBurstMax'),
+        snapshotVolumePriceDivergenceMin: readSnapshotValue(raw, 'snapshotVolumePriceDivergenceFilterToggle', 'snapshotVolumePriceDivergenceMin'),
+        snapshotVolumePriceDivergenceMax: readSnapshotValue(raw, 'snapshotVolumePriceDivergenceFilterToggle', 'snapshotVolumePriceDivergenceMax'),
+        snapshotVolumeConsistencyMin: readSnapshotValue(raw, 'snapshotVolumeConsistencyFilterToggle', 'snapshotVolumeConsistencyMin'),
+        snapshotVolumeConsistencyMax: readSnapshotValue(raw, 'snapshotVolumeConsistencyFilterToggle', 'snapshotVolumeConsistencyMax'),
+    };
+}
 
 // ============================================================================
 // Scanner Engine Class
@@ -186,14 +376,38 @@ export class ScannerEngine {
                 const params = { ...strategy.defaultParams, ...stratConfig.strategyParams };
                 const rawSignals = strategy.execute(data, params);
 
-                // Get the backtest settings for this strategy
-                const backtestSettings = stratConfig.backtestSettings ?? {};
+                // Normalize persisted UI config into effective backtest settings.
+                const backtestSettings = resolveScannerBacktestSettings(stratConfig.backtestSettings);
+
+                // Apply confirmation-strategy filtering to match backtest flow.
+                const confirmationStrategies = backtestSettings.confirmationStrategies ?? [];
+                const tradeFilterMode = readTradeFilterMode(
+                    backtestSettings.tradeFilterMode ?? backtestSettings.entryConfirmation ?? 'none',
+                    'none'
+                );
+                const confirmationStates = confirmationStrategies.length > 0
+                    ? buildConfirmationStates(data, confirmationStrategies, backtestSettings.confirmationStrategyParams)
+                    : [];
+                const filteredSignals = confirmationStates.length > 0
+                    ? ((strategy.metadata?.role === 'entry' || backtestSettings.tradeDirection === 'both' || backtestSettings.tradeDirection === 'combined')
+                        ? filterSignalsWithConfirmationsBoth(data, rawSignals, confirmationStates, tradeFilterMode)
+                        : filterSignalsWithConfirmations(
+                            data,
+                            rawSignals,
+                            confirmationStates,
+                            tradeFilterMode,
+                            backtestSettings.tradeDirection ?? 'long'
+                        ))
+                    : rawSignals;
 
                 // Run a backtest simulation to get the current open position (if any)
-                const openPosition = getOpenPositionForScanner(data, rawSignals, backtestSettings);
+                const openPosition = getOpenPositionForScanner(data, filteredSignals, backtestSettings);
+                const maxSignalAgeBars = Number.isFinite(config.signalFreshnessBars)
+                    ? Math.max(0, Math.floor(config.signalFreshnessBars))
+                    : Number.POSITIVE_INFINITY;
 
-                // Only add to results if there's an open position
-                if (openPosition) {
+                // Only add to results if there's an open and fresh-enough position
+                if (openPosition && openPosition.barsInTrade <= maxSignalAgeBars) {
                     // Create a signal-like object from the open position
                     const signal: Signal = {
                         time: openPosition.entryTime,

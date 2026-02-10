@@ -111,7 +111,7 @@ class LogicTestService {
                 if (hasConfirmationFilters) {
                     const confirmationStates = buildConfirmationStates(mockData, confirmationStrategies, confirmationParams);
                     if (confirmationStates.length > 0) {
-                        signals = backtestSettings.tradeDirection === 'both'
+                        signals = strategy.metadata?.role === 'entry' || backtestSettings.tradeDirection === 'both' || backtestSettings.tradeDirection === 'combined'
                             ? filterSignalsWithConfirmationsBoth(
                                 mockData,
                                 signals,

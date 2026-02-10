@@ -142,16 +142,30 @@ export function setupEventHandlers() {
                 asset.type === 'stock' ? 'Stock' :
                     asset.type === 'forex' ? 'Forex' : 'Commodity';
 
-            item.innerHTML = `
-                <div class="symbol-item-icon">${iconText}</div>
-                <div class="symbol-item-details">
-                    <div class="symbol-item-name">
-                        ${asset.displayName}
-                        <span class="symbol-item-badge ${badgeClass}">${badgeText}</span>
-                    </div>
-                    <div class="symbol-item-pair">${asset.symbol}</div>
-                </div>
-            `;
+            const icon = document.createElement('div');
+            icon.className = 'symbol-item-icon';
+            icon.textContent = iconText;
+
+            const details = document.createElement('div');
+            details.className = 'symbol-item-details';
+
+            const name = document.createElement('div');
+            name.className = 'symbol-item-name';
+            name.textContent = asset.displayName;
+
+            const badge = document.createElement('span');
+            badge.className = `symbol-item-badge ${badgeClass}`;
+            badge.textContent = badgeText;
+            name.appendChild(badge);
+
+            const pair = document.createElement('div');
+            pair.className = 'symbol-item-pair';
+            pair.textContent = asset.symbol;
+
+            details.appendChild(name);
+            details.appendChild(pair);
+            item.appendChild(icon);
+            item.appendChild(details);
 
             // Click handler
             item.addEventListener('click', () => selectSymbol(asset.symbol, asset.displayName));

@@ -20,6 +20,7 @@ import {
     generateMockData,
     isMockSymbol
 } from "./dataProviders/mock";
+import { tradfiSearchService } from "./tradfi-search-service";
 import { HistoricalFetchOptions } from "./types/index";
 import { getIntervalSeconds } from "./dataProviders/utils";
 
@@ -27,6 +28,7 @@ type DataProvider = 'binance' | 'bybit-tradfi';
 
 export class DataManager {
     private nonBinanceProviderOverride: Map<string, DataProvider> = new Map();
+    private autoReloadSuppressCount = 0;
     private ws: WebSocket | null = null;
     public isStreaming: boolean = false;
     public streamSymbol: string = '';
@@ -58,14 +60,26 @@ export class DataManager {
         return isMockSymbol(symbol);
     }
 
+    public suppressNextAutoReload(count = 1): void {
+        this.autoReloadSuppressCount += Math.max(0, Math.floor(count));
+    }
+
+    public shouldSkipAutoReload(): boolean {
+        if (this.autoReloadSuppressCount <= 0) return false;
+        this.autoReloadSuppressCount -= 1;
+        return true;
+    }
+
     public getProvider(symbol: string): DataProvider {
-        if (this.nonBinanceProviderOverride.has(symbol)) {
-            return this.nonBinanceProviderOverride.get(symbol)!;
+        const normalizedSymbol = symbol.trim().toUpperCase();
+        if (this.nonBinanceProviderOverride.has(normalizedSymbol)) {
+            return this.nonBinanceProviderOverride.get(normalizedSymbol)!;
         }
-        if (symbol.includes('/') || symbol.length === 6) {
-            // Likely forex/crypto pair
-            // Could add more heuristics here
+        if (tradfiSearchService.isTradFiSymbol(normalizedSymbol)) {
+            this.nonBinanceProviderOverride.set(normalizedSymbol, 'bybit-tradfi');
+            return 'bybit-tradfi';
         }
+
         return 'binance';
     }
 
@@ -159,6 +173,9 @@ export class DataManager {
             return;
         }
         const provider = this.getProvider(symbol);
+        if (provider !== 'binance') {
+            this.nonBinanceProviderOverride.set(symbol.trim().toUpperCase(), provider);
+        }
         if (provider === 'binance' && !isBinanceInterval(interval)) {
             debugLogger.info('data.stream.skip_interval', { symbol, interval, provider });
             return;
@@ -338,7 +355,6 @@ export class DataManager {
 
         try {
             let candle: OHLCVData | null = null;
-            let provider: string | null = null;
 
             if (this.streamProvider === 'bybit-tradfi') {
                 candle = await fetchBybitTradFiLatest(symbol, interval, abort.signal);
@@ -347,7 +363,6 @@ export class DataManager {
             if (abort.signal.aborted) return;
 
             if (candle) {
-                if (provider) this.nonBinanceProviderOverride.set(symbol, provider as DataProvider);
                 // Ensure timestamp is strictly increasing or same? 
                 // We trust applyRealtimeCandle specific logic.
                 this.handleStreamUpdate(candle);

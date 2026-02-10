@@ -5,16 +5,18 @@ import {
     LineSeries,
     HistogramSeries,
     DeepPartial,
-    ChartOptions,
     Time,
     createSeriesMarkers,
     SeriesMarker,
     MouseEventParams,
     ISeriesApi,
+    TickMarkType,
+    TimeChartOptions,
 } from "lightweight-charts";
 import { state } from "./state";
 import { darkTheme, lightTheme, ENHANCED_CANDLE_COLORS } from "./constants";
 import { toHeikinAshi } from "./heikin-ashi-utils";
+import { formatJakartaTickMark, formatJakartaTime } from "./timezone-utils";
 
 import { Trade, OHLCVData } from "./strategies/index";
 
@@ -33,6 +35,15 @@ export class ChartManager {
     private correlationUpperSeries: ISeriesApi<"Line"> | null = null;
     private correlationLowerSeries: ISeriesApi<"Line"> | null = null;
     private readonly MIN_BAR_SPACING = 2;
+    private readonly jakartaTimeFormatter = (time: Time): string => (
+        formatJakartaTime(
+            time,
+            { month: 'short', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }
+        )
+    );
+    private readonly jakartaTickMarkFormatter = (time: Time, tickMarkType: TickMarkType, locale: string): string | null => (
+        formatJakartaTickMark(time, tickMarkType, locale)
+    );
 
     public initCharts() {
         const container = document.getElementById('main-chart')!;
@@ -41,6 +52,13 @@ export class ChartManager {
         state.chart = createChart(container, {
             ...darkTheme,
             autoSize: true,
+            localization: {
+                timeFormatter: this.jakartaTimeFormatter,
+            },
+            timeScale: {
+                ...darkTheme.timeScale,
+                tickMarkFormatter: this.jakartaTickMarkFormatter,
+            },
             handleScroll: {
                 mouseWheel: false,
                 pressedMouseMove: true,
@@ -63,7 +81,7 @@ export class ChartManager {
                     labelVisible: true,
                 },
             },
-        } as DeepPartial<ChartOptions>);
+        } as DeepPartial<TimeChartOptions>);
 
         // Enhanced candlestick styling with better colors
         state.candlestickSeries = state.chart.addSeries(CandlestickSeries, {
@@ -79,6 +97,13 @@ export class ChartManager {
         state.equityChart = createChart(equityContainer, {
             ...darkTheme,
             autoSize: true,
+            localization: {
+                timeFormatter: this.jakartaTimeFormatter,
+            },
+            timeScale: {
+                ...darkTheme.timeScale,
+                tickMarkFormatter: this.jakartaTickMarkFormatter,
+            },
             rightPriceScale: {
                 borderColor: '#2a2e39',
                 scaleMargins: { top: 0.15, bottom: 0.1 },
@@ -94,7 +119,7 @@ export class ChartManager {
                 vertTouchDrag: false,
                 horzTouchDrag: false,
             },
-        } as DeepPartial<ChartOptions>);
+        } as DeepPartial<TimeChartOptions>);
 
         // Enhanced equity curve with better gradient
         state.equitySeries = state.equityChart.addSeries(AreaSeries, {
@@ -221,20 +246,15 @@ export class ChartManager {
             return v.toFixed(2);
         };
 
-        const formatDate = (time: Time) => {
-            if (typeof time === 'number') {
-                const date = new Date(time * 1000);
-                return date.toLocaleDateString('en-US', {
-                    weekday: 'short',
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-            }
-            return String(time);
-        };
+        const formatDate = (time: Time) => formatJakartaTime(time, {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        });
 
         const change = ((data.close - data.open) / data.open) * 100;
         const isPositive = change >= 0;
@@ -521,6 +541,7 @@ export class ChartManager {
         const theme = state.isDarkTheme ? darkTheme : lightTheme;
         state.chart.applyOptions(theme);
         state.equityChart.applyOptions(theme);
+        this.applyJakartaTimeFormatting();
 
         // Update candlestick colors based on theme
         const colors = state.isDarkTheme ? ENHANCED_CANDLE_COLORS : {
@@ -540,6 +561,20 @@ export class ChartManager {
             wickUpColor: colors.wickUp,
             wickDownColor: colors.wickDown,
         });
+    }
+
+    private applyJakartaTimeFormatting() {
+        const options = {
+            localization: {
+                timeFormatter: this.jakartaTimeFormatter,
+            },
+            timeScale: {
+                tickMarkFormatter: this.jakartaTickMarkFormatter,
+            },
+        } as DeepPartial<TimeChartOptions>;
+
+        state.chart.applyOptions(options);
+        state.equityChart.applyOptions(options);
     }
 
     /**
