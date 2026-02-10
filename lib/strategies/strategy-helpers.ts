@@ -4,59 +4,21 @@ import { Signal, OHLCVData, Time } from '../types/strategies';
 // Data Mapping & Memoization
 // ============================================================================
 
-const highsCache = new WeakMap<OHLCVData[], number[]>();
-const lowsCache = new WeakMap<OHLCVData[], number[]>();
-const closesCache = new WeakMap<OHLCVData[], number[]>();
-const volumesCache = new WeakMap<OHLCVData[], number[]>();
-
-/**
- * Gets a memoized array of high prices from OHLCV data.
- * Useful for ensuring indicator cache hits.
- */
-export function getHighs(data: OHLCVData[]): number[] {
-    let cached = highsCache.get(data);
-    if (!cached) {
-        cached = data.map(d => d.high);
-        highsCache.set(data, cached);
-    }
-    return cached;
+function getMemoized(cache: WeakMap<OHLCVData[], number[]>, data: OHLCVData[], mapper: (d: OHLCVData) => number): number[] {
+    let c = cache.get(data);
+    if (!c) { c = data.map(mapper); cache.set(data, c); }
+    return c;
 }
 
-/**
- * Gets a memoized array of low prices from OHLCV data.
- */
-export function getLows(data: OHLCVData[]): number[] {
-    let cached = lowsCache.get(data);
-    if (!cached) {
-        cached = data.map(d => d.low);
-        lowsCache.set(data, cached);
-    }
-    return cached;
-}
+const _h = new WeakMap<OHLCVData[], number[]>();
+const _l = new WeakMap<OHLCVData[], number[]>();
+const _c = new WeakMap<OHLCVData[], number[]>();
+const _v = new WeakMap<OHLCVData[], number[]>();
 
-/**
- * Gets a memoized array of close prices from OHLCV data.
- */
-export function getCloses(data: OHLCVData[]): number[] {
-    let cached = closesCache.get(data);
-    if (!cached) {
-        cached = data.map(d => d.close);
-        closesCache.set(data, cached);
-    }
-    return cached;
-}
-
-/**
- * Gets a memoized array of volume from OHLCV data.
- */
-export function getVolumes(data: OHLCVData[]): number[] {
-    let cached = volumesCache.get(data);
-    if (!cached) {
-        cached = data.map(d => d.volume);
-        volumesCache.set(data, cached);
-    }
-    return cached;
-}
+export const getHighs = (data: OHLCVData[]): number[] => getMemoized(_h, data, d => d.high);
+export const getLows = (data: OHLCVData[]): number[] => getMemoized(_l, data, d => d.low);
+export const getCloses = (data: OHLCVData[]): number[] => getMemoized(_c, data, d => d.close);
+export const getVolumes = (data: OHLCVData[]): number[] => getMemoized(_v, data, d => d.volume);
 
 // ============================================================================
 // Signal Helpers
@@ -76,37 +38,12 @@ export function hasNullValues(arrays: (number | null)[][], index: number): boole
     return false;
 }
 
-/**
- * Creates a buy signal.
- * @param data The OHLCV data array.
- * @param index The current index.
- * @param reason The reason for the signal.
- */
-export function createBuySignal(data: OHLCVData[], index: number, reason: string): Signal {
-    return {
-        time: data[index].time,
-        type: 'buy',
-        price: data[index].close,
-        reason,
-        barIndex: index,
-    };
+function createSignal(data: OHLCVData[], index: number, type: 'buy' | 'sell', reason: string): Signal {
+    return { time: data[index].time, type, price: data[index].close, reason, barIndex: index };
 }
 
-/**
- * Creates a sell signal.
- * @param data The OHLCV data array.
- * @param index The current index.
- * @param reason The reason for the signal.
- */
-export function createSellSignal(data: OHLCVData[], index: number, reason: string): Signal {
-    return {
-        time: data[index].time,
-        type: 'sell',
-        price: data[index].close,
-        reason,
-        barIndex: index,
-    };
-}
+export const createBuySignal = (data: OHLCVData[], index: number, reason: string): Signal => createSignal(data, index, 'buy', reason);
+export const createSellSignal = (data: OHLCVData[], index: number, reason: string): Signal => createSignal(data, index, 'sell', reason);
 
 /**
  * Helper to cross-check two arrays (e.g. Fast vs Slow MA).

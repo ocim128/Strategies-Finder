@@ -79,14 +79,11 @@ class StrategyRegistryImpl implements StrategyRegistry {
     }
 
     private toNumericTimeData(data: OHLCVData[]): OHLCVData[] | null {
-        const mapped: OHLCVData[] = [];
-        for (const bar of data) {
-            const t = this.toUnixSeconds(bar.time);
+        const mapped: OHLCVData[] = new Array(data.length);
+        for (let i = 0; i < data.length; i++) {
+            const t = this.toUnixSeconds(data[i].time);
             if (t === null) return null;
-            mapped.push({
-                ...bar,
-                time: t as Time
-            });
+            mapped[i] = { ...data[i], time: t as Time };
         }
         return mapped;
     }
@@ -242,11 +239,7 @@ class StrategyRegistryImpl implements StrategyRegistry {
     }
 
     getAll(): Record<string, Strategy> {
-        const result: Record<string, Strategy> = {};
-        this.strategies.forEach((strategy, key) => {
-            result[key] = strategy;
-        });
-        return result;
+        return Object.fromEntries(this.strategies);
     }
 
     clear(): void {

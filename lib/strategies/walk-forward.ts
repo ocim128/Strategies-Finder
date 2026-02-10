@@ -122,6 +122,13 @@ type TradeSizing = {
 // Parameter Grid Generation
 // ============================================================================
 
+function validateRange(range: ParameterRange): void {
+    if (!Number.isFinite(range.step) || range.step <= 0)
+        throw new Error(`Invalid parameter step for ${range.name}: ${range.step}`);
+    if (!Number.isFinite(range.min) || !Number.isFinite(range.max) || range.min >= range.max)
+        throw new Error(`Invalid parameter range for ${range.name}: ${range.min} to ${range.max}`);
+}
+
 function generateParameterGrid(ranges: ParameterRange[]): StrategyParams[] {
     if (ranges.length === 0) return [{}];
 
@@ -134,12 +141,7 @@ function generateParameterGrid(ranges: ParameterRange[]): StrategyParams[] {
         }
 
         const range = ranges[index];
-        if (!Number.isFinite(range.step) || range.step <= 0) {
-            throw new Error(`Invalid parameter step for ${range.name}: ${range.step}`);
-        }
-        if (!Number.isFinite(range.min) || !Number.isFinite(range.max) || range.min >= range.max) {
-            throw new Error(`Invalid parameter range for ${range.name}: ${range.min} to ${range.max}`);
-        }
+        validateRange(range);
 
         // Guard against runaway loops on floating point ranges
         const maxIterations = Math.ceil((range.max - range.min) / range.step) + 2;
@@ -160,12 +162,7 @@ function estimateParameterGridSize(ranges: ParameterRange[]): number {
     if (ranges.length === 0) return 1;
     let estimate = 1;
     for (const range of ranges) {
-        if (!Number.isFinite(range.step) || range.step <= 0) {
-            throw new Error(`Invalid parameter step for ${range.name}: ${range.step}`);
-        }
-        if (!Number.isFinite(range.min) || !Number.isFinite(range.max) || range.min >= range.max) {
-            throw new Error(`Invalid parameter range for ${range.name}: ${range.min} to ${range.max}`);
-        }
+        validateRange(range);
         const steps = Math.floor((range.max - range.min) / range.step) + 1;
         estimate *= Math.max(1, steps);
         if (!Number.isFinite(estimate)) {
@@ -176,12 +173,7 @@ function estimateParameterGridSize(ranges: ParameterRange[]): number {
 }
 
 function getRangeStepCount(range: ParameterRange): number {
-    if (!Number.isFinite(range.step) || range.step <= 0) {
-        throw new Error(`Invalid parameter step for ${range.name}: ${range.step}`);
-    }
-    if (!Number.isFinite(range.min) || !Number.isFinite(range.max) || range.min >= range.max) {
-        throw new Error(`Invalid parameter range for ${range.name}: ${range.min} to ${range.max}`);
-    }
+    validateRange(range);
     return Math.max(1, Math.floor((range.max - range.min) / range.step) + 1);
 }
 
@@ -258,96 +250,56 @@ function calculateOptimizationScore(result: BacktestResult, minTrades: number): 
 
 
 /**
- * Fast backtest runner for optimization loops.
- * Assumes data is already cleaned and indices are valid.
- * Skip validation for speed - caller must ensure correctness.
+ * Shared buffer + signal preparation for window backtests.
  */
-function runBacktestFast(
-    data: OHLCVData[],
-    startIndex: number,
-    endIndex: number,
-    strategy: Strategy,
-    params: StrategyParams,
-    initialCapital: number,
-    positionSizePercent: number,
-    commissionPercent: number,
-    backtestSettings: BacktestSettings,
-    sizing?: TradeSizing,
-    lookback: number = 250
-): BacktestResult {
+function prepareWindowBacktest(
+    data: OHLCVData[], startIndex: number, endIndex: number,
+    strategy: Strategy, params: StrategyParams, lookback: number = 250
+) {
     const bufferedStart = Math.max(0, startIndex - lookback);
     const bufferedData = data.slice(bufferedStart, endIndex);
-
     const allSignals = strategy.execute(bufferedData, params);
-
     const windowStartBar = data[startIndex];
     const windowEndBar = data[endIndex - 1];
-
-    const windowSignals = allSignals.filter(s => {
-        return compareTime(s.time, windowStartBar.time) >= 0 && compareTime(s.time, windowEndBar.time) <= 0;
-    });
-
-    const fullResult = runBacktest(
-        bufferedData,
-        windowSignals,
-        initialCapital,
-        positionSizePercent,
-        commissionPercent,
-        backtestSettings,
-        sizing
+    const windowSignals = allSignals.filter(s =>
+        compareTime(s.time, windowStartBar.time) >= 0 && compareTime(s.time, windowEndBar.time) <= 0
     );
+    return { bufferedStart, bufferedData, windowSignals, windowStartBar };
+}
+
+/**
+ * Fast backtest runner for optimization loops.
+ * Assumes data is already cleaned and indices are valid.
+ */
+function runBacktestFast(
+    data: OHLCVData[], startIndex: number, endIndex: number,
+    strategy: Strategy, params: StrategyParams,
+    initialCapital: number, positionSizePercent: number, commissionPercent: number,
+    backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250
+): BacktestResult {
+    const { bufferedStart, bufferedData, windowSignals, windowStartBar } =
+        prepareWindowBacktest(data, startIndex, endIndex, strategy, params, lookback);
+
+    const fullResult = runBacktest(bufferedData, windowSignals, initialCapital, positionSizePercent, commissionPercent, backtestSettings, sizing);
 
     const windowTrades = fullResult.trades.filter(t => compareTime(t.entryTime, windowStartBar.time) >= 0);
     const windowIndexOffset = startIndex - bufferedStart;
     const windowEquity = fullResult.equityCurve.slice(windowIndexOffset);
-
     const finalCapital = windowEquity.length > 0 ? windowEquity[windowEquity.length - 1].value : initialCapital;
     const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(windowEquity, initialCapital);
 
-    return calculateBacktestStats(
-        windowTrades,
-        windowEquity,
-        initialCapital,
-        finalCapital,
-        maxDrawdown,
-        maxDrawdownPercent
-    );
+    return calculateBacktestStats(windowTrades, windowEquity, initialCapital, finalCapital, maxDrawdown, maxDrawdownPercent);
 }
 
 function runBacktestFastCompact(
-    data: OHLCVData[],
-    startIndex: number,
-    endIndex: number,
-    strategy: Strategy,
-    params: StrategyParams,
-    initialCapital: number,
-    positionSizePercent: number,
-    commissionPercent: number,
-    backtestSettings: BacktestSettings,
-    sizing?: TradeSizing,
-    lookback: number = 250
+    data: OHLCVData[], startIndex: number, endIndex: number,
+    strategy: Strategy, params: StrategyParams,
+    initialCapital: number, positionSizePercent: number, commissionPercent: number,
+    backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250
 ): BacktestResult {
-    const bufferedStart = Math.max(0, startIndex - lookback);
-    const bufferedData = data.slice(bufferedStart, endIndex);
-
-    const allSignals = strategy.execute(bufferedData, params);
-    const windowStartBar = data[startIndex];
-    const windowEndBar = data[endIndex - 1];
-
-    const windowSignals = allSignals.filter(signal =>
-        compareTime(signal.time, windowStartBar.time) >= 0 &&
-        compareTime(signal.time, windowEndBar.time) <= 0
-    );
-
-    return runBacktestCompact(
-        bufferedData,
-        windowSignals,
-        initialCapital,
-        positionSizePercent,
-        commissionPercent,
-        backtestSettings,
-        sizing
-    );
+    const { bufferedData, windowSignals } =
+        prepareWindowBacktest(data, startIndex, endIndex, strategy, params, lookback);
+    return runBacktestCompact(bufferedData, windowSignals, initialCapital, positionSizePercent, commissionPercent, backtestSettings, sizing);
 }
 
 function toSummaryResult(result: BacktestResult): BacktestResult {
