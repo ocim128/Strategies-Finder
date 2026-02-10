@@ -20,11 +20,12 @@
 @import './styles/replay.css';
 @import './styles/scanner-styles.css';
 @import './styles/media-queries.css';
-@import './styles/webhook.css';
 @import './styles/logictest.css';
 @import './styles/symbol-search.css';
 @import './styles/engine-status.css';
 @import './styles/onboarding.css';
+@import './styles/analysis-styles.css';
+@import './styles/settings-ux.css';
 
 /* Accessibility must be last to override other styles */
 @import './styles/accessibility.css';

@@ -13,6 +13,7 @@ import tabLogictestHtml from '../html-partials/tab-logictest.html?raw';
 import tabReplayHtml from '../html-partials/tab-replay.html?raw';
 import tabResultsHtml from '../html-partials/tab-results.html?raw';
 import tabTradesHtml from '../html-partials/tab-trades.html?raw';
+import tabAnalysisHtml from '../html-partials/tab-analysis.html?raw';
 import statusBarHtml from '../html-partials/status-bar.html?raw';
 import debugPanelHtml from '../html-partials/debug-panel.html?raw';
 import codeEditorHtml from '../html-partials/code-editor.html?raw';
@@ -68,7 +69,8 @@ export function injectLayout() {
         tabLogictestHtml +
         tabReplayHtml +
         tabResultsHtml +
-        tabTradesHtml;
+        tabTradesHtml +
+        tabAnalysisHtml;
 
     // Create the panel shell
     const strategyPanelContainer = document.createElement('div');

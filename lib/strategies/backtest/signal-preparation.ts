@@ -4,7 +4,8 @@ import { calculateADX, calculateATR, calculateEMA, calculateRSI, calculateSMA } 
 import { getCloses, getHighs, getLows, getVolumes } from '../strategy-helpers';
 import { IndicatorSeries, NormalizedSettings, PreparedSignal } from '../../types/backtest';
 import { getTimeIndex, getExecutionShift, resolveExecutionPrice, compareTime, normalizeBacktestSettings, normalizeTradeDirection, timeToNumber, timeKey, signalToPositionDirection } from './backtest-utils';
-import { resolveTrendPeriod, passesTradeFilter, passesRegimeFilters } from './trade-filters';
+import { resolveTrendPeriod, passesTradeFilter, passesRegimeFilters, passesSnapshotFilters } from './trade-filters';
+import { SnapshotIndicators, computeSnapshotIndicators } from './snapshot-capture';
 import { runBacktest } from './backtest-engine';
 
 export function prepareSignals(
@@ -12,7 +13,8 @@ export function prepareSignals(
     signals: Signal[],
     config: NormalizedSettings,
     indicators: IndicatorSeries,
-    tradeDirection: TradeDirection
+    tradeDirection: TradeDirection,
+    snapshotIndicators?: SnapshotIndicators | null
 ): Signal[] {
     if (signals.length === 0) return [];
     const timeIndex = getTimeIndex(data);
@@ -54,6 +56,7 @@ export function prepareSignals(
 
             if (!passesTradeFilter(data, entryIndex, config, indicators, tradeDirection)) return;
             if (!passesRegimeFilters(data, entryIndex, config, indicators, tradeDirection)) return;
+            if (!passesSnapshotFilters(data, entryIndex, config, snapshotIndicators ?? null)) return;
 
             const entryPrice = resolveExecutionPrice(data, signal, signalIndex, entryIndex, config);
 
@@ -78,6 +81,7 @@ export function prepareSignals(
         const signalDirection = signalToPositionDirection(signal.type);
         if (!passesTradeFilter(data, entryIndex, config, indicators, signalDirection)) return;
         if (!passesRegimeFilters(data, entryIndex, config, indicators, signalDirection)) return;
+        if (!passesSnapshotFilters(data, entryIndex, config, snapshotIndicators ?? null)) return;
 
         const entryPrice = resolveExecutionPrice(data, signal, signalIndex, entryIndex, config);
 
@@ -144,8 +148,18 @@ export function prepareSignalsForScanner(
         rsi
     };
 
+    // Compute snapshot indicators if snapshot-based filters are active
+    const needsSnapshotIndicators =
+        config.snapshotAtrPercentMin > 0 ||
+        config.snapshotVolumeRatioMin > 0 ||
+        config.snapshotAdxMin > 0 ||
+        config.snapshotEmaDistanceMin !== 0;
+    const snapshotIndicators = needsSnapshotIndicators
+        ? computeSnapshotIndicators(data, indicators)
+        : null;
+
     // Use the same prepareSignals logic
-    return prepareSignals(data, signals, config, indicators, tradeDirection);
+    return prepareSignals(data, signals, config, indicators, tradeDirection, snapshotIndicators);
 }
 
 /**

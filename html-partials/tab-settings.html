@@ -1,5 +1,5 @@
 <!-- Settings Tab -->
-<div id="settingsTab">
+<div id="settingsTab" data-preset="standard">
     <select class="strategy-select" id="strategySelect">
         <option value="sma_crossover">SMA Crossover</option>
         <option value="ema_crossover">EMA Crossover</option>
@@ -13,394 +13,467 @@
         <!-- Parameters will be injected here -->
     </div>
 
-    <div class="section-header">
-        <div class="section-title">Backend Engine</div>
-        <label class="section-toggle" aria-label="Toggle Rust backend">
-            <input type="checkbox" id="useRustEngineToggle" checked>
-            <span class="section-toggle-track"></span>
-        </label>
-    </div>
-    <div class="param-hint">Prefer Rust for faster backtests when available. Turn off to force TypeScript.</div>
-
-    <div class="section-header">
-        <div class="section-title">Backtest Realism</div>
-    </div>
-    <div class="section-body">
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">Execution Model</label>
-                <select class="param-input" id="executionModel">
-                    <option value="next_open" selected>Next Bar Open (realistic)</option>
-                    <option value="next_close">Next Bar Close (conservative)</option>
-                    <option value="signal_close">Signal Bar Close (optimistic)</option>
-                </select>
-                <div class="param-hint">Next-bar execution reduces look-ahead bias.</div>
-            </div>
-            <div class="param-group">
-                <label class="param-label">Slippage (bps)</label>
-                <input type="number" class="param-input" id="slippageBps" value="5" min="0" max="100" step="1">
-                <div class="param-hint">Applied on entry and exit fills.</div>
-            </div>
-        </div>
-        <div class="param-row">
-            <div class="param-group">
-                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                    <label class="param-label" style="margin-bottom: 0;">Allow Same-Bar Exits</label>
-                    <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle same-bar exits">
-                        <input type="checkbox" id="allowSameBarExitToggle">
-                        <span class="section-toggle-track"></span>
-                    </label>
-                </div>
-                <div class="param-hint">Disable to avoid entry/exit on the same bar.</div>
-            </div>
-        </div>
-        <div class="param-row">
-            <div class="param-group">
-                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                    <label class="param-label" style="margin-bottom: 0;">Use Strategy Timeframe</label>
-                    <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle global strategy timeframe">
-                        <input type="checkbox" id="strategyTimeframeToggle">
-                        <span class="section-toggle-track"></span>
-                    </label>
-                </div>
-                <div class="param-hint">Run signal logic on higher timeframe, map entries back to current chart bars.</div>
-            </div>
-            <div class="param-group" id="strategyTimeframeMinutesGroup">
-                <label class="param-label">Strategy TF (minutes)</label>
-                <input type="number" class="param-input" id="strategyTimeframeMinutes" value="120" min="1" step="1">
-                <div class="param-hint">Example: chart 5m + strategy 120m.</div>
-            </div>
-        </div>
-        <div class="param-hint">Realism settings use the TypeScript engine (Rust skipped for accuracy).</div>
+    <!-- ── Preset Selector ── -->
+    <div class="settings-preset-bar" id="settingsPresetBar">
+        <button class="settings-preset-btn" data-preset="simple" type="button">
+            <span class="preset-dot"></span>Simple
+        </button>
+        <button class="settings-preset-btn active" data-preset="standard" type="button">
+            <span class="preset-dot"></span>Standard
+        </button>
+        <button class="settings-preset-btn" data-preset="advanced" type="button">
+            <span class="preset-dot"></span>Advanced
+        </button>
     </div>
 
-    <div class="section-header">
-        <div class="section-title">Fixed Trade Amount Mode</div>
-        <label class="section-toggle" aria-label="Toggle fixed trade amount mode">
-            <input type="checkbox" id="fixedTradeToggle" checked>
-            <span class="section-toggle-track"></span>
-        </label>
-    </div>
-    <div class="section-body" id="tradeSizing">
-        <div class="param-row">
-            <div class="param-group" id="initialCapitalGroup">
-                <label class="param-label">Initial Capital ($)</label>
-                <input type="number" class="param-input" id="initialCapital" value="10000" min="100">
-            </div>
-            <div class="param-group" id="fixedTradeGroup">
-                <label class="param-label">Fixed Trade Amount ($)</label>
-                <input type="number" class="param-input" id="fixedTradeAmount" value="1000" min="1">
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Section: Trade Direction  (simple)
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="settings-section" data-complexity="simple" data-section="direction">
+        <div class="section-header collapsible" data-target="directionBody">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Trade Direction</div>
+                <span class="section-changed-dot" id="directionChangedDot"></span>
             </div>
         </div>
-
-        <div class="param-row">
-            <div class="param-group" id="positionSizeGroup">
-                <label class="param-label">Position Size (%)</label>
-                <input type="number" class="param-input" id="positionSize" value="100" min="1" max="100">
-            </div>
-            <div class="param-group">
-                <label class="param-label">Commission (%)</label>
-                <input type="number" class="param-input" id="commission" value="0.1" min="0" step="0.01">
-            </div>
-        </div>
-    </div>
-
-    <div class="section-header">
-        <div class="section-title">Trade Direction</div>
-    </div>
-    <div class="section-body">
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">Direction Mode</label>
-                <select class="param-input" id="tradeDirection">
-                    <option value="long">Long</option>
-                    <option value="short" selected>Short</option>
-                    <option value="both">Both (Flip)</option>
-                </select>
-                <div class="param-hint">Both mode exits and reverses on opposite entry signals.</div>
-            </div>
-        </div>
-    </div>
-
-    <div class="section-header">
-        <div class="section-title">Risk Management</div>
-        <label class="section-toggle" aria-label="Toggle risk management">
-            <input type="checkbox" id="riskSettingsToggle">
-            <span class="section-toggle-track"></span>
-        </label>
-    </div>
-    <div class="section-body" id="riskSettings">
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">Mode</label>
-                <select class="param-input" id="riskMode">
-                    <option value="simple" selected>Simple</option>
-                    <option value="advanced">Advanced</option>
-                    <option value="percentage">Percentage</option>
-                </select>
-                <div class="param-hint">Simple shows core stops. Advanced adds scale-out, break-even, and time stop.
-                    Percentage uses fixed % from entry.
-                </div>
-            </div>
-            <div class="param-group">
-                <label class="param-label">Market Mode</label>
-                <select class="param-input" id="marketMode">
-                    <option value="all" selected>All Markets</option>
-                    <option value="uptrend">Uptrend</option>
-                    <option value="downtrend">Downtrend</option>
-                    <option value="sideway">Sideway / Range</option>
-                </select>
-                <div class="param-hint">Trade filter by market regime before opening positions.</div>
-            </div>
-        </div>
-        <div class="risk-simple-advanced" id="riskSimpleAdvanced">
+        <div class="section-body accordion-body" id="directionBody">
             <div class="param-row">
                 <div class="param-group">
-                    <label class="param-label">Volatility Period (ATR)</label>
-                    <input type="number" class="param-input" id="atrPeriod" value="14" min="1">
-                    <div class="param-hint">ATR measures average movement. Higher = smoother stops.</div>
-                </div>
-                <div class="param-group">
-                    <label class="param-label">Stop Loss (ATR x)</label>
-                    <input type="number" class="param-input" id="stopLossAtr" value="1.5" min="0" step="0.1">
+                    <label class="param-label">Direction Mode</label>
+                    <select class="param-input" id="tradeDirection">
+                        <option value="long">Long</option>
+                        <option value="short" selected>Short</option>
+                        <option value="both">Both (Flip)</option>
+                    </select>
+                    <div class="param-hint">Both mode exits and reverses on opposite entry signals.</div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Section: Risk Management  (simple)
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="settings-section" data-complexity="simple" data-section="risk">
+        <div class="section-header collapsible" data-target="riskSettings">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Risk Management</div>
+                <span class="section-changed-dot" id="riskChangedDot"></span>
+            </div>
+            <label class="section-toggle" aria-label="Toggle risk management">
+                <input type="checkbox" id="riskSettingsToggle">
+                <span class="section-toggle-track"></span>
+            </label>
+        </div>
+        <div class="section-body accordion-body" id="riskSettings">
             <div class="param-row">
                 <div class="param-group">
-                    <label class="param-label">Take Profit (ATR x)</label>
-                    <input type="number" class="param-input" id="takeProfitAtr" value="3" min="0" step="0.1">
+                    <label class="param-label">Mode</label>
+                    <select class="param-input" id="riskMode">
+                        <option value="simple" selected>Simple</option>
+                        <option value="advanced">Advanced</option>
+                        <option value="percentage">Percentage</option>
+                    </select>
+                    <div class="param-hint">Simple shows core stops. Advanced adds scale-out, break-even, and time stop.
+                        Percentage uses fixed % from entry.
+                    </div>
                 </div>
                 <div class="param-group">
-                    <label class="param-label">Trailing Stop (ATR x)</label>
-                    <input type="number" class="param-input" id="trailingAtr" value="2" min="0" step="0.1">
+                    <label class="param-label">Market Mode</label>
+                    <select class="param-input" id="marketMode">
+                        <option value="all" selected>All Markets</option>
+                        <option value="uptrend">Uptrend</option>
+                        <option value="downtrend">Downtrend</option>
+                        <option value="sideway">Sideway / Range</option>
+                    </select>
+                    <div class="param-hint">Trade filter by market regime before opening positions.</div>
                 </div>
             </div>
-            <div class="risk-advanced is-hidden" id="riskAdvanced">
+            <div class="risk-simple-advanced" id="riskSimpleAdvanced">
                 <div class="param-row">
                     <div class="param-group">
-                        <label class="param-label">Scale Out at R</label>
-                        <input type="number" class="param-input" id="partialTakeProfitAtR" value="1" min="0" step="0.1">
-                        <div class="param-hint">R = distance from entry to stop loss.</div>
+                        <label class="param-label">Volatility Period (ATR)</label>
+                        <input type="number" class="param-input" id="atrPeriod" value="14" min="1">
+                        <div class="param-hint">ATR measures average movement. Higher = smoother stops.</div>
                     </div>
                     <div class="param-group">
-                        <label class="param-label">Scale Out Size (%)</label>
-                        <input type="number" class="param-input" id="partialTakeProfitPercent" value="50" min="0"
-                            max="100">
+                        <label class="param-label">Stop Loss (ATR x)</label>
+                        <input type="number" class="param-input" id="stopLossAtr" value="1.5" min="0" step="0.1">
                     </div>
                 </div>
                 <div class="param-row">
                     <div class="param-group">
-                        <label class="param-label">Move Stop to Break-even at R</label>
-                        <input type="number" class="param-input" id="breakEvenAtR" value="1" min="0" step="0.1">
+                        <label class="param-label">Take Profit (ATR x)</label>
+                        <input type="number" class="param-input" id="takeProfitAtr" value="3" min="0" step="0.1">
                     </div>
                     <div class="param-group">
-                        <label class="param-label">Exit After N Bars (if losing)</label>
-                        <input type="number" class="param-input" id="timeStopBars" value="0" min="0">
+                        <label class="param-label">Trailing Stop (ATR x)</label>
+                        <input type="number" class="param-input" id="trailingAtr" value="2" min="0" step="0.1">
+                    </div>
+                </div>
+                <div class="risk-advanced is-hidden" id="riskAdvanced">
+                    <div class="param-row">
+                        <div class="param-group">
+                            <label class="param-label">Scale Out at R</label>
+                            <input type="number" class="param-input" id="partialTakeProfitAtR" value="1" min="0"
+                                step="0.1">
+                            <div class="param-hint">R = distance from entry to stop loss.</div>
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Scale Out Size (%)</label>
+                            <input type="number" class="param-input" id="partialTakeProfitPercent" value="50" min="0"
+                                max="100">
+                        </div>
+                    </div>
+                    <div class="param-row">
+                        <div class="param-group">
+                            <label class="param-label">Move Stop to Break-even at R</label>
+                            <input type="number" class="param-input" id="breakEvenAtR" value="1" min="0" step="0.1">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Exit After N Bars (if losing)</label>
+                            <input type="number" class="param-input" id="timeStopBars" value="0" min="0">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="risk-percentage is-hidden" id="riskPercentage">
+                <div class="param-row">
+                    <div class="param-group">
+                        <div
+                            style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Stop Loss (%)</label>
+                            <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle stop loss">
+                                <input type="checkbox" id="stopLossToggle">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <input type="number" class="param-input" id="stopLossPercent" value="5" min="0.1" max="15"
+                            step="0.1">
+                        <div class="param-hint">Allowed: 0 - 15%</div>
+                    </div>
+                    <div class="param-group">
+                        <div
+                            style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Take Profit (%)</label>
+                            <label class="section-toggle" style="transform: scale(0.8);"
+                                aria-label="Toggle take profit">
+                                <input type="checkbox" id="takeProfitToggle">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <input type="number" class="param-input" id="takeProfitPercent" value="10" min="0.1" max="100"
+                            step="0.1">
+                        <div class="param-hint">Allowed: 0 - 100%</div>
                     </div>
                 </div>
             </div>
         </div>
-        <div class="risk-percentage is-hidden" id="riskPercentage">
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Section: Fixed Trade Amount  (simple)
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="settings-section" data-complexity="simple" data-section="sizing">
+        <div class="section-header collapsible" data-target="tradeSizingBody">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Fixed Trade Amount Mode</div>
+                <span class="section-changed-dot" id="sizingChangedDot"></span>
+            </div>
+            <label class="section-toggle" aria-label="Toggle fixed trade amount mode">
+                <input type="checkbox" id="fixedTradeToggle" checked>
+                <span class="section-toggle-track"></span>
+            </label>
+        </div>
+        <div class="section-body accordion-body" id="tradeSizingBody">
+            <div class="param-row">
+                <div class="param-group" id="initialCapitalGroup">
+                    <label class="param-label">Initial Capital ($)</label>
+                    <input type="number" class="param-input" id="initialCapital" value="10000" min="100">
+                </div>
+                <div class="param-group" id="fixedTradeGroup">
+                    <label class="param-label">Fixed Trade Amount ($)</label>
+                    <input type="number" class="param-input" id="fixedTradeAmount" value="1000" min="1">
+                </div>
+            </div>
+
+            <div class="param-row">
+                <div class="param-group" id="positionSizeGroup">
+                    <label class="param-label">Position Size (%)</label>
+                    <input type="number" class="param-input" id="positionSize" value="100" min="1" max="100">
+                </div>
+                <div class="param-group">
+                    <label class="param-label">Commission (%)</label>
+                    <input type="number" class="param-input" id="commission" value="0.1" min="0" step="0.01">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Section: Backend Engine  (standard)
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="settings-section" data-complexity="standard" data-section="engine">
+        <div class="section-header collapsible" data-target="engineBody">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Backend Engine</div>
+            </div>
+            <label class="section-toggle" aria-label="Toggle Rust backend">
+                <input type="checkbox" id="useRustEngineToggle" checked>
+                <span class="section-toggle-track"></span>
+            </label>
+        </div>
+        <div class="section-body accordion-body" id="engineBody">
+            <div class="param-hint">Prefer Rust for faster backtests when available. Turn off to force TypeScript.</div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Section: Backtest Realism  (standard)
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="settings-section" data-complexity="standard" data-section="realism">
+        <div class="section-header collapsible collapsed" data-target="realismBody">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Backtest Realism</div>
+                <span class="section-changed-dot" id="realismChangedDot"></span>
+            </div>
+        </div>
+        <div class="section-body accordion-body collapsed" id="realismBody">
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label">Execution Model</label>
+                    <select class="param-input" id="executionModel">
+                        <option value="next_open" selected>Next Bar Open (realistic)</option>
+                        <option value="next_close">Next Bar Close (conservative)</option>
+                        <option value="signal_close">Signal Bar Close (optimistic)</option>
+                    </select>
+                    <div class="param-hint">Next-bar execution reduces look-ahead bias.</div>
+                </div>
+                <div class="param-group">
+                    <label class="param-label">Slippage (bps)</label>
+                    <input type="number" class="param-input" id="slippageBps" value="5" min="0" max="100" step="1">
+                    <div class="param-hint">Applied on entry and exit fills.</div>
+                </div>
+            </div>
             <div class="param-row">
                 <div class="param-group">
                     <div
                         style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Stop Loss (%)</label>
-                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle stop loss">
-                            <input type="checkbox" id="stopLossToggle">
+                        <label class="param-label" style="margin-bottom: 0;">Allow Same-Bar Exits</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle same-bar exits">
+                            <input type="checkbox" id="allowSameBarExitToggle">
                             <span class="section-toggle-track"></span>
                         </label>
                     </div>
-                    <input type="number" class="param-input" id="stopLossPercent" value="5" min="0.1" max="15"
-                        step="0.1">
-                    <div class="param-hint">Allowed: 0 - 15%</div>
+                    <div class="param-hint">Disable to avoid entry/exit on the same bar.</div>
                 </div>
+            </div>
+            <div class="param-row">
                 <div class="param-group">
                     <div
                         style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Take Profit (%)</label>
-                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle take profit">
-                            <input type="checkbox" id="takeProfitToggle">
+                        <label class="param-label" style="margin-bottom: 0;">Use Strategy Timeframe</label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle global strategy timeframe">
+                            <input type="checkbox" id="strategyTimeframeToggle">
                             <span class="section-toggle-track"></span>
                         </label>
                     </div>
-                    <input type="number" class="param-input" id="takeProfitPercent" value="10" min="0.1" max="100"
-                        step="0.1">
-                    <div class="param-hint">Allowed: 0 - 100%</div>
+                    <div class="param-hint">Run signal logic on higher timeframe, map entries back to current chart
+                        bars.
+                    </div>
+                </div>
+                <div class="param-group" id="strategyTimeframeMinutesGroup">
+                    <label class="param-label">Strategy TF (minutes)</label>
+                    <input type="number" class="param-input" id="strategyTimeframeMinutes" value="120" min="1" step="1">
+                    <div class="param-hint">Example: chart 5m + strategy 120m.</div>
+                </div>
+            </div>
+            <div class="param-hint">Realism settings use the TypeScript engine (Rust skipped for accuracy).</div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Section: Trade Filter  (standard)
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="settings-section" data-complexity="standard" data-section="tradeFilter">
+        <div class="section-header collapsible collapsed" data-target="tradeFilterSettings">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Trade Filter</div>
+                <span class="section-changed-dot" id="filterChangedDot"></span>
+            </div>
+            <label class="section-toggle" aria-label="Toggle trade filter">
+                <input type="checkbox" id="tradeFilterSettingsToggle">
+                <span class="section-toggle-track"></span>
+            </label>
+        </div>
+        <div class="section-body accordion-body collapsed" id="tradeFilterSettings">
+            <div class="param-group">
+                <label class="param-label">Filter Mode</label>
+                <select class="param-input" id="tradeFilterMode">
+                    <option value="none" selected>None</option>
+                    <option value="close">Close Breakout</option>
+                    <option value="volume">Volume Expansion</option>
+                    <option value="rsi">RSI Confirmation</option>
+                    <option value="trend">Trend Alignment (EMA)</option>
+                    <option value="adx">ADX Strength</option>
+                </select>
+                <div class="param-hint">Simple trade-quality filter applied before opening positions.</div>
+            </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label">Filter Lookback (bars)</label>
+                    <input type="number" class="param-input" id="confirmLookback" value="1" min="1">
+                </div>
+                <div class="param-group">
+                    <label class="param-label">Volume SMA Period</label>
+                    <input type="number" class="param-input" id="volumeSmaPeriod" value="20" min="1">
+                </div>
+            </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label">Volume Multiplier</label>
+                    <input type="number" class="param-input" id="volumeMultiplier" value="1.5" min="0" step="0.1">
+                </div>
+                <div class="param-group">
+                    <label class="param-label">RSI Period</label>
+                    <input type="number" class="param-input" id="confirmRsiPeriod" value="14" min="1">
+                </div>
+            </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label">RSI Bullish</label>
+                    <input type="number" class="param-input" id="confirmRsiBullish" value="55" min="0" max="100">
+                </div>
+                <div class="param-group">
+                    <label class="param-label">RSI Bearish</label>
+                    <input type="number" class="param-input" id="confirmRsiBearish" value="45" min="0" max="100">
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="section-header">
-        <div class="section-title">Webhook Alerts</div>
-        <label class="section-toggle" aria-label="Toggle webhook alerts">
-            <input type="checkbox" id="webhookEnabledToggle">
-            <span class="section-toggle-track"></span>
-        </label>
-    </div>
-    <div class="section-body" id="webhookSettings">
-        <!-- Webhook Status -->
-        <div class="webhook-status" id="webhookStatus">
-            <span class="webhook-status-dot status-disabled" id="webhookStatusDot"></span>
-            <span class="webhook-status-text" id="webhookStatusText">Webhook disabled</span>
-            <span class="webhook-status-count" id="webhookStatusCount"></span>
-        </div>
-
-        <!-- Webhook URL -->
-        <div class="param-group">
-            <label class="param-label">Webhook URL</label>
-            <div class="webhook-url-wrapper">
-                <input type="url" class="param-input" id="webhookUrl"
-                    placeholder="https://your-webhook-endpoint.com/signal">
-                <span class="webhook-url-validation" id="webhookUrlValidation"></span>
-            </div>
-            <div class="webhook-hint">Enter the URL where signals will be sent via POST request</div>
-        </div>
-
-        <!-- Secret Key -->
-        <div class="param-group">
-            <label class="param-label">Secret Key (Optional)</label>
-            <div class="webhook-secret-wrapper">
-                <input type="password" class="param-input" id="webhookSecretKey"
-                    placeholder="For HMAC-SHA256 payload signing">
-                <button type="button" class="webhook-secret-toggle" id="webhookSecretToggle" title="Toggle visibility">
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                        <path
-                            d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
-                    </svg>
-                </button>
-            </div>
-            <div class="webhook-hint">Used to sign payloads so your receiver can verify authenticity</div>
-        </div>
-
-        <!-- Event Types -->
-        <div class="param-group">
-            <label class="param-label">Send Webhook On</label>
-            <div class="webhook-events">
-                <label class="webhook-event-option">
-                    <input type="checkbox" id="webhookSendOnSignal" checked>
-                    <span class="event-label">Strategy Signals</span>
-                </label>
-                <label class="webhook-event-option">
-                    <input type="checkbox" id="webhookSendOnTrade" checked>
-                    <span class="event-label">Trade Entry/Exit</span>
-                </label>
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Section: Entry Quality Filters  (advanced)
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="settings-section" data-complexity="advanced" data-section="entryQuality">
+        <div class="section-header collapsible collapsed" data-target="entryQualityBody">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Entry Quality Filters</div>
             </div>
         </div>
+        <div class="section-body accordion-body collapsed" id="entryQualityBody">
+            <div class="param-hint">Data-driven filters from trade analysis. Multiple filters stack (AND logic). Uses
+                TypeScript engine.</div>
 
-        <!-- Test Button and Stats Row -->
-        <div class="webhook-actions-row">
-            <button type="button" class="btn-test-webhook" id="webhookTestBtn" disabled>
-                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                    <path
-                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
-                </svg>
-                Test Webhook
-            </button>
-            <button type="button" class="btn-clear-queue" id="webhookClearBtn" title="Clear pending queue">
-                <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-                    <path
-                        d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
-                </svg>
-            </button>
-        </div>
+            <!-- ATR% Filter -->
+            <div class="param-row snapshot-filter-row">
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Min ATR %</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle ATR% filter">
+                            <input type="checkbox" id="snapshotAtrFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <input type="number" class="param-input" id="snapshotAtrPercentMin" value="2" min="0" step="0.1">
+                    <div class="param-hint">Only enter when volatility (ATR/Price) exceeds this %.</div>
+                </div>
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Min Volume Ratio</label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Volume Ratio filter">
+                            <input type="checkbox" id="snapshotVolumeFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <input type="number" class="param-input" id="snapshotVolumeRatioMin" value="1.3" min="0" step="0.1">
+                    <div class="param-hint">Only enter when volume exceeds SMA(20) by this ratio.</div>
+                </div>
+            </div>
 
-        <!-- Statistics Panel -->
-        <div class="webhook-stats" id="webhookStats">
-            <div class="webhook-stat">
-                <span class="webhook-stat-value" id="webhookStatSent">0</span>
-                <span class="webhook-stat-label">Sent</span>
-            </div>
-            <div class="webhook-stat">
-                <span class="webhook-stat-value" id="webhookStatPending">0</span>
-                <span class="webhook-stat-label">Pending</span>
-            </div>
-            <div class="webhook-stat webhook-stat-error">
-                <span class="webhook-stat-value" id="webhookStatFailed">0</span>
-                <span class="webhook-stat-label">Failed</span>
-            </div>
-        </div>
-
-        <!-- Activity Log -->
-        <div class="webhook-activity-section">
-            <div class="webhook-activity-header">
-                <span class="webhook-activity-title">Recent Activity</span>
-                <button type="button" class="webhook-activity-clear" id="webhookActivityClearBtn"
-                    title="Clear log">Clear</button>
-            </div>
-            <div class="webhook-activity" id="webhookActivity">
-                <div class="webhook-activity-empty">No webhook activity yet</div>
+            <div class="param-row snapshot-filter-row">
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Min ADX</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle ADX filter">
+                            <input type="checkbox" id="snapshotAdxFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <input type="number" class="param-input" id="snapshotAdxMin" value="22" min="0" step="1">
+                    <div class="param-hint">Only enter when ADX(14) indicates trending market.</div>
+                </div>
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Min EMA Distance %</label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle EMA Distance filter">
+                            <input type="checkbox" id="snapshotEmaFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <input type="number" class="param-input" id="snapshotEmaDistanceMin" value="0" step="0.5">
+                    <div class="param-hint">Min % distance from EMA(50). Positive = above, negative = below.</div>
+                </div>
             </div>
         </div>
     </div>
 
-    <div class="section-header">
-        <div class="section-title">Trade Filter</div>
-        <label class="section-toggle" aria-label="Toggle trade filter">
-            <input type="checkbox" id="tradeFilterSettingsToggle">
-            <span class="section-toggle-track"></span>
-        </label>
-    </div>
-    <div class="section-body" id="tradeFilterSettings">
-        <div class="param-group">
-            <label class="param-label">Filter Mode</label>
-            <select class="param-input" id="tradeFilterMode">
-                <option value="none" selected>None</option>
-                <option value="close">Close Breakout</option>
-                <option value="volume">Volume Expansion</option>
-                <option value="rsi">RSI Confirmation</option>
-                <option value="trend">Trend Alignment (EMA)</option>
-                <option value="adx">ADX Strength</option>
-            </select>
-            <div class="param-hint">Simple trade-quality filter applied before opening positions.</div>
+    <!-- ══════════════════════════════════════════════════════════════════════
+         Section: Confirmation Strategies  (advanced)
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="settings-section" data-complexity="advanced" data-section="confirmation">
+        <div class="section-header collapsible collapsed" data-target="confirmationStrategies">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Confirmation Strategies</div>
+            </div>
+            <label class="section-toggle" aria-label="Toggle confirmation strategies">
+                <input type="checkbox" id="confirmationStrategiesToggle">
+                <span class="section-toggle-track"></span>
+            </label>
         </div>
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">Filter Lookback (bars)</label>
-                <input type="number" class="param-input" id="confirmLookback" value="1" min="1">
-            </div>
-            <div class="param-group">
-                <label class="param-label">Volume SMA Period</label>
-                <input type="number" class="param-input" id="volumeSmaPeriod" value="20" min="1">
-            </div>
-        </div>
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">Volume Multiplier</label>
-                <input type="number" class="param-input" id="volumeMultiplier" value="1.5" min="0" step="0.1">
-            </div>
-            <div class="param-group">
-                <label class="param-label">RSI Period</label>
-                <input type="number" class="param-input" id="confirmRsiPeriod" value="14" min="1">
-            </div>
-        </div>
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">RSI Bullish</label>
-                <input type="number" class="param-input" id="confirmRsiBullish" value="55" min="0" max="100">
-            </div>
-            <div class="param-group">
-                <label class="param-label">RSI Bearish</label>
-                <input type="number" class="param-input" id="confirmRsiBearish" value="45" min="0" max="100">
+        <div class="section-body accordion-body collapsed" id="confirmationStrategies">
+            <div class="param-hint">Require additional strategy signals to confirm entries (filters persist until
+                flipped).
+                Up to 5.</div>
+            <div class="confirmation-strategy-list" id="confirmationStrategyList"></div>
+            <div class="confirmation-actions">
+                <button class="btn btn-secondary btn-compact" id="confirmationAddBtn" type="button">Add
+                    Strategy</button>
             </div>
         </div>
     </div>
 
-    <div class="section-header">
-        <div class="section-title">Confirmation Strategies</div>
-        <label class="section-toggle" aria-label="Toggle confirmation strategies">
-            <input type="checkbox" id="confirmationStrategiesToggle">
-            <span class="section-toggle-track"></span>
-        </label>
-    </div>
-    <div class="section-body" id="confirmationStrategies">
-        <div class="param-hint">Require additional strategy signals to confirm entries (filters persist until flipped). Up to 5.</div>
-        <div class="confirmation-strategy-list" id="confirmationStrategyList"></div>
-        <div class="confirmation-actions">
-            <button class="btn btn-secondary btn-compact" id="confirmationAddBtn" type="button">Add Strategy</button>
-        </div>
-    </div>
 
 
     <div class="progress-container" id="progressContainer">
@@ -451,9 +524,9 @@
                 </button>
                 <button class="btn btn-danger btn-icon" id="deleteConfigBtn" title="Delete selected configuration">
                     <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                </svg>
-            </button>
+                        <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                    </svg>
+                </button>
             </div>
 
             <div class="config-share-actions">

@@ -1,0 +1,197 @@
+/* ============================================================================
+   Analysis Tab — Trade Pattern Mining
+   ============================================================================ */
+
+.analysis-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+}
+
+.analysis-header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.analysis-title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.analysis-subtitle {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+/* Feature Table */
+.analysis-table-wrap {
+    overflow-x: auto;
+    padding: 0 4px;
+}
+
+.analysis-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+.analysis-table th {
+    text-align: left;
+    padding: 6px 8px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.analysis-table td {
+    padding: 7px 8px;
+    border-bottom: 1px solid var(--border-light, rgba(128, 128, 128, 0.1));
+    white-space: nowrap;
+    color: var(--text-primary);
+}
+
+.analysis-table tr:hover {
+    background: var(--surface-hover, rgba(128, 128, 128, 0.05));
+}
+
+.analysis-table tr.high-score {
+    background: rgba(0, 200, 83, 0.06);
+}
+
+.analysis-table tr.high-score:hover {
+    background: rgba(0, 200, 83, 0.1);
+}
+
+/* Score bar */
+.score-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.score-bar-fill {
+    height: 6px;
+    border-radius: 3px;
+    min-width: 2px;
+    max-width: 50px;
+}
+
+.score-bar-fill.score-low {
+    background: var(--text-secondary);
+}
+
+.score-bar-fill.score-medium {
+    background: #f0b429;
+}
+
+.score-bar-fill.score-high {
+    background: #00c853;
+}
+
+/* Filter badge */
+.filter-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 500;
+    background: rgba(100, 108, 255, 0.1);
+    color: var(--accent, #646cff);
+}
+
+.filter-badge.no-filter {
+    background: transparent;
+    color: var(--text-tertiary, #888);
+}
+
+/* Simulate button */
+.btn-simulate {
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 10px;
+    transition: all 0.15s;
+}
+
+.btn-simulate:hover {
+    border-color: var(--accent, #646cff);
+    color: var(--accent, #646cff);
+    background: rgba(100, 108, 255, 0.05);
+}
+
+/* Simulation panel */
+.analysis-simulation {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border);
+}
+
+.simulation-title {
+    margin: 0 0 10px 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.simulation-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.sim-card {
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--surface, rgba(128, 128, 128, 0.05));
+    border: 1px solid var(--border-light, rgba(128, 128, 128, 0.1));
+}
+
+.sim-card-label {
+    font-size: 10px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+}
+
+.sim-card-value {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.sim-card-value.positive {
+    color: #00c853;
+}
+
+.sim-card-value.negative {
+    color: #ff5252;
+}
+
+.sim-card-value.neutral {
+    color: var(--text-secondary);
+}
+
+.sim-card-delta {
+    font-size: 10px;
+    margin-top: 2px;
+}
+
+.sim-card-delta.positive {
+    color: #00c853;
+}
+
+.sim-card-delta.negative {
+    color: #ff5252;
+}

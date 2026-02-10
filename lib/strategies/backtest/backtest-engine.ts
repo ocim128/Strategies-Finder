@@ -9,6 +9,8 @@ import { calculateTradeExitDetails, createEmptyBacktestResult, finalizeBacktestM
 import { precomputeIndicators, resolveIndicators } from './indicator-precompute';
 import { buildPositionFromSignal } from './position-builder';
 import { processPositionExits, updatePositionState } from './exit-handlers';
+import { captureTradeSnapshot, computeSnapshotIndicators, SnapshotIndicators } from './snapshot-capture';
+import { TradeSnapshot } from '../../types/index';
 
 export { precomputeIndicators };
 
@@ -32,7 +34,18 @@ export function runBacktestCompact(
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const indicatorSeries = resolveIndicators(data, settings, precomputed);
-    const preparedSignals = prepareSignals(data, signals, config, indicatorSeries, tradeDirection);
+
+    // Compute snapshot indicators if any snapshot-based filters are active
+    const needsSnapshotIndicators =
+        config.snapshotAtrPercentMin > 0 ||
+        config.snapshotVolumeRatioMin > 0 ||
+        config.snapshotAdxMin > 0 ||
+        config.snapshotEmaDistanceMin !== 0;
+    const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators
+        ? computeSnapshotIndicators(data, indicatorSeries)
+        : null;
+
+    const preparedSignals = prepareSignals(data, signals, config, indicatorSeries, tradeDirection, snapshotIndicators);
 
     let capital = initialCapital;
     let position: PositionState | null = null;
@@ -118,9 +131,24 @@ export function runBacktest(
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const indicatorSeries = resolveIndicators(data, settings, precomputed);
-    const preparedSignals = prepareSignals(data, signals, config, indicatorSeries, tradeDirection);
+
+    // Compute snapshot indicators if any snapshot-based filters are active OR snapshots are requested
+    const needsSnapshotIndicators =
+        !!settings.captureSnapshots ||
+        config.snapshotAtrPercentMin > 0 ||
+        config.snapshotVolumeRatioMin > 0 ||
+        config.snapshotAdxMin > 0 ||
+        config.snapshotEmaDistanceMin !== 0;
+    const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators
+        ? computeSnapshotIndicators(data, indicatorSeries)
+        : null;
+
+    const preparedSignals = prepareSignals(data, signals, config, indicatorSeries, tradeDirection, snapshotIndicators);
+
+    const doSnapshot = !!settings.captureSnapshots;
 
     let capital = initialCapital, position: PositionState | null = null, tradeId = 0, signalIdx = 0;
+    let currentSnapshot: TradeSnapshot | null = null;
     const trades: Trade[] = [];
     const equityCurve: { time: Time; value: number }[] = [];
     const commissionRate = commissionPercent / 100;
@@ -133,9 +161,11 @@ export function runBacktest(
             processPositionExits(candle, position, config, slippageRate, (exitPrice, exitSize, reason) => {
                 const d = calculateTradeExitDetails(position!, exitPrice, exitSize, commissionRate);
                 capital += d.rawPnl - d.commission;
-                trades.push({ id: ++tradeId, type: position!.direction, entryTime: position!.entryTime, entryPrice: position!.entryPrice, exitTime: candle.time, exitPrice, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: reason });
+                const trade: Trade = { id: ++tradeId, type: position!.direction, entryTime: position!.entryTime, entryPrice: position!.entryPrice, exitTime: candle.time, exitPrice, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: reason };
+                if (currentSnapshot) trade.entrySnapshot = currentSnapshot;
+                trades.push(trade);
                 position!.size -= d.size;
-                if (position!.size <= 0) position = null;
+                if (position!.size <= 0) { position = null; currentSnapshot = null; }
             });
             if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
         }
@@ -145,15 +175,30 @@ export function runBacktest(
             if (compareTime(signal.time, candle.time) === 0) {
                 if (!position) {
                     const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
-                    if (opened) { position = opened.nextPosition; capital -= opened.entryCommission; }
+                    if (opened) {
+                        position = opened.nextPosition;
+                        capital -= opened.entryCommission;
+                        if (doSnapshot && snapshotIndicators) {
+                            currentSnapshot = captureTradeSnapshot(data, i, indicatorSeries, snapshotIndicators);
+                        }
+                    }
                 } else if (signal.type === directionToSignalType(position.direction === 'long' ? 'short' : 'long') && (config.allowSameBarExit || compareTime(signal.time, position.entryTime) !== 0)) {
                     const details = calculateTradeExitDetails(position, signal.price, position.size, commissionRate);
                     capital += details.rawPnl - details.commission;
-                    trades.push({ id: ++tradeId, type: position.direction, entryTime: position.entryTime, entryPrice: position.entryPrice, exitTime: candle.time, exitPrice: signal.price, pnl: details.totalPnl, pnlPercent: details.pnlPercent, size: details.size, fees: details.fees, exitReason: 'signal' });
+                    const sigTrade: Trade = { id: ++tradeId, type: position.direction, entryTime: position.entryTime, entryPrice: position.entryPrice, exitTime: candle.time, exitPrice: signal.price, pnl: details.totalPnl, pnlPercent: details.pnlPercent, size: details.size, fees: details.fees, exitReason: 'signal' };
+                    if (currentSnapshot) sigTrade.entrySnapshot = currentSnapshot;
+                    trades.push(sigTrade);
                     position = null;
+                    currentSnapshot = null;
                     if (tradeDirection === 'both') {
                         const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
-                        if (opened) { position = opened.nextPosition; capital -= opened.entryCommission; }
+                        if (opened) {
+                            position = opened.nextPosition;
+                            capital -= opened.entryCommission;
+                            if (doSnapshot && snapshotIndicators) {
+                                currentSnapshot = captureTradeSnapshot(data, i, indicatorSeries, snapshotIndicators);
+                            }
+                        }
                     }
                 }
             }
@@ -165,7 +210,9 @@ export function runBacktest(
         const candle = data[data.length - 1];
         const d = calculateTradeExitDetails(position, candle.close, position.size, commissionRate);
         capital += d.rawPnl - d.commission;
-        trades.push({ id: ++tradeId, type: position.direction, entryTime: position.entryTime, entryPrice: position.entryPrice, exitTime: candle.time, exitPrice: candle.close, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: 'end_of_data' });
+        const eodTrade: Trade = { id: ++tradeId, type: position.direction, entryTime: position.entryTime, entryPrice: position.entryPrice, exitTime: candle.time, exitPrice: candle.close, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: 'end_of_data' };
+        if (currentSnapshot) eodTrade.entrySnapshot = currentSnapshot;
+        trades.push(eodTrade);
     }
 
     const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(equityCurve, initialCapital);

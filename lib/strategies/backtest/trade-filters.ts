@@ -155,5 +155,65 @@ export function passesRegimeFilters(
 }
 
 
+// ============================================================================
+// Snapshot-Based Filters (stackable, AND logic)
+// ============================================================================
 
+import { SnapshotIndicators } from './snapshot-capture';
 
+/**
+ * Check all snapshot-based filters.  These are evaluated with AND logic —
+ * the trade is only allowed if ALL enabled filters pass.
+ * They work independently of (and stack with) the legacy `tradeFilterMode`.
+ *
+ * Returns `true` if the entry passes all enabled snapshot filters.
+ */
+export function passesSnapshotFilters(
+    data: OHLCVData[],
+    entryIndex: number,
+    config: NormalizedSettings,
+    snapshotIndicators: SnapshotIndicators | null
+): boolean {
+    // If no snapshot filters are enabled, pass
+    const hasAny =
+        config.snapshotAtrPercentMin > 0 ||
+        config.snapshotVolumeRatioMin > 0 ||
+        config.snapshotAdxMin > 0 ||
+        config.snapshotEmaDistanceMin !== 0;
+    if (!hasAny || !snapshotIndicators) return true;
+
+    const close = data[entryIndex].close;
+
+    // ATR% filter
+    if (config.snapshotAtrPercentMin > 0) {
+        const atr = snapshotIndicators.atr[entryIndex];
+        if (atr === null || atr === undefined) return false;
+        const atrPercent = close > 0 ? (atr / close) * 100 : 0;
+        if (atrPercent < config.snapshotAtrPercentMin) return false;
+    }
+
+    // Volume Ratio filter
+    if (config.snapshotVolumeRatioMin > 0) {
+        const volSma = snapshotIndicators.volumeSma[entryIndex];
+        if (volSma === null || volSma === undefined || volSma <= 0) return false;
+        const volumeRatio = data[entryIndex].volume / volSma;
+        if (volumeRatio < config.snapshotVolumeRatioMin) return false;
+    }
+
+    // ADX filter
+    if (config.snapshotAdxMin > 0) {
+        const adx = snapshotIndicators.adx[entryIndex];
+        if (adx === null || adx === undefined) return false;
+        if (adx < config.snapshotAdxMin) return false;
+    }
+
+    // EMA Distance filter (positive value = require price above EMA by that %)
+    if (config.snapshotEmaDistanceMin !== 0) {
+        const ema = snapshotIndicators.emaTrend[entryIndex];
+        if (ema === null || ema === undefined || ema <= 0) return false;
+        const emaDistance = ((close - ema) / ema) * 100;
+        if (emaDistance < config.snapshotEmaDistanceMin) return false;
+    }
+
+    return true;
+}

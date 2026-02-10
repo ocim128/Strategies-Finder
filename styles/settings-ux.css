@@ -1,0 +1,259 @@
+/* ============================================================================
+   Settings UX Enhancements
+   - Collapsible accordion sections
+   - Info-icon tooltips (replacing inline .param-hint)
+   - Preset mode selector (Simple / Standard / Advanced)
+   ============================================================================ */
+
+/* --------------------------------------------------------------------------
+   1. Preset Mode Selector
+   -------------------------------------------------------------------------- */
+
+.settings-preset-bar {
+    display: flex;
+    gap: 4px;
+    padding: 3px;
+    margin-bottom: var(--space-4);
+    background: hsl(var(--hsl-surface-3) / 0.5);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--glass-border);
+}
+
+.settings-preset-btn {
+    flex: 1;
+    padding: var(--space-1-5) var(--space-2);
+    border: none;
+    border-radius: var(--radius-s);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    position: relative;
+}
+
+.settings-preset-btn:hover {
+    color: var(--text-primary);
+    background: hsl(var(--hsl-surface-4) / 0.5);
+}
+
+.settings-preset-btn.active {
+    background: var(--gradient-accent);
+    color: var(--text-on-accent);
+    box-shadow: var(--glow-subtle);
+}
+
+.settings-preset-btn .preset-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.settings-preset-btn[data-preset="simple"] .preset-dot {
+    background: var(--green);
+}
+
+.settings-preset-btn[data-preset="standard"] .preset-dot {
+    background: var(--warning);
+}
+
+.settings-preset-btn[data-preset="advanced"] .preset-dot {
+    background: var(--red);
+}
+
+.settings-preset-btn.active .preset-dot {
+    background: currentColor;
+}
+
+/* --------------------------------------------------------------------------
+   2. Collapsible Accordion Sections
+   -------------------------------------------------------------------------- */
+
+/* Make section-header clickable */
+.section-header.collapsible {
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    border-radius: var(--radius-s);
+    padding: var(--space-1-5) var(--space-2);
+    margin-left: calc(-1 * var(--space-2));
+    margin-right: calc(-1 * var(--space-2));
+    transition: background 0.15s ease;
+}
+
+.section-header.collapsible:hover {
+    background: hsl(var(--hsl-surface-4) / 0.35);
+}
+
+.section-header.collapsible:active {
+    background: hsl(var(--hsl-surface-4) / 0.5);
+}
+
+/* Chevron indicator */
+.section-header.collapsible .section-chevron {
+    display: inline-flex;
+    align-items: center;
+    margin-right: var(--space-2);
+    color: var(--text-secondary);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    flex-shrink: 0;
+}
+
+.section-header.collapsible .section-chevron svg {
+    width: 14px;
+    height: 14px;
+}
+
+.section-header.collapsible.collapsed .section-chevron {
+    transform: rotate(-90deg);
+}
+
+/* The section body slides/collapses */
+.section-body.accordion-body {
+    overflow: hidden;
+    transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 0.2s ease,
+        margin 0.3s ease;
+    max-height: 1200px;
+    /* generous max for open state */
+    opacity: 1;
+}
+
+.section-body.accordion-body.collapsed {
+    max-height: 0 !important;
+    opacity: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   3. Info-icon Tooltips (replacing inline .param-hint)
+   -------------------------------------------------------------------------- */
+
+/* When tooltip mode is active, hide regular param hints */
+#settingsTab.tooltips-active .param-hint {
+    display: none;
+}
+
+/* Tooltip wrapper around param-label */
+.param-label-with-tip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.info-tip-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1px solid var(--border-color);
+    background: hsl(var(--hsl-surface-3) / 0.5);
+    color: var(--text-secondary);
+    font-size: 9px;
+    font-weight: var(--font-weight-bold);
+    cursor: help;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+    position: relative;
+    line-height: 1;
+}
+
+.info-tip-trigger:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+    background: hsl(var(--hsl-accent) / 0.1);
+    transform: scale(1.15);
+}
+
+/* The floating tooltip */
+.info-tip-content {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-normal);
+    line-height: var(--line-height-relaxed);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-s);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-floating);
+    white-space: normal;
+    width: max-content;
+    max-width: 220px;
+    z-index: 100;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    text-transform: none;
+    letter-spacing: normal;
+}
+
+/* Arrow */
+.info-tip-content::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: var(--bg-elevated);
+}
+
+.info-tip-trigger:hover .info-tip-content,
+.info-tip-trigger:focus .info-tip-content {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    pointer-events: auto;
+}
+
+/* --------------------------------------------------------------------------
+   4. Preset-driven section visibility
+   -------------------------------------------------------------------------- */
+
+/* Sections hidden in simple mode */
+#settingsTab[data-preset="simple"] .settings-section[data-complexity="standard"],
+#settingsTab[data-preset="simple"] .settings-section[data-complexity="advanced"] {
+    display: none;
+}
+
+/* Sections hidden in standard mode */
+#settingsTab[data-preset="standard"] .settings-section[data-complexity="advanced"] {
+    display: none;
+}
+
+/* --------------------------------------------------------------------------
+   5. Section changed indicator
+   -------------------------------------------------------------------------- */
+
+.section-header .section-changed-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent-color);
+    margin-left: var(--space-1);
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.section-header .section-changed-dot.visible {
+    opacity: 1;
+    animation: pulse 2s ease-in-out infinite;
+}

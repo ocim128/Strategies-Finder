@@ -14,6 +14,24 @@ export interface OHLCVData {
     volume: number;
 }
 
+/** Indicator snapshot captured at trade entry for pattern analysis */
+export interface TradeSnapshot {
+    rsi: number | null;
+    adx: number | null;
+    /** ATR as percentage of price */
+    atrPercent: number | null;
+    /** % distance from trend EMA (positive = above, negative = below) */
+    emaDistance: number | null;
+    /** volume / volume SMA ratio */
+    volumeRatio: number | null;
+    /** position in recent N-bar range (0 = at low, 1 = at high) */
+    priceRangePos: number | null;
+    /** bars since recent high */
+    barsFromHigh: number | null;
+    /** bars since recent low */
+    barsFromLow: number | null;
+}
+
 export interface Trade {
     id: number;
     type: 'long' | 'short';
@@ -27,6 +45,8 @@ export interface Trade {
     fees?: number;
     /** Exit reason: how the trade was closed */
     exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'end_of_data';
+    /** Indicator snapshot at entry for pattern analysis */
+    entrySnapshot?: TradeSnapshot;
 }
 
 export interface BacktestResult {
@@ -108,6 +128,18 @@ export interface BacktestSettings {
     strategyTimeframeEnabled?: boolean;
     /** Higher timeframe in minutes for global strategy execution */
     strategyTimeframeMinutes?: number;
+    /** Capture indicator snapshots at trade entry for pattern analysis */
+    captureSnapshots?: boolean;
+
+    // ── Snapshot-based trade filters (stackable, AND logic) ──
+    /** Minimum ATR% at entry (0 = disabled). Filters out low-volatility entries. */
+    snapshotAtrPercentMin?: number;
+    /** Minimum volume ratio at entry (0 = disabled). Filters out low-volume entries. */
+    snapshotVolumeRatioMin?: number;
+    /** Minimum ADX at entry (0 = disabled). Filters out range-bound entries. */
+    snapshotAdxMin?: number;
+    /** Minimum EMA distance % (0 = disabled). Positive = above EMA. */
+    snapshotEmaDistanceMin?: number;
 }
 
 export interface Signal {

@@ -8,7 +8,6 @@ export * from './finder';
 export * from './pair-combiner';
 export * from './replay';
 export * from './scanner';
-export * from './webhook';
 export * from './data-providers';
 export * from './feature-lab';
 

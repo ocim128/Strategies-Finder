@@ -53,7 +53,12 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
             : 'all',
         executionModel,
         allowSameBarExit: settings?.allowSameBarExit ?? true,
-        slippageBps: Math.max(0, toNumberOr(settings?.slippageBps, 0))
+        slippageBps: Math.max(0, toNumberOr(settings?.slippageBps, 0)),
+
+        snapshotAtrPercentMin: Math.max(0, toNumberOr(settings?.snapshotAtrPercentMin, 0)),
+        snapshotVolumeRatioMin: Math.max(0, toNumberOr(settings?.snapshotVolumeRatioMin, 0)),
+        snapshotAdxMin: Math.max(0, toNumberOr(settings?.snapshotAdxMin, 0)),
+        snapshotEmaDistanceMin: toNumberOr(settings?.snapshotEmaDistanceMin, 0),
     };
 }
 

@@ -106,6 +106,11 @@ export class BacktestService {
             delete (rustSettings as { marketMode?: string }).marketMode;
             delete (rustSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
             delete (rustSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
+            delete (rustSettings as { captureSnapshots?: boolean }).captureSnapshots;
+            delete (rustSettings as { snapshotAtrPercentMin?: number }).snapshotAtrPercentMin;
+            delete (rustSettings as { snapshotVolumeRatioMin?: number }).snapshotVolumeRatioMin;
+            delete (rustSettings as { snapshotAdxMin?: number }).snapshotAdxMin;
+            delete (rustSettings as { snapshotEmaDistanceMin?: number }).snapshotEmaDistanceMin;
 
             if (strategy.metadata?.role === 'entry' && entryStats) {
                 result = buildEntryBacktestResult(entryStats);
@@ -155,10 +160,7 @@ export class BacktestService {
 
             state.set('currentBacktestResult', result);
 
-            // Send webhook notifications for completed trades
-            if (result.trades.length > 0) {
-                this.sendWebhookForTrades(result.trades, strategy.name, params);
-            }
+
 
             progressFill.style.width = '100%';
             progressText.textContent = 'Complete!';
@@ -213,43 +215,7 @@ export class BacktestService {
         }
     }
 
-    /**
-     * Send webhook notifications for completed trades
-     */
-    private async sendWebhookForTrades(
-        trades: import('./types/strategies').Trade[],
-        strategyName: string,
-        params: StrategyParams
-    ): Promise<void> {
-        if (trades.length === 0) return;
 
-        try {
-            // Dynamic import to avoid circular dependencies
-            const { webhookService } = await import('./webhook-service');
-
-            // Send just the most recent trade (to avoid flooding webhooks)
-            const lastTrade = trades[trades.length - 1];
-
-            await webhookService.sendTradeExit(
-                {
-                    id: lastTrade.id,
-                    type: lastTrade.type,
-                    entryPrice: lastTrade.entryPrice,
-                    exitPrice: lastTrade.exitPrice,
-                    entryTime: lastTrade.entryTime,
-                    exitTime: lastTrade.exitTime,
-                    pnl: lastTrade.pnl,
-                    pnlPercent: lastTrade.pnlPercent,
-                    size: lastTrade.size
-                },
-                strategyName,
-                params
-            );
-        } catch (error) {
-            // Silently fail - webhooks are not critical to backtest
-            console.debug('[BacktestService] Webhook send failed:', error);
-        }
-    }
 
     public getCapitalSettings(): {
         initialCapital: number;
@@ -330,6 +296,13 @@ export class BacktestService {
             slippageBps: this.readNumberInput('slippageBps', 5),
             strategyTimeframeEnabled: this.isToggleEnabled('strategyTimeframeToggle', false),
             strategyTimeframeMinutes: this.readNumberInput('strategyTimeframeMinutes', 120),
+            captureSnapshots: true,
+
+            // Snapshot-based trade filters (stackable)
+            snapshotAtrPercentMin: this.isToggleEnabled('snapshotAtrFilterToggle', false) ? this.readNumberInput('snapshotAtrPercentMin', 0) : 0,
+            snapshotVolumeRatioMin: this.isToggleEnabled('snapshotVolumeFilterToggle', false) ? this.readNumberInput('snapshotVolumeRatioMin', 0) : 0,
+            snapshotAdxMin: this.isToggleEnabled('snapshotAdxFilterToggle', false) ? this.readNumberInput('snapshotAdxMin', 0) : 0,
+            snapshotEmaDistanceMin: this.isToggleEnabled('snapshotEmaFilterToggle', false) ? this.readNumberInput('snapshotEmaDistanceMin', 0) : 0,
         };
     }
 
@@ -368,7 +341,12 @@ export class BacktestService {
         const executionModel = settings.executionModel ?? 'signal_close';
         const allowSameBarExit = settings.allowSameBarExit ?? true;
         const slippageBps = settings.slippageBps ?? 0;
-        return executionModel !== 'signal_close' || slippageBps > 0 || !allowSameBarExit || settings.tradeDirection === 'both';
+        const hasSnapshotFilters =
+            (settings.snapshotAtrPercentMin ?? 0) > 0 ||
+            (settings.snapshotVolumeRatioMin ?? 0) > 0 ||
+            (settings.snapshotAdxMin ?? 0) > 0 ||
+            (settings.snapshotEmaDistanceMin ?? 0) !== 0;
+        return executionModel !== 'signal_close' || slippageBps > 0 || !allowSameBarExit || settings.tradeDirection === 'both' || hasSnapshotFilters;
     }
 
     public addStrategyIndicators(params: StrategyParams) {

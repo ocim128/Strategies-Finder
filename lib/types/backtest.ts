@@ -35,6 +35,12 @@ export interface NormalizedSettings {
     executionModel: 'signal_close' | 'next_open' | 'next_close';
     allowSameBarExit: boolean;
     slippageBps: number;
+
+    // Snapshot-based trade filters
+    snapshotAtrPercentMin: number;
+    snapshotVolumeRatioMin: number;
+    snapshotAdxMin: number;
+    snapshotEmaDistanceMin: number;
 }
 
 export interface IndicatorSeries {

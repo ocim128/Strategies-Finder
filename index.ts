@@ -21,6 +21,7 @@ import { settingsManager } from "./lib/settings-manager";
 import { injectLayout } from "./lib/layout-manager";
 import { commandPaletteManager } from "./lib/command-palette";
 import { pairCombinerManager } from "./lib/pair-combiner-manager";
+import { analysisPanel } from "./lib/analysis-panel";
 import { dataMiningManager } from "./lib/data-mining-manager";
 
 import { replayManager, ReplayChartAdapter, ReplayUI } from "./lib/replay";
@@ -32,6 +33,7 @@ import { setupGlobalErrorHandlers } from "./lib/handlers/global-error-handlers";
 import { setupStateSubscriptions } from "./lib/handlers/state-subscriptions";
 import { setupEventHandlers } from "./lib/handlers/ui-event-handlers";
 import { setupSettingsHandlers } from "./lib/handlers/settings-handlers";
+import { initSettingsUX } from "./lib/handlers/settings-ux-handlers";
 import { handleCrosshairMove } from "./lib/app-actions";
 import { initEngineStatusIndicator } from "./lib/engine-status-indicator";
 
@@ -63,6 +65,7 @@ async function init() {
 	walkForwardService.initUI();
 	monteCarloService.initUI();
 	logicTestService.initUI();
+	analysisPanel.init();
 
 	initConfirmationStrategyUI();
 	initDebugPanel();
@@ -140,6 +143,7 @@ async function init() {
 
 	// Setup settings event handlers
 	setupSettingsHandlers();
+	initSettingsUX();
 
 	// Setup auto-save for settings changes
 	settingsManager.setupAutoSave();
