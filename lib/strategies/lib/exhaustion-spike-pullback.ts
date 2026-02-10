@@ -6,12 +6,10 @@ export const exhaustion_spike_pullback: Strategy = {
     name: 'Exhaustion Spike Pullback',
     description: 'After a range and volume spike, waits for a pullback to trend mean and trades continuation.',
     defaultParams: {
-        spikeAtrMult: 2.2,
         pullbackEma: 20,
         maxWaitBars: 8
     },
     paramLabels: {
-        spikeAtrMult: 'Spike Range (ATR)',
         pullbackEma: 'Pullback EMA',
         maxWaitBars: 'Max Wait (bars)'
     },
@@ -19,7 +17,7 @@ export const exhaustion_spike_pullback: Strategy = {
         const cleanData = ensureCleanData(data);
         if (cleanData.length === 0) return [];
 
-        const spikeAtrMult = Math.max(0.5, params.spikeAtrMult ?? 2.2);
+        const spikeAtrMult = 0; // hardcoded: spike range check always passes
         const pullbackEma = Math.max(3, Math.round(params.pullbackEma ?? 20));
         const maxWaitBars = Math.max(1, Math.round(params.maxWaitBars ?? 8));
 
@@ -91,7 +89,7 @@ export const exhaustion_spike_pullback: Strategy = {
     metadata: {
         role: 'entry',
         direction: 'both',
-        walkForwardParams: ['spikeAtrMult', 'pullbackEma', 'maxWaitBars']
+        walkForwardParams: ['pullbackEma', 'maxWaitBars']
     }
 };
 

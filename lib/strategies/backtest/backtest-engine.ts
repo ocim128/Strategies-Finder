@@ -38,9 +38,19 @@ export function runBacktestCompact(
     // Compute snapshot indicators if any snapshot-based filters are active
     const needsSnapshotIndicators =
         config.snapshotAtrPercentMin > 0 ||
+        config.snapshotAtrPercentMax > 0 ||
         config.snapshotVolumeRatioMin > 0 ||
+        config.snapshotVolumeRatioMax > 0 ||
         config.snapshotAdxMin > 0 ||
-        config.snapshotEmaDistanceMin !== 0;
+        config.snapshotAdxMax > 0 ||
+        config.snapshotEmaDistanceMin !== 0 ||
+        config.snapshotEmaDistanceMax !== 0 ||
+        config.snapshotRsiMin > 0 ||
+        config.snapshotRsiMax > 0 ||
+        config.snapshotPriceRangePosMin > 0 ||
+        config.snapshotPriceRangePosMax > 0 ||
+        config.snapshotBarsFromHighMax > 0 ||
+        config.snapshotBarsFromLowMax > 0;
     const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators
         ? computeSnapshotIndicators(data, indicatorSeries)
         : null;
@@ -136,9 +146,19 @@ export function runBacktest(
     const needsSnapshotIndicators =
         !!settings.captureSnapshots ||
         config.snapshotAtrPercentMin > 0 ||
+        config.snapshotAtrPercentMax > 0 ||
         config.snapshotVolumeRatioMin > 0 ||
+        config.snapshotVolumeRatioMax > 0 ||
         config.snapshotAdxMin > 0 ||
-        config.snapshotEmaDistanceMin !== 0;
+        config.snapshotAdxMax > 0 ||
+        config.snapshotEmaDistanceMin !== 0 ||
+        config.snapshotEmaDistanceMax !== 0 ||
+        config.snapshotRsiMin > 0 ||
+        config.snapshotRsiMax > 0 ||
+        config.snapshotPriceRangePosMin > 0 ||
+        config.snapshotPriceRangePosMax > 0 ||
+        config.snapshotBarsFromHighMax > 0 ||
+        config.snapshotBarsFromLowMax > 0;
     const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators
         ? computeSnapshotIndicators(data, indicatorSeries)
         : null;
@@ -210,7 +230,7 @@ export function runBacktest(
         const candle = data[data.length - 1];
         const d = calculateTradeExitDetails(position, candle.close, position.size, commissionRate);
         capital += d.rawPnl - d.commission;
-        const eodTrade: Trade = { id: ++tradeId, type: position.direction, entryTime: position.entryTime, entryPrice: position.entryPrice, exitTime: candle.time, exitPrice: candle.close, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: 'end_of_data' };
+        const eodTrade: Trade = { id: ++tradeId, type: position.direction, entryTime: position.entryTime, entryPrice: position.entryPrice, exitTime: candle.time, exitPrice: candle.close, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: 'end_of_data', stopLossPrice: position.stopLossPrice, takeProfitPrice: position.takeProfitPrice };
         if (currentSnapshot) eodTrade.entrySnapshot = currentSnapshot;
         trades.push(eodTrade);
     }

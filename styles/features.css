@@ -726,6 +726,35 @@
 .exit-reason-badge:hover {
     transform: scale(1.1);
 }
+/* TP/SL target prices for open (EOD) trades */
+.trade-targets-row {
+    display: flex;
+    gap: 12px;
+    padding: 5px 8px 2px;
+    margin-top: 4px;
+    font-size: 11px;
+    font-family: var(--font-family-mono);
+    border-top: 1px dashed hsl(var(--hsl-surface-3) / 0.6);
+}
+
+.trade-target {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.trade-target.tp {
+    color: #22c55e;
+}
+
+.trade-target.sl {
+    color: #ef4444;
+}
+
+.trade-target .target-pct {
+    opacity: 0.7;
+    font-size: 10px;
+}
 
 /* Settings Actions */
 .settings-actions {

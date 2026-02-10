@@ -45,6 +45,10 @@ export interface Trade {
     fees?: number;
     /** Exit reason: how the trade was closed */
     exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'end_of_data';
+    /** Stop-loss price level (populated for open/EOD trades) */
+    stopLossPrice?: number | null;
+    /** Take-profit price level (populated for open/EOD trades) */
+    takeProfitPrice?: number | null;
     /** Indicator snapshot at entry for pattern analysis */
     entrySnapshot?: TradeSnapshot;
 }
@@ -134,12 +138,32 @@ export interface BacktestSettings {
     // ── Snapshot-based trade filters (stackable, AND logic) ──
     /** Minimum ATR% at entry (0 = disabled). Filters out low-volatility entries. */
     snapshotAtrPercentMin?: number;
+    /** Maximum ATR% at entry (0 = disabled). Filters out high-volatility entries. */
+    snapshotAtrPercentMax?: number;
     /** Minimum volume ratio at entry (0 = disabled). Filters out low-volume entries. */
     snapshotVolumeRatioMin?: number;
+    /** Maximum volume ratio at entry (0 = disabled). Filters out volume spikes. */
+    snapshotVolumeRatioMax?: number;
     /** Minimum ADX at entry (0 = disabled). Filters out range-bound entries. */
     snapshotAdxMin?: number;
+    /** Maximum ADX at entry (0 = disabled). Filters out over-trending entries. */
+    snapshotAdxMax?: number;
     /** Minimum EMA distance % (0 = disabled). Positive = above EMA. */
     snapshotEmaDistanceMin?: number;
+    /** Maximum EMA distance % (0 = disabled). */
+    snapshotEmaDistanceMax?: number;
+    /** Min RSI at entry (0 = disabled) */
+    snapshotRsiMin?: number;
+    /** Max RSI at entry (0 = disabled) */
+    snapshotRsiMax?: number;
+    /** Min price range position (0-1, 0 = disabled) */
+    snapshotPriceRangePosMin?: number;
+    /** Max price range position (0-1, 0 = disabled) */
+    snapshotPriceRangePosMax?: number;
+    /** Max bars from recent high (0 = disabled) */
+    snapshotBarsFromHighMax?: number;
+    /** Max bars from recent low (0 = disabled) */
+    snapshotBarsFromLowMax?: number;
 }
 
 export interface Signal {

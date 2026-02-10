@@ -25,6 +25,8 @@ export interface FeatureAnalysis {
     suggestedFilter: { direction: 'above' | 'below'; threshold: number } | null;
     /** Projected win rate if this filter were applied */
     winRateIfFiltered: number;
+    /** Projected expectancy ($/trade) if this filter were applied */
+    expectancyIfFiltered: number;
     /** % of total trades that would be removed */
     tradesRemovedPercent: number;
 }
@@ -42,7 +44,22 @@ export interface FilterSimulationResult {
     winRateImprovement: number;
     /** PnL of remaining trades */
     filteredNetPnl: number;
+    /** Expectancy (avg PnL per trade) of original trades */
+    originalExpectancy: number;
+    /** Expectancy (avg PnL per trade) of remaining trades */
+    filteredExpectancy: number;
+    /** Expectancy improvement (filtered - original) */
+    expectancyImprovement: number;
+    /** Profit factor of remaining trades */
+    filteredProfitFactor: number;
 }
+
+/** Minimum remaining trades to accept a filter — prevents overfitting on tiny samples */
+const MIN_TRADES_FOR_FILTER = 8;
+/** Maximum trade removal for single-feature filters */
+const MAX_SINGLE_REMOVAL = 35;
+/** Maximum trade removal for combo filters */
+const MAX_COMBO_REMOVAL = 40;
 
 // ============================================================================
 // Feature Metadata
@@ -99,16 +116,18 @@ export function analyzeTradePatterns(trades: Trade[]): FeatureAnalysis[] {
             ? Math.min(1, Math.abs(winStats.mean - lossStats.mean) / pooledStd / 3)
             : 0;
 
-        // Determine suggested filter
+        // Determine suggested filter (now optimized for expectancy)
         const suggestedFilter = findBestThreshold(tradesWithSnapshots, feature, winStats, lossStats);
 
         // Simulate the filter to get projected metrics
         let winRateIfFiltered = 0;
+        let expectancyIfFiltered = 0;
         let tradesRemovedPercent = 0;
 
         if (suggestedFilter) {
             const sim = simulateFilter(tradesWithSnapshots, feature, suggestedFilter.direction, suggestedFilter.threshold);
             winRateIfFiltered = sim.filteredWinRate;
+            expectancyIfFiltered = sim.filteredExpectancy;
             tradesRemovedPercent = sim.removedPercent;
         }
 
@@ -120,6 +139,7 @@ export function analyzeTradePatterns(trades: Trade[]): FeatureAnalysis[] {
             separationScore,
             suggestedFilter,
             winRateIfFiltered,
+            expectancyIfFiltered,
             tradesRemovedPercent
         });
     }
@@ -132,6 +152,7 @@ export function analyzeTradePatterns(trades: Trade[]): FeatureAnalysis[] {
 
 /**
  * Simulate applying a filter to trades and return projected metrics.
+ * Now includes expectancy and profit factor alongside win rate.
  */
 export function simulateFilter(
     trades: Trade[],
@@ -144,6 +165,10 @@ export function simulateFilter(
     const originalWinRate = tradesWithSnapshots.length > 0
         ? (originalWins / tradesWithSnapshots.length) * 100
         : 0;
+    const originalNetPnl = tradesWithSnapshots.reduce((sum, t) => sum + t.pnl, 0);
+    const originalExpectancy = tradesWithSnapshots.length > 0
+        ? originalNetPnl / tradesWithSnapshots.length
+        : 0;
 
     const remaining = tradesWithSnapshots.filter(t => {
         const val = t.entrySnapshot![feature] as number | null;
@@ -155,6 +180,18 @@ export function simulateFilter(
     const filteredWinRate = remaining.length > 0
         ? (filteredWins / remaining.length) * 100
         : 0;
+
+    const filteredNetPnl = remaining.reduce((sum, t) => sum + t.pnl, 0);
+    const filteredExpectancy = remaining.length > 0
+        ? filteredNetPnl / remaining.length
+        : 0;
+
+    // Profit factor
+    const filteredGrossProfit = remaining.filter(t => t.pnl > 0).reduce((s, t) => s + t.pnl, 0);
+    const filteredGrossLoss = Math.abs(remaining.filter(t => t.pnl <= 0).reduce((s, t) => s + t.pnl, 0));
+    const filteredProfitFactor = filteredGrossLoss > 0
+        ? filteredGrossProfit / filteredGrossLoss
+        : filteredGrossProfit > 0 ? Infinity : 0;
 
     const removedCount = tradesWithSnapshots.length - remaining.length;
 
@@ -171,7 +208,11 @@ export function simulateFilter(
         originalWinRate,
         filteredWinRate,
         winRateImprovement: filteredWinRate - originalWinRate,
-        filteredNetPnl: remaining.reduce((sum, t) => sum + t.pnl, 0)
+        filteredNetPnl,
+        originalExpectancy,
+        filteredExpectancy,
+        expectancyImprovement: filteredExpectancy - originalExpectancy,
+        filteredProfitFactor
     };
 }
 
@@ -208,45 +249,76 @@ function computeStats(values: number[]): FeatureStats {
 }
 
 /**
- * Find the best threshold for a feature that maximizes win rate improvement
- * while not removing too many trades (max 40% removal).
+ * Find the best threshold for a feature that maximizes EXPECTANCY improvement
+ * while preserving as many trades as possible.
+ *
+ * Approach:
+ * 1. Extract all feature values from trades and build percentile candidates
+ *    (5th through 95th) — this searches the ACTUAL data distribution, not
+ *    just between win/loss means, so it naturally finds gentle thresholds.
+ * 2. Try BOTH directions (above & below) for each candidate.
+ * 3. Score with a quadratic trade-preservation penalty:
+ *    score = expectancyImprovement × (keepRatio)²
+ *    This makes it very hard for aggressive filters (>30% removal) to win.
  */
 function findBestThreshold(
     trades: Trade[],
     feature: keyof TradeSnapshot,
-    winStats: FeatureStats,
-    lossStats: FeatureStats
+    _winStats: FeatureStats,
+    _lossStats: FeatureStats
 ): { direction: 'above' | 'below'; threshold: number } | null {
-    // Determine direction: if losses have higher mean, filter below (keep above)
-    // If losses have lower mean, filter above (keep below)
-    const direction: 'above' | 'below' = lossStats.mean > winStats.mean ? 'below' : 'above';
+    // Collect all feature values to build percentile-based candidates
+    const allValues = extractFeatureValues(trades, feature);
+    if (allValues.length < 6) return null;
 
-    // Try thresholds between the two means
-    const lo = Math.min(winStats.mean, lossStats.mean);
-    const hi = Math.max(winStats.mean, lossStats.mean);
-    const steps = 10;
+    const sorted = [...allValues].sort((a, b) => a - b);
 
-    let bestThreshold = direction === 'above' ? lo : hi;
+    // Generate candidate thresholds at 5th, 10th, 15th, ..., 95th percentiles
+    const candidates: number[] = [];
+    for (let p = 5; p <= 95; p += 5) {
+        const idx = Math.min(Math.floor((p / 100) * sorted.length), sorted.length - 1);
+        candidates.push(sorted[idx]);
+    }
+    // Deduplicate (common in discrete features like barsFromHigh)
+    const uniqueCandidates = [...new Set(candidates)];
+
+    let bestDirection: 'above' | 'below' = 'above';
+    let bestThreshold = 0;
     let bestScore = -Infinity;
 
-    for (let i = 0; i <= steps; i++) {
-        const candidate = lo + (hi - lo) * (i / steps);
-        const sim = simulateFilter(trades, feature, direction, candidate);
+    const directions: ('above' | 'below')[] = ['above', 'below'];
 
-        // Score: win rate improvement with penalty for removing too many trades
-        if (sim.removedPercent > 40) continue;
-        const score = sim.winRateImprovement - sim.removedPercent * 0.1;
-        if (score > bestScore) {
-            bestScore = score;
-            bestThreshold = candidate;
+    for (const dir of directions) {
+        for (const candidate of uniqueCandidates) {
+            const sim = simulateFilter(trades, feature, dir, candidate);
+
+            // Hard constraints
+            if (sim.remainingTrades < MIN_TRADES_FOR_FILTER) continue;
+            if (sim.removedPercent > MAX_SINGLE_REMOVAL) continue;
+            if (sim.expectancyImprovement <= 0) continue;
+
+            // Score: expectancy improvement × (keep ratio)²
+            // Quadratic penalty: removing 20% → (0.8)² = 0.64, removing 30% → (0.7)² = 0.49
+            // This strongly prefers filters that remove fewer trades
+            const keepRatio = 1 - sim.removedPercent / 100;
+            const score = sim.expectancyImprovement * (keepRatio * keepRatio);
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestThreshold = candidate;
+                bestDirection = dir;
+            }
         }
     }
 
-    // Only suggest if there's meaningful improvement
-    const finalSim = simulateFilter(trades, feature, direction, bestThreshold);
-    if (finalSim.winRateImprovement < 1) return null;
+    if (bestScore <= 0) return null;
 
-    return { direction, threshold: Math.round(bestThreshold * 100) / 100 };
+    // Final validation
+    const finalSim = simulateFilter(trades, feature, bestDirection, bestThreshold);
+    if (finalSim.expectancyImprovement <= 0) return null;
+    if (finalSim.remainingTrades < MIN_TRADES_FOR_FILTER) return null;
+
+    return { direction: bestDirection, threshold: Math.round(bestThreshold * 100) / 100 };
 }
 
 // ============================================================================
@@ -270,6 +342,14 @@ export interface ComboFilterResult {
     filteredWinRate: number;
     winRateImprovement: number;
     filteredNetPnl: number;
+    /** Original expectancy ($/trade) */
+    originalExpectancy: number;
+    /** Filtered expectancy ($/trade) */
+    filteredExpectancy: number;
+    /** Expectancy improvement (filtered - original) */
+    expectancyImprovement: number;
+    /** Profit factor of remaining trades */
+    filteredProfitFactor: number;
 }
 
 /**
@@ -284,6 +364,10 @@ export function simulateComboFilter(
     const originalWins = tradesWithSnapshots.filter(t => t.pnl > 0).length;
     const originalWinRate = tradesWithSnapshots.length > 0
         ? (originalWins / tradesWithSnapshots.length) * 100
+        : 0;
+    const originalNetPnl = tradesWithSnapshots.reduce((sum, t) => sum + t.pnl, 0);
+    const originalExpectancy = tradesWithSnapshots.length > 0
+        ? originalNetPnl / tradesWithSnapshots.length
         : 0;
 
     const remaining = tradesWithSnapshots.filter(t => {
@@ -301,6 +385,17 @@ export function simulateComboFilter(
         ? (filteredWins / remaining.length) * 100
         : 0;
     const removedCount = tradesWithSnapshots.length - remaining.length;
+    const filteredNetPnl = remaining.reduce((sum, t) => sum + t.pnl, 0);
+    const filteredExpectancy = remaining.length > 0
+        ? filteredNetPnl / remaining.length
+        : 0;
+
+    // Profit factor
+    const filteredGrossProfit = remaining.filter(t => t.pnl > 0).reduce((s, t) => s + t.pnl, 0);
+    const filteredGrossLoss = Math.abs(remaining.filter(t => t.pnl <= 0).reduce((s, t) => s + t.pnl, 0));
+    const filteredProfitFactor = filteredGrossLoss > 0
+        ? filteredGrossProfit / filteredGrossLoss
+        : filteredGrossProfit > 0 ? Infinity : 0;
 
     return {
         filters,
@@ -313,19 +408,26 @@ export function simulateComboFilter(
         originalWinRate,
         filteredWinRate,
         winRateImprovement: filteredWinRate - originalWinRate,
-        filteredNetPnl: remaining.reduce((sum, t) => sum + t.pnl, 0)
+        filteredNetPnl,
+        originalExpectancy,
+        filteredExpectancy,
+        expectancyImprovement: filteredExpectancy - originalExpectancy,
+        filteredProfitFactor
     };
 }
 
 /**
  * Build the best combo filter from the top N features that have suggested filters.
- * Tries pairs and triples, returns the best combo that improves win rate
- * while keeping trade removal under maxRemovalPercent.
+ * Tries pairs and triples, returns the best combo that improves EXPECTANCY
+ * while keeping enough trades to be statistically meaningful.
+ *
+ * Uses quadratic trade-preservation penalty to strongly prefer combos
+ * that don't remove too many trades.
  */
 export function findBestComboFilter(
     trades: Trade[],
     analyses: FeatureAnalysis[],
-    maxRemovalPercent: number = 60
+    maxRemovalPercent: number = MAX_COMBO_REMOVAL
 ): ComboFilterResult | null {
     const withFilters = analyses.filter(a => a.suggestedFilter !== null);
     if (withFilters.length < 2) return null;
@@ -340,7 +442,9 @@ export function findBestComboFilter(
                 { feature: withFilters[j].feature, label: withFilters[j].label, ...withFilters[j].suggestedFilter! }
             ];
             const result = simulateComboFilter(trades, filters);
-            if (result.removedPercent <= maxRemovalPercent && result.winRateImprovement > 0) {
+            if (result.removedPercent <= maxRemovalPercent
+                && result.remainingTrades >= MIN_TRADES_FOR_FILTER
+                && result.expectancyImprovement > 0) {
                 candidates.push(result);
             }
         }
@@ -357,7 +461,9 @@ export function findBestComboFilter(
                         { feature: withFilters[k].feature, label: withFilters[k].label, ...withFilters[k].suggestedFilter! }
                     ];
                     const result = simulateComboFilter(trades, filters);
-                    if (result.removedPercent <= maxRemovalPercent && result.winRateImprovement > 0) {
+                    if (result.removedPercent <= maxRemovalPercent
+                        && result.remainingTrades >= MIN_TRADES_FOR_FILTER
+                        && result.expectancyImprovement > 0) {
                         candidates.push(result);
                     }
                 }
@@ -367,10 +473,12 @@ export function findBestComboFilter(
 
     if (candidates.length === 0) return null;
 
-    // Rank: maximize (winRateImprovement) with penalty for excessive removal
+    // Rank with quadratic trade preservation: score = expectancyImprovement × (keepRatio)²
     candidates.sort((a, b) => {
-        const scoreA = a.winRateImprovement - a.removedPercent * 0.05;
-        const scoreB = b.winRateImprovement - b.removedPercent * 0.05;
+        const keepA = 1 - a.removedPercent / 100;
+        const keepB = 1 - b.removedPercent / 100;
+        const scoreA = a.expectancyImprovement * (keepA * keepA);
+        const scoreB = b.expectancyImprovement * (keepB * keepB);
         return scoreB - scoreA;
     });
 

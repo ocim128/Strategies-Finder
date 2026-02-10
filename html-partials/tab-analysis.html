@@ -37,7 +37,8 @@
                         <th>Loss Mean</th>
                         <th>Score</th>
                         <th>Filter</th>
-                        <th>Projected WR</th>
+                        <th>Proj. WR</th>
+                        <th>Proj. Exp</th>
                         <th>Removed</th>
                         <th></th>
                     </tr>
@@ -49,14 +50,16 @@
 
         <!-- Combo (Multi-Feature) Filter — auto-computed -->
         <div class="analysis-simulation combo-filter-section" id="comboFilterSection" style="display: none;">
-            <h4 class="simulation-title">🎯 Best Combined Filter</h4>
+            <h4 class="simulation-title">🎯 Best Combined Filter <span class="sim-approx-badge">approx.</span></h4>
             <div class="simulation-grid" id="comboFilterGrid"></div>
         </div>
 
         <!-- Single-Feature Filter Simulation (shown on "Test" click) -->
         <div class="analysis-simulation" id="analysisSimulation" style="display: none;">
-            <h4 class="simulation-title">Filter Simulation</h4>
+            <h4 class="simulation-title">Filter Simulation <span class="sim-approx-badge">approx.</span></h4>
             <div class="simulation-grid" id="simulationGrid"></div>
+            <div class="sim-disclaimer">Estimates based on post-hoc filtering. Actual backtest results may differ due to
+                position sizing and capital changes.</div>
         </div>
     </div>
 </div>

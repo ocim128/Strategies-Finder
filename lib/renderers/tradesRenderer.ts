@@ -27,6 +27,23 @@ export class TradesRenderer {
             // Format precise dates for tooltip or subtitle
             const entryDate = formatDate(trade.entryTime);
 
+            // Build target row for EOD (open) trades with TP/SL configured
+            let targetRow = '';
+            if (trade.exitReason === 'end_of_data') {
+                const targets: string[] = [];
+                if (trade.takeProfitPrice != null && trade.takeProfitPrice > 0) {
+                    const tpPct = Math.abs((trade.takeProfitPrice - trade.entryPrice) / trade.entryPrice * 100);
+                    targets.push(`<span class="trade-target tp" title="Take Profit target">🎯 TP: ${formatPrice(trade.takeProfitPrice)} <span class="target-pct">(${tpPct.toFixed(2)}%)</span></span>`);
+                }
+                if (trade.stopLossPrice != null && trade.stopLossPrice > 0) {
+                    const slPct = Math.abs((trade.stopLossPrice - trade.entryPrice) / trade.entryPrice * 100);
+                    targets.push(`<span class="trade-target sl" title="Stop Loss target">🛑 SL: ${formatPrice(trade.stopLossPrice)} <span class="target-pct">(${slPct.toFixed(2)}%)</span></span>`);
+                }
+                if (targets.length > 0) {
+                    targetRow = `<div class="trade-targets-row">${targets.join('')}</div>`;
+                }
+            }
+
             return `
 				<div class="trade-item ${statusClass}" data-entry-time="${trade.entryTime}" role="button" tabindex="0">
                     <div class="trade-main-row">
@@ -59,6 +76,7 @@ export class TradesRenderer {
                             </div>
 					    </div>
                     </div>
+                    ${targetRow}
 				</div>
 			`;
         }).join('');

@@ -177,42 +177,101 @@ export function passesSnapshotFilters(
     // If no snapshot filters are enabled, pass
     const hasAny =
         config.snapshotAtrPercentMin > 0 ||
+        config.snapshotAtrPercentMax > 0 ||
         config.snapshotVolumeRatioMin > 0 ||
+        config.snapshotVolumeRatioMax > 0 ||
         config.snapshotAdxMin > 0 ||
-        config.snapshotEmaDistanceMin !== 0;
+        config.snapshotAdxMax > 0 ||
+        config.snapshotEmaDistanceMin !== 0 ||
+        config.snapshotEmaDistanceMax !== 0 ||
+        config.snapshotRsiMin > 0 ||
+        config.snapshotRsiMax > 0 ||
+        config.snapshotPriceRangePosMin > 0 ||
+        config.snapshotPriceRangePosMax > 0 ||
+        config.snapshotBarsFromHighMax > 0 ||
+        config.snapshotBarsFromLowMax > 0;
     if (!hasAny || !snapshotIndicators) return true;
 
     const close = data[entryIndex].close;
 
-    // ATR% filter
-    if (config.snapshotAtrPercentMin > 0) {
+    // ATR% filter (min and/or max)
+    if (config.snapshotAtrPercentMin > 0 || config.snapshotAtrPercentMax > 0) {
         const atr = snapshotIndicators.atr[entryIndex];
         if (atr === null || atr === undefined) return false;
         const atrPercent = close > 0 ? (atr / close) * 100 : 0;
-        if (atrPercent < config.snapshotAtrPercentMin) return false;
+        if (config.snapshotAtrPercentMin > 0 && atrPercent < config.snapshotAtrPercentMin) return false;
+        if (config.snapshotAtrPercentMax > 0 && atrPercent > config.snapshotAtrPercentMax) return false;
     }
 
-    // Volume Ratio filter
-    if (config.snapshotVolumeRatioMin > 0) {
+    // Volume Ratio filter (min and/or max)
+    if (config.snapshotVolumeRatioMin > 0 || config.snapshotVolumeRatioMax > 0) {
         const volSma = snapshotIndicators.volumeSma[entryIndex];
         if (volSma === null || volSma === undefined || volSma <= 0) return false;
         const volumeRatio = data[entryIndex].volume / volSma;
-        if (volumeRatio < config.snapshotVolumeRatioMin) return false;
+        if (config.snapshotVolumeRatioMin > 0 && volumeRatio < config.snapshotVolumeRatioMin) return false;
+        if (config.snapshotVolumeRatioMax > 0 && volumeRatio > config.snapshotVolumeRatioMax) return false;
     }
 
-    // ADX filter
-    if (config.snapshotAdxMin > 0) {
+    // ADX filter (min and/or max)
+    if (config.snapshotAdxMin > 0 || config.snapshotAdxMax > 0) {
         const adx = snapshotIndicators.adx[entryIndex];
         if (adx === null || adx === undefined) return false;
-        if (adx < config.snapshotAdxMin) return false;
+        if (config.snapshotAdxMin > 0 && adx < config.snapshotAdxMin) return false;
+        if (config.snapshotAdxMax > 0 && adx > config.snapshotAdxMax) return false;
     }
 
-    // EMA Distance filter (positive value = require price above EMA by that %)
-    if (config.snapshotEmaDistanceMin !== 0) {
+    // EMA Distance filter (min and/or max)
+    if (config.snapshotEmaDistanceMin !== 0 || config.snapshotEmaDistanceMax !== 0) {
         const ema = snapshotIndicators.emaTrend[entryIndex];
         if (ema === null || ema === undefined || ema <= 0) return false;
         const emaDistance = ((close - ema) / ema) * 100;
-        if (emaDistance < config.snapshotEmaDistanceMin) return false;
+        if (config.snapshotEmaDistanceMin !== 0 && emaDistance < config.snapshotEmaDistanceMin) return false;
+        if (config.snapshotEmaDistanceMax !== 0 && emaDistance > config.snapshotEmaDistanceMax) return false;
+    }
+
+    // RSI filter (min and/or max)
+    if (config.snapshotRsiMin > 0 || config.snapshotRsiMax > 0) {
+        const rsi = snapshotIndicators.rsi[entryIndex];
+        if (rsi === null || rsi === undefined) return false;
+        if (config.snapshotRsiMin > 0 && rsi < config.snapshotRsiMin) return false;
+        if (config.snapshotRsiMax > 0 && rsi > config.snapshotRsiMax) return false;
+    }
+
+    // Price Range Position filter (0-1 range, min and/or max)
+    if (config.snapshotPriceRangePosMin > 0 || config.snapshotPriceRangePosMax > 0) {
+        const RANGE_LOOKBACK = 20;
+        const start = Math.max(0, entryIndex - RANGE_LOOKBACK + 1);
+        let highest = -Infinity, lowest = Infinity;
+        for (let i = start; i <= entryIndex; i++) {
+            if (data[i].high > highest) highest = data[i].high;
+            if (data[i].low < lowest) lowest = data[i].low;
+        }
+        const range = highest - lowest;
+        const priceRangePos = range > 0 ? (close - lowest) / range : 0.5;
+        if (config.snapshotPriceRangePosMin > 0 && priceRangePos < config.snapshotPriceRangePosMin) return false;
+        if (config.snapshotPriceRangePosMax > 0 && priceRangePos > config.snapshotPriceRangePosMax) return false;
+    }
+
+    // Bars from High filter (max = only enter within N bars of recent high)
+    if (config.snapshotBarsFromHighMax > 0) {
+        const RANGE_LOOKBACK = 20;
+        const start = Math.max(0, entryIndex - RANGE_LOOKBACK + 1);
+        let highBar = entryIndex, highest = -Infinity;
+        for (let i = start; i <= entryIndex; i++) {
+            if (data[i].high > highest) { highest = data[i].high; highBar = i; }
+        }
+        if (entryIndex - highBar > config.snapshotBarsFromHighMax) return false;
+    }
+
+    // Bars from Low filter (max = only enter within N bars of recent low)
+    if (config.snapshotBarsFromLowMax > 0) {
+        const RANGE_LOOKBACK = 20;
+        const start = Math.max(0, entryIndex - RANGE_LOOKBACK + 1);
+        let lowBar = entryIndex, lowest = Infinity;
+        for (let i = start; i <= entryIndex; i++) {
+            if (data[i].low < lowest) { lowest = data[i].low; lowBar = i; }
+        }
+        if (entryIndex - lowBar > config.snapshotBarsFromLowMax) return false;
     }
 
     return true;

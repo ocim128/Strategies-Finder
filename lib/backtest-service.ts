@@ -108,9 +108,19 @@ export class BacktestService {
             delete (rustSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
             delete (rustSettings as { captureSnapshots?: boolean }).captureSnapshots;
             delete (rustSettings as { snapshotAtrPercentMin?: number }).snapshotAtrPercentMin;
+            delete (rustSettings as { snapshotAtrPercentMax?: number }).snapshotAtrPercentMax;
             delete (rustSettings as { snapshotVolumeRatioMin?: number }).snapshotVolumeRatioMin;
+            delete (rustSettings as { snapshotVolumeRatioMax?: number }).snapshotVolumeRatioMax;
             delete (rustSettings as { snapshotAdxMin?: number }).snapshotAdxMin;
+            delete (rustSettings as { snapshotAdxMax?: number }).snapshotAdxMax;
             delete (rustSettings as { snapshotEmaDistanceMin?: number }).snapshotEmaDistanceMin;
+            delete (rustSettings as { snapshotEmaDistanceMax?: number }).snapshotEmaDistanceMax;
+            delete (rustSettings as { snapshotRsiMin?: number }).snapshotRsiMin;
+            delete (rustSettings as { snapshotRsiMax?: number }).snapshotRsiMax;
+            delete (rustSettings as { snapshotPriceRangePosMin?: number }).snapshotPriceRangePosMin;
+            delete (rustSettings as { snapshotPriceRangePosMax?: number }).snapshotPriceRangePosMax;
+            delete (rustSettings as { snapshotBarsFromHighMax?: number }).snapshotBarsFromHighMax;
+            delete (rustSettings as { snapshotBarsFromLowMax?: number }).snapshotBarsFromLowMax;
 
             if (strategy.metadata?.role === 'entry' && entryStats) {
                 result = buildEntryBacktestResult(entryStats);
@@ -300,9 +310,19 @@ export class BacktestService {
 
             // Snapshot-based trade filters (stackable)
             snapshotAtrPercentMin: this.isToggleEnabled('snapshotAtrFilterToggle', false) ? this.readNumberInput('snapshotAtrPercentMin', 0) : 0,
+            snapshotAtrPercentMax: this.isToggleEnabled('snapshotAtrFilterToggle', false) ? this.readNumberInput('snapshotAtrPercentMax', 0) : 0,
             snapshotVolumeRatioMin: this.isToggleEnabled('snapshotVolumeFilterToggle', false) ? this.readNumberInput('snapshotVolumeRatioMin', 0) : 0,
+            snapshotVolumeRatioMax: this.isToggleEnabled('snapshotVolumeFilterToggle', false) ? this.readNumberInput('snapshotVolumeRatioMax', 0) : 0,
             snapshotAdxMin: this.isToggleEnabled('snapshotAdxFilterToggle', false) ? this.readNumberInput('snapshotAdxMin', 0) : 0,
+            snapshotAdxMax: this.isToggleEnabled('snapshotAdxFilterToggle', false) ? this.readNumberInput('snapshotAdxMax', 0) : 0,
             snapshotEmaDistanceMin: this.isToggleEnabled('snapshotEmaFilterToggle', false) ? this.readNumberInput('snapshotEmaDistanceMin', 0) : 0,
+            snapshotEmaDistanceMax: this.isToggleEnabled('snapshotEmaFilterToggle', false) ? this.readNumberInput('snapshotEmaDistanceMax', 0) : 0,
+            snapshotRsiMin: this.isToggleEnabled('snapshotRsiFilterToggle', false) ? this.readNumberInput('snapshotRsiMin', 0) : 0,
+            snapshotRsiMax: this.isToggleEnabled('snapshotRsiFilterToggle', false) ? this.readNumberInput('snapshotRsiMax', 0) : 0,
+            snapshotPriceRangePosMin: this.isToggleEnabled('snapshotPriceRangePosFilterToggle', false) ? this.readNumberInput('snapshotPriceRangePosMin', 0) : 0,
+            snapshotPriceRangePosMax: this.isToggleEnabled('snapshotPriceRangePosFilterToggle', false) ? this.readNumberInput('snapshotPriceRangePosMax', 0) : 0,
+            snapshotBarsFromHighMax: this.isToggleEnabled('snapshotBarsFromHighFilterToggle', false) ? this.readNumberInput('snapshotBarsFromHighMax', 0) : 0,
+            snapshotBarsFromLowMax: this.isToggleEnabled('snapshotBarsFromLowFilterToggle', false) ? this.readNumberInput('snapshotBarsFromLowMax', 0) : 0,
         };
     }
 
@@ -343,9 +363,19 @@ export class BacktestService {
         const slippageBps = settings.slippageBps ?? 0;
         const hasSnapshotFilters =
             (settings.snapshotAtrPercentMin ?? 0) > 0 ||
+            (settings.snapshotAtrPercentMax ?? 0) > 0 ||
             (settings.snapshotVolumeRatioMin ?? 0) > 0 ||
+            (settings.snapshotVolumeRatioMax ?? 0) > 0 ||
             (settings.snapshotAdxMin ?? 0) > 0 ||
-            (settings.snapshotEmaDistanceMin ?? 0) !== 0;
+            (settings.snapshotAdxMax ?? 0) > 0 ||
+            (settings.snapshotEmaDistanceMin ?? 0) !== 0 ||
+            (settings.snapshotEmaDistanceMax ?? 0) !== 0 ||
+            (settings.snapshotRsiMin ?? 0) > 0 ||
+            (settings.snapshotRsiMax ?? 0) > 0 ||
+            (settings.snapshotPriceRangePosMin ?? 0) > 0 ||
+            (settings.snapshotPriceRangePosMax ?? 0) > 0 ||
+            (settings.snapshotBarsFromHighMax ?? 0) > 0 ||
+            (settings.snapshotBarsFromLowMax ?? 0) > 0;
         return executionModel !== 'signal_close' || slippageBps > 0 || !allowSameBarExit || settings.tradeDirection === 'both' || hasSnapshotFilters;
     }
 

@@ -38,9 +38,19 @@ export interface NormalizedSettings {
 
     // Snapshot-based trade filters
     snapshotAtrPercentMin: number;
+    snapshotAtrPercentMax: number;
     snapshotVolumeRatioMin: number;
+    snapshotVolumeRatioMax: number;
     snapshotAdxMin: number;
+    snapshotAdxMax: number;
     snapshotEmaDistanceMin: number;
+    snapshotEmaDistanceMax: number;
+    snapshotRsiMin: number;
+    snapshotRsiMax: number;
+    snapshotPriceRangePosMin: number;
+    snapshotPriceRangePosMax: number;
+    snapshotBarsFromHighMax: number;
+    snapshotBarsFromLowMax: number;
 }
 
 export interface IndicatorSeries {

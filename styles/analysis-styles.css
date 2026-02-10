@@ -195,3 +195,67 @@
 .sim-card-delta.negative {
     color: #ff5252;
 }
+
+/* Approximation badge */
+.sim-approx-badge {
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--text-tertiary, #888);
+    background: rgba(128, 128, 128, 0.12);
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 4px;
+    vertical-align: middle;
+    letter-spacing: 0.3px;
+}
+
+/* Disclaimer text */
+.sim-disclaimer {
+    margin-top: 8px;
+    padding: 6px 8px;
+    font-size: 10px;
+    color: var(--text-tertiary, #888);
+    border-left: 2px solid rgba(128, 128, 128, 0.2);
+    line-height: 1.4;
+}
+
+/* Apply filter buttons (analysis table rows) */
+.btn-apply-filter {
+    padding: 2px 8px;
+    font-size: 10px;
+    background: rgba(0, 200, 83, 0.15);
+    color: #00c853;
+    border: 1px solid rgba(0, 200, 83, 0.3);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.btn-apply-filter:hover {
+    background: rgba(0, 200, 83, 0.25);
+    border-color: rgba(0, 200, 83, 0.5);
+}
+
+.btn-apply-filter.applied {
+    background: rgba(0, 200, 83, 0.35);
+    color: #fff;
+}
+
+/* Apply All combo button */
+.btn-apply-combo {
+    padding: 4px 16px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(0, 200, 83, 0.15);
+    color: #00c853;
+    border: 1px solid rgba(0, 200, 83, 0.3);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.btn-apply-combo:hover {
+    background: rgba(0, 200, 83, 0.25);
+    border-color: rgba(0, 200, 83, 0.5);
+}

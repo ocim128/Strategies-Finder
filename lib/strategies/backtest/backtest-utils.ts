@@ -56,9 +56,19 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         slippageBps: Math.max(0, toNumberOr(settings?.slippageBps, 0)),
 
         snapshotAtrPercentMin: Math.max(0, toNumberOr(settings?.snapshotAtrPercentMin, 0)),
+        snapshotAtrPercentMax: Math.max(0, toNumberOr(settings?.snapshotAtrPercentMax, 0)),
         snapshotVolumeRatioMin: Math.max(0, toNumberOr(settings?.snapshotVolumeRatioMin, 0)),
+        snapshotVolumeRatioMax: Math.max(0, toNumberOr(settings?.snapshotVolumeRatioMax, 0)),
         snapshotAdxMin: Math.max(0, toNumberOr(settings?.snapshotAdxMin, 0)),
+        snapshotAdxMax: Math.max(0, toNumberOr(settings?.snapshotAdxMax, 0)),
         snapshotEmaDistanceMin: toNumberOr(settings?.snapshotEmaDistanceMin, 0),
+        snapshotEmaDistanceMax: toNumberOr(settings?.snapshotEmaDistanceMax, 0),
+        snapshotRsiMin: Math.max(0, toNumberOr(settings?.snapshotRsiMin, 0)),
+        snapshotRsiMax: Math.max(0, toNumberOr(settings?.snapshotRsiMax, 0)),
+        snapshotPriceRangePosMin: Math.max(0, toNumberOr(settings?.snapshotPriceRangePosMin, 0)),
+        snapshotPriceRangePosMax: Math.max(0, toNumberOr(settings?.snapshotPriceRangePosMax, 0)),
+        snapshotBarsFromHighMax: Math.max(0, toNumberOr(settings?.snapshotBarsFromHighMax, 0)),
+        snapshotBarsFromLowMax: Math.max(0, toNumberOr(settings?.snapshotBarsFromLowMax, 0)),
     };
 }
 
