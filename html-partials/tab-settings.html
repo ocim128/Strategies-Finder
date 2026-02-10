@@ -49,7 +49,8 @@
                         <option value="both">Both (Flip)</option>
                         <option value="combined">Combined (L+S)</option>
                     </select>
-                    <div class="param-hint">Both flips on opposite signals. Combined runs long+short books in parallel and ignores same-bar opposite entries.</div>
+                    <div class="param-hint">Both flips on opposite signals. Combined runs long+short books in parallel
+                        and ignores same-bar opposite entries.</div>
                 </div>
             </div>
         </div>
@@ -665,7 +666,8 @@
                     <div
                         style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
                         <label class="param-label" style="margin-bottom: 0;">Volume Trend
-                            <span class="tooltip-icon" data-tooltip="Short/long volume EMA ratio. >1 = volume building, <1 = fading.">&#9432;</span>
+                            <span class="tooltip-icon"
+                                data-tooltip="Short/long volume EMA ratio. >1 = volume building, <1 = fading.">&#9432;</span>
                         </label>
                         <label class="section-toggle" style="transform: scale(0.8);"
                             aria-label="Toggle Volume Trend filter">
@@ -690,7 +692,8 @@
                     <div
                         style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
                         <label class="param-label" style="margin-bottom: 0;">Volume Burst
-                            <span class="tooltip-icon" data-tooltip="Z-score of current volume vs recent bars. Higher = more unusual spike.">&#9432;</span>
+                            <span class="tooltip-icon"
+                                data-tooltip="Z-score of current volume vs recent bars. Higher = more unusual spike.">&#9432;</span>
                         </label>
                         <label class="section-toggle" style="transform: scale(0.8);"
                             aria-label="Toggle Volume Burst filter">
@@ -700,13 +703,11 @@
                     </div>
                     <div style="display: flex; gap: 8px;">
                         <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotVolumeBurstMin" value="0"
-                                step="0.1">
+                            <input type="number" class="param-input" id="snapshotVolumeBurstMin" value="0" step="0.1">
                             <div class="param-hint">Min z-score</div>
                         </div>
                         <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotVolumeBurstMax" value="0"
-                                step="0.1">
+                            <input type="number" class="param-input" id="snapshotVolumeBurstMax" value="0" step="0.1">
                             <div class="param-hint">Max z-score</div>
                         </div>
                     </div>
@@ -719,7 +720,8 @@
                     <div
                         style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
                         <label class="param-label" style="margin-bottom: 0;">Vol-Price Agreement
-                            <span class="tooltip-icon" data-tooltip="Price-volume direction agreement (-1 to 1). Negative = divergence, weak move.">&#9432;</span>
+                            <span class="tooltip-icon"
+                                data-tooltip="Price-volume direction agreement (-1 to 1). Negative = divergence, weak move.">&#9432;</span>
                         </label>
                         <label class="section-toggle" style="transform: scale(0.8);"
                             aria-label="Toggle Vol-Price Divergence filter">
@@ -744,7 +746,8 @@
                     <div
                         style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
                         <label class="param-label" style="margin-bottom: 0;">Volume Consistency
-                            <span class="tooltip-icon" data-tooltip="Volume stability (CV). Lower = steady institutional flow, higher = erratic retail noise.">&#9432;</span>
+                            <span class="tooltip-icon"
+                                data-tooltip="Volume stability (CV). Lower = steady institutional flow, higher = erratic retail noise.">&#9432;</span>
                         </label>
                         <label class="section-toggle" style="transform: scale(0.8);"
                             aria-label="Toggle Volume Consistency filter">
@@ -754,13 +757,13 @@
                     </div>
                     <div style="display: flex; gap: 8px;">
                         <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotVolumeConsistencyMin" value="0"
-                                min="0" step="0.1">
+                            <input type="number" class="param-input" id="snapshotVolumeConsistencyMin" value="0" min="0"
+                                step="0.1">
                             <div class="param-hint">Min CV</div>
                         </div>
                         <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotVolumeConsistencyMax" value="0"
-                                min="0" step="0.1">
+                            <input type="number" class="param-input" id="snapshotVolumeConsistencyMax" value="0" min="0"
+                                step="0.1">
                             <div class="param-hint">Max CV</div>
                         </div>
                     </div>
@@ -848,30 +851,6 @@
                 <button class="btn btn-danger btn-icon" id="deleteConfigBtn" title="Delete selected configuration">
                     <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
                         <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                    </svg>
-                </button>
-            </div>
-
-            <div class="config-share-actions">
-                <button class="btn btn-secondary btn-compact" id="generateShareLinkBtn"
-                    title="Generate unique link for selected configuration">
-                    Generate Share Link
-                </button>
-                <button class="btn btn-primary btn-compact" id="copyShareLinkBtn" disabled
-                    title="Copy generated share link">
-                    Copy Link
-                </button>
-            </div>
-
-            <input type="text" class="param-input config-share-link-input" id="shareConfigLinkInput"
-                placeholder="Generated share link will appear here" readonly />
-
-            <div class="config-import-row">
-                <input type="text" class="param-input config-share-import-input" id="shareConfigImportInput"
-                    placeholder="Paste shared strategy link (or token)..." />
-                <button class="btn btn-primary btn-icon" id="loadShareLinkBtn" title="Load shared configuration">
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
                     </svg>
                 </button>
             </div>

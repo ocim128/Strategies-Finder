@@ -57,6 +57,7 @@ interface SubscriptionUpsertRequest {
     backtestSettings?: BacktestSettings;
     freshnessBars?: number;
     notifyTelegram?: boolean;
+    notifyExit?: boolean;
     enabled?: boolean;
     candleLimit?: number;
 }
@@ -87,6 +88,10 @@ interface StoredSignalPayload {
     signalPrice: number;
     signalReason: string | null;
     fingerprint: string;
+    takeProfitPrice?: number;
+    stopLossPrice?: number;
+    takeProfitPercent?: number;
+    stopLossPercent?: number;
 }
 
 interface SubscriptionRow {
@@ -100,6 +105,7 @@ interface SubscriptionRow {
     backtest_settings_json: string;
     freshness_bars: number;
     notify_telegram: number;
+    notify_exit: number;
     candle_limit: number;
     last_processed_closed_candle_time: number;
     last_run_at: string | null;
@@ -117,6 +123,7 @@ interface ProcessSignalPayload {
     backtestSettings: BacktestSettings;
     freshnessBars: number;
     notifyTelegram: boolean;
+    notifyExit: boolean;
     candles: OHLCVData[];
 }
 
@@ -563,22 +570,45 @@ function selectClosedCandleWindow(
     };
 }
 
+function formatPercent(value: number): string {
+    const sign = value >= 0 ? "+" : "";
+    return `${sign}${value.toFixed(2)}%`;
+}
+
 function buildTelegramMessage(signal: StoredSignalPayload): string {
-    return [
-        "New Entry Signal",
+    const icon = signal.direction === "long" ? "\u{1F7E2}" : "\u{1F534}";
+    const lines = [
+        `${icon} New Entry Signal`,
         `Symbol: ${signal.symbol}`,
         `Interval: ${signal.interval}`,
         `Strategy: ${signal.strategyName} (${signal.strategyKey})`,
         `Direction: ${signal.direction.toUpperCase()}`,
         `Price: ${signal.signalPrice}`,
-        `Time (UTC): ${new Date(signal.signalTimeSec * 1000).toISOString()}`,
-        signal.signalReason ? `Reason: ${signal.signalReason}` : "",
-    ]
-        .filter(Boolean)
-        .join("\n");
+    ];
+    if (signal.takeProfitPrice != null && signal.takeProfitPercent != null) {
+        lines.push(`\u{1F3AF} Take Profit: ${signal.takeProfitPrice.toFixed(4)} (${formatPercent(signal.takeProfitPercent)})`);
+    }
+    if (signal.stopLossPrice != null && signal.stopLossPercent != null) {
+        lines.push(`\u{1F6D1} Stop Loss: ${signal.stopLossPrice.toFixed(4)} (${formatPercent(-Math.abs(signal.stopLossPercent))})`);
+    }
+    lines.push(`Time (UTC): ${new Date(signal.signalTimeSec * 1000).toISOString()}`);
+    if (signal.signalReason) lines.push(`Reason: ${signal.signalReason}`);
+    return lines.join("\n");
 }
 
-async function sendTelegramAlert(env: Env, signal: StoredSignalPayload): Promise<void> {
+function buildExitTelegramMessage(exitDirection: "long" | "short", symbol: string, interval: string, strategyName: string, strategyKey: string, price: number, timeSec: number): string {
+    return [
+        `\u{1F6AA} Exit Signal`,
+        `Symbol: ${symbol}`,
+        `Interval: ${interval}`,
+        `Strategy: ${strategyName} (${strategyKey})`,
+        `Closing: ${exitDirection.toUpperCase()} position`,
+        `Price: ${price}`,
+        `Time (UTC): ${new Date(timeSec * 1000).toISOString()}`,
+    ].join("\n");
+}
+
+async function sendTelegramText(env: Env, text: string): Promise<void> {
     const token = env.TELEGRAM_BOT_TOKEN;
     const chatId = env.TELEGRAM_CHAT_ID;
     if (!token || !chatId) {
@@ -588,10 +618,7 @@ async function sendTelegramAlert(env: Env, signal: StoredSignalPayload): Promise
     const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-            chat_id: chatId,
-            text: buildTelegramMessage(signal),
-        }),
+        body: JSON.stringify({ chat_id: chatId, text }),
     });
 
     if (!response.ok) {
@@ -657,6 +684,26 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         };
     }
 
+    // Compute TP/SL target prices from backtest settings (percentage mode)
+    const bs = payload.backtestSettings;
+    const price = evaluation.latestEntry.signal.price;
+    const isLong = evaluation.latestEntry.direction === "long";
+    let takeProfitPrice: number | undefined;
+    let stopLossPrice: number | undefined;
+    let takeProfitPercent: number | undefined;
+    let stopLossPercent: number | undefined;
+
+    if (bs.riskMode === "percentage") {
+        if (bs.takeProfitEnabled && bs.takeProfitPercent && bs.takeProfitPercent > 0) {
+            takeProfitPercent = bs.takeProfitPercent;
+            takeProfitPrice = isLong ? price * (1 + bs.takeProfitPercent / 100) : price * (1 - bs.takeProfitPercent / 100);
+        }
+        if (bs.stopLossEnabled && bs.stopLossPercent && bs.stopLossPercent > 0) {
+            stopLossPercent = bs.stopLossPercent;
+            stopLossPrice = isLong ? price * (1 - bs.stopLossPercent / 100) : price * (1 + bs.stopLossPercent / 100);
+        }
+    }
+
     const entryPayload: StoredSignalPayload = {
         streamId,
         symbol,
@@ -666,9 +713,13 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         direction: evaluation.latestEntry.direction,
         signalTimeSec: evaluation.latestEntry.signalTimeSec,
         signalAgeBars: evaluation.latestEntry.signalAgeBars,
-        signalPrice: evaluation.latestEntry.signal.price,
+        signalPrice: price,
         signalReason: evaluation.latestEntry.signal.reason ?? null,
         fingerprint: evaluation.latestEntry.fingerprint,
+        takeProfitPrice,
+        stopLossPrice,
+        takeProfitPercent,
+        stopLossPercent,
     };
 
     const dedupeKey = `${channelKey}:${evaluation.latestEntry.fingerprint}`;
@@ -711,7 +762,7 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
 
     if (inserted && payload.notifyTelegram) {
         try {
-            await sendTelegramAlert(env, entryPayload);
+            await sendTelegramText(env, buildTelegramMessage(entryPayload));
             telegramSent = true;
         } catch (error) {
             telegramSent = false;
@@ -768,6 +819,7 @@ async function handleStreamSignal(request: Request, env: Env): Promise<Response>
             backtestSettings: payload.backtestSettings ?? {},
             freshnessBars: Math.max(0, Math.floor(payload.freshnessBars ?? 1)),
             notifyTelegram: payload.notifyTelegram === true,
+            notifyExit: false,
             candles: normalizedCandles,
         },
         env
@@ -796,8 +848,8 @@ async function handleSignalHistory(request: Request, env: Env): Promise<Response
         streamId && streamId.length > 0
             ? streamId.toLowerCase()
             : symbol && interval && strategyKey
-              ? buildChannelKey({ symbol, interval, strategyKey })
-              : null;
+                ? buildChannelKey({ symbol, interval, strategyKey })
+                : null;
 
     if (!channelKey) {
         return toJsonResponse(
@@ -867,6 +919,7 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
         : buildDefaultStreamId(symbol, interval, strategyKey);
     const enabled = payload.enabled === false ? 0 : 1;
     const notifyTelegram = payload.notifyTelegram === false ? 0 : 1;
+    const notifyExit = payload.notifyExit === true ? 1 : 0;
     const freshnessBars = Math.max(0, Math.floor(payload.freshnessBars ?? 1));
     const candleLimit = Math.max(
         MIN_CANDLES,
@@ -885,9 +938,10 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
             backtest_settings_json,
             freshness_bars,
             notify_telegram,
+            notify_exit,
             candle_limit,
             last_processed_closed_candle_time
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         ON CONFLICT(stream_id) DO UPDATE SET
             enabled = excluded.enabled,
             symbol = excluded.symbol,
@@ -897,6 +951,7 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
             backtest_settings_json = excluded.backtest_settings_json,
             freshness_bars = excluded.freshness_bars,
             notify_telegram = excluded.notify_telegram,
+            notify_exit = excluded.notify_exit,
             candle_limit = excluded.candle_limit,
             updated_at = CURRENT_TIMESTAMP
         `
@@ -911,6 +966,7 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
             JSON.stringify(payload.backtestSettings ?? {}),
             freshnessBars,
             notifyTelegram,
+            notifyExit,
             candleLimit
         )
         .run();
@@ -1019,10 +1075,46 @@ async function runSubscription(
                 backtestSettings: safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings),
                 freshnessBars: Math.max(0, subscription.freshness_bars ?? 1),
                 notifyTelegram: subscription.notify_telegram === 1,
+                notifyExit: subscription.notify_exit === 1,
                 candles: closed.candles,
             },
             env
         );
+
+        // Exit signal detection: if no new entry and exit alerts enabled,
+        // check if the last entry's opposite signal has fired
+        if (result.ok && !result.newEntry && subscription.notify_exit === 1 && subscription.notify_telegram === 1) {
+            try {
+                const lastEntry = await env.SIGNALS_DB.prepare(
+                    `SELECT payload_json FROM entry_signals WHERE stream_id = ? ORDER BY signal_time DESC, id DESC LIMIT 1`
+                ).bind(streamId).first<{ payload_json: string }>();
+                if (lastEntry) {
+                    const lastPayload = safeJsonParse(lastEntry.payload_json, null as StoredSignalPayload | null);
+                    if (lastPayload && result.preparedSignalCount > 0) {
+                        // check latest prepared signal direction vs last entry direction
+                        const evaluation = evaluateLatestEntrySignal({
+                            strategyKey: subscription.strategy_key,
+                            candles: closed.candles,
+                            strategyParams: safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>),
+                            backtestSettings: safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings),
+                            freshnessBars: 9999, // don't filter by freshness for exit check
+                        });
+                        if (evaluation.ok && evaluation.latestEntry && evaluation.latestEntry.direction !== lastPayload.direction) {
+                            const exitMsg = buildExitTelegramMessage(
+                                lastPayload.direction,
+                                subscription.symbol,
+                                subscription.interval,
+                                evaluation.latestEntry.strategyName,
+                                subscription.strategy_key,
+                                evaluation.latestEntry.signal.price,
+                                evaluation.latestEntry.signalTimeSec
+                            );
+                            await sendTelegramText(env, exitMsg).catch(() => { /* best effort */ });
+                        }
+                    }
+                }
+            } catch { /* exit alerts are best effort */ }
+        }
 
         const status = result.ok
             ? result.newEntry

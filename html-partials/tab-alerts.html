@@ -1,0 +1,158 @@
+<!-- Alerts Tab -->
+<div id="alertsTab" style="display:none;">
+    <!-- Section 1: Connection -->
+    <div class="section-header">
+        <div class="section-title">Worker Connection</div>
+    </div>
+    <div class="section-body">
+        <div class="param-row">
+            <div class="param-group" style="flex:3;">
+                <label class="param-label">Worker URL</label>
+                <input type="url" class="param-input" id="alertWorkerUrl" placeholder="https://your-worker.workers.dev"
+                    style="width:100%;">
+            </div>
+            <div class="param-group" style="flex:0 0 auto; display:flex; align-items:flex-end; gap:6px;">
+                <button class="btn btn-secondary btn-compact" id="alertTestBtn" title="Test connection">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                        <path
+                            d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z" />
+                    </svg>
+                    Test
+                </button>
+                <span class="alert-status-dot" id="alertStatusDot" title="Not connected"></span>
+            </div>
+        </div>
+        <div class="param-hint" id="alertStatusMsg" style="margin-top:4px;">Enter your Cloudflare Worker URL and click
+            Test.</div>
+    </div>
+
+    <!-- Section 2: Quick Subscribe -->
+    <div class="section-header" style="margin-top:16px;">
+        <div class="section-title">Quick Subscribe</div>
+    </div>
+    <div class="section-body">
+        <p class="section-desc">Subscribe to alerts for the current chart context (symbol + interval + strategy +
+            settings).</p>
+        <div class="param-row" style="gap:8px; flex-wrap: wrap;">
+            <div class="param-group" style="flex:0 0 auto;">
+                <label class="toggle-label" style="font-size:0.78rem;">
+                    <input type="checkbox" id="alertTelegramToggle" checked> Telegram
+                </label>
+            </div>
+            <div class="param-group" style="flex:0 0 auto;">
+                <label class="toggle-label" style="font-size:0.78rem;">
+                    <input type="checkbox" id="alertExitToggle"> Exit Alerts
+                </label>
+            </div>
+            <div class="param-group" style="flex:0 0 auto;">
+                <label class="param-label" style="font-size:0.78rem;">Freshness</label>
+                <input type="number" class="param-input" id="alertFreshnessBars" value="1" min="0" max="50" step="1"
+                    style="width:56px;">
+            </div>
+        </div>
+        <button class="btn btn-primary btn-compact" id="alertQuickSubscribeBtn" style="margin-top:8px; width:100%;">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                <path
+                    d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />
+            </svg>
+            Subscribe to Current
+        </button>
+    </div>
+
+    <!-- Section 3: Active Subscriptions -->
+    <div class="section-header" style="margin-top:16px;">
+        <div class="section-title">Active Subscriptions</div>
+        <button class="btn btn-secondary btn-compact" id="alertRefreshBtn" title="Refresh subscriptions">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                <path
+                    d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+            </svg>
+            Refresh
+        </button>
+    </div>
+    <div class="section-body" id="alertSubscriptionsList">
+        <div class="empty-state" id="alertEmptyState">
+            <p>No subscriptions yet. Use Quick Subscribe to create one.</p>
+        </div>
+        <div class="alert-table-wrapper" id="alertTableWrapper" style="display:none;">
+            <table class="alert-table">
+                <thead>
+                    <tr>
+                        <th>Stream</th>
+                        <th>Symbol</th>
+                        <th>Interval</th>
+                        <th>Strategy</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="alertTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Section 4: Signal History -->
+    <div class="section-header" style="margin-top:16px;">
+        <div class="section-title">Signal History</div>
+    </div>
+    <div class="section-body">
+        <div class="param-row" style="margin-bottom:8px;">
+            <div class="param-group" style="flex:1;">
+                <select class="param-input" id="alertHistoryStreamSelect" style="width:100%;">
+                    <option value="">Select a subscription...</option>
+                </select>
+            </div>
+            <div class="param-group" style="flex:0 0 auto;">
+                <button class="btn btn-secondary btn-compact" id="alertHistoryLoadBtn">Load</button>
+            </div>
+        </div>
+        <div class="alert-table-wrapper" id="alertHistoryWrapper" style="display:none;">
+            <table class="alert-table">
+                <thead>
+                    <tr>
+                        <th>Time (UTC)</th>
+                        <th>Dir</th>
+                        <th>Price</th>
+                        <th>TP</th>
+                        <th>SL</th>
+                    </tr>
+                </thead>
+                <tbody id="alertHistoryBody"></tbody>
+            </table>
+        </div>
+        <div class="empty-state" id="alertHistoryEmpty">
+            <p>Select a subscription and click Load to view signals.</p>
+        </div>
+    </div>
+
+    <!-- Section 5: Share Strategy Link -->
+    <div class="section-header" style="margin-top:16px;">
+        <div class="section-title">Share Strategy</div>
+    </div>
+    <div class="section-body">
+        <p class="section-desc">Generate a shareable link for a saved configuration, or import one.</p>
+        <div class="config-share-actions">
+            <button class="btn btn-secondary btn-compact" id="generateShareLinkBtn"
+                title="Generate unique link for selected configuration">
+                Generate Share Link
+            </button>
+            <button class="btn btn-primary btn-compact" id="copyShareLinkBtn" disabled
+                title="Copy generated share link">
+                Copy Link
+            </button>
+        </div>
+
+        <input type="text" class="param-input config-share-link-input" id="shareConfigLinkInput"
+            placeholder="Generated share link will appear here" readonly />
+
+        <div class="config-import-row">
+            <input type="text" class="param-input config-share-import-input" id="shareConfigImportInput"
+                placeholder="Paste shared strategy link (or token)..." />
+            <button class="btn btn-primary btn-icon" id="loadShareLinkBtn" title="Load shared configuration">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                </svg>
+            </button>
+        </div>
+    </div>
+</div>

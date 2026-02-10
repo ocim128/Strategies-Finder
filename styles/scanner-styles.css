@@ -446,3 +446,32 @@
 .scanner-panel__scan-btn--cancel .scanner-panel__scan-btn {
     animation: scanner-pulse 1.5s ease-in-out infinite;
 }
+
+/* ============================================================================
+   Alert Button in Rows
+   ============================================================================ */
+
+.scanner-panel__cell-alert {
+    text-align: center;
+    padding: 4px !important;
+}
+
+.scanner-panel__alert-btn {
+    background: none;
+    border: 1px solid rgba(100, 150, 255, 0.15);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 3px 6px;
+    line-height: 1;
+    transition: all 0.2s ease;
+    opacity: 0.6;
+}
+
+.scanner-panel__alert-btn:hover {
+    opacity: 1;
+    background: rgba(100, 150, 255, 0.12);
+    border-color: rgba(100, 150, 255, 0.35);
+    box-shadow: 0 0 8px rgba(100, 150, 255, 0.2);
+    transform: scale(1.15);
+}

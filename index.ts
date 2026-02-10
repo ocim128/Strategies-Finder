@@ -34,6 +34,7 @@ import { setupStateSubscriptions } from "./lib/handlers/state-subscriptions";
 import { setupEventHandlers } from "./lib/handlers/ui-event-handlers";
 import { setupSettingsHandlers } from "./lib/handlers/settings-handlers";
 import { initSettingsUX } from "./lib/handlers/settings-ux-handlers";
+import { initAlertHandlers } from "./lib/handlers/alert-handlers";
 import { handleCrosshairMove } from "./lib/app-actions";
 import { initEngineStatusIndicator } from "./lib/engine-status-indicator";
 
@@ -66,6 +67,7 @@ async function init() {
 	monteCarloService.initUI();
 	logicTestService.initUI();
 	analysisPanel.init();
+	initAlertHandlers();
 
 	initConfirmationStrategyUI();
 	initDebugPanel();

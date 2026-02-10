@@ -5,6 +5,8 @@
 
 import { scannerManager } from './scanner-manager';
 import { settingsManager } from '../settings-manager';
+import { alertService } from '../alert-service';
+import { uiManager } from '../ui-manager';
 import type { ScanResult, ScanProgress, StrategyConfigEntry } from '../types/scanner';
 
 // ============================================================================
@@ -131,6 +133,7 @@ export class ScannerPanel {
                                 <th>Target $</th>
                                 <th>uPnL</th>
                                 <th>Age</th>
+                                <th>🔔</th>
                             </tr>
                         </thead>
                         <tbody class="scanner-panel__results-body"></tbody>
@@ -430,6 +433,7 @@ export class ScannerPanel {
                     <td class="scanner-panel__cell-target">${targetHtml}</td>
                     <td class="scanner-panel__cell-pnl ${pnlClass}">${pnlSign}${pnl.toFixed(2)}%</td>
                     <td class="scanner-panel__cell-age">${r.signalAge} bar${r.signalAge !== 1 ? 's' : ''}</td>
+                    <td class="scanner-panel__cell-alert"><button class="scanner-panel__alert-btn" data-symbol="${r.symbol}" data-strategy="${r.strategy}" title="Subscribe to alerts">🔔</button></td>
                 </tr>
             `;
             })
@@ -437,9 +441,19 @@ export class ScannerPanel {
 
         // Add click handlers to rows
         tbody.querySelectorAll('.scanner-panel__result-row').forEach((row) => {
-            row.addEventListener('click', () => {
+            row.addEventListener('click', (e) => {
+                if ((e.target as HTMLElement).closest('.scanner-panel__alert-btn')) return;
                 const symbol = (row as HTMLElement).dataset.symbol;
                 if (symbol) this.handleResultClick(symbol);
+            });
+        });
+
+        // Add click handlers to alert buttons
+        tbody.querySelectorAll('.scanner-panel__alert-btn').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const el = e.currentTarget as HTMLElement;
+                this.handleAlertSubscribe(el.dataset.symbol!, el.dataset.strategy!);
             });
         });
     }
@@ -460,10 +474,32 @@ export class ScannerPanel {
         }
     }
 
+    private async handleAlertSubscribe(symbol: string, strategyKey: string): Promise<void> {
+        const config = scannerManager.getConfig();
+        const matched = config.strategyConfigs.find(c => c.strategyKey === strategyKey);
+
+        try {
+            await alertService.upsertSubscription({
+                symbol,
+                interval: config.interval,
+                strategyKey,
+                strategyParams: matched?.strategyParams,
+                backtestSettings: matched?.backtestSettings as Record<string, unknown> | undefined,
+                freshnessBars: config.signalFreshnessBars,
+                notifyTelegram: true,
+                notifyExit: true,
+                enabled: true,
+            });
+            uiManager.showToast(`Alert subscribed: ${symbol} ${config.interval}`, 'success');
+        } catch (err) {
+            uiManager.showToast(`Alert failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+        }
+    }
+
     private showError(message: string): void {
         const tbody = this.container.querySelector('.scanner-panel__results-body') as HTMLTableSectionElement;
         if (tbody) {
-            tbody.innerHTML = `<tr><td colspan="8" class="scanner-panel__error">Error: ${message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" class="scanner-panel__error">Error: ${message}</td></tr>`;
         }
     }
 }

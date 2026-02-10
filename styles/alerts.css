@@ -1,0 +1,107 @@
+/* ── Alert Tab Styles ───────────────────────────────────────────────────── */
+
+/* Status dot indicator */
+.alert-status-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--text-muted, #666);
+    margin-left: 4px;
+    vertical-align: middle;
+    transition: background 0.3s;
+}
+
+.alert-status-ok {
+    background: var(--green, #26a69a);
+    box-shadow: 0 0 6px rgba(38, 166, 154, 0.5);
+}
+
+.alert-status-fail {
+    background: var(--red, #ef5350);
+    box-shadow: 0 0 6px rgba(239, 83, 80, 0.5);
+}
+
+.alert-status-checking {
+    background: var(--warning, #ffa726);
+    animation: pulse-dot 1s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+/* Alert tables */
+.alert-table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.alert-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+}
+
+.alert-table th,
+.alert-table td {
+    padding: 6px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.06));
+    white-space: nowrap;
+}
+
+.alert-table th {
+    color: var(--text-muted, #888);
+    font-weight: 500;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.alert-table tbody tr:hover {
+    background: var(--hover-bg, rgba(255, 255, 255, 0.03));
+}
+
+/* Cell-specific */
+.alert-cell-stream {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: monospace;
+    font-size: 0.72rem;
+    color: var(--text-muted, #888);
+}
+
+.alert-cell-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.alert-action-btn {
+    padding: 2px 6px !important;
+    min-width: unset !important;
+    font-size: 0.72rem !important;
+}
+
+/* Status colors */
+.alert-status-new {
+    color: var(--green, #26a69a);
+    font-weight: 600;
+}
+
+.alert-status-error {
+    color: var(--red, #ef5350);
+}
+
+/* Direction colors in signal history */
+.alert-dir-long {
+    color: var(--green, #26a69a);
+    font-weight: 600;
+}
+
+.alert-dir-short {
+    color: var(--red, #ef5350);
+    font-weight: 600;
+}
