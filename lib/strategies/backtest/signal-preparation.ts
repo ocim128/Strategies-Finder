@@ -1,11 +1,10 @@
 
 import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../../types/index';
-import { calculateADX, calculateATR, calculateEMA, calculateRSI, calculateSMA } from '../indicators';
-import { getCloses, getHighs, getLows, getVolumes } from '../strategy-helpers';
 import { IndicatorSeries, NormalizedSettings, PreparedSignal } from '../../types/backtest';
-import { getTimeIndex, getExecutionShift, resolveExecutionPrice, compareTime, normalizeBacktestSettings, normalizeTradeDirection, timeToNumber, timeKey, signalToPositionDirection } from './backtest-utils';
-import { resolveTrendPeriod, passesTradeFilter, passesRegimeFilters, passesSnapshotFilters } from './trade-filters';
+import { getTimeIndex, getExecutionShift, resolveExecutionPrice, compareTime, needsSnapshotIndicators as checkSnapshotNeeded, normalizeBacktestSettings, normalizeTradeDirection, timeToNumber, timeKey, signalToPositionDirection } from './backtest-utils';
+import { passesTradeFilter, passesRegimeFilters, passesSnapshotFilters } from './trade-filters';
 import { SnapshotIndicators, computeSnapshotIndicators } from './snapshot-capture';
+import { resolveIndicators } from './indicator-precompute';
 import { runBacktest } from './backtest-engine';
 
 export function prepareSignals(
@@ -102,11 +101,6 @@ export function prepareSignals(
 /**
  * Prepare signals for the scanner using the same logic as the backtest engine.
  * This ensures the scanner shows the same entry prices and filters as the backtest.
- * 
- * @param data OHLCV data array
- * @param signals Raw signals from strategy execution
- * @param settings Backtest settings for filtering and price resolution
- * @returns Prepared signals with resolved execution prices
  */
 export function prepareSignalsForScanner(
     data: OHLCVData[],
@@ -117,58 +111,12 @@ export function prepareSignalsForScanner(
 
     const config = normalizeBacktestSettings(settings);
     const tradeDirection = normalizeTradeDirection(settings);
+    const indicators = resolveIndicators(data, settings);
 
-    // Compute indicators needed for trade filters
-    const highs = getHighs(data);
-    const lows = getLows(data);
-    const closes = getCloses(data);
-    const volumes = getVolumes(data);
-
-    const needsAtr = config.atrPercentMin > 0 || config.atrPercentMax > 0;
-    const atr = needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : [];
-    const trendPeriod = resolveTrendPeriod(config);
-    const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
-
-    const useAdx = config.tradeFilterMode === 'adx' || config.adxMin > 0 || config.adxMax > 0;
-    const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
-    const adx = useAdx ? calculateADX(highs, lows, closes, adxPeriod) : [];
-
-    const volumeSma = config.tradeFilterMode === 'volume'
-        ? calculateSMA(volumes, config.volumeSmaPeriod)
-        : [];
-    const rsi = config.tradeFilterMode === 'rsi'
-        ? calculateRSI(closes, config.rsiPeriod)
-        : [];
-
-    const indicators: IndicatorSeries = {
-        atr,
-        emaTrend,
-        adx,
-        volumeSma,
-        rsi
-    };
-
-    // Compute snapshot indicators if snapshot-based filters are active
-    const needsSnapshotIndicators =
-        config.snapshotAtrPercentMin > 0 ||
-        config.snapshotAtrPercentMax > 0 ||
-        config.snapshotVolumeRatioMin > 0 ||
-        config.snapshotVolumeRatioMax > 0 ||
-        config.snapshotAdxMin > 0 ||
-        config.snapshotAdxMax > 0 ||
-        config.snapshotEmaDistanceMin !== 0 ||
-        config.snapshotEmaDistanceMax !== 0 ||
-        config.snapshotRsiMin > 0 ||
-        config.snapshotRsiMax > 0 ||
-        config.snapshotPriceRangePosMin > 0 ||
-        config.snapshotPriceRangePosMax > 0 ||
-        config.snapshotBarsFromHighMax > 0 ||
-        config.snapshotBarsFromLowMax > 0;
-    const snapshotIndicators = needsSnapshotIndicators
+    const snapshotIndicators = checkSnapshotNeeded(config)
         ? computeSnapshotIndicators(data, indicators)
         : null;
 
-    // Use the same prepareSignals logic
     return prepareSignals(data, signals, config, indicators, tradeDirection, snapshotIndicators);
 }
 

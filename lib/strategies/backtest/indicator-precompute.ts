@@ -69,58 +69,15 @@ export function resolveIndicators(
     settings: BacktestSettings,
     precomputed?: PrecomputedIndicators
 ): IndicatorSeries {
-    const config = normalizeBacktestSettings(settings);
-    const dataLen = data.length;
-
-    // Check if precomputed matches current data length
-    const isValidPrecomputed = precomputed && precomputed.dataLength === dataLen;
-
-    const highs = (!isValidPrecomputed || !precomputed.atr?.length || !precomputed.adx?.length) ? getHighs(data) : [];
-    const lows = (!isValidPrecomputed || !precomputed.atr?.length || !precomputed.adx?.length) ? getLows(data) : [];
-    const closes = (!isValidPrecomputed || !precomputed.atr?.length || !precomputed.emaTrend?.length || !precomputed.adx?.length || !precomputed.rsi?.length) ? getCloses(data) : [];
-    const volumes = (!isValidPrecomputed || !precomputed.volumeSma?.length) ? getVolumes(data) : [];
-
-    const needsAtr =
-        config.stopLossAtr > 0 ||
-        config.takeProfitAtr > 0 ||
-        config.trailingAtr > 0 ||
-        config.atrPercentMin > 0 ||
-        config.atrPercentMax > 0 ||
-        config.partialTakeProfitAtR > 0 ||
-        config.breakEvenAtR > 0;
-
-    const atr = (isValidPrecomputed && precomputed.atr?.length === dataLen)
-        ? precomputed.atr
-        : (needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : []);
-
-    const trendPeriod = resolveTrendPeriod(config);
-    const emaTrend = (isValidPrecomputed && precomputed.emaTrend?.length === dataLen && trendPeriod > 0)
-        ? precomputed.emaTrend
-        : (trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : []);
-
-    const useAdx = config.tradeFilterMode === 'adx' || config.adxMin > 0 || config.adxMax > 0;
-    const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
-    const adx = (isValidPrecomputed && precomputed.adx?.length === dataLen && useAdx)
-        ? precomputed.adx
-        : (useAdx ? calculateADX(highs, lows, closes, adxPeriod) : []);
-
-    const volumeSma = (isValidPrecomputed && precomputed.volumeSma?.length === dataLen && config.tradeFilterMode === 'volume')
-        ? precomputed.volumeSma
-        : (config.tradeFilterMode === 'volume'
-            ? calculateSMA(volumes, config.volumeSmaPeriod)
-            : []);
-
-    const rsi = (isValidPrecomputed && precomputed.rsi?.length === dataLen && config.tradeFilterMode === 'rsi')
-        ? precomputed.rsi
-        : (config.tradeFilterMode === 'rsi'
-            ? calculateRSI(closes, config.rsiPeriod)
-            : []);
-
+    const computed = (precomputed && precomputed.dataLength === data.length)
+        ? precomputed
+        : precomputeIndicators(data, settings);
     return {
-        atr,
-        emaTrend,
-        adx,
-        volumeSma,
-        rsi
+        atr: computed.atr,
+        emaTrend: computed.emaTrend,
+        adx: computed.adx,
+        volumeSma: computed.volumeSma,
+        rsi: computed.rsi
     };
 }
+

@@ -1,7 +1,7 @@
 
-import { OHLCVData, BacktestSettings, Trade } from '../../types/index';
-import { PositionState } from '../../types/backtest';
-import { applySlippage, directionFactorFor, exitSideForDirection, normalizeBacktestSettings } from './backtest-utils';
+import { OHLCVData, Trade } from '../../types/index';
+import { NormalizedSettings, PositionState } from '../../types/backtest';
+import { applySlippage, directionFactorFor, exitSideForDirection } from './backtest-utils';
 
 export type ExitCallback = (exitPrice: number, exitSize: number, exitReason: Trade['exitReason']) => void;
 
@@ -12,11 +12,10 @@ export type ExitCallback = (exitPrice: number, exitSize: number, exitReason: Tra
 export function processPositionExits(
     candle: OHLCVData,
     position: PositionState,
-    settings: BacktestSettings,
+    config: NormalizedSettings,
     slippageRate: number,
     onExit: ExitCallback
 ): boolean {
-    const config = normalizeBacktestSettings(settings);
     const isShortPosition = position.direction === 'short';
     const exitSide = exitSideForDirection(position.direction);
 
@@ -80,10 +79,9 @@ export function processPositionExits(
 export function updatePositionState(
     candle: OHLCVData,
     position: PositionState,
-    settings: BacktestSettings,
+    config: NormalizedSettings,
     atrValue: number | null | undefined
 ): void {
-    const config = normalizeBacktestSettings(settings);
     const directionFactor = directionFactorFor(position.direction);
     const isShortPosition = position.direction === 'short';
 

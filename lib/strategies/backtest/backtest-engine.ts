@@ -2,7 +2,7 @@
 import { BacktestResult, BacktestSettings, OHLCVData, Signal, Time, Trade } from '../../types/index';
 import { ensureCleanData } from '../strategy-helpers';
 import { PositionState, PrecomputedIndicators, TradeSizingConfig } from '../../types/backtest';
-import { compareTime, directionFactorFor, directionToSignalType, normalizeBacktestSettings, normalizeTradeDirection } from './backtest-utils';
+import { compareTime, directionFactorFor, directionToSignalType, needsSnapshotIndicators, normalizeBacktestSettings, normalizeTradeDirection } from './backtest-utils';
 
 import { prepareSignals } from './signal-preparation';
 import { calculateTradeExitDetails, createEmptyBacktestResult, finalizeBacktestMetrics, calculateBacktestStats, calculateMaxDrawdown } from './position-stats';
@@ -35,23 +35,7 @@ export function runBacktestCompact(
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const indicatorSeries = resolveIndicators(data, settings, precomputed);
 
-    // Compute snapshot indicators if any snapshot-based filters are active
-    const needsSnapshotIndicators =
-        config.snapshotAtrPercentMin > 0 ||
-        config.snapshotAtrPercentMax > 0 ||
-        config.snapshotVolumeRatioMin > 0 ||
-        config.snapshotVolumeRatioMax > 0 ||
-        config.snapshotAdxMin > 0 ||
-        config.snapshotAdxMax > 0 ||
-        config.snapshotEmaDistanceMin !== 0 ||
-        config.snapshotEmaDistanceMax !== 0 ||
-        config.snapshotRsiMin > 0 ||
-        config.snapshotRsiMax > 0 ||
-        config.snapshotPriceRangePosMin > 0 ||
-        config.snapshotPriceRangePosMax > 0 ||
-        config.snapshotBarsFromHighMax > 0 ||
-        config.snapshotBarsFromLowMax > 0;
-    const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators
+    const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators(config)
         ? computeSnapshotIndicators(data, indicatorSeries)
         : null;
 
@@ -66,21 +50,25 @@ export function runBacktestCompact(
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
 
+    const recordExit = (exitPrice: number, exitSize: number) => {
+        const details = calculateTradeExitDetails(position!, exitPrice, exitSize, commissionRate);
+        capital += details.rawPnl - details.commission;
+        totalTrades++;
+        if (details.totalPnl > 0) { winningTrades++; totalProfit += details.totalPnl; } else { totalLoss += Math.abs(details.totalPnl); }
+        const delta = details.pnlPercent - avgReturn;
+        avgReturn += delta / totalTrades;
+        returnM2 += delta * (details.pnlPercent - avgReturn);
+        position!.size -= details.size;
+        if (position!.size <= 0) position = null;
+    };
+
     for (let i = 0; i < data.length; i++) {
         const candle = data[i];
 
         if (position) {
             position.barsInTrade += 1;
             processPositionExits(candle, position, config, slippageRate, (exitPrice, exitSize) => {
-                const details = calculateTradeExitDetails(position!, exitPrice, exitSize, commissionRate);
-                capital += details.rawPnl - details.commission;
-                totalTrades++;
-                if (details.totalPnl > 0) { winningTrades++; totalProfit += details.totalPnl; } else { totalLoss += Math.abs(details.totalPnl); }
-                const delta = details.pnlPercent - avgReturn;
-                avgReturn += delta / totalTrades;
-                returnM2 += delta * (details.pnlPercent - avgReturn);
-                position!.size -= details.size;
-                if (position!.size <= 0) position = null;
+                recordExit(exitPrice, exitSize);
             });
             if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
         }
@@ -93,15 +81,8 @@ export function runBacktestCompact(
                     if (opened) { position = opened.nextPosition; capital -= opened.entryCommission; }
                 } else if (signal.type === directionToSignalType(position.direction === 'long' ? 'short' : 'long') && (config.allowSameBarExit || compareTime(signal.time, position.entryTime) !== 0)) {
                     // Signal exit
-                    const exitPrice = (candle.close + candle.open) / 2; // Approximate or use slippage
-                    const details = calculateTradeExitDetails(position, exitPrice, position.size, commissionRate);
-                    capital += details.rawPnl - details.commission;
-                    totalTrades++;
-                    if (details.totalPnl > 0) { winningTrades++; totalProfit += details.totalPnl; } else { totalLoss += Math.abs(details.totalPnl); }
-                    const delta = details.pnlPercent - avgReturn;
-                    avgReturn += delta / totalTrades;
-                    returnM2 += delta * (details.pnlPercent - avgReturn);
-                    position = null;
+                    const exitPrice = (candle.close + candle.open) / 2;
+                    recordExit(exitPrice, position.size);
                     if (tradeDirection === 'both') {
                         const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
                         if (opened) { position = opened.nextPosition; capital -= opened.entryCommission; }
@@ -142,24 +123,7 @@ export function runBacktest(
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const indicatorSeries = resolveIndicators(data, settings, precomputed);
 
-    // Compute snapshot indicators if any snapshot-based filters are active OR snapshots are requested
-    const needsSnapshotIndicators =
-        !!settings.captureSnapshots ||
-        config.snapshotAtrPercentMin > 0 ||
-        config.snapshotAtrPercentMax > 0 ||
-        config.snapshotVolumeRatioMin > 0 ||
-        config.snapshotVolumeRatioMax > 0 ||
-        config.snapshotAdxMin > 0 ||
-        config.snapshotAdxMax > 0 ||
-        config.snapshotEmaDistanceMin !== 0 ||
-        config.snapshotEmaDistanceMax !== 0 ||
-        config.snapshotRsiMin > 0 ||
-        config.snapshotRsiMax > 0 ||
-        config.snapshotPriceRangePosMin > 0 ||
-        config.snapshotPriceRangePosMax > 0 ||
-        config.snapshotBarsFromHighMax > 0 ||
-        config.snapshotBarsFromLowMax > 0;
-    const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators
+    const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators(config, !!settings.captureSnapshots)
         ? computeSnapshotIndicators(data, indicatorSeries)
         : null;
 

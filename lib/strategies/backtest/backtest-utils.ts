@@ -175,6 +175,15 @@ export function getTimeIndex(data: OHLCVData[]): Map<string, number> {
     return cached;
 }
 
-
+export function needsSnapshotIndicators(config: NormalizedSettings, captureSnapshots = false): boolean {
+    return captureSnapshots ||
+        config.snapshotAtrPercentMin > 0 || config.snapshotAtrPercentMax > 0 ||
+        config.snapshotVolumeRatioMin > 0 || config.snapshotVolumeRatioMax > 0 ||
+        config.snapshotAdxMin > 0 || config.snapshotAdxMax > 0 ||
+        config.snapshotEmaDistanceMin !== 0 || config.snapshotEmaDistanceMax !== 0 ||
+        config.snapshotRsiMin > 0 || config.snapshotRsiMax > 0 ||
+        config.snapshotPriceRangePosMin > 0 || config.snapshotPriceRangePosMax > 0 ||
+        config.snapshotBarsFromHighMax > 0 || config.snapshotBarsFromLowMax > 0;
+}
 
 

@@ -1,7 +1,7 @@
 
-import { BacktestSettings, Signal } from '../../types/index';
-import { PositionState } from '../../types/backtest';
-import { allowsSignalAsEntry, applySlippage, directionFactorFor, entrySideForDirection, normalizeBacktestSettings, signalToPositionDirection } from './backtest-utils';
+import { Signal } from '../../types/index';
+import { NormalizedSettings, PositionState } from '../../types/backtest';
+import { allowsSignalAsEntry, applySlippage, directionFactorFor, entrySideForDirection, signalToPositionDirection } from './backtest-utils';
 
 export interface PositionBuilderParams {
     signal: Signal;
@@ -11,7 +11,7 @@ export interface PositionBuilderParams {
     positionSizePercent: number;
     commissionRate: number;
     slippageRate: number;
-    settings: BacktestSettings;
+    settings: NormalizedSettings;
     atrArray: (number | null)[];
     tradeDirection: 'long' | 'short' | 'both';
     sizingMode: 'percent' | 'fixed';
@@ -35,15 +35,12 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
         positionSizePercent,
         commissionRate,
         slippageRate,
-        settings,
+        settings: config,
         atrArray,
         tradeDirection,
         sizingMode,
         fixedTradeAmount
     } = params;
-
-    // Normalize settings
-    const config = normalizeBacktestSettings(settings);
 
     if (!allowsSignalAsEntry(signal.type, tradeDirection)) return null;
 
@@ -56,14 +53,7 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
 
     const atrValue = needsAtr ? atrArray[barIndex] : null;
 
-    const requiresAtrForEntry =
-        config.stopLossAtr > 0 ||
-        config.takeProfitAtr > 0 ||
-        config.trailingAtr > 0 ||
-        config.partialTakeProfitAtR > 0 ||
-        config.breakEvenAtR > 0;
-
-    if (requiresAtrForEntry && (atrValue === null || atrValue === undefined)) return null;
+    if (needsAtr && (atrValue === null || atrValue === undefined)) return null;
 
     const allocatedCapital = (sizingMode === 'fixed' && fixedTradeAmount > 0)
         ? fixedTradeAmount
