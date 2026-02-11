@@ -1,4 +1,4 @@
-import { BacktestResult } from "../strategies/index";
+import { BacktestResult, Time, timeToNumber } from "../strategies/index";
 import { getRequiredElement, updateTextContent, setVisible } from "../dom-utils";
 
 export class ResultsRenderer {
@@ -20,10 +20,11 @@ export class ResultsRenderer {
 
         const avgTradeClass = result.avgTrade >= 0 ? 'positive' : 'negative';
         updateTextContent('avgTrade', `${result.avgTrade >= 0 ? '+' : ''}$${result.avgTrade.toFixed(2)}`, `stat-value ${avgTradeClass}`);
+        updateTextContent('avgClosedTradeTime', this.getAverageClosedTradeTimeText(result));
 
         updateTextContent('winRate', `${result.winRate.toFixed(1)}%`, `stat-value ${result.winRate >= 50 ? 'positive' : 'negative'}`);
 
-        const pfText = result.profitFactor === Infinity ? '∞' : result.profitFactor.toFixed(2);
+        const pfText = result.profitFactor === Infinity ? 'INF' : result.profitFactor.toFixed(2);
         updateTextContent('profitFactor', pfText, `stat-value ${result.profitFactor >= 1 ? 'positive' : 'negative'}`);
 
         updateTextContent('totalTrades', result.totalTrades.toString());
@@ -112,6 +113,53 @@ export class ResultsRenderer {
 
     private formatLevel(level: number): string {
         return level.toFixed(3).replace(/\.?0+$/, '');
+    }
+
+    private getAverageClosedTradeTimeText(result: BacktestResult): string {
+        if (!result.trades.length) return '--';
+
+        let durationSumMs = 0;
+        let durationCount = 0;
+
+        for (const trade of result.trades) {
+            const entryMs = this.toEpochMs(trade.entryTime);
+            const exitMs = this.toEpochMs(trade.exitTime);
+            if (entryMs === null || exitMs === null) continue;
+
+            const durationMs = exitMs - entryMs;
+            if (!Number.isFinite(durationMs) || durationMs < 0) continue;
+
+            durationSumMs += durationMs;
+            durationCount += 1;
+        }
+
+        if (durationCount === 0) return '--';
+        return this.formatDuration(durationSumMs / durationCount);
+    }
+
+    private toEpochMs(time: Time): number | null {
+        const numeric = timeToNumber(time);
+        if (numeric === null || !Number.isFinite(numeric)) return null;
+
+        if (typeof time === 'number') {
+            // lightweight-charts UTCTimestamp is seconds-based.
+            return numeric > 1_000_000_000_000 ? numeric : numeric * 1000;
+        }
+        return numeric;
+    }
+
+    private formatDuration(durationMs: number): string {
+        const seconds = durationMs / 1000;
+        if (seconds < 60) return `${seconds.toFixed(0)}s`;
+
+        const minutes = seconds / 60;
+        if (minutes < 60) return `${minutes.toFixed(1)}m`;
+
+        const hours = minutes / 60;
+        if (hours < 24) return `${hours.toFixed(1)}h`;
+
+        const days = hours / 24;
+        return `${days.toFixed(1)}d`;
     }
 
     public clear() {

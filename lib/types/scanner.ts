@@ -39,6 +39,8 @@ export interface ScanResult {
     displayName: string;
     /** Strategy that generated the signal */
     strategy: string;
+    /** Strategy key used for execution/subscription */
+    strategyKey: string;
     /** The signal details */
     signal: Signal;
     /** Current price at time of scan */

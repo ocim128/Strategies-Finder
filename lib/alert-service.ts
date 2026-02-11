@@ -1,11 +1,11 @@
-/**
- * Alert Service — thin API client for the Cloudflare Worker alert system.
+﻿/**
+ * Alert Service - thin API client for the Cloudflare Worker alert system.
  * Worker URL is stored in localStorage under 'alert_worker_url'.
  */
 
 const WORKER_URL_KEY = 'alert_worker_url';
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// Types
 
 export interface AlertSubscription {
     id: number;
@@ -29,11 +29,11 @@ export interface AlertSubscription {
 
 export interface AlertSubscriptionUpsert {
     streamId?: string;
-    symbol: string;
-    interval: string;
-    strategyKey: string;
+    symbol?: string;
+    interval?: string;
+    strategyKey?: string;
     strategyParams?: Record<string, number>;
-    backtestSettings?: Record<string, unknown>;
+    backtestSettings?: unknown;
     freshnessBars?: number;
     notifyTelegram?: boolean;
     notifyExit?: boolean;
@@ -62,7 +62,7 @@ export interface RunNowResult {
     result?: Record<string, unknown>;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// Helpers
 
 function getWorkerUrl(): string {
     return localStorage.getItem(WORKER_URL_KEY) ?? '';
@@ -89,7 +89,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     return json as T;
 }
 
-// ── Public API ───────────────────────────────────────────────────────────────
+// Public API
 
 export const alertService = {
     getWorkerUrl,
@@ -127,25 +127,40 @@ export const alertService = {
 
     /** Disable a subscription (soft-delete) */
     async disableSubscription(streamId: string): Promise<void> {
-        await apiFetch('/api/subscriptions/upsert', {
-            method: 'POST',
-            body: JSON.stringify({ streamId, symbol: '_', interval: '_', strategyKey: '_', enabled: false }),
-        });
+        try {
+            await apiFetch('/api/subscriptions/delete', {
+                method: 'POST',
+                body: JSON.stringify({ streamId }),
+            });
+        } catch {
+            // Backward compatibility for workers that do not expose /delete yet.
+            await apiFetch('/api/subscriptions/upsert', {
+                method: 'POST',
+                body: JSON.stringify({ streamId, enabled: false }),
+            });
+        }
     },
 
     /** Trigger immediate evaluation for a subscription */
     async runNow(streamId: string, force = false): Promise<RunNowResult> {
-        return apiFetch('/api/subscriptions/run-now', {
+        const data = await apiFetch<{ ok: boolean; run?: RunNowResult } & Partial<RunNowResult>>('/api/subscriptions/run-now', {
             method: 'POST',
             body: JSON.stringify({ streamId, force }),
         });
+
+        return data.run ?? {
+            streamId: data.streamId ?? streamId,
+            status: data.status ?? 'unknown',
+            closedCandleTimeSec: data.closedCandleTimeSec,
+            result: data.result,
+        };
     },
 
     /** Get signal history for a stream */
     async getSignalHistory(streamId: string, limit = 20): Promise<AlertSignalRecord[]> {
-        const data = await apiFetch<{ ok: boolean; signals: AlertSignalRecord[] }>(
+        const data = await apiFetch<{ ok: boolean; signals?: AlertSignalRecord[]; items?: AlertSignalRecord[] }>(
             `/api/stream/signals?streamId=${encodeURIComponent(streamId)}&limit=${limit}`
         );
-        return data.signals ?? [];
+        return data.items ?? data.signals ?? [];
     },
 };

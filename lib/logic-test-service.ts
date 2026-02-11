@@ -257,8 +257,11 @@ class LogicTestService {
      * Simple seeded random number generator (0 to 1)
      */
     private seededRandom(seed: number): number {
-        const x = Math.sin(seed) * 10000;
-        return x - Math.floor(x);
+        // Mulberry32-based PRNG — better distribution than sin-based
+        let t = (seed + 0x6D2B79F5) | 0;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     }
 
     /**

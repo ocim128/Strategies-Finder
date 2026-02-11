@@ -4,7 +4,6 @@
  */
 
 import { binanceSearchService, type BinanceSymbol } from '../binance-search-service';
-import { dataManager } from '../data-manager';
 import { strategyRegistry } from '../../strategyRegistry';
 import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth } from '../confirmation-strategies';
 import type { BacktestSettings, Signal, StrategyParams, TradeDirection, TradeFilterMode } from '../types/strategies';
@@ -331,6 +330,7 @@ export class ScannerEngine {
         signal: AbortSignal
     ): Promise<Map<string, PairScanData>> {
         const results = new Map<string, PairScanData>();
+        const { dataManager } = await import('../data-manager');
 
         const fetchPromises = pairs.map(async (pair) => {
             if (signal.aborted) return;
@@ -420,6 +420,7 @@ export class ScannerEngine {
                         symbol,
                         displayName,
                         strategy: stratConfig.name,
+                        strategyKey: stratConfig.strategyKey,
                         signal,
                         currentPrice: openPosition.currentPrice,
                         signalAge: openPosition.barsInTrade,

@@ -1,4 +1,4 @@
-import { Time } from "lightweight-charts";
+﻿import { Time } from "lightweight-charts";
 import { OHLCVData, BacktestResult, Trade, EntryPreview } from "./strategies/index";
 import { state } from "./state";
 import { strategyRegistry, getStrategyList } from "../strategyRegistry";
@@ -62,7 +62,7 @@ export class UIManager {
             changeValueEl.textContent = `${isPositive ? '+' : ''}${change.toFixed(2)}%`;
             changeEl.className = `ohlc-change ${isPositive ? 'positive' : 'negative'}`;
             if (arrowEl) {
-                arrowEl.textContent = isPositive ? '▲' : '▼';
+                arrowEl.textContent = isPositive ? '^' : 'v';
             }
         }
     }
@@ -333,3 +333,4 @@ export class UIManager {
 }
 
 export const uiManager = new UIManager();
+

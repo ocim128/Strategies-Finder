@@ -5,7 +5,7 @@ import { Trade, TradeSnapshot } from './types/index';
 import { uiManager } from './ui-manager';
 
 /**
- * Maps TradeSnapshot feature keys â†’ settings UI element IDs.
+ * Maps TradeSnapshot feature keys -> settings UI element IDs.
  * Each entry defines the toggle checkbox ID and one or two value input IDs.
  * "direction" controls how above/below maps to min vs max inputs.
  */
@@ -15,7 +15,7 @@ const FEATURE_TO_SETTINGS: Record<keyof TradeSnapshot, {
     inputId?: string;
     /** Direction that this single-value input supports. */
     inputKind?: 'min' | 'max';
-    /** For range filters â€” aboveâ†’min, belowâ†’max */
+    /** For range filters - above->min, below->max */
     minInputId?: string;
     maxInputId?: string;
 } | null> = {
@@ -38,7 +38,7 @@ const FEATURE_TO_SETTINGS: Record<keyof TradeSnapshot, {
 };
 
 /**
- * Analysis Panel â€” Trade pattern mining UI controller.
+ * Analysis Panel - Trade pattern mining UI controller.
  * Reads trades from `state.currentBacktestResult`, runs analysis,
  * and renders results into the analysis tab.
  *
@@ -88,7 +88,7 @@ class AnalysisPanel {
             const total = result.trades.length;
             const netPnl = result.trades.reduce((s, t) => s + t.pnl, 0);
             const avgExp = total > 0 ? netPnl / total : 0;
-            summaryEl.textContent = `${total} trades (${wins}W / ${total - wins}L) â€¢ Exp $${avgExp.toFixed(2)}/trade â€¢ ${tradesWithSnapshots.length} with snapshots`;
+            summaryEl.textContent = `${total} trades (${wins}W / ${total - wins}L) | Exp $${avgExp.toFixed(2)}/trade | ${tradesWithSnapshots.length} with snapshots`;
         }
 
         // Render table
@@ -121,22 +121,22 @@ class AnalysisPanel {
             const rowClass = scorePercent >= 40 ? 'high-score' : '';
 
             const filterText = a.suggestedFilter
-                ? `${a.suggestedFilter.direction === 'above' ? 'â‰¥' : 'â‰¤'} ${this.fmtThreshold(a.suggestedFilter.threshold)}`
-                : 'â€”';
+                ? `${a.suggestedFilter.direction === 'above' ? '>=' : '<='} ${this.fmtThreshold(a.suggestedFilter.threshold)}`
+                : '-';
             const filterClass = a.suggestedFilter ? '' : 'no-filter';
 
             const wrText = a.suggestedFilter
                 ? `${a.winRateIfFiltered.toFixed(1)}%`
-                : 'â€”';
+                : '-';
             const expText = a.suggestedFilter
                 ? `$${a.expectancyIfFiltered >= 0 ? '+' : ''}${a.expectancyIfFiltered.toFixed(2)}`
-                : 'â€”';
+                : '-';
             const expClass = a.suggestedFilter
                 ? (a.expectancyIfFiltered > 0 ? 'positive' : a.expectancyIfFiltered < 0 ? 'negative' : '')
                 : '';
             const removedText = a.suggestedFilter
                 ? `${a.tradesRemovedPercent.toFixed(0)}%`
-                : 'â€”';
+                : '-';
 
             const simBtn = a.suggestedFilter
                 ? `<button class="btn-simulate" data-feature="${a.feature}" data-dir="${a.suggestedFilter.direction}" data-threshold="${a.suggestedFilter.threshold}">Test</button>`
@@ -203,12 +203,12 @@ class AnalysisPanel {
         if (!comboGrid) return;
 
         const filterDesc = best.filters
-            .map(f => `<span class="filter-badge">${f.label} ${f.direction === 'above' ? 'â‰¥' : 'â‰¤'} ${this.fmtThreshold(f.threshold)}</span>`)
+            .map(f => `<span class="filter-badge">${f.label} ${f.direction === 'above' ? '>=' : '<='} ${this.fmtThreshold(f.threshold)}</span>`)
             .join(' <span style="color:var(--text-secondary);font-size:10px;">AND</span> ');
 
         const expSign = best.filteredExpectancy >= 0 ? '+' : '';
         const expImpSign = best.expectancyImprovement >= 0 ? '+' : '';
-        const pfText = best.filteredProfitFactor === Infinity ? 'âˆž' : best.filteredProfitFactor.toFixed(2);
+        const pfText = best.filteredProfitFactor === Infinity ? 'INF' : best.filteredProfitFactor.toFixed(2);
 
         comboGrid.innerHTML = `
             <div class="sim-card" style="grid-column: 1 / -1;">
@@ -287,12 +287,12 @@ class AnalysisPanel {
         const featureLabel = this.lastResults.find(r => r.feature === feature)?.label ?? feature;
         const expSign = sim.filteredExpectancy >= 0 ? '+' : '';
         const expImpSign = sim.expectancyImprovement >= 0 ? '+' : '';
-        const pfText = sim.filteredProfitFactor === Infinity ? 'âˆž' : sim.filteredProfitFactor.toFixed(2);
+        const pfText = sim.filteredProfitFactor === Infinity ? 'INF' : sim.filteredProfitFactor.toFixed(2);
 
         grid.innerHTML = `
             <div class="sim-card">
                 <div class="sim-card-label">Filter</div>
-                <div class="sim-card-value">${featureLabel} ${direction === 'above' ? 'â‰¥' : 'â‰¤'} ${this.fmtThreshold(threshold)}</div>
+                <div class="sim-card-value">${featureLabel} ${direction === 'above' ? '>=' : '<='} ${this.fmtThreshold(threshold)}</div>
             </div>
             <div class="sim-card">
                 <div class="sim-card-label">Trades Remaining</div>

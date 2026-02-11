@@ -288,6 +288,25 @@ function normalizeStatusText(value: string, maxLen = STATUS_TEXT_MAX): string {
     return value.replace(/\s+/g, " ").trim().slice(0, maxLen);
 }
 
+function extractExitAlertKey(status: string | null | undefined): string | null {
+    if (!status) return null;
+    const parts = status.split(";");
+    for (const part of parts) {
+        if (part.startsWith("exit_alert:")) {
+            const value = part.slice("exit_alert:".length).trim();
+            if (value) return value;
+        }
+    }
+    return null;
+}
+
+function composeSubscriptionStatus(baseStatus: string, exitAlertKey: string | null): string {
+    const normalizedBase = normalizeStatusText(baseStatus, Math.max(32, STATUS_TEXT_MAX - 32));
+    if (!exitAlertKey) return normalizedBase;
+    const raw = `${normalizedBase};exit_alert:${exitAlertKey}`;
+    return normalizeStatusText(raw, STATUS_TEXT_MAX);
+}
+
 function readBinanceApiBases(env: Env): string[] {
     const configured = (env.BINANCE_API_BASES ?? "")
         .split(",")
@@ -525,16 +544,18 @@ async function fetchBybitCandles(symbol: string, interval: string, limit: number
 
 async function fetchMarketCandles(symbol: string, interval: string, limit: number, env: Env): Promise<OHLCVData[]> {
     try {
-        return await fetchBinanceCandles(symbol, interval, limit, env);
-    } catch (binanceError) {
+        // Prefer Bybit first because Binance endpoints may be region-restricted
+        // from Cloudflare Worker egress in some geographies.
+        return await fetchBybitCandles(symbol, interval, limit, env);
+    } catch (bybitError) {
         try {
-            return await fetchBybitCandles(symbol, interval, limit, env);
-        } catch (bybitError) {
-            const binanceMessage = binanceError instanceof Error ? binanceError.message : String(binanceError);
+            return await fetchBinanceCandles(symbol, interval, limit, env);
+        } catch (binanceError) {
             const bybitMessage = bybitError instanceof Error ? bybitError.message : String(bybitError);
+            const binanceMessage = binanceError instanceof Error ? binanceError.message : String(binanceError);
             throw new Error(
                 normalizeStatusText(
-                    `Binance failed: ${binanceMessage} | Bybit failed: ${bybitMessage}`,
+                    `Bybit failed: ${bybitMessage} | Binance failed: ${binanceMessage}`,
                     1000
                 )
             );
@@ -893,10 +914,19 @@ async function handleSignalHistory(request: Request, env: Env): Promise<Response
             ...row,
             payload: safeJsonParse(row.payload_json, null as unknown),
         })),
+        // Backward compatibility with older frontend clients.
+        signals: rows.map((row) => ({
+            ...row,
+            payload: safeJsonParse(row.payload_json, null as unknown),
+        })),
     });
 }
 
 async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Response> {
+    if (!env.SIGNALS_DB) {
+        return toJsonResponse({ ok: false, error: "Missing SIGNALS_DB binding" }, 500);
+    }
+
     let payload: SubscriptionUpsertRequest;
     try {
         payload = (await request.json()) as SubscriptionUpsertRequest;
@@ -904,27 +934,57 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
         return toJsonResponse({ ok: false, error: "Invalid JSON body" }, 400);
     }
 
-    if (!payload.symbol || !payload.interval || !payload.strategyKey) {
+    const incomingStreamId = payload.streamId ? normalizeText(payload.streamId) : "";
+    const existing = incomingStreamId
+        ? await env.SIGNALS_DB.prepare(`SELECT * FROM signal_subscriptions WHERE stream_id = ? LIMIT 1`)
+            .bind(incomingStreamId)
+            .first<SubscriptionRow>()
+        : null;
+
+    const symbol = payload.symbol
+        ? normalizeText(payload.symbol).toUpperCase()
+        : existing?.symbol;
+    const interval = payload.interval
+        ? normalizeText(payload.interval)
+        : existing?.interval;
+    const strategyKey = payload.strategyKey
+        ? normalizeText(payload.strategyKey)
+        : existing?.strategy_key;
+
+    if (!symbol || !interval || !strategyKey) {
         return toJsonResponse(
             { ok: false, error: "Required fields: symbol, interval, strategyKey" },
             400
         );
     }
 
-    const symbol = normalizeText(payload.symbol).toUpperCase();
-    const interval = normalizeText(payload.interval);
-    const strategyKey = normalizeText(payload.strategyKey);
-    const streamId = payload.streamId
-        ? normalizeText(payload.streamId)
+    const streamId = incomingStreamId
+        ? incomingStreamId
         : buildDefaultStreamId(symbol, interval, strategyKey);
-    const enabled = payload.enabled === false ? 0 : 1;
-    const notifyTelegram = payload.notifyTelegram === false ? 0 : 1;
-    const notifyExit = payload.notifyExit === true ? 1 : 0;
-    const freshnessBars = Math.max(0, Math.floor(payload.freshnessBars ?? 1));
+    const enabled = payload.enabled === undefined
+        ? existing?.enabled ?? 1
+        : payload.enabled === false ? 0 : 1;
+    const notifyTelegram = payload.notifyTelegram === undefined
+        ? existing?.notify_telegram ?? 1
+        : payload.notifyTelegram === false ? 0 : 1;
+    const notifyExit = payload.notifyExit === undefined
+        ? existing?.notify_exit ?? 0
+        : payload.notifyExit === true ? 1 : 0;
+    const freshnessBars = Math.max(
+        0,
+        Math.floor(payload.freshnessBars ?? existing?.freshness_bars ?? 1)
+    );
     const candleLimit = Math.max(
         MIN_CANDLES,
-        Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, Math.floor(payload.candleLimit ?? DEFAULT_SUBSCRIPTION_CANDLE_LIMIT))
+        Math.min(
+            MAX_SUBSCRIPTION_CANDLE_LIMIT,
+            Math.floor(payload.candleLimit ?? existing?.candle_limit ?? DEFAULT_SUBSCRIPTION_CANDLE_LIMIT)
+        )
     );
+    const strategyParams = payload.strategyParams
+        ?? safeJsonParse(existing?.strategy_params_json ?? "{}", {} as Record<string, number>);
+    const backtestSettings = payload.backtestSettings
+        ?? safeJsonParse(existing?.backtest_settings_json ?? "{}", {} as BacktestSettings);
 
     await env.SIGNALS_DB.prepare(
         `
@@ -962,8 +1022,8 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
             symbol,
             interval,
             strategyKey,
-            JSON.stringify(payload.strategyParams ?? {}),
-            JSON.stringify(payload.backtestSettings ?? {}),
+            JSON.stringify(strategyParams),
+            JSON.stringify(backtestSettings),
             freshnessBars,
             notifyTelegram,
             notifyExit,
@@ -985,6 +1045,10 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
 }
 
 async function handleSubscriptionList(_request: Request, env: Env): Promise<Response> {
+    if (!env.SIGNALS_DB) {
+        return toJsonResponse({ ok: false, error: "Missing SIGNALS_DB binding" }, 500);
+    }
+
     const result = await env.SIGNALS_DB.prepare(
         `SELECT * FROM signal_subscriptions ORDER BY updated_at DESC`
     ).all<SubscriptionRow>();
@@ -993,6 +1057,38 @@ async function handleSubscriptionList(_request: Request, env: Env): Promise<Resp
         ok: true,
         count: (result.results ?? []).length,
         items: result.results ?? [],
+    });
+}
+
+async function handleSubscriptionDelete(request: Request, env: Env): Promise<Response> {
+    if (!env.SIGNALS_DB) {
+        return toJsonResponse({ ok: false, error: "Missing SIGNALS_DB binding" }, 500);
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const payload = body as { streamId?: string };
+    const streamId = payload.streamId?.trim();
+    if (!streamId) {
+        return toJsonResponse({ ok: false, error: "streamId is required" }, 400);
+    }
+
+    const subsDelete = await env.SIGNALS_DB.prepare(
+        `DELETE FROM signal_subscriptions WHERE stream_id = ?`
+    )
+        .bind(streamId)
+        .run();
+    const signalsDelete = await env.SIGNALS_DB.prepare(
+        `DELETE FROM entry_signals WHERE stream_id = ? OR channel_key = ?`
+    )
+        .bind(streamId, streamId.toLowerCase())
+        .run();
+
+    return toJsonResponse({
+        ok: true,
+        streamId,
+        deleted: (subsDelete.meta?.changes ?? 0) > 0,
+        subscriptionsDeleted: subsDelete.meta?.changes ?? 0,
+        signalsDeleted: signalsDelete.meta?.changes ?? 0,
     });
 }
 
@@ -1041,6 +1137,8 @@ async function runSubscription(
     force = false
 ): Promise<Record<string, unknown>> {
     const streamId = subscription.stream_id;
+    const lastExitAlertKey = extractExitAlertKey(subscription.last_status);
+    let persistedExitAlertKey: string | null = lastExitAlertKey;
 
     try {
         const candles = await fetchMarketCandles(
@@ -1097,30 +1195,50 @@ async function runSubscription(
                             candles: closed.candles,
                             strategyParams: safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>),
                             backtestSettings: safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings),
-                            freshnessBars: 9999, // don't filter by freshness for exit check
+                            // Keep exit alerts fresh and avoid repeated stale exits.
+                            freshnessBars: Math.max(0, subscription.freshness_bars ?? 1),
                         });
-                        if (evaluation.ok && evaluation.latestEntry && evaluation.latestEntry.direction !== lastPayload.direction) {
-                            const exitMsg = buildExitTelegramMessage(
-                                lastPayload.direction,
-                                subscription.symbol,
-                                subscription.interval,
-                                evaluation.latestEntry.strategyName,
-                                subscription.strategy_key,
-                                evaluation.latestEntry.signal.price,
-                                evaluation.latestEntry.signalTimeSec
-                            );
-                            await sendTelegramText(env, exitMsg).catch(() => { /* best effort */ });
+                        if (
+                            evaluation.ok &&
+                            evaluation.latestEntry &&
+                            evaluation.latestEntry.direction !== lastPayload.direction &&
+                            evaluation.latestEntry.signalTimeSec > lastPayload.signalTimeSec
+                        ) {
+                            const exitAlertKey = `${lastPayload.fingerprint}:${evaluation.latestEntry.fingerprint}`;
+                            if (persistedExitAlertKey !== exitAlertKey) {
+                                const exitMsg = buildExitTelegramMessage(
+                                    lastPayload.direction,
+                                    subscription.symbol,
+                                    subscription.interval,
+                                    evaluation.latestEntry.strategyName,
+                                    subscription.strategy_key,
+                                    evaluation.latestEntry.signal.price,
+                                    evaluation.latestEntry.signalTimeSec
+                                );
+                                try {
+                                    await sendTelegramText(env, exitMsg);
+                                    persistedExitAlertKey = exitAlertKey;
+                                } catch {
+                                    // Exit alerts are best effort.
+                                }
+                            }
                         }
                     }
                 }
             } catch { /* exit alerts are best effort */ }
         }
 
-        const status = result.ok
+        if (result.ok && result.newEntry) {
+            // New entry starts a fresh cycle; clear prior exit alert dedupe key.
+            persistedExitAlertKey = null;
+        }
+
+        const baseStatus = result.ok
             ? result.newEntry
                 ? "new_entry"
                 : result.reason ?? "no_entry"
             : result.error ?? "processing_error";
+        const status = composeSubscriptionStatus(baseStatus, persistedExitAlertKey);
 
         if (result.ok) {
             await updateSubscriptionStatus(env, streamId, status, closed.closedCandleTimeSec);
@@ -1142,6 +1260,10 @@ async function runSubscription(
 }
 
 async function handleRunNow(request: Request, env: Env): Promise<Response> {
+    if (!env.SIGNALS_DB) {
+        return toJsonResponse({ ok: false, error: "Missing SIGNALS_DB binding" }, 500);
+    }
+
     const body = await request.json().catch(() => ({}));
     const payload = body as { streamId?: string; force?: boolean };
     const streamId = payload.streamId?.trim();
@@ -1160,10 +1282,14 @@ async function handleRunNow(request: Request, env: Env): Promise<Response> {
     }
 
     const run = await runSubscription(env, subscription, payload.force === true);
-    return toJsonResponse({ ok: true, run });
+    return toJsonResponse({ ok: true, run, ...(run as Record<string, unknown>) });
 }
 
 async function runScheduledSubscriptions(env: Env): Promise<Record<string, unknown>> {
+    if (!env.SIGNALS_DB) {
+        return { ok: false, error: "Missing SIGNALS_DB binding" };
+    }
+
     const result = await env.SIGNALS_DB.prepare(
         `SELECT * FROM signal_subscriptions WHERE enabled = 1 ORDER BY updated_at DESC`
     ).all<SubscriptionRow>();
@@ -1217,6 +1343,10 @@ export default {
             return handleSubscriptionList(request, env);
         }
 
+        if (request.method === "POST" && pathname === "/api/subscriptions/delete") {
+            return handleSubscriptionDelete(request, env);
+        }
+
         if (request.method === "POST" && pathname === "/api/subscriptions/run-now") {
             return handleRunNow(request, env);
         }
@@ -1225,6 +1355,10 @@ export default {
     },
 
     async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+        if (!env.SIGNALS_DB) {
+            console.error(JSON.stringify({ ok: false, error: "Missing SIGNALS_DB binding" }));
+            return;
+        }
         const summary = await runScheduledSubscriptions(env);
         console.log(JSON.stringify(summary));
     },

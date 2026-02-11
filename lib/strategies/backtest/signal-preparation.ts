@@ -180,7 +180,18 @@ export function getOpenPositionForScanner(
     if (exitTimeNum === null || lastBarTimeNum === null) {
         return null;
     }
-    if (Math.abs(exitTimeNum - lastBarTimeNum) > 60000) { // 60 seconds in milliseconds
+
+    const toEpochMs = (rawTime: Time, numericTime: number): number => {
+        if (typeof rawTime === 'number') {
+            // Numeric lightweight-charts timestamps are usually seconds.
+            return numericTime > 1_000_000_000_000 ? numericTime : numericTime * 1000;
+        }
+        return numericTime;
+    };
+
+    const exitTimeMs = toEpochMs(lastTrade.exitTime, exitTimeNum);
+    const lastBarTimeMs = toEpochMs(lastBar.time, lastBarTimeNum);
+    if (Math.abs(exitTimeMs - lastBarTimeMs) > 60000) { // 60 seconds
         return null; // Exit wasn't at last bar, position was closed before
     }
 

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Scanner Panel UI
  * Displays scanner controls and results
  */
@@ -82,8 +82,8 @@ export class ScannerPanel {
         container.className = 'scanner-panel';
         container.innerHTML = `
             <div class="scanner-panel__header">
-                <h2 class="scanner-panel__title">🔍 Multi-Pair Scanner</h2>
-                <button class="scanner-panel__close" title="Close">×</button>
+                <h2 class="scanner-panel__title">Multi-Pair Scanner</h2>
+                <button class="scanner-panel__close" title="Close">x</button>
             </div>
             <div class="scanner-panel__controls">
                 <div class="scanner-panel__control-row">
@@ -133,7 +133,7 @@ export class ScannerPanel {
                                 <th>Target $</th>
                                 <th>uPnL</th>
                                 <th>Age</th>
-                                <th>🔔</th>
+                                <th>Alert</th>
                             </tr>
                         </thead>
                         <tbody class="scanner-panel__results-body"></tbody>
@@ -406,7 +406,7 @@ export class ScannerPanel {
                 const pnlSign = pnl >= 0 ? '+' : '';
 
                 // Format target price with appropriate styling
-                let targetHtml = '<span class="scanner-panel__cell-target--none">—</span>';
+                let targetHtml = '<span class="scanner-panel__cell-target--none">-</span>';
                 if (r.targetPrice !== null) {
                     // Calculate how close we are to target (0 = at entry, 100 = at target)
                     const entryPrice = r.signal.price;
@@ -425,7 +425,7 @@ export class ScannerPanel {
                 <tr class="scanner-panel__result-row" data-symbol="${r.symbol}">
                     <td class="scanner-panel__cell-pair">${r.displayName}</td>
                     <td class="scanner-panel__cell-dir scanner-panel__cell-dir--${r.direction}">
-                        ${r.direction === 'long' ? '🟢' : '🔴'} ${r.direction.toUpperCase()}
+                        ${r.direction.toUpperCase()}
                     </td>
                     <td class="scanner-panel__cell-strategy">${r.strategy.replace(/_/g, ' ')}</td>
                     <td class="scanner-panel__cell-price">${r.signal.price.toFixed(4)}</td>
@@ -433,7 +433,7 @@ export class ScannerPanel {
                     <td class="scanner-panel__cell-target">${targetHtml}</td>
                     <td class="scanner-panel__cell-pnl ${pnlClass}">${pnlSign}${pnl.toFixed(2)}%</td>
                     <td class="scanner-panel__cell-age">${r.signalAge} bar${r.signalAge !== 1 ? 's' : ''}</td>
-                    <td class="scanner-panel__cell-alert"><button class="scanner-panel__alert-btn" data-symbol="${r.symbol}" data-strategy="${r.strategy}" title="Subscribe to alerts">🔔</button></td>
+                    <td class="scanner-panel__cell-alert"><button class="scanner-panel__alert-btn" data-symbol="${r.symbol}" data-strategy-key="${r.strategyKey}" title="Subscribe to alerts">Alert</button></td>
                 </tr>
             `;
             })
@@ -453,7 +453,7 @@ export class ScannerPanel {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const el = e.currentTarget as HTMLElement;
-                this.handleAlertSubscribe(el.dataset.symbol!, el.dataset.strategy!);
+                this.handleAlertSubscribe(el.dataset.symbol!, el.dataset.strategyKey!);
             });
         });
     }
@@ -484,7 +484,7 @@ export class ScannerPanel {
                 interval: config.interval,
                 strategyKey,
                 strategyParams: matched?.strategyParams,
-                backtestSettings: matched?.backtestSettings as Record<string, unknown> | undefined,
+                backtestSettings: matched?.backtestSettings,
                 freshnessBars: config.signalFreshnessBars,
                 notifyTelegram: true,
                 notifyExit: true,
@@ -506,4 +506,5 @@ export class ScannerPanel {
 
 // Export singleton instance
 export const scannerPanel = new ScannerPanel();
+
 
