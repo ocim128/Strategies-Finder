@@ -67,6 +67,18 @@ export interface NormalizedSettings {
     snapshotVolumePriceDivergenceMax: number;
     snapshotVolumeConsistencyMin: number;
     snapshotVolumeConsistencyMax: number;
+    snapshotCloseLocationMin: number;
+    snapshotCloseLocationMax: number;
+    snapshotOppositeWickMin: number;
+    snapshotOppositeWickMax: number;
+    snapshotRangeAtrMultipleMin: number;
+    snapshotRangeAtrMultipleMax: number;
+    snapshotMomentumConsistencyMin: number;
+    snapshotMomentumConsistencyMax: number;
+    snapshotBreakQualityMin: number;
+    snapshotBreakQualityMax: number;
+    snapshotEntryQualityScoreMin: number;
+    snapshotEntryQualityScoreMax: number;
 }
 
 export interface IndicatorSeries {

@@ -443,7 +443,14 @@ export function runBacktest(
                         position = opened.nextPosition;
                         capital -= opened.entryCommission;
                         if (doSnapshot && snapshotIndicators) {
-                            currentSnapshot = captureTradeSnapshot(data, i, indicatorSeries, snapshotIndicators);
+                            currentSnapshot = captureTradeSnapshot(
+                                data,
+                                i,
+                                indicatorSeries,
+                                snapshotIndicators,
+                                opened.nextPosition.direction,
+                                signal.triggerPrice ?? signal.price
+                            );
                         }
                     }
                 } else if (signal.type === directionToSignalType(position.direction === 'long' ? 'short' : 'long') && (config.allowSameBarExit || compareTime(signal.time, position.entryTime) !== 0)) {
@@ -460,7 +467,14 @@ export function runBacktest(
                             position = opened.nextPosition;
                             capital -= opened.entryCommission;
                             if (doSnapshot && snapshotIndicators) {
-                                currentSnapshot = captureTradeSnapshot(data, i, indicatorSeries, snapshotIndicators);
+                                currentSnapshot = captureTradeSnapshot(
+                                    data,
+                                    i,
+                                    indicatorSeries,
+                                    snapshotIndicators,
+                                    opened.nextPosition.direction,
+                                    signal.triggerPrice ?? signal.price
+                                );
                             }
                         }
                     }

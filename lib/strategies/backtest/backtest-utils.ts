@@ -85,6 +85,18 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         snapshotVolumePriceDivergenceMax: clamp(toNumberOr(settings?.snapshotVolumePriceDivergenceMax, 0), -1, 1),
         snapshotVolumeConsistencyMin: Math.max(0, toNumberOr(settings?.snapshotVolumeConsistencyMin, 0)),
         snapshotVolumeConsistencyMax: Math.max(0, toNumberOr(settings?.snapshotVolumeConsistencyMax, 0)),
+        snapshotCloseLocationMin: clamp(toNumberOr(settings?.snapshotCloseLocationMin, 0), 0, 100),
+        snapshotCloseLocationMax: clamp(toNumberOr(settings?.snapshotCloseLocationMax, 0), 0, 100),
+        snapshotOppositeWickMin: clamp(toNumberOr(settings?.snapshotOppositeWickMin, 0), 0, 100),
+        snapshotOppositeWickMax: clamp(toNumberOr(settings?.snapshotOppositeWickMax, 0), 0, 100),
+        snapshotRangeAtrMultipleMin: Math.max(0, toNumberOr(settings?.snapshotRangeAtrMultipleMin, 0)),
+        snapshotRangeAtrMultipleMax: Math.max(0, toNumberOr(settings?.snapshotRangeAtrMultipleMax, 0)),
+        snapshotMomentumConsistencyMin: clamp(toNumberOr(settings?.snapshotMomentumConsistencyMin, 0), 0, 100),
+        snapshotMomentumConsistencyMax: clamp(toNumberOr(settings?.snapshotMomentumConsistencyMax, 0), 0, 100),
+        snapshotBreakQualityMin: clamp(toNumberOr(settings?.snapshotBreakQualityMin, 0), 0, 100),
+        snapshotBreakQualityMax: clamp(toNumberOr(settings?.snapshotBreakQualityMax, 0), 0, 100),
+        snapshotEntryQualityScoreMin: clamp(toNumberOr(settings?.snapshotEntryQualityScoreMin, 0), 0, 100),
+        snapshotEntryQualityScoreMax: clamp(toNumberOr(settings?.snapshotEntryQualityScoreMax, 0), 0, 100),
     };
 }
 
@@ -209,7 +221,13 @@ export function needsSnapshotIndicators(config: NormalizedSettings, captureSnaps
         config.snapshotVolumeTrendMin > 0 || config.snapshotVolumeTrendMax > 0 ||
         config.snapshotVolumeBurstMin !== 0 || config.snapshotVolumeBurstMax !== 0 ||
         config.snapshotVolumePriceDivergenceMin !== 0 || config.snapshotVolumePriceDivergenceMax !== 0 ||
-        config.snapshotVolumeConsistencyMin > 0 || config.snapshotVolumeConsistencyMax > 0;
+        config.snapshotVolumeConsistencyMin > 0 || config.snapshotVolumeConsistencyMax > 0 ||
+        config.snapshotCloseLocationMin > 0 || config.snapshotCloseLocationMax > 0 ||
+        config.snapshotOppositeWickMin > 0 || config.snapshotOppositeWickMax > 0 ||
+        config.snapshotRangeAtrMultipleMin > 0 || config.snapshotRangeAtrMultipleMax > 0 ||
+        config.snapshotMomentumConsistencyMin > 0 || config.snapshotMomentumConsistencyMax > 0 ||
+        config.snapshotBreakQualityMin > 0 || config.snapshotBreakQualityMax > 0 ||
+        config.snapshotEntryQualityScoreMin > 0 || config.snapshotEntryQualityScoreMax > 0;
 }
 
 

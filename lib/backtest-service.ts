@@ -137,6 +137,18 @@ export class BacktestService {
             delete (rustSettings as { snapshotVolumePriceDivergenceMax?: number }).snapshotVolumePriceDivergenceMax;
             delete (rustSettings as { snapshotVolumeConsistencyMin?: number }).snapshotVolumeConsistencyMin;
             delete (rustSettings as { snapshotVolumeConsistencyMax?: number }).snapshotVolumeConsistencyMax;
+            delete (rustSettings as { snapshotCloseLocationMin?: number }).snapshotCloseLocationMin;
+            delete (rustSettings as { snapshotCloseLocationMax?: number }).snapshotCloseLocationMax;
+            delete (rustSettings as { snapshotOppositeWickMin?: number }).snapshotOppositeWickMin;
+            delete (rustSettings as { snapshotOppositeWickMax?: number }).snapshotOppositeWickMax;
+            delete (rustSettings as { snapshotRangeAtrMultipleMin?: number }).snapshotRangeAtrMultipleMin;
+            delete (rustSettings as { snapshotRangeAtrMultipleMax?: number }).snapshotRangeAtrMultipleMax;
+            delete (rustSettings as { snapshotMomentumConsistencyMin?: number }).snapshotMomentumConsistencyMin;
+            delete (rustSettings as { snapshotMomentumConsistencyMax?: number }).snapshotMomentumConsistencyMax;
+            delete (rustSettings as { snapshotBreakQualityMin?: number }).snapshotBreakQualityMin;
+            delete (rustSettings as { snapshotBreakQualityMax?: number }).snapshotBreakQualityMax;
+            delete (rustSettings as { snapshotEntryQualityScoreMin?: number }).snapshotEntryQualityScoreMin;
+            delete (rustSettings as { snapshotEntryQualityScoreMax?: number }).snapshotEntryQualityScoreMax;
 
             if (strategy.metadata?.role === 'entry' && entryStats) {
                 result = buildEntryBacktestResult(entryStats);
@@ -355,6 +367,18 @@ export class BacktestService {
             snapshotVolumePriceDivergenceMax: this.isToggleEnabled('snapshotVolumePriceDivergenceFilterToggle', false) ? this.readNumberInput('snapshotVolumePriceDivergenceMax', 0) : 0,
             snapshotVolumeConsistencyMin: this.isToggleEnabled('snapshotVolumeConsistencyFilterToggle', false) ? this.readNumberInput('snapshotVolumeConsistencyMin', 0) : 0,
             snapshotVolumeConsistencyMax: this.isToggleEnabled('snapshotVolumeConsistencyFilterToggle', false) ? this.readNumberInput('snapshotVolumeConsistencyMax', 0) : 0,
+            snapshotCloseLocationMin: this.isToggleEnabled('snapshotCloseLocationFilterToggle', false) ? this.readNumberInput('snapshotCloseLocationMin', 0) : 0,
+            snapshotCloseLocationMax: this.isToggleEnabled('snapshotCloseLocationFilterToggle', false) ? this.readNumberInput('snapshotCloseLocationMax', 0) : 0,
+            snapshotOppositeWickMin: this.isToggleEnabled('snapshotOppositeWickFilterToggle', false) ? this.readNumberInput('snapshotOppositeWickMin', 0) : 0,
+            snapshotOppositeWickMax: this.isToggleEnabled('snapshotOppositeWickFilterToggle', false) ? this.readNumberInput('snapshotOppositeWickMax', 0) : 0,
+            snapshotRangeAtrMultipleMin: this.isToggleEnabled('snapshotRangeAtrFilterToggle', false) ? this.readNumberInput('snapshotRangeAtrMultipleMin', 0) : 0,
+            snapshotRangeAtrMultipleMax: this.isToggleEnabled('snapshotRangeAtrFilterToggle', false) ? this.readNumberInput('snapshotRangeAtrMultipleMax', 0) : 0,
+            snapshotMomentumConsistencyMin: this.isToggleEnabled('snapshotMomentumFilterToggle', false) ? this.readNumberInput('snapshotMomentumConsistencyMin', 0) : 0,
+            snapshotMomentumConsistencyMax: this.isToggleEnabled('snapshotMomentumFilterToggle', false) ? this.readNumberInput('snapshotMomentumConsistencyMax', 0) : 0,
+            snapshotBreakQualityMin: this.isToggleEnabled('snapshotBreakQualityFilterToggle', false) ? this.readNumberInput('snapshotBreakQualityMin', 0) : 0,
+            snapshotBreakQualityMax: this.isToggleEnabled('snapshotBreakQualityFilterToggle', false) ? this.readNumberInput('snapshotBreakQualityMax', 0) : 0,
+            snapshotEntryQualityScoreMin: this.isToggleEnabled('snapshotEntryQualityScoreFilterToggle', false) ? this.readNumberInput('snapshotEntryQualityScoreMin', 0) : 0,
+            snapshotEntryQualityScoreMax: this.isToggleEnabled('snapshotEntryQualityScoreFilterToggle', false) ? this.readNumberInput('snapshotEntryQualityScoreMax', 0) : 0,
         };
     }
 
@@ -423,7 +447,19 @@ export class BacktestService {
             (settings.snapshotVolumePriceDivergenceMin ?? 0) !== 0 ||
             (settings.snapshotVolumePriceDivergenceMax ?? 0) !== 0 ||
             (settings.snapshotVolumeConsistencyMin ?? 0) > 0 ||
-            (settings.snapshotVolumeConsistencyMax ?? 0) > 0;
+            (settings.snapshotVolumeConsistencyMax ?? 0) > 0 ||
+            (settings.snapshotCloseLocationMin ?? 0) > 0 ||
+            (settings.snapshotCloseLocationMax ?? 0) > 0 ||
+            (settings.snapshotOppositeWickMin ?? 0) > 0 ||
+            (settings.snapshotOppositeWickMax ?? 0) > 0 ||
+            (settings.snapshotRangeAtrMultipleMin ?? 0) > 0 ||
+            (settings.snapshotRangeAtrMultipleMax ?? 0) > 0 ||
+            (settings.snapshotMomentumConsistencyMin ?? 0) > 0 ||
+            (settings.snapshotMomentumConsistencyMax ?? 0) > 0 ||
+            (settings.snapshotBreakQualityMin ?? 0) > 0 ||
+            (settings.snapshotBreakQualityMax ?? 0) > 0 ||
+            (settings.snapshotEntryQualityScoreMin ?? 0) > 0 ||
+            (settings.snapshotEntryQualityScoreMax ?? 0) > 0;
         return executionModel !== 'signal_close' || slippageBps > 0 || !allowSameBarExit || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined' || hasSnapshotFilters;
     }
 

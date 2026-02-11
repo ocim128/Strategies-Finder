@@ -277,6 +277,7 @@
 
 .stat-card:hover {
     background: var(--bg-elevated);
+    box-shadow: 0 1px 4px hsl(0 0% 0% / 0.12);
 }
 
 .stat-card:nth-child(2n) {
@@ -540,7 +541,8 @@
 .trade-item:hover {
     background: var(--bg-tertiary);
     z-index: 1;
-    transform: translateX(2px);
+    transform: translateX(1px);
+    box-shadow: 0 1px 3px hsl(0 0% 0% / 0.08);
 }
 
 .trade-item.win {

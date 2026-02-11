@@ -11,12 +11,28 @@ body {
     font-family: var(--font-family-sans);
     font-size: var(--font-size-base);
     line-height: var(--line-height-normal);
-    background: var(--page-gradient), var(--bg-primary);
+    background: var(--bg-primary);
     color: var(--text-primary);
     font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+}
+
+/* Ambient background layer – sits behind everything */
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: var(--page-gradient);
+    pointer-events: none;
+    z-index: 0;
+}
+
+#root {
+    position: relative;
+    z-index: 1;
+    height: 100%;
 }
 
 /* Premium selection colors */
@@ -30,10 +46,10 @@ body {
     color: var(--text-primary);
 }
 
-/* Custom scrollbar styling */
+/* Custom scrollbar styling – thinner, more premium */
 ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
 }
 
 ::-webkit-scrollbar-track {
@@ -41,19 +57,20 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: hsl(var(--hsl-border) / 0.6);
+    background: hsl(var(--hsl-border) / 0.5);
     border-radius: var(--radius-pill);
     border: 2px solid transparent;
     background-clip: content-box;
+    transition: background 0.2s;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--hsl-accent) / 0.5);
+    background: hsl(var(--hsl-accent) / 0.55);
     background-clip: content-box;
 }
 
 /* Firefox scrollbar */
 * {
     scrollbar-width: thin;
-    scrollbar-color: hsl(var(--hsl-border) / 0.6) transparent;
+    scrollbar-color: hsl(var(--hsl-border) / 0.5) transparent;
 }

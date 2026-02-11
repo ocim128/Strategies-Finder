@@ -5,7 +5,13 @@ import { calculateADX, calculateATR, calculateEMA, calculateRSI, calculateSMA } 
 import { getCloses, getHighs, getLows, getVolumes } from '../strategy-helpers';
 import {
     computeAtrRegimeRatio,
+    computeBreakQuality,
     computeBodyPercent,
+    computeDirectionalCloseLocation,
+    computeEntryQualityScore,
+    computeMomentumConsistency,
+    computeOppositeWickPercent,
+    computeRangeAtrMultiple,
     computeTrendEfficiency,
     computeRelativeVolumeBurst,
     computeVolumeConsistency,
@@ -88,7 +94,9 @@ export function captureTradeSnapshot(
     data: OHLCVData[],
     barIndex: number,
     _indicators: IndicatorSeries,
-    snapshotIndicators: SnapshotIndicators
+    snapshotIndicators: SnapshotIndicators,
+    direction: 'long' | 'short',
+    triggerPrice?: number | null
 ): TradeSnapshot {
     const close = data[barIndex].close;
     const volume = data[barIndex].volume;
@@ -144,6 +152,19 @@ export function captureTradeSnapshot(
     const atrRegimeRatio = computeAtrRegimeRatio(snapshotIndicators.atr, barIndex);
     const bodyPercent = computeBodyPercent(data[barIndex]);
     const wickSkew = computeWickSkew(data[barIndex]);
+    const closeLocation = computeDirectionalCloseLocation(data[barIndex], direction);
+    const oppositeWickPercent = computeOppositeWickPercent(data[barIndex], direction);
+    const rangeAtrMultiple = computeRangeAtrMultiple(data[barIndex], atrRaw);
+    const momentumConsistency = computeMomentumConsistency(data, barIndex, direction);
+    const breakQuality = computeBreakQuality(data[barIndex], direction, triggerPrice ?? null);
+    const entryQualityScore = computeEntryQualityScore({
+        bodyPercent,
+        closeLocation,
+        oppositeWickPercent,
+        rangeAtrMultiple,
+        momentumConsistency,
+        breakQuality
+    });
 
     // Volume-derived metrics
     const volumes = getVolumes(data);
@@ -165,6 +186,12 @@ export function captureTradeSnapshot(
         atrRegimeRatio,
         bodyPercent,
         wickSkew,
+        closeLocation,
+        oppositeWickPercent,
+        rangeAtrMultiple,
+        momentumConsistency,
+        breakQuality,
+        entryQualityScore,
         volumeTrend,
         volumeBurst,
         volumePriceDivergence,

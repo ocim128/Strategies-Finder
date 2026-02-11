@@ -109,6 +109,24 @@ export interface BacktestSettingsData {
     snapshotVolumeConsistencyFilterToggle: boolean;
     snapshotVolumeConsistencyMin: number;
     snapshotVolumeConsistencyMax: number;
+    snapshotCloseLocationFilterToggle: boolean;
+    snapshotCloseLocationMin: number;
+    snapshotCloseLocationMax: number;
+    snapshotOppositeWickFilterToggle: boolean;
+    snapshotOppositeWickMin: number;
+    snapshotOppositeWickMax: number;
+    snapshotRangeAtrFilterToggle: boolean;
+    snapshotRangeAtrMultipleMin: number;
+    snapshotRangeAtrMultipleMax: number;
+    snapshotMomentumFilterToggle: boolean;
+    snapshotMomentumConsistencyMin: number;
+    snapshotMomentumConsistencyMax: number;
+    snapshotBreakQualityFilterToggle: boolean;
+    snapshotBreakQualityMin: number;
+    snapshotBreakQualityMax: number;
+    snapshotEntryQualityScoreFilterToggle: boolean;
+    snapshotEntryQualityScoreMin: number;
+    snapshotEntryQualityScoreMax: number;
 
     // Confirmation strategies
     confirmationStrategiesToggle: boolean;
@@ -229,6 +247,24 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     snapshotVolumeConsistencyFilterToggle: false,
     snapshotVolumeConsistencyMin: 0,
     snapshotVolumeConsistencyMax: 0,
+    snapshotCloseLocationFilterToggle: false,
+    snapshotCloseLocationMin: 0,
+    snapshotCloseLocationMax: 0,
+    snapshotOppositeWickFilterToggle: false,
+    snapshotOppositeWickMin: 0,
+    snapshotOppositeWickMax: 0,
+    snapshotRangeAtrFilterToggle: false,
+    snapshotRangeAtrMultipleMin: 0,
+    snapshotRangeAtrMultipleMax: 0,
+    snapshotMomentumFilterToggle: false,
+    snapshotMomentumConsistencyMin: 0,
+    snapshotMomentumConsistencyMax: 0,
+    snapshotBreakQualityFilterToggle: false,
+    snapshotBreakQualityMin: 0,
+    snapshotBreakQualityMax: 0,
+    snapshotEntryQualityScoreFilterToggle: false,
+    snapshotEntryQualityScoreMin: 0,
+    snapshotEntryQualityScoreMax: 0,
 
     // Confirmation strategies
     confirmationStrategiesToggle: false,
@@ -369,6 +405,24 @@ class SettingsManager {
             snapshotVolumeConsistencyFilterToggle: this.readCheckbox('snapshotVolumeConsistencyFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyFilterToggle),
             snapshotVolumeConsistencyMin: this.readNumber('snapshotVolumeConsistencyMin', DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyMin),
             snapshotVolumeConsistencyMax: this.readNumber('snapshotVolumeConsistencyMax', DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyMax),
+            snapshotCloseLocationFilterToggle: this.readCheckbox('snapshotCloseLocationFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotCloseLocationFilterToggle),
+            snapshotCloseLocationMin: this.readNumber('snapshotCloseLocationMin', DEFAULT_BACKTEST_SETTINGS.snapshotCloseLocationMin),
+            snapshotCloseLocationMax: this.readNumber('snapshotCloseLocationMax', DEFAULT_BACKTEST_SETTINGS.snapshotCloseLocationMax),
+            snapshotOppositeWickFilterToggle: this.readCheckbox('snapshotOppositeWickFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotOppositeWickFilterToggle),
+            snapshotOppositeWickMin: this.readNumber('snapshotOppositeWickMin', DEFAULT_BACKTEST_SETTINGS.snapshotOppositeWickMin),
+            snapshotOppositeWickMax: this.readNumber('snapshotOppositeWickMax', DEFAULT_BACKTEST_SETTINGS.snapshotOppositeWickMax),
+            snapshotRangeAtrFilterToggle: this.readCheckbox('snapshotRangeAtrFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotRangeAtrFilterToggle),
+            snapshotRangeAtrMultipleMin: this.readNumber('snapshotRangeAtrMultipleMin', DEFAULT_BACKTEST_SETTINGS.snapshotRangeAtrMultipleMin),
+            snapshotRangeAtrMultipleMax: this.readNumber('snapshotRangeAtrMultipleMax', DEFAULT_BACKTEST_SETTINGS.snapshotRangeAtrMultipleMax),
+            snapshotMomentumFilterToggle: this.readCheckbox('snapshotMomentumFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotMomentumFilterToggle),
+            snapshotMomentumConsistencyMin: this.readNumber('snapshotMomentumConsistencyMin', DEFAULT_BACKTEST_SETTINGS.snapshotMomentumConsistencyMin),
+            snapshotMomentumConsistencyMax: this.readNumber('snapshotMomentumConsistencyMax', DEFAULT_BACKTEST_SETTINGS.snapshotMomentumConsistencyMax),
+            snapshotBreakQualityFilterToggle: this.readCheckbox('snapshotBreakQualityFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityFilterToggle),
+            snapshotBreakQualityMin: this.readNumber('snapshotBreakQualityMin', DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityMin),
+            snapshotBreakQualityMax: this.readNumber('snapshotBreakQualityMax', DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityMax),
+            snapshotEntryQualityScoreFilterToggle: this.readCheckbox('snapshotEntryQualityScoreFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreFilterToggle),
+            snapshotEntryQualityScoreMin: this.readNumber('snapshotEntryQualityScoreMin', DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMin),
+            snapshotEntryQualityScoreMax: this.readNumber('snapshotEntryQualityScoreMax', DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMax),
 
             // Confirmation strategies
             confirmationStrategiesToggle: this.readCheckbox('confirmationStrategiesToggle', DEFAULT_BACKTEST_SETTINGS.confirmationStrategiesToggle),
@@ -532,6 +586,24 @@ class SettingsManager {
         this.writeCheckbox('snapshotVolumeConsistencyFilterToggle', settings.snapshotVolumeConsistencyFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyFilterToggle);
         this.writeNumber('snapshotVolumeConsistencyMin', settings.snapshotVolumeConsistencyMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyMin);
         this.writeNumber('snapshotVolumeConsistencyMax', settings.snapshotVolumeConsistencyMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyMax);
+        this.writeCheckbox('snapshotCloseLocationFilterToggle', settings.snapshotCloseLocationFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotCloseLocationFilterToggle);
+        this.writeNumber('snapshotCloseLocationMin', settings.snapshotCloseLocationMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotCloseLocationMin);
+        this.writeNumber('snapshotCloseLocationMax', settings.snapshotCloseLocationMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotCloseLocationMax);
+        this.writeCheckbox('snapshotOppositeWickFilterToggle', settings.snapshotOppositeWickFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotOppositeWickFilterToggle);
+        this.writeNumber('snapshotOppositeWickMin', settings.snapshotOppositeWickMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotOppositeWickMin);
+        this.writeNumber('snapshotOppositeWickMax', settings.snapshotOppositeWickMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotOppositeWickMax);
+        this.writeCheckbox('snapshotRangeAtrFilterToggle', settings.snapshotRangeAtrFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotRangeAtrFilterToggle);
+        this.writeNumber('snapshotRangeAtrMultipleMin', settings.snapshotRangeAtrMultipleMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotRangeAtrMultipleMin);
+        this.writeNumber('snapshotRangeAtrMultipleMax', settings.snapshotRangeAtrMultipleMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotRangeAtrMultipleMax);
+        this.writeCheckbox('snapshotMomentumFilterToggle', settings.snapshotMomentumFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotMomentumFilterToggle);
+        this.writeNumber('snapshotMomentumConsistencyMin', settings.snapshotMomentumConsistencyMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotMomentumConsistencyMin);
+        this.writeNumber('snapshotMomentumConsistencyMax', settings.snapshotMomentumConsistencyMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotMomentumConsistencyMax);
+        this.writeCheckbox('snapshotBreakQualityFilterToggle', settings.snapshotBreakQualityFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityFilterToggle);
+        this.writeNumber('snapshotBreakQualityMin', settings.snapshotBreakQualityMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityMin);
+        this.writeNumber('snapshotBreakQualityMax', settings.snapshotBreakQualityMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityMax);
+        this.writeCheckbox('snapshotEntryQualityScoreFilterToggle', settings.snapshotEntryQualityScoreFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreFilterToggle);
+        this.writeNumber('snapshotEntryQualityScoreMin', settings.snapshotEntryQualityScoreMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMin);
+        this.writeNumber('snapshotEntryQualityScoreMax', settings.snapshotEntryQualityScoreMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMax);
 
         // Confirmation strategies
         this.writeCheckbox('confirmationStrategiesToggle', settings.confirmationStrategiesToggle ?? DEFAULT_BACKTEST_SETTINGS.confirmationStrategiesToggle);
@@ -816,6 +888,12 @@ class SettingsManager {
             'snapshotVolumeBurstFilterToggle',
             'snapshotVolumePriceDivergenceFilterToggle',
             'snapshotVolumeConsistencyFilterToggle',
+            'snapshotCloseLocationFilterToggle',
+            'snapshotOppositeWickFilterToggle',
+            'snapshotRangeAtrFilterToggle',
+            'snapshotMomentumFilterToggle',
+            'snapshotBreakQualityFilterToggle',
+            'snapshotEntryQualityScoreFilterToggle',
 
             'stopLossToggle',
             'takeProfitToggle'

@@ -1,5 +1,5 @@
 import { getRequiredElement } from "../dom-utils";
-import { state, type ChartMode } from "../state";
+import { state, type ChartMode, type MockChartModel } from "../state";
 import { debugLogger } from "../debug-logger";
 
 import { backtestService } from "../backtest-service";
@@ -29,30 +29,39 @@ export function setupEventHandlers() {
     const symbolSearchEmpty = document.getElementById('symbolSearchEmpty');
     const mockModelSelect = document.getElementById('mockModelSelect') as HTMLSelectElement | null;
     const mockBarsInput = document.getElementById('mockBarsInput') as HTMLInputElement | null;
-    const chartModeSelect = document.getElementById('chartModeSelect') as HTMLSelectElement | null;
+    const chartModeToggle = document.getElementById('chartModeToggle') as HTMLButtonElement | null;
+    const chartModeLabel = document.getElementById('chartModeLabel');
 
     let isSearchInitialized = false;
     let selectedIndex = -1;
 
     if (mockModelSelect) {
+        const allowedMockModels = new Set<MockChartModel>(['simple', 'hard', 'v3', 'v4', 'v5', 'v6']);
         mockModelSelect.value = state.mockChartModel;
         mockModelSelect.addEventListener('change', () => {
             const value = mockModelSelect.value;
-            if (value === 'simple' || value === 'hard' || value === 'v3' || value === 'v4' || value === 'v5') {
-                state.set('mockChartModel', value);
+            if (allowedMockModels.has(value as MockChartModel)) {
+                state.set('mockChartModel', value as MockChartModel);
             }
         });
     }
 
-    // Chart mode selector (Candlestick / Heikin Ashi)
-    if (chartModeSelect) {
-        chartModeSelect.value = state.chartMode;
-        chartModeSelect.addEventListener('change', () => {
-            const value = chartModeSelect.value as ChartMode;
-            if (value === 'candlestick' || value === 'heikin-ashi') {
-                debugLogger.event('ui.chartMode.select', { mode: value });
-                state.set('chartMode', value);
-            }
+    // Chart mode toggle (Candlestick / Heikin Ashi)
+    const syncChartModeToggle = () => {
+        if (!chartModeToggle || !chartModeLabel) return;
+        const isHA = state.chartMode === 'heikin-ashi';
+        chartModeLabel.textContent = isHA ? 'HA' : 'Candle';
+        chartModeToggle.classList.toggle('active', isHA);
+        chartModeToggle.title = isHA ? 'Switch to Candlestick' : 'Switch to Heikin Ashi';
+    };
+    syncChartModeToggle();
+
+    if (chartModeToggle) {
+        chartModeToggle.addEventListener('click', () => {
+            const newMode: ChartMode = state.chartMode === 'candlestick' ? 'heikin-ashi' : 'candlestick';
+            debugLogger.event('ui.chartMode.toggle', { mode: newMode });
+            state.set('chartMode', newMode);
+            syncChartModeToggle();
         });
     }
 

@@ -1,5 +1,39 @@
 <!-- Settings Tab -->
 <div id="settingsTab" data-preset="standard">
+    <div class="section-header config-header">
+        <div class="section-title">Strategy Configurations</div>
+    </div>
+
+    <div class="config-actions">
+        <div class="config-input-row">
+            <input type="text" class="param-input config-name-input" id="configNameInput"
+                placeholder="Configuration name..." />
+            <button class="btn btn-success btn-icon" id="saveConfigBtn"
+                title="Save current settings as configuration">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                    <path
+                        d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm2 16H5V5h11.17L19 7.83V19zm-7-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3zM6 6h9v4H6V6z" />
+                </svg>
+            </button>
+        </div>
+
+        <div class="config-list-wrapper">
+            <select class="param-input config-select" id="configSelect">
+                <option value="">-- Select configuration --</option>
+            </select>
+            <button class="btn btn-primary btn-icon" id="loadConfigBtn" title="Load selected configuration">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+                </svg>
+            </button>
+            <button class="btn btn-danger btn-icon" id="deleteConfigBtn" title="Delete selected configuration">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
     <select class="strategy-select" id="strategySelect">
         <option value="sma_crossover">SMA Crossover</option>
         <option value="ema_crossover">EMA Crossover</option>
@@ -660,6 +694,171 @@
                 </div>
             </div>
 
+            <div class="param-row snapshot-filter-row">
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Close Location %
+                            <span class="tooltip-icon"
+                                data-tooltip="Directional close quality in candle range. Higher = stronger close in trade direction.">&#9432;</span>
+                        </label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Close Location filter">
+                            <input type="checkbox" id="snapshotCloseLocationFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotCloseLocationMin" value="0" min="0"
+                                max="100" step="1">
+                            <div class="param-hint">Min %</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotCloseLocationMax" value="0" min="0"
+                                max="100" step="1">
+                            <div class="param-hint">Max %</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Opposite Wick %
+                            <span class="tooltip-icon"
+                                data-tooltip="Wick against entry direction as % of range. Lower is cleaner.">&#9432;</span>
+                        </label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Opposite Wick filter">
+                            <input type="checkbox" id="snapshotOppositeWickFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotOppositeWickMin" value="0" min="0"
+                                max="100" step="1">
+                            <div class="param-hint">Min %</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotOppositeWickMax" value="0" min="0"
+                                max="100" step="1">
+                            <div class="param-hint">Max %</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="param-row snapshot-filter-row">
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Range / ATR
+                            <span class="tooltip-icon"
+                                data-tooltip="Candle range sanity vs ATR. Filters out dead bars and extreme spikes.">&#9432;</span>
+                        </label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Range ATR filter">
+                            <input type="checkbox" id="snapshotRangeAtrFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotRangeAtrMultipleMin" value="0" min="0"
+                                step="0.1">
+                            <div class="param-hint">Min multiple</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotRangeAtrMultipleMax" value="0" min="0"
+                                step="0.1">
+                            <div class="param-hint">Max multiple</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Momentum Consistency %
+                            <span class="tooltip-icon"
+                                data-tooltip="Directional consistency over recent candles. 66% ~= 2 of last 3 support entry.">&#9432;</span>
+                        </label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Momentum Consistency filter">
+                            <input type="checkbox" id="snapshotMomentumFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotMomentumConsistencyMin" value="0"
+                                min="0" max="100" step="1">
+                            <div class="param-hint">Min %</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotMomentumConsistencyMax" value="0"
+                                min="0" max="100" step="1">
+                            <div class="param-hint">Max %</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="param-row snapshot-filter-row">
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Break Quality
+                            <span class="tooltip-icon"
+                                data-tooltip="Requires directional close-through quality beyond trigger level.">&#9432;</span>
+                        </label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Break Quality filter">
+                            <input type="checkbox" id="snapshotBreakQualityFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotBreakQualityMin" value="0" min="0"
+                                max="100" step="1">
+                            <div class="param-hint">Min score</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotBreakQualityMax" value="0" min="0"
+                                max="100" step="1">
+                            <div class="param-hint">Max score</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Entry Quality Score
+                            <span class="tooltip-icon"
+                                data-tooltip="Composite 0-100 score from candle quality factors.">&#9432;</span>
+                        </label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Entry Quality Score filter">
+                            <input type="checkbox" id="snapshotEntryQualityScoreFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotEntryQualityScoreMin" value="0" min="0"
+                                max="100" step="1">
+                            <div class="param-hint">Min score</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotEntryQualityScoreMax" value="0" min="0"
+                                max="100" step="1">
+                            <div class="param-hint">Max score</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Volume Trend & Volume Burst Filters -->
             <div class="param-row snapshot-filter-row">
                 <div class="param-group" style="flex: 1;">
@@ -820,40 +1019,6 @@
                 </svg>
                 Reset to Default
             </button>
-        </div>
-
-        <div class="section-header config-header">
-            <div class="section-title">Strategy Configurations</div>
-        </div>
-
-        <div class="config-actions">
-            <div class="config-input-row">
-                <input type="text" class="param-input config-name-input" id="configNameInput"
-                    placeholder="Configuration name..." />
-                <button class="btn btn-success btn-icon" id="saveConfigBtn"
-                    title="Save current settings as configuration">
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                        <path
-                            d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm2 16H5V5h11.17L19 7.83V19zm-7-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3zM6 6h9v4H6V6z" />
-                    </svg>
-                </button>
-            </div>
-
-            <div class="config-list-wrapper">
-                <select class="param-input config-select" id="configSelect">
-                    <option value="">-- Select configuration --</option>
-                </select>
-                <button class="btn btn-primary btn-icon" id="loadConfigBtn" title="Load selected configuration">
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
-                    </svg>
-                </button>
-                <button class="btn btn-danger btn-icon" id="deleteConfigBtn" title="Delete selected configuration">
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                        <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                    </svg>
-                </button>
-            </div>
         </div>
     </div>
 

@@ -310,11 +310,6 @@ function activateSharedLinkViewMode(): void {
         }
     });
 
-    const tabGroups = Array.from(document.querySelectorAll<HTMLElement>('#strategyTabs .tab-group-label, #strategyTabs .tab-group-separator'));
-    tabGroups.forEach((group) => {
-        group.style.display = 'none';
-    });
-
     const resultsTab = document.querySelector<HTMLElement>('.panel-tab[data-tab="results"]');
     if (resultsTab) {
         resultsTab.click();

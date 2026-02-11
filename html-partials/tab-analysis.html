@@ -58,7 +58,66 @@
             </table>
         </div>
 
-        <!-- Combo (Multi-Feature) Filter — auto-computed -->
+        <!-- Finder (Random + Local refinement) -->
+        <div class="analysis-finder-section">
+            <div class="analysis-finder-header">
+                <h4 class="analysis-finder-title">Filter Finder</h4>
+                <div class="analysis-finder-controls">
+                    <label class="analysis-control" for="analysisFinderMinScore">
+                        <span>Min Score %</span>
+                        <input type="number" id="analysisFinderMinScore" min="0" max="100" step="1" value="10">
+                    </label>
+                    <label class="analysis-control" for="analysisFinderRandomTrials">
+                        <span>Random Trials</span>
+                        <input type="number" id="analysisFinderRandomTrials" min="1" max="50000" step="1" value="300">
+                    </label>
+                    <label class="analysis-control" for="analysisFinderRefineTrials">
+                        <span>Refine Trials</span>
+                        <input type="number" id="analysisFinderRefineTrials" min="0" max="50000" step="1" value="120">
+                    </label>
+                    <label class="analysis-control" for="analysisFinderRangePercent">
+                        <span>Range %</span>
+                        <input type="number" id="analysisFinderRangePercent" min="1" max="100" step="1" value="100">
+                    </label>
+                    <label class="analysis-control" for="analysisFinderMinBadRemoved">
+                        <span>Min Bad Removed %</span>
+                        <input type="number" id="analysisFinderMinBadRemoved" min="0" max="100" step="1" value="20">
+                    </label>
+                    <label class="analysis-control" for="analysisFinderMaxGoodRemoved">
+                        <span>Max Good Removed %</span>
+                        <input type="number" id="analysisFinderMaxGoodRemoved" min="0" max="100" step="1" value="8">
+                    </label>
+                    <label class="analysis-control" for="analysisFinderMaxTotalRemoved">
+                        <span>Max Total Removed %</span>
+                        <input type="number" id="analysisFinderMaxTotalRemoved" min="0" max="100" step="1" value="25">
+                    </label>
+                    <button class="btn btn-primary btn-compact" id="analysisRunFinderBtn" type="button">Run Finder</button>
+                </div>
+            </div>
+            <div class="analysis-finder-status" id="analysisFinderStatus"></div>
+            <div class="analysis-finder-results" id="analysisFinderResults" style="display: none;">
+                <div class="simulation-grid" id="analysisFinderBestGrid"></div>
+                <div class="analysis-finder-table-wrap">
+                    <table class="analysis-finder-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Objective</th>
+                                <th>Filters</th>
+                                <th>Bad Removed</th>
+                                <th>Good Removed</th>
+                                <th>Total Removed</th>
+                                <th>Exp Delta</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="analysisFinderTopBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Combo (Multi-Feature) Filter -->
         <div class="analysis-simulation combo-filter-section" id="comboFilterSection" style="display: none;">
             <h4 class="simulation-title">🎯 Best Combined Filter <span class="sim-approx-badge">approx.</span></h4>
             <div class="simulation-grid" id="comboFilterGrid"></div>

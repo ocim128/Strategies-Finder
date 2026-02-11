@@ -38,6 +38,18 @@ export interface TradeSnapshot {
     bodyPercent: number | null;
     /** Wick imbalance % (-100..100): positive upper-wick bias, negative lower-wick bias */
     wickSkew: number | null;
+    /** Directional close location in the candle (0-100, higher = stronger close in trade direction) */
+    closeLocation?: number | null;
+    /** Wick against trade direction as % of candle range (0-100, lower is better) */
+    oppositeWickPercent?: number | null;
+    /** Candle range / ATR ratio (volatility sanity check) */
+    rangeAtrMultiple?: number | null;
+    /** % of supportive candles over recent window (default 3 bars) */
+    momentumConsistency?: number | null;
+    /** Breakout close quality score (0-100, higher = cleaner close beyond trigger) */
+    breakQuality?: number | null;
+    /** Composite entry quality score (0-100) from candle-based sub-metrics */
+    entryQualityScore?: number | null;
     /** Volume trend ratio (short EMA / long EMA, >1 = building) */
     volumeTrend: number | null;
     /** Relative volume burst z-score */
@@ -212,12 +224,38 @@ export interface BacktestSettings {
     snapshotVolumeConsistencyMin?: number;
     /** Maximum volume consistency at entry (0 = disabled) */
     snapshotVolumeConsistencyMax?: number;
+    /** Min directional close location % (0-100, 0 = disabled) */
+    snapshotCloseLocationMin?: number;
+    /** Max directional close location % (0-100, 0 = disabled) */
+    snapshotCloseLocationMax?: number;
+    /** Min opposite wick % (0-100, 0 = disabled) */
+    snapshotOppositeWickMin?: number;
+    /** Max opposite wick % (0-100, 0 = disabled) */
+    snapshotOppositeWickMax?: number;
+    /** Min candle range/ATR multiple (0 = disabled) */
+    snapshotRangeAtrMultipleMin?: number;
+    /** Max candle range/ATR multiple (0 = disabled) */
+    snapshotRangeAtrMultipleMax?: number;
+    /** Min momentum consistency (0-100, 0 = disabled) */
+    snapshotMomentumConsistencyMin?: number;
+    /** Max momentum consistency (0-100, 0 = disabled) */
+    snapshotMomentumConsistencyMax?: number;
+    /** Min break-quality score (0-100, 0 = disabled) */
+    snapshotBreakQualityMin?: number;
+    /** Max break-quality score (0-100, 0 = disabled) */
+    snapshotBreakQualityMax?: number;
+    /** Min composite entry-quality score (0-100, 0 = disabled) */
+    snapshotEntryQualityScoreMin?: number;
+    /** Max composite entry-quality score (0-100, 0 = disabled) */
+    snapshotEntryQualityScoreMax?: number;
 }
 
 export interface Signal {
     time: Time;
     type: 'buy' | 'sell';
     price: number;
+    /** Raw trigger level before execution shift/slippage (used by quality filters) */
+    triggerPrice?: number;
     reason?: string;
     /** Optional bar index to align execution timing in backtests/replay. */
     barIndex?: number;

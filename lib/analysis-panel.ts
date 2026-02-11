@@ -1,6 +1,16 @@
 
 import { state } from './state';
-import { analyzeTradePatterns, simulateFilter, findBestComboFilter, FeatureAnalysis, AnalysisOptions } from './strategies/backtest/trade-analyzer';
+import {
+    analyzeTradePatterns,
+    simulateFilter,
+    findBestComboFilter,
+    runAnalysisFilterFinder,
+    FeatureAnalysis,
+    AnalysisOptions,
+    AnalysisFinderOptions,
+    AnalysisFinderCandidate,
+    AnalysisFilterFinderResult
+} from './strategies/backtest/trade-analyzer';
 import { Trade, TradeSnapshot } from './types/index';
 import { uiManager } from './ui-manager';
 
@@ -31,6 +41,12 @@ const FEATURE_TO_SETTINGS: Record<keyof TradeSnapshot, {
     atrRegimeRatio: { toggleId: 'snapshotAtrRegimeFilterToggle', minInputId: 'snapshotAtrRegimeRatioMin', maxInputId: 'snapshotAtrRegimeRatioMax' },
     bodyPercent: { toggleId: 'snapshotBodyPercentFilterToggle', minInputId: 'snapshotBodyPercentMin', maxInputId: 'snapshotBodyPercentMax' },
     wickSkew: { toggleId: 'snapshotWickSkewFilterToggle', minInputId: 'snapshotWickSkewMin', maxInputId: 'snapshotWickSkewMax' },
+    closeLocation: { toggleId: 'snapshotCloseLocationFilterToggle', minInputId: 'snapshotCloseLocationMin', maxInputId: 'snapshotCloseLocationMax' },
+    oppositeWickPercent: { toggleId: 'snapshotOppositeWickFilterToggle', minInputId: 'snapshotOppositeWickMin', maxInputId: 'snapshotOppositeWickMax' },
+    rangeAtrMultiple: { toggleId: 'snapshotRangeAtrFilterToggle', minInputId: 'snapshotRangeAtrMultipleMin', maxInputId: 'snapshotRangeAtrMultipleMax' },
+    momentumConsistency: { toggleId: 'snapshotMomentumFilterToggle', minInputId: 'snapshotMomentumConsistencyMin', maxInputId: 'snapshotMomentumConsistencyMax' },
+    breakQuality: { toggleId: 'snapshotBreakQualityFilterToggle', minInputId: 'snapshotBreakQualityMin', maxInputId: 'snapshotBreakQualityMax' },
+    entryQualityScore: { toggleId: 'snapshotEntryQualityScoreFilterToggle', minInputId: 'snapshotEntryQualityScoreMin', maxInputId: 'snapshotEntryQualityScoreMax' },
     volumeTrend: { toggleId: 'snapshotVolumeTrendFilterToggle', minInputId: 'snapshotVolumeTrendMin', maxInputId: 'snapshotVolumeTrendMax' },
     volumeBurst: { toggleId: 'snapshotVolumeBurstFilterToggle', minInputId: 'snapshotVolumeBurstMin', maxInputId: 'snapshotVolumeBurstMax' },
     volumePriceDivergence: { toggleId: 'snapshotVolumePriceDivergenceFilterToggle', minInputId: 'snapshotVolumePriceDivergenceMin', maxInputId: 'snapshotVolumePriceDivergenceMax' },
@@ -47,6 +63,7 @@ const FEATURE_TO_SETTINGS: Record<keyof TradeSnapshot, {
  */
 class AnalysisPanel {
     private lastResults: FeatureAnalysis[] = [];
+    private lastFinderCandidates: AnalysisFinderCandidate[] = [];
 
 
     /** Run analysis on the current backtest result and render results. */
@@ -58,6 +75,7 @@ class AnalysisPanel {
         if (!result || result.trades.length === 0) {
             if (emptyEl) emptyEl.style.display = '';
             if (contentEl) contentEl.style.display = 'none';
+            this.resetFinderResults();
             return;
         }
 
@@ -70,6 +88,7 @@ class AnalysisPanel {
                 if (desc) desc.textContent = 'Not enough trades with indicator snapshots. Re-run the backtest to capture snapshots.';
             }
             if (contentEl) contentEl.style.display = 'none';
+            this.resetFinderResults();
             return;
         }
 
@@ -100,6 +119,8 @@ class AnalysisPanel {
         // Hide single-filter simulation initially
         const simEl = document.getElementById('analysisSimulation');
         if (simEl) simEl.style.display = 'none';
+
+        this.resetFinderResults('Finder ready. Click "Run Finder" to search threshold combinations.');
     }
 
     private renderTable(analyses: FeatureAnalysis[], trades: Trade[]) {
@@ -208,6 +229,7 @@ class AnalysisPanel {
 
         const expSign = best.filteredExpectancy >= 0 ? '+' : '';
         const expImpSign = best.expectancyImprovement >= 0 ? '+' : '';
+        const ddImpSign = best.drawdownImprovement >= 0 ? '+' : '';
         const pfText = best.filteredProfitFactor === Infinity ? 'INF' : best.filteredProfitFactor.toFixed(2);
 
         comboGrid.innerHTML = `
@@ -242,6 +264,15 @@ class AnalysisPanel {
                 <div class="sim-card-label">Profit Factor</div>
                 <div class="sim-card-value ${best.filteredProfitFactor > 1 ? 'positive' : 'negative'}">
                     ${pfText}
+                </div>
+            </div>
+            <div class="sim-card">
+                <div class="sim-card-label">Max Drawdown</div>
+                <div class="sim-card-value ${best.drawdownImprovement > 0 ? 'positive' : best.drawdownImprovement < 0 ? 'negative' : 'neutral'}">
+                    $${best.filteredMaxDrawdown.toFixed(2)}
+                </div>
+                <div class="sim-card-delta ${best.drawdownImprovement > 0 ? 'positive' : best.drawdownImprovement < 0 ? 'negative' : 'neutral'}">
+                    ${ddImpSign}$${best.drawdownImprovement.toFixed(2)} vs $${best.originalMaxDrawdown.toFixed(2)}
                 </div>
             </div>
             <div class="sim-card">
@@ -287,6 +318,7 @@ class AnalysisPanel {
         const featureLabel = this.lastResults.find(r => r.feature === feature)?.label ?? feature;
         const expSign = sim.filteredExpectancy >= 0 ? '+' : '';
         const expImpSign = sim.expectancyImprovement >= 0 ? '+' : '';
+        const ddImpSign = sim.drawdownImprovement >= 0 ? '+' : '';
         const pfText = sim.filteredProfitFactor === Infinity ? 'INF' : sim.filteredProfitFactor.toFixed(2);
 
         grid.innerHTML = `
@@ -324,12 +356,241 @@ class AnalysisPanel {
                 </div>
             </div>
             <div class="sim-card">
+                <div class="sim-card-label">Max Drawdown</div>
+                <div class="sim-card-value ${sim.drawdownImprovement > 0 ? 'positive' : sim.drawdownImprovement < 0 ? 'negative' : 'neutral'}">
+                    $${sim.filteredMaxDrawdown.toFixed(2)}
+                </div>
+                <div class="sim-card-delta ${sim.drawdownImprovement > 0 ? 'positive' : sim.drawdownImprovement < 0 ? 'negative' : 'neutral'}">
+                    ${ddImpSign}$${sim.drawdownImprovement.toFixed(2)} vs $${sim.originalMaxDrawdown.toFixed(2)}
+                </div>
+            </div>
+            <div class="sim-card">
                 <div class="sim-card-label">Net PnL</div>
                 <div class="sim-card-value ${sim.filteredNetPnl > 0 ? 'positive' : sim.filteredNetPnl < 0 ? 'negative' : 'neutral'}">
                     $${sim.filteredNetPnl.toFixed(2)}
                 </div>
             </div>
         `;
+    }
+
+    private runFinder() {
+        const result = state.currentBacktestResult;
+        if (!result || result.trades.length === 0) {
+            this.resetFinderResults('Run a backtest before using finder.');
+            return;
+        }
+
+        if (this.lastResults.length === 0) {
+            this.runAnalysis();
+            if (this.lastResults.length === 0) {
+                this.resetFinderResults('Run analysis first to generate feature suggestions.');
+                return;
+            }
+        }
+
+        const runBtn = document.getElementById('analysisRunFinderBtn') as HTMLButtonElement | null;
+        if (runBtn) runBtn.disabled = true;
+
+        const statusEl = document.getElementById('analysisFinderStatus');
+        if (statusEl) statusEl.textContent = 'Running finder...';
+
+        try {
+            const finderResult = runAnalysisFilterFinder(
+                result.trades,
+                this.lastResults,
+                this.readFinderOptions()
+            );
+            this.renderFinderResults(finderResult);
+        } finally {
+            if (runBtn) runBtn.disabled = false;
+        }
+    }
+
+    private readFinderOptions(): AnalysisFinderOptions {
+        const minFeatureScorePct = this.readClampedNumberInput('analysisFinderMinScore', 10, 0, 100);
+        const randomTrials = Math.round(this.readClampedNumberInput('analysisFinderRandomTrials', 300, 1, 50000));
+        const refineTrials = Math.round(this.readClampedNumberInput('analysisFinderRefineTrials', 120, 0, 50000));
+        const rangePercent = this.readClampedNumberInput('analysisFinderRangePercent', 100, 1, 100);
+        const minBadRemovedPct = this.readClampedNumberInput('analysisFinderMinBadRemoved', 20, 0, 100);
+        const maxGoodRemovedPct = this.readClampedNumberInput('analysisFinderMaxGoodRemoved', 8, 0, 100);
+        const maxTotalRemovedPct = this.readClampedNumberInput('analysisFinderMaxTotalRemoved', 25, 0, 100);
+
+        return {
+            minFeatureScorePct,
+            randomTrials,
+            refineTrials,
+            rangePercent,
+            minBadRemovedPct,
+            maxGoodRemovedPct,
+            maxTotalRemovedPct
+        };
+    }
+
+    private readClampedNumberInput(inputId: string, fallback: number, min: number, max: number): number {
+        const input = document.getElementById(inputId) as HTMLInputElement | null;
+        const parsed = input ? parseFloat(input.value) : NaN;
+        if (!Number.isFinite(parsed)) return fallback;
+        return Math.max(min, Math.min(max, parsed));
+    }
+
+    private resetFinderResults(statusText: string = 'Finder ready.') {
+        this.lastFinderCandidates = [];
+
+        const statusEl = document.getElementById('analysisFinderStatus');
+        if (statusEl) statusEl.textContent = statusText;
+
+        const resultsEl = document.getElementById('analysisFinderResults');
+        if (resultsEl) resultsEl.style.display = 'none';
+
+        const bestGrid = document.getElementById('analysisFinderBestGrid');
+        if (bestGrid) bestGrid.innerHTML = '';
+
+        const topBody = document.getElementById('analysisFinderTopBody');
+        if (topBody) topBody.innerHTML = '';
+    }
+
+    private renderFinderResults(result: AnalysisFilterFinderResult) {
+        const statusEl = document.getElementById('analysisFinderStatus');
+        const resultsEl = document.getElementById('analysisFinderResults');
+        const bestGrid = document.getElementById('analysisFinderBestGrid');
+        const topBody = document.getElementById('analysisFinderTopBody');
+
+        if (!statusEl || !resultsEl || !bestGrid || !topBody) return;
+
+        this.lastFinderCandidates = result.topCandidates;
+
+        if (!result.bestCandidate) {
+            resultsEl.style.display = 'none';
+            if (result.featureRanges.length === 0) {
+                statusEl.textContent = 'No eligible features. Lower Min Score or rerun Analyze.';
+            } else {
+                statusEl.textContent =
+                    `No candidate met constraints after ${result.attemptedCount} attempts. ` +
+                    `Rejected: ${result.rejectedByConstraints}.`;
+            }
+            return;
+        }
+
+        const best = result.bestCandidate;
+        const sim = best.simulation;
+        const filterDesc = best.filters
+            .map(f => `<span class="filter-badge">${f.label} ${f.direction === 'above' ? '>=' : '<='} ${this.fmtThreshold(f.threshold)}</span>`)
+            .join(' <span style="color:var(--text-secondary);font-size:10px;">AND</span> ');
+
+        const expSign = sim.filteredExpectancy >= 0 ? '+' : '';
+        const expImpSign = sim.expectancyImprovement >= 0 ? '+' : '';
+        const maxGoodRemovedLimit = this.readClampedNumberInput('analysisFinderMaxGoodRemoved', 8, 0, 100);
+
+        bestGrid.innerHTML = `
+            <div class="sim-card" style="grid-column: 1 / -1;">
+                <div class="sim-card-label">Best Finder Filters</div>
+                <div class="sim-card-value" style="font-size:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${filterDesc}</div>
+            </div>
+            <div class="sim-card">
+                <div class="sim-card-label">Objective</div>
+                <div class="sim-card-value">${best.objectiveScore.toFixed(3)}</div>
+            </div>
+            <div class="sim-card">
+                <div class="sim-card-label">Filtered Expectancy</div>
+                <div class="sim-card-value ${sim.filteredExpectancy > 0 ? 'positive' : 'negative'}">
+                    $${expSign}${sim.filteredExpectancy.toFixed(2)}/trade
+                </div>
+                <div class="sim-card-delta ${sim.expectancyImprovement > 0 ? 'positive' : 'negative'}">
+                    ${expImpSign}$${sim.expectancyImprovement.toFixed(2)} vs $${sim.originalExpectancy.toFixed(2)}
+                </div>
+            </div>
+            <div class="sim-card">
+                <div class="sim-card-label">Bad Trades Removed</div>
+                <div class="sim-card-value positive">${best.badTradesRemovedPct.toFixed(1)}%</div>
+                <div class="sim-card-delta" style="color:var(--text-secondary);">${best.badTradesRemoved} trades</div>
+            </div>
+            <div class="sim-card">
+                <div class="sim-card-label">Good Trades Removed</div>
+                <div class="sim-card-value ${best.goodTradesRemovedPct > maxGoodRemovedLimit ? 'negative' : 'positive'}">${best.goodTradesRemovedPct.toFixed(1)}%</div>
+                <div class="sim-card-delta" style="color:var(--text-secondary);">${best.goodTradesRemoved} trades</div>
+            </div>
+            <div class="sim-card">
+                <div class="sim-card-label">Total Removed</div>
+                <div class="sim-card-value">${sim.removedPercent.toFixed(1)}%</div>
+                <div class="sim-card-delta" style="color:var(--text-secondary);">${sim.removedTrades} trades</div>
+            </div>
+            <div class="sim-card">
+                <div class="sim-card-label">Win Rate</div>
+                <div class="sim-card-value ${sim.winRateImprovement > 0 ? 'positive' : sim.winRateImprovement < 0 ? 'negative' : 'neutral'}">
+                    ${sim.filteredWinRate.toFixed(1)}%
+                </div>
+                <div class="sim-card-delta" style="color:var(--text-secondary);">
+                    ${sim.winRateImprovement > 0 ? '+' : ''}${sim.winRateImprovement.toFixed(1)}%
+                </div>
+            </div>
+            <div class="sim-card analysis-finder-action-card">
+                <button class="btn-apply-combo btn-apply-finder-best" title="Apply all finder filters to Entry Quality Filters in Settings">Apply All to Settings</button>
+            </div>
+        `;
+
+        const applyBestBtn = bestGrid.querySelector('.btn-apply-finder-best');
+        if (applyBestBtn) {
+            applyBestBtn.addEventListener('click', () => {
+                this.applyFinderCandidate(best, applyBestBtn as HTMLElement);
+            });
+        }
+
+        topBody.innerHTML = result.topCandidates.map((candidate, index) => {
+            const cSim = candidate.simulation;
+            const filtersText = candidate.filters
+                .map(f => `${f.label} ${f.direction === 'above' ? '>=' : '<='} ${this.fmtThreshold(f.threshold)}`)
+                .join(' AND ');
+            return `
+                <tr>
+                    <td>${index + 1}</td>
+                    <td>${candidate.objectiveScore.toFixed(3)}</td>
+                    <td title="${filtersText}">${filtersText}</td>
+                    <td>${candidate.badTradesRemovedPct.toFixed(1)}%</td>
+                    <td>${candidate.goodTradesRemovedPct.toFixed(1)}%</td>
+                    <td>${cSim.removedPercent.toFixed(1)}%</td>
+                    <td>${cSim.expectancyImprovement >= 0 ? '+' : ''}$${cSim.expectancyImprovement.toFixed(2)}</td>
+                    <td><button class="btn-apply-filter btn-apply-finder-row" data-index="${index}">Apply</button></td>
+                </tr>
+            `;
+        }).join('');
+
+        topBody.querySelectorAll('.btn-apply-finder-row').forEach(button => {
+            button.addEventListener('click', (event) => {
+                const target = event.currentTarget as HTMLElement;
+                const indexText = target.dataset.index;
+                const index = indexText ? parseInt(indexText, 10) : -1;
+                const candidate = this.lastFinderCandidates[index];
+                if (!candidate) return;
+                this.applyFinderCandidate(candidate, target);
+            });
+        });
+
+        statusEl.textContent =
+            `Finder evaluated ${result.attemptedCount} candidates ` +
+            `(${result.feasibleCount} feasible, ${result.rejectedByConstraints} rejected).`;
+        resultsEl.style.display = '';
+    }
+
+    private applyFinderCandidate(candidate: AnalysisFinderCandidate, buttonEl?: HTMLElement): boolean {
+        let allApplied = true;
+        for (const filter of candidate.filters) {
+            const applied = this.applyFilterToSettings(
+                filter.feature as keyof TradeSnapshot,
+                filter.direction,
+                filter.threshold
+            );
+            if (!applied) allApplied = false;
+        }
+
+        if (buttonEl) {
+            const originalText = buttonEl.textContent;
+            buttonEl.textContent = allApplied ? '\u2713 Applied!' : 'Partial';
+            setTimeout(() => {
+                buttonEl.textContent = originalText;
+            }, 1500);
+        }
+
+        return allApplied;
     }
 
     private fmt(val: number): string {
@@ -465,6 +726,11 @@ class AnalysisPanel {
         if (btn) {
             btn.addEventListener('click', () => this.runAnalysis());
         }
+        const runFinderBtn = document.getElementById('analysisRunFinderBtn');
+        if (runFinderBtn) {
+            runFinderBtn.addEventListener('click', () => this.runFinder());
+        }
+        this.resetFinderResults('Finder ready. Click "Run Finder" after Analyze.');
 
         const relaxToggle = document.getElementById('analysisRelaxModeToggle') as HTMLInputElement | null;
         const maxRemovalInput = document.getElementById('analysisMaxRemovalPercent') as HTMLInputElement | null;

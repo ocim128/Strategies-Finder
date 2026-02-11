@@ -39,6 +39,7 @@ export function prepareSignals(
                     time: data[exitIndex].time,
                     type: exitType,
                     price: exitPrice,
+                    triggerPrice: signal.price,
                     reason: signal.reason,
                     order
                 });
@@ -55,7 +56,7 @@ export function prepareSignals(
 
             if (!passesTradeFilter(data, entryIndex, config, indicators, tradeDirection)) return;
             if (!passesRegimeFilters(data, entryIndex, config, indicators, tradeDirection)) return;
-            if (!passesSnapshotFilters(data, entryIndex, config, snapshotIndicators ?? null)) return;
+            if (!passesSnapshotFilters(data, entryIndex, config, snapshotIndicators ?? null, tradeDirection, signal.price)) return;
 
             const entryPrice = resolveExecutionPrice(data, signal, signalIndex, entryIndex, config);
 
@@ -63,6 +64,7 @@ export function prepareSignals(
                 time: data[entryIndex].time,
                 type: entryType,
                 price: entryPrice,
+                triggerPrice: signal.price,
                 reason: signal.reason,
                 order
             });
@@ -80,7 +82,7 @@ export function prepareSignals(
         const signalDirection = signalToPositionDirection(signal.type);
         if (!passesTradeFilter(data, entryIndex, config, indicators, signalDirection)) return;
         if (!passesRegimeFilters(data, entryIndex, config, indicators, signalDirection)) return;
-        if (!passesSnapshotFilters(data, entryIndex, config, snapshotIndicators ?? null)) return;
+        if (!passesSnapshotFilters(data, entryIndex, config, snapshotIndicators ?? null, signalDirection, signal.price)) return;
 
         const entryPrice = resolveExecutionPrice(data, signal, signalIndex, entryIndex, config);
 
@@ -88,6 +90,7 @@ export function prepareSignals(
             time: data[entryIndex].time,
             type: signal.type,
             price: entryPrice,
+            triggerPrice: signal.price,
             reason: signal.reason,
             order
         });

@@ -25,26 +25,81 @@ const MIN_DATA_BARS = 200;
 const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>(['none', 'close', 'volume', 'rsi', 'trend', 'adx']);
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(['long', 'short', 'both', 'combined']);
 
+function toBooleanLike(rawValue: unknown): boolean | null {
+    if (typeof rawValue === 'boolean') return rawValue;
+    if (typeof rawValue !== 'string') return null;
+
+    const normalized = rawValue.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') {
+        return true;
+    }
+    if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') {
+        return false;
+    }
+    return null;
+}
+
+function toFiniteNumber(rawValue: unknown): number | null {
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue)) return rawValue;
+    if (typeof rawValue !== 'string') return null;
+
+    const trimmed = rawValue.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function coerceScalar(rawValue: unknown): unknown {
+    const asBoolean = toBooleanLike(rawValue);
+    if (asBoolean !== null) return asBoolean;
+
+    const asNumber = toFiniteNumber(rawValue);
+    if (asNumber !== null) return asNumber;
+
+    return rawValue;
+}
+
+function coerceDeepValue(rawValue: unknown): unknown {
+    if (Array.isArray(rawValue)) {
+        return rawValue.map((value) => coerceDeepValue(value));
+    }
+    if (rawValue && typeof rawValue === 'object') {
+        const record = rawValue as Record<string, unknown>;
+        const normalized: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(record)) {
+            normalized[key] = coerceDeepValue(value);
+        }
+        return normalized;
+    }
+    return coerceScalar(rawValue);
+}
+
 function readBoolean(raw: Record<string, unknown>, key: string, fallback: boolean): boolean {
     const value = raw[key];
-    return typeof value === 'boolean' ? value : fallback;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value !== 0;
+    }
+    const parsed = toBooleanLike(value);
+    return parsed !== null ? parsed : fallback;
 }
 
 function readNumber(raw: Record<string, unknown>, key: string, fallback: number): number {
-    const value = raw[key];
-    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+    const parsed = toFiniteNumber(raw[key]);
+    return parsed !== null ? parsed : fallback;
 }
 
 function readTradeFilterMode(rawValue: unknown, fallback: TradeFilterMode = 'none'): TradeFilterMode {
-    if (typeof rawValue === 'string' && VALID_TRADE_FILTER_MODES.has(rawValue as TradeFilterMode)) {
-        return rawValue as TradeFilterMode;
+    if (typeof rawValue === 'string') {
+        const mode = rawValue.trim().toLowerCase() as TradeFilterMode;
+        if (VALID_TRADE_FILTER_MODES.has(mode)) return mode;
     }
     return fallback;
 }
 
 function readTradeDirection(rawValue: unknown, fallback: TradeDirection = 'long'): TradeDirection {
-    if (typeof rawValue === 'string' && VALID_TRADE_DIRECTIONS.has(rawValue as TradeDirection)) {
-        return rawValue as TradeDirection;
+    if (typeof rawValue === 'string') {
+        const direction = rawValue.trim().toLowerCase() as TradeDirection;
+        if (VALID_TRADE_DIRECTIONS.has(direction)) return direction;
     }
     return fallback;
 }
@@ -64,11 +119,27 @@ function readConfirmationParams(rawValue: unknown): Record<string, StrategyParam
         if (!params || typeof params !== 'object' || Array.isArray(params)) continue;
         const normalizedParams: StrategyParams = {};
         for (const [paramKey, paramValue] of Object.entries(params as Record<string, unknown>)) {
-            if (typeof paramValue === 'number' && Number.isFinite(paramValue)) {
-                normalizedParams[paramKey] = paramValue;
+            const parsed = toFiniteNumber(paramValue);
+            if (parsed !== null) {
+                normalizedParams[paramKey] = parsed;
             }
         }
         normalized[strategyKey] = normalizedParams;
+    }
+    return normalized;
+}
+
+function normalizeStrategyParams(defaultParams: StrategyParams, rawParams: unknown): StrategyParams {
+    const normalized: StrategyParams = { ...defaultParams };
+    if (!rawParams || typeof rawParams !== 'object' || Array.isArray(rawParams)) {
+        return normalized;
+    }
+
+    for (const [key, value] of Object.entries(rawParams as Record<string, unknown>)) {
+        const parsed = toFiniteNumber(value);
+        if (parsed !== null) {
+            normalized[key] = parsed;
+        }
     }
     return normalized;
 }
@@ -95,6 +166,12 @@ function hasUiToggleSettings(raw: Record<string, unknown>): boolean {
         'snapshotVolumeBurstFilterToggle',
         'snapshotVolumePriceDivergenceFilterToggle',
         'snapshotVolumeConsistencyFilterToggle',
+        'snapshotCloseLocationFilterToggle',
+        'snapshotOppositeWickFilterToggle',
+        'snapshotRangeAtrFilterToggle',
+        'snapshotMomentumFilterToggle',
+        'snapshotBreakQualityFilterToggle',
+        'snapshotEntryQualityScoreFilterToggle',
     ].some((key) => key in raw);
 }
 
@@ -115,7 +192,7 @@ export function resolveScannerBacktestSettings(settings?: BacktestSettings): Bac
 
     const raw = settings as Record<string, unknown>;
     if (!hasUiToggleSettings(raw)) {
-        return { ...settings };
+        return coerceDeepValue(settings) as BacktestSettings;
     }
 
     const riskEnabled = readBoolean(raw, 'riskSettingsToggle', false);
@@ -209,6 +286,18 @@ export function resolveScannerBacktestSettings(settings?: BacktestSettings): Bac
         snapshotVolumePriceDivergenceMax: readSnapshotValue(raw, 'snapshotVolumePriceDivergenceFilterToggle', 'snapshotVolumePriceDivergenceMax'),
         snapshotVolumeConsistencyMin: readSnapshotValue(raw, 'snapshotVolumeConsistencyFilterToggle', 'snapshotVolumeConsistencyMin'),
         snapshotVolumeConsistencyMax: readSnapshotValue(raw, 'snapshotVolumeConsistencyFilterToggle', 'snapshotVolumeConsistencyMax'),
+        snapshotCloseLocationMin: readSnapshotValue(raw, 'snapshotCloseLocationFilterToggle', 'snapshotCloseLocationMin'),
+        snapshotCloseLocationMax: readSnapshotValue(raw, 'snapshotCloseLocationFilterToggle', 'snapshotCloseLocationMax'),
+        snapshotOppositeWickMin: readSnapshotValue(raw, 'snapshotOppositeWickFilterToggle', 'snapshotOppositeWickMin'),
+        snapshotOppositeWickMax: readSnapshotValue(raw, 'snapshotOppositeWickFilterToggle', 'snapshotOppositeWickMax'),
+        snapshotRangeAtrMultipleMin: readSnapshotValue(raw, 'snapshotRangeAtrFilterToggle', 'snapshotRangeAtrMultipleMin'),
+        snapshotRangeAtrMultipleMax: readSnapshotValue(raw, 'snapshotRangeAtrFilterToggle', 'snapshotRangeAtrMultipleMax'),
+        snapshotMomentumConsistencyMin: readSnapshotValue(raw, 'snapshotMomentumFilterToggle', 'snapshotMomentumConsistencyMin'),
+        snapshotMomentumConsistencyMax: readSnapshotValue(raw, 'snapshotMomentumFilterToggle', 'snapshotMomentumConsistencyMax'),
+        snapshotBreakQualityMin: readSnapshotValue(raw, 'snapshotBreakQualityFilterToggle', 'snapshotBreakQualityMin'),
+        snapshotBreakQualityMax: readSnapshotValue(raw, 'snapshotBreakQualityFilterToggle', 'snapshotBreakQualityMax'),
+        snapshotEntryQualityScoreMin: readSnapshotValue(raw, 'snapshotEntryQualityScoreFilterToggle', 'snapshotEntryQualityScoreMin'),
+        snapshotEntryQualityScoreMax: readSnapshotValue(raw, 'snapshotEntryQualityScoreFilterToggle', 'snapshotEntryQualityScoreMax'),
     };
 }
 
@@ -373,7 +462,7 @@ export class ScannerEngine {
 
             try {
                 // Use saved params from config, fall back to defaults
-                const params = { ...strategy.defaultParams, ...stratConfig.strategyParams };
+                const params = normalizeStrategyParams(strategy.defaultParams, stratConfig.strategyParams);
                 const rawSignals = strategy.execute(data, params);
 
                 // Normalize persisted UI config into effective backtest settings.

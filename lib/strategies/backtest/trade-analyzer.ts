@@ -58,6 +58,53 @@ export interface FilterSimulationResult {
     expectancyImprovement: number;
     /** Profit factor of remaining trades */
     filteredProfitFactor: number;
+    /** Original max drawdown over cumulative trade PnL sequence */
+    originalMaxDrawdown: number;
+    /** Filtered max drawdown over cumulative trade PnL sequence */
+    filteredMaxDrawdown: number;
+    /** Drawdown improvement in $ (original - filtered, higher is better) */
+    drawdownImprovement: number;
+}
+
+export interface AnalysisFinderOptions {
+    minFeatureScorePct?: number;
+    randomTrials?: number;
+    refineTrials?: number;
+    /** Percentage of the 0..suggested-threshold interval to scan (1-100). */
+    rangePercent?: number;
+    /** Maximum number of filters combined per candidate. */
+    maxFeaturesPerCandidate?: number;
+    minBadRemovedPct?: number;
+    maxGoodRemovedPct?: number;
+    maxTotalRemovedPct?: number;
+}
+
+export interface FinderFeatureRange {
+    feature: keyof TradeSnapshot;
+    label: string;
+    direction: 'above' | 'below';
+    suggestedThreshold: number;
+    minThreshold: number;
+    maxThreshold: number;
+}
+
+export interface AnalysisFinderCandidate {
+    filters: ComboFilterEntry[];
+    simulation: ComboFilterResult;
+    objectiveScore: number;
+    badTradesRemoved: number;
+    goodTradesRemoved: number;
+    badTradesRemovedPct: number;
+    goodTradesRemovedPct: number;
+}
+
+export interface AnalysisFilterFinderResult {
+    featureRanges: FinderFeatureRange[];
+    attemptedCount: number;
+    feasibleCount: number;
+    rejectedByConstraints: number;
+    bestCandidate: AnalysisFinderCandidate | null;
+    topCandidates: AnalysisFinderCandidate[];
 }
 
 /** Minimum remaining trades to accept a filter — prevents overfitting on tiny samples */
@@ -66,6 +113,16 @@ const MIN_TRADES_FOR_FILTER = 8;
 const MAX_SINGLE_REMOVAL = 35;
 /** Maximum trade removal for combo filters */
 const MAX_COMBO_REMOVAL = 40;
+const DEFAULT_FINDER_MIN_SCORE_PCT = 10;
+const DEFAULT_FINDER_RANDOM_TRIALS = 300;
+const DEFAULT_FINDER_REFINE_TRIALS = 120;
+const DEFAULT_FINDER_RANGE_PCT = 100;
+const DEFAULT_FINDER_MAX_FEATURES = 3;
+const DEFAULT_FINDER_MIN_BAD_REMOVED_PCT = 20;
+const DEFAULT_FINDER_MAX_GOOD_REMOVED_PCT = 8;
+const DEFAULT_FINDER_MAX_TOTAL_REMOVED_PCT = 25;
+const FINDER_TOP_RESULTS = 5;
+const FINDER_SEED_POOL_SIZE = 8;
 
 // ============================================================================
 // Feature Metadata
@@ -82,8 +139,14 @@ const FEATURE_LABELS: Record<keyof TradeSnapshot, string> = {
     barsFromLow: 'Bars from Low',
     trendEfficiency: 'Trend Efficiency',
     atrRegimeRatio: 'ATR Regime Ratio',
-    bodyPercent: 'Body % of Range',
+    bodyPercent: 'Body Strength %',
     wickSkew: 'Wick Skew %',
+    closeLocation: 'Close Location %',
+    oppositeWickPercent: 'Opposite Wick %',
+    rangeAtrMultiple: 'Range / ATR',
+    momentumConsistency: 'Momentum Consistency %',
+    breakQuality: 'Break Quality',
+    entryQualityScore: 'Entry Quality Score',
     volumeTrend: 'Volume Trend',
     volumeBurst: 'Volume Burst',
     volumePriceDivergence: 'Vol-Price Agreement',
@@ -107,6 +170,12 @@ const FEATURE_DIRECTIONS: Record<keyof TradeSnapshot, ('above' | 'below')[]> = {
     atrRegimeRatio: ['above', 'below'],
     bodyPercent: ['above', 'below'],
     wickSkew: ['above', 'below'],
+    closeLocation: ['above'],
+    oppositeWickPercent: ['below'],
+    rangeAtrMultiple: ['above', 'below'],
+    momentumConsistency: ['above'],
+    breakQuality: ['above'],
+    entryQualityScore: ['above'],
     volumeTrend: ['above', 'below'],
     volumeBurst: ['above', 'below'],
     volumePriceDivergence: ['above', 'below'],
@@ -206,6 +275,7 @@ export function simulateFilter(
     const originalExpectancy = tradesWithSnapshots.length > 0
         ? originalNetPnl / tradesWithSnapshots.length
         : 0;
+    const originalMaxDrawdown = computeMaxDrawdownFromTradeSequence(tradesWithSnapshots);
 
     const remaining = tradesWithSnapshots.filter(t => {
         const val = t.entrySnapshot![feature] as number | null;
@@ -229,6 +299,7 @@ export function simulateFilter(
     const filteredProfitFactor = filteredGrossLoss > 0
         ? filteredGrossProfit / filteredGrossLoss
         : filteredGrossProfit > 0 ? Infinity : 0;
+    const filteredMaxDrawdown = computeMaxDrawdownFromTradeSequence(remaining);
 
     const removedCount = tradesWithSnapshots.length - remaining.length;
 
@@ -249,7 +320,10 @@ export function simulateFilter(
         originalExpectancy,
         filteredExpectancy,
         expectancyImprovement: filteredExpectancy - originalExpectancy,
-        filteredProfitFactor
+        filteredProfitFactor,
+        originalMaxDrawdown,
+        filteredMaxDrawdown,
+        drawdownImprovement: originalMaxDrawdown - filteredMaxDrawdown
     };
 }
 
@@ -283,6 +357,21 @@ function computeStats(values: number[]): FeatureStats {
     const stddev = Math.sqrt(variance);
 
     return { mean, median, stddev, count };
+}
+
+function computeMaxDrawdownFromTradeSequence(trades: Trade[]): number {
+    let equity = 0;
+    let peak = 0;
+    let maxDrawdown = 0;
+
+    for (const trade of trades) {
+        equity += trade.pnl;
+        if (equity > peak) peak = equity;
+        const drawdown = peak - equity;
+        if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+    }
+
+    return maxDrawdown;
 }
 
 /**
@@ -422,7 +511,11 @@ export interface ComboFilterEntry {
 export interface ComboFilterResult {
     filters: ComboFilterEntry[];
     originalTrades: number;
+    originalWinningTrades: number;
+    originalLosingTrades: number;
     remainingTrades: number;
+    remainingWinningTrades: number;
+    remainingLosingTrades: number;
     removedTrades: number;
     removedPercent: number;
     originalWinRate: number;
@@ -437,6 +530,12 @@ export interface ComboFilterResult {
     expectancyImprovement: number;
     /** Profit factor of remaining trades */
     filteredProfitFactor: number;
+    /** Original max drawdown over cumulative trade PnL sequence */
+    originalMaxDrawdown: number;
+    /** Filtered max drawdown over cumulative trade PnL sequence */
+    filteredMaxDrawdown: number;
+    /** Drawdown improvement in $ (original - filtered, higher is better) */
+    drawdownImprovement: number;
 }
 
 /**
@@ -449,6 +548,7 @@ export function simulateComboFilter(
 ): ComboFilterResult {
     const tradesWithSnapshots = trades.filter(t => t.entrySnapshot);
     const originalWins = tradesWithSnapshots.filter(t => t.pnl > 0).length;
+    const originalLosses = tradesWithSnapshots.length - originalWins;
     const originalWinRate = tradesWithSnapshots.length > 0
         ? (originalWins / tradesWithSnapshots.length) * 100
         : 0;
@@ -456,6 +556,7 @@ export function simulateComboFilter(
     const originalExpectancy = tradesWithSnapshots.length > 0
         ? originalNetPnl / tradesWithSnapshots.length
         : 0;
+    const originalMaxDrawdown = computeMaxDrawdownFromTradeSequence(tradesWithSnapshots);
 
     const remaining = tradesWithSnapshots.filter(t => {
         for (const f of filters) {
@@ -468,6 +569,7 @@ export function simulateComboFilter(
     });
 
     const filteredWins = remaining.filter(t => t.pnl > 0).length;
+    const filteredLosses = remaining.length - filteredWins;
     const filteredWinRate = remaining.length > 0
         ? (filteredWins / remaining.length) * 100
         : 0;
@@ -483,11 +585,16 @@ export function simulateComboFilter(
     const filteredProfitFactor = filteredGrossLoss > 0
         ? filteredGrossProfit / filteredGrossLoss
         : filteredGrossProfit > 0 ? Infinity : 0;
+    const filteredMaxDrawdown = computeMaxDrawdownFromTradeSequence(remaining);
 
     return {
         filters,
         originalTrades: tradesWithSnapshots.length,
+        originalWinningTrades: originalWins,
+        originalLosingTrades: originalLosses,
         remainingTrades: remaining.length,
+        remainingWinningTrades: filteredWins,
+        remainingLosingTrades: filteredLosses,
         removedTrades: removedCount,
         removedPercent: tradesWithSnapshots.length > 0
             ? (removedCount / tradesWithSnapshots.length) * 100
@@ -499,7 +606,10 @@ export function simulateComboFilter(
         originalExpectancy,
         filteredExpectancy,
         expectancyImprovement: filteredExpectancy - originalExpectancy,
-        filteredProfitFactor
+        filteredProfitFactor,
+        originalMaxDrawdown,
+        filteredMaxDrawdown,
+        drawdownImprovement: originalMaxDrawdown - filteredMaxDrawdown
     };
 }
 
@@ -570,5 +680,357 @@ export function findBestComboFilter(
     });
 
     return candidates[0];
+}
+
+interface NormalizedFinderOptions {
+    minFeatureScorePct: number;
+    randomTrials: number;
+    refineTrials: number;
+    rangePercent: number;
+    maxFeaturesPerCandidate: number;
+    minBadRemovedPct: number;
+    maxGoodRemovedPct: number;
+    maxTotalRemovedPct: number;
+}
+
+export function runAnalysisFilterFinder(
+    trades: Trade[],
+    analyses: FeatureAnalysis[],
+    options: AnalysisFinderOptions = {}
+): AnalysisFilterFinderResult {
+    const tradesWithSnapshots = trades.filter(t => t.entrySnapshot);
+    if (tradesWithSnapshots.length < MIN_TRADES_FOR_FILTER || analyses.length === 0) {
+        return {
+            featureRanges: [],
+            attemptedCount: 0,
+            feasibleCount: 0,
+            rejectedByConstraints: 0,
+            bestCandidate: null,
+            topCandidates: []
+        };
+    }
+
+    const normalized = normalizeFinderOptions(options);
+    const featureRanges = buildFinderFeatureRanges(
+        tradesWithSnapshots,
+        analyses,
+        normalized.minFeatureScorePct,
+        normalized.rangePercent
+    );
+
+    if (featureRanges.length === 0) {
+        return {
+            featureRanges,
+            attemptedCount: 0,
+            feasibleCount: 0,
+            rejectedByConstraints: 0,
+            bestCandidate: null,
+            topCandidates: []
+        };
+    }
+
+    let attemptedCount = 0;
+    let rejectedByConstraints = 0;
+    const acceptedCandidates: AnalysisFinderCandidate[] = [];
+    const seenCandidateKeys = new Set<string>();
+
+    for (const range of featureRanges) {
+        const filter: ComboFilterEntry = {
+            feature: range.feature,
+            label: range.label,
+            direction: range.direction,
+            threshold: normalizeSuggestedThreshold(
+                clamp(range.suggestedThreshold, range.minThreshold, range.maxThreshold)
+            )
+        };
+        const key = buildFinderCandidateKey([filter]);
+        if (seenCandidateKeys.has(key)) continue;
+        seenCandidateKeys.add(key);
+        attemptedCount++;
+
+        const candidate = evaluateFinderCandidate(tradesWithSnapshots, [filter], normalized);
+        if (!candidate) {
+            rejectedByConstraints++;
+            continue;
+        }
+        acceptedCandidates.push(candidate);
+    }
+
+    for (let i = 0; i < normalized.randomTrials; i++) {
+        const filters = buildRandomCandidateFilters(featureRanges, normalized.maxFeaturesPerCandidate);
+        const key = buildFinderCandidateKey(filters);
+        if (seenCandidateKeys.has(key)) continue;
+        seenCandidateKeys.add(key);
+        attemptedCount++;
+
+        const candidate = evaluateFinderCandidate(tradesWithSnapshots, filters, normalized);
+        if (!candidate) {
+            rejectedByConstraints++;
+            continue;
+        }
+        acceptedCandidates.push(candidate);
+    }
+
+    const seedPool = [...acceptedCandidates]
+        .sort(compareFinderCandidates)
+        .slice(0, FINDER_SEED_POOL_SIZE);
+
+    if (seedPool.length > 0) {
+        for (let i = 0; i < normalized.refineTrials; i++) {
+            const seed = seedPool[i % seedPool.length];
+            const filters = buildRefinedCandidateFilters(seed.filters, featureRanges);
+            const key = buildFinderCandidateKey(filters);
+            if (seenCandidateKeys.has(key)) continue;
+            seenCandidateKeys.add(key);
+            attemptedCount++;
+
+            const candidate = evaluateFinderCandidate(tradesWithSnapshots, filters, normalized);
+            if (!candidate) {
+                rejectedByConstraints++;
+                continue;
+            }
+            acceptedCandidates.push(candidate);
+        }
+    }
+
+    const sortedCandidates = acceptedCandidates
+        .sort(compareFinderCandidates)
+        .slice(0, FINDER_TOP_RESULTS);
+
+    return {
+        featureRanges,
+        attemptedCount,
+        feasibleCount: acceptedCandidates.length,
+        rejectedByConstraints,
+        bestCandidate: sortedCandidates[0] ?? null,
+        topCandidates: sortedCandidates
+    };
+}
+
+function normalizeFinderOptions(options: AnalysisFinderOptions): NormalizedFinderOptions {
+    return {
+        minFeatureScorePct: clamp(
+            options.minFeatureScorePct ?? DEFAULT_FINDER_MIN_SCORE_PCT,
+            0,
+            100
+        ),
+        randomTrials: Math.max(
+            1,
+            Math.round(options.randomTrials ?? DEFAULT_FINDER_RANDOM_TRIALS)
+        ),
+        refineTrials: Math.max(
+            0,
+            Math.round(options.refineTrials ?? DEFAULT_FINDER_REFINE_TRIALS)
+        ),
+        rangePercent: clamp(options.rangePercent ?? DEFAULT_FINDER_RANGE_PCT, 1, 100),
+        maxFeaturesPerCandidate: Math.max(
+            1,
+            Math.round(options.maxFeaturesPerCandidate ?? DEFAULT_FINDER_MAX_FEATURES)
+        ),
+        minBadRemovedPct: clamp(
+            options.minBadRemovedPct ?? DEFAULT_FINDER_MIN_BAD_REMOVED_PCT,
+            0,
+            100
+        ),
+        maxGoodRemovedPct: clamp(
+            options.maxGoodRemovedPct ?? DEFAULT_FINDER_MAX_GOOD_REMOVED_PCT,
+            0,
+            100
+        ),
+        maxTotalRemovedPct: clamp(
+            options.maxTotalRemovedPct ?? DEFAULT_FINDER_MAX_TOTAL_REMOVED_PCT,
+            0,
+            100
+        )
+    };
+}
+
+function buildFinderFeatureRanges(
+    trades: Trade[],
+    analyses: FeatureAnalysis[],
+    minFeatureScorePct: number,
+    rangePercent: number
+): FinderFeatureRange[] {
+    const scoreThreshold = minFeatureScorePct / 100;
+    const rangeScale = clamp(rangePercent, 1, 100) / 100;
+    const ranges: FinderFeatureRange[] = [];
+
+    for (const analysis of analyses) {
+        if (!analysis.suggestedFilter) continue;
+        if (analysis.separationScore < scoreThreshold) continue;
+
+        const values = extractFeatureValues(trades, analysis.feature);
+        if (values.length < 6) continue;
+        const sorted = [...values].sort((a, b) => a - b);
+
+        const p05 = percentileFromSorted(sorted, 0.05);
+        const p95 = percentileFromSorted(sorted, 0.95);
+        if (!Number.isFinite(p05) || !Number.isFinite(p95) || p95 < p05) continue;
+
+        const suggestedThreshold = analysis.suggestedFilter.threshold;
+        const scaledSuggestion = suggestedThreshold * rangeScale;
+        const baseMin = Math.min(0, scaledSuggestion);
+        const baseMax = Math.max(0, scaledSuggestion);
+
+        let minThreshold = Math.max(baseMin, p05);
+        let maxThreshold = Math.min(baseMax, p95);
+
+        if (maxThreshold < minThreshold) {
+            const safeSuggested = clamp(suggestedThreshold, p05, p95);
+            const zeroClamped = clamp(0, p05, p95);
+            minThreshold = Math.min(safeSuggested, zeroClamped);
+            maxThreshold = Math.max(safeSuggested, zeroClamped);
+        }
+
+        if (maxThreshold - minThreshold < 1e-9) {
+            const localSpan = Math.max(1e-6, (p95 - p05) * 0.1);
+            minThreshold = clamp(minThreshold - localSpan / 2, p05, p95);
+            maxThreshold = clamp(maxThreshold + localSpan / 2, p05, p95);
+        }
+
+        if (maxThreshold < minThreshold) continue;
+
+        ranges.push({
+            feature: analysis.feature,
+            label: analysis.label,
+            direction: analysis.suggestedFilter.direction,
+            suggestedThreshold: normalizeSuggestedThreshold(
+                clamp(suggestedThreshold, minThreshold, maxThreshold)
+            ),
+            minThreshold,
+            maxThreshold
+        });
+    }
+
+    return ranges;
+}
+
+function buildRandomCandidateFilters(
+    featureRanges: FinderFeatureRange[],
+    maxFeaturesPerCandidate: number
+): ComboFilterEntry[] {
+    const maxFeatures = Math.max(1, Math.min(featureRanges.length, maxFeaturesPerCandidate));
+    const selectedCount = Math.max(1, Math.floor(Math.random() * maxFeatures) + 1);
+    const shuffled = [...featureRanges];
+
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    return shuffled.slice(0, selectedCount).map(range => ({
+        feature: range.feature,
+        label: range.label,
+        direction: range.direction,
+        threshold: normalizeSuggestedThreshold(randomThresholdBetween(range.minThreshold, range.maxThreshold))
+    }));
+}
+
+function buildRefinedCandidateFilters(
+    seedFilters: ComboFilterEntry[],
+    featureRanges: FinderFeatureRange[]
+): ComboFilterEntry[] {
+    const rangesByFeature = new Map<keyof TradeSnapshot, FinderFeatureRange>(
+        featureRanges.map(range => [range.feature, range])
+    );
+
+    return seedFilters.map(filter => {
+        const range = rangesByFeature.get(filter.feature);
+        if (!range) return filter;
+
+        const fullSpan = Math.max(1e-6, range.maxThreshold - range.minThreshold);
+        const localHalfSpan = fullSpan * 0.15;
+        const localMin = clamp(filter.threshold - localHalfSpan, range.minThreshold, range.maxThreshold);
+        const localMax = clamp(filter.threshold + localHalfSpan, range.minThreshold, range.maxThreshold);
+        const sampledThreshold = normalizeSuggestedThreshold(randomThresholdBetween(localMin, localMax));
+
+        return {
+            feature: filter.feature,
+            label: filter.label,
+            direction: filter.direction,
+            threshold: sampledThreshold
+        };
+    });
+}
+
+function randomThresholdBetween(min: number, max: number): number {
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return 0;
+    if (max <= min) return min;
+    return min + (max - min) * Math.random();
+}
+
+function evaluateFinderCandidate(
+    trades: Trade[],
+    filters: ComboFilterEntry[],
+    options: NormalizedFinderOptions
+): AnalysisFinderCandidate | null {
+    const simulation = simulateComboFilter(trades, filters);
+    if (simulation.remainingTrades < MIN_TRADES_FOR_FILTER) return null;
+    if (simulation.expectancyImprovement <= 0) return null;
+    if (simulation.removedPercent > options.maxTotalRemovedPct) return null;
+
+    const badTradesRemoved = simulation.originalLosingTrades - simulation.remainingLosingTrades;
+    const goodTradesRemoved = simulation.originalWinningTrades - simulation.remainingWinningTrades;
+    const badTradesRemovedPct = simulation.originalLosingTrades > 0
+        ? (badTradesRemoved / simulation.originalLosingTrades) * 100
+        : 0;
+    const goodTradesRemovedPct = simulation.originalWinningTrades > 0
+        ? (goodTradesRemoved / simulation.originalWinningTrades) * 100
+        : 0;
+
+    if (badTradesRemovedPct < options.minBadRemovedPct) return null;
+    if (goodTradesRemovedPct > options.maxGoodRemovedPct) return null;
+
+    const objectiveScore = computeFinderObjective(simulation, goodTradesRemovedPct);
+
+    return {
+        filters,
+        simulation,
+        objectiveScore,
+        badTradesRemoved,
+        goodTradesRemoved,
+        badTradesRemovedPct,
+        goodTradesRemovedPct
+    };
+}
+
+function computeFinderObjective(
+    simulation: ComboFilterResult,
+    goodTradesRemovedPct: number
+): number {
+    return simulation.expectancyImprovement
+        + (0.04 * simulation.winRateImprovement)
+        - (0.08 * goodTradesRemovedPct)
+        - (0.03 * simulation.removedPercent);
+}
+
+function compareFinderCandidates(a: AnalysisFinderCandidate, b: AnalysisFinderCandidate): number {
+    if (b.objectiveScore !== a.objectiveScore) {
+        return b.objectiveScore - a.objectiveScore;
+    }
+    if (b.simulation.expectancyImprovement !== a.simulation.expectancyImprovement) {
+        return b.simulation.expectancyImprovement - a.simulation.expectancyImprovement;
+    }
+    return a.simulation.removedPercent - b.simulation.removedPercent;
+}
+
+function buildFinderCandidateKey(filters: ComboFilterEntry[]): string {
+    const normalized = [...filters]
+        .sort((a, b) => String(a.feature).localeCompare(String(b.feature)))
+        .map(filter => `${String(filter.feature)}:${filter.direction}:${filter.threshold.toFixed(6)}`);
+    return normalized.join('|');
+}
+
+function percentileFromSorted(sortedValues: number[], percentile: number): number {
+    if (sortedValues.length === 0) return 0;
+    if (sortedValues.length === 1) return sortedValues[0];
+
+    const clamped = clamp(percentile, 0, 1);
+    const scaledIndex = clamped * (sortedValues.length - 1);
+    const lower = Math.floor(scaledIndex);
+    const upper = Math.ceil(scaledIndex);
+    if (lower === upper) return sortedValues[lower];
+    const weight = scaledIndex - lower;
+    return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * weight;
 }
 

@@ -163,10 +163,14 @@ export function setupStateSubscriptions() {
     // Chart mode changes (Candlestick / Heikin Ashi)
     state.subscribe('chartMode', (chartMode) => {
         debugLogger.event('state.chartMode', { chartMode });
-        // Update dropdown to reflect current state
-        const select = document.getElementById('chartModeSelect') as HTMLSelectElement | null;
-        if (select && select.value !== chartMode) {
-            select.value = chartMode;
+        // Sync toggle button visual state
+        const toggle = document.getElementById('chartModeToggle');
+        const label = document.getElementById('chartModeLabel');
+        if (toggle) {
+            const isHA = chartMode === 'heikin-ashi';
+            toggle.classList.toggle('active', isHA);
+            toggle.title = isHA ? 'Switch to Candlestick' : 'Switch to Heikin Ashi';
+            if (label) label.textContent = isHA ? 'HA' : 'Candle';
         }
         // Re-render chart with appropriate transformation
         if (state.ohlcvData.length > 0) {

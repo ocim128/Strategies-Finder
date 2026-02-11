@@ -3,8 +3,14 @@ import { OHLCVData } from '../../types/index';
 import { NormalizedSettings, IndicatorSeries } from '../../types/backtest';
 import {
     computeAtrRegimeRatio,
+    computeBreakQuality,
     computeBodyPercent,
+    computeDirectionalCloseLocation,
+    computeEntryQualityScore,
     computeRelativeVolumeBurst,
+    computeMomentumConsistency,
+    computeOppositeWickPercent,
+    computeRangeAtrMultiple,
     computeVolumeConsistency,
     computeVolumePriceDivergence,
     computeVolumeTrend,
@@ -182,7 +188,9 @@ export function passesSnapshotFilters(
     data: OHLCVData[],
     entryIndex: number,
     config: NormalizedSettings,
-    snapshotIndicators: SnapshotIndicators | null
+    snapshotIndicators: SnapshotIndicators | null,
+    tradeDirection: 'long' | 'short',
+    triggerPrice?: number
 ): boolean {
     // If no snapshot filters are enabled, pass
     const hasAny =
@@ -215,7 +223,19 @@ export function passesSnapshotFilters(
         config.snapshotVolumePriceDivergenceMin !== 0 ||
         config.snapshotVolumePriceDivergenceMax !== 0 ||
         config.snapshotVolumeConsistencyMin > 0 ||
-        config.snapshotVolumeConsistencyMax > 0;
+        config.snapshotVolumeConsistencyMax > 0 ||
+        config.snapshotCloseLocationMin > 0 ||
+        config.snapshotCloseLocationMax > 0 ||
+        config.snapshotOppositeWickMin > 0 ||
+        config.snapshotOppositeWickMax > 0 ||
+        config.snapshotRangeAtrMultipleMin > 0 ||
+        config.snapshotRangeAtrMultipleMax > 0 ||
+        config.snapshotMomentumConsistencyMin > 0 ||
+        config.snapshotMomentumConsistencyMax > 0 ||
+        config.snapshotBreakQualityMin > 0 ||
+        config.snapshotBreakQualityMax > 0 ||
+        config.snapshotEntryQualityScoreMin > 0 ||
+        config.snapshotEntryQualityScoreMax > 0;
     if (!hasAny || !snapshotIndicators) return true;
 
     const close = data[entryIndex].close;
@@ -330,6 +350,69 @@ export function passesSnapshotFilters(
         if (wickSkew === null || wickSkew === undefined) return false;
         if (config.snapshotWickSkewMin !== 0 && wickSkew < config.snapshotWickSkewMin) return false;
         if (config.snapshotWickSkewMax !== 0 && wickSkew > config.snapshotWickSkewMax) return false;
+    }
+
+    // Directional close-location filter (0..100, higher = better close in entry direction)
+    if (config.snapshotCloseLocationMin > 0 || config.snapshotCloseLocationMax > 0) {
+        const closeLocation = computeDirectionalCloseLocation(data[entryIndex], tradeDirection);
+        if (closeLocation === null || closeLocation === undefined) return false;
+        if (config.snapshotCloseLocationMin > 0 && closeLocation < config.snapshotCloseLocationMin) return false;
+        if (config.snapshotCloseLocationMax > 0 && closeLocation > config.snapshotCloseLocationMax) return false;
+    }
+
+    // Opposite-wick filter (0..100, lower is better)
+    if (config.snapshotOppositeWickMin > 0 || config.snapshotOppositeWickMax > 0) {
+        const oppositeWick = computeOppositeWickPercent(data[entryIndex], tradeDirection);
+        if (oppositeWick === null || oppositeWick === undefined) return false;
+        if (config.snapshotOppositeWickMin > 0 && oppositeWick < config.snapshotOppositeWickMin) return false;
+        if (config.snapshotOppositeWickMax > 0 && oppositeWick > config.snapshotOppositeWickMax) return false;
+    }
+
+    // Candle range sanity filter (range / ATR, min and/or max)
+    if (config.snapshotRangeAtrMultipleMin > 0 || config.snapshotRangeAtrMultipleMax > 0) {
+        const atr = snapshotIndicators.atr[entryIndex];
+        const rangeAtrMultiple = computeRangeAtrMultiple(data[entryIndex], atr);
+        if (rangeAtrMultiple === null || rangeAtrMultiple === undefined) return false;
+        if (config.snapshotRangeAtrMultipleMin > 0 && rangeAtrMultiple < config.snapshotRangeAtrMultipleMin) return false;
+        if (config.snapshotRangeAtrMultipleMax > 0 && rangeAtrMultiple > config.snapshotRangeAtrMultipleMax) return false;
+    }
+
+    // Momentum consistency filter (0..100 over recent candles)
+    if (config.snapshotMomentumConsistencyMin > 0 || config.snapshotMomentumConsistencyMax > 0) {
+        const momentumConsistency = computeMomentumConsistency(data, entryIndex, tradeDirection);
+        if (momentumConsistency === null || momentumConsistency === undefined) return false;
+        if (config.snapshotMomentumConsistencyMin > 0 && momentumConsistency < config.snapshotMomentumConsistencyMin) return false;
+        if (config.snapshotMomentumConsistencyMax > 0 && momentumConsistency > config.snapshotMomentumConsistencyMax) return false;
+    }
+
+    // Break quality filter (0..100, higher means cleaner close beyond trigger)
+    if (config.snapshotBreakQualityMin > 0 || config.snapshotBreakQualityMax > 0) {
+        const breakQuality = computeBreakQuality(data[entryIndex], tradeDirection, triggerPrice ?? null);
+        if (breakQuality === null || breakQuality === undefined) return false;
+        if (config.snapshotBreakQualityMin > 0 && breakQuality < config.snapshotBreakQualityMin) return false;
+        if (config.snapshotBreakQualityMax > 0 && breakQuality > config.snapshotBreakQualityMax) return false;
+    }
+
+    // Composite entry quality score (0..100)
+    if (config.snapshotEntryQualityScoreMin > 0 || config.snapshotEntryQualityScoreMax > 0) {
+        const candle = data[entryIndex];
+        const bodyPercent = computeBodyPercent(candle);
+        const closeLocation = computeDirectionalCloseLocation(candle, tradeDirection);
+        const oppositeWickPercent = computeOppositeWickPercent(candle, tradeDirection);
+        const rangeAtrMultiple = computeRangeAtrMultiple(candle, snapshotIndicators.atr[entryIndex]);
+        const momentumConsistency = computeMomentumConsistency(data, entryIndex, tradeDirection);
+        const breakQuality = computeBreakQuality(candle, tradeDirection, triggerPrice ?? null);
+        const entryQualityScore = computeEntryQualityScore({
+            bodyPercent,
+            closeLocation,
+            oppositeWickPercent,
+            rangeAtrMultiple,
+            momentumConsistency,
+            breakQuality
+        });
+        if (entryQualityScore === null || entryQualityScore === undefined) return false;
+        if (config.snapshotEntryQualityScoreMin > 0 && entryQualityScore < config.snapshotEntryQualityScoreMin) return false;
+        if (config.snapshotEntryQualityScoreMax > 0 && entryQualityScore > config.snapshotEntryQualityScoreMax) return false;
     }
 
     // Pre-extract volumes once if any volume-derived filter is active

@@ -367,6 +367,83 @@ describe('Backtesting Engine', () => {
         expect(resolved.tradeDirection).to.equal('combined');
     });
 
+    it('scanner settings resolver should coerce string toggles and numeric inputs', () => {
+        const resolved = resolveScannerBacktestSettings({
+            riskSettingsToggle: 'true',
+            riskMode: 'percentage',
+            stopLossPercent: '2.5',
+            takeProfitPercent: '7.5',
+            stopLossEnabled: 'true',
+            takeProfitEnabled: 'false',
+            tradeFilterSettingsToggle: 'true',
+            tradeFilterMode: 'rsi',
+            confirmLookback: '3',
+            volumeSmaPeriod: '21',
+            volumeMultiplier: '1.8',
+            confirmRsiPeriod: '11',
+            confirmRsiBullish: '60',
+            confirmRsiBearish: '40',
+            confirmationStrategiesToggle: 'true',
+            confirmationStrategies: ['sma_crossover'],
+            confirmationStrategyParams: {
+                sma_crossover: {
+                    fastPeriod: '9',
+                    slowPeriod: '21',
+                }
+            },
+            allowSameBarExit: 'true',
+            slippageBps: '12',
+            tradeDirection: 'combined',
+            snapshotAtrFilterToggle: 'true',
+            snapshotAtrPercentMin: '1.1',
+            snapshotAtrPercentMax: '2.2',
+        } as any);
+
+        expect(resolved.stopLossPercent).to.equal(2.5);
+        expect(resolved.takeProfitPercent).to.equal(7.5);
+        expect(resolved.stopLossEnabled).to.equal(true);
+        expect(resolved.takeProfitEnabled).to.equal(false);
+        expect(resolved.tradeFilterMode).to.equal('rsi');
+        expect(resolved.confirmLookback).to.equal(3);
+        expect(resolved.volumeSmaPeriod).to.equal(21);
+        expect(resolved.volumeMultiplier).to.equal(1.8);
+        expect(resolved.rsiPeriod).to.equal(11);
+        expect(resolved.rsiBullish).to.equal(60);
+        expect(resolved.rsiBearish).to.equal(40);
+        expect(resolved.confirmationStrategies).to.deep.equal(['sma_crossover']);
+        expect(resolved.confirmationStrategyParams).to.deep.equal({
+            sma_crossover: {
+                fastPeriod: 9,
+                slowPeriod: 21,
+            }
+        });
+        expect(resolved.allowSameBarExit).to.equal(true);
+        expect(resolved.slippageBps).to.equal(12);
+        expect(resolved.tradeDirection).to.equal('combined');
+        expect(resolved.snapshotAtrPercentMin).to.equal(1.1);
+        expect(resolved.snapshotAtrPercentMax).to.equal(2.2);
+    });
+
+    it('scanner settings resolver should coerce numeric/boolean strings when toggle keys are absent', () => {
+        const resolved = resolveScannerBacktestSettings({
+            executionModel: 'next_close',
+            allowSameBarExit: 'false',
+            slippageBps: '9',
+            takeProfitAtr: '2.75',
+            confirmationStrategyParams: {
+                dynamic_vix_regime: {
+                    lookback: '34'
+                }
+            }
+        } as any);
+
+        expect(resolved.executionModel).to.equal('next_close');
+        expect(resolved.allowSameBarExit).to.equal(false);
+        expect(resolved.slippageBps).to.equal(9);
+        expect(resolved.takeProfitAtr).to.equal(2.75);
+        expect((resolved.confirmationStrategyParams as any)?.dynamic_vix_regime?.lookback).to.equal(34);
+    });
+
     it('scanner open position should reuse TP/SL from backtest open trade state', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
@@ -634,6 +711,106 @@ describe('Backtesting Engine', () => {
         const withoutFilter = runBacktest(data, signals, 10000, 100, 0);
         const withFilter = runBacktest(data, signals, 10000, 100, 0, {
             snapshotBodyPercentMin: 50
+        });
+
+        expect(withoutFilter.totalTrades).to.equal(2);
+        expect(withFilter.totalTrades).to.equal(1);
+    });
+
+    it('should filter entries with weak break quality', () => {
+        const data: OHLCVData[] = [];
+        for (let i = 0; i < 22; i++) {
+            const base = 100 + i * 0.4;
+            data.push({
+                time: (`2023-04-${String(i + 1).padStart(2, '0')}`) as Time,
+                open: base,
+                high: base + 1.5,
+                low: base - 1.5,
+                close: base + 0.6,
+                volume: 1200
+            });
+        }
+
+        // Entry 1: closes below trigger -> poor break quality
+        data[12] = {
+            time: '2023-04-13' as Time,
+            open: 100,
+            high: 103,
+            low: 99,
+            close: 101,
+            volume: 1400
+        };
+
+        // Entry 2: closes strongly above trigger -> high break quality
+        data[16] = {
+            time: '2023-04-17' as Time,
+            open: 104,
+            high: 107,
+            low: 103,
+            close: 106,
+            volume: 1500
+        };
+
+        const signals: Signal[] = [
+            { time: '2023-04-13' as Time, type: 'buy', price: 102 },
+            { time: '2023-04-14' as Time, type: 'sell', price: 101.5 },
+            { time: '2023-04-17' as Time, type: 'buy', price: 104 },
+            { time: '2023-04-19' as Time, type: 'sell', price: 106.5 },
+        ];
+
+        const withoutFilter = runBacktest(data, signals, 10000, 100, 0);
+        const withFilter = runBacktest(data, signals, 10000, 100, 0, {
+            snapshotBreakQualityMin: 55
+        });
+
+        expect(withoutFilter.totalTrades).to.equal(2);
+        expect(withFilter.totalTrades).to.equal(1);
+    });
+
+    it('should filter weak entries by composite entry quality score', () => {
+        const data: OHLCVData[] = [];
+        for (let i = 0; i < 24; i++) {
+            const base = 98 + i * 0.5;
+            data.push({
+                time: (`2023-05-${String(i + 1).padStart(2, '0')}`) as Time,
+                open: base - 0.2,
+                high: base + 1.2,
+                low: base - 1.2,
+                close: base + 0.3,
+                volume: 1250 + (i % 4) * 60
+            });
+        }
+
+        // Weak candle profile (small body, weak close, larger opposite wick)
+        data[12] = {
+            time: '2023-05-13' as Time,
+            open: 104.5,
+            high: 107,
+            low: 103,
+            close: 104.8,
+            volume: 1300
+        };
+
+        // Strong candle profile (large body, strong close, cleaner wick)
+        data[18] = {
+            time: '2023-05-19' as Time,
+            open: 108,
+            high: 111,
+            low: 107.5,
+            close: 110.6,
+            volume: 1700
+        };
+
+        const signals: Signal[] = [
+            { time: '2023-05-13' as Time, type: 'buy', price: 105.8 },
+            { time: '2023-05-15' as Time, type: 'sell', price: 105.2 },
+            { time: '2023-05-19' as Time, type: 'buy', price: 108.8 },
+            { time: '2023-05-22' as Time, type: 'sell', price: 111.2 },
+        ];
+
+        const withoutFilter = runBacktest(data, signals, 10000, 100, 0);
+        const withFilter = runBacktest(data, signals, 10000, 100, 0, {
+            snapshotEntryQualityScoreMin: 65
         });
 
         expect(withoutFilter.totalTrades).to.equal(2);

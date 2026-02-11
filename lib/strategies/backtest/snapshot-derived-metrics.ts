@@ -7,6 +7,9 @@ export const VOLUME_TREND_LONG = 20;
 export const VOLUME_BURST_LOOKBACK = 20;
 export const VOLUME_PRICE_DIV_LOOKBACK = 10;
 export const VOLUME_CONSISTENCY_LOOKBACK = 20;
+export const MOMENTUM_CONSISTENCY_LOOKBACK = 3;
+
+export type EntryDirection = 'long' | 'short';
 
 export function computeTrendEfficiency(
     data: OHLCVData[],
@@ -65,6 +68,148 @@ export function computeWickSkew(candle: OHLCVData): number | null {
     const upperWick = Math.max(0, candle.high - bodyHigh);
     const lowerWick = Math.max(0, bodyLow - candle.low);
     return ((upperWick - lowerWick) / range) * 100;
+}
+
+export function computeDirectionalCloseLocation(candle: OHLCVData, direction: EntryDirection): number | null {
+    const range = candle.high - candle.low;
+    if (!Number.isFinite(range) || range <= 0) return null;
+
+    const score = direction === 'short'
+        ? ((candle.high - candle.close) / range) * 100
+        : ((candle.close - candle.low) / range) * 100;
+    return clamp(score, 0, 100);
+}
+
+export function computeOppositeWickPercent(candle: OHLCVData, direction: EntryDirection): number | null {
+    const range = candle.high - candle.low;
+    if (!Number.isFinite(range) || range <= 0) return null;
+
+    const bodyHigh = Math.max(candle.open, candle.close);
+    const bodyLow = Math.min(candle.open, candle.close);
+    const oppositeWick = direction === 'short'
+        ? Math.max(0, bodyLow - candle.low)
+        : Math.max(0, candle.high - bodyHigh);
+    return clamp((oppositeWick / range) * 100, 0, 100);
+}
+
+export function computeRangeAtrMultiple(
+    candle: OHLCVData,
+    atr: number | null | undefined
+): number | null {
+    if (atr === null || atr === undefined || !Number.isFinite(atr) || atr <= 0) return null;
+    const range = candle.high - candle.low;
+    if (!Number.isFinite(range) || range <= 0) return null;
+    return range / atr;
+}
+
+export function computeMomentumConsistency(
+    data: OHLCVData[],
+    barIndex: number,
+    direction: EntryDirection,
+    lookback: number = MOMENTUM_CONSISTENCY_LOOKBACK
+): number | null {
+    if (lookback <= 0 || barIndex - lookback + 1 < 0) return null;
+
+    let supportive = 0;
+    const start = barIndex - lookback + 1;
+    for (let i = start; i <= barIndex; i++) {
+        const candle = data[i];
+        const supports = direction === 'short'
+            ? candle.close < candle.open
+            : candle.close > candle.open;
+        if (supports) supportive++;
+    }
+
+    return (supportive / lookback) * 100;
+}
+
+export function computeBreakQuality(
+    candle: OHLCVData,
+    direction: EntryDirection,
+    triggerPrice: number | null | undefined
+): number | null {
+    if (triggerPrice === null || triggerPrice === undefined || !Number.isFinite(triggerPrice)) return null;
+    const range = candle.high - candle.low;
+    if (!Number.isFinite(range) || range <= 0) return null;
+
+    // Positive distance means the candle closes beyond the trigger in the entry direction.
+    const directionalDistance = direction === 'short'
+        ? (triggerPrice - candle.close) / range
+        : (candle.close - triggerPrice) / range;
+
+    return clamp(50 + (directionalDistance * 250), 0, 100);
+}
+
+export function computeEntryQualityScore(metrics: {
+    bodyPercent: number | null;
+    closeLocation: number | null;
+    oppositeWickPercent: number | null;
+    rangeAtrMultiple: number | null;
+    momentumConsistency: number | null;
+    breakQuality: number | null;
+}): number | null {
+    const parts: Array<{ value: number; weight: number }> = [];
+
+    const bodyComponent = bodyToQuality(metrics.bodyPercent);
+    if (bodyComponent !== null) parts.push({ value: bodyComponent, weight: 0.2 });
+
+    if (metrics.closeLocation !== null && Number.isFinite(metrics.closeLocation)) {
+        parts.push({ value: clamp(metrics.closeLocation, 0, 100), weight: 0.17 });
+    }
+
+    if (metrics.oppositeWickPercent !== null && Number.isFinite(metrics.oppositeWickPercent)) {
+        const oppositeWickComponent = clamp(100 - (metrics.oppositeWickPercent * 1.8), 0, 100);
+        parts.push({ value: oppositeWickComponent, weight: 0.15 });
+    }
+
+    const rangeComponent = rangeAtrToQuality(metrics.rangeAtrMultiple);
+    if (rangeComponent !== null) parts.push({ value: rangeComponent, weight: 0.16 });
+
+    if (metrics.momentumConsistency !== null && Number.isFinite(metrics.momentumConsistency)) {
+        parts.push({ value: clamp(metrics.momentumConsistency, 0, 100), weight: 0.16 });
+    }
+
+    if (metrics.breakQuality !== null && Number.isFinite(metrics.breakQuality)) {
+        parts.push({ value: clamp(metrics.breakQuality, 0, 100), weight: 0.16 });
+    }
+
+    if (parts.length === 0) return null;
+
+    let weightedSum = 0;
+    let totalWeight = 0;
+    for (const part of parts) {
+        weightedSum += part.value * part.weight;
+        totalWeight += part.weight;
+    }
+    if (totalWeight <= 0) return null;
+    return clamp(weightedSum / totalWeight, 0, 100);
+}
+
+function bodyToQuality(bodyPercent: number | null): number | null {
+    if (bodyPercent === null || !Number.isFinite(bodyPercent)) return null;
+    if (bodyPercent <= 15) return 0;
+    if (bodyPercent >= 75) return 100;
+    return ((bodyPercent - 15) / 60) * 100;
+}
+
+function rangeAtrToQuality(rangeAtrMultiple: number | null): number | null {
+    if (rangeAtrMultiple === null || !Number.isFinite(rangeAtrMultiple) || rangeAtrMultiple <= 0) return null;
+
+    const softLow = 0.25;
+    const idealLow = 0.6;
+    const idealHigh = 1.8;
+    const softHigh = 3;
+
+    if (rangeAtrMultiple >= idealLow && rangeAtrMultiple <= idealHigh) return 100;
+    if (rangeAtrMultiple <= softLow || rangeAtrMultiple >= softHigh) return 0;
+    if (rangeAtrMultiple < idealLow) {
+        return ((rangeAtrMultiple - softLow) / (idealLow - softLow)) * 100;
+    }
+    return ((softHigh - rangeAtrMultiple) / (softHigh - idealHigh)) * 100;
+}
+
+function clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
 }
 
 // ============================================================================
