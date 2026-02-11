@@ -147,8 +147,8 @@ const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const DEFAULT_SUBSCRIPTION_CANDLE_LIMIT = 350;
 const MAX_SUBSCRIPTION_CANDLE_LIMIT = 1000;
-const STATUS_TEXT_MAX = 240;
-const RESPONSE_SNIPPET_MAX = 160;
+const STATUS_TEXT_MAX = 1200;
+const RESPONSE_SNIPPET_MAX = 320;
 const BINANCE_INTERVALS = new Set([
     "1m", "3m", "5m", "15m", "30m",
     "1h", "2h", "4h", "6h", "8h", "12h",
@@ -285,7 +285,16 @@ function safeJsonParse<T>(value: string, fallback: T): T {
 }
 
 function normalizeStatusText(value: string, maxLen = STATUS_TEXT_MAX): string {
-    return value.replace(/\s+/g, " ").trim().slice(0, maxLen);
+    const normalized = value.replace(/\s+/g, " ").trim();
+    if (normalized.length <= maxLen) return normalized;
+    if (maxLen <= 3) return normalized.slice(0, maxLen);
+
+    const truncated = normalized.slice(0, maxLen - 3);
+    const lastSpaceIdx = truncated.lastIndexOf(" ");
+    const compact = lastSpaceIdx > Math.floor((maxLen - 3) * 0.6)
+        ? truncated.slice(0, lastSpaceIdx)
+        : truncated;
+    return `${compact}...`;
 }
 
 function extractExitAlertKey(status: string | null | undefined): string | null {
@@ -301,9 +310,12 @@ function extractExitAlertKey(status: string | null | undefined): string | null {
 }
 
 function composeSubscriptionStatus(baseStatus: string, exitAlertKey: string | null): string {
-    const normalizedBase = normalizeStatusText(baseStatus, Math.max(32, STATUS_TEXT_MAX - 32));
-    if (!exitAlertKey) return normalizedBase;
-    const raw = `${normalizedBase};exit_alert:${exitAlertKey}`;
+    if (!exitAlertKey) return normalizeStatusText(baseStatus, STATUS_TEXT_MAX);
+
+    const suffix = `;exit_alert:${exitAlertKey}`;
+    const baseBudget = Math.max(32, STATUS_TEXT_MAX - suffix.length);
+    const normalizedBase = normalizeStatusText(baseStatus, baseBudget);
+    const raw = `${normalizedBase}${suffix}`;
     return normalizeStatusText(raw, STATUS_TEXT_MAX);
 }
 
@@ -1253,7 +1265,10 @@ async function runSubscription(
             result,
         };
     } catch (error) {
-        const status = normalizeStatusText(error instanceof Error ? error.message : String(error), 200);
+        const status = normalizeStatusText(
+            error instanceof Error ? error.message : String(error),
+            Math.max(32, STATUS_TEXT_MAX - 6)
+        );
         await updateSubscriptionStatus(env, streamId, `error:${status}`);
         return { streamId, status: `error:${status}` };
     }

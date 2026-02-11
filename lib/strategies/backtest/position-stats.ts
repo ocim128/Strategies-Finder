@@ -103,6 +103,7 @@ export function finalizeBacktestMetrics(
     const sharpeRatio = calculateSharpeRatioFromMoments(avgReturn, stdReturn, totalTrades);
 
     return {
+        trades: [],
         netProfit,
         netProfitPercent,
         winRate: winRate * 100,

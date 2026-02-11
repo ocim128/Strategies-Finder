@@ -31,6 +31,91 @@ export class FinderManager {
 		...FinderManager.MULTI_TIMEFRAME_DEFAULTS,
 		'15m', '30m', '1h', '4h', '1d', '1w', '1M'
 	];
+	private static readonly RUST_UNSUPPORTED_SETTINGS_KEYS = [
+		'confirmationStrategies',
+		'confirmationStrategyParams',
+		'executionModel',
+		'allowSameBarExit',
+		'slippageBps',
+		'marketMode',
+		'strategyTimeframeEnabled',
+		'strategyTimeframeMinutes',
+		'captureSnapshots',
+		'snapshotAtrPercentMin',
+		'snapshotAtrPercentMax',
+		'snapshotVolumeRatioMin',
+		'snapshotVolumeRatioMax',
+		'snapshotAdxMin',
+		'snapshotAdxMax',
+		'snapshotEmaDistanceMin',
+		'snapshotEmaDistanceMax',
+		'snapshotRsiMin',
+		'snapshotRsiMax',
+		'snapshotPriceRangePosMin',
+		'snapshotPriceRangePosMax',
+		'snapshotBarsFromHighMax',
+		'snapshotBarsFromLowMax',
+		'snapshotTrendEfficiencyMin',
+		'snapshotTrendEfficiencyMax',
+		'snapshotAtrRegimeRatioMin',
+		'snapshotAtrRegimeRatioMax',
+		'snapshotBodyPercentMin',
+		'snapshotBodyPercentMax',
+		'snapshotWickSkewMin',
+		'snapshotWickSkewMax',
+		'snapshotVolumeTrendMin',
+		'snapshotVolumeTrendMax',
+		'snapshotVolumeBurstMin',
+		'snapshotVolumeBurstMax',
+		'snapshotVolumePriceDivergenceMin',
+		'snapshotVolumePriceDivergenceMax',
+		'snapshotVolumeConsistencyMin',
+		'snapshotVolumeConsistencyMax'
+	] as const;
+	private static readonly SNAPSHOT_FILTER_KEYS = [
+		'snapshotAtrPercentMin',
+		'snapshotAtrPercentMax',
+		'snapshotVolumeRatioMin',
+		'snapshotVolumeRatioMax',
+		'snapshotAdxMin',
+		'snapshotAdxMax',
+		'snapshotEmaDistanceMin',
+		'snapshotEmaDistanceMax',
+		'snapshotRsiMin',
+		'snapshotRsiMax',
+		'snapshotPriceRangePosMin',
+		'snapshotPriceRangePosMax',
+		'snapshotBarsFromHighMax',
+		'snapshotBarsFromLowMax',
+		'snapshotTrendEfficiencyMin',
+		'snapshotTrendEfficiencyMax',
+		'snapshotAtrRegimeRatioMin',
+		'snapshotAtrRegimeRatioMax',
+		'snapshotBodyPercentMin',
+		'snapshotBodyPercentMax',
+		'snapshotWickSkewMin',
+		'snapshotWickSkewMax',
+		'snapshotVolumeTrendMin',
+		'snapshotVolumeTrendMax',
+		'snapshotVolumeBurstMin',
+		'snapshotVolumeBurstMax',
+		'snapshotVolumePriceDivergenceMin',
+		'snapshotVolumePriceDivergenceMax',
+		'snapshotVolumeConsistencyMin',
+		'snapshotVolumeConsistencyMax',
+		'snapshotCloseLocationMin',
+		'snapshotCloseLocationMax',
+		'snapshotOppositeWickMin',
+		'snapshotOppositeWickMax',
+		'snapshotRangeAtrMultipleMin',
+		'snapshotRangeAtrMultipleMax',
+		'snapshotMomentumConsistencyMin',
+		'snapshotMomentumConsistencyMax',
+		'snapshotBreakQualityMin',
+		'snapshotBreakQualityMax',
+		'snapshotEntryQualityScoreMin',
+		'snapshotEntryQualityScoreMax'
+	] as const;
 
 	private isRunning = false;
 	private displayResults: FinderResult[] = [];
@@ -376,6 +461,73 @@ export class FinderManager {
 		return buildSelectionResult(raw, lastDataTime, initialCapital);
 	}
 
+	private sanitizeSettingsForRust<T extends Record<string, unknown>>(settings: T): T {
+		const sanitized = { ...settings } as Record<string, unknown>;
+		for (const key of FinderManager.RUST_UNSUPPORTED_SETTINGS_KEYS) {
+			delete sanitized[key];
+		}
+		return sanitized as T;
+	}
+
+	private hasHeavySnapshotFilters(settings: Record<string, unknown>): boolean {
+		return FinderManager.SNAPSHOT_FILTER_KEYS.some((key) => {
+			const value = settings[key];
+			return typeof value === 'number' && Number.isFinite(value) && value !== 0;
+		});
+	}
+
+	private isResultWorse(a: FinderResult, b: FinderResult, sortPriority: FinderMetric[]): boolean {
+		return this.compareResults(a, b, sortPriority) > 0;
+	}
+
+	private siftUpWorstHeap(heap: FinderResult[], index: number, sortPriority: FinderMetric[]): void {
+		let idx = index;
+		while (idx > 0) {
+			const parent = Math.floor((idx - 1) / 2);
+			if (!this.isResultWorse(heap[idx], heap[parent], sortPriority)) break;
+			[heap[idx], heap[parent]] = [heap[parent], heap[idx]];
+			idx = parent;
+		}
+	}
+
+	private siftDownWorstHeap(heap: FinderResult[], index: number, sortPriority: FinderMetric[]): void {
+		let idx = index;
+		const length = heap.length;
+		while (true) {
+			const left = idx * 2 + 1;
+			const right = left + 1;
+			let worst = idx;
+			if (left < length && this.isResultWorse(heap[left], heap[worst], sortPriority)) {
+				worst = left;
+			}
+			if (right < length && this.isResultWorse(heap[right], heap[worst], sortPriority)) {
+				worst = right;
+			}
+			if (worst === idx) break;
+			[heap[idx], heap[worst]] = [heap[worst], heap[idx]];
+			idx = worst;
+		}
+	}
+
+	private insertIntoTopResultsHeap(
+		heap: FinderResult[],
+		candidate: FinderResult,
+		maxSize: number,
+		sortPriority: FinderMetric[]
+	): void {
+		if (heap.length < maxSize) {
+			heap.push(candidate);
+			this.siftUpWorstHeap(heap, heap.length - 1, sortPriority);
+			return;
+		}
+		if (heap.length === 0) return;
+		if (this.compareResults(candidate, heap[0], sortPriority) >= 0) {
+			return;
+		}
+		heap[0] = candidate;
+		this.siftDownWorstHeap(heap, 0, sortPriority);
+	}
+
 
 
 	/**
@@ -428,46 +580,9 @@ export class FinderManager {
 				this.setStatus('Multi timeframe finder is disabled for mock chart symbols.');
 				return;
 			}
-			const rustSettings: typeof settings = { ...settings };
-			delete (rustSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
-			delete (rustSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
-			delete (rustSettings as { executionModel?: string }).executionModel;
-			delete (rustSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
-			delete (rustSettings as { slippageBps?: number }).slippageBps;
-			delete (rustSettings as { marketMode?: string }).marketMode;
-			delete (rustSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
-			delete (rustSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
-			delete (rustSettings as { captureSnapshots?: boolean }).captureSnapshots;
-			delete (rustSettings as { snapshotAtrPercentMin?: number }).snapshotAtrPercentMin;
-			delete (rustSettings as { snapshotAtrPercentMax?: number }).snapshotAtrPercentMax;
-			delete (rustSettings as { snapshotVolumeRatioMin?: number }).snapshotVolumeRatioMin;
-			delete (rustSettings as { snapshotVolumeRatioMax?: number }).snapshotVolumeRatioMax;
-			delete (rustSettings as { snapshotAdxMin?: number }).snapshotAdxMin;
-			delete (rustSettings as { snapshotAdxMax?: number }).snapshotAdxMax;
-			delete (rustSettings as { snapshotEmaDistanceMin?: number }).snapshotEmaDistanceMin;
-			delete (rustSettings as { snapshotEmaDistanceMax?: number }).snapshotEmaDistanceMax;
-			delete (rustSettings as { snapshotRsiMin?: number }).snapshotRsiMin;
-			delete (rustSettings as { snapshotRsiMax?: number }).snapshotRsiMax;
-			delete (rustSettings as { snapshotPriceRangePosMin?: number }).snapshotPriceRangePosMin;
-			delete (rustSettings as { snapshotPriceRangePosMax?: number }).snapshotPriceRangePosMax;
-			delete (rustSettings as { snapshotBarsFromHighMax?: number }).snapshotBarsFromHighMax;
-			delete (rustSettings as { snapshotBarsFromLowMax?: number }).snapshotBarsFromLowMax;
-			delete (rustSettings as { snapshotTrendEfficiencyMin?: number }).snapshotTrendEfficiencyMin;
-			delete (rustSettings as { snapshotTrendEfficiencyMax?: number }).snapshotTrendEfficiencyMax;
-			delete (rustSettings as { snapshotAtrRegimeRatioMin?: number }).snapshotAtrRegimeRatioMin;
-			delete (rustSettings as { snapshotAtrRegimeRatioMax?: number }).snapshotAtrRegimeRatioMax;
-			delete (rustSettings as { snapshotBodyPercentMin?: number }).snapshotBodyPercentMin;
-			delete (rustSettings as { snapshotBodyPercentMax?: number }).snapshotBodyPercentMax;
-			delete (rustSettings as { snapshotWickSkewMin?: number }).snapshotWickSkewMin;
-			delete (rustSettings as { snapshotWickSkewMax?: number }).snapshotWickSkewMax;
-			delete (rustSettings as { snapshotVolumeTrendMin?: number }).snapshotVolumeTrendMin;
-			delete (rustSettings as { snapshotVolumeTrendMax?: number }).snapshotVolumeTrendMax;
-			delete (rustSettings as { snapshotVolumeBurstMin?: number }).snapshotVolumeBurstMin;
-			delete (rustSettings as { snapshotVolumeBurstMax?: number }).snapshotVolumeBurstMax;
-			delete (rustSettings as { snapshotVolumePriceDivergenceMin?: number }).snapshotVolumePriceDivergenceMin;
-			delete (rustSettings as { snapshotVolumePriceDivergenceMax?: number }).snapshotVolumePriceDivergenceMax;
-			delete (rustSettings as { snapshotVolumeConsistencyMin?: number }).snapshotVolumeConsistencyMin;
-			delete (rustSettings as { snapshotVolumeConsistencyMax?: number }).snapshotVolumeConsistencyMax;
+			const rustSettings = this.sanitizeSettingsForRust(
+				settings as unknown as Record<string, unknown>
+			) as typeof settings;
 
 			const strategies = strategyRegistry.getAll();
 			const selectedStrategyEntries = Object.entries(strategies).filter(([key]) => {
@@ -488,11 +603,25 @@ export class FinderManager {
 			const isLargeDataset = dataSize > 500000;      // 500K+ candles
 			const isVeryLargeDataset = dataSize > 2000000; // 2M+ candles
 			const isExtremeDataset = dataSize > 4000000;   // 4M+ candles (OOM risk zone)
-			const backtestFn = isLargeDataset ? runBacktestCompact : runBacktest;
+			const hasSnapshotFilters = this.hasHeavySnapshotFilters(settings as unknown as Record<string, unknown>);
+			const hasHeavyTradeFiltering = options.tradeFilterEnabled && options.minTrades >= 1000;
+			const isHeavyFinderConfig = hasSnapshotFilters || hasHeavyTradeFiltering || hasConfirmationStrategies;
+			const compactBacktestThreshold = isHeavyFinderConfig ? 50000 : 500000;
+			const shouldUseCompactBacktest = dataSize >= compactBacktestThreshold;
+			const backtestFn = shouldUseCompactBacktest ? runBacktestCompact : runBacktest;
 
 			// Smaller batches for larger datasets - CRITICAL for 5M+ bars
-			// For extreme datasets, process ONE job at a time to minimize peak memory
-			const BATCH_SIZE = isExtremeDataset ? 1 : (isVeryLargeDataset ? 2 : (isLargeDataset ? 8 : 50));
+			// For extreme datasets, process ONE job at a time to minimize peak memory.
+			// For heavy filters on mid-size datasets, reduce batch pressure to keep UI responsive.
+			const BATCH_SIZE = isExtremeDataset
+				? 1
+				: isVeryLargeDataset
+					? 2
+					: isLargeDataset
+						? 8
+						: isHeavyFinderConfig
+							? 4
+							: 20;
 
 			// For very large datasets, warn user
 			if (isExtremeDataset) {
@@ -502,15 +631,24 @@ export class FinderManager {
 				debugLogger.warn(`[Finder] Very large dataset detected (${dataSize} bars). Using memory-efficient mode.`);
 			}
 
-			// Collect parameter combinations WITHOUT generating signals yet
+			// Collect parameter combinations by strategy (lazy batch materialization)
+			type StrategyPlan = {
+				key: string;
+				name: string;
+				strategy: (typeof strategyEntries)[0][1];
+				paramSets: StrategyParams[];
+			};
 			type ParamJob = {
+				id: number;
 				key: string;
 				name: string;
 				params: StrategyParams;
 				backtestSettings: typeof settings;
+				rustBacktestSettings: typeof rustSettings;
 				strategy: (typeof strategyEntries)[0][1];
 			};
-			const allJobs: ParamJob[] = [];
+			const strategyPlans: StrategyPlan[] = [];
+			let totalRuns = 0;
 
 			this.setProgress(true, 5, 'Preparing parameter combinations...');
 
@@ -525,23 +663,69 @@ export class FinderManager {
 					}
 				}
 				const paramSets = this.generateParamSets(extendedDefaults, options);
-				for (const params of paramSets) {
-					const backtestSettings = { ...settings };
-					if (params['stopLossPercent'] !== undefined) {
-						backtestSettings.stopLossPercent = params['stopLossPercent'];
-					}
-					if (params['takeProfitPercent'] !== undefined) {
-						backtestSettings.takeProfitPercent = params['takeProfitPercent'];
-					}
-					allJobs.push({ key, name: strategy.name, params, backtestSettings, strategy });
-				}
+				if (paramSets.length === 0) continue;
+				totalRuns += paramSets.length;
+				strategyPlans.push({ key, name: strategy.name, strategy, paramSets });
 			}
 
-			const totalRuns = allJobs.length;
 			if (totalRuns === 0) {
 				this.setStatus('No valid parameter combinations generated.');
 				return;
 			}
+
+			let planIndex = 0;
+			let paramIndex = 0;
+			let nextJobId = 0;
+			const nextJobBatch = (batchSize: number): ParamJob[] => {
+				const batch: ParamJob[] = [];
+				while (batch.length < batchSize && planIndex < strategyPlans.length) {
+					const plan = strategyPlans[planIndex];
+					if (paramIndex >= plan.paramSets.length) {
+						planIndex++;
+						paramIndex = 0;
+						continue;
+					}
+					const params = plan.paramSets[paramIndex++];
+					const stopLossPercent = params['stopLossPercent'];
+					const takeProfitPercent = params['takeProfitPercent'];
+					const hasOverrides = stopLossPercent !== undefined || takeProfitPercent !== undefined;
+					const backtestSettings = hasOverrides ? { ...settings } : settings;
+					const rustBacktestSettings = hasOverrides ? { ...rustSettings } : rustSettings;
+					if (stopLossPercent !== undefined) {
+						backtestSettings.stopLossPercent = stopLossPercent;
+						rustBacktestSettings.stopLossPercent = stopLossPercent;
+					}
+					if (takeProfitPercent !== undefined) {
+						backtestSettings.takeProfitPercent = takeProfitPercent;
+						rustBacktestSettings.takeProfitPercent = takeProfitPercent;
+					}
+					batch.push({
+						id: nextJobId++,
+						key: plan.key,
+						name: plan.name,
+						params,
+						backtestSettings,
+						rustBacktestSettings,
+						strategy: plan.strategy
+					});
+				}
+				return batch;
+			};
+			let lastUiUpdateAt = 0;
+			const shouldUpdateUi = (force: boolean = false): boolean => {
+				const now = performance.now();
+				if (!force && (now - lastUiUpdateAt) < 120) return false;
+				lastUiUpdateAt = now;
+				return true;
+			};
+			const yieldBudgetMs = isHeavyFinderConfig ? 16 : 28;
+			let sliceStart = performance.now();
+			const maybeYieldByBudget = async (force: boolean = false): Promise<void> => {
+				const now = performance.now();
+				if (!force && (now - sliceStart) < yieldBudgetMs) return;
+				await this.yieldControl();
+				sliceStart = performance.now();
+			};
 
 			if (usingMultiTimeframe) {
 				this.setProgress(true, 8, `Loading ${runTimeframes.length} timeframe datasets...`);
@@ -564,131 +748,128 @@ export class FinderManager {
 				}
 
 				const topResults: FinderResult[] = [];
-				const maxResults = Math.max(options.topN * 2, 50);
+				const maxResults = Math.max(options.topN, 50);
 				let processedCount = 0;
 				let filteredCount = 0;
 				let endpointAdjustedCount = 0;
+				const timeframeLabels = datasets.map(dataset => dataset.interval);
 
-				for (const job of allJobs) {
-					let confirmationParamsForJob: Record<string, StrategyParams> | undefined;
-					if (hasConfirmationStrategies) {
-						if (shouldRandomizeConfirmations) {
-							confirmationParamsForJob = this.buildRandomConfirmationParams(confirmationStrategies, options);
-						} else if (Object.keys(baseConfirmationParams).length > 0) {
-							confirmationParamsForJob = baseConfirmationParams;
-						}
-					}
+				while (processedCount < totalRuns) {
+					const batchJobs = nextJobBatch(BATCH_SIZE);
+					if (batchJobs.length === 0) break;
 
-					const timeframeResults: BacktestResult[] = [];
-
-					for (const dataset of datasets) {
-						try {
-							let signals = job.strategy.execute(dataset.data, job.params);
-							const confirmationStates = !hasConfirmationStrategies
-								? []
-								: shouldRandomizeConfirmations
-									? buildConfirmationStates(dataset.data, confirmationStrategies, confirmationParamsForJob ?? {})
-									: (fixedConfirmationStatesByInterval.get(dataset.interval) ?? []);
-
-							if (confirmationStates.length > 0) {
-								signals = (job.strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined')
-									? filterSignalsWithConfirmationsBoth(
-										dataset.data,
-										signals,
-										confirmationStates,
-										settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none'
-									)
-									: filterSignalsWithConfirmations(
-										dataset.data,
-										signals,
-										confirmationStates,
-										settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none',
-										settings.tradeDirection ?? 'long'
-									);
+					for (const job of batchJobs) {
+						let confirmationParamsForJob: Record<string, StrategyParams> | undefined;
+						if (hasConfirmationStrategies) {
+							if (shouldRandomizeConfirmations) {
+								confirmationParamsForJob = this.buildRandomConfirmationParams(confirmationStrategies, options);
+							} else if (Object.keys(baseConfirmationParams).length > 0) {
+								confirmationParamsForJob = baseConfirmationParams;
 							}
-
-							const evaluation = job.strategy.evaluate?.(dataset.data, job.params, signals);
-							const entryStats = evaluation?.entryStats;
-							const backtestFn = dataset.data.length > 500000 ? runBacktestCompact : runBacktest;
-							const result = job.strategy.metadata?.role === 'entry' && entryStats
-								? buildEntryBacktestResult(entryStats)
-								: backtestFn(
-									dataset.data,
-									signals,
-									initialCapital,
-									positionSize,
-									commission,
-									job.backtestSettings,
-									{ mode: sizingMode, fixedTradeAmount }
-								);
-
-							timeframeResults.push(result);
-
-							signals.length = 0;
-						} catch (error) {
-							console.warn(`[Finder] Multi timeframe run failed for ${job.key} @ ${dataset.interval}:`, error);
 						}
-					}
 
-					if (timeframeResults.length === 0) {
+						const timeframeResults: BacktestResult[] = [];
+
+						for (const dataset of datasets) {
+							try {
+								let signals = job.strategy.execute(dataset.data, job.params);
+								const confirmationStates = !hasConfirmationStrategies
+									? []
+									: shouldRandomizeConfirmations
+										? buildConfirmationStates(dataset.data, confirmationStrategies, confirmationParamsForJob ?? {})
+										: (fixedConfirmationStatesByInterval.get(dataset.interval) ?? []);
+
+								if (confirmationStates.length > 0) {
+									signals = (job.strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined')
+										? filterSignalsWithConfirmationsBoth(
+											dataset.data,
+											signals,
+											confirmationStates,
+											settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none'
+										)
+										: filterSignalsWithConfirmations(
+											dataset.data,
+											signals,
+											confirmationStates,
+											settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none',
+											settings.tradeDirection ?? 'long'
+										);
+								}
+
+								const evaluation = job.strategy.evaluate?.(dataset.data, job.params, signals);
+								const entryStats = evaluation?.entryStats;
+								const timeframeBacktestFn = dataset.data.length >= compactBacktestThreshold ? runBacktestCompact : runBacktest;
+								const result = job.strategy.metadata?.role === 'entry' && entryStats
+									? buildEntryBacktestResult(entryStats)
+									: timeframeBacktestFn(
+										dataset.data,
+										signals,
+										initialCapital,
+										positionSize,
+										commission,
+										job.backtestSettings,
+										{ mode: sizingMode, fixedTradeAmount }
+									);
+
+								timeframeResults.push(result);
+								signals.length = 0;
+							} catch (error) {
+								console.warn(`[Finder] Multi timeframe run failed for ${job.key} @ ${dataset.interval}:`, error);
+							}
+						}
+
+						if (timeframeResults.length > 0) {
+							const aggregatedResult = this.aggregateBacktestResults(timeframeResults, initialCapital);
+							if (options.tradeFilterEnabled && aggregatedResult.totalTrades < options.minTrades) {
+								processedCount++;
+								await maybeYieldByBudget(processedCount === totalRuns);
+								continue;
+							}
+							const lastDataTime = datasets.length === 1
+								? datasets[0].data[datasets[0].data.length - 1]?.time ?? null
+								: null;
+							const adjustment = this.buildSelectionResult(aggregatedResult, lastDataTime, initialCapital);
+							const enriched: FinderResult = {
+								key: job.key,
+								name: job.name,
+								timeframes: timeframeLabels,
+								params: job.params,
+								result: aggregatedResult,
+								selectionResult: adjustment.result,
+								endpointAdjusted: adjustment.adjusted,
+								endpointRemovedTrades: adjustment.removedTrades,
+								confirmationParams: confirmationParamsForJob
+							};
+
+							if (!options.tradeFilterEnabled ||
+								(enriched.selectionResult.totalTrades >= options.minTrades &&
+									enriched.selectionResult.totalTrades <= options.maxTrades)) {
+								filteredCount++;
+								if (enriched.endpointAdjusted) {
+									endpointAdjustedCount++;
+								}
+								this.insertIntoTopResultsHeap(topResults, enriched, maxResults, options.sortPriority);
+							}
+						}
+
 						processedCount++;
-						continue;
-					}
-
-					const aggregatedResult = this.aggregateBacktestResults(timeframeResults, initialCapital);
-					const lastDataTime = datasets.length === 1
-						? datasets[0].data[datasets[0].data.length - 1]?.time ?? null
-						: null;
-					const adjustment = this.buildSelectionResult(aggregatedResult, lastDataTime, initialCapital);
-					const enriched: FinderResult = {
-						key: job.key,
-						name: job.name,
-						timeframes: datasets.map(dataset => dataset.interval),
-						params: job.params,
-						result: aggregatedResult,
-						selectionResult: adjustment.result,
-						endpointAdjusted: adjustment.adjusted,
-						endpointRemovedTrades: adjustment.removedTrades,
-						confirmationParams: confirmationParamsForJob
-					};
-
-					if (options.tradeFilterEnabled) {
-						if (enriched.selectionResult.totalTrades < options.minTrades ||
-							enriched.selectionResult.totalTrades > options.maxTrades) {
-							processedCount++;
-							continue;
+						if (processedCount % 5 === 0 || processedCount === totalRuns) {
+							if (shouldUpdateUi(processedCount === totalRuns)) {
+								const progress = 12 + (processedCount / totalRuns) * 84;
+								this.setProgress(
+									true,
+									progress,
+									`${processedCount}/${totalRuns} runs (${datasets.length} TF)`
+								);
+								this.setStatus(`Processing ${processedCount}/${totalRuns} runs across ${datasets.length} timeframes...`);
+							}
 						}
-					}
-
-
-
-					filteredCount++;
-					if (enriched.endpointAdjusted) {
-						endpointAdjustedCount++;
-					}
-
-
-					topResults.push(enriched);
-					if (topResults.length > maxResults * 2) {
-						topResults.sort((a, b) => this.compareResults(a, b, options.sortPriority));
-						topResults.length = maxResults;
-					}
-
-					processedCount++;
-					if (processedCount % 5 === 0 || processedCount === totalRuns) {
-						const progress = 12 + (processedCount / totalRuns) * 84;
-						this.setProgress(
-							true,
-							progress,
-							`${processedCount}/${totalRuns} runs (${datasets.length} TF)`
-						);
-						this.setStatus(`Processing ${processedCount}/${totalRuns} runs across ${datasets.length} timeframes...`);
-						await this.yieldControl();
+						await maybeYieldByBudget(processedCount === totalRuns);
 					}
 				}
 
-				topResults.sort((a, b) => this.compareResults(a, b, options.sortPriority));
-				const trimmed = topResults.slice(0, Math.max(1, options.topN));
+				const sortedResults = [...topResults].sort((a, b) => this.compareResults(a, b, options.sortPriority));
+				const trimmed = sortedResults.slice(0, Math.max(1, options.topN));
 				this.renderResults(trimmed, options.sortPriority[0]);
 				this.displayResults = trimmed;
 
@@ -698,6 +879,9 @@ export class FinderManager {
 				];
 				if (options.tradeFilterEnabled) {
 					statusParts.push(`${filteredCount} matched`);
+				}
+				if (endpointAdjustedCount > 0) {
+					statusParts.push(`${endpointAdjustedCount} endpoint-adjusted`);
 				}
 				statusParts.push(`${trimmed.length} shown`);
 
@@ -724,9 +908,9 @@ export class FinderManager {
 
 			this.setProgress(true, 10, `Running ${totalRuns} backtests (batch mode)...`);
 
-			// MEMORY OPTIMIZATION: Use a max-heap-like structure to keep only top N results
+			// Keep only top results in a bounded heap to avoid repeated full-array sorting.
 			const topResults: FinderResult[] = [];
-			const maxResults = Math.max(options.topN * 2, 50); // Keep 2x topN as buffer
+			const maxResults = Math.max(options.topN, 50);
 			let processedCount = 0;
 			let filteredCount = 0;
 			let endpointAdjustedCount = 0;
@@ -772,7 +956,7 @@ export class FinderManager {
 				debugLogger.info(`[Finder] Extreme dataset (${(dataSize / 1000000).toFixed(1)}M bars) - using TypeScript ultra-memory mode`);
 				this.setStatus(`Ultra-memory mode: TypeScript only (${(dataSize / 1000000).toFixed(1)}M bars)`);
 			} else if (isVeryLargeDataset && rustAvailable) {
-				this.setStatus(`Using Rust engine with cached data ?`);
+				this.setStatus('Using Rust engine with cached data...');
 			} else if (!rustAvailable && isLargeDataset) {
 				debugLogger.warn(`[Finder] Using TypeScript for ${dataSize} bars (Rust unavailable)`);
 				this.setStatus('Using TypeScript engine...');
@@ -781,6 +965,17 @@ export class FinderManager {
 			// Helper to insert result, maintaining only top N
 			type CandidateResult = Omit<FinderResult, 'selectionResult' | 'endpointAdjusted' | 'endpointRemovedTrades'>;
 			const insertResult = (result: CandidateResult) => {
+				if (options.tradeFilterEnabled) {
+					const rawTrades = result.result.totalTrades;
+					if (rawTrades < options.minTrades) {
+						return;
+					}
+					// If there is no trade list (compact mode), endpoint adjustment cannot reduce trades.
+					if (rawTrades > options.maxTrades && (!Array.isArray(result.result.trades) || result.result.trades.length === 0)) {
+						return;
+					}
+				}
+
 				const adjustment = this.buildSelectionResult(result.result, lastDataTime, initialCapital);
 				const enriched: FinderResult = {
 					...result,
@@ -801,13 +996,7 @@ export class FinderManager {
 					endpointAdjustedCount++;
 				}
 
-				topResults.push(enriched);
-
-				// Periodically trim to avoid unbounded growth
-				if (topResults.length > maxResults * 2) {
-					topResults.sort((a, b) => this.compareResults(a, b, options.sortPriority));
-					topResults.length = maxResults;
-				}
+				this.insertIntoTopResultsHeap(topResults, enriched, maxResults, options.sortPriority);
 			};
 
 			// NOTE: Indicator pre-computation disabled for now
@@ -819,10 +1008,10 @@ export class FinderManager {
 			const totalBatches = Math.ceil(totalRuns / BATCH_SIZE);
 			let batchNum = 0;
 
-			for (let startIdx = 0; startIdx < totalRuns; startIdx += BATCH_SIZE) {
+			while (processedCount < totalRuns) {
+				const batchJobs = nextJobBatch(BATCH_SIZE);
+				if (batchJobs.length === 0) break;
 				batchNum++;
-				const endIdx = Math.min(startIdx + BATCH_SIZE, totalRuns);
-				const batchJobs = allJobs.slice(startIdx, endIdx);
 
 				// MEMORY OPTIMIZATION: For TypeScript-only mode with extreme datasets
 				// Process jobs one at a time, clearing signals immediately after use
@@ -874,17 +1063,20 @@ export class FinderManager {
 							console.warn(`[Finder] Backtest failed for ${job.key}:`, err);
 						}
 
-						// For extreme datasets, yield after EVERY job to allow GC
-						if (isExtremeDataset) {
-							await this.yieldControl();
-						}
+						await maybeYieldByBudget(false);
 					}
 
 					processedCount += batchJobs.length;
-					const progress = 10 + (processedCount / totalRuns) * 85;
-					this.setProgress(true, progress, `Batch ${batchNum}/${totalBatches} (${processedCount}/${totalRuns})`);
-					this.setStatus(`Processing batch ${batchNum}/${totalBatches}...`);
-					await this.yieldControl();
+					if (shouldUpdateUi(processedCount === totalRuns)) {
+						const progress = 10 + (processedCount / totalRuns) * 85;
+						this.setProgress(true, progress, `Batch ${batchNum}/${totalBatches} (${processedCount}/${totalRuns})`);
+						if (isExtremeDataset) {
+							this.setStatus(`Processing ${batchNum}/${totalBatches} (ultra-memory mode)...`);
+						} else {
+							this.setStatus(`Processing batch ${batchNum}/${totalBatches}...`);
+						}
+					}
+					await maybeYieldByBudget(true);
 					continue;
 				}
 
@@ -896,6 +1088,7 @@ export class FinderManager {
 					params: StrategyParams;
 					signals: Signal[];
 					backtestSettings: typeof settings;
+					rustBacktestSettings: typeof rustSettings;
 					confirmationParams?: Record<string, StrategyParams>;
 				};
 				const batchRuns: PreparedRun[] = [];
@@ -923,8 +1116,7 @@ export class FinderManager {
 					}
 				};
 
-				for (let jobOffset = 0; jobOffset < batchJobs.length; jobOffset++) {
-					const job = batchJobs[jobOffset];
+				for (const job of batchJobs) {
 					try {
 						const confirmationContext = buildConfirmationContext();
 						let signals = job.strategy.execute(state.ohlcvData, job.params);
@@ -959,17 +1151,19 @@ export class FinderManager {
 							continue;
 						}
 						batchRuns.push({
-							id: `${job.key}-${startIdx + jobOffset}`,
+							id: `${job.key}-${job.id}`,
 							key: job.key,
 							name: job.name,
 							params: job.params,
 							signals,
 							backtestSettings: job.backtestSettings,
+							rustBacktestSettings: job.rustBacktestSettings,
 							confirmationParams: confirmationContext.params
 						});
 					} catch (err) {
 						console.warn(`[Finder] Signal generation failed for ${job.key}:`, err);
 					}
+					await maybeYieldByBudget(false);
 				}
 
 				if (batchRuns.length === 0) {
@@ -979,53 +1173,11 @@ export class FinderManager {
 
 				// Run backtests for this batch
 				if (rustAvailable) {
-					const batchItems = batchRuns.map((run) => {
-						const itemSettings = { ...run.backtestSettings };
-						delete (itemSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
-						delete (itemSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
-						delete (itemSettings as { executionModel?: string }).executionModel;
-						delete (itemSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
-						delete (itemSettings as { slippageBps?: number }).slippageBps;
-						delete (itemSettings as { marketMode?: string }).marketMode;
-						delete (itemSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
-						delete (itemSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
-						delete (itemSettings as { captureSnapshots?: boolean }).captureSnapshots;
-						delete (itemSettings as { snapshotAtrPercentMin?: number }).snapshotAtrPercentMin;
-						delete (itemSettings as { snapshotAtrPercentMax?: number }).snapshotAtrPercentMax;
-						delete (itemSettings as { snapshotVolumeRatioMin?: number }).snapshotVolumeRatioMin;
-						delete (itemSettings as { snapshotVolumeRatioMax?: number }).snapshotVolumeRatioMax;
-						delete (itemSettings as { snapshotAdxMin?: number }).snapshotAdxMin;
-						delete (itemSettings as { snapshotAdxMax?: number }).snapshotAdxMax;
-						delete (itemSettings as { snapshotEmaDistanceMin?: number }).snapshotEmaDistanceMin;
-						delete (itemSettings as { snapshotEmaDistanceMax?: number }).snapshotEmaDistanceMax;
-						delete (itemSettings as { snapshotRsiMin?: number }).snapshotRsiMin;
-						delete (itemSettings as { snapshotRsiMax?: number }).snapshotRsiMax;
-						delete (itemSettings as { snapshotPriceRangePosMin?: number }).snapshotPriceRangePosMin;
-						delete (itemSettings as { snapshotPriceRangePosMax?: number }).snapshotPriceRangePosMax;
-						delete (itemSettings as { snapshotBarsFromHighMax?: number }).snapshotBarsFromHighMax;
-						delete (itemSettings as { snapshotBarsFromLowMax?: number }).snapshotBarsFromLowMax;
-						delete (itemSettings as { snapshotTrendEfficiencyMin?: number }).snapshotTrendEfficiencyMin;
-						delete (itemSettings as { snapshotTrendEfficiencyMax?: number }).snapshotTrendEfficiencyMax;
-						delete (itemSettings as { snapshotAtrRegimeRatioMin?: number }).snapshotAtrRegimeRatioMin;
-						delete (itemSettings as { snapshotAtrRegimeRatioMax?: number }).snapshotAtrRegimeRatioMax;
-						delete (itemSettings as { snapshotBodyPercentMin?: number }).snapshotBodyPercentMin;
-						delete (itemSettings as { snapshotBodyPercentMax?: number }).snapshotBodyPercentMax;
-						delete (itemSettings as { snapshotWickSkewMin?: number }).snapshotWickSkewMin;
-						delete (itemSettings as { snapshotWickSkewMax?: number }).snapshotWickSkewMax;
-						delete (itemSettings as { snapshotVolumeTrendMin?: number }).snapshotVolumeTrendMin;
-						delete (itemSettings as { snapshotVolumeTrendMax?: number }).snapshotVolumeTrendMax;
-						delete (itemSettings as { snapshotVolumeBurstMin?: number }).snapshotVolumeBurstMin;
-						delete (itemSettings as { snapshotVolumeBurstMax?: number }).snapshotVolumeBurstMax;
-						delete (itemSettings as { snapshotVolumePriceDivergenceMin?: number }).snapshotVolumePriceDivergenceMin;
-						delete (itemSettings as { snapshotVolumePriceDivergenceMax?: number }).snapshotVolumePriceDivergenceMax;
-						delete (itemSettings as { snapshotVolumeConsistencyMin?: number }).snapshotVolumeConsistencyMin;
-						delete (itemSettings as { snapshotVolumeConsistencyMax?: number }).snapshotVolumeConsistencyMax;
-						return {
-							id: run.id,
-							signals: run.signals,
-							settings: itemSettings,
-						};
-					});
+					const batchItems = batchRuns.map((run) => ({
+						id: run.id,
+						signals: run.signals,
+						settings: run.rustBacktestSettings,
+					}));
 
 					try {
 						// Use cached endpoint for large datasets, regular for smaller ones
@@ -1099,22 +1251,22 @@ export class FinderManager {
 				processedCount += batchJobs.length;
 
 				// Update progress and yield control
-				const progress = 10 + (processedCount / totalRuns) * 85;
-				this.setProgress(true, progress, `Batch ${batchNum}/${totalBatches} (${processedCount}/${totalRuns})`);
-				if (isExtremeDataset) {
-					this.setStatus(`Processing ${batchNum}/${totalBatches} (ultra-memory mode)...`);
-				} else {
-					this.setStatus(`Processing batch ${batchNum}/${totalBatches}...`);
+				if (shouldUpdateUi(processedCount === totalRuns)) {
+					const progress = 10 + (processedCount / totalRuns) * 85;
+					this.setProgress(true, progress, `Batch ${batchNum}/${totalBatches} (${processedCount}/${totalRuns})`);
+					if (isExtremeDataset) {
+						this.setStatus(`Processing ${batchNum}/${totalBatches} (ultra-memory mode)...`);
+					} else {
+						this.setStatus(`Processing batch ${batchNum}/${totalBatches}...`);
+					}
 				}
 
 				// Yield more frequently for large datasets to prevent freeze and allow GC
-				await this.yieldControl();
+				await maybeYieldByBudget(true);
 			}
 
-			// Final sort
-			topResults.sort((a, b) => this.compareResults(a, b, options.sortPriority));
-
-			const trimmed = topResults.slice(0, Math.max(1, options.topN));
+			const sortedResults = [...topResults].sort((a, b) => this.compareResults(a, b, options.sortPriority));
+			const trimmed = sortedResults.slice(0, Math.max(1, options.topN));
 			this.renderResults(trimmed, options.sortPriority[0]);
 			this.displayResults = trimmed;
 

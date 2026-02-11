@@ -3,9 +3,58 @@ import type { FinderResult } from "../types/finder";
 import type { StrategyParams } from "../types/strategies";
 
 export class FinderUI {
+    private listElement: HTMLElement | null = null;
+    private copyButton: HTMLButtonElement | null = null;
+    private progressContainer: HTMLElement | null = null;
+    private progressFill: HTMLElement | null = null;
+    private progressLabel: HTMLElement | null = null;
+    private statusElement: HTMLElement | null = null;
+    private lastProgressActive: boolean | null = null;
+    private lastProgressPercent = -1;
+    private lastProgressText = "";
+    private lastStatusText = "";
+
+    private getListElement(): HTMLElement {
+        if (!this.listElement) {
+            this.listElement = getRequiredElement("finderList");
+        }
+        return this.listElement;
+    }
+
+    private getCopyButton(): HTMLButtonElement | null {
+        if (!this.copyButton) {
+            this.copyButton = document.getElementById("finderCopyTopResults") as HTMLButtonElement | null;
+        }
+        return this.copyButton;
+    }
+
+    private getProgressElements(): { container: HTMLElement; fill: HTMLElement; label: HTMLElement } {
+        if (!this.progressContainer) {
+            this.progressContainer = getRequiredElement("finderProgress");
+        }
+        if (!this.progressFill) {
+            this.progressFill = getRequiredElement("finderProgressFill");
+        }
+        if (!this.progressLabel) {
+            this.progressLabel = getRequiredElement("finderProgressText");
+        }
+        return {
+            container: this.progressContainer,
+            fill: this.progressFill,
+            label: this.progressLabel
+        };
+    }
+
+    private getStatusElement(): HTMLElement {
+        if (!this.statusElement) {
+            this.statusElement = getRequiredElement("finderStatus");
+        }
+        return this.statusElement;
+    }
+
     public renderResults(results: FinderResult[]): void {
-        const list = getRequiredElement("finderList");
-        const copyButton = document.getElementById("finderCopyTopResults") as HTMLButtonElement | null;
+        const list = this.getListElement();
+        const copyButton = this.getCopyButton();
         list.innerHTML = "";
 
         if (results.length === 0) {
@@ -17,6 +66,7 @@ export class FinderUI {
         setVisible("finderEmpty", false);
         if (copyButton) copyButton.disabled = false;
 
+        const fragment = document.createDocumentFragment();
         results.forEach((item, index) => {
             const row = document.createElement("div");
             row.className = "finder-row";
@@ -65,21 +115,34 @@ export class FinderUI {
             row.appendChild(rank);
             row.appendChild(main);
             row.appendChild(button);
-            list.appendChild(row);
+            fragment.appendChild(row);
         });
+        list.appendChild(fragment);
     }
 
     public setProgress(active: boolean, percent: number, text: string): void {
-        const container = getRequiredElement("finderProgress");
-        const fill = getRequiredElement("finderProgressFill");
-        const label = getRequiredElement("finderProgressText");
+        const normalizedPercent = Math.min(100, Math.max(0, percent));
+        if (
+            this.lastProgressActive === active &&
+            Math.abs(this.lastProgressPercent - normalizedPercent) < 0.01 &&
+            this.lastProgressText === text
+        ) {
+            return;
+        }
+
+        const { container, fill, label } = this.getProgressElements();
         container.classList.toggle("active", active);
-        fill.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+        fill.style.width = `${normalizedPercent}%`;
         label.textContent = text;
+        this.lastProgressActive = active;
+        this.lastProgressPercent = normalizedPercent;
+        this.lastProgressText = text;
     }
 
     public setStatus(text: string): void {
-        getRequiredElement("finderStatus").textContent = text;
+        if (this.lastStatusText === text) return;
+        this.getStatusElement().textContent = text;
+        this.lastStatusText = text;
     }
 
     private createMetricChip(text: string): HTMLSpanElement {

@@ -19,6 +19,34 @@ function safeJsonParse<T>(raw: string, fallback: T): T {
     }
 }
 
+function appendTextCell(
+    row: HTMLTableRowElement,
+    text: string,
+    options?: { className?: string; title?: string }
+): HTMLTableCellElement {
+    const td = document.createElement('td');
+    td.textContent = text;
+    if (options?.className) td.className = options.className;
+    if (options?.title) td.title = options.title;
+    row.appendChild(td);
+    return td;
+}
+
+function createActionButton(
+    action: 'run' | 'disable',
+    streamId: string,
+    title: string,
+    label: string
+): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-secondary btn-compact alert-action-btn';
+    btn.dataset.action = action;
+    btn.dataset.stream = streamId;
+    btn.title = title;
+    btn.textContent = label;
+    return btn;
+}
+
 function renderSubscriptions(subs: AlertSubscription[]) {
     const emptyState = el('alertEmptyState');
     const tableWrapper = el('alertTableWrapper');
@@ -46,18 +74,24 @@ function renderSubscriptions(subs: AlertSubscription[]) {
         const statusClass = lastStatus.startsWith('new_entry') ? 'alert-status-new'
             : lastStatus.startsWith('error') ? 'alert-status-error'
                 : '';
+        appendTextCell(tr, sub.stream_id.length > 20 ? sub.stream_id.slice(0, 20) + '...' : sub.stream_id, {
+            className: 'alert-cell-stream',
+            title: sub.stream_id,
+        });
+        appendTextCell(tr, sub.symbol);
+        appendTextCell(tr, sub.interval);
+        appendTextCell(tr, sub.strategy_key);
+        appendTextCell(tr, `${telegramTag} ${exitTag} ${lastStatus}`, {
+            className: statusClass,
+            title: lastStatus,
+        });
 
-        tr.innerHTML = `
-            <td title="${sub.stream_id}" class="alert-cell-stream">${sub.stream_id.length > 20 ? sub.stream_id.slice(0, 20) + '...' : sub.stream_id}</td>
-            <td>${sub.symbol}</td>
-            <td>${sub.interval}</td>
-            <td>${sub.strategy_key}</td>
-            <td class="${statusClass}">${telegramTag} ${exitTag} ${lastStatus}</td>
-            <td class="alert-cell-actions">
-                <button class="btn btn-secondary btn-compact alert-action-btn" data-action="run" data-stream="${sub.stream_id}" title="Run Now">Run</button>
-                <button class="btn btn-secondary btn-compact alert-action-btn" data-action="disable" data-stream="${sub.stream_id}" title="Disable">Disable</button>
-            </td>
-        `;
+        const actionsTd = document.createElement('td');
+        actionsTd.className = 'alert-cell-actions';
+        actionsTd.appendChild(createActionButton('run', sub.stream_id, 'Run Now', 'Run'));
+        actionsTd.appendChild(createActionButton('disable', sub.stream_id, 'Disable', 'Disable'));
+        tr.appendChild(actionsTd);
+
         tbody.appendChild(tr);
     });
 
@@ -95,18 +129,18 @@ function renderSignalHistory(signals: AlertSignalRecord[]) {
     tbody.innerHTML = '';
     signals.forEach((sig) => {
         const payload = safeJsonParse<Record<string, unknown>>(sig.payload_json, {});
-        const tp = payload.takeProfitPrice != null ? Number(payload.takeProfitPrice).toFixed(2) : '-';
-        const sl = payload.stopLossPrice != null ? Number(payload.stopLossPrice).toFixed(2) : '-';
+        const tpValue = Number(payload.takeProfitPrice);
+        const slValue = Number(payload.stopLossPrice);
+        const tp = Number.isFinite(tpValue) ? tpValue.toFixed(2) : '-';
+        const sl = Number.isFinite(slValue) ? slValue.toFixed(2) : '-';
         const dirClass = sig.direction === 'long' ? 'alert-dir-long' : 'alert-dir-short';
 
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td>${new Date(sig.signal_time * 1000).toISOString().replace('T', ' ').slice(0, 19)}</td>
-            <td class="${dirClass}">${sig.direction.toUpperCase()}</td>
-            <td>${sig.signal_price}</td>
-            <td>${tp}</td>
-            <td>${sl}</td>
-        `;
+        appendTextCell(tr, new Date(sig.signal_time * 1000).toISOString().replace('T', ' ').slice(0, 19));
+        appendTextCell(tr, sig.direction.toUpperCase(), { className: dirClass });
+        appendTextCell(tr, String(sig.signal_price));
+        appendTextCell(tr, tp);
+        appendTextCell(tr, sl);
         tbody.appendChild(tr);
     });
 }
@@ -174,6 +208,7 @@ async function quickSubscribe() {
     const backtestSettings = settingsManager.getBacktestSettings();
 
     try {
+        const parsedFreshness = Number.parseInt(freshnessBarsInput?.value ?? '1', 10);
         const result = await alertService.upsertSubscription({
             symbol,
             interval,
@@ -182,7 +217,7 @@ async function quickSubscribe() {
             backtestSettings,
             notifyTelegram: telegramToggle?.checked ?? true,
             notifyExit: exitToggle?.checked ?? false,
-            freshnessBars: parseInt(freshnessBarsInput?.value ?? '1', 10) || 1,
+            freshnessBars: Number.isFinite(parsedFreshness) ? Math.max(0, parsedFreshness) : 1,
         });
         uiManager.showToast(`Subscribed: ${result.streamId}`, 'success');
         await refreshSubscriptions();
@@ -196,7 +231,9 @@ async function handleTableAction(action: string, streamId: string) {
         if (action === 'run') {
             uiManager.showToast(`Running ${streamId}...`, 'info');
             const result = await alertService.runNow(streamId, true);
-            uiManager.showToast(`${streamId}: ${result.status}`, 'success');
+            const status = result.status ?? 'unknown';
+            const toastType = status.startsWith('error') ? 'error' : status === 'new_entry' ? 'success' : 'info';
+            uiManager.showToast(`${streamId}: ${status}`, toastType);
             await refreshSubscriptions();
         } else if (action === 'disable') {
             await alertService.disableSubscription(streamId);

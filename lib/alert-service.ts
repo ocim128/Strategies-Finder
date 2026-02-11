@@ -78,15 +78,59 @@ function requireUrl(): string {
     return url;
 }
 
+function truncateText(value: string, maxLen = 320): string {
+    const trimmed = value.trim();
+    if (trimmed.length <= maxLen) return trimmed;
+    return `${trimmed.slice(0, Math.max(0, maxLen - 3))}...`;
+}
+
+function extractErrorMessage(body: unknown): string | null {
+    if (!body || typeof body !== 'object') return null;
+    const message = (body as Record<string, unknown>).error;
+    return typeof message === 'string' && message.trim() ? message.trim() : null;
+}
+
+async function readApiBody(res: Response): Promise<{ json: unknown | null; text: string | null }> {
+    const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
+
+    if (contentType.includes('application/json')) {
+        try {
+            return { json: await res.json(), text: null };
+        } catch {
+            return { json: null, text: null };
+        }
+    }
+
+    try {
+        const text = await res.text();
+        if (!text.trim()) return { json: null, text: null };
+        try {
+            return { json: JSON.parse(text), text };
+        } catch {
+            return { json: null, text };
+        }
+    } catch {
+        return { json: null, text: null };
+    }
+}
+
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     const base = requireUrl();
     const res = await fetch(`${base}${path}`, {
         ...options,
         headers: { 'content-type': 'application/json', ...(options?.headers ?? {}) },
     });
-    const json = await res.json();
-    if (!res.ok) throw new Error((json as Record<string, string>).error ?? `HTTP ${res.status}`);
-    return json as T;
+    const body = await readApiBody(res);
+
+    if (!res.ok) {
+        const message = extractErrorMessage(body.json)
+            ?? (body.text ? truncateText(body.text) : null)
+            ?? `HTTP ${res.status}`;
+        throw new Error(message);
+    }
+
+    if (body.json !== null) return body.json as T;
+    throw new Error(`Unexpected non-JSON response (HTTP ${res.status}).`);
 }
 
 // Public API
@@ -100,8 +144,16 @@ export const alertService = {
         try {
             const base = requireUrl();
             const res = await fetch(`${base}/health`);
-            const json = (await res.json()) as Record<string, unknown>;
-            return { ok: !!json.ok };
+            const body = await readApiBody(res);
+            if (!res.ok) {
+                return {
+                    ok: false,
+                    error: extractErrorMessage(body.json)
+                        ?? (body.text ? truncateText(body.text) : `HTTP ${res.status}`),
+                };
+            }
+            const json = body.json as Record<string, unknown> | null;
+            return { ok: !!json?.ok };
         } catch (err) {
             return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
