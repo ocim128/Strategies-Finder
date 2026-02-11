@@ -185,6 +185,10 @@ function hasUiToggleSettings(raw: Record<string, unknown>): boolean {
         'snapshotRangeAtrFilterToggle',
         'snapshotMomentumFilterToggle',
         'snapshotBreakQualityFilterToggle',
+        'snapshotTf60PerfFilterToggle',
+        'snapshotTf90PerfFilterToggle',
+        'snapshotTf120PerfFilterToggle',
+        'snapshotTf480PerfFilterToggle',
         'snapshotEntryQualityScoreFilterToggle',
     ].some((key) => key in raw);
 }
@@ -310,6 +314,14 @@ export function resolveScannerBacktestSettings(settings?: BacktestSettings): Bac
         snapshotMomentumConsistencyMax: readSnapshotValue(raw, 'snapshotMomentumFilterToggle', 'snapshotMomentumConsistencyMax'),
         snapshotBreakQualityMin: readSnapshotValue(raw, 'snapshotBreakQualityFilterToggle', 'snapshotBreakQualityMin'),
         snapshotBreakQualityMax: readSnapshotValue(raw, 'snapshotBreakQualityFilterToggle', 'snapshotBreakQualityMax'),
+        snapshotTf60PerfMin: readSnapshotValue(raw, 'snapshotTf60PerfFilterToggle', 'snapshotTf60PerfMin'),
+        snapshotTf60PerfMax: readSnapshotValue(raw, 'snapshotTf60PerfFilterToggle', 'snapshotTf60PerfMax'),
+        snapshotTf90PerfMin: readSnapshotValue(raw, 'snapshotTf90PerfFilterToggle', 'snapshotTf90PerfMin'),
+        snapshotTf90PerfMax: readSnapshotValue(raw, 'snapshotTf90PerfFilterToggle', 'snapshotTf90PerfMax'),
+        snapshotTf120PerfMin: readSnapshotValue(raw, 'snapshotTf120PerfFilterToggle', 'snapshotTf120PerfMin'),
+        snapshotTf120PerfMax: readSnapshotValue(raw, 'snapshotTf120PerfFilterToggle', 'snapshotTf120PerfMax'),
+        snapshotTf480PerfMin: readSnapshotValue(raw, 'snapshotTf480PerfFilterToggle', 'snapshotTf480PerfMin'),
+        snapshotTf480PerfMax: readSnapshotValue(raw, 'snapshotTf480PerfFilterToggle', 'snapshotTf480PerfMax'),
         snapshotEntryQualityScoreMin: readSnapshotValue(raw, 'snapshotEntryQualityScoreFilterToggle', 'snapshotEntryQualityScoreMin'),
         snapshotEntryQualityScoreMax: readSnapshotValue(raw, 'snapshotEntryQualityScoreFilterToggle', 'snapshotEntryQualityScoreMax'),
     };
@@ -689,6 +701,4 @@ export class ScannerEngine {
 
 // Export singleton instance
 export const scannerEngine = new ScannerEngine();
-
-
 

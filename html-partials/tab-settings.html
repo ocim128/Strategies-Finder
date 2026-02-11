@@ -493,107 +493,110 @@
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <div class="param-row snapshot-filter-row">
                 <div class="param-group" style="flex: 1;">
                     <div
                         style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">EMA Distance % Range</label>
+                        <label class="param-label" style="margin-bottom: 0;">TF 60m Perf %
+                            <span class="tooltip-icon"
+                                data-tooltip="Directional performance over prior 60 minutes. Positive means aligned with entry direction.">&#9432;</span>
+                        </label>
                         <label class="section-toggle" style="transform: scale(0.8);"
-                            aria-label="Toggle EMA Distance filter">
-                            <input type="checkbox" id="snapshotEmaFilterToggle">
+                            aria-label="Toggle TF 60m performance filter">
+                            <input type="checkbox" id="snapshotTf60PerfFilterToggle">
                             <span class="section-toggle-track"></span>
                         </label>
                     </div>
                     <div style="display: flex; gap: 8px;">
                         <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotEmaDistanceMin" value="0" step="0.5">
+                            <input type="number" class="param-input" id="snapshotTf60PerfMin" value="0" step="0.1">
                             <div class="param-hint">Min %</div>
                         </div>
                         <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotEmaDistanceMax" value="0" step="0.5">
+                            <input type="number" class="param-input" id="snapshotTf60PerfMax" value="0" step="0.1">
+                            <div class="param-hint">Max %</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">TF 90m Perf %
+                            <span class="tooltip-icon"
+                                data-tooltip="Directional performance over prior 90 minutes. Useful when 90m is your weaker context.">&#9432;</span>
+                        </label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle TF 90m performance filter">
+                            <input type="checkbox" id="snapshotTf90PerfFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotTf90PerfMin" value="0" step="0.1">
+                            <div class="param-hint">Min %</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotTf90PerfMax" value="0" step="0.1">
                             <div class="param-hint">Max %</div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- RSI Filter -->
             <div class="param-row snapshot-filter-row">
                 <div class="param-group" style="flex: 1;">
                     <div
                         style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">RSI Range</label>
-                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle RSI filter">
-                            <input type="checkbox" id="snapshotRsiFilterToggle">
+                        <label class="param-label" style="margin-bottom: 0;">TF 120m Perf %
+                            <span class="tooltip-icon"
+                                data-tooltip="Directional performance over prior 120 minutes. This is often the highest-quality context.">&#9432;</span>
+                        </label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle TF 120m performance filter">
+                            <input type="checkbox" id="snapshotTf120PerfFilterToggle">
                             <span class="section-toggle-track"></span>
                         </label>
                     </div>
                     <div style="display: flex; gap: 8px;">
                         <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotRsiMin" value="0" min="0" max="100"
-                                step="1">
-                            <div class="param-hint">Min RSI</div>
+                            <input type="number" class="param-input" id="snapshotTf120PerfMin" value="0" step="0.1">
+                            <div class="param-hint">Min %</div>
                         </div>
                         <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotRsiMax" value="0" min="0" max="100"
-                                step="1">
-                            <div class="param-hint">Max RSI</div>
+                            <input type="number" class="param-input" id="snapshotTf120PerfMax" value="0" step="0.1">
+                            <div class="param-hint">Max %</div>
                         </div>
                     </div>
                 </div>
                 <div class="param-group" style="flex: 1;">
                     <div
                         style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Price Range Pos</label>
+                        <label class="param-label" style="margin-bottom: 0;">TF 480m Perf %
+                            <span class="tooltip-icon"
+                                data-tooltip="Directional performance over prior 480 minutes (8h). Higher-timeframe trend quality filter.">&#9432;</span>
+                        </label>
                         <label class="section-toggle" style="transform: scale(0.8);"
-                            aria-label="Toggle Price Range Pos filter">
-                            <input type="checkbox" id="snapshotPriceRangePosFilterToggle">
+                            aria-label="Toggle TF 480m performance filter">
+                            <input type="checkbox" id="snapshotTf480PerfFilterToggle">
                             <span class="section-toggle-track"></span>
                         </label>
                     </div>
                     <div style="display: flex; gap: 8px;">
                         <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotPriceRangePosMin" value="0" min="0"
-                                max="1" step="0.05">
-                            <div class="param-hint">Min (0-1)</div>
+                            <input type="number" class="param-input" id="snapshotTf480PerfMin" value="0" step="0.1">
+                            <div class="param-hint">Min %</div>
                         </div>
                         <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotPriceRangePosMax" value="0" min="0"
-                                max="1" step="0.05">
-                            <div class="param-hint">Max (0-1)</div>
+                            <input type="number" class="param-input" id="snapshotTf480PerfMax" value="0" step="0.1">
+                            <div class="param-hint">Max %</div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Bars from High/Low Filter -->
-            <div class="param-row snapshot-filter-row">
-                <div class="param-group" style="flex: 1;">
-                    <div
-                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Max Bars from High</label>
-                        <label class="section-toggle" style="transform: scale(0.8);"
-                            aria-label="Toggle Bars from High filter">
-                            <input type="checkbox" id="snapshotBarsFromHighFilterToggle">
-                            <span class="section-toggle-track"></span>
-                        </label>
-                    </div>
-                    <input type="number" class="param-input" id="snapshotBarsFromHighMax" value="0" min="0" step="1">
-                    <div class="param-hint">Only enter within N bars of recent 20-bar high.</div>
-                </div>
-                <div class="param-group" style="flex: 1;">
-                    <div
-                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Max Bars from Low</label>
-                        <label class="section-toggle" style="transform: scale(0.8);"
-                            aria-label="Toggle Bars from Low filter">
-                            <input type="checkbox" id="snapshotBarsFromLowFilterToggle">
-                            <span class="section-toggle-track"></span>
-                        </label>
-                    </div>
-                    <input type="number" class="param-input" id="snapshotBarsFromLowMax" value="0" min="0" step="1">
-                    <div class="param-hint">Only enter within N bars of recent 20-bar low.</div>
-                </div>
-            </div>
 
             <!-- Advanced Snapshot Filters -->
             <div class="param-row snapshot-filter-row">
@@ -669,85 +672,8 @@
                         </div>
                     </div>
                 </div>
-                <div class="param-group" style="flex: 1;">
-                    <div
-                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Wick Skew %</label>
-                        <label class="section-toggle" style="transform: scale(0.8);"
-                            aria-label="Toggle Wick Skew filter">
-                            <input type="checkbox" id="snapshotWickSkewFilterToggle">
-                            <span class="section-toggle-track"></span>
-                        </label>
-                    </div>
-                    <div style="display: flex; gap: 8px;">
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotWickSkewMin" value="0" min="-100"
-                                max="100" step="1">
-                            <div class="param-hint">Min (-100 to 100)</div>
-                        </div>
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotWickSkewMax" value="0" min="-100"
-                                max="100" step="1">
-                            <div class="param-hint">Max (-100 to 100)</div>
-                        </div>
-                    </div>
-                </div>
             </div>
 
-            <div class="param-row snapshot-filter-row">
-                <div class="param-group" style="flex: 1;">
-                    <div
-                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Close Location %
-                            <span class="tooltip-icon"
-                                data-tooltip="Directional close quality in candle range. Higher = stronger close in trade direction.">&#9432;</span>
-                        </label>
-                        <label class="section-toggle" style="transform: scale(0.8);"
-                            aria-label="Toggle Close Location filter">
-                            <input type="checkbox" id="snapshotCloseLocationFilterToggle">
-                            <span class="section-toggle-track"></span>
-                        </label>
-                    </div>
-                    <div style="display: flex; gap: 8px;">
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotCloseLocationMin" value="0" min="0"
-                                max="100" step="1">
-                            <div class="param-hint">Min %</div>
-                        </div>
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotCloseLocationMax" value="0" min="0"
-                                max="100" step="1">
-                            <div class="param-hint">Max %</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="param-group" style="flex: 1;">
-                    <div
-                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Opposite Wick %
-                            <span class="tooltip-icon"
-                                data-tooltip="Wick against entry direction as % of range. Lower is cleaner.">&#9432;</span>
-                        </label>
-                        <label class="section-toggle" style="transform: scale(0.8);"
-                            aria-label="Toggle Opposite Wick filter">
-                            <input type="checkbox" id="snapshotOppositeWickFilterToggle">
-                            <span class="section-toggle-track"></span>
-                        </label>
-                    </div>
-                    <div style="display: flex; gap: 8px;">
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotOppositeWickMin" value="0" min="0"
-                                max="100" step="1">
-                            <div class="param-hint">Min %</div>
-                        </div>
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotOppositeWickMax" value="0" min="0"
-                                max="100" step="1">
-                            <div class="param-hint">Max %</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
             <div class="param-row snapshot-filter-row">
                 <div class="param-group" style="flex: 1;">
@@ -776,88 +702,8 @@
                         </div>
                     </div>
                 </div>
-                <div class="param-group" style="flex: 1;">
-                    <div
-                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Momentum Consistency %
-                            <span class="tooltip-icon"
-                                data-tooltip="Directional consistency over recent candles. 66% ~= 2 of last 3 support entry.">&#9432;</span>
-                        </label>
-                        <label class="section-toggle" style="transform: scale(0.8);"
-                            aria-label="Toggle Momentum Consistency filter">
-                            <input type="checkbox" id="snapshotMomentumFilterToggle">
-                            <span class="section-toggle-track"></span>
-                        </label>
-                    </div>
-                    <div style="display: flex; gap: 8px;">
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotMomentumConsistencyMin" value="0"
-                                min="0" max="100" step="1">
-                            <div class="param-hint">Min %</div>
-                        </div>
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotMomentumConsistencyMax" value="0"
-                                min="0" max="100" step="1">
-                            <div class="param-hint">Max %</div>
-                        </div>
-                    </div>
-                </div>
             </div>
 
-            <div class="param-row snapshot-filter-row">
-                <div class="param-group" style="flex: 1;">
-                    <div
-                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Break Quality
-                            <span class="tooltip-icon"
-                                data-tooltip="Requires directional close-through quality beyond trigger level.">&#9432;</span>
-                        </label>
-                        <label class="section-toggle" style="transform: scale(0.8);"
-                            aria-label="Toggle Break Quality filter">
-                            <input type="checkbox" id="snapshotBreakQualityFilterToggle">
-                            <span class="section-toggle-track"></span>
-                        </label>
-                    </div>
-                    <div style="display: flex; gap: 8px;">
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotBreakQualityMin" value="0" min="0"
-                                max="100" step="1">
-                            <div class="param-hint">Min score</div>
-                        </div>
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotBreakQualityMax" value="0" min="0"
-                                max="100" step="1">
-                            <div class="param-hint">Max score</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="param-group" style="flex: 1;">
-                    <div
-                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Entry Quality Score
-                            <span class="tooltip-icon"
-                                data-tooltip="Composite 0-100 score from candle quality factors.">&#9432;</span>
-                        </label>
-                        <label class="section-toggle" style="transform: scale(0.8);"
-                            aria-label="Toggle Entry Quality Score filter">
-                            <input type="checkbox" id="snapshotEntryQualityScoreFilterToggle">
-                            <span class="section-toggle-track"></span>
-                        </label>
-                    </div>
-                    <div style="display: flex; gap: 8px;">
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotEntryQualityScoreMin" value="0" min="0"
-                                max="100" step="1">
-                            <div class="param-hint">Min score</div>
-                        </div>
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotEntryQualityScoreMax" value="0" min="0"
-                                max="100" step="1">
-                            <div class="param-hint">Max score</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
             <!-- Volume Trend & Volume Burst Filters -->
             <div class="param-row snapshot-filter-row">
@@ -913,61 +759,6 @@
                 </div>
             </div>
 
-            <!-- Vol-Price Agreement & Volume Consistency Filters -->
-            <div class="param-row snapshot-filter-row">
-                <div class="param-group" style="flex: 1;">
-                    <div
-                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Vol-Price Agreement
-                            <span class="tooltip-icon"
-                                data-tooltip="Price-volume direction agreement (-1 to 1). Negative = divergence, weak move.">&#9432;</span>
-                        </label>
-                        <label class="section-toggle" style="transform: scale(0.8);"
-                            aria-label="Toggle Vol-Price Divergence filter">
-                            <input type="checkbox" id="snapshotVolumePriceDivergenceFilterToggle">
-                            <span class="section-toggle-track"></span>
-                        </label>
-                    </div>
-                    <div style="display: flex; gap: 8px;">
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotVolumePriceDivergenceMin" value="0"
-                                min="-1" max="1" step="0.1">
-                            <div class="param-hint">Min (-1 to 1)</div>
-                        </div>
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotVolumePriceDivergenceMax" value="0"
-                                min="-1" max="1" step="0.1">
-                            <div class="param-hint">Max (-1 to 1)</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="param-group" style="flex: 1;">
-                    <div
-                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Volume Consistency
-                            <span class="tooltip-icon"
-                                data-tooltip="Volume stability (CV). Lower = steady institutional flow, higher = erratic retail noise.">&#9432;</span>
-                        </label>
-                        <label class="section-toggle" style="transform: scale(0.8);"
-                            aria-label="Toggle Volume Consistency filter">
-                            <input type="checkbox" id="snapshotVolumeConsistencyFilterToggle">
-                            <span class="section-toggle-track"></span>
-                        </label>
-                    </div>
-                    <div style="display: flex; gap: 8px;">
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotVolumeConsistencyMin" value="0" min="0"
-                                step="0.1">
-                            <div class="param-hint">Min CV</div>
-                        </div>
-                        <div style="flex: 1;">
-                            <input type="number" class="param-input" id="snapshotVolumeConsistencyMax" value="0" min="0"
-                                step="0.1">
-                            <div class="param-hint">Max CV</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
     </div>
 

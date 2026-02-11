@@ -70,7 +70,27 @@ export class FinderManager {
 		'snapshotVolumePriceDivergenceMin',
 		'snapshotVolumePriceDivergenceMax',
 		'snapshotVolumeConsistencyMin',
-		'snapshotVolumeConsistencyMax'
+		'snapshotVolumeConsistencyMax',
+		'snapshotCloseLocationMin',
+		'snapshotCloseLocationMax',
+		'snapshotOppositeWickMin',
+		'snapshotOppositeWickMax',
+		'snapshotRangeAtrMultipleMin',
+		'snapshotRangeAtrMultipleMax',
+		'snapshotMomentumConsistencyMin',
+		'snapshotMomentumConsistencyMax',
+		'snapshotBreakQualityMin',
+		'snapshotBreakQualityMax',
+		'snapshotTf60PerfMin',
+		'snapshotTf60PerfMax',
+		'snapshotTf90PerfMin',
+		'snapshotTf90PerfMax',
+		'snapshotTf120PerfMin',
+		'snapshotTf120PerfMax',
+		'snapshotTf480PerfMin',
+		'snapshotTf480PerfMax',
+		'snapshotEntryQualityScoreMin',
+		'snapshotEntryQualityScoreMax'
 	] as const;
 	private static readonly SNAPSHOT_FILTER_KEYS = [
 		'snapshotAtrPercentMin',
@@ -113,6 +133,14 @@ export class FinderManager {
 		'snapshotMomentumConsistencyMax',
 		'snapshotBreakQualityMin',
 		'snapshotBreakQualityMax',
+		'snapshotTf60PerfMin',
+		'snapshotTf60PerfMax',
+		'snapshotTf90PerfMin',
+		'snapshotTf90PerfMax',
+		'snapshotTf120PerfMin',
+		'snapshotTf120PerfMax',
+		'snapshotTf480PerfMin',
+		'snapshotTf480PerfMax',
 		'snapshotEntryQualityScoreMin',
 		'snapshotEntryQualityScoreMax'
 	] as const;

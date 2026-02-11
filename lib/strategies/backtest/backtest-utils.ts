@@ -95,6 +95,14 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         snapshotMomentumConsistencyMax: clamp(toNumberOr(settings?.snapshotMomentumConsistencyMax, 0), 0, 100),
         snapshotBreakQualityMin: clamp(toNumberOr(settings?.snapshotBreakQualityMin, 0), 0, 100),
         snapshotBreakQualityMax: clamp(toNumberOr(settings?.snapshotBreakQualityMax, 0), 0, 100),
+        snapshotTf60PerfMin: toNumberOr(settings?.snapshotTf60PerfMin, 0),
+        snapshotTf60PerfMax: toNumberOr(settings?.snapshotTf60PerfMax, 0),
+        snapshotTf90PerfMin: toNumberOr(settings?.snapshotTf90PerfMin, 0),
+        snapshotTf90PerfMax: toNumberOr(settings?.snapshotTf90PerfMax, 0),
+        snapshotTf120PerfMin: toNumberOr(settings?.snapshotTf120PerfMin, 0),
+        snapshotTf120PerfMax: toNumberOr(settings?.snapshotTf120PerfMax, 0),
+        snapshotTf480PerfMin: toNumberOr(settings?.snapshotTf480PerfMin, 0),
+        snapshotTf480PerfMax: toNumberOr(settings?.snapshotTf480PerfMax, 0),
         snapshotEntryQualityScoreMin: clamp(toNumberOr(settings?.snapshotEntryQualityScoreMin, 0), 0, 100),
         snapshotEntryQualityScoreMax: clamp(toNumberOr(settings?.snapshotEntryQualityScoreMax, 0), 0, 100),
     };
@@ -227,6 +235,10 @@ export function needsSnapshotIndicators(config: NormalizedSettings, captureSnaps
         config.snapshotRangeAtrMultipleMin > 0 || config.snapshotRangeAtrMultipleMax > 0 ||
         config.snapshotMomentumConsistencyMin > 0 || config.snapshotMomentumConsistencyMax > 0 ||
         config.snapshotBreakQualityMin > 0 || config.snapshotBreakQualityMax > 0 ||
+        config.snapshotTf60PerfMin !== 0 || config.snapshotTf60PerfMax !== 0 ||
+        config.snapshotTf90PerfMin !== 0 || config.snapshotTf90PerfMax !== 0 ||
+        config.snapshotTf120PerfMin !== 0 || config.snapshotTf120PerfMax !== 0 ||
+        config.snapshotTf480PerfMin !== 0 || config.snapshotTf480PerfMax !== 0 ||
         config.snapshotEntryQualityScoreMin > 0 || config.snapshotEntryQualityScoreMax > 0;
 }
 

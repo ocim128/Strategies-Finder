@@ -147,6 +147,14 @@ export class BacktestService {
             delete (rustSettings as { snapshotMomentumConsistencyMax?: number }).snapshotMomentumConsistencyMax;
             delete (rustSettings as { snapshotBreakQualityMin?: number }).snapshotBreakQualityMin;
             delete (rustSettings as { snapshotBreakQualityMax?: number }).snapshotBreakQualityMax;
+            delete (rustSettings as { snapshotTf60PerfMin?: number }).snapshotTf60PerfMin;
+            delete (rustSettings as { snapshotTf60PerfMax?: number }).snapshotTf60PerfMax;
+            delete (rustSettings as { snapshotTf90PerfMin?: number }).snapshotTf90PerfMin;
+            delete (rustSettings as { snapshotTf90PerfMax?: number }).snapshotTf90PerfMax;
+            delete (rustSettings as { snapshotTf120PerfMin?: number }).snapshotTf120PerfMin;
+            delete (rustSettings as { snapshotTf120PerfMax?: number }).snapshotTf120PerfMax;
+            delete (rustSettings as { snapshotTf480PerfMin?: number }).snapshotTf480PerfMin;
+            delete (rustSettings as { snapshotTf480PerfMax?: number }).snapshotTf480PerfMax;
             delete (rustSettings as { snapshotEntryQualityScoreMin?: number }).snapshotEntryQualityScoreMin;
             delete (rustSettings as { snapshotEntryQualityScoreMax?: number }).snapshotEntryQualityScoreMax;
 
@@ -377,6 +385,14 @@ export class BacktestService {
             snapshotMomentumConsistencyMax: this.isToggleEnabled('snapshotMomentumFilterToggle', false) ? this.readNumberInput('snapshotMomentumConsistencyMax', 0) : 0,
             snapshotBreakQualityMin: this.isToggleEnabled('snapshotBreakQualityFilterToggle', false) ? this.readNumberInput('snapshotBreakQualityMin', 0) : 0,
             snapshotBreakQualityMax: this.isToggleEnabled('snapshotBreakQualityFilterToggle', false) ? this.readNumberInput('snapshotBreakQualityMax', 0) : 0,
+            snapshotTf60PerfMin: this.isToggleEnabled('snapshotTf60PerfFilterToggle', false) ? this.readNumberInput('snapshotTf60PerfMin', 0) : 0,
+            snapshotTf60PerfMax: this.isToggleEnabled('snapshotTf60PerfFilterToggle', false) ? this.readNumberInput('snapshotTf60PerfMax', 0) : 0,
+            snapshotTf90PerfMin: this.isToggleEnabled('snapshotTf90PerfFilterToggle', false) ? this.readNumberInput('snapshotTf90PerfMin', 0) : 0,
+            snapshotTf90PerfMax: this.isToggleEnabled('snapshotTf90PerfFilterToggle', false) ? this.readNumberInput('snapshotTf90PerfMax', 0) : 0,
+            snapshotTf120PerfMin: this.isToggleEnabled('snapshotTf120PerfFilterToggle', false) ? this.readNumberInput('snapshotTf120PerfMin', 0) : 0,
+            snapshotTf120PerfMax: this.isToggleEnabled('snapshotTf120PerfFilterToggle', false) ? this.readNumberInput('snapshotTf120PerfMax', 0) : 0,
+            snapshotTf480PerfMin: this.isToggleEnabled('snapshotTf480PerfFilterToggle', false) ? this.readNumberInput('snapshotTf480PerfMin', 0) : 0,
+            snapshotTf480PerfMax: this.isToggleEnabled('snapshotTf480PerfFilterToggle', false) ? this.readNumberInput('snapshotTf480PerfMax', 0) : 0,
             snapshotEntryQualityScoreMin: this.isToggleEnabled('snapshotEntryQualityScoreFilterToggle', false) ? this.readNumberInput('snapshotEntryQualityScoreMin', 0) : 0,
             snapshotEntryQualityScoreMax: this.isToggleEnabled('snapshotEntryQualityScoreFilterToggle', false) ? this.readNumberInput('snapshotEntryQualityScoreMax', 0) : 0,
         };
@@ -458,6 +474,14 @@ export class BacktestService {
             (settings.snapshotMomentumConsistencyMax ?? 0) > 0 ||
             (settings.snapshotBreakQualityMin ?? 0) > 0 ||
             (settings.snapshotBreakQualityMax ?? 0) > 0 ||
+            (settings.snapshotTf60PerfMin ?? 0) !== 0 ||
+            (settings.snapshotTf60PerfMax ?? 0) !== 0 ||
+            (settings.snapshotTf90PerfMin ?? 0) !== 0 ||
+            (settings.snapshotTf90PerfMax ?? 0) !== 0 ||
+            (settings.snapshotTf120PerfMin ?? 0) !== 0 ||
+            (settings.snapshotTf120PerfMax ?? 0) !== 0 ||
+            (settings.snapshotTf480PerfMin ?? 0) !== 0 ||
+            (settings.snapshotTf480PerfMax ?? 0) !== 0 ||
             (settings.snapshotEntryQualityScoreMin ?? 0) > 0 ||
             (settings.snapshotEntryQualityScoreMax ?? 0) > 0;
         return executionModel !== 'signal_close' || slippageBps > 0 || !allowSameBarExit || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined' || hasSnapshotFilters;

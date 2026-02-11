@@ -8,6 +8,10 @@ export const VOLUME_BURST_LOOKBACK = 20;
 export const VOLUME_PRICE_DIV_LOOKBACK = 10;
 export const VOLUME_CONSISTENCY_LOOKBACK = 20;
 export const MOMENTUM_CONSISTENCY_LOOKBACK = 3;
+export const TF_60_LOOKBACK_MINUTES = 60;
+export const TF_90_LOOKBACK_MINUTES = 90;
+export const TF_120_LOOKBACK_MINUTES = 120;
+export const TF_480_LOOKBACK_MINUTES = 480;
 
 export type EntryDirection = 'long' | 'short';
 
@@ -185,6 +189,27 @@ export function computeEntryQualityScore(metrics: {
     return clamp(weightedSum / totalWeight, 0, 100);
 }
 
+export function computeDirectionalPerformancePercent(
+    data: OHLCVData[],
+    barIndex: number,
+    direction: EntryDirection,
+    lookbackMinutes: number
+): number | null {
+    if (lookbackMinutes <= 0 || barIndex <= 0 || barIndex >= data.length) return null;
+
+    const currentClose = data[barIndex].close;
+    if (!Number.isFinite(currentClose) || currentClose <= 0) return null;
+
+    const lookbackIndex = findLookbackIndexByMinutes(data, barIndex, lookbackMinutes);
+    if (lookbackIndex === null || lookbackIndex < 0 || lookbackIndex >= barIndex) return null;
+
+    const baseClose = data[lookbackIndex].close;
+    if (!Number.isFinite(baseClose) || baseClose <= 0) return null;
+
+    const rawReturnPct = ((currentClose - baseClose) / baseClose) * 100;
+    return direction === 'short' ? -rawReturnPct : rawReturnPct;
+}
+
 function bodyToQuality(bodyPercent: number | null): number | null {
     if (bodyPercent === null || !Number.isFinite(bodyPercent)) return null;
     if (bodyPercent <= 15) return 0;
@@ -210,6 +235,40 @@ function rangeAtrToQuality(rangeAtrMultiple: number | null): number | null {
 
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
+}
+
+function findLookbackIndexByMinutes(
+    data: OHLCVData[],
+    barIndex: number,
+    lookbackMinutes: number
+): number | null {
+    const currentMs = timeToMs(data[barIndex].time);
+    if (currentMs === null) return null;
+
+    const targetMs = currentMs - (lookbackMinutes * 60_000);
+    for (let i = barIndex - 1; i >= 0; i--) {
+        const barMs = timeToMs(data[i].time);
+        if (barMs === null) continue;
+        if (barMs <= targetMs) return i;
+    }
+    return null;
+}
+
+function timeToMs(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        // Lightweight Charts intraday numeric times are usually seconds.
+        return value > 9_999_999_999 ? Math.floor(value) : Math.floor(value * 1000);
+    }
+    if (typeof value === 'string') {
+        const parsed = Date.parse(value);
+        return Number.isNaN(parsed) ? null : parsed;
+    }
+    if (value && typeof value === 'object' && 'year' in (value as Record<string, unknown>)) {
+        const day = value as { year: number; month: number; day: number };
+        if (!Number.isFinite(day.year) || !Number.isFinite(day.month) || !Number.isFinite(day.day)) return null;
+        return Date.UTC(day.year, day.month - 1, day.day);
+    }
+    return null;
 }
 
 // ============================================================================

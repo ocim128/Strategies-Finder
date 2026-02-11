@@ -146,12 +146,32 @@ const FEATURE_LABELS: Record<keyof TradeSnapshot, string> = {
     rangeAtrMultiple: 'Range / ATR',
     momentumConsistency: 'Momentum Consistency %',
     breakQuality: 'Break Quality',
+    tf60Perf: 'TF 60m Perf %',
+    tf90Perf: 'TF 90m Perf %',
+    tf120Perf: 'TF 120m Perf %',
+    tf480Perf: 'TF 480m Perf %',
     entryQualityScore: 'Entry Quality Score',
     volumeTrend: 'Volume Trend',
     volumeBurst: 'Volume Burst',
     volumePriceDivergence: 'Vol-Price Agreement',
     volumeConsistency: 'Volume Consistency'
 };
+
+const EXCLUDED_ENTRY_QUALITY_FEATURES = new Set<keyof TradeSnapshot>([
+    'barsFromHigh',
+    'barsFromLow',
+    'volumeConsistency',
+    'momentumConsistency',
+    'wickSkew',
+    'volumePriceDivergence',
+    'entryQualityScore',
+    'closeLocation',
+    'oppositeWickPercent',
+    'emaDistance',
+    'breakQuality',
+    'rsi',
+    'priceRangePos',
+]);
 
 /**
  * Some settings only support a single filter direction in the UI/runtime.
@@ -175,6 +195,10 @@ const FEATURE_DIRECTIONS: Record<keyof TradeSnapshot, ('above' | 'below')[]> = {
     rangeAtrMultiple: ['above', 'below'],
     momentumConsistency: ['above'],
     breakQuality: ['above'],
+    tf60Perf: ['above', 'below'],
+    tf90Perf: ['above', 'below'],
+    tf120Perf: ['above', 'below'],
+    tf480Perf: ['above', 'below'],
     entryQualityScore: ['above'],
     volumeTrend: ['above', 'below'],
     volumeBurst: ['above', 'below'],
@@ -199,7 +223,8 @@ export function analyzeTradePatterns(trades: Trade[], options: AnalysisOptions =
 
     if (wins.length < 2 || losses.length < 2) return []; // Need both sides
 
-    const features = Object.keys(FEATURE_LABELS) as (keyof TradeSnapshot)[];
+    const features = (Object.keys(FEATURE_LABELS) as (keyof TradeSnapshot)[])
+        .filter(feature => !EXCLUDED_ENTRY_QUALITY_FEATURES.has(feature));
     const results: FeatureAnalysis[] = [];
 
     for (const feature of features) {

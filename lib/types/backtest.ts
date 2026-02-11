@@ -77,6 +77,14 @@ export interface NormalizedSettings {
     snapshotMomentumConsistencyMax: number;
     snapshotBreakQualityMin: number;
     snapshotBreakQualityMax: number;
+    snapshotTf60PerfMin: number;
+    snapshotTf60PerfMax: number;
+    snapshotTf90PerfMin: number;
+    snapshotTf90PerfMax: number;
+    snapshotTf120PerfMin: number;
+    snapshotTf120PerfMax: number;
+    snapshotTf480PerfMin: number;
+    snapshotTf480PerfMax: number;
     snapshotEntryQualityScoreMin: number;
     snapshotEntryQualityScoreMax: number;
 }

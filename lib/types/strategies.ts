@@ -48,6 +48,14 @@ export interface TradeSnapshot {
     momentumConsistency?: number | null;
     /** Breakout close quality score (0-100, higher = cleaner close beyond trigger) */
     breakQuality?: number | null;
+    /** Directional performance over prior 60 minutes (%, positive = aligned with entry) */
+    tf60Perf?: number | null;
+    /** Directional performance over prior 90 minutes (%, positive = aligned with entry) */
+    tf90Perf?: number | null;
+    /** Directional performance over prior 120 minutes (%, positive = aligned with entry) */
+    tf120Perf?: number | null;
+    /** Directional performance over prior 480 minutes (%, positive = aligned with entry) */
+    tf480Perf?: number | null;
     /** Composite entry quality score (0-100) from candle-based sub-metrics */
     entryQualityScore?: number | null;
     /** Volume trend ratio (short EMA / long EMA, >1 = building) */
@@ -244,6 +252,22 @@ export interface BacktestSettings {
     snapshotBreakQualityMin?: number;
     /** Max break-quality score (0-100, 0 = disabled) */
     snapshotBreakQualityMax?: number;
+    /** Min 60m directional performance % (0 = disabled) */
+    snapshotTf60PerfMin?: number;
+    /** Max 60m directional performance % (0 = disabled) */
+    snapshotTf60PerfMax?: number;
+    /** Min 90m directional performance % (0 = disabled) */
+    snapshotTf90PerfMin?: number;
+    /** Max 90m directional performance % (0 = disabled) */
+    snapshotTf90PerfMax?: number;
+    /** Min 120m directional performance % (0 = disabled) */
+    snapshotTf120PerfMin?: number;
+    /** Max 120m directional performance % (0 = disabled) */
+    snapshotTf120PerfMax?: number;
+    /** Min 480m directional performance % (0 = disabled) */
+    snapshotTf480PerfMin?: number;
+    /** Max 480m directional performance % (0 = disabled) */
+    snapshotTf480PerfMax?: number;
     /** Min composite entry-quality score (0-100, 0 = disabled) */
     snapshotEntryQualityScoreMin?: number;
     /** Max composite entry-quality score (0-100, 0 = disabled) */

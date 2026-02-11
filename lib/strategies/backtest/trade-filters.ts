@@ -2,10 +2,15 @@
 import { OHLCVData } from '../../types/index';
 import { NormalizedSettings, IndicatorSeries } from '../../types/backtest';
 import {
+    TF_60_LOOKBACK_MINUTES,
+    TF_90_LOOKBACK_MINUTES,
+    TF_120_LOOKBACK_MINUTES,
+    TF_480_LOOKBACK_MINUTES,
     computeAtrRegimeRatio,
     computeBreakQuality,
     computeBodyPercent,
     computeDirectionalCloseLocation,
+    computeDirectionalPerformancePercent,
     computeEntryQualityScore,
     computeRelativeVolumeBurst,
     computeMomentumConsistency,
@@ -234,6 +239,14 @@ export function passesSnapshotFilters(
         config.snapshotMomentumConsistencyMax > 0 ||
         config.snapshotBreakQualityMin > 0 ||
         config.snapshotBreakQualityMax > 0 ||
+        config.snapshotTf60PerfMin !== 0 ||
+        config.snapshotTf60PerfMax !== 0 ||
+        config.snapshotTf90PerfMin !== 0 ||
+        config.snapshotTf90PerfMax !== 0 ||
+        config.snapshotTf120PerfMin !== 0 ||
+        config.snapshotTf120PerfMax !== 0 ||
+        config.snapshotTf480PerfMin !== 0 ||
+        config.snapshotTf480PerfMax !== 0 ||
         config.snapshotEntryQualityScoreMin > 0 ||
         config.snapshotEntryQualityScoreMax > 0;
     if (!hasAny || !snapshotIndicators) return true;
@@ -391,6 +404,32 @@ export function passesSnapshotFilters(
         if (breakQuality === null || breakQuality === undefined) return false;
         if (config.snapshotBreakQualityMin > 0 && breakQuality < config.snapshotBreakQualityMin) return false;
         if (config.snapshotBreakQualityMax > 0 && breakQuality > config.snapshotBreakQualityMax) return false;
+    }
+
+    // MTF directional-performance filters (%, positive = aligned with entry direction)
+    if (config.snapshotTf60PerfMin !== 0 || config.snapshotTf60PerfMax !== 0) {
+        const tf60Perf = computeDirectionalPerformancePercent(data, entryIndex, tradeDirection, TF_60_LOOKBACK_MINUTES);
+        if (tf60Perf === null || tf60Perf === undefined) return false;
+        if (config.snapshotTf60PerfMin !== 0 && tf60Perf < config.snapshotTf60PerfMin) return false;
+        if (config.snapshotTf60PerfMax !== 0 && tf60Perf > config.snapshotTf60PerfMax) return false;
+    }
+    if (config.snapshotTf90PerfMin !== 0 || config.snapshotTf90PerfMax !== 0) {
+        const tf90Perf = computeDirectionalPerformancePercent(data, entryIndex, tradeDirection, TF_90_LOOKBACK_MINUTES);
+        if (tf90Perf === null || tf90Perf === undefined) return false;
+        if (config.snapshotTf90PerfMin !== 0 && tf90Perf < config.snapshotTf90PerfMin) return false;
+        if (config.snapshotTf90PerfMax !== 0 && tf90Perf > config.snapshotTf90PerfMax) return false;
+    }
+    if (config.snapshotTf120PerfMin !== 0 || config.snapshotTf120PerfMax !== 0) {
+        const tf120Perf = computeDirectionalPerformancePercent(data, entryIndex, tradeDirection, TF_120_LOOKBACK_MINUTES);
+        if (tf120Perf === null || tf120Perf === undefined) return false;
+        if (config.snapshotTf120PerfMin !== 0 && tf120Perf < config.snapshotTf120PerfMin) return false;
+        if (config.snapshotTf120PerfMax !== 0 && tf120Perf > config.snapshotTf120PerfMax) return false;
+    }
+    if (config.snapshotTf480PerfMin !== 0 || config.snapshotTf480PerfMax !== 0) {
+        const tf480Perf = computeDirectionalPerformancePercent(data, entryIndex, tradeDirection, TF_480_LOOKBACK_MINUTES);
+        if (tf480Perf === null || tf480Perf === undefined) return false;
+        if (config.snapshotTf480PerfMin !== 0 && tf480Perf < config.snapshotTf480PerfMin) return false;
+        if (config.snapshotTf480PerfMax !== 0 && tf480Perf > config.snapshotTf480PerfMax) return false;
     }
 
     // Composite entry quality score (0..100)

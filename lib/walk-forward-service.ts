@@ -568,6 +568,26 @@ class WalkForwardService {
         delete (rustSettings as { snapshotVolumePriceDivergenceMax?: number }).snapshotVolumePriceDivergenceMax;
         delete (rustSettings as { snapshotVolumeConsistencyMin?: number }).snapshotVolumeConsistencyMin;
         delete (rustSettings as { snapshotVolumeConsistencyMax?: number }).snapshotVolumeConsistencyMax;
+        delete (rustSettings as { snapshotCloseLocationMin?: number }).snapshotCloseLocationMin;
+        delete (rustSettings as { snapshotCloseLocationMax?: number }).snapshotCloseLocationMax;
+        delete (rustSettings as { snapshotOppositeWickMin?: number }).snapshotOppositeWickMin;
+        delete (rustSettings as { snapshotOppositeWickMax?: number }).snapshotOppositeWickMax;
+        delete (rustSettings as { snapshotRangeAtrMultipleMin?: number }).snapshotRangeAtrMultipleMin;
+        delete (rustSettings as { snapshotRangeAtrMultipleMax?: number }).snapshotRangeAtrMultipleMax;
+        delete (rustSettings as { snapshotMomentumConsistencyMin?: number }).snapshotMomentumConsistencyMin;
+        delete (rustSettings as { snapshotMomentumConsistencyMax?: number }).snapshotMomentumConsistencyMax;
+        delete (rustSettings as { snapshotBreakQualityMin?: number }).snapshotBreakQualityMin;
+        delete (rustSettings as { snapshotBreakQualityMax?: number }).snapshotBreakQualityMax;
+        delete (rustSettings as { snapshotTf60PerfMin?: number }).snapshotTf60PerfMin;
+        delete (rustSettings as { snapshotTf60PerfMax?: number }).snapshotTf60PerfMax;
+        delete (rustSettings as { snapshotTf90PerfMin?: number }).snapshotTf90PerfMin;
+        delete (rustSettings as { snapshotTf90PerfMax?: number }).snapshotTf90PerfMax;
+        delete (rustSettings as { snapshotTf120PerfMin?: number }).snapshotTf120PerfMin;
+        delete (rustSettings as { snapshotTf120PerfMax?: number }).snapshotTf120PerfMax;
+        delete (rustSettings as { snapshotTf480PerfMin?: number }).snapshotTf480PerfMin;
+        delete (rustSettings as { snapshotTf480PerfMax?: number }).snapshotTf480PerfMax;
+        delete (rustSettings as { snapshotEntryQualityScoreMin?: number }).snapshotEntryQualityScoreMin;
+        delete (rustSettings as { snapshotEntryQualityScoreMax?: number }).snapshotEntryQualityScoreMax;
         return rustSettings;
     }
 

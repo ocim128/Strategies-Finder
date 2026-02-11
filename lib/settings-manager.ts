@@ -124,6 +124,18 @@ export interface BacktestSettingsData {
     snapshotBreakQualityFilterToggle: boolean;
     snapshotBreakQualityMin: number;
     snapshotBreakQualityMax: number;
+    snapshotTf60PerfFilterToggle: boolean;
+    snapshotTf60PerfMin: number;
+    snapshotTf60PerfMax: number;
+    snapshotTf90PerfFilterToggle: boolean;
+    snapshotTf90PerfMin: number;
+    snapshotTf90PerfMax: number;
+    snapshotTf120PerfFilterToggle: boolean;
+    snapshotTf120PerfMin: number;
+    snapshotTf120PerfMax: number;
+    snapshotTf480PerfFilterToggle: boolean;
+    snapshotTf480PerfMin: number;
+    snapshotTf480PerfMax: number;
     snapshotEntryQualityScoreFilterToggle: boolean;
     snapshotEntryQualityScoreMin: number;
     snapshotEntryQualityScoreMax: number;
@@ -262,6 +274,18 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     snapshotBreakQualityFilterToggle: false,
     snapshotBreakQualityMin: 0,
     snapshotBreakQualityMax: 0,
+    snapshotTf60PerfFilterToggle: false,
+    snapshotTf60PerfMin: 0,
+    snapshotTf60PerfMax: 0,
+    snapshotTf90PerfFilterToggle: false,
+    snapshotTf90PerfMin: 0,
+    snapshotTf90PerfMax: 0,
+    snapshotTf120PerfFilterToggle: false,
+    snapshotTf120PerfMin: 0,
+    snapshotTf120PerfMax: 0,
+    snapshotTf480PerfFilterToggle: false,
+    snapshotTf480PerfMin: 0,
+    snapshotTf480PerfMax: 0,
     snapshotEntryQualityScoreFilterToggle: false,
     snapshotEntryQualityScoreMin: 0,
     snapshotEntryQualityScoreMax: 0,
@@ -420,6 +444,18 @@ class SettingsManager {
             snapshotBreakQualityFilterToggle: this.readCheckbox('snapshotBreakQualityFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityFilterToggle),
             snapshotBreakQualityMin: this.readNumber('snapshotBreakQualityMin', DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityMin),
             snapshotBreakQualityMax: this.readNumber('snapshotBreakQualityMax', DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityMax),
+            snapshotTf60PerfFilterToggle: this.readCheckbox('snapshotTf60PerfFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotTf60PerfFilterToggle),
+            snapshotTf60PerfMin: this.readNumber('snapshotTf60PerfMin', DEFAULT_BACKTEST_SETTINGS.snapshotTf60PerfMin),
+            snapshotTf60PerfMax: this.readNumber('snapshotTf60PerfMax', DEFAULT_BACKTEST_SETTINGS.snapshotTf60PerfMax),
+            snapshotTf90PerfFilterToggle: this.readCheckbox('snapshotTf90PerfFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotTf90PerfFilterToggle),
+            snapshotTf90PerfMin: this.readNumber('snapshotTf90PerfMin', DEFAULT_BACKTEST_SETTINGS.snapshotTf90PerfMin),
+            snapshotTf90PerfMax: this.readNumber('snapshotTf90PerfMax', DEFAULT_BACKTEST_SETTINGS.snapshotTf90PerfMax),
+            snapshotTf120PerfFilterToggle: this.readCheckbox('snapshotTf120PerfFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotTf120PerfFilterToggle),
+            snapshotTf120PerfMin: this.readNumber('snapshotTf120PerfMin', DEFAULT_BACKTEST_SETTINGS.snapshotTf120PerfMin),
+            snapshotTf120PerfMax: this.readNumber('snapshotTf120PerfMax', DEFAULT_BACKTEST_SETTINGS.snapshotTf120PerfMax),
+            snapshotTf480PerfFilterToggle: this.readCheckbox('snapshotTf480PerfFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotTf480PerfFilterToggle),
+            snapshotTf480PerfMin: this.readNumber('snapshotTf480PerfMin', DEFAULT_BACKTEST_SETTINGS.snapshotTf480PerfMin),
+            snapshotTf480PerfMax: this.readNumber('snapshotTf480PerfMax', DEFAULT_BACKTEST_SETTINGS.snapshotTf480PerfMax),
             snapshotEntryQualityScoreFilterToggle: this.readCheckbox('snapshotEntryQualityScoreFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreFilterToggle),
             snapshotEntryQualityScoreMin: this.readNumber('snapshotEntryQualityScoreMin', DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMin),
             snapshotEntryQualityScoreMax: this.readNumber('snapshotEntryQualityScoreMax', DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMax),
@@ -601,6 +637,18 @@ class SettingsManager {
         this.writeCheckbox('snapshotBreakQualityFilterToggle', settings.snapshotBreakQualityFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityFilterToggle);
         this.writeNumber('snapshotBreakQualityMin', settings.snapshotBreakQualityMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityMin);
         this.writeNumber('snapshotBreakQualityMax', settings.snapshotBreakQualityMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityMax);
+        this.writeCheckbox('snapshotTf60PerfFilterToggle', settings.snapshotTf60PerfFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf60PerfFilterToggle);
+        this.writeNumber('snapshotTf60PerfMin', settings.snapshotTf60PerfMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf60PerfMin);
+        this.writeNumber('snapshotTf60PerfMax', settings.snapshotTf60PerfMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf60PerfMax);
+        this.writeCheckbox('snapshotTf90PerfFilterToggle', settings.snapshotTf90PerfFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf90PerfFilterToggle);
+        this.writeNumber('snapshotTf90PerfMin', settings.snapshotTf90PerfMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf90PerfMin);
+        this.writeNumber('snapshotTf90PerfMax', settings.snapshotTf90PerfMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf90PerfMax);
+        this.writeCheckbox('snapshotTf120PerfFilterToggle', settings.snapshotTf120PerfFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf120PerfFilterToggle);
+        this.writeNumber('snapshotTf120PerfMin', settings.snapshotTf120PerfMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf120PerfMin);
+        this.writeNumber('snapshotTf120PerfMax', settings.snapshotTf120PerfMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf120PerfMax);
+        this.writeCheckbox('snapshotTf480PerfFilterToggle', settings.snapshotTf480PerfFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf480PerfFilterToggle);
+        this.writeNumber('snapshotTf480PerfMin', settings.snapshotTf480PerfMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf480PerfMin);
+        this.writeNumber('snapshotTf480PerfMax', settings.snapshotTf480PerfMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf480PerfMax);
         this.writeCheckbox('snapshotEntryQualityScoreFilterToggle', settings.snapshotEntryQualityScoreFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreFilterToggle);
         this.writeNumber('snapshotEntryQualityScoreMin', settings.snapshotEntryQualityScoreMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMin);
         this.writeNumber('snapshotEntryQualityScoreMax', settings.snapshotEntryQualityScoreMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMax);
@@ -893,6 +941,10 @@ class SettingsManager {
             'snapshotRangeAtrFilterToggle',
             'snapshotMomentumFilterToggle',
             'snapshotBreakQualityFilterToggle',
+            'snapshotTf60PerfFilterToggle',
+            'snapshotTf90PerfFilterToggle',
+            'snapshotTf120PerfFilterToggle',
+            'snapshotTf480PerfFilterToggle',
             'snapshotEntryQualityScoreFilterToggle',
 
             'stopLossToggle',

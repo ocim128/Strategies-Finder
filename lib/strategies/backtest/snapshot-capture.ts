@@ -4,9 +4,14 @@ import { IndicatorSeries } from '../../types/backtest';
 import { calculateADX, calculateATR, calculateEMA, calculateRSI, calculateSMA } from '../indicators';
 import { getCloses, getHighs, getLows, getVolumes } from '../strategy-helpers';
 import {
+    TF_60_LOOKBACK_MINUTES,
+    TF_90_LOOKBACK_MINUTES,
+    TF_120_LOOKBACK_MINUTES,
+    TF_480_LOOKBACK_MINUTES,
     computeAtrRegimeRatio,
     computeBreakQuality,
     computeBodyPercent,
+    computeDirectionalPerformancePercent,
     computeDirectionalCloseLocation,
     computeEntryQualityScore,
     computeMomentumConsistency,
@@ -157,6 +162,10 @@ export function captureTradeSnapshot(
     const rangeAtrMultiple = computeRangeAtrMultiple(data[barIndex], atrRaw);
     const momentumConsistency = computeMomentumConsistency(data, barIndex, direction);
     const breakQuality = computeBreakQuality(data[barIndex], direction, triggerPrice ?? null);
+    const perf60m = computeDirectionalPerformancePercent(data, barIndex, direction, TF_60_LOOKBACK_MINUTES);
+    const perf90m = computeDirectionalPerformancePercent(data, barIndex, direction, TF_90_LOOKBACK_MINUTES);
+    const perf120m = computeDirectionalPerformancePercent(data, barIndex, direction, TF_120_LOOKBACK_MINUTES);
+    const perf480m = computeDirectionalPerformancePercent(data, barIndex, direction, TF_480_LOOKBACK_MINUTES);
     const entryQualityScore = computeEntryQualityScore({
         bodyPercent,
         closeLocation,
@@ -191,6 +200,10 @@ export function captureTradeSnapshot(
         rangeAtrMultiple,
         momentumConsistency,
         breakQuality,
+        tf60Perf: perf60m,
+        tf90Perf: perf90m,
+        tf120Perf: perf120m,
+        tf480Perf: perf480m,
         entryQualityScore,
         volumeTrend,
         volumeBurst,
