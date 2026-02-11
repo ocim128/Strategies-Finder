@@ -804,7 +804,7 @@ export class PairCombinerManager {
         this.renderScanResults([]);
 
         try {
-            const symbols = await this.getScanUniverse(provider, 120, state.currentSymbol);
+            const symbols = await this.getScanUniverse(provider, 100, state.currentSymbol);
             const total = symbols.length;
             const results: PairAnalysisResults[] = [];
             let processed = 0;

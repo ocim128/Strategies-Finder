@@ -5,6 +5,7 @@ import { state } from "./state";
 import { debugLogger } from "./debug-logger";
 import { uiManager } from "./ui-manager";
 import {
+    fetchBinanceDataAfter,
     fetchBinanceData,
     fetchBinanceDataWithLimit,
     isBinanceInterval,
@@ -23,6 +24,16 @@ import {
 import { tradfiSearchService } from "./tradfi-search-service";
 import { HistoricalFetchOptions } from "./types/index";
 import { getIntervalSeconds } from "./dataProviders/utils";
+import {
+    loadCachedCandles,
+    loadSeedCandlesFromPriceData,
+    mergeCandles,
+    saveCachedCandles,
+} from "./candle-cache";
+import {
+    loadSqliteCandles,
+    storeSqliteCandles,
+} from "./local-sqlite-api";
 
 type DataProvider = 'binance' | 'bybit-tradfi';
 
@@ -51,6 +62,10 @@ export class DataManager {
     private lastLogTime: number = 0;
     private lastUiUpdateTime: number = 0;
     private readonly TOTAL_LIMIT = 50000;
+    private readonly CACHE_SYNC_MIN_MS = 30000;
+    private readonly STREAM_PERSIST_DELAY_MS = 1200;
+    private cacheSyncAtByKey: Map<string, number> = new Map();
+    private cachePersistTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
     // ============================================================================
     // Public API
@@ -93,7 +108,7 @@ export class DataManager {
         const provider = this.getProvider(symbol);
 
         if (provider === 'binance') {
-            return fetchBinanceData(symbol, interval, signal);
+            return this.fetchBinanceDataHybrid(symbol, interval, signal);
         }
 
         if (provider === 'bybit-tradfi') {
@@ -105,6 +120,38 @@ export class DataManager {
 
         // Fallback or explicit provider logic for others
         return this.fetchNonBinanceData(symbol, interval, signal);
+    }
+
+    public async fetchDataForScan(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        lookbackBars?: number
+    ): Promise<OHLCVData[]> {
+        if (this.isMockSymbol(symbol)) {
+            if (signal?.aborted) return [];
+            const mockData = generateMockData(symbol, interval);
+            const maxBars = Number.isFinite(lookbackBars)
+                ? Math.max(200, Math.min(this.TOTAL_LIMIT, Math.floor(lookbackBars!)))
+                : 1000;
+            return mockData.slice(-maxBars);
+        }
+
+        const provider = this.getProvider(symbol);
+        const maxBars = Number.isFinite(lookbackBars)
+            ? Math.max(200, Math.min(this.TOTAL_LIMIT, Math.floor(lookbackBars!)))
+            : 1000;
+        if (provider === 'binance') {
+            return this.fetchBinanceDataHybrid(symbol, interval, signal, {
+                localOnlyIfPresent: true,
+                maxBars,
+            });
+        }
+        if (provider === 'bybit-tradfi') {
+            return fetchBybitTradFiDataWithLimit(symbol, interval, maxBars, { signal });
+        }
+        const fallbackData = await this.fetchNonBinanceData(symbol, interval, signal);
+        return fallbackData.slice(-maxBars);
     }
 
     public async fetchDataWithLimit(
@@ -238,6 +285,143 @@ export class DataManager {
         // Priority: Fallback to Mock
         this.notifyDataFallback(symbol, interval);
         return generateMockData(symbol, interval);
+    }
+
+    private buildCacheKey(symbol: string, interval: string): string {
+        return `${symbol.trim().toUpperCase()}::${interval.trim().toLowerCase()}`;
+    }
+
+    private async fetchBinanceDataHybrid(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        options?: { localOnlyIfPresent?: boolean; maxBars?: number }
+    ): Promise<OHLCVData[]> {
+        const requestedMaxBars = options?.maxBars;
+        const hasMaxBars = typeof requestedMaxBars === 'number' && Number.isFinite(requestedMaxBars);
+        const effectiveMaxBars = hasMaxBars
+            ? Math.max(1, Math.min(this.TOTAL_LIMIT, Math.floor(requestedMaxBars)))
+            : this.TOTAL_LIMIT;
+        const cacheKey = this.buildCacheKey(symbol, interval);
+        const sqliteCachedCandles = await loadSqliteCandles(symbol, interval, effectiveMaxBars);
+        const hasSqliteBase = Boolean(sqliteCachedCandles && sqliteCachedCandles.length > 0);
+        let cached = hasSqliteBase
+            ? {
+                candles: sqliteCachedCandles!,
+                updatedAt: Date.now(),
+                source: 'sqlite',
+            }
+            : await loadCachedCandles(symbol, interval);
+
+        if (!cached || cached.candles.length === 0) {
+            const seedCandles = await loadSeedCandlesFromPriceData(symbol, interval, signal);
+            if (seedCandles && seedCandles.length > 0) {
+                cached = {
+                    candles: seedCandles,
+                    updatedAt: Date.now(),
+                    source: 'seed-file',
+                };
+                await saveCachedCandles(symbol, interval, seedCandles, 'seed-file');
+                await storeSqliteCandles(symbol, interval, seedCandles, 'Binance', 'seed-file');
+                debugLogger.event('data.cache.seed_loaded', {
+                    symbol,
+                    interval,
+                    bars: seedCandles.length,
+                });
+            }
+        }
+
+        const now = Date.now();
+        const lastSyncAt = this.cacheSyncAtByKey.get(cacheKey) ?? 0;
+        const recentlySynced = now - lastSyncAt < this.CACHE_SYNC_MIN_MS;
+        const hasCachedData = Boolean(cached && cached.candles.length > 0);
+        const localOnlyIfPresent = Boolean(options?.localOnlyIfPresent);
+
+        if (localOnlyIfPresent && hasCachedData && recentlySynced) {
+            return cached!.candles.slice(-effectiveMaxBars);
+        }
+        if (hasCachedData && recentlySynced) {
+            return cached!.candles.slice(-effectiveMaxBars);
+        }
+
+        let remoteData: OHLCVData[] = [];
+        if (hasCachedData) {
+            const cachedCandles = cached!.candles;
+            const lastCachedTime = Number(cachedCandles[cachedCandles.length - 1]?.time ?? 0);
+            remoteData = await fetchBinanceDataAfter(symbol, interval, lastCachedTime, {
+                signal,
+                requestDelayMs: 80,
+                maxRequests: 60,
+            });
+        } else {
+            if (hasMaxBars) {
+                remoteData = await fetchBinanceDataWithLimit(symbol, interval, effectiveMaxBars, {
+                    signal,
+                    requestDelayMs: 80,
+                    maxRequests: 60,
+                });
+            } else {
+                remoteData = await fetchBinanceData(symbol, interval, signal);
+            }
+        }
+
+        if (signal?.aborted) {
+            return [];
+        }
+
+        if (!hasCachedData) {
+            const fresh = remoteData.slice(-effectiveMaxBars);
+            if (fresh.length > 0) {
+                await saveCachedCandles(symbol, interval, fresh, 'binance-full');
+                await storeSqliteCandles(symbol, interval, fresh, 'Binance', 'binance-full');
+                this.cacheSyncAtByKey.set(cacheKey, Date.now());
+            }
+            return fresh;
+        }
+
+        if (remoteData.length === 0) {
+            this.cacheSyncAtByKey.set(cacheKey, Date.now());
+            return cached!.candles.slice(-effectiveMaxBars);
+        }
+
+        const merged = mergeCandles(cached!.candles, remoteData).slice(-effectiveMaxBars);
+        if (merged.length > 0) {
+            await saveCachedCandles(symbol, interval, merged, 'binance-gap');
+            if (hasSqliteBase) {
+                await storeSqliteCandles(symbol, interval, remoteData, 'Binance', 'binance-gap');
+            } else {
+                await storeSqliteCandles(symbol, interval, merged, 'Binance', 'binance-gap');
+            }
+            this.cacheSyncAtByKey.set(cacheKey, Date.now());
+            return merged;
+        }
+
+        return cached!.candles.slice(-effectiveMaxBars);
+    }
+
+    private queuePersistCandles(symbol: string, interval: string, candles: OHLCVData[]): void {
+        if (!symbol || !interval || candles.length === 0) return;
+        const cacheKey = this.buildCacheKey(symbol, interval);
+        const existingTimer = this.cachePersistTimers.get(cacheKey);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+        }
+
+        const snapshot = candles.slice(-this.TOTAL_LIMIT);
+        const timer = setTimeout(() => {
+            this.cachePersistTimers.delete(cacheKey);
+            void (async () => {
+                const delta = snapshot.slice(-2);
+                const sqliteResult = await storeSqliteCandles(symbol, interval, delta, 'Binance', 'stream');
+                const lastSync = this.cacheSyncAtByKey.get(cacheKey) ?? 0;
+                const shouldPersistSnapshot = !sqliteResult || (Date.now() - lastSync >= this.CACHE_SYNC_MIN_MS);
+                if (shouldPersistSnapshot) {
+                    await saveCachedCandles(symbol, interval, snapshot, 'stream');
+                }
+                this.cacheSyncAtByKey.set(cacheKey, Date.now());
+            })();
+        }, this.STREAM_PERSIST_DELAY_MS);
+        this.cachePersistTimers.set(cacheKey, timer);
     }
 
     private notifyDataFallback(symbol: string, interval: string): void {
@@ -398,6 +582,9 @@ export class DataManager {
         }
 
         (state as any).ohlcvData = currentData;
+        const persistSymbol = this.streamSymbol || state.currentSymbol;
+        const persistInterval = this.streamInterval || state.currentInterval;
+        this.queuePersistCandles(persistSymbol, persistInterval, currentData);
 
         const now = Date.now();
         if (!this.lastUiUpdateTime || now - this.lastUiUpdateTime > 1000) {

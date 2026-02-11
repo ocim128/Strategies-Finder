@@ -54,6 +54,12 @@ export function resolveFetchInterval(interval: string): { sourceInterval: string
     return { sourceInterval: interval, needsResample: false };
 }
 
+type FetchKlinesBatchOptions = {
+    startTime?: number;
+    endTime?: number;
+    signal?: AbortSignal;
+};
+
 function resolveRawFetchLimit(
     targetBars: number,
     targetInterval: string,
@@ -77,13 +83,15 @@ async function fetchKlinesBatch(
     symbol: string,
     interval: string,
     limit: number,
-    endTime?: number,
-    signal?: AbortSignal
+    options?: FetchKlinesBatchOptions
 ): Promise<BinanceKline[]> {
     let url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-    if (endTime) url += `&endTime=${endTime}`;
+    const startTime = options?.startTime;
+    const endTime = options?.endTime;
+    if (typeof startTime === 'number' && Number.isFinite(startTime)) url += `&startTime=${Math.floor(startTime)}`;
+    if (typeof endTime === 'number' && Number.isFinite(endTime)) url += `&endTime=${Math.floor(endTime)}`;
 
-    const response = await fetch(url, { signal });
+    const response = await fetch(url, { signal: options?.signal });
     if (!response.ok) {
         debugLogger.warn('data.fetch.http_error', {
             symbol,
@@ -135,7 +143,7 @@ export async function fetchBinanceData(symbol: string, interval: string, signal?
             const remaining = TOTAL_LIMIT - totalDataLength;
             const limit = Math.min(remaining, LIMIT_PER_REQUEST);
 
-            const data = await fetchKlinesBatch(symbol, sourceInterval, limit, endTime, signal);
+            const data = await fetchKlinesBatch(symbol, sourceInterval, limit, { endTime, signal });
 
             if (data.length === 0) break;
 
@@ -201,7 +209,10 @@ export async function fetchBinanceDataWithLimit(
             const remaining = rawLimit - totalDataLength;
             const limit = Math.min(remaining, LIMIT_PER_REQUEST);
 
-            const data = await fetchKlinesBatch(symbol, sourceInterval, limit, endTime, options?.signal);
+            const data = await fetchKlinesBatch(symbol, sourceInterval, limit, {
+                endTime,
+                signal: options?.signal,
+            });
             if (data.length === 0) break;
 
             batches.push(data);
@@ -239,6 +250,65 @@ export async function fetchBinanceDataWithLimit(
             error: formatError(error),
         });
         throw error;
+    }
+}
+
+export async function fetchBinanceDataAfter(
+    symbol: string,
+    interval: string,
+    fromTimeSec: number,
+    options?: HistoricalFetchOptions
+): Promise<OHLCVData[]> {
+    try {
+        const fromSec = Math.max(0, Math.floor(fromTimeSec || 0));
+        const { sourceInterval, needsResample } = resolveFetchInterval(interval);
+        const targetSeconds = Math.max(1, getIntervalSeconds(interval));
+        const sourceSeconds = Math.max(1, getIntervalSeconds(sourceInterval));
+        const overlapSeconds = Math.max(targetSeconds, sourceSeconds);
+        let cursorMs = Math.max(0, fromSec - overlapSeconds) * 1000;
+
+        const maxRequests = Math.min(options?.maxRequests ?? 30, 5000);
+        const batches: BinanceKline[][] = [];
+        let requestCount = 0;
+
+        while (requestCount < maxRequests) {
+            if (options?.signal?.aborted) return [];
+
+            const data = await fetchKlinesBatch(symbol, sourceInterval, LIMIT_PER_REQUEST, {
+                startTime: cursorMs,
+                signal: options?.signal,
+            });
+            if (data.length === 0) break;
+
+            batches.push(data);
+            requestCount++;
+            options?.onProgress?.({ fetched: requestCount, total: maxRequests, requestCount });
+
+            const lastOpenMs = Number(data[data.length - 1]?.[0]);
+            if (!Number.isFinite(lastOpenMs)) break;
+            const nextCursorMs = lastOpenMs + 1;
+            if (nextCursorMs <= cursorMs) break;
+            cursorMs = nextCursorMs;
+
+            if (data.length < LIMIT_PER_REQUEST) break;
+            if (options?.requestDelayMs) {
+                await wait(options.requestDelayMs);
+            }
+        }
+
+        const mapped = mapToOHLCV(batches.flat());
+        const resampled = needsResample ? resampleOHLCV(mapped, interval) : mapped;
+        return resampled.filter(bar => Number(bar.time) >= (fromSec - targetSeconds));
+    } catch (error) {
+        if (isAbortError(error)) {
+            return [];
+        }
+        debugLogger.error('data.fetch.gap_error', {
+            symbol,
+            interval,
+            error: formatError(error),
+        });
+        return [];
     }
 }
 

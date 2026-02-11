@@ -19,11 +19,25 @@ import type {
 // Constants
 // ============================================================================
 
-const BATCH_SIZE = 10;
-const BATCH_DELAY_MS = 1500;
+const BATCH_SIZE = 15;
+const BATCH_DELAY_MS = 300;
 const MIN_DATA_BARS = 200;
+const DEFAULT_SCAN_LOOKBACK_BARS = 300;
 const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>(['none', 'close', 'volume', 'rsi', 'trend', 'adx']);
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(['long', 'short', 'both', 'combined']);
+
+// ============================================================================
+// Scan Result Cache
+// ============================================================================
+
+interface CachedPairScan {
+    /** Results for this symbol (empty array = scanned, no hits) */
+    results: ScanResult[];
+    /** Timestamp of the last candle when this was scanned */
+    lastCandleTime: number;
+    /** When this cache entry was created */
+    cachedAt: number;
+}
 
 function toBooleanLike(rawValue: unknown): boolean | null {
     if (typeof rawValue === 'boolean') return rawValue;
@@ -308,6 +322,11 @@ export function resolveScannerBacktestSettings(settings?: BacktestSettings): Bac
 export class ScannerEngine {
     private abortController: AbortController | null = null;
 
+    /** Per-symbol result cache keyed by `symbol:interval` */
+    private scanCache = new Map<string, CachedPairScan>();
+    /** Config fingerprint to auto-invalidate cache on config changes */
+    private lastConfigFingerprint = '';
+
     /**
      * Scan multiple pairs for trading signals
      * Yields progress updates and returns final results
@@ -320,6 +339,13 @@ export class ScannerEngine {
         const signal = this.abortController.signal;
 
         try {
+            // Invalidate cache if config changed since last scan
+            const configFp = this.buildConfigFingerprint(config);
+            if (configFp !== this.lastConfigFingerprint) {
+                this.scanCache.clear();
+                this.lastConfigFingerprint = configFp;
+            }
+
             // 1. Build universe
             const pairs = await this.buildUniverse(config.maxPairs);
             if (pairs.length === 0) {
@@ -329,6 +355,9 @@ export class ScannerEngine {
             const results: ScanResult[] = [];
             const totalBatches = Math.ceil(pairs.length / BATCH_SIZE);
             let processedCount = 0;
+            const scanLookbackBars = Number.isFinite(config.scanLookbackBars)
+                ? Math.max(MIN_DATA_BARS, Math.floor(config.scanLookbackBars))
+                : DEFAULT_SCAN_LOOKBACK_BARS;
 
             // 2. Process in batches
             for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
@@ -339,13 +368,15 @@ export class ScannerEngine {
                 const batch = pairs.slice(batchStart, batchEnd);
 
                 // Fetch data for batch
-                const pairDataMap = await this.fetchBatch(batch, config.interval, signal);
+                const { pairDataMap, hadNetworkFetch } = await this.fetchBatch(batch, config.interval, scanLookbackBars, signal);
 
-                // Process each pair in batch
-                for (const [symbol, pairData] of pairDataMap) {
+                // Process each requested symbol in batch so progress reaches 100%
+                // even when some pairs fail to fetch local/remote data.
+                for (const pair of batch) {
                     if (signal.aborted) break;
 
                     processedCount++;
+                    const symbol = pair.symbol;
 
                     // Report progress
                     const progress: ScanProgress = {
@@ -361,13 +392,36 @@ export class ScannerEngine {
                     yield progress;
                     onProgress?.(progress);
 
-                    // Scan for signals
+                    const pairData = pairDataMap.get(symbol);
+                    if (!pairData) {
+                        continue;
+                    }
+
+                    // ── Phase 3: Delta scan — use cache if data unchanged ─────
+                    const cacheKey = `${symbol}:${config.interval}`;
+                    const lastCandleTime = this.getCandleTimeNum(pairData.data[pairData.data.length - 1]);
+                    const cached = this.scanCache.get(cacheKey);
+
+                    if (cached && cached.lastCandleTime === lastCandleTime) {
+                        // Data hasn't changed since last scan — reuse cached results
+                        results.push(...cached.results);
+                        continue;
+                    }
+
+                    // Scan for signals (cache miss or stale)
                     const pairResults = this.scanPair(pairData, config);
                     results.push(...pairResults);
+
+                    // Update cache
+                    this.scanCache.set(cacheKey, {
+                        results: pairResults,
+                        lastCandleTime,
+                        cachedAt: Date.now(),
+                    });
                 }
 
-                // Delay between batches (except last)
-                if (batchIdx < totalBatches - 1 && !signal.aborted) {
+                // Smart delay: only pause between batches when network was hit
+                if (hadNetworkFetch && batchIdx < totalBatches - 1 && !signal.aborted) {
                     await this.delay(BATCH_DELAY_MS);
                 }
             }
@@ -395,6 +449,15 @@ export class ScannerEngine {
         return this.abortController !== null;
     }
 
+    /**
+     * Clear the scan result cache. Call when strategy settings change
+     * or to force a full re-scan.
+     */
+    clearCache(): void {
+        this.scanCache.clear();
+        this.lastConfigFingerprint = '';
+    }
+
     // ========================================================================
     // Private Methods
     // ========================================================================
@@ -416,42 +479,56 @@ export class ScannerEngine {
     private async fetchBatch(
         pairs: BinanceSymbol[],
         interval: string,
+        lookbackBars: number,
         signal: AbortSignal
-    ): Promise<Map<string, PairScanData>> {
-        const results = new Map<string, PairScanData>();
+    ): Promise<{ pairDataMap: Map<string, PairScanData>; hadNetworkFetch: boolean }> {
+        const pairDataMap = new Map<string, PairScanData>();
         const { dataManager } = await import('../data-manager');
+        let hadNetworkFetch = false;
 
         const fetchPromises = pairs.map(async (pair) => {
             if (signal.aborted) return;
 
             try {
-                // Use public fetchData method which handles all providers
-                const data = await dataManager.fetchData(pair.symbol, interval, signal);
+                // Scanner mode: prefer local cache (SQLite/seed) and only refresh
+                // from network when cache is stale.
+                const data = await dataManager.fetchDataForScan(pair.symbol, interval, signal, lookbackBars);
                 if (data && data.length >= MIN_DATA_BARS) {
-                    results.set(pair.symbol, {
+                    pairDataMap.set(pair.symbol, {
                         symbol: pair.symbol,
                         displayName: pair.displayName,
                         data,
                     });
                 }
             } catch (err) {
-                // Skip pairs that fail to fetch
+                // Network fetch attempted but failed — flag it
+                hadNetworkFetch = true;
                 console.warn(`Failed to fetch data for ${pair.symbol}:`, err);
             }
         });
 
         await Promise.all(fetchPromises);
-        return results;
+        return { pairDataMap, hadNetworkFetch };
     }
 
     /**
      * Scan a single pair for open positions across all configured strategies.
      * Uses the backtest engine to determine position state - only shows OPEN positions.
      * Closed trades are NOT included.
+     *
+     * Phase 2 optimization: before running a full backtest, check if any signal
+     * is recent enough to possibly produce a fresh open position. If the newest
+     * signal is too old, skip the expensive backtest entirely.
      */
     private scanPair(pairData: PairScanData, config: ScannerConfig): ScanResult[] {
         const results: ScanResult[] = [];
         const { data, symbol, displayName } = pairData;
+        const dataLen = data.length;
+        if (dataLen === 0) return results;
+
+        const maxSignalAgeBars = Number.isFinite(config.signalFreshnessBars)
+            ? Math.max(0, Math.floor(config.signalFreshnessBars))
+            : Number.POSITIVE_INFINITY;
 
         for (const stratConfig of config.strategyConfigs) {
             const strategy = strategyRegistry.get(stratConfig.strategyKey);
@@ -464,6 +541,9 @@ export class ScannerEngine {
                 // Use saved params from config, fall back to defaults
                 const params = normalizeStrategyParams(strategy.defaultParams, stratConfig.strategyParams);
                 const rawSignals = strategy.execute(data, params);
+
+                // Early exit: no signals at all → skip
+                if (rawSignals.length === 0) continue;
 
                 // Normalize persisted UI config into effective backtest settings.
                 const backtestSettings = resolveScannerBacktestSettings(stratConfig.backtestSettings);
@@ -489,11 +569,44 @@ export class ScannerEngine {
                         ))
                     : rawSignals;
 
+                // Early exit: no filtered signals → skip
+                if (filteredSignals.length === 0) continue;
+
+                // ── Phase 2: Early exit if newest signal is too old ───────────
+                // A position opened N bars ago has barsInTrade = N. If the most
+                // recent signal is older than maxSignalAgeBars, no position from
+                // it can pass the freshness check, so we skip the full backtest.
+                if (maxSignalAgeBars < Number.POSITIVE_INFINITY) {
+                    const lastSignal = filteredSignals[filteredSignals.length - 1];
+                    const lastSignalTime = lastSignal.time;
+                    const lastBarTime = data[dataLen - 1].time;
+
+                    // Compare times (both are numeric epoch seconds or ms)
+                    const sigT = typeof lastSignalTime === 'number' ? lastSignalTime : Number(lastSignalTime);
+                    const barT = typeof lastBarTime === 'number' ? lastBarTime : Number(lastBarTime);
+
+                    if (Number.isFinite(sigT) && Number.isFinite(barT) && sigT < barT) {
+                        // Find bar index of last signal by reverse-scanning
+                        let lastSignalBarIdx = dataLen - 1;
+                        for (let i = dataLen - 1; i >= 0; i--) {
+                            const t = typeof data[i].time === 'number'
+                                ? data[i].time as number
+                                : Number(data[i].time);
+                            if (t <= sigT) {
+                                lastSignalBarIdx = i;
+                                break;
+                            }
+                        }
+
+                        const barsFromEnd = dataLen - 1 - lastSignalBarIdx;
+                        if (barsFromEnd > maxSignalAgeBars) {
+                            continue; // Signal too old, no fresh open position possible
+                        }
+                    }
+                }
+
                 // Run a backtest simulation to get the current open position (if any)
                 const openPosition = getOpenPositionForScanner(data, filteredSignals, backtestSettings);
-                const maxSignalAgeBars = Number.isFinite(config.signalFreshnessBars)
-                    ? Math.max(0, Math.floor(config.signalFreshnessBars))
-                    : Number.POSITIVE_INFINITY;
 
                 // Only add to results if there's an open and fresh-enough position
                 if (openPosition && openPosition.barsInTrade <= maxSignalAgeBars) {
@@ -544,6 +657,33 @@ export class ScannerEngine {
      */
     private delay(ms: number): Promise<void> {
         return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    /**
+     * Extract numeric timestamp from a candle's time field.
+     */
+    private getCandleTimeNum(candle: { time: unknown }): number {
+        const t = candle.time;
+        return typeof t === 'number' ? t : Number(t) || 0;
+    }
+
+    /**
+     * Build a fingerprint string from config so we can detect changes.
+     * Only includes fields that affect scan results.
+     */
+    private buildConfigFingerprint(config: ScannerConfig): string {
+        return JSON.stringify([
+            config.interval,
+            config.maxPairs,
+            config.signalFreshnessBars,
+            config.scanLookbackBars,
+            config.strategyConfigs.map(sc => [
+                sc.strategyKey,
+                sc.name,
+                sc.strategyParams,
+                sc.backtestSettings,
+            ]),
+        ]);
     }
 }
 

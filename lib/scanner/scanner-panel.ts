@@ -108,6 +108,10 @@ export class ScannerPanel {
                     <label>Freshness (bars):</label>
                     <input type="number" class="scanner-panel__freshness" value="3" min="1" max="10">
                 </div>
+                <div class="scanner-panel__control-row">
+                    <label>Lookback (bars):</label>
+                    <input type="number" class="scanner-panel__lookback" value="1000" min="200" max="50000">
+                </div>
                 <button class="scanner-panel__scan-btn">Start Scan</button>
             </div>
             <div class="scanner-panel__progress" style="display: none;">
@@ -272,6 +276,7 @@ export class ScannerPanel {
         const intervalSelect = this.container.querySelector('.scanner-panel__interval-select') as HTMLSelectElement;
         const maxPairsInput = this.container.querySelector('.scanner-panel__max-pairs') as HTMLInputElement;
         const freshnessInput = this.container.querySelector('.scanner-panel__freshness') as HTMLInputElement;
+        const lookbackInput = this.container.querySelector('.scanner-panel__lookback') as HTMLInputElement;
 
         // Get selected config names and build strategy config entries
         const selectedNames = Array.from(strategySelect.selectedOptions).map((opt) => opt.value);
@@ -296,6 +301,7 @@ export class ScannerPanel {
             interval: intervalSelect.value,
             maxPairs: parseInt(maxPairsInput.value, 10) || 120,
             signalFreshnessBars: parseInt(freshnessInput.value, 10) || 3,
+            scanLookbackBars: parseInt(lookbackInput.value, 10) || 1000,
         });
     }
 
@@ -361,6 +367,24 @@ export class ScannerPanel {
     }
 
     /**
+     * Returns directional progress to target in percent.
+     * 0 = at entry, 100 = at target, >100 = overshot, <0 = moving away.
+     */
+    private calculateTargetProgress(result: ScanResult): number | null {
+        if (result.targetPrice === null) return null;
+        const entryPrice = result.signal.price;
+        const targetPrice = result.targetPrice;
+        if (!Number.isFinite(entryPrice) || !Number.isFinite(targetPrice)) return null;
+
+        const directionFactor = result.direction === 'long' ? 1 : -1;
+        const targetMove = directionFactor * (targetPrice - entryPrice);
+        if (targetMove <= 0) return null;
+
+        const currentMove = directionFactor * (result.currentPrice - entryPrice);
+        return (currentMove / targetMove) * 100;
+    }
+
+    /**
      * Sort results by:
      * 1. Signal freshness (ascending - nearest first)
      * 2. Unrealized PnL (ascending - losing positions first, they're better entries)
@@ -408,15 +432,11 @@ export class ScannerPanel {
                 // Format target price with appropriate styling
                 let targetHtml = '<span class="scanner-panel__cell-target--none">-</span>';
                 if (r.targetPrice !== null) {
-                    // Calculate how close we are to target (0 = at entry, 100 = at target)
-                    const entryPrice = r.signal.price;
-                    const targetDistance = Math.abs(r.targetPrice - entryPrice);
-                    const currentProgress = Math.abs(r.currentPrice - entryPrice);
-                    const progressPercent = targetDistance > 0 ? (currentProgress / targetDistance) * 100 : 0;
+                    const progressPercent = this.calculateTargetProgress(r);
 
-                    // Color gradient: farther = dimmer, closer = brighter green
-                    const targetClass = progressPercent >= 75 ? 'scanner-panel__cell-target--close' :
-                        progressPercent >= 50 ? 'scanner-panel__cell-target--mid' :
+                    // Color gradient: wrong-way/early = dimmer, closer = brighter green
+                    const targetClass = progressPercent !== null && progressPercent >= 75 ? 'scanner-panel__cell-target--close' :
+                        progressPercent !== null && progressPercent >= 50 ? 'scanner-panel__cell-target--mid' :
                             'scanner-panel__cell-target--far';
                     targetHtml = `<span class="${targetClass}">${r.targetPrice.toFixed(4)}</span>`;
                 }
@@ -433,7 +453,7 @@ export class ScannerPanel {
                     <td class="scanner-panel__cell-target">${targetHtml}</td>
                     <td class="scanner-panel__cell-pnl ${pnlClass}">${pnlSign}${pnl.toFixed(2)}%</td>
                     <td class="scanner-panel__cell-age">${r.signalAge} bar${r.signalAge !== 1 ? 's' : ''}</td>
-                    <td class="scanner-panel__cell-alert"><button class="scanner-panel__alert-btn" data-symbol="${r.symbol}" data-strategy-key="${r.strategyKey}" title="Subscribe to alerts">Alert</button></td>
+                    <td class="scanner-panel__cell-alert"><button class="scanner-panel__alert-btn" data-symbol="${r.symbol}" data-strategy-key="${r.strategyKey}" data-config-name="${encodeURIComponent(r.strategy)}" title="Subscribe to alerts">Alert</button></td>
                 </tr>
             `;
             })
@@ -453,7 +473,9 @@ export class ScannerPanel {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const el = e.currentTarget as HTMLElement;
-                this.handleAlertSubscribe(el.dataset.symbol!, el.dataset.strategyKey!);
+                const encodedName = el.dataset.configName;
+                const configName = encodedName ? decodeURIComponent(encodedName) : undefined;
+                this.handleAlertSubscribe(el.dataset.symbol!, el.dataset.strategyKey!, configName);
             });
         });
     }
@@ -474,9 +496,10 @@ export class ScannerPanel {
         }
     }
 
-    private async handleAlertSubscribe(symbol: string, strategyKey: string): Promise<void> {
+    private async handleAlertSubscribe(symbol: string, strategyKey: string, configName?: string): Promise<void> {
         const config = scannerManager.getConfig();
-        const matched = config.strategyConfigs.find(c => c.strategyKey === strategyKey);
+        const matched = config.strategyConfigs.find(c => c.strategyKey === strategyKey && (!configName || c.name === configName))
+            ?? config.strategyConfigs.find(c => c.strategyKey === strategyKey);
 
         try {
             await alertService.upsertSubscription({

@@ -20,6 +20,8 @@ interface NormalizedCandle {
 }
 
 export class DataMiningManager {
+    private readonly SQLITE_STORE_CHUNK_SIZE = 5000;
+
     private pairEl: HTMLElement | null = null;
     private intervalEl: HTMLElement | null = null;
     private barsEl: HTMLElement | null = null;
@@ -81,7 +83,7 @@ export class DataMiningManager {
         this.downloadJsonButton?.addEventListener('click', () => this.downloadJson());
         this.exportFeatureDatasetButton?.addEventListener('click', () => this.exportFeatureDataset());
         this.exportVerdictReportButton?.addEventListener('click', () => this.exportVerdictReport());
-        this.fetchCsvButton?.addEventListener('click', () => this.fetchHistorical('csv'));
+        this.fetchCsvButton?.addEventListener('click', () => this.fetchAndStoreSqlite());
         this.fetchJsonButton?.addEventListener('click', () => this.fetchHistorical('json'));
         this.importButton?.addEventListener('click', () => this.importJsonFile());
     }
@@ -351,6 +353,155 @@ export class DataMiningManager {
             this.isFetching = false;
             this.toggleHistoricalButtons(false);
         }
+    }
+
+    private async fetchAndStoreSqlite(): Promise<void> {
+        if (this.isFetching) return;
+
+        const request = this.getHistoricalRequest();
+        if (!request) return;
+
+        const { symbol, interval, bars } = request;
+        const provider = assetSearchService.getProvider(symbol);
+        if (provider !== 'binance' && provider !== 'bybit-tradfi') {
+            uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit TradFi symbols only.', 'error');
+            this.setStatus('SQLite sync not supported for this provider.', 'error');
+            return;
+        }
+
+        this.isFetching = true;
+        this.toggleHistoricalButtons(true);
+        this.setStatus(`Fetching ${bars.toLocaleString()} bars (${interval})...`, 'info');
+
+        try {
+            const data = await dataManager.fetchHistoricalData(symbol, interval, bars, {
+                requestDelayMs: 120,
+                onProgress: ({ fetched, total, requestCount }: HistoricalFetchProgress) => {
+                    const pct = total > 0 ? Math.min(100, Math.round((fetched / total) * 100)) : 0;
+                    this.setStatus(`Fetching... ${fetched.toLocaleString()} / ${total.toLocaleString()} bars (${pct}%, ${requestCount} requests)`, 'info');
+                },
+            });
+
+            if (data.length === 0) {
+                uiManager.showToast('No historical data returned.', 'error');
+                this.setStatus('No historical data returned.', 'error');
+                return;
+            }
+
+            this.setStatus(`Storing ${data.length.toLocaleString()} bars to SQLite...`, 'info');
+            const payload = await this.storeHistoricalToSqlite(
+                symbol,
+                interval,
+                this.getProviderLabel(symbol),
+                data,
+                ({ chunkIndex, totalChunks, storedBars, totalBars }) => {
+                    this.setStatus(
+                        `Storing... chunk ${chunkIndex}/${totalChunks} (${storedBars.toLocaleString()} / ${totalBars.toLocaleString()} bars)`,
+                        'info'
+                    );
+                }
+            );
+            this.setStatus(
+                `SQLite updated: ${payload.upserted.toLocaleString()} bars written (${payload.totalBars.toLocaleString()} total in series).`,
+                'success'
+            );
+            uiManager.showToast(`Stored to SQLite: ${payload.dbPath}`, 'success');
+        } catch (error) {
+            console.error('Historical SQLite sync failed:', error);
+            uiManager.showToast('Historical SQLite sync failed. See console for details.', 'error');
+            this.setStatus('Historical SQLite sync failed.', 'error');
+        } finally {
+            this.isFetching = false;
+            this.toggleHistoricalButtons(false);
+        }
+    }
+
+    private async storeHistoricalToSqlite(
+        symbol: string,
+        interval: string,
+        providerLabel: string,
+        data: OHLCVData[],
+        onProgress?: (progress: {
+            chunkIndex: number;
+            totalChunks: number;
+            chunkBars: number;
+            storedBars: number;
+            totalBars: number;
+        }) => void
+    ): Promise<{ upserted: number; totalBars: number; dbPath: string }> {
+        const candles = this.normalizeData(data).map((row) => ({
+            time: row.time,
+            open: row.open,
+            high: row.high,
+            low: row.low,
+            close: row.close,
+            volume: row.volume,
+        }));
+
+        if (candles.length === 0) {
+            return {
+                upserted: 0,
+                totalBars: 0,
+                dbPath: 'price-data/market-data.sqlite',
+            };
+        }
+
+        const chunkSize = Math.max(1, Math.floor(this.SQLITE_STORE_CHUNK_SIZE));
+        const totalBars = candles.length;
+        const totalChunks = Math.ceil(totalBars / chunkSize);
+        let totalUpserted = 0;
+        let seriesTotalBars = 0;
+        let dbPath = 'price-data/market-data.sqlite';
+
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            const start = chunkIndex * chunkSize;
+            const end = Math.min(start + chunkSize, totalBars);
+            const chunk = candles.slice(start, end);
+
+            onProgress?.({
+                chunkIndex: chunkIndex + 1,
+                totalChunks,
+                chunkBars: chunk.length,
+                storedBars: end,
+                totalBars,
+            });
+
+            const response = await fetch('/api/sqlite/store-ohlcv', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    symbol,
+                    interval,
+                    provider: providerLabel,
+                    source: 'data-menu-fetch',
+                    candles: chunk,
+                }),
+            });
+
+            const payload = await response.json() as {
+                ok?: boolean;
+                upserted?: number;
+                totalBars?: number;
+                dbPath?: string;
+                error?: string;
+            };
+
+            if (!response.ok || !payload?.ok) {
+                throw new Error(payload?.error || `SQLite store failed (${response.status})`);
+            }
+
+            totalUpserted += Math.max(0, Number(payload.upserted) || chunk.length);
+            seriesTotalBars = Math.max(0, Number(payload.totalBars) || seriesTotalBars);
+            dbPath = payload.dbPath || dbPath;
+        }
+
+        return {
+            upserted: totalUpserted,
+            totalBars: seriesTotalBars || totalBars,
+            dbPath,
+        };
     }
 
     private ensureDataReady(): boolean {

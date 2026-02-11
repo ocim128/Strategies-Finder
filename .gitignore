@@ -123,3 +123,6 @@ dist-ssr/
 test_strategies_output.txt
 test_e2e_output.txt
 *.png
+
+# Data files
+price-data/

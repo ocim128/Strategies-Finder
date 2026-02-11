@@ -20,6 +20,8 @@ export interface ScannerConfig {
     maxPairs: number;
     /** Only show signals within last N bars (default: 3) */
     signalFreshnessBars: number;
+    /** Candles loaded per pair for scan speed (default: 1000) */
+    scanLookbackBars: number;
     /** Optional auto-refresh interval in milliseconds */
     autoRefreshMs?: number;
 }
@@ -29,6 +31,7 @@ export const DEFAULT_SCANNER_CONFIG: ScannerConfig = {
     interval: '2h',
     maxPairs: 120,
     signalFreshnessBars: 3,
+    scanLookbackBars: 1000,
     autoRefreshMs: undefined,
 };
 

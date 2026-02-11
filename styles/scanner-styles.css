@@ -122,7 +122,8 @@
 .scanner-panel__strategy-select,
 .scanner-panel__interval-select,
 .scanner-panel__max-pairs,
-.scanner-panel__freshness {
+.scanner-panel__freshness,
+.scanner-panel__lookback {
     flex: 1;
     padding: 10px 14px;
     background: rgba(25, 30, 48, 0.9);
@@ -140,7 +141,8 @@
 .scanner-panel__strategy-select:focus,
 .scanner-panel__interval-select:focus,
 .scanner-panel__max-pairs:focus,
-.scanner-panel__freshness:focus {
+.scanner-panel__freshness:focus,
+.scanner-panel__lookback:focus {
     outline: none;
     border-color: rgba(100, 150, 255, 0.45);
     box-shadow: 0 0 0 4px rgba(100, 150, 255, 0.08);
@@ -443,7 +445,7 @@
     }
 }
 
-.scanner-panel__scan-btn--cancel .scanner-panel__scan-btn {
+.scanner-panel__scan-btn.scanner-panel__scan-btn--cancel {
     animation: scanner-pulse 1.5s ease-in-out infinite;
 }
 

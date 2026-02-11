@@ -29,6 +29,7 @@ export class ScannerManager {
             interval: '1h',
             maxPairs: 120,
             signalFreshnessBars: 3,
+            scanLookbackBars: 1000,
             ...config,
         };
     }

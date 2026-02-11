@@ -1,7 +1,7 @@
 <!-- Data Mining Tab -->
 <div id="dataminingTab">
     <div class="section-title">Data Mining</div>
-    <p class="section-desc">Review the active dataset and download raw price data for analysis.</p>
+    <p class="section-desc">Review the active dataset, export files, and sync historical candles into local SQLite.</p>
 
     <div class="stats-grid data-mining-stats">
         <div class="stat-card">
@@ -57,7 +57,7 @@
     </div>
 
     <div class="section-header">
-        <div class="section-title">Historical Download</div>
+        <div class="section-title">Historical Sync</div>
     </div>
     <div class="section-body">
         <div class="param-row">
@@ -73,13 +73,13 @@
         </div>
         <div class="param-row">
             <div class="param-group">
-                <label class="param-label">Bars to Download</label>
+                <label class="param-label">Bars to Fetch</label>
                 <input class="param-input" id="dataMiningBarsInput" type="number" min="1000" max="1000000" value="200000">
-                <div class="param-hint">Large downloads supported for Binance / Bybit TradFi.</div>
+                <div class="param-hint">Stored in local SQLite: <code>price-data/market-data.sqlite</code>.</div>
             </div>
         </div>
         <div class="data-mining-actions">
-            <button class="btn btn-primary" id="dataMiningFetchCsv" type="button">Fetch & Download CSV</button>
+            <button class="btn btn-primary" id="dataMiningFetchCsv" type="button">Fetch & Store SQLite</button>
             <button class="btn btn-secondary" id="dataMiningFetchJson" type="button">Fetch & Download JSON</button>
         </div>
     </div>
