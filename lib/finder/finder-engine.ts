@@ -6,7 +6,7 @@ function isAscendingMetric(metric: FinderMetric): boolean {
 }
 
 export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): number {
-    const result = item.selectionResult;
+    const result = item.result;
     switch (metric) {
         case "netProfit":
             return result.netProfit;

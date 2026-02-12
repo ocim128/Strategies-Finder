@@ -70,6 +70,42 @@ function buildCombinedEquityCurve(
     return curve;
 }
 
+function collectReturnsFromEquityArray(
+    equityValues: ArrayLike<number>,
+    initialCapital: number
+): number[] {
+    const returns: number[] = [];
+    let prevEquity = initialCapital;
+
+    for (let i = 0; i < equityValues.length; i++) {
+        const equity = equityValues[i];
+        if (prevEquity > 0) {
+            returns.push((equity - prevEquity) / prevEquity);
+        }
+        prevEquity = equity;
+    }
+
+    return returns;
+}
+
+function collectReturnsFromEquityCurve(
+    equityCurve: { time: Time; value: number }[],
+    initialCapital: number
+): number[] {
+    const returns: number[] = [];
+    let prevEquity = initialCapital;
+
+    for (const point of equityCurve) {
+        const equity = point.value;
+        if (prevEquity > 0) {
+            returns.push((equity - prevEquity) / prevEquity);
+        }
+        prevEquity = equity;
+    }
+
+    return returns;
+}
+
 function combineCompactResults(
     initialCapital: number,
     longResult: BacktestResult,
@@ -103,11 +139,11 @@ function combineCompactResults(
     let maxDrawdown = 0;
     let maxDrawdownPercent = 0;
     const len = Math.min(longEquity.length, shortEquity.length);
-    const combinedReturns: number[] = [];
-    let prevEquity = initialCapital;
+    const combinedEquity = new Float64Array(len);
 
     for (let i = 0; i < len; i++) {
         const combined = longEquity[i] + shortEquity[i];
+        combinedEquity[i] = combined;
         if (combined > peakEquity) {
             peakEquity = combined;
         } else {
@@ -117,13 +153,9 @@ function combineCompactResults(
                 maxDrawdownPercent = peakEquity > 0 ? (dd / peakEquity) * 100 : 0;
             }
         }
-        // Collect per-bar returns for Sharpe calculation
-        if (prevEquity > 0) {
-            combinedReturns.push((combined - prevEquity) / prevEquity);
-        }
-        prevEquity = combined;
     }
 
+    const combinedReturns = collectReturnsFromEquityArray(combinedEquity, initialCapital);
     const sharpeRatio = calculateSharpeRatioFromReturns(combinedReturns);
 
     return {
@@ -257,7 +289,18 @@ function runCombinedBacktest(
     );
     const finalCapital = initialCapital + longResult.netProfit + shortResult.netProfit;
     const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(equityCurve, initialCapital);
-    return calculateBacktestStats(mergedTrades, equityCurve, initialCapital, finalCapital, maxDrawdown, maxDrawdownPercent);
+    const combinedReturns = collectReturnsFromEquityCurve(equityCurve, initialCapital);
+    const combinedSharpe = calculateSharpeRatioFromReturns(combinedReturns);
+    const result = calculateBacktestStats(
+        mergedTrades,
+        equityCurve,
+        initialCapital,
+        finalCapital,
+        maxDrawdown,
+        maxDrawdownPercent
+    );
+    result.sharpeRatio = combinedSharpe;
+    return result;
 }
 
 /**

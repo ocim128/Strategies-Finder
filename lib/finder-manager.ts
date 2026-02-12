@@ -637,6 +637,7 @@ export class FinderManager {
 			const compactBacktestThreshold = isHeavyFinderConfig ? 50000 : 500000;
 			const shouldUseCompactBacktest = dataSize >= compactBacktestThreshold;
 			const backtestFn = shouldUseCompactBacktest ? runBacktestCompact : runBacktest;
+			const rustCompactMode = shouldUseCompactBacktest;
 
 			// Smaller batches for larger datasets - CRITICAL for 5M+ bars
 			// For extreme datasets, process ONE job at a time to minimize peak memory.
@@ -826,7 +827,8 @@ export class FinderManager {
 
 								const evaluation = job.strategy.evaluate?.(dataset.data, job.params, signals);
 								const entryStats = evaluation?.entryStats;
-								const timeframeBacktestFn = dataset.data.length >= compactBacktestThreshold ? runBacktestCompact : runBacktest;
+								const datasetUseCompact = dataset.data.length >= compactBacktestThreshold;
+								const timeframeBacktestFn = datasetUseCompact ? runBacktestCompact : runBacktest;
 								const result = job.strategy.metadata?.role === 'entry' && entryStats
 									? buildEntryBacktestResult(entryStats)
 									: timeframeBacktestFn(
@@ -870,8 +872,8 @@ export class FinderManager {
 							};
 
 							if (!options.tradeFilterEnabled ||
-								(enriched.selectionResult.totalTrades >= options.minTrades &&
-									enriched.selectionResult.totalTrades <= options.maxTrades)) {
+								(enriched.result.totalTrades >= options.minTrades &&
+									enriched.result.totalTrades <= options.maxTrades)) {
 								filteredCount++;
 								if (enriched.endpointAdjusted) {
 									endpointAdjustedCount++;
@@ -1014,8 +1016,8 @@ export class FinderManager {
 
 				// Apply trade filter early to reduce memory
 				if (options.tradeFilterEnabled) {
-					if (enriched.selectionResult.totalTrades < options.minTrades ||
-						enriched.selectionResult.totalTrades > options.maxTrades) {
+					if (enriched.result.totalTrades < options.minTrades ||
+						enriched.result.totalTrades > options.maxTrades) {
 						return;
 					}
 				}
@@ -1217,7 +1219,8 @@ export class FinderManager {
 								positionSize,
 								commission,
 								rustSettings,
-								{ mode: sizingMode, fixedTradeAmount }
+								{ mode: sizingMode, fixedTradeAmount },
+								rustCompactMode
 							)
 							: await rustEngine.runBatchBacktest(
 								state.ohlcvData,
@@ -1226,7 +1229,8 @@ export class FinderManager {
 								positionSize,
 								commission,
 								rustSettings,
-								{ mode: sizingMode, fixedTradeAmount }
+								{ mode: sizingMode, fixedTradeAmount },
+								rustCompactMode
 							);
 
 						if (batchResult && batchResult.results.length > 0) {
@@ -1237,6 +1241,11 @@ export class FinderManager {
 								const run = runById.get(batchEntry.id);
 								if (!run) {
 									console.warn(`[Finder] Rust batch returned unknown run id: ${batchEntry.id}`);
+									continue;
+								}
+								if (!this.isBacktestResultConsistent(batchEntry.result)) {
+									debugLogger.warn(`[Finder] Rust batch result inconsistent for ${run.key}, using TypeScript fallback.`);
+									runBacktestFallback(run);
 									continue;
 								}
 								insertResult({
@@ -1409,6 +1418,24 @@ export class FinderManager {
 		return aggregateFinderBacktestResults(results, initialCapital);
 	}
 
+	private isBacktestResultConsistent(result: BacktestResult): boolean {
+		const totalTrades = result.totalTrades;
+		if (totalTrades !== result.winningTrades + result.losingTrades) return false;
+		if (totalTrades <= 0) return true;
+
+		const expectedWinRate = (result.winningTrades / totalTrades) * 100;
+		if (Math.abs(expectedWinRate - result.winRate) > 1) return false;
+
+		const expectedAvgTrade = result.netProfit / totalTrades;
+		const tolerance = Math.max(0.01, Math.abs(expectedAvgTrade) * 0.15);
+		if (Math.abs(expectedAvgTrade - result.avgTrade) > tolerance) return false;
+
+		if (!Number.isFinite(result.sharpeRatio)) return false;
+		if (Math.abs(result.sharpeRatio) > 8) return false;
+
+		return true;
+	}
+
 	private buildMetadataPayload(result: FinderResult, rank: number) {
 		const strategy = strategyRegistry.get(result.key);
 		return {
@@ -1419,21 +1446,6 @@ export class FinderManager {
 			params: result.params,
 			metadata: strategy?.metadata ?? null,
 			metrics: {
-				netProfit: result.selectionResult.netProfit,
-				netProfitPercent: result.selectionResult.netProfitPercent,
-				expectancy: result.selectionResult.expectancy,
-				avgTrade: result.selectionResult.avgTrade,
-				winRate: result.selectionResult.winRate,
-				profitFactor: result.selectionResult.profitFactor,
-				totalTrades: result.selectionResult.totalTrades,
-				maxDrawdownPercent: result.selectionResult.maxDrawdownPercent,
-				winningTrades: result.selectionResult.winningTrades,
-				losingTrades: result.selectionResult.losingTrades,
-				avgWin: result.selectionResult.avgWin,
-				avgLoss: result.selectionResult.avgLoss,
-				sharpeRatio: result.selectionResult.sharpeRatio
-			},
-			rawMetrics: {
 				netProfit: result.result.netProfit,
 				netProfitPercent: result.result.netProfitPercent,
 				expectancy: result.result.expectancy,
@@ -1447,6 +1459,21 @@ export class FinderManager {
 				avgWin: result.result.avgWin,
 				avgLoss: result.result.avgLoss,
 				sharpeRatio: result.result.sharpeRatio
+			},
+			selectionMetrics: {
+				netProfit: result.selectionResult.netProfit,
+				netProfitPercent: result.selectionResult.netProfitPercent,
+				expectancy: result.selectionResult.expectancy,
+				avgTrade: result.selectionResult.avgTrade,
+				winRate: result.selectionResult.winRate,
+				profitFactor: result.selectionResult.profitFactor,
+				totalTrades: result.selectionResult.totalTrades,
+				maxDrawdownPercent: result.selectionResult.maxDrawdownPercent,
+				winningTrades: result.selectionResult.winningTrades,
+				losingTrades: result.selectionResult.losingTrades,
+				avgWin: result.selectionResult.avgWin,
+				avgLoss: result.selectionResult.avgLoss,
+				sharpeRatio: result.selectionResult.sharpeRatio
 			},
 			endpointAdjusted: result.endpointAdjusted,
 			endpointRemovedTrades: result.endpointRemovedTrades

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade } from './lib/strategies/index';
 import { buildPivotFlags, detectPivots, detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
 import { simple_regression_line } from './lib/strategies/lib/simple-regression-line';
-import { analyzeTradePatterns } from './lib/strategies/backtest/trade-analyzer';
+import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/backtest/trade-analyzer';
 import { getOpenPositionForScanner } from './lib/strategies/backtest/signal-preparation';
 import { resolveScannerBacktestSettings } from './lib/scanner/scanner-engine';
 
@@ -529,6 +529,45 @@ describe('Backtesting Engine', () => {
         expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-8);
     });
 
+    it('should keep combined-mode sharpe consistent between full and compact backtests', () => {
+        const data: OHLCVData[] = [];
+        for (let i = 0; i < 240; i++) {
+            const trend = 100 + i * 0.08;
+            const cycle = Math.sin(i / 7) * 1.8;
+            const close = trend + cycle;
+            data.push({
+                time: (i + 1) as unknown as Time,
+                open: close - 0.4,
+                high: close + 0.9,
+                low: close - 0.9,
+                close,
+                volume: 1000 + (i % 9) * 25
+            });
+        }
+
+        const signals: Signal[] = [];
+        for (let i = 20; i < 220; i += 20) {
+            const openLong = i % 40 !== 0;
+            signals.push({
+                time: (i + 1) as unknown as Time,
+                type: openLong ? 'buy' : 'sell',
+                price: data[i + 1].close
+            });
+            signals.push({
+                time: (i + 8) as unknown as Time,
+                type: openLong ? 'sell' : 'buy',
+                price: data[i + 8].close
+            });
+        }
+
+        const settings = { tradeDirection: 'combined' as const, allowSameBarExit: true, slippageBps: 0 };
+        const full = runBacktest(data, signals, 10000, 100, 0.1, settings);
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0.1, settings);
+
+        expect(full.totalTrades).to.equal(compact.totalTrades);
+        expect(full.sharpeRatio).to.be.closeTo(compact.sharpeRatio, 1e-9);
+    });
+
     it('should handle commission correctly', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 105, low: 95, close: 100, volume: 1000 },
@@ -1025,5 +1064,64 @@ describe('Trade Analyzer', () => {
         expect(divergenceFeature).to.not.be.undefined;
         expect(divergenceFeature?.suggestedFilter).to.not.be.null;
         expect(divergenceFeature?.suggestedFilter?.threshold).to.not.equal(0);
+    });
+
+    it('finder ranges should keep zero suggested thresholds active', () => {
+        const trades: Trade[] = [];
+
+        for (let i = 0; i < 12; i++) {
+            const isLoss = i < 4;
+            const tf60Perf = i < 6 ? -0.2 : 0.2;
+
+            trades.push({
+                id: i + 1,
+                type: 'long',
+                entryTime: (i + 1) as unknown as Time,
+                entryPrice: 100,
+                exitTime: (i + 2) as unknown as Time,
+                exitPrice: 100,
+                pnl: isLoss ? -7 : 6,
+                pnlPercent: isLoss ? -0.7 : 0.6,
+                size: 1,
+                entrySnapshot: {
+                    rsi: 52,
+                    adx: 24,
+                    atrPercent: 1.1,
+                    emaDistance: 0.3,
+                    volumeRatio: 1.05,
+                    priceRangePos: 0.5,
+                    barsFromHigh: 3,
+                    barsFromLow: 3,
+                    trendEfficiency: 0.6,
+                    atrRegimeRatio: 1.0,
+                    bodyPercent: 55,
+                    wickSkew: 1,
+                    tf60Perf,
+                    volumeTrend: 1.0,
+                    volumeBurst: 0.1,
+                    volumePriceDivergence: 0.05,
+                    volumeConsistency: 0.7
+                }
+            });
+        }
+
+        const finderResult = runAnalysisFilterFinder(
+            trades,
+            [{
+                feature: 'tf60Perf',
+                label: 'TF 60m Perf %',
+                winStats: { mean: 0.1, median: 0.1, stddev: 0.1, count: 8 },
+                lossStats: { mean: -0.1, median: -0.1, stddev: 0.1, count: 4 },
+                separationScore: 0.4,
+                suggestedFilter: { direction: 'above', threshold: 0 },
+                winRateIfFiltered: 0,
+                expectancyIfFiltered: 0,
+                tradesRemovedPercent: 0
+            }],
+            { randomTrials: 1, refineTrials: 0 }
+        );
+
+        expect(finderResult.featureRanges.length).to.equal(1);
+        expect(finderResult.featureRanges[0].suggestedThreshold).to.not.equal(0);
     });
 });

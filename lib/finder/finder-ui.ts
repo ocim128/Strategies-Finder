@@ -91,13 +91,13 @@ export class FinderUI {
             params.textContent = this.formatParams(item.params);
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
-            const selection = item.selectionResult;
+            const result = item.result;
 
-            metrics.appendChild(this.createMetricChip(`Net ${this.formatCurrency(selection.netProfit)}`));
-            metrics.appendChild(this.createMetricChip(`PF ${this.formatProfitFactor(selection.profitFactor)}`));
-            metrics.appendChild(this.createMetricChip(`Sharpe ${selection.sharpeRatio.toFixed(2)}`));
-            metrics.appendChild(this.createMetricChip(`DD ${selection.maxDrawdownPercent.toFixed(2)}%`));
-            metrics.appendChild(this.createMetricChip(`Trades ${selection.totalTrades}`));
+            metrics.appendChild(this.createMetricChip(`Net ${this.formatCurrency(result.netProfit)}`));
+            metrics.appendChild(this.createMetricChip(`PF ${this.formatProfitFactor(result.profitFactor)}`));
+            metrics.appendChild(this.createMetricChip(`Sharpe ${result.sharpeRatio.toFixed(2)}`));
+            metrics.appendChild(this.createMetricChip(`DD ${result.maxDrawdownPercent.toFixed(2)}%`));
+            metrics.appendChild(this.createMetricChip(`Trades ${result.totalTrades}`));
             if (item.endpointAdjusted) {
                 metrics.appendChild(this.createMetricChip(`Endpoint bias removed (${item.endpointRemovedTrades})`));
             }

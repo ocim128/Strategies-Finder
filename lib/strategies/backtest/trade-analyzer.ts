@@ -502,7 +502,8 @@ function clamp(value: number, min: number, max: number): number {
 
 function normalizeSuggestedThreshold(value: number): number {
     if (!Number.isFinite(value)) return 0;
-    if (value === 0) return 0;
+    // Zero often means "disabled" in runtime filters, so keep suggestions active.
+    if (value === 0) return 1e-6;
 
     const abs = Math.abs(value);
     const decimals = abs >= 100 ? 2
