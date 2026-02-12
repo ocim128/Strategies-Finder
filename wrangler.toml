@@ -9,5 +9,6 @@ database_id = "ba727aeb-077a-4fed-a526-e07e97c61f6b"
 migrations_dir = "workers/migrations"
 
 [triggers]
-# Run shortly after each 2-hour candle opens, so previous 2h candle is closed.
-crons = ["1 */2 * * *"]
+# Intentional: this worker is tuned for 2h signal workflows.
+# Trigger exactly at each 2h boundary minute; worker then aligns to second 10 in code.
+crons = ["0 */2 * * *"]

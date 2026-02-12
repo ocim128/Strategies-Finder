@@ -149,6 +149,9 @@ const DEFAULT_SUBSCRIPTION_CANDLE_LIMIT = 350;
 const MAX_SUBSCRIPTION_CANDLE_LIMIT = 1000;
 const STATUS_TEXT_MAX = 1200;
 const RESPONSE_SNIPPET_MAX = 320;
+// Keep this worker on 2h cron cadence and run shortly after minute boundary.
+// Cloudflare cron granularity is 1 minute, so second-level precision is done in code.
+const SCHEDULE_TARGET_SECOND = 10;
 const BINANCE_INTERVALS = new Set([
     "1m", "3m", "5m", "15m", "30m",
     "1h", "2h", "4h", "6h", "8h", "12h",
@@ -185,6 +188,23 @@ function toJsonResponse(payload: unknown, status = 200): Response {
 
 function toNoContentResponse(): Response {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function computeScheduleAlignmentDelayMs(
+    scheduledTimeMs: number,
+    targetSecond: number,
+    nowMs: number = Date.now()
+): number {
+    if (!Number.isFinite(scheduledTimeMs)) return 0;
+    const minuteStartMs = Math.floor(scheduledTimeMs / 60_000) * 60_000;
+    const clampedSecond = Math.max(0, Math.min(59, Math.floor(targetSecond)));
+    const targetMs = minuteStartMs + clampedSecond * 1000;
+    const waitMs = targetMs - nowMs;
+    return waitMs > 0 ? waitMs : 0;
 }
 
 function parseNumeric(value: unknown): number | null {
@@ -1369,11 +1389,21 @@ export default {
         return toJsonResponse({ ok: false, error: "Not found" }, 404);
     },
 
-    async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    async scheduled(controller: ScheduledController, env: Env): Promise<void> {
         if (!env.SIGNALS_DB) {
             console.error(JSON.stringify({ ok: false, error: "Missing SIGNALS_DB binding" }));
             return;
         }
+
+        // Intentional behavior:
+        // - Wrangler cron should run every 2h at minute 00 (`0 */2 * * *`)
+        // - We delay to second 10 so evaluation happens just after the new candle forms.
+        const scheduledTimeMs = Number(controller.scheduledTime);
+        const waitMs = computeScheduleAlignmentDelayMs(scheduledTimeMs, SCHEDULE_TARGET_SECOND);
+        if (waitMs > 0) {
+            await sleep(waitMs);
+        }
+
         const summary = await runScheduledSubscriptions(env);
         console.log(JSON.stringify(summary));
     },

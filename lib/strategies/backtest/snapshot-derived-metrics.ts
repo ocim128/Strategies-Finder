@@ -210,6 +210,48 @@ export function computeDirectionalPerformancePercent(
     return direction === 'short' ? -rawReturnPct : rawReturnPct;
 }
 
+export function computeDirectionalConfluencePercent(
+    data: OHLCVData[],
+    barIndex: number,
+    direction: EntryDirection
+): number | null {
+    const weightedPerformances = [
+        { value: computeDirectionalPerformancePercent(data, barIndex, direction, TF_60_LOOKBACK_MINUTES), weight: 0.36 },
+        { value: computeDirectionalPerformancePercent(data, barIndex, direction, TF_90_LOOKBACK_MINUTES), weight: 0.24 },
+        { value: computeDirectionalPerformancePercent(data, barIndex, direction, TF_120_LOOKBACK_MINUTES), weight: 0.22 },
+        { value: computeDirectionalPerformancePercent(data, barIndex, direction, TF_480_LOOKBACK_MINUTES), weight: 0.18 },
+    ].filter((entry): entry is { value: number; weight: number } => entry.value !== null && Number.isFinite(entry.value));
+
+    if (weightedPerformances.length < 2) return null;
+
+    let weightedSum = 0;
+    let totalWeight = 0;
+    for (const entry of weightedPerformances) {
+        weightedSum += entry.value * entry.weight;
+        totalWeight += entry.weight;
+    }
+    if (totalWeight <= 0) return null;
+
+    const weightedMean = weightedSum / totalWeight;
+
+    let weightedVariance = 0;
+    let weightedCounterTrend = 0;
+    for (const entry of weightedPerformances) {
+        const delta = entry.value - weightedMean;
+        weightedVariance += entry.weight * (delta * delta);
+        if (entry.value < 0) {
+            weightedCounterTrend += entry.weight * Math.abs(entry.value);
+        }
+    }
+
+    const weightedStdDev = Math.sqrt(weightedVariance / totalWeight);
+    const counterTrendMagnitude = weightedCounterTrend / totalWeight;
+    const disagreementPenalty = weightedStdDev * 0.45;
+    const counterTrendPenalty = counterTrendMagnitude * 1.1;
+
+    return weightedMean - disagreementPenalty - counterTrendPenalty;
+}
+
 function bodyToQuality(bodyPercent: number | null): number | null {
     if (bodyPercent === null || !Number.isFinite(bodyPercent)) return null;
     if (bodyPercent <= 15) return 0;

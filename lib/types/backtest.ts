@@ -85,6 +85,8 @@ export interface NormalizedSettings {
     snapshotTf120PerfMax: number;
     snapshotTf480PerfMin: number;
     snapshotTf480PerfMax: number;
+    snapshotTfConfluencePerfMin: number;
+    snapshotTfConfluencePerfMax: number;
     snapshotEntryQualityScoreMin: number;
     snapshotEntryQualityScoreMax: number;
 }

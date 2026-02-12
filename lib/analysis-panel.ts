@@ -50,6 +50,7 @@ const FEATURE_TO_SETTINGS: Record<keyof TradeSnapshot, {
     tf90Perf: { toggleId: 'snapshotTf90PerfFilterToggle', minInputId: 'snapshotTf90PerfMin', maxInputId: 'snapshotTf90PerfMax' },
     tf120Perf: { toggleId: 'snapshotTf120PerfFilterToggle', minInputId: 'snapshotTf120PerfMin', maxInputId: 'snapshotTf120PerfMax' },
     tf480Perf: { toggleId: 'snapshotTf480PerfFilterToggle', minInputId: 'snapshotTf480PerfMin', maxInputId: 'snapshotTf480PerfMax' },
+    tfConfluencePerf: { toggleId: 'snapshotTfConfluencePerfFilterToggle', minInputId: 'snapshotTfConfluencePerfMin', maxInputId: 'snapshotTfConfluencePerfMax' },
     entryQualityScore: { toggleId: 'snapshotEntryQualityScoreFilterToggle', minInputId: 'snapshotEntryQualityScoreMin', maxInputId: 'snapshotEntryQualityScoreMax' },
     volumeTrend: { toggleId: 'snapshotVolumeTrendFilterToggle', minInputId: 'snapshotVolumeTrendMin', maxInputId: 'snapshotVolumeTrendMax' },
     volumeBurst: { toggleId: 'snapshotVolumeBurstFilterToggle', minInputId: 'snapshotVolumeBurstMin', maxInputId: 'snapshotVolumeBurstMax' },

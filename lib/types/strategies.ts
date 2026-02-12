@@ -56,6 +56,8 @@ export interface TradeSnapshot {
     tf120Perf?: number | null;
     /** Directional performance over prior 480 minutes (%, positive = aligned with entry) */
     tf480Perf?: number | null;
+    /** Multi-timeframe directional confluence % (higher = broad timeframe alignment) */
+    tfConfluencePerf?: number | null;
     /** Composite entry quality score (0-100) from candle-based sub-metrics */
     entryQualityScore?: number | null;
     /** Volume trend ratio (short EMA / long EMA, >1 = building) */
@@ -300,6 +302,10 @@ export interface BacktestSettings {
     snapshotTf480PerfMin?: number;
     /** Max 480m directional performance % (0 = disabled) */
     snapshotTf480PerfMax?: number;
+    /** Min multi-timeframe confluence % (0 = disabled) */
+    snapshotTfConfluencePerfMin?: number;
+    /** Max multi-timeframe confluence % (0 = disabled) */
+    snapshotTfConfluencePerfMax?: number;
     /** Min composite entry-quality score (0-100, 0 = disabled) */
     snapshotEntryQualityScoreMin?: number;
     /** Max composite entry-quality score (0-100, 0 = disabled) */

@@ -5,7 +5,7 @@
 import { alertService, AlertSubscription, AlertSignalRecord } from '../alert-service';
 import { uiManager } from '../ui-manager';
 import { state } from '../state';
-import { settingsManager } from '../settings-manager';
+import { backtestService } from '../backtest-service';
 
 function el<T extends HTMLElement>(id: string): T | null {
     return document.getElementById(id) as T | null;
@@ -210,7 +210,7 @@ async function quickSubscribe() {
     }
 
     const strategyParams = collectCurrentStrategyParams();
-    const backtestSettings = settingsManager.getBacktestSettings();
+    const backtestSettings = backtestService.getBacktestSettings();
 
     try {
         const parsedFreshness = Number.parseInt(freshnessBarsInput?.value ?? '1', 10);
@@ -251,7 +251,7 @@ async function handleTableAction(action: string, streamId: string) {
                 streamId,
                 strategyKey,
                 strategyParams: collectCurrentStrategyParams(),
-                backtestSettings: settingsManager.getBacktestSettings(),
+                backtestSettings: backtestService.getBacktestSettings(),
             });
             uiManager.showToast(`Updated ${streamId} to current strategy (${strategyKey}).`, 'success');
             await refreshSubscriptions();

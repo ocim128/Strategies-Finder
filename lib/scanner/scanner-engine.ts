@@ -189,6 +189,7 @@ function hasUiToggleSettings(raw: Record<string, unknown>): boolean {
         'snapshotTf90PerfFilterToggle',
         'snapshotTf120PerfFilterToggle',
         'snapshotTf480PerfFilterToggle',
+        'snapshotTfConfluencePerfFilterToggle',
         'snapshotEntryQualityScoreFilterToggle',
     ].some((key) => key in raw);
 }
@@ -322,6 +323,8 @@ export function resolveScannerBacktestSettings(settings?: BacktestSettings): Bac
         snapshotTf120PerfMax: readSnapshotValue(raw, 'snapshotTf120PerfFilterToggle', 'snapshotTf120PerfMax'),
         snapshotTf480PerfMin: readSnapshotValue(raw, 'snapshotTf480PerfFilterToggle', 'snapshotTf480PerfMin'),
         snapshotTf480PerfMax: readSnapshotValue(raw, 'snapshotTf480PerfFilterToggle', 'snapshotTf480PerfMax'),
+        snapshotTfConfluencePerfMin: readSnapshotValue(raw, 'snapshotTfConfluencePerfFilterToggle', 'snapshotTfConfluencePerfMin'),
+        snapshotTfConfluencePerfMax: readSnapshotValue(raw, 'snapshotTfConfluencePerfFilterToggle', 'snapshotTfConfluencePerfMax'),
         snapshotEntryQualityScoreMin: readSnapshotValue(raw, 'snapshotEntryQualityScoreFilterToggle', 'snapshotEntryQualityScoreMin'),
         snapshotEntryQualityScoreMax: readSnapshotValue(raw, 'snapshotEntryQualityScoreFilterToggle', 'snapshotEntryQualityScoreMax'),
     };

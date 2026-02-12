@@ -855,6 +855,52 @@ describe('Backtesting Engine', () => {
         expect(withoutFilter.totalTrades).to.equal(2);
         expect(withFilter.totalTrades).to.equal(1);
     });
+
+    it('should filter rebound traps using TF confluence', () => {
+        const data: OHLCVData[] = [];
+        const startMs = Date.UTC(2023, 5, 1, 0, 0, 0);
+
+        for (let i = 0; i < 80; i++) {
+            let close: number;
+            if (i < 30) {
+                close = 120 - i * 0.7;
+            } else if (i < 35) {
+                close = 99 + (i - 29) * 1.2;
+            } else if (i < 40) {
+                close = 105 - (i - 34) * 1.0;
+            } else {
+                close = 100 + (i - 39) * 0.65;
+            }
+
+            const open = close - 0.25;
+            const high = Math.max(open, close) + 0.6;
+            const low = Math.min(open, close) - 0.6;
+            data.push({
+                time: Math.floor((startMs + i * 30 * 60 * 1000) / 1000) as Time,
+                open,
+                high,
+                low,
+                close,
+                volume: 1200 + (i % 6) * 30
+            });
+        }
+
+        const signals: Signal[] = [
+            { time: data[34].time, type: 'buy', price: data[34].close },
+            { time: data[38].time, type: 'sell', price: data[38].close },
+            { time: data[66].time, type: 'buy', price: data[66].close },
+            { time: data[70].time, type: 'sell', price: data[70].close },
+        ];
+
+        const withoutFilter = runBacktest(data, signals, 10000, 100, 0);
+        const withFilter = runBacktest(data, signals, 10000, 100, 0, {
+            snapshotTfConfluencePerfMin: 1.2
+        });
+
+        expect(withoutFilter.totalTrades).to.equal(2);
+        expect(withFilter.totalTrades).to.equal(1);
+        expect(withFilter.trades[0].entryTime).to.equal(data[66].time);
+    });
 });
 
 describe('Simple Regression Line Strategy', () => {

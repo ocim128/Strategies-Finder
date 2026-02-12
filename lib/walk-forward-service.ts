@@ -586,6 +586,8 @@ class WalkForwardService {
         delete (rustSettings as { snapshotTf120PerfMax?: number }).snapshotTf120PerfMax;
         delete (rustSettings as { snapshotTf480PerfMin?: number }).snapshotTf480PerfMin;
         delete (rustSettings as { snapshotTf480PerfMax?: number }).snapshotTf480PerfMax;
+        delete (rustSettings as { snapshotTfConfluencePerfMin?: number }).snapshotTfConfluencePerfMin;
+        delete (rustSettings as { snapshotTfConfluencePerfMax?: number }).snapshotTfConfluencePerfMax;
         delete (rustSettings as { snapshotEntryQualityScoreMin?: number }).snapshotEntryQualityScoreMin;
         delete (rustSettings as { snapshotEntryQualityScoreMax?: number }).snapshotEntryQualityScoreMax;
         return rustSettings;

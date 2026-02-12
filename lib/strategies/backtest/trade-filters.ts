@@ -9,6 +9,7 @@ import {
     computeAtrRegimeRatio,
     computeBreakQuality,
     computeBodyPercent,
+    computeDirectionalConfluencePercent,
     computeDirectionalCloseLocation,
     computeDirectionalPerformancePercent,
     computeEntryQualityScore,
@@ -247,6 +248,8 @@ export function passesSnapshotFilters(
         config.snapshotTf120PerfMax !== 0 ||
         config.snapshotTf480PerfMin !== 0 ||
         config.snapshotTf480PerfMax !== 0 ||
+        config.snapshotTfConfluencePerfMin !== 0 ||
+        config.snapshotTfConfluencePerfMax !== 0 ||
         config.snapshotEntryQualityScoreMin > 0 ||
         config.snapshotEntryQualityScoreMax > 0;
     if (!hasAny || !snapshotIndicators) return true;
@@ -430,6 +433,12 @@ export function passesSnapshotFilters(
         if (tf480Perf === null || tf480Perf === undefined) return false;
         if (config.snapshotTf480PerfMin !== 0 && tf480Perf < config.snapshotTf480PerfMin) return false;
         if (config.snapshotTf480PerfMax !== 0 && tf480Perf > config.snapshotTf480PerfMax) return false;
+    }
+    if (config.snapshotTfConfluencePerfMin !== 0 || config.snapshotTfConfluencePerfMax !== 0) {
+        const tfConfluencePerf = computeDirectionalConfluencePercent(data, entryIndex, tradeDirection);
+        if (tfConfluencePerf === null || tfConfluencePerf === undefined) return false;
+        if (config.snapshotTfConfluencePerfMin !== 0 && tfConfluencePerf < config.snapshotTfConfluencePerfMin) return false;
+        if (config.snapshotTfConfluencePerfMax !== 0 && tfConfluencePerf > config.snapshotTfConfluencePerfMax) return false;
     }
 
     // Composite entry quality score (0..100)

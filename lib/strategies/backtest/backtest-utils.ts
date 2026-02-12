@@ -103,6 +103,8 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         snapshotTf120PerfMax: toNumberOr(settings?.snapshotTf120PerfMax, 0),
         snapshotTf480PerfMin: toNumberOr(settings?.snapshotTf480PerfMin, 0),
         snapshotTf480PerfMax: toNumberOr(settings?.snapshotTf480PerfMax, 0),
+        snapshotTfConfluencePerfMin: toNumberOr(settings?.snapshotTfConfluencePerfMin, 0),
+        snapshotTfConfluencePerfMax: toNumberOr(settings?.snapshotTfConfluencePerfMax, 0),
         snapshotEntryQualityScoreMin: clamp(toNumberOr(settings?.snapshotEntryQualityScoreMin, 0), 0, 100),
         snapshotEntryQualityScoreMax: clamp(toNumberOr(settings?.snapshotEntryQualityScoreMax, 0), 0, 100),
     };
@@ -239,6 +241,7 @@ export function needsSnapshotIndicators(config: NormalizedSettings, captureSnaps
         config.snapshotTf90PerfMin !== 0 || config.snapshotTf90PerfMax !== 0 ||
         config.snapshotTf120PerfMin !== 0 || config.snapshotTf120PerfMax !== 0 ||
         config.snapshotTf480PerfMin !== 0 || config.snapshotTf480PerfMax !== 0 ||
+        config.snapshotTfConfluencePerfMin !== 0 || config.snapshotTfConfluencePerfMax !== 0 ||
         config.snapshotEntryQualityScoreMin > 0 || config.snapshotEntryQualityScoreMax > 0;
 }
 

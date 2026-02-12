@@ -170,6 +170,8 @@ export class BacktestService {
             delete (rustSettings as { snapshotTf120PerfMax?: number }).snapshotTf120PerfMax;
             delete (rustSettings as { snapshotTf480PerfMin?: number }).snapshotTf480PerfMin;
             delete (rustSettings as { snapshotTf480PerfMax?: number }).snapshotTf480PerfMax;
+            delete (rustSettings as { snapshotTfConfluencePerfMin?: number }).snapshotTfConfluencePerfMin;
+            delete (rustSettings as { snapshotTfConfluencePerfMax?: number }).snapshotTfConfluencePerfMax;
             delete (rustSettings as { snapshotEntryQualityScoreMin?: number }).snapshotEntryQualityScoreMin;
             delete (rustSettings as { snapshotEntryQualityScoreMax?: number }).snapshotEntryQualityScoreMax;
 
@@ -413,6 +415,8 @@ export class BacktestService {
             snapshotTf120PerfMax: this.isToggleEnabled('snapshotTf120PerfFilterToggle', false) ? this.readNumberInput('snapshotTf120PerfMax', 0) : 0,
             snapshotTf480PerfMin: this.isToggleEnabled('snapshotTf480PerfFilterToggle', false) ? this.readNumberInput('snapshotTf480PerfMin', 0) : 0,
             snapshotTf480PerfMax: this.isToggleEnabled('snapshotTf480PerfFilterToggle', false) ? this.readNumberInput('snapshotTf480PerfMax', 0) : 0,
+            snapshotTfConfluencePerfMin: this.isToggleEnabled('snapshotTfConfluencePerfFilterToggle', false) ? this.readNumberInput('snapshotTfConfluencePerfMin', 0) : 0,
+            snapshotTfConfluencePerfMax: this.isToggleEnabled('snapshotTfConfluencePerfFilterToggle', false) ? this.readNumberInput('snapshotTfConfluencePerfMax', 0) : 0,
             snapshotEntryQualityScoreMin: this.isToggleEnabled('snapshotEntryQualityScoreFilterToggle', false) ? this.readNumberInput('snapshotEntryQualityScoreMin', 0) : 0,
             snapshotEntryQualityScoreMax: this.isToggleEnabled('snapshotEntryQualityScoreFilterToggle', false) ? this.readNumberInput('snapshotEntryQualityScoreMax', 0) : 0,
         };
@@ -805,6 +809,8 @@ export class BacktestService {
             (settings.snapshotTf120PerfMax ?? 0) !== 0 ||
             (settings.snapshotTf480PerfMin ?? 0) !== 0 ||
             (settings.snapshotTf480PerfMax ?? 0) !== 0 ||
+            (settings.snapshotTfConfluencePerfMin ?? 0) !== 0 ||
+            (settings.snapshotTfConfluencePerfMax ?? 0) !== 0 ||
             (settings.snapshotEntryQualityScoreMin ?? 0) > 0 ||
             (settings.snapshotEntryQualityScoreMax ?? 0) > 0;
         return executionModel !== 'signal_close' || slippageBps > 0 || !allowSameBarExit || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined' || hasSnapshotFilters;

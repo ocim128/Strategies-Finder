@@ -11,6 +11,7 @@ import {
     computeAtrRegimeRatio,
     computeBreakQuality,
     computeBodyPercent,
+    computeDirectionalConfluencePercent,
     computeDirectionalPerformancePercent,
     computeDirectionalCloseLocation,
     computeEntryQualityScore,
@@ -166,6 +167,7 @@ export function captureTradeSnapshot(
     const perf90m = computeDirectionalPerformancePercent(data, barIndex, direction, TF_90_LOOKBACK_MINUTES);
     const perf120m = computeDirectionalPerformancePercent(data, barIndex, direction, TF_120_LOOKBACK_MINUTES);
     const perf480m = computeDirectionalPerformancePercent(data, barIndex, direction, TF_480_LOOKBACK_MINUTES);
+    const tfConfluencePerf = computeDirectionalConfluencePercent(data, barIndex, direction);
     const entryQualityScore = computeEntryQualityScore({
         bodyPercent,
         closeLocation,
@@ -204,6 +206,7 @@ export function captureTradeSnapshot(
         tf90Perf: perf90m,
         tf120Perf: perf120m,
         tf480Perf: perf480m,
+        tfConfluencePerf,
         entryQualityScore,
         volumeTrend,
         volumeBurst,

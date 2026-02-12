@@ -90,6 +90,8 @@ export class FinderManager {
 		'snapshotTf120PerfMax',
 		'snapshotTf480PerfMin',
 		'snapshotTf480PerfMax',
+		'snapshotTfConfluencePerfMin',
+		'snapshotTfConfluencePerfMax',
 		'snapshotEntryQualityScoreMin',
 		'snapshotEntryQualityScoreMax'
 	] as const;
@@ -142,6 +144,8 @@ export class FinderManager {
 		'snapshotTf120PerfMax',
 		'snapshotTf480PerfMin',
 		'snapshotTf480PerfMax',
+		'snapshotTfConfluencePerfMin',
+		'snapshotTfConfluencePerfMax',
 		'snapshotEntryQualityScoreMin',
 		'snapshotEntryQualityScoreMax'
 	] as const;

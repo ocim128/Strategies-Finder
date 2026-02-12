@@ -52,11 +52,13 @@ Cron is configured in `wrangler.toml`:
 
 ```toml
 [triggers]
-crons = ["1 */2 * * *"]
+crons = ["0 */2 * * *"]
 ```
 
 Behavior:
-- Runs every 2 hours at minute `01` UTC.
+- Runs every 2 hours on minute `00` UTC.
+- Worker aligns processing to around second `10` of that minute before evaluating subscriptions.
+- This is intentional for 2h signal workflows. Do not switch to per-minute cron unless you also change interval strategy requirements.
 - For each enabled subscription, worker fetches Binance candles.
 - It only evaluates when a **new closed candle** exists (`last_processed_closed_candle_time` guard).
 - This avoids duplicate alerts between candle closes.
