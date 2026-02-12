@@ -158,12 +158,9 @@ const FEATURE_LABELS: Record<keyof TradeSnapshot, string> = {
 };
 
 const EXCLUDED_ENTRY_QUALITY_FEATURES = new Set<keyof TradeSnapshot>([
-    'barsFromHigh',
-    'barsFromLow',
     'volumeConsistency',
     'momentumConsistency',
     'wickSkew',
-    'volumePriceDivergence',
     'entryQualityScore',
     'closeLocation',
     'oppositeWickPercent',
