@@ -34,6 +34,7 @@ interface StreamSignalRequest {
     symbol: string;
     interval: string;
     strategyKey: string;
+    configName?: string;
     strategyParams?: Record<string, number>;
     backtestSettings?: BacktestSettings;
     freshnessBars?: number;
@@ -53,6 +54,7 @@ interface SubscriptionUpsertRequest {
     symbol: string;
     interval: string;
     strategyKey: string;
+    configName?: string;
     strategyParams?: Record<string, number>;
     backtestSettings?: BacktestSettings;
     freshnessBars?: number;
@@ -82,6 +84,7 @@ interface StoredSignalPayload {
     interval: string;
     strategyKey: string;
     strategyName: string;
+    configName?: string;
     direction: "long" | "short";
     signalTimeSec: number;
     signalAgeBars: number;
@@ -119,6 +122,7 @@ interface ProcessSignalPayload {
     symbol: string;
     interval: string;
     strategyKey: string;
+    configName?: string;
     strategyParams: Record<string, number>;
     backtestSettings: BacktestSettings;
     freshnessBars: number;
@@ -149,6 +153,7 @@ const DEFAULT_SUBSCRIPTION_CANDLE_LIMIT = 350;
 const MAX_SUBSCRIPTION_CANDLE_LIMIT = 1000;
 const STATUS_TEXT_MAX = 1200;
 const RESPONSE_SNIPPET_MAX = 320;
+const STREAM_CONFIG_MARKER = ":cfg:";
 // Keep this worker on 2h cron cadence and run shortly after minute boundary.
 // Cloudflare cron granularity is 1 minute, so second-level precision is done in code.
 const SCHEDULE_TARGET_SECOND = 10;
@@ -292,8 +297,24 @@ function buildChannelKey(payload: {
     return `${payload.symbol}:${payload.interval}:${payload.strategyKey}`.toLowerCase();
 }
 
-function buildDefaultStreamId(symbol: string, interval: string, strategyKey: string): string {
-    return `${symbol}:${interval}:${strategyKey}`.toLowerCase();
+function buildDefaultStreamId(symbol: string, interval: string, strategyKey: string, configName?: string): string {
+    const base = `${symbol}:${interval}:${strategyKey}`.toLowerCase();
+    const normalizedConfigName = (configName ?? "").trim();
+    if (!normalizedConfigName) return base;
+    return `${base}${STREAM_CONFIG_MARKER}${encodeURIComponent(normalizedConfigName)}`;
+}
+
+function parseConfigNameFromStreamId(streamId: string): string | null {
+    const markerIdx = streamId.lastIndexOf(STREAM_CONFIG_MARKER);
+    if (markerIdx < 0) return null;
+    const encoded = streamId.slice(markerIdx + STREAM_CONFIG_MARKER.length);
+    if (!encoded) return null;
+    try {
+        const decoded = decodeURIComponent(encoded).trim();
+        return decoded || null;
+    } catch {
+        return encoded.trim() || null;
+    }
 }
 
 function safeJsonParse<T>(value: string, fallback: T): T {
@@ -630,11 +651,13 @@ function formatPercent(value: number): string {
 
 function buildTelegramMessage(signal: StoredSignalPayload): string {
     const icon = signal.direction === "long" ? "\u{1F7E2}" : "\u{1F534}";
+    const configLabel = signal.configName ?? signal.strategyKey;
     const lines = [
         `${icon} New Entry Signal`,
         `Symbol: ${signal.symbol}`,
         `Interval: ${signal.interval}`,
-        `Strategy: ${signal.strategyName} (${signal.strategyKey})`,
+        `Configuration: ${configLabel}`,
+        `Strategy: ${signal.strategyKey}`,
         `Direction: ${signal.direction.toUpperCase()}`,
         `Price: ${signal.signalPrice}`,
     ];
@@ -649,12 +672,22 @@ function buildTelegramMessage(signal: StoredSignalPayload): string {
     return lines.join("\n");
 }
 
-function buildExitTelegramMessage(exitDirection: "long" | "short", symbol: string, interval: string, strategyName: string, strategyKey: string, price: number, timeSec: number): string {
+function buildExitTelegramMessage(
+    exitDirection: "long" | "short",
+    symbol: string,
+    interval: string,
+    strategyKey: string,
+    configName: string | null,
+    price: number,
+    timeSec: number
+): string {
+    const configLabel = configName ?? strategyKey;
     return [
         `\u{1F6AA} Exit Signal`,
         `Symbol: ${symbol}`,
         `Interval: ${interval}`,
-        `Strategy: ${strategyName} (${strategyKey})`,
+        `Configuration: ${configLabel}`,
+        `Strategy: ${strategyKey}`,
         `Closing: ${exitDirection.toUpperCase()} position`,
         `Price: ${price}`,
         `Time (UTC): ${new Date(timeSec * 1000).toISOString()}`,
@@ -695,6 +728,7 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
     const interval = normalizeText(payload.interval);
     const strategyKey = normalizeText(payload.strategyKey);
     const streamId = normalizeText(payload.streamId);
+    const configName = (payload.configName ?? parseConfigNameFromStreamId(streamId) ?? "").trim() || null;
     const channelKey = buildChannelKey({ streamId, symbol, interval, strategyKey });
 
     const evaluation = evaluateLatestEntrySignal({
@@ -763,6 +797,7 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         interval,
         strategyKey,
         strategyName: evaluation.latestEntry.strategyName,
+        configName: configName ?? undefined,
         direction: evaluation.latestEntry.direction,
         signalTimeSec: evaluation.latestEntry.signalTimeSec,
         signalAgeBars: evaluation.latestEntry.signalAgeBars,
@@ -860,7 +895,7 @@ async function handleStreamSignal(request: Request, env: Env): Promise<Response>
     const normalizedCandles = normalizeCandles(payload.candles);
     const streamId = payload.streamId
         ? normalizeText(payload.streamId)
-        : buildDefaultStreamId(payload.symbol.toUpperCase(), payload.interval, payload.strategyKey);
+        : buildDefaultStreamId(payload.symbol.toUpperCase(), payload.interval, payload.strategyKey, payload.configName);
 
     const result = await processSignalPayload(
         {
@@ -868,6 +903,7 @@ async function handleStreamSignal(request: Request, env: Env): Promise<Response>
             symbol: payload.symbol,
             interval: payload.interval,
             strategyKey: payload.strategyKey,
+            configName: payload.configName,
             strategyParams: payload.strategyParams ?? {},
             backtestSettings: payload.backtestSettings ?? {},
             freshnessBars: Math.max(0, Math.floor(payload.freshnessBars ?? 1)),
@@ -992,7 +1028,7 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
 
     const streamId = incomingStreamId
         ? incomingStreamId
-        : buildDefaultStreamId(symbol, interval, strategyKey);
+        : buildDefaultStreamId(symbol, interval, strategyKey, payload.configName);
     const enabled = payload.enabled === undefined
         ? existing?.enabled ?? 1
         : payload.enabled === false ? 0 : 1;
@@ -1201,6 +1237,7 @@ async function runSubscription(
                 symbol: subscription.symbol,
                 interval: subscription.interval,
                 strategyKey: subscription.strategy_key,
+                configName: parseConfigNameFromStreamId(streamId) ?? undefined,
                 strategyParams: safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>),
                 backtestSettings: safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings),
                 freshnessBars: Math.max(0, subscription.freshness_bars ?? 1),
@@ -1242,8 +1279,8 @@ async function runSubscription(
                                     lastPayload.direction,
                                     subscription.symbol,
                                     subscription.interval,
-                                    evaluation.latestEntry.strategyName,
                                     subscription.strategy_key,
+                                    parseConfigNameFromStreamId(streamId),
                                     evaluation.latestEntry.signal.price,
                                     evaluation.latestEntry.signalTimeSec
                                 );

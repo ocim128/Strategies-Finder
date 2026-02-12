@@ -6,6 +6,7 @@ import { backtestService } from "../backtest-service";
 import { clearAll } from "../app-actions";
 import { uiManager } from "../ui-manager";
 import { chartManager } from "../chart-manager";
+import { dataManager } from "../data-manager";
 import { assetSearchService, Asset } from "../asset-search-service";
 
 // Debounce helper for search input
@@ -375,6 +376,10 @@ export function setupEventHandlers() {
     const timeframeMinutesInput = document.getElementById('timeframeMinutesInput') as HTMLInputElement | null;
     const timeframeMinutesApply = document.getElementById('timeframeMinutesApply');
     const MAX_CUSTOM_MINUTES = 60 * 24 * 7;
+    const visibleCandlesInput = document.getElementById('visibleCandlesInput') as HTMLInputElement | null;
+    const visibleCandlesApply = document.getElementById('visibleCandlesApply');
+    const MIN_VISIBLE_CANDLES = 200;
+    const MAX_VISIBLE_CANDLES = 50000;
 
     const applyCustomMinutes = () => {
         if (!timeframeMinutesInput) return;
@@ -408,6 +413,45 @@ export function setupEventHandlers() {
 
     if (timeframeMinutesApply) {
         timeframeMinutesApply.addEventListener('click', applyCustomMinutes);
+    }
+
+    const applyVisibleCandles = async () => {
+        if (!visibleCandlesInput) return;
+        const raw = visibleCandlesInput.value.trim();
+        const parsed = Number.parseInt(raw, 10);
+        if (!Number.isFinite(parsed)) {
+            uiManager.showToast(`Enter candles between ${MIN_VISIBLE_CANDLES} and ${MAX_VISIBLE_CANDLES}.`, 'error');
+            const lookback = dataManager.getChartLookbackBars();
+            visibleCandlesInput.value = String(lookback ?? Math.max(MIN_VISIBLE_CANDLES, state.ohlcvData.length || 15000));
+            return;
+        }
+
+        const clamped = Math.max(MIN_VISIBLE_CANDLES, Math.min(MAX_VISIBLE_CANDLES, Math.floor(parsed)));
+        if (clamped !== parsed) {
+            uiManager.showToast(`Candles must be between ${MIN_VISIBLE_CANDLES} and ${MAX_VISIBLE_CANDLES}.`, 'error');
+        }
+
+        visibleCandlesInput.value = String(clamped);
+        dataManager.setChartLookbackBars(clamped);
+        await dataManager.loadData(state.currentSymbol, state.currentInterval);
+        uiManager.showToast(`Reloaded with ${clamped} candles.`, 'success');
+    };
+
+    if (visibleCandlesInput) {
+        const lookback = dataManager.getChartLookbackBars();
+        visibleCandlesInput.value = String(lookback ?? Math.max(MIN_VISIBLE_CANDLES, state.ohlcvData.length || 15000));
+        visibleCandlesInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                void applyVisibleCandles();
+            }
+        });
+    }
+
+    if (visibleCandlesApply) {
+        visibleCandlesApply.addEventListener('click', () => {
+            void applyVisibleCandles();
+        });
     }
 
     // Theme toggle

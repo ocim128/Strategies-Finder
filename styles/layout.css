@@ -374,6 +374,49 @@
     transition: color 0.2s ease;
 }
 
+.status-viewbars {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.status-viewbars-label {
+    color: var(--text-secondary);
+}
+
+.status-viewbars input {
+    width: 72px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: var(--radius-xs);
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: var(--font-size-xs);
+    font-family: var(--font-family-mono);
+}
+
+.status-viewbars input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+}
+
+.status-viewbars button {
+    height: 22px;
+    padding: 0 8px;
+    border-radius: var(--radius-xs);
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: var(--font-size-xs);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.status-viewbars button:hover {
+    background: var(--bg-elevated);
+}
+
 .status-item:hover {
     color: var(--text-primary);
 }

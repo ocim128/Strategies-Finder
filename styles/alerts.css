@@ -85,6 +85,11 @@
     font-size: 0.72rem !important;
 }
 
+.alert-action-btn[data-action="info"] {
+    border-color: hsl(var(--hsl-accent) / 0.35);
+    color: var(--accent-color);
+}
+
 /* Status colors */
 .alert-status-new {
     color: var(--green, #26a69a);
@@ -104,4 +109,49 @@
 .alert-dir-short {
     color: var(--red, #ef5350);
     font-weight: 600;
+}
+
+.alert-config-modal {
+    width: min(760px, 92vw);
+    max-height: min(80vh, 760px);
+}
+
+.alert-config-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.alert-config-section {
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: var(--bg-tertiary, rgba(255, 255, 255, 0.02));
+}
+
+.alert-config-section h4 {
+    margin: 0 0 6px;
+    font-size: 0.76rem;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-muted, #9aa4b1);
+}
+
+.alert-config-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.alert-config-list li {
+    font-size: 0.78rem;
+    line-height: 1.35;
+    color: var(--text-primary, #d6dde8);
+}
+
+.alert-config-muted {
+    color: var(--text-muted, #8b96a6);
 }

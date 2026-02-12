@@ -62,6 +62,7 @@ export class DataManager {
     private lastLogTime: number = 0;
     private lastUiUpdateTime: number = 0;
     private readonly TOTAL_LIMIT = 50000;
+    private chartLookbackBars: number | null = null;
     private readonly CACHE_SYNC_MIN_MS = 30000;
     private readonly STREAM_PERSIST_DELAY_MS = 1200;
     private cacheSyncAtByKey: Map<string, number> = new Map();
@@ -85,6 +86,18 @@ export class DataManager {
         return true;
     }
 
+    public setChartLookbackBars(lookbackBars: number | null): void {
+        if (lookbackBars === null || !Number.isFinite(lookbackBars)) {
+            this.chartLookbackBars = null;
+            return;
+        }
+        this.chartLookbackBars = Math.max(200, Math.min(this.TOTAL_LIMIT, Math.floor(lookbackBars)));
+    }
+
+    public getChartLookbackBars(): number | null {
+        return this.chartLookbackBars;
+    }
+
     public getProvider(symbol: string): DataProvider {
         const normalizedSymbol = symbol.trim().toUpperCase();
         if (this.nonBinanceProviderOverride.has(normalizedSymbol)) {
@@ -99,27 +112,35 @@ export class DataManager {
     }
 
     public async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
+        const lookbackBars = this.chartLookbackBars;
+
         if (this.isMockSymbol(symbol)) {
             await new Promise(resolve => setTimeout(resolve, 600)); // Simulate latency
             if (signal?.aborted) return [];
-            return generateMockData(symbol, interval);
+            const mockData = generateMockData(symbol, interval);
+            return typeof lookbackBars === 'number' ? mockData.slice(-lookbackBars) : mockData;
         }
 
         const provider = this.getProvider(symbol);
 
         if (provider === 'binance') {
-            return this.fetchBinanceDataHybrid(symbol, interval, signal);
+            return this.fetchBinanceDataHybrid(symbol, interval, signal, {
+                maxBars: lookbackBars ?? undefined,
+            });
         }
 
         if (provider === 'bybit-tradfi') {
-            const data = await fetchBybitTradFiData(symbol, interval, signal);
+            const data = typeof lookbackBars === 'number'
+                ? await fetchBybitTradFiDataWithLimit(symbol, interval, lookbackBars, { signal })
+                : await fetchBybitTradFiData(symbol, interval, signal);
             if (data.length > 0) return data;
             uiManager.showToast('Bybit TradFi returned no data.', 'error');
             return [];
         }
 
         // Fallback or explicit provider logic for others
-        return this.fetchNonBinanceData(symbol, interval, signal);
+        const fallback = await this.fetchNonBinanceData(symbol, interval, signal);
+        return typeof lookbackBars === 'number' ? fallback.slice(-lookbackBars) : fallback;
     }
 
     public async fetchDataForScan(
@@ -575,7 +596,8 @@ export class DataManager {
                 currentData[currentData.length - 1] = updatedCandle;
             } else if (updatedCandle.time > lastCandle.time) {
                 currentData.push(updatedCandle);
-                if (currentData.length > this.TOTAL_LIMIT) {
+                const activeLimit = this.chartLookbackBars ?? this.TOTAL_LIMIT;
+                if (currentData.length > activeLimit) {
                     currentData.shift();
                 }
             }

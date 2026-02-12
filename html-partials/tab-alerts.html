@@ -81,7 +81,7 @@
                         <th>Stream</th>
                         <th>Symbol</th>
                         <th>Interval</th>
-                        <th>Strategy</th>
+                        <th>Configuration</th>
                         <th>Status</th>
                         <th>Actions</th>
                     </tr>
@@ -153,6 +153,20 @@
                     <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
                 </svg>
             </button>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="alertConfigModal">
+        <div class="modal alert-config-modal">
+            <div class="modal-header">
+                <span class="modal-title" id="alertConfigModalTitle">Alert Configuration</span>
+                <button class="modal-close" id="alertConfigModalClose" aria-label="Close alert configuration details">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M18.3 5.71 12 12l6.3 6.29-1.41 1.41L10.59 13.4 4.29 19.7 2.88 18.29 9.17 12 2.88 5.71 4.29 4.3l6.3 6.3 6.29-6.3z" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" id="alertConfigModalBody"></div>
         </div>
     </div>
 </div>

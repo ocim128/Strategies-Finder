@@ -20,6 +20,14 @@ export function setupStateSubscriptions() {
         changeEl.className = 'symbol-change';
     };
 
+    const applyDefaultVisibleRange = (dataLength: number) => {
+        const visibleBars = Math.max(50, Math.min(1000, dataLength));
+        state.chart.timeScale().setVisibleLogicalRange({
+            from: Math.max(0, dataLength - visibleBars),
+            to: dataLength,
+        });
+    };
+
     let lastDataLength = 0;
 
     let reloadTimeout: number | null = null;
@@ -50,6 +58,10 @@ export function setupStateSubscriptions() {
         uiManager.updatePriceDisplay();
 
         getRequiredElement('dataPoints').textContent = `${data.length} candles`;
+        const candlesInput = document.getElementById('visibleCandlesInput') as HTMLInputElement | null;
+        if (candlesInput) {
+            candlesInput.value = String(data.length);
+        }
         getRequiredElement('lastUpdate').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
 
         const timeScale = state.chart.timeScale();
@@ -62,10 +74,7 @@ export function setupStateSubscriptions() {
                 timeScale.scrollToPosition(0, false);
             }
         } else {
-            timeScale.setVisibleLogicalRange({
-                from: Math.max(0, data.length - 1000),
-                to: data.length,
-            });
+            applyDefaultVisibleRange(data.length);
         }
 
         if (state.currentBacktestResult) {
@@ -182,4 +191,5 @@ export function setupStateSubscriptions() {
     state.subscribe('currentStrategyKey', (key) => {
         uiManager.updateStrategyParams(key);
     });
+
 }

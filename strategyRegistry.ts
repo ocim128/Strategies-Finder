@@ -11,6 +11,7 @@
  */
 
 import type { Strategy, OHLCVData, Signal, StrategyParams, Time } from "./lib/strategies/index";
+import type { StrategyManifestEntry } from "./lib/strategies/manifest";
 import { getIntervalSeconds, resampleOHLCV } from "./lib/strategies/resample-utils";
 export type { Strategy, OHLCVData, Signal, StrategyParams };
 
@@ -272,17 +273,23 @@ export const strategyRegistry: StrategyRegistry = new StrategyRegistryImpl();
 // ============================================================================
 
 /**
- * Load built-in strategies from the main strategies module
+ * Register all built-in strategies from a manifest
  */
-export async function loadBuiltInStrategies(): Promise<void> {
-    // Import strategies module dynamically to support HMR
-    const { strategies: builtInStrategies } = await import("./lib/strategies/index");
-
-    Object.entries(builtInStrategies).forEach(([key, strategy]) => {
+function registerBuiltInStrategyManifest(manifest: readonly StrategyManifestEntry[]): void {
+    manifest.forEach(({ key, strategy }) => {
         strategyRegistry.register(key, strategy);
     });
+}
 
-    console.log(`[StrategyRegistry] Loaded ${Object.keys(builtInStrategies).length} built-in strategies`);
+/**
+ * Load built-in strategies from the shared manifest
+ */
+export async function loadBuiltInStrategies(): Promise<void> {
+    // Import manifest dynamically to support HMR
+    const { strategyManifest } = await import("./lib/strategies/manifest");
+    registerBuiltInStrategyManifest(strategyManifest);
+
+    console.log(`[StrategyRegistry] Loaded ${strategyManifest.length} built-in strategies`);
 }
 
 // ============================================================================
@@ -291,17 +298,14 @@ export async function loadBuiltInStrategies(): Promise<void> {
 
 // Check if HMR is available (Vite)
 if (import.meta.hot) {
-    // Accept updates to the strategies module
-    import.meta.hot.accept("./lib/strategies/index", async (newModule) => {
+    // Accept updates to the shared strategy manifest
+    import.meta.hot.accept("./lib/strategies/manifest", async (newModule) => {
         if (newModule) {
-            console.log('[HMR] Strategies module updated, reloading...');
+            console.log('[HMR] Strategy manifest updated, reloading...');
 
             // Clear existing strategies and reload
             strategyRegistry.clear();
-
-            Object.entries(newModule.strategies).forEach(([key, strategy]) => {
-                strategyRegistry.register(key, strategy as Strategy);
-            });
+            registerBuiltInStrategyManifest(newModule.strategyManifest as readonly StrategyManifestEntry[]);
 
             console.log('[HMR] Strategies reloaded successfully');
         }

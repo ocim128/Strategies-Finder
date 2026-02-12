@@ -5,7 +5,7 @@
 
 import { scannerManager } from './scanner-manager';
 import { settingsManager } from '../settings-manager';
-import { alertService } from '../alert-service';
+import { alertService, buildAlertStreamId } from '../alert-service';
 import { uiManager } from '../ui-manager';
 import type { ScanResult, ScanProgress, StrategyConfigEntry } from '../types/scanner';
 
@@ -500,15 +500,19 @@ export class ScannerPanel {
         const config = scannerManager.getConfig();
         const matched = config.strategyConfigs.find(c => c.strategyKey === strategyKey && (!configName || c.name === configName))
             ?? config.strategyConfigs.find(c => c.strategyKey === strategyKey);
+        const streamId = buildAlertStreamId(symbol, config.interval, strategyKey, matched?.name ?? configName);
 
         try {
             await alertService.upsertSubscription({
+                streamId,
                 symbol,
                 interval: config.interval,
                 strategyKey,
+                configName: matched?.name ?? configName,
                 strategyParams: matched?.strategyParams,
                 backtestSettings: matched?.backtestSettings,
                 freshnessBars: config.signalFreshnessBars,
+                candleLimit: config.scanLookbackBars,
                 notifyTelegram: true,
                 notifyExit: true,
                 enabled: true,
