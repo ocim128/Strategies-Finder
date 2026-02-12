@@ -1,4 +1,4 @@
-import { BacktestResult, Time, timeToNumber } from "../strategies/index";
+import { BacktestResult, PostEntryPathStats } from "../strategies/index";
 import { getRequiredElement, updateTextContent, setVisible } from "../dom-utils";
 
 export class ResultsRenderer {
@@ -20,7 +20,6 @@ export class ResultsRenderer {
 
         const avgTradeClass = result.avgTrade >= 0 ? 'positive' : 'negative';
         updateTextContent('avgTrade', `${result.avgTrade >= 0 ? '+' : ''}$${result.avgTrade.toFixed(2)}`, `stat-value ${avgTradeClass}`);
-        updateTextContent('avgClosedTradeTime', this.getAverageClosedTradeTimeText(result));
 
         updateTextContent('winRate', `${result.winRate.toFixed(1)}%`, `stat-value ${result.winRate >= 50 ? 'positive' : 'negative'}`);
 
@@ -36,6 +35,8 @@ export class ResultsRenderer {
 
         const sharpeClass = result.sharpeRatio >= 1 ? 'positive' : result.sharpeRatio < 0 ? 'negative' : '';
         updateTextContent('sharpeRatio', result.sharpeRatio.toFixed(2), `stat-value ${sharpeClass}`);
+
+        this.renderPostEntryPath(result.postEntryPath);
 
         const entryStats = result.entryStats;
         const hasEntryStats = Boolean(entryStats);
@@ -115,56 +116,115 @@ export class ResultsRenderer {
         return level.toFixed(3).replace(/\.?0+$/, '');
     }
 
-    private getAverageClosedTradeTimeText(result: BacktestResult): string {
-        if (!result.trades.length) return '--';
-
-        let durationSumMs = 0;
-        let durationCount = 0;
-
-        for (const trade of result.trades) {
-            const entryMs = this.toEpochMs(trade.entryTime);
-            const exitMs = this.toEpochMs(trade.exitTime);
-            if (entryMs === null || exitMs === null) continue;
-
-            const durationMs = exitMs - entryMs;
-            if (!Number.isFinite(durationMs) || durationMs < 0) continue;
-
-            durationSumMs += durationMs;
-            durationCount += 1;
+    private renderPostEntryPath(postEntryPath: PostEntryPathStats | undefined): void {
+        const hasStats = !!postEntryPath
+            && postEntryPath.horizonBars.length > 0
+            && (
+                postEntryPath.win.sampleSizeByBar.some((value) => value > 0)
+                || postEntryPath.lose.sampleSizeByBar.some((value) => value > 0)
+                || postEntryPath.all.sampleSizeByBar.some((value) => value > 0)
+                || postEntryPath.all.avgClosedTradeTimeBars !== null
+            );
+        setVisible('postEntryPathTitle', hasStats);
+        setVisible('postEntryPathContainer', hasStats);
+        if (!hasStats || !postEntryPath) {
+            setVisible('postEntryPathHint', false);
+            return;
         }
 
-        if (durationCount === 0) return '--';
-        return this.formatDuration(durationSumMs / durationCount);
-    }
+        const container = getRequiredElement('postEntryPathContainer');
+        const sideOrder: Array<'win' | 'lose' | 'all'> = ['win', 'lose', 'all'];
+        const sideLabels: Record<'win' | 'lose' | 'all', string> = {
+            win: 'Win Trades',
+            lose: 'Lose Trades',
+            all: 'All Trades',
+        };
 
-    private toEpochMs(time: Time): number | null {
-        const numeric = timeToNumber(time);
-        if (numeric === null || !Number.isFinite(numeric)) return null;
+        const barsHeader = postEntryPath.horizonBars
+            .map((bar) => `<div class="post-entry-cell header">Bar +${bar}</div>`)
+            .join('');
 
-        if (typeof time === 'number') {
-            // lightweight-charts UTCTimestamp is seconds-based.
-            return numeric > 1_000_000_000_000 ? numeric : numeric * 1000;
+        const renderMetricRow = (label: string, values: string[]) => {
+            const cells = values.map((value) => `<div class="post-entry-cell value">${value}</div>`).join('');
+            return `<div class="post-entry-cell metric">${label}</div>${cells}`;
+        };
+
+        container.innerHTML = sideOrder.map((side) => {
+            const stats = postEntryPath[side];
+            const avgClosedBars = this.formatNumber(stats.avgClosedTradeTimeBars, 1);
+            const avgClosedMinutes = this.formatNumber(stats.avgClosedTradeTimeMinutes, 1);
+            const timeSummary = `Avg Closed: ${avgClosedBars} bars | ${avgClosedMinutes}m`;
+
+            const avgMoves = stats.avgSignedMovePctByBar.map((value) => this.formatPercent(value, 2, true));
+            const medMoves = stats.medianSignedMovePctByBar.map((value) => this.formatPercent(value, 2, true));
+            const highMoves = stats.maxSignedMovePctByBar.map((value) => this.formatPercent(value, 2, true));
+            const lowMoves = stats.minSignedMovePctByBar.map((value) => this.formatPercent(value, 2, true));
+            const winRates = stats.positiveRatePctByBar.map((value) => this.formatPercent(value, 1));
+            const samples = stats.sampleSizeByBar.map((value) => value.toString());
+
+            return `
+                <div class="post-entry-side">
+                    <div class="post-entry-side-header">
+                        <div class="post-entry-side-title">${sideLabels[side]}</div>
+                        <div class="post-entry-side-time">${timeSummary}</div>
+                    </div>
+                    <div class="post-entry-grid-shell">
+                        <div class="post-entry-grid">
+                            <div class="post-entry-cell header">Metric</div>
+                            ${barsHeader}
+                            ${renderMetricRow('Avg Move %', avgMoves)}
+                            ${renderMetricRow('Median %', medMoves)}
+                            ${renderMetricRow('Highest %', highMoves)}
+                            ${renderMetricRow('Lowest %', lowMoves)}
+                            ${renderMetricRow('Positive %', winRates)}
+                            ${renderMetricRow('Samples', samples)}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        const openTrade = postEntryPath.openTradeProbability;
+        const hasOpenTrade = openTrade.hasOpenTrade;
+        setVisible('postEntryPathHint', hasOpenTrade);
+        if (hasOpenTrade) {
+            const hint = getRequiredElement('postEntryPathHint');
+            const tradeType = openTrade.tradeType ? openTrade.tradeType.toUpperCase() : 'N/A';
+            const moveText = this.formatPercent(openTrade.signedMovePct, 2, true);
+            const basisText = openTrade.basisBar === null ? 'n/a' : `+${openTrade.basisBar}`;
+            const barsHeldText = openTrade.barsHeld === null ? 'n/a' : openTrade.barsHeld.toString();
+            const winText = this.formatPercent(openTrade.winProbabilityPct, 1);
+            const loseText = this.formatPercent(openTrade.loseProbabilityPct, 1);
+
+            if (openTrade.winProbabilityPct === null || openTrade.loseProbabilityPct === null) {
+                hint.textContent = `Open trade (${tradeType}, EOD) detected. Not enough historical samples to estimate win/lose probability yet.`;
+            } else {
+                hint.textContent = `Open trade (${tradeType}, EOD): held ${barsHeldText} bars | basis bar ${basisText} move ${moveText} | Estimated Win ${winText} / Lose ${loseText} (matched ${openTrade.matchedSampleSize} of ${openTrade.sampleSize} historical trades).`;
+            }
         }
-        return numeric;
     }
 
-    private formatDuration(durationMs: number): string {
-        const seconds = durationMs / 1000;
-        if (seconds < 60) return `${seconds.toFixed(0)}s`;
+    private formatPercent(value: number | null, decimals: number, signed = false): string {
+        if (value === null || !Number.isFinite(value)) return '--';
+        const prefix = signed && value > 0 ? '+' : '';
+        return `${prefix}${value.toFixed(decimals)}%`;
+    }
 
-        const minutes = seconds / 60;
-        if (minutes < 60) return `${minutes.toFixed(1)}m`;
-
-        const hours = minutes / 60;
-        if (hours < 24) return `${hours.toFixed(1)}h`;
-
-        const days = hours / 24;
-        return `${days.toFixed(1)}d`;
+    private formatNumber(value: number | null, decimals: number): string {
+        if (value === null || !Number.isFinite(value)) return '--';
+        return value.toFixed(decimals);
     }
 
     public clear() {
         setVisible('emptyResults', true);
         setVisible('resultsContent', false);
+        setVisible('postEntryPathTitle', false);
+        setVisible('postEntryPathContainer', false);
+        setVisible('postEntryPathHint', false);
+        const container = document.getElementById('postEntryPathContainer');
+        if (container) container.innerHTML = '';
+        const hint = document.getElementById('postEntryPathHint');
+        if (hint) hint.textContent = '';
     }
 }
 

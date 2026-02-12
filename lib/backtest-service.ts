@@ -2,13 +2,28 @@ import { state } from "./state";
 import { uiManager } from "./ui-manager";
 import { chartManager } from "./chart-manager";
 
-import { runBacktest, StrategyParams, BacktestSettings, TradeFilterMode, ExecutionModel, buildEntryBacktestResult, BacktestResult } from "./strategies/index";
+import {
+    runBacktest,
+    StrategyParams,
+    BacktestSettings,
+    TradeFilterMode,
+    ExecutionModel,
+    buildEntryBacktestResult,
+    BacktestResult,
+    PostEntryPathStats,
+    PostEntryPathBucketStats,
+    PostEntryPathOpenTradeProbability,
+    Trade,
+    timeKey,
+    timeToNumber,
+} from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
 import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
 import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth, getConfirmationStrategyParams, getConfirmationStrategyValues } from "./confirmation-strategies";
+import { calculateSharpeRatioFromReturns } from "./strategies/performance-metrics";
 
 export class BacktestService {
     private warnedStrictEngine = false;
@@ -203,6 +218,11 @@ export class BacktestService {
                 );
                 engineUsed = 'typescript';
             }
+
+            if (!result.entryStats) {
+                result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
+            }
+            result.postEntryPath = this.buildPostEntryPathStats(result, 5);
 
             state.set('currentBacktestResult', result);
 
@@ -427,6 +447,309 @@ export class BacktestService {
         if (Math.abs(expectedAvgTrade - result.avgTrade) > tolerance) return false;
 
         return true;
+    }
+
+    private recomputeSharpeRatio(result: BacktestResult, initialCapital: number): number {
+        if (Array.isArray(result.trades) && result.trades.length > 0) {
+            return calculateSharpeRatioFromReturns(result.trades.map(trade => trade.pnlPercent));
+        }
+
+        if (Array.isArray(result.equityCurve) && result.equityCurve.length > 1) {
+            const returns: number[] = [];
+            let prevEquity = initialCapital;
+            for (const point of result.equityCurve) {
+                if (prevEquity > 0) {
+                    returns.push((point.value - prevEquity) / prevEquity);
+                }
+                prevEquity = point.value;
+            }
+            return calculateSharpeRatioFromReturns(returns);
+        }
+
+        return Number.isFinite(result.sharpeRatio) ? result.sharpeRatio : 0;
+    }
+
+    private buildPostEntryPathStats(result: BacktestResult, horizonMaxBars: number): PostEntryPathStats {
+        const horizonBars = Array.from({ length: horizonMaxBars }, (_, index) => index + 1);
+        const createMoveBuckets = () => Array.from({ length: horizonMaxBars }, () => [] as number[]);
+        const winMoves = createMoveBuckets();
+        const loseMoves = createMoveBuckets();
+        const allMoves = createMoveBuckets();
+
+        const winDurationBars: number[] = [];
+        const loseDurationBars: number[] = [];
+        const allDurationBars: number[] = [];
+        const winDurationMinutes: number[] = [];
+        const loseDurationMinutes: number[] = [];
+        const allDurationMinutes: number[] = [];
+
+        const timeIndex = new Map<string, number>();
+        for (let i = 0; i < state.ohlcvData.length; i++) {
+            timeIndex.set(timeKey(state.ohlcvData[i].time), i);
+        }
+
+        for (const trade of result.trades) {
+            const entryIndex = timeIndex.get(timeKey(trade.entryTime));
+            if (entryIndex !== undefined && Number.isFinite(trade.entryPrice) && trade.entryPrice > 0) {
+                for (let bar = 1; bar <= horizonMaxBars; bar++) {
+                    const targetIndex = entryIndex + bar;
+                    if (targetIndex >= state.ohlcvData.length) break;
+
+                    const targetClose = state.ohlcvData[targetIndex].close;
+                    if (!Number.isFinite(targetClose)) continue;
+
+                    const rawMovePct = ((targetClose - trade.entryPrice) / trade.entryPrice) * 100;
+                    const signedMovePct = trade.type === 'short' ? -rawMovePct : rawMovePct;
+                    const bucketIndex = bar - 1;
+                    allMoves[bucketIndex].push(signedMovePct);
+                    if (trade.pnl > 0) {
+                        winMoves[bucketIndex].push(signedMovePct);
+                    } else {
+                        loseMoves[bucketIndex].push(signedMovePct);
+                    }
+                }
+            }
+
+            this.collectTradeDuration(
+                trade,
+                timeIndex,
+                winDurationBars,
+                loseDurationBars,
+                allDurationBars,
+                winDurationMinutes,
+                loseDurationMinutes,
+                allDurationMinutes
+            );
+        }
+
+        return {
+            horizonBars,
+            win: this.finalizePostEntryBucket(winMoves, winDurationBars, winDurationMinutes),
+            lose: this.finalizePostEntryBucket(loseMoves, loseDurationBars, loseDurationMinutes),
+            all: this.finalizePostEntryBucket(allMoves, allDurationBars, allDurationMinutes),
+            openTradeProbability: this.estimateOpenTradeProbability(result.trades, timeIndex, horizonMaxBars),
+        };
+    }
+
+    private collectTradeDuration(
+        trade: Trade,
+        timeIndex: Map<string, number>,
+        winDurationBars: number[],
+        loseDurationBars: number[],
+        allDurationBars: number[],
+        winDurationMinutes: number[],
+        loseDurationMinutes: number[],
+        allDurationMinutes: number[]
+    ): void {
+        const entryIndex = timeIndex.get(timeKey(trade.entryTime));
+        const exitIndex = timeIndex.get(timeKey(trade.exitTime));
+        if (entryIndex !== undefined && exitIndex !== undefined && exitIndex >= entryIndex) {
+            const durationBars = exitIndex - entryIndex;
+            allDurationBars.push(durationBars);
+            if (trade.pnl > 0) {
+                winDurationBars.push(durationBars);
+            } else {
+                loseDurationBars.push(durationBars);
+            }
+        }
+
+        const entryMs = this.toEpochMs(trade.entryTime);
+        const exitMs = this.toEpochMs(trade.exitTime);
+        if (entryMs === null || exitMs === null) return;
+        const durationMinutes = (exitMs - entryMs) / 60000;
+        if (!Number.isFinite(durationMinutes) || durationMinutes < 0) return;
+
+        allDurationMinutes.push(durationMinutes);
+        if (trade.pnl > 0) {
+            winDurationMinutes.push(durationMinutes);
+        } else {
+            loseDurationMinutes.push(durationMinutes);
+        }
+    }
+
+    private finalizePostEntryBucket(
+        movesByBar: number[][],
+        durationBars: number[],
+        durationMinutes: number[]
+    ): PostEntryPathBucketStats {
+        return {
+            avgSignedMovePctByBar: movesByBar.map((values) => this.average(values)),
+            medianSignedMovePctByBar: movesByBar.map((values) => this.median(values)),
+            maxSignedMovePctByBar: movesByBar.map((values) => this.maximum(values)),
+            minSignedMovePctByBar: movesByBar.map((values) => this.minimum(values)),
+            positiveRatePctByBar: movesByBar.map((values) => {
+                if (values.length === 0) return null;
+                const positiveCount = values.filter((value) => value > 0).length;
+                return (positiveCount / values.length) * 100;
+            }),
+            sampleSizeByBar: movesByBar.map((values) => values.length),
+            avgClosedTradeTimeBars: this.average(durationBars),
+            avgClosedTradeTimeMinutes: this.average(durationMinutes),
+        };
+    }
+
+    private estimateOpenTradeProbability(
+        trades: Trade[],
+        timeIndex: Map<string, number>,
+        horizonMaxBars: number
+    ): PostEntryPathOpenTradeProbability {
+        const openTrade = [...trades].reverse().find((trade) => trade.exitReason === 'end_of_data');
+        if (!openTrade) {
+            return {
+                hasOpenTrade: false,
+                tradeType: null,
+                barsHeld: null,
+                basisBar: null,
+                signedMovePct: null,
+                winProbabilityPct: null,
+                loseProbabilityPct: null,
+                sampleSize: 0,
+                matchedSampleSize: 0,
+            };
+        }
+
+        const entryIndex = timeIndex.get(timeKey(openTrade.entryTime));
+        const exitIndex = timeIndex.get(timeKey(openTrade.exitTime));
+        if (entryIndex === undefined || exitIndex === undefined || exitIndex < entryIndex || openTrade.entryPrice <= 0) {
+            return {
+                hasOpenTrade: true,
+                tradeType: openTrade.type,
+                barsHeld: null,
+                basisBar: null,
+                signedMovePct: null,
+                winProbabilityPct: null,
+                loseProbabilityPct: null,
+                sampleSize: 0,
+                matchedSampleSize: 0,
+            };
+        }
+
+        const barsHeld = exitIndex - entryIndex;
+        if (barsHeld < 1) {
+            return {
+                hasOpenTrade: true,
+                tradeType: openTrade.type,
+                barsHeld,
+                basisBar: null,
+                signedMovePct: null,
+                winProbabilityPct: null,
+                loseProbabilityPct: null,
+                sampleSize: 0,
+                matchedSampleSize: 0,
+            };
+        }
+
+        const basisBar = Math.min(horizonMaxBars, barsHeld);
+        const probeIndex = entryIndex + basisBar;
+        if (probeIndex >= state.ohlcvData.length || !Number.isFinite(state.ohlcvData[probeIndex].close)) {
+            return {
+                hasOpenTrade: true,
+                tradeType: openTrade.type,
+                barsHeld,
+                basisBar,
+                signedMovePct: null,
+                winProbabilityPct: null,
+                loseProbabilityPct: null,
+                sampleSize: 0,
+                matchedSampleSize: 0,
+            };
+        }
+
+        const probeClose = state.ohlcvData[probeIndex].close;
+        const rawProbeMovePct = ((probeClose - openTrade.entryPrice) / openTrade.entryPrice) * 100;
+        const probeSignedMovePct = openTrade.type === 'short' ? -rawProbeMovePct : rawProbeMovePct;
+
+        const comparableTrades: Array<{ signedMovePct: number; isWin: boolean }> = [];
+        for (const trade of trades) {
+            if (trade.id === openTrade.id) continue;
+            if (trade.exitReason === 'end_of_data') continue;
+            if (!Number.isFinite(trade.entryPrice) || trade.entryPrice <= 0) continue;
+
+            const historicalEntryIndex = timeIndex.get(timeKey(trade.entryTime));
+            if (historicalEntryIndex === undefined) continue;
+            const historicalProbeIndex = historicalEntryIndex + basisBar;
+            if (historicalProbeIndex >= state.ohlcvData.length) continue;
+
+            const historicalClose = state.ohlcvData[historicalProbeIndex].close;
+            if (!Number.isFinite(historicalClose)) continue;
+
+            const rawMovePct = ((historicalClose - trade.entryPrice) / trade.entryPrice) * 100;
+            const signedMovePct = trade.type === 'short' ? -rawMovePct : rawMovePct;
+            comparableTrades.push({ signedMovePct, isWin: trade.pnl > 0 });
+        }
+
+        if (comparableTrades.length === 0) {
+            return {
+                hasOpenTrade: true,
+                tradeType: openTrade.type,
+                barsHeld,
+                basisBar,
+                signedMovePct: probeSignedMovePct,
+                winProbabilityPct: null,
+                loseProbabilityPct: null,
+                sampleSize: 0,
+                matchedSampleSize: 0,
+            };
+        }
+
+        const nearest = comparableTrades
+            .map((sample) => ({
+                ...sample,
+                distance: Math.abs(sample.signedMovePct - probeSignedMovePct),
+            }))
+            .sort((a, b) => a.distance - b.distance);
+
+        const matchedSampleSize = Math.max(8, Math.min(nearest.length, Math.round(nearest.length * 0.35)));
+        const matched = nearest.slice(0, matchedSampleSize);
+        const winCount = matched.filter((sample) => sample.isWin).length;
+        const winProbabilityPct = matched.length > 0 ? (winCount / matched.length) * 100 : null;
+        const loseProbabilityPct = winProbabilityPct === null ? null : 100 - winProbabilityPct;
+
+        return {
+            hasOpenTrade: true,
+            tradeType: openTrade.type,
+            barsHeld,
+            basisBar,
+            signedMovePct: probeSignedMovePct,
+            winProbabilityPct,
+            loseProbabilityPct,
+            sampleSize: comparableTrades.length,
+            matchedSampleSize: matched.length,
+        };
+    }
+
+    private average(values: number[]): number | null {
+        if (values.length === 0) return null;
+        return values.reduce((sum, value) => sum + value, 0) / values.length;
+    }
+
+    private median(values: number[]): number | null {
+        if (values.length === 0) return null;
+        const sorted = [...values].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        if (sorted.length % 2 === 0) {
+            return (sorted[mid - 1] + sorted[mid]) / 2;
+        }
+        return sorted[mid];
+    }
+
+    private maximum(values: number[]): number | null {
+        if (values.length === 0) return null;
+        return values.reduce((max, value) => (value > max ? value : max), values[0]);
+    }
+
+    private minimum(values: number[]): number | null {
+        if (values.length === 0) return null;
+        return values.reduce((min, value) => (value < min ? value : min), values[0]);
+    }
+
+    private toEpochMs(time: Trade['entryTime']): number | null {
+        const numeric = timeToNumber(time);
+        if (numeric === null || !Number.isFinite(numeric)) return null;
+        if (typeof time === 'number') {
+            return numeric > 1_000_000_000_000 ? numeric : numeric * 1000;
+        }
+        return numeric;
     }
 
     public requiresTypescriptEngine(settings: BacktestSettings): boolean {

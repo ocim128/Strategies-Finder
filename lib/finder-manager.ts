@@ -16,6 +16,7 @@ import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderTimeframeLoader, type FinderDataset } from "./finder/finder-timeframe-loader";
 import { FinderUI } from "./finder/finder-ui";
 import { aggregateFinderBacktestResults, compareFinderResults } from "./finder/finder-engine";
+import { calculateSharpeRatioFromReturns } from "./strategies/performance-metrics";
 import type {
 	EndpointSelectionAdjustment,
 	FinderMetric,
@@ -981,14 +982,23 @@ export class FinderManager {
 			// CRITICAL: For extreme datasets, disable Rust entirely to avoid JSON serialization OOM
 			// Even cached mode sends signals array which can be huge
 			const rustAvailable = isExtremeDataset ? false : (useRustCached || useRustDirect);
+			const forceTsForSharpe = options.sortPriority.includes('sharpeRatio') && shouldUseCompactBacktest;
+			const useRustForFinder = rustAvailable && !forceTsForSharpe;
+			if (forceTsForSharpe && rustAvailable) {
+				debugLogger.info('[Finder] Sharpe sort in compact mode - forcing TypeScript for Sharpe consistency.');
+			}
 
 			if (isExtremeDataset) {
 				debugLogger.info(`[Finder] Extreme dataset (${(dataSize / 1000000).toFixed(1)}M bars) - using TypeScript ultra-memory mode`);
 				this.setStatus(`Ultra-memory mode: TypeScript only (${(dataSize / 1000000).toFixed(1)}M bars)`);
-			} else if (isVeryLargeDataset && rustAvailable) {
+			} else if (isVeryLargeDataset && useRustForFinder) {
 				this.setStatus('Using Rust engine with cached data...');
-			} else if (!rustAvailable && isLargeDataset) {
-				debugLogger.warn(`[Finder] Using TypeScript for ${dataSize} bars (Rust unavailable)`);
+			} else if (!useRustForFinder && isLargeDataset) {
+				if (forceTsForSharpe && rustAvailable) {
+					debugLogger.info(`[Finder] Using TypeScript for ${dataSize} bars (Rust disabled for Sharpe consistency).`);
+				} else {
+					debugLogger.warn(`[Finder] Using TypeScript for ${dataSize} bars (Rust unavailable)`);
+				}
 				this.setStatus('Using TypeScript engine...');
 			}
 
@@ -1006,9 +1016,11 @@ export class FinderManager {
 					}
 				}
 
-				const adjustment = this.buildSelectionResult(result.result, lastDataTime, initialCapital);
+				const normalizedResult = this.normalizeResultSharpe(result.result, initialCapital);
+				const adjustment = this.buildSelectionResult(normalizedResult, lastDataTime, initialCapital);
 				const enriched: FinderResult = {
 					...result,
+					result: normalizedResult,
 					selectionResult: adjustment.result,
 					endpointAdjusted: adjustment.adjusted,
 					endpointRemovedTrades: adjustment.removedTrades
@@ -1045,7 +1057,7 @@ export class FinderManager {
 
 				// MEMORY OPTIMIZATION: For TypeScript-only mode with extreme datasets
 				// Process jobs one at a time, clearing signals immediately after use
-				if (!rustAvailable) {
+				if (!useRustForFinder) {
 					for (const job of batchJobs) {
 						try {
 							const confirmationContext = buildConfirmationContext();
@@ -1202,7 +1214,7 @@ export class FinderManager {
 				}
 
 				// Run backtests for this batch
-				if (rustAvailable) {
+				if (useRustForFinder) {
 					const batchItems = batchRuns.map((run) => ({
 						id: run.id,
 						signals: run.signals,
@@ -1418,6 +1430,32 @@ export class FinderManager {
 		return aggregateFinderBacktestResults(results, initialCapital);
 	}
 
+	private normalizeResultSharpe(result: BacktestResult, initialCapital: number): BacktestResult {
+		if (Array.isArray(result.trades) && result.trades.length > 0) {
+			return {
+				...result,
+				sharpeRatio: calculateSharpeRatioFromReturns(result.trades.map(trade => trade.pnlPercent))
+			};
+		}
+
+		if (Array.isArray(result.equityCurve) && result.equityCurve.length > 1) {
+			const returns: number[] = [];
+			let prevEquity = initialCapital;
+			for (const point of result.equityCurve) {
+				if (prevEquity > 0) {
+					returns.push((point.value - prevEquity) / prevEquity);
+				}
+				prevEquity = point.value;
+			}
+			return {
+				...result,
+				sharpeRatio: calculateSharpeRatioFromReturns(returns)
+			};
+		}
+
+		return result;
+	}
+
 	private isBacktestResultConsistent(result: BacktestResult): boolean {
 		const totalTrades = result.totalTrades;
 		if (totalTrades !== result.winningTrades + result.losingTrades) return false;
@@ -1446,6 +1484,21 @@ export class FinderManager {
 			params: result.params,
 			metadata: strategy?.metadata ?? null,
 			metrics: {
+				netProfit: result.result.netProfit,
+				netProfitPercent: result.result.netProfitPercent,
+				expectancy: result.result.expectancy,
+				avgTrade: result.result.avgTrade,
+				winRate: result.result.winRate,
+				profitFactor: result.result.profitFactor,
+				totalTrades: result.result.totalTrades,
+				maxDrawdownPercent: result.result.maxDrawdownPercent,
+				winningTrades: result.result.winningTrades,
+				losingTrades: result.result.losingTrades,
+				avgWin: result.result.avgWin,
+				avgLoss: result.result.avgLoss,
+				sharpeRatio: result.result.sharpeRatio
+			},
+			rawMetrics: {
 				netProfit: result.result.netProfit,
 				netProfitPercent: result.result.netProfitPercent,
 				expectancy: result.result.expectancy,

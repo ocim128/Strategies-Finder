@@ -33,7 +33,7 @@ function appendTextCell(
 }
 
 function createActionButton(
-    action: 'run' | 'disable',
+    action: 'run' | 'sync' | 'disable',
     streamId: string,
     title: string,
     label: string
@@ -89,6 +89,7 @@ function renderSubscriptions(subs: AlertSubscription[]) {
         const actionsTd = document.createElement('td');
         actionsTd.className = 'alert-cell-actions';
         actionsTd.appendChild(createActionButton('run', sub.stream_id, 'Run Now', 'Run'));
+        actionsTd.appendChild(createActionButton('sync', sub.stream_id, 'Use currently loaded strategy/settings', 'Use Current'));
         actionsTd.appendChild(createActionButton('disable', sub.stream_id, 'Disable', 'Disable'));
         tr.appendChild(actionsTd);
 
@@ -183,6 +184,17 @@ async function refreshSubscriptions() {
     }
 }
 
+function collectCurrentStrategyParams(): Record<string, number> {
+    const strategyParams: Record<string, number> = {};
+    document.querySelectorAll<HTMLInputElement>('#settingsTab .param-input[data-param]').forEach((input) => {
+        const key = input.dataset.param;
+        if (!key) return;
+        const parsed = Number.parseFloat(input.value);
+        strategyParams[key] = Number.isFinite(parsed) ? parsed : 0;
+    });
+    return strategyParams;
+}
+
 async function quickSubscribe() {
     const telegramToggle = el<HTMLInputElement>('alertTelegramToggle');
     const exitToggle = el<HTMLInputElement>('alertExitToggle');
@@ -197,14 +209,7 @@ async function quickSubscribe() {
         return;
     }
 
-    const strategyParams: Record<string, number> = {};
-    document.querySelectorAll<HTMLInputElement>('#settingsTab .param-input[data-param]').forEach((input) => {
-        const key = input.dataset.param;
-        if (!key) return;
-        const parsed = parseFloat(input.value);
-        strategyParams[key] = Number.isFinite(parsed) ? parsed : 0;
-    });
-
+    const strategyParams = collectCurrentStrategyParams();
     const backtestSettings = settingsManager.getBacktestSettings();
 
     try {
@@ -234,6 +239,21 @@ async function handleTableAction(action: string, streamId: string) {
             const status = result.status ?? 'unknown';
             const toastType = status.startsWith('error') ? 'error' : status === 'new_entry' ? 'success' : 'info';
             uiManager.showToast(`${streamId}: ${status}`, toastType);
+            await refreshSubscriptions();
+        } else if (action === 'sync') {
+            const strategyKey = state.currentStrategyKey;
+            if (!strategyKey) {
+                uiManager.showToast('Select a strategy first.', 'error');
+                return;
+            }
+
+            await alertService.upsertSubscription({
+                streamId,
+                strategyKey,
+                strategyParams: collectCurrentStrategyParams(),
+                backtestSettings: settingsManager.getBacktestSettings(),
+            });
+            uiManager.showToast(`Updated ${streamId} to current strategy (${strategyKey}).`, 'success');
             await refreshSubscriptions();
         } else if (action === 'disable') {
             await alertService.disableSubscription(streamId);

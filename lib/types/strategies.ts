@@ -107,6 +107,38 @@ export interface BacktestResult {
     sharpeRatio: number;
     equityCurve: { time: Time; value: number }[];
     entryStats?: EntryStats;
+    postEntryPath?: PostEntryPathStats;
+}
+
+export interface PostEntryPathBucketStats {
+    avgSignedMovePctByBar: Array<number | null>;
+    medianSignedMovePctByBar: Array<number | null>;
+    maxSignedMovePctByBar: Array<number | null>;
+    minSignedMovePctByBar: Array<number | null>;
+    positiveRatePctByBar: Array<number | null>;
+    sampleSizeByBar: number[];
+    avgClosedTradeTimeBars: number | null;
+    avgClosedTradeTimeMinutes: number | null;
+}
+
+export interface PostEntryPathOpenTradeProbability {
+    hasOpenTrade: boolean;
+    tradeType: 'long' | 'short' | null;
+    barsHeld: number | null;
+    basisBar: number | null;
+    signedMovePct: number | null;
+    winProbabilityPct: number | null;
+    loseProbabilityPct: number | null;
+    sampleSize: number;
+    matchedSampleSize: number;
+}
+
+export interface PostEntryPathStats {
+    horizonBars: number[];
+    win: PostEntryPathBucketStats;
+    lose: PostEntryPathBucketStats;
+    all: PostEntryPathBucketStats;
+    openTradeProbability: PostEntryPathOpenTradeProbability;
 }
 
 export interface StrategyParams {
