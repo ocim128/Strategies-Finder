@@ -6,8 +6,9 @@
 import { binanceSearchService, type BinanceSymbol } from '../binance-search-service';
 import { strategyRegistry } from '../../strategyRegistry';
 import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth } from '../confirmation-strategies';
-import type { BacktestSettings, Signal, StrategyParams, TradeDirection, TradeFilterMode } from '../types/strategies';
+import type { BacktestSettings, Signal, StrategyParams, TradeFilterMode } from '../types/strategies';
 import { getOpenPositionForScanner } from '../strategies/backtest';
+import { resolveBacktestSettingsFromRaw } from '../backtest-settings-resolver';
 import type {
     ScannerConfig,
     ScanResult,
@@ -24,7 +25,14 @@ const BATCH_DELAY_MS = 300;
 const MIN_DATA_BARS = 200;
 const DEFAULT_SCAN_LOOKBACK_BARS = 300;
 const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>(['none', 'close', 'volume', 'rsi', 'trend', 'adx']);
-const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(['long', 'short', 'both', 'combined']);
+
+function readTradeFilterMode(rawValue: unknown, fallback: TradeFilterMode = 'none'): TradeFilterMode {
+    if (typeof rawValue === 'string') {
+        const mode = rawValue.trim().toLowerCase() as TradeFilterMode;
+        if (VALID_TRADE_FILTER_MODES.has(mode)) return mode;
+    }
+    return fallback;
+}
 
 // ============================================================================
 // Scan Result Cache
@@ -39,20 +47,6 @@ interface CachedPairScan {
     cachedAt: number;
 }
 
-function toBooleanLike(rawValue: unknown): boolean | null {
-    if (typeof rawValue === 'boolean') return rawValue;
-    if (typeof rawValue !== 'string') return null;
-
-    const normalized = rawValue.trim().toLowerCase();
-    if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') {
-        return true;
-    }
-    if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') {
-        return false;
-    }
-    return null;
-}
-
 function toFiniteNumber(rawValue: unknown): number | null {
     if (typeof rawValue === 'number' && Number.isFinite(rawValue)) return rawValue;
     if (typeof rawValue !== 'string') return null;
@@ -61,86 +55,6 @@ function toFiniteNumber(rawValue: unknown): number | null {
     if (!trimmed) return null;
     const parsed = Number(trimmed);
     return Number.isFinite(parsed) ? parsed : null;
-}
-
-function coerceScalar(rawValue: unknown): unknown {
-    const asBoolean = toBooleanLike(rawValue);
-    if (asBoolean !== null) return asBoolean;
-
-    const asNumber = toFiniteNumber(rawValue);
-    if (asNumber !== null) return asNumber;
-
-    return rawValue;
-}
-
-function coerceDeepValue(rawValue: unknown): unknown {
-    if (Array.isArray(rawValue)) {
-        return rawValue.map((value) => coerceDeepValue(value));
-    }
-    if (rawValue && typeof rawValue === 'object') {
-        const record = rawValue as Record<string, unknown>;
-        const normalized: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(record)) {
-            normalized[key] = coerceDeepValue(value);
-        }
-        return normalized;
-    }
-    return coerceScalar(rawValue);
-}
-
-function readBoolean(raw: Record<string, unknown>, key: string, fallback: boolean): boolean {
-    const value = raw[key];
-    if (typeof value === 'number' && Number.isFinite(value)) {
-        return value !== 0;
-    }
-    const parsed = toBooleanLike(value);
-    return parsed !== null ? parsed : fallback;
-}
-
-function readNumber(raw: Record<string, unknown>, key: string, fallback: number): number {
-    const parsed = toFiniteNumber(raw[key]);
-    return parsed !== null ? parsed : fallback;
-}
-
-function readTradeFilterMode(rawValue: unknown, fallback: TradeFilterMode = 'none'): TradeFilterMode {
-    if (typeof rawValue === 'string') {
-        const mode = rawValue.trim().toLowerCase() as TradeFilterMode;
-        if (VALID_TRADE_FILTER_MODES.has(mode)) return mode;
-    }
-    return fallback;
-}
-
-function readTradeDirection(rawValue: unknown, fallback: TradeDirection = 'long'): TradeDirection {
-    if (typeof rawValue === 'string') {
-        const direction = rawValue.trim().toLowerCase() as TradeDirection;
-        if (VALID_TRADE_DIRECTIONS.has(direction)) return direction;
-    }
-    return fallback;
-}
-
-function readConfirmationStrategies(rawValue: unknown): string[] {
-    if (!Array.isArray(rawValue)) return [];
-    return rawValue.filter((value): value is string => typeof value === 'string' && value.length > 0);
-}
-
-function readConfirmationParams(rawValue: unknown): Record<string, StrategyParams> {
-    if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) {
-        return {};
-    }
-
-    const normalized: Record<string, StrategyParams> = {};
-    for (const [strategyKey, params] of Object.entries(rawValue as Record<string, unknown>)) {
-        if (!params || typeof params !== 'object' || Array.isArray(params)) continue;
-        const normalizedParams: StrategyParams = {};
-        for (const [paramKey, paramValue] of Object.entries(params as Record<string, unknown>)) {
-            const parsed = toFiniteNumber(paramValue);
-            if (parsed !== null) {
-                normalizedParams[paramKey] = parsed;
-            }
-        }
-        normalized[strategyKey] = normalizedParams;
-    }
-    return normalized;
 }
 
 function normalizeStrategyParams(defaultParams: StrategyParams, rawParams: unknown): StrategyParams {
@@ -158,176 +72,15 @@ function normalizeStrategyParams(defaultParams: StrategyParams, rawParams: unkno
     return normalized;
 }
 
-function hasUiToggleSettings(raw: Record<string, unknown>): boolean {
-    return [
-        'riskSettingsToggle',
-        'tradeFilterSettingsToggle',
-        'entrySettingsToggle',
-        'confirmationStrategiesToggle',
-        'snapshotAtrFilterToggle',
-        'snapshotVolumeFilterToggle',
-        'snapshotAdxFilterToggle',
-        'snapshotEmaFilterToggle',
-        'snapshotRsiFilterToggle',
-        'snapshotPriceRangePosFilterToggle',
-        'snapshotBarsFromHighFilterToggle',
-        'snapshotBarsFromLowFilterToggle',
-        'snapshotTrendEfficiencyFilterToggle',
-        'snapshotAtrRegimeFilterToggle',
-        'snapshotBodyPercentFilterToggle',
-        'snapshotWickSkewFilterToggle',
-        'snapshotVolumeTrendFilterToggle',
-        'snapshotVolumeBurstFilterToggle',
-        'snapshotVolumePriceDivergenceFilterToggle',
-        'snapshotVolumeConsistencyFilterToggle',
-        'snapshotCloseLocationFilterToggle',
-        'snapshotOppositeWickFilterToggle',
-        'snapshotRangeAtrFilterToggle',
-        'snapshotMomentumFilterToggle',
-        'snapshotBreakQualityFilterToggle',
-        'snapshotTf60PerfFilterToggle',
-        'snapshotTf90PerfFilterToggle',
-        'snapshotTf120PerfFilterToggle',
-        'snapshotTf480PerfFilterToggle',
-        'snapshotTfConfluencePerfFilterToggle',
-        'snapshotEntryQualityScoreFilterToggle',
-    ].some((key) => key in raw);
-}
-
-function readSnapshotValue(
-    raw: Record<string, unknown>,
-    toggleKey: string,
-    valueKey: string
-): number {
-    return readBoolean(raw, toggleKey, false) ? readNumber(raw, valueKey, 0) : 0;
-}
-
 /**
  * Convert persisted UI config into the same effective BacktestSettings shape
  * used by BacktestService.getBacktestSettings().
  */
 export function resolveScannerBacktestSettings(settings?: BacktestSettings): BacktestSettings {
-    if (!settings) return {};
-
-    const raw = settings as Record<string, unknown>;
-    if (!hasUiToggleSettings(raw)) {
-        return coerceDeepValue(settings) as BacktestSettings;
-    }
-
-    const riskEnabled = readBoolean(raw, 'riskSettingsToggle', false);
-    const riskModeRaw = raw['riskMode'];
-    const riskMode = riskModeRaw === 'advanced' || riskModeRaw === 'percentage' ? riskModeRaw : 'simple';
-    const useAtrRisk = riskEnabled && (riskMode === 'simple' || riskMode === 'advanced');
-    const usePercentRisk = riskEnabled && riskMode === 'percentage';
-
-    const tradeFilterEnabled = readBoolean(raw, 'tradeFilterSettingsToggle', readBoolean(raw, 'entrySettingsToggle', false));
-    const modeCandidate = raw['tradeFilterMode'] ?? raw['entryConfirmation'];
-    const tradeFilterMode = tradeFilterEnabled ? readTradeFilterMode(modeCandidate, 'none') : 'none';
-
-    const confirmationEnabled = readBoolean(raw, 'confirmationStrategiesToggle', false);
-    const confirmationStrategies = confirmationEnabled
-        ? readConfirmationStrategies(raw['confirmationStrategies'])
-        : [];
-    const confirmationStrategyParams = confirmationEnabled
-        ? readConfirmationParams(raw['confirmationStrategyParams'])
-        : {};
-
-    const tradeDirection = readTradeDirection(raw['tradeDirection'], 'long');
-    const executionModel = raw['executionModel'];
-    const normalizedExecutionModel = executionModel === 'signal_close' || executionModel === 'next_open' || executionModel === 'next_close'
-        ? executionModel
-        : 'signal_close';
-
-    const marketModeRaw = raw['marketMode'];
-    const marketMode = marketModeRaw === 'uptrend' || marketModeRaw === 'downtrend' || marketModeRaw === 'sideway'
-        ? marketModeRaw
-        : 'all';
-
-    return {
-        atrPeriod: readNumber(raw, 'atrPeriod', 14),
-        stopLossAtr: useAtrRisk ? readNumber(raw, 'stopLossAtr', 1.5) : 0,
-        takeProfitAtr: useAtrRisk ? readNumber(raw, 'takeProfitAtr', 3) : 0,
-        trailingAtr: useAtrRisk ? readNumber(raw, 'trailingAtr', 2) : 0,
-        partialTakeProfitAtR: riskEnabled && riskMode === 'advanced' ? readNumber(raw, 'partialTakeProfitAtR', 1) : 0,
-        partialTakeProfitPercent: riskEnabled && riskMode === 'advanced' ? readNumber(raw, 'partialTakeProfitPercent', 50) : 0,
-        breakEvenAtR: riskEnabled && riskMode === 'advanced' ? readNumber(raw, 'breakEvenAtR', 1) : 0,
-        timeStopBars: riskEnabled && riskMode === 'advanced' ? readNumber(raw, 'timeStopBars', 0) : 0,
-        riskMode,
-        stopLossPercent: usePercentRisk ? readNumber(raw, 'stopLossPercent', 5) : 0,
-        takeProfitPercent: usePercentRisk ? readNumber(raw, 'takeProfitPercent', 10) : 0,
-        stopLossEnabled: usePercentRisk ? readBoolean(raw, 'stopLossEnabled', true) : false,
-        takeProfitEnabled: usePercentRisk ? readBoolean(raw, 'takeProfitEnabled', true) : false,
-        marketMode,
-        tradeFilterMode,
-        entryConfirmation: tradeFilterMode,
-        confirmLookback: tradeFilterEnabled ? readNumber(raw, 'confirmLookback', 1) : 1,
-        volumeSmaPeriod: tradeFilterEnabled ? readNumber(raw, 'volumeSmaPeriod', 20) : 20,
-        volumeMultiplier: tradeFilterEnabled ? readNumber(raw, 'volumeMultiplier', 1.5) : 1.5,
-        rsiPeriod: tradeFilterEnabled ? readNumber(raw, 'rsiPeriod', readNumber(raw, 'confirmRsiPeriod', 14)) : 14,
-        rsiBullish: tradeFilterEnabled ? readNumber(raw, 'rsiBullish', readNumber(raw, 'confirmRsiBullish', 55)) : 55,
-        rsiBearish: tradeFilterEnabled ? readNumber(raw, 'rsiBearish', readNumber(raw, 'confirmRsiBearish', 45)) : 45,
-        confirmationStrategies,
-        confirmationStrategyParams,
-        tradeDirection,
-        executionModel: normalizedExecutionModel,
-        allowSameBarExit: readBoolean(raw, 'allowSameBarExit', false),
-        slippageBps: readNumber(raw, 'slippageBps', 5),
-        strategyTimeframeEnabled: readBoolean(raw, 'strategyTimeframeEnabled', false),
-        strategyTimeframeMinutes: readNumber(raw, 'strategyTimeframeMinutes', 120),
+    return resolveBacktestSettingsFromRaw(settings, {
         captureSnapshots: false,
-        snapshotAtrPercentMin: readSnapshotValue(raw, 'snapshotAtrFilterToggle', 'snapshotAtrPercentMin'),
-        snapshotAtrPercentMax: readSnapshotValue(raw, 'snapshotAtrFilterToggle', 'snapshotAtrPercentMax'),
-        snapshotVolumeRatioMin: readSnapshotValue(raw, 'snapshotVolumeFilterToggle', 'snapshotVolumeRatioMin'),
-        snapshotVolumeRatioMax: readSnapshotValue(raw, 'snapshotVolumeFilterToggle', 'snapshotVolumeRatioMax'),
-        snapshotAdxMin: readSnapshotValue(raw, 'snapshotAdxFilterToggle', 'snapshotAdxMin'),
-        snapshotAdxMax: readSnapshotValue(raw, 'snapshotAdxFilterToggle', 'snapshotAdxMax'),
-        snapshotEmaDistanceMin: readSnapshotValue(raw, 'snapshotEmaFilterToggle', 'snapshotEmaDistanceMin'),
-        snapshotEmaDistanceMax: readSnapshotValue(raw, 'snapshotEmaFilterToggle', 'snapshotEmaDistanceMax'),
-        snapshotRsiMin: readSnapshotValue(raw, 'snapshotRsiFilterToggle', 'snapshotRsiMin'),
-        snapshotRsiMax: readSnapshotValue(raw, 'snapshotRsiFilterToggle', 'snapshotRsiMax'),
-        snapshotPriceRangePosMin: readSnapshotValue(raw, 'snapshotPriceRangePosFilterToggle', 'snapshotPriceRangePosMin'),
-        snapshotPriceRangePosMax: readSnapshotValue(raw, 'snapshotPriceRangePosFilterToggle', 'snapshotPriceRangePosMax'),
-        snapshotBarsFromHighMax: readSnapshotValue(raw, 'snapshotBarsFromHighFilterToggle', 'snapshotBarsFromHighMax'),
-        snapshotBarsFromLowMax: readSnapshotValue(raw, 'snapshotBarsFromLowFilterToggle', 'snapshotBarsFromLowMax'),
-        snapshotTrendEfficiencyMin: readSnapshotValue(raw, 'snapshotTrendEfficiencyFilterToggle', 'snapshotTrendEfficiencyMin'),
-        snapshotTrendEfficiencyMax: readSnapshotValue(raw, 'snapshotTrendEfficiencyFilterToggle', 'snapshotTrendEfficiencyMax'),
-        snapshotAtrRegimeRatioMin: readSnapshotValue(raw, 'snapshotAtrRegimeFilterToggle', 'snapshotAtrRegimeRatioMin'),
-        snapshotAtrRegimeRatioMax: readSnapshotValue(raw, 'snapshotAtrRegimeFilterToggle', 'snapshotAtrRegimeRatioMax'),
-        snapshotBodyPercentMin: readSnapshotValue(raw, 'snapshotBodyPercentFilterToggle', 'snapshotBodyPercentMin'),
-        snapshotBodyPercentMax: readSnapshotValue(raw, 'snapshotBodyPercentFilterToggle', 'snapshotBodyPercentMax'),
-        snapshotWickSkewMin: readSnapshotValue(raw, 'snapshotWickSkewFilterToggle', 'snapshotWickSkewMin'),
-        snapshotWickSkewMax: readSnapshotValue(raw, 'snapshotWickSkewFilterToggle', 'snapshotWickSkewMax'),
-        snapshotVolumeTrendMin: readSnapshotValue(raw, 'snapshotVolumeTrendFilterToggle', 'snapshotVolumeTrendMin'),
-        snapshotVolumeTrendMax: readSnapshotValue(raw, 'snapshotVolumeTrendFilterToggle', 'snapshotVolumeTrendMax'),
-        snapshotVolumeBurstMin: readSnapshotValue(raw, 'snapshotVolumeBurstFilterToggle', 'snapshotVolumeBurstMin'),
-        snapshotVolumeBurstMax: readSnapshotValue(raw, 'snapshotVolumeBurstFilterToggle', 'snapshotVolumeBurstMax'),
-        snapshotVolumePriceDivergenceMin: readSnapshotValue(raw, 'snapshotVolumePriceDivergenceFilterToggle', 'snapshotVolumePriceDivergenceMin'),
-        snapshotVolumePriceDivergenceMax: readSnapshotValue(raw, 'snapshotVolumePriceDivergenceFilterToggle', 'snapshotVolumePriceDivergenceMax'),
-        snapshotVolumeConsistencyMin: readSnapshotValue(raw, 'snapshotVolumeConsistencyFilterToggle', 'snapshotVolumeConsistencyMin'),
-        snapshotVolumeConsistencyMax: readSnapshotValue(raw, 'snapshotVolumeConsistencyFilterToggle', 'snapshotVolumeConsistencyMax'),
-        snapshotCloseLocationMin: readSnapshotValue(raw, 'snapshotCloseLocationFilterToggle', 'snapshotCloseLocationMin'),
-        snapshotCloseLocationMax: readSnapshotValue(raw, 'snapshotCloseLocationFilterToggle', 'snapshotCloseLocationMax'),
-        snapshotOppositeWickMin: readSnapshotValue(raw, 'snapshotOppositeWickFilterToggle', 'snapshotOppositeWickMin'),
-        snapshotOppositeWickMax: readSnapshotValue(raw, 'snapshotOppositeWickFilterToggle', 'snapshotOppositeWickMax'),
-        snapshotRangeAtrMultipleMin: readSnapshotValue(raw, 'snapshotRangeAtrFilterToggle', 'snapshotRangeAtrMultipleMin'),
-        snapshotRangeAtrMultipleMax: readSnapshotValue(raw, 'snapshotRangeAtrFilterToggle', 'snapshotRangeAtrMultipleMax'),
-        snapshotMomentumConsistencyMin: readSnapshotValue(raw, 'snapshotMomentumFilterToggle', 'snapshotMomentumConsistencyMin'),
-        snapshotMomentumConsistencyMax: readSnapshotValue(raw, 'snapshotMomentumFilterToggle', 'snapshotMomentumConsistencyMax'),
-        snapshotBreakQualityMin: readSnapshotValue(raw, 'snapshotBreakQualityFilterToggle', 'snapshotBreakQualityMin'),
-        snapshotBreakQualityMax: readSnapshotValue(raw, 'snapshotBreakQualityFilterToggle', 'snapshotBreakQualityMax'),
-        snapshotTf60PerfMin: readSnapshotValue(raw, 'snapshotTf60PerfFilterToggle', 'snapshotTf60PerfMin'),
-        snapshotTf60PerfMax: readSnapshotValue(raw, 'snapshotTf60PerfFilterToggle', 'snapshotTf60PerfMax'),
-        snapshotTf90PerfMin: readSnapshotValue(raw, 'snapshotTf90PerfFilterToggle', 'snapshotTf90PerfMin'),
-        snapshotTf90PerfMax: readSnapshotValue(raw, 'snapshotTf90PerfFilterToggle', 'snapshotTf90PerfMax'),
-        snapshotTf120PerfMin: readSnapshotValue(raw, 'snapshotTf120PerfFilterToggle', 'snapshotTf120PerfMin'),
-        snapshotTf120PerfMax: readSnapshotValue(raw, 'snapshotTf120PerfFilterToggle', 'snapshotTf120PerfMax'),
-        snapshotTf480PerfMin: readSnapshotValue(raw, 'snapshotTf480PerfFilterToggle', 'snapshotTf480PerfMin'),
-        snapshotTf480PerfMax: readSnapshotValue(raw, 'snapshotTf480PerfFilterToggle', 'snapshotTf480PerfMax'),
-        snapshotTfConfluencePerfMin: readSnapshotValue(raw, 'snapshotTfConfluencePerfFilterToggle', 'snapshotTfConfluencePerfMin'),
-        snapshotTfConfluencePerfMax: readSnapshotValue(raw, 'snapshotTfConfluencePerfFilterToggle', 'snapshotTfConfluencePerfMax'),
-        snapshotEntryQualityScoreMin: readSnapshotValue(raw, 'snapshotEntryQualityScoreFilterToggle', 'snapshotEntryQualityScoreMin'),
-        snapshotEntryQualityScoreMax: readSnapshotValue(raw, 'snapshotEntryQualityScoreFilterToggle', 'snapshotEntryQualityScoreMax'),
-    };
+        coerceWithoutUiToggles: true,
+    });
 }
 
 // ============================================================================

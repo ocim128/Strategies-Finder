@@ -1,4 +1,4 @@
-import { getRequiredElement } from "../dom-utils";
+import { getOptionalElement, getRequiredElement } from "../dom-utils";
 import { state, type ChartMode, type MockChartModel } from "../state";
 import { debugLogger } from "../debug-logger";
 import { debounce } from "../debounce";
@@ -17,16 +17,16 @@ export function setupEventHandlers() {
     // Symbol dropdown with search
     const symbolSelector = getRequiredElement('symbolSelector');
     const symbolDropdown = getRequiredElement('symbolDropdown');
-    const symbolSearchInput = document.getElementById('symbolSearchInput') as HTMLInputElement | null;
-    const symbolSearchResults = document.getElementById('symbolSearchResults');
-    const symbolSearchSpinner = document.getElementById('symbolSearchSpinner');
-    const symbolSearchClear = document.getElementById('symbolSearchClear');
-    const symbolSearchLoading = document.getElementById('symbolSearchLoading');
-    const symbolSearchEmpty = document.getElementById('symbolSearchEmpty');
-    const mockModelSelect = document.getElementById('mockModelSelect') as HTMLSelectElement | null;
-    const mockBarsInput = document.getElementById('mockBarsInput') as HTMLInputElement | null;
-    const chartModeToggle = document.getElementById('chartModeToggle') as HTMLButtonElement | null;
-    const chartModeLabel = document.getElementById('chartModeLabel');
+    const symbolSearchInput = getOptionalElement<HTMLInputElement>('symbolSearchInput');
+    const symbolSearchResults = getOptionalElement<HTMLElement>('symbolSearchResults');
+    const symbolSearchSpinner = getOptionalElement<HTMLElement>('symbolSearchSpinner');
+    const symbolSearchClear = getOptionalElement<HTMLElement>('symbolSearchClear');
+    const symbolSearchLoading = getOptionalElement<HTMLElement>('symbolSearchLoading');
+    const symbolSearchEmpty = getOptionalElement<HTMLElement>('symbolSearchEmpty');
+    const mockModelSelect = getOptionalElement<HTMLSelectElement>('mockModelSelect');
+    const mockBarsInput = getOptionalElement<HTMLInputElement>('mockBarsInput');
+    const chartModeToggle = getOptionalElement<HTMLButtonElement>('chartModeToggle');
+    const chartModeLabel = getOptionalElement<HTMLElement>('chartModeLabel');
 
     let isSearchInitialized = false;
     let selectedIndex = -1;
@@ -216,7 +216,7 @@ export function setupEventHandlers() {
             const results = await assetSearchService.searchAssets(query, 20);
             renderSearchResults(results, query);
         } catch (error) {
-            console.error('Asset search failed:', error);
+            debugLogger.error('ui.asset_search_failed', { error: error instanceof Error ? error.message : String(error) });
             symbolSearchEmpty?.classList.remove('is-hidden');
         } finally {
             symbolSearchSpinner?.classList.add('is-hidden');
@@ -234,7 +234,7 @@ export function setupEventHandlers() {
             const popularAssets = await assetSearchService.searchAssets('', 20);
             renderSearchResults(popularAssets);
         } catch (error) {
-            console.error('Failed to initialize asset search:', error);
+            debugLogger.error('ui.asset_search_init_failed', { error: error instanceof Error ? error.message : String(error) });
         }
     };
 
@@ -541,7 +541,7 @@ export function setupEventHandlers() {
                 chartManager.downloadScreenshot(dataUrl);
                 uiManager.showToast('Screenshot saved!', 'success');
             } catch (error) {
-                console.error('Screenshot failed:', error);
+                debugLogger.error('ui.screenshot_failed', { error: error instanceof Error ? error.message : String(error) });
                 uiManager.showToast('Screenshot failed - try again', 'error');
             }
         });
@@ -560,7 +560,7 @@ export function setupEventHandlers() {
                     uiManager.showToast('Copy failed - check browser permissions', 'error');
                 }
             } catch (error) {
-                console.error('Copy failed:', error);
+                debugLogger.error('ui.copy_failed', { error: error instanceof Error ? error.message : String(error) });
                 uiManager.showToast('Copy failed - try again', 'error');
             }
         });
@@ -667,7 +667,7 @@ export function setupEventHandlers() {
             void dataManager.loadData(state.currentSymbol, state.currentInterval).then(() => {
                 uiManager.showToast(`2H close parity set to ${nextParity}. Data reloaded.`, 'info');
             }).catch((error) => {
-                console.error('Failed to reload data after parity change:', error);
+                debugLogger.error('ui.parity_reload_failed', { error: error instanceof Error ? error.message : String(error) });
                 uiManager.showToast('Failed to reload data for new 2H parity.', 'error');
             });
         });

@@ -8,7 +8,6 @@ import {
     StrategyParams,
     BacktestSettings,
     TradeFilterMode,
-    ExecutionModel,
     buildEntryBacktestResult,
     BacktestResult,
     PostEntryPathStats,
@@ -29,6 +28,13 @@ import { getIntervalSeconds } from "./dataProviders/utils";
 import { getOptionalElement, getRequiredElement } from "./dom-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
+import {
+    BACKTEST_DOM_SETTING_IDS,
+    CAPITAL_DEFAULTS,
+    EFFECTIVE_BACKTEST_DEFAULTS,
+    resolveBacktestSettingsFromRaw
+} from "./backtest-settings-resolver";
+import { readNumberInputValue } from "./dom-input-readers";
 
 export class BacktestService {
     private warnedStrictEngine = false;
@@ -68,7 +74,7 @@ export class BacktestService {
 
             const strategy = strategyRegistry.get(state.currentStrategyKey);
             if (!strategy) {
-                console.error(`Strategy not found: ${state.currentStrategyKey}`);
+                debugLogger.error("backtest.strategy_not_found", { strategyKey: state.currentStrategyKey });
                 statusEl.textContent = 'Strategy not found';
                 return;
             }
@@ -369,170 +375,54 @@ export class BacktestService {
         sizingMode: 'percent' | 'fixed';
         fixedTradeAmount: number;
     } {
-        const initialCapital = Math.max(0, this.readNumberInput('initialCapital', 10000));
-        const positionSize = Math.max(0, this.readNumberInput('positionSize', 100));
-        const commission = Math.max(0, this.readNumberInput('commission', 0.1));
-        const fixedTradeAmount = Math.max(0, this.readNumberInput('fixedTradeAmount', 0));
+        const initialCapital = Math.max(0, this.readNumberInput('initialCapital', CAPITAL_DEFAULTS.initialCapital));
+        const positionSize = Math.max(0, this.readNumberInput('positionSize', CAPITAL_DEFAULTS.positionSize));
+        const commission = Math.max(0, this.readNumberInput('commission', CAPITAL_DEFAULTS.commission));
+        const fixedTradeAmount = Math.max(0, this.readNumberInput('fixedTradeAmount', CAPITAL_DEFAULTS.fixedTradeAmount));
         const fixedTradeToggle = getOptionalElement<HTMLInputElement>('fixedTradeToggle');
         const sizingMode: 'percent' | 'fixed' = fixedTradeToggle?.checked ? 'fixed' : 'percent';
         return { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount };
     }
 
     public getBacktestSettings(): BacktestSettings {
-        const riskEnabled = this.isToggleEnabled('riskSettingsToggle');
-        const tradeFilterEnabled = this.isToggleEnabled('tradeFilterSettingsToggle');
-        const confirmationEnabled = this.isToggleEnabled('confirmationStrategiesToggle', false);
-        const riskMode = this.readRiskMode();
+        const raw: Record<string, unknown> = {};
+        for (const id of BACKTEST_DOM_SETTING_IDS) {
+            const value = this.readDomSettingValue(id);
+            if (value !== undefined) {
+                raw[id] = value;
+            }
+        }
 
-        return {
-            atrPeriod: this.readNumberInput('atrPeriod', 14),
-            ...this.buildRiskSettings(riskEnabled, riskMode),
-            ...this.buildTradeAndExecutionSettings(tradeFilterEnabled, confirmationEnabled),
+        raw.confirmationStrategies = getConfirmationStrategyValues();
+        raw.confirmationStrategyParams = getConfirmationStrategyParams();
+
+        const settings = resolveBacktestSettingsFromRaw(raw as BacktestSettings, {
             captureSnapshots: true,
-            ...this.buildSnapshotSettings(),
-        };
+            coerceWithoutUiToggles: false,
+        });
+
+        settings.tradeDirection = settings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
+        settings.executionModel = settings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
+        return settings;
     }
 
-    private readRiskMode(): BacktestSettings['riskMode'] {
-        return getOptionalElement<HTMLSelectElement>('riskMode')?.value as BacktestSettings['riskMode'];
-    }
-
-    private buildRiskSettings(riskEnabled: boolean, riskMode: BacktestSettings['riskMode']): Partial<BacktestSettings> {
-        const useAtrRisk = riskEnabled && (riskMode === 'simple' || riskMode === 'advanced');
-        const useAdvancedRisk = riskEnabled && riskMode === 'advanced';
-        const usePercentageRisk = riskEnabled && riskMode === 'percentage';
-
-        return {
-            stopLossAtr: useAtrRisk ? this.readNumberInput('stopLossAtr', 1.5) : 0,
-            takeProfitAtr: useAtrRisk ? this.readNumberInput('takeProfitAtr', 3) : 0,
-            trailingAtr: useAtrRisk ? this.readNumberInput('trailingAtr', 2) : 0,
-            partialTakeProfitAtR: useAdvancedRisk ? this.readNumberInput('partialTakeProfitAtR', 1) : 0,
-            partialTakeProfitPercent: useAdvancedRisk ? this.readNumberInput('partialTakeProfitPercent', 50) : 0,
-            breakEvenAtR: useAdvancedRisk ? this.readNumberInput('breakEvenAtR', 1) : 0,
-            timeStopBars: useAdvancedRisk ? this.readNumberInput('timeStopBars', 0) : 0,
-            riskMode,
-            stopLossPercent: usePercentageRisk ? this.readNumberInput('stopLossPercent', 5) : 0,
-            takeProfitPercent: usePercentageRisk ? this.readNumberInput('takeProfitPercent', 10) : 0,
-            stopLossEnabled: usePercentageRisk ? this.isToggleEnabled('stopLossToggle', true) : false,
-            takeProfitEnabled: usePercentageRisk ? this.isToggleEnabled('takeProfitToggle', true) : false,
-        };
-    }
-
-    private buildTradeAndExecutionSettings(tradeFilterEnabled: boolean, confirmationEnabled: boolean): Partial<BacktestSettings> {
-        const tradeFilterMode = getOptionalElement<HTMLSelectElement>('tradeFilterMode')?.value as TradeFilterMode | undefined;
-        const confirmationStrategies = confirmationEnabled ? getConfirmationStrategyValues() : [];
-        const confirmationStrategyParams = confirmationEnabled ? getConfirmationStrategyParams() : {};
-        const executionModelRaw = getOptionalElement<HTMLSelectElement>('executionModel')?.value as ExecutionModel | undefined;
-        const executionModel: ExecutionModel = executionModelRaw ?? 'signal_close';
-        const tradeDirectionRaw = getOptionalElement<HTMLSelectElement>('tradeDirection')?.value;
-        const tradeDirection = tradeDirectionRaw === 'short' || tradeDirectionRaw === 'both' || tradeDirectionRaw === 'combined'
-            ? tradeDirectionRaw
-            : 'long';
-        const marketModeRaw = getOptionalElement<HTMLSelectElement>('marketMode')?.value;
-        const marketMode = marketModeRaw === 'uptrend' || marketModeRaw === 'downtrend' || marketModeRaw === 'sideway'
-            ? marketModeRaw
-            : 'all';
-        const twoHourCloseParityRaw = getOptionalElement<HTMLSelectElement>('twoHourCloseParity')?.value;
-        const twoHourCloseParity = twoHourCloseParityRaw === 'even' || twoHourCloseParityRaw === 'both'
-            ? twoHourCloseParityRaw
-            : 'odd';
-
-        return {
-            marketMode,
-            trendEmaPeriod: 0,
-            trendEmaSlopeBars: 0,
-            atrPercentMin: 0,
-            atrPercentMax: 0,
-            adxPeriod: 14,
-            adxMin: 0,
-            adxMax: 0,
-            tradeFilterMode: tradeFilterEnabled ? (tradeFilterMode ?? 'none') : 'none',
-            entryConfirmation: tradeFilterEnabled ? (tradeFilterMode ?? 'none') : 'none',
-            confirmLookback: tradeFilterEnabled ? this.readNumberInput('confirmLookback', 1) : 1,
-            volumeSmaPeriod: tradeFilterEnabled ? this.readNumberInput('volumeSmaPeriod', 20) : 20,
-            volumeMultiplier: tradeFilterEnabled ? this.readNumberInput('volumeMultiplier', 1.5) : 1.5,
-            rsiPeriod: tradeFilterEnabled ? this.readNumberInput('confirmRsiPeriod', 14) : 14,
-            rsiBullish: tradeFilterEnabled ? this.readNumberInput('confirmRsiBullish', 55) : 55,
-            rsiBearish: tradeFilterEnabled ? this.readNumberInput('confirmRsiBearish', 45) : 45,
-            confirmationStrategies,
-            confirmationStrategyParams,
-            tradeDirection,
-            executionModel,
-            allowSameBarExit: this.isToggleEnabled('allowSameBarExitToggle', false),
-            slippageBps: this.readNumberInput('slippageBps', 5),
-            strategyTimeframeEnabled: this.isToggleEnabled('strategyTimeframeToggle', false),
-            strategyTimeframeMinutes: this.readNumberInput('strategyTimeframeMinutes', 120),
-            twoHourCloseParity,
-        };
-    }
-
-    private buildSnapshotSettings(): Partial<BacktestSettings> {
-        return {
-            snapshotAtrPercentMin: this.isToggleEnabled('snapshotAtrFilterToggle', false) ? this.readNumberInput('snapshotAtrPercentMin', 0) : 0,
-            snapshotAtrPercentMax: this.isToggleEnabled('snapshotAtrFilterToggle', false) ? this.readNumberInput('snapshotAtrPercentMax', 0) : 0,
-            snapshotVolumeRatioMin: this.isToggleEnabled('snapshotVolumeFilterToggle', false) ? this.readNumberInput('snapshotVolumeRatioMin', 0) : 0,
-            snapshotVolumeRatioMax: this.isToggleEnabled('snapshotVolumeFilterToggle', false) ? this.readNumberInput('snapshotVolumeRatioMax', 0) : 0,
-            snapshotAdxMin: this.isToggleEnabled('snapshotAdxFilterToggle', false) ? this.readNumberInput('snapshotAdxMin', 0) : 0,
-            snapshotAdxMax: this.isToggleEnabled('snapshotAdxFilterToggle', false) ? this.readNumberInput('snapshotAdxMax', 0) : 0,
-            snapshotEmaDistanceMin: this.isToggleEnabled('snapshotEmaFilterToggle', false) ? this.readNumberInput('snapshotEmaDistanceMin', 0) : 0,
-            snapshotEmaDistanceMax: this.isToggleEnabled('snapshotEmaFilterToggle', false) ? this.readNumberInput('snapshotEmaDistanceMax', 0) : 0,
-            snapshotRsiMin: this.isToggleEnabled('snapshotRsiFilterToggle', false) ? this.readNumberInput('snapshotRsiMin', 0) : 0,
-            snapshotRsiMax: this.isToggleEnabled('snapshotRsiFilterToggle', false) ? this.readNumberInput('snapshotRsiMax', 0) : 0,
-            snapshotPriceRangePosMin: this.isToggleEnabled('snapshotPriceRangePosFilterToggle', false) ? this.readNumberInput('snapshotPriceRangePosMin', 0) : 0,
-            snapshotPriceRangePosMax: this.isToggleEnabled('snapshotPriceRangePosFilterToggle', false) ? this.readNumberInput('snapshotPriceRangePosMax', 0) : 0,
-            snapshotBarsFromHighMax: this.isToggleEnabled('snapshotBarsFromHighFilterToggle', false) ? this.readNumberInput('snapshotBarsFromHighMax', 0) : 0,
-            snapshotBarsFromLowMax: this.isToggleEnabled('snapshotBarsFromLowFilterToggle', false) ? this.readNumberInput('snapshotBarsFromLowMax', 0) : 0,
-            snapshotTrendEfficiencyMin: this.isToggleEnabled('snapshotTrendEfficiencyFilterToggle', false) ? this.readNumberInput('snapshotTrendEfficiencyMin', 0) : 0,
-            snapshotTrendEfficiencyMax: this.isToggleEnabled('snapshotTrendEfficiencyFilterToggle', false) ? this.readNumberInput('snapshotTrendEfficiencyMax', 0) : 0,
-            snapshotAtrRegimeRatioMin: this.isToggleEnabled('snapshotAtrRegimeFilterToggle', false) ? this.readNumberInput('snapshotAtrRegimeRatioMin', 0) : 0,
-            snapshotAtrRegimeRatioMax: this.isToggleEnabled('snapshotAtrRegimeFilterToggle', false) ? this.readNumberInput('snapshotAtrRegimeRatioMax', 0) : 0,
-            snapshotBodyPercentMin: this.isToggleEnabled('snapshotBodyPercentFilterToggle', false) ? this.readNumberInput('snapshotBodyPercentMin', 0) : 0,
-            snapshotBodyPercentMax: this.isToggleEnabled('snapshotBodyPercentFilterToggle', false) ? this.readNumberInput('snapshotBodyPercentMax', 0) : 0,
-            snapshotWickSkewMin: this.isToggleEnabled('snapshotWickSkewFilterToggle', false) ? this.readNumberInput('snapshotWickSkewMin', 0) : 0,
-            snapshotWickSkewMax: this.isToggleEnabled('snapshotWickSkewFilterToggle', false) ? this.readNumberInput('snapshotWickSkewMax', 0) : 0,
-            snapshotVolumeTrendMin: this.isToggleEnabled('snapshotVolumeTrendFilterToggle', false) ? this.readNumberInput('snapshotVolumeTrendMin', 0) : 0,
-            snapshotVolumeTrendMax: this.isToggleEnabled('snapshotVolumeTrendFilterToggle', false) ? this.readNumberInput('snapshotVolumeTrendMax', 0) : 0,
-            snapshotVolumeBurstMin: this.isToggleEnabled('snapshotVolumeBurstFilterToggle', false) ? this.readNumberInput('snapshotVolumeBurstMin', 0) : 0,
-            snapshotVolumeBurstMax: this.isToggleEnabled('snapshotVolumeBurstFilterToggle', false) ? this.readNumberInput('snapshotVolumeBurstMax', 0) : 0,
-            snapshotVolumePriceDivergenceMin: this.isToggleEnabled('snapshotVolumePriceDivergenceFilterToggle', false) ? this.readNumberInput('snapshotVolumePriceDivergenceMin', 0) : 0,
-            snapshotVolumePriceDivergenceMax: this.isToggleEnabled('snapshotVolumePriceDivergenceFilterToggle', false) ? this.readNumberInput('snapshotVolumePriceDivergenceMax', 0) : 0,
-            snapshotVolumeConsistencyMin: this.isToggleEnabled('snapshotVolumeConsistencyFilterToggle', false) ? this.readNumberInput('snapshotVolumeConsistencyMin', 0) : 0,
-            snapshotVolumeConsistencyMax: this.isToggleEnabled('snapshotVolumeConsistencyFilterToggle', false) ? this.readNumberInput('snapshotVolumeConsistencyMax', 0) : 0,
-            snapshotCloseLocationMin: this.isToggleEnabled('snapshotCloseLocationFilterToggle', false) ? this.readNumberInput('snapshotCloseLocationMin', 0) : 0,
-            snapshotCloseLocationMax: this.isToggleEnabled('snapshotCloseLocationFilterToggle', false) ? this.readNumberInput('snapshotCloseLocationMax', 0) : 0,
-            snapshotOppositeWickMin: this.isToggleEnabled('snapshotOppositeWickFilterToggle', false) ? this.readNumberInput('snapshotOppositeWickMin', 0) : 0,
-            snapshotOppositeWickMax: this.isToggleEnabled('snapshotOppositeWickFilterToggle', false) ? this.readNumberInput('snapshotOppositeWickMax', 0) : 0,
-            snapshotRangeAtrMultipleMin: this.isToggleEnabled('snapshotRangeAtrFilterToggle', false) ? this.readNumberInput('snapshotRangeAtrMultipleMin', 0) : 0,
-            snapshotRangeAtrMultipleMax: this.isToggleEnabled('snapshotRangeAtrFilterToggle', false) ? this.readNumberInput('snapshotRangeAtrMultipleMax', 0) : 0,
-            snapshotMomentumConsistencyMin: this.isToggleEnabled('snapshotMomentumFilterToggle', false) ? this.readNumberInput('snapshotMomentumConsistencyMin', 0) : 0,
-            snapshotMomentumConsistencyMax: this.isToggleEnabled('snapshotMomentumFilterToggle', false) ? this.readNumberInput('snapshotMomentumConsistencyMax', 0) : 0,
-            snapshotBreakQualityMin: this.isToggleEnabled('snapshotBreakQualityFilterToggle', false) ? this.readNumberInput('snapshotBreakQualityMin', 0) : 0,
-            snapshotBreakQualityMax: this.isToggleEnabled('snapshotBreakQualityFilterToggle', false) ? this.readNumberInput('snapshotBreakQualityMax', 0) : 0,
-            snapshotTf60PerfMin: this.isToggleEnabled('snapshotTf60PerfFilterToggle', false) ? this.readNumberInput('snapshotTf60PerfMin', 0) : 0,
-            snapshotTf60PerfMax: this.isToggleEnabled('snapshotTf60PerfFilterToggle', false) ? this.readNumberInput('snapshotTf60PerfMax', 0) : 0,
-            snapshotTf90PerfMin: this.isToggleEnabled('snapshotTf90PerfFilterToggle', false) ? this.readNumberInput('snapshotTf90PerfMin', 0) : 0,
-            snapshotTf90PerfMax: this.isToggleEnabled('snapshotTf90PerfFilterToggle', false) ? this.readNumberInput('snapshotTf90PerfMax', 0) : 0,
-            snapshotTf120PerfMin: this.isToggleEnabled('snapshotTf120PerfFilterToggle', false) ? this.readNumberInput('snapshotTf120PerfMin', 0) : 0,
-            snapshotTf120PerfMax: this.isToggleEnabled('snapshotTf120PerfFilterToggle', false) ? this.readNumberInput('snapshotTf120PerfMax', 0) : 0,
-            snapshotTf480PerfMin: this.isToggleEnabled('snapshotTf480PerfFilterToggle', false) ? this.readNumberInput('snapshotTf480PerfMin', 0) : 0,
-            snapshotTf480PerfMax: this.isToggleEnabled('snapshotTf480PerfFilterToggle', false) ? this.readNumberInput('snapshotTf480PerfMax', 0) : 0,
-            snapshotTfConfluencePerfMin: this.isToggleEnabled('snapshotTfConfluencePerfFilterToggle', false) ? this.readNumberInput('snapshotTfConfluencePerfMin', 0) : 0,
-            snapshotTfConfluencePerfMax: this.isToggleEnabled('snapshotTfConfluencePerfFilterToggle', false) ? this.readNumberInput('snapshotTfConfluencePerfMax', 0) : 0,
-            snapshotEntryQualityScoreMin: this.isToggleEnabled('snapshotEntryQualityScoreFilterToggle', false) ? this.readNumberInput('snapshotEntryQualityScoreMin', 0) : 0,
-            snapshotEntryQualityScoreMax: this.isToggleEnabled('snapshotEntryQualityScoreFilterToggle', false) ? this.readNumberInput('snapshotEntryQualityScoreMax', 0) : 0,
-        };
+    private readDomSettingValue(id: string): unknown {
+        const element = getOptionalElement<HTMLElement>(id);
+        if (!element) return undefined;
+        if (element instanceof HTMLInputElement) {
+            if (element.type === 'checkbox' || element.type === 'radio') {
+                return element.checked;
+            }
+            return element.value;
+        }
+        if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) {
+            return element.value;
+        }
+        return undefined;
     }
 
     private readNumberInput(id: string, fallback: number): number {
-        const input = getOptionalElement<HTMLInputElement>(id);
-        if (!input) return fallback;
-        const value = parseFloat(input.value);
-        return Number.isFinite(value) ? value : fallback;
-    }
-
-    private isToggleEnabled(id: string, fallback: boolean = true): boolean {
-        const toggle = getOptionalElement<HTMLInputElement>(id);
-        return toggle ? toggle.checked : fallback;
+        return readNumberInputValue(id, fallback);
     }
 
     private sleep(ms: number): Promise<void> {

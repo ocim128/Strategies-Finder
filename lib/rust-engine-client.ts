@@ -10,6 +10,13 @@
  */
 
 import { OHLCVData, Signal, BacktestResult, BacktestSettings } from './types/strategies';
+import { debugLogger } from './debug-logger';
+
+const rustLog = {
+    info: (message: string, ...data: unknown[]) => debugLogger.info(message, data.length <= 1 ? data[0] : data),
+    warn: (message: string, ...data: unknown[]) => debugLogger.warn(message, data.length <= 1 ? data[0] : data),
+    error: (message: string, ...data: unknown[]) => debugLogger.error(message, data.length <= 1 ? data[0] : data),
+};
 
 // ============================================================================
 // Types
@@ -204,7 +211,7 @@ export class RustEngineClient {
                 this.isAvailable = data.status === 'healthy';
                 this.engineVersion = typeof data.version === 'string' ? data.version : null;
                 this.lastHealthCheck = now;
-                console.log(`[RustEngine] Connected: v${this.engineVersion ?? 'unknown'}`);
+                rustLog.info(`[RustEngine] Connected: v${this.engineVersion ?? 'unknown'}`);
                 return this.isAvailable;
             }
             this.isAvailable = false;
@@ -212,7 +219,7 @@ export class RustEngineClient {
         } catch (error) {
             this.isAvailable = false;
             this.engineVersion = null;
-            console.warn('[RustEngine] Server not available, using TypeScript fallback');
+            rustLog.warn('[RustEngine] Server not available, using TypeScript fallback');
         }
 
         return false;
@@ -270,18 +277,18 @@ export class RustEngineClient {
             });
 
             if (!response.ok) {
-                console.error('[RustEngine] Backtest failed:', response.statusText);
+                rustLog.error('[RustEngine] Backtest failed:', response.statusText);
                 return null;
             }
 
             const result: BacktestResult = await response.json();
             const elapsed = performance.now() - startTime;
 
-            console.log(`[RustEngine] Backtest completed in ${elapsed.toFixed(2)}ms (${data.length} bars)`);
+            rustLog.info(`[RustEngine] Backtest completed in ${elapsed.toFixed(2)}ms (${data.length} bars)`);
 
             return result;
         } catch (error) {
-            console.error('[RustEngine] Backtest error:', error);
+            rustLog.error('[RustEngine] Backtest error:', error);
             return null;
         }
     }
@@ -333,18 +340,18 @@ export class RustEngineClient {
             });
 
             if (!response.ok) {
-                console.error('[RustEngine] Batch backtest failed:', response.statusText);
+                rustLog.error('[RustEngine] Batch backtest failed:', response.statusText);
                 return null;
             }
 
             const result = await response.json();
             const elapsed = performance.now() - startTime;
 
-            console.log(`[RustEngine] Batch backtest: ${items.length} runs in ${elapsed.toFixed(2)}ms (Rust: ${result.processingTimeMs}ms)`);
+            rustLog.info(`[RustEngine] Batch backtest: ${items.length} runs in ${elapsed.toFixed(2)}ms (Rust: ${result.processingTimeMs}ms)`);
 
             return result;
         } catch (error) {
-            console.error('[RustEngine] Batch backtest error:', error);
+            rustLog.error('[RustEngine] Batch backtest error:', error);
             return null;
         }
     }
@@ -369,12 +376,12 @@ export class RustEngineClient {
 
         // If we already have this data cached, return existing ID
         if (this.cachedDataHash === dataHash && this.cachedDataId) {
-            console.log(`[RustEngine] Using existing cache ID: ${this.cachedDataId}`);
+            rustLog.info(`[RustEngine] Using existing cache ID: ${this.cachedDataId}`);
             return this.cachedDataId;
         }
 
         try {
-            console.log(`[RustEngine] Caching ${data.length} bars...`);
+            rustLog.info(`[RustEngine] Caching ${data.length} bars...`);
             const startTime = performance.now();
 
             const response = await fetch(`${this.baseUrl}/api/data/cache`, {
@@ -385,7 +392,7 @@ export class RustEngineClient {
             });
 
             if (!response.ok) {
-                console.error('[RustEngine] Cache data failed:', response.statusText);
+                rustLog.error('[RustEngine] Cache data failed:', response.statusText);
                 return null;
             }
 
@@ -395,11 +402,11 @@ export class RustEngineClient {
             this.cachedDataId = result.cacheId;
             this.cachedDataHash = dataHash;
 
-            console.log(`[RustEngine] Cached ${result.barCount} bars in ${elapsed.toFixed(2)}ms, ID: ${result.cacheId}`);
+            rustLog.info(`[RustEngine] Cached ${result.barCount} bars in ${elapsed.toFixed(2)}ms, ID: ${result.cacheId}`);
 
             return result.cacheId;
         } catch (error) {
-            console.error('[RustEngine] Cache data error:', error);
+            rustLog.error('[RustEngine] Cache data error:', error);
             return null;
         }
     }
@@ -449,18 +456,18 @@ export class RustEngineClient {
 
             if (!response.ok) {
                 const errorText = await response.text();
-                console.error('[RustEngine] Cached batch backtest failed:', response.statusText, errorText);
+                rustLog.error('[RustEngine] Cached batch backtest failed:', response.statusText, errorText);
                 return null;
             }
 
             const result = await response.json();
             const elapsed = performance.now() - startTime;
 
-            console.log(`[RustEngine] Cached batch: ${items.length} runs in ${elapsed.toFixed(2)}ms (Rust: ${result.processingTimeMs}ms)`);
+            rustLog.info(`[RustEngine] Cached batch: ${items.length} runs in ${elapsed.toFixed(2)}ms (Rust: ${result.processingTimeMs}ms)`);
 
             return result;
         } catch (error) {
-            console.error('[RustEngine] Cached batch backtest error:', error);
+            rustLog.error('[RustEngine] Cached batch backtest error:', error);
             return null;
         }
     }
@@ -525,19 +532,19 @@ export class RustEngineClient {
             this.disconnectProgressSocket();
 
             if (!response.ok) {
-                console.error('[RustEngine] Walk-forward failed:', response.statusText);
+                rustLog.error('[RustEngine] Walk-forward failed:', response.statusText);
                 return null;
             }
 
             const result = await response.json();
             const elapsed = performance.now() - startTime;
 
-            console.log(`[RustEngine] Walk-forward completed in ${elapsed.toFixed(2)}ms`);
+            rustLog.info(`[RustEngine] Walk-forward completed in ${elapsed.toFixed(2)}ms`);
 
             return result;
         } catch (error) {
             this.disconnectProgressSocket();
-            console.error('[RustEngine] Walk-forward error:', error);
+            rustLog.error('[RustEngine] Walk-forward error:', error);
             return null;
         }
     }
@@ -594,19 +601,19 @@ export class RustEngineClient {
             this.disconnectProgressSocket();
 
             if (!response.ok) {
-                console.error('[RustEngine] Finder failed:', response.statusText);
+                rustLog.error('[RustEngine] Finder failed:', response.statusText);
                 return null;
             }
 
             const result = await response.json();
             const elapsed = performance.now() - startTime;
 
-            console.log(`[RustEngine] Finder completed in ${elapsed.toFixed(2)}ms`);
+            rustLog.info(`[RustEngine] Finder completed in ${elapsed.toFixed(2)}ms`);
 
             return result;
         } catch (error) {
             this.disconnectProgressSocket();
-            console.error('[RustEngine] Finder error:', error);
+            rustLog.error('[RustEngine] Finder error:', error);
             return null;
         }
     }
@@ -625,15 +632,15 @@ export class RustEngineClient {
                     const update: ProgressUpdate = JSON.parse(event.data);
                     onProgress(update);
                 } catch (e) {
-                    console.warn('[RustEngine] Invalid progress message:', event.data);
+                    rustLog.warn('[RustEngine] Invalid progress message:', event.data);
                 }
             };
 
             this.ws.onerror = (error) => {
-                console.warn('[RustEngine] WebSocket error:', error);
+                rustLog.warn('[RustEngine] WebSocket error:', error);
             };
         } catch (error) {
-            console.warn('[RustEngine] Failed to connect WebSocket:', error);
+            rustLog.warn('[RustEngine] Failed to connect WebSocket:', error);
         }
     }
 
@@ -678,5 +685,6 @@ export async function getEngineStatus(): Promise<{
     }
     return { engine: 'typescript' };
 }
+
 
 

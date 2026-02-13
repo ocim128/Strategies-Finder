@@ -12,6 +12,8 @@ import { runFinderExecution, type FinderSelectedStrategy } from "./finder/finder
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderTimeframeLoader, type FinderDataset } from "./finder/finder-timeframe-loader";
 import { FinderUI } from "./finder/finder-ui";
+import { debugLogger } from "./debug-logger";
+import { readNumberInputValue, readToggleValue } from "./dom-input-readers";
 import type {
 	FinderMetric,
 	FinderMode,
@@ -455,7 +457,7 @@ export class FinderManager {
 	}
 
 	private readOptions(): FinderOptions {
-		const useAdvancedSort = this.isToggleEnabled('finderAdvancedToggle', false);
+		const useAdvancedSort = readToggleValue('finderAdvancedToggle', false);
 		let sortPriority: FinderMetric[] = [];
 
 		if (useAdvancedSort) {
@@ -484,19 +486,19 @@ export class FinderManager {
 		}
 
 		const mode = getRequiredElement<HTMLSelectElement>('finderMode').value as FinderMode;
-		const multiTimeframeRequested = this.isToggleEnabled('finderMultiTimeframeToggle', false);
+		const multiTimeframeRequested = readToggleValue('finderMultiTimeframeToggle', false);
 		const multiTimeframeEnabled = multiTimeframeRequested && !dataManager.isMockSymbol(state.currentSymbol);
 		const timeframes = multiTimeframeEnabled
 			? this.selectedFinderTimeframes.slice(0, FinderManager.MAX_MULTI_TIMEFRAMES)
 			: [];
-		const topN = Math.round(this.readNumberInput('finderTopN', 10, 1));
-		const steps = Math.round(this.readNumberInput('finderSteps', 3, 2));
-		const rangePercent = this.readNumberInput('finderRange', 35, 0);
-		const maxRuns = Math.round(this.readNumberInput('finderMaxRuns', 120, 1));
-		const tradeFilterEnabled = this.isToggleEnabled('finderTradesToggle', true);
-		const minTrades = tradeFilterEnabled ? Math.round(this.readNumberInput('finderTradesMin', 40, 0)) : 0;
+		const topN = Math.round(readNumberInputValue('finderTopN', 10, 1));
+		const steps = Math.round(readNumberInputValue('finderSteps', 3, 2));
+		const rangePercent = readNumberInputValue('finderRange', 35, 0);
+		const maxRuns = Math.round(readNumberInputValue('finderMaxRuns', 120, 1));
+		const tradeFilterEnabled = readToggleValue('finderTradesToggle', true);
+		const minTrades = tradeFilterEnabled ? Math.round(readNumberInputValue('finderTradesMin', 40, 0)) : 0;
 		const maxTradesRaw = tradeFilterEnabled
-			? Math.round(this.readNumberInput('finderTradesMax', Number.POSITIVE_INFINITY, 0))
+			? Math.round(readNumberInputValue('finderTradesMax', Number.POSITIVE_INFINITY, 0))
 			: Number.POSITIVE_INFINITY;
 		const maxTrades = Math.max(minTrades, maxTradesRaw);
 		return {
@@ -513,19 +515,6 @@ export class FinderManager {
 			minTrades,
 			maxTrades
 		};
-	}
-
-	private readNumberInput(id: string, fallback: number, min: number): number {
-		const input = document.getElementById(id) as HTMLInputElement | null;
-		if (!input) return fallback;
-		const value = parseFloat(input.value);
-		if (!Number.isFinite(value)) return fallback;
-		return Math.max(min, value);
-	}
-
-	private isToggleEnabled(id: string, fallback: boolean): boolean {
-		const toggle = document.getElementById(id) as HTMLInputElement | null;
-		return toggle ? toggle.checked : fallback;
 	}
 
 	private generateParamSets(defaultParams: StrategyParams, options: FinderOptions): StrategyParams[] {
@@ -611,7 +600,7 @@ export class FinderManager {
 			await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
 			uiManager.showToast('Top results metadata copied', 'success');
 		} catch (error) {
-			console.error('Failed to copy finder metadata:', error);
+			debugLogger.error('finder.copy_metadata_failed', { error: error instanceof Error ? error.message : String(error) });
 			uiManager.showToast('Copy failed - check browser permissions', 'error');
 		}
 	}
@@ -647,7 +636,7 @@ export class FinderManager {
 
 		setTimeout(() => {
 			backtestService.runCurrentBacktest().catch(err => {
-				console.error('Failed to run backtest after applying result:', err);
+				debugLogger.error('finder.apply_result_backtest_failed', { error: err instanceof Error ? err.message : String(err) });
 			});
 		}, 0);
 	}

@@ -13,7 +13,8 @@ import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
 import { getConfirmationStrategyParams, getConfirmationStrategyValues, renderConfirmationStrategyList, setConfirmationStrategyParams } from "./confirmation-strategies";
-import type { MarketMode, StrategyParams, TradeDirection } from './types/strategies';
+import type { BacktestSettings, ExecutionModel, MarketMode, StrategyParams, TradeDirection, TradeFilterMode } from './types/strategies';
+import { EFFECTIVE_BACKTEST_DEFAULTS } from "./backtest-settings-resolver";
 
 // ============================================================================
 // Types
@@ -32,7 +33,7 @@ export interface BacktestSettingsData {
 
     // Risk management
     riskSettingsToggle: boolean;
-    riskMode: string;
+    riskMode: NonNullable<BacktestSettings['riskMode']>;
     atrPeriod: number;
     stopLossAtr: number;
     takeProfitAtr: number;
@@ -52,7 +53,7 @@ export interface BacktestSettingsData {
 
     // Trade filter
     tradeFilterSettingsToggle: boolean;
-    tradeFilterMode: string;
+    tradeFilterMode: TradeFilterMode;
     /** @deprecated Legacy key retained for backward compatibility when loading old configs */
     entrySettingsToggle?: boolean;
     /** @deprecated Legacy key retained for backward compatibility when loading old configs */
@@ -149,7 +150,7 @@ export interface BacktestSettingsData {
     confirmationStrategyParams: Record<string, StrategyParams>;
 
     // Execution realism
-    executionModel: string;
+    executionModel: ExecutionModel;
     allowSameBarExit: boolean;
     slippageBps: number;
     strategyTimeframeEnabled: boolean;
@@ -190,33 +191,33 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
 
     // Risk management
     riskSettingsToggle: false,
-    riskMode: 'simple',
-    atrPeriod: 14,
-    stopLossAtr: 1.5,
-    takeProfitAtr: 3,
-    trailingAtr: 2,
-    partialTakeProfitAtR: 1,
-    partialTakeProfitPercent: 50,
-    breakEvenAtR: 1,
-    timeStopBars: 0,
-    stopLossPercent: 5,
-    takeProfitPercent: 10,
+    riskMode: EFFECTIVE_BACKTEST_DEFAULTS.riskMode,
+    atrPeriod: EFFECTIVE_BACKTEST_DEFAULTS.atrPeriod,
+    stopLossAtr: EFFECTIVE_BACKTEST_DEFAULTS.stopLossAtr,
+    takeProfitAtr: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAtr,
+    trailingAtr: EFFECTIVE_BACKTEST_DEFAULTS.trailingAtr,
+    partialTakeProfitAtR: EFFECTIVE_BACKTEST_DEFAULTS.partialTakeProfitAtR,
+    partialTakeProfitPercent: EFFECTIVE_BACKTEST_DEFAULTS.partialTakeProfitPercent,
+    breakEvenAtR: EFFECTIVE_BACKTEST_DEFAULTS.breakEvenAtR,
+    timeStopBars: EFFECTIVE_BACKTEST_DEFAULTS.timeStopBars,
+    stopLossPercent: EFFECTIVE_BACKTEST_DEFAULTS.stopLossPercent,
+    takeProfitPercent: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitPercent,
     stopLossEnabled: false,
     takeProfitEnabled: false,
-    marketMode: 'all',
+    marketMode: EFFECTIVE_BACKTEST_DEFAULTS.marketMode,
 
     // Trade direction
-    tradeDirection: 'short',
+    tradeDirection: EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection,
 
     // Trade filter
     tradeFilterSettingsToggle: false,
-    tradeFilterMode: 'none',
-    confirmLookback: 1,
-    volumeSmaPeriod: 20,
-    volumeMultiplier: 1.5,
-    confirmRsiPeriod: 14,
-    confirmRsiBullish: 55,
-    confirmRsiBearish: 45,
+    tradeFilterMode: EFFECTIVE_BACKTEST_DEFAULTS.tradeFilterMode,
+    confirmLookback: EFFECTIVE_BACKTEST_DEFAULTS.confirmLookback,
+    volumeSmaPeriod: EFFECTIVE_BACKTEST_DEFAULTS.volumeSmaPeriod,
+    volumeMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.volumeMultiplier,
+    confirmRsiPeriod: EFFECTIVE_BACKTEST_DEFAULTS.rsiPeriod,
+    confirmRsiBullish: EFFECTIVE_BACKTEST_DEFAULTS.rsiBullish,
+    confirmRsiBearish: EFFECTIVE_BACKTEST_DEFAULTS.rsiBearish,
     snapshotAtrFilterToggle: false,
     snapshotAtrPercentMin: 0,
     snapshotAtrPercentMax: 0,
@@ -303,12 +304,12 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     confirmationStrategyParams: {},
 
     // Execution realism
-    executionModel: 'next_open',
-    allowSameBarExit: false,
-    slippageBps: 5,
-    strategyTimeframeEnabled: false,
-    strategyTimeframeMinutes: 120,
-    twoHourCloseParity: 'odd',
+    executionModel: EFFECTIVE_BACKTEST_DEFAULTS.executionModel,
+    allowSameBarExit: EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit,
+    slippageBps: EFFECTIVE_BACKTEST_DEFAULTS.slippageBps,
+    strategyTimeframeEnabled: EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeEnabled,
+    strategyTimeframeMinutes: EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeMinutes,
+    twoHourCloseParity: EFFECTIVE_BACKTEST_DEFAULTS.twoHourCloseParity,
 };
 
 const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -364,7 +365,7 @@ class SettingsManager {
 
             // Risk management
             riskSettingsToggle: this.readCheckbox('riskSettingsToggle', DEFAULT_BACKTEST_SETTINGS.riskSettingsToggle),
-            riskMode: this.readSelect('riskMode', DEFAULT_BACKTEST_SETTINGS.riskMode),
+            riskMode: this.resolveRiskModeValue(this.readSelect('riskMode', DEFAULT_BACKTEST_SETTINGS.riskMode)),
             atrPeriod: this.readNumber('atrPeriod', DEFAULT_BACKTEST_SETTINGS.atrPeriod),
             stopLossAtr: this.readNumber('stopLossAtr', DEFAULT_BACKTEST_SETTINGS.stopLossAtr),
             takeProfitAtr: this.readNumber('takeProfitAtr', DEFAULT_BACKTEST_SETTINGS.takeProfitAtr),
@@ -384,7 +385,7 @@ class SettingsManager {
 
             // Trade filter
             tradeFilterSettingsToggle: this.readCheckbox('tradeFilterSettingsToggle', DEFAULT_BACKTEST_SETTINGS.tradeFilterSettingsToggle),
-            tradeFilterMode: this.readSelect('tradeFilterMode', DEFAULT_BACKTEST_SETTINGS.tradeFilterMode),
+            tradeFilterMode: this.resolveTradeFilterModeValue(this.readSelect('tradeFilterMode', DEFAULT_BACKTEST_SETTINGS.tradeFilterMode)),
             confirmLookback: this.readNumber('confirmLookback', DEFAULT_BACKTEST_SETTINGS.confirmLookback),
             volumeSmaPeriod: this.readNumber('volumeSmaPeriod', DEFAULT_BACKTEST_SETTINGS.volumeSmaPeriod),
             volumeMultiplier: this.readNumber('volumeMultiplier', DEFAULT_BACKTEST_SETTINGS.volumeMultiplier),
@@ -477,7 +478,7 @@ class SettingsManager {
             confirmationStrategyParams: getConfirmationStrategyParams(),
 
             // Execution realism
-            executionModel: this.readSelect('executionModel', DEFAULT_BACKTEST_SETTINGS.executionModel),
+            executionModel: this.resolveExecutionModelValue(this.readSelect('executionModel', DEFAULT_BACKTEST_SETTINGS.executionModel)),
             allowSameBarExit: this.readCheckbox('allowSameBarExitToggle', DEFAULT_BACKTEST_SETTINGS.allowSameBarExit),
             slippageBps: this.readNumber('slippageBps', DEFAULT_BACKTEST_SETTINGS.slippageBps),
             strategyTimeframeEnabled: this.readCheckbox('strategyTimeframeToggle', DEFAULT_BACKTEST_SETTINGS.strategyTimeframeEnabled),
@@ -498,7 +499,7 @@ class SettingsManager {
             localStorage.setItem(STORAGE_KEYS.APP_SETTINGS, JSON.stringify(settings));
             debugLogger.event('settings.saved', { strategy: settings.currentStrategyKey });
         } catch (e) {
-            console.error('[SettingsManager] Failed to save settings:', e);
+            debugLogger.error('settings.save_failed', { error: e instanceof Error ? e.message : String(e) });
         }
     }
 
@@ -523,7 +524,7 @@ class SettingsManager {
                 return settings;
             }
         } catch (e) {
-            console.error('[SettingsManager] Failed to load settings:', e);
+            debugLogger.error('settings.load_failed', { error: e instanceof Error ? e.message : String(e) });
         }
         return null;
     }
@@ -756,7 +757,7 @@ class SettingsManager {
         try {
             localStorage.setItem(STORAGE_KEYS.STRATEGY_CONFIGS, JSON.stringify(configs));
         } catch (e) {
-            console.error('[SettingsManager] Failed to save strategy config:', e);
+            debugLogger.error('settings.config_save_failed', { error: e instanceof Error ? e.message : String(e), name: config.name });
         }
 
         return normalized;
@@ -804,11 +805,11 @@ class SettingsManager {
                 if (Array.isArray(parsed)) {
                     return parsed as StrategyConfig[];
                 }
-                console.warn('[SettingsManager] Invalid strategy configs format, resetting to empty.');
+                debugLogger.warn('settings.config_invalid_format');
                 return [];
             }
         } catch (e) {
-            console.error('[SettingsManager] Failed to load strategy configs:', e);
+            debugLogger.error('settings.config_load_failed', { error: e instanceof Error ? e.message : String(e) });
         }
         return [];
     }
@@ -824,7 +825,7 @@ class SettingsManager {
                 debugLogger.event('settings.config.deleted', { name });
                 return true;
             } catch (e) {
-                console.error('[SettingsManager] Failed to delete strategy config:', e);
+                debugLogger.error('settings.config_delete_failed', { error: e instanceof Error ? e.message : String(e), name });
             }
         }
         return false;
@@ -912,12 +913,30 @@ class SettingsManager {
         return DEFAULT_BACKTEST_SETTINGS.marketMode;
     }
 
-    private resolveTradeFilterMode(settings: Partial<BacktestSettingsData>): string {
-        const mode = settings.tradeFilterMode ?? settings.entryConfirmation;
-        if (mode === 'none' || mode === 'close' || mode === 'volume' || mode === 'rsi' || mode === 'trend' || mode === 'adx') {
-            return mode;
+    private resolveRiskModeValue(value: unknown): NonNullable<BacktestSettings['riskMode']> {
+        if (value === 'simple' || value === 'advanced' || value === 'percentage') {
+            return value;
+        }
+        return DEFAULT_BACKTEST_SETTINGS.riskMode;
+    }
+
+    private resolveTradeFilterModeValue(value: unknown): TradeFilterMode {
+        if (value === 'none' || value === 'close' || value === 'volume' || value === 'rsi' || value === 'trend' || value === 'adx') {
+            return value;
         }
         return DEFAULT_BACKTEST_SETTINGS.tradeFilterMode;
+    }
+
+    private resolveExecutionModelValue(value: unknown): ExecutionModel {
+        if (value === 'signal_close' || value === 'next_open' || value === 'next_close') {
+            return value;
+        }
+        return DEFAULT_BACKTEST_SETTINGS.executionModel;
+    }
+
+    private resolveTradeFilterMode(settings: Partial<BacktestSettingsData>): TradeFilterMode {
+        const mode = settings.tradeFilterMode ?? settings.entryConfirmation;
+        return this.resolveTradeFilterModeValue(mode);
     }
 
     private resolveTwoHourCloseParity(value: unknown): 'odd' | 'even' | 'both' {
