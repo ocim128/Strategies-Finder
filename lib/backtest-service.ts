@@ -35,6 +35,7 @@ import {
     resolveBacktestSettingsFromRaw
 } from "./backtest-settings-resolver";
 import { readNumberInputValue } from "./dom-input-readers";
+import { trimToClosedCandles } from "./closed-candle-utils";
 
 export class BacktestService {
     private warnedStrictEngine = false;
@@ -106,6 +107,7 @@ export class BacktestService {
 
                 const oddRun = await this.withTemporaryTwoHourParity('odd', async () => this.runBacktestForData(
                     oddData,
+                    state.currentInterval,
                     strategy,
                     params,
                     settings,
@@ -118,6 +120,7 @@ export class BacktestService {
                 ));
                 const evenRun = await this.withTemporaryTwoHourParity('even', async () => this.runBacktestForData(
                     evenData,
+                    state.currentInterval,
                     strategy,
                     params,
                     settings,
@@ -153,6 +156,7 @@ export class BacktestService {
 
                 const singleRun = await this.withTemporaryTwoHourParity(parityMode, async () => this.runBacktestForData(
                     state.ohlcvData,
+                    state.currentInterval,
                     strategy,
                     params,
                     settings,
@@ -270,6 +274,7 @@ export class BacktestService {
 
     private async runBacktestForData(
         ohlcvData: OHLCVData[],
+        interval: string,
         strategy: Strategy,
         params: StrategyParams,
         settings: BacktestSettings,
@@ -280,23 +285,24 @@ export class BacktestService {
         fixedTradeAmount: number,
         requiresTsEngine: boolean
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
-        const signals = strategy.execute(ohlcvData, params);
+        const backtestData = this.selectClosedCandleData(ohlcvData, interval);
+        const signals = strategy.execute(backtestData, params);
 
         const confirmationStrategies = settings.confirmationStrategies ?? [];
         const tradeFilterMode = this.resolveTradeFilterMode(settings);
         const confirmationStates = confirmationStrategies.length > 0
-            ? buildConfirmationStates(ohlcvData, confirmationStrategies, settings.confirmationStrategyParams)
+            ? buildConfirmationStates(backtestData, confirmationStrategies, settings.confirmationStrategyParams)
             : [];
         const filteredSignals = confirmationStates.length > 0
             ? ((strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined')
                 ? filterSignalsWithConfirmationsBoth(
-                    ohlcvData,
+                    backtestData,
                     signals,
                     confirmationStates,
                     tradeFilterMode
                 )
                 : filterSignalsWithConfirmations(
-                    ohlcvData,
+                    backtestData,
                     signals,
                     confirmationStates,
                     tradeFilterMode,
@@ -307,7 +313,7 @@ export class BacktestService {
         let result: BacktestResult | undefined;
         let engineUsed: 'rust' | 'typescript' = 'typescript';
 
-        const evaluation = strategy.evaluate?.(ohlcvData, params, filteredSignals);
+        const evaluation = strategy.evaluate?.(backtestData, params, filteredSignals);
         const entryStats = evaluation?.entryStats;
 
         if (strategy.metadata?.role === 'entry' && entryStats) {
@@ -317,7 +323,7 @@ export class BacktestService {
 
         if (!result && shouldUseRustEngine() && !requiresTsEngine) {
             const rustResult = await rustEngine.runBacktest(
-                ohlcvData,
+                backtestData,
                 filteredSignals,
                 initialCapital,
                 positionSize,
@@ -330,7 +336,7 @@ export class BacktestService {
                 if (this.isResultConsistent(rustResult)) {
                     result = rustResult;
                     engineUsed = 'rust';
-                    debugLogger.event('backtest.rust_used', { bars: ohlcvData.length });
+                    debugLogger.event('backtest.rust_used', { bars: backtestData.length });
                 } else {
                     debugLogger.warn('[Backtest] Rust result failed consistency checks, falling back to TypeScript');
                     uiManager.showToast('Rust backtest result inconsistent, rerunning in TypeScript', 'info');
@@ -344,7 +350,7 @@ export class BacktestService {
                 uiManager.showToast('Realism or snapshot filter settings require TypeScript engine (Rust skipped).', 'info');
             }
             result = runBacktest(
-                ohlcvData,
+                backtestData,
                 filteredSignals,
                 initialCapital,
                 positionSize,
@@ -358,8 +364,12 @@ export class BacktestService {
         if (!result.entryStats) {
             result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
         }
-        result.postEntryPath = this.buildPostEntryPathStats(result, 5, ohlcvData);
+        result.postEntryPath = this.buildPostEntryPathStats(result, 5, backtestData);
         return { result, engineUsed };
+    }
+
+    private selectClosedCandleData(ohlcvData: OHLCVData[], interval: string): OHLCVData[] {
+        return trimToClosedCandles(ohlcvData, interval);
     }
 
     private buildRustCompatibleSettings(settings: BacktestSettings): BacktestSettings {
@@ -850,6 +860,7 @@ export class BacktestService {
      */
     public async runBacktestForSubscription(
         ohlcvData: OHLCVData[],
+        interval: string,
         strategyKey: string,
         strategyParams: Record<string, number>,
         backtestSettings: BacktestSettings
@@ -860,11 +871,13 @@ export class BacktestService {
         }
 
         const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = this.getCapitalSettings();
-        const requiresTsEngine = this.requiresTypescriptEngine(backtestSettings);
+        // Keep Alerts "Last Trade" aligned with Worker evaluation (TypeScript engine path).
+        const requiresTsEngine = true;
 
         // Run the backtest
         const runResult = await this.runBacktestForData(
             ohlcvData,
+            interval,
             strategy,
             strategyParams,
             backtestSettings,

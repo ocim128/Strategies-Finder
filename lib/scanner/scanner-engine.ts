@@ -9,6 +9,7 @@ import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsW
 import type { BacktestSettings, Signal, StrategyParams, TradeFilterMode } from '../types/strategies';
 import { getOpenPositionForScanner } from '../strategies/backtest';
 import { resolveBacktestSettingsFromRaw } from '../backtest-settings-resolver';
+import { trimToClosedCandles } from '../closed-candle-utils';
 import type {
     ScannerConfig,
     ScanResult,
@@ -291,8 +292,9 @@ export class ScannerEngine {
     private scanPair(pairData: PairScanData, config: ScannerConfig): ScanResult[] {
         const results: ScanResult[] = [];
         const { data, symbol, displayName } = pairData;
-        const dataLen = data.length;
-        if (dataLen === 0) return results;
+        const scanData = trimToClosedCandles(data, config.interval);
+        const dataLen = scanData.length;
+        if (dataLen < MIN_DATA_BARS) return results;
 
         const maxSignalAgeBars = Number.isFinite(config.signalFreshnessBars)
             ? Math.max(0, Math.floor(config.signalFreshnessBars))
@@ -308,7 +310,7 @@ export class ScannerEngine {
             try {
                 // Use saved params from config, fall back to defaults
                 const params = normalizeStrategyParams(strategy.defaultParams, stratConfig.strategyParams);
-                const rawSignals = strategy.execute(data, params);
+                const rawSignals = strategy.execute(scanData, params);
 
                 // Early exit: no signals at all → skip
                 if (rawSignals.length === 0) continue;
@@ -323,13 +325,13 @@ export class ScannerEngine {
                     'none'
                 );
                 const confirmationStates = confirmationStrategies.length > 0
-                    ? buildConfirmationStates(data, confirmationStrategies, backtestSettings.confirmationStrategyParams)
+                    ? buildConfirmationStates(scanData, confirmationStrategies, backtestSettings.confirmationStrategyParams)
                     : [];
                 const filteredSignals = confirmationStates.length > 0
                     ? ((strategy.metadata?.role === 'entry' || backtestSettings.tradeDirection === 'both' || backtestSettings.tradeDirection === 'combined')
-                        ? filterSignalsWithConfirmationsBoth(data, rawSignals, confirmationStates, tradeFilterMode)
+                        ? filterSignalsWithConfirmationsBoth(scanData, rawSignals, confirmationStates, tradeFilterMode)
                         : filterSignalsWithConfirmations(
-                            data,
+                            scanData,
                             rawSignals,
                             confirmationStates,
                             tradeFilterMode,
@@ -347,7 +349,7 @@ export class ScannerEngine {
                 if (maxSignalAgeBars < Number.POSITIVE_INFINITY) {
                     const lastSignal = filteredSignals[filteredSignals.length - 1];
                     const lastSignalTime = lastSignal.time;
-                    const lastBarTime = data[dataLen - 1].time;
+                    const lastBarTime = scanData[dataLen - 1].time;
 
                     // Compare times (both are numeric epoch seconds or ms)
                     const sigT = typeof lastSignalTime === 'number' ? lastSignalTime : Number(lastSignalTime);
@@ -357,9 +359,9 @@ export class ScannerEngine {
                         // Find bar index of last signal by reverse-scanning
                         let lastSignalBarIdx = dataLen - 1;
                         for (let i = dataLen - 1; i >= 0; i--) {
-                            const t = typeof data[i].time === 'number'
-                                ? data[i].time as number
-                                : Number(data[i].time);
+                            const t = typeof scanData[i].time === 'number'
+                                ? scanData[i].time as number
+                                : Number(scanData[i].time);
                             if (t <= sigT) {
                                 lastSignalBarIdx = i;
                                 break;
@@ -374,7 +376,7 @@ export class ScannerEngine {
                 }
 
                 // Run a backtest simulation to get the current open position (if any)
-                const openPosition = getOpenPositionForScanner(data, filteredSignals, backtestSettings);
+                const openPosition = getOpenPositionForScanner(scanData, filteredSignals, backtestSettings);
 
                 // Only add to results if there's an open and fresh-enough position
                 if (openPosition && openPosition.barsInTrade <= maxSignalAgeBars) {

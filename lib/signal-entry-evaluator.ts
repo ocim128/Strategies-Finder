@@ -36,6 +36,12 @@ export interface EvaluatedEntrySignal {
     fingerprint: string;
 }
 
+export interface EvaluatedLatestTradeContext {
+    entryTimeSec: number;
+    exitReason: string | null;
+    isOpen: boolean;
+}
+
 export interface EntrySignalEvaluationResult {
     ok: boolean;
     reason?:
@@ -47,6 +53,7 @@ export interface EntrySignalEvaluationResult {
     rawSignalCount: number;
     preparedSignalCount: number;
     latestEntry: EvaluatedEntrySignal | null;
+    latestTrade: EvaluatedLatestTradeContext | null;
 }
 
 type StrategyRole = NonNullable<NonNullable<Strategy["metadata"]>["role"]>;
@@ -451,6 +458,7 @@ export function evaluateLatestEntrySignal(
             rawSignalCount: 0,
             preparedSignalCount: 0,
             latestEntry: null,
+            latestTrade: null,
         };
     }
 
@@ -462,6 +470,7 @@ export function evaluateLatestEntrySignal(
             rawSignalCount: 0,
             preparedSignalCount: 0,
             latestEntry: null,
+            latestTrade: null,
         };
     }
 
@@ -472,6 +481,7 @@ export function evaluateLatestEntrySignal(
             rawSignalCount: 0,
             preparedSignalCount: 0,
             latestEntry: null,
+            latestTrade: null,
         };
     }
 
@@ -510,6 +520,7 @@ export function evaluateLatestEntrySignal(
             rawSignalCount: rawSignals.length,
             preparedSignalCount: preparedSignals.length,
             latestEntry: null,
+            latestTrade: null,
         };
     }
 
@@ -521,6 +532,7 @@ export function evaluateLatestEntrySignal(
             rawSignalCount: rawSignals.length,
             preparedSignalCount: preparedSignals.length,
             latestEntry: null,
+            latestTrade: null,
         };
     }
 
@@ -557,6 +569,7 @@ export function evaluateLatestEntrySignal(
             rawSignalCount: rawSignals.length,
             preparedSignalCount: preparedSignals.length,
             latestEntry: null,
+            latestTrade: null,
         };
     }
 
@@ -584,5 +597,10 @@ export function evaluateLatestEntrySignal(
         rawSignalCount: rawSignals.length,
         preparedSignalCount: preparedSignals.length,
         latestEntry,
+        latestTrade: {
+            entryTimeSec: signalTimeSec,
+            exitReason: latestTrade.exitReason ?? null,
+            isOpen: latestTrade.exitReason === "end_of_data",
+        },
     };
 }

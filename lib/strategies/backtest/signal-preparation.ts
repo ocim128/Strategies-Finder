@@ -48,20 +48,22 @@ export function prepareSignals(
 
             if (signal.type !== entryType) return;
 
-            let entryIndex = signalIndex + executionShift;
-            if (config.tradeFilterMode === 'close') {
-                entryIndex = Math.max(entryIndex, signalIndex + 1);
-            }
-            if (entryIndex >= data.length) return;
+            const decisionIndex = config.tradeFilterMode === 'close'
+                ? signalIndex + 1
+                : signalIndex;
+            if (decisionIndex >= data.length) return;
 
-            if (!passesTradeFilter(data, entryIndex, config, indicators, tradeDirection)) return;
-            if (!passesRegimeFilters(data, entryIndex, config, indicators, tradeDirection)) return;
-            if (!passesSnapshotFilters(data, entryIndex, config, snapshotIndicators ?? null, tradeDirection, signal.price)) return;
+            const executionIndex = decisionIndex + executionShift;
+            if (executionIndex >= data.length) return;
 
-            const entryPrice = resolveExecutionPrice(data, signal, signalIndex, entryIndex, config);
+            if (!passesTradeFilter(data, decisionIndex, config, indicators, tradeDirection)) return;
+            if (!passesRegimeFilters(data, decisionIndex, config, indicators, tradeDirection)) return;
+            if (!passesSnapshotFilters(data, decisionIndex, config, snapshotIndicators ?? null, tradeDirection, signal.price)) return;
+
+            const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
 
             prepared.push({
-                time: data[entryIndex].time,
+                time: data[executionIndex].time,
                 type: entryType,
                 price: entryPrice,
                 triggerPrice: signal.price,
@@ -73,21 +75,23 @@ export function prepareSignals(
 
         if (signal.type !== 'buy' && signal.type !== 'sell') return;
 
-        let entryIndex = signalIndex + executionShift;
-        if (config.tradeFilterMode === 'close') {
-            entryIndex = Math.max(entryIndex, signalIndex + 1);
-        }
-        if (entryIndex >= data.length) return;
+        const decisionIndex = config.tradeFilterMode === 'close'
+            ? signalIndex + 1
+            : signalIndex;
+        if (decisionIndex >= data.length) return;
+
+        const executionIndex = decisionIndex + executionShift;
+        if (executionIndex >= data.length) return;
 
         const signalDirection = signalToPositionDirection(signal.type);
-        if (!passesTradeFilter(data, entryIndex, config, indicators, signalDirection)) return;
-        if (!passesRegimeFilters(data, entryIndex, config, indicators, signalDirection)) return;
-        if (!passesSnapshotFilters(data, entryIndex, config, snapshotIndicators ?? null, signalDirection, signal.price)) return;
+        if (!passesTradeFilter(data, decisionIndex, config, indicators, signalDirection)) return;
+        if (!passesRegimeFilters(data, decisionIndex, config, indicators, signalDirection)) return;
+        if (!passesSnapshotFilters(data, decisionIndex, config, snapshotIndicators ?? null, signalDirection, signal.price)) return;
 
-        const entryPrice = resolveExecutionPrice(data, signal, signalIndex, entryIndex, config);
+        const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
 
         prepared.push({
-            time: data[entryIndex].time,
+            time: data[executionIndex].time,
             type: signal.type,
             price: entryPrice,
             triggerPrice: signal.price,

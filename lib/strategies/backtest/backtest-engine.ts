@@ -381,14 +381,32 @@ export function runBacktestCompact(
             if (compareTime(signal.time, candle.time) === 0) {
                 if (!position) {
                     const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
-                    if (opened) { position = opened.nextPosition; capital -= opened.entryCommission; }
+                    if (opened) {
+                        position = opened.nextPosition;
+                        capital -= opened.entryCommission;
+                        if (config.executionModel === 'next_open') {
+                            processPositionExits(candle, position, config, slippageRate, (exitPrice, exitSize) => {
+                                recordExit(exitPrice, exitSize);
+                            });
+                            if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
+                        }
+                    }
                 } else if (signal.type === directionToSignalType(position.direction === 'long' ? 'short' : 'long') && (config.allowSameBarExit || compareTime(signal.time, position.entryTime) !== 0)) {
                     // Signal exit
                     const exitPrice = signal.price;
                     recordExit(exitPrice, position.size);
                     if (tradeDirection === 'both') {
                         const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
-                        if (opened) { position = opened.nextPosition; capital -= opened.entryCommission; }
+                        if (opened) {
+                            position = opened.nextPosition;
+                            capital -= opened.entryCommission;
+                            if (config.executionModel === 'next_open') {
+                                processPositionExits(candle, position, config, slippageRate, (exitPrice, exitSize) => {
+                                    recordExit(exitPrice, exitSize);
+                                });
+                                if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
+                            }
+                        }
                     }
                 }
             }
@@ -495,6 +513,18 @@ export function runBacktest(
                                 signal.triggerPrice ?? signal.price
                             );
                         }
+                        if (config.executionModel === 'next_open') {
+                            processPositionExits(candle, position, config, slippageRate, (exitPrice, exitSize, reason) => {
+                                const d = calculateTradeExitDetails(position!, exitPrice, exitSize, commissionRate);
+                                capital += d.rawPnl - d.commission;
+                                const trade: Trade = { id: ++tradeId, type: position!.direction, entryTime: position!.entryTime, entryPrice: position!.entryPrice, exitTime: candle.time, exitPrice, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: reason };
+                                if (currentSnapshot) trade.entrySnapshot = currentSnapshot;
+                                trades.push(trade);
+                                position!.size -= d.size;
+                                if (position!.size <= 0) { position = null; currentSnapshot = null; }
+                            });
+                            if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
+                        }
                     }
                 } else if (signal.type === directionToSignalType(position.direction === 'long' ? 'short' : 'long') && (config.allowSameBarExit || compareTime(signal.time, position.entryTime) !== 0)) {
                     const details = calculateTradeExitDetails(position, signal.price, position.size, commissionRate);
@@ -518,6 +548,18 @@ export function runBacktest(
                                     opened.nextPosition.direction,
                                     signal.triggerPrice ?? signal.price
                                 );
+                            }
+                            if (config.executionModel === 'next_open') {
+                                processPositionExits(candle, position, config, slippageRate, (exitPrice, exitSize, reason) => {
+                                    const d = calculateTradeExitDetails(position!, exitPrice, exitSize, commissionRate);
+                                    capital += d.rawPnl - d.commission;
+                                    const trade: Trade = { id: ++tradeId, type: position!.direction, entryTime: position!.entryTime, entryPrice: position!.entryPrice, exitTime: candle.time, exitPrice, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: reason };
+                                    if (currentSnapshot) trade.entrySnapshot = currentSnapshot;
+                                    trades.push(trade);
+                                    position!.size -= d.size;
+                                    if (position!.size <= 0) { position = null; currentSnapshot = null; }
+                                });
+                                if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
                             }
                         }
                     }

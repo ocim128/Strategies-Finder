@@ -48,13 +48,8 @@ export function processPositionExits(
             if (partialSize > 0) {
                 const exitPrice = applySlippage(position.partialTargetPrice, exitSide, slippageRate);
                 onExit(exitPrice, partialSize, 'partial');
-
-                position.size -= partialSize;
-
-                // If it was partial, position might still exist
-                if (position.size > 0) {
-                    position.partialTaken = true;
-                }
+                // Position size is updated by the engine callback.
+                if (position.size > 0) position.partialTaken = true;
 
                 if (position.size <= 0) return true;
             }

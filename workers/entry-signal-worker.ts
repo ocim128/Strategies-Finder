@@ -780,15 +780,38 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
     }
 
     if (!evaluation.latestEntry.isFresh) {
-        return {
-            ok: true,
-            newEntry: false,
-            reason: "stale_signal",
-            signalAgeBars: evaluation.latestEntry.signalAgeBars,
-            rawSignalCount: evaluation.rawSignalCount,
-            preparedSignalCount: evaluation.preparedSignalCount,
-            latestEntry: evaluation.latestEntry,
-        };
+        const staleOpenTrade = evaluation.latestTrade?.isOpen === true;
+        if (!staleOpenTrade) {
+            return {
+                ok: true,
+                newEntry: false,
+                reason: "stale_signal",
+                signalAgeBars: evaluation.latestEntry.signalAgeBars,
+                rawSignalCount: evaluation.rawSignalCount,
+                preparedSignalCount: evaluation.preparedSignalCount,
+                latestEntry: evaluation.latestEntry,
+            };
+        }
+
+        // One-time catch-up: if stream has an active open trade but no prior entry
+        // record, allow the stale entry to be inserted/sent once.
+        const existingEntry = await env.SIGNALS_DB.prepare(
+            `SELECT id FROM entry_signals WHERE channel_key = ? ORDER BY signal_time DESC, id DESC LIMIT 1`
+        )
+            .bind(channelKey)
+            .first<{ id: number }>();
+
+        if (existingEntry) {
+            return {
+                ok: true,
+                newEntry: false,
+                reason: "stale_signal",
+                signalAgeBars: evaluation.latestEntry.signalAgeBars,
+                rawSignalCount: evaluation.rawSignalCount,
+                preparedSignalCount: evaluation.preparedSignalCount,
+                latestEntry: evaluation.latestEntry,
+            };
+        }
     }
 
     // Compute TP/SL target prices from backtest settings (percentage mode)
@@ -875,6 +898,21 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         } catch (error) {
             telegramSent = false;
             telegramError = error instanceof Error ? error.message : String(error);
+            // Keep dedupe open so retries can resend when Telegram recovers.
+            await env.SIGNALS_DB.prepare(`DELETE FROM entry_signals WHERE dedupe_key = ?`)
+                .bind(dedupeKey)
+                .run();
+
+            return {
+                ok: false,
+                newEntry: false,
+                error: `telegram_send_failed:${normalizeStatusText(telegramError, 240)}`,
+                rawSignalCount: evaluation.rawSignalCount,
+                preparedSignalCount: evaluation.preparedSignalCount,
+                entry: entryPayload,
+                telegramSent,
+                telegramError,
+            };
         }
     }
 
@@ -1287,6 +1325,10 @@ async function runSubscription(
         streamId
     );
     const minClosedCandles = readMinClosedCandles(env);
+    const subscriptionFreshnessBars = Math.max(0, subscription.freshness_bars ?? 1);
+    const effectiveFreshnessBars = force
+        ? Math.max(subscriptionFreshnessBars, subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT)
+        : subscriptionFreshnessBars;
 
     try {
         const candles = await fetchMarketCandles(
@@ -1325,7 +1367,7 @@ async function runSubscription(
                 configName: parseConfigNameFromStreamId(streamId) ?? undefined,
                 strategyParams: parsedStrategyParams,
                 backtestSettings: parsedBacktestSettings,
-                freshnessBars: Math.max(0, subscription.freshness_bars ?? 1),
+                freshnessBars: effectiveFreshnessBars,
                 notifyTelegram: subscription.notify_telegram === 1,
                 notifyExit: subscription.notify_exit === 1,
                 candles: closed.candles,

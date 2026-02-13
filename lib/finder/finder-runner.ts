@@ -25,6 +25,7 @@ import { FinderResultRanker } from "./finder-result-ranker";
 import { hasNonZeroSnapshotFilter, sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { FinderDataset } from "./finder-timeframe-loader";
 import type { EndpointSelectionAdjustment, FinderOptions, FinderResult } from "../types/finder";
+import { trimToClosedCandles } from "../closed-candle-utils";
 
 export interface FinderSelectedStrategy {
     key: string;
@@ -297,17 +298,23 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
     callbacks.setProgress(8, `Loading ${runTimeframes.length} timeframe datasets...`);
     callbacks.setStatus(`Loading timeframe datasets (${runTimeframes.length})...`);
     const datasets = await input.loadMultiTimeframeDatasets(input.symbol, runTimeframes);
+    const activeDatasets = datasets
+        .map((dataset) => ({
+            ...dataset,
+            data: trimToClosedCandles(dataset.data, dataset.interval),
+        }))
+        .filter((dataset) => dataset.data.length > 0);
 
-    if (datasets.length === 0) {
+    if (activeDatasets.length === 0) {
         callbacks.setStatus("No data available for selected timeframes.");
         return { results: [] };
     }
 
-    callbacks.setProgress(12, `Running ${totalRuns} runs across ${datasets.length} timeframes...`);
+    callbacks.setProgress(12, `Running ${totalRuns} runs across ${activeDatasets.length} timeframes...`);
 
     const fixedConfirmationStatesByInterval = new Map<string, Int8Array[]>();
     if (hasConfirmationStrategies && !shouldRandomizeConfirmations) {
-        for (const dataset of datasets) {
+        for (const dataset of activeDatasets) {
             const states = buildConfirmationStates(dataset.data, confirmationStrategies, baseConfirmationParams);
             fixedConfirmationStatesByInterval.set(dataset.interval, states);
         }
@@ -317,7 +324,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
     let processedCount = 0;
     let filteredCount = 0;
     let endpointAdjustedCount = 0;
-    const timeframeLabels = datasets.map((dataset) => dataset.interval);
+    const timeframeLabels = activeDatasets.map((dataset) => dataset.interval);
 
     while (processedCount < totalRuns) {
         const batchJobs = nextJobBatch(flags.batchSize);
@@ -334,7 +341,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
             }
 
             const timeframeResults: BacktestResult[] = [];
-            for (const dataset of datasets) {
+            for (const dataset of activeDatasets) {
                 try {
                     let signals = job.strategy.execute(dataset.data, job.params);
                     const confirmationStates = !hasConfirmationStrategies
@@ -391,8 +398,8 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                     continue;
                 }
 
-                const lastDataTime = datasets.length === 1
-                    ? datasets[0].data[datasets[0].data.length - 1]?.time ?? null
+                const lastDataTime = activeDatasets.length === 1
+                    ? activeDatasets[0].data[activeDatasets[0].data.length - 1]?.time ?? null
                     : null;
                 const adjustment = buildSelectionResult(aggregatedResult, lastDataTime, initialCapital);
                 const enriched: FinderResult = {
@@ -422,8 +429,8 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
             if (processedCount % 5 === 0 || processedCount === totalRuns) {
                 if (shouldUpdateUi(processedCount === totalRuns)) {
                     const progress = 12 + (processedCount / totalRuns) * 84;
-                    callbacks.setProgress(progress, `${processedCount}/${totalRuns} runs (${datasets.length} TF)`);
-                    callbacks.setStatus(`Processing ${processedCount}/${totalRuns} runs across ${datasets.length} timeframes...`);
+                    callbacks.setProgress(progress, `${processedCount}/${totalRuns} runs (${activeDatasets.length} TF)`);
+                    callbacks.setStatus(`Processing ${processedCount}/${totalRuns} runs across ${activeDatasets.length} timeframes...`);
                 }
             }
             await maybeYieldByBudget(processedCount === totalRuns);
@@ -433,7 +440,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
     const trimmed = ranker.toSortedArray(input.options.topN);
     const statusParts = [
         `${processedCount} runs`,
-        `${datasets.length} timeframes`,
+        `${activeDatasets.length} timeframes`,
     ];
     if (input.options.tradeFilterEnabled) {
         statusParts.push(`${filteredCount} matched`);
@@ -488,9 +495,14 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         fixedTradeAmount,
         rustSettings,
     } = params;
+    const closedData = trimToClosedCandles(input.ohlcvData, input.interval);
+    if (closedData.length === 0) {
+        callbacks.setStatus("No closed candles available for finder run.");
+        return { results: [] };
+    }
 
     const confirmationStates = !shouldRandomizeConfirmations && hasConfirmationStrategies
-        ? buildConfirmationStates(input.ohlcvData, confirmationStrategies, baseConfirmationParams)
+        ? buildConfirmationStates(closedData, confirmationStrategies, baseConfirmationParams)
         : [];
     const buildConfirmationContext = (): { states: Int8Array[]; params?: Record<string, StrategyParams> } => {
         if (!hasConfirmationStrategies) return { states: [] };
@@ -503,7 +515,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
 
         const confirmationParams = input.buildRandomConfirmationParams(confirmationStrategies, input.options);
         return {
-            states: buildConfirmationStates(input.ohlcvData, confirmationStrategies, confirmationParams),
+            states: buildConfirmationStates(closedData, confirmationStrategies, confirmationParams),
             params: confirmationParams,
         };
     };
@@ -514,7 +526,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     let processedCount = 0;
     let filteredCount = 0;
     let endpointAdjustedCount = 0;
-    const lastDataTime = input.ohlcvData.length > 0 ? input.ohlcvData[input.ohlcvData.length - 1].time : null;
+    const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
 
     const rustHealthy = !input.requiresTsEngine && shouldUseRustEngine() && await rustEngine.checkHealth();
     if (input.requiresTsEngine) {
@@ -527,7 +539,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     if (useCachedMode && rustHealthy) {
         callbacks.setStatus("Caching data on Rust engine...");
         callbacks.setProgress(8, "Uploading data to Rust...");
-        cacheId = await rustEngine.cacheData(input.ohlcvData);
+        cacheId = await rustEngine.cacheData(closedData);
         if (cacheId) {
             debugLogger.info(`[Finder] Data cached with ID: ${cacheId} (${flags.dataSize} bars)`);
         } else {
@@ -604,17 +616,17 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
             for (const job of batchJobs) {
                 try {
                     const confirmationContext = buildConfirmationContext();
-                    let signals = job.strategy.execute(input.ohlcvData, job.params);
+                    let signals = job.strategy.execute(closedData, job.params);
                     if (confirmationContext.states.length > 0) {
                         signals = (job.strategy.metadata?.role === "entry" || input.settings.tradeDirection === "both" || input.settings.tradeDirection === "combined")
                             ? filterSignalsWithConfirmationsBoth(
-                                input.ohlcvData,
+                                closedData,
                                 signals,
                                 confirmationContext.states,
                                 input.settings.tradeFilterMode ?? input.settings.entryConfirmation ?? "none"
                             )
                             : filterSignalsWithConfirmations(
-                                input.ohlcvData,
+                                closedData,
                                 signals,
                                 confirmationContext.states,
                                 input.settings.tradeFilterMode ?? input.settings.entryConfirmation ?? "none",
@@ -622,12 +634,12 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                             );
                     }
 
-                    const evaluation = job.strategy.evaluate?.(input.ohlcvData, job.params, signals);
+                    const evaluation = job.strategy.evaluate?.(closedData, job.params, signals);
                     const entryStats = evaluation?.entryStats;
                     const result = job.strategy.metadata?.role === "entry" && entryStats
                         ? buildEntryBacktestResult(entryStats)
                         : backtestFn(
-                            input.ohlcvData,
+                            closedData,
                             signals,
                             initialCapital,
                             positionSize,
@@ -678,7 +690,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         const runBacktestFallback = (run: PreparedRun): void => {
             try {
                 const result = backtestFn(
-                    input.ohlcvData,
+                    closedData,
                     run.signals,
                     initialCapital,
                     positionSize,
@@ -701,17 +713,17 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         for (const job of batchJobs) {
             try {
                 const confirmationContext = buildConfirmationContext();
-                let signals = job.strategy.execute(input.ohlcvData, job.params);
+                let signals = job.strategy.execute(closedData, job.params);
                 if (confirmationContext.states.length > 0) {
                     signals = (job.strategy.metadata?.role === "entry" || input.settings.tradeDirection === "both" || input.settings.tradeDirection === "combined")
                         ? filterSignalsWithConfirmationsBoth(
-                            input.ohlcvData,
+                            closedData,
                             signals,
                             confirmationContext.states,
                             input.settings.tradeFilterMode ?? input.settings.entryConfirmation ?? "none"
                         )
                         : filterSignalsWithConfirmations(
-                            input.ohlcvData,
+                            closedData,
                             signals,
                             confirmationContext.states,
                             input.settings.tradeFilterMode ?? input.settings.entryConfirmation ?? "none",
@@ -719,7 +731,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                         );
                 }
 
-                const evaluation = job.strategy.evaluate?.(input.ohlcvData, job.params, signals);
+                const evaluation = job.strategy.evaluate?.(closedData, job.params, signals);
                 const entryStats = evaluation?.entryStats;
                 if (job.strategy.metadata?.role === "entry" && entryStats) {
                     const result = buildEntryBacktestResult(entryStats);
@@ -774,7 +786,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                     flags.rustCompactMode
                 )
                 : await rustEngine.runBatchBacktest(
-                    input.ohlcvData,
+                    closedData,
                     batchItems,
                     initialCapital,
                     positionSize,

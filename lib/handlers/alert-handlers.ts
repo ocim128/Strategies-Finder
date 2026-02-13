@@ -822,7 +822,61 @@ function formatDurationForTradeTimes(entryTime: unknown, exitTime: unknown): str
     return formatDuration(exitMs - entryMs);
 }
 
-function showLastTradeResult(trade: Trade | null, symbol: string, interval: string, totalTrades: number): void {
+function selectLastTradeForDisplay(trades: Trade[]): { trade: Trade | null; tradeNumber: number; openTrade: Trade | null } {
+    if (trades.length === 0) {
+        return { trade: null, tradeNumber: 0, openTrade: null };
+    }
+
+    const latestTrade = trades[trades.length - 1];
+    if (latestTrade.exitReason !== 'end_of_data') {
+        return { trade: latestTrade, tradeNumber: trades.length, openTrade: null };
+    }
+
+    for (let i = trades.length - 1; i >= 0; i--) {
+        if (trades[i].exitReason !== 'end_of_data') {
+            return { trade: trades[i], tradeNumber: i + 1, openTrade: latestTrade };
+        }
+    }
+
+    return { trade: latestTrade, tradeNumber: trades.length, openTrade: latestTrade };
+}
+
+function createOpenTradeFromSignalRecord(signal: AlertSignalRecord): Trade | null {
+    if (!signal || !Number.isFinite(signal.signal_time) || !Number.isFinite(signal.signal_price)) {
+        return null;
+    }
+
+    const payload = safeJsonParse<Record<string, unknown>>(signal.payload_json, {});
+    const tpValue = Number(payload.takeProfitPrice);
+    const slValue = Number(payload.stopLossPrice);
+    const takeProfitPrice = Number.isFinite(tpValue) ? tpValue : null;
+    const stopLossPrice = Number.isFinite(slValue) ? slValue : null;
+
+    return {
+        id: Number.isFinite(signal.id) ? signal.id : 0,
+        type: signal.direction === 'short' ? 'short' : 'long',
+        entryTime: signal.signal_time as Time,
+        entryPrice: Number(signal.signal_price),
+        exitTime: signal.signal_time as Time,
+        exitPrice: Number(signal.signal_price),
+        pnl: 0,
+        pnlPercent: 0,
+        size: 0,
+        fees: 0,
+        exitReason: 'end_of_data',
+        stopLossPrice,
+        takeProfitPrice,
+    };
+}
+
+function showLastTradeResult(
+    trade: Trade | null,
+    symbol: string,
+    interval: string,
+    totalTrades: number,
+    tradeNumber: number,
+    openTrade: Trade | null
+): void {
     const loadingEl = getOptionalElement<HTMLElement>('lastTradeLoading');
     const contentEl = getOptionalElement<HTMLElement>('lastTradeContent');
     const errorEl = getOptionalElement<HTMLElement>('lastTradeError');
@@ -841,15 +895,21 @@ function showLastTradeResult(trade: Trade | null, symbol: string, interval: stri
     
     // Format trade details
     const isLong = trade.type === 'long';
+    const isOpenTrade = trade.exitReason === 'end_of_data';
     const isWin = trade.pnl >= 0;
     const entryTimeStr = formatTimeForDisplay(trade.entryTime);
-    const exitTimeStr = trade.exitTime ? formatTimeForDisplay(trade.exitTime) : 'Still open';
-    const duration = trade.entryTime && trade.exitTime 
+    const exitTimeStr = isOpenTrade ? 'Still open' : (trade.exitTime ? formatTimeForDisplay(trade.exitTime) : 'N/A');
+    const duration = !isOpenTrade && trade.entryTime && trade.exitTime 
         ? formatDurationForTradeTimes(trade.entryTime, trade.exitTime)
         : 'Open';
     
-    // Exit reason badge
-    const exitReasonBadge = getExitReasonBadge(trade.exitReason);
+    const exitReasonBadge = isOpenTrade
+        ? '<span style="background: #22c55e20; color: #22c55e; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">Open Position</span>'
+        : getExitReasonBadge(trade.exitReason);
+    const openTradeNote = openTrade
+        ? `<div class="detail-row divider"></div>
+           <div class="detail-row"><span class="label">Live Position</span><span class="value">Open ${openTrade.type.toUpperCase()} from ${formatTimeForDisplay(openTrade.entryTime)} (${openTrade.entryPrice.toFixed(2)})</span></div>`
+        : '';
     
     // Summary header
     if (summaryEl) {
@@ -858,6 +918,7 @@ function showLastTradeResult(trade: Trade | null, symbol: string, interval: stri
                 <span class="trade-type ${isLong ? 'long' : 'short'}">${isLong ? 'LONG' : 'SHORT'}</span>
                 <span class="trade-result ${isWin ? 'win' : 'loss'}">${isWin ? '+' : ''}${trade.pnl.toFixed(2)} (${trade.pnlPercent >= 0 ? '+' : ''}${trade.pnlPercent.toFixed(2)}%)</span>
             </div>
+            ${openTrade ? '<p class="no-trades" style="margin-top:8px;">Latest position is still open. Telegram alert is sent once per entry when the stream has no matching previous signal.</p>' : ''}
         `;
     }
     
@@ -877,16 +938,17 @@ function showLastTradeResult(trade: Trade | null, symbol: string, interval: stri
             <div class="detail-grid">
                 <div class="detail-row"><span class="label">Symbol</span><span class="value">${symbol}</span></div>
                 <div class="detail-row"><span class="label">Interval</span><span class="value">${interval}</span></div>
-                <div class="detail-row"><span class="label">Trade #</span><span class="value">${totalTrades} of ${totalTrades}</span></div>
+                <div class="detail-row"><span class="label">Trade #</span><span class="value">${tradeNumber} of ${totalTrades}</span></div>
                 <div class="detail-row divider"></div>
                 <div class="detail-row"><span class="label">Entry Price</span><span class="value">${trade.entryPrice.toFixed(2)}</span></div>
                 <div class="detail-row"><span class="label">Entry Time</span><span class="value">${entryTimeStr}</span></div>
-                <div class="detail-row"><span class="label">Exit Price</span><span class="value">${trade.exitPrice?.toFixed(2) ?? 'N/A'}</span></div>
+                <div class="detail-row"><span class="label">${isOpenTrade ? 'Mark Price' : 'Exit Price'}</span><span class="value">${trade.exitPrice?.toFixed(2) ?? 'N/A'}</span></div>
                 <div class="detail-row"><span class="label">Exit Time</span><span class="value">${exitTimeStr}</span></div>
                 <div class="detail-row"><span class="label">Duration</span><span class="value">${duration}</span></div>
                 <div class="detail-row"><span class="label">Exit Reason</span><span class="value">${exitReasonBadge}</span></div>
                 ${trade.fees ? `<div class="detail-row"><span class="label">Fees</span><span class="value">${trade.fees.toFixed(2)}</span></div>` : ''}
                 ${targetsHtml ? `<div class="detail-row divider"></div>${targetsHtml}` : ''}
+                ${openTradeNote}
             </div>
         `;
     }
@@ -942,10 +1004,19 @@ async function handleLastTradeAction(streamId: string): Promise<void> {
         const parityOverride = getIntervalSeconds(sub.interval) === 7200
             ? resolveSubscriptionParity(sub)
             : null;
+        const effectiveBacktestSettings = applyTwoHourParityToBacktestSettings(
+            backtestSettings,
+            parityOverride
+        ) as BacktestSettings;
+        const subscriptionCandleLimit = Number.isFinite(sub.candle_limit) && sub.candle_limit > 0
+            ? Math.floor(sub.candle_limit)
+            : null;
 
         // Fetch data for the subscription's symbol and interval
         const ohlcvData = await withTemporaryTwoHourParitySelection(parityOverride, async () =>
-            dataManager.fetchData(sub.symbol, sub.interval)
+            subscriptionCandleLimit !== null
+                ? dataManager.fetchDataWithLimit(sub.symbol, sub.interval, subscriptionCandleLimit)
+                : dataManager.fetchData(sub.symbol, sub.interval)
         );
         
         if (ohlcvData.length === 0) {
@@ -955,17 +1026,37 @@ async function handleLastTradeAction(streamId: string): Promise<void> {
         // Run backtest with the subscription's configuration
         const result = await backtestService.runBacktestForSubscription(
             ohlcvData,
+            sub.interval,
             sub.strategy_key,
             strategyParams,
-            backtestSettings
+            effectiveBacktestSettings
         );
         
-        // Get the last trade
-        const lastTrade = result.trades.length > 0 
-            ? result.trades[result.trades.length - 1] 
-            : null;
-        
-        showLastTradeResult(lastTrade, sub.symbol, sub.interval, result.trades.length);
+        const tradeSelection = selectLastTradeForDisplay(result.trades);
+        if (!tradeSelection.trade) {
+            const history = await alertService.getSignalHistory(streamId, 1);
+            const fallbackTrade = history.length > 0 ? createOpenTradeFromSignalRecord(history[0]) : null;
+            if (fallbackTrade) {
+                showLastTradeResult(
+                    fallbackTrade,
+                    sub.symbol,
+                    sub.interval,
+                    1,
+                    1,
+                    fallbackTrade
+                );
+                return;
+            }
+        }
+
+        showLastTradeResult(
+            tradeSelection.trade,
+            sub.symbol,
+            sub.interval,
+            result.trades.length,
+            tradeSelection.tradeNumber,
+            tradeSelection.openTrade
+        );
         
     } catch (err) {
         showLastTradeError('Failed to run backtest: ' + (err instanceof Error ? err.message : String(err)));
