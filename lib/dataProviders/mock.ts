@@ -11,8 +11,8 @@ type MockChartConfig = {
     intervalSeconds: number;
 };
 
-const MIN_MOCK_BARS = 100;
-const MAX_MOCK_BARS = 30000000;
+export const MIN_MOCK_BARS = 100;
+export const MAX_MOCK_BARS = 500000;
 const TOTAL_LIMIT = 30000; // Default limit if not specified
 const MOCK_SYMBOLS = new Set(['MOCK_STOCK', 'MOCK_CRYPTO', 'MOCK_FOREX']);
 

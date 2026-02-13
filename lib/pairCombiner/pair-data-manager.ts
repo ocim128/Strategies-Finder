@@ -3,14 +3,10 @@ import { OHLCVData } from "../strategies/index";
 import { dataManager } from "../data-manager";
 import { debugLogger } from "../debug-logger";
 import type { AlignedPairData, AlignmentStats } from '../types/index';
+import { toTimeKey } from "../time-key";
 
 function timeKey(time: Time): string {
-    if (typeof time === 'number') return `n:${time}`;
-    if (typeof time === 'string') return `s:${time}`;
-    if (typeof time === 'object' && time && 'year' in time) {
-        return `o:${time.year}-${time.month}-${time.day}`;
-    }
-    return String(time);
+    return toTimeKey(time);
 }
 
 function computeSpread(primary: OHLCVData[], secondary: OHLCVData[]): number[] {

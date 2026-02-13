@@ -5,6 +5,12 @@ import { resampleOHLCV, type ResampleOptions } from "../strategies/resample-util
 import { debugLogger } from "../debug-logger";
 import { BybitTradFiKline, BybitTradFiKlineResponse, HistoricalFetchOptions } from '../types/index';
 import { getIntervalSeconds, wait } from "./utils";
+import {
+    findBestDivisibleInterval,
+    formatProviderError,
+    isAbortError,
+    resolveRawFetchLimit,
+} from "./fetch-helpers";
 
 const BYBIT_LIMIT_PER_REQUEST = 200;
 const TOTAL_LIMIT = 30000;
@@ -104,19 +110,7 @@ function resolveBybitTradFiInterval(interval: string): { sourceInterval: string;
         return { sourceInterval: '1d', needsResample: false };
     }
 
-    let bestInterval: string | null = null;
-    let bestSeconds = 0;
-
-    for (const candidate of BYBIT_TRADFI_INTERVALS) {
-        const seconds = getIntervalSeconds(candidate);
-        if (!Number.isFinite(seconds) || seconds <= 0) continue;
-        if (seconds > targetSeconds) continue;
-        if (targetSeconds % seconds !== 0) continue;
-        if (seconds > bestSeconds) {
-            bestSeconds = seconds;
-            bestInterval = candidate;
-        }
-    }
+    const bestInterval = findBestDivisibleInterval(targetSeconds, BYBIT_TRADFI_INTERVALS);
 
     if (bestInterval) {
         return { sourceInterval: bestInterval, needsResample: true };
@@ -141,25 +135,6 @@ function mapBybitTradFiToOHLCV(rawData: BybitTradFiKline[]): OHLCVData[] {
             Number.isFinite(bar.low) &&
             Number.isFinite(bar.close)
         );
-}
-
-function resolveRawFetchLimit(
-    targetBars: number,
-    targetInterval: string,
-    sourceInterval: string,
-    needsResample: boolean
-): { rawLimit: number; ratio: number } {
-    if (!needsResample) {
-        return { rawLimit: targetBars, ratio: 1 };
-    }
-
-    const targetSeconds = getIntervalSeconds(targetInterval);
-    const sourceSeconds = getIntervalSeconds(sourceInterval);
-    const ratio = Number.isFinite(targetSeconds) && Number.isFinite(sourceSeconds) && sourceSeconds > 0
-        ? Math.max(1, Math.round(targetSeconds / sourceSeconds))
-        : 1;
-
-    return { rawLimit: Math.max(targetBars, Math.ceil(targetBars * ratio)), ratio };
 }
 
 async function fetchBybitTradFiBatch(
@@ -229,20 +204,6 @@ async function fetchBybitTradFiBatch(
     throw new Error(`Bybit TradFi symbol is invalid: ${symbol}`);
 }
 
-function isAbortError(error: unknown): boolean {
-    if (error instanceof DOMException) {
-        return error.name === 'AbortError';
-    }
-    return (error as { name?: string }).name === 'AbortError';
-}
-
-function formatError(error: unknown): string {
-    if (error instanceof Error) {
-        return `${error.name}: ${error.message}`;
-    }
-    return String(error);
-}
-
 export async function fetchBybitTradFiData(
     symbol: string,
     interval: string,
@@ -282,7 +243,7 @@ export async function fetchBybitTradFiData(
         debugLogger.error('data.bybit_tradfi.error', {
             symbol,
             interval,
-            error: formatError(error),
+            error: formatProviderError(error),
         });
         return [];
     }
@@ -345,7 +306,7 @@ export async function fetchBybitTradFiDataWithLimit(
         debugLogger.error('data.bybit_tradfi.historical_error', {
             symbol,
             interval,
-            error: formatError(error),
+            error: formatProviderError(error),
         });
         throw error;
     }

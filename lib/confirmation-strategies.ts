@@ -1,5 +1,6 @@
 import { strategyRegistry } from "../strategyRegistry";
 import { type OHLCVData, type Signal, type Time, type TradeFilterMode, type TradeDirection, type StrategyParams } from './types/strategies';
+import { toTimeKey } from "./time-key";
 
 export const MAX_CONFIRMATION_STRATEGIES = 5;
 
@@ -15,15 +16,7 @@ interface StrategyOption {
 let confirmationParamsByKey: Record<string, StrategyParams> = {};
 
 function timeKey(time: Time): string {
-    if (typeof time === "number") return time.toString();
-    if (typeof time === "string") return time;
-    if (time && typeof time === "object" && "year" in time) {
-        const businessDay = time as { year: number; month: number; day: number };
-        const month = String(businessDay.month).padStart(2, "0");
-        const day = String(businessDay.day).padStart(2, "0");
-        return `${businessDay.year}-${month}-${day}`;
-    }
-    return String(time);
+    return toTimeKey(time);
 }
 
 function getTimeIndex(data: OHLCVData[]): Map<string, number> {

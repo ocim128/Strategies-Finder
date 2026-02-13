@@ -5,6 +5,12 @@ import { resampleOHLCV, type ResampleOptions } from "../strategies/resample-util
 import { debugLogger } from "../debug-logger";
 import { BinanceKline, HistoricalFetchOptions } from '../types/index';
 import { getIntervalSeconds, wait } from "./utils";
+import {
+    findBestDivisibleInterval,
+    formatProviderError,
+    isAbortError,
+    resolveRawFetchLimit,
+} from "./fetch-helpers";
 
 const LIMIT_PER_REQUEST = 1000;
 const TOTAL_LIMIT = 30000;
@@ -45,21 +51,10 @@ export function resolveFetchInterval(
     const customMinutes = parseCustomMinutes(interval);
     if (customMinutes) {
         const targetSeconds = customMinutes * 60;
-        let bestInterval = '1m';
-        let bestSeconds = 60;
-
-        for (const candidate of BINANCE_INTERVALS) {
-            if (candidate === '1M') continue;
-            const seconds = getIntervalSeconds(candidate);
-            if (!Number.isFinite(seconds) || seconds <= 0) continue;
-            if (seconds > targetSeconds) continue;
-            if (targetSeconds % seconds !== 0) continue;
-            if (seconds > bestSeconds) {
-                bestSeconds = seconds;
-                bestInterval = candidate;
-            }
-        }
-
+        const bestInterval = findBestDivisibleInterval(
+            targetSeconds,
+            [...BINANCE_INTERVALS].filter((candidate) => candidate !== '1M')
+        ) ?? '1m';
         return { sourceInterval: bestInterval, needsResample: true };
     }
     return { sourceInterval: interval, needsResample: false };
@@ -70,25 +65,6 @@ type FetchKlinesBatchOptions = {
     endTime?: number;
     signal?: AbortSignal;
 };
-
-function resolveRawFetchLimit(
-    targetBars: number,
-    targetInterval: string,
-    sourceInterval: string,
-    needsResample: boolean
-): { rawLimit: number; ratio: number } {
-    if (!needsResample) {
-        return { rawLimit: targetBars, ratio: 1 };
-    }
-
-    const targetSeconds = getIntervalSeconds(targetInterval);
-    const sourceSeconds = getIntervalSeconds(sourceInterval);
-    const ratio = Number.isFinite(targetSeconds) && Number.isFinite(sourceSeconds) && sourceSeconds > 0
-        ? Math.max(1, Math.round(targetSeconds / sourceSeconds))
-        : 1;
-
-    return { rawLimit: Math.max(targetBars, Math.ceil(targetBars * ratio)), ratio };
-}
 
 async function fetchKlinesBatch(
     symbol: string,
@@ -125,20 +101,6 @@ function mapToOHLCV(rawData: BinanceKline[]): OHLCVData[] {
         close: parseFloat(d[4]),
         volume: parseFloat(d[5]),
     }));
-}
-
-function isAbortError(error: unknown): boolean {
-    if (error instanceof DOMException) {
-        return error.name === 'AbortError';
-    }
-    return (error as { name?: string }).name === 'AbortError';
-}
-
-function formatError(error: unknown): string {
-    if (error instanceof Error) {
-        return `${error.name}: ${error.message}`;
-    }
-    return String(error);
 }
 
 export async function fetchBinanceData(
@@ -194,7 +156,7 @@ export async function fetchBinanceData(
         debugLogger.error('data.fetch.error', {
             symbol,
             interval,
-            error: formatError(error),
+            error: formatProviderError(error),
         });
         console.error('Failed to fetch data:', error);
         return [];
@@ -263,7 +225,7 @@ export async function fetchBinanceDataWithLimit(
         debugLogger.error('data.fetch.historical_error', {
             symbol,
             interval,
-            error: formatError(error),
+            error: formatProviderError(error),
         });
         throw error;
     }
@@ -322,7 +284,7 @@ export async function fetchBinanceDataAfter(
         debugLogger.error('data.fetch.gap_error', {
             symbol,
             interval,
-            error: formatError(error),
+            error: formatProviderError(error),
         });
         return [];
     }

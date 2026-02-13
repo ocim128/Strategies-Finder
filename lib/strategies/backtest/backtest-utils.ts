@@ -1,6 +1,7 @@
 
 import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../../types/index';
 import { NormalizedSettings } from '../../types/backtest';
+import { toTimeKey } from '../../time-key';
 
 export function toNumberOr(value: number | undefined, fallback: number): number {
     return Number.isFinite(value) ? value! : fallback;
@@ -111,15 +112,7 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
 }
 
 export function timeKey(time: Time): string {
-    if (typeof time === 'number') return time.toString();
-    if (typeof time === 'string') return time;
-    if (time && typeof time === 'object' && 'year' in time) {
-        const businessDay = time as { year: number; month: number; day: number };
-        const month = String(businessDay.month).padStart(2, '0');
-        const day = String(businessDay.day).padStart(2, '0');
-        return `${businessDay.year}-${month}-${day}`;
-    }
-    return String(time);
+    return toTimeKey(time);
 }
 
 export function timeToNumber(time: Time): number | null {

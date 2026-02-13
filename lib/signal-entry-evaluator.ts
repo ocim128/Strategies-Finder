@@ -2,6 +2,7 @@ import type { BacktestSettings, OHLCVData, Signal } from "./types/strategies";
 import { strategies } from "./strategies/library";
 import { prepareSignalsForScanner } from "./strategies/backtest/signal-preparation";
 import { allowsSignalAsEntry, normalizeTradeDirection } from "./strategies/backtest/backtest-utils";
+import { parseTimeToUnixSeconds } from "./time-normalization";
 
 export interface EntrySignalEvaluationRequest {
     strategyKey: string;
@@ -36,20 +37,7 @@ export interface EntrySignalEvaluationResult {
 }
 
 function toUnixSeconds(value: OHLCVData["time"]): number | null {
-    if (typeof value === "number") {
-        if (!Number.isFinite(value)) return null;
-        // Normalize ms timestamps to seconds.
-        return value > 9_999_999_999 ? Math.floor(value / 1000) : Math.floor(value);
-    }
-    if (typeof value === "string") {
-        const parsed = Date.parse(value);
-        return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
-    }
-    if (value && typeof value === "object" && "year" in value) {
-        const day = value as { year: number; month: number; day: number };
-        return Math.floor(Date.UTC(day.year, day.month - 1, day.day) / 1000);
-    }
-    return null;
+    return parseTimeToUnixSeconds(value);
 }
 
 function buildSignalFingerprint(

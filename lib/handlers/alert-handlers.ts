@@ -11,6 +11,8 @@ import {
     parseAlertConfigNameFromStreamId,
     parseAlertTwoHourParityFromStreamId,
 } from '../alert-service';
+import { parseIntervalSeconds } from '../interval-utils';
+import { replaceTwoHourParityInStreamId, stripTwoHourParityFromStreamId } from '../alert-stream-id';
 import { uiManager } from '../ui-manager';
 import { state } from '../state';
 import { backtestService } from '../backtest-service';
@@ -111,8 +113,6 @@ function resolveSubscriptionConfigName(
 }
 
 let subscriptionsByStreamId: Map<string, AlertSubscription> = new Map();
-const STREAM_CONFIG_MARKER = ':cfg:';
-const STREAM_PARITY_MARKER = ':2hcp:';
 
 function humanizeKey(input: string): string {
     if (!input) return input;
@@ -146,18 +146,7 @@ function getNumber(value: unknown): number | null {
 }
 
 function getIntervalSeconds(interval: string): number {
-    const trimmed = interval.trim();
-    const match = /^(\d+)(m|h|d|w|M)$/i.exec(trimmed);
-    if (!match) return 0;
-    const value = Number(match[1]);
-    if (!Number.isFinite(value) || value <= 0) return 0;
-    const unit = match[2] === 'M' ? 'M' : match[2].toLowerCase();
-    if (unit === 'm') return value * 60;
-    if (unit === 'h') return value * 3600;
-    if (unit === 'd') return value * 86400;
-    if (unit === 'w') return value * 604800;
-    if (unit === 'M') return value * 2592000;
-    return 0;
+    return parseIntervalSeconds(interval) ?? 0;
 }
 
 function resolveParityModeFromUi(): 'odd' | 'even' | 'both' {
@@ -189,27 +178,15 @@ function resolveEffectiveTwoHourParity(sub: AlertSubscription): { parity: AlertT
     return { parity: 'odd', source: 'default' };
 }
 
-function stripParityFromStreamId(streamId: string): string {
-    const markerIndex = streamId.indexOf(STREAM_PARITY_MARKER);
-    if (markerIndex < 0) return streamId;
-    const start = markerIndex;
-    const valueStart = markerIndex + STREAM_PARITY_MARKER.length;
-    const configIndex = streamId.indexOf(STREAM_CONFIG_MARKER, valueStart);
-    if (configIndex >= 0) {
-        return `${streamId.slice(0, start)}${streamId.slice(configIndex)}`;
-    }
-    return streamId.slice(0, start);
-}
-
 function resolvePairedTwoHourParity(sub: AlertSubscription): AlertTwoHourCloseParity | null {
     if (getIntervalSeconds(sub.interval) !== 7200) return null;
-    const baseKey = stripParityFromStreamId(sub.stream_id);
+    const baseKey = stripTwoHourParityFromStreamId(sub.stream_id);
     let hasOdd = false;
     let hasEven = false;
 
     for (const item of subscriptionsByStreamId.values()) {
         if (getIntervalSeconds(item.interval) !== 7200) continue;
-        if (stripParityFromStreamId(item.stream_id) !== baseKey) continue;
+        if (stripTwoHourParityFromStreamId(item.stream_id) !== baseKey) continue;
         const parity = resolveSubscriptionParity(item);
         if (parity === 'odd') hasOdd = true;
         if (parity === 'even') hasEven = true;
@@ -678,7 +655,7 @@ async function handleTableAction(action: string, streamId: string) {
 
             if (isTwoHourInterval && currentWantsBoth && syncParity) {
                 const otherParity = syncParity === 'odd' ? 'even' : 'odd';
-                const otherStreamId = streamId.replace(`:2hcp:${syncParity}`, `:2hcp:${otherParity}`);
+                const otherStreamId = replaceTwoHourParityInStreamId(streamId, otherParity);
 
                 const syncedSettingsCurrent = applyTwoHourParityToBacktestSettings(currentSettings, syncParity);
                 await alertService.upsertSubscription({

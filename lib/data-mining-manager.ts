@@ -8,6 +8,7 @@ import { debugLogger } from "./debug-logger";
 import { clearAll } from "./app-actions";
 import { OHLCVData, HistoricalFetchProgress } from "./types/index";
 import { buildFeatureLabDataset, buildFeatureLabMetadata, buildFeatureLabVerdictReport } from "./featureLab/featureLabService";
+import { parseTimeToUnixSeconds } from "./time-normalization";
 
 interface NormalizedCandle {
     time: number;
@@ -788,34 +789,7 @@ export class DataMiningManager {
     }
 
     private normalizeTime(value: any): number | null {
-        if (typeof value === 'number') {
-            if (!Number.isFinite(value)) return null;
-            if (value > 1e12) return Math.floor(value / 1000);
-            if (value > 1e10) return Math.floor(value / 1000);
-            return Math.floor(value);
-        }
-
-        if (typeof value === 'string') {
-            const parsed = Date.parse(value);
-            if (Number.isFinite(parsed)) {
-                return Math.floor(parsed / 1000);
-            }
-            const numeric = Number(value);
-            if (Number.isFinite(numeric)) {
-                return this.normalizeTime(numeric);
-            }
-        }
-
-        if (value && typeof value === 'object' && 'year' in value) {
-            const year = Number(value.year);
-            const month = Number(value.month);
-            const day = Number(value.day);
-            if (Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)) {
-                return Math.floor(Date.UTC(year, month - 1, day) / 1000);
-            }
-        }
-
-        return null;
+        return parseTimeToUnixSeconds(value);
     }
 
     private buildBar(

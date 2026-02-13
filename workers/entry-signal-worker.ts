@@ -1,5 +1,12 @@
 import { evaluateLatestEntrySignal } from "../lib/signal-entry-evaluator";
 import type { BacktestSettings, OHLCVData } from "../lib/types/strategies";
+import { parseIntervalSeconds } from "../lib/interval-utils";
+import { parseTimeToUnixSeconds } from "../lib/time-normalization";
+import {
+    buildStreamId as buildAlertStreamId,
+    parseConfigNameFromStreamId as parseConfigNameFromAlertStreamId,
+    parseTwoHourParityFromStreamId as parseTwoHourParityFromAlertStreamId,
+} from "../lib/alert-stream-id";
 
 type CandleTime = OHLCVData["time"];
 
@@ -162,8 +169,6 @@ const DEFAULT_SUBSCRIPTION_CANDLE_LIMIT = 350;
 const MAX_SUBSCRIPTION_CANDLE_LIMIT = 1000;
 const STATUS_TEXT_MAX = 1200;
 const RESPONSE_SNIPPET_MAX = 320;
-const STREAM_CONFIG_MARKER = ":cfg:";
-const STREAM_PARITY_MARKER = ":2hcp:";
 // Keep scheduled runs aligned shortly after minute boundary.
 // Cloudflare cron granularity is 1 minute, so second-level precision is done in code.
 const SCHEDULE_TARGET_SECOND = 10;
@@ -233,24 +238,7 @@ function parseNumeric(value: unknown): number | null {
 }
 
 function parseTimeToSec(value: unknown): number | null {
-    if (typeof value === "number") {
-        if (!Number.isFinite(value)) return null;
-        return value > 9_999_999_999 ? Math.floor(value / 1000) : Math.floor(value);
-    }
-    if (typeof value === "string") {
-        if (/^\d+$/.test(value.trim())) {
-            const asNumber = Number(value.trim());
-            return asNumber > 9_999_999_999 ? Math.floor(asNumber / 1000) : Math.floor(asNumber);
-        }
-        const parsed = Date.parse(value);
-        return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
-    }
-    if (value && typeof value === "object" && "year" in (value as Record<string, unknown>)) {
-        const day = value as { year: number; month: number; day: number };
-        if (!Number.isFinite(day.year) || !Number.isFinite(day.month) || !Number.isFinite(day.day)) return null;
-        return Math.floor(Date.UTC(day.year, day.month - 1, day.day) / 1000);
-    }
-    return null;
+    return parseTimeToUnixSeconds(value);
 }
 
 function normalizeCandles(input: StreamSignalRequest["candles"]): OHLCVData[] {
@@ -307,23 +295,11 @@ function buildChannelKey(payload: {
 }
 
 function buildDefaultStreamId(symbol: string, interval: string, strategyKey: string, configName?: string): string {
-    const base = `${symbol}:${interval}:${strategyKey}`.toLowerCase();
-    const normalizedConfigName = (configName ?? "").trim();
-    if (!normalizedConfigName) return base;
-    return `${base}${STREAM_CONFIG_MARKER}${encodeURIComponent(normalizedConfigName)}`;
+    return buildAlertStreamId(symbol, interval, strategyKey, configName);
 }
 
 function parseConfigNameFromStreamId(streamId: string): string | null {
-    const markerIdx = streamId.lastIndexOf(STREAM_CONFIG_MARKER);
-    if (markerIdx < 0) return null;
-    const encoded = streamId.slice(markerIdx + STREAM_CONFIG_MARKER.length);
-    if (!encoded) return null;
-    try {
-        const decoded = decodeURIComponent(encoded).trim();
-        return decoded || null;
-    } catch {
-        return encoded.trim() || null;
-    }
+    return parseConfigNameFromAlertStreamId(streamId);
 }
 
 function safeJsonParse<T>(value: string, fallback: T): T {
@@ -394,20 +370,7 @@ function normalizeBinanceResponseSnippet(value: string): string {
 }
 
 function intervalToSeconds(interval: string): number | null {
-    const trimmed = interval.trim();
-    if (!trimmed) return null;
-    const m = /^(\d+)(m|h|d|w|M)$/.exec(trimmed);
-    if (!m) return null;
-    const value = Number(m[1]);
-    if (!Number.isFinite(value) || value <= 0) return null;
-    const unit = m[2];
-
-    if (unit === "m") return value * 60;
-    if (unit === "h") return value * 60 * 60;
-    if (unit === "d") return value * 24 * 60 * 60;
-    if (unit === "w") return value * 7 * 24 * 60 * 60;
-    if (unit === "M") return value * 30 * 24 * 60 * 60;
-    return null;
+    return parseIntervalSeconds(interval);
 }
 
 function isMexcBase(base: string): boolean {
@@ -462,7 +425,7 @@ function resolveTwoHourCloseParity(
     );
     if (fromSettings) return fromSettings;
 
-    const fromStream = parseTwoHourCloseParityFromStreamId(streamId);
+    const fromStream = parseTwoHourParityFromAlertStreamId(streamId);
     if (fromStream) return fromStream;
 
     return "odd";
@@ -1249,17 +1212,6 @@ async function handleSubscriptionDelete(request: Request, env: Env): Promise<Res
         subscriptionsDisabled: disabled.meta?.changes ?? 0,
         signalsDeleted: 0,
     });
-}
-
-function parseTwoHourCloseParityFromStreamId(streamId: string): "odd" | "even" | null {
-    const markerIdx = streamId.indexOf(STREAM_PARITY_MARKER);
-    if (markerIdx < 0) return null;
-    const valueStart = markerIdx + STREAM_PARITY_MARKER.length;
-    const configIdx = streamId.indexOf(STREAM_CONFIG_MARKER, valueStart);
-    const raw = (configIdx >= 0 ? streamId.slice(valueStart, configIdx) : streamId.slice(valueStart))
-        .trim()
-        .toLowerCase();
-    return raw === "even" ? "even" : raw === "odd" ? "odd" : null;
 }
 
 function shouldPollSubscriptionOnSchedule(

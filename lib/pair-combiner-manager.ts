@@ -5,6 +5,7 @@ import { uiManager } from "./ui-manager";
 import { debugLogger } from "./debug-logger";
 import { chartManager } from "./chart-manager";
 import { dataManager } from "./data-manager";
+import { debounce } from "./debounce";
 import { alignPairData } from "./pairCombiner";
 import { calculateCopulaDependence } from "./pairCombiner";
 import { waveletDecompose } from "./pairCombiner";
@@ -181,7 +182,7 @@ export class PairCombinerManager {
     private setupSearchHandlers() {
         if (!this.searchInput || !this.searchResults) return;
 
-        const debouncedSearch = this.debounce(async (query: string) => {
+        const debouncedSearch = debounce(async (query: string) => {
             this.searchSpinner?.classList.remove('is-hidden');
             try {
                 const results = await assetSearchService.searchAssets(query, 20);
@@ -963,13 +964,6 @@ export class PairCombinerManager {
         `;
     }
 
-    private debounce<T extends (...args: any[]) => void>(fn: T, delay: number): (...args: Parameters<T>) => void {
-        let timeoutId: ReturnType<typeof setTimeout> | null = null;
-        return (...args: Parameters<T>) => {
-            if (timeoutId) clearTimeout(timeoutId);
-            timeoutId = setTimeout(() => fn(...args), delay);
-        };
-    }
 }
 
 export const pairCombinerManager = new PairCombinerManager();

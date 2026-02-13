@@ -1,6 +1,7 @@
 import { Time } from "lightweight-charts";
 import type { OHLCVData } from "./types/index";
 import { debugLogger } from "./debug-logger";
+import { parseTimeToUnixSeconds } from "./time-normalization";
 
 const DB_NAME = 'strategies-finder-candles';
 const STORE_NAME = 'series';
@@ -71,32 +72,7 @@ function openDb(): Promise<IDBDatabase | null> {
 }
 
 function normalizeTime(raw: unknown): number | null {
-    if (typeof raw === 'number') {
-        if (!Number.isFinite(raw)) return null;
-        if (raw > 1e12) return Math.floor(raw / 1000);
-        return Math.floor(raw);
-    }
-    if (typeof raw === 'string') {
-        const asNumber = Number(raw);
-        if (Number.isFinite(asNumber)) {
-            return normalizeTime(asNumber);
-        }
-        const parsed = Date.parse(raw);
-        if (Number.isFinite(parsed)) {
-            return Math.floor(parsed / 1000);
-        }
-        return null;
-    }
-    if (raw && typeof raw === 'object' && 'year' in (raw as Record<string, unknown>)) {
-        const value = raw as { year?: unknown; month?: unknown; day?: unknown };
-        const year = Number(value.year);
-        const month = Number(value.month);
-        const day = Number(value.day);
-        if (Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)) {
-            return Math.floor(Date.UTC(year, month - 1, day) / 1000);
-        }
-    }
-    return null;
+    return parseTimeToUnixSeconds(raw);
 }
 
 function buildCandle(

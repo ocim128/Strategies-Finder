@@ -1,4 +1,5 @@
 import type { OHLCVData } from "./types/index";
+import { parseTimeToUnixSeconds } from "./time-normalization";
 
 const AVAILABILITY_CACHE_MS = 60000;
 let sqliteApiAvailable: boolean | null = null;
@@ -21,18 +22,7 @@ function normalizeInterval(interval: string): string {
 }
 
 function toUnixSeconds(value: unknown): number | null {
-    if (typeof value === 'number') {
-        if (!Number.isFinite(value)) return null;
-        if (value > 1e12) return Math.floor(value / 1000);
-        return Math.floor(value);
-    }
-    if (typeof value === 'string') {
-        const numeric = Number(value);
-        if (Number.isFinite(numeric)) return toUnixSeconds(numeric);
-        const parsed = Date.parse(value);
-        if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
-    }
-    return null;
+    return parseTimeToUnixSeconds(value);
 }
 
 function toStoreRow(candle: OHLCVData): { time: number; open: number; high: number; low: number; close: number; volume: number } | null {
@@ -176,4 +166,3 @@ export async function storeSqliteCandles(
         return null;
     }
 }
-

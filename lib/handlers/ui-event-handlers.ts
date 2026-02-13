@@ -1,6 +1,8 @@
 import { getRequiredElement } from "../dom-utils";
 import { state, type ChartMode, type MockChartModel } from "../state";
 import { debugLogger } from "../debug-logger";
+import { debounce } from "../debounce";
+import { MAX_MOCK_BARS, MIN_MOCK_BARS } from "../dataProviders/mock";
 
 import { backtestService } from "../backtest-service";
 import { clearAll } from "../app-actions";
@@ -10,15 +12,6 @@ import { dataManager } from "../data-manager";
 import { assetSearchService, Asset } from "../asset-search-service";
 import { finderManager } from "../finder-manager";
 import { scannerManager } from "../scanner/scanner-manager";
-
-// Debounce helper for search input
-function debounce<T extends (...args: any[]) => any>(fn: T, delay: number): (...args: Parameters<T>) => void {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    return (...args: Parameters<T>) => {
-        if (timeoutId) clearTimeout(timeoutId);
-        timeoutId = setTimeout(() => fn(...args), delay);
-    };
-}
 
 export function setupEventHandlers() {
     // Symbol dropdown with search
@@ -69,9 +62,6 @@ export function setupEventHandlers() {
     }
 
     if (mockBarsInput) {
-        const MIN_MOCK_BARS = 100;
-        const MAX_MOCK_BARS = 30000000;
-
         mockBarsInput.value = String(state.mockChartBars);
 
         const applyMockBars = () => {
