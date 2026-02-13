@@ -324,6 +324,10 @@ export class FinderManager {
 		this.applyMockRestrictionToMultiTimeframe();
 	}
 
+	public clearTimeframeCache(): void {
+		this.timeframeLoader.clearCache();
+	}
+
 	private populateMultiTimeframePresets(): void {
 		const select = document.getElementById('finderMultiTimeframeSelect') as HTMLSelectElement | null;
 		if (!select) return;

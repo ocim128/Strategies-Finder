@@ -34,6 +34,7 @@ import {
     loadSqliteCandles,
     storeSqliteCandles,
 } from "./local-sqlite-api";
+import type { ResampleOptions, TwoHourCloseParity } from "./strategies/resample-utils";
 
 type DataProvider = 'binance' | 'bybit-tradfi';
 
@@ -113,6 +114,7 @@ export class DataManager {
 
     public async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
         const lookbackBars = this.chartLookbackBars;
+        const resampleOptions = this.getResampleOptions(interval);
 
         if (this.isMockSymbol(symbol)) {
             await new Promise(resolve => setTimeout(resolve, 600)); // Simulate latency
@@ -131,8 +133,11 @@ export class DataManager {
 
         if (provider === 'bybit-tradfi') {
             const data = typeof lookbackBars === 'number'
-                ? await fetchBybitTradFiDataWithLimit(symbol, interval, lookbackBars, { signal })
-                : await fetchBybitTradFiData(symbol, interval, signal);
+                ? await fetchBybitTradFiDataWithLimit(symbol, interval, lookbackBars, {
+                    signal,
+                    ...(resampleOptions ?? {}),
+                })
+                : await fetchBybitTradFiData(symbol, interval, signal, resampleOptions);
             if (data.length > 0) return data;
             uiManager.showToast('Bybit TradFi returned no data.', 'error');
             return [];
@@ -162,6 +167,7 @@ export class DataManager {
         const maxBars = Number.isFinite(lookbackBars)
             ? Math.max(200, Math.min(this.TOTAL_LIMIT, Math.floor(lookbackBars!)))
             : 1000;
+        const resampleOptions = this.getResampleOptions(interval);
         if (provider === 'binance') {
             return this.fetchBinanceDataHybrid(symbol, interval, signal, {
                 localOnlyIfPresent: true,
@@ -169,7 +175,10 @@ export class DataManager {
             });
         }
         if (provider === 'bybit-tradfi') {
-            return fetchBybitTradFiDataWithLimit(symbol, interval, maxBars, { signal });
+            return fetchBybitTradFiDataWithLimit(symbol, interval, maxBars, {
+                signal,
+                ...(resampleOptions ?? {}),
+            });
         }
         const fallbackData = await this.fetchNonBinanceData(symbol, interval, signal);
         return fallbackData.slice(-maxBars);
@@ -187,13 +196,20 @@ export class DataManager {
         }
 
         const provider = this.getProvider(symbol);
+        const resampleOptions = this.getResampleOptions(interval);
 
         if (provider === 'binance') {
-            return fetchBinanceDataWithLimit(symbol, interval, limit, options);
+            return fetchBinanceDataWithLimit(symbol, interval, limit, {
+                ...options,
+                ...(resampleOptions ?? {}),
+            });
         }
 
         if (provider === 'bybit-tradfi') {
-            return fetchBybitTradFiDataWithLimit(symbol, interval, limit, options);
+            return fetchBybitTradFiDataWithLimit(symbol, interval, limit, {
+                ...options,
+                ...(resampleOptions ?? {}),
+            });
         }
 
         // For others, fall back to standard fetch (no specific limit optimization yet implemented for 12data/yahoo historical)
@@ -248,6 +264,7 @@ export class DataManager {
             debugLogger.info('data.stream.skip_interval', { symbol, interval, provider });
             return;
         }
+        const useBinanceAlignedPolling = provider === 'binance' && this.shouldUseBinanceAlignedPolling(interval);
 
         if (this.isStreaming && this.streamSymbol === symbol && this.streamInterval === interval && this.streamProvider === provider) {
             return;
@@ -260,7 +277,7 @@ export class DataManager {
         this.streamProvider = provider;
         this.reconnectAttempts = 0;
 
-        if (provider === 'binance') {
+        if (provider === 'binance' && !useBinanceAlignedPolling) {
             this.connectBinanceStream();
         } else {
             this.startPolling();
@@ -308,8 +325,44 @@ export class DataManager {
         return generateMockData(symbol, interval);
     }
 
+    private getTwoHourCloseParity(): TwoHourCloseParity {
+        if (typeof document === 'undefined') return 'odd';
+        const select = document.getElementById('twoHourCloseParity') as HTMLSelectElement | null;
+        return select?.value === 'even' ? 'even' : 'odd';
+    }
+
+    private getResampleOptions(interval: string): ResampleOptions | undefined {
+        const normalized = interval.trim().toLowerCase();
+        const intervalSeconds = getIntervalSeconds(normalized);
+        return intervalSeconds === 7200
+            ? { twoHourCloseParity: this.getTwoHourCloseParity() }
+            : undefined;
+    }
+
+    private getStorageInterval(interval: string): string {
+        const normalized = interval.trim().toLowerCase();
+        if (normalized.includes('@close-')) {
+            return normalized;
+        }
+        if (getIntervalSeconds(normalized) === 7200) {
+            return `${normalized}@close-${this.getTwoHourCloseParity()}`;
+        }
+        return normalized;
+    }
+
+    private shouldUseBinanceAlignedPolling(interval: string): boolean {
+        return getIntervalSeconds(interval.trim().toLowerCase()) === 7200 && this.getTwoHourCloseParity() === 'even';
+    }
+
+    private isTwoHourParityAligned(candles: OHLCVData[], parity: TwoHourCloseParity): boolean {
+        if (!candles.length) return true;
+        const expectedRemainder = parity === 'even' ? 3600 : 0;
+        const mod = ((Number(candles[0].time) % 7200) + 7200) % 7200;
+        return mod === expectedRemainder;
+    }
+
     private buildCacheKey(symbol: string, interval: string): string {
-        return `${symbol.trim().toUpperCase()}::${interval.trim().toLowerCase()}`;
+        return `${symbol.trim().toUpperCase()}::${this.getStorageInterval(interval)}`;
     }
 
     private async fetchBinanceDataHybrid(
@@ -323,8 +376,16 @@ export class DataManager {
         const effectiveMaxBars = hasMaxBars
             ? Math.max(1, Math.min(this.TOTAL_LIMIT, Math.floor(requestedMaxBars)))
             : this.TOTAL_LIMIT;
-        const cacheKey = this.buildCacheKey(symbol, interval);
-        const sqliteCachedCandles = await loadSqliteCandles(symbol, interval, effectiveMaxBars);
+        const normalizedInterval = interval.trim().toLowerCase();
+        const twoHourCloseParity = this.getTwoHourCloseParity();
+        const requiresEven2hAlignment = getIntervalSeconds(normalizedInterval) === 7200 && twoHourCloseParity === 'even';
+        const storageInterval = this.getStorageInterval(interval);
+        const resampleOptions = this.getResampleOptions(interval);
+        const cacheKey = this.buildCacheKey(symbol, storageInterval);
+        const sqliteLoadedCandles = await loadSqliteCandles(symbol, storageInterval, effectiveMaxBars);
+        const sqliteCachedCandles = (requiresEven2hAlignment && sqliteLoadedCandles && !this.isTwoHourParityAligned(sqliteLoadedCandles, 'even'))
+            ? null
+            : sqliteLoadedCandles;
         const hasSqliteBase = Boolean(sqliteCachedCandles && sqliteCachedCandles.length > 0);
         let cached = hasSqliteBase
             ? {
@@ -332,18 +393,25 @@ export class DataManager {
                 updatedAt: Date.now(),
                 source: 'sqlite',
             }
-            : await loadCachedCandles(symbol, interval);
+            : await loadCachedCandles(symbol, storageInterval);
+
+        if (requiresEven2hAlignment && cached && !this.isTwoHourParityAligned(cached.candles, 'even')) {
+            cached = null;
+        }
 
         if (!cached || cached.candles.length === 0) {
-            const seedCandles = await loadSeedCandlesFromPriceData(symbol, interval, signal);
+            // Seed files are plain interval snapshots; for 2h-even they can be odd-aligned.
+            const seedCandles = requiresEven2hAlignment
+                ? null
+                : await loadSeedCandlesFromPriceData(symbol, interval, signal);
             if (seedCandles && seedCandles.length > 0) {
                 cached = {
                     candles: seedCandles,
                     updatedAt: Date.now(),
                     source: 'seed-file',
                 };
-                await saveCachedCandles(symbol, interval, seedCandles, 'seed-file');
-                await storeSqliteCandles(symbol, interval, seedCandles, 'Binance', 'seed-file');
+                await saveCachedCandles(symbol, storageInterval, seedCandles, 'seed-file');
+                await storeSqliteCandles(symbol, storageInterval, seedCandles, 'Binance', 'seed-file');
                 debugLogger.event('data.cache.seed_loaded', {
                     symbol,
                     interval,
@@ -373,6 +441,7 @@ export class DataManager {
                 signal,
                 requestDelayMs: 80,
                 maxRequests: 60,
+                ...(resampleOptions ?? {}),
             });
         } else {
             if (hasMaxBars) {
@@ -380,9 +449,10 @@ export class DataManager {
                     signal,
                     requestDelayMs: 80,
                     maxRequests: 60,
+                    ...(resampleOptions ?? {}),
                 });
             } else {
-                remoteData = await fetchBinanceData(symbol, interval, signal);
+                remoteData = await fetchBinanceData(symbol, interval, signal, resampleOptions);
             }
         }
 
@@ -393,8 +463,8 @@ export class DataManager {
         if (!hasCachedData) {
             const fresh = remoteData.slice(-effectiveMaxBars);
             if (fresh.length > 0) {
-                await saveCachedCandles(symbol, interval, fresh, 'binance-full');
-                await storeSqliteCandles(symbol, interval, fresh, 'Binance', 'binance-full');
+                await saveCachedCandles(symbol, storageInterval, fresh, 'binance-full');
+                await storeSqliteCandles(symbol, storageInterval, fresh, 'Binance', 'binance-full');
                 this.cacheSyncAtByKey.set(cacheKey, Date.now());
             }
             return fresh;
@@ -407,11 +477,11 @@ export class DataManager {
 
         const merged = mergeCandles(cached!.candles, remoteData).slice(-effectiveMaxBars);
         if (merged.length > 0) {
-            await saveCachedCandles(symbol, interval, merged, 'binance-gap');
+            await saveCachedCandles(symbol, storageInterval, merged, 'binance-gap');
             if (hasSqliteBase) {
-                await storeSqliteCandles(symbol, interval, remoteData, 'Binance', 'binance-gap');
+                await storeSqliteCandles(symbol, storageInterval, remoteData, 'Binance', 'binance-gap');
             } else {
-                await storeSqliteCandles(symbol, interval, merged, 'Binance', 'binance-gap');
+                await storeSqliteCandles(symbol, storageInterval, merged, 'Binance', 'binance-gap');
             }
             this.cacheSyncAtByKey.set(cacheKey, Date.now());
             return merged;
@@ -422,7 +492,8 @@ export class DataManager {
 
     private queuePersistCandles(symbol: string, interval: string, candles: OHLCVData[]): void {
         if (!symbol || !interval || candles.length === 0) return;
-        const cacheKey = this.buildCacheKey(symbol, interval);
+        const storageInterval = this.getStorageInterval(interval);
+        const cacheKey = this.buildCacheKey(symbol, storageInterval);
         const existingTimer = this.cachePersistTimers.get(cacheKey);
         if (existingTimer) {
             clearTimeout(existingTimer);
@@ -433,11 +504,11 @@ export class DataManager {
             this.cachePersistTimers.delete(cacheKey);
             void (async () => {
                 const delta = snapshot.slice(-2);
-                const sqliteResult = await storeSqliteCandles(symbol, interval, delta, 'Binance', 'stream');
+                const sqliteResult = await storeSqliteCandles(symbol, storageInterval, delta, 'Binance', 'stream');
                 const lastSync = this.cacheSyncAtByKey.get(cacheKey) ?? 0;
                 const shouldPersistSnapshot = !sqliteResult || (Date.now() - lastSync >= this.CACHE_SYNC_MIN_MS);
                 if (shouldPersistSnapshot) {
-                    await saveCachedCandles(symbol, interval, snapshot, 'stream');
+                    await saveCachedCandles(symbol, storageInterval, snapshot, 'stream');
                 }
                 this.cacheSyncAtByKey.set(cacheKey, Date.now());
             })();
@@ -560,9 +631,17 @@ export class DataManager {
 
         try {
             let candle: OHLCVData | null = null;
+            const resampleOptions = this.getResampleOptions(interval);
 
             if (this.streamProvider === 'bybit-tradfi') {
-                candle = await fetchBybitTradFiLatest(symbol, interval, abort.signal);
+                candle = await fetchBybitTradFiLatest(symbol, interval, abort.signal, resampleOptions);
+            } else if (this.streamProvider === 'binance' && this.shouldUseBinanceAlignedPolling(interval)) {
+                const latestSeries = await fetchBinanceDataWithLimit(symbol, interval, 2, {
+                    signal: abort.signal,
+                    maxRequests: 2,
+                    ...(resampleOptions ?? {}),
+                });
+                candle = latestSeries[latestSeries.length - 1] ?? null;
             }
 
             if (abort.signal.aborted) return;

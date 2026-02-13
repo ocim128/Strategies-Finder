@@ -1,6 +1,7 @@
 ﻿import { Time } from "lightweight-charts";
 import { OHLCVData, BacktestResult, Trade, EntryPreview } from "./strategies/index";
 import { state } from "./state";
+import type { TwoHourParityBacktestResults } from "./state";
 import { strategyRegistry, getStrategyList } from "../strategyRegistry";
 import { getRequiredElement, updateTextContent } from "./dom-utils";
 import { resultsRenderer } from "./renderers/resultsRenderer";
@@ -103,9 +104,22 @@ export class UIManager {
         }
     }
 
+    public updateParityComparisonUI(results: TwoHourParityBacktestResults): void {
+        resultsRenderer.renderParityComparison(results);
+    }
+
+    public clearParityComparisonUI(): void {
+        resultsRenderer.clearParityComparison();
+    }
+
     public updateTradesList(trades: Trade[], jumpToTrade: (time: Time) => void) {
         tradesRenderer.render(trades, jumpToTrade, this.formatPrice, this.formatDate);
         this.updateTradeBadge(trades.length);
+    }
+
+    public updateParityTradesList(oddTrades: Trade[], evenTrades: Trade[], jumpToTrade: (time: Time) => void): void {
+        tradesRenderer.renderParity(oddTrades, evenTrades, jumpToTrade, this.formatPrice, this.formatDate);
+        this.updateTradeBadge(oddTrades.length + evenTrades.length);
     }
 
     public updateTradeBadge(count: number) {
@@ -196,6 +210,7 @@ export class UIManager {
         getRequiredElement('indicatorsPanel').innerHTML = '';
         resultsRenderer.clear();
         tradesRenderer.clear();
+        this.clearParityComparisonUI();
         this.updateTradeBadge(0);
         updateTextContent('strategyStatus', 'Ready');
         this.updateEntryPreview(null);

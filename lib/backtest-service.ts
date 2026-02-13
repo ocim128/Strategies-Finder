@@ -1,6 +1,7 @@
 import { state } from "./state";
 import { uiManager } from "./ui-manager";
 import { chartManager } from "./chart-manager";
+import { dataManager } from "./data-manager";
 
 import {
     runBacktest,
@@ -17,6 +18,7 @@ import {
     timeKey,
     timeToNumber,
 } from "./strategies/index";
+import type { OHLCVData, Strategy } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
@@ -24,6 +26,7 @@ import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
 import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth, getConfirmationStrategyParams, getConfirmationStrategyValues } from "./confirmation-strategies";
 import { calculateSharpeRatioFromReturns } from "./strategies/performance-metrics";
+import { getIntervalSeconds } from "./dataProviders/utils";
 
 export class BacktestService {
     private warnedStrictEngine = false;
@@ -72,167 +75,97 @@ export class BacktestService {
             const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = this.getCapitalSettings();
             const settings = this.getBacktestSettings();
             const requiresTsEngine = this.requiresTypescriptEngine(settings);
+            const parityMode = this.getTwoHourCloseParityMode();
 
             progressFill.style.width = '40%';
-            progressText.textContent = 'Generating signals...';
+            progressText.textContent = parityMode === 'both' ? 'Preparing parity runs...' : 'Generating signals...';
             await this.sleep(100);
 
-            const signals = strategy.execute(state.ohlcvData, params);
+            state.set('twoHourParityBacktestResults', null);
 
-            progressFill.style.width = '60%';
-            progressText.textContent = 'Running backtest...';
-            await this.sleep(100);
+            let result: BacktestResult;
+            let engineUsed: 'rust' | 'typescript';
+            let parityComparison: { odd: BacktestResult; even: BacktestResult; baseline: 'odd' | 'even' } | null = null;
 
-            const confirmationStrategies = settings.confirmationStrategies ?? [];
-            const tradeFilterMode = this.resolveTradeFilterMode(settings);
-            const confirmationStates = confirmationStrategies.length > 0
-                ? buildConfirmationStates(state.ohlcvData, confirmationStrategies, settings.confirmationStrategyParams)
-                : [];
-            const filteredSignals = confirmationStates.length > 0
-                ? ((strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined')
-                    ? filterSignalsWithConfirmationsBoth(
-                        state.ohlcvData,
-                        signals,
-                        confirmationStates,
-                        tradeFilterMode
-                    )
-                    : filterSignalsWithConfirmations(
-                        state.ohlcvData,
-                        signals,
-                        confirmationStates,
-                        tradeFilterMode,
-                        settings.tradeDirection ?? 'long'
-                    ))
-                : signals;
+            if (parityMode === 'both') {
+                const baselineParity = this.inferBaselineParity(state.ohlcvData);
+                const oddData = await this.getBacktestDataForParity('odd');
+                const evenData = await this.getBacktestDataForParity('even');
 
-            // Try Rust engine first for performance, fallback to TypeScript
-            let result;
-            let engineUsed: 'rust' | 'typescript' = 'typescript';
+                progressFill.style.width = '65%';
+                progressText.textContent = 'Running odd + even backtests...';
+                await this.sleep(80);
 
-            const evaluation = strategy.evaluate?.(state.ohlcvData, params, filteredSignals);
-            const entryStats = evaluation?.entryStats;
-
-            const rustSettings: BacktestSettings = { ...settings };
-            delete (rustSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
-            delete (rustSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
-            delete (rustSettings as { executionModel?: string }).executionModel;
-            delete (rustSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
-            delete (rustSettings as { slippageBps?: number }).slippageBps;
-            delete (rustSettings as { marketMode?: string }).marketMode;
-            delete (rustSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
-            delete (rustSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
-            delete (rustSettings as { captureSnapshots?: boolean }).captureSnapshots;
-            delete (rustSettings as { snapshotAtrPercentMin?: number }).snapshotAtrPercentMin;
-            delete (rustSettings as { snapshotAtrPercentMax?: number }).snapshotAtrPercentMax;
-            delete (rustSettings as { snapshotVolumeRatioMin?: number }).snapshotVolumeRatioMin;
-            delete (rustSettings as { snapshotVolumeRatioMax?: number }).snapshotVolumeRatioMax;
-            delete (rustSettings as { snapshotAdxMin?: number }).snapshotAdxMin;
-            delete (rustSettings as { snapshotAdxMax?: number }).snapshotAdxMax;
-            delete (rustSettings as { snapshotEmaDistanceMin?: number }).snapshotEmaDistanceMin;
-            delete (rustSettings as { snapshotEmaDistanceMax?: number }).snapshotEmaDistanceMax;
-            delete (rustSettings as { snapshotRsiMin?: number }).snapshotRsiMin;
-            delete (rustSettings as { snapshotRsiMax?: number }).snapshotRsiMax;
-            delete (rustSettings as { snapshotPriceRangePosMin?: number }).snapshotPriceRangePosMin;
-            delete (rustSettings as { snapshotPriceRangePosMax?: number }).snapshotPriceRangePosMax;
-            delete (rustSettings as { snapshotBarsFromHighMax?: number }).snapshotBarsFromHighMax;
-            delete (rustSettings as { snapshotBarsFromLowMax?: number }).snapshotBarsFromLowMax;
-            delete (rustSettings as { snapshotTrendEfficiencyMin?: number }).snapshotTrendEfficiencyMin;
-            delete (rustSettings as { snapshotTrendEfficiencyMax?: number }).snapshotTrendEfficiencyMax;
-            delete (rustSettings as { snapshotAtrRegimeRatioMin?: number }).snapshotAtrRegimeRatioMin;
-            delete (rustSettings as { snapshotAtrRegimeRatioMax?: number }).snapshotAtrRegimeRatioMax;
-            delete (rustSettings as { snapshotBodyPercentMin?: number }).snapshotBodyPercentMin;
-            delete (rustSettings as { snapshotBodyPercentMax?: number }).snapshotBodyPercentMax;
-            delete (rustSettings as { snapshotWickSkewMin?: number }).snapshotWickSkewMin;
-            delete (rustSettings as { snapshotWickSkewMax?: number }).snapshotWickSkewMax;
-            delete (rustSettings as { snapshotVolumeTrendMin?: number }).snapshotVolumeTrendMin;
-            delete (rustSettings as { snapshotVolumeTrendMax?: number }).snapshotVolumeTrendMax;
-            delete (rustSettings as { snapshotVolumeBurstMin?: number }).snapshotVolumeBurstMin;
-            delete (rustSettings as { snapshotVolumeBurstMax?: number }).snapshotVolumeBurstMax;
-            delete (rustSettings as { snapshotVolumePriceDivergenceMin?: number }).snapshotVolumePriceDivergenceMin;
-            delete (rustSettings as { snapshotVolumePriceDivergenceMax?: number }).snapshotVolumePriceDivergenceMax;
-            delete (rustSettings as { snapshotVolumeConsistencyMin?: number }).snapshotVolumeConsistencyMin;
-            delete (rustSettings as { snapshotVolumeConsistencyMax?: number }).snapshotVolumeConsistencyMax;
-            delete (rustSettings as { snapshotCloseLocationMin?: number }).snapshotCloseLocationMin;
-            delete (rustSettings as { snapshotCloseLocationMax?: number }).snapshotCloseLocationMax;
-            delete (rustSettings as { snapshotOppositeWickMin?: number }).snapshotOppositeWickMin;
-            delete (rustSettings as { snapshotOppositeWickMax?: number }).snapshotOppositeWickMax;
-            delete (rustSettings as { snapshotRangeAtrMultipleMin?: number }).snapshotRangeAtrMultipleMin;
-            delete (rustSettings as { snapshotRangeAtrMultipleMax?: number }).snapshotRangeAtrMultipleMax;
-            delete (rustSettings as { snapshotMomentumConsistencyMin?: number }).snapshotMomentumConsistencyMin;
-            delete (rustSettings as { snapshotMomentumConsistencyMax?: number }).snapshotMomentumConsistencyMax;
-            delete (rustSettings as { snapshotBreakQualityMin?: number }).snapshotBreakQualityMin;
-            delete (rustSettings as { snapshotBreakQualityMax?: number }).snapshotBreakQualityMax;
-            delete (rustSettings as { snapshotTf60PerfMin?: number }).snapshotTf60PerfMin;
-            delete (rustSettings as { snapshotTf60PerfMax?: number }).snapshotTf60PerfMax;
-            delete (rustSettings as { snapshotTf90PerfMin?: number }).snapshotTf90PerfMin;
-            delete (rustSettings as { snapshotTf90PerfMax?: number }).snapshotTf90PerfMax;
-            delete (rustSettings as { snapshotTf120PerfMin?: number }).snapshotTf120PerfMin;
-            delete (rustSettings as { snapshotTf120PerfMax?: number }).snapshotTf120PerfMax;
-            delete (rustSettings as { snapshotTf480PerfMin?: number }).snapshotTf480PerfMin;
-            delete (rustSettings as { snapshotTf480PerfMax?: number }).snapshotTf480PerfMax;
-            delete (rustSettings as { snapshotTfConfluencePerfMin?: number }).snapshotTfConfluencePerfMin;
-            delete (rustSettings as { snapshotTfConfluencePerfMax?: number }).snapshotTfConfluencePerfMax;
-            delete (rustSettings as { snapshotEntryQualityScoreMin?: number }).snapshotEntryQualityScoreMin;
-            delete (rustSettings as { snapshotEntryQualityScoreMax?: number }).snapshotEntryQualityScoreMax;
-
-            if (strategy.metadata?.role === 'entry' && entryStats) {
-                result = buildEntryBacktestResult(entryStats);
-                engineUsed = 'typescript';
-            }
-
-            if (!result && shouldUseRustEngine() && !requiresTsEngine) {
-                const rustResult = await rustEngine.runBacktest(
-                    state.ohlcvData,
-                    filteredSignals,
-                    initialCapital,
-                    positionSize,
-                    commission,
-                    rustSettings,
-                    { mode: sizingMode, fixedTradeAmount }
-                );
-
-                if (rustResult) {
-                    if (this.isResultConsistent(rustResult)) {
-                        result = rustResult;
-                        engineUsed = 'rust';
-                        debugLogger.event('backtest.rust_used', { bars: state.ohlcvData.length });
-                    } else {
-                        debugLogger.warn('[Backtest] Rust result failed consistency checks, falling back to TypeScript');
-                        uiManager.showToast('Rust backtest result inconsistent, rerunning in TypeScript', 'info');
-                    }
-                }
-            }
-
-            // Fallback to TypeScript if Rust unavailable or failed
-            if (!result) {
-                if (requiresTsEngine && shouldUseRustEngine() && !this.warnedStrictEngine) {
-                    this.warnedStrictEngine = true;
-                    uiManager.showToast('Realism or snapshot filter settings require TypeScript engine (Rust skipped).', 'info');
-                }
-                result = runBacktest(
-                    state.ohlcvData,
-                    filteredSignals,
-                    initialCapital,
-                    positionSize,
-                    commission,
+                const oddRun = await this.withTemporaryTwoHourParity('odd', async () => this.runBacktestForData(
+                    oddData,
+                    strategy,
+                    params,
                     settings,
-                    { mode: sizingMode, fixedTradeAmount }
-                );
-                engineUsed = 'typescript';
-            }
+                    initialCapital,
+                    positionSize,
+                    commission,
+                    sizingMode,
+                    fixedTradeAmount,
+                    requiresTsEngine
+                ));
+                const evenRun = await this.withTemporaryTwoHourParity('even', async () => this.runBacktestForData(
+                    evenData,
+                    strategy,
+                    params,
+                    settings,
+                    initialCapital,
+                    positionSize,
+                    commission,
+                    sizingMode,
+                    fixedTradeAmount,
+                    requiresTsEngine
+                ));
 
-            if (!result.entryStats) {
-                result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
+                parityComparison = { odd: oddRun.result, even: evenRun.result, baseline: baselineParity };
+                state.set('twoHourParityBacktestResults', parityComparison);
+
+                if (baselineParity === 'even') {
+                    result = evenRun.result;
+                    engineUsed = evenRun.engineUsed;
+                } else {
+                    result = oddRun.result;
+                    engineUsed = oddRun.engineUsed;
+                }
+
+                debugLogger.event('backtest.parity_compare', {
+                    strategy: state.currentStrategyKey,
+                    oddTrades: oddRun.result.totalTrades,
+                    evenTrades: evenRun.result.totalTrades,
+                    baseline: baselineParity,
+                });
+            } else {
+                progressFill.style.width = '60%';
+                progressText.textContent = 'Running backtest...';
+                await this.sleep(100);
+
+                const singleRun = await this.withTemporaryTwoHourParity(parityMode, async () => this.runBacktestForData(
+                    state.ohlcvData,
+                    strategy,
+                    params,
+                    settings,
+                    initialCapital,
+                    positionSize,
+                    commission,
+                    sizingMode,
+                    fixedTradeAmount,
+                    requiresTsEngine
+                ));
+                result = singleRun.result;
+                engineUsed = singleRun.engineUsed;
             }
-            result.postEntryPath = this.buildPostEntryPathStats(result, 5);
 
             state.set('currentBacktestResult', result);
 
-
-
             progressFill.style.width = '100%';
             progressText.textContent = 'Complete!';
-            if (result.entryStats) {
+            if (parityComparison && !result.entryStats) {
+                statusEl.textContent = `2H compare | Odd ${parityComparison.odd.netProfitPercent.toFixed(2)}% | Even ${parityComparison.even.netProfitPercent.toFixed(2)}%`;
+            } else if (result.entryStats) {
                 const entryWin = result.entryStats.winRate.toFixed(1);
                 const useTarget = result.entryStats.winDefinition === 'target' && (result.entryStats.targetPct ?? 0) > 0;
                 const avgBars = useTarget
@@ -252,6 +185,7 @@ export class BacktestService {
                 trades: result.totalTrades,
                 durationMs: Date.now() - startedAt,
                 engine: engineUsed,
+                parityMode,
             });
 
             // Enable replay button if there are results
@@ -281,6 +215,209 @@ export class BacktestService {
             progressFill.style.width = '0%';
             setLoading(false);
         }
+    }
+
+    private getTwoHourCloseParityMode(): 'odd' | 'even' | 'both' {
+        const select = document.getElementById('twoHourCloseParity') as HTMLSelectElement | null;
+        if (select?.value === 'even' || select?.value === 'both') {
+            return select.value;
+        }
+        return 'odd';
+    }
+
+    private inferBaselineParity(data: OHLCVData[]): 'odd' | 'even' {
+        if (getIntervalSeconds(state.currentInterval) !== 7200 || data.length === 0) {
+            return 'odd';
+        }
+        const firstTime = Number(data[0].time);
+        if (!Number.isFinite(firstTime)) return 'odd';
+        const mod = ((firstTime % 7200) + 7200) % 7200;
+        return mod === 3600 ? 'even' : 'odd';
+    }
+
+    private async withTemporaryTwoHourParity<T>(parity: 'odd' | 'even', run: () => Promise<T>): Promise<T> {
+        const select = document.getElementById('twoHourCloseParity') as HTMLSelectElement | null;
+        if (!select) return run();
+
+        const previous = select.value;
+        if (previous === parity) return run();
+
+        select.value = parity;
+        try {
+            return await run();
+        } finally {
+            select.value = previous;
+        }
+    }
+
+    private async getBacktestDataForParity(parity: 'odd' | 'even'): Promise<OHLCVData[]> {
+        if (getIntervalSeconds(state.currentInterval) !== 7200) {
+            return state.ohlcvData;
+        }
+        return this.withTemporaryTwoHourParity(parity, async () => {
+            const fetched = await dataManager.fetchData(state.currentSymbol, state.currentInterval);
+            return fetched.length > 0 ? fetched : state.ohlcvData;
+        });
+    }
+
+    private async runBacktestForData(
+        ohlcvData: OHLCVData[],
+        strategy: Strategy,
+        params: StrategyParams,
+        settings: BacktestSettings,
+        initialCapital: number,
+        positionSize: number,
+        commission: number,
+        sizingMode: 'percent' | 'fixed',
+        fixedTradeAmount: number,
+        requiresTsEngine: boolean
+    ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
+        const signals = strategy.execute(ohlcvData, params);
+
+        const confirmationStrategies = settings.confirmationStrategies ?? [];
+        const tradeFilterMode = this.resolveTradeFilterMode(settings);
+        const confirmationStates = confirmationStrategies.length > 0
+            ? buildConfirmationStates(ohlcvData, confirmationStrategies, settings.confirmationStrategyParams)
+            : [];
+        const filteredSignals = confirmationStates.length > 0
+            ? ((strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined')
+                ? filterSignalsWithConfirmationsBoth(
+                    ohlcvData,
+                    signals,
+                    confirmationStates,
+                    tradeFilterMode
+                )
+                : filterSignalsWithConfirmations(
+                    ohlcvData,
+                    signals,
+                    confirmationStates,
+                    tradeFilterMode,
+                    settings.tradeDirection ?? 'long'
+                ))
+            : signals;
+
+        let result: BacktestResult | undefined;
+        let engineUsed: 'rust' | 'typescript' = 'typescript';
+
+        const evaluation = strategy.evaluate?.(ohlcvData, params, filteredSignals);
+        const entryStats = evaluation?.entryStats;
+
+        if (strategy.metadata?.role === 'entry' && entryStats) {
+            result = buildEntryBacktestResult(entryStats);
+            engineUsed = 'typescript';
+        }
+
+        if (!result && shouldUseRustEngine() && !requiresTsEngine) {
+            const rustResult = await rustEngine.runBacktest(
+                ohlcvData,
+                filteredSignals,
+                initialCapital,
+                positionSize,
+                commission,
+                this.buildRustCompatibleSettings(settings),
+                { mode: sizingMode, fixedTradeAmount }
+            );
+
+            if (rustResult) {
+                if (this.isResultConsistent(rustResult)) {
+                    result = rustResult;
+                    engineUsed = 'rust';
+                    debugLogger.event('backtest.rust_used', { bars: ohlcvData.length });
+                } else {
+                    debugLogger.warn('[Backtest] Rust result failed consistency checks, falling back to TypeScript');
+                    uiManager.showToast('Rust backtest result inconsistent, rerunning in TypeScript', 'info');
+                }
+            }
+        }
+
+        if (!result) {
+            if (requiresTsEngine && shouldUseRustEngine() && !this.warnedStrictEngine) {
+                this.warnedStrictEngine = true;
+                uiManager.showToast('Realism or snapshot filter settings require TypeScript engine (Rust skipped).', 'info');
+            }
+            result = runBacktest(
+                ohlcvData,
+                filteredSignals,
+                initialCapital,
+                positionSize,
+                commission,
+                settings,
+                { mode: sizingMode, fixedTradeAmount }
+            );
+            engineUsed = 'typescript';
+        }
+
+        if (!result.entryStats) {
+            result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
+        }
+        result.postEntryPath = this.buildPostEntryPathStats(result, 5, ohlcvData);
+        return { result, engineUsed };
+    }
+
+    private buildRustCompatibleSettings(settings: BacktestSettings): BacktestSettings {
+        const rustSettings: BacktestSettings = { ...settings };
+        delete (rustSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
+        delete (rustSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
+        delete (rustSettings as { executionModel?: string }).executionModel;
+        delete (rustSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
+        delete (rustSettings as { slippageBps?: number }).slippageBps;
+        delete (rustSettings as { marketMode?: string }).marketMode;
+        delete (rustSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
+        delete (rustSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
+        delete (rustSettings as { captureSnapshots?: boolean }).captureSnapshots;
+        delete (rustSettings as { snapshotAtrPercentMin?: number }).snapshotAtrPercentMin;
+        delete (rustSettings as { snapshotAtrPercentMax?: number }).snapshotAtrPercentMax;
+        delete (rustSettings as { snapshotVolumeRatioMin?: number }).snapshotVolumeRatioMin;
+        delete (rustSettings as { snapshotVolumeRatioMax?: number }).snapshotVolumeRatioMax;
+        delete (rustSettings as { snapshotAdxMin?: number }).snapshotAdxMin;
+        delete (rustSettings as { snapshotAdxMax?: number }).snapshotAdxMax;
+        delete (rustSettings as { snapshotEmaDistanceMin?: number }).snapshotEmaDistanceMin;
+        delete (rustSettings as { snapshotEmaDistanceMax?: number }).snapshotEmaDistanceMax;
+        delete (rustSettings as { snapshotRsiMin?: number }).snapshotRsiMin;
+        delete (rustSettings as { snapshotRsiMax?: number }).snapshotRsiMax;
+        delete (rustSettings as { snapshotPriceRangePosMin?: number }).snapshotPriceRangePosMin;
+        delete (rustSettings as { snapshotPriceRangePosMax?: number }).snapshotPriceRangePosMax;
+        delete (rustSettings as { snapshotBarsFromHighMax?: number }).snapshotBarsFromHighMax;
+        delete (rustSettings as { snapshotBarsFromLowMax?: number }).snapshotBarsFromLowMax;
+        delete (rustSettings as { snapshotTrendEfficiencyMin?: number }).snapshotTrendEfficiencyMin;
+        delete (rustSettings as { snapshotTrendEfficiencyMax?: number }).snapshotTrendEfficiencyMax;
+        delete (rustSettings as { snapshotAtrRegimeRatioMin?: number }).snapshotAtrRegimeRatioMin;
+        delete (rustSettings as { snapshotAtrRegimeRatioMax?: number }).snapshotAtrRegimeRatioMax;
+        delete (rustSettings as { snapshotBodyPercentMin?: number }).snapshotBodyPercentMin;
+        delete (rustSettings as { snapshotBodyPercentMax?: number }).snapshotBodyPercentMax;
+        delete (rustSettings as { snapshotWickSkewMin?: number }).snapshotWickSkewMin;
+        delete (rustSettings as { snapshotWickSkewMax?: number }).snapshotWickSkewMax;
+        delete (rustSettings as { snapshotVolumeTrendMin?: number }).snapshotVolumeTrendMin;
+        delete (rustSettings as { snapshotVolumeTrendMax?: number }).snapshotVolumeTrendMax;
+        delete (rustSettings as { snapshotVolumeBurstMin?: number }).snapshotVolumeBurstMin;
+        delete (rustSettings as { snapshotVolumeBurstMax?: number }).snapshotVolumeBurstMax;
+        delete (rustSettings as { snapshotVolumePriceDivergenceMin?: number }).snapshotVolumePriceDivergenceMin;
+        delete (rustSettings as { snapshotVolumePriceDivergenceMax?: number }).snapshotVolumePriceDivergenceMax;
+        delete (rustSettings as { snapshotVolumeConsistencyMin?: number }).snapshotVolumeConsistencyMin;
+        delete (rustSettings as { snapshotVolumeConsistencyMax?: number }).snapshotVolumeConsistencyMax;
+        delete (rustSettings as { snapshotCloseLocationMin?: number }).snapshotCloseLocationMin;
+        delete (rustSettings as { snapshotCloseLocationMax?: number }).snapshotCloseLocationMax;
+        delete (rustSettings as { snapshotOppositeWickMin?: number }).snapshotOppositeWickMin;
+        delete (rustSettings as { snapshotOppositeWickMax?: number }).snapshotOppositeWickMax;
+        delete (rustSettings as { snapshotRangeAtrMultipleMin?: number }).snapshotRangeAtrMultipleMin;
+        delete (rustSettings as { snapshotRangeAtrMultipleMax?: number }).snapshotRangeAtrMultipleMax;
+        delete (rustSettings as { snapshotMomentumConsistencyMin?: number }).snapshotMomentumConsistencyMin;
+        delete (rustSettings as { snapshotMomentumConsistencyMax?: number }).snapshotMomentumConsistencyMax;
+        delete (rustSettings as { snapshotBreakQualityMin?: number }).snapshotBreakQualityMin;
+        delete (rustSettings as { snapshotBreakQualityMax?: number }).snapshotBreakQualityMax;
+        delete (rustSettings as { snapshotTf60PerfMin?: number }).snapshotTf60PerfMin;
+        delete (rustSettings as { snapshotTf60PerfMax?: number }).snapshotTf60PerfMax;
+        delete (rustSettings as { snapshotTf90PerfMin?: number }).snapshotTf90PerfMin;
+        delete (rustSettings as { snapshotTf90PerfMax?: number }).snapshotTf90PerfMax;
+        delete (rustSettings as { snapshotTf120PerfMin?: number }).snapshotTf120PerfMin;
+        delete (rustSettings as { snapshotTf120PerfMax?: number }).snapshotTf120PerfMax;
+        delete (rustSettings as { snapshotTf480PerfMin?: number }).snapshotTf480PerfMin;
+        delete (rustSettings as { snapshotTf480PerfMax?: number }).snapshotTf480PerfMax;
+        delete (rustSettings as { snapshotTfConfluencePerfMin?: number }).snapshotTfConfluencePerfMin;
+        delete (rustSettings as { snapshotTfConfluencePerfMax?: number }).snapshotTfConfluencePerfMax;
+        delete (rustSettings as { snapshotEntryQualityScoreMin?: number }).snapshotEntryQualityScoreMin;
+        delete (rustSettings as { snapshotEntryQualityScoreMax?: number }).snapshotEntryQualityScoreMax;
+        return rustSettings;
     }
 
 
@@ -473,7 +610,7 @@ export class BacktestService {
         return Number.isFinite(result.sharpeRatio) ? result.sharpeRatio : 0;
     }
 
-    private buildPostEntryPathStats(result: BacktestResult, horizonMaxBars: number): PostEntryPathStats {
+    private buildPostEntryPathStats(result: BacktestResult, horizonMaxBars: number, ohlcvData: OHLCVData[]): PostEntryPathStats {
         const horizonBars = Array.from({ length: horizonMaxBars }, (_, index) => index + 1);
         const createMoveBuckets = () => Array.from({ length: horizonMaxBars }, () => [] as number[]);
         const winMoves = createMoveBuckets();
@@ -488,8 +625,8 @@ export class BacktestService {
         const allDurationMinutes: number[] = [];
 
         const timeIndex = new Map<string, number>();
-        for (let i = 0; i < state.ohlcvData.length; i++) {
-            timeIndex.set(timeKey(state.ohlcvData[i].time), i);
+        for (let i = 0; i < ohlcvData.length; i++) {
+            timeIndex.set(timeKey(ohlcvData[i].time), i);
         }
 
         for (const trade of result.trades) {
@@ -497,9 +634,9 @@ export class BacktestService {
             if (entryIndex !== undefined && Number.isFinite(trade.entryPrice) && trade.entryPrice > 0) {
                 for (let bar = 1; bar <= horizonMaxBars; bar++) {
                     const targetIndex = entryIndex + bar;
-                    if (targetIndex >= state.ohlcvData.length) break;
+                    if (targetIndex >= ohlcvData.length) break;
 
-                    const targetClose = state.ohlcvData[targetIndex].close;
+                    const targetClose = ohlcvData[targetIndex].close;
                     if (!Number.isFinite(targetClose)) continue;
 
                     const rawMovePct = ((targetClose - trade.entryPrice) / trade.entryPrice) * 100;
@@ -531,7 +668,7 @@ export class BacktestService {
             win: this.finalizePostEntryBucket(winMoves, winDurationBars, winDurationMinutes),
             lose: this.finalizePostEntryBucket(loseMoves, loseDurationBars, loseDurationMinutes),
             all: this.finalizePostEntryBucket(allMoves, allDurationBars, allDurationMinutes),
-            openTradeProbability: this.estimateOpenTradeProbability(result.trades, timeIndex, horizonMaxBars),
+            openTradeProbability: this.estimateOpenTradeProbability(result.trades, timeIndex, horizonMaxBars, ohlcvData),
         };
     }
 
@@ -595,7 +732,8 @@ export class BacktestService {
     private estimateOpenTradeProbability(
         trades: Trade[],
         timeIndex: Map<string, number>,
-        horizonMaxBars: number
+        horizonMaxBars: number,
+        ohlcvData: OHLCVData[]
     ): PostEntryPathOpenTradeProbability {
         const openTrade = [...trades].reverse().find((trade) => trade.exitReason === 'end_of_data');
         if (!openTrade) {
@@ -645,7 +783,7 @@ export class BacktestService {
 
         const basisBar = Math.min(horizonMaxBars, barsHeld);
         const probeIndex = entryIndex + basisBar;
-        if (probeIndex >= state.ohlcvData.length || !Number.isFinite(state.ohlcvData[probeIndex].close)) {
+        if (probeIndex >= ohlcvData.length || !Number.isFinite(ohlcvData[probeIndex].close)) {
             return {
                 hasOpenTrade: true,
                 tradeType: openTrade.type,
@@ -659,7 +797,7 @@ export class BacktestService {
             };
         }
 
-        const probeClose = state.ohlcvData[probeIndex].close;
+        const probeClose = ohlcvData[probeIndex].close;
         const rawProbeMovePct = ((probeClose - openTrade.entryPrice) / openTrade.entryPrice) * 100;
         const probeSignedMovePct = openTrade.type === 'short' ? -rawProbeMovePct : rawProbeMovePct;
 
@@ -672,9 +810,9 @@ export class BacktestService {
             const historicalEntryIndex = timeIndex.get(timeKey(trade.entryTime));
             if (historicalEntryIndex === undefined) continue;
             const historicalProbeIndex = historicalEntryIndex + basisBar;
-            if (historicalProbeIndex >= state.ohlcvData.length) continue;
+            if (historicalProbeIndex >= ohlcvData.length) continue;
 
-            const historicalClose = state.ohlcvData[historicalProbeIndex].close;
+            const historicalClose = ohlcvData[historicalProbeIndex].close;
             if (!Number.isFinite(historicalClose)) continue;
 
             const rawMovePct = ((historicalClose - trade.entryPrice) / trade.entryPrice) * 100;

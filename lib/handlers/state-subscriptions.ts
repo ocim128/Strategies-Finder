@@ -94,7 +94,29 @@ export function setupStateSubscriptions() {
             chartManager.displayTradeMarkers(result.trades, uiManager.formatPrice);
             chartManager.displayEquityCurve(result.equityCurve);
             uiManager.updateResultsUI(result);
-            uiManager.updateTradesList(result.trades, (time) => {
+            const jumpToTrade = (time: typeof result.trades[number]['entryTime']) => {
+                const dataIndex = state.ohlcvData.findIndex(d => d.time === time);
+                if (dataIndex !== -1) {
+                    const from = Math.max(0, dataIndex - 20);
+                    const to = Math.min(state.ohlcvData.length - 1, dataIndex + 20);
+                    state.chart.timeScale().setVisibleLogicalRange({ from, to });
+                }
+            };
+
+            const parityResults = state.twoHourParityBacktestResults;
+            if (parityResults) {
+                uiManager.updateParityTradesList(parityResults.odd.trades, parityResults.even.trades, jumpToTrade);
+            } else {
+                uiManager.updateTradesList(result.trades, jumpToTrade);
+            }
+        }
+    });
+
+    state.subscribe('twoHourParityBacktestResults', (results) => {
+        if (state.replayMode) return;
+        if (results) {
+            uiManager.updateParityComparisonUI(results);
+            uiManager.updateParityTradesList(results.odd.trades, results.even.trades, (time) => {
                 const dataIndex = state.ohlcvData.findIndex(d => d.time === time);
                 if (dataIndex !== -1) {
                     const from = Math.max(0, dataIndex - 20);
@@ -102,6 +124,18 @@ export function setupStateSubscriptions() {
                     state.chart.timeScale().setVisibleLogicalRange({ from, to });
                 }
             });
+        } else {
+            uiManager.clearParityComparisonUI();
+            if (state.currentBacktestResult) {
+                uiManager.updateTradesList(state.currentBacktestResult.trades, (time) => {
+                    const dataIndex = state.ohlcvData.findIndex(d => d.time === time);
+                    if (dataIndex !== -1) {
+                        const from = Math.max(0, dataIndex - 20);
+                        const to = Math.min(state.ohlcvData.length - 1, dataIndex + 20);
+                        state.chart.timeScale().setVisibleLogicalRange({ from, to });
+                    }
+                });
+            }
         }
     });
 

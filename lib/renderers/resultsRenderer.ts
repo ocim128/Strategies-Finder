@@ -1,5 +1,6 @@
 import { BacktestResult, PostEntryPathStats } from "../strategies/index";
 import { getRequiredElement, updateTextContent, setVisible } from "../dom-utils";
+import type { TwoHourParityBacktestResults } from "../state";
 
 export class ResultsRenderer {
     public render(result: BacktestResult) {
@@ -104,6 +105,68 @@ export class ResultsRenderer {
                 levelsBody.innerHTML = '';
             }
         }
+    }
+
+    public renderParityComparison(results: TwoHourParityBacktestResults): void {
+        const panel = document.getElementById('parityComparePanel');
+        const grid = document.getElementById('parityCompareGrid');
+        const hint = document.getElementById('parityCompareHint');
+        if (!panel || !grid || !hint) return;
+
+        const renderCard = (label: 'odd' | 'even', result: BacktestResult): string => {
+            const pnlClass = result.netProfit >= 0 ? 'positive' : 'negative';
+            const pfText = result.profitFactor === Infinity ? 'INF' : result.profitFactor.toFixed(2);
+            return `
+                <div class="parity-compare-card ${pnlClass}">
+                    <div class="parity-compare-card-title">${label.toUpperCase()} Close-Hour Universe</div>
+                    <div class="parity-compare-row">
+                        <span>Net Profit</span>
+                        <span class="parity-compare-row-value ${pnlClass}">${result.netProfit >= 0 ? '+' : ''}$${result.netProfit.toFixed(2)}</span>
+                    </div>
+                    <div class="parity-compare-row">
+                        <span>ROI</span>
+                        <span class="parity-compare-row-value ${pnlClass}">${result.netProfitPercent >= 0 ? '+' : ''}${result.netProfitPercent.toFixed(2)}%</span>
+                    </div>
+                    <div class="parity-compare-row">
+                        <span>Win Rate</span>
+                        <span class="parity-compare-row-value">${result.winRate.toFixed(1)}%</span>
+                    </div>
+                    <div class="parity-compare-row">
+                        <span>Profit Factor</span>
+                        <span class="parity-compare-row-value">${pfText}</span>
+                    </div>
+                    <div class="parity-compare-row">
+                        <span>Total Trades</span>
+                        <span class="parity-compare-row-value">${result.totalTrades}</span>
+                    </div>
+                    <div class="parity-compare-row">
+                        <span>Max Drawdown</span>
+                        <span class="parity-compare-row-value">${result.maxDrawdownPercent.toFixed(2)}%</span>
+                    </div>
+                </div>
+            `;
+        };
+
+        grid.innerHTML = `${renderCard('odd', results.odd)}${renderCard('even', results.even)}`;
+
+        const delta = results.even.netProfitPercent - results.odd.netProfitPercent;
+        const better = delta > 0 ? 'even' : delta < 0 ? 'odd' : 'tie';
+        const baselineLabel = results.baseline.toUpperCase();
+        if (better === 'tie') {
+            hint.textContent = `Baseline: ${baselineLabel}. Odd and even produced the same ROI (${results.odd.netProfitPercent.toFixed(2)}%).`;
+        } else {
+            const betterLabel = better.toUpperCase();
+            hint.textContent = `Baseline: ${baselineLabel}. ${betterLabel} outperformed by ${Math.abs(delta).toFixed(2)}% ROI.`;
+        }
+        panel.style.display = 'block';
+    }
+
+    public clearParityComparison(): void {
+        setVisible('parityComparePanel', false);
+        const grid = document.getElementById('parityCompareGrid');
+        if (grid) grid.innerHTML = '';
+        const hint = document.getElementById('parityCompareHint');
+        if (hint) hint.textContent = '';
     }
 
     private formatEntryMode(mode: number): string {
@@ -218,6 +281,7 @@ export class ResultsRenderer {
     public clear() {
         setVisible('emptyResults', true);
         setVisible('resultsContent', false);
+        this.clearParityComparison();
         setVisible('postEntryPathTitle', false);
         setVisible('postEntryPathContainer', false);
         setVisible('postEntryPathHint', false);

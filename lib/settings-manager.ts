@@ -154,6 +154,7 @@ export interface BacktestSettingsData {
     slippageBps: number;
     strategyTimeframeEnabled: boolean;
     strategyTimeframeMinutes: number;
+    twoHourCloseParity: 'odd' | 'even' | 'both';
 }
 
 export interface StrategyConfig {
@@ -307,6 +308,7 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     slippageBps: 5,
     strategyTimeframeEnabled: false,
     strategyTimeframeMinutes: 120,
+    twoHourCloseParity: 'odd',
 };
 
 const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -480,6 +482,9 @@ class SettingsManager {
             slippageBps: this.readNumber('slippageBps', DEFAULT_BACKTEST_SETTINGS.slippageBps),
             strategyTimeframeEnabled: this.readCheckbox('strategyTimeframeToggle', DEFAULT_BACKTEST_SETTINGS.strategyTimeframeEnabled),
             strategyTimeframeMinutes: this.readNumber('strategyTimeframeMinutes', DEFAULT_BACKTEST_SETTINGS.strategyTimeframeMinutes),
+            twoHourCloseParity: this.resolveTwoHourCloseParity(
+                this.readSelect('twoHourCloseParity', DEFAULT_BACKTEST_SETTINGS.twoHourCloseParity)
+            ),
         };
     }
 
@@ -677,6 +682,7 @@ class SettingsManager {
         this.writeNumber('slippageBps', settings.slippageBps ?? DEFAULT_BACKTEST_SETTINGS.slippageBps);
         this.writeCheckbox('strategyTimeframeToggle', settings.strategyTimeframeEnabled ?? DEFAULT_BACKTEST_SETTINGS.strategyTimeframeEnabled);
         this.writeNumber('strategyTimeframeMinutes', settings.strategyTimeframeMinutes ?? DEFAULT_BACKTEST_SETTINGS.strategyTimeframeMinutes);
+        this.writeSelect('twoHourCloseParity', this.resolveTwoHourCloseParity(settings.twoHourCloseParity));
 
         // Trigger change events so UI updates reflect changes
         this.triggerChangeEvents();
@@ -914,6 +920,13 @@ class SettingsManager {
         return DEFAULT_BACKTEST_SETTINGS.tradeFilterMode;
     }
 
+    private resolveTwoHourCloseParity(value: unknown): 'odd' | 'even' | 'both' {
+        if (value === 'even' || value === 'both' || value === 'odd') {
+            return value;
+        }
+        return DEFAULT_BACKTEST_SETTINGS.twoHourCloseParity;
+    }
+
     private resolveTradeFilterToggle(settings: Partial<BacktestSettingsData>): boolean {
         if (typeof settings.tradeFilterSettingsToggle === 'boolean') {
             return settings.tradeFilterSettingsToggle;
@@ -979,6 +992,10 @@ class SettingsManager {
         const tradeDirection = document.getElementById('tradeDirection');
         if (tradeDirection) {
             tradeDirection.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        const twoHourCloseParity = document.getElementById('twoHourCloseParity');
+        if (twoHourCloseParity) {
+            twoHourCloseParity.dispatchEvent(new Event('change', { bubbles: true }));
         }
     }
 }

@@ -8,6 +8,8 @@ import { uiManager } from "../ui-manager";
 import { chartManager } from "../chart-manager";
 import { dataManager } from "../data-manager";
 import { assetSearchService, Asset } from "../asset-search-service";
+import { finderManager } from "../finder-manager";
+import { scannerManager } from "../scanner/scanner-manager";
 
 // Debounce helper for search input
 function debounce<T extends (...args: any[]) => any>(fn: T, delay: number): (...args: Parameters<T>) => void {
@@ -642,6 +644,44 @@ export function setupEventHandlers() {
 
     strategyTimeframeToggle.addEventListener('change', applyStrategyTimeframeMode);
     applyStrategyTimeframeMode();
+
+    const twoHourCloseParity = document.getElementById('twoHourCloseParity') as HTMLSelectElement | null;
+    if (twoHourCloseParity) {
+        const resolveParityMode = (value: string): 'odd' | 'even' | 'both' => {
+            if (value === 'even' || value === 'both') return value;
+            return 'odd';
+        };
+
+        let lastAppliedParity: 'odd' | 'even' | 'both' = resolveParityMode(twoHourCloseParity.value);
+        twoHourCloseParity.addEventListener('change', () => {
+            const nextParity: 'odd' | 'even' | 'both' = resolveParityMode(twoHourCloseParity.value);
+            if (nextParity === lastAppliedParity) {
+                return;
+            }
+
+            lastAppliedParity = nextParity;
+            finderManager.clearTimeframeCache();
+            scannerManager.clearCache();
+            debugLogger.event('ui.settings.2h_close_parity', { parity: nextParity });
+
+            // During startup/config bootstrap, settings can be applied before data is loaded.
+            if (state.ohlcvData.length === 0) {
+                return;
+            }
+
+            if (nextParity === 'both') {
+                uiManager.showToast('2H parity compare mode enabled (odd + even). Run backtest to view both results.', 'info');
+                return;
+            }
+
+            void dataManager.loadData(state.currentSymbol, state.currentInterval).then(() => {
+                uiManager.showToast(`2H close parity set to ${nextParity}. Data reloaded.`, 'info');
+            }).catch((error) => {
+                console.error('Failed to reload data after parity change:', error);
+                uiManager.showToast('Failed to reload data for new 2H parity.', 'error');
+            });
+        });
+    }
 
     // Finder settings toggles
     [

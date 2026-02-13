@@ -12,7 +12,12 @@
 
 import type { Strategy, OHLCVData, Signal, StrategyParams, Time } from "./lib/strategies/index";
 import type { StrategyManifestEntry } from "./lib/strategies/manifest";
-import { getIntervalSeconds, resampleOHLCV } from "./lib/strategies/resample-utils";
+import {
+    getResampleBucketStart,
+    resampleOHLCV,
+    type ResampleOptions,
+    type TwoHourCloseParity,
+} from "./lib/strategies/resample-utils";
 export type { Strategy, OHLCVData, Signal, StrategyParams };
 
 
@@ -89,18 +94,20 @@ class StrategyRegistryImpl implements StrategyRegistry {
         return mapped;
     }
 
-    private readGlobalStrategyTfSettings(): { enabled: boolean; minutes: number } {
+    private readGlobalStrategyTfSettings(): { enabled: boolean; minutes: number; twoHourCloseParity: TwoHourCloseParity } {
         if (typeof document === 'undefined') {
-            return { enabled: false, minutes: 120 };
+            return { enabled: false, minutes: 120, twoHourCloseParity: 'odd' };
         }
 
         const toggle = document.getElementById('strategyTimeframeToggle') as HTMLInputElement | null;
         const minutesInput = document.getElementById('strategyTimeframeMinutes') as HTMLInputElement | null;
+        const parityInput = document.getElementById('twoHourCloseParity') as HTMLSelectElement | null;
 
         const enabled = toggle?.checked ?? false;
         const parsedMinutes = parseInt(minutesInput?.value ?? '120', 10);
         const minutes = Number.isFinite(parsedMinutes) ? Math.max(1, Math.floor(parsedMinutes)) : 120;
-        return { enabled, minutes };
+        const twoHourCloseParity: TwoHourCloseParity = parityInput?.value === 'even' ? 'even' : 'odd';
+        return { enabled, minutes, twoHourCloseParity };
     }
 
     private mapSignalsFromHigherTimeframe(
@@ -108,17 +115,17 @@ class StrategyRegistryImpl implements StrategyRegistry {
         numericBaseData: OHLCVData[],
         higherData: OHLCVData[],
         higherSignals: Signal[],
-        tfMinutes: number
+        tfMinutes: number,
+        resampleOptions?: ResampleOptions
     ): Signal[] {
         if (higherSignals.length === 0) return [];
 
         const interval = `${tfMinutes}m`;
-        const intervalSeconds = getIntervalSeconds(interval);
         const lastBaseIndexByBucket = new Map<number, number>();
 
         for (let i = 0; i < numericBaseData.length; i++) {
             const t = numericBaseData[i].time as number;
-            const bucketStart = Math.floor(t / intervalSeconds) * intervalSeconds;
+            const bucketStart = getResampleBucketStart(t, interval, resampleOptions);
             lastBaseIndexByBucket.set(bucketStart, i);
         }
 
@@ -137,7 +144,7 @@ class StrategyRegistryImpl implements StrategyRegistry {
             if (bucketStart === null) {
                 const signalTime = this.toUnixSeconds(signal.time);
                 if (signalTime !== null) {
-                    bucketStart = Math.floor(signalTime / intervalSeconds) * intervalSeconds;
+                    bucketStart = getResampleBucketStart(signalTime, interval, resampleOptions);
                 }
             }
 
@@ -167,7 +174,7 @@ class StrategyRegistryImpl implements StrategyRegistry {
         const wrapped: Strategy = {
             ...strategy,
             execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
-                const { enabled, minutes } = this.readGlobalStrategyTfSettings();
+                const { enabled, minutes, twoHourCloseParity } = this.readGlobalStrategyTfSettings();
                 if (!enabled || data.length === 0) {
                     return originalExecute(data, params);
                 }
@@ -178,13 +185,16 @@ class StrategyRegistryImpl implements StrategyRegistry {
                 }
 
                 const interval = `${minutes}m`;
-                const higherData = resampleOHLCV(numericData, interval);
+                const resampleOptions: ResampleOptions | undefined = minutes === 120
+                    ? { twoHourCloseParity }
+                    : undefined;
+                const higherData = resampleOHLCV(numericData, interval, resampleOptions);
                 if (higherData.length === 0) {
                     return [];
                 }
 
                 const higherSignals = originalExecute(higherData, params);
-                return this.mapSignalsFromHigherTimeframe(data, numericData, higherData, higherSignals, minutes);
+                return this.mapSignalsFromHigherTimeframe(data, numericData, higherData, higherSignals, minutes, resampleOptions);
             }
         };
 

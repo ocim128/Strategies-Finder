@@ -1,7 +1,7 @@
 
 import { Time } from "lightweight-charts";
 import { OHLCVData } from "../strategies/index";
-import { resampleOHLCV } from "../strategies/resample-utils";
+import { resampleOHLCV, type ResampleOptions } from "../strategies/resample-utils";
 import { debugLogger } from "../debug-logger";
 import { BybitTradFiKline, BybitTradFiKlineResponse, HistoricalFetchOptions } from '../types/index';
 import { getIntervalSeconds, wait } from "./utils";
@@ -243,7 +243,12 @@ function formatError(error: unknown): string {
     return String(error);
 }
 
-export async function fetchBybitTradFiData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
+export async function fetchBybitTradFiData(
+    symbol: string,
+    interval: string,
+    signal?: AbortSignal,
+    options?: ResampleOptions
+): Promise<OHLCVData[]> {
     try {
         const batches: BybitTradFiKline[][] = [];
         const { sourceInterval, needsResample } = resolveBybitTradFiInterval(interval);
@@ -269,7 +274,7 @@ export async function fetchBybitTradFiData(symbol: string, interval: string, sig
 
         const allRawData = batches.reverse().flat();
         const mapped = mapBybitTradFiToOHLCV(allRawData);
-        return needsResample ? resampleOHLCV(mapped, interval) : mapped;
+        return needsResample ? resampleOHLCV(mapped, interval, options) : mapped;
     } catch (error) {
         if (isAbortError(error)) {
             return [];
@@ -287,7 +292,7 @@ export async function fetchBybitTradFiDataWithLimit(
     symbol: string,
     interval: string,
     totalBars: number,
-    options?: HistoricalFetchOptions
+    options?: HistoricalFetchOptions & ResampleOptions
 ): Promise<OHLCVData[]> {
     try {
         const targetBars = Math.max(1, Math.floor(totalBars));
@@ -329,7 +334,7 @@ export async function fetchBybitTradFiDataWithLimit(
         const allRawData = batches.reverse().flat();
         const mapped = mapBybitTradFiToOHLCV(allRawData);
         if (needsResample) {
-            const resampled = resampleOHLCV(mapped, interval);
+            const resampled = resampleOHLCV(mapped, interval, options);
             return resampled.slice(-targetBars);
         }
         return mapped.slice(-targetBars);
@@ -349,7 +354,8 @@ export async function fetchBybitTradFiDataWithLimit(
 export async function fetchBybitTradFiLatest(
     symbol: string,
     interval: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: ResampleOptions
 ): Promise<OHLCVData | null> {
     const { sourceInterval, needsResample } = resolveBybitTradFiInterval(interval);
     const targetSeconds = getIntervalSeconds(interval);
@@ -362,7 +368,7 @@ export async function fetchBybitTradFiLatest(
     if (batch.length === 0) return null;
     const ohlcv = mapBybitTradFiToOHLCV(batch);
     if (ohlcv.length === 0) return null;
-    const updatedSeries = needsResample ? resampleOHLCV(ohlcv, interval) : ohlcv;
+    const updatedSeries = needsResample ? resampleOHLCV(ohlcv, interval, options) : ohlcv;
     return updatedSeries[updatedSeries.length - 1] ?? null;
 }
 

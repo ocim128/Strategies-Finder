@@ -1,7 +1,7 @@
 
 import { Time } from "lightweight-charts";
 import { OHLCVData } from "../strategies/index";
-import { resampleOHLCV } from "../strategies/resample-utils";
+import { resampleOHLCV, type ResampleOptions } from "../strategies/resample-utils";
 import { debugLogger } from "../debug-logger";
 import { BinanceKline, HistoricalFetchOptions } from '../types/index';
 import { getIntervalSeconds, wait } from "./utils";
@@ -19,6 +19,10 @@ export function isBinanceInterval(interval: string): boolean {
     return BINANCE_INTERVALS.has(interval);
 }
 
+function normalizeTwoHourParity(options?: ResampleOptions): 'odd' | 'even' {
+    return options?.twoHourCloseParity === 'even' ? 'even' : 'odd';
+}
+
 function parseCustomMinutes(interval: string): number | null {
     if (isBinanceInterval(interval)) return null;
     if (!interval.endsWith('m')) return null;
@@ -27,7 +31,14 @@ function parseCustomMinutes(interval: string): number | null {
     return minutes;
 }
 
-export function resolveFetchInterval(interval: string): { sourceInterval: string; needsResample: boolean } {
+export function resolveFetchInterval(
+    interval: string,
+    options?: ResampleOptions
+): { sourceInterval: string; needsResample: boolean } {
+    const intervalSeconds = getIntervalSeconds(interval);
+    if (intervalSeconds === 7200 && normalizeTwoHourParity(options) === 'even') {
+        return { sourceInterval: '1h', needsResample: true };
+    }
     if (isBinanceInterval(interval)) {
         return { sourceInterval: interval, needsResample: false };
     }
@@ -130,10 +141,15 @@ function formatError(error: unknown): string {
     return String(error);
 }
 
-export async function fetchBinanceData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
+export async function fetchBinanceData(
+    symbol: string,
+    interval: string,
+    signal?: AbortSignal,
+    options?: ResampleOptions
+): Promise<OHLCVData[]> {
     try {
         const batches: BinanceKline[][] = [];
-        const { sourceInterval, needsResample } = resolveFetchInterval(interval);
+        const { sourceInterval, needsResample } = resolveFetchInterval(interval, options);
         let endTime: number | undefined;
         let requestCount = 0;
         let totalDataLength = 0;
@@ -159,7 +175,7 @@ export async function fetchBinanceData(symbol: string, interval: string, signal?
         const mapped = mapToOHLCV(allRawData);
 
         if (needsResample) {
-            const resampled = resampleOHLCV(mapped, interval);
+            const resampled = resampleOHLCV(mapped, interval, options);
             debugLogger.info('data.resample', {
                 symbol,
                 interval,
@@ -189,11 +205,11 @@ export async function fetchBinanceDataWithLimit(
     symbol: string,
     interval: string,
     totalBars: number,
-    options?: HistoricalFetchOptions
+    options?: HistoricalFetchOptions & ResampleOptions
 ): Promise<OHLCVData[]> {
     try {
         const targetBars = Math.max(1, Math.floor(totalBars));
-        const { sourceInterval, needsResample } = resolveFetchInterval(interval);
+        const { sourceInterval, needsResample } = resolveFetchInterval(interval, options);
         const { rawLimit, ratio } = resolveRawFetchLimit(targetBars, interval, sourceInterval, needsResample);
         const batches: BinanceKline[][] = [];
         let endTime: number | undefined;
@@ -235,7 +251,7 @@ export async function fetchBinanceDataWithLimit(
         const mapped = mapToOHLCV(allRawData);
 
         if (needsResample) {
-            const resampled = resampleOHLCV(mapped, interval);
+            const resampled = resampleOHLCV(mapped, interval, options);
             return resampled.slice(-targetBars);
         }
 
@@ -257,11 +273,11 @@ export async function fetchBinanceDataAfter(
     symbol: string,
     interval: string,
     fromTimeSec: number,
-    options?: HistoricalFetchOptions
+    options?: HistoricalFetchOptions & ResampleOptions
 ): Promise<OHLCVData[]> {
     try {
         const fromSec = Math.max(0, Math.floor(fromTimeSec || 0));
-        const { sourceInterval, needsResample } = resolveFetchInterval(interval);
+        const { sourceInterval, needsResample } = resolveFetchInterval(interval, options);
         const targetSeconds = Math.max(1, getIntervalSeconds(interval));
         const sourceSeconds = Math.max(1, getIntervalSeconds(sourceInterval));
         const overlapSeconds = Math.max(targetSeconds, sourceSeconds);
@@ -297,7 +313,7 @@ export async function fetchBinanceDataAfter(
         }
 
         const mapped = mapToOHLCV(batches.flat());
-        const resampled = needsResample ? resampleOHLCV(mapped, interval) : mapped;
+        const resampled = needsResample ? resampleOHLCV(mapped, interval, options) : mapped;
         return resampled.filter(bar => Number(bar.time) >= (fromSec - targetSeconds));
     } catch (error) {
         if (isAbortError(error)) {

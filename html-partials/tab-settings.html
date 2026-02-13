@@ -340,6 +340,17 @@
                     <div class="param-hint">Example: chart 5m + strategy 120m.</div>
                 </div>
             </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label">2H Close-Hour Parity</label>
+                    <select class="param-input" id="twoHourCloseParity">
+                        <option value="odd" selected>Odd Close Hour (default)</option>
+                        <option value="even">Even Close Hour (+1h phase)</option>
+                        <option value="both">Both (run odd + even compare)</option>
+                    </select>
+                    <div class="param-hint">Controls 2H bucket alignment for chart/fetch/resample paths. Both keeps chart data unchanged and runs two independent backtests for comparison.</div>
+                </div>
+            </div>
             <div class="param-hint">Realism settings use the TypeScript engine (Rust skipped for accuracy).</div>
         </div>
     </div>

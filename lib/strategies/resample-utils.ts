@@ -1,6 +1,12 @@
 
 import { OHLCVData, Time } from '../types/strategies';
 
+export type TwoHourCloseParity = 'odd' | 'even';
+
+export interface ResampleOptions {
+    twoHourCloseParity?: TwoHourCloseParity;
+}
+
 /**
  * Gets the number of seconds for a given interval string (e.g., '1m', '1h', '1d').
  */
@@ -16,11 +22,35 @@ export function getIntervalSeconds(interval: string): number {
     }
 }
 
+function normalizeTwoHourCloseParity(options?: ResampleOptions): TwoHourCloseParity {
+    return options?.twoHourCloseParity === 'even' ? 'even' : 'odd';
+}
+
+export function getResampleBucketStart(
+    time: number,
+    targetInterval: string,
+    options?: ResampleOptions
+): number {
+    const intervalSeconds = getIntervalSeconds(targetInterval);
+    if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
+        return Math.floor(time);
+    }
+
+    // 2H can be bucketed into odd/even close-hour universes by shifting 1 hour.
+    const parity = normalizeTwoHourCloseParity(options);
+    const phaseOffsetSeconds = intervalSeconds === 7200 && parity === 'even' ? 3600 : 0;
+    return Math.floor((time - phaseOffsetSeconds) / intervalSeconds) * intervalSeconds + phaseOffsetSeconds;
+}
+
 /**
  * Resamples OHLCV data to a higher timeframe.
  * The output times are aligned to the start of the period.
  */
-export function resampleOHLCV(data: OHLCVData[], targetInterval: string): OHLCVData[] {
+export function resampleOHLCV(
+    data: OHLCVData[],
+    targetInterval: string,
+    options?: ResampleOptions
+): OHLCVData[] {
     if (data.length === 0) return [];
 
     // Infer source interval from data if possible, otherwise assume smaller than target
@@ -41,7 +71,7 @@ export function resampleOHLCV(data: OHLCVData[], targetInterval: string): OHLCVD
 
     for (const bar of data) {
         const time = typeof bar.time === 'number' ? bar.time : 0;
-        const periodStart = Math.floor(time / targetIntervalSeconds) * targetIntervalSeconds;
+        const periodStart = getResampleBucketStart(time, targetInterval, options);
 
         if (periodStart !== currentPeriodStart) {
             if (currentBar) {
@@ -74,9 +104,8 @@ export function resampleOHLCV(data: OHLCVData[], targetInterval: string): OHLCVD
 /**
  * Maps a base timeframe timestamp to its corresponding higher timeframe timestamp.
  */
-export function mapToBaseTimeframe(time: number, higherInterval: string): number {
-    const intervalSeconds = getIntervalSeconds(higherInterval);
-    return Math.floor(time / intervalSeconds) * intervalSeconds;
+export function mapToBaseTimeframe(time: number, higherInterval: string, options?: ResampleOptions): number {
+    return getResampleBucketStart(time, higherInterval, options);
 }
 
 

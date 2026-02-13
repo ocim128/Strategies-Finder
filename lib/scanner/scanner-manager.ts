@@ -135,6 +135,13 @@ export class ScannerManager {
     }
 
     /**
+     * Clear internal scanner caches to force fresh data/strategy evaluation.
+     */
+    clearCache(): void {
+        scannerEngine.clearCache();
+    }
+
+    /**
      * Enable/disable auto-refresh
      */
     setAutoRefresh(enabled: boolean, intervalMs?: number): void {

@@ -199,6 +199,10 @@
     }
 
     /* Stack stats on mobile */
+    .parity-compare-grid {
+        grid-template-columns: 1fr;
+    }
+
     .stats-grid {
         grid-template-columns: 1fr;
     }
@@ -221,6 +225,10 @@
     }
 
     /* Trades list adjustments */
+    .trades-parity-grid {
+        grid-template-columns: 1fr;
+    }
+
     .trade-item {
         padding: var(--space-3);
     }
