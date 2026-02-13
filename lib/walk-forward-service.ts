@@ -1,12 +1,14 @@
 import { state } from "./state";
 import { chartManager } from "./chart-manager";
 import { uiManager } from "./ui-manager";
+import { dataManager } from "./data-manager";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
 import { backtestService } from "./backtest-service";
 import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
+import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
 import { runBacktestCompact } from "./strategies/backtest";
 import type { Strategy, StrategyParams, BacktestSettings, OHLCVData } from "./strategies/index";
 import {
@@ -27,6 +29,20 @@ import {
 
 class WalkForwardService {
     private lastResult: WalkForwardResult | null = null;
+    private lastPreparedDataContext: string | null = null;
+
+    private async ensureDataReadyForCurrentContext(): Promise<OHLCVData[]> {
+        const contextKey = `${state.currentSymbol}|${state.currentInterval}`;
+        const needsRefresh = state.ohlcvData.length === 0 || this.lastPreparedDataContext !== contextKey;
+        if (!needsRefresh) {
+            return state.ohlcvData;
+        }
+
+        this.updateStatus('Syncing data for selected symbol/interval...');
+        await dataManager.loadData(state.currentSymbol, state.currentInterval);
+        this.lastPreparedDataContext = contextKey;
+        return state.ohlcvData;
+    }
 
     private estimateWindowCount(totalBars: number, optimizationWindow: number, testWindow: number, stepSize: number): number {
         if (totalBars <= 0 || optimizationWindow <= 0 || testWindow <= 0 || stepSize <= 0) return 0;
@@ -187,7 +203,7 @@ class WalkForwardService {
      * Run walk-forward analysis with current strategy and data
      */
     async runAnalysis(): Promise<WalkForwardResult | null> {
-        const data = state.ohlcvData;
+        const data = await this.ensureDataReadyForCurrentContext();
         if (!data || data.length === 0) {
             debugLogger.error('No data loaded for walk-forward analysis');
             return null;
@@ -350,7 +366,7 @@ class WalkForwardService {
      * Quick analysis with auto-detected settings
      */
     async runQuickAnalysis(): Promise<WalkForwardResult | null> {
-        const data = state.ohlcvData;
+        const data = await this.ensureDataReadyForCurrentContext();
         if (!data || data.length === 0) {
             debugLogger.error('No data loaded for walk-forward analysis');
             return null;
@@ -528,69 +544,12 @@ class WalkForwardService {
 
 
     private toRustBacktestSettings(settings: BacktestSettings): BacktestSettings {
-        const rustSettings: BacktestSettings = { ...settings };
-        delete (rustSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
-        delete (rustSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
-        delete (rustSettings as { executionModel?: string }).executionModel;
-        delete (rustSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
-        delete (rustSettings as { slippageBps?: number }).slippageBps;
-        delete (rustSettings as { marketMode?: string }).marketMode;
-        delete (rustSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
-        delete (rustSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
-        delete (rustSettings as { captureSnapshots?: boolean }).captureSnapshots;
-        delete (rustSettings as { snapshotAtrPercentMin?: number }).snapshotAtrPercentMin;
-        delete (rustSettings as { snapshotAtrPercentMax?: number }).snapshotAtrPercentMax;
-        delete (rustSettings as { snapshotVolumeRatioMin?: number }).snapshotVolumeRatioMin;
-        delete (rustSettings as { snapshotVolumeRatioMax?: number }).snapshotVolumeRatioMax;
-        delete (rustSettings as { snapshotAdxMin?: number }).snapshotAdxMin;
-        delete (rustSettings as { snapshotAdxMax?: number }).snapshotAdxMax;
-        delete (rustSettings as { snapshotEmaDistanceMin?: number }).snapshotEmaDistanceMin;
-        delete (rustSettings as { snapshotEmaDistanceMax?: number }).snapshotEmaDistanceMax;
-        delete (rustSettings as { snapshotRsiMin?: number }).snapshotRsiMin;
-        delete (rustSettings as { snapshotRsiMax?: number }).snapshotRsiMax;
-        delete (rustSettings as { snapshotPriceRangePosMin?: number }).snapshotPriceRangePosMin;
-        delete (rustSettings as { snapshotPriceRangePosMax?: number }).snapshotPriceRangePosMax;
-        delete (rustSettings as { snapshotBarsFromHighMax?: number }).snapshotBarsFromHighMax;
-        delete (rustSettings as { snapshotBarsFromLowMax?: number }).snapshotBarsFromLowMax;
-        delete (rustSettings as { snapshotTrendEfficiencyMin?: number }).snapshotTrendEfficiencyMin;
-        delete (rustSettings as { snapshotTrendEfficiencyMax?: number }).snapshotTrendEfficiencyMax;
-        delete (rustSettings as { snapshotAtrRegimeRatioMin?: number }).snapshotAtrRegimeRatioMin;
-        delete (rustSettings as { snapshotAtrRegimeRatioMax?: number }).snapshotAtrRegimeRatioMax;
-        delete (rustSettings as { snapshotBodyPercentMin?: number }).snapshotBodyPercentMin;
-        delete (rustSettings as { snapshotBodyPercentMax?: number }).snapshotBodyPercentMax;
-        delete (rustSettings as { snapshotWickSkewMin?: number }).snapshotWickSkewMin;
-        delete (rustSettings as { snapshotWickSkewMax?: number }).snapshotWickSkewMax;
-        delete (rustSettings as { snapshotVolumeTrendMin?: number }).snapshotVolumeTrendMin;
-        delete (rustSettings as { snapshotVolumeTrendMax?: number }).snapshotVolumeTrendMax;
-        delete (rustSettings as { snapshotVolumeBurstMin?: number }).snapshotVolumeBurstMin;
-        delete (rustSettings as { snapshotVolumeBurstMax?: number }).snapshotVolumeBurstMax;
-        delete (rustSettings as { snapshotVolumePriceDivergenceMin?: number }).snapshotVolumePriceDivergenceMin;
-        delete (rustSettings as { snapshotVolumePriceDivergenceMax?: number }).snapshotVolumePriceDivergenceMax;
-        delete (rustSettings as { snapshotVolumeConsistencyMin?: number }).snapshotVolumeConsistencyMin;
-        delete (rustSettings as { snapshotVolumeConsistencyMax?: number }).snapshotVolumeConsistencyMax;
-        delete (rustSettings as { snapshotCloseLocationMin?: number }).snapshotCloseLocationMin;
-        delete (rustSettings as { snapshotCloseLocationMax?: number }).snapshotCloseLocationMax;
-        delete (rustSettings as { snapshotOppositeWickMin?: number }).snapshotOppositeWickMin;
-        delete (rustSettings as { snapshotOppositeWickMax?: number }).snapshotOppositeWickMax;
-        delete (rustSettings as { snapshotRangeAtrMultipleMin?: number }).snapshotRangeAtrMultipleMin;
-        delete (rustSettings as { snapshotRangeAtrMultipleMax?: number }).snapshotRangeAtrMultipleMax;
-        delete (rustSettings as { snapshotMomentumConsistencyMin?: number }).snapshotMomentumConsistencyMin;
-        delete (rustSettings as { snapshotMomentumConsistencyMax?: number }).snapshotMomentumConsistencyMax;
-        delete (rustSettings as { snapshotBreakQualityMin?: number }).snapshotBreakQualityMin;
-        delete (rustSettings as { snapshotBreakQualityMax?: number }).snapshotBreakQualityMax;
-        delete (rustSettings as { snapshotTf60PerfMin?: number }).snapshotTf60PerfMin;
-        delete (rustSettings as { snapshotTf60PerfMax?: number }).snapshotTf60PerfMax;
-        delete (rustSettings as { snapshotTf90PerfMin?: number }).snapshotTf90PerfMin;
-        delete (rustSettings as { snapshotTf90PerfMax?: number }).snapshotTf90PerfMax;
-        delete (rustSettings as { snapshotTf120PerfMin?: number }).snapshotTf120PerfMin;
-        delete (rustSettings as { snapshotTf120PerfMax?: number }).snapshotTf120PerfMax;
-        delete (rustSettings as { snapshotTf480PerfMin?: number }).snapshotTf480PerfMin;
-        delete (rustSettings as { snapshotTf480PerfMax?: number }).snapshotTf480PerfMax;
-        delete (rustSettings as { snapshotTfConfluencePerfMin?: number }).snapshotTfConfluencePerfMin;
-        delete (rustSettings as { snapshotTfConfluencePerfMax?: number }).snapshotTfConfluencePerfMax;
-        delete (rustSettings as { snapshotEntryQualityScoreMin?: number }).snapshotEntryQualityScoreMin;
-        delete (rustSettings as { snapshotEntryQualityScoreMax?: number }).snapshotEntryQualityScoreMax;
-        return rustSettings;
+        const sanitized = sanitizeBacktestSettingsForRust(settings);
+        // Preserve 2H parity in walk-forward requests to keep prior tuning behavior.
+        if (settings.twoHourCloseParity) {
+            sanitized.twoHourCloseParity = settings.twoHourCloseParity;
+        }
+        return sanitized;
     }
 
     private toRustWalkForwardConfig(config: WalkForwardConfig): {

@@ -35,6 +35,11 @@ import {
     storeSqliteCandles,
 } from "./local-sqlite-api";
 import type { ResampleOptions, TwoHourCloseParity } from "./strategies/resample-utils";
+import {
+    DATA_CACHE_SYNC_MIN_MS,
+    DATA_CHART_TOTAL_LIMIT,
+    DATA_MAX_RECONNECT_ATTEMPTS,
+} from "./data/constants";
 
 type DataProvider = 'binance' | 'bybit-tradfi';
 
@@ -56,15 +61,12 @@ export class DataManager {
     // Stream reconnection state
     private reconnectAttempts: number = 0;
     private reconnectTimeout: any = null;
-    private readonly MAX_RECONNECT_ATTEMPTS = 5;
     private readonly RECONNECT_DELAY_BASE = 1000;
 
     // UI update throttling
     private lastLogTime: number = 0;
     private lastUiUpdateTime: number = 0;
-    private readonly TOTAL_LIMIT = 50000;
     private chartLookbackBars: number | null = null;
-    private readonly CACHE_SYNC_MIN_MS = 30000;
     private readonly STREAM_PERSIST_DELAY_MS = 1200;
     private cacheSyncAtByKey: Map<string, number> = new Map();
     private cachePersistTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
@@ -93,7 +95,7 @@ export class DataManager {
             this.chartLookbackBars = null;
             return;
         }
-        this.chartLookbackBars = Math.max(200, Math.min(this.TOTAL_LIMIT, Math.floor(lookbackBars)));
+        this.chartLookbackBars = Math.max(200, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(lookbackBars)));
     }
 
     public getChartLookbackBars(): number | null {
@@ -159,14 +161,14 @@ export class DataManager {
             if (signal?.aborted) return [];
             const mockData = generateMockData(symbol, interval);
             const maxBars = Number.isFinite(lookbackBars)
-                ? Math.max(200, Math.min(this.TOTAL_LIMIT, Math.floor(lookbackBars!)))
+                ? Math.max(200, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(lookbackBars!)))
                 : 1000;
             return mockData.slice(-maxBars);
         }
 
         const provider = this.getProvider(symbol);
         const maxBars = Number.isFinite(lookbackBars)
-            ? Math.max(200, Math.min(this.TOTAL_LIMIT, Math.floor(lookbackBars!)))
+            ? Math.max(200, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(lookbackBars!)))
             : 1000;
         const resampleOptions = this.getResampleOptions(interval);
         if (provider === 'binance') {
@@ -375,8 +377,8 @@ export class DataManager {
         const requestedMaxBars = options?.maxBars;
         const hasMaxBars = typeof requestedMaxBars === 'number' && Number.isFinite(requestedMaxBars);
         const effectiveMaxBars = hasMaxBars
-            ? Math.max(1, Math.min(this.TOTAL_LIMIT, Math.floor(requestedMaxBars)))
-            : this.TOTAL_LIMIT;
+            ? Math.max(1, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(requestedMaxBars)))
+            : DATA_CHART_TOTAL_LIMIT;
         const normalizedInterval = interval.trim().toLowerCase();
         const twoHourCloseParity = this.getTwoHourCloseParity();
         const requiresEven2hAlignment = getIntervalSeconds(normalizedInterval) === 7200 && twoHourCloseParity === 'even';
@@ -423,7 +425,7 @@ export class DataManager {
 
         const now = Date.now();
         const lastSyncAt = this.cacheSyncAtByKey.get(cacheKey) ?? 0;
-        const recentlySynced = now - lastSyncAt < this.CACHE_SYNC_MIN_MS;
+        const recentlySynced = now - lastSyncAt < DATA_CACHE_SYNC_MIN_MS;
         const hasCachedData = Boolean(cached && cached.candles.length > 0);
         const localOnlyIfPresent = Boolean(options?.localOnlyIfPresent);
 
@@ -511,8 +513,8 @@ export class DataManager {
                 this.cachePersistPendingByKey.delete(cacheKey);
                 if (!pending || pending.candles.length === 0) return;
 
-                const snapshot = pending.candles.length > this.TOTAL_LIMIT
-                    ? pending.candles.slice(-this.TOTAL_LIMIT)
+                const snapshot = pending.candles.length > DATA_CHART_TOTAL_LIMIT
+                    ? pending.candles.slice(-DATA_CHART_TOTAL_LIMIT)
                     : pending.candles.slice();
                 const delta = snapshot.slice(-2);
                 const sqliteResult = await storeSqliteCandles(
@@ -523,7 +525,7 @@ export class DataManager {
                     'stream'
                 );
                 const lastSync = this.cacheSyncAtByKey.get(cacheKey) ?? 0;
-                const shouldPersistSnapshot = !sqliteResult || (Date.now() - lastSync >= this.CACHE_SYNC_MIN_MS);
+                const shouldPersistSnapshot = !sqliteResult || (Date.now() - lastSync >= DATA_CACHE_SYNC_MIN_MS);
                 if (shouldPersistSnapshot) {
                     await saveCachedCandles(pending.symbol, pending.storageInterval, snapshot, 'stream');
                 }
@@ -585,7 +587,7 @@ export class DataManager {
     }
 
     private attemptReconnect(): void {
-        if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
+        if (this.reconnectAttempts >= DATA_MAX_RECONNECT_ATTEMPTS) {
             debugLogger.error('data.stream.max_reconnects', { attempts: this.reconnectAttempts });
             return;
         }
@@ -686,7 +688,7 @@ export class DataManager {
         const currentData = state.ohlcvData;
         let changed = false;
         if (currentData.length === 0) {
-            (state as any).ohlcvData = [updatedCandle];
+            state.set('ohlcvData', [updatedCandle]);
             changed = true;
         } else {
             const lastCandle = currentData[currentData.length - 1];
@@ -695,7 +697,7 @@ export class DataManager {
                 changed = true;
             } else if (updatedCandle.time > lastCandle.time) {
                 currentData.push(updatedCandle);
-                const activeLimit = this.chartLookbackBars ?? this.TOTAL_LIMIT;
+                const activeLimit = this.chartLookbackBars ?? DATA_CHART_TOTAL_LIMIT;
                 if (currentData.length > activeLimit) {
                     const overflow = currentData.length - activeLimit;
                     currentData.splice(0, overflow);
@@ -706,7 +708,7 @@ export class DataManager {
 
         if (!changed) return;
 
-        const persistedData = (state as any).ohlcvData as OHLCVData[];
+        const persistedData = state.ohlcvData;
         const persistSymbol = this.streamSymbol || state.currentSymbol;
         const persistInterval = this.streamInterval || state.currentInterval;
         this.queuePersistCandles(persistSymbol, persistInterval, persistedData);

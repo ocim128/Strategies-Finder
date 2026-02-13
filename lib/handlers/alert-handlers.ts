@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Alert Handlers - wires up the Alerts tab UI to the alert service.
  */
 
@@ -20,10 +20,8 @@ import { settingsManager } from '../settings-manager';
 import { dataManager } from '../data-manager';
 import { Trade, BacktestSettings, Time } from '../strategies/index';
 import { formatJakartaTime, isBusinessDayTime } from '../timezone-utils';
-
-function el<T extends HTMLElement>(id: string): T | null {
-    return document.getElementById(id) as T | null;
-}
+import { getOptionalElement } from '../dom-utils';
+import { parseTimeToUnixSeconds } from '../time-normalization';
 
 function safeJsonParse<T>(raw: string, fallback: T): T {
     try {
@@ -73,7 +71,7 @@ function resolveCurrentConfigName(
         stableStringify(config.strategyParams) === targetParams &&
         stableStringify(config.backtestSettings) === targetSettings;
 
-    const configSelect = el<HTMLSelectElement>('configSelect');
+    const configSelect = getOptionalElement<HTMLSelectElement>('configSelect');
     const selected = configSelect?.value?.trim();
     const allConfigs = settingsManager.loadAllStrategyConfigs();
 
@@ -153,7 +151,7 @@ function getIntervalSeconds(interval: string): number {
 }
 
 function resolveParityModeFromUi(): 'odd' | 'even' | 'both' {
-    const select = el<HTMLSelectElement>('twoHourCloseParity');
+    const select = getOptionalElement<HTMLSelectElement>('twoHourCloseParity');
     if (select?.value === 'even' || select?.value === 'both') return select.value;
     return 'odd';
 }
@@ -210,7 +208,7 @@ async function withTemporaryTwoHourParitySelection<T>(
         return task();
     }
 
-    const select = el<HTMLSelectElement>('twoHourCloseParity');
+    const select = getOptionalElement<HTMLSelectElement>('twoHourCloseParity');
     if (!select) {
         return task();
     }
@@ -295,14 +293,14 @@ function collectEnabledSnapshotFilterLines(settings: Record<string, unknown>): s
 }
 
 function closeAlertConfigModal(): void {
-    const overlay = el<HTMLElement>('alertConfigModal');
+    const overlay = getOptionalElement<HTMLElement>('alertConfigModal');
     if (overlay) overlay.classList.remove('active');
 }
 
 function openSubscriptionInfoModal(sub: AlertSubscription, configName: string | null): void {
-    const overlay = el<HTMLElement>('alertConfigModal');
-    const titleEl = el<HTMLElement>('alertConfigModalTitle');
-    const bodyEl = el<HTMLElement>('alertConfigModalBody');
+    const overlay = getOptionalElement<HTMLElement>('alertConfigModal');
+    const titleEl = getOptionalElement<HTMLElement>('alertConfigModalTitle');
+    const bodyEl = getOptionalElement<HTMLElement>('alertConfigModalBody');
     if (!overlay || !titleEl || !bodyEl) return;
 
     const settings = safeJsonParse<Record<string, unknown>>(sub.backtest_settings_json, {});
@@ -410,10 +408,10 @@ function createActionButton(
 }
 
 function renderSubscriptions(subs: AlertSubscription[]) {
-    const emptyState = el('alertEmptyState');
-    const tableWrapper = el('alertTableWrapper');
-    const tbody = el<HTMLTableSectionElement>('alertTableBody');
-    const historySelect = el<HTMLSelectElement>('alertHistoryStreamSelect');
+    const emptyState = getOptionalElement('alertEmptyState');
+    const tableWrapper = getOptionalElement('alertTableWrapper');
+    const tbody = getOptionalElement<HTMLTableSectionElement>('alertTableBody');
+    const historySelect = getOptionalElement<HTMLSelectElement>('alertHistoryStreamSelect');
 
     if (!tbody) return;
 
@@ -485,9 +483,9 @@ function renderSubscriptions(subs: AlertSubscription[]) {
 }
 
 function renderSignalHistory(signals: AlertSignalRecord[]) {
-    const wrapper = el('alertHistoryWrapper');
-    const empty = el('alertHistoryEmpty');
-    const tbody = el<HTMLTableSectionElement>('alertHistoryBody');
+    const wrapper = getOptionalElement('alertHistoryWrapper');
+    const empty = getOptionalElement('alertHistoryEmpty');
+    const tbody = getOptionalElement<HTMLTableSectionElement>('alertHistoryBody');
     if (!tbody) return;
 
     if (signals.length === 0) {
@@ -522,8 +520,8 @@ function renderSignalHistory(signals: AlertSignalRecord[]) {
 }
 
 async function testConnection() {
-    const dot = el('alertStatusDot');
-    const msg = el('alertStatusMsg');
+    const dot = getOptionalElement('alertStatusDot');
+    const msg = getOptionalElement('alertStatusMsg');
 
     if (dot) {
         dot.className = 'alert-status-dot alert-status-checking';
@@ -571,9 +569,9 @@ function collectCurrentStrategyParams(): Record<string, number> {
 }
 
 async function quickSubscribe() {
-    const telegramToggle = el<HTMLInputElement>('alertTelegramToggle');
-    const exitToggle = el<HTMLInputElement>('alertExitToggle');
-    const freshnessBarsInput = el<HTMLInputElement>('alertFreshnessBars');
+    const telegramToggle = getOptionalElement<HTMLInputElement>('alertTelegramToggle');
+    const exitToggle = getOptionalElement<HTMLInputElement>('alertExitToggle');
+    const freshnessBarsInput = getOptionalElement<HTMLInputElement>('alertFreshnessBars');
 
     const symbol = state.currentSymbol;
     const interval = state.currentInterval;
@@ -729,7 +727,7 @@ async function handleTableAction(action: string, streamId: string) {
 }
 
 async function loadSignalHistory() {
-    const select = el<HTMLSelectElement>('alertHistoryStreamSelect');
+    const select = getOptionalElement<HTMLSelectElement>('alertHistoryStreamSelect');
     const streamId = select?.value;
     if (!streamId) {
         uiManager.showToast('Select a subscription first.', 'error');
@@ -745,21 +743,21 @@ async function loadSignalHistory() {
 
 // Last Trade Modal Functions
 function closeLastTradeModal(): void {
-    const overlay = el<HTMLElement>('lastTradeModal');
+    const overlay = getOptionalElement<HTMLElement>('lastTradeModal');
     if (overlay) overlay.classList.remove('active');
 }
 
 function openLastTradeModal(title: string): void {
-    const overlay = el<HTMLElement>('lastTradeModal');
-    const titleEl = el<HTMLElement>('lastTradeModalTitle');
+    const overlay = getOptionalElement<HTMLElement>('lastTradeModal');
+    const titleEl = getOptionalElement<HTMLElement>('lastTradeModalTitle');
     if (!overlay || !titleEl) return;
     
     titleEl.textContent = title;
     
     // Reset to loading state
-    const loadingEl = el<HTMLElement>('lastTradeLoading');
-    const contentEl = el<HTMLElement>('lastTradeContent');
-    const errorEl = el<HTMLElement>('lastTradeError');
+    const loadingEl = getOptionalElement<HTMLElement>('lastTradeLoading');
+    const contentEl = getOptionalElement<HTMLElement>('lastTradeContent');
+    const errorEl = getOptionalElement<HTMLElement>('lastTradeError');
     
     if (loadingEl) loadingEl.style.display = '';
     if (contentEl) contentEl.style.display = 'none';
@@ -769,9 +767,9 @@ function openLastTradeModal(title: string): void {
 }
 
 function showLastTradeError(message: string): void {
-    const loadingEl = el<HTMLElement>('lastTradeLoading');
-    const contentEl = el<HTMLElement>('lastTradeContent');
-    const errorEl = el<HTMLElement>('lastTradeError');
+    const loadingEl = getOptionalElement<HTMLElement>('lastTradeLoading');
+    const contentEl = getOptionalElement<HTMLElement>('lastTradeContent');
+    const errorEl = getOptionalElement<HTMLElement>('lastTradeError');
     const errorMsgEl = errorEl?.querySelector('.error-message');
     
     if (loadingEl) loadingEl.style.display = 'none';
@@ -780,23 +778,33 @@ function showLastTradeError(message: string): void {
     if (errorMsgEl) errorMsgEl.textContent = message;
 }
 
+function toEpochMs(value: unknown): number | null {
+    const unixSeconds = parseTimeToUnixSeconds(value);
+    return unixSeconds === null ? null : unixSeconds * 1000;
+}
+
+function isBusinessDayValue(value: unknown): value is Time {
+    if (typeof value === 'object' && value !== null && 'year' in value) {
+        return true;
+    }
+    return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
 function formatTimeForDisplay(time: unknown): string {
     if (time == null) return 'N/A';
+    const unixSeconds = parseTimeToUnixSeconds(time);
+    if (unixSeconds === null) return 'N/A';
+    const displayTime: Time = isBusinessDayValue(time) ? time : (unixSeconds as Time);
 
-    if (typeof time !== 'number' && typeof time !== 'string' && (typeof time !== 'object' || !('year' in time))) {
-        return 'N/A';
-    }
-
-    const value = time as Time;
-    if (isBusinessDayTime(value)) {
-        return formatJakartaTime(value, {
+    if (isBusinessDayTime(displayTime)) {
+        return formatJakartaTime(displayTime, {
             month: 'short',
             day: 'numeric',
             year: 'numeric',
         });
     }
 
-    return formatJakartaTime(value, {
+    return formatJakartaTime(displayTime, {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
@@ -808,36 +816,18 @@ function formatTimeForDisplay(time: unknown): string {
 
 function formatDurationForTradeTimes(entryTime: unknown, exitTime: unknown): string {
     if (entryTime == null || exitTime == null) return '-';
-    
-    let entryMs: number;
-    if (typeof entryTime === 'number') {
-        entryMs = entryTime > 1e11 ? entryTime : entryTime * 1000;
-    } else if (typeof entryTime === 'object' && 'year' in entryTime) {
-        const bd = entryTime as { year: number; month: number; day: number };
-        entryMs = Date.UTC(bd.year, bd.month - 1, bd.day);
-    } else {
-        entryMs = typeof entryTime === 'string' ? new Date(entryTime).getTime() : Date.now();
-    }
-    
-    let exitMs: number;
-    if (typeof exitTime === 'number') {
-        exitMs = exitTime > 1e11 ? exitTime : exitTime * 1000;
-    } else if (typeof exitTime === 'object' && 'year' in exitTime) {
-        const bd = exitTime as { year: number; month: number; day: number };
-        exitMs = Date.UTC(bd.year, bd.month - 1, bd.day);
-    } else {
-        exitMs = typeof exitTime === 'string' ? new Date(exitTime).getTime() : Date.now();
-    }
-    
+    const entryMs = toEpochMs(entryTime);
+    const exitMs = toEpochMs(exitTime);
+    if (entryMs === null || exitMs === null) return '-';
     return formatDuration(exitMs - entryMs);
 }
 
 function showLastTradeResult(trade: Trade | null, symbol: string, interval: string, totalTrades: number): void {
-    const loadingEl = el<HTMLElement>('lastTradeLoading');
-    const contentEl = el<HTMLElement>('lastTradeContent');
-    const errorEl = el<HTMLElement>('lastTradeError');
-    const summaryEl = el<HTMLElement>('lastTradeSummary');
-    const detailsEl = el<HTMLElement>('lastTradeDetails');
+    const loadingEl = getOptionalElement<HTMLElement>('lastTradeLoading');
+    const contentEl = getOptionalElement<HTMLElement>('lastTradeContent');
+    const errorEl = getOptionalElement<HTMLElement>('lastTradeError');
+    const summaryEl = getOptionalElement<HTMLElement>('lastTradeSummary');
+    const detailsEl = getOptionalElement<HTMLElement>('lastTradeDetails');
     
     if (loadingEl) loadingEl.style.display = 'none';
     if (errorEl) errorEl.style.display = 'none';
@@ -983,7 +973,7 @@ async function handleLastTradeAction(streamId: string): Promise<void> {
 }
 
 export function initAlertHandlers() {
-    const urlInput = el<HTMLInputElement>('alertWorkerUrl');
+    const urlInput = getOptionalElement<HTMLInputElement>('alertWorkerUrl');
     if (urlInput) {
         urlInput.value = alertService.getWorkerUrl();
         urlInput.addEventListener('change', () => {
@@ -991,11 +981,11 @@ export function initAlertHandlers() {
         });
     }
 
-    el('alertTestBtn')?.addEventListener('click', testConnection);
-    el('alertQuickSubscribeBtn')?.addEventListener('click', quickSubscribe);
-    el('alertRefreshBtn')?.addEventListener('click', refreshSubscriptions);
+    getOptionalElement('alertTestBtn')?.addEventListener('click', testConnection);
+    getOptionalElement('alertQuickSubscribeBtn')?.addEventListener('click', quickSubscribe);
+    getOptionalElement('alertRefreshBtn')?.addEventListener('click', refreshSubscriptions);
 
-    el('alertTableBody')?.addEventListener('click', (e) => {
+    getOptionalElement('alertTableBody')?.addEventListener('click', (e) => {
         const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.alert-action-btn');
         if (!btn) return;
         const action = btn.dataset.action;
@@ -1003,20 +993,20 @@ export function initAlertHandlers() {
         if (action && streamId) void handleTableAction(action, streamId);
     });
 
-    el('alertHistoryLoadBtn')?.addEventListener('click', () => {
+    getOptionalElement('alertHistoryLoadBtn')?.addEventListener('click', () => {
         void loadSignalHistory();
     });
 
-    el('alertConfigModalClose')?.addEventListener('click', closeAlertConfigModal);
-    el('alertConfigModal')?.addEventListener('click', (e) => {
+    getOptionalElement('alertConfigModalClose')?.addEventListener('click', closeAlertConfigModal);
+    getOptionalElement('alertConfigModal')?.addEventListener('click', (e) => {
         if (e.target === e.currentTarget) {
             closeAlertConfigModal();
         }
     });
 
     // Last Trade Modal event listeners
-    el('lastTradeModalClose')?.addEventListener('click', closeLastTradeModal);
-    el('lastTradeModal')?.addEventListener('click', (e) => {
+    getOptionalElement('lastTradeModalClose')?.addEventListener('click', closeLastTradeModal);
+    getOptionalElement('lastTradeModal')?.addEventListener('click', (e) => {
         if (e.target === e.currentTarget) {
             closeLastTradeModal();
         }
@@ -1031,7 +1021,7 @@ export function initAlertHandlers() {
     const observer = new MutationObserver((mutations) => {
         for (const m of mutations) {
             if (m.attributeName === 'style') {
-                const tab = el('alertsTab');
+                const tab = getOptionalElement('alertsTab');
                 if (tab && tab.style.display !== 'none') {
                     void refreshSubscriptions();
                     break;
@@ -1040,8 +1030,9 @@ export function initAlertHandlers() {
         }
     });
 
-    const alertsTab = el('alertsTab');
+    const alertsTab = getOptionalElement('alertsTab');
     if (alertsTab) {
         observer.observe(alertsTab, { attributes: true, attributeFilter: ['style'] });
     }
 }
+

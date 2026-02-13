@@ -3,6 +3,7 @@ import { Time } from "lightweight-charts";
 import { OHLCVData } from "../strategies/index";
 import { resampleOHLCV, type ResampleOptions } from "../strategies/resample-utils";
 import { debugLogger } from "../debug-logger";
+import { DATA_PROVIDER_TOTAL_LIMIT } from "../data/constants";
 import { BinanceKline, HistoricalFetchOptions } from '../types/index';
 import { getIntervalSeconds, wait } from "./utils";
 import {
@@ -13,7 +14,6 @@ import {
 } from "./fetch-helpers";
 
 const LIMIT_PER_REQUEST = 1000;
-const TOTAL_LIMIT = 30000;
 const MAX_REQUESTS = 15;
 const BINANCE_INTERVALS = new Set([
     '1m', '3m', '5m', '15m', '30m',
@@ -116,9 +116,9 @@ export async function fetchBinanceData(
         let requestCount = 0;
         let totalDataLength = 0;
 
-        while (totalDataLength < TOTAL_LIMIT && requestCount < MAX_REQUESTS) {
+        while (totalDataLength < DATA_PROVIDER_TOTAL_LIMIT && requestCount < MAX_REQUESTS) {
             if (signal?.aborted) return [];
-            const remaining = TOTAL_LIMIT - totalDataLength;
+            const remaining = DATA_PROVIDER_TOTAL_LIMIT - totalDataLength;
             const limit = Math.min(remaining, LIMIT_PER_REQUEST);
 
             const data = await fetchKlinesBatch(symbol, sourceInterval, limit, { endTime, signal });

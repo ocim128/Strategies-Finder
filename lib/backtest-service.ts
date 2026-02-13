@@ -16,7 +16,6 @@ import {
     PostEntryPathOpenTradeProbability,
     Trade,
     timeKey,
-    timeToNumber,
 } from "./strategies/index";
 import type { OHLCVData, Strategy } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
@@ -27,6 +26,9 @@ import { shouldUseRustEngine } from "./engine-preferences";
 import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth, getConfirmationStrategyParams, getConfirmationStrategyValues } from "./confirmation-strategies";
 import { calculateSharpeRatioFromReturns } from "./strategies/performance-metrics";
 import { getIntervalSeconds } from "./dataProviders/utils";
+import { getOptionalElement, getRequiredElement } from "./dom-utils";
+import { parseTimeToUnixSeconds } from "./time-normalization";
+import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
 
 export class BacktestService {
     private warnedStrictEngine = false;
@@ -41,11 +43,11 @@ export class BacktestService {
             strategy: state.currentStrategyKey,
             candles: state.ohlcvData.length,
         });
-        const progressContainer = document.getElementById('progressContainer')!;
-        const progressFill = document.getElementById('progressFill')!;
-        const progressText = document.getElementById('progressText')!;
-        const statusEl = document.getElementById('strategyStatus')!;
-        const runButton = document.getElementById('runBacktest') as HTMLButtonElement | null;
+        const progressContainer = getRequiredElement('progressContainer');
+        const progressFill = getRequiredElement('progressFill');
+        const progressText = getRequiredElement('progressText');
+        const statusEl = getRequiredElement('strategyStatus');
+        const runButton = getOptionalElement<HTMLButtonElement>('runBacktest');
 
         const setLoading = (loading: boolean) => {
             if (!runButton) return;
@@ -189,7 +191,7 @@ export class BacktestService {
             });
 
             // Enable replay button if there are results
-            const replayStartBtn = document.getElementById('replayStartBtn') as HTMLButtonElement | null;
+            const replayStartBtn = getOptionalElement<HTMLButtonElement>('replayStartBtn');
             if (replayStartBtn) {
                 replayStartBtn.disabled = result.totalTrades === 0;
             }
@@ -201,7 +203,7 @@ export class BacktestService {
             });
 
             // Disable replay button on error
-            const replayStartBtn = document.getElementById('replayStartBtn') as HTMLButtonElement | null;
+            const replayStartBtn = getOptionalElement<HTMLButtonElement>('replayStartBtn');
             if (replayStartBtn) {
                 replayStartBtn.disabled = true;
             }
@@ -218,7 +220,7 @@ export class BacktestService {
     }
 
     private getTwoHourCloseParityMode(): 'odd' | 'even' | 'both' {
-        const select = document.getElementById('twoHourCloseParity') as HTMLSelectElement | null;
+        const select = getOptionalElement<HTMLSelectElement>('twoHourCloseParity');
         if (select?.value === 'even' || select?.value === 'both') {
             return select.value;
         }
@@ -236,7 +238,7 @@ export class BacktestService {
     }
 
     private async withTemporaryTwoHourParity<T>(parity: 'odd' | 'even', run: () => Promise<T>): Promise<T> {
-        const select = document.getElementById('twoHourCloseParity') as HTMLSelectElement | null;
+        const select = getOptionalElement<HTMLSelectElement>('twoHourCloseParity');
         if (!select) return run();
 
         const previous = select.value;
@@ -355,70 +357,7 @@ export class BacktestService {
     }
 
     private buildRustCompatibleSettings(settings: BacktestSettings): BacktestSettings {
-        const rustSettings: BacktestSettings = { ...settings };
-        delete (rustSettings as { confirmationStrategies?: string[] }).confirmationStrategies;
-        delete (rustSettings as { confirmationStrategyParams?: Record<string, StrategyParams> }).confirmationStrategyParams;
-        delete (rustSettings as { executionModel?: string }).executionModel;
-        delete (rustSettings as { allowSameBarExit?: boolean }).allowSameBarExit;
-        delete (rustSettings as { slippageBps?: number }).slippageBps;
-        delete (rustSettings as { marketMode?: string }).marketMode;
-        delete (rustSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
-        delete (rustSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
-        delete (rustSettings as { twoHourCloseParity?: 'odd' | 'even' | 'both' }).twoHourCloseParity;
-        delete (rustSettings as { captureSnapshots?: boolean }).captureSnapshots;
-        delete (rustSettings as { snapshotAtrPercentMin?: number }).snapshotAtrPercentMin;
-        delete (rustSettings as { snapshotAtrPercentMax?: number }).snapshotAtrPercentMax;
-        delete (rustSettings as { snapshotVolumeRatioMin?: number }).snapshotVolumeRatioMin;
-        delete (rustSettings as { snapshotVolumeRatioMax?: number }).snapshotVolumeRatioMax;
-        delete (rustSettings as { snapshotAdxMin?: number }).snapshotAdxMin;
-        delete (rustSettings as { snapshotAdxMax?: number }).snapshotAdxMax;
-        delete (rustSettings as { snapshotEmaDistanceMin?: number }).snapshotEmaDistanceMin;
-        delete (rustSettings as { snapshotEmaDistanceMax?: number }).snapshotEmaDistanceMax;
-        delete (rustSettings as { snapshotRsiMin?: number }).snapshotRsiMin;
-        delete (rustSettings as { snapshotRsiMax?: number }).snapshotRsiMax;
-        delete (rustSettings as { snapshotPriceRangePosMin?: number }).snapshotPriceRangePosMin;
-        delete (rustSettings as { snapshotPriceRangePosMax?: number }).snapshotPriceRangePosMax;
-        delete (rustSettings as { snapshotBarsFromHighMax?: number }).snapshotBarsFromHighMax;
-        delete (rustSettings as { snapshotBarsFromLowMax?: number }).snapshotBarsFromLowMax;
-        delete (rustSettings as { snapshotTrendEfficiencyMin?: number }).snapshotTrendEfficiencyMin;
-        delete (rustSettings as { snapshotTrendEfficiencyMax?: number }).snapshotTrendEfficiencyMax;
-        delete (rustSettings as { snapshotAtrRegimeRatioMin?: number }).snapshotAtrRegimeRatioMin;
-        delete (rustSettings as { snapshotAtrRegimeRatioMax?: number }).snapshotAtrRegimeRatioMax;
-        delete (rustSettings as { snapshotBodyPercentMin?: number }).snapshotBodyPercentMin;
-        delete (rustSettings as { snapshotBodyPercentMax?: number }).snapshotBodyPercentMax;
-        delete (rustSettings as { snapshotWickSkewMin?: number }).snapshotWickSkewMin;
-        delete (rustSettings as { snapshotWickSkewMax?: number }).snapshotWickSkewMax;
-        delete (rustSettings as { snapshotVolumeTrendMin?: number }).snapshotVolumeTrendMin;
-        delete (rustSettings as { snapshotVolumeTrendMax?: number }).snapshotVolumeTrendMax;
-        delete (rustSettings as { snapshotVolumeBurstMin?: number }).snapshotVolumeBurstMin;
-        delete (rustSettings as { snapshotVolumeBurstMax?: number }).snapshotVolumeBurstMax;
-        delete (rustSettings as { snapshotVolumePriceDivergenceMin?: number }).snapshotVolumePriceDivergenceMin;
-        delete (rustSettings as { snapshotVolumePriceDivergenceMax?: number }).snapshotVolumePriceDivergenceMax;
-        delete (rustSettings as { snapshotVolumeConsistencyMin?: number }).snapshotVolumeConsistencyMin;
-        delete (rustSettings as { snapshotVolumeConsistencyMax?: number }).snapshotVolumeConsistencyMax;
-        delete (rustSettings as { snapshotCloseLocationMin?: number }).snapshotCloseLocationMin;
-        delete (rustSettings as { snapshotCloseLocationMax?: number }).snapshotCloseLocationMax;
-        delete (rustSettings as { snapshotOppositeWickMin?: number }).snapshotOppositeWickMin;
-        delete (rustSettings as { snapshotOppositeWickMax?: number }).snapshotOppositeWickMax;
-        delete (rustSettings as { snapshotRangeAtrMultipleMin?: number }).snapshotRangeAtrMultipleMin;
-        delete (rustSettings as { snapshotRangeAtrMultipleMax?: number }).snapshotRangeAtrMultipleMax;
-        delete (rustSettings as { snapshotMomentumConsistencyMin?: number }).snapshotMomentumConsistencyMin;
-        delete (rustSettings as { snapshotMomentumConsistencyMax?: number }).snapshotMomentumConsistencyMax;
-        delete (rustSettings as { snapshotBreakQualityMin?: number }).snapshotBreakQualityMin;
-        delete (rustSettings as { snapshotBreakQualityMax?: number }).snapshotBreakQualityMax;
-        delete (rustSettings as { snapshotTf60PerfMin?: number }).snapshotTf60PerfMin;
-        delete (rustSettings as { snapshotTf60PerfMax?: number }).snapshotTf60PerfMax;
-        delete (rustSettings as { snapshotTf90PerfMin?: number }).snapshotTf90PerfMin;
-        delete (rustSettings as { snapshotTf90PerfMax?: number }).snapshotTf90PerfMax;
-        delete (rustSettings as { snapshotTf120PerfMin?: number }).snapshotTf120PerfMin;
-        delete (rustSettings as { snapshotTf120PerfMax?: number }).snapshotTf120PerfMax;
-        delete (rustSettings as { snapshotTf480PerfMin?: number }).snapshotTf480PerfMin;
-        delete (rustSettings as { snapshotTf480PerfMax?: number }).snapshotTf480PerfMax;
-        delete (rustSettings as { snapshotTfConfluencePerfMin?: number }).snapshotTfConfluencePerfMin;
-        delete (rustSettings as { snapshotTfConfluencePerfMax?: number }).snapshotTfConfluencePerfMax;
-        delete (rustSettings as { snapshotEntryQualityScoreMin?: number }).snapshotEntryQualityScoreMin;
-        delete (rustSettings as { snapshotEntryQualityScoreMax?: number }).snapshotEntryQualityScoreMax;
-        return rustSettings;
+        return sanitizeBacktestSettingsForRust(settings);
     }
 
 
@@ -434,7 +373,7 @@ export class BacktestService {
         const positionSize = Math.max(0, this.readNumberInput('positionSize', 100));
         const commission = Math.max(0, this.readNumberInput('commission', 0.1));
         const fixedTradeAmount = Math.max(0, this.readNumberInput('fixedTradeAmount', 0));
-        const fixedTradeToggle = document.getElementById('fixedTradeToggle') as HTMLInputElement | null;
+        const fixedTradeToggle = getOptionalElement<HTMLInputElement>('fixedTradeToggle');
         const sizingMode: 'percent' | 'fixed' = fixedTradeToggle?.checked ? 'fixed' : 'percent';
         return { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount };
     }
@@ -443,42 +382,63 @@ export class BacktestService {
         const riskEnabled = this.isToggleEnabled('riskSettingsToggle');
         const tradeFilterEnabled = this.isToggleEnabled('tradeFilterSettingsToggle');
         const confirmationEnabled = this.isToggleEnabled('confirmationStrategiesToggle', false);
-        const riskMode = (document.getElementById('riskMode') as HTMLSelectElement | null)?.value as 'simple' | 'advanced' | 'percentage';
-        const useAdvancedRisk = riskMode === 'advanced';
-        const usePercentageRisk = riskMode === 'percentage';
+        const riskMode = this.readRiskMode();
 
-        const tradeFilterMode = (document.getElementById('tradeFilterMode') as HTMLSelectElement | null)?.value as TradeFilterMode | undefined;
+        return {
+            atrPeriod: this.readNumberInput('atrPeriod', 14),
+            ...this.buildRiskSettings(riskEnabled, riskMode),
+            ...this.buildTradeAndExecutionSettings(tradeFilterEnabled, confirmationEnabled),
+            captureSnapshots: true,
+            ...this.buildSnapshotSettings(),
+        };
+    }
+
+    private readRiskMode(): BacktestSettings['riskMode'] {
+        return getOptionalElement<HTMLSelectElement>('riskMode')?.value as BacktestSettings['riskMode'];
+    }
+
+    private buildRiskSettings(riskEnabled: boolean, riskMode: BacktestSettings['riskMode']): Partial<BacktestSettings> {
+        const useAtrRisk = riskEnabled && (riskMode === 'simple' || riskMode === 'advanced');
+        const useAdvancedRisk = riskEnabled && riskMode === 'advanced';
+        const usePercentageRisk = riskEnabled && riskMode === 'percentage';
+
+        return {
+            stopLossAtr: useAtrRisk ? this.readNumberInput('stopLossAtr', 1.5) : 0,
+            takeProfitAtr: useAtrRisk ? this.readNumberInput('takeProfitAtr', 3) : 0,
+            trailingAtr: useAtrRisk ? this.readNumberInput('trailingAtr', 2) : 0,
+            partialTakeProfitAtR: useAdvancedRisk ? this.readNumberInput('partialTakeProfitAtR', 1) : 0,
+            partialTakeProfitPercent: useAdvancedRisk ? this.readNumberInput('partialTakeProfitPercent', 50) : 0,
+            breakEvenAtR: useAdvancedRisk ? this.readNumberInput('breakEvenAtR', 1) : 0,
+            timeStopBars: useAdvancedRisk ? this.readNumberInput('timeStopBars', 0) : 0,
+            riskMode,
+            stopLossPercent: usePercentageRisk ? this.readNumberInput('stopLossPercent', 5) : 0,
+            takeProfitPercent: usePercentageRisk ? this.readNumberInput('takeProfitPercent', 10) : 0,
+            stopLossEnabled: usePercentageRisk ? this.isToggleEnabled('stopLossToggle', true) : false,
+            takeProfitEnabled: usePercentageRisk ? this.isToggleEnabled('takeProfitToggle', true) : false,
+        };
+    }
+
+    private buildTradeAndExecutionSettings(tradeFilterEnabled: boolean, confirmationEnabled: boolean): Partial<BacktestSettings> {
+        const tradeFilterMode = getOptionalElement<HTMLSelectElement>('tradeFilterMode')?.value as TradeFilterMode | undefined;
         const confirmationStrategies = confirmationEnabled ? getConfirmationStrategyValues() : [];
         const confirmationStrategyParams = confirmationEnabled ? getConfirmationStrategyParams() : {};
-        const executionModel = (document.getElementById('executionModel') as HTMLSelectElement | null)?.value as ExecutionModel | undefined;
-        const resolvedExecutionModel: ExecutionModel = executionModel ?? 'signal_close';
-        const tradeDirectionRaw = (document.getElementById('tradeDirection') as HTMLSelectElement | null)?.value;
-        const tradeDirection = tradeDirectionRaw === 'short' || tradeDirectionRaw === 'both' || tradeDirectionRaw === 'combined' ? tradeDirectionRaw : 'long';
-        const marketModeRaw = (document.getElementById('marketMode') as HTMLSelectElement | null)?.value;
+        const executionModelRaw = getOptionalElement<HTMLSelectElement>('executionModel')?.value as ExecutionModel | undefined;
+        const executionModel: ExecutionModel = executionModelRaw ?? 'signal_close';
+        const tradeDirectionRaw = getOptionalElement<HTMLSelectElement>('tradeDirection')?.value;
+        const tradeDirection = tradeDirectionRaw === 'short' || tradeDirectionRaw === 'both' || tradeDirectionRaw === 'combined'
+            ? tradeDirectionRaw
+            : 'long';
+        const marketModeRaw = getOptionalElement<HTMLSelectElement>('marketMode')?.value;
         const marketMode = marketModeRaw === 'uptrend' || marketModeRaw === 'downtrend' || marketModeRaw === 'sideway'
             ? marketModeRaw
             : 'all';
-        const twoHourCloseParityRaw = (document.getElementById('twoHourCloseParity') as HTMLSelectElement | null)?.value;
-        const twoHourCloseParity = twoHourCloseParityRaw === 'even' || twoHourCloseParityRaw === 'both' ? twoHourCloseParityRaw : 'odd';
+        const twoHourCloseParityRaw = getOptionalElement<HTMLSelectElement>('twoHourCloseParity')?.value;
+        const twoHourCloseParity = twoHourCloseParityRaw === 'even' || twoHourCloseParityRaw === 'both'
+            ? twoHourCloseParityRaw
+            : 'odd';
+
         return {
-            atrPeriod: this.readNumberInput('atrPeriod', 14),
-            stopLossAtr: riskEnabled && (riskMode === 'simple' || riskMode === 'advanced') ? this.readNumberInput('stopLossAtr', 1.5) : 0,
-            takeProfitAtr: riskEnabled && (riskMode === 'simple' || riskMode === 'advanced') ? this.readNumberInput('takeProfitAtr', 3) : 0,
-            trailingAtr: riskEnabled && (riskMode === 'simple' || riskMode === 'advanced') ? this.readNumberInput('trailingAtr', 2) : 0,
-            partialTakeProfitAtR: riskEnabled && useAdvancedRisk ? this.readNumberInput('partialTakeProfitAtR', 1) : 0,
-            partialTakeProfitPercent: riskEnabled && useAdvancedRisk ? this.readNumberInput('partialTakeProfitPercent', 50) : 0,
-            breakEvenAtR: riskEnabled && useAdvancedRisk ? this.readNumberInput('breakEvenAtR', 1) : 0,
-            timeStopBars: riskEnabled && useAdvancedRisk ? this.readNumberInput('timeStopBars', 0) : 0,
-
-            // New percentage settings
-            riskMode,
-            stopLossPercent: riskEnabled && usePercentageRisk ? this.readNumberInput('stopLossPercent', 5) : 0,
-            takeProfitPercent: riskEnabled && usePercentageRisk ? this.readNumberInput('takeProfitPercent', 10) : 0,
-            stopLossEnabled: riskEnabled && usePercentageRisk ? this.isToggleEnabled('stopLossToggle', true) : false,
-            takeProfitEnabled: riskEnabled && usePercentageRisk ? this.isToggleEnabled('takeProfitToggle', true) : false,
             marketMode,
-
-            // Regime filters (not exposed in UI here; keep explicit defaults for engine parity)
             trendEmaPeriod: 0,
             trendEmaSlopeBars: 0,
             atrPercentMin: 0,
@@ -486,9 +446,7 @@ export class BacktestService {
             adxPeriod: 14,
             adxMin: 0,
             adxMax: 0,
-
             tradeFilterMode: tradeFilterEnabled ? (tradeFilterMode ?? 'none') : 'none',
-            // Legacy field for compatibility with existing Rust payloads and old saved configs.
             entryConfirmation: tradeFilterEnabled ? (tradeFilterMode ?? 'none') : 'none',
             confirmLookback: tradeFilterEnabled ? this.readNumberInput('confirmLookback', 1) : 1,
             volumeSmaPeriod: tradeFilterEnabled ? this.readNumberInput('volumeSmaPeriod', 20) : 20,
@@ -499,15 +457,17 @@ export class BacktestService {
             confirmationStrategies,
             confirmationStrategyParams,
             tradeDirection,
-            executionModel: resolvedExecutionModel,
+            executionModel,
             allowSameBarExit: this.isToggleEnabled('allowSameBarExitToggle', false),
             slippageBps: this.readNumberInput('slippageBps', 5),
             strategyTimeframeEnabled: this.isToggleEnabled('strategyTimeframeToggle', false),
             strategyTimeframeMinutes: this.readNumberInput('strategyTimeframeMinutes', 120),
             twoHourCloseParity,
-            captureSnapshots: true,
+        };
+    }
 
-            // Snapshot-based trade filters (stackable)
+    private buildSnapshotSettings(): Partial<BacktestSettings> {
+        return {
             snapshotAtrPercentMin: this.isToggleEnabled('snapshotAtrFilterToggle', false) ? this.readNumberInput('snapshotAtrPercentMin', 0) : 0,
             snapshotAtrPercentMax: this.isToggleEnabled('snapshotAtrFilterToggle', false) ? this.readNumberInput('snapshotAtrPercentMax', 0) : 0,
             snapshotVolumeRatioMin: this.isToggleEnabled('snapshotVolumeFilterToggle', false) ? this.readNumberInput('snapshotVolumeRatioMin', 0) : 0,
@@ -564,14 +524,14 @@ export class BacktestService {
     }
 
     private readNumberInput(id: string, fallback: number): number {
-        const input = document.getElementById(id) as HTMLInputElement | null;
+        const input = getOptionalElement<HTMLInputElement>(id);
         if (!input) return fallback;
         const value = parseFloat(input.value);
         return Number.isFinite(value) ? value : fallback;
     }
 
     private isToggleEnabled(id: string, fallback: boolean = true): boolean {
-        const toggle = document.getElementById(id) as HTMLInputElement | null;
+        const toggle = getOptionalElement<HTMLInputElement>(id);
         return toggle ? toggle.checked : fallback;
     }
 
@@ -890,12 +850,8 @@ export class BacktestService {
     }
 
     private toEpochMs(time: Trade['entryTime']): number | null {
-        const numeric = timeToNumber(time);
-        if (numeric === null || !Number.isFinite(numeric)) return null;
-        if (typeof time === 'number') {
-            return numeric > 1_000_000_000_000 ? numeric : numeric * 1000;
-        }
-        return numeric;
+        const unixSeconds = parseTimeToUnixSeconds(time);
+        return unixSeconds === null ? null : unixSeconds * 1000;
     }
 
     public requiresTypescriptEngine(settings: BacktestSettings): boolean {
@@ -960,7 +916,7 @@ export class BacktestService {
 
     public addStrategyIndicators(params: StrategyParams) {
         chartManager.clearIndicators();
-        const indicatorsPanel = document.getElementById('indicatorsPanel');
+        const indicatorsPanel = getOptionalElement('indicatorsPanel');
         if (indicatorsPanel) indicatorsPanel.innerHTML = '';
 
         const strategy = strategyRegistry.get(state.currentStrategyKey);

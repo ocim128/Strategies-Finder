@@ -19,6 +19,10 @@ export function getRequiredElement<T extends HTMLElement>(id: string): T {
     return element as T;
 }
 
+export function getOptionalElement<T extends HTMLElement>(id: string): T | null {
+    return (document.getElementById(id) as T | null) ?? null;
+}
+
 /**
  * Set text content of an element and optionally apply a class.
  */

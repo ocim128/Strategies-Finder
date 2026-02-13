@@ -2,6 +2,7 @@
 import { Time } from "lightweight-charts";
 import { OHLCVData } from "../strategies/index";
 import { state, type MockChartModel } from "../state";
+import { DATA_PROVIDER_TOTAL_LIMIT } from "../data/constants";
 import { getIntervalSeconds } from "./utils";
 
 type MockChartConfig = {
@@ -13,7 +14,6 @@ type MockChartConfig = {
 
 export const MIN_MOCK_BARS = 100;
 export const MAX_MOCK_BARS = 500000;
-const TOTAL_LIMIT = 30000; // Default limit if not specified
 const MOCK_SYMBOLS = new Set(['MOCK_STOCK', 'MOCK_CRYPTO', 'MOCK_FOREX']);
 
 export function isMockSymbol(symbol: string): boolean {
@@ -63,7 +63,7 @@ function createRandomSeed(): number {
 }
 
 export function generateMockData(symbol: string, interval: string): OHLCVData[] {
-    const rawBars = Number.isFinite(state.mockChartBars) ? Math.floor(state.mockChartBars) : TOTAL_LIMIT;
+    const rawBars = Number.isFinite(state.mockChartBars) ? Math.floor(state.mockChartBars) : DATA_PROVIDER_TOTAL_LIMIT;
     const barsCount = Math.min(MAX_MOCK_BARS, Math.max(MIN_MOCK_BARS, rawBars));
     const config: MockChartConfig = {
         barsCount,

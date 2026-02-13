@@ -3,6 +3,7 @@ import { Time } from "lightweight-charts";
 import { OHLCVData } from "../strategies/index";
 import { resampleOHLCV, type ResampleOptions } from "../strategies/resample-utils";
 import { debugLogger } from "../debug-logger";
+import { DATA_PROVIDER_TOTAL_LIMIT } from "../data/constants";
 import { BybitTradFiKline, BybitTradFiKlineResponse, HistoricalFetchOptions } from '../types/index';
 import { getIntervalSeconds, wait } from "./utils";
 import {
@@ -13,7 +14,6 @@ import {
 } from "./fetch-helpers";
 
 const BYBIT_LIMIT_PER_REQUEST = 200;
-const TOTAL_LIMIT = 30000;
 const MAX_REQUESTS = 15;
 const BYBIT_TRADFI_KLINE_URL = '/api/tradfi-kline';
 const BYBIT_TRADFI_INTERVALS = new Set([
@@ -217,9 +217,9 @@ export async function fetchBybitTradFiData(
         let requestCount = 0;
         let totalDataLength = 0;
 
-        while (totalDataLength < TOTAL_LIMIT && requestCount < MAX_REQUESTS) {
+        while (totalDataLength < DATA_PROVIDER_TOTAL_LIMIT && requestCount < MAX_REQUESTS) {
             if (signal?.aborted) return [];
-            const remaining = TOTAL_LIMIT - totalDataLength;
+            const remaining = DATA_PROVIDER_TOTAL_LIMIT - totalDataLength;
             const limit = Math.min(remaining, BYBIT_LIMIT_PER_REQUEST);
 
             const data = await fetchBybitTradFiBatch(symbol, sourceInterval, limit, endTime, signal);

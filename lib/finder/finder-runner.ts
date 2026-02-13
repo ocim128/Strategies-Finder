@@ -22,128 +22,9 @@ import { calculateSharpeRatioFromReturns } from "../strategies/performance-metri
 import { buildSelectionResult } from "./endpoint";
 import { aggregateFinderBacktestResults } from "./finder-engine";
 import { FinderResultRanker } from "./finder-result-ranker";
+import { hasNonZeroSnapshotFilter, sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { FinderDataset } from "./finder-timeframe-loader";
 import type { EndpointSelectionAdjustment, FinderOptions, FinderResult } from "../types/finder";
-
-const RUST_UNSUPPORTED_SETTINGS_KEYS = [
-    "confirmationStrategies",
-    "confirmationStrategyParams",
-    "executionModel",
-    "allowSameBarExit",
-    "slippageBps",
-    "marketMode",
-    "strategyTimeframeEnabled",
-    "strategyTimeframeMinutes",
-    "twoHourCloseParity",
-    "captureSnapshots",
-    "snapshotAtrPercentMin",
-    "snapshotAtrPercentMax",
-    "snapshotVolumeRatioMin",
-    "snapshotVolumeRatioMax",
-    "snapshotAdxMin",
-    "snapshotAdxMax",
-    "snapshotEmaDistanceMin",
-    "snapshotEmaDistanceMax",
-    "snapshotRsiMin",
-    "snapshotRsiMax",
-    "snapshotPriceRangePosMin",
-    "snapshotPriceRangePosMax",
-    "snapshotBarsFromHighMax",
-    "snapshotBarsFromLowMax",
-    "snapshotTrendEfficiencyMin",
-    "snapshotTrendEfficiencyMax",
-    "snapshotAtrRegimeRatioMin",
-    "snapshotAtrRegimeRatioMax",
-    "snapshotBodyPercentMin",
-    "snapshotBodyPercentMax",
-    "snapshotWickSkewMin",
-    "snapshotWickSkewMax",
-    "snapshotVolumeTrendMin",
-    "snapshotVolumeTrendMax",
-    "snapshotVolumeBurstMin",
-    "snapshotVolumeBurstMax",
-    "snapshotVolumePriceDivergenceMin",
-    "snapshotVolumePriceDivergenceMax",
-    "snapshotVolumeConsistencyMin",
-    "snapshotVolumeConsistencyMax",
-    "snapshotCloseLocationMin",
-    "snapshotCloseLocationMax",
-    "snapshotOppositeWickMin",
-    "snapshotOppositeWickMax",
-    "snapshotRangeAtrMultipleMin",
-    "snapshotRangeAtrMultipleMax",
-    "snapshotMomentumConsistencyMin",
-    "snapshotMomentumConsistencyMax",
-    "snapshotBreakQualityMin",
-    "snapshotBreakQualityMax",
-    "snapshotTf60PerfMin",
-    "snapshotTf60PerfMax",
-    "snapshotTf90PerfMin",
-    "snapshotTf90PerfMax",
-    "snapshotTf120PerfMin",
-    "snapshotTf120PerfMax",
-    "snapshotTf480PerfMin",
-    "snapshotTf480PerfMax",
-    "snapshotTfConfluencePerfMin",
-    "snapshotTfConfluencePerfMax",
-    "snapshotEntryQualityScoreMin",
-    "snapshotEntryQualityScoreMax",
-] as const;
-
-const SNAPSHOT_FILTER_KEYS = [
-    "snapshotAtrPercentMin",
-    "snapshotAtrPercentMax",
-    "snapshotVolumeRatioMin",
-    "snapshotVolumeRatioMax",
-    "snapshotAdxMin",
-    "snapshotAdxMax",
-    "snapshotEmaDistanceMin",
-    "snapshotEmaDistanceMax",
-    "snapshotRsiMin",
-    "snapshotRsiMax",
-    "snapshotPriceRangePosMin",
-    "snapshotPriceRangePosMax",
-    "snapshotBarsFromHighMax",
-    "snapshotBarsFromLowMax",
-    "snapshotTrendEfficiencyMin",
-    "snapshotTrendEfficiencyMax",
-    "snapshotAtrRegimeRatioMin",
-    "snapshotAtrRegimeRatioMax",
-    "snapshotBodyPercentMin",
-    "snapshotBodyPercentMax",
-    "snapshotWickSkewMin",
-    "snapshotWickSkewMax",
-    "snapshotVolumeTrendMin",
-    "snapshotVolumeTrendMax",
-    "snapshotVolumeBurstMin",
-    "snapshotVolumeBurstMax",
-    "snapshotVolumePriceDivergenceMin",
-    "snapshotVolumePriceDivergenceMax",
-    "snapshotVolumeConsistencyMin",
-    "snapshotVolumeConsistencyMax",
-    "snapshotCloseLocationMin",
-    "snapshotCloseLocationMax",
-    "snapshotOppositeWickMin",
-    "snapshotOppositeWickMax",
-    "snapshotRangeAtrMultipleMin",
-    "snapshotRangeAtrMultipleMax",
-    "snapshotMomentumConsistencyMin",
-    "snapshotMomentumConsistencyMax",
-    "snapshotBreakQualityMin",
-    "snapshotBreakQualityMax",
-    "snapshotTf60PerfMin",
-    "snapshotTf60PerfMax",
-    "snapshotTf90PerfMin",
-    "snapshotTf90PerfMax",
-    "snapshotTf120PerfMin",
-    "snapshotTf120PerfMax",
-    "snapshotTf480PerfMin",
-    "snapshotTf480PerfMax",
-    "snapshotTfConfluencePerfMin",
-    "snapshotTfConfluencePerfMax",
-    "snapshotEntryQualityScoreMin",
-    "snapshotEntryQualityScoreMax",
-] as const;
 
 export interface FinderSelectedStrategy {
     key: string;
@@ -223,7 +104,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
         fixedTradeAmount,
     } = input;
 
-    const rustSettings = sanitizeSettingsForRust(settings);
+    const rustSettings = sanitizeBacktestSettingsForRust(settings);
     const confirmationStrategies = settings.confirmationStrategies ?? [];
     const shouldRandomizeConfirmations = options.mode === "random";
     const hasConfirmationStrategies = confirmationStrategies.length > 0;
@@ -984,19 +865,8 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     return { results: trimmed };
 }
 
-function sanitizeSettingsForRust<T extends object>(settings: T): T {
-    const sanitized = { ...settings } as Record<string, unknown>;
-    for (const key of RUST_UNSUPPORTED_SETTINGS_KEYS) {
-        delete sanitized[key];
-    }
-    return sanitized as T;
-}
-
-function hasHeavySnapshotFilters(settings: Record<string, unknown>): boolean {
-    return SNAPSHOT_FILTER_KEYS.some((key) => {
-        const value = settings[key];
-        return typeof value === "number" && Number.isFinite(value) && value !== 0;
-    });
+function hasHeavySnapshotFilters(settings: BacktestSettings): boolean {
+    return hasNonZeroSnapshotFilter(settings);
 }
 
 function computeDatasetFlags(
@@ -1008,7 +878,7 @@ function computeDatasetFlags(
     const isLargeDataset = dataSize > 500_000;
     const isVeryLargeDataset = dataSize > 2_000_000;
     const isExtremeDataset = dataSize > 4_000_000;
-    const hasSnapshotFilters = hasHeavySnapshotFilters(settings as unknown as Record<string, unknown>);
+    const hasSnapshotFilters = hasHeavySnapshotFilters(settings);
     const hasHeavyTradeFiltering = options.tradeFilterEnabled && options.minTrades >= 1_000;
     const isHeavyFinderConfig = hasSnapshotFilters || hasHeavyTradeFiltering || hasConfirmationStrategies;
     const compactBacktestThreshold = isHeavyFinderConfig ? 50_000 : 500_000;

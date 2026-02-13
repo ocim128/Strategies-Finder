@@ -1,0 +1,4 @@
+export const DATA_CHART_TOTAL_LIMIT = 50_000;
+export const DATA_PROVIDER_TOTAL_LIMIT = 30_000;
+export const DATA_MAX_RECONNECT_ATTEMPTS = 5;
+export const DATA_CACHE_SYNC_MIN_MS = 30_000;
