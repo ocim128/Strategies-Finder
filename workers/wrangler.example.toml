@@ -13,3 +13,9 @@ database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 # - Worker aligns execution to second 10 in code.
 # - 2h+ subscriptions are interval-gated in worker code to avoid over-polling.
 crons = ["0 * * * *"]
+
+[vars]
+# Optional: override Binance-compatible candle sources (CSV, ordered fallback).
+# MARKET_DATA_API_BASES = "https://api.mexc.com,https://api.binance.us,https://data-api.binance.vision"
+# Optional: minimum required closed candles for subscription evaluation.
+# MIN_CLOSED_CANDLES = "120"

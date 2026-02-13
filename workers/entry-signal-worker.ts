@@ -32,7 +32,9 @@ interface Env {
     SIGNALS_DB: D1Database;
     TELEGRAM_BOT_TOKEN?: string;
     TELEGRAM_CHAT_ID?: string;
+    MARKET_DATA_API_BASES?: string;
     BINANCE_API_BASES?: string;
+    MIN_CLOSED_CANDLES?: string;
 }
 
 interface StreamSignalRequest {
@@ -152,7 +154,8 @@ interface ProcessSignalResult {
     error?: string;
 }
 
-const MIN_CANDLES = 200;
+const DEFAULT_MIN_CANDLES = 200;
+const MIN_CANDLES_LOWER_BOUND = 50;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const DEFAULT_SUBSCRIPTION_CANDLE_LIMIT = 350;
@@ -171,6 +174,7 @@ const BINANCE_INTERVALS = new Set([
 ]);
 const DEFAULT_BINANCE_API_BASES = [
     "https://api.binance.us",
+    "https://api.mexc.com",
     "https://data-api.binance.vision",
     "https://api.binance.com",
     "https://api1.binance.com",
@@ -365,12 +369,19 @@ function composeSubscriptionStatus(baseStatus: string, exitAlertKey: string | nu
 }
 
 function readBinanceApiBases(env: Env): string[] {
-    const configured = (env.BINANCE_API_BASES ?? "")
+    const configuredRaw = (env.MARKET_DATA_API_BASES ?? env.BINANCE_API_BASES ?? "");
+    const configured = configuredRaw
         .split(",")
         .map((x) => x.trim().replace(/\/+$/, ""))
         .filter(Boolean);
 
     return configured.length > 0 ? configured : DEFAULT_BINANCE_API_BASES;
+}
+
+function readMinClosedCandles(env: Env): number {
+    const parsed = Number(env.MIN_CLOSED_CANDLES);
+    if (!Number.isFinite(parsed)) return DEFAULT_MIN_CANDLES;
+    return Math.max(MIN_CANDLES_LOWER_BOUND, Math.floor(parsed));
 }
 
 function normalizeBinanceResponseSnippet(value: string): string {
@@ -396,6 +407,39 @@ function intervalToSeconds(interval: string): number | null {
     if (unit === "w") return value * 7 * 24 * 60 * 60;
     if (unit === "M") return value * 30 * 24 * 60 * 60;
     return null;
+}
+
+function isMexcBase(base: string): boolean {
+    try {
+        return new URL(base).hostname.toLowerCase() === "api.mexc.com";
+    } catch {
+        return base.toLowerCase().includes("api.mexc.com");
+    }
+}
+
+function translateIntervalForApiBase(base: string, interval: string): string | null {
+    if (!isMexcBase(base)) return interval;
+
+    // MEXC supports Binance-style klines endpoint with a narrower interval set.
+    const mexcMap: Record<string, string | null> = {
+        "1m": "1m",
+        "3m": null,
+        "5m": "5m",
+        "15m": "15m",
+        "30m": "30m",
+        "1h": "60m",
+        "2h": null,
+        "4h": "4h",
+        "6h": null,
+        "8h": "8h",
+        "12h": null,
+        "1d": "1d",
+        "3d": null,
+        "1w": null,
+        "1M": "1M",
+    };
+
+    return mexcMap[interval] ?? null;
 }
 
 function normalizeTwoHourCloseParity(value: unknown): "odd" | "even" | null {
@@ -527,22 +571,32 @@ async function fetchBinanceCandles(
     env: Env,
     twoHourCloseParity: "odd" | "even" = "odd"
 ): Promise<OHLCVData[]> {
+    const minClosedCandles = readMinClosedCandles(env);
     const requestedIntervalSec = intervalToSeconds(interval);
-    const useEven2hResample = requestedIntervalSec === 7200 && twoHourCloseParity === "even";
-    const sourceInterval = useEven2hResample ? "1h" : interval;
+    // Always compose 2H from 1H candles so odd/even parity remains consistent
+    // and does not rely on exchange-native 2H interval support.
+    const useTwoHourResample = requestedIntervalSec === 7200;
+    const sourceInterval = useTwoHourResample ? "1h" : interval;
     const binanceInterval = toBinanceInterval(sourceInterval);
     if (!binanceInterval) {
         throw new Error(`Unsupported interval for Binance: ${sourceInterval}`);
     }
-    const clampedLimit = Math.max(MIN_CANDLES, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, Math.floor(limit)));
-    const sourceLimit = useEven2hResample
-        ? Math.max(MIN_CANDLES, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, clampedLimit * 2 + 6))
-        : clampedLimit;
+    const clampedLimit = Math.max(minClosedCandles, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, Math.floor(limit)));
+    // Pull one extra bar so, after dropping an in-progress candle, we still keep the configured minimum closed bars.
+    const targetBarsWithSpare = Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, clampedLimit + 1);
+    const sourceLimit = useTwoHourResample
+        ? Math.max(minClosedCandles, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, targetBarsWithSpare * 2 + 6))
+        : targetBarsWithSpare;
     const bases = readBinanceApiBases(env);
     const endpointErrors: string[] = [];
 
     for (const base of bases) {
-        const endpoint = `${base}/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(binanceInterval)}&limit=${sourceLimit}`;
+        const providerInterval = translateIntervalForApiBase(base, binanceInterval);
+        if (!providerInterval) {
+            endpointErrors.push(`${base} -> unsupported_interval:${binanceInterval}`);
+            continue;
+        }
+        const endpoint = `${base}/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(providerInterval)}&limit=${sourceLimit}`;
         try {
             const res = await fetch(endpoint, {
                 headers: {
@@ -571,11 +625,11 @@ async function fetchBinanceCandles(
                 close: Number(kline[4]),
                 volume: Number(kline[5]),
             }));
-            if (!useEven2hResample) {
-                return sourceCandles;
+            if (!useTwoHourResample) {
+                return sourceCandles.slice(-targetBarsWithSpare);
             }
 
-            return resampleCandles(sourceCandles, interval, "even").slice(-clampedLimit);
+            return resampleCandles(sourceCandles, interval, twoHourCloseParity).slice(-targetBarsWithSpare);
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             endpointErrors.push(`${base} -> ${normalizeStatusText(detail, 120)}`);
@@ -599,7 +653,8 @@ async function fetchMarketCandles(
 function selectClosedCandleWindow(
     candles: OHLCVData[],
     interval: string,
-    nowSec: number = Math.floor(Date.now() / 1000)
+    nowSec: number = Math.floor(Date.now() / 1000),
+    minClosedCandles: number = DEFAULT_MIN_CANDLES
 ): { candles: OHLCVData[]; closedCandleTimeSec: number } | null {
     if (candles.length < 2) return null;
     const intervalSeconds = intervalToSeconds(interval);
@@ -613,7 +668,7 @@ function selectClosedCandleWindow(
     if (nowSec < lastOpenSec + intervalSeconds) {
         closedIdx -= 1;
     }
-    if (closedIdx < MIN_CANDLES - 1) return null;
+    if (closedIdx < minClosedCandles - 1) return null;
 
     const closedTime = Number(candles[closedIdx].time);
     if (!Number.isFinite(closedTime)) return null;
@@ -622,6 +677,19 @@ function selectClosedCandleWindow(
         candles: candles.slice(0, closedIdx + 1),
         closedCandleTimeSec: closedTime,
     };
+}
+
+function countClosedCandles(
+    candles: OHLCVData[],
+    interval: string,
+    nowSec: number = Math.floor(Date.now() / 1000)
+): number {
+    if (candles.length === 0) return 0;
+    const intervalSeconds = intervalToSeconds(interval);
+    if (!intervalSeconds || intervalSeconds <= 0) return candles.length;
+    const lastOpenSec = Number(candles[candles.length - 1].time);
+    if (!Number.isFinite(lastOpenSec)) return candles.length;
+    return nowSec < lastOpenSec + intervalSeconds ? Math.max(0, candles.length - 1) : candles.length;
 }
 
 function formatPercent(value: number): string {
@@ -694,11 +762,12 @@ async function sendTelegramText(env: Env, text: string): Promise<void> {
 }
 
 async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Promise<ProcessSignalResult> {
-    if (payload.candles.length < MIN_CANDLES) {
+    const minClosedCandles = readMinClosedCandles(env);
+    if (payload.candles.length < minClosedCandles) {
         return {
             ok: false,
             newEntry: false,
-            error: `Not enough candles. Need at least ${MIN_CANDLES}.`,
+            error: `Not enough candles. Need at least ${minClosedCandles}.`,
             rawSignalCount: 0,
             preparedSignalCount: 0,
         };
@@ -1022,8 +1091,9 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
         0,
         Math.floor(payload.freshnessBars ?? existing?.freshness_bars ?? 1)
     );
+    const minClosedCandles = readMinClosedCandles(env);
     const candleLimit = Math.max(
-        MIN_CANDLES,
+        minClosedCandles,
         Math.min(
             MAX_SUBSCRIPTION_CANDLE_LIMIT,
             Math.floor(payload.candleLimit ?? existing?.candle_limit ?? DEFAULT_SUBSCRIPTION_CANDLE_LIMIT)
@@ -1256,6 +1326,7 @@ async function runSubscription(
         parsedBacktestSettings,
         streamId
     );
+    const minClosedCandles = readMinClosedCandles(env);
 
     try {
         const candles = await fetchMarketCandles(
@@ -1266,9 +1337,11 @@ async function runSubscription(
             twoHourCloseParity
         );
 
-        const closed = selectClosedCandleWindow(candles, subscription.interval);
+        const nowSec = Math.floor(Date.now() / 1000);
+        const closed = selectClosedCandleWindow(candles, subscription.interval, nowSec, minClosedCandles);
         if (!closed) {
-            const status = composeSubscriptionStatus("insufficient_candles", persistedExitAlertKey);
+            const closedCount = countClosedCandles(candles, subscription.interval, nowSec);
+            const status = composeSubscriptionStatus(`insufficient_candles:${closedCount}/${minClosedCandles}`, persistedExitAlertKey);
             await updateSubscriptionStatus(env, streamId, status);
             return { streamId, status };
         }

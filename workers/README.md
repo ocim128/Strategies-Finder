@@ -46,7 +46,7 @@ It deduplicates signals in D1, so the same entry is only produced once.
 ```
 
 Notes:
-- Send at least 200 candles per call (worker validates this).
+- Send at least 200 candles per call by default (configurable via `MIN_CLOSED_CANDLES` for worker-side evaluation).
 - `time` can be unix seconds, unix milliseconds, ISO string, or business-day object.
 
 ## Automatic Scheduled Runs (new candle only)
@@ -62,10 +62,11 @@ Behavior:
 - Runs every hour on minute `00` UTC.
 - Worker aligns processing to around second `10` of that minute before evaluating subscriptions.
 - Interval gating prevents unnecessary checks for higher timeframes (for example, `2h` subscriptions are skipped on non-due hours).
-- For each enabled subscription, worker fetches market candles from Binance endpoints only.
+- For each enabled subscription, worker fetches market candles from Binance-compatible endpoints.
+- `2h` subscriptions are composed from `1h` source candles inside the worker so close-hour parity (`odd`/`even`) stays deterministic across providers.
 - It only evaluates when a **new closed candle** exists (`last_processed_closed_candle_time` guard).
 - This avoids duplicate alerts between candle closes.
-- Worker tries `api.binance.us` first, then falls back across Binance hosts (`data-api.binance.vision`, `api.binance.com`, `api1..4`).
+- Worker tries `api.binance.us` first, then `api.mexc.com` (Binance-compatible), then falls back across Binance hosts (`data-api.binance.vision`, `api.binance.com`, `api1..4`).
 
 Create subscription example:
 
@@ -106,14 +107,21 @@ Set worker secrets:
 
 Then send `notifyTelegram: true` in request body.
 
-## Optional Env: Binance Endpoint Override
+## Optional Env: Market Endpoint Override
 
-If your Worker region still gets blocked, set a custom CSV of API bases:
+If your Worker region still gets blocked, set a custom CSV of Binance-compatible API bases:
 
+- `MARKET_DATA_API_BASES` (preferred)
 - `BINANCE_API_BASES`
 
 Example value:
 
 ```text
-https://api.binance.us,https://data-api.binance.vision,https://api.binance.com
+https://api.mexc.com,https://api.binance.us,https://data-api.binance.vision
 ```
+
+## Optional Env: Minimum Closed Candles
+
+- `MIN_CLOSED_CANDLES`
+  - Default: `200`
+  - Example override for newer symbols: `120`

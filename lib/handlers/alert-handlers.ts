@@ -415,7 +415,7 @@ function renderSubscriptions(subs: AlertSubscription[]) {
 
     if (!tbody) return;
 
-    const active = subs.filter((s) => s.enabled === 1);
+    const active = subs.filter((s) => Number(s.enabled) === 1);
     const savedConfigs = settingsManager.loadAllStrategyConfigs();
     subscriptionsByStreamId = new Map(subs.map((sub) => [sub.stream_id, sub]));
 
@@ -599,6 +599,7 @@ async function quickSubscribe() {
             strategyKey,
             configName: configName ?? undefined,
             strategyParams,
+            enabled: true,
             notifyTelegram: telegramToggle?.checked ?? true,
             notifyExit: exitToggle?.checked ?? false,
             freshnessBars: Number.isFinite(parsedFreshness) ? Math.max(0, parsedFreshness) : 1,
