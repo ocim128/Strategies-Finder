@@ -202,6 +202,8 @@ export interface BacktestSettings {
     strategyTimeframeEnabled?: boolean;
     /** Higher timeframe in minutes for global strategy execution */
     strategyTimeframeMinutes?: number;
+    /** 2H close-hour parity mode for data alignment; `both` is compare-only orchestration mode */
+    twoHourCloseParity?: 'odd' | 'even' | 'both';
     /** Capture indicator snapshots at trade entry for pattern analysis */
     captureSnapshots?: boolean;
 

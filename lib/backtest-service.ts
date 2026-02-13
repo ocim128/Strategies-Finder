@@ -364,6 +364,7 @@ export class BacktestService {
         delete (rustSettings as { marketMode?: string }).marketMode;
         delete (rustSettings as { strategyTimeframeEnabled?: boolean }).strategyTimeframeEnabled;
         delete (rustSettings as { strategyTimeframeMinutes?: number }).strategyTimeframeMinutes;
+        delete (rustSettings as { twoHourCloseParity?: 'odd' | 'even' | 'both' }).twoHourCloseParity;
         delete (rustSettings as { captureSnapshots?: boolean }).captureSnapshots;
         delete (rustSettings as { snapshotAtrPercentMin?: number }).snapshotAtrPercentMin;
         delete (rustSettings as { snapshotAtrPercentMax?: number }).snapshotAtrPercentMax;
@@ -457,6 +458,8 @@ export class BacktestService {
         const marketMode = marketModeRaw === 'uptrend' || marketModeRaw === 'downtrend' || marketModeRaw === 'sideway'
             ? marketModeRaw
             : 'all';
+        const twoHourCloseParityRaw = (document.getElementById('twoHourCloseParity') as HTMLSelectElement | null)?.value;
+        const twoHourCloseParity = twoHourCloseParityRaw === 'even' || twoHourCloseParityRaw === 'both' ? twoHourCloseParityRaw : 'odd';
         return {
             atrPeriod: this.readNumberInput('atrPeriod', 14),
             stopLossAtr: riskEnabled && (riskMode === 'simple' || riskMode === 'advanced') ? this.readNumberInput('stopLossAtr', 1.5) : 0,
@@ -501,6 +504,7 @@ export class BacktestService {
             slippageBps: this.readNumberInput('slippageBps', 5),
             strategyTimeframeEnabled: this.isToggleEnabled('strategyTimeframeToggle', false),
             strategyTimeframeMinutes: this.readNumberInput('strategyTimeframeMinutes', 120),
+            twoHourCloseParity,
             captureSnapshots: true,
 
             // Snapshot-based trade filters (stackable)

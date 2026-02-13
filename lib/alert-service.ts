@@ -5,6 +5,8 @@
 
 const WORKER_URL_KEY = 'alert_worker_url';
 const STREAM_CONFIG_MARKER = ':cfg:';
+const STREAM_PARITY_MARKER = ':2hcp:';
+export type AlertTwoHourCloseParity = 'odd' | 'even';
 
 // Types
 
@@ -75,9 +77,13 @@ export function buildAlertStreamId(
     symbol: string,
     interval: string,
     strategyKey: string,
-    configName?: string
+    configName?: string,
+    twoHourCloseParity?: AlertTwoHourCloseParity
 ): string {
-    const base = buildBaseStreamId(symbol, interval, strategyKey);
+    let base = buildBaseStreamId(symbol, interval, strategyKey);
+    if (twoHourCloseParity === 'odd' || twoHourCloseParity === 'even') {
+        base = `${base}${STREAM_PARITY_MARKER}${twoHourCloseParity}`;
+    }
     const normalizedConfigName = (configName ?? '').trim();
     if (!normalizedConfigName) return base;
     return `${base}${STREAM_CONFIG_MARKER}${encodeURIComponent(normalizedConfigName)}`;
@@ -97,6 +103,15 @@ export function parseAlertConfigNameFromStreamId(streamId: string): string | nul
     } catch {
         return encoded.trim() || null;
     }
+}
+
+export function parseAlertTwoHourParityFromStreamId(streamId: string): AlertTwoHourCloseParity | null {
+    const markerIndex = streamId.indexOf(STREAM_PARITY_MARKER);
+    if (markerIndex < 0) return null;
+    const start = markerIndex + STREAM_PARITY_MARKER.length;
+    const configIndex = streamId.indexOf(STREAM_CONFIG_MARKER, start);
+    const raw = (configIndex >= 0 ? streamId.slice(start, configIndex) : streamId.slice(start)).trim().toLowerCase();
+    return raw === 'even' ? 'even' : raw === 'odd' ? 'odd' : null;
 }
 
 // Helpers

@@ -135,6 +135,18 @@ Changes:
 3. Keep one baseline result in `currentBacktestResult` for existing consumers (markers, trades, replay, analysis).
 4. Render a dedicated compare block in Results tab with odd/even summary metrics side-by-side.
 
+### 8. Alerts Integration (`both`)
+Files:
+- `lib/handlers/alert-handlers.ts`
+- `lib/alert-service.ts`
+- `workers/entry-signal-worker.ts`
+
+Changes:
+1. Quick Subscribe creates two subscriptions when interval is 2H and parity mode is `both`.
+2. Stream IDs carry parity tags so odd/even alerts are independent channels.
+3. Stored backtest settings are parity-specific per stream (`odd` or `even`), never `both`.
+4. Worker fetch path re-aggregates even 2H subscriptions from 1H candles before signal evaluation.
+
 ## Compatibility and Contracts
 1. Existing saved settings/configs with no new key fall back to `'odd'`.
 2. Worker strategy registration (`lib/strategies/library.ts`) is unaffected.

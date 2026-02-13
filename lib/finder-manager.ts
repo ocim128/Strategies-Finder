@@ -41,6 +41,7 @@ export class FinderManager {
 		'marketMode',
 		'strategyTimeframeEnabled',
 		'strategyTimeframeMinutes',
+		'twoHourCloseParity',
 		'captureSnapshots',
 		'snapshotAtrPercentMin',
 		'snapshotAtrPercentMax',

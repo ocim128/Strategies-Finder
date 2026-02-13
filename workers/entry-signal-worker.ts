@@ -161,6 +161,7 @@ const MAX_SUBSCRIPTION_CANDLE_LIMIT = 1000;
 const STATUS_TEXT_MAX = 1200;
 const RESPONSE_SNIPPET_MAX = 320;
 const STREAM_CONFIG_MARKER = ":cfg:";
+const STREAM_PARITY_MARKER = ":2hcp:";
 // Keep scheduled runs aligned shortly after minute boundary.
 // Cloudflare cron granularity is 1 minute, so second-level precision is done in code.
 const SCHEDULE_TARGET_SECOND = 10;
@@ -433,6 +434,82 @@ function intervalToSeconds(interval: string): number | null {
     return null;
 }
 
+function normalizeTwoHourCloseParity(value: unknown): "odd" | "even" | null {
+    if (value === "even") return "even";
+    if (value === "odd") return "odd";
+    return null;
+}
+
+function resolveTwoHourCloseParity(
+    interval: string,
+    backtestSettings: BacktestSettings,
+    streamId: string
+): "odd" | "even" {
+    const intervalSeconds = intervalToSeconds(interval);
+    if (intervalSeconds !== 7200) return "odd";
+
+    const fromSettings = normalizeTwoHourCloseParity(
+        (backtestSettings as BacktestSettings & { twoHourCloseParity?: unknown }).twoHourCloseParity
+    );
+    if (fromSettings) return fromSettings;
+
+    const fromStream = parseTwoHourCloseParityFromStreamId(streamId);
+    if (fromStream) return fromStream;
+
+    return "odd";
+}
+
+function getResampleBucketStart(timeSec: number, intervalSec: number, parity: "odd" | "even"): number {
+    const phaseOffsetSec = intervalSec === 7200 && parity === "even" ? 3600 : 0;
+    return Math.floor((timeSec - phaseOffsetSec) / intervalSec) * intervalSec + phaseOffsetSec;
+}
+
+function resampleCandles(
+    candles: OHLCVData[],
+    targetInterval: string,
+    parity: "odd" | "even"
+): OHLCVData[] {
+    if (candles.length === 0) return [];
+    const targetSec = intervalToSeconds(targetInterval);
+    if (!targetSec || targetSec <= 0) return candles;
+
+    const sourceSec = candles.length > 1
+        ? Math.max(1, Number(candles[1].time) - Number(candles[0].time))
+        : 60;
+    if (targetSec <= sourceSec) return candles;
+
+    const out: OHLCVData[] = [];
+    let current: OHLCVData | null = null;
+    let bucketStart = Number.NaN;
+
+    for (const row of candles) {
+        const t = Number(row.time);
+        if (!Number.isFinite(t)) continue;
+        const nextBucket = getResampleBucketStart(t, targetSec, parity);
+        if (!current || nextBucket !== bucketStart) {
+            if (current) out.push(current);
+            current = {
+                time: nextBucket as CandleTime,
+                open: row.open,
+                high: row.high,
+                low: row.low,
+                close: row.close,
+                volume: row.volume,
+            };
+            bucketStart = nextBucket;
+            continue;
+        }
+
+        current.high = Math.max(current.high, row.high);
+        current.low = Math.min(current.low, row.low);
+        current.close = row.close;
+        current.volume += row.volume;
+    }
+
+    if (current) out.push(current);
+    return out;
+}
+
 function toBinanceInterval(interval: string): string | null {
     const trimmed = interval.trim();
     if (BINANCE_INTERVALS.has(trimmed)) return trimmed;
@@ -479,17 +556,29 @@ function toBinanceInterval(interval: string): string | null {
     return null;
 }
 
-async function fetchBinanceCandles(symbol: string, interval: string, limit: number, env: Env): Promise<OHLCVData[]> {
-    const binanceInterval = toBinanceInterval(interval);
+async function fetchBinanceCandles(
+    symbol: string,
+    interval: string,
+    limit: number,
+    env: Env,
+    twoHourCloseParity: "odd" | "even" = "odd"
+): Promise<OHLCVData[]> {
+    const requestedIntervalSec = intervalToSeconds(interval);
+    const useEven2hResample = requestedIntervalSec === 7200 && twoHourCloseParity === "even";
+    const sourceInterval = useEven2hResample ? "1h" : interval;
+    const binanceInterval = toBinanceInterval(sourceInterval);
     if (!binanceInterval) {
-        throw new Error(`Unsupported interval for Binance: ${interval}`);
+        throw new Error(`Unsupported interval for Binance: ${sourceInterval}`);
     }
     const clampedLimit = Math.max(MIN_CANDLES, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, Math.floor(limit)));
+    const sourceLimit = useEven2hResample
+        ? Math.max(MIN_CANDLES, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, clampedLimit * 2 + 6))
+        : clampedLimit;
     const bases = readBinanceApiBases(env);
     const endpointErrors: string[] = [];
 
     for (const base of bases) {
-        const endpoint = `${base}/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(binanceInterval)}&limit=${clampedLimit}`;
+        const endpoint = `${base}/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(binanceInterval)}&limit=${sourceLimit}`;
         try {
             const res = await fetch(endpoint, {
                 headers: {
@@ -510,7 +599,7 @@ async function fetchBinanceCandles(symbol: string, interval: string, limit: numb
                 continue;
             }
 
-            return rows.map((kline) => ({
+            const sourceCandles = rows.map((kline) => ({
                 time: Math.floor(kline[0] / 1000) as CandleTime,
                 open: Number(kline[1]),
                 high: Number(kline[2]),
@@ -518,6 +607,11 @@ async function fetchBinanceCandles(symbol: string, interval: string, limit: numb
                 close: Number(kline[4]),
                 volume: Number(kline[5]),
             }));
+            if (!useEven2hResample) {
+                return sourceCandles;
+            }
+
+            return resampleCandles(sourceCandles, interval, "even").slice(-clampedLimit);
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             endpointErrors.push(`${base} -> ${normalizeStatusText(detail, 120)}`);
@@ -547,19 +641,31 @@ function toBybitInterval(interval: string): string | null {
     return null;
 }
 
-async function fetchBybitCandles(symbol: string, interval: string, limit: number, env: Env): Promise<OHLCVData[]> {
-    const bybitInterval = toBybitInterval(interval);
+async function fetchBybitCandles(
+    symbol: string,
+    interval: string,
+    limit: number,
+    env: Env,
+    twoHourCloseParity: "odd" | "even" = "odd"
+): Promise<OHLCVData[]> {
+    const requestedIntervalSec = intervalToSeconds(interval);
+    const useEven2hResample = requestedIntervalSec === 7200 && twoHourCloseParity === "even";
+    const sourceInterval = useEven2hResample ? "1h" : interval;
+    const bybitInterval = toBybitInterval(sourceInterval);
     if (!bybitInterval) {
-        throw new Error(`Unsupported interval for Bybit: ${interval}`);
+        throw new Error(`Unsupported interval for Bybit: ${sourceInterval}`);
     }
 
     const clampedLimit = Math.max(MIN_CANDLES, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, Math.floor(limit)));
+    const sourceLimit = useEven2hResample
+        ? Math.max(MIN_CANDLES, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, clampedLimit * 2 + 6))
+        : clampedLimit;
     const bases = readBybitApiBases(env);
     const endpointErrors: string[] = [];
 
     for (const base of bases) {
         for (const category of ["spot", "linear"]) {
-            const endpoint = `${base}/v5/market/kline?category=${category}&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(bybitInterval)}&limit=${clampedLimit}`;
+            const endpoint = `${base}/v5/market/kline?category=${category}&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(bybitInterval)}&limit=${sourceLimit}`;
             try {
                 const res = await fetch(endpoint, {
                     headers: {
@@ -584,13 +690,17 @@ async function fetchBybitCandles(symbol: string, interval: string, limit: number
                 }
 
                 const list = body.result?.list ?? [];
-                const candles = parseBybitKlineList(list);
-                if (candles.length === 0) {
+                const sourceCandles = parseBybitKlineList(list);
+                if (sourceCandles.length === 0) {
                     endpointErrors.push(`${base}/${category} -> empty_response`);
                     continue;
                 }
 
-                return candles;
+                if (!useEven2hResample) {
+                    return sourceCandles;
+                }
+
+                return resampleCandles(sourceCandles, interval, "even").slice(-clampedLimit);
             } catch (error) {
                 const detail = error instanceof Error ? error.message : String(error);
                 endpointErrors.push(`${base}/${category} -> ${normalizeStatusText(detail, 120)}`);
@@ -602,14 +712,20 @@ async function fetchBybitCandles(symbol: string, interval: string, limit: number
     throw new Error(`Bybit API unavailable: ${summary}`);
 }
 
-async function fetchMarketCandles(symbol: string, interval: string, limit: number, env: Env): Promise<OHLCVData[]> {
+async function fetchMarketCandles(
+    symbol: string,
+    interval: string,
+    limit: number,
+    env: Env,
+    twoHourCloseParity: "odd" | "even" = "odd"
+): Promise<OHLCVData[]> {
     try {
         // Prefer Bybit first because Binance endpoints may be region-restricted
         // from Cloudflare Worker egress in some geographies.
-        return await fetchBybitCandles(symbol, interval, limit, env);
+        return await fetchBybitCandles(symbol, interval, limit, env, twoHourCloseParity);
     } catch (bybitError) {
         try {
-            return await fetchBinanceCandles(symbol, interval, limit, env);
+            return await fetchBinanceCandles(symbol, interval, limit, env, twoHourCloseParity);
         } catch (binanceError) {
             const bybitMessage = bybitError instanceof Error ? bybitError.message : String(bybitError);
             const binanceMessage = binanceError instanceof Error ? binanceError.message : String(binanceError);
@@ -1200,6 +1316,17 @@ async function handleSubscriptionDelete(request: Request, env: Env): Promise<Res
     });
 }
 
+function parseTwoHourCloseParityFromStreamId(streamId: string): "odd" | "even" | null {
+    const markerIdx = streamId.indexOf(STREAM_PARITY_MARKER);
+    if (markerIdx < 0) return null;
+    const valueStart = markerIdx + STREAM_PARITY_MARKER.length;
+    const configIdx = streamId.indexOf(STREAM_CONFIG_MARKER, valueStart);
+    const raw = (configIdx >= 0 ? streamId.slice(valueStart, configIdx) : streamId.slice(valueStart))
+        .trim()
+        .toLowerCase();
+    return raw === "even" ? "even" : raw === "odd" ? "odd" : null;
+}
+
 function shouldPollSubscriptionOnSchedule(
     subscription: SubscriptionRow,
     nowSec: number = Math.floor(Date.now() / 1000)
@@ -1265,13 +1392,21 @@ async function runSubscription(
     const streamId = subscription.stream_id;
     const lastExitAlertKey = extractExitAlertKey(subscription.last_status);
     let persistedExitAlertKey: string | null = lastExitAlertKey;
+    const parsedStrategyParams = safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>);
+    const parsedBacktestSettings = safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings);
+    const twoHourCloseParity = resolveTwoHourCloseParity(
+        subscription.interval,
+        parsedBacktestSettings,
+        streamId
+    );
 
     try {
         const candles = await fetchMarketCandles(
             subscription.symbol,
             subscription.interval,
             subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT,
-            env
+            env,
+            twoHourCloseParity
         );
 
         const closed = selectClosedCandleWindow(candles, subscription.interval);
@@ -1298,8 +1433,8 @@ async function runSubscription(
                 interval: subscription.interval,
                 strategyKey: subscription.strategy_key,
                 configName: parseConfigNameFromStreamId(streamId) ?? undefined,
-                strategyParams: safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>),
-                backtestSettings: safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings),
+                strategyParams: parsedStrategyParams,
+                backtestSettings: parsedBacktestSettings,
                 freshnessBars: Math.max(0, subscription.freshness_bars ?? 1),
                 notifyTelegram: subscription.notify_telegram === 1,
                 notifyExit: subscription.notify_exit === 1,
@@ -1322,8 +1457,8 @@ async function runSubscription(
                         const evaluation = evaluateLatestEntrySignal({
                             strategyKey: subscription.strategy_key,
                             candles: closed.candles,
-                            strategyParams: safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>),
-                            backtestSettings: safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings),
+                            strategyParams: parsedStrategyParams,
+                            backtestSettings: parsedBacktestSettings,
                             // Keep exit alerts fresh and avoid repeated stale exits.
                             freshnessBars: Math.max(0, subscription.freshness_bars ?? 1),
                         });
