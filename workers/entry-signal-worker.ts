@@ -33,7 +33,6 @@ interface Env {
     TELEGRAM_BOT_TOKEN?: string;
     TELEGRAM_CHAT_ID?: string;
     BINANCE_API_BASES?: string;
-    BYBIT_API_BASES?: string;
 }
 
 interface StreamSignalRequest {
@@ -171,16 +170,13 @@ const BINANCE_INTERVALS = new Set([
     "1d", "3d", "1w", "1M",
 ]);
 const DEFAULT_BINANCE_API_BASES = [
+    "https://api.binance.us",
     "https://data-api.binance.vision",
     "https://api.binance.com",
     "https://api1.binance.com",
     "https://api2.binance.com",
     "https://api3.binance.com",
     "https://api4.binance.com",
-    "https://api.binance.us",
-];
-const DEFAULT_BYBIT_API_BASES = [
-    "https://api.bybit.com",
 ];
 
 const CORS_HEADERS: Record<string, string> = {
@@ -377,44 +373,12 @@ function readBinanceApiBases(env: Env): string[] {
     return configured.length > 0 ? configured : DEFAULT_BINANCE_API_BASES;
 }
 
-function readBybitApiBases(env: Env): string[] {
-    const configured = (env.BYBIT_API_BASES ?? "")
-        .split(",")
-        .map((x) => x.trim().replace(/\/+$/, ""))
-        .filter(Boolean);
-
-    return configured.length > 0 ? configured : DEFAULT_BYBIT_API_BASES;
-}
-
 function normalizeBinanceResponseSnippet(value: string): string {
     return value
         .replace(/<[^>]+>/g, " ")
         .replace(/\s+/g, " ")
         .trim()
         .slice(0, RESPONSE_SNIPPET_MAX);
-}
-
-function parseBybitKlineList(
-    rows: Array<[string, string, string, string, string, string, string]>
-): OHLCVData[] {
-    return rows
-        .map((kline) => ({
-            time: Math.floor(Number(kline[0]) / 1000) as CandleTime,
-            open: Number(kline[1]),
-            high: Number(kline[2]),
-            low: Number(kline[3]),
-            close: Number(kline[4]),
-            volume: Number(kline[5]),
-        }))
-        .filter((row) =>
-            Number.isFinite(row.time) &&
-            Number.isFinite(row.open) &&
-            Number.isFinite(row.high) &&
-            Number.isFinite(row.low) &&
-            Number.isFinite(row.close) &&
-            Number.isFinite(row.volume)
-        )
-        .sort((a, b) => Number(a.time) - Number(b.time));
 }
 
 function intervalToSeconds(interval: string): number | null {
@@ -622,96 +586,6 @@ async function fetchBinanceCandles(
     throw new Error(`Binance API unavailable: ${summary}`);
 }
 
-function toBybitInterval(interval: string): string | null {
-    const trimmed = interval.trim();
-    if (/^\d+m$/.test(trimmed)) {
-        const mins = Number(trimmed.slice(0, -1));
-        const supported = new Set([1, 3, 5, 15, 30, 60, 120, 240, 360, 720]);
-        return supported.has(mins) ? String(mins) : null;
-    }
-    if (/^\d+h$/.test(trimmed)) {
-        const hours = Number(trimmed.slice(0, -1));
-        const mins = hours * 60;
-        const supported = new Set([60, 120, 240, 360, 720]);
-        return supported.has(mins) ? String(mins) : null;
-    }
-    if (trimmed === "1d" || trimmed === "24h") return "D";
-    if (trimmed === "1w" || trimmed === "7d") return "W";
-    if (trimmed === "1M" || trimmed === "30d") return "M";
-    return null;
-}
-
-async function fetchBybitCandles(
-    symbol: string,
-    interval: string,
-    limit: number,
-    env: Env,
-    twoHourCloseParity: "odd" | "even" = "odd"
-): Promise<OHLCVData[]> {
-    const requestedIntervalSec = intervalToSeconds(interval);
-    const useEven2hResample = requestedIntervalSec === 7200 && twoHourCloseParity === "even";
-    const sourceInterval = useEven2hResample ? "1h" : interval;
-    const bybitInterval = toBybitInterval(sourceInterval);
-    if (!bybitInterval) {
-        throw new Error(`Unsupported interval for Bybit: ${sourceInterval}`);
-    }
-
-    const clampedLimit = Math.max(MIN_CANDLES, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, Math.floor(limit)));
-    const sourceLimit = useEven2hResample
-        ? Math.max(MIN_CANDLES, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, clampedLimit * 2 + 6))
-        : clampedLimit;
-    const bases = readBybitApiBases(env);
-    const endpointErrors: string[] = [];
-
-    for (const base of bases) {
-        for (const category of ["spot", "linear"]) {
-            const endpoint = `${base}/v5/market/kline?category=${category}&symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(bybitInterval)}&limit=${sourceLimit}`;
-            try {
-                const res = await fetch(endpoint, {
-                    headers: {
-                        accept: "application/json",
-                        "user-agent": "strategy-entry-signal-worker/1.0",
-                    },
-                });
-                if (!res.ok) {
-                    endpointErrors.push(`${base}/${category} -> ${res.status}`);
-                    continue;
-                }
-
-                const body = (await res.json()) as {
-                    retCode?: number;
-                    retMsg?: string;
-                    result?: { list?: Array<[string, string, string, string, string, string, string]> };
-                };
-
-                if (body.retCode !== 0) {
-                    endpointErrors.push(`${base}/${category} -> code:${body.retCode ?? "?"} ${body.retMsg ?? ""}`.trim());
-                    continue;
-                }
-
-                const list = body.result?.list ?? [];
-                const sourceCandles = parseBybitKlineList(list);
-                if (sourceCandles.length === 0) {
-                    endpointErrors.push(`${base}/${category} -> empty_response`);
-                    continue;
-                }
-
-                if (!useEven2hResample) {
-                    return sourceCandles;
-                }
-
-                return resampleCandles(sourceCandles, interval, "even").slice(-clampedLimit);
-            } catch (error) {
-                const detail = error instanceof Error ? error.message : String(error);
-                endpointErrors.push(`${base}/${category} -> ${normalizeStatusText(detail, 120)}`);
-            }
-        }
-    }
-
-    const summary = normalizeStatusText(endpointErrors.join(" | "), 900);
-    throw new Error(`Bybit API unavailable: ${summary}`);
-}
-
 async function fetchMarketCandles(
     symbol: string,
     interval: string,
@@ -719,24 +593,7 @@ async function fetchMarketCandles(
     env: Env,
     twoHourCloseParity: "odd" | "even" = "odd"
 ): Promise<OHLCVData[]> {
-    try {
-        // Prefer Bybit first because Binance endpoints may be region-restricted
-        // from Cloudflare Worker egress in some geographies.
-        return await fetchBybitCandles(symbol, interval, limit, env, twoHourCloseParity);
-    } catch (bybitError) {
-        try {
-            return await fetchBinanceCandles(symbol, interval, limit, env, twoHourCloseParity);
-        } catch (binanceError) {
-            const bybitMessage = bybitError instanceof Error ? bybitError.message : String(bybitError);
-            const binanceMessage = binanceError instanceof Error ? binanceError.message : String(binanceError);
-            throw new Error(
-                normalizeStatusText(
-                    `Bybit failed: ${bybitMessage} | Binance failed: ${binanceMessage}`,
-                    1000
-                )
-            );
-        }
-    }
+    return fetchBinanceCandles(symbol, interval, limit, env, twoHourCloseParity);
 }
 
 function selectClosedCandleWindow(

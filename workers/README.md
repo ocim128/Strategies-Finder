@@ -62,11 +62,10 @@ Behavior:
 - Runs every hour on minute `00` UTC.
 - Worker aligns processing to around second `10` of that minute before evaluating subscriptions.
 - Interval gating prevents unnecessary checks for higher timeframes (for example, `2h` subscriptions are skipped on non-due hours).
-- For each enabled subscription, worker fetches market candles (Bybit-first, then Binance fallback).
+- For each enabled subscription, worker fetches market candles from Binance endpoints only.
 - It only evaluates when a **new closed candle** exists (`last_processed_closed_candle_time` guard).
 - This avoids duplicate alerts between candle closes.
-- Worker now auto-fallbacks across multiple Binance hosts (`data-api.binance.vision`, `api.binance.com`, `api1..4`, `api.binance.us`).
-- If Binance is fully blocked from Worker egress, it falls back to Bybit klines (`spot` then `linear`) for continuity.
+- Worker tries `api.binance.us` first, then falls back across Binance hosts (`data-api.binance.vision`, `api.binance.com`, `api1..4`).
 
 Create subscription example:
 
@@ -112,14 +111,9 @@ Then send `notifyTelegram: true` in request body.
 If your Worker region still gets blocked, set a custom CSV of API bases:
 
 - `BINANCE_API_BASES`
-- `BYBIT_API_BASES`
 
 Example value:
 
 ```text
-https://data-api.binance.vision,https://api.binance.us
-```
-
-```text
-https://api.bybit.com
+https://api.binance.us,https://data-api.binance.vision,https://api.binance.com
 ```
