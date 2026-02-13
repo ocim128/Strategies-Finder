@@ -8,6 +8,8 @@ database_name = "strategy_signals"
 database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 
 [triggers]
-# Intentional: keep 2-hour cadence for 2h strategy signals.
-# The worker aligns execution to second 10 inside scheduled().
-crons = ["0 */2 * * *"]
+# Multi-timeframe scheduler:
+# - Runs every hour at minute 00.
+# - Worker aligns execution to second 10 in code.
+# - 2h+ subscriptions are interval-gated in worker code to avoid over-polling.
+crons = ["0 * * * *"]

@@ -9,6 +9,8 @@ database_id = "ba727aeb-077a-4fed-a526-e07e97c61f6b"
 migrations_dir = "workers/migrations"
 
 [triggers]
-# Intentional: this worker is tuned for 2h signal workflows.
-# Trigger exactly at each 2h boundary minute; worker then aligns to second 10 in code.
-crons = ["0 */2 * * *"]
+# Multi-timeframe scheduler:
+# - Runs every hour at minute 00.
+# - Worker aligns execution to second 10 in code.
+# - 2h+ subscriptions are interval-gated in worker code to avoid over-polling.
+crons = ["0 * * * *"]

@@ -1,6 +1,13 @@
 import { evaluateLatestEntrySignal } from "../lib/signal-entry-evaluator";
 import type { BacktestSettings, OHLCVData } from "../lib/types/strategies";
 
+type CandleTime = OHLCVData["time"];
+
+interface ScheduledController {
+    scheduledTime: number | string;
+    cron?: string;
+}
+
 interface D1Meta {
     changes?: number;
 }
@@ -154,7 +161,7 @@ const MAX_SUBSCRIPTION_CANDLE_LIMIT = 1000;
 const STATUS_TEXT_MAX = 1200;
 const RESPONSE_SNIPPET_MAX = 320;
 const STREAM_CONFIG_MARKER = ":cfg:";
-// Keep this worker on 2h cron cadence and run shortly after minute boundary.
+// Keep scheduled runs aligned shortly after minute boundary.
 // Cloudflare cron granularity is 1 minute, so second-level precision is done in code.
 const SCHEDULE_TARGET_SECOND = 10;
 const BINANCE_INTERVALS = new Set([
@@ -267,7 +274,7 @@ function normalizeCandles(input: StreamSignalRequest["candles"]): OHLCVData[] {
         }
 
         deduped.set(timeSec, {
-            time: timeSec,
+            time: timeSec as CandleTime,
             open,
             high,
             low,
@@ -391,7 +398,7 @@ function parseBybitKlineList(
 ): OHLCVData[] {
     return rows
         .map((kline) => ({
-            time: Math.floor(Number(kline[0]) / 1000),
+            time: Math.floor(Number(kline[0]) / 1000) as CandleTime,
             open: Number(kline[1]),
             high: Number(kline[2]),
             low: Number(kline[3]),
@@ -504,7 +511,7 @@ async function fetchBinanceCandles(symbol: string, interval: string, limit: numb
             }
 
             return rows.map((kline) => ({
-                time: Math.floor(kline[0] / 1000),
+                time: Math.floor(kline[0] / 1000) as CandleTime,
                 open: Number(kline[1]),
                 high: Number(kline[2]),
                 low: Number(kline[3]),
@@ -1134,30 +1141,81 @@ async function handleSubscriptionDelete(request: Request, env: Env): Promise<Res
     }
 
     const body = await request.json().catch(() => ({}));
-    const payload = body as { streamId?: string };
+    const payload = body as { streamId?: string; hardDelete?: boolean };
     const streamId = payload.streamId?.trim();
     if (!streamId) {
         return toJsonResponse({ ok: false, error: "streamId is required" }, 400);
     }
 
-    const subsDelete = await env.SIGNALS_DB.prepare(
-        `DELETE FROM signal_subscriptions WHERE stream_id = ?`
+    if (payload.hardDelete === true) {
+        const subsDelete = await env.SIGNALS_DB.prepare(
+            `DELETE FROM signal_subscriptions WHERE stream_id = ?`
+        )
+            .bind(streamId)
+            .run();
+        const signalsDelete = await env.SIGNALS_DB.prepare(
+            `DELETE FROM entry_signals WHERE stream_id = ? OR channel_key = ?`
+        )
+            .bind(streamId, streamId.toLowerCase())
+            .run();
+
+        return toJsonResponse({
+            ok: true,
+            mode: "hard_delete",
+            streamId,
+            deleted: (subsDelete.meta?.changes ?? 0) > 0,
+            subscriptionsDeleted: subsDelete.meta?.changes ?? 0,
+            signalsDeleted: signalsDelete.meta?.changes ?? 0,
+        });
+    }
+
+    const existing = await env.SIGNALS_DB.prepare(
+        `SELECT last_status FROM signal_subscriptions WHERE stream_id = ? LIMIT 1`
     )
         .bind(streamId)
-        .run();
-    const signalsDelete = await env.SIGNALS_DB.prepare(
-        `DELETE FROM entry_signals WHERE stream_id = ? OR channel_key = ?`
+        .first<{ last_status: string | null }>();
+    const status = composeSubscriptionStatus("disabled", extractExitAlertKey(existing?.last_status));
+
+    const disabled = await env.SIGNALS_DB.prepare(
+        `
+        UPDATE signal_subscriptions
+        SET
+            enabled = 0,
+            last_run_at = CURRENT_TIMESTAMP,
+            last_status = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE stream_id = ?
+        `
     )
-        .bind(streamId, streamId.toLowerCase())
+        .bind(status, streamId)
         .run();
 
     return toJsonResponse({
         ok: true,
+        mode: "soft_disable",
         streamId,
-        deleted: (subsDelete.meta?.changes ?? 0) > 0,
-        subscriptionsDeleted: subsDelete.meta?.changes ?? 0,
-        signalsDeleted: signalsDelete.meta?.changes ?? 0,
+        disabled: (disabled.meta?.changes ?? 0) > 0,
+        subscriptionsDisabled: disabled.meta?.changes ?? 0,
+        signalsDeleted: 0,
     });
+}
+
+function shouldPollSubscriptionOnSchedule(
+    subscription: SubscriptionRow,
+    nowSec: number = Math.floor(Date.now() / 1000)
+): boolean {
+    const intervalSeconds = intervalToSeconds(subscription.interval);
+    if (!intervalSeconds || intervalSeconds <= 0) return true;
+
+    const lastProcessedOpenTimeSec = Number(subscription.last_processed_closed_candle_time ?? 0);
+    if (!Number.isFinite(lastProcessedOpenTimeSec) || lastProcessedOpenTimeSec <= 0) return true;
+
+    // last_processed_closed_candle_time stores candle OPEN time.
+    // A new closed candle can only exist after two interval lengths from that open:
+    // - one interval to close the processed candle
+    // - one more interval for the next candle to close
+    const nextPossibleNewClosedCandleSec = lastProcessedOpenTimeSec + intervalSeconds * 2;
+    return nowSec >= nextPossibleNewClosedCandleSec;
 }
 
 async function updateSubscriptionStatus(
@@ -1218,15 +1276,17 @@ async function runSubscription(
 
         const closed = selectClosedCandleWindow(candles, subscription.interval);
         if (!closed) {
-            await updateSubscriptionStatus(env, streamId, "insufficient_candles");
-            return { streamId, status: "insufficient_candles" };
+            const status = composeSubscriptionStatus("insufficient_candles", persistedExitAlertKey);
+            await updateSubscriptionStatus(env, streamId, status);
+            return { streamId, status };
         }
 
         if (!force && closed.closedCandleTimeSec <= (subscription.last_processed_closed_candle_time || 0)) {
-            await updateSubscriptionStatus(env, streamId, "no_new_closed_candle");
+            const status = composeSubscriptionStatus("no_new_closed_candle", persistedExitAlertKey);
+            await updateSubscriptionStatus(env, streamId, status);
             return {
                 streamId,
-                status: "no_new_closed_candle",
+                status,
                 closedCandleTimeSec: closed.closedCandleTimeSec,
             };
         }
@@ -1270,6 +1330,7 @@ async function runSubscription(
                         if (
                             evaluation.ok &&
                             evaluation.latestEntry &&
+                            evaluation.latestEntry.isFresh &&
                             evaluation.latestEntry.direction !== lastPayload.direction &&
                             evaluation.latestEntry.signalTimeSec > lastPayload.signalTimeSec
                         ) {
@@ -1322,12 +1383,13 @@ async function runSubscription(
             result,
         };
     } catch (error) {
-        const status = normalizeStatusText(
+        const rawStatus = normalizeStatusText(
             error instanceof Error ? error.message : String(error),
             Math.max(32, STATUS_TEXT_MAX - 6)
         );
-        await updateSubscriptionStatus(env, streamId, `error:${status}`);
-        return { streamId, status: `error:${status}` };
+        const status = composeSubscriptionStatus(`error:${rawStatus}`, persistedExitAlertKey);
+        await updateSubscriptionStatus(env, streamId, status);
+        return { streamId, status };
     }
 }
 
@@ -1368,8 +1430,18 @@ async function runScheduledSubscriptions(env: Env): Promise<Record<string, unkno
 
     const subscriptions = result.results ?? [];
     const runs: Record<string, unknown>[] = [];
+    const nowSec = Math.floor(Date.now() / 1000);
+    let skippedNotDue = 0;
 
     for (const subscription of subscriptions) {
+        if (!shouldPollSubscriptionOnSchedule(subscription, nowSec)) {
+            skippedNotDue += 1;
+            runs.push({
+                streamId: subscription.stream_id,
+                status: "skipped_interval_not_due",
+            });
+            continue;
+        }
         const run = await runSubscription(env, subscription, false);
         runs.push(run);
     }
@@ -1377,6 +1449,8 @@ async function runScheduledSubscriptions(env: Env): Promise<Record<string, unkno
     return {
         ok: true,
         scanned: subscriptions.length,
+        eligible: subscriptions.length - skippedNotDue,
+        skippedNotDue,
         runs,
         at: new Date().toISOString(),
     };
@@ -1433,8 +1507,9 @@ export default {
         }
 
         // Intentional behavior:
-        // - Wrangler cron should run every 2h at minute 00 (`0 */2 * * *`)
+        // - Wrangler cron runs every hour at minute 00 (`0 * * * *`)
         // - We delay to second 10 so evaluation happens just after the new candle forms.
+        // - Subscriptions are interval-gated in code to avoid unnecessary fetches.
         const scheduledTimeMs = Number(controller.scheduledTime);
         const waitMs = computeScheduleAlignmentDelayMs(scheduledTimeMs, SCHEDULE_TARGET_SECOND);
         if (waitMs > 0) {

@@ -14,6 +14,9 @@ It deduplicates signals in D1, so the same entry is only produced once.
   - Stores/updates an auto-run subscription (pair + timeframe + strategy config)
 - `GET /api/subscriptions`
   - Lists configured subscriptions
+- `POST /api/subscriptions/delete`
+  - Soft-disables a subscription by default (`enabled=0`, keeps history)
+  - Optional hard-delete: `{ "streamId": "...", "hardDelete": true }`
 - `POST /api/subscriptions/run-now`
   - Runs one subscription immediately for testing
 - `GET /health`
@@ -46,20 +49,20 @@ Notes:
 - Send at least 200 candles per call (worker validates this).
 - `time` can be unix seconds, unix milliseconds, ISO string, or business-day object.
 
-## Automatic 2h Runs (new candle only)
+## Automatic Scheduled Runs (new candle only)
 
 Cron is configured in `wrangler.toml`:
 
 ```toml
 [triggers]
-crons = ["0 */2 * * *"]
+crons = ["0 * * * *"]
 ```
 
 Behavior:
-- Runs every 2 hours on minute `00` UTC.
+- Runs every hour on minute `00` UTC.
 - Worker aligns processing to around second `10` of that minute before evaluating subscriptions.
-- This is intentional for 2h signal workflows. Do not switch to per-minute cron unless you also change interval strategy requirements.
-- For each enabled subscription, worker fetches Binance candles.
+- Interval gating prevents unnecessary checks for higher timeframes (for example, `2h` subscriptions are skipped on non-due hours).
+- For each enabled subscription, worker fetches market candles (Bybit-first, then Binance fallback).
 - It only evaluates when a **new closed candle** exists (`last_processed_closed_candle_time` guard).
 - This avoids duplicate alerts between candle closes.
 - Worker now auto-fallbacks across multiple Binance hosts (`data-api.binance.vision`, `api.binance.com`, `api1..4`, `api.binance.us`).
@@ -94,6 +97,7 @@ wrangler d1 migrations apply strategy_signals --remote
 Migration file:
 - `workers/migrations/0001_entry_signals.sql`
 - `workers/migrations/0002_signal_subscriptions.sql`
+- `workers/migrations/0003_exit_alerts.sql`
 
 ## Telegram (Optional)
 

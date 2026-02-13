@@ -20,5 +20,7 @@
 		"*.tsx",
 		"*.js",
 		"*.jsx",
+		"workers/**/*.ts",
+		"workers/**/*.tsx"
 	]
 }

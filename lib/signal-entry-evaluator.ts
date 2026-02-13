@@ -1,6 +1,7 @@
 import type { BacktestSettings, OHLCVData, Signal } from "./types/strategies";
 import { strategies } from "./strategies/library";
 import { prepareSignalsForScanner } from "./strategies/backtest/signal-preparation";
+import { allowsSignalAsEntry, normalizeTradeDirection } from "./strategies/backtest/backtest-utils";
 
 export interface EntrySignalEvaluationRequest {
     strategyKey: string;
@@ -102,18 +103,22 @@ export function evaluateLatestEntrySignal(
         rawSignals,
         request.backtestSettings ?? {}
     );
+    const tradeDirection = normalizeTradeDirection(request.backtestSettings);
+    const entrySignals = preparedSignals.filter((signal) =>
+        allowsSignalAsEntry(signal.type, tradeDirection)
+    );
 
-    if (preparedSignals.length === 0) {
+    if (entrySignals.length === 0) {
         return {
             ok: true,
             reason: "no_signals",
             rawSignalCount: rawSignals.length,
-            preparedSignalCount: 0,
+            preparedSignalCount: preparedSignals.length,
             latestEntry: null,
         };
     }
 
-    const latestSignal = preparedSignals[preparedSignals.length - 1];
+    const latestSignal = entrySignals[entrySignals.length - 1];
     const signalTimeSec = toUnixSeconds(latestSignal.time);
     if (signalTimeSec === null) {
         return {
