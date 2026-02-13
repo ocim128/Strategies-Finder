@@ -17,6 +17,8 @@ import { uiManager } from '../ui-manager';
 import { state } from '../state';
 import { backtestService } from '../backtest-service';
 import { settingsManager } from '../settings-manager';
+import { dataManager } from '../data-manager';
+import { Trade, BacktestSettings } from '../strategies/index';
 
 function el<T extends HTMLElement>(id: string): T | null {
     return document.getElementById(id) as T | null;
@@ -370,7 +372,7 @@ function openSubscriptionInfoModal(sub: AlertSubscription, configName: string | 
 }
 
 function createActionButton(
-    action: 'info' | 'run' | 'sync' | 'disable',
+    action: 'info' | 'run' | 'sync' | 'disable' | 'lastTrade',
     streamId: string,
     title: string,
     label: string
@@ -437,6 +439,7 @@ function renderSubscriptions(subs: AlertSubscription[]) {
         actionsTd.appendChild(createActionButton('run', sub.stream_id, 'Run Now', 'Run'));
         actionsTd.appendChild(createActionButton('sync', sub.stream_id, 'Use currently loaded strategy/settings', 'Use Current'));
         actionsTd.appendChild(createActionButton('disable', sub.stream_id, 'Disable', 'Disable'));
+        actionsTd.appendChild(createActionButton('lastTrade', sub.stream_id, 'Show last trade from backtest', 'Last Trade'));
         tr.appendChild(actionsTd);
 
         tbody.appendChild(tr);
@@ -694,6 +697,8 @@ async function handleTableAction(action: string, streamId: string) {
             await alertService.disableSubscription(streamId);
             uiManager.showToast(`Disabled: ${streamId}`, 'success');
             await refreshSubscriptions();
+        } else if (action === 'lastTrade') {
+            await handleLastTradeAction(streamId);
         }
     } catch (err) {
         uiManager.showToast('Action failed: ' + (err instanceof Error ? err.message : String(err)), 'error');
@@ -712,6 +717,230 @@ async function loadSignalHistory() {
         renderSignalHistory(signals);
     } catch (err) {
         uiManager.showToast('Failed to load history: ' + (err instanceof Error ? err.message : String(err)), 'error');
+    }
+}
+
+// Last Trade Modal Functions
+function closeLastTradeModal(): void {
+    const overlay = el<HTMLElement>('lastTradeModal');
+    if (overlay) overlay.classList.remove('active');
+}
+
+function openLastTradeModal(title: string): void {
+    const overlay = el<HTMLElement>('lastTradeModal');
+    const titleEl = el<HTMLElement>('lastTradeModalTitle');
+    if (!overlay || !titleEl) return;
+    
+    titleEl.textContent = title;
+    
+    // Reset to loading state
+    const loadingEl = el<HTMLElement>('lastTradeLoading');
+    const contentEl = el<HTMLElement>('lastTradeContent');
+    const errorEl = el<HTMLElement>('lastTradeError');
+    
+    if (loadingEl) loadingEl.style.display = '';
+    if (contentEl) contentEl.style.display = 'none';
+    if (errorEl) errorEl.style.display = 'none';
+    
+    overlay.classList.add('active');
+}
+
+function showLastTradeError(message: string): void {
+    const loadingEl = el<HTMLElement>('lastTradeLoading');
+    const contentEl = el<HTMLElement>('lastTradeContent');
+    const errorEl = el<HTMLElement>('lastTradeError');
+    const errorMsgEl = errorEl?.querySelector('.error-message');
+    
+    if (loadingEl) loadingEl.style.display = 'none';
+    if (contentEl) contentEl.style.display = 'none';
+    if (errorEl) errorEl.style.display = '';
+    if (errorMsgEl) errorMsgEl.textContent = message;
+}
+
+function formatTimeForDisplay(time: unknown): string {
+    if (time == null) return 'N/A';
+    
+    // Handle BusinessDay object
+    if (typeof time === 'object' && 'year' in time) {
+        const bd = time as { year: number; month: number; day: number };
+        return `${bd.year}-${String(bd.month).padStart(2, '0')}-${String(bd.day).padStart(2, '0')}`;
+    }
+    
+    // Handle Unix timestamp or ISO string
+    const timestamp = typeof time === 'number' 
+        ? (time > 1e11 ? time : time * 1000) 
+        : (typeof time === 'string' ? new Date(time).getTime() : Date.now());
+    
+    return new Date(timestamp).toISOString().replace('T', ' ').slice(0, 19);
+}
+
+function formatDurationForTradeTimes(entryTime: unknown, exitTime: unknown): string {
+    if (entryTime == null || exitTime == null) return '-';
+    
+    let entryMs: number;
+    if (typeof entryTime === 'number') {
+        entryMs = entryTime > 1e11 ? entryTime : entryTime * 1000;
+    } else if (typeof entryTime === 'object' && 'year' in entryTime) {
+        const bd = entryTime as { year: number; month: number; day: number };
+        entryMs = Date.UTC(bd.year, bd.month - 1, bd.day);
+    } else {
+        entryMs = typeof entryTime === 'string' ? new Date(entryTime).getTime() : Date.now();
+    }
+    
+    let exitMs: number;
+    if (typeof exitTime === 'number') {
+        exitMs = exitTime > 1e11 ? exitTime : exitTime * 1000;
+    } else if (typeof exitTime === 'object' && 'year' in exitTime) {
+        const bd = exitTime as { year: number; month: number; day: number };
+        exitMs = Date.UTC(bd.year, bd.month - 1, bd.day);
+    } else {
+        exitMs = typeof exitTime === 'string' ? new Date(exitTime).getTime() : Date.now();
+    }
+    
+    return formatDuration(exitMs - entryMs);
+}
+
+function showLastTradeResult(trade: Trade | null, symbol: string, interval: string, totalTrades: number): void {
+    const loadingEl = el<HTMLElement>('lastTradeLoading');
+    const contentEl = el<HTMLElement>('lastTradeContent');
+    const errorEl = el<HTMLElement>('lastTradeError');
+    const summaryEl = el<HTMLElement>('lastTradeSummary');
+    const detailsEl = el<HTMLElement>('lastTradeDetails');
+    
+    if (loadingEl) loadingEl.style.display = 'none';
+    if (errorEl) errorEl.style.display = 'none';
+    if (contentEl) contentEl.style.display = '';
+    
+    if (!trade) {
+        if (summaryEl) summaryEl.innerHTML = '<p class="no-trades">No trades found in backtest results.</p>';
+        if (detailsEl) detailsEl.innerHTML = '';
+        return;
+    }
+    
+    // Format trade details
+    const isLong = trade.type === 'long';
+    const isWin = trade.pnl >= 0;
+    const entryTimeStr = formatTimeForDisplay(trade.entryTime);
+    const exitTimeStr = trade.exitTime ? formatTimeForDisplay(trade.exitTime) : 'Still open';
+    const duration = trade.entryTime && trade.exitTime 
+        ? formatDurationForTradeTimes(trade.entryTime, trade.exitTime)
+        : 'Open';
+    
+    // Exit reason badge
+    const exitReasonBadge = getExitReasonBadge(trade.exitReason);
+    
+    // Summary header
+    if (summaryEl) {
+        summaryEl.innerHTML = `
+            <div class="last-trade-header ${isWin ? 'win' : 'loss'}">
+                <span class="trade-type ${isLong ? 'long' : 'short'}">${isLong ? 'LONG' : 'SHORT'}</span>
+                <span class="trade-result ${isWin ? 'win' : 'loss'}">${isWin ? '+' : ''}${trade.pnl.toFixed(2)} (${Math.abs(trade.pnlPercent).toFixed(2)}%)</span>
+            </div>
+        `;
+    }
+    
+    // Details table
+    if (detailsEl) {
+        let targetsHtml = '';
+        if (trade.takeProfitPrice != null && trade.takeProfitPrice > 0) {
+            const tpPct = Math.abs((trade.takeProfitPrice - trade.entryPrice) / trade.entryPrice * 100);
+            targetsHtml += `<div class="detail-row"><span class="label">TP Price</span><span class="value">${trade.takeProfitPrice.toFixed(2)} (${tpPct.toFixed(2)}%)</span></div>`;
+        }
+        if (trade.stopLossPrice != null && trade.stopLossPrice > 0) {
+            const slPct = Math.abs((trade.stopLossPrice - trade.entryPrice) / trade.entryPrice * 100);
+            targetsHtml += `<div class="detail-row"><span class="label">SL Price</span><span class="value">${trade.stopLossPrice.toFixed(2)} (${slPct.toFixed(2)}%)</span></div>`;
+        }
+        
+        detailsEl.innerHTML = `
+            <div class="detail-grid">
+                <div class="detail-row"><span class="label">Symbol</span><span class="value">${symbol}</span></div>
+                <div class="detail-row"><span class="label">Interval</span><span class="value">${interval}</span></div>
+                <div class="detail-row"><span class="label">Trade #</span><span class="value">${totalTrades} of ${totalTrades}</span></div>
+                <div class="detail-row divider"></div>
+                <div class="detail-row"><span class="label">Entry Price</span><span class="value">${trade.entryPrice.toFixed(2)}</span></div>
+                <div class="detail-row"><span class="label">Entry Time</span><span class="value">${entryTimeStr}</span></div>
+                <div class="detail-row"><span class="label">Exit Price</span><span class="value">${trade.exitPrice?.toFixed(2) ?? 'N/A'}</span></div>
+                <div class="detail-row"><span class="label">Exit Time</span><span class="value">${exitTimeStr}</span></div>
+                <div class="detail-row"><span class="label">Duration</span><span class="value">${duration}</span></div>
+                <div class="detail-row"><span class="label">Exit Reason</span><span class="value">${exitReasonBadge}</span></div>
+                ${trade.fees ? `<div class="detail-row"><span class="label">Fees</span><span class="value">${trade.fees.toFixed(2)}</span></div>` : ''}
+                ${targetsHtml ? `<div class="detail-row divider"></div>${targetsHtml}` : ''}
+            </div>
+        `;
+    }
+}
+
+function getExitReasonBadge(exitReason: string | null | undefined): string {
+    if (!exitReason) return '-';
+    
+    const reasonMap: Record<string, { label: string; color: string }> = {
+        signal: { label: 'Signal', color: '#3b82f6' },
+        stop_loss: { label: 'Stop Loss', color: '#ef4444' },
+        take_profit: { label: 'Take Profit', color: '#22c55e' },
+        trailing_stop: { label: 'Trailing Stop', color: '#f59e0b' },
+        time_stop: { label: 'Time Stop', color: '#8b5cf6' },
+        partial: { label: 'Partial', color: '#06b6d4' },
+        end_of_data: { label: 'End of Data', color: '#f97316' },
+    };
+    
+    const info = reasonMap[exitReason];
+    if (!info) return exitReason;
+    
+    return `<span style="background: ${info.color}20; color: ${info.color}; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">${info.label}</span>`;
+}
+
+function formatDuration(ms: number): string {
+    if (ms < 0) return '-';
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    
+    if (days > 0) return `${days}d ${hours % 24}h`;
+    if (hours > 0) return `${hours}h ${minutes % 60}m`;
+    if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+    return `${seconds}s`;
+}
+
+async function handleLastTradeAction(streamId: string): Promise<void> {
+    const sub = subscriptionsByStreamId.get(streamId);
+    if (!sub) {
+        uiManager.showToast(`Subscription not found: ${streamId}`, 'error');
+        return;
+    }
+    
+    // Open modal with loading state
+    openLastTradeModal(`Last Trade: ${sub.symbol} ${sub.interval}`);
+    
+    try {
+        // Parse subscription configuration
+        const strategyParams = safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
+        const backtestSettings = safeJsonParse<BacktestSettings>(sub.backtest_settings_json, {});
+        
+        // Fetch data for the subscription's symbol and interval
+        const ohlcvData = await dataManager.fetchData(sub.symbol, sub.interval);
+        
+        if (ohlcvData.length === 0) {
+            throw new Error(`No data available for ${sub.symbol} ${sub.interval}`);
+        }
+        
+        // Run backtest with the subscription's configuration
+        const result = await backtestService.runBacktestForSubscription(
+            ohlcvData,
+            sub.strategy_key,
+            strategyParams,
+            backtestSettings
+        );
+        
+        // Get the last trade
+        const lastTrade = result.trades.length > 0 
+            ? result.trades[result.trades.length - 1] 
+            : null;
+        
+        showLastTradeResult(lastTrade, sub.symbol, sub.interval, result.trades.length);
+        
+    } catch (err) {
+        showLastTradeError('Failed to run backtest: ' + (err instanceof Error ? err.message : String(err)));
     }
 }
 
@@ -746,9 +975,18 @@ export function initAlertHandlers() {
             closeAlertConfigModal();
         }
     });
+
+    // Last Trade Modal event listeners
+    el('lastTradeModalClose')?.addEventListener('click', closeLastTradeModal);
+    el('lastTradeModal')?.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) {
+            closeLastTradeModal();
+        }
+    });
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             closeAlertConfigModal();
+            closeLastTradeModal();
         }
     });
 

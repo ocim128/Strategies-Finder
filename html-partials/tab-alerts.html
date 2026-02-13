@@ -169,4 +169,31 @@
             <div class="modal-body" id="alertConfigModalBody"></div>
         </div>
     </div>
+
+    <!-- Last Trade Modal -->
+    <div class="modal-overlay" id="lastTradeModal">
+        <div class="modal last-trade-modal">
+            <div class="modal-header">
+                <span class="modal-title" id="lastTradeModalTitle">Last Trade</span>
+                <button class="modal-close" id="lastTradeModalClose" aria-label="Close last trade details">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M18.3 5.71 12 12l6.3 6.29-1.41 1.41L10.59 13.4 4.29 19.7 2.88 18.29 9.17 12 2.88 5.71 4.29 4.3l6.3 6.3 6.29-6.3z" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" id="lastTradeModalBody">
+                <div class="last-trade-loading" id="lastTradeLoading">
+                    <div class="spinner"></div>
+                    <p>Running backtest...</p>
+                </div>
+                <div class="last-trade-content" id="lastTradeContent" style="display:none;">
+                    <div class="last-trade-summary" id="lastTradeSummary"></div>
+                    <div class="last-trade-details" id="lastTradeDetails"></div>
+                </div>
+                <div class="last-trade-error" id="lastTradeError" style="display:none;">
+                    <p class="error-message"></p>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>

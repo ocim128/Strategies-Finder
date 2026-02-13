@@ -997,6 +997,41 @@ export class BacktestService {
             uiManager.addIndicatorBadge(id, name, 0, color);
         }
     }
+
+    /**
+     * Run a backtest with custom strategy params and settings.
+     * Used by alert handlers to show last trade for a subscription.
+     */
+    public async runBacktestForSubscription(
+        ohlcvData: OHLCVData[],
+        strategyKey: string,
+        strategyParams: Record<string, number>,
+        backtestSettings: BacktestSettings
+    ): Promise<BacktestResult> {
+        const strategy = strategyRegistry.get(strategyKey);
+        if (!strategy) {
+            throw new Error(`Strategy not found: ${strategyKey}`);
+        }
+
+        const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = this.getCapitalSettings();
+        const requiresTsEngine = this.requiresTypescriptEngine(backtestSettings);
+
+        // Run the backtest
+        const runResult = await this.runBacktestForData(
+            ohlcvData,
+            strategy,
+            strategyParams,
+            backtestSettings,
+            initialCapital,
+            positionSize,
+            commission,
+            sizingMode,
+            fixedTradeAmount,
+            requiresTsEngine
+        );
+
+        return runResult.result;
+    }
 }
 
 export const backtestService = new BacktestService();

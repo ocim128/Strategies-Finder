@@ -155,3 +155,151 @@
 .alert-config-muted {
     color: var(--text-muted, #8b96a6);
 }
+
+/* Last Trade Modal Styles */
+.last-trade-modal {
+    width: min(480px, 92vw);
+    max-height: min(80vh, 600px);
+}
+
+.last-trade-modal .modal-body {
+    padding: 16px;
+}
+
+.last-trade-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    gap: 12px;
+}
+
+.last-trade-loading .spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border-color, rgba(255, 255, 255, 0.1));
+    border-top-color: var(--accent-color, #2962ff);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.last-trade-loading p {
+    color: var(--text-muted, #888);
+    margin: 0;
+    font-size: 0.85rem;
+}
+
+.last-trade-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.last-trade-error {
+    padding: 20px;
+    text-align: center;
+    color: var(--red, #ef5350);
+}
+
+.last-trade-error .error-message {
+    margin: 0;
+    font-size: 0.9rem;
+}
+
+.last-trade-summary {
+    margin-bottom: 4px;
+}
+
+.last-trade-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-radius: 8px;
+    background: var(--bg-tertiary, rgba(255, 255, 255, 0.03));
+}
+
+.last-trade-header.win {
+    border-left: 4px solid var(--green, #26a69a);
+}
+
+.last-trade-header.loss {
+    border-left: 4px solid var(--red, #ef5350);
+}
+
+.last-trade-header .trade-type {
+    font-weight: 700;
+    font-size: 1rem;
+    letter-spacing: 1px;
+}
+
+.last-trade-header .trade-type.long {
+    color: var(--green, #26a69a);
+}
+
+.last-trade-header .trade-type.short {
+    color: var(--red, #ef5350);
+}
+
+.last-trade-header .trade-result {
+    font-weight: 600;
+    font-size: 1.1rem;
+}
+
+.last-trade-header .trade-result.win {
+    color: var(--green, #26a69a);
+}
+
+.last-trade-header .trade-result.loss {
+    color: var(--red, #ef5350);
+}
+
+.last-trade-details {
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.detail-grid {
+    display: flex;
+    flex-direction: column;
+}
+
+.detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.06));
+    font-size: 0.82rem;
+}
+
+.detail-row:last-child {
+    border-bottom: none;
+}
+
+.detail-row.divider {
+    height: 1px;
+    padding: 0;
+    background: var(--border-color, rgba(255, 255, 255, 0.1));
+}
+
+.detail-row .label {
+    color: var(--text-muted, #888);
+}
+
+.detail-row .value {
+    color: var(--text-primary, #d6dde8);
+    font-weight: 500;
+}
+
+.no-trades {
+    text-align: center;
+    color: var(--text-muted, #888);
+    padding: 20px;
+    margin: 0;
+}
