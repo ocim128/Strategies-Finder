@@ -68,6 +68,7 @@ export class DataManager {
     private readonly STREAM_PERSIST_DELAY_MS = 1200;
     private cacheSyncAtByKey: Map<string, number> = new Map();
     private cachePersistTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+    private cachePersistPendingByKey: Map<string, { symbol: string; storageInterval: string; candles: OHLCVData[] }> = new Map();
 
     // ============================================================================
     // Public API
@@ -494,21 +495,37 @@ export class DataManager {
         if (!symbol || !interval || candles.length === 0) return;
         const storageInterval = this.getStorageInterval(interval);
         const cacheKey = this.buildCacheKey(symbol, storageInterval);
-        const existingTimer = this.cachePersistTimers.get(cacheKey);
-        if (existingTimer) {
-            clearTimeout(existingTimer);
-        }
+        this.cachePersistPendingByKey.set(cacheKey, {
+            symbol,
+            storageInterval,
+            candles,
+        });
 
-        const snapshot = candles.slice(-this.TOTAL_LIMIT);
+        const existingTimer = this.cachePersistTimers.get(cacheKey);
+        if (existingTimer) return;
+
         const timer = setTimeout(() => {
             this.cachePersistTimers.delete(cacheKey);
             void (async () => {
+                const pending = this.cachePersistPendingByKey.get(cacheKey);
+                this.cachePersistPendingByKey.delete(cacheKey);
+                if (!pending || pending.candles.length === 0) return;
+
+                const snapshot = pending.candles.length > this.TOTAL_LIMIT
+                    ? pending.candles.slice(-this.TOTAL_LIMIT)
+                    : pending.candles.slice();
                 const delta = snapshot.slice(-2);
-                const sqliteResult = await storeSqliteCandles(symbol, storageInterval, delta, 'Binance', 'stream');
+                const sqliteResult = await storeSqliteCandles(
+                    pending.symbol,
+                    pending.storageInterval,
+                    delta,
+                    'Binance',
+                    'stream'
+                );
                 const lastSync = this.cacheSyncAtByKey.get(cacheKey) ?? 0;
                 const shouldPersistSnapshot = !sqliteResult || (Date.now() - lastSync >= this.CACHE_SYNC_MIN_MS);
                 if (shouldPersistSnapshot) {
-                    await saveCachedCandles(symbol, storageInterval, snapshot, 'stream');
+                    await saveCachedCandles(pending.symbol, pending.storageInterval, snapshot, 'stream');
                 }
                 this.cacheSyncAtByKey.set(cacheKey, Date.now());
             })();
@@ -666,26 +683,33 @@ export class DataManager {
             state.candlestickSeries.update(updatedCandle);
         }
 
-        const currentData = [...state.ohlcvData];
+        const currentData = state.ohlcvData;
+        let changed = false;
         if (currentData.length === 0) {
-            currentData.push(updatedCandle);
+            (state as any).ohlcvData = [updatedCandle];
+            changed = true;
         } else {
             const lastCandle = currentData[currentData.length - 1];
             if (lastCandle.time === updatedCandle.time) {
                 currentData[currentData.length - 1] = updatedCandle;
+                changed = true;
             } else if (updatedCandle.time > lastCandle.time) {
                 currentData.push(updatedCandle);
                 const activeLimit = this.chartLookbackBars ?? this.TOTAL_LIMIT;
                 if (currentData.length > activeLimit) {
-                    currentData.shift();
+                    const overflow = currentData.length - activeLimit;
+                    currentData.splice(0, overflow);
                 }
+                changed = true;
             }
         }
 
-        (state as any).ohlcvData = currentData;
+        if (!changed) return;
+
+        const persistedData = (state as any).ohlcvData as OHLCVData[];
         const persistSymbol = this.streamSymbol || state.currentSymbol;
         const persistInterval = this.streamInterval || state.currentInterval;
-        this.queuePersistCandles(persistSymbol, persistInterval, currentData);
+        this.queuePersistCandles(persistSymbol, persistInterval, persistedData);
 
         const now = Date.now();
         if (!this.lastUiUpdateTime || now - this.lastUiUpdateTime > 1000) {

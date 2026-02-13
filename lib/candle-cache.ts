@@ -180,8 +180,43 @@ export function mergeCandles(
     incomingCandles: OHLCVData[]
 ): OHLCVData[] {
     if (existingCandles.length === 0) return sanitizeCandles(incomingCandles);
-    if (incomingCandles.length === 0) return sanitizeCandles(existingCandles);
-    return sanitizeCandles([...existingCandles, ...incomingCandles]);
+    if (incomingCandles.length === 0) return existingCandles.slice(-MAX_CANDLES_PER_SERIES);
+
+    const incoming = sanitizeCandles(incomingCandles);
+    if (incoming.length === 0) return existingCandles.slice(-MAX_CANDLES_PER_SERIES);
+
+    // Fast path for incremental append/replace of the latest candle(s).
+    const firstIncomingTime = Number(incoming[0].time);
+    const lastExistingTime = Number(existingCandles[existingCandles.length - 1].time);
+    if (Number.isFinite(firstIncomingTime) && Number.isFinite(lastExistingTime) && firstIncomingTime >= lastExistingTime) {
+        const merged = existingCandles.length > MAX_CANDLES_PER_SERIES
+            ? existingCandles.slice(-MAX_CANDLES_PER_SERIES)
+            : existingCandles.slice();
+        let tailTime = Number(merged[merged.length - 1].time);
+
+        for (const bar of incoming) {
+            const barTime = Number(bar.time);
+            if (!Number.isFinite(barTime)) {
+                return sanitizeCandles([...existingCandles, ...incoming]);
+            }
+            if (barTime < tailTime) {
+                return sanitizeCandles([...existingCandles, ...incoming]);
+            }
+            if (barTime === tailTime) {
+                merged[merged.length - 1] = bar;
+                continue;
+            }
+            merged.push(bar);
+            tailTime = barTime;
+        }
+
+        if (merged.length > MAX_CANDLES_PER_SERIES) {
+            merged.splice(0, merged.length - MAX_CANDLES_PER_SERIES);
+        }
+        return merged;
+    }
+
+    return sanitizeCandles([...existingCandles, ...incoming]);
 }
 
 function extractCandlesFromPayload(payload: unknown): OHLCVData[] {
@@ -294,4 +329,3 @@ export async function loadSeedCandlesFromPriceData(
         return null;
     }
 }
-

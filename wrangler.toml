@@ -10,10 +10,10 @@ migrations_dir = "workers/migrations"
 
 [triggers]
 # Multi-timeframe scheduler:
-# - Runs every hour at minute 00.
+# - Runs every minute.
 # - Worker aligns execution to second 10 in code.
-# - 2h+ subscriptions are interval-gated in worker code to avoid over-polling.
-crons = ["0 * * * *"]
+# - Interval gating in worker code prevents over-polling for higher timeframes.
+crons = ["* * * * *"]
 
 [vars]
 # Optional: override Binance-compatible candle sources (CSV, ordered fallback).

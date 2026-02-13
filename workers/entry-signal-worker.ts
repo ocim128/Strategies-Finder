@@ -167,6 +167,7 @@ const STREAM_PARITY_MARKER = ":2hcp:";
 // Keep scheduled runs aligned shortly after minute boundary.
 // Cloudflare cron granularity is 1 minute, so second-level precision is done in code.
 const SCHEDULE_TARGET_SECOND = 10;
+const MAX_SCHEDULED_CONCURRENCY = 4;
 const BINANCE_INTERVALS = new Set([
     "1m", "3m", "5m", "15m", "30m",
     "1h", "2h", "4h", "6h", "8h", "12h",
@@ -588,14 +589,12 @@ async function fetchBinanceCandles(
         ? Math.max(minClosedCandles, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, targetBarsWithSpare * 2 + 6))
         : targetBarsWithSpare;
     const bases = readBinanceApiBases(env);
-    const endpointErrors: string[] = [];
-
-    for (const base of bases) {
+    const attempts = bases.map(async (base): Promise<OHLCVData[]> => {
         const providerInterval = translateIntervalForApiBase(base, binanceInterval);
         if (!providerInterval) {
-            endpointErrors.push(`${base} -> unsupported_interval:${binanceInterval}`);
-            continue;
+            throw new Error(`${base} -> unsupported_interval:${binanceInterval}`);
         }
+
         const endpoint = `${base}/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(providerInterval)}&limit=${sourceLimit}`;
         try {
             const res = await fetch(endpoint, {
@@ -607,14 +606,12 @@ async function fetchBinanceCandles(
 
             if (!res.ok) {
                 const body = normalizeBinanceResponseSnippet(await res.text());
-                endpointErrors.push(`${base} -> ${res.status}${body ? ` ${body}` : ""}`);
-                continue;
+                throw new Error(`${base} -> ${res.status}${body ? ` ${body}` : ""}`);
             }
 
             const rows = (await res.json()) as Array<[number, string, string, string, string, string]>;
             if (!Array.isArray(rows) || rows.length === 0) {
-                endpointErrors.push(`${base} -> empty_response`);
-                continue;
+                throw new Error(`${base} -> empty_response`);
             }
 
             const sourceCandles = rows.map((kline) => ({
@@ -625,19 +622,30 @@ async function fetchBinanceCandles(
                 close: Number(kline[4]),
                 volume: Number(kline[5]),
             }));
+
             if (!useTwoHourResample) {
                 return sourceCandles.slice(-targetBarsWithSpare);
             }
-
             return resampleCandles(sourceCandles, interval, twoHourCloseParity).slice(-targetBarsWithSpare);
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
-            endpointErrors.push(`${base} -> ${normalizeStatusText(detail, 120)}`);
+            if (detail.startsWith(`${base} ->`)) {
+                throw new Error(normalizeStatusText(detail, 120));
+            }
+            throw new Error(`${base} -> ${normalizeStatusText(detail, 120)}`);
         }
-    }
+    });
 
-    const summary = normalizeStatusText(endpointErrors.join(" | "), 900);
-    throw new Error(`Binance API unavailable: ${summary}`);
+    try {
+        return await Promise.any(attempts);
+    } catch (error) {
+        const reasons = error instanceof AggregateError ? error.errors : [error];
+        const endpointErrors = reasons
+            .map((reason) => reason instanceof Error ? reason.message : String(reason))
+            .filter((value) => Boolean(value && value.trim()));
+        const summary = normalizeStatusText(endpointErrors.join(" | "), 900);
+        throw new Error(`Binance API unavailable: ${summary || "all endpoints failed"}`);
+    }
 }
 
 async function fetchMarketCandles(
@@ -1494,29 +1502,54 @@ async function runScheduledSubscriptions(env: Env): Promise<Record<string, unkno
     ).all<SubscriptionRow>();
 
     const subscriptions = result.results ?? [];
-    const runs: Record<string, unknown>[] = [];
+    const runs: Record<string, unknown>[] = new Array(subscriptions.length);
     const nowSec = Math.floor(Date.now() / 1000);
     let skippedNotDue = 0;
+    const dueIndexes: number[] = [];
 
-    for (const subscription of subscriptions) {
+    for (let i = 0; i < subscriptions.length; i++) {
+        const subscription = subscriptions[i];
         if (!shouldPollSubscriptionOnSchedule(subscription, nowSec)) {
             skippedNotDue += 1;
-            runs.push({
+            runs[i] = {
                 streamId: subscription.stream_id,
                 status: "skipped_interval_not_due",
-            });
+            };
             continue;
         }
-        const run = await runSubscription(env, subscription, false);
-        runs.push(run);
+        dueIndexes.push(i);
     }
+
+    let cursor = 0;
+    const workerCount = Math.min(MAX_SCHEDULED_CONCURRENCY, dueIndexes.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+        while (true) {
+            const current = cursor;
+            cursor += 1;
+            if (current >= dueIndexes.length) break;
+
+            const index = dueIndexes[current];
+            const subscription = subscriptions[index];
+            try {
+                runs[index] = await runSubscription(env, subscription, false);
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                runs[index] = {
+                    streamId: subscription.stream_id,
+                    status: `error:${normalizeStatusText(detail, 200)}`,
+                };
+            }
+        }
+    });
+
+    await Promise.all(workers);
 
     return {
         ok: true,
         scanned: subscriptions.length,
         eligible: subscriptions.length - skippedNotDue,
         skippedNotDue,
-        runs,
+        runs: runs.filter((entry): entry is Record<string, unknown> => Boolean(entry)),
         at: new Date().toISOString(),
     };
 }
@@ -1572,8 +1605,8 @@ export default {
         }
 
         // Intentional behavior:
-        // - Wrangler cron runs every hour at minute 00 (`0 * * * *`)
-        // - We delay to second 10 so evaluation happens just after the new candle forms.
+        // - Wrangler cron runs every minute (`* * * * *`)
+        // - We delay to second 10 so evaluation happens just after minute boundary updates settle.
         // - Subscriptions are interval-gated in code to avoid unnecessary fetches.
         const scheduledTimeMs = Number(controller.scheduledTime);
         const waitMs = computeScheduleAlignmentDelayMs(scheduledTimeMs, SCHEDULE_TARGET_SECOND);

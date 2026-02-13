@@ -271,7 +271,7 @@ async function runTest() {
             });
 
             console.log(`Navigating to ${baseUrl}...`);
-            await page.goto(baseUrl, { waitUntil: 'networkidle0' });
+            await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
             console.log('Checking for #main-chart element...');
             try {
