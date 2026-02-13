@@ -18,7 +18,8 @@ import { state } from '../state';
 import { backtestService } from '../backtest-service';
 import { settingsManager } from '../settings-manager';
 import { dataManager } from '../data-manager';
-import { Trade, BacktestSettings } from '../strategies/index';
+import { Trade, BacktestSettings, Time } from '../strategies/index';
+import { formatJakartaTime, isBusinessDayTime } from '../timezone-utils';
 
 function el<T extends HTMLElement>(id: string): T | null {
     return document.getElementById(id) as T | null;
@@ -199,6 +200,28 @@ function resolvePairedTwoHourParity(sub: AlertSubscription): AlertTwoHourClosePa
     if (current === 'odd') return 'even';
     if (current === 'even') return 'odd';
     return null;
+}
+
+async function withTemporaryTwoHourParitySelection<T>(
+    parity: AlertTwoHourCloseParity | null,
+    task: () => Promise<T>
+): Promise<T> {
+    if (!parity) {
+        return task();
+    }
+
+    const select = el<HTMLSelectElement>('twoHourCloseParity');
+    if (!select) {
+        return task();
+    }
+
+    const previous = select.value;
+    select.value = parity;
+    try {
+        return await task();
+    } finally {
+        select.value = previous;
+    }
 }
 
 function applyTwoHourParityToBacktestSettings(
@@ -759,19 +782,28 @@ function showLastTradeError(message: string): void {
 
 function formatTimeForDisplay(time: unknown): string {
     if (time == null) return 'N/A';
-    
-    // Handle BusinessDay object
-    if (typeof time === 'object' && 'year' in time) {
-        const bd = time as { year: number; month: number; day: number };
-        return `${bd.year}-${String(bd.month).padStart(2, '0')}-${String(bd.day).padStart(2, '0')}`;
+
+    if (typeof time !== 'number' && typeof time !== 'string' && (typeof time !== 'object' || !('year' in time))) {
+        return 'N/A';
     }
-    
-    // Handle Unix timestamp or ISO string
-    const timestamp = typeof time === 'number' 
-        ? (time > 1e11 ? time : time * 1000) 
-        : (typeof time === 'string' ? new Date(time).getTime() : Date.now());
-    
-    return new Date(timestamp).toISOString().replace('T', ' ').slice(0, 19);
+
+    const value = time as Time;
+    if (isBusinessDayTime(value)) {
+        return formatJakartaTime(value, {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+        });
+    }
+
+    return formatJakartaTime(value, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+    });
 }
 
 function formatDurationForTradeTimes(entryTime: unknown, exitTime: unknown): string {
@@ -834,7 +866,7 @@ function showLastTradeResult(trade: Trade | null, symbol: string, interval: stri
         summaryEl.innerHTML = `
             <div class="last-trade-header ${isWin ? 'win' : 'loss'}">
                 <span class="trade-type ${isLong ? 'long' : 'short'}">${isLong ? 'LONG' : 'SHORT'}</span>
-                <span class="trade-result ${isWin ? 'win' : 'loss'}">${isWin ? '+' : ''}${trade.pnl.toFixed(2)} (${Math.abs(trade.pnlPercent).toFixed(2)}%)</span>
+                <span class="trade-result ${isWin ? 'win' : 'loss'}">${isWin ? '+' : ''}${trade.pnl.toFixed(2)} (${trade.pnlPercent >= 0 ? '+' : ''}${trade.pnlPercent.toFixed(2)}%)</span>
             </div>
         `;
     }
@@ -916,9 +948,15 @@ async function handleLastTradeAction(streamId: string): Promise<void> {
         // Parse subscription configuration
         const strategyParams = safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
         const backtestSettings = safeJsonParse<BacktestSettings>(sub.backtest_settings_json, {});
-        
+
+        const parityOverride = getIntervalSeconds(sub.interval) === 7200
+            ? resolveSubscriptionParity(sub)
+            : null;
+
         // Fetch data for the subscription's symbol and interval
-        const ohlcvData = await dataManager.fetchData(sub.symbol, sub.interval);
+        const ohlcvData = await withTemporaryTwoHourParitySelection(parityOverride, async () =>
+            dataManager.fetchData(sub.symbol, sub.interval)
+        );
         
         if (ohlcvData.length === 0) {
             throw new Error(`No data available for ${sub.symbol} ${sub.interval}`);

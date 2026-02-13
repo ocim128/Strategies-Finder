@@ -1,11 +1,13 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade } from './lib/strategies/index';
+import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade, Strategy } from './lib/strategies/index';
 import { buildPivotFlags, detectPivots, detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
 import { simple_regression_line } from './lib/strategies/lib/simple-regression-line';
 import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/backtest/trade-analyzer';
 import { getOpenPositionForScanner } from './lib/strategies/backtest/signal-preparation';
 import { resolveScannerBacktestSettings } from './lib/scanner/scanner-engine';
+import { evaluateLatestEntrySignal } from './lib/signal-entry-evaluator';
+import { strategies } from './lib/strategies/library';
 
 
 describe('Strategy Calculations', () => {
@@ -1169,5 +1171,142 @@ describe('Trade Analyzer', () => {
 
         expect(finderResult.featureRanges.length).to.equal(1);
         expect(finderResult.featureRanges[0].suggestedThreshold).to.not.equal(0);
+    });
+});
+
+describe('Alert Entry Evaluator', () => {
+    function buildCandles(count: number, startSec = 1_700_000_000): OHLCVData[] {
+        const out: OHLCVData[] = [];
+        for (let i = 0; i < count; i++) {
+            const open = 100 + i;
+            out.push({
+                time: (startSec + i * 60) as Time,
+                open,
+                high: open + 1,
+                low: open - 1,
+                close: open + 0.5,
+                volume: 1000 + i
+            });
+        }
+        return out;
+    }
+
+    it('should select latest executed entry instead of latest prepared entry signal', () => {
+        const strategyKey = '__test_eval_executed_entry__';
+        const registry = strategies as Record<string, Strategy>;
+        const previous = registry[strategyKey];
+
+        const testStrategy: Strategy = {
+            name: 'Evaluator Executed Entry Test',
+            description: 'Ensures evaluator follows executed trades.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => {
+                if (data.length < 5) return [];
+                return [
+                    { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                    { time: data[2].time, type: 'buy', price: data[2].close, barIndex: 2 },
+                    { time: data[3].time, type: 'buy', price: data[3].close, barIndex: 3 },
+                ];
+            }
+        };
+
+        registry[strategyKey] = testStrategy;
+        try {
+            const candles = buildCandles(6);
+            const result = evaluateLatestEntrySignal({
+                strategyKey,
+                candles,
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'signal_close'
+                },
+                freshnessBars: 20
+            });
+
+            expect(result.ok).to.equal(true);
+            expect(result.latestEntry).to.not.equal(null);
+            expect(result.rawSignalCount).to.equal(3);
+            expect(result.latestEntry?.signalTimeSec).to.equal(Number(candles[1].time));
+            expect(result.latestEntry?.signal.price).to.equal(candles[1].close);
+            expect(result.latestEntry?.direction).to.equal('long');
+        } finally {
+            if (previous) {
+                registry[strategyKey] = previous;
+            } else {
+                delete registry[strategyKey];
+            }
+        }
+    });
+
+    it('should apply confirmation strategies before selecting latest entry', () => {
+        const mainKey = '__test_eval_main_with_confirm__';
+        const confKey = '__test_eval_confirm_state__';
+        const registry = strategies as Record<string, Strategy>;
+        const prevMain = registry[mainKey];
+        const prevConf = registry[confKey];
+
+        const mainStrategy: Strategy = {
+            name: 'Main Confirm Test',
+            description: 'Main strategy emits two long entries.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => {
+                if (data.length < 5) return [];
+                return [
+                    { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                    { time: data[3].time, type: 'buy', price: data[3].close, barIndex: 3 },
+                ];
+            }
+        };
+
+        const confirmationStrategy: Strategy = {
+            name: 'Confirmation State Test',
+            description: 'Turns bearish before the second main entry.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => {
+                if (data.length < 5) return [];
+                return [
+                    { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                    { time: data[2].time, type: 'sell', price: data[2].close, barIndex: 2 },
+                ];
+            }
+        };
+
+        registry[mainKey] = mainStrategy;
+        registry[confKey] = confirmationStrategy;
+
+        try {
+            const candles = buildCandles(6);
+            const result = evaluateLatestEntrySignal({
+                strategyKey: mainKey,
+                candles,
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'signal_close',
+                    tradeFilterMode: 'none',
+                    confirmationStrategies: [confKey]
+                },
+                freshnessBars: 20
+            });
+
+            expect(result.ok).to.equal(true);
+            expect(result.latestEntry).to.not.equal(null);
+            expect(result.rawSignalCount).to.equal(2);
+            expect(result.preparedSignalCount).to.equal(1);
+            expect(result.latestEntry?.signalTimeSec).to.equal(Number(candles[1].time));
+        } finally {
+            if (prevMain) {
+                registry[mainKey] = prevMain;
+            } else {
+                delete registry[mainKey];
+            }
+            if (prevConf) {
+                registry[confKey] = prevConf;
+            } else {
+                delete registry[confKey];
+            }
+        }
     });
 });
