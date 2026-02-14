@@ -27,18 +27,23 @@ export class FinderParamSpace {
         }
 
         if (options.mode === "grid") {
-            return this.sampleGridCombos(keys, valuesByKey, defaultParams, options.maxRuns);
+            return this.sampleGridCombos(keys, valuesByKey, defaultParams, options.maxRuns, this.resolveRandom(options));
         }
 
-        return this.generateRandomCombos(keys, defaultParams, options);
+        if (options.mode === "robust_random_wf") {
+            return this.generateRandomCombos(keys, defaultParams, options, this.resolveRandom(options));
+        }
+
+        return this.generateRandomCombos(keys, defaultParams, options, this.resolveRandom(options));
     }
 
     public buildRandomConfirmationParams(strategyKeys: string[], options: FinderOptions): Record<string, StrategyParams> {
         const paramsByKey: Record<string, StrategyParams> = {};
+        const rand = this.resolveRandom(options);
         for (const key of strategyKeys) {
             const strategy = strategyRegistry.get(key);
             if (!strategy) continue;
-            paramsByKey[key] = this.generateRandomParams(strategy.defaultParams, options);
+            paramsByKey[key] = this.generateRandomParams(strategy.defaultParams, options, rand);
         }
         return paramsByKey;
     }
@@ -119,7 +124,8 @@ export class FinderParamSpace {
         keys: string[],
         valuesByKey: number[][],
         defaultParams: StrategyParams,
-        maxRuns: number
+        maxRuns: number,
+        rand: () => number
     ): StrategyParams[] {
         const combos: StrategyParams[] = [];
         const seen = new Set<string>();
@@ -132,7 +138,7 @@ export class FinderParamSpace {
             const params: StrategyParams = {};
             for (let i = 0; i < keys.length; i++) {
                 const values = valuesByKey[i];
-                const pick = values[Math.floor(Math.random() * values.length)];
+                const pick = values[Math.floor(rand() * values.length)];
                 params[keys[i]] = pick;
             }
             this.tryAddCombo(params, combos, seen, maxRuns);
@@ -144,7 +150,8 @@ export class FinderParamSpace {
     private generateRandomCombos(
         keys: string[],
         defaultParams: StrategyParams,
-        options: FinderOptions
+        options: FinderOptions,
+        rand: () => number
     ): StrategyParams[] {
         const combos: StrategyParams[] = [];
         const seen = new Set<string>();
@@ -189,12 +196,12 @@ export class FinderParamSpace {
 
             // Randomize toggle params (50% chance on/off)
             for (const key of toggleKeys) {
-                params[key] = Math.random() < 0.5 ? 0 : 1;
+                params[key] = rand() < 0.5 ? 0 : 1;
             }
 
             // Randomize numeric params within range
             for (const range of numericRanges) {
-                const raw = range.min + Math.random() * (range.max - range.min);
+                const raw = range.min + rand() * (range.max - range.min);
                 params[range.key] = this.normalizeParamValue(range.key, raw, range.baseValue);
             }
 
@@ -204,7 +211,7 @@ export class FinderParamSpace {
         return combos;
     }
 
-    private generateRandomParams(defaultParams: StrategyParams, options: FinderOptions): StrategyParams {
+    private generateRandomParams(defaultParams: StrategyParams, options: FinderOptions, rand: () => number): StrategyParams {
         const keys = Object.keys(defaultParams);
         if (keys.length === 0) return {};
 
@@ -245,11 +252,11 @@ export class FinderParamSpace {
             const params: StrategyParams = {};
 
             for (const key of toggleKeys) {
-                params[key] = Math.random() < 0.5 ? 0 : 1;
+                params[key] = rand() < 0.5 ? 0 : 1;
             }
 
             for (const range of numericRanges) {
-                const raw = range.min + Math.random() * (range.max - range.min);
+                const raw = range.min + rand() * (range.max - range.min);
                 params[range.key] = this.normalizeParamValue(range.key, raw, range.baseValue);
             }
 
@@ -259,6 +266,25 @@ export class FinderParamSpace {
         }
 
         return this.normalizeParams(defaultParams);
+    }
+
+    private resolveRandom(options: FinderOptions): () => number {
+        if (options.mode !== "robust_random_wf") {
+            return Math.random;
+        }
+        const seedValue = Number.isFinite(options.robustSeed) ? Number(options.robustSeed) : 1337;
+        return this.createSeededRandom(seedValue);
+    }
+
+    private createSeededRandom(seed: number): () => number {
+        let state = (Math.floor(seed) >>> 0) || 1;
+        return () => {
+            state += 0x6D2B79F5;
+            let t = state;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
     }
 
     private tryAddCombo(params: StrategyParams, combos: StrategyParams[], seen: Set<string>, maxRuns: number): void {

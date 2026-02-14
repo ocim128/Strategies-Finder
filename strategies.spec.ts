@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade, Strategy } from './lib/strategies/index';
 import { buildPivotFlags, detectPivots, detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
 import { simple_regression_line } from './lib/strategies/lib/simple-regression-line';
+import { hypothesis_trend_persistence } from './lib/strategies/lib/hypothesis-trend-persistence';
 import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/backtest/trade-analyzer';
 import { getOpenPositionForScanner } from './lib/strategies/backtest/signal-preparation';
 import { resolveScannerBacktestSettings } from './lib/scanner/scanner-engine';
@@ -993,6 +994,41 @@ describe('Simple Regression Line Strategy', () => {
         expect(simple_regression_line.metadata?.walkForwardParams).to.include('lookback');
         expect(simple_regression_line.metadata?.walkForwardParams).to.include('zEntry');
         expect(simple_regression_line.metadata?.walkForwardParams).to.include('zExit');
+    });
+});
+
+describe('Hypothesis Trend Persistence Strategy', () => {
+    it('should emit entry signals on persistent trend shifts', () => {
+        const data: OHLCVData[] = [];
+        for (let i = 0; i < 220; i++) {
+            let close = 120;
+            if (i < 80) close = 140 - i * 0.35;
+            else if (i < 150) close = 112 + (i - 80) * 0.55;
+            else close = 150 - (i - 150) * 0.50;
+
+            data.push({
+                time: (i + 1) as unknown as Time,
+                open: close - 0.3,
+                high: close + 0.9,
+                low: close - 0.9,
+                close,
+                volume: 1000 + (i % 10) * 25
+            });
+        }
+
+        const signals = hypothesis_trend_persistence.execute(data, {
+            trendLookback: 40,
+            persistenceBars: 3,
+            entryBufferPct: 0.0005,
+            exitBufferPct: 0,
+            allowShorts: 1
+        });
+
+        expect(signals.length).to.be.greaterThan(2);
+        expect(signals.some((signal) => signal.type === 'buy')).to.equal(true);
+        expect(signals.some((signal) => signal.type === 'sell')).to.equal(true);
+        expect(hypothesis_trend_persistence.metadata?.walkForwardParams).to.include('trendLookback');
+        expect(hypothesis_trend_persistence.metadata?.walkForwardParams).to.include('persistenceBars');
     });
 });
 

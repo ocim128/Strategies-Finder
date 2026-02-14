@@ -130,22 +130,71 @@ Use this guide to make safe, high-signal changes with GPT-5.3 Codex.
 - Scanner uses cache fingerprinting and open-position detection via backtest replay logic.
 - Keep these paths performant; avoid introducing expensive per-bar allocations in hot loops.
 
+## Edge Validation Protocol (robust_random_wf)
+This repo now supports a survivability-first finder mode. Treat it as a validation engine, not an optimizer.
+
+### Objective and non-goals
+- Objective: detect ideas that repeatedly survive strict OOS constraints under realistic execution assumptions.
+- Non-goal: maximize backtest equity or discover one lucky parameter set.
+
+### Hard requirements for this mode
+- Deterministic seeded runs are mandatory (`robustSeed`).
+- Pass rate is computed from Stage C survivors only.
+- Cell decision is explicit and binary:
+  - `PASS`
+  - `FAIL` with `decisionReason`
+- Cell audit payload is emitted for both passes and fails:
+  - event: `[Finder][robust_random_wf][cell_audit]`
+
+### Current robust flow
+1. Stage A: cheap holdout filter with hard constraints.
+2. Stage B: short fixed-param walk-forward with hard constraints.
+3. Stage C: full fixed-param walk-forward with hard constraints.
+4. Cell gates decide final `PASS/FAIL` from survivor density + stability constraints.
+
+### Deterministic experiment discipline
+- Freeze config during an experiment:
+  - strategy set, symbol list, timeframe list, data span, costs, runs/range/steps.
+- Use a fixed seed list for validation (example):
+  - `1337, 7331, 2026, 4242, 9001`
+- Never reroll seeds until you get a pass. That reintroduces optimizer behavior.
+
+### Recommended acceptance policy
+- Per-cell seed pass rule:
+  - pass at least `3/5` seeds.
+- Reject if behavior is unstable across seeds:
+  - pass rate collapses
+  - DD breach rate spikes
+  - fold stability degrades materially
+
+### Reason-code interpretation
+- `cell_low_stage_c_survivors`: weak edge density; too few robust survivors.
+- `cell_low_pass_rate`: robust region too narrow; likely fragile.
+- `cell_high_dd_breach_rate`: structural risk flaw under OOS pressure.
+- `cell_high_fold_variance`: unstable behavior / probable overfit.
+
+### Scope reminders
+- Cluster reporting is for confirmation, not ranking.
+- `mock` symbols are useful for pipeline checks but not evidence of tradable edge.
+- Promote only after multi-seed, multi-cell validation on real markets.
+
 ## Validation Commands
 Run from this directory.
 
 - Type check: `npm run typecheck`
 - Strategy test suite: `npm run test`
 - E2E smoke: `npm run test:e2e`
+- Robust matrix summary utility:
+  - `npm run robust:summary -- run-seed-1337.txt run-seed-7331.txt`
+  - `npm run robust:summary -- --format json --out matrix-summary.json run-seed-*.txt`
 
 Additional useful test file:
 - Pair combiner tests: `..\..\..\node_modules\.bin\esno pairCombiner.spec.ts`
 
-## Current Baseline Test Notes (observed on 2026-02-12)
+## Current Baseline Test Notes (observed on 2026-02-14)
 - `npm run typecheck`: passes
-- `npm run test`: fails with 2 Trade Analyzer assertions in `strategies.spec.ts`
-  - "should only suggest below direction for bars-from-high/low features"
-  - "should keep tiny non-zero suggested thresholds non-zero"
-- `npm run test:e2e`: fails with Puppeteer navigation timeout
+- `npm run test`: passes
+- `npm run test:e2e`: historical instability possible (Puppeteer timeout), re-check in your environment if touched.
 
 Treat these as existing baseline issues unless your change directly targets them.
 

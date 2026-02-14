@@ -91,6 +91,8 @@ class LogicTestService {
 
             const results: IndividualTestResult[] = [];
             let completedTests = 0;
+            const uiUpdateInterval = Math.max(1, Math.floor(config.mockCount / 40));
+            const yieldInterval = Math.max(16, uiUpdateInterval * 2);
 
             // Run tests on each mock dataset
             for (let i = 0; i < config.mockCount; i++) {
@@ -99,9 +101,11 @@ class LogicTestService {
                     break;
                 }
 
-                // Update progress
-                this.updateProgress(i, config.mockCount);
-                this.updateStatus(`Testing dataset ${i + 1} of ${config.mockCount}...`);
+                // Throttle UI writes to avoid layout/repaint overhead in large test batches.
+                if (i === 0 || i === config.mockCount - 1 || i % uiUpdateInterval === 0) {
+                    this.updateProgress(i, config.mockCount);
+                    this.updateStatus(`Testing dataset ${i + 1} of ${config.mockCount}...`);
+                }
 
                 // Generate mock data with unique seed
                 const mockData = this.generateMockData(config, i);
@@ -151,11 +155,14 @@ class LogicTestService {
 
                 completedTests++;
 
-                // Yield to UI to keep it responsive
-                if (i % 5 === 0) {
-                    await this.sleep(10);
+                // Keep the UI responsive without adding artificial delay.
+                if ((i + 1) % yieldInterval === 0) {
+                    this.updateProgress(i + 1, config.mockCount);
+                    await this.sleep(0);
                 }
             }
+
+            this.updateProgress(completedTests, config.mockCount);
 
             // Calculate aggregate statistics
             const testResult = this.calculateAggregateResults(results, Date.now() - startTime);
@@ -289,43 +296,52 @@ class LogicTestService {
             };
         }
 
-        const winrates = results.map(r => r.winrate);
-        const trades = results.map(r => r.totalTrades);
-        const profitFactors = results.map(r => r.profitFactor === Infinity ? 100 : r.profitFactor);
-        const netProfits = results.map(r => r.netProfit);
-        const maxDrawdowns = results.map(r => r.maxDrawdown);
+        let sumWinrate = 0;
+        let sumWinrateSq = 0;
+        let sumTrades = 0;
+        let sumProfitFactor = 0;
+        let sumNetProfit = 0;
+        let sumMaxDrawdown = 0;
+        let profitableTests = 0;
+        let minWinrate = Number.POSITIVE_INFINITY;
+        let maxWinrate = Number.NEGATIVE_INFINITY;
 
-        const avgWinrate = this.average(winrates);
-        const stdDev = this.standardDeviation(winrates);
+        for (const result of results) {
+            const winrate = result.winrate;
+            const normalizedProfitFactor = result.profitFactor === Infinity ? 100 : result.profitFactor;
+
+            sumWinrate += winrate;
+            sumWinrateSq += winrate * winrate;
+            sumTrades += result.totalTrades;
+            sumProfitFactor += normalizedProfitFactor;
+            sumNetProfit += result.netProfit;
+            sumMaxDrawdown += result.maxDrawdown;
+
+            if (result.netProfit > 0) profitableTests++;
+            if (winrate < minWinrate) minWinrate = winrate;
+            if (winrate > maxWinrate) maxWinrate = winrate;
+        }
+
+        const total = results.length;
+        const averageWinrate = sumWinrate / total;
+        const variance = Math.max(0, (sumWinrateSq / total) - (averageWinrate * averageWinrate));
+        const stdDevWinrate = Math.sqrt(variance);
 
         return {
-            averageWinrate: avgWinrate,
-            totalTests: results.length,
-            completedTests: results.length,
-            averageTrades: this.average(trades),
-            averageProfitFactor: this.average(profitFactors),
-            averageNetProfit: this.average(netProfits),
-            averageMaxDrawdown: this.average(maxDrawdowns),
-            minWinrate: Math.min(...winrates),
-            maxWinrate: Math.max(...winrates),
-            stdDevWinrate: stdDev,
-            profitableTests: results.filter(r => r.netProfit > 0).length,
+            averageWinrate,
+            totalTests: total,
+            completedTests: total,
+            averageTrades: sumTrades / total,
+            averageProfitFactor: sumProfitFactor / total,
+            averageNetProfit: sumNetProfit / total,
+            averageMaxDrawdown: sumMaxDrawdown / total,
+            minWinrate,
+            maxWinrate,
+            stdDevWinrate,
+            profitableTests,
             testDurationMs: durationMs,
             individualResults: results
         };
-    }
-
-    private average(arr: number[]): number {
-        if (arr.length === 0) return 0;
-        return arr.reduce((a, b) => a + b, 0) / arr.length;
-    }
-
-    private standardDeviation(arr: number[]): number {
-        if (arr.length === 0) return 0;
-        const avg = this.average(arr);
-        const squareDiffs = arr.map(value => Math.pow(value - avg, 2));
-        const avgSquareDiff = this.average(squareDiffs);
-        return Math.sqrt(avgSquareDiff);
     }
 
     /**

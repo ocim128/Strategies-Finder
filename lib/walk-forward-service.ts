@@ -273,7 +273,7 @@ class WalkForwardService {
                         (update) => {
                             const percent = Number.isFinite(update.percent) ? `${Math.round(update.percent)}%` : '';
                             const status = update.status?.trim() || 'Optimizing';
-                            this.updateStatus(percent ? `[Rust ${percent}] ${status}` : `[Rust] ${status}`);
+                            this.updateStatus(percent ? `[Rust ${percent}] ${status}` : `[Rust] ${status}`, false);
                         }
                     );
                     if (this.isWalkForwardResult(rustResult)) {
@@ -300,6 +300,7 @@ class WalkForwardService {
                 const fixedConfig: FixedParamWalkForwardConfig = {
                     testWindow,
                     stepSize,
+                    fixedParams: currentParams,
                     minTrades,
                     onProgress: progressReporter
                 };
@@ -414,6 +415,7 @@ class WalkForwardService {
                 const fixedConfig: FixedParamWalkForwardConfig = {
                     testWindow,
                     stepSize,
+                    fixedParams: currentParams,
                     minTrades: 1,
                     onProgress: progressReporter
                 };
@@ -794,15 +796,17 @@ class WalkForwardService {
         }
     }
 
-    private updateStatus(message: string): void {
+    private updateStatus(message: string, log: boolean = true): void {
         const statusEl = document.getElementById('wf-status');
         if (statusEl) statusEl.textContent = message;
-        debugLogger.info(`[WalkForward] ${message}`);
+        if (log) {
+            debugLogger.info(`[WalkForward] ${message}`);
+        }
     }
 
     private createProgressReporter(): (progress: WalkForwardProgress) => void {
         let lastUpdate = 0;
-        const minIntervalMs = 350;
+        const minIntervalMs = 600;
 
         return (progress: WalkForwardProgress) => {
             const now = performance.now();
@@ -814,19 +818,19 @@ class WalkForwardService {
                 const comboLabel = progress.comboTotal
                     ? ` (${progress.comboIndex}/${progress.comboTotal})`
                     : '';
-                this.updateStatus(`Optimizing window ${windowLabel}${comboLabel}...`);
+                this.updateStatus(`Optimizing window ${windowLabel}${comboLabel}...`, false);
                 return;
             }
             if (progress.phase === 'test') {
-                this.updateStatus(`Running OOS for window ${windowLabel}...`);
+                this.updateStatus(`Running OOS for window ${windowLabel}...`, false);
                 return;
             }
             if (progress.phase === 'window') {
-                this.updateStatus(`Completed window ${windowLabel}.`);
+                this.updateStatus(`Completed window ${windowLabel}.`, false);
                 return;
             }
             if (progress.phase === 'complete') {
-                this.updateStatus('Finalizing results...');
+                this.updateStatus('Finalizing results...', false);
             }
         };
     }

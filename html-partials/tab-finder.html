@@ -51,6 +51,7 @@
             <select class="param-input" id="finderMode">
                 <option value="grid">Grid Sweep</option>
                 <option value="random" selected>Random Search</option>
+                <option value="robust_random_wf">Robust Random WF</option>
             </select>
         </div>
         <div class="param-group">
@@ -63,6 +64,10 @@
         <div class="param-group">
             <label class="param-label">Steps / Param</label>
             <input type="number" class="param-input" id="finderSteps" value="3" min="2" max="7">
+        </div>
+        <div class="param-group">
+            <label class="param-label">Robust Seed</label>
+            <input type="number" class="param-input" id="finderRobustSeed" value="1337" step="1">
         </div>
     </div>
 

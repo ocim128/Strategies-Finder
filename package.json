@@ -4,6 +4,8 @@
     "test:strategies": "npm run test",
     "test:e2e": "..\\..\\..\\node_modules\\.bin\\esno e2e.spec.ts",
     "typecheck": "tsc --noEmit",
+    "robust:summary": "node scripts/robust-matrix-summary.mjs",
+    "robust:report": "node scripts/robust-go-no-go-report.mjs",
     "build:types": "tsc -p tsconfig.types.json",
     "dev": "vite",
     "build": "vite build"

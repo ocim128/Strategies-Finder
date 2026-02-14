@@ -1,5 +1,5 @@
-import { OHLCVData, BacktestResult, StrategyParams, BacktestSettings, Strategy, Time } from '../types/strategies';
-import { runBacktest, runBacktestCompact, calculateBacktestStats, calculateMaxDrawdown, compareTime } from './backtest';
+import { OHLCVData, BacktestResult, StrategyParams, BacktestSettings, Strategy, Time, Signal } from '../types/strategies';
+import { runBacktest, runBacktestCompact, calculateBacktestStats, calculateMaxDrawdown, compareTime, timeToNumber } from './backtest';
 import { ensureCleanData } from './strategy-helpers';
 import { sanitizeSharpeRatio } from './performance-metrics';
 
@@ -249,22 +249,94 @@ function calculateOptimizationScore(result: BacktestResult, minTrades: number): 
 // ============================================================================
 
 
+type WindowBacktestContext = {
+    bufferedStart: number;
+    bufferedData: OHLCVData[];
+    windowStartIndex: number;
+    windowEndIndexExclusive: number;
+    windowStartTime: Time;
+    windowEndTime: Time;
+    windowStartNumericTime: number | null;
+    windowEndNumericTime: number | null;
+};
+
 /**
- * Shared buffer + signal preparation for window backtests.
+ * Build immutable per-window context once and reuse it across parameter combinations.
  */
-function prepareWindowBacktest(
-    data: OHLCVData[], startIndex: number, endIndex: number,
-    strategy: Strategy, params: StrategyParams, lookback: number = 250
-) {
+function createWindowBacktestContext(
+    data: OHLCVData[],
+    startIndex: number,
+    endIndex: number,
+    lookback: number = 250
+): WindowBacktestContext {
+    if (startIndex < 0 || endIndex > data.length || startIndex >= endIndex) {
+        throw new Error(`Invalid window bounds [${startIndex}, ${endIndex}) for data length ${data.length}`);
+    }
+
     const bufferedStart = Math.max(0, startIndex - lookback);
     const bufferedData = data.slice(bufferedStart, endIndex);
-    const allSignals = strategy.execute(bufferedData, params);
-    const windowStartBar = data[startIndex];
-    const windowEndBar = data[endIndex - 1];
-    const windowSignals = allSignals.filter(s =>
-        compareTime(s.time, windowStartBar.time) >= 0 && compareTime(s.time, windowEndBar.time) <= 0
-    );
-    return { bufferedStart, bufferedData, windowSignals, windowStartBar };
+    const windowStartTime = data[startIndex].time;
+    const windowEndTime = data[endIndex - 1].time;
+    const windowStartNumericTime = timeToNumber(windowStartTime);
+    const windowEndNumericTime = timeToNumber(windowEndTime);
+
+    return {
+        bufferedStart,
+        bufferedData,
+        windowStartIndex: startIndex - bufferedStart,
+        windowEndIndexExclusive: endIndex - bufferedStart,
+        windowStartTime,
+        windowEndTime,
+        windowStartNumericTime,
+        windowEndNumericTime
+    };
+}
+
+function filterSignalsForWindow(allSignals: Signal[], context: WindowBacktestContext): Signal[] {
+    if (allSignals.length === 0) return [];
+
+    const windowSignals: Signal[] = [];
+    for (const signal of allSignals) {
+        const signalBarIndex = signal.barIndex;
+        if (Number.isFinite(signalBarIndex)) {
+            const idx = Math.trunc(signalBarIndex as number);
+            if (idx >= context.windowStartIndex && idx < context.windowEndIndexExclusive) {
+                windowSignals.push(signal);
+            }
+            continue;
+        }
+
+        if (context.windowStartNumericTime !== null && context.windowEndNumericTime !== null) {
+            const signalTime = timeToNumber(signal.time);
+            if (
+                signalTime !== null &&
+                signalTime >= context.windowStartNumericTime &&
+                signalTime <= context.windowEndNumericTime
+            ) {
+                windowSignals.push(signal);
+            }
+            continue;
+        }
+
+        if (
+            compareTime(signal.time, context.windowStartTime) >= 0 &&
+            compareTime(signal.time, context.windowEndTime) <= 0
+        ) {
+            windowSignals.push(signal);
+        }
+    }
+
+    return windowSignals;
+}
+
+function prepareWindowBacktest(
+    context: WindowBacktestContext,
+    strategy: Strategy,
+    params: StrategyParams
+): { windowSignals: Signal[] } {
+    const allSignals = strategy.execute(context.bufferedData, params);
+    const windowSignals = filterSignalsForWindow(allSignals, context);
+    return { windowSignals };
 }
 
 /**
@@ -275,16 +347,24 @@ function runBacktestFast(
     data: OHLCVData[], startIndex: number, endIndex: number,
     strategy: Strategy, params: StrategyParams,
     initialCapital: number, positionSizePercent: number, commissionPercent: number,
-    backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250
+    backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250,
+    context?: WindowBacktestContext
 ): BacktestResult {
-    const { bufferedStart, bufferedData, windowSignals, windowStartBar } =
-        prepareWindowBacktest(data, startIndex, endIndex, strategy, params, lookback);
+    const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback);
+    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params);
 
-    const fullResult = runBacktest(bufferedData, windowSignals, initialCapital, positionSizePercent, commissionPercent, backtestSettings, sizing);
+    const fullResult = runBacktest(
+        windowContext.bufferedData,
+        windowSignals,
+        initialCapital,
+        positionSizePercent,
+        commissionPercent,
+        backtestSettings,
+        sizing
+    );
 
-    const windowTrades = fullResult.trades.filter(t => compareTime(t.entryTime, windowStartBar.time) >= 0);
-    const windowIndexOffset = startIndex - bufferedStart;
-    const windowEquity = fullResult.equityCurve.slice(windowIndexOffset);
+    const windowTrades = fullResult.trades.filter(t => compareTime(t.entryTime, windowContext.windowStartTime) >= 0);
+    const windowEquity = fullResult.equityCurve.slice(windowContext.windowStartIndex);
     const finalCapital = windowEquity.length > 0 ? windowEquity[windowEquity.length - 1].value : initialCapital;
     const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(windowEquity, initialCapital);
 
@@ -295,11 +375,20 @@ function runBacktestFastCompact(
     data: OHLCVData[], startIndex: number, endIndex: number,
     strategy: Strategy, params: StrategyParams,
     initialCapital: number, positionSizePercent: number, commissionPercent: number,
-    backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250
+    backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250,
+    context?: WindowBacktestContext
 ): BacktestResult {
-    const { bufferedData, windowSignals } =
-        prepareWindowBacktest(data, startIndex, endIndex, strategy, params, lookback);
-    return runBacktestCompact(bufferedData, windowSignals, initialCapital, positionSizePercent, commissionPercent, backtestSettings, sizing);
+    const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback);
+    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params);
+    return runBacktestCompact(
+        windowContext.bufferedData,
+        windowSignals,
+        initialCapital,
+        positionSizePercent,
+        commissionPercent,
+        backtestSettings,
+        sizing
+    );
 }
 
 function toSummaryResult(result: BacktestResult): BacktestResult {
@@ -351,18 +440,32 @@ async function optimizeWindow(
     onProgress?: (processed: number, total: number) => void
 ): Promise<OptimizationResult[]> {
     const topResults: OptimizationResult[] = [];
-    // PERF: Increased batch size from 50 to 200 for less overhead
-    const BATCH_SIZE = 200;
-    // PERF: Yield every N batches instead of every batch
-    const YIELD_INTERVAL = 3;
-    // PERF: Early termination threshold - if top scores are stable, we can stop early
-    const EARLY_TERM_CHECK_INTERVAL = 500;
-    const EARLY_TERM_STABILITY_THRESHOLD = 5; // Number of stable checks before termination
+    const BATCH_SIZE = 240;
+    const YIELD_INTERVAL = 4;
+    const topCapacity = Math.max(topN, topN * 2);
+    const windowContext = createWindowBacktestContext(data, startIndex, endIndex);
+
+    const tryAddTopResult = (candidate: OptimizationResult) => {
+        if (topResults.length < topCapacity) {
+            topResults.push(candidate);
+            return;
+        }
+
+        let minScore = topResults[0].score;
+        let minIndex = 0;
+        for (let k = 1; k < topResults.length; k++) {
+            if (topResults[k].score < minScore) {
+                minScore = topResults[k].score;
+                minIndex = k;
+            }
+        }
+
+        if (candidate.score > minScore) {
+            topResults[minIndex] = candidate;
+        }
+    };
 
     let batchCount = 0;
-    let lastTopScore = -Infinity;
-    let stableScoreCount = 0;
-    let processedCount = 0;
 
     for (let i = 0; i < paramGrid.length; i += BATCH_SIZE) {
         const batchEnd = Math.min(i + BATCH_SIZE, paramGrid.length);
@@ -380,7 +483,6 @@ async function optimizeWindow(
         for (let j = i; j < batchEnd; j++) {
             const paramOverrides = paramGrid[j];
             const params = { ...baseParams, ...paramOverrides };
-            processedCount++;
 
             try {
                 // Use compact backtest during optimization to keep memory stable.
@@ -394,41 +496,19 @@ async function optimizeWindow(
                     positionSizePercent,
                     commissionPercent,
                     backtestSettings,
-                    sizing
+                    sizing,
+                    250,
+                    windowContext
                 );
 
                 const score = calculateOptimizationScore(result, minTrades);
 
                 if (Number.isFinite(score)) {
-                    topResults.push({ params, score });
+                    tryAddTopResult({ params, score });
                 }
             } catch (e) {
                 continue;
             }
-        }
-
-        // Prune and sort periodically (less frequent than before)
-        if (topResults.length > topN * 3) {
-            topResults.sort((a, b) => b.score - a.score);
-            topResults.splice(topN * 2);
-        }
-
-        // PERF: Early termination check - if we've processed enough and scores are stable
-        if (processedCount >= EARLY_TERM_CHECK_INTERVAL && topResults.length >= topN) {
-            topResults.sort((a, b) => b.score - a.score);
-            const currentTopScore = topResults[0].score;
-
-            // Check if top score has stabilized
-            if (Math.abs(currentTopScore - lastTopScore) < 0.001) {
-                stableScoreCount++;
-                if (stableScoreCount >= EARLY_TERM_STABILITY_THRESHOLD && processedCount > paramGrid.length * 0.3) {
-                    // Top score stable for N checks and we've processed at least 30% - early terminate
-                    break;
-                }
-            } else {
-                stableScoreCount = 0;
-            }
-            lastTopScore = currentTopScore;
         }
     }
 
@@ -913,6 +993,8 @@ export interface FixedParamWalkForwardConfig {
     testWindow: number;
     /** Step size for rolling forward (typically = testWindow for non-overlapping) */
     stepSize: number;
+    /** Explicit parameter set to evaluate in every window */
+    fixedParams?: StrategyParams;
     /** Minimum trades required to consider a window valid */
     minTrades?: number;
     /** Optional progress callback for UI feedback */
@@ -960,8 +1042,8 @@ export async function runFixedParamWalkForward(
     const combinedTrades: BacktestResult['trades'] = [];
     const combinedEquityCurve: { time: Time; value: number }[] = [];
 
-    // Fixed params - use whatever the strategy has
-    const fixedParams = strategy.defaultParams;
+    // Fixed params must be explicitly injected by callers that evaluate candidates.
+    const fixedParams = config.fixedParams ?? strategy.defaultParams;
 
     const totalWindows = Math.floor((totalDataLength - testWindow) / stepSize) + 1;
 

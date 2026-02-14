@@ -493,6 +493,7 @@ export class FinderManager {
 			: [];
 		const topN = Math.round(readNumberInputValue('finderTopN', 10, 1));
 		const steps = Math.round(readNumberInputValue('finderSteps', 3, 2));
+		const robustSeed = Math.round(readNumberInputValue('finderRobustSeed', 1337, -2147483648));
 		const rangePercent = readNumberInputValue('finderRange', 35, 0);
 		const maxRuns = Math.round(readNumberInputValue('finderMaxRuns', 120, 1));
 		const tradeFilterEnabled = readToggleValue('finderTradesToggle', true);
@@ -505,6 +506,7 @@ export class FinderManager {
 			mode,
 			sortPriority,
 			useAdvancedSort,
+			robustSeed,
 			multiTimeframeEnabled,
 			timeframes,
 			topN,
@@ -584,7 +586,8 @@ export class FinderManager {
 				sharpeRatio: result.selectionResult.sharpeRatio
 			},
 			endpointAdjusted: result.endpointAdjusted,
-			endpointRemovedTrades: result.endpointRemovedTrades
+			endpointRemovedTrades: result.endpointRemovedTrades,
+			robustMetrics: result.robustMetrics ?? null
 		};
 	}
 

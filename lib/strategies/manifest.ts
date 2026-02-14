@@ -24,6 +24,7 @@ import { session_open_fakeout } from "./lib/session-open-fakeout";
 import { momentum_rsi_pullback_entry } from "./lib/momentum-rsi-pullback-entry";
 import { momentum_rsi_regime_gate } from "./lib/momentum-rsi-regime-gate";
 import { momentum_rsi_exit_pack } from "./lib/momentum-rsi-exit-pack";
+import { hypothesis_trend_persistence } from "./lib/hypothesis-trend-persistence";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -56,6 +57,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "momentum_rsi_pullback_entry", strategy: momentum_rsi_pullback_entry },
     { key: "momentum_rsi_regime_gate", strategy: momentum_rsi_regime_gate },
     { key: "momentum_rsi_exit_pack", strategy: momentum_rsi_exit_pack },
+    { key: "hypothesis_trend_persistence", strategy: hypothesis_trend_persistence },
 ];
 
 export function createStrategiesRecordFromManifest(

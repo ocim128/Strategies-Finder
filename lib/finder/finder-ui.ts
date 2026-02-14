@@ -84,7 +84,8 @@ export class FinderUI {
 
             const sub = document.createElement("div");
             sub.className = "finder-sub";
-            sub.textContent = item.key;
+            const timeframeLabel = item.timeframes && item.timeframes.length === 1 ? ` @ ${item.timeframes[0]}` : "";
+            sub.textContent = `${item.key}${timeframeLabel}`;
 
             const params = document.createElement("div");
             params.className = "finder-params";
@@ -98,6 +99,13 @@ export class FinderUI {
             metrics.appendChild(this.createMetricChip(`Sharpe ${result.sharpeRatio.toFixed(2)}`));
             metrics.appendChild(this.createMetricChip(`DD ${result.maxDrawdownPercent.toFixed(2)}%`));
             metrics.appendChild(this.createMetricChip(`Trades ${result.totalTrades}`));
+            if (item.robustMetrics) {
+                const robust = item.robustMetrics;
+                metrics.appendChild(this.createMetricChip(`Robust ${robust.robustScore.toFixed(1)}`));
+                metrics.appendChild(this.createMetricChip(`Pass ${(robust.passRate * 100).toFixed(1)}%`));
+                metrics.appendChild(this.createMetricChip(`Top10 Exp ${robust.topDecileMedianOOSExpectancy.toFixed(3)}`));
+                metrics.appendChild(this.createMetricChip(`Stages ${robust.sampledParams}>${robust.stageASurvivors}>${robust.stageBSurvivors}>${robust.stageCSurvivors}`));
+            }
             if (item.endpointAdjusted) {
                 metrics.appendChild(this.createMetricChip(`Endpoint bias removed (${item.endpointRemovedTrades})`));
             }

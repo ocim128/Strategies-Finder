@@ -1,6 +1,6 @@
 import type { BacktestResult, StrategyParams } from "../types/strategies";
 
-export type FinderMode = 'default' | 'grid' | 'random';
+export type FinderMode = 'default' | 'grid' | 'random' | 'robust_random_wf';
 export type FinderMetric =
     | 'netProfit'
     | 'profitFactor'
@@ -16,6 +16,7 @@ export interface FinderOptions {
     mode: FinderMode;
     sortPriority: FinderMetric[];
     useAdvancedSort: boolean;
+    robustSeed?: number;
     multiTimeframeEnabled?: boolean;
     timeframes?: string[];
     topN: number;
@@ -45,4 +46,23 @@ export interface FinderResult {
     endpointAdjusted: boolean;
     endpointRemovedTrades: number;
     confirmationParams?: Record<string, StrategyParams>;
+    robustMetrics?: {
+        mode: 'robust_random_wf';
+        seed: number;
+        cellSeed: number;
+        decision: 'PASS' | 'FAIL';
+        decisionReason: string;
+        timeframe: string;
+        sampledParams: number;
+        stageASurvivors: number;
+        stageBSurvivors: number;
+        stageCSurvivors: number;
+        passRate: number;
+        topDecileMedianOOSExpectancy: number;
+        topDecileMedianProfitableFoldRatio: number;
+        medianFoldStabilityPenalty: number;
+        topDecileMedianDDBreachRate: number;
+        robustScore: number;
+        rejectionReasons: Record<string, number>;
+    };
 }
