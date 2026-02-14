@@ -424,6 +424,12 @@ export function runBacktestCompact(
     if (position && data.length > 0) {
         const finalCandle = data[data.length - 1];
         recordExit(finalCandle.close, position.size);
+        const finalEquity = capital;
+        if (equityOut) equityOut[data.length - 1] = finalEquity;
+        if (finalEquity > peakEquity) peakEquity = finalEquity; else {
+            const dd = peakEquity - finalEquity;
+            if (dd > maxDrawdown) { maxDrawdown = dd; maxDrawdownPercent = (dd / peakEquity) * 100; }
+        }
     }
 
     return finalizeBacktestMetrics(initialCapital, capital, totalTrades, winningTrades, totalProfit, totalLoss, avgReturn, returnM2, maxDrawdown, maxDrawdownPercent) as BacktestResult;
@@ -576,6 +582,9 @@ export function runBacktest(
         const eodTrade: Trade = { id: ++tradeId, type: position.direction, entryTime: position.entryTime, entryPrice: position.entryPrice, exitTime: candle.time, exitPrice: candle.close, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: 'end_of_data', stopLossPrice: position.stopLossPrice, takeProfitPrice: position.takeProfitPrice };
         if (currentSnapshot) eodTrade.entrySnapshot = currentSnapshot;
         trades.push(eodTrade);
+        if (equityCurve.length > 0) {
+            equityCurve[equityCurve.length - 1] = { time: candle.time, value: capital };
+        }
     }
 
     const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(equityCurve, initialCapital);

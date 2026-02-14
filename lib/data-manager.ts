@@ -46,6 +46,7 @@ type DataProvider = 'binance' | 'bybit-tradfi';
 export class DataManager {
     private nonBinanceProviderOverride: Map<string, DataProvider> = new Map();
     private autoReloadSuppressCount = 0;
+    private importedDataByKey: Map<string, OHLCVData[]> = new Map();
     private ws: WebSocket | null = null;
     public isStreaming: boolean = false;
     public streamSymbol: string = '';
@@ -96,6 +97,24 @@ export class DataManager {
             return;
         }
         this.chartLookbackBars = Math.max(200, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(lookbackBars)));
+    }
+
+    public registerImportedData(symbol: string, interval: string, candles: OHLCVData[]): void {
+        const normalizedSymbol = symbol.trim().toUpperCase();
+        const normalizedInterval = interval.trim().toLowerCase();
+        if (!normalizedSymbol || !normalizedInterval || candles.length === 0) return;
+
+        const storageIntervals = this.getImportStorageIntervals(normalizedInterval);
+        const now = Date.now();
+        for (const storageInterval of storageIntervals) {
+            const cacheKey = this.buildCacheKey(normalizedSymbol, storageInterval);
+            this.importedDataByKey.set(cacheKey, candles);
+            this.cacheSyncAtByKey.set(cacheKey, now);
+        }
+    }
+
+    public clearImportedData(): void {
+        this.importedDataByKey.clear();
     }
 
     public getChartLookbackBars(): number | null {
@@ -228,6 +247,7 @@ export class DataManager {
     }
 
     public async setSymbol(symbol: string, interval: string): Promise<OHLCVData[]> {
+        this.clearImportedData();
         this.stopStreaming();
         state.set('currentSymbol', symbol);
         state.set('currentInterval', interval);
@@ -342,6 +362,16 @@ export class DataManager {
             : undefined;
     }
 
+    private getImportStorageIntervals(interval: string): string[] {
+        if (interval.includes('@close-')) {
+            return [interval];
+        }
+        if (getIntervalSeconds(interval) === 7200) {
+            return [`${interval}@close-odd`, `${interval}@close-even`];
+        }
+        return [interval];
+    }
+
     private getStorageInterval(interval: string): string {
         const normalized = interval.trim().toLowerCase();
         if (normalized.includes('@close-')) {
@@ -385,6 +415,10 @@ export class DataManager {
         const storageInterval = this.getStorageInterval(interval);
         const resampleOptions = this.getResampleOptions(interval);
         const cacheKey = this.buildCacheKey(symbol, storageInterval);
+        const imported = this.importedDataByKey.get(cacheKey);
+        if (imported && imported.length > 0) {
+            return imported.slice(-effectiveMaxBars);
+        }
         const sqliteLoadedCandles = await loadSqliteCandles(symbol, storageInterval, effectiveMaxBars);
         const sqliteCachedCandles = (requiresEven2hAlignment && sqliteLoadedCandles && !this.isTwoHourParityAligned(sqliteLoadedCandles, 'even'))
             ? null

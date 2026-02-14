@@ -599,6 +599,47 @@ describe('Backtesting Engine', () => {
         expect(result.netProfit).to.be.closeTo(225.24, 0.1);
     });
 
+    it('should keep trade pnlPercent fee-aware', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 102, low: 100, close: 101, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 101, high: 103, low: 101, close: 102, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'buy', price: 100 },
+            { time: '2023-01-03' as Time, type: 'sell', price: 101 },
+        ];
+
+        const result = runBacktest(data, signals, 1000, 100, 1);
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.netProfit).to.be.lessThan(0);
+        expect(result.trades[0].pnl).to.be.lessThan(0);
+        expect(result.trades[0].pnlPercent).to.be.lessThan(0);
+    });
+
+    it('should keep forced end-of-data equity and drawdown in sync', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'buy', price: 100 },
+        ];
+
+        const full = runBacktest(data, signals, 1000, 100, 1);
+        const compact = runBacktestCompact(data, signals, 1000, 100, 1);
+        const finalCapital = 1000 + full.netProfit;
+
+        expect(full.totalTrades).to.equal(1);
+        expect(full.trades[0].exitReason).to.equal('end_of_data');
+        expect(full.equityCurve[full.equityCurve.length - 1].value).to.be.closeTo(finalCapital, 1e-9);
+        expect(compact.maxDrawdown).to.be.closeTo(full.maxDrawdown, 1e-9);
+        expect(compact.maxDrawdownPercent).to.be.closeTo(full.maxDrawdownPercent, 1e-9);
+    });
+
     it('should calculate profit factor and drawdown correctly', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 105, low: 95, close: 100, volume: 1000 },

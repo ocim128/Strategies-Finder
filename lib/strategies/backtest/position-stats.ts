@@ -140,7 +140,8 @@ export function calculateTradeExitDetails(
 
     const rawPnl = (exitValue - entryValue) * directionFactor;
     const totalPnl = rawPnl - entryCommission - commission;
-    const pnlPercent = entryValue > 0 ? (rawPnl / entryValue) * 100 : 0;
+    // Keep trade return metrics fee-aware so Sharpe/expectancy reflect net execution costs.
+    const pnlPercent = entryValue > 0 ? (totalPnl / entryValue) * 100 : 0;
 
     return {
         size,

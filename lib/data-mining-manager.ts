@@ -684,6 +684,7 @@ export class DataMiningManager {
                 state.set('currentInterval', interval);
             }
             state.set('ohlcvData', bars);
+            dataManager.registerImportedData(state.currentSymbol, state.currentInterval, bars);
 
             const metaNote = meta ? ` (${meta})` : '';
             this.setStatus(`Loaded ${bars.length.toLocaleString()} bars from JSON${metaNote}.`, 'success');

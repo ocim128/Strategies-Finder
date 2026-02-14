@@ -267,8 +267,18 @@ export class BacktestService {
             return state.ohlcvData;
         }
         return this.withTemporaryTwoHourParity(parity, async () => {
-            const fetched = await dataManager.fetchData(state.currentSymbol, state.currentInterval);
-            return fetched.length > 0 ? fetched : state.ohlcvData;
+            try {
+                const fetched = await dataManager.fetchData(state.currentSymbol, state.currentInterval);
+                return fetched.length > 0 ? fetched : state.ohlcvData;
+            } catch (error) {
+                debugLogger.warn('[Backtest] Failed to fetch parity data, falling back to current chart candles', {
+                    parity,
+                    symbol: state.currentSymbol,
+                    interval: state.currentInterval,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                return state.ohlcvData;
+            }
         });
     }
 
