@@ -6,6 +6,7 @@
     "typecheck": "tsc --noEmit",
     "robust:summary": "node scripts/robust-matrix-summary.mjs",
     "robust:report": "node scripts/robust-go-no-go-report.mjs",
+    "robust:run": "..\\..\\..\\node_modules\\.bin\\esno scripts\\robust-cli-runner.ts",
     "build:types": "tsc -p tsconfig.types.json",
     "dev": "vite",
     "build": "vite build"

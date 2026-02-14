@@ -1,36 +1,114 @@
-New Strategy Lib Concepts (Finder-friendly)
+I have tried many strategies, many filter, etc always not pass walkforward except using look-ahead bias, whats your idea?
 
-regime_donchian_breakout
-Logic: trade 55-bar breakout only when trend is positive and volatility is not extreme.
-Exit: 20-bar channel exit + ATR trail + time stop.
-Params (7): breakoutLen, exitLen, trendLen, volLen, volMinPct, volMaxPct, maxHoldBars.
-Why robust: broad structural edge, few thresholds, no tiny TP tricks.
-vol_compression_expansion
-Logic: detect ATR compression, enter on range expansion in trend direction.
-Exit: volatility fades or ATR trail hit.
-Params (7): compressionLen, compressionPct, rangeLen, breakoutAtrBuffer, trendLen, trailAtr, maxHoldBars.
-Why robust: regime transition model (quiet -> expansion), usually transferable.
-shock_reversion_trend_gate
-Logic: buy shock-down events only if long-term trend is up and vol spike confirms panic.
-Exit: mean reversion target or time stop.
-Params (7): shockLookback, shockZ, trendLen, volSpikePct, reversionLen, stopAtr, maxHoldBars.
-Why robust: avoids blind dip-buying; entries only in controlled context.
-dual_horizon_momentum_guard
-Logic: require both fast and slow momentum alignment; go defensive on vol spike + momentum decay.
-Exit: momentum breakdown.
-Params (6): fastMomLen, slowMomLen, fastMomThr, slowMomThr, volSpikePct, cooldownBars.
-Why robust: fewer discrete events, smoother behavior.
-Rules for all new libs
+If it only “works” with look-ahead bias, assume there is no real edge yet or there’s hidden leakage.
 
-Keep tunables at <= 8.
-Avoid tiny fixed TP/SL as primary edge.
-Use walkForwardParams allowlist to limit optimization scope.
-Force entry/exit confirmation bars and time stops.
-Rank by OOS durability first, not in-sample profit.
-Deployment gate (minimum)
+What I’d do next:
 
-OOS durability score >= 55.
-OOS PF >= 1.15.
-OOS net profit % > 0.
-OOS max DD under your risk cap.
-Passes both normal and quick walk-forward without collapse.
+Leakage audit first
+Entry must use information available at decision time only.
+In your app, verify executionModel is realistic (next_open is safest for testing).
+Check no feature/normalization is fit on the full dataset (train-only fit, then apply to OOS).
+Ensure finder/scanner labels don’t use future bars in a way that leaks into features.
+Reduce complexity hard
+Use 1 strategy, 1 market, 1 timeframe, max 2–3 params.
+Remove most filters; each filter usually adds overfit risk.
+Keep parameter ranges coarse, not fine-grained.
+Change optimization target
+Don’t optimize total return.
+Optimize median OOS performance across folds, plus stability (low fold-to-fold variance), and DD constraints.
+Require pass on multiple contiguous OOS windows, not just one.
+Use robustness tests
+Add realistic fees/slippage.
+Test neighboring params (parameter perturbation). If tiny changes break it, reject.
+Test nearby time periods and at least one related symbol.
+Accept a low hit-rate reality
+Many ideas have no persistent edge. Fast rejection is progress.
+If you want, I can help you add a “leakage checklist + WF robustness score” directly in this repo so each run tells you why a strategy failed WF.
+
+
+how do i know if specific strategies work on specific market, and specific timeframe?
+
+Use a test matrix + strict OOS rules, not a single backtest.
+
+Build a matrix
+Rows: markets (e.g., BTC, ETH, ES, NQ, EURUSD).
+Columns: timeframes (5m, 15m, 1h, 4h, 1d).
+Test the same strategy logic on every cell.
+Run walk-forward per cell
+Use rolling/anchored WF (at least 6 folds).
+Optimize only on IS, evaluate only on next OOS segment.
+Keep fees/slippage on.
+Score only OOS
+For each cell, track: OOS expectancy, profit factor, max drawdown, Sharpe/Sortino, and % profitable folds.
+Ignore in-sample “best” results.
+Require robustness
+Parameter perturbation: small param changes should still work.
+Regime split: bull/bear/sideways periods should not completely break.
+Neighbor check: related markets/timeframes should be “okay,” not catastrophic.
+Use pass/fail criteria
+Example:
+>= 70% folds profitable
+OOS expectancy > 0 after costs
+max DD below your limit
+no single fold contributes most of profit
+Decide by pattern
+If only 1 market+TF passes and nearby cells fail, likely overfit.
+If a cluster passes (e.g., BTC/ETH on 1h+4h), likely real edge for that regime family.
+If you want, I can help you set up a market-timeframe score table in your current finder workflow so it auto-ranks robust cells instead of top-return cells.
+
+
+so you can ' market-timeframe score table' not only using one parameter setting, but it randomize using random search and pick most top of it?
+
+Yes, exactly. That is the right direction, with one tweak:
+
+Don’t pick the single top run.
+Pick robust winners from random search.
+
+Use this flow per strategy x market x timeframe cell:
+
+Random-sample params (e.g. 200-1000 sets).
+Run walk-forward OOS for each set (with fees/slippage).
+Compute a robustness score, not just return:
+median OOS expectancy/Sharpe
+profitable-fold ratio
+drawdown penalty
+stability penalty (high fold variance = bad)
+Keep only sets that pass hard constraints.
+Cell score = quality of the top decile median + pass rate (how many random sets survive).
+If a cell only has 1 lucky param set, reject it.
+If many random sets pass, that cell is likely real.
+
+If you want, I can implement this into your Finder pipeline (finder-manager.ts + lib/finder/*) as a “Random Robustness Scan” mode.
+
+
+you are mention "Run walk-forward OOS for each set (with fees/slippage)." is that using finder and count its score on many  search random? but there is a problem on it, walk-forward test is super super slow even for testing 1 loaded strategies backtest
+
+Yes, use Finder, but not “full walk-forward on every random set.”
+That’s the slow path.
+
+Use a multi-stage search:
+
+Stage A (cheap prefilter)
+Random sample many params.
+Run 1 quick OOS split (or very short WF, 1-2 folds).
+Keep top 20-30%.
+Stage B (medium)
+Run kept params on 3-fold WF.
+Apply hard rejects early (DD too high, expectancy < 0, etc.).
+Keep top 10-20%.
+Stage C (expensive)
+Only survivors get full WF (6+ folds, full costs).
+This usually cuts compute by 10x+.
+
+Also add these speed rules:
+
+Early stop per param set: stop after fold 1/2 if it already fails constraints.
+Time budget per cell: e.g., 3-5 min per market/timeframe, not fixed eval count.
+Coarse parameter spaces: fewer useless combos.
+Enable Rust engine for heavy backtests where possible.
+Disable UI-heavy work during scans (render/log throttling).
+And keep ranking by robustness:
+
+not best single run
+use pass rate + median OOS of top decile
+If you want, I can implement this as a “Successive Halving / Early-Stop” mode in your Finder (finder-manager.ts + lib/finder/*).

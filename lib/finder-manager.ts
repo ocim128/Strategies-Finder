@@ -47,6 +47,11 @@ export class FinderManager {
 			void this.copyTopResultsMetadata();
 		});
 
+		const saveSeedAuditButton = getRequiredElement<HTMLButtonElement>('finderSaveSeedAudit');
+		saveSeedAuditButton.addEventListener('click', () => {
+			void this.saveCurrentSeedAuditFile();
+		});
+
 		getRequiredElement('finderList').addEventListener('click', (event) => {
 			const target = event.target as HTMLElement | null;
 			const button = target?.closest<HTMLButtonElement>('.finder-apply');
@@ -605,6 +610,61 @@ export class FinderManager {
 		} catch (error) {
 			debugLogger.error('finder.copy_metadata_failed', { error: error instanceof Error ? error.message : String(error) });
 			uiManager.showToast('Copy failed - check browser permissions', 'error');
+		}
+	}
+
+	private async saveCurrentSeedAuditFile(): Promise<void> {
+		const mode = getRequiredElement<HTMLSelectElement>('finderMode').value as FinderMode;
+		if (mode !== 'robust_random_wf') {
+			uiManager.showToast('Seed audit export is available only in Robust Random WF mode.', 'info');
+			return;
+		}
+
+		const seed = Math.round(readNumberInputValue('finderRobustSeed', 1337, -2147483648));
+		if (!Number.isFinite(seed)) {
+			uiManager.showToast('Invalid robust seed value.', 'error');
+			return;
+		}
+
+		const matchingEntries = debugLogger.getEntries().filter((entry) => {
+			if (entry.message !== '[Finder][robust_random_wf][cell_audit]') return false;
+			if (!entry.data || typeof entry.data !== 'object') return false;
+			const dataSeed = Number((entry.data as Record<string, unknown>).seed);
+			return Number.isFinite(dataSeed) && Math.round(dataSeed) === seed;
+		});
+
+		if (matchingEntries.length === 0) {
+			uiManager.showToast(`No robust cell-audit logs found for seed ${seed}. Run Finder first.`, 'warning');
+			return;
+		}
+
+		const payload = matchingEntries
+			.map((entry) => `${entry.message} ${JSON.stringify(entry.data)}`)
+			.join('\n');
+		const fileName = `run-seed-${seed}.txt`;
+
+		try {
+			const response = await fetch('/api/sqlite/write-seed-log', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					seed,
+					content: payload
+				})
+			});
+
+			const responseBody = await response.json().catch(() => null) as { ok?: boolean; error?: string; path?: string } | null;
+			if (!response.ok || !responseBody?.ok) {
+				throw new Error(responseBody?.error || `HTTP ${response.status}`);
+			}
+
+			uiManager.showToast(`Saved ${fileName}`, 'success');
+		} catch (error) {
+			debugLogger.error('finder.save_seed_audit_failed', {
+				seed,
+				error: error instanceof Error ? error.message : String(error)
+			});
+			uiManager.showToast('Failed to save seed audit file. Start app with Vite dev server.', 'error');
 		}
 	}
 

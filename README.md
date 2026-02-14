@@ -91,6 +91,31 @@ Go/no-go JSON output:
 npm run robust:report -- --format json --out go-no-go.json run-seed-*.txt
 ```
 
+## Run robust finder from CLI
+Use this when you want reproducible batch runs without UI actions.
+
+1) Edit config:
+- `scripts/robust-cli-config.example.json`
+
+2) Run:
+```bash
+npm run robust:run -- --config scripts/robust-cli-config.example.json
+```
+
+If your shell/npm strips flag names, positional mode also works:
+```bash
+npm run robust:run -- scripts/robust-cli-config.example.json
+```
+
+What it does:
+- Loads OHLCV JSON from `dataPath` (same format exported/imported by Data menu)
+- Runs `robust_random_wf` for each seed
+- Writes `run-seed-<seed>.txt` files (cell_audit lines)
+- Generates summary/report tables
+- Generates JSON outputs:
+  - `matrix-summary-YYYY-MM-DD.json`
+  - `go-no-go-YYYY-MM-DD.json`
+
 Accepted input files:
 - Debug copy text containing `[Finder][robust_random_wf][cell_audit]` lines (recommended).
 - Finder `Copy Top Results` JSON (PASS-only; useful but incomplete for reject diagnostics).

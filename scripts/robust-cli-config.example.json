@@ -1,0 +1,45 @@
+{
+  "dataPath": "C:/Users/user/Downloads/data-ETHUSDT-120m-37135bars-2026-02-10T02-27-05-506Z.json",
+  "symbol": "ETHUSDT",
+  "interval": "120m",
+  "strategyKeys": [
+    "exhaustion_spike_pullback"
+  ],
+  "seeds": [
+    1337,
+    7331,
+    2026,
+    4242,
+    9001
+  ],
+  "finder": {
+    "rangePercent": 2222,
+    "maxRuns": 555,
+    "steps": 3,
+    "topN": 10,
+    "minTrades": 40
+  },
+  "backtestSettings": {
+    "tradeFilterMode": "close",
+    "confirmLookback": 1,
+    "tradeDirection": "both",
+    "slippageBps": 5,
+    "executionModel": "next_open",
+    "allowSameBarExit": false
+  },
+  "capital": {
+    "initialCapital": 10000,
+    "positionSize": 100,
+    "commission": 0.1,
+    "sizingMode": "percent",
+    "fixedTradeAmount": 1000
+  },
+  "output": {
+    "outDir": ".",
+    "filePrefix": "run-seed",
+    "writeJsonSummary": true,
+    "writeJsonReport": true,
+    "writeTableSummary": true,
+    "writeTableReport": true
+  }
+}

@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { IncomingMessage } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
@@ -328,6 +328,34 @@ function localSqlitePlugin(): Plugin {
                         firstTime: Number(summary.firstTime) || null,
                         lastTime: Number(summary.lastTime) || null,
                         dbPath: SQLITE_DB_PATH,
+                    });
+                    return;
+                }
+
+                if (method === 'POST' && path === '/write-seed-log') {
+                    const payload = await readJsonBody(req as IncomingMessage);
+                    const seedRaw = Number(payload.seed);
+                    const seed = Number.isFinite(seedRaw) ? Math.trunc(seedRaw) : NaN;
+                    const content = typeof payload.content === 'string' ? payload.content : '';
+
+                    if (!Number.isFinite(seed)) {
+                        sendJson(res, 400, { ok: false, error: 'seed must be a finite number' });
+                        return;
+                    }
+                    if (!content.trim()) {
+                        sendJson(res, 400, { ok: false, error: 'content must be a non-empty string' });
+                        return;
+                    }
+
+                    const filePath = resolve(process.cwd(), `run-seed-${seed}.txt`);
+                    const normalized = content.endsWith('\n') ? content : `${content}\n`;
+                    writeFileSync(filePath, normalized, 'utf8');
+
+                    sendJson(res, 200, {
+                        ok: true,
+                        seed,
+                        filePath,
+                        bytes: Buffer.byteLength(normalized, 'utf8'),
                     });
                     return;
                 }
