@@ -21,6 +21,9 @@ import { volatility_compression_break } from "./lib/volatility-compression-break
 import { gap_fail_reversal } from "./lib/gap-fail-reversal";
 import { exhaustion_spike_pullback } from "./lib/exhaustion-spike-pullback";
 import { session_open_fakeout } from "./lib/session-open-fakeout";
+import { momentum_rsi_pullback_entry } from "./lib/momentum-rsi-pullback-entry";
+import { momentum_rsi_regime_gate } from "./lib/momentum-rsi-regime-gate";
+import { momentum_rsi_exit_pack } from "./lib/momentum-rsi-exit-pack";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -50,6 +53,9 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "gap_fail_reversal", strategy: gap_fail_reversal },
     { key: "exhaustion_spike_pullback", strategy: exhaustion_spike_pullback },
     { key: "session_open_fakeout", strategy: session_open_fakeout },
+    { key: "momentum_rsi_pullback_entry", strategy: momentum_rsi_pullback_entry },
+    { key: "momentum_rsi_regime_gate", strategy: momentum_rsi_regime_gate },
+    { key: "momentum_rsi_exit_pack", strategy: momentum_rsi_exit_pack },
 ];
 
 export function createStrategiesRecordFromManifest(

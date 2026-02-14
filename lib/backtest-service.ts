@@ -230,6 +230,9 @@ export class BacktestService {
     }
 
     private getTwoHourCloseParityMode(): 'odd' | 'even' | 'both' {
+        if (getIntervalSeconds(state.currentInterval) !== 7200) {
+            return 'odd';
+        }
         const select = getOptionalElement<HTMLSelectElement>('twoHourCloseParity');
         if (select?.value === 'even' || select?.value === 'both') {
             return select.value;

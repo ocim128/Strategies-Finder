@@ -93,7 +93,7 @@ export class FinderManager {
 
 		// Set defaults
 		sortPrimary.value = 'expectancy';
-		sortSecondary.value = 'oosProfitFactor';
+		sortSecondary.value = 'profitFactor';
 
 		// Advanced Toggle Logic
 		const toggle = getRequiredElement<HTMLInputElement>('finderAdvancedToggle');
@@ -606,6 +606,13 @@ export class FinderManager {
 	}
 
 	private applyResult(result: FinderResult): void {
+		if (Array.isArray(result.timeframes) && result.timeframes.length > 1) {
+			uiManager.showToast(
+				'Applied params from a multi-timeframe aggregate result. The backtest run below uses current chart timeframe only.',
+				'info'
+			);
+		}
+
 		state.set('currentStrategyKey', result.key);
 		uiManager.updateStrategyDropdown(result.key);
 		const strategy = strategyRegistry.get(result.key);

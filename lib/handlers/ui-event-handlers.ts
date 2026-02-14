@@ -12,6 +12,7 @@ import { dataManager } from "../data-manager";
 import { assetSearchService, Asset } from "../asset-search-service";
 import { finderManager } from "../finder-manager";
 import { scannerManager } from "../scanner/scanner-manager";
+import { getIntervalSeconds } from "../dataProviders/utils";
 
 export function setupEventHandlers() {
     // Symbol dropdown with search
@@ -637,6 +638,19 @@ export function setupEventHandlers() {
 
     const twoHourCloseParity = document.getElementById('twoHourCloseParity') as HTMLSelectElement | null;
     if (twoHourCloseParity) {
+        const parityHint = twoHourCloseParity.parentElement?.querySelector('.param-hint') as HTMLElement | null;
+        const defaultParityHint = parityHint?.textContent ?? '';
+        const applyParityAvailability = () => {
+            const isTwoHourInterval = getIntervalSeconds(state.currentInterval) === 7200;
+            twoHourCloseParity.disabled = !isTwoHourInterval;
+            twoHourCloseParity.parentElement?.classList.toggle('is-disabled', !isTwoHourInterval);
+            if (parityHint) {
+                parityHint.textContent = isTwoHourInterval
+                    ? defaultParityHint
+                    : 'Available only on 2H interval.';
+            }
+        };
+
         const resolveParityMode = (value: string): 'odd' | 'even' | 'both' => {
             if (value === 'even' || value === 'both') return value;
             return 'odd';
@@ -644,6 +658,11 @@ export function setupEventHandlers() {
 
         let lastAppliedParity: 'odd' | 'even' | 'both' = resolveParityMode(twoHourCloseParity.value);
         twoHourCloseParity.addEventListener('change', () => {
+            if (getIntervalSeconds(state.currentInterval) !== 7200) {
+                twoHourCloseParity.value = 'odd';
+                lastAppliedParity = 'odd';
+                return;
+            }
             const nextParity: 'odd' | 'even' | 'both' = resolveParityMode(twoHourCloseParity.value);
             if (nextParity === lastAppliedParity) {
                 return;
@@ -671,6 +690,11 @@ export function setupEventHandlers() {
                 uiManager.showToast('Failed to reload data for new 2H parity.', 'error');
             });
         });
+
+        state.subscribe('currentInterval', () => {
+            applyParityAvailability();
+        });
+        applyParityAvailability();
     }
 
     // Finder settings toggles

@@ -20,7 +20,7 @@ import {
 } from "../confirmation-strategies";
 import { calculateSharpeRatioFromReturns } from "../strategies/performance-metrics";
 import { buildSelectionResult } from "./endpoint";
-import { aggregateFinderBacktestResults } from "./finder-engine";
+import { aggregateFinderBacktestResults, compareFinderResults } from "./finder-engine";
 import { FinderResultRanker } from "./finder-result-ranker";
 import { hasNonZeroSnapshotFilter, sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { FinderDataset } from "./finder-timeframe-loader";
@@ -860,7 +860,26 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         await maybeYieldByBudget(true);
     }
 
-    const trimmed = ranker.toSortedArray(input.options.topN);
+    const fastTop = ranker.toSortedArray(input.options.topN);
+    let trimmed = fastTop;
+    const shouldReconcileTopResults = flags.shouldUseCompactBacktest || useRustForFinder;
+    if (shouldReconcileTopResults && fastTop.length > 0) {
+        callbacks.setStatus("Reconciling top results with full backtest...");
+        callbacks.setProgress(99, "Reconciling top results...");
+        trimmed = await reconcileSingleTimeframeTopResults(
+            fastTop,
+            input,
+            closedData,
+            initialCapital,
+            positionSize,
+            commission,
+            sizingMode,
+            fixedTradeAmount,
+            maybeYieldByBudget
+        );
+    }
+
+    endpointAdjustedCount = trimmed.reduce((count, item) => count + (item.endpointAdjusted ? 1 : 0), 0);
     callbacks.setProgress(100, totalRuns > 0 ? `${totalRuns}/${totalRuns} runs` : "Complete");
     const statusParts = [`${processedCount} runs`];
     if (input.options.tradeFilterEnabled) {
@@ -875,6 +894,80 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     }
     callbacks.setStatus(`Complete. ${statusParts.join(", ")}.`);
     return { results: trimmed };
+}
+
+async function reconcileSingleTimeframeTopResults(
+    candidates: FinderResult[],
+    input: FinderRunInput,
+    closedData: OHLCVData[],
+    initialCapital: number,
+    positionSize: number,
+    commission: number,
+    sizingMode: "percent" | "fixed",
+    fixedTradeAmount: number,
+    maybeYieldByBudget: (force?: boolean) => Promise<void>
+): Promise<FinderResult[]> {
+    const strategyByKey = new Map(input.selectedStrategies.map((item) => [item.key, item.strategy]));
+    const confirmationStrategies = input.settings.confirmationStrategies ?? [];
+    const hasConfirmations = confirmationStrategies.length > 0;
+    const tradeFilterMode = input.settings.tradeFilterMode ?? input.settings.entryConfirmation ?? "none";
+    const tradeDirection = input.settings.tradeDirection ?? "long";
+    const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
+    const reconciled: FinderResult[] = [];
+
+    for (const candidate of candidates) {
+        const strategy = strategyByKey.get(candidate.key);
+        if (!strategy) {
+            reconciled.push(candidate);
+            continue;
+        }
+
+        try {
+            let signals = strategy.execute(closedData, candidate.params);
+
+            if (hasConfirmations) {
+                const confirmationParams = candidate.confirmationParams ?? input.settings.confirmationStrategyParams ?? {};
+                const confirmationStates = buildConfirmationStates(closedData, confirmationStrategies, confirmationParams);
+                if (confirmationStates.length > 0) {
+                    signals = (strategy.metadata?.role === "entry" || tradeDirection === "both" || tradeDirection === "combined")
+                        ? filterSignalsWithConfirmationsBoth(closedData, signals, confirmationStates, tradeFilterMode)
+                        : filterSignalsWithConfirmations(closedData, signals, confirmationStates, tradeFilterMode, tradeDirection);
+                }
+            }
+
+            const evaluation = strategy.evaluate?.(closedData, candidate.params, signals);
+            const entryStats = evaluation?.entryStats;
+            const rawResult = strategy.metadata?.role === "entry" && entryStats
+                ? buildEntryBacktestResult(entryStats)
+                : runBacktest(
+                    closedData,
+                    signals,
+                    initialCapital,
+                    positionSize,
+                    commission,
+                    input.settings,
+                    { mode: sizingMode, fixedTradeAmount }
+                );
+            const normalizedResult = normalizeResultSharpe(rawResult, initialCapital);
+            const adjustment = buildSelection(normalizedResult, lastDataTime, initialCapital);
+
+            reconciled.push({
+                ...candidate,
+                result: normalizedResult,
+                selectionResult: adjustment.result,
+                endpointAdjusted: adjustment.adjusted,
+                endpointRemovedTrades: adjustment.removedTrades,
+            });
+        } catch (_error) {
+            reconciled.push(candidate);
+        }
+
+        await maybeYieldByBudget(false);
+    }
+
+    return reconciled
+        .sort((a, b) => compareFinderResults(a, b, input.options.sortPriority))
+        .slice(0, Math.max(1, input.options.topN));
 }
 
 function hasHeavySnapshotFilters(settings: BacktestSettings): boolean {
