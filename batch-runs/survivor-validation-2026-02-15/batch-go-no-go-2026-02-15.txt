@@ -1,0 +1,44 @@
+Overall Verdict: GO
+Policy | minSeedRuns=5 | minSeedPasses=3 | minPassRate=3.00% | minStageC=3.0 | maxDDBreach=15.00% | maxFoldVar=1.20
+
+Cell | Verdict | SeedPass | Runs | MedianPassRate | MedianStageC | MedianDDBreach | MedianFoldVar | TopFailReason | NoGoReasons
+---|---|---:|---:|---:|---:|---:|---:|---|---
+BNBUSDT:120m:long_short_harvest:close:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:long_short_harvest:close:long | NO_GO | 5/5 | 5 | 2.73% | 6.0 | 0.00% | 0.974 | - | low_median_stage_c_pass_rate
+BNBUSDT:120m:long_short_harvest:close:short | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:long_short_harvest:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:long_short_harvest:none:long | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:long_short_harvest:none:short | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:long_short_harvest:close:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:long_short_harvest:close:long | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:long_short_harvest:close:short | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:long_short_harvest:none:both | GO | 5/5 | 5 | 5.45% | 12.0 | 0.00% | 0.828 | - | -
+SOLUSDT:1h:long_short_harvest:none:long | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:long_short_harvest:none:short | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+
+No-Go Reason Counts
+Reason | Cells
+---|---:
+low_median_stage_c_pass_rate (Stage C pass rate too low) | 11
+low_median_stage_c_survivors (Stage C survivor density too low) | 10
+low_seed_pass_count (Seed pass rule failed) | 10
+
+Global FAIL Decision Reasons
+Reason | Count
+---|---:
+cell_low_stage_c_survivors | 50
+
+Global Stage Reject Reasons
+Reason | Count
+---|---:
+stage_a_non_positive_expectancy | 4648
+stage_a_low_trades | 3642
+stage_b_non_positive_expectancy | 3198
+stage_a_high_drawdown | 755
+stage_b_high_combined_drawdown | 363
+stage_b_unstable_fold_expectancy | 251
+stage_c_low_oos_trades | 203
+stage_b_high_window_dd_breach_rate | 25
+stage_c_low_profitable_fold_ratio | 17
+stage_c_unstable_fold_expectancy | 9
+stage_c_non_positive_expectancy | 3

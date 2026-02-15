@@ -1,0 +1,23 @@
+SOL Surgical Pass 2026-02-15T05:19:01.441Z
+Data: C:\Users\user\Documents\Repo\Experimental\lightweight-charts\debug\playground\Strategies-Finder\price-data\robust-lab\generated\strategy-evolution-2026-02-15-btc-sol-15m-4h\SOLUSDT-4h.json
+Finder maxRuns cap: 50
+
+Step 1: Dynamic VIX OOS tuning (stopLossAtr=0.90)
+  oos-p1 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=0.00% blindPF=0.00
+  oos-p2 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=47.85% blindPF=1.74
+  oos-p3 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=46.08% blindPF=1.71
+  oos-p4 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=0.00% blindPF=0.00
+  oos-p5 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=0.00% blindPF=0.00
+  oos-p6 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=0.00% blindPF=0.00
+  oos-p7 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=0.00% blindPF=0.00
+  oos-p8 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=45.88% blindPF=1.51
+  oos-p9 | pass=1/3 | oos=FAIL wf=PASS fee=FAIL | blindNet=65.80% blindPF=2.24
+  oos-p10 | pass=1/3 | oos=FAIL wf=PASS fee=FAIL | blindNet=0.00% blindPF=0.00
+
+Step 2: Meta Harvest v2.1
+  meta-p1 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=0.00% wfWFE=0.000 feePF=0.00
+  meta-p2 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=0.00% wfWFE=0.000 feePF=0.00
+  meta-p3 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=0.00% wfWFE=0.000 feePF=0.00
+
+Step 3: <10% DD and PF>1.3 hunt (dynamic_vix_regime)
+  hits=0

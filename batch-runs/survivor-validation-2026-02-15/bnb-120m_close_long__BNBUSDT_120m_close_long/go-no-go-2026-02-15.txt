@@ -1,0 +1,29 @@
+Overall Verdict: NO_GO
+Policy | minSeedRuns=5 | minSeedPasses=3 | minPassRate=3.00% | minStageC=3.0 | maxDDBreach=15.00% | maxFoldVar=1.20
+
+Cell | Verdict | SeedPass | Runs | MedianPassRate | MedianStageC | MedianDDBreach | MedianFoldVar | TopFailReason | NoGoReasons
+---|---|---:|---:|---:|---:|---:|---:|---|---
+BNBUSDT:120m:long_short_harvest:close:long | NO_GO | 5/5 | 5 | 2.73% | 6.0 | 0.00% | 0.974 | - | low_median_stage_c_pass_rate
+
+No-Go Reason Counts
+Reason | Cells
+---|---:
+low_median_stage_c_pass_rate (Stage C pass rate too low) | 1
+
+Global FAIL Decision Reasons
+Reason | Count
+---|---:
+(none) | 0
+
+Global Stage Reject Reasons
+Reason | Count
+---|---:
+stage_b_non_positive_expectancy | 681
+stage_c_low_oos_trades | 131
+stage_a_non_positive_expectancy | 114
+stage_b_unstable_fold_expectancy | 97
+stage_b_high_combined_drawdown | 18
+stage_c_low_profitable_fold_ratio | 15
+stage_c_unstable_fold_expectancy | 9
+stage_c_non_positive_expectancy | 3
+stage_a_low_trades | 1

@@ -1,0 +1,296 @@
+{
+  "generatedAt": "2026-02-15T03:46:38.589Z",
+  "inputs": {
+    "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\BTCUSDT-2h.json",
+    "symbol": "BTCUSDT",
+    "interval": "2h",
+    "strategyKey": "adaptive_supertrend_kmeans",
+    "seeds": [
+      1337,
+      7331,
+      2026,
+      4242,
+      9001
+    ],
+    "split": {
+      "trainRatio": 0.7,
+      "trainBars": 10514,
+      "blindBars": 4507
+    },
+    "trading": {
+      "initialCapital": 10000,
+      "positionSizePercent": 100,
+      "commissionPercent": 0.1,
+      "slippageBps": 1,
+      "rawTickSlippageBps": 0.015948859026599666,
+      "tickSize": 0.1,
+      "referenceMedianPrice": 62700.41
+    }
+  },
+  "oos70_30": {
+    "criteria": {
+      "minTrainSeedPasses": 3,
+      "minBlindPositiveSeeds": 3,
+      "minBlindMedianNetProfitPercent": 0
+    },
+    "trainSeedPassCount": 3,
+    "blindPositiveSeedCount": 0,
+    "blindMedianNetProfitPercent": -19.64881688440216,
+    "blindMedianMaxDrawdownPercent": 48.46450087568254,
+    "blindMedianProfitFactor": 0.8613356253638367,
+    "blindConsensusResult": {
+      "trades": [],
+      "netProfit": -1426.8619171922874,
+      "netProfitPercent": -14.268619171922875,
+      "winRate": 34.02061855670103,
+      "expectancy": -14.709916672085512,
+      "avgTrade": -14.709916672085436,
+      "profitFactor": 0.9012502747711385,
+      "maxDrawdown": 6121.428628633903,
+      "maxDrawdownPercent": 48.46450087568251,
+      "totalTrades": 97,
+      "winningTrades": 33,
+      "losingTrades": 64,
+      "avgWin": 394.61857249351607,
+      "avgLoss": 225.76991889809884,
+      "sharpeRatio": -0.015931723429023062,
+      "equityCurve": []
+    },
+    "seedRuns": [
+      {
+        "seed": 1337,
+        "trainPassed": true,
+        "params": {
+          "atrPeriod": 13,
+          "minFactor": 1,
+          "maxFactor": 16,
+          "factorStep": 0.6269,
+          "perfAlpha": 8,
+          "kMeansIterations": 67,
+          "kMeansInterval": 3,
+          "clusterChoice": 2,
+          "warmupBars": 46
+        },
+        "blindResult": {
+          "trades": [],
+          "netProfit": -797.2925702901321,
+          "netProfitPercent": -7.97292570290132,
+          "winRate": 33.33333333333333,
+          "expectancy": -8.573038390216396,
+          "avgTrade": -8.573038390216475,
+          "profitFactor": 0.9415180450888236,
+          "maxDrawdown": 5983.450780668787,
+          "maxDrawdownPercent": 47.3054814173978,
+          "totalTrades": 93,
+          "winningTrades": 31,
+          "losingTrades": 62,
+          "avgWin": 414.0595346660733,
+          "avgLoss": 219.88932491836127,
+          "sharpeRatio": 0.0011929986380153587,
+          "equityCurve": []
+        }
+      },
+      {
+        "seed": 7331,
+        "trainPassed": true,
+        "params": {
+          "atrPeriod": 12,
+          "minFactor": 1,
+          "maxFactor": 12,
+          "factorStep": 0.3761,
+          "perfAlpha": 7,
+          "kMeansIterations": 39,
+          "kMeansInterval": 2,
+          "clusterChoice": 2,
+          "warmupBars": 59
+        },
+        "blindResult": {
+          "trades": [],
+          "netProfit": -4323.435301439082,
+          "netProfitPercent": -43.23435301439082,
+          "winRate": 31.40495867768595,
+          "expectancy": -35.73087025982713,
+          "avgTrade": -35.73087025982712,
+          "profitFactor": 0.6924191320510528,
+          "maxDrawdown": 7863.953593243748,
+          "maxDrawdownPercent": 63.73552312771289,
+          "totalTrades": 121,
+          "winningTrades": 38,
+          "losingTrades": 83,
+          "avgWin": 256.1268502939918,
+          "avgLoss": 169.35247726037073,
+          "sharpeRatio": -0.10987282699115837,
+          "equityCurve": []
+        }
+      },
+      {
+        "seed": 2026,
+        "trainPassed": true,
+        "params": {
+          "atrPeriod": 13,
+          "minFactor": 1,
+          "maxFactor": 16,
+          "factorStep": 0.5149,
+          "perfAlpha": 7,
+          "kMeansIterations": 63,
+          "kMeansInterval": 3,
+          "clusterChoice": 2,
+          "warmupBars": 33
+        },
+        "blindResult": {
+          "trades": [],
+          "netProfit": -1964.8816884402158,
+          "netProfitPercent": -19.64881688440216,
+          "winRate": 33.33333333333333,
+          "expectancy": -19.847289782224465,
+          "avgTrade": -19.8472897822244,
+          "profitFactor": 0.8613356253638367,
+          "maxDrawdown": 5737.269456265893,
+          "maxDrawdownPercent": 48.46450087568254,
+          "totalTrades": 99,
+          "winningTrades": 33,
+          "losingTrades": 66,
+          "avgWin": 369.8537090266705,
+          "avgLoss": 214.69778918667197,
+          "sharpeRatio": -0.03056399142258879,
+          "equityCurve": []
+        }
+      },
+      {
+        "seed": 4242,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      },
+      {
+        "seed": 9001,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      }
+    ],
+    "verdict": "FAIL",
+    "failReasons": [
+      "insufficient_blind_positive_seeds",
+      "non_positive_blind_median_net_profit"
+    ]
+  },
+  "walkForward3m1m": {
+    "criteria": {
+      "minCombinedOOSNetProfitPercent": 0,
+      "minWalkForwardEfficiency": 0.45,
+      "minParameterStability": 40,
+      "maxCombinedOOSDrawdownPercent": 30
+    },
+    "optimizationWindowBars": 2160,
+    "testWindowBars": 720,
+    "stepSizeBars": 720,
+    "totalWindows": 17,
+    "combinedOOS": {
+      "netProfitPercent": 13.655836543295846,
+      "profitFactor": 1.0235439266044,
+      "maxDrawdownPercent": 60.775606884832726,
+      "totalTrades": 181,
+      "winRate": 37.569060773480665
+    },
+    "avgInSampleSharpe": 0.17955754543036861,
+    "avgOutOfSampleSharpe": 0.006928177145490609,
+    "walkForwardEfficiency": 0.03858471738898501,
+    "robustnessScore": 21,
+    "parameterStability": 39.22848529423835,
+    "parameterDrift": {
+      "averageChangedParamsPerWindow": 1.625,
+      "changedParamRatePerWindow": 0.18055555555555555,
+      "perParamDistinctValues": {
+        "atrPeriod": 4,
+        "minFactor": 2,
+        "maxFactor": 3,
+        "factorStep": 3,
+        "perfAlpha": 1,
+        "kMeansIterations": 1,
+        "kMeansInterval": 1,
+        "clusterChoice": 1,
+        "warmupBars": 1
+      }
+    },
+    "verdict": "FAIL",
+    "failReasons": [
+      "low_walk_forward_efficiency",
+      "low_parameter_stability",
+      "high_combined_oos_drawdown"
+    ]
+  },
+  "feeSlippageSensitivity": {
+    "criteria": {
+      "minSeedPasses": 3,
+      "minMedianNetProfitPercent": 0,
+      "maxMedianDrawdownPercent": 30
+    },
+    "seedPassCount": 0,
+    "medianNetProfitPercent": 0,
+    "medianMaxDrawdownPercent": 0,
+    "medianProfitFactor": 0,
+    "medianRobustScore": 0,
+    "seedRuns": [
+      {
+        "seed": 1337,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 7331,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 2026,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 4242,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 9001,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      }
+    ],
+    "verdict": "FAIL",
+    "failReasons": [
+      "insufficient_seed_passes",
+      "non_positive_median_net_profit"
+    ]
+  },
+  "overall": {
+    "survivesAllThree": false,
+    "verdict": "FAIL"
+  }
+}

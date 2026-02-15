@@ -119,7 +119,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     ),
 ]);
 
-const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>(["none", "close", "volume", "rsi", "trend", "adx"]);
+const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>(["none", "close", "volume", "rsi", "trend", "adx", "htf_drift"]);
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "combined"]);
 
 function toBooleanLike(rawValue: unknown): boolean | null {

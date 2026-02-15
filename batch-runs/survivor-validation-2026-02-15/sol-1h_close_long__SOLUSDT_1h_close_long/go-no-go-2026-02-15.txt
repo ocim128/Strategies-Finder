@@ -1,0 +1,25 @@
+Overall Verdict: NO_GO
+Policy | minSeedRuns=5 | minSeedPasses=3 | minPassRate=3.00% | minStageC=3.0 | maxDDBreach=15.00% | maxFoldVar=1.20
+
+Cell | Verdict | SeedPass | Runs | MedianPassRate | MedianStageC | MedianDDBreach | MedianFoldVar | TopFailReason | NoGoReasons
+---|---|---:|---:|---:|---:|---:|---:|---|---
+SOLUSDT:1h:long_short_harvest:close:long | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+
+No-Go Reason Counts
+Reason | Cells
+---|---:
+low_median_stage_c_pass_rate (Stage C pass rate too low) | 1
+low_median_stage_c_survivors (Stage C survivor density too low) | 1
+low_seed_pass_count (Seed pass rule failed) | 1
+
+Global FAIL Decision Reasons
+Reason | Count
+---|---:
+cell_low_stage_c_survivors | 5
+
+Global Stage Reject Reasons
+Reason | Count
+---|---:
+stage_a_low_trades | 1084
+stage_a_non_positive_expectancy | 11
+stage_b_non_positive_expectancy | 5

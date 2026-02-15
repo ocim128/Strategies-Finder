@@ -1,0 +1,98 @@
+{
+  "generatedAt": "2026-02-15T03:00:31.730Z",
+  "configPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\scripts\\robust-batch-config.real-market.json",
+  "taskCount": 3,
+  "seedCount": 5,
+  "tasks": [
+    {
+      "label": "btc-2h:none:both",
+      "symbol": "BTCUSDT",
+      "interval": "2h",
+      "tradeFilterMode": "none",
+      "tradeDirection": "both",
+      "strategyKeys": [
+        "regime_donchian_breakout",
+        "momentum_volatility_rotation",
+        "long_short_harvest",
+        "mean_reversion_zscore",
+        "shock_reversion_trend_gate",
+        "liquidity_void_rider",
+        "hypothesis_trend_persistence",
+        "volatility_compression_break",
+        "exhaustion_spike_pullback",
+        "time_weighted_mean_reversion"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\btc-2h_none_both__BTCUSDT_2h_none_both",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\btc-2h_none_both__BTCUSDT_2h_none_both\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\btc-2h_none_both__BTCUSDT_2h_none_both\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\btc-2h_none_both__BTCUSDT_2h_none_both\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\btc-2h_none_both__BTCUSDT_2h_none_both\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\btc-2h_none_both__BTCUSDT_2h_none_both\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\btc-2h_none_both__BTCUSDT_2h_none_both\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\btc-2h_none_both__BTCUSDT_2h_none_both\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\btc-2h_none_both__BTCUSDT_2h_none_both\\go-no-go-2026-02-15.txt"
+    },
+    {
+      "label": "eth-2h:none:both",
+      "symbol": "ETHUSDT",
+      "interval": "2h",
+      "tradeFilterMode": "none",
+      "tradeDirection": "both",
+      "strategyKeys": [
+        "regime_donchian_breakout",
+        "momentum_volatility_rotation",
+        "long_short_harvest",
+        "mean_reversion_zscore",
+        "shock_reversion_trend_gate",
+        "liquidity_void_rider",
+        "hypothesis_trend_persistence",
+        "volatility_compression_break",
+        "exhaustion_spike_pullback",
+        "time_weighted_mean_reversion"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\eth-2h_none_both__ETHUSDT_2h_none_both",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\eth-2h_none_both__ETHUSDT_2h_none_both\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\eth-2h_none_both__ETHUSDT_2h_none_both\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\eth-2h_none_both__ETHUSDT_2h_none_both\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\eth-2h_none_both__ETHUSDT_2h_none_both\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\eth-2h_none_both__ETHUSDT_2h_none_both\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\eth-2h_none_both__ETHUSDT_2h_none_both\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\eth-2h_none_both__ETHUSDT_2h_none_both\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\eth-2h_none_both__ETHUSDT_2h_none_both\\go-no-go-2026-02-15.txt"
+    },
+    {
+      "label": "sol-1h:none:both",
+      "symbol": "SOLUSDT",
+      "interval": "1h",
+      "tradeFilterMode": "none",
+      "tradeDirection": "both",
+      "strategyKeys": [
+        "regime_donchian_breakout",
+        "momentum_volatility_rotation",
+        "long_short_harvest",
+        "mean_reversion_zscore",
+        "shock_reversion_trend_gate",
+        "liquidity_void_rider",
+        "hypothesis_trend_persistence",
+        "volatility_compression_break",
+        "exhaustion_spike_pullback",
+        "time_weighted_mean_reversion"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\real-market-screening-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\go-no-go-2026-02-15.txt"
+    }
+  ]
+}

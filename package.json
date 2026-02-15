@@ -8,6 +8,9 @@
     "robust:report": "node scripts/robust-go-no-go-report.mjs",
     "robust:run": "..\\..\\..\\node_modules\\.bin\\esno scripts\\robust-cli-runner.ts",
     "robust:batch": "..\\..\\..\\node_modules\\.bin\\esno scripts\\robust-batch-runner.ts",
+    "alpha:sweep": "..\\..\\..\\node_modules\\.bin\\esno scripts\\massive-alpha-sweep.ts",
+    "alpha:evolve": "..\\..\\..\\node_modules\\.bin\\esno scripts\\strategy-evolution-sweep.ts",
+    "alpha:surgical": "..\\..\\..\\node_modules\\.bin\\esno scripts\\surgical-optimization.ts",
     "build:types": "tsc -p tsconfig.types.json",
     "dev": "vite",
     "build": "vite build"

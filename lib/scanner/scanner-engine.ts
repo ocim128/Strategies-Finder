@@ -25,7 +25,7 @@ const BATCH_SIZE = 15;
 const BATCH_DELAY_MS = 300;
 const MIN_DATA_BARS = 200;
 const DEFAULT_SCAN_LOOKBACK_BARS = 300;
-const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>(['none', 'close', 'volume', 'rsi', 'trend', 'adx']);
+const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>(['none', 'close', 'volume', 'rsi', 'trend', 'adx', 'htf_drift']);
 
 function readTradeFilterMode(rawValue: unknown, fallback: TradeFilterMode = 'none'): TradeFilterMode {
     if (typeof rawValue === 'string') {

@@ -1,0 +1,260 @@
+{
+  "generatedAt": "2026-02-15T03:11:23.363Z",
+  "configPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\scripts\\robust-batch-config.survivor-validation.json",
+  "taskCount": 12,
+  "seedCount": 5,
+  "tasks": [
+    {
+      "label": "sol-1h:none:long",
+      "symbol": "SOLUSDT",
+      "interval": "1h",
+      "tradeFilterMode": "none",
+      "tradeDirection": "long",
+      "strategyKeys": [
+        "long_short_harvest"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_long__SOLUSDT_1h_none_long",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_long__SOLUSDT_1h_none_long\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_long__SOLUSDT_1h_none_long\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_long__SOLUSDT_1h_none_long\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_long__SOLUSDT_1h_none_long\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_long__SOLUSDT_1h_none_long\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_long__SOLUSDT_1h_none_long\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_long__SOLUSDT_1h_none_long\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_long__SOLUSDT_1h_none_long\\go-no-go-2026-02-15.txt"
+    },
+    {
+      "label": "sol-1h:none:short",
+      "symbol": "SOLUSDT",
+      "interval": "1h",
+      "tradeFilterMode": "none",
+      "tradeDirection": "short",
+      "strategyKeys": [
+        "long_short_harvest"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_short__SOLUSDT_1h_none_short",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_short__SOLUSDT_1h_none_short\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_short__SOLUSDT_1h_none_short\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_short__SOLUSDT_1h_none_short\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_short__SOLUSDT_1h_none_short\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_short__SOLUSDT_1h_none_short\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_short__SOLUSDT_1h_none_short\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_short__SOLUSDT_1h_none_short\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_short__SOLUSDT_1h_none_short\\go-no-go-2026-02-15.txt"
+    },
+    {
+      "label": "sol-1h:none:both",
+      "symbol": "SOLUSDT",
+      "interval": "1h",
+      "tradeFilterMode": "none",
+      "tradeDirection": "both",
+      "strategyKeys": [
+        "long_short_harvest"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_none_both__SOLUSDT_1h_none_both\\go-no-go-2026-02-15.txt"
+    },
+    {
+      "label": "sol-1h:close:long",
+      "symbol": "SOLUSDT",
+      "interval": "1h",
+      "tradeFilterMode": "close",
+      "tradeDirection": "long",
+      "strategyKeys": [
+        "long_short_harvest"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_long__SOLUSDT_1h_close_long",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_long__SOLUSDT_1h_close_long\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_long__SOLUSDT_1h_close_long\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_long__SOLUSDT_1h_close_long\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_long__SOLUSDT_1h_close_long\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_long__SOLUSDT_1h_close_long\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_long__SOLUSDT_1h_close_long\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_long__SOLUSDT_1h_close_long\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_long__SOLUSDT_1h_close_long\\go-no-go-2026-02-15.txt"
+    },
+    {
+      "label": "sol-1h:close:short",
+      "symbol": "SOLUSDT",
+      "interval": "1h",
+      "tradeFilterMode": "close",
+      "tradeDirection": "short",
+      "strategyKeys": [
+        "long_short_harvest"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_short__SOLUSDT_1h_close_short",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_short__SOLUSDT_1h_close_short\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_short__SOLUSDT_1h_close_short\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_short__SOLUSDT_1h_close_short\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_short__SOLUSDT_1h_close_short\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_short__SOLUSDT_1h_close_short\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_short__SOLUSDT_1h_close_short\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_short__SOLUSDT_1h_close_short\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_short__SOLUSDT_1h_close_short\\go-no-go-2026-02-15.txt"
+    },
+    {
+      "label": "sol-1h:close:both",
+      "symbol": "SOLUSDT",
+      "interval": "1h",
+      "tradeFilterMode": "close",
+      "tradeDirection": "both",
+      "strategyKeys": [
+        "long_short_harvest"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_both__SOLUSDT_1h_close_both",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_both__SOLUSDT_1h_close_both\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_both__SOLUSDT_1h_close_both\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_both__SOLUSDT_1h_close_both\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_both__SOLUSDT_1h_close_both\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_both__SOLUSDT_1h_close_both\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_both__SOLUSDT_1h_close_both\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_both__SOLUSDT_1h_close_both\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\sol-1h_close_both__SOLUSDT_1h_close_both\\go-no-go-2026-02-15.txt"
+    },
+    {
+      "label": "bnb-120m:none:long",
+      "symbol": "BNBUSDT",
+      "interval": "120m",
+      "tradeFilterMode": "none",
+      "tradeDirection": "long",
+      "strategyKeys": [
+        "long_short_harvest"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_long__BNBUSDT_120m_none_long",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_long__BNBUSDT_120m_none_long\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_long__BNBUSDT_120m_none_long\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_long__BNBUSDT_120m_none_long\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_long__BNBUSDT_120m_none_long\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_long__BNBUSDT_120m_none_long\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_long__BNBUSDT_120m_none_long\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_long__BNBUSDT_120m_none_long\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_long__BNBUSDT_120m_none_long\\go-no-go-2026-02-15.txt"
+    },
+    {
+      "label": "bnb-120m:none:short",
+      "symbol": "BNBUSDT",
+      "interval": "120m",
+      "tradeFilterMode": "none",
+      "tradeDirection": "short",
+      "strategyKeys": [
+        "long_short_harvest"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_short__BNBUSDT_120m_none_short",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_short__BNBUSDT_120m_none_short\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_short__BNBUSDT_120m_none_short\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_short__BNBUSDT_120m_none_short\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_short__BNBUSDT_120m_none_short\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_short__BNBUSDT_120m_none_short\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_short__BNBUSDT_120m_none_short\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_short__BNBUSDT_120m_none_short\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_short__BNBUSDT_120m_none_short\\go-no-go-2026-02-15.txt"
+    },
+    {
+      "label": "bnb-120m:none:both",
+      "symbol": "BNBUSDT",
+      "interval": "120m",
+      "tradeFilterMode": "none",
+      "tradeDirection": "both",
+      "strategyKeys": [
+        "long_short_harvest"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_both__BNBUSDT_120m_none_both",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_both__BNBUSDT_120m_none_both\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_both__BNBUSDT_120m_none_both\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_both__BNBUSDT_120m_none_both\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_both__BNBUSDT_120m_none_both\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_both__BNBUSDT_120m_none_both\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_both__BNBUSDT_120m_none_both\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_both__BNBUSDT_120m_none_both\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_none_both__BNBUSDT_120m_none_both\\go-no-go-2026-02-15.txt"
+    },
+    {
+      "label": "bnb-120m:close:long",
+      "symbol": "BNBUSDT",
+      "interval": "120m",
+      "tradeFilterMode": "close",
+      "tradeDirection": "long",
+      "strategyKeys": [
+        "long_short_harvest"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_long__BNBUSDT_120m_close_long",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_long__BNBUSDT_120m_close_long\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_long__BNBUSDT_120m_close_long\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_long__BNBUSDT_120m_close_long\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_long__BNBUSDT_120m_close_long\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_long__BNBUSDT_120m_close_long\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_long__BNBUSDT_120m_close_long\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_long__BNBUSDT_120m_close_long\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_long__BNBUSDT_120m_close_long\\go-no-go-2026-02-15.txt"
+    },
+    {
+      "label": "bnb-120m:close:short",
+      "symbol": "BNBUSDT",
+      "interval": "120m",
+      "tradeFilterMode": "close",
+      "tradeDirection": "short",
+      "strategyKeys": [
+        "long_short_harvest"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_short__BNBUSDT_120m_close_short",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_short__BNBUSDT_120m_close_short\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_short__BNBUSDT_120m_close_short\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_short__BNBUSDT_120m_close_short\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_short__BNBUSDT_120m_close_short\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_short__BNBUSDT_120m_close_short\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_short__BNBUSDT_120m_close_short\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_short__BNBUSDT_120m_close_short\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_short__BNBUSDT_120m_close_short\\go-no-go-2026-02-15.txt"
+    },
+    {
+      "label": "bnb-120m:close:both",
+      "symbol": "BNBUSDT",
+      "interval": "120m",
+      "tradeFilterMode": "close",
+      "tradeDirection": "both",
+      "strategyKeys": [
+        "long_short_harvest"
+      ],
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_both__BNBUSDT_120m_close_both",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_both__BNBUSDT_120m_close_both\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_both__BNBUSDT_120m_close_both\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_both__BNBUSDT_120m_close_both\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_both__BNBUSDT_120m_close_both\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_both__BNBUSDT_120m_close_both\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_both__BNBUSDT_120m_close_both\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_both__BNBUSDT_120m_close_both\\go-no-go-2026-02-15.json",
+      "reportTablePath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\survivor-validation-2026-02-15\\bnb-120m_close_both__BNBUSDT_120m_close_both\\go-no-go-2026-02-15.txt"
+    }
+  ]
+}

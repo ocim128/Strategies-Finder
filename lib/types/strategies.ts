@@ -147,7 +147,7 @@ export interface StrategyParams {
     [key: string]: number;
 }
 
-export type TradeFilterMode = 'none' | 'close' | 'volume' | 'rsi' | 'trend' | 'adx';
+export type TradeFilterMode = 'none' | 'close' | 'volume' | 'rsi' | 'trend' | 'adx' | 'htf_drift';
 export type TradeDirection = 'long' | 'short' | 'both' | 'combined';
 export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';

@@ -1,0 +1,24 @@
+Overall Verdict: GO
+Policy | minSeedRuns=5 | minSeedPasses=3 | minPassRate=3.00% | minStageC=3.0 | maxDDBreach=15.00% | maxFoldVar=1.20
+
+Cell | Verdict | SeedPass | Runs | MedianPassRate | MedianStageC | MedianDDBreach | MedianFoldVar | TopFailReason | NoGoReasons
+---|---|---:|---:|---:|---:|---:|---:|---|---
+SOLUSDT:1h:long_short_harvest:none:both | GO | 5/5 | 5 | 5.45% | 12.0 | 0.00% | 0.828 | - | -
+
+No-Go Reason Counts
+Reason | Cells
+---|---:
+(none) | 0
+
+Global FAIL Decision Reasons
+Reason | Count
+---|---:
+(none) | 0
+
+Global Stage Reject Reasons
+Reason | Count
+---|---:
+stage_b_non_positive_expectancy | 665
+stage_a_high_drawdown | 305
+stage_b_high_combined_drawdown | 64
+stage_b_unstable_fold_expectancy | 12

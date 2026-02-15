@@ -1,0 +1,613 @@
+{
+  "generatedAt": "2026-02-15T04:54:42.716Z",
+  "inputs": {
+    "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\BTCUSDT-4h.json",
+    "symbol": "BTCUSDT",
+    "interval": "4h",
+    "strategyKey": "fib_speed_fan_entry",
+    "seeds": [
+      1337,
+      7331,
+      2026,
+      4242,
+      9001
+    ],
+    "split": {
+      "trainRatio": 0.7,
+      "trainBars": 10502,
+      "blindBars": 4501
+    },
+    "trading": {
+      "initialCapital": 10000,
+      "positionSizePercent": 100,
+      "commissionPercent": 0.1,
+      "slippageBps": 1,
+      "rawTickSlippageBps": 0.02794391990601901,
+      "tickSize": 0.1,
+      "referenceMedianPrice": 35785.96
+    },
+    "backtestSettingsOverrides": {}
+  },
+  "oos70_30": {
+    "criteria": {
+      "minTrainSeedPasses": 3,
+      "minBlindPositiveSeeds": 3,
+      "minBlindMedianNetProfitPercent": 0
+    },
+    "trainSeedPassCount": 3,
+    "blindPositiveSeedCount": 0,
+    "blindMedianNetProfitPercent": 0,
+    "blindMedianMaxDrawdownPercent": 0,
+    "blindMedianProfitFactor": 23.5,
+    "blindConsensusResult": {
+      "trades": [],
+      "netProfit": 0,
+      "netProfitPercent": 0,
+      "winRate": 97.41100323624595,
+      "expectancy": 0.948220064724919,
+      "avgTrade": 0.948220064724919,
+      "profitFactor": 37.625,
+      "maxDrawdown": 0,
+      "maxDrawdownPercent": 0,
+      "totalTrades": 927,
+      "winningTrades": 903,
+      "losingTrades": 24,
+      "avgWin": 1,
+      "avgLoss": 1,
+      "sharpeRatio": 0,
+      "equityCurve": [],
+      "entryStats": {
+        "mode": "fan_retest",
+        "winDefinition": "target",
+        "targetPct": 0.31,
+        "avgTargetBars": 3.8511326860841426,
+        "levels": [
+          {
+            "level": 0.25,
+            "totalEntries": 916,
+            "wins": 882,
+            "losses": 34,
+            "winRate": 96.2882096069869,
+            "avgRetestBars": 4.776200873362446,
+            "avgRetests": 0,
+            "avgTargetBars": 4.776200873362446
+          },
+          {
+            "level": 0.382,
+            "totalEntries": 926,
+            "wins": 895,
+            "losses": 31,
+            "winRate": 96.65226781857451,
+            "avgRetestBars": 4.371490280777538,
+            "avgRetests": 0,
+            "avgTargetBars": 4.371490280777538
+          },
+          {
+            "level": 0.5,
+            "totalEntries": 928,
+            "wins": 895,
+            "losses": 33,
+            "winRate": 96.44396551724138,
+            "avgRetestBars": 4.511853448275862,
+            "avgRetests": 0,
+            "avgTargetBars": 4.511853448275862
+          },
+          {
+            "level": 0.618,
+            "totalEntries": 927,
+            "wins": 903,
+            "losses": 24,
+            "winRate": 97.41100323624595,
+            "avgRetestBars": 3.8511326860841426,
+            "avgRetests": 0,
+            "avgTargetBars": 3.8511326860841426
+          },
+          {
+            "level": 0.75,
+            "totalEntries": 929,
+            "wins": 908,
+            "losses": 21,
+            "winRate": 97.73950484391818,
+            "avgRetestBars": 3.5543595263724437,
+            "avgRetests": 0,
+            "avgTargetBars": 3.5543595263724437
+          }
+        ],
+        "selectedLevel": 0.618,
+        "selectedLevelIndex": 3,
+        "totalEntries": 927,
+        "wins": 903,
+        "losses": 24,
+        "winRate": 97.41100323624595,
+        "avgRetestBars": 3.8511326860841426,
+        "avgRetests": 0,
+        "maxBars": 55,
+        "maxRetests": 3,
+        "minRetestsForWin": 1,
+        "entryMode": 1,
+        "retestMode": 2,
+        "useWick": true,
+        "touchTolerancePct": 0.0658
+      }
+    },
+    "seedRuns": [
+      {
+        "seed": 1337,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      },
+      {
+        "seed": 7331,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      },
+      {
+        "seed": 2026,
+        "trainPassed": true,
+        "params": {
+          "usePivotContext": 0,
+          "useLong": 1,
+          "useShort": 1,
+          "depth": 11,
+          "atrPeriod": 11,
+          "deviationMult": 4,
+          "levelIndex": 3,
+          "entryMode": 1,
+          "retestMode": 2,
+          "targetPct": 0.3,
+          "touchUsesWick": 1,
+          "touchTolerancePct": 0.0658,
+          "signalCooldownBars": 5,
+          "maxBars": 55,
+          "maxRetests": 3,
+          "minRetestsForWin": 1
+        },
+        "blindResult": {
+          "trades": [],
+          "netProfit": 0,
+          "netProfitPercent": 0,
+          "winRate": 97.73462783171522,
+          "expectancy": 0.9546925566343042,
+          "avgTrade": 0.9546925566343042,
+          "profitFactor": 43.142857142857146,
+          "maxDrawdown": 0,
+          "maxDrawdownPercent": 0,
+          "totalTrades": 927,
+          "winningTrades": 906,
+          "losingTrades": 21,
+          "avgWin": 1,
+          "avgLoss": 1,
+          "sharpeRatio": 0,
+          "equityCurve": [],
+          "entryStats": {
+            "mode": "fan_retest",
+            "winDefinition": "target",
+            "targetPct": 0.3,
+            "avgTargetBars": 3.605177993527508,
+            "levels": [
+              {
+                "level": 0.25,
+                "totalEntries": 916,
+                "wins": 883,
+                "losses": 33,
+                "winRate": 96.39737991266377,
+                "avgRetestBars": 4.641921397379913,
+                "avgRetests": 0,
+                "avgTargetBars": 4.641921397379913
+              },
+              {
+                "level": 0.382,
+                "totalEntries": 926,
+                "wins": 897,
+                "losses": 29,
+                "winRate": 96.8682505399568,
+                "avgRetestBars": 4.167386609071274,
+                "avgRetests": 0,
+                "avgTargetBars": 4.167386609071274
+              },
+              {
+                "level": 0.5,
+                "totalEntries": 928,
+                "wins": 895,
+                "losses": 33,
+                "winRate": 96.44396551724138,
+                "avgRetestBars": 4.424568965517241,
+                "avgRetests": 0,
+                "avgTargetBars": 4.424568965517241
+              },
+              {
+                "level": 0.618,
+                "totalEntries": 927,
+                "wins": 906,
+                "losses": 21,
+                "winRate": 97.73462783171522,
+                "avgRetestBars": 3.605177993527508,
+                "avgRetests": 0,
+                "avgTargetBars": 3.605177993527508
+              },
+              {
+                "level": 0.75,
+                "totalEntries": 929,
+                "wins": 911,
+                "losses": 18,
+                "winRate": 98.06243272335846,
+                "avgRetestBars": 3.3379978471474705,
+                "avgRetests": 0,
+                "avgTargetBars": 3.3379978471474705
+              }
+            ],
+            "selectedLevel": 0.618,
+            "selectedLevelIndex": 3,
+            "totalEntries": 927,
+            "wins": 906,
+            "losses": 21,
+            "winRate": 97.73462783171522,
+            "avgRetestBars": 3.605177993527508,
+            "avgRetests": 0,
+            "maxBars": 55,
+            "maxRetests": 3,
+            "minRetestsForWin": 1,
+            "entryMode": 1,
+            "retestMode": 2,
+            "useWick": true,
+            "touchTolerancePct": 0.0658
+          }
+        }
+      },
+      {
+        "seed": 4242,
+        "trainPassed": true,
+        "params": {
+          "usePivotContext": 0,
+          "useLong": 1,
+          "useShort": 1,
+          "depth": 10,
+          "atrPeriod": 9,
+          "deviationMult": 4,
+          "levelIndex": 2,
+          "entryMode": 1,
+          "retestMode": 2,
+          "targetPct": 1.48,
+          "touchUsesWick": 1,
+          "touchTolerancePct": 0.0597,
+          "signalCooldownBars": 6,
+          "maxBars": 59,
+          "maxRetests": 2,
+          "minRetestsForWin": 1
+        },
+        "blindResult": {
+          "trades": [],
+          "netProfit": 0,
+          "netProfitPercent": 0,
+          "winRate": 84.85607008760951,
+          "expectancy": 0.6971214017521903,
+          "avgTrade": 0.6971214017521903,
+          "profitFactor": 5.603305785123967,
+          "maxDrawdown": 0,
+          "maxDrawdownPercent": 0,
+          "totalTrades": 799,
+          "winningTrades": 678,
+          "losingTrades": 121,
+          "avgWin": 1,
+          "avgLoss": 1,
+          "sharpeRatio": 0,
+          "equityCurve": [],
+          "entryStats": {
+            "mode": "fan_retest",
+            "winDefinition": "target",
+            "targetPct": 1.48,
+            "avgTargetBars": 16.519399249061326,
+            "levels": [
+              {
+                "level": 0.25,
+                "totalEntries": 797,
+                "wins": 660,
+                "losses": 137,
+                "winRate": 82.81053952321204,
+                "avgRetestBars": 17.904642409033876,
+                "avgRetests": 0,
+                "avgTargetBars": 17.904642409033876
+              },
+              {
+                "level": 0.382,
+                "totalEntries": 801,
+                "wins": 680,
+                "losses": 121,
+                "winRate": 84.89388264669164,
+                "avgRetestBars": 16.700374531835205,
+                "avgRetests": 0,
+                "avgTargetBars": 16.700374531835205
+              },
+              {
+                "level": 0.5,
+                "totalEntries": 799,
+                "wins": 678,
+                "losses": 121,
+                "winRate": 84.85607008760951,
+                "avgRetestBars": 16.519399249061326,
+                "avgRetests": 0,
+                "avgTargetBars": 16.519399249061326
+              },
+              {
+                "level": 0.618,
+                "totalEntries": 805,
+                "wins": 692,
+                "losses": 113,
+                "winRate": 85.96273291925466,
+                "avgRetestBars": 15.855900621118012,
+                "avgRetests": 0,
+                "avgTargetBars": 15.855900621118012
+              },
+              {
+                "level": 0.75,
+                "totalEntries": 803,
+                "wins": 694,
+                "losses": 109,
+                "winRate": 86.42590286425903,
+                "avgRetestBars": 15.374844333748444,
+                "avgRetests": 0,
+                "avgTargetBars": 15.374844333748444
+              }
+            ],
+            "selectedLevel": 0.5,
+            "selectedLevelIndex": 2,
+            "totalEntries": 799,
+            "wins": 678,
+            "losses": 121,
+            "winRate": 84.85607008760951,
+            "avgRetestBars": 16.519399249061326,
+            "avgRetests": 0,
+            "maxBars": 59,
+            "maxRetests": 2,
+            "minRetestsForWin": 1,
+            "entryMode": 1,
+            "retestMode": 2,
+            "useWick": true,
+            "touchTolerancePct": 0.0597
+          }
+        }
+      },
+      {
+        "seed": 9001,
+        "trainPassed": true,
+        "params": {
+          "usePivotContext": 0,
+          "useLong": 1,
+          "useShort": 1,
+          "depth": 12,
+          "atrPeriod": 12,
+          "deviationMult": 3,
+          "levelIndex": 3,
+          "entryMode": 0,
+          "retestMode": 2,
+          "targetPct": 0.31,
+          "touchUsesWick": 1,
+          "touchTolerancePct": 0.0674,
+          "signalCooldownBars": 5,
+          "maxBars": 44,
+          "maxRetests": 3,
+          "minRetestsForWin": 1
+        },
+        "blindResult": {
+          "trades": [],
+          "netProfit": 0,
+          "netProfitPercent": 0,
+          "winRate": 95.91836734693877,
+          "expectancy": 0.9183673469387755,
+          "avgTrade": 0.9183673469387755,
+          "profitFactor": 23.5,
+          "maxDrawdown": 0,
+          "maxDrawdownPercent": 0,
+          "totalTrades": 196,
+          "winningTrades": 188,
+          "losingTrades": 8,
+          "avgWin": 1,
+          "avgLoss": 1,
+          "sharpeRatio": 0,
+          "equityCurve": [],
+          "entryStats": {
+            "mode": "fan_retest",
+            "winDefinition": "target",
+            "targetPct": 0.31,
+            "avgTargetBars": 4.198979591836735,
+            "levels": [
+              {
+                "level": 0.25,
+                "totalEntries": 168,
+                "wins": 160,
+                "losses": 8,
+                "winRate": 95.23809523809523,
+                "avgRetestBars": 4.029761904761905,
+                "avgRetests": 0,
+                "avgTargetBars": 4.029761904761905
+              },
+              {
+                "level": 0.382,
+                "totalEntries": 167,
+                "wins": 159,
+                "losses": 8,
+                "winRate": 95.20958083832335,
+                "avgRetestBars": 4.137724550898204,
+                "avgRetests": 0,
+                "avgTargetBars": 4.137724550898204
+              },
+              {
+                "level": 0.5,
+                "totalEntries": 189,
+                "wins": 180,
+                "losses": 9,
+                "winRate": 95.23809523809523,
+                "avgRetestBars": 4.2592592592592595,
+                "avgRetests": 0,
+                "avgTargetBars": 4.2592592592592595
+              },
+              {
+                "level": 0.618,
+                "totalEntries": 196,
+                "wins": 188,
+                "losses": 8,
+                "winRate": 95.91836734693877,
+                "avgRetestBars": 4.198979591836735,
+                "avgRetests": 0,
+                "avgTargetBars": 4.198979591836735
+              },
+              {
+                "level": 0.75,
+                "totalEntries": 213,
+                "wins": 206,
+                "losses": 7,
+                "winRate": 96.71361502347418,
+                "avgRetestBars": 3.6854460093896715,
+                "avgRetests": 0,
+                "avgTargetBars": 3.6854460093896715
+              }
+            ],
+            "selectedLevel": 0.618,
+            "selectedLevelIndex": 3,
+            "totalEntries": 196,
+            "wins": 188,
+            "losses": 8,
+            "winRate": 95.91836734693877,
+            "avgRetestBars": 4.198979591836735,
+            "avgRetests": 0,
+            "maxBars": 44,
+            "maxRetests": 3,
+            "minRetestsForWin": 1,
+            "entryMode": 0,
+            "retestMode": 2,
+            "useWick": true,
+            "touchTolerancePct": 0.0674
+          }
+        }
+      }
+    ],
+    "verdict": "FAIL",
+    "failReasons": [
+      "insufficient_blind_positive_seeds",
+      "non_positive_blind_median_net_profit"
+    ]
+  },
+  "walkForward3m1m": {
+    "criteria": {
+      "minCombinedOOSNetProfitPercent": 0,
+      "minWalkForwardEfficiency": 0.45,
+      "minParameterStability": 40,
+      "maxCombinedOOSDrawdownPercent": 30
+    },
+    "optimizationWindowBars": 2160,
+    "testWindowBars": 720,
+    "stepSizeBars": 720,
+    "totalWindows": 17,
+    "combinedOOS": {
+      "netProfitPercent": 115481.9867033922,
+      "profitFactor": 1.7734286714516625,
+      "maxDrawdownPercent": 26.035217138477613,
+      "totalTrades": 473,
+      "winRate": 51.79704016913319
+    },
+    "avgInSampleSharpe": 0.2549618943019225,
+    "avgOutOfSampleSharpe": 0.2461276279869038,
+    "walkForwardEfficiency": 0.9653506405762844,
+    "robustnessScore": 77,
+    "parameterStability": 46.33617558795711,
+    "parameterDrift": {
+      "averageChangedParamsPerWindow": 4.125,
+      "changedParamRatePerWindow": 0.2578125,
+      "perParamDistinctValues": {
+        "depth": 2,
+        "atrPeriod": 3,
+        "deviationMult": 3,
+        "levelIndex": 3,
+        "entryMode": 1,
+        "retestMode": 2,
+        "targetPct": 1,
+        "touchUsesWick": 2,
+        "touchTolerancePct": 1,
+        "usePivotContext": 2,
+        "useLong": 1,
+        "useShort": 1,
+        "signalCooldownBars": 3,
+        "maxBars": 2,
+        "maxRetests": 2,
+        "minRetestsForWin": 2
+      }
+    },
+    "verdict": "PASS",
+    "failReasons": []
+  },
+  "feeSlippageSensitivity": {
+    "criteria": {
+      "minSeedPasses": 3,
+      "minMedianNetProfitPercent": 0,
+      "maxMedianDrawdownPercent": 30
+    },
+    "seedPassCount": 0,
+    "medianNetProfitPercent": 0,
+    "medianMaxDrawdownPercent": 0,
+    "medianProfitFactor": 0,
+    "medianRobustScore": 0,
+    "seedRuns": [
+      {
+        "seed": 1337,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 7331,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 2026,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 4242,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 9001,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      }
+    ],
+    "verdict": "FAIL",
+    "failReasons": [
+      "insufficient_seed_passes",
+      "non_positive_median_net_profit"
+    ]
+  },
+  "overall": {
+    "survivesAllThree": false,
+    "verdict": "FAIL"
+  }
+}

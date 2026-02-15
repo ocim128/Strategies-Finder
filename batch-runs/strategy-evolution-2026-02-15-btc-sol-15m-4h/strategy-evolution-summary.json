@@ -1,0 +1,190 @@
+{
+  "generatedAt": "2026-02-15T04:39:33.209Z",
+  "runTag": "2026-02-15-btc-sol-15m-4h",
+  "seeds": [
+    1337,
+    7331,
+    2026,
+    4242,
+    9001
+  ],
+  "coverage": {
+    "targetSymbols": [
+      "BTCUSDT",
+      "SOLUSDT"
+    ],
+    "targetIntervals": [
+      "15m",
+      "4h"
+    ],
+    "datasets": [
+      {
+        "symbol": "BTCUSDT",
+        "interval": "15m",
+        "bars": 8000,
+        "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\BTCUSDT-15m.json"
+      },
+      {
+        "symbol": "BTCUSDT",
+        "interval": "4h",
+        "bars": 15003,
+        "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\BTCUSDT-4h.json"
+      },
+      {
+        "symbol": "SOLUSDT",
+        "interval": "15m",
+        "bars": 8000,
+        "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\SOLUSDT-15m.json"
+      },
+      {
+        "symbol": "SOLUSDT",
+        "interval": "4h",
+        "bars": 3768,
+        "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\SOLUSDT-4h.json"
+      }
+    ],
+    "strategyCount": 31,
+    "comboCount": 124,
+    "completedCombos": 124
+  },
+  "robustPrecheck": {
+    "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\strategy-evolution-robust-2026-02-15-btc-sol-15m-4h\\batch-go-no-go-2026-02-15.json",
+    "goCells": 4,
+    "totalCells": 124
+  },
+  "survivors": {
+    "count": 0,
+    "leaderboard": []
+  },
+  "nearMisses": {
+    "count": 1,
+    "items": [
+      {
+        "symbol": "SOLUSDT",
+        "interval": "4h",
+        "strategyKey": "dynamic_vix_regime",
+        "failedTest": "walkForward3m1m",
+        "passCount": 2,
+        "compositeScore": 65.2672960507989,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\stress-reports\\SOLUSDT-4h\\dynamic_vix_regime.json"
+      }
+    ]
+  },
+  "topRecoveryFactor": [
+    {
+      "symbol": "SOLUSDT",
+      "interval": "4h",
+      "strategyKey": "fib_speed_fan_entry",
+      "recoveryFactor": 106.8792643311094,
+      "passCount": 1,
+      "oosVerdict": "FAIL",
+      "walkForwardVerdict": "FAIL",
+      "feeSlippageVerdict": "PASS",
+      "medianNetProfitPercent": 1112.8692776089358,
+      "medianMaxDrawdownPercent": 10.412396497802357,
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\stress-reports\\SOLUSDT-4h\\fib_speed_fan_entry.json"
+    },
+    {
+      "symbol": "SOLUSDT",
+      "interval": "15m",
+      "strategyKey": "fib_speed_fan_entry",
+      "recoveryFactor": 8.387742832243863,
+      "passCount": 1,
+      "oosVerdict": "FAIL",
+      "walkForwardVerdict": "FAIL",
+      "feeSlippageVerdict": "PASS",
+      "medianNetProfitPercent": 102.02687651513708,
+      "medianMaxDrawdownPercent": 12.163805991157595,
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\stress-reports\\SOLUSDT-15m\\fib_speed_fan_entry.json"
+    },
+    {
+      "symbol": "SOLUSDT",
+      "interval": "4h",
+      "strategyKey": "dynamic_vix_regime",
+      "recoveryFactor": 7.72933012202698,
+      "passCount": 2,
+      "oosVerdict": "PASS",
+      "walkForwardVerdict": "FAIL",
+      "feeSlippageVerdict": "PASS",
+      "medianNetProfitPercent": 155.6838548501586,
+      "medianMaxDrawdownPercent": 20.141959573765917,
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\stress-reports\\SOLUSDT-4h\\dynamic_vix_regime.json"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "interval": "15m",
+      "strategyKey": "fib_speed_fan_entry",
+      "recoveryFactor": 2.7776988860161858,
+      "passCount": 1,
+      "oosVerdict": "FAIL",
+      "walkForwardVerdict": "FAIL",
+      "feeSlippageVerdict": "PASS",
+      "medianNetProfitPercent": 28.71480585065718,
+      "medianMaxDrawdownPercent": 10.337623705440711,
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\stress-reports\\BTCUSDT-15m\\fib_speed_fan_entry.json"
+    }
+  ],
+  "failureAnalysis": [
+    {
+      "symbol": "BTCUSDT",
+      "strategyKey": "fib_speed_fan_entry",
+      "available": true,
+      "chosenInterval": "4h",
+      "passCount": 0,
+      "verdict": "FAIL",
+      "failureMode": "drawdown_shock",
+      "likelyIssue": "exit_logic",
+      "rationale": "DD spikes dominate (worst DD=80.21%, WF DD=80.21%). Losses are concentrated in adverse bursts.",
+      "metrics": {
+        "oosBlindMedianNetProfitPercent": 0,
+        "oosBlindMedianMaxDrawdownPercent": 0,
+        "walkForwardNetProfitPercent": 164.13755771958338,
+        "walkForwardMaxDrawdownPercent": 80.2100806833365,
+        "feeSlippageMedianNetProfitPercent": 0,
+        "feeSlippageMedianMaxDrawdownPercent": 0
+      },
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\stress-reports\\BTCUSDT-4h\\fib_speed_fan_entry.json"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "strategyKey": "volatility_compression_trigger",
+      "available": true,
+      "chosenInterval": "15m",
+      "passCount": 0,
+      "verdict": "FAIL",
+      "failureMode": "slow_bleed_cost_drag",
+      "likelyIssue": "entry_logic",
+      "rationale": "Returns decay without catastrophic DD (fee/slip net=0.00%, worst DD=7.41%). Edge is too weak after costs.",
+      "metrics": {
+        "oosBlindMedianNetProfitPercent": 0,
+        "oosBlindMedianMaxDrawdownPercent": 0,
+        "walkForwardNetProfitPercent": 32.60090426987654,
+        "walkForwardMaxDrawdownPercent": 7.414051684786735,
+        "feeSlippageMedianNetProfitPercent": 0,
+        "feeSlippageMedianMaxDrawdownPercent": 0
+      },
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\stress-reports\\BTCUSDT-15m\\volatility_compression_trigger.json"
+    },
+    {
+      "symbol": "SOLUSDT",
+      "strategyKey": "long_short_harvest",
+      "available": true,
+      "chosenInterval": "15m",
+      "passCount": 1,
+      "verdict": "FAIL",
+      "failureMode": "mixed_instability",
+      "likelyIssue": "mixed",
+      "rationale": "Mixed profile (OOS net=21.14%, WF net=19.79%, fee/slip net=0.00%, worst DD=17.80%).",
+      "metrics": {
+        "oosBlindMedianNetProfitPercent": 21.135827432635743,
+        "oosBlindMedianMaxDrawdownPercent": 14.522942594868377,
+        "walkForwardNetProfitPercent": 19.78651310803203,
+        "walkForwardMaxDrawdownPercent": 17.799870096776075,
+        "feeSlippageMedianNetProfitPercent": 0,
+        "feeSlippageMedianMaxDrawdownPercent": 0
+      },
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\stress-reports\\SOLUSDT-15m\\long_short_harvest.json"
+    }
+  ],
+  "noSurvivorRecommendation": "No Gold-Standard survivors found in BTC/SOL 15m/4h. Next options: widen to 4h-only/15m-only, or evolve strategy logic."
+}

@@ -1,0 +1,36 @@
+SOL Iron Core Pass 2026-02-15T05:51:21.859Z
+Data: C:\Users\user\Documents\Repo\Experimental\lightweight-charts\debug\playground\Strategies-Finder\price-data\robust-lab\generated\strategy-evolution-2026-02-15-btc-sol-15m-4h\SOLUSDT-4h.json
+Finder maxRuns cap: 50
+Dynamic max position size: 50%
+
+Step 1: Dynamic VIX Iron Core OOS tuning (stopLossAtr=2.50, ADX filter forced)
+  oos-p1 | pass=3/3 | oos=PASS wf=PASS fee=PASS | blindNet=9.18% blindPF=1.23
+  oos-p2 | pass=3/3 | oos=PASS wf=PASS fee=PASS | blindNet=9.18% blindPF=1.23
+  oos-p3 | pass=3/3 | oos=PASS wf=PASS fee=PASS | blindNet=11.64% blindPF=1.30
+  oos-p4 | pass=3/3 | oos=PASS wf=PASS fee=PASS | blindNet=11.64% blindPF=1.30
+  oos-p5 | pass=3/3 | oos=PASS wf=PASS fee=PASS | blindNet=11.64% blindPF=1.30
+  oos-p6 | pass=3/3 | oos=PASS wf=PASS fee=PASS | blindNet=11.64% blindPF=1.30
+  oos-p7 | pass=3/3 | oos=PASS wf=PASS fee=PASS | blindNet=14.20% blindPF=1.39
+  oos-p8 | pass=3/3 | oos=PASS wf=PASS fee=PASS | blindNet=11.64% blindPF=1.30
+  oos-p9 | pass=3/3 | oos=PASS wf=PASS fee=PASS | blindNet=11.64% blindPF=1.30
+  oos-p10 | pass=3/3 | oos=PASS wf=PASS fee=PASS | blindNet=11.64% blindPF=1.30
+
+Step 2: Liquidity Sweep Reclaim
+  liq-p1 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=0.00% wfWFE=0.000 feePF=0.00
+  liq-p2 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=0.00% wfWFE=0.000 feePF=0.00
+  liq-p3 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | blindNet=0.00% wfWFE=0.000 feePF=0.00
+
+Step 3: PF>1.5 and WinRate>45% hunt (dynamic_vix_regime_iron_core)
+  hits=44
+  feeSlippageSensitivity oos-p5 seed=1337 | PF=1.75 WR=69.09% DD=18.11% net=58.13%
+  feeSlippageSensitivity oos-p5 seed=7331 | PF=1.75 WR=69.09% DD=18.11% net=58.13%
+  feeSlippageSensitivity oos-p5 seed=4242 | PF=1.75 WR=69.09% DD=18.11% net=58.13%
+  feeSlippageSensitivity oos-p7 seed=1337 | PF=1.75 WR=69.09% DD=18.11% net=58.13%
+  feeSlippageSensitivity oos-p7 seed=7331 | PF=1.75 WR=69.09% DD=18.11% net=58.13%
+  feeSlippageSensitivity oos-p7 seed=4242 | PF=1.75 WR=69.09% DD=18.11% net=58.13%
+  feeSlippageSensitivity oos-p9 seed=7331 | PF=1.75 WR=69.09% DD=18.11% net=58.13%
+  feeSlippageSensitivity oos-p1 seed=7331 | PF=1.66 WR=65.45% DD=18.11% net=53.45%
+
+Step 4: Kelly Control Verification
+  preset=oos-p7 | overall=PASS | oos=PASS wf=PASS fee=PASS
+  OOS blind net=14.20% PF=1.39 DD=14.36% | WF DD=19.65%

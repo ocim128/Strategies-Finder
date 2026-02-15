@@ -1,0 +1,85 @@
+{
+  "strategyKeys": "all",
+  "seeds": [
+    1337,
+    7331,
+    2026,
+    4242,
+    9001
+  ],
+  "finder": {
+    "rangePercent": 35,
+    "maxRuns": 120,
+    "steps": 3,
+    "topN": 12,
+    "minTrades": 40
+  },
+  "tradeFilterModes": [
+    "none"
+  ],
+  "tradeDirections": [
+    "both"
+  ],
+  "backtestSettings": {
+    "tradeFilterMode": "none",
+    "tradeDirection": "both",
+    "executionModel": "next_open",
+    "allowSameBarExit": false,
+    "slippageBps": 5
+  },
+  "capital": {
+    "initialCapital": 10000,
+    "positionSize": 100,
+    "commission": 0.1,
+    "sizingMode": "percent",
+    "fixedTradeAmount": 1000
+  },
+  "reportPolicy": {
+    "minSeedRuns": 5,
+    "minSeedPasses": 3,
+    "minMedianCellPassRate": 0.01,
+    "minMedianStageCSurvivors": 2,
+    "maxMedianDDBreachRate": 0.2,
+    "maxMedianFoldStabilityPenalty": 1.8
+  },
+  "output": {
+    "outDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\massive-alpha-robust-2026-02-15",
+    "filePrefix": "run-seed",
+    "writePerCellJsonSummary": true,
+    "writePerCellJsonReport": true,
+    "writePerCellTableReport": false,
+    "writeBatchJsonSummary": true,
+    "writeBatchJsonReport": true,
+    "writeBatchTableReport": true
+  },
+  "matrix": [
+    {
+      "label": "btcusdt-2h",
+      "enabled": true,
+      "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\BTCUSDT-2h.json",
+      "symbol": "BTCUSDT",
+      "interval": "2h"
+    },
+    {
+      "label": "ethusdt-2h",
+      "enabled": true,
+      "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\ETHUSDT-2h.json",
+      "symbol": "ETHUSDT",
+      "interval": "2h"
+    },
+    {
+      "label": "bnbusdt-120m",
+      "enabled": true,
+      "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\BNBUSDT-120m.json",
+      "symbol": "BNBUSDT",
+      "interval": "120m"
+    },
+    {
+      "label": "solusdt-1h",
+      "enabled": true,
+      "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\SOLUSDT-1h.json",
+      "symbol": "SOLUSDT",
+      "interval": "1h"
+    }
+  ]
+}

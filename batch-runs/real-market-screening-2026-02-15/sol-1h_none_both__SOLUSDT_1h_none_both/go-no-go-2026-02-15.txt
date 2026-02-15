@@ -1,0 +1,42 @@
+Overall Verdict: GO
+Policy | minSeedRuns=5 | minSeedPasses=3 | minPassRate=1.00% | minStageC=2.0 | maxDDBreach=20.00% | maxFoldVar=1.80
+
+Cell | Verdict | SeedPass | Runs | MedianPassRate | MedianStageC | MedianDDBreach | MedianFoldVar | TopFailReason | NoGoReasons
+---|---|---:|---:|---:|---:|---:|---:|---|---
+SOLUSDT:1h:exhaustion_spike_pullback:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:hypothesis_trend_persistence:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:liquidity_void_rider:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:long_short_harvest:none:both | GO | 5/5 | 5 | 4.17% | 5.0 | 0.00% | 0.759 | - | -
+SOLUSDT:1h:mean_reversion_zscore:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:momentum_volatility_rotation:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:regime_donchian_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:shock_reversion_trend_gate:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:time_weighted_mean_reversion:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:volatility_compression_break:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+
+No-Go Reason Counts
+Reason | Cells
+---|---:
+low_median_stage_c_pass_rate (Stage C pass rate too low) | 9
+low_median_stage_c_survivors (Stage C survivor density too low) | 9
+low_seed_pass_count (Seed pass rule failed) | 9
+
+Global FAIL Decision Reasons
+Reason | Count
+---|---:
+cell_low_stage_c_survivors | 45
+
+Global Stage Reject Reasons
+Reason | Count
+---|---:
+stage_a_non_positive_expectancy | 2715
+stage_b_non_positive_expectancy | 1713
+stage_a_low_trades | 694
+stage_a_high_drawdown | 671
+stage_b_high_window_dd_breach_rate | 47
+stage_b_high_combined_drawdown | 46
+stage_b_unstable_fold_expectancy | 4
+stage_c_high_window_dd_breach_rate | 3
+stage_b_low_oos_trades | 1
+stage_c_low_profitable_fold_ratio | 1
+stage_c_non_positive_expectancy | 1

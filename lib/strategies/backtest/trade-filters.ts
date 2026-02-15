@@ -30,6 +30,8 @@ export const MARKET_MODE_SLOPE_THRESHOLD = 0.0008;
 export const MARKET_MODE_SIDEWAY_DISTANCE = 0.015;
 export const TRADE_FILTER_DEFAULT_TREND_EMA_PERIOD = 50;
 export const TRADE_FILTER_DEFAULT_ADX_MIN = 20;
+export const TRADE_FILTER_DEFAULT_HTF_DRIFT_THRESHOLD_PCT = 2;
+export const TRADE_FILTER_DEFAULT_HTF_DRIFT_BARS = 5;
 
 export function resolveTrendPeriod(config: NormalizedSettings): number {
     if (config.trendEmaPeriod > 0) return config.trendEmaPeriod;
@@ -77,6 +79,19 @@ export function passesTradeFilter(
         const rsi = indicators.rsi[entryIndex];
         if (rsi === null || rsi === undefined) return false;
         return tradeDirection === 'short' ? rsi <= config.rsiBearish : rsi >= config.rsiBullish;
+    }
+
+    if (config.tradeFilterMode === 'htf_drift') {
+        const configuredBars = Math.max(1, Math.round(config.confirmLookback));
+        const htfBars = configuredBars === 1 ? TRADE_FILTER_DEFAULT_HTF_DRIFT_BARS : configuredBars;
+        const lookbackMinutes = htfBars * TF_120_LOOKBACK_MINUTES;
+        const driftPct = computeDirectionalPerformancePercent(data, entryIndex, 'long', lookbackMinutes);
+        if (driftPct === null || driftPct === undefined) return false;
+
+        if (tradeDirection === 'short') {
+            return driftPct <= -TRADE_FILTER_DEFAULT_HTF_DRIFT_THRESHOLD_PCT;
+        }
+        return driftPct >= TRADE_FILTER_DEFAULT_HTF_DRIFT_THRESHOLD_PCT;
     }
 
     if (config.tradeFilterMode === 'trend') {

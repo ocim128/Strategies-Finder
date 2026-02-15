@@ -1,0 +1,1091 @@
+{
+  "generatedAt": "2026-02-15T05:51:21.858Z",
+  "scope": {
+    "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\SOLUSDT-4h.json",
+    "symbol": "SOLUSDT",
+    "interval": "4h",
+    "seeds": [
+      1337,
+      7331,
+      2026,
+      4242,
+      9001
+    ],
+    "finderMaxRunsCap": 50,
+    "dynamicMaxPositionSizePercent": 50
+  },
+  "step1DynamicVixOosTuning": {
+    "strategyKey": "dynamic_vix_regime_iron_core",
+    "fixedRisk": {
+      "riskMode": "simple",
+      "stopLossAtr": 2.5,
+      "takeProfitAtr": 0,
+      "trailingAtr": 0,
+      "timeStopBars": 0,
+      "tradeFilterMode": "adx",
+      "adxMin": 20,
+      "adxMax": 0
+    },
+    "presets": [
+      {
+        "preset": {
+          "id": "oos-p1",
+          "finderMinTrades": 24,
+          "finderRangePercent": 18,
+          "finderSteps": 2,
+          "finderTopN": 8
+        },
+        "passCount": 3,
+        "overallVerdict": "PASS",
+        "oosVerdict": "PASS",
+        "wfVerdict": "PASS",
+        "feeVerdict": "PASS",
+        "oosBlindMedianNetProfitPercent": 9.176298483417758,
+        "oosBlindMedianMaxDrawdownPercent": 20.158885394080027,
+        "oosBlindMedianProfitFactor": 1.230107467153886,
+        "wfCombinedNetProfitPercent": 46.0485978817978,
+        "wfCombinedMaxDrawdownPercent": 14.47992563673509,
+        "wfCombinedProfitFactor": 2.3356678376903037,
+        "feeMedianNetProfitPercent": 53.44647706661879,
+        "feeMedianMaxDrawdownPercent": 18.108709656566603,
+        "feeMedianProfitFactor": 1.6641523601162027,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\dynamic-vix-oos-tuning\\oos-p1.json"
+      },
+      {
+        "preset": {
+          "id": "oos-p2",
+          "finderMinTrades": 28,
+          "finderRangePercent": 20,
+          "finderSteps": 2,
+          "finderTopN": 8
+        },
+        "passCount": 3,
+        "overallVerdict": "PASS",
+        "oosVerdict": "PASS",
+        "wfVerdict": "PASS",
+        "feeVerdict": "PASS",
+        "oosBlindMedianNetProfitPercent": 9.176298483417758,
+        "oosBlindMedianMaxDrawdownPercent": 20.158885394080027,
+        "oosBlindMedianProfitFactor": 1.230107467153886,
+        "wfCombinedNetProfitPercent": 65.72241210451149,
+        "wfCombinedMaxDrawdownPercent": 14.47992563673509,
+        "wfCombinedProfitFactor": 3.2337030611840327,
+        "feeMedianNetProfitPercent": 53.44647706661879,
+        "feeMedianMaxDrawdownPercent": 18.108709656566603,
+        "feeMedianProfitFactor": 1.6641523601162027,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\dynamic-vix-oos-tuning\\oos-p2.json"
+      },
+      {
+        "preset": {
+          "id": "oos-p3",
+          "finderMinTrades": 32,
+          "finderRangePercent": 22,
+          "finderSteps": 2,
+          "finderTopN": 10
+        },
+        "passCount": 3,
+        "overallVerdict": "PASS",
+        "oosVerdict": "PASS",
+        "wfVerdict": "PASS",
+        "feeVerdict": "PASS",
+        "oosBlindMedianNetProfitPercent": 11.637001055168021,
+        "oosBlindMedianMaxDrawdownPercent": 20.090164203733206,
+        "oosBlindMedianProfitFactor": 1.3037503453047437,
+        "wfCombinedNetProfitPercent": 43.3125948638135,
+        "wfCombinedMaxDrawdownPercent": 19.64525487276704,
+        "wfCombinedProfitFactor": 2.338828309347115,
+        "feeMedianNetProfitPercent": 53.44647706661879,
+        "feeMedianMaxDrawdownPercent": 18.108709656566603,
+        "feeMedianProfitFactor": 1.6641523601162027,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\dynamic-vix-oos-tuning\\oos-p3.json"
+      },
+      {
+        "preset": {
+          "id": "oos-p4",
+          "finderMinTrades": 36,
+          "finderRangePercent": 24,
+          "finderSteps": 2,
+          "finderTopN": 10
+        },
+        "passCount": 3,
+        "overallVerdict": "PASS",
+        "oosVerdict": "PASS",
+        "wfVerdict": "PASS",
+        "feeVerdict": "PASS",
+        "oosBlindMedianNetProfitPercent": 11.637001055168021,
+        "oosBlindMedianMaxDrawdownPercent": 20.090164203733206,
+        "oosBlindMedianProfitFactor": 1.3037503453047437,
+        "wfCombinedNetProfitPercent": 65.72241210451149,
+        "wfCombinedMaxDrawdownPercent": 14.47992563673509,
+        "wfCombinedProfitFactor": 3.2337030611840327,
+        "feeMedianNetProfitPercent": 53.44647706661879,
+        "feeMedianMaxDrawdownPercent": 18.108709656566603,
+        "feeMedianProfitFactor": 1.6641523601162027,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\dynamic-vix-oos-tuning\\oos-p4.json"
+      },
+      {
+        "preset": {
+          "id": "oos-p5",
+          "finderMinTrades": 28,
+          "finderRangePercent": 28,
+          "finderSteps": 2,
+          "finderTopN": 10
+        },
+        "passCount": 3,
+        "overallVerdict": "PASS",
+        "oosVerdict": "PASS",
+        "wfVerdict": "PASS",
+        "feeVerdict": "PASS",
+        "oosBlindMedianNetProfitPercent": 11.637001055168021,
+        "oosBlindMedianMaxDrawdownPercent": 20.090164203733206,
+        "oosBlindMedianProfitFactor": 1.3037503453047437,
+        "wfCombinedNetProfitPercent": 62.61784947096585,
+        "wfCombinedMaxDrawdownPercent": 19.64525487276704,
+        "wfCombinedProfitFactor": 3.2859261531822734,
+        "feeMedianNetProfitPercent": 58.13102559917912,
+        "feeMedianMaxDrawdownPercent": 18.108709656566578,
+        "feeMedianProfitFactor": 1.7545894146659038,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\dynamic-vix-oos-tuning\\oos-p5.json"
+      },
+      {
+        "preset": {
+          "id": "oos-p6",
+          "finderMinTrades": 32,
+          "finderRangePercent": 28,
+          "finderSteps": 2,
+          "finderTopN": 10
+        },
+        "passCount": 3,
+        "overallVerdict": "PASS",
+        "oosVerdict": "PASS",
+        "wfVerdict": "PASS",
+        "feeVerdict": "PASS",
+        "oosBlindMedianNetProfitPercent": 11.637001055168021,
+        "oosBlindMedianMaxDrawdownPercent": 20.090164203733206,
+        "oosBlindMedianProfitFactor": 1.3037503453047437,
+        "wfCombinedNetProfitPercent": 65.72241210451149,
+        "wfCombinedMaxDrawdownPercent": 14.47992563673509,
+        "wfCombinedProfitFactor": 3.2337030611840327,
+        "feeMedianNetProfitPercent": 58.13102559917912,
+        "feeMedianMaxDrawdownPercent": 18.108709656566578,
+        "feeMedianProfitFactor": 1.7545894146659038,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\dynamic-vix-oos-tuning\\oos-p6.json"
+      },
+      {
+        "preset": {
+          "id": "oos-p7",
+          "finderMinTrades": 36,
+          "finderRangePercent": 30,
+          "finderSteps": 2,
+          "finderTopN": 12
+        },
+        "passCount": 3,
+        "overallVerdict": "PASS",
+        "oosVerdict": "PASS",
+        "wfVerdict": "PASS",
+        "feeVerdict": "PASS",
+        "oosBlindMedianNetProfitPercent": 14.204502638121738,
+        "oosBlindMedianMaxDrawdownPercent": 14.356534366148244,
+        "oosBlindMedianProfitFactor": 1.389558003585645,
+        "wfCombinedNetProfitPercent": 65.72241210451149,
+        "wfCombinedMaxDrawdownPercent": 14.47992563673509,
+        "wfCombinedProfitFactor": 3.2337030611840327,
+        "feeMedianNetProfitPercent": 58.13102559917912,
+        "feeMedianMaxDrawdownPercent": 18.108709656566578,
+        "feeMedianProfitFactor": 1.7545894146659038,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\dynamic-vix-oos-tuning\\oos-p7.json"
+      },
+      {
+        "preset": {
+          "id": "oos-p8",
+          "finderMinTrades": 24,
+          "finderRangePercent": 24,
+          "finderSteps": 3,
+          "finderTopN": 10
+        },
+        "passCount": 3,
+        "overallVerdict": "PASS",
+        "oosVerdict": "PASS",
+        "wfVerdict": "PASS",
+        "feeVerdict": "PASS",
+        "oosBlindMedianNetProfitPercent": 11.637001055168021,
+        "oosBlindMedianMaxDrawdownPercent": 20.090164203733206,
+        "oosBlindMedianProfitFactor": 1.3037503453047437,
+        "wfCombinedNetProfitPercent": 46.0485978817978,
+        "wfCombinedMaxDrawdownPercent": 14.47992563673509,
+        "wfCombinedProfitFactor": 2.3356678376903037,
+        "feeMedianNetProfitPercent": 53.44647706661879,
+        "feeMedianMaxDrawdownPercent": 18.108709656566603,
+        "feeMedianProfitFactor": 1.6641523601162027,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\dynamic-vix-oos-tuning\\oos-p8.json"
+      },
+      {
+        "preset": {
+          "id": "oos-p9",
+          "finderMinTrades": 28,
+          "finderRangePercent": 26,
+          "finderSteps": 3,
+          "finderTopN": 10
+        },
+        "passCount": 3,
+        "overallVerdict": "PASS",
+        "oosVerdict": "PASS",
+        "wfVerdict": "PASS",
+        "feeVerdict": "PASS",
+        "oosBlindMedianNetProfitPercent": 11.637001055168021,
+        "oosBlindMedianMaxDrawdownPercent": 20.090164203733206,
+        "oosBlindMedianProfitFactor": 1.3037503453047437,
+        "wfCombinedNetProfitPercent": 62.61784947096585,
+        "wfCombinedMaxDrawdownPercent": 19.64525487276704,
+        "wfCombinedProfitFactor": 3.2859261531822734,
+        "feeMedianNetProfitPercent": 53.44647706661879,
+        "feeMedianMaxDrawdownPercent": 18.108709656566603,
+        "feeMedianProfitFactor": 1.6641523601162027,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\dynamic-vix-oos-tuning\\oos-p9.json"
+      },
+      {
+        "preset": {
+          "id": "oos-p10",
+          "finderMinTrades": 32,
+          "finderRangePercent": 28,
+          "finderSteps": 3,
+          "finderTopN": 12
+        },
+        "passCount": 3,
+        "overallVerdict": "PASS",
+        "oosVerdict": "PASS",
+        "wfVerdict": "PASS",
+        "feeVerdict": "PASS",
+        "oosBlindMedianNetProfitPercent": 11.637001055168021,
+        "oosBlindMedianMaxDrawdownPercent": 20.090164203733206,
+        "oosBlindMedianProfitFactor": 1.3037503453047437,
+        "wfCombinedNetProfitPercent": 65.72241210451149,
+        "wfCombinedMaxDrawdownPercent": 14.47992563673509,
+        "wfCombinedProfitFactor": 3.2337030611840327,
+        "feeMedianNetProfitPercent": 58.13102559917912,
+        "feeMedianMaxDrawdownPercent": 18.108709656566578,
+        "feeMedianProfitFactor": 1.7545894146659038,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\dynamic-vix-oos-tuning\\oos-p10.json"
+      }
+    ],
+    "bestPreset": {
+      "preset": {
+        "id": "oos-p7",
+        "finderMinTrades": 36,
+        "finderRangePercent": 30,
+        "finderSteps": 2,
+        "finderTopN": 12
+      },
+      "passCount": 3,
+      "overallVerdict": "PASS",
+      "oosVerdict": "PASS",
+      "wfVerdict": "PASS",
+      "feeVerdict": "PASS",
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\dynamic-vix-oos-tuning\\oos-p7.json"
+    }
+  },
+  "step2LiquiditySweepReclaim": {
+    "strategyKey": "liquidity_sweep_reclaim",
+    "presets": [
+      {
+        "preset": {
+          "id": "liq-p1",
+          "finderMinTrades": 24,
+          "finderRangePercent": 110,
+          "finderSteps": 3,
+          "finderTopN": 10,
+          "tradeFilterMode": "none",
+          "confirmLookback": 1
+        },
+        "passCount": 0,
+        "overallVerdict": "FAIL",
+        "oosVerdict": "FAIL",
+        "wfVerdict": "FAIL",
+        "feeVerdict": "FAIL",
+        "oosBlindMedianNetProfitPercent": 0,
+        "oosBlindMedianMaxDrawdownPercent": 0,
+        "oosBlindMedianProfitFactor": 0,
+        "wfCombinedNetProfitPercent": 110.39794124426207,
+        "wfCombinedMaxDrawdownPercent": 23.461351482741854,
+        "wfCombinedProfitFactor": null,
+        "wfEfficiency": 0,
+        "feeMedianNetProfitPercent": 0,
+        "feeMedianMaxDrawdownPercent": 0,
+        "feeMedianProfitFactor": 0,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\liquidity-sweep-reclaim\\liq-p1.json"
+      },
+      {
+        "preset": {
+          "id": "liq-p2",
+          "finderMinTrades": 28,
+          "finderRangePercent": 110,
+          "finderSteps": 3,
+          "finderTopN": 12,
+          "tradeFilterMode": "none",
+          "confirmLookback": 1
+        },
+        "passCount": 0,
+        "overallVerdict": "FAIL",
+        "oosVerdict": "FAIL",
+        "wfVerdict": "FAIL",
+        "feeVerdict": "FAIL",
+        "oosBlindMedianNetProfitPercent": 0,
+        "oosBlindMedianMaxDrawdownPercent": 0,
+        "oosBlindMedianProfitFactor": 0,
+        "wfCombinedNetProfitPercent": 110.39794124426207,
+        "wfCombinedMaxDrawdownPercent": 23.461351482741854,
+        "wfCombinedProfitFactor": null,
+        "wfEfficiency": 0,
+        "feeMedianNetProfitPercent": 0,
+        "feeMedianMaxDrawdownPercent": 0,
+        "feeMedianProfitFactor": 0,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\liquidity-sweep-reclaim\\liq-p2.json"
+      },
+      {
+        "preset": {
+          "id": "liq-p3",
+          "finderMinTrades": 32,
+          "finderRangePercent": 110,
+          "finderSteps": 3,
+          "finderTopN": 12,
+          "tradeFilterMode": "none",
+          "confirmLookback": 1
+        },
+        "passCount": 0,
+        "overallVerdict": "FAIL",
+        "oosVerdict": "FAIL",
+        "wfVerdict": "FAIL",
+        "feeVerdict": "FAIL",
+        "oosBlindMedianNetProfitPercent": 0,
+        "oosBlindMedianMaxDrawdownPercent": 0,
+        "oosBlindMedianProfitFactor": 0,
+        "wfCombinedNetProfitPercent": 110.39794124426207,
+        "wfCombinedMaxDrawdownPercent": 23.461351482741854,
+        "wfCombinedProfitFactor": null,
+        "wfEfficiency": 0,
+        "feeMedianNetProfitPercent": 0,
+        "feeMedianMaxDrawdownPercent": 0,
+        "feeMedianProfitFactor": 0,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\liquidity-sweep-reclaim\\liq-p3.json"
+      }
+    ],
+    "bestPreset": {
+      "preset": {
+        "id": "liq-p1",
+        "finderMinTrades": 24,
+        "finderRangePercent": 110,
+        "finderSteps": 3,
+        "finderTopN": 10,
+        "tradeFilterMode": "none",
+        "confirmLookback": 1
+      },
+      "passCount": 0,
+      "overallVerdict": "FAIL",
+      "oosVerdict": "FAIL",
+      "wfVerdict": "FAIL",
+      "feeVerdict": "FAIL",
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\liquidity-sweep-reclaim\\liq-p1.json"
+    }
+  },
+  "step3RealMoneyHunt": {
+    "target": {
+      "profitFactorGt": 1.5,
+      "winRateGt": 45
+    },
+    "dynamicVixHits": [
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p5",
+        "seed": 1337,
+        "profitFactor": 1.7545894146659038,
+        "winRate": 69.0909090909091,
+        "maxDrawdownPercent": 18.108709656566578,
+        "netProfitPercent": 58.13102559917912,
+        "params": {
+          "entryExposurePct": 60.448332057371736,
+          "exitExposurePct": 37.50493970263749,
+          "minHoldBars": 13,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p5",
+        "seed": 7331,
+        "profitFactor": 1.7545894146659038,
+        "winRate": 69.0909090909091,
+        "maxDrawdownPercent": 18.108709656566578,
+        "netProfitPercent": 58.13102559917912,
+        "params": {
+          "entryExposurePct": 57.64549788191914,
+          "exitExposurePct": 39.37210838198662,
+          "minHoldBars": 13,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p5",
+        "seed": 4242,
+        "profitFactor": 1.7545894146659038,
+        "winRate": 69.0909090909091,
+        "maxDrawdownPercent": 18.108709656566578,
+        "netProfitPercent": 58.13102559917912,
+        "params": {
+          "entryExposurePct": 61.34369200084358,
+          "exitExposurePct": 41.20903943251818,
+          "minHoldBars": 13,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p7",
+        "seed": 1337,
+        "profitFactor": 1.7545894146659038,
+        "winRate": 69.0909090909091,
+        "maxDrawdownPercent": 18.108709656566578,
+        "netProfitPercent": 58.13102559917912,
+        "params": {
+          "entryExposurePct": 60.051784347184004,
+          "exitExposurePct": 37.46957825282588,
+          "minHoldBars": 13,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p7",
+        "seed": 7331,
+        "profitFactor": 1.7545894146659038,
+        "winRate": 69.0909090909091,
+        "maxDrawdownPercent": 18.108709656566578,
+        "netProfitPercent": 58.13102559917912,
+        "params": {
+          "entryExposurePct": 57.04874773062765,
+          "exitExposurePct": 39.47011612355709,
+          "minHoldBars": 13,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p7",
+        "seed": 4242,
+        "profitFactor": 1.7545894146659038,
+        "winRate": 69.0909090909091,
+        "maxDrawdownPercent": 18.108709656566578,
+        "netProfitPercent": 58.13102559917912,
+        "params": {
+          "entryExposurePct": 61.011098572332415,
+          "exitExposurePct": 41.43825653484091,
+          "minHoldBars": 13,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p9",
+        "seed": 7331,
+        "profitFactor": 1.7545894146659038,
+        "winRate": 69.0909090909091,
+        "maxDrawdownPercent": 18.108709656566578,
+        "netProfitPercent": 58.13102559917912,
+        "params": {
+          "entryExposurePct": 52.179491620603955,
+          "exitExposurePct": 42.84545480657369,
+          "minHoldBars": 13,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p1",
+        "seed": 7331,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 60.629248638376595,
+          "exitExposurePct": 38.88206967413426,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p1",
+        "seed": 2026,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 60.160650604739786,
+          "exitExposurePct": 36.58281946685165,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p1",
+        "seed": 4242,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 54.30249499032274,
+          "exitExposurePct": 38.10517685474828,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p1",
+        "seed": 9001,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 58.533923543058336,
+          "exitExposurePct": 36.15530612437055,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p2",
+        "seed": 7331,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 59.74492270164192,
+          "exitExposurePct": 37.3507788144052,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p2",
+        "seed": 2026,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 59.51183400526643,
+          "exitExposurePct": 36.4253549631685,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p2",
+        "seed": 4242,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 53.002772211469704,
+          "exitExposurePct": 38.11686317194253,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p2",
+        "seed": 9001,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 57.70435949228704,
+          "exitExposurePct": 35.950340138189496,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p3",
+        "seed": 1337,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 61.637975187934934,
+          "exitExposurePct": 37.61102405207232,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p3",
+        "seed": 7331,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 59.11941497180611,
+          "exitExposurePct": 37.28585669584572,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p3",
+        "seed": 2026,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 58.86301740579307,
+          "exitExposurePct": 36.26789045948535,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p3",
+        "seed": 4242,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 51.70304943261669,
+          "exitExposurePct": 38.12854948913679,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p3",
+        "seed": 9001,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 56.874795441515744,
+          "exitExposurePct": 35.745374152008445,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p4",
+        "seed": 1337,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 61.2414274777472,
+          "exitExposurePct": 37.57566260226071,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p4",
+        "seed": 7331,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 58.4939072419703,
+          "exitExposurePct": 37.22093457728624,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p4",
+        "seed": 2026,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 58.21420080631971,
+          "exitExposurePct": 36.1104259558022,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p4",
+        "seed": 4242,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 50.40332665376365,
+          "exitExposurePct": 38.140235806331034,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p4",
+        "seed": 9001,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 56.04523139074445,
+          "exitExposurePct": 35.540408165827394,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p5",
+        "seed": 2026,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 60.447940252572295,
+          "exitExposurePct": 37.72950315840542,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p5",
+        "seed": 9001,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 54.386103289201856,
+          "exitExposurePct": 35.13047619346529,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p9",
+        "seed": 1337,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 60.84487976755947,
+          "exitExposurePct": 37.5403011524491,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p9",
+        "seed": 4242,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 61.676285429354756,
+          "exitExposurePct": 40.97982233019546,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "feeSlippageSensitivity",
+        "presetId": "oos-p9",
+        "seed": 9001,
+        "profitFactor": 1.6641523601162027,
+        "winRate": 65.45454545454545,
+        "maxDrawdownPercent": 18.108709656566603,
+        "netProfitPercent": 53.44647706661879,
+        "params": {
+          "entryExposurePct": 55.21566733997315,
+          "exitExposurePct": 35.33544217964634,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p1",
+        "seed": 7331,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 57.04061970558018,
+          "exitExposurePct": 33.819566075447945,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p1",
+        "seed": 4242,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 60.04164300592616,
+          "exitExposurePct": 34.576835140548646,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p2",
+        "seed": 7331,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 56.04513300620019,
+          "exitExposurePct": 33.355073417164384,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p2",
+        "seed": 4242,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 59.379603339917956,
+          "exitExposurePct": 34.1964834894985,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p3",
+        "seed": 7331,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 55.049646306820215,
+          "exitExposurePct": 32.89058075888082,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p3",
+        "seed": 4242,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 55.74217497121543,
+          "exitExposurePct": 34.8485274512507,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p4",
+        "seed": 7331,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 54.05415960744023,
+          "exitExposurePct": 32.42608810059726,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p4",
+        "seed": 4242,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 58.055524007901546,
+          "exitExposurePct": 33.435780187398194,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p5",
+        "seed": 7331,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 52.06318620868027,
+          "exitExposurePct": 31.49710278403014,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p5",
+        "seed": 4242,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 56.73144467588514,
+          "exitExposurePct": 32.6750768852979,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p7",
+        "seed": 7331,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 51.0676995093003,
+          "exitExposurePct": 31.03261012574658,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p7",
+        "seed": 4242,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 56.06940500987694,
+          "exitExposurePct": 32.29472523424774,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p9",
+        "seed": 7331,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 53.05867290806025,
+          "exitExposurePct": 31.9615954423137,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      },
+      {
+        "source": "oosBlind",
+        "presetId": "oos-p9",
+        "seed": 4242,
+        "profitFactor": 1.627827984805909,
+        "winRate": 67.85714285714286,
+        "maxDrawdownPercent": 14.356534366148244,
+        "netProfitPercent": 20.89882619418713,
+        "params": {
+          "entryExposurePct": 57.39348434189335,
+          "exitExposurePct": 33.055428536348046,
+          "minHoldBars": 9,
+          "entryConfirmBars": 2
+        }
+      }
+    ],
+    "found": true
+  },
+  "step4KellyControlVerification": {
+    "strategyKey": "dynamic_vix_regime_iron_core",
+    "basedOnPreset": {
+      "id": "oos-p7",
+      "finderMinTrades": 36,
+      "finderRangePercent": 30,
+      "finderSteps": 2,
+      "finderTopN": 12
+    },
+    "config": {
+      "riskMode": "percentage",
+      "riskPercentProxy": 1,
+      "maxPositionSizePercent": 50,
+      "stopLossAtr": 2.5,
+      "tradeFilterMode": "adx",
+      "adxMin": 20
+    },
+    "overallVerdict": "PASS",
+    "oosVerdict": "PASS",
+    "wfVerdict": "PASS",
+    "feeVerdict": "PASS",
+    "oosBlindMedianNetProfitPercent": 14.204502638121738,
+    "oosBlindMedianMaxDrawdownPercent": 14.356534366148244,
+    "oosBlindMedianProfitFactor": 1.389558003585645,
+    "wfCombinedNetProfitPercent": 62.61784947096585,
+    "wfCombinedMaxDrawdownPercent": 19.64525487276704,
+    "wfCombinedProfitFactor": 3.2859261531822734,
+    "feeMedianNetProfitPercent": 58.13102559917912,
+    "feeMedianMaxDrawdownPercent": 18.108709656566578,
+    "feeMedianProfitFactor": 1.7545894146659038,
+    "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-iron-core-pass-2026-02-15\\dynamic-vix-kelly-control\\kelly-oos-p7.json"
+  }
+}

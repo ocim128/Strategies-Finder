@@ -921,7 +921,7 @@ class SettingsManager {
     }
 
     private resolveTradeFilterModeValue(value: unknown): TradeFilterMode {
-        if (value === 'none' || value === 'close' || value === 'volume' || value === 'rsi' || value === 'trend' || value === 'adx') {
+        if (value === 'none' || value === 'close' || value === 'volume' || value === 'rsi' || value === 'trend' || value === 'adx' || value === 'htf_drift') {
             return value;
         }
         return DEFAULT_BACKTEST_SETTINGS.tradeFilterMode;

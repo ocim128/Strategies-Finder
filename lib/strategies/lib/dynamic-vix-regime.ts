@@ -7,6 +7,10 @@ interface RegimeConfig {
     useRecoveryRegime: boolean;
     useLowVolDeRisk: boolean;
     useMlOverlay: boolean;
+    adaptiveLookbacks: boolean;
+    adaptiveStrength: number;
+    minAdaptiveFactor: number;
+    maxAdaptiveFactor: number;
     volWindow: number;
     volLookback: number;
     fastPeriod: number;
@@ -168,6 +172,101 @@ function calculatePercentileRank(values: (number | null)[], lookback: number): (
     return out;
 }
 
+function median(values: number[]): number {
+    if (values.length === 0) return 0;
+    const sorted = values.slice().sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 1
+        ? sorted[mid]
+        : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function resolveAdaptivePeriods(
+    close: number[],
+    high: number[],
+    low: number[],
+    config: RegimeConfig
+): {
+    fastPeriod: number;
+    slowPeriod: number;
+    volWindow: number;
+    volLookback: number;
+    atrPeriod: number;
+    adaptiveFactor: number;
+} {
+    const fallback = {
+        fastPeriod: config.fastPeriod,
+        slowPeriod: config.slowPeriod,
+        volWindow: config.volWindow,
+        volLookback: config.volLookback,
+        atrPeriod: Math.max(5, Math.round(config.volWindow / 2)),
+        adaptiveFactor: 1,
+    };
+    if (!config.adaptiveLookbacks || close.length < 120) return fallback;
+
+    const baselineAtrPeriod = 14;
+    const atr = calculateATR(high, low, close, baselineAtrPeriod);
+    const atrPct = atr
+        .map((value, i) => {
+            const c = close[i];
+            if (value === null || c <= 0) return null;
+            return (value / c) * 100;
+        })
+        .filter((v): v is number => v !== null && Number.isFinite(v) && v > 0);
+
+    if (atrPct.length < 80) return fallback;
+
+    const anchor = median(atrPct);
+    if (anchor <= 0) return fallback;
+
+    const tail = atrPct.slice(Math.max(0, atrPct.length - 80));
+    const recent = median(tail);
+    const volatilityRatio = recent / anchor;
+
+    // Higher realized volatility -> shorter reactive windows; lower volatility -> slower, smoother windows.
+    const adaptiveFactor = clamp(
+        1 - config.adaptiveStrength * (volatilityRatio - 1),
+        config.minAdaptiveFactor,
+        config.maxAdaptiveFactor
+    );
+
+    const minVolWindow = Math.max(8, Math.floor(config.volWindow * 0.65));
+    const maxVolWindow = Math.max(minVolWindow + 4, Math.ceil(config.volWindow * 1.6));
+    const minVolLookback = Math.max(minVolWindow + 20, Math.floor(config.volLookback * 0.7));
+    const maxVolLookback = Math.max(minVolLookback + 20, Math.ceil(config.volLookback * 1.5));
+    const minFastPeriod = Math.max(8, Math.floor(config.fastPeriod * 0.7));
+    const maxFastPeriod = Math.max(minFastPeriod + 5, Math.ceil(config.fastPeriod * 1.5));
+    const minSlowPeriod = Math.max(minFastPeriod + 20, Math.floor(config.slowPeriod * 0.75));
+    const maxSlowPeriod = Math.max(minSlowPeriod + 20, Math.ceil(config.slowPeriod * 1.4));
+
+    const volWindow = Math.max(
+        minVolWindow,
+        Math.min(maxVolWindow, Math.round(config.volWindow * adaptiveFactor))
+    );
+    const volLookback = Math.max(
+        Math.max(volWindow + 20, minVolLookback),
+        Math.min(maxVolLookback, Math.round(config.volLookback * adaptiveFactor))
+    );
+    const fastPeriod = Math.max(
+        minFastPeriod,
+        Math.min(maxFastPeriod, Math.round(config.fastPeriod * adaptiveFactor))
+    );
+    const slowPeriod = Math.max(
+        Math.max(fastPeriod + 20, minSlowPeriod),
+        Math.min(maxSlowPeriod, Math.round(config.slowPeriod * adaptiveFactor))
+    );
+    const atrPeriod = Math.max(5, Math.round(volWindow / 2));
+
+    return {
+        fastPeriod,
+        slowPeriod,
+        volWindow,
+        volLookback,
+        atrPeriod,
+        adaptiveFactor,
+    };
+}
+
 function normalizeConfig(params: StrategyParams): RegimeConfig {
     const volWindow = Math.max(10, Math.round(params.volWindow ?? 21));
     const volLookback = Math.max(volWindow + 20, Math.round(params.volLookback ?? 126));
@@ -180,12 +279,19 @@ function normalizeConfig(params: StrategyParams): RegimeConfig {
     const entryExposureRaw = clamp(params.entryExposurePct ?? 66, 50, 95) / 100;
     const exitExposureRaw = clamp(params.exitExposurePct ?? 38, 5, 70) / 100;
     const exitExposure = Math.min(exitExposureRaw, entryExposureRaw - 0.05);
+    const adaptiveStrength = clamp(params.adaptiveStrengthPct ?? 55, 0, 100) / 100;
+    const minAdaptiveFactor = clamp(params.minAdaptiveFactor ?? 0.65, 0.45, 1);
+    const maxAdaptiveFactor = clamp(params.maxAdaptiveFactor ?? 1.55, 1, 2.2);
 
     return {
         useSpikeRegime: asToggle(params.useSpikeRegime, true),
         useRecoveryRegime: asToggle(params.useRecoveryRegime, true),
         useLowVolDeRisk: asToggle(params.useLowVolDeRisk, true),
         useMlOverlay: asToggle(params.useMlOverlay, true),
+        adaptiveLookbacks: asToggle(params.adaptiveLookbacks, true),
+        adaptiveStrength,
+        minAdaptiveFactor,
+        maxAdaptiveFactor,
         volWindow,
         volLookback,
         fastPeriod,
@@ -209,17 +315,18 @@ function buildRegimeSeries(cleanData: OHLCVData[], config: RegimeConfig): Regime
     const high = getHighs(cleanData);
     const low = getLows(cleanData);
 
-    const fast = calculateSMA(close, config.fastPeriod);
-    const slow = calculateSMA(close, config.slowPeriod);
+    const adaptive = resolveAdaptivePeriods(close, high, low, config);
+    const fast = calculateSMA(close, adaptive.fastPeriod);
+    const slow = calculateSMA(close, adaptive.slowPeriod);
 
-    const atrPeriod = Math.max(5, Math.round(config.volWindow / 2));
+    const atrPeriod = adaptive.atrPeriod;
     const atr = calculateATR(high, low, close, atrPeriod);
 
     const logReturns = close.map((c, i) => {
         if (i === 0 || c <= 0 || close[i - 1] <= 0) return 0;
         return Math.log(c / close[i - 1]);
     });
-    const realizedVolRaw = calculateRollingStd(logReturns, config.volWindow);
+    const realizedVolRaw = calculateRollingStd(logReturns, adaptive.volWindow);
     const realizedVol = realizedVolRaw.map(v => (v === null ? null : v * Math.sqrt(252) * 100));
 
     const volProxy: (number | null)[] = new Array(cleanData.length).fill(null);
@@ -232,8 +339,8 @@ function buildRegimeSeries(cleanData: OHLCVData[], config: RegimeConfig): Regime
         volProxy[i] = (0.65 * rv) + (0.35 * atrPct);
     }
 
-    const volMean = calculateRollingMean(volProxy, config.volWindow);
-    const volStd = calculateRollingStdFromNullable(volProxy, config.volWindow);
+    const volMean = calculateRollingMean(volProxy, adaptive.volWindow);
+    const volStd = calculateRollingStdFromNullable(volProxy, adaptive.volWindow);
     const volZ: (number | null)[] = volProxy.map((value, i) => {
         const mean = volMean[i];
         const std = volStd[i];
@@ -241,7 +348,7 @@ function buildRegimeSeries(cleanData: OHLCVData[], config: RegimeConfig): Regime
         return (value - mean) / std;
     });
 
-    const volPercentile = calculatePercentileRank(volProxy, config.volLookback);
+    const volPercentile = calculatePercentileRank(volProxy, adaptive.volLookback);
     const mlProb: (number | null)[] = new Array(cleanData.length).fill(null);
     const targetExposure: (number | null)[] = new Array(cleanData.length).fill(null);
     const regimeReason: (string | null)[] = new Array(cleanData.length).fill(null);
@@ -339,12 +446,16 @@ function buildRegimeSeries(cleanData: OHLCVData[], config: RegimeConfig): Regime
 
 export const dynamic_vix_regime: Strategy = {
     name: 'Dynamic VIX Regime',
-    description: 'Volatility-regime allocator inspired by VIX spike/recovery logic, adapted for single-symbol backtests with an ML-style probability overlay.',
+    description: 'Volatility-regime allocator inspired by VIX spike/recovery logic with adaptive lookbacks that auto-scale by realized volatility regime.',
     defaultParams: {
         useSpikeRegime: 1,
         useRecoveryRegime: 1,
         useLowVolDeRisk: 1,
         useMlOverlay: 1,
+        adaptiveLookbacks: 1,
+        adaptiveStrengthPct: 55,
+        minAdaptiveFactor: 0.65,
+        maxAdaptiveFactor: 1.55,
         volWindow: 21,
         volLookback: 126,
         fastPeriod: 50,
@@ -366,6 +477,10 @@ export const dynamic_vix_regime: Strategy = {
         useRecoveryRegime: 'Use Recovery Regime (0/1)',
         useLowVolDeRisk: 'Use Low-Vol DeRisk (0/1)',
         useMlOverlay: 'Use ML Overlay (0/1)',
+        adaptiveLookbacks: 'Adaptive Lookbacks (0/1)',
+        adaptiveStrengthPct: 'Adaptive Strength (%)',
+        minAdaptiveFactor: 'Adaptive Min Scale',
+        maxAdaptiveFactor: 'Adaptive Max Scale',
         volWindow: 'Volatility Window',
         volLookback: 'Volatility Lookback',
         fastPeriod: 'Fast SMA Period',
@@ -387,7 +502,10 @@ export const dynamic_vix_regime: Strategy = {
         if (cleanData.length === 0) return [];
 
         const config = normalizeConfig(params);
-        const minBars = Math.max(config.slowPeriod + 1, config.volWindow + config.volLookback);
+        const minBars = Math.max(
+            Math.ceil(config.slowPeriod * 1.5) + 1,
+            Math.ceil(config.volLookback * 1.5) + Math.ceil(config.volWindow * 1.5)
+        );
         if (cleanData.length < minBars) return [];
 
         const series = buildRegimeSeries(cleanData, config);
@@ -458,21 +576,14 @@ export const dynamic_vix_regime: Strategy = {
             'volLookback',
             'fastPeriod',
             'slowPeriod',
+            'adaptiveStrengthPct',
+            'minAdaptiveFactor',
+            'maxAdaptiveFactor',
             'spikePercentilePct',
             'calmPercentilePct',
-            'oversoldRetPct',
-            'extensionPct',
-            'mlBullThresholdPct',
             'entryExposurePct',
             'exitExposurePct',
-            'entryConfirmBars',
-            'exitConfirmBars',
             'minHoldBars',
-            'cooldownBars',
-            'useSpikeRegime',
-            'useRecoveryRegime',
-            'useLowVolDeRisk',
-            'useMlOverlay',
         ],
     },
 };

@@ -65,6 +65,7 @@ const TRADE_FILTER_MODES: ReadonlySet<TradeFilterMode> = new Set([
     "rsi",
     "trend",
     "adx",
+    "htf_drift",
 ]);
 
 function toUnixSeconds(value: Time): number | null {

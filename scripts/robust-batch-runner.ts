@@ -11,6 +11,7 @@ import type { FinderOptions } from "../lib/types/finder";
 import type {
     BacktestSettings,
     OHLCVData,
+    Time,
     StrategyParams,
     TradeDirection,
     TradeFilterMode,
@@ -233,7 +234,7 @@ function parseBar(row: unknown): OHLCVData | null {
         const volume = row.length > 5 ? Number(row[5]) : 0;
         if (time === null) return null;
         if (!Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) return null;
-        return { time, open, high, low, close, volume: Number.isFinite(volume) ? volume : 0 };
+        return { time: time as Time, open, high, low, close, volume: Number.isFinite(volume) ? volume : 0 };
     }
 
     if (!isObject(row)) return null;
@@ -249,7 +250,7 @@ function parseBar(row: unknown): OHLCVData | null {
 
     if (time === null) return null;
     if (!Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) return null;
-    return { time, open, high, low, close, volume: Number.isFinite(volume) ? volume : 0 };
+    return { time: time as Time, open, high, low, close, volume: Number.isFinite(volume) ? volume : 0 };
 }
 
 function parseDataFile(raw: unknown): ParsedDataFile {
@@ -534,7 +535,7 @@ async function runSeed(
     totalTasks: number
 ): Promise<string> {
     debugLogger.clear();
-    (debugLogger as { maxEntries?: number }).maxEntries = Math.max((debugLogger as { maxEntries?: number }).maxEntries ?? 200, 20_000);
+    (debugLogger as unknown as { maxEntries?: number }).maxEntries = Math.max((debugLogger as unknown as { maxEntries?: number }).maxEntries ?? 200, 20_000);
 
     const finderOptions = buildFinderOptions(seed, cfg);
     let lastProgressBucket = -1;

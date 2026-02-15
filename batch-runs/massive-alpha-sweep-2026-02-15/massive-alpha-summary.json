@@ -1,0 +1,55 @@
+{
+  "generatedAt": "2026-02-15T04:04:13.133Z",
+  "seeds": [
+    1337,
+    7331,
+    2026,
+    4242,
+    9001
+  ],
+  "coverage": {
+    "datasets": [
+      {
+        "symbol": "BTCUSDT",
+        "interval": "2h",
+        "bars": 15021,
+        "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\BTCUSDT-2h.json"
+      },
+      {
+        "symbol": "ETHUSDT",
+        "interval": "2h",
+        "bars": 15022,
+        "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\ETHUSDT-2h.json"
+      },
+      {
+        "symbol": "BNBUSDT",
+        "interval": "120m",
+        "bars": 36201,
+        "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\BNBUSDT-120m.json"
+      },
+      {
+        "symbol": "SOLUSDT",
+        "interval": "1h",
+        "bars": 15068,
+        "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\SOLUSDT-1h.json"
+      }
+    ],
+    "strategyCount": 30,
+    "comboCount": 120,
+    "completedCombos": 120
+  },
+  "robustPrecheck": {
+    "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\massive-alpha-robust-2026-02-15\\batch-go-no-go-2026-02-15.json",
+    "goCells": 4,
+    "totalCells": 120
+  },
+  "survivors": {
+    "count": 0,
+    "leaderboard": []
+  },
+  "nearMisses": {
+    "count": 0,
+    "items": []
+  },
+  "noSurvivorRecommendation": "No Gold-Standard survivors found. Next sweep should add 4h and/or 15m primaries, or test new strategy variants."
+}

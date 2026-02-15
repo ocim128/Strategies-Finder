@@ -1,0 +1,15 @@
+Surgical Optimization - 2026-02-15T05:00:22.914Z
+Source summary: C:\Users\user\Documents\Repo\Experimental\lightweight-charts\debug\playground\Strategies-Finder\batch-runs\strategy-evolution-2026-02-15-btc-sol-15m-4h\strategy-evolution-summary.json
+Focused strategies: dynamic_vix_regime, fib_speed_fan_entry, mean_reversion_zscore
+
+Focused Results:
+  BTCUSDT 4h dynamic_vix_regime | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | score=-40.05
+  BTCUSDT 4h fib_speed_fan_entry | pass=1/3 | oos=FAIL wf=PASS fee=FAIL | score=34639.39
+  BTCUSDT 4h mean_reversion_zscore | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | score=-34.81
+  SOLUSDT 4h dynamic_vix_regime | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | score=43.12
+  SOLUSDT 4h fib_speed_fan_entry | pass=1/3 | oos=FAIL wf=FAIL fee=PASS | score=440.70
+  SOLUSDT 4h mean_reversion_zscore | pass=1/3 | oos=FAIL wf=PASS fee=FAIL | score=32.32
+
+Dynamic VIX Stop-Loss Sensitivity (best per symbol):
+  BTCUSDT | stop=1.30 | pass=0/3 | WFE=0.577 | WF net=82.64% | WF DD=51.30%
+  SOLUSDT | stop=0.90 | pass=2/3 | WFE=0.500 | WF net=93.33% | WF DD=16.52%

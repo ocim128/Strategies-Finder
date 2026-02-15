@@ -1,0 +1,339 @@
+{
+  "generatedAt": "2026-02-15T05:00:22.914Z",
+  "sourceSummaryPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\strategy-evolution-summary.json",
+  "focusedScope": {
+    "symbols": [
+      "BTCUSDT",
+      "SOLUSDT"
+    ],
+    "interval": "4h",
+    "selectedStrategies": [
+      "dynamic_vix_regime",
+      "fib_speed_fan_entry",
+      "mean_reversion_zscore"
+    ],
+    "datasets": [
+      {
+        "symbol": "BTCUSDT",
+        "interval": "4h",
+        "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\BTCUSDT-4h.json",
+        "bars": 15003
+      },
+      {
+        "symbol": "SOLUSDT",
+        "interval": "4h",
+        "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\SOLUSDT-4h.json",
+        "bars": 3768
+      }
+    ]
+  },
+  "focusedResults": [
+    {
+      "symbol": "BTCUSDT",
+      "interval": "4h",
+      "strategyKey": "dynamic_vix_regime",
+      "passCount": 0,
+      "fails": [
+        "oos70_30",
+        "walkForward3m1m",
+        "feeSlippageSensitivity"
+      ],
+      "compositeScore": -40.05054173670057,
+      "oos": "FAIL",
+      "wf": "FAIL",
+      "fee": "FAIL",
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\stress-reports\\BTCUSDT-4h\\dynamic_vix_regime.json"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "interval": "4h",
+      "strategyKey": "fib_speed_fan_entry",
+      "passCount": 1,
+      "fails": [
+        "oos70_30",
+        "feeSlippageSensitivity"
+      ],
+      "compositeScore": 34639.38896758996,
+      "oos": "FAIL",
+      "wf": "PASS",
+      "fee": "FAIL",
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\stress-reports\\BTCUSDT-4h\\fib_speed_fan_entry.json"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "interval": "4h",
+      "strategyKey": "mean_reversion_zscore",
+      "passCount": 0,
+      "fails": [
+        "oos70_30",
+        "walkForward3m1m",
+        "feeSlippageSensitivity"
+      ],
+      "compositeScore": -34.80988565511244,
+      "oos": "FAIL",
+      "wf": "FAIL",
+      "fee": "FAIL",
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\stress-reports\\BTCUSDT-4h\\mean_reversion_zscore.json"
+    },
+    {
+      "symbol": "SOLUSDT",
+      "interval": "4h",
+      "strategyKey": "dynamic_vix_regime",
+      "passCount": 0,
+      "fails": [
+        "oos70_30",
+        "walkForward3m1m",
+        "feeSlippageSensitivity"
+      ],
+      "compositeScore": 43.123182060140785,
+      "oos": "FAIL",
+      "wf": "FAIL",
+      "fee": "FAIL",
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\stress-reports\\SOLUSDT-4h\\dynamic_vix_regime.json"
+    },
+    {
+      "symbol": "SOLUSDT",
+      "interval": "4h",
+      "strategyKey": "fib_speed_fan_entry",
+      "passCount": 1,
+      "fails": [
+        "oos70_30",
+        "walkForward3m1m"
+      ],
+      "compositeScore": 440.69587948998895,
+      "oos": "FAIL",
+      "wf": "FAIL",
+      "fee": "PASS",
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\stress-reports\\SOLUSDT-4h\\fib_speed_fan_entry.json"
+    },
+    {
+      "symbol": "SOLUSDT",
+      "interval": "4h",
+      "strategyKey": "mean_reversion_zscore",
+      "passCount": 1,
+      "fails": [
+        "oos70_30",
+        "feeSlippageSensitivity"
+      ],
+      "compositeScore": 32.32057817169548,
+      "oos": "FAIL",
+      "wf": "PASS",
+      "fee": "FAIL",
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\stress-reports\\SOLUSDT-4h\\mean_reversion_zscore.json"
+    }
+  ],
+  "stopLossSensitivity": {
+    "strategyKey": "dynamic_vix_regime",
+    "stopLossAtrGrid": [
+      0.7,
+      0.9,
+      1.1,
+      1.3,
+      1.5,
+      1.8,
+      2.2
+    ],
+    "rows": [
+      {
+        "symbol": "BTCUSDT",
+        "stopLossAtr": 0.7,
+        "verdict": "FAIL",
+        "passCount": 0,
+        "walkForwardEfficiency": 0.3314447239819174,
+        "walkForwardNetProfitPercent": 109.35113880702396,
+        "walkForwardMaxDrawdownPercent": 66.06529606516443,
+        "feeMedianNetProfitPercent": 0,
+        "feeMedianMaxDrawdownPercent": 0,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\BTCUSDT-4h\\dynamic_vix_regime-stop-0.70.json"
+      },
+      {
+        "symbol": "BTCUSDT",
+        "stopLossAtr": 0.9,
+        "verdict": "FAIL",
+        "passCount": 0,
+        "walkForwardEfficiency": 0.0722506100454836,
+        "walkForwardNetProfitPercent": -30.020634949766205,
+        "walkForwardMaxDrawdownPercent": 66.13978112344357,
+        "feeMedianNetProfitPercent": 0,
+        "feeMedianMaxDrawdownPercent": 0,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\BTCUSDT-4h\\dynamic_vix_regime-stop-0.90.json"
+      },
+      {
+        "symbol": "BTCUSDT",
+        "stopLossAtr": 1.1,
+        "verdict": "FAIL",
+        "passCount": 0,
+        "walkForwardEfficiency": 0,
+        "walkForwardNetProfitPercent": -28.958046957320505,
+        "walkForwardMaxDrawdownPercent": 79.63188852058568,
+        "feeMedianNetProfitPercent": 0,
+        "feeMedianMaxDrawdownPercent": 0,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\BTCUSDT-4h\\dynamic_vix_regime-stop-1.10.json"
+      },
+      {
+        "symbol": "BTCUSDT",
+        "stopLossAtr": 1.3,
+        "verdict": "FAIL",
+        "passCount": 0,
+        "walkForwardEfficiency": 0.5774084256359148,
+        "walkForwardNetProfitPercent": 82.63876521436254,
+        "walkForwardMaxDrawdownPercent": 51.29984689999251,
+        "feeMedianNetProfitPercent": 0,
+        "feeMedianMaxDrawdownPercent": 0,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\BTCUSDT-4h\\dynamic_vix_regime-stop-1.30.json"
+      },
+      {
+        "symbol": "BTCUSDT",
+        "stopLossAtr": 1.5,
+        "verdict": "FAIL",
+        "passCount": 0,
+        "walkForwardEfficiency": 0.29913132207407167,
+        "walkForwardNetProfitPercent": 324.3777209063209,
+        "walkForwardMaxDrawdownPercent": 35.75118601785474,
+        "feeMedianNetProfitPercent": 0,
+        "feeMedianMaxDrawdownPercent": 0,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\BTCUSDT-4h\\dynamic_vix_regime-stop-1.50.json"
+      },
+      {
+        "symbol": "BTCUSDT",
+        "stopLossAtr": 1.8,
+        "verdict": "FAIL",
+        "passCount": 0,
+        "walkForwardEfficiency": 0.12243180167480777,
+        "walkForwardNetProfitPercent": 376.04189696560167,
+        "walkForwardMaxDrawdownPercent": 63.72952296597959,
+        "feeMedianNetProfitPercent": 0,
+        "feeMedianMaxDrawdownPercent": 0,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\BTCUSDT-4h\\dynamic_vix_regime-stop-1.80.json"
+      },
+      {
+        "symbol": "BTCUSDT",
+        "stopLossAtr": 2.2,
+        "verdict": "FAIL",
+        "passCount": 0,
+        "walkForwardEfficiency": 0.24413958339406489,
+        "walkForwardNetProfitPercent": 93.72610872354478,
+        "walkForwardMaxDrawdownPercent": 73.7384698413497,
+        "feeMedianNetProfitPercent": 0,
+        "feeMedianMaxDrawdownPercent": 0,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\BTCUSDT-4h\\dynamic_vix_regime-stop-2.20.json"
+      },
+      {
+        "symbol": "SOLUSDT",
+        "stopLossAtr": 0.7,
+        "verdict": "FAIL",
+        "passCount": 1,
+        "walkForwardEfficiency": 0,
+        "walkForwardNetProfitPercent": -37.31342136807605,
+        "walkForwardMaxDrawdownPercent": 45.08438624487796,
+        "feeMedianNetProfitPercent": 151.82612044978526,
+        "feeMedianMaxDrawdownPercent": 20.653784995504072,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\SOLUSDT-4h\\dynamic_vix_regime-stop-0.70.json"
+      },
+      {
+        "symbol": "SOLUSDT",
+        "stopLossAtr": 0.9,
+        "verdict": "FAIL",
+        "passCount": 2,
+        "walkForwardEfficiency": 0.5,
+        "walkForwardNetProfitPercent": 93.3328039929516,
+        "walkForwardMaxDrawdownPercent": 16.51906954030457,
+        "feeMedianNetProfitPercent": 151.82612044978526,
+        "feeMedianMaxDrawdownPercent": 20.653784995504072,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\SOLUSDT-4h\\dynamic_vix_regime-stop-0.90.json"
+      },
+      {
+        "symbol": "SOLUSDT",
+        "stopLossAtr": 1.1,
+        "verdict": "FAIL",
+        "passCount": 1,
+        "walkForwardEfficiency": 0,
+        "walkForwardNetProfitPercent": -18.998670989672572,
+        "walkForwardMaxDrawdownPercent": 56.0359224213046,
+        "feeMedianNetProfitPercent": 151.82612044978526,
+        "feeMedianMaxDrawdownPercent": 20.653784995504072,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\SOLUSDT-4h\\dynamic_vix_regime-stop-1.10.json"
+      },
+      {
+        "symbol": "SOLUSDT",
+        "stopLossAtr": 1.3,
+        "verdict": "FAIL",
+        "passCount": 1,
+        "walkForwardEfficiency": 0,
+        "walkForwardNetProfitPercent": -25.050470957266263,
+        "walkForwardMaxDrawdownPercent": 47.46998670061453,
+        "feeMedianNetProfitPercent": 151.82612044978526,
+        "feeMedianMaxDrawdownPercent": 20.653784995504072,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\SOLUSDT-4h\\dynamic_vix_regime-stop-1.30.json"
+      },
+      {
+        "symbol": "SOLUSDT",
+        "stopLossAtr": 1.5,
+        "verdict": "FAIL",
+        "passCount": 1,
+        "walkForwardEfficiency": 0,
+        "walkForwardNetProfitPercent": -9.108782561349035,
+        "walkForwardMaxDrawdownPercent": 51.518478734780224,
+        "feeMedianNetProfitPercent": 151.82612044978526,
+        "feeMedianMaxDrawdownPercent": 20.653784995504072,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\SOLUSDT-4h\\dynamic_vix_regime-stop-1.50.json"
+      },
+      {
+        "symbol": "SOLUSDT",
+        "stopLossAtr": 1.8,
+        "verdict": "FAIL",
+        "passCount": 1,
+        "walkForwardEfficiency": 0,
+        "walkForwardNetProfitPercent": -29.56362091372096,
+        "walkForwardMaxDrawdownPercent": 63.95292832057875,
+        "feeMedianNetProfitPercent": 151.82612044978526,
+        "feeMedianMaxDrawdownPercent": 20.653784995504072,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\SOLUSDT-4h\\dynamic_vix_regime-stop-1.80.json"
+      },
+      {
+        "symbol": "SOLUSDT",
+        "stopLossAtr": 2.2,
+        "verdict": "FAIL",
+        "passCount": 1,
+        "walkForwardEfficiency": 0,
+        "walkForwardNetProfitPercent": -12.568248568066757,
+        "walkForwardMaxDrawdownPercent": 49.000416250511584,
+        "feeMedianNetProfitPercent": 151.82612044978526,
+        "feeMedianMaxDrawdownPercent": 20.653784995504072,
+        "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\SOLUSDT-4h\\dynamic_vix_regime-stop-2.20.json"
+      }
+    ],
+    "bestBySymbol": [
+      {
+        "symbol": "BTCUSDT",
+        "best": {
+          "symbol": "BTCUSDT",
+          "stopLossAtr": 1.3,
+          "verdict": "FAIL",
+          "passCount": 0,
+          "walkForwardEfficiency": 0.5774084256359148,
+          "walkForwardNetProfitPercent": 82.63876521436254,
+          "walkForwardMaxDrawdownPercent": 51.29984689999251,
+          "feeMedianNetProfitPercent": 0,
+          "feeMedianMaxDrawdownPercent": 0,
+          "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\BTCUSDT-4h\\dynamic_vix_regime-stop-1.30.json"
+        }
+      },
+      {
+        "symbol": "SOLUSDT",
+        "best": {
+          "symbol": "SOLUSDT",
+          "stopLossAtr": 0.9,
+          "verdict": "FAIL",
+          "passCount": 2,
+          "walkForwardEfficiency": 0.5,
+          "walkForwardNetProfitPercent": 93.3328039929516,
+          "walkForwardMaxDrawdownPercent": 16.51906954030457,
+          "feeMedianNetProfitPercent": 151.82612044978526,
+          "feeMedianMaxDrawdownPercent": 20.653784995504072,
+          "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\surgical-optimization-2026-02-15-btc-sol-4h-focused\\dynamic-vix-stop-sweep\\SOLUSDT-4h\\dynamic_vix_regime-stop-0.90.json"
+        }
+      }
+    ]
+  }
+}

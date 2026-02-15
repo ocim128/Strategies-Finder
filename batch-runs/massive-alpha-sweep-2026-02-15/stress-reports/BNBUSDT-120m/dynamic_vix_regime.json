@@ -1,0 +1,210 @@
+{
+  "generatedAt": "2026-02-15T03:54:03.550Z",
+  "inputs": {
+    "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\BNBUSDT-120m.json",
+    "symbol": "BNBUSDT",
+    "interval": "120m",
+    "strategyKey": "dynamic_vix_regime",
+    "seeds": [
+      1337,
+      7331,
+      2026,
+      4242,
+      9001
+    ],
+    "split": {
+      "trainRatio": 0.7,
+      "trainBars": 25340,
+      "blindBars": 10861
+    },
+    "trading": {
+      "initialCapital": 10000,
+      "positionSizePercent": 100,
+      "commissionPercent": 0.1,
+      "slippageBps": 1,
+      "rawTickSlippageBps": 0.3717472118959108,
+      "tickSize": 0.01,
+      "referenceMedianPrice": 269
+    }
+  },
+  "oos70_30": {
+    "criteria": {
+      "minTrainSeedPasses": 3,
+      "minBlindPositiveSeeds": 3,
+      "minBlindMedianNetProfitPercent": 0
+    },
+    "trainSeedPassCount": 0,
+    "blindPositiveSeedCount": 0,
+    "blindMedianNetProfitPercent": 0,
+    "blindMedianMaxDrawdownPercent": 0,
+    "blindMedianProfitFactor": 0,
+    "blindConsensusResult": null,
+    "seedRuns": [
+      {
+        "seed": 1337,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      },
+      {
+        "seed": 7331,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      },
+      {
+        "seed": 2026,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      },
+      {
+        "seed": 4242,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      },
+      {
+        "seed": 9001,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      }
+    ],
+    "verdict": "FAIL",
+    "failReasons": [
+      "insufficient_train_seed_passes",
+      "insufficient_blind_positive_seeds",
+      "non_positive_blind_median_net_profit"
+    ]
+  },
+  "walkForward3m1m": {
+    "criteria": {
+      "minCombinedOOSNetProfitPercent": 0,
+      "minWalkForwardEfficiency": 0.45,
+      "minParameterStability": 40,
+      "maxCombinedOOSDrawdownPercent": 30
+    },
+    "optimizationWindowBars": 2160,
+    "testWindowBars": 720,
+    "stepSizeBars": 720,
+    "totalWindows": 47,
+    "combinedOOS": {
+      "netProfitPercent": -102.66631673829059,
+      "profitFactor": 0.7710793698492115,
+      "maxDrawdownPercent": 117.07263741264597,
+      "totalTrades": 191,
+      "winRate": 41.8848167539267
+    },
+    "avgInSampleSharpe": 0.20813520847241965,
+    "avgOutOfSampleSharpe": -0.07707652033854874,
+    "walkForwardEfficiency": 0,
+    "robustnessScore": 14,
+    "parameterStability": 30.845408805600506,
+    "parameterDrift": {
+      "averageChangedParamsPerWindow": 8.717391304347826,
+      "changedParamRatePerWindow": 0.4588100686498856,
+      "perParamDistinctValues": {
+        "useSpikeRegime": 2,
+        "useRecoveryRegime": 2,
+        "useLowVolDeRisk": 2,
+        "useMlOverlay": 2,
+        "volWindow": 3,
+        "volLookback": 3,
+        "fastPeriod": 3,
+        "slowPeriod": 3,
+        "spikePercentilePct": 3,
+        "calmPercentilePct": 3,
+        "oversoldRetPct": 3,
+        "extensionPct": 4,
+        "mlBullThresholdPct": 3,
+        "entryExposurePct": 3,
+        "exitExposurePct": 2,
+        "entryConfirmBars": 3,
+        "exitConfirmBars": 3,
+        "minHoldBars": 3,
+        "cooldownBars": 3
+      }
+    },
+    "verdict": "FAIL",
+    "failReasons": [
+      "non_positive_combined_oos_profit",
+      "low_walk_forward_efficiency",
+      "low_parameter_stability",
+      "high_combined_oos_drawdown"
+    ]
+  },
+  "feeSlippageSensitivity": {
+    "criteria": {
+      "minSeedPasses": 3,
+      "minMedianNetProfitPercent": 0,
+      "maxMedianDrawdownPercent": 30
+    },
+    "seedPassCount": 0,
+    "medianNetProfitPercent": 0,
+    "medianMaxDrawdownPercent": 0,
+    "medianProfitFactor": 0,
+    "medianRobustScore": 0,
+    "seedRuns": [
+      {
+        "seed": 1337,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 7331,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 2026,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 4242,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 9001,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      }
+    ],
+    "verdict": "FAIL",
+    "failReasons": [
+      "insufficient_seed_passes",
+      "non_positive_median_net_profit"
+    ]
+  },
+  "overall": {
+    "survivesAllThree": false,
+    "verdict": "FAIL"
+  }
+}

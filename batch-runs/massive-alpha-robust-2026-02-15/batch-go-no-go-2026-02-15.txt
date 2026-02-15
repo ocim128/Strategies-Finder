@@ -1,0 +1,155 @@
+Overall Verdict: GO
+Policy | minSeedRuns=5 | minSeedPasses=3 | minPassRate=1.00% | minStageC=2.0 | maxDDBreach=20.00% | maxFoldVar=1.80
+
+Cell | Verdict | SeedPass | Runs | MedianPassRate | MedianStageC | MedianDDBreach | MedianFoldVar | TopFailReason | NoGoReasons
+---|---|---:|---:|---:|---:|---:|---:|---|---
+BNBUSDT:120m:adaptive_supertrend_kmeans:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:adx_atr_no_trade_zone:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:chandelier_rsi_ema:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:drawdown_regime_gate:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:dynamic_vix_regime:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:dynamic_vix_regime_finder:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:exhaustion_spike_pullback:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:failed_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:fib_speed_fan_entry:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:gap_fail_reversal:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:hypothesis_trend_persistence:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:liquidity_sweep_reclaim:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:liquidity_void_rider:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:long_short_harvest:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:mean_reversion_zscore:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:momentum_rsi_exit_pack:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:momentum_rsi_pullback_entry:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:momentum_rsi_regime_gate:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:momentum_volatility_rotation:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:mtf_impulse_zone_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:mtf_impulse_zone_reversal:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:regime_donchian_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:session_open_fakeout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:shock_reversion_trend_gate:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:simple_regression_line:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:supply_demand_zones:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:tick_imbalance_pressure:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:time_weighted_mean_reversion:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:volatility_compression_break:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BNBUSDT:120m:volatility_compression_trigger:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:adaptive_supertrend_kmeans:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:adx_atr_no_trade_zone:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:chandelier_rsi_ema:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:drawdown_regime_gate:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:dynamic_vix_regime:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:dynamic_vix_regime_finder:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:exhaustion_spike_pullback:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:failed_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:fib_speed_fan_entry:none:both | GO | 5/5 | 5 | 8.33% | 10.0 | 0.00% | 0.927 | - | -
+BTCUSDT:2h:gap_fail_reversal:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:hypothesis_trend_persistence:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:liquidity_sweep_reclaim:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:liquidity_void_rider:none:both | NO_GO | 2/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:long_short_harvest:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:mean_reversion_zscore:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:momentum_rsi_exit_pack:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:momentum_rsi_pullback_entry:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:momentum_rsi_regime_gate:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:momentum_volatility_rotation:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:mtf_impulse_zone_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:mtf_impulse_zone_reversal:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:regime_donchian_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:session_open_fakeout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:shock_reversion_trend_gate:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:simple_regression_line:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:supply_demand_zones:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:tick_imbalance_pressure:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:time_weighted_mean_reversion:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:volatility_compression_break:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:2h:volatility_compression_trigger:none:both | GO | 3/5 | 5 | 2.50% | 3.0 | 16.67% | 0.668 | cell_low_stage_c_survivors | -
+ETHUSDT:2h:adaptive_supertrend_kmeans:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:adx_atr_no_trade_zone:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:chandelier_rsi_ema:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:drawdown_regime_gate:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:dynamic_vix_regime:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:dynamic_vix_regime_finder:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:exhaustion_spike_pullback:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:failed_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:fib_speed_fan_entry:none:both | NO_GO | 2/5 | 5 | 0.83% | 1.0 | 0.00% | 1.100 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:gap_fail_reversal:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:hypothesis_trend_persistence:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:liquidity_sweep_reclaim:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:liquidity_void_rider:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:long_short_harvest:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:mean_reversion_zscore:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:momentum_rsi_exit_pack:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:momentum_rsi_pullback_entry:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:momentum_rsi_regime_gate:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:momentum_volatility_rotation:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:mtf_impulse_zone_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:mtf_impulse_zone_reversal:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:regime_donchian_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:session_open_fakeout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:shock_reversion_trend_gate:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:simple_regression_line:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:supply_demand_zones:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:tick_imbalance_pressure:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:time_weighted_mean_reversion:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:volatility_compression_break:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:2h:volatility_compression_trigger:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:adaptive_supertrend_kmeans:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:adx_atr_no_trade_zone:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:chandelier_rsi_ema:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:drawdown_regime_gate:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:dynamic_vix_regime:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:dynamic_vix_regime_finder:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:exhaustion_spike_pullback:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:failed_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:fib_speed_fan_entry:none:both | GO | 5/5 | 5 | 3.33% | 4.0 | 16.67% | 1.219 | - | -
+SOLUSDT:1h:gap_fail_reversal:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:hypothesis_trend_persistence:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:liquidity_sweep_reclaim:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:liquidity_void_rider:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:long_short_harvest:none:both | GO | 5/5 | 5 | 4.17% | 5.0 | 0.00% | 0.759 | - | -
+SOLUSDT:1h:mean_reversion_zscore:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:momentum_rsi_exit_pack:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:momentum_rsi_pullback_entry:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:momentum_rsi_regime_gate:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:momentum_volatility_rotation:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:mtf_impulse_zone_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:mtf_impulse_zone_reversal:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:regime_donchian_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:session_open_fakeout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:shock_reversion_trend_gate:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:simple_regression_line:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:supply_demand_zones:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:tick_imbalance_pressure:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:time_weighted_mean_reversion:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:volatility_compression_break:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:volatility_compression_trigger:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+
+No-Go Reason Counts
+Reason | Cells
+---|---:
+low_median_stage_c_pass_rate (Stage C pass rate too low) | 116
+low_median_stage_c_survivors (Stage C survivor density too low) | 116
+low_seed_pass_count (Seed pass rule failed) | 116
+
+Global FAIL Decision Reasons
+Reason | Count
+---|---:
+cell_low_stage_c_survivors | 578
+
+Global Stage Reject Reasons
+Reason | Count
+---|---:
+stage_a_non_positive_expectancy | 34829
+stage_a_low_trades | 25865
+stage_a_high_drawdown | 5201
+stage_b_non_positive_expectancy | 3377
+stage_b_low_oos_trades | 1158
+stage_b_high_combined_drawdown | 428
+stage_b_high_window_dd_breach_rate | 283
+stage_b_unstable_fold_expectancy | 229
+stage_c_high_window_dd_breach_rate | 58
+stage_c_low_oos_trades | 42
+stage_c_non_positive_expectancy | 34
+stage_c_unstable_fold_expectancy | 33
+stage_c_high_combined_drawdown | 17
+stage_c_low_profitable_fold_ratio | 11

@@ -1,0 +1,198 @@
+{
+  "generatedAt": "2026-02-15T03:52:14.174Z",
+  "inputs": {
+    "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\ETHUSDT-2h.json",
+    "symbol": "ETHUSDT",
+    "interval": "2h",
+    "strategyKey": "shock_reversion_trend_gate",
+    "seeds": [
+      1337,
+      7331,
+      2026,
+      4242,
+      9001
+    ],
+    "split": {
+      "trainRatio": 0.7,
+      "trainBars": 10515,
+      "blindBars": 4507
+    },
+    "trading": {
+      "initialCapital": 10000,
+      "positionSizePercent": 100,
+      "commissionPercent": 0.1,
+      "slippageBps": 1,
+      "rawTickSlippageBps": 0.04095012479550531,
+      "tickSize": 0.01,
+      "referenceMedianPrice": 2441.995
+    }
+  },
+  "oos70_30": {
+    "criteria": {
+      "minTrainSeedPasses": 3,
+      "minBlindPositiveSeeds": 3,
+      "minBlindMedianNetProfitPercent": 0
+    },
+    "trainSeedPassCount": 0,
+    "blindPositiveSeedCount": 0,
+    "blindMedianNetProfitPercent": 0,
+    "blindMedianMaxDrawdownPercent": 0,
+    "blindMedianProfitFactor": 0,
+    "blindConsensusResult": null,
+    "seedRuns": [
+      {
+        "seed": 1337,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      },
+      {
+        "seed": 7331,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      },
+      {
+        "seed": 2026,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      },
+      {
+        "seed": 4242,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      },
+      {
+        "seed": 9001,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      }
+    ],
+    "verdict": "FAIL",
+    "failReasons": [
+      "insufficient_train_seed_passes",
+      "insufficient_blind_positive_seeds",
+      "non_positive_blind_median_net_profit"
+    ]
+  },
+  "walkForward3m1m": {
+    "criteria": {
+      "minCombinedOOSNetProfitPercent": 0,
+      "minWalkForwardEfficiency": 0.45,
+      "minParameterStability": 40,
+      "maxCombinedOOSDrawdownPercent": 30
+    },
+    "optimizationWindowBars": 2160,
+    "testWindowBars": 720,
+    "stepSizeBars": 720,
+    "totalWindows": 17,
+    "combinedOOS": {
+      "netProfitPercent": -40.43112232755751,
+      "profitFactor": 0.5127292786039614,
+      "maxDrawdownPercent": 57.469532057957196,
+      "totalTrades": 50,
+      "winRate": 56.00000000000001
+    },
+    "avgInSampleSharpe": -0.08884506206777534,
+    "avgOutOfSampleSharpe": -0.07471397789017113,
+    "walkForwardEfficiency": 0,
+    "robustnessScore": 18,
+    "parameterStability": 35.76490732343984,
+    "parameterDrift": {
+      "averageChangedParamsPerWindow": 3.8125,
+      "changedParamRatePerWindow": 0.5446428571428571,
+      "perParamDistinctValues": {
+        "shockLookback": 3,
+        "shockZ": 3,
+        "trendLen": 3,
+        "volSpikePct": 2,
+        "reversionLen": 3,
+        "stopAtr": 3,
+        "maxHoldBars": 3
+      }
+    },
+    "verdict": "FAIL",
+    "failReasons": [
+      "non_positive_combined_oos_profit",
+      "low_walk_forward_efficiency",
+      "low_parameter_stability",
+      "high_combined_oos_drawdown"
+    ]
+  },
+  "feeSlippageSensitivity": {
+    "criteria": {
+      "minSeedPasses": 3,
+      "minMedianNetProfitPercent": 0,
+      "maxMedianDrawdownPercent": 30
+    },
+    "seedPassCount": 0,
+    "medianNetProfitPercent": 0,
+    "medianMaxDrawdownPercent": 0,
+    "medianProfitFactor": 0,
+    "medianRobustScore": 0,
+    "seedRuns": [
+      {
+        "seed": 1337,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 7331,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 2026,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 4242,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 9001,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      }
+    ],
+    "verdict": "FAIL",
+    "failReasons": [
+      "insufficient_seed_passes",
+      "non_positive_median_net_profit"
+    ]
+  },
+  "overall": {
+    "survivesAllThree": false,
+    "verdict": "FAIL"
+  }
+}

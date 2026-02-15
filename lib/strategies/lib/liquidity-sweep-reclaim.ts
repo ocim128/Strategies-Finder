@@ -1,6 +1,6 @@
 import { Strategy, OHLCVData, StrategyParams } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows, getCloses } from '../strategy-helpers';
-import { calculateATR, calculateDonchianChannels } from '../indicators';
+import { calculateATR, calculateDonchianChannels, calculateEMA } from '../indicators';
 
 export const liquidity_sweep_reclaim: Strategy = {
     name: 'Liquidity Sweep Reclaim',
@@ -19,8 +19,9 @@ export const liquidity_sweep_reclaim: Strategy = {
         const cleanData = ensureCleanData(data);
         if (cleanData.length === 0) return [];
 
-        const lookback = Math.max(5, Math.round(params.lookback ?? 24));
-        const bufferAtr = Math.max(0, params.bufferAtr ?? 0.12);
+        // Oxygen sweep bounds: constrain search to the requested range.
+        const lookback = Math.max(12, Math.min(48, Math.round(params.lookback ?? 24)));
+        const bufferAtr = Math.max(0.05, Math.min(0.25, params.bufferAtr ?? 0.12));
         const cooldownBars = Math.max(0, Math.round(params.cooldownBars ?? 4));
 
         const highs = getHighs(cleanData);
@@ -28,6 +29,7 @@ export const liquidity_sweep_reclaim: Strategy = {
         const closes = getCloses(cleanData);
         const { upper, lower } = calculateDonchianChannels(highs, lows, lookback);
         const atr = calculateATR(highs, lows, closes, 14);
+        const trendEma = calculateEMA(closes, 200);
 
         let lastSignalIndex = -9999;
 
@@ -42,17 +44,21 @@ export const liquidity_sweep_reclaim: Strategy = {
             const high = highs[i];
             const low = lows[i];
             const close = closes[i];
+            const ema200 = trendEma[i - 1];
+            if (ema200 === null || ema200 === undefined) return null;
+            const longTrendOk = close > ema200;
+            const shortTrendOk = close < ema200;
 
             const sweptHigh = high > prevUpper + buffer;
             const reclaimedInsideHigh = close < prevUpper;
-            if (sweptHigh && reclaimedInsideHigh) {
+            if (sweptHigh && reclaimedInsideHigh && shortTrendOk) {
                 lastSignalIndex = i;
                 return createSellSignal(cleanData, i, 'Sweep High Reclaim');
             }
 
             const sweptLow = low < prevLower - buffer;
             const reclaimedInsideLow = close > prevLower;
-            if (sweptLow && reclaimedInsideLow) {
+            if (sweptLow && reclaimedInsideLow && longTrendOk) {
                 lastSignalIndex = i;
                 return createBuySignal(cleanData, i, 'Sweep Low Reclaim');
             }
