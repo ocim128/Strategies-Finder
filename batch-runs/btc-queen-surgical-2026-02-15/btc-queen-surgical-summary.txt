@@ -1,0 +1,12 @@
+BTC Queen v1 Surgical Sweep 2026-02-15T06:01:30.078Z
+btc-p1 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | feePF=0.00 feeNet=0.00%
+btc-p2 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | feePF=1.41 feeNet=184.70%
+btc-p3 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | feePF=0.00 feeNet=0.00%
+btc-p4 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | feePF=0.00 feeNet=0.00%
+btc-p5 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | feePF=1.41 feeNet=184.70%
+btc-p6 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | feePF=0.00 feeNet=0.00%
+btc-p7 | pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | feePF=0.00 feeNet=0.00%
+
+Best Candidate: btc-p5
+pass=0/3 | oos=FAIL wf=FAIL fee=FAIL | feePF=1.41
+candidateParams={"volWindow":26,"volLookback":149,"fastPeriod":39,"slowPeriod":268,"entryExposurePct":69.2992,"exitExposurePct":29.2998,"minHoldBars":15,"entryConfirmBars":2}

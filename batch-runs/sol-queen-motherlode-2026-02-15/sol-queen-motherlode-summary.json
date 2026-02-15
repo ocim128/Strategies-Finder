@@ -1,0 +1,62 @@
+{
+  "generatedAt": "2026-02-15T05:57:20.558Z",
+  "strategyKey": "sol_queen_v1",
+  "lockedBacktestSettings": {
+    "riskMode": "simple",
+    "stopLossAtr": 2.5,
+    "takeProfitAtr": 0,
+    "trailingAtr": 0,
+    "timeStopBars": 0,
+    "tradeFilterMode": "adx",
+    "adxMin": 20,
+    "adxMax": 0,
+    "confirmLookback": 1
+  },
+  "tuning": {
+    "finderRangePercent": 0,
+    "finderSteps": 1,
+    "finderTopN": 1,
+    "finderMaxRuns": 20,
+    "note": "No tuning: immutable strategy params, fixed finder surface"
+  },
+  "runs": [
+    {
+      "symbol": "BTCUSDT",
+      "interval": "4h",
+      "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\BTCUSDT-4h.json",
+      "overallVerdict": "FAIL",
+      "oosVerdict": "FAIL",
+      "wfVerdict": "FAIL",
+      "feeVerdict": "FAIL",
+      "oosBlindMedianNetProfitPercent": 0,
+      "oosBlindMedianMaxDrawdownPercent": 0,
+      "oosBlindMedianProfitFactor": 0,
+      "wfCombinedNetProfitPercent": 103.25166753775139,
+      "wfCombinedMaxDrawdownPercent": 37.44006317793491,
+      "wfCombinedProfitFactor": 1.149528907279177,
+      "feeMedianNetProfitPercent": 0,
+      "feeMedianMaxDrawdownPercent": 0,
+      "feeMedianProfitFactor": 0,
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-queen-motherlode-2026-02-15\\btcusdt-4h-sol-queen-v1.json"
+    },
+    {
+      "symbol": "ETHUSDT",
+      "interval": "4h",
+      "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-queen-motherlode-2026-02-15\\ETHUSDT-4h.generated.json",
+      "overallVerdict": "FAIL",
+      "oosVerdict": "FAIL",
+      "wfVerdict": "FAIL",
+      "feeVerdict": "FAIL",
+      "oosBlindMedianNetProfitPercent": 0,
+      "oosBlindMedianMaxDrawdownPercent": 0,
+      "oosBlindMedianProfitFactor": 0,
+      "wfCombinedNetProfitPercent": 20.87722483876989,
+      "wfCombinedMaxDrawdownPercent": 48.10742815909511,
+      "wfCombinedProfitFactor": 1.1099129902991072,
+      "feeMedianNetProfitPercent": 0,
+      "feeMedianMaxDrawdownPercent": 0,
+      "feeMedianProfitFactor": 0,
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\sol-queen-motherlode-2026-02-15\\ethusdt-4h-sol-queen-v1.json"
+    }
+  ]
+}

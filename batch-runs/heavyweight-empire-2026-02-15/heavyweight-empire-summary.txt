@@ -1,0 +1,4 @@
+Heavyweight Empire 2026-02-15T06:10:40.103Z
+BTC best: stop=1.5 adxMin=15 | pass=0/3 | feePF=1.56 feeDD=19.39%
+ETH best: eth-p1 | pass=0/3 | feePF=1.45 feeDD=29.79%
+Portfolio proxy (33/33/34): net=156.11% dd=22.50%

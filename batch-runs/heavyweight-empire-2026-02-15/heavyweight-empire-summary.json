@@ -1,0 +1,66 @@
+{
+  "generatedAt": "2026-02-15T06:10:40.102Z",
+  "btc": {
+    "target": {
+      "feeMedianMaxDrawdownPercentLt": 20,
+      "feeMedianProfitFactorGt": 1.5
+    },
+    "best": {
+      "stopLossAtr": 1.5,
+      "adxMin": 15,
+      "passCount": 0,
+      "overallVerdict": "FAIL",
+      "oosVerdict": "FAIL",
+      "wfVerdict": "FAIL",
+      "feeVerdict": "FAIL",
+      "feeMedianNetProfitPercent": 330.44499174964653,
+      "feeMedianMaxDrawdownPercent": 19.3909514109085,
+      "feeMedianProfitFactor": 1.5617689038825993,
+      "candidateParams": {
+        "volWindow": 26,
+        "volLookback": 132,
+        "fastPeriod": 50,
+        "slowPeriod": 224,
+        "entryExposurePct": 67.3756,
+        "exitExposurePct": 49.2985,
+        "minHoldBars": 9,
+        "entryConfirmBars": 2
+      },
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\heavyweight-empire-2026-02-15\\btc-oxygen-grid\\btc-stop-1.5-adx-15.json"
+    }
+  },
+  "eth": {
+    "best": {
+      "presetId": "eth-p1",
+      "passCount": 0,
+      "overallVerdict": "FAIL",
+      "oosVerdict": "FAIL",
+      "wfVerdict": "FAIL",
+      "feeVerdict": "FAIL",
+      "feeMedianNetProfitPercent": 81.99047956948841,
+      "feeMedianMaxDrawdownPercent": 29.793558968401513,
+      "feeMedianProfitFactor": 1.4452353678724181,
+      "candidateParams": {
+        "volWindow": 26,
+        "volLookback": 117,
+        "fastPeriod": 59,
+        "slowPeriod": 173,
+        "entryExposurePct": 52.6504,
+        "exitExposurePct": 28.1465,
+        "minHoldBars": 17,
+        "entryConfirmBars": 2
+      },
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\heavyweight-empire-2026-02-15\\eth-structural\\eth-p1.json"
+    }
+  },
+  "portfolioProxy": {
+    "weights": {
+      "sol": 0.33,
+      "btc": 0.33,
+      "eth": 0.34
+    },
+    "netProfitPercentApprox": 156.10684877873854,
+    "maxDrawdownPercentApprox": 22.50469820152329,
+    "note": "Weighted-average proxy only; no synchronized equity-curve simulation."
+  }
+}

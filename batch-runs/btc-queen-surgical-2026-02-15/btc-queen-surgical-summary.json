@@ -1,0 +1,275 @@
+{
+  "generatedAt": "2026-02-15T06:01:30.078Z",
+  "strategyKey": "btc_queen_v1",
+  "dataset": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\BTCUSDT-4h.json",
+  "fixedBacktestSettings": {
+    "riskMode": "simple",
+    "stopLossAtr": 2.5,
+    "takeProfitAtr": 0,
+    "trailingAtr": 0,
+    "timeStopBars": 0,
+    "tradeFilterMode": "adx",
+    "adxMin": 20,
+    "adxMax": 0,
+    "confirmLookback": 1
+  },
+  "finder": {
+    "maxRuns": 50,
+    "positionSizePercent": 50,
+    "presets": [
+      {
+        "id": "btc-p1",
+        "finderMinTrades": 24,
+        "finderRangePercent": 30,
+        "finderSteps": 2,
+        "finderTopN": 10
+      },
+      {
+        "id": "btc-p2",
+        "finderMinTrades": 28,
+        "finderRangePercent": 35,
+        "finderSteps": 2,
+        "finderTopN": 10
+      },
+      {
+        "id": "btc-p3",
+        "finderMinTrades": 32,
+        "finderRangePercent": 40,
+        "finderSteps": 2,
+        "finderTopN": 12
+      },
+      {
+        "id": "btc-p4",
+        "finderMinTrades": 36,
+        "finderRangePercent": 45,
+        "finderSteps": 2,
+        "finderTopN": 12
+      },
+      {
+        "id": "btc-p5",
+        "finderMinTrades": 24,
+        "finderRangePercent": 35,
+        "finderSteps": 3,
+        "finderTopN": 10
+      },
+      {
+        "id": "btc-p6",
+        "finderMinTrades": 28,
+        "finderRangePercent": 40,
+        "finderSteps": 3,
+        "finderTopN": 10
+      },
+      {
+        "id": "btc-p7",
+        "finderMinTrades": 32,
+        "finderRangePercent": 45,
+        "finderSteps": 3,
+        "finderTopN": 12
+      }
+    ]
+  },
+  "rows": [
+    {
+      "preset": {
+        "id": "btc-p1",
+        "finderMinTrades": 24,
+        "finderRangePercent": 30,
+        "finderSteps": 2,
+        "finderTopN": 10
+      },
+      "passCount": 0,
+      "overallVerdict": "FAIL",
+      "oosVerdict": "FAIL",
+      "wfVerdict": "FAIL",
+      "feeVerdict": "FAIL",
+      "oosBlindMedianNetProfitPercent": -33.20346799894846,
+      "oosBlindMedianMaxDrawdownPercent": 41.58785791159669,
+      "oosBlindMedianProfitFactor": 0.6894733595749887,
+      "wfCombinedNetProfitPercent": 21.427958760607872,
+      "wfCombinedMaxDrawdownPercent": 45.07306804438993,
+      "wfCombinedProfitFactor": 1.0976688049351546,
+      "feeMedianNetProfitPercent": 0,
+      "feeMedianMaxDrawdownPercent": 0,
+      "feeMedianProfitFactor": 0,
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\btc-queen-surgical-2026-02-15\\stress-reports\\btc-p1.json"
+    },
+    {
+      "preset": {
+        "id": "btc-p2",
+        "finderMinTrades": 28,
+        "finderRangePercent": 35,
+        "finderSteps": 2,
+        "finderTopN": 10
+      },
+      "passCount": 0,
+      "overallVerdict": "FAIL",
+      "oosVerdict": "FAIL",
+      "wfVerdict": "FAIL",
+      "feeVerdict": "FAIL",
+      "oosBlindMedianNetProfitPercent": 1.34562742964672,
+      "oosBlindMedianMaxDrawdownPercent": 29.168337603128542,
+      "oosBlindMedianProfitFactor": 1.0138784976178832,
+      "wfCombinedNetProfitPercent": -34.83728720773311,
+      "wfCombinedMaxDrawdownPercent": 64.02010944184373,
+      "wfCombinedProfitFactor": 0.7814802794774968,
+      "feeMedianNetProfitPercent": 184.7049818286634,
+      "feeMedianMaxDrawdownPercent": 29.038324253114844,
+      "feeMedianProfitFactor": 1.4118622815670634,
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\btc-queen-surgical-2026-02-15\\stress-reports\\btc-p2.json"
+    },
+    {
+      "preset": {
+        "id": "btc-p3",
+        "finderMinTrades": 32,
+        "finderRangePercent": 40,
+        "finderSteps": 2,
+        "finderTopN": 12
+      },
+      "passCount": 0,
+      "overallVerdict": "FAIL",
+      "oosVerdict": "FAIL",
+      "wfVerdict": "FAIL",
+      "feeVerdict": "FAIL",
+      "oosBlindMedianNetProfitPercent": -9.920111672803714,
+      "oosBlindMedianMaxDrawdownPercent": 40.774892715516444,
+      "oosBlindMedianProfitFactor": 0.9031181768565533,
+      "wfCombinedNetProfitPercent": -18.79976062512542,
+      "wfCombinedMaxDrawdownPercent": 48.738142642119314,
+      "wfCombinedProfitFactor": 0.9099219938763137,
+      "feeMedianNetProfitPercent": 0,
+      "feeMedianMaxDrawdownPercent": 0,
+      "feeMedianProfitFactor": 0,
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\btc-queen-surgical-2026-02-15\\stress-reports\\btc-p3.json"
+    },
+    {
+      "preset": {
+        "id": "btc-p4",
+        "finderMinTrades": 36,
+        "finderRangePercent": 45,
+        "finderSteps": 2,
+        "finderTopN": 12
+      },
+      "passCount": 0,
+      "overallVerdict": "FAIL",
+      "oosVerdict": "FAIL",
+      "wfVerdict": "FAIL",
+      "feeVerdict": "FAIL",
+      "oosBlindMedianNetProfitPercent": 1.5328741451321004,
+      "oosBlindMedianMaxDrawdownPercent": 28.33507878332992,
+      "oosBlindMedianProfitFactor": 1.0167824730708606,
+      "wfCombinedNetProfitPercent": 166.61206060208778,
+      "wfCombinedMaxDrawdownPercent": 36.76967319686995,
+      "wfCombinedProfitFactor": 1.4314588647628421,
+      "feeMedianNetProfitPercent": 0,
+      "feeMedianMaxDrawdownPercent": 0,
+      "feeMedianProfitFactor": 0,
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\btc-queen-surgical-2026-02-15\\stress-reports\\btc-p4.json"
+    },
+    {
+      "preset": {
+        "id": "btc-p5",
+        "finderMinTrades": 24,
+        "finderRangePercent": 35,
+        "finderSteps": 3,
+        "finderTopN": 10
+      },
+      "passCount": 0,
+      "overallVerdict": "FAIL",
+      "oosVerdict": "FAIL",
+      "wfVerdict": "FAIL",
+      "feeVerdict": "FAIL",
+      "oosBlindMedianNetProfitPercent": 1.34562742964672,
+      "oosBlindMedianMaxDrawdownPercent": 29.168337603128542,
+      "oosBlindMedianProfitFactor": 1.0138784976178832,
+      "wfCombinedNetProfitPercent": 291.0437421457927,
+      "wfCombinedMaxDrawdownPercent": 26.159943803863456,
+      "wfCombinedProfitFactor": 1.6509283134043482,
+      "feeMedianNetProfitPercent": 184.7049818286634,
+      "feeMedianMaxDrawdownPercent": 29.038324253114844,
+      "feeMedianProfitFactor": 1.4118622815670634,
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\btc-queen-surgical-2026-02-15\\stress-reports\\btc-p5.json"
+    },
+    {
+      "preset": {
+        "id": "btc-p6",
+        "finderMinTrades": 28,
+        "finderRangePercent": 40,
+        "finderSteps": 3,
+        "finderTopN": 10
+      },
+      "passCount": 0,
+      "overallVerdict": "FAIL",
+      "oosVerdict": "FAIL",
+      "wfVerdict": "FAIL",
+      "feeVerdict": "FAIL",
+      "oosBlindMedianNetProfitPercent": -9.920111672803714,
+      "oosBlindMedianMaxDrawdownPercent": 40.774892715516444,
+      "oosBlindMedianProfitFactor": 0.9031181768565533,
+      "wfCombinedNetProfitPercent": 177.1094046382457,
+      "wfCombinedMaxDrawdownPercent": 36.56139025834178,
+      "wfCombinedProfitFactor": 1.6188295514337363,
+      "feeMedianNetProfitPercent": 0,
+      "feeMedianMaxDrawdownPercent": 0,
+      "feeMedianProfitFactor": 0,
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\btc-queen-surgical-2026-02-15\\stress-reports\\btc-p6.json"
+    },
+    {
+      "preset": {
+        "id": "btc-p7",
+        "finderMinTrades": 32,
+        "finderRangePercent": 45,
+        "finderSteps": 3,
+        "finderTopN": 12
+      },
+      "passCount": 0,
+      "overallVerdict": "FAIL",
+      "oosVerdict": "FAIL",
+      "wfVerdict": "FAIL",
+      "feeVerdict": "FAIL",
+      "oosBlindMedianNetProfitPercent": 1.5328741451321004,
+      "oosBlindMedianMaxDrawdownPercent": 28.33507878332992,
+      "oosBlindMedianProfitFactor": 1.0167824730708606,
+      "wfCombinedNetProfitPercent": -35.361264348117686,
+      "wfCombinedMaxDrawdownPercent": 52.43331820057179,
+      "wfCombinedProfitFactor": 0.8218893898806954,
+      "feeMedianNetProfitPercent": 0,
+      "feeMedianMaxDrawdownPercent": 0,
+      "feeMedianProfitFactor": 0,
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\btc-queen-surgical-2026-02-15\\stress-reports\\btc-p7.json"
+    }
+  ],
+  "bestCandidate": {
+    "preset": {
+      "id": "btc-p5",
+      "finderMinTrades": 24,
+      "finderRangePercent": 35,
+      "finderSteps": 3,
+      "finderTopN": 10
+    },
+    "passCount": 0,
+    "overallVerdict": "FAIL",
+    "oosVerdict": "FAIL",
+    "wfVerdict": "FAIL",
+    "feeVerdict": "FAIL",
+    "oosBlindMedianNetProfitPercent": 1.34562742964672,
+    "oosBlindMedianMaxDrawdownPercent": 29.168337603128542,
+    "oosBlindMedianProfitFactor": 1.0138784976178832,
+    "wfCombinedNetProfitPercent": 291.0437421457927,
+    "wfCombinedMaxDrawdownPercent": 26.159943803863456,
+    "wfCombinedProfitFactor": 1.6509283134043482,
+    "feeMedianNetProfitPercent": 184.7049818286634,
+    "feeMedianMaxDrawdownPercent": 29.038324253114844,
+    "feeMedianProfitFactor": 1.4118622815670634,
+    "candidateParams": {
+      "volWindow": 26,
+      "volLookback": 149,
+      "fastPeriod": 39,
+      "slowPeriod": 268,
+      "entryExposurePct": 69.2992,
+      "exitExposurePct": 29.2998,
+      "minHoldBars": 15,
+      "entryConfirmBars": 2
+    },
+    "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\btc-queen-surgical-2026-02-15\\stress-reports\\btc-p5.json"
+  }
+}

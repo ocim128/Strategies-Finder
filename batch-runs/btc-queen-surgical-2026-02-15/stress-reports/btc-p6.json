@@ -1,0 +1,277 @@
+{
+  "generatedAt": "2026-02-15T06:01:22.997Z",
+  "inputs": {
+    "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\strategy-evolution-2026-02-15-btc-sol-15m-4h\\BTCUSDT-4h.json",
+    "symbol": "BTCUSDT",
+    "interval": "4h",
+    "strategyKey": "btc_queen_v1",
+    "seeds": [
+      1337,
+      7331,
+      2026,
+      4242,
+      9001
+    ],
+    "split": {
+      "trainRatio": 0.7,
+      "trainBars": 10502,
+      "blindBars": 4501
+    },
+    "trading": {
+      "initialCapital": 10000,
+      "positionSizePercent": 50,
+      "commissionPercent": 0.1,
+      "slippageBps": 1,
+      "rawTickSlippageBps": 0.02794391990601901,
+      "tickSize": 0.1,
+      "referenceMedianPrice": 35785.96
+    },
+    "backtestSettingsOverrides": {
+      "riskMode": "simple",
+      "stopLossAtr": 2.5,
+      "takeProfitAtr": 0,
+      "trailingAtr": 0,
+      "timeStopBars": 0,
+      "tradeFilterMode": "adx",
+      "adxMin": 20,
+      "adxMax": 0,
+      "confirmLookback": 1
+    }
+  },
+  "oos70_30": {
+    "criteria": {
+      "minTrainSeedPasses": 3,
+      "minBlindPositiveSeeds": 3,
+      "minBlindMedianNetProfitPercent": 0
+    },
+    "trainSeedPassCount": 2,
+    "blindPositiveSeedCount": 0,
+    "blindMedianNetProfitPercent": -9.920111672803714,
+    "blindMedianMaxDrawdownPercent": 40.774892715516444,
+    "blindMedianProfitFactor": 0.9031181768565533,
+    "blindConsensusResult": {
+      "trades": [],
+      "netProfit": -1223.259254943121,
+      "netProfitPercent": -12.23259254943121,
+      "winRate": 51.35135135135135,
+      "expectancy": -16.530530472204504,
+      "avgTrade": -16.53053047220434,
+      "profitFactor": 0.8861141713141273,
+      "maxDrawdown": 4166.9071036496825,
+      "maxDrawdownPercent": 34.510548179549126,
+      "totalTrades": 74,
+      "winningTrades": 38,
+      "losingTrades": 36,
+      "avgWin": 250.46953498676933,
+      "avgLoss": 298.3639329011213,
+      "sharpeRatio": -0.029604074029980755,
+      "equityCurve": []
+    },
+    "seedRuns": [
+      {
+        "seed": 1337,
+        "trainPassed": true,
+        "params": {
+          "volWindow": 27,
+          "volLookback": 119,
+          "fastPeriod": 56,
+          "slowPeriod": 157,
+          "entryExposurePct": 64.0023,
+          "exitExposurePct": 44.6601,
+          "minHoldBars": 10,
+          "entryConfirmBars": 3
+        },
+        "blindResult": {
+          "trades": [],
+          "netProfit": -1692.8652196823314,
+          "netProfitPercent": -16.928652196823315,
+          "winRate": 39.743589743589745,
+          "expectancy": -21.703400252337516,
+          "avgTrade": -21.70340025233758,
+          "profitFactor": 0.8453260104344162,
+          "maxDrawdown": 4966.230691610439,
+          "maxDrawdownPercent": 41.067600881521656,
+          "totalTrades": 78,
+          "winningTrades": 31,
+          "losingTrades": 47,
+          "avgWin": 298.4472855698293,
+          "avgLoss": 232.8666185605752,
+          "sharpeRatio": -0.03897984075781632,
+          "equityCurve": []
+        }
+      },
+      {
+        "seed": 7331,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      },
+      {
+        "seed": 2026,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      },
+      {
+        "seed": 4242,
+        "trainPassed": true,
+        "params": {
+          "volWindow": 20,
+          "volLookback": 142,
+          "fastPeriod": 34,
+          "slowPeriod": 266,
+          "entryExposurePct": 72.1826,
+          "exitExposurePct": 29.8562,
+          "minHoldBars": 12,
+          "entryConfirmBars": 2
+        },
+        "blindResult": {
+          "trades": [],
+          "netProfit": -291.15711487841145,
+          "netProfitPercent": -2.9115711487841143,
+          "winRate": 50,
+          "expectancy": -8.563444555247372,
+          "avgTrade": -8.563444555247395,
+          "profitFactor": 0.9609103432786904,
+          "maxDrawdown": 5378.980030627127,
+          "maxDrawdownPercent": 40.48218454951123,
+          "totalTrades": 34,
+          "winningTrades": 17,
+          "losingTrades": 17,
+          "avgWin": 421.0168692908957,
+          "avgLoss": 438.14375840139047,
+          "sharpeRatio": 0.015944371060836352,
+          "equityCurve": []
+        }
+      },
+      {
+        "seed": 9001,
+        "trainPassed": false,
+        "params": null,
+        "blindResult": null
+      }
+    ],
+    "verdict": "FAIL",
+    "failReasons": [
+      "insufficient_train_seed_passes",
+      "insufficient_blind_positive_seeds",
+      "non_positive_blind_median_net_profit"
+    ]
+  },
+  "walkForward3m1m": {
+    "criteria": {
+      "minCombinedOOSNetProfitPercent": 0,
+      "minWalkForwardEfficiency": 0.45,
+      "minParameterStability": 40,
+      "maxCombinedOOSDrawdownPercent": 30
+    },
+    "optimizationWindowBars": 2160,
+    "testWindowBars": 720,
+    "stepSizeBars": 720,
+    "totalWindows": 17,
+    "combinedOOS": {
+      "netProfitPercent": 177.1094046382457,
+      "profitFactor": 1.6188295514337363,
+      "maxDrawdownPercent": 36.56139025834178,
+      "totalTrades": 113,
+      "winRate": 57.52212389380531
+    },
+    "avgInSampleSharpe": 0.043093429052724196,
+    "avgOutOfSampleSharpe": 0.15334440877925762,
+    "walkForwardEfficiency": 0.5,
+    "robustnessScore": 41,
+    "parameterStability": 35.21688439301754,
+    "parameterDrift": {
+      "averageChangedParamsPerWindow": 4.625,
+      "changedParamRatePerWindow": 0.578125,
+      "perParamDistinctValues": {
+        "volWindow": 3,
+        "volLookback": 3,
+        "fastPeriod": 3,
+        "slowPeriod": 3,
+        "entryExposurePct": 3,
+        "exitExposurePct": 2,
+        "minHoldBars": 3,
+        "entryConfirmBars": 3
+      }
+    },
+    "verdict": "FAIL",
+    "failReasons": [
+      "low_parameter_stability",
+      "high_combined_oos_drawdown"
+    ]
+  },
+  "feeSlippageSensitivity": {
+    "criteria": {
+      "minSeedPasses": 3,
+      "minMedianNetProfitPercent": 0,
+      "maxMedianDrawdownPercent": 30
+    },
+    "seedPassCount": 0,
+    "medianNetProfitPercent": 0,
+    "medianMaxDrawdownPercent": 0,
+    "medianProfitFactor": 0,
+    "medianRobustScore": 0,
+    "seedRuns": [
+      {
+        "seed": 1337,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 7331,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 2026,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 4242,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      },
+      {
+        "seed": 9001,
+        "passed": false,
+        "robustScore": 0,
+        "passRate": 0,
+        "stageCSurvivors": 0,
+        "params": null,
+        "result": null,
+        "decisionReason": "no_pass"
+      }
+    ],
+    "verdict": "FAIL",
+    "failReasons": [
+      "insufficient_seed_passes",
+      "non_positive_median_net_profit"
+    ]
+  },
+  "overall": {
+    "survivesAllThree": false,
+    "verdict": "FAIL"
+  }
+}
