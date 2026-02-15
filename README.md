@@ -116,6 +116,38 @@ What it does:
   - `matrix-summary-YYYY-MM-DD.json`
   - `go-no-go-YYYY-MM-DD.json`
 
+## Run full matrix batch from CLI
+Use this when you want one automated pass across many cells (`strategy x symbol x timeframe x filter x direction`).
+
+1) Edit config:
+- `scripts/robust-batch-config.example.json`
+
+2) Run:
+```bash
+npm run robust:batch -- --config scripts/robust-batch-config.example.json
+```
+
+Positional fallback:
+```bash
+npm run robust:batch -- scripts/robust-batch-config.example.json
+```
+
+Batch output:
+- Per-cell folders (for each symbol/timeframe/filter/direction):
+  - `run-seed-<seed>.txt`
+  - `matrix-summary-YYYY-MM-DD.json`
+  - `go-no-go-YYYY-MM-DD.json`
+  - `go-no-go-YYYY-MM-DD.txt`
+- Batch-level artifacts in `output.outDir`:
+  - `batch-manifest-YYYY-MM-DD.json`
+  - `batch-matrix-summary-YYYY-MM-DD.json`
+  - `batch-go-no-go-YYYY-MM-DD.json`
+  - `batch-go-no-go-YYYY-MM-DD.txt`
+
+Notes:
+- Cell identity includes symbol + timeframe + trade filter + direction + strategy, so cross-market runs are not merged incorrectly.
+- `reportPolicy` gates define final GO/NO_GO criteria for automation.
+
 Accepted input files:
 - Debug copy text containing `[Finder][robust_random_wf][cell_audit]` lines (recommended).
 - Finder `Copy Top Results` JSON (PASS-only; useful but incomplete for reject diagnostics).

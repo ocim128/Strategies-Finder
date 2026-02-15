@@ -79,7 +79,7 @@ function formatTable(summary) {
     lines.push("Cell | Runs | Pass | SeedPassRate | MedianPassRate | MedianRobust | MedianStageC | MedianDDBreach | TopFailReason | TopRejectReason");
     lines.push("---|---:|---:|---:|---:|---:|---:|---:|---|---");
     for (const cell of summary.cells) {
-        const cellName = `${cell.strategyKey}@${cell.timeframe}`;
+        const cellName = `${cell.symbol}:${cell.timeframe}:${cell.strategyKey}:${cell.tradeFilterMode}:${cell.tradeDirection}`;
         lines.push([
             cellName,
             cell.runs,

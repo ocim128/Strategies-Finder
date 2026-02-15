@@ -1,4 +1,4 @@
-import type { BacktestResult, StrategyParams } from "../types/strategies";
+import type { BacktestResult, StrategyParams, TradeDirection, TradeFilterMode } from "../types/strategies";
 
 export type FinderMode = 'default' | 'grid' | 'random' | 'robust_random_wf';
 export type FinderMetric =
@@ -50,6 +50,9 @@ export interface FinderResult {
         mode: 'robust_random_wf';
         seed: number;
         cellSeed: number;
+        symbol?: string;
+        tradeFilterMode?: TradeFilterMode;
+        tradeDirection?: TradeDirection;
         decision: 'PASS' | 'FAIL';
         decisionReason: string;
         timeframe: string;

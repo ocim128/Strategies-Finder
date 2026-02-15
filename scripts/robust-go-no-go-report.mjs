@@ -2,9 +2,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { buildSummary, collectRecords } from "./robust-log-utils.mjs";
 
-const DEFAULT_POLICY = {
+export const DEFAULT_POLICY = {
     minSeedRuns: 5,
     minSeedPasses: 3,
     minMedianCellPassRate: 0.01,
@@ -13,7 +14,7 @@ const DEFAULT_POLICY = {
     maxMedianFoldStabilityPenalty: 1.8,
 };
 
-const NOGO_REASON_LABELS = {
+export const NOGO_REASON_LABELS = {
     insufficient_seed_runs: "Not enough seeded runs",
     low_seed_pass_count: "Seed pass rule failed",
     low_median_stage_c_survivors: "Stage C survivor density too low",
@@ -136,7 +137,7 @@ function parseArgs(argv) {
     return options;
 }
 
-function evaluateCell(cell, policy) {
+export function evaluateCell(cell, policy) {
     const reasons = [];
     if (cell.runs < policy.minSeedRuns) {
         reasons.push("insufficient_seed_runs");
@@ -165,7 +166,7 @@ function evaluateCell(cell, policy) {
     };
 }
 
-function buildReport(summary, policy) {
+export function buildReport(summary, policy) {
     const cells = summary.cells.map((cell) => evaluateCell(cell, policy));
     const goCells = cells.filter((cell) => cell.verdict === "GO");
     const noGoCells = cells.filter((cell) => cell.verdict === "NO_GO");
@@ -195,9 +196,12 @@ function buildReport(summary, policy) {
             Object.entries(noGoReasonCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
         ),
         topGoCells: rankedGoCells.slice(0, 10).map((cell) => ({
+            symbol: cell.symbol,
             strategyKey: cell.strategyKey,
             strategyName: cell.strategyName,
             timeframe: cell.timeframe,
+            tradeFilterMode: cell.tradeFilterMode,
+            tradeDirection: cell.tradeDirection,
             passCount: cell.passCount,
             runs: cell.runs,
             seedPassRate: cell.seedPassRate,
@@ -210,7 +214,7 @@ function buildReport(summary, policy) {
     };
 }
 
-function formatTable(summary, report) {
+export function formatTable(summary, report) {
     const lines = [];
     lines.push(`Overall Verdict: ${report.overallVerdict}`);
     lines.push([
@@ -228,7 +232,7 @@ function formatTable(summary, report) {
 
     for (const cell of report.cells) {
         lines.push([
-            `${cell.strategyKey}@${cell.timeframe}`,
+            `${cell.symbol}:${cell.timeframe}:${cell.strategyKey}:${cell.tradeFilterMode}:${cell.tradeDirection}`,
             cell.verdict,
             `${cell.passCount}/${cell.runs}`,
             cell.runs,
@@ -339,4 +343,15 @@ function main() {
     }
 }
 
-main();
+const invokedAsScript = (() => {
+    if (!process.argv[1]) return false;
+    try {
+        return import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+    } catch {
+        return false;
+    }
+})();
+
+if (invokedAsScript) {
+    main();
+}

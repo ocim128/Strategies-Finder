@@ -78,6 +78,9 @@ export function normalizeAuditRecord(raw, source, sourceFile, warnings) {
     const robust = raw.robustMetrics && typeof raw.robustMetrics === "object" ? raw.robustMetrics : raw;
     const strategyKey = String(raw.strategyKey ?? raw.strategyId ?? "").trim();
     const strategyName = String(raw.strategyName ?? raw.name ?? "").trim();
+    const symbol = String(raw.symbol ?? robust.symbol ?? raw.market ?? raw.ticker ?? "").trim();
+    const tradeFilterMode = String(raw.tradeFilterMode ?? robust.tradeFilterMode ?? "").trim().toLowerCase();
+    const tradeDirection = String(raw.tradeDirection ?? robust.tradeDirection ?? "").trim().toLowerCase();
     const timeframe = String(
         robust.timeframe ??
         (Array.isArray(raw.timeframes) && raw.timeframes.length === 1 ? raw.timeframes[0] : "") ??
@@ -105,6 +108,9 @@ export function normalizeAuditRecord(raw, source, sourceFile, warnings) {
         sourceFile,
         strategyKey,
         strategyName: strategyName || strategyKey,
+        symbol: symbol || "unknown",
+        tradeFilterMode: tradeFilterMode || "unknown",
+        tradeDirection: tradeDirection || "unknown",
         timeframe,
         seed,
         cellSeed: asFiniteNumber(robust.cellSeed, Number.NaN),
@@ -205,11 +211,14 @@ export function buildSummary(records) {
     const globalRejectReasonCountsByStage = { A: 0, B: 0, C: 0, other: 0 };
 
     for (const row of records) {
-        const key = `${row.strategyKey}|${row.timeframe}`;
+        const key = `${row.symbol}|${row.timeframe}|${row.strategyKey}|${row.tradeFilterMode}|${row.tradeDirection}`;
         const bucket = byCell.get(key) ?? {
+            symbol: row.symbol,
             strategyKey: row.strategyKey,
             strategyName: row.strategyName,
             timeframe: row.timeframe,
+            tradeFilterMode: row.tradeFilterMode,
+            tradeDirection: row.tradeDirection,
             rows: [],
         };
         bucket.rows.push(row);
@@ -255,9 +264,12 @@ export function buildSummary(records) {
         const topRejectReason = Object.entries(rejectReasonCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
 
         cells.push({
+            symbol: bucket.symbol,
             strategyKey: bucket.strategyKey,
             strategyName: bucket.strategyName,
             timeframe: bucket.timeframe,
+            tradeFilterMode: bucket.tradeFilterMode,
+            tradeDirection: bucket.tradeDirection,
             runs: rows.length,
             seeds,
             passCount: passes.length,
@@ -288,7 +300,13 @@ export function buildSummary(records) {
         });
     }
 
-    cells.sort((a, b) => a.strategyKey.localeCompare(b.strategyKey) || a.timeframe.localeCompare(b.timeframe));
+    cells.sort((a, b) =>
+        a.symbol.localeCompare(b.symbol) ||
+        a.timeframe.localeCompare(b.timeframe) ||
+        a.tradeFilterMode.localeCompare(b.tradeFilterMode) ||
+        a.tradeDirection.localeCompare(b.tradeDirection) ||
+        a.strategyKey.localeCompare(b.strategyKey)
+    );
 
     return {
         cells,
