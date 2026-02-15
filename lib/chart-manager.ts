@@ -809,11 +809,7 @@ export class ChartManager {
             state.markersPlugin.detach();
         }
 
-        // If in replay mode, we don't display backtest markers automatically
-        if (state.replayMode) {
-            console.log('[ChartManager] Replay mode active, skipping backtest marker display');
-            return;
-        }
+
 
         state.markersPlugin = createSeriesMarkers(state.candlestickSeries, markers);
     }

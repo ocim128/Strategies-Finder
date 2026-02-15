@@ -12,12 +12,12 @@
 @import './styles/tab-groups.css';
 @import './styles/features.css';
 @import './styles/data-mining.css';
-@import './styles/pair-combiner.css';
+
 @import './styles/data-viz.css';
 @import './styles/chart-enhancements.css';
 @import './styles/command-palette.css';
 
-@import './styles/replay.css';
+
 @import './styles/scanner-styles.css';
 @import './styles/media-queries.css';
 @import './styles/logictest.css';

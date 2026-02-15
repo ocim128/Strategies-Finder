@@ -1,13 +1,11 @@
 import { ISeriesApi, Time, ISeriesMarkersPluginApi, IChartApi } from "lightweight-charts";
 import { BacktestResult, OHLCVData } from "./strategies";
-import type { PairAnalysisResults } from "./pair-combiner";
 import type { TwoHourParityBacktestResults } from "../state";
 
 export * from './strategies';
 export * from './backtest';
 export * from './finder';
-export * from './pair-combiner';
-export * from './replay';
+
 export * from './scanner';
 export * from './data-providers';
 export * from './feature-lab';
@@ -35,9 +33,4 @@ export interface AppState {
     currentBacktestResult: BacktestResult | null;
     twoHourParityBacktestResults: TwoHourParityBacktestResults | null;
     currentStrategyKey: string;
-    pairCombinerEnabled: boolean;
-    secondarySymbol: string | null;
-    secondaryInterval: string | null;
-    secondaryOhlcvData: OHLCVData[];
-    pairAnalysisResults: PairAnalysisResults | null;
 }

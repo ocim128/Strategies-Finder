@@ -1,5 +1,4 @@
 
-
 import { OHLCVData } from "./types/index";
 import { state } from "./state";
 import { debugLogger } from "./debug-logger";
@@ -258,9 +257,7 @@ export class DataManager {
         const data = await this.fetchData(symbol, interval);
         state.set('ohlcvData', data);
 
-        if (!state.replayMode) {
-            this.startStreaming(symbol, interval);
-        }
+        this.startStreaming(symbol, interval);
 
         return data;
     }
@@ -598,8 +595,6 @@ export class DataManager {
     }
 
     private handleStreamUpdate(candle: OHLCVData): void {
-        if (state.replayMode) return;
-
         this.applyRealtimeCandle(candle);
 
         const now = Date.now();
@@ -713,8 +708,6 @@ export class DataManager {
     }
 
     private applyRealtimeCandle(updatedCandle: OHLCVData): void {
-        if (state.replayMode) return;
-
         if (state.candlestickSeries) {
             state.candlestickSeries.update(updatedCandle);
         }

@@ -5,12 +5,12 @@ import strategyPanelShellHtml from '../html-partials/strategy-panel-shell.html?r
 import tabSettingsHtml from '../html-partials/tab-settings.html?raw';
 import tabDataminingHtml from '../html-partials/tab-datamining.html?raw';
 import tabFinderHtml from '../html-partials/tab-finder.html?raw';
-import tabPairCombinerHtml from '../html-partials/tab-paircombiner.html?raw';
+
 
 import tabWalkforwardHtml from '../html-partials/tab-walkforward.html?raw';
 import tabMontecarloHtml from '../html-partials/tab-montecarlo.html?raw';
 import tabLogictestHtml from '../html-partials/tab-logictest.html?raw';
-import tabReplayHtml from '../html-partials/tab-replay.html?raw';
+
 import tabResultsHtml from '../html-partials/tab-results.html?raw';
 import tabTradesHtml from '../html-partials/tab-trades.html?raw';
 import tabAnalysisHtml from '../html-partials/tab-analysis.html?raw';
@@ -64,11 +64,11 @@ export function injectLayout() {
         tabSettingsHtml +
         tabDataminingHtml +
         tabFinderHtml +
-        tabPairCombinerHtml +
+
         tabWalkforwardHtml +
         tabMontecarloHtml +
         tabLogictestHtml +
-        tabReplayHtml +
+
         tabResultsHtml +
         tabTradesHtml +
         tabAnalysisHtml +

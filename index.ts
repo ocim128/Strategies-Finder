@@ -20,11 +20,11 @@ import { logicTestService } from "./lib/logic-test-service";
 import { settingsManager } from "./lib/settings-manager";
 import { injectLayout } from "./lib/layout-manager";
 import { commandPaletteManager } from "./lib/command-palette";
-import { pairCombinerManager } from "./lib/pair-combiner-manager";
+
 import { analysisPanel } from "./lib/analysis-panel";
 import { dataMiningManager } from "./lib/data-mining-manager";
 
-import { replayManager, ReplayChartAdapter, ReplayUI } from "./lib/replay";
+
 import { initConfirmationStrategyUI } from "./lib/confirmation-strategies";
 import { scannerPanel, scannerManager } from "./lib/scanner";
 
@@ -61,7 +61,7 @@ async function init() {
 	setupStateSubscriptions();
 	setupEventHandlers();
 	finderManager.init();
-	pairCombinerManager.init();
+
 	dataMiningManager.init();
 	walkForwardService.initUI();
 	monteCarloService.initUI();
@@ -89,22 +89,7 @@ async function init() {
 		scannerPanel.hide();
 	}) as EventListener);
 
-	// Initialize replay feature
-	const replayUI = new ReplayUI(replayManager);
-	const replayChartAdapter = new ReplayChartAdapter(replayManager);
-	replayChartAdapter.connect();
 
-	// Initialize replay UI when tab becomes active
-	const initReplayUIOnTabChange = () => {
-		const replayTab = document.querySelector('.panel-tab[data-tab="replay"]');
-		if (replayTab) {
-			replayTab.addEventListener('click', () => {
-				// Small delay to ensure DOM is ready
-				setTimeout(() => replayUI.reinit(), 50);
-			});
-		}
-	};
-	initReplayUIOnTabChange();
 
 	editorManager.init(() => {
 		uiManager.updateStrategyDropdown(state.currentStrategyKey);
@@ -164,7 +149,7 @@ if (typeof window !== 'undefined') {
 	(window as any).__state = state;
 	(window as any).__debug = debugLogger;
 	(window as any).__commandPalette = commandPaletteManager;
-	(window as any).__replayManager = replayManager;
+
 	(window as any).__scannerPanel = scannerPanel;
 	(window as any).__scannerManager = scannerManager;
 }
