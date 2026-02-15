@@ -1,6 +1,6 @@
 import { Strategy, OHLCVData, StrategyParams, Signal } from '../../types/strategies';
 import { createBuySignal, createSellSignal, ensureCleanData, getCloses } from '../strategy-helpers';
-import { calculateEMA, calculateRSI } from '../indicators';
+import { calculateRSI, calculateSMA } from '../indicators';
 
 interface Config {
     rsiPeriod: number;
@@ -45,7 +45,7 @@ function normalizeConfig(params: StrategyParams): Config {
 
 export const momentum_rsi_pullback_entry: Strategy = {
     name: 'Momentum RSI Pullback Entry',
-    description: 'Long-only momentum pullback entry on RSI oversold crossover with optional reclaim confirmation and deterministic, close-bar exits.',
+    description: 'Long-only momentum pullback entry on RSI oversold crossover with optional reclaim confirmation, SMA trend filter, and deterministic close-bar exits.',
     defaultParams: {
         rsiPeriod: 14,
         rsiThreshold: 30,
@@ -63,7 +63,7 @@ export const momentum_rsi_pullback_entry: Strategy = {
         rsiPeriod: 'RSI Period',
         rsiThreshold: 'RSI Oversold Threshold',
         exitRsi: 'RSI Exit Threshold',
-        trendEmaPeriod: 'Trend EMA Period',
+        trendEmaPeriod: 'Trend SMA Period',
         momentumLookback: 'Momentum Lookback (bars)',
         minMomentumPct: 'Min Momentum (%)',
         requireReclaim: 'Require RSI Reclaim (0/1)',
@@ -79,7 +79,8 @@ export const momentum_rsi_pullback_entry: Strategy = {
         const cfg = normalizeConfig(params);
         const closes = getCloses(cleanData);
         const rsi = calculateRSI(closes, cfg.rsiPeriod);
-        const trend = calculateEMA(closes, cfg.trendEmaPeriod);
+        // Keep param key name for backward compatibility; implementation uses SMA trend filter.
+        const trend = calculateSMA(closes, cfg.trendEmaPeriod);
         const momentum: (number | null)[] = new Array(closes.length).fill(null);
 
         for (let i = cfg.momentumLookback; i < closes.length; i++) {
@@ -190,4 +191,3 @@ export const momentum_rsi_pullback_entry: Strategy = {
         ],
     },
 };
-

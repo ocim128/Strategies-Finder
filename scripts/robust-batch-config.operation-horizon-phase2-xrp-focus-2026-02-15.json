@@ -1,0 +1,56 @@
+{
+  "strategyKeys": ["dynamic_vix_regime_iron_core"],
+  "seeds": [1337, 7331, 2026, 4242, 9001],
+  "finder": {
+    "rangePercent": 20,
+    "maxRuns": 520,
+    "steps": 5,
+    "topN": 20,
+    "minTrades": 30
+  },
+  "tradeFilterModes": ["none"],
+  "tradeDirections": ["both"],
+  "backtestSettings": {
+    "tradeFilterMode": "none",
+    "tradeDirection": "both",
+    "executionModel": "next_open",
+    "allowSameBarExit": false,
+    "slippageBps": 5
+  },
+  "capital": {
+    "initialCapital": 10000,
+    "positionSize": 100,
+    "commission": 0.1,
+    "sizingMode": "percent",
+    "fixedTradeAmount": 1000
+  },
+  "reportPolicy": {
+    "minSeedRuns": 5,
+    "minSeedPasses": 3,
+    "minMedianCellPassRate": 0.01,
+    "minMedianStageCSurvivors": 2,
+    "maxMedianDDBreachRate": 0.2,
+    "maxMedianFoldStabilityPenalty": 1.8
+  },
+  "output": {
+    "outDir": "batch-runs/operation-horizon-phase2-xrp-focus-robust-2026-02-15",
+    "filePrefix": "run-seed",
+    "writePerCellJsonSummary": true,
+    "writePerCellJsonReport": true,
+    "writePerCellTableReport": true,
+    "writeBatchJsonSummary": true,
+    "writeBatchJsonReport": true,
+    "writeBatchTableReport": true
+  },
+  "matrix": [
+    {
+      "label": "phase2-xrp-focus-4h",
+      "enabled": true,
+      "dataPath": "price-data/robust-lab/generated/operation-horizon-2026-02-15/XRPUSDT-4h.json",
+      "symbol": "XRPUSDT",
+      "interval": "4h",
+      "strategyKeys": ["dynamic_vix_regime_iron_core"],
+      "tradeDirections": ["both"]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+Operation Horizon Phase 8 Portfolio (2026-02-15T07:46:55.501Z)
+config: C:\Users\user\Documents\Repo\Experimental\lightweight-charts\debug\playground\Strategies-Finder\scripts\horizon_portfolio.json
+period: 2022-01-01 -> 2026-02-15
+portfolio return: 23.07%
+portfolio max drawdown: 30.54%
+mission gate: MaxDD < 15% and Net Profit > 200%
+mission verdict: NOT YET
+
+sol_queen (sol_queen_v1) | net=78.15% PF=1.31 DD=43.57% trades=50
+btc_queen (btc_queen_v1) | net=89.81% PF=1.35 DD=33.18% trades=105
+iron_shield (bear_hunter_v5) | net=9.84% PF=1.16 DD=19.87% trades=47
+obsidian (meta_harvest_v3) | net=-85.52% PF=0.41 DD=91.68% trades=62

@@ -1,0 +1,39 @@
+Overall Verdict: GO
+Policy | minSeedRuns=5 | minSeedPasses=3 | minPassRate=1.00% | minStageC=2.0 | maxDDBreach=20.00% | maxFoldVar=1.80
+
+Cell | Verdict | SeedPass | Runs | MedianPassRate | MedianStageC | MedianDDBreach | MedianFoldVar | TopFailReason | NoGoReasons
+---|---|---:|---:|---:|---:|---:|---:|---|---
+BTCUSDT:4h:bear_hunter_v2:none:short | GO | 5/5 | 5 | 3.89% | 7.0 | 0.00% | 1.004 | - | -
+ETHUSDT:15m:liquidity_sweep_reclaim_v1:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:4h:bear_hunter_v2:none:short | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:15m:liquidity_sweep_reclaim_v1:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+XRPUSDT:4h:dynamic_vix_regime_iron_core:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+
+No-Go Reason Counts
+Reason | Cells
+---|---:
+low_median_stage_c_pass_rate (Stage C pass rate too low) | 4
+low_median_stage_c_survivors (Stage C survivor density too low) | 4
+low_seed_pass_count (Seed pass rule failed) | 4
+
+Global FAIL Decision Reasons
+Reason | Count
+---|---:
+cell_low_stage_c_survivors | 20
+
+Global Stage Reject Reasons
+Reason | Count
+---|---:
+stage_b_non_positive_expectancy | 1701
+stage_a_non_positive_expectancy | 874
+stage_a_low_trades | 704
+stage_b_low_oos_trades | 342
+stage_b_unstable_fold_expectancy | 340
+stage_b_high_combined_drawdown | 233
+stage_c_low_oos_trades | 69
+stage_c_unstable_fold_expectancy | 53
+stage_b_high_window_dd_breach_rate | 44
+stage_c_non_positive_expectancy | 37
+stage_a_high_drawdown | 36
+stage_c_low_profitable_fold_ratio | 11
+stage_c_high_combined_drawdown | 10

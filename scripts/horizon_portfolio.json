@@ -1,0 +1,69 @@
+{
+  "name": "operation-horizon-phase9-trinity",
+  "period": {
+    "startDate": "2022-01-01"
+  },
+  "allocation": {
+    "totalCapital": 10000,
+    "commissionPercent": 0.1,
+    "positionSizePercent": 100,
+    "slippageBps": 1
+  },
+  "sleeves": [
+    {
+      "id": "sol_queen",
+      "strategyKey": "sol_queen_v1",
+      "symbol": "SOLUSDT",
+      "interval": "4h",
+      "weight": 0.3333333333,
+      "dataPath": "price-data/robust-lab/generated/strategy-evolution-2026-02-15-btc-sol-15m-4h/SOLUSDT-4h.json",
+      "backtestSettingsOverrides": {
+        "tradeDirection": "long",
+        "riskMode": "simple",
+        "stopLossAtr": 2.5,
+        "takeProfitAtr": 0,
+        "trailingAtr": 0,
+        "timeStopBars": 0,
+        "tradeFilterMode": "adx",
+        "adxMin": 20,
+        "adxMax": 0,
+        "confirmLookback": 1
+      }
+    },
+    {
+      "id": "btc_queen",
+      "strategyKey": "btc_queen_v1",
+      "symbol": "BTCUSDT",
+      "interval": "4h",
+      "weight": 0.3333333333,
+      "dataPath": "price-data/robust-lab/generated/operation-horizon-2026-02-15/BTCUSDT-4h.json",
+      "backtestSettingsOverrides": {
+        "tradeDirection": "long",
+        "riskMode": "simple",
+        "stopLossAtr": 1.5,
+        "takeProfitAtr": 0,
+        "trailingAtr": 0,
+        "timeStopBars": 0,
+        "tradeFilterMode": "adx",
+        "adxMin": 15,
+        "adxMax": 0,
+        "confirmLookback": 1
+      }
+    },
+    {
+      "id": "iron_shield",
+      "strategyKey": "bear_hunter_v5",
+      "symbol": "BTCUSDT",
+      "interval": "4h",
+      "weight": 0.3333333333,
+      "dataPath": "price-data/robust-lab/generated/operation-horizon-2026-02-15/BTCUSDT-4h.json",
+      "backtestSettingsOverrides": {
+        "tradeDirection": "short"
+      }
+    }
+  ],
+  "output": {
+    "outDirPrefix": "operation-horizon-phase9-portfolio",
+    "fileName": "horizon-portfolio-summary.json"
+  }
+}

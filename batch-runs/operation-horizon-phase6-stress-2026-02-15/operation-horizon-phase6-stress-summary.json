@@ -1,0 +1,78 @@
+{
+  "generatedAt": "2026-02-15T07:30:15.238Z",
+  "outDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-stress-2026-02-15",
+  "metaHarvestV3Gate": {
+    "bankerGate": {
+      "required": {
+        "minProfitFactor": 1.5,
+        "maxDrawdownPercent": 35
+      },
+      "observed": {
+        "medianProfitFactor": 2.8143636576927404,
+        "medianMaxDrawdownPercent": 11.585058063292472
+      },
+      "verdict": "PROMOTE"
+    },
+    "stretchGoal": {
+      "required": {
+        "minProfitFactor": 2.5
+      },
+      "observed": {
+        "medianProfitFactor": 2.8143636576927404
+      },
+      "verdict": "PASS"
+    }
+  },
+  "runs": [
+    {
+      "id": "eth-4h-meta_harvest_v3",
+      "strategyKey": "meta_harvest_v3",
+      "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\operation-horizon-2026-02-15\\ETHUSDT-4h.json",
+      "overallVerdict": "FAIL",
+      "oos70_30": {
+        "verdict": "FAIL",
+        "blindMedianNetProfitPercent": 80.58482105030352,
+        "blindMedianProfitFactor": 1.62566549554139,
+        "blindMedianMaxDrawdownPercent": 22.71156025427925
+      },
+      "walkForward3m1m": {
+        "verdict": "FAIL",
+        "netProfitPercent": -16.349800417428614,
+        "profitFactor": 0.36870364976468145,
+        "maxDrawdownPercent": 18.74794308095896
+      },
+      "feeSlippageSensitivity": {
+        "verdict": "FAIL",
+        "medianNetProfitPercent": 355.02412245954577,
+        "medianProfitFactor": 2.8143636576927404,
+        "medianMaxDrawdownPercent": 11.585058063292472
+      },
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-stress-2026-02-15\\eth-4h-meta_harvest_v3.json"
+    },
+    {
+      "id": "eth-1h-simple_regression_line",
+      "strategyKey": "simple_regression_line",
+      "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\operation-horizon-phase6-2026-02-15\\ETHUSDT-1h.json",
+      "overallVerdict": "FAIL",
+      "oos70_30": {
+        "verdict": "FAIL",
+        "blindMedianNetProfitPercent": 0,
+        "blindMedianProfitFactor": 0,
+        "blindMedianMaxDrawdownPercent": 0
+      },
+      "walkForward3m1m": {
+        "verdict": "PASS",
+        "netProfitPercent": 28.171356662405394,
+        "profitFactor": 2.149042805688602,
+        "maxDrawdownPercent": 15.71507463736919
+      },
+      "feeSlippageSensitivity": {
+        "verdict": "FAIL",
+        "medianNetProfitPercent": 0,
+        "medianProfitFactor": 0,
+        "medianMaxDrawdownPercent": 0
+      },
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-stress-2026-02-15\\eth-1h-simple_regression_line.json"
+    }
+  ]
+}

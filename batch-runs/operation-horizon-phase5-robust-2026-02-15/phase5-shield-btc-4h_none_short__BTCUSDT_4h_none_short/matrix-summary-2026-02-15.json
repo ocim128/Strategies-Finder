@@ -1,0 +1,194 @@
+{
+  "generatedAt": "2026-02-15T07:20:51.716Z",
+  "inputFiles": [
+    "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase5-robust-2026-02-15\\phase5-shield-btc-4h_none_short__BTCUSDT_4h_none_short\\run-seed-1337.txt",
+    "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase5-robust-2026-02-15\\phase5-shield-btc-4h_none_short__BTCUSDT_4h_none_short\\run-seed-7331.txt",
+    "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase5-robust-2026-02-15\\phase5-shield-btc-4h_none_short__BTCUSDT_4h_none_short\\run-seed-2026.txt",
+    "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase5-robust-2026-02-15\\phase5-shield-btc-4h_none_short__BTCUSDT_4h_none_short\\run-seed-4242.txt",
+    "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase5-robust-2026-02-15\\phase5-shield-btc-4h_none_short__BTCUSDT_4h_none_short\\run-seed-9001.txt"
+  ],
+  "recordCount": 5,
+  "cellCount": 1,
+  "warnings": {
+    "missingSeed": false,
+    "topResultsInference": false
+  },
+  "summary": {
+    "cells": [
+      {
+        "symbol": "BTCUSDT",
+        "strategyKey": "bear_hunter_v5",
+        "strategyName": "Bear Hunter v5",
+        "timeframe": "4h",
+        "tradeFilterMode": "none",
+        "tradeDirection": "short",
+        "runs": 5,
+        "seeds": [
+          1337,
+          2026,
+          4242,
+          7331,
+          9001
+        ],
+        "passCount": 5,
+        "failCount": 0,
+        "seedPassRate": 1,
+        "medianCellPassRate": 0.1318181818181818,
+        "medianRobustScore": 34.878884595922,
+        "medianTopDecileExpectancy": 335.6021792540645,
+        "medianFoldStabilityPenalty": 0.6734495008431677,
+        "medianDDBreachRate": 0,
+        "medianStageCSurvivors": 29,
+        "topFailReason": "",
+        "topRejectReason": "stage_a_non_positive_expectancy",
+        "failReasonCounts": {},
+        "rejectReasonCounts": {
+          "stage_a_non_positive_expectancy": 698,
+          "stage_b_unstable_fold_expectancy": 94,
+          "stage_b_non_positive_expectancy": 49,
+          "stage_a_low_trades": 36,
+          "stage_c_unstable_fold_expectancy": 31,
+          "stage_c_low_profitable_fold_ratio": 30,
+          "stage_c_non_positive_expectancy": 13,
+          "stage_b_high_combined_drawdown": 8,
+          "stage_c_low_oos_trades": 5,
+          "stage_b_low_oos_trades": 1,
+          "stage_c_high_combined_drawdown": 1
+        },
+        "rejectReasonCountsByStage": {
+          "A": 734,
+          "B": 152,
+          "C": 80,
+          "other": 0
+        },
+        "perSeed": [
+          {
+            "seed": 1337,
+            "decision": "PASS",
+            "decisionReason": "cell_pass",
+            "passRate": 0.15,
+            "robustScore": 39.41602797727223,
+            "stageCSurvivors": 33,
+            "ddBreachRate": 0,
+            "foldStabilityPenalty": 0.625063868939444,
+            "rejectionReasons": {
+              "stage_a_non_positive_expectancy": 139,
+              "stage_a_low_trades": 5,
+              "stage_b_unstable_fold_expectancy": 17,
+              "stage_b_non_positive_expectancy": 11,
+              "stage_c_non_positive_expectancy": 2,
+              "stage_c_unstable_fold_expectancy": 9,
+              "stage_c_low_profitable_fold_ratio": 4
+            }
+          },
+          {
+            "seed": 2026,
+            "decision": "PASS",
+            "decisionReason": "cell_pass",
+            "passRate": 0.13636363636363635,
+            "robustScore": 37.81105913253683,
+            "stageCSurvivors": 30,
+            "ddBreachRate": 0,
+            "foldStabilityPenalty": 0.5970257937826443,
+            "rejectionReasons": {
+              "stage_a_non_positive_expectancy": 135,
+              "stage_a_low_trades": 6,
+              "stage_b_unstable_fold_expectancy": 17,
+              "stage_b_non_positive_expectancy": 11,
+              "stage_b_high_combined_drawdown": 3,
+              "stage_c_low_profitable_fold_ratio": 8,
+              "stage_c_unstable_fold_expectancy": 5,
+              "stage_c_non_positive_expectancy": 4,
+              "stage_c_low_oos_trades": 1
+            }
+          },
+          {
+            "seed": 4242,
+            "decision": "PASS",
+            "decisionReason": "cell_pass",
+            "passRate": 0.09545454545454546,
+            "robustScore": 29.986421995175466,
+            "stageCSurvivors": 21,
+            "ddBreachRate": 0,
+            "foldStabilityPenalty": 1.2467919262654616,
+            "rejectionReasons": {
+              "stage_a_low_trades": 10,
+              "stage_a_non_positive_expectancy": 136,
+              "stage_b_unstable_fold_expectancy": 30,
+              "stage_b_non_positive_expectancy": 8,
+              "stage_b_high_combined_drawdown": 2,
+              "stage_c_non_positive_expectancy": 1,
+              "stage_c_low_profitable_fold_ratio": 5,
+              "stage_c_unstable_fold_expectancy": 6,
+              "stage_c_low_oos_trades": 1
+            }
+          },
+          {
+            "seed": 7331,
+            "decision": "PASS",
+            "decisionReason": "cell_pass",
+            "passRate": 0.1318181818181818,
+            "robustScore": 34.878884595922,
+            "stageCSurvivors": 29,
+            "ddBreachRate": 0,
+            "foldStabilityPenalty": 0.9103171687153269,
+            "rejectionReasons": {
+              "stage_a_non_positive_expectancy": 144,
+              "stage_a_low_trades": 8,
+              "stage_b_unstable_fold_expectancy": 16,
+              "stage_b_non_positive_expectancy": 8,
+              "stage_b_high_combined_drawdown": 2,
+              "stage_c_low_profitable_fold_ratio": 7,
+              "stage_c_non_positive_expectancy": 3,
+              "stage_c_unstable_fold_expectancy": 2,
+              "stage_c_low_oos_trades": 1
+            }
+          },
+          {
+            "seed": 9001,
+            "decision": "PASS",
+            "decisionReason": "cell_pass",
+            "passRate": 0.09545454545454546,
+            "robustScore": 34.13312778009028,
+            "stageCSurvivors": 21,
+            "ddBreachRate": 0,
+            "foldStabilityPenalty": 0.6734495008431677,
+            "rejectionReasons": {
+              "stage_a_non_positive_expectancy": 144,
+              "stage_a_low_trades": 7,
+              "stage_b_unstable_fold_expectancy": 14,
+              "stage_b_non_positive_expectancy": 11,
+              "stage_b_high_combined_drawdown": 1,
+              "stage_b_low_oos_trades": 1,
+              "stage_c_low_oos_trades": 2,
+              "stage_c_high_combined_drawdown": 1,
+              "stage_c_low_profitable_fold_ratio": 6,
+              "stage_c_unstable_fold_expectancy": 9,
+              "stage_c_non_positive_expectancy": 3
+            }
+          }
+        ]
+      }
+    ],
+    "globalFailDecisionReasonCounts": {},
+    "globalRejectReasonCounts": {
+      "stage_a_non_positive_expectancy": 698,
+      "stage_b_unstable_fold_expectancy": 94,
+      "stage_b_non_positive_expectancy": 49,
+      "stage_a_low_trades": 36,
+      "stage_c_unstable_fold_expectancy": 31,
+      "stage_c_low_profitable_fold_ratio": 30,
+      "stage_c_non_positive_expectancy": 13,
+      "stage_b_high_combined_drawdown": 8,
+      "stage_c_low_oos_trades": 5,
+      "stage_b_low_oos_trades": 1,
+      "stage_c_high_combined_drawdown": 1
+    },
+    "globalRejectReasonCountsByStage": {
+      "A": 734,
+      "B": 152,
+      "C": 80,
+      "other": 0
+    }
+  }
+}

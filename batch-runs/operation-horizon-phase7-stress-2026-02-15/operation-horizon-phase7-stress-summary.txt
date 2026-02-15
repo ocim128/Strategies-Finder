@@ -1,0 +1,5 @@
+Operation Horizon Phase 7 Stress Summary (2026-02-15T07:39:33.293Z)
+Volatility Compression Break v2 banker gate: HOLD
+  observed fee/slip median PF=0.00 DD=0.00%
+volatility_compression_break_v2 | overall=FAIL | oos=FAIL (net=0.00% PF=0.00 DD=0.00%) | wf=FAIL (net=11.82% PF=1.39 DD=22.33%) | fee=FAIL (net=0.00% PF=0.00 DD=0.00%)
+mtf_impulse_zone_reversal | overall=FAIL | oos=FAIL (net=0.00% PF=0.00 DD=0.00%) | wf=FAIL (net=-59.37% PF=0.18 DD=63.08%) | fee=FAIL (net=0.00% PF=0.00 DD=0.00%)

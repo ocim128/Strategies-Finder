@@ -1,0 +1,38 @@
+Overall Verdict: GO
+Policy | minSeedRuns=5 | minSeedPasses=3 | minPassRate=1.00% | minStageC=2.0 | maxDDBreach=20.00% | maxFoldVar=1.80
+
+Cell | Verdict | SeedPass | Runs | MedianPassRate | MedianStageC | MedianDDBreach | MedianFoldVar | TopFailReason | NoGoReasons
+---|---|---:|---:|---:|---:|---:|---:|---|---
+BTCUSDT:4h:bear_hunter_v5:none:short | GO | 5/5 | 5 | 13.18% | 29.0 | 0.00% | 0.673 | - | -
+ETHUSDT:1h:simple_regression_line:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:4h:meta_harvest_v3:none:both | GO | 3/5 | 5 | 2.27% | 5.0 | 0.00% | 0.799 | cell_low_stage_c_survivors | -
+
+No-Go Reason Counts
+Reason | Cells
+---|---:
+low_median_stage_c_pass_rate (Stage C pass rate too low) | 1
+low_median_stage_c_survivors (Stage C survivor density too low) | 1
+low_seed_pass_count (Seed pass rule failed) | 1
+
+Global FAIL Decision Reasons
+Reason | Count
+---|---:
+cell_low_stage_c_survivors | 7
+
+Global Stage Reject Reasons
+Reason | Count
+---|---:
+stage_a_low_trades | 1451
+stage_a_non_positive_expectancy | 1027
+stage_b_high_combined_drawdown | 154
+stage_b_non_positive_expectancy | 114
+stage_b_unstable_fold_expectancy | 114
+stage_a_high_drawdown | 76
+stage_c_unstable_fold_expectancy | 48
+stage_c_high_combined_drawdown | 46
+stage_c_low_profitable_fold_ratio | 40
+stage_b_high_window_dd_breach_rate | 33
+stage_c_high_window_dd_breach_rate | 20
+stage_c_non_positive_expectancy | 16
+stage_c_low_oos_trades | 7
+stage_b_low_oos_trades | 1

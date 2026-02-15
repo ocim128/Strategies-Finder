@@ -1,0 +1,40 @@
+Overall Verdict: GO
+Policy | minSeedRuns=5 | minSeedPasses=3 | minPassRate=1.00% | minStageC=2.0 | maxDDBreach=20.00% | maxFoldVar=1.80
+
+Cell | Verdict | SeedPass | Runs | MedianPassRate | MedianStageC | MedianDDBreach | MedianFoldVar | TopFailReason | NoGoReasons
+---|---|---:|---:|---:|---:|---:|---:|---|---
+BTCUSDT:4h:bear_hunter_v5:none:short | GO | 5/5 | 5 | 13.18% | 29.0 | 0.00% | 0.673 | - | -
+ETHUSDT:4h:meta_harvest_v2:none:both | GO | 4/5 | 5 | 1.36% | 3.0 | 16.67% | 0.856 | cell_low_pass_rate | -
+ETHUSDT:4h:bear_hunter_v5:none:short | NO_GO | 0/5 | 5 | 0.45% | 1.0 | 0.00% | 0.603 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:1h:adaptive_supertrend_kmeans:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+
+No-Go Reason Counts
+Reason | Cells
+---|---:
+low_median_stage_c_pass_rate (Stage C pass rate too low) | 2
+low_median_stage_c_survivors (Stage C survivor density too low) | 2
+low_seed_pass_count (Seed pass rule failed) | 2
+
+Global FAIL Decision Reasons
+Reason | Count
+---|---:
+cell_low_stage_c_survivors | 9
+cell_low_pass_rate | 2
+
+Global Stage Reject Reasons
+Reason | Count
+---|---:
+stage_a_non_positive_expectancy | 2070
+stage_a_low_trades | 921
+stage_b_non_positive_expectancy | 404
+stage_a_high_drawdown | 218
+stage_b_unstable_fold_expectancy | 171
+stage_b_high_combined_drawdown | 142
+stage_b_low_oos_trades | 71
+stage_b_high_window_dd_breach_rate | 62
+stage_c_high_combined_drawdown | 46
+stage_c_unstable_fold_expectancy | 40
+stage_c_low_profitable_fold_ratio | 38
+stage_c_high_window_dd_breach_rate | 35
+stage_c_non_positive_expectancy | 16
+stage_c_low_oos_trades | 12

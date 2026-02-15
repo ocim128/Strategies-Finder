@@ -1,0 +1,5 @@
+Operation Horizon Phase 5 Stress Summary (2026-02-15T07:22:14.227Z)
+Bear Hunter v5 promotion gate: PROMOTE
+  observed fee/slip median PF=4.56 DD=10.52%
+bear_hunter_v5 | overall=FAIL | oos=FAIL (net=0.00% PF=0.00 DD=0.00%) | wf=FAIL (net=-22.59% PF=0.58 DD=28.22%) | fee=PASS (net=93.61% PF=4.56 DD=10.52%)
+meta_harvest_v2 | overall=FAIL | oos=FAIL (net=114.46% PF=2.12 DD=26.15%) | wf=FAIL (net=-4.30% PF=0.87 DD=25.27%) | fee=PASS (net=351.64% PF=1.94 DD=25.94%)

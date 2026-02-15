@@ -1,0 +1,42 @@
+Overall Verdict: GO
+Policy | minSeedRuns=5 | minSeedPasses=3 | minPassRate=1.00% | minStageC=2.0 | maxDDBreach=20.00% | maxFoldVar=1.80
+
+Cell | Verdict | SeedPass | Runs | MedianPassRate | MedianStageC | MedianDDBreach | MedianFoldVar | TopFailReason | NoGoReasons
+---|---|---:|---:|---:|---:|---:|---:|---|---
+ADAUSDT:4h:dynamic_vix_regime_iron_core:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+BTCUSDT:4h:bear_hunter_v1:none:short | GO | 4/5 | 5 | 4.17% | 5.0 | 0.00% | 0.983 | cell_low_stage_c_survivors | -
+DOGEUSDT:4h:dynamic_vix_regime_iron_core:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:15m:failed_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+ETHUSDT:4h:bear_hunter_v1:none:short | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:15m:failed_breakout:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+XRPUSDT:4h:dynamic_vix_regime_iron_core:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+
+No-Go Reason Counts
+Reason | Cells
+---|---:
+low_median_stage_c_pass_rate (Stage C pass rate too low) | 6
+low_median_stage_c_survivors (Stage C survivor density too low) | 6
+low_seed_pass_count (Seed pass rule failed) | 6
+
+Global FAIL Decision Reasons
+Reason | Count
+---|---:
+cell_low_stage_c_survivors | 31
+
+Global Stage Reject Reasons
+Reason | Count
+---|---:
+stage_a_non_positive_expectancy | 2083
+stage_a_low_trades | 641
+stage_b_low_oos_trades | 322
+stage_b_high_window_dd_breach_rate | 312
+stage_b_non_positive_expectancy | 308
+stage_b_high_combined_drawdown | 305
+stage_a_high_drawdown | 129
+stage_c_high_window_dd_breach_rate | 22
+stage_b_unstable_fold_expectancy | 15
+stage_c_unstable_fold_expectancy | 15
+stage_c_non_positive_expectancy | 11
+stage_c_low_profitable_fold_ratio | 10
+stage_c_high_combined_drawdown | 5
+stage_c_low_oos_trades | 2

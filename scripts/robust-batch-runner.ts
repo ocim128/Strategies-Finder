@@ -12,6 +12,7 @@ import type {
     BacktestSettings,
     OHLCVData,
     Time,
+    Strategy,
     StrategyParams,
     TradeDirection,
     TradeFilterMode,
@@ -32,6 +33,7 @@ type BatchCellConfig = {
     symbol?: string;
     interval?: string;
     strategyKeys?: string[];
+    strategyParams?: Record<string, StrategyParams>;
     tradeFilterModes?: TradeFilterMode[];
     tradeDirections?: TradeDirection[];
 };
@@ -90,6 +92,7 @@ type EffectiveTask = {
     symbol: string;
     interval: string;
     strategyKeys: string[];
+    strategyParams?: Record<string, StrategyParams>;
     tradeFilterMode: TradeFilterMode;
     tradeDirection: TradeDirection;
 };
@@ -347,17 +350,58 @@ function resolveStrategyKeys(raw: BatchConfig, overrides: CliOverrides): string[
     throw new Error("No strategy keys provided. Set strategyKeys or pass --strategy.");
 }
 
-function resolveSelectedStrategies(strategyKeys: string[]): FinderSelectedStrategy[] {
+function normalizeStrategyParamsMap(raw: unknown, context: string): Record<string, StrategyParams> | undefined {
+    if (raw === undefined || raw === null) return undefined;
+    if (!isObject(raw)) {
+        throw new Error(`${context} must be an object keyed by strategy key.`);
+    }
+
+    const out: Record<string, StrategyParams> = {};
+    for (const [strategyKey, value] of Object.entries(raw)) {
+        if (!isObject(value)) {
+            throw new Error(`${context}.${strategyKey} must be an object of numeric params.`);
+        }
+        const params: StrategyParams = {};
+        for (const [paramKey, paramValue] of Object.entries(value)) {
+            const asNumber = Number(paramValue);
+            if (!Number.isFinite(asNumber)) {
+                throw new Error(`${context}.${strategyKey}.${paramKey} must be numeric.`);
+            }
+            params[paramKey] = asNumber;
+        }
+        out[strategyKey] = params;
+    }
+    return out;
+}
+
+function resolveSelectedStrategies(
+    strategyKeys: string[],
+    strategyParams?: Record<string, StrategyParams>
+): FinderSelectedStrategy[] {
     const resolved: FinderSelectedStrategy[] = [];
     const missing: string[] = [];
 
     for (const key of strategyKeys) {
-        const strategy = strategies[key];
-        if (!strategy) {
+        const baseStrategy = strategies[key];
+        if (!baseStrategy) {
             missing.push(key);
             continue;
         }
-        resolved.push({ key, name: strategy.name, strategy });
+
+        const paramOverride = strategyParams?.[key];
+        if (paramOverride && Object.keys(paramOverride).length > 0) {
+            const strategy: Strategy = {
+                ...baseStrategy,
+                defaultParams: {
+                    ...baseStrategy.defaultParams,
+                    ...paramOverride,
+                },
+            };
+            resolved.push({ key, name: strategy.name, strategy });
+            continue;
+        }
+
+        resolved.push({ key, name: baseStrategy.name, strategy: baseStrategy });
     }
 
     if (missing.length > 0) {
@@ -402,6 +446,10 @@ function resolveConfig(rawConfig: BatchConfig, overrides: CliOverrides): Effecti
         const perRowStrategies = Array.isArray(row.strategyKeys) && row.strategyKeys.length > 0
             ? row.strategyKeys
             : globalStrategyKeys;
+        const perRowStrategyParams = normalizeStrategyParamsMap(
+            (row as { strategyParams?: unknown }).strategyParams,
+            `matrix[${i}].strategyParams`
+        );
         const filters = normalizeTradeFilterModes(row.tradeFilterModes, globalFilters);
         const directions = normalizeTradeDirections(row.tradeDirections, globalDirections);
 
@@ -414,6 +462,7 @@ function resolveConfig(rawConfig: BatchConfig, overrides: CliOverrides): Effecti
                     symbol: String(row.symbol ?? "").trim() || "",
                     interval: String(row.interval ?? "").trim() || "",
                     strategyKeys: perRowStrategies,
+                    strategyParams: perRowStrategyParams,
                     tradeFilterMode,
                     tradeDirection,
                 });
@@ -624,7 +673,7 @@ async function main(): Promise<void> {
         const symbol = task.symbol || loaded.symbol || "UNKNOWN";
         const interval = task.interval || loaded.interval || "UNKNOWN";
         const runTask: EffectiveTask = { ...task, symbol, interval };
-        const strategySelection = resolveSelectedStrategies(runTask.strategyKeys);
+        const strategySelection = resolveSelectedStrategies(runTask.strategyKeys, runTask.strategyParams);
 
         const settingsForTask: BacktestSettings = {
             ...cfg.baseBacktestSettings,
@@ -712,6 +761,7 @@ async function main(): Promise<void> {
             tradeFilterMode: taskRun.task.tradeFilterMode,
             tradeDirection: taskRun.task.tradeDirection,
             strategyKeys: taskRun.task.strategyKeys,
+            strategyParams: taskRun.task.strategyParams ?? null,
             runDir: taskRun.runDir,
             runFiles: taskRun.runFiles,
             summaryJsonPath: taskRun.summaryJsonPath ?? null,

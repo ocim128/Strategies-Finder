@@ -41,6 +41,7 @@ export function prepareSignals(
                     price: exitPrice,
                     triggerPrice: signal.price,
                     reason: signal.reason,
+                    sizeFraction: signal.sizeFraction,
                     order
                 });
                 return;
@@ -68,6 +69,7 @@ export function prepareSignals(
                 price: entryPrice,
                 triggerPrice: signal.price,
                 reason: signal.reason,
+                sizeFraction: signal.sizeFraction,
                 order
             });
             return;
@@ -96,6 +98,7 @@ export function prepareSignals(
             price: entryPrice,
             triggerPrice: signal.price,
             reason: signal.reason,
+            sizeFraction: signal.sizeFraction,
             order
         });
     });

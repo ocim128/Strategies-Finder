@@ -1,0 +1,69 @@
+{
+  "generatedAt": "2026-02-15T07:39:33.293Z",
+  "outDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase7-stress-2026-02-15",
+  "volatilityCompressionV2Gate": {
+    "bankerGate": {
+      "required": {
+        "minProfitFactor": 1.5,
+        "maxDrawdownPercent": 35
+      },
+      "observed": {
+        "medianProfitFactor": 0,
+        "medianMaxDrawdownPercent": 0
+      },
+      "verdict": "HOLD"
+    }
+  },
+  "runs": [
+    {
+      "id": "sol-15m-volatility_compression_break_v2",
+      "strategyKey": "volatility_compression_break_v2",
+      "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\operation-horizon-2026-02-15\\SOLUSDT-15m.json",
+      "overallVerdict": "FAIL",
+      "oos70_30": {
+        "verdict": "FAIL",
+        "blindMedianNetProfitPercent": 0,
+        "blindMedianProfitFactor": 0,
+        "blindMedianMaxDrawdownPercent": 0
+      },
+      "walkForward3m1m": {
+        "verdict": "FAIL",
+        "netProfitPercent": 11.81704350803666,
+        "profitFactor": 1.3869319988995084,
+        "maxDrawdownPercent": 22.329688250339483
+      },
+      "feeSlippageSensitivity": {
+        "verdict": "FAIL",
+        "medianNetProfitPercent": 0,
+        "medianProfitFactor": 0,
+        "medianMaxDrawdownPercent": 0
+      },
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase7-stress-2026-02-15\\sol-15m-volatility_compression_break_v2.json"
+    },
+    {
+      "id": "eth-1h-mtf_impulse_zone_reversal",
+      "strategyKey": "mtf_impulse_zone_reversal",
+      "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\operation-horizon-phase7-2026-02-15\\ETHUSDT-1h.json",
+      "overallVerdict": "FAIL",
+      "oos70_30": {
+        "verdict": "FAIL",
+        "blindMedianNetProfitPercent": 0,
+        "blindMedianProfitFactor": 0,
+        "blindMedianMaxDrawdownPercent": 0
+      },
+      "walkForward3m1m": {
+        "verdict": "FAIL",
+        "netProfitPercent": -59.370791856381985,
+        "profitFactor": 0.179856892880489,
+        "maxDrawdownPercent": 63.079274792180264
+      },
+      "feeSlippageSensitivity": {
+        "verdict": "FAIL",
+        "medianNetProfitPercent": 0,
+        "medianProfitFactor": 0,
+        "medianMaxDrawdownPercent": 0
+      },
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase7-stress-2026-02-15\\eth-1h-mtf_impulse_zone_reversal.json"
+    }
+  ]
+}

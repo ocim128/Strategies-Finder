@@ -1,0 +1,6 @@
+Operation Horizon Phase 6 Stress Summary (2026-02-15T07:30:15.239Z)
+Meta Harvest v3 banker gate: PROMOTE
+  observed fee/slip median PF=2.81 DD=11.59%
+Meta Harvest v3 stretch PF>2.5: PASS
+meta_harvest_v3 | overall=FAIL | oos=FAIL (net=80.58% PF=1.63 DD=22.71%) | wf=FAIL (net=-16.35% PF=0.37 DD=18.75%) | fee=FAIL (net=355.02% PF=2.81 DD=11.59%)
+simple_regression_line | overall=FAIL | oos=FAIL (net=0.00% PF=0.00 DD=0.00%) | wf=PASS (net=28.17% PF=2.15 DD=15.72%) | fee=FAIL (net=0.00% PF=0.00 DD=0.00%)

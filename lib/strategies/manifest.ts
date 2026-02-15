@@ -10,6 +10,12 @@ import { failed_breakout } from "./lib/failed_breakout";
 import { long_short_harvest } from "./lib/long-short-harvest";
 import { dynamic_vix_regime } from "./lib/dynamic-vix-regime";
 import { dynamic_vix_regime_iron_core } from "./lib/dynamic-vix-regime-iron-core";
+import { bear_hunter_v1 } from "./lib/bear_hunter_v1";
+import { bear_hunter_v2 } from "./lib/bear_hunter_v2";
+import { bear_hunter_v3 } from "./lib/bear_hunter_v3";
+import { bear_hunter_v4 } from "./lib/bear_hunter_v4";
+import { bear_hunter_v5 } from "./lib/bear_hunter_v5";
+import { asian_session_breakout_v2 } from "./lib/asian_session_breakout_v2";
 import { btc_queen_v1 } from "./lib/btc_queen_v1";
 import { dynamic_vix_regime_finder } from "./lib/dynamic-vix-regime-finder";
 import { drawdown_regime_gate } from "./lib/drawdown-regime-gate";
@@ -20,6 +26,7 @@ import { adx_atr_no_trade_zone } from "./lib/adx-atr-no-trade-zone";
 import { simple_regression_line } from "./lib/simple-regression-line";
 import { sol_queen_v1 } from "./lib/sol_queen_v1";
 import { volatility_compression_break } from "./lib/volatility-compression-break";
+import { volatility_compression_break_v2 } from "./lib/volatility_compression_break_v2";
 import { gap_fail_reversal } from "./lib/gap-fail-reversal";
 import { exhaustion_spike_pullback } from "./lib/exhaustion-spike-pullback";
 import { session_open_fakeout } from "./lib/session-open-fakeout";
@@ -33,8 +40,10 @@ import { volatility_compression_trigger } from "./lib/volatility-compression-tri
 import { time_weighted_mean_reversion } from "./lib/time-weighted-mean-reversion";
 import { meta_harvest_v1 } from "./lib/meta_harvest_v1";
 import { meta_harvest_v2 } from "./lib/meta_harvest_v2";
+import { meta_harvest_v3 } from "./lib/meta_harvest_v3";
 import { meta_harvest_v2_1 } from "./lib/meta_harvest_v2_1";
 import { meta_harvest_v2_2 } from "./lib/meta_harvest_v2_2";
+import { liquidity_sweep_reclaim_v1 } from "./lib/liquidity_sweep_reclaim_v1";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -54,6 +63,12 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "long_short_harvest", strategy: long_short_harvest },
     { key: "dynamic_vix_regime", strategy: dynamic_vix_regime },
     { key: "dynamic_vix_regime_iron_core", strategy: dynamic_vix_regime_iron_core },
+    { key: "bear_hunter_v1", strategy: bear_hunter_v1 },
+    { key: "bear_hunter_v2", strategy: bear_hunter_v2 },
+    { key: "bear_hunter_v3", strategy: bear_hunter_v3 },
+    { key: "bear_hunter_v4", strategy: bear_hunter_v4 },
+    { key: "bear_hunter_v5", strategy: bear_hunter_v5 },
+    { key: "asian_session_breakout_v2", strategy: asian_session_breakout_v2 },
     { key: "btc_queen_v1", strategy: btc_queen_v1, assets: ["BTC"] },
     { key: "dynamic_vix_regime_finder", strategy: dynamic_vix_regime_finder },
     { key: "drawdown_regime_gate", strategy: drawdown_regime_gate },
@@ -64,6 +79,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "simple_regression_line", strategy: simple_regression_line },
     { key: "sol_queen_v1", strategy: sol_queen_v1, assets: ["SOL"] },
     { key: "volatility_compression_break", strategy: volatility_compression_break },
+    { key: "volatility_compression_break_v2", strategy: volatility_compression_break_v2 },
     { key: "gap_fail_reversal", strategy: gap_fail_reversal },
     { key: "exhaustion_spike_pullback", strategy: exhaustion_spike_pullback },
     { key: "session_open_fakeout", strategy: session_open_fakeout },
@@ -77,8 +93,10 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "time_weighted_mean_reversion", strategy: time_weighted_mean_reversion },
     { key: "meta_harvest_v1", strategy: meta_harvest_v1 },
     { key: "meta_harvest_v2", strategy: meta_harvest_v2 },
+    { key: "meta_harvest_v3", strategy: meta_harvest_v3 },
     { key: "meta_harvest_v2_1", strategy: meta_harvest_v2_1 },
     { key: "meta_harvest_v2_2", strategy: meta_harvest_v2_2 },
+    { key: "liquidity_sweep_reclaim_v1", strategy: liquidity_sweep_reclaim_v1 },
 ];
 
 export function createStrategiesRecordFromManifest(

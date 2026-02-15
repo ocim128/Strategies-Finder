@@ -1,0 +1,87 @@
+{
+  "strategyKeys": [
+    "bear_hunter_v3",
+    "asian_session_breakout_v2",
+    "mean_reversion_zscore"
+  ],
+  "seeds": [1337, 7331, 2026, 4242, 9001],
+  "finder": {
+    "rangePercent": 35,
+    "maxRuns": 220,
+    "steps": 4,
+    "topN": 16,
+    "minTrades": 40
+  },
+  "tradeFilterModes": ["none"],
+  "tradeDirections": ["both"],
+  "backtestSettings": {
+    "tradeFilterMode": "none",
+    "tradeDirection": "both",
+    "executionModel": "next_open",
+    "allowSameBarExit": false,
+    "slippageBps": 5
+  },
+  "capital": {
+    "initialCapital": 10000,
+    "positionSize": 100,
+    "commission": 0.1,
+    "sizingMode": "percent",
+    "fixedTradeAmount": 1000
+  },
+  "reportPolicy": {
+    "minSeedRuns": 5,
+    "minSeedPasses": 3,
+    "minMedianCellPassRate": 0.01,
+    "minMedianStageCSurvivors": 2,
+    "maxMedianDDBreachRate": 0.2,
+    "maxMedianFoldStabilityPenalty": 1.8
+  },
+  "output": {
+    "outDir": "batch-runs/operation-horizon-phase3-robust-2026-02-15",
+    "filePrefix": "run-seed",
+    "writePerCellJsonSummary": true,
+    "writePerCellJsonReport": true,
+    "writePerCellTableReport": false,
+    "writeBatchJsonSummary": true,
+    "writeBatchJsonReport": true,
+    "writeBatchTableReport": true
+  },
+  "matrix": [
+    {
+      "label": "phase3-shield-btc-4h",
+      "enabled": true,
+      "dataPath": "price-data/robust-lab/generated/operation-horizon-2026-02-15/BTCUSDT-4h.json",
+      "symbol": "BTCUSDT",
+      "interval": "4h",
+      "strategyKeys": ["bear_hunter_v3"],
+      "tradeDirections": ["short"]
+    },
+    {
+      "label": "phase3-shield-eth-4h",
+      "enabled": true,
+      "dataPath": "price-data/robust-lab/generated/operation-horizon-2026-02-15/ETHUSDT-4h.json",
+      "symbol": "ETHUSDT",
+      "interval": "4h",
+      "strategyKeys": ["bear_hunter_v3"],
+      "tradeDirections": ["short"]
+    },
+    {
+      "label": "phase3-scalper-sol-15m",
+      "enabled": true,
+      "dataPath": "price-data/robust-lab/generated/operation-horizon-2026-02-15/SOLUSDT-15m.json",
+      "symbol": "SOLUSDT",
+      "interval": "15m",
+      "strategyKeys": ["asian_session_breakout_v2"],
+      "tradeDirections": ["both"]
+    },
+    {
+      "label": "phase3-exotic-eth-4h",
+      "enabled": true,
+      "dataPath": "price-data/robust-lab/generated/operation-horizon-2026-02-15/ETHUSDT-4h.json",
+      "symbol": "ETHUSDT",
+      "interval": "4h",
+      "strategyKeys": ["mean_reversion_zscore"],
+      "tradeDirections": ["both"]
+    }
+  ]
+}

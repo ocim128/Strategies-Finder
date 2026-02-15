@@ -1,0 +1,32 @@
+Overall Verdict: NO_GO
+Policy | minSeedRuns=5 | minSeedPasses=3 | minPassRate=1.00% | minStageC=2.0 | maxDDBreach=20.00% | maxFoldVar=1.80
+
+Cell | Verdict | SeedPass | Runs | MedianPassRate | MedianStageC | MedianDDBreach | MedianFoldVar | TopFailReason | NoGoReasons
+---|---|---:|---:|---:|---:|---:|---:|---|---
+ETHUSDT:1h:mtf_impulse_zone_reversal:none:both | NO_GO | 0/5 | 5 | 0.00% | 0.0 | 0.00% | 0.000 | cell_low_stage_c_survivors | low_seed_pass_count,low_median_stage_c_survivors,low_median_stage_c_pass_rate
+SOLUSDT:15m:volatility_compression_break_v2:none:both | NO_GO | 0/5 | 5 | 0.91% | 2.0 | 0.00% | 1.701 | cell_low_pass_rate | low_seed_pass_count,low_median_stage_c_pass_rate
+
+No-Go Reason Counts
+Reason | Cells
+---|---:
+low_median_stage_c_pass_rate (Stage C pass rate too low) | 2
+low_seed_pass_count (Seed pass rule failed) | 2
+low_median_stage_c_survivors (Stage C survivor density too low) | 1
+
+Global FAIL Decision Reasons
+Reason | Count
+---|---:
+cell_low_stage_c_survivors | 7
+cell_low_pass_rate | 3
+
+Global Stage Reject Reasons
+Reason | Count
+---|---:
+stage_a_non_positive_expectancy | 1113
+stage_a_low_trades | 618
+stage_b_non_positive_expectancy | 283
+stage_b_unstable_fold_expectancy | 114
+stage_c_low_profitable_fold_ratio | 21
+stage_c_non_positive_expectancy | 17
+stage_c_unstable_fold_expectancy | 17
+stage_c_low_oos_trades | 10

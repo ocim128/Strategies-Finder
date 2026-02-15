@@ -394,8 +394,15 @@ export function runBacktestCompact(
                 } else if (signal.type === directionToSignalType(position.direction === 'long' ? 'short' : 'long') && (config.allowSameBarExit || compareTime(signal.time, position.entryTime) !== 0)) {
                     // Signal exit
                     const exitPrice = signal.price;
-                    recordExit(exitPrice, position.size);
-                    if (tradeDirection === 'both') {
+                    const exitFractionRaw = Number.isFinite(signal.sizeFraction as number) ? Number(signal.sizeFraction) : 1;
+                    const exitFraction = Math.max(0, Math.min(1, exitFractionRaw));
+                    const exitSize = position.size * exitFraction;
+                    if (exitSize <= 0) {
+                        continue;
+                    }
+                    const wasPartial = exitFraction < 1;
+                    recordExit(exitPrice, exitSize);
+                    if (!position && tradeDirection === 'both' && !wasPartial) {
                         const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
                         if (opened) {
                             position = opened.nextPosition;
@@ -533,14 +540,24 @@ export function runBacktest(
                         }
                     }
                 } else if (signal.type === directionToSignalType(position.direction === 'long' ? 'short' : 'long') && (config.allowSameBarExit || compareTime(signal.time, position.entryTime) !== 0)) {
-                    const details = calculateTradeExitDetails(position, signal.price, position.size, commissionRate);
+                    const exitFractionRaw = Number.isFinite(signal.sizeFraction as number) ? Number(signal.sizeFraction) : 1;
+                    const exitFraction = Math.max(0, Math.min(1, exitFractionRaw));
+                    const exitSize = position.size * exitFraction;
+                    if (exitSize <= 0) {
+                        continue;
+                    }
+                    const details = calculateTradeExitDetails(position, signal.price, exitSize, commissionRate);
                     capital += details.rawPnl - details.commission;
                     const sigTrade: Trade = { id: ++tradeId, type: position.direction, entryTime: position.entryTime, entryPrice: position.entryPrice, exitTime: candle.time, exitPrice: signal.price, pnl: details.totalPnl, pnlPercent: details.pnlPercent, size: details.size, fees: details.fees, exitReason: 'signal' };
                     if (currentSnapshot) sigTrade.entrySnapshot = currentSnapshot;
                     trades.push(sigTrade);
-                    position = null;
-                    currentSnapshot = null;
-                    if (tradeDirection === 'both') {
+                    position.size -= details.size;
+                    const fullyClosed = position.size <= 0;
+                    if (fullyClosed) {
+                        position = null;
+                        currentSnapshot = null;
+                    }
+                    if (fullyClosed && tradeDirection === 'both' && exitFraction >= 1) {
                         const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
                         if (opened) {
                             position = opened.nextPosition;

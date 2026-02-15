@@ -1,0 +1,21 @@
+﻿{
+    "generatedAt":  "2026-02-15T14:53:15.5009559+07:00",
+    "source":  "horizon-portfolio-summary.json",
+    "scenario":  "25pct_cash_buffer_plus_trinity_25_each",
+    "allocation":  {
+                       "cash":  0.25,
+                       "sol_queen_v1":  0.25,
+                       "btc_queen_v1":  0.25,
+                       "bear_hunter_v5":  0.25
+                   },
+    "metrics":  {
+                    "netProfitPercent":  44.449537454841192,
+                    "maxDrawdownPercent":  24.587273765524863,
+                    "finalEquity":  14444.953745484119
+                },
+    "missionGate":  {
+                        "maxDrawdownPercentLt":  15,
+                        "netProfitPercentGt":  200,
+                        "pass":  false
+                    }
+}

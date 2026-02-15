@@ -38,12 +38,37 @@ export function hasNullValues(arrays: (number | null)[][], index: number): boole
     return false;
 }
 
-function createSignal(data: OHLCVData[], index: number, type: 'buy' | 'sell', reason: string): Signal {
-    return { time: data[index].time, type, price: data[index].close, reason, barIndex: index };
+function createSignal(
+    data: OHLCVData[],
+    index: number,
+    type: 'buy' | 'sell',
+    reason: string,
+    sizeFraction?: number
+): Signal {
+    const signal: Signal = { time: data[index].time, type, price: data[index].close, reason, barIndex: index };
+    if (Number.isFinite(sizeFraction as number)) {
+        const normalized = Math.max(0, Math.min(1, Number(sizeFraction)));
+        if (normalized > 0 && normalized < 1) {
+            signal.sizeFraction = normalized;
+        } else if (normalized === 1) {
+            signal.sizeFraction = 1;
+        }
+    }
+    return signal;
 }
 
-export const createBuySignal = (data: OHLCVData[], index: number, reason: string): Signal => createSignal(data, index, 'buy', reason);
-export const createSellSignal = (data: OHLCVData[], index: number, reason: string): Signal => createSignal(data, index, 'sell', reason);
+export const createBuySignal = (
+    data: OHLCVData[],
+    index: number,
+    reason: string,
+    sizeFraction?: number
+): Signal => createSignal(data, index, 'buy', reason, sizeFraction);
+export const createSellSignal = (
+    data: OHLCVData[],
+    index: number,
+    reason: string,
+    sizeFraction?: number
+): Signal => createSignal(data, index, 'sell', reason, sizeFraction);
 
 /**
  * Helper to cross-check two arrays (e.g. Fast vs Slow MA).

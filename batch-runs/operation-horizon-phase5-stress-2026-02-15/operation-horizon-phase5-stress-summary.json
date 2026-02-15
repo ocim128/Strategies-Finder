@@ -1,0 +1,68 @@
+{
+  "generatedAt": "2026-02-15T07:22:14.226Z",
+  "outDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase5-stress-2026-02-15",
+  "promotionGate": {
+    "strategyKey": "bear_hunter_v5",
+    "required": {
+      "minProfitFactor": 1.5,
+      "maxDrawdownPercent": 35
+    },
+    "observed": {
+      "medianProfitFactor": 4.558947025724676,
+      "medianMaxDrawdownPercent": 10.517254445220171
+    },
+    "verdict": "PROMOTE"
+  },
+  "runs": [
+    {
+      "id": "btc-4h-bear_hunter_v5",
+      "strategyKey": "bear_hunter_v5",
+      "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\operation-horizon-2026-02-15\\BTCUSDT-4h.json",
+      "overallVerdict": "FAIL",
+      "oos70_30": {
+        "verdict": "FAIL",
+        "blindMedianNetProfitPercent": 0,
+        "blindMedianProfitFactor": 0,
+        "blindMedianMaxDrawdownPercent": 0
+      },
+      "walkForward3m1m": {
+        "verdict": "FAIL",
+        "netProfitPercent": -22.588860052569043,
+        "profitFactor": 0.5801055160452286,
+        "maxDrawdownPercent": 28.218304470605794
+      },
+      "feeSlippageSensitivity": {
+        "verdict": "PASS",
+        "medianNetProfitPercent": 93.61127538613985,
+        "medianProfitFactor": 4.558947025724676,
+        "medianMaxDrawdownPercent": 10.517254445220171
+      },
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase5-stress-2026-02-15\\btc-4h-bear_hunter_v5.json"
+    },
+    {
+      "id": "eth-4h-meta_harvest_v2",
+      "strategyKey": "meta_harvest_v2",
+      "dataPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\robust-lab\\generated\\operation-horizon-2026-02-15\\ETHUSDT-4h.json",
+      "overallVerdict": "FAIL",
+      "oos70_30": {
+        "verdict": "FAIL",
+        "blindMedianNetProfitPercent": 114.46456358861974,
+        "blindMedianProfitFactor": 2.116516766837934,
+        "blindMedianMaxDrawdownPercent": 26.15020011696482
+      },
+      "walkForward3m1m": {
+        "verdict": "FAIL",
+        "netProfitPercent": -4.299425364054259,
+        "profitFactor": 0.870783033890252,
+        "maxDrawdownPercent": 25.26644129389833
+      },
+      "feeSlippageSensitivity": {
+        "verdict": "PASS",
+        "medianNetProfitPercent": 351.6398934431127,
+        "medianProfitFactor": 1.9428629346597135,
+        "medianMaxDrawdownPercent": 25.94487414140679
+      },
+      "reportPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase5-stress-2026-02-15\\eth-4h-meta_harvest_v2.json"
+    }
+  ]
+}

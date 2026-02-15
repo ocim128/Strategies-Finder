@@ -323,6 +323,11 @@ export interface Signal {
     reason?: string;
     /** Optional bar index to align execution timing in backtests/replay. */
     barIndex?: number;
+    /**
+     * Optional exit size fraction (0..1] for signal-driven exits.
+     * Omitted means full exit.
+     */
+    sizeFraction?: number;
 }
 
 export interface EntryStats {

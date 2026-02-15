@@ -10,6 +10,19 @@ This document is the single source of truth for the Twin Towers production profi
 
 No parameter drift is allowed without a new Constitution revision.
 
+## Final Determination (Operation Horizon)
+Status: `CONCLUDED`  
+Outcome: `Twin Towers are the proven peak.`
+
+Portfolio evidence:
+- Twin Towers (baseline): Max Drawdown `19.21%`, Net Profit `274.35%`
+- Trinity (+ Bear Hunter): Max Drawdown `28.51%`, Net Profit `59.27%`
+- Quad (+ Meta Harvest): Max Drawdown `30.54%`, Net Profit `23.07%`
+
+Conclusion:
+- Adding hedges/diversifiers degraded stability and returns relative to the Twin Towers baseline.
+- The empire is locked to the two Queen strategies only.
+
 ## Iron Core: SOL Queen v1 (Locked)
 Strategy key: `sol_queen_v1`  
 Asset scope: `SOL`  
@@ -100,6 +113,16 @@ Portfolio benchmark:
 - Combined Max Drawdown: `19.21%`
 
 These values define the accepted baseline for this Constitution revision.
+
+## Strategic Scope (Locked)
+Allowed focus:
+- Backtest engine speed and reliability.
+- Execution logic quality for the Queen strategies.
+- Data/infra robustness and reproducibility.
+
+Disallowed focus:
+- Adding new production pillars.
+- Diluting allocation with experimental hedges/diversifiers without a new constitutional rewrite.
 
 ## Refreeze Policy
 No edits are allowed to:

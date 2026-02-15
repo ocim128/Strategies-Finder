@@ -1,0 +1,88 @@
+{
+  "generatedAt": "2026-02-15T07:29:11.840Z",
+  "configPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\scripts\\robust-batch-config.operation-horizon-phase6-2026-02-15.json",
+  "taskCount": 3,
+  "seedCount": 5,
+  "tasks": [
+    {
+      "label": "phase6-shield-btc-4h:none:short",
+      "symbol": "BTCUSDT",
+      "interval": "4h",
+      "tradeFilterMode": "none",
+      "tradeDirection": "short",
+      "strategyKeys": [
+        "bear_hunter_v5"
+      ],
+      "strategyParams": null,
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-shield-btc-4h_none_short__BTCUSDT_4h_none_short",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-shield-btc-4h_none_short__BTCUSDT_4h_none_short\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-shield-btc-4h_none_short__BTCUSDT_4h_none_short\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-shield-btc-4h_none_short__BTCUSDT_4h_none_short\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-shield-btc-4h_none_short__BTCUSDT_4h_none_short\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-shield-btc-4h_none_short__BTCUSDT_4h_none_short\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-shield-btc-4h_none_short__BTCUSDT_4h_none_short\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-shield-btc-4h_none_short__BTCUSDT_4h_none_short\\go-no-go-2026-02-15.json",
+      "reportTablePath": null
+    },
+    {
+      "label": "phase6-exotic-eth-4h:none:both",
+      "symbol": "ETHUSDT",
+      "interval": "4h",
+      "tradeFilterMode": "none",
+      "tradeDirection": "both",
+      "strategyKeys": [
+        "meta_harvest_v3"
+      ],
+      "strategyParams": {
+        "meta_harvest_v3": {
+          "useLong": 1,
+          "useShort": 1,
+          "killIfNoProfitAfterBars": 12,
+          "bankerTriggerProfitPct": 3,
+          "bankerFractionPct": 50,
+          "bankerTrailAtr": 2
+        }
+      },
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-exotic-eth-4h_none_both__ETHUSDT_4h_none_both",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-exotic-eth-4h_none_both__ETHUSDT_4h_none_both\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-exotic-eth-4h_none_both__ETHUSDT_4h_none_both\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-exotic-eth-4h_none_both__ETHUSDT_4h_none_both\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-exotic-eth-4h_none_both__ETHUSDT_4h_none_both\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-exotic-eth-4h_none_both__ETHUSDT_4h_none_both\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-exotic-eth-4h_none_both__ETHUSDT_4h_none_both\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-exotic-eth-4h_none_both__ETHUSDT_4h_none_both\\go-no-go-2026-02-15.json",
+      "reportTablePath": null
+    },
+    {
+      "label": "phase6-trend-eth-1h:none:both",
+      "symbol": "ETHUSDT",
+      "interval": "1h",
+      "tradeFilterMode": "none",
+      "tradeDirection": "both",
+      "strategyKeys": [
+        "simple_regression_line"
+      ],
+      "strategyParams": {
+        "simple_regression_line": {
+          "lookback": 80,
+          "zEntry": 2
+        }
+      },
+      "runDir": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-trend-eth-1h_none_both__ETHUSDT_1h_none_both",
+      "runFiles": [
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-trend-eth-1h_none_both__ETHUSDT_1h_none_both\\run-seed-1337.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-trend-eth-1h_none_both__ETHUSDT_1h_none_both\\run-seed-7331.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-trend-eth-1h_none_both__ETHUSDT_1h_none_both\\run-seed-2026.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-trend-eth-1h_none_both__ETHUSDT_1h_none_both\\run-seed-4242.txt",
+        "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-trend-eth-1h_none_both__ETHUSDT_1h_none_both\\run-seed-9001.txt"
+      ],
+      "summaryJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-trend-eth-1h_none_both__ETHUSDT_1h_none_both\\matrix-summary-2026-02-15.json",
+      "reportJsonPath": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\batch-runs\\operation-horizon-phase6-robust-2026-02-15\\phase6-trend-eth-1h_none_both__ETHUSDT_1h_none_both\\go-no-go-2026-02-15.json",
+      "reportTablePath": null
+    }
+  ]
+}
