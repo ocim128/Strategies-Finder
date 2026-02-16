@@ -15,6 +15,11 @@ import {
     fetchBybitTradFiDataWithLimit,
     fetchBybitTradFiLatest
 } from "./dataProviders/bybit";
+import {
+    fetchPolymarketData,
+    fetchPolymarketDataWithLimit,
+    isPolymarketEventSymbol,
+} from "./dataProviders/polymarket";
 
 import {
     generateMockData,
@@ -40,7 +45,7 @@ import {
     DATA_MAX_RECONNECT_ATTEMPTS,
 } from "./data/constants";
 
-type DataProvider = 'binance' | 'bybit-tradfi';
+type DataProvider = 'binance' | 'bybit-tradfi' | 'polymarket';
 
 export class DataManager {
     private nonBinanceProviderOverride: Map<string, DataProvider> = new Map();
@@ -125,6 +130,10 @@ export class DataManager {
         if (this.nonBinanceProviderOverride.has(normalizedSymbol)) {
             return this.nonBinanceProviderOverride.get(normalizedSymbol)!;
         }
+        if (isPolymarketEventSymbol(symbol)) {
+            this.nonBinanceProviderOverride.set(normalizedSymbol, 'polymarket');
+            return 'polymarket';
+        }
         if (tradfiSearchService.isTradFiSymbol(normalizedSymbol)) {
             this.nonBinanceProviderOverride.set(normalizedSymbol, 'bybit-tradfi');
             return 'bybit-tradfi';
@@ -161,6 +170,14 @@ export class DataManager {
                 : await fetchBybitTradFiData(symbol, interval, signal, resampleOptions);
             if (data.length > 0) return data;
             uiManager.showToast('Bybit TradFi returned no data.', 'error');
+            return [];
+        }
+        if (provider === 'polymarket') {
+            const data = typeof lookbackBars === 'number'
+                ? await fetchPolymarketDataWithLimit(symbol, interval, lookbackBars, { signal })
+                : await fetchPolymarketData(symbol, interval, signal);
+            if (data.length > 0) return data;
+            uiManager.showToast('Polymarket returned no data for this market.', 'error');
             return [];
         }
 
@@ -201,6 +218,11 @@ export class DataManager {
                 ...(resampleOptions ?? {}),
             });
         }
+        if (provider === 'polymarket') {
+            return fetchPolymarketDataWithLimit(symbol, interval, maxBars, {
+                signal,
+            });
+        }
         const fallbackData = await this.fetchNonBinanceData(symbol, interval, signal);
         return fallbackData.slice(-maxBars);
     }
@@ -231,6 +253,9 @@ export class DataManager {
                 ...options,
                 ...(resampleOptions ?? {}),
             });
+        }
+        if (provider === 'polymarket') {
+            return fetchPolymarketDataWithLimit(symbol, interval, limit, options);
         }
 
         // For others, fall back to standard fetch (no specific limit optimization yet implemented for 12data/yahoo historical)
@@ -279,6 +304,10 @@ export class DataManager {
         const provider = this.getProvider(symbol);
         if (provider !== 'binance') {
             this.nonBinanceProviderOverride.set(symbol.trim().toUpperCase(), provider);
+        }
+        if (provider === 'polymarket') {
+            debugLogger.info('data.stream.skip_polymarket', { symbol, interval });
+            return;
         }
         if (provider === 'binance' && !isBinanceInterval(interval)) {
             debugLogger.info('data.stream.skip_interval', { symbol, interval, provider });

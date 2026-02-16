@@ -5,9 +5,13 @@
 
 import { binanceSearchService, BinanceSymbol } from './binance-search-service';
 import { tradfiSearchService, type TradFiSymbol } from './tradfi-search-service';
+import {
+    formatPolymarketDisplayName,
+    parsePolymarketEventInput,
+} from './dataProviders/polymarket';
 
 export type AssetType = 'crypto' | 'stock' | 'forex' | 'commodity';
-export type AssetProvider = 'binance' | 'bybit-tradfi' | 'mock';
+export type AssetProvider = 'binance' | 'bybit-tradfi' | 'polymarket' | 'mock';
 
 export interface Asset {
     symbol: string;          // e.g., "AAPL", "ETHUSDT", "EURUSD"
@@ -22,6 +26,17 @@ export interface Asset {
 const POPULAR_ASSETS: Asset[] = [];
 
 class AssetSearchService {
+    private mapPolymarketAsset(query: string): Asset | null {
+        const parsed = parsePolymarketEventInput(query);
+        if (!parsed) return null;
+        return {
+            symbol: parsed.canonicalSymbol,
+            displayName: formatPolymarketDisplayName(parsed.canonicalSymbol) ?? `Polymarket ${parsed.slug}`,
+            type: 'crypto',
+            provider: 'polymarket',
+        };
+    }
+
     private mapTradFiAsset(symbol: TradFiSymbol): Asset {
         return {
             symbol: symbol.symbol,
@@ -52,6 +67,10 @@ class AssetSearchService {
 
         const results: Asset[] = [];
         const searchTerm = query.toUpperCase();
+        const polymarketAsset = this.mapPolymarketAsset(query);
+        if (polymarketAsset) {
+            results.push(polymarketAsset);
+        }
 
         // Search Bybit TradFi pairs
         try {
@@ -110,6 +129,7 @@ class AssetSearchService {
             // Prioritize stocks and popular assets
             if (asset.type === 'stock') score += 5;
             if (asset.provider === 'bybit-tradfi') score += 8;
+            if (asset.provider === 'polymarket') score += 20;
             if (asset.type === 'crypto' && asset.quoteAsset === 'USDT') score += 3;
 
             return { asset, score };
@@ -153,6 +173,9 @@ class AssetSearchService {
      * Check if a symbol is valid
      */
     async isValidAsset(symbol: string): Promise<boolean> {
+        if (parsePolymarketEventInput(symbol)) {
+            return true;
+        }
         if (tradfiSearchService.isTradFiSymbol(symbol)) {
             return true;
         }
@@ -177,6 +200,9 @@ class AssetSearchService {
      * Get asset info
      */
     async getAssetInfo(symbol: string): Promise<Asset | null> {
+        const polymarket = this.mapPolymarketAsset(symbol);
+        if (polymarket) return polymarket;
+
         const tradfiAsset = tradfiSearchService.getSymbolInfo(symbol);
         if (tradfiAsset) {
             return this.mapTradFiAsset(tradfiAsset);
@@ -210,6 +236,8 @@ class AssetSearchService {
      * Determine asset type from symbol
      */
     getAssetType(symbol: string): AssetType {
+        if (parsePolymarketEventInput(symbol)) return 'crypto';
+
         const tradfiAsset = tradfiSearchService.getSymbolInfo(symbol);
         if (tradfiAsset) return tradfiAsset.type;
 
@@ -228,6 +256,9 @@ class AssetSearchService {
      * Determine provider from symbol
      */
     getProvider(symbol: string): AssetProvider {
+        if (parsePolymarketEventInput(symbol)) {
+            return 'polymarket';
+        }
         if (tradfiSearchService.isTradFiSymbol(symbol)) {
             return 'bybit-tradfi';
         }

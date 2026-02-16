@@ -6,8 +6,6 @@ import { resolveBacktestSettingsFromRaw, CAPITAL_DEFAULTS } from "../lib/backtes
 import { runGeneticOptimization, type GeneticOptimizerConfig } from "../lib/finder/genetic-optimizer";
 import { trimToClosedCandles } from "../lib/closed-candle-utils";
 import { strategies } from "../lib/strategies/library";
-import { ensureUniversalMarketData } from "./universal-market-loader";
-import { parseArgs as parseVerifyArgs, runVerification as runVerifyAlphaReport } from "./verify-alpha";
 import type {
     BacktestSettings,
     ExecutionModel,
@@ -17,6 +15,7 @@ import type {
     TradeDirection,
     TradeFilterMode,
 } from "../lib/types/strategies";
+import { ensureUniversalMarketData } from "./universal-market-loader";
 
 type CliOptions = {
     topN: number;
@@ -31,12 +30,8 @@ type CliOptions = {
     rangePercent: number;
     minTrades: number;
     strategies: string[];
-    seedsPerPair: number;
-    baseSeed: number;
     outFile: string;
-    verifiedOutFile: string;
-    autoVerify: boolean;
-    verifyMaxCandidates: number;
+    seed: number;
     initialCapital: number;
     positionSize: number;
     commission: number;
@@ -46,43 +41,16 @@ type CliOptions = {
     tradeFilterMode: TradeFilterMode;
     slippageBps: number;
     allowSameBarExit: boolean;
-    dataDir: string;
+    outputDir: string;
 };
 
 type ParsedDataFile = {
     bars: OHLCVData[];
 };
 
-type SeedRun = {
-    seed: number;
-    elapsedMs: number;
-    fitness: {
-        score: number;
-        netProfitPercent: number;
-        sharpeRatio: number;
-        stability: number;
-        maxDrawdownPercent: number;
-        totalTrades: number;
-    };
-    alphaGenome: Record<string, number>;
-};
-
-type AggregatedFitness = {
-    robustScore: number;
-    medianScore: number;
-    medianNetProfitPercent: number;
-    medianSharpeRatio: number;
-    medianMaxDrawdownPercent: number;
-    medianTotalTrades: number;
-    worstMaxDrawdownPercent: number;
-};
-
-type HuntResult = {
+type AlphaHuntResult = {
     strategyKey: string;
     elapsedMs: number;
-    seeds: number[];
-    seedRuns: SeedRun[];
-    aggregate: AggregatedFitness;
     fitness: {
         score: number;
         netProfitPercent: number;
@@ -94,15 +62,15 @@ type HuntResult = {
     alphaGenome: Record<string, number>;
 };
 
-type SymbolReport = {
+type AlphaSymbolReport = {
     rank: number;
     symbol: string;
     interval: string;
     quoteVolume: number;
     bars: number;
     dataFile: string;
-    hunts: HuntResult[];
-    winner: HuntResult | null;
+    hunts: AlphaHuntResult[];
+    winner: AlphaHuntResult | null;
 };
 
 const DEFAULT_STRATEGIES = ["bear_hunter_v5", "meta_harvest_v2"];
@@ -110,30 +78,22 @@ const DEFAULT_STRATEGIES = ["bear_hunter_v5", "meta_harvest_v2"];
 function printUsage(): void {
     console.log([
         "Usage:",
-        "  npm run hunt:massive",
+        "  npm run alpha:sweep",
         "",
         "Optional flags:",
-        "  --top <n>                    default 20",
-        "  --interval <value>           default 15m",
-        "  --bars <n>                   default 10000",
-        "  --fresh-hours <n>            default 4",
-        "  --population <n>             default 100",
-        "  --generations <n>            default 50",
-        "  --elite <n>                  default 5",
-        "  --mutation-rate <0..1>       default 0.12",
-        "  --mutation-sigma <ratio>     default 0.12",
-        "  --range <percent>            default 35",
-        "  --min-trades <n>             default 20",
-        "  --strategies <k1,k2,...>     default bear_hunter_v5,meta_harvest_v2",
-        "  --seeds <n>                  default 5",
-        "  --seed <n>                   default 2026",
-        "  --out <file>                 default alpha_report.json",
-        "  --verified-out <file>        default verified_alpha.json",
-        "  --no-verify                  skip automatic verify:alpha",
-        "  --verify-max-candidates <n>  pass-through to verify:alpha",
-        "",
-        "Positional fallback:",
-        "  hunt:massive [top] [generations] [seeds]",
+        "  --top <n>                   default 50",
+        "  --interval <value>          default 15m",
+        "  --bars <n>                  default 10000",
+        "  --fresh-hours <n>           default 4",
+        "  --population <n>            default 100",
+        "  --generations <n>           default 50",
+        "  --elite <n>                 default 5",
+        "  --mutation-rate <0..1>      default 0.12",
+        "  --mutation-sigma <ratio>    default 0.12",
+        "  --range <percent>           default 35",
+        "  --min-trades <n>            default 20",
+        "  --strategies <k1,k2,...>    default bear_hunter_v5,meta_harvest_v2",
+        "  --out <file>                default alpha_report.json",
     ].join("\n"));
 }
 
@@ -157,7 +117,7 @@ function toBoolean(value: string | undefined, fallback: boolean): boolean {
 }
 
 function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
-    let topN = 20;
+    let topN = 50;
     let interval = "15m";
     let bars = 10000;
     let freshnessHours = 4;
@@ -169,12 +129,8 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
     let rangePercent = 35;
     let minTrades = 20;
     let strategyKeys = [...DEFAULT_STRATEGIES];
-    let seedsPerPair = 5;
-    let baseSeed = 2026;
     let outFile = path.resolve("alpha_report.json");
-    let verifiedOutFile = path.resolve("verified_alpha.json");
-    let autoVerify = true;
-    let verifyMaxCandidates = 0;
+    let seed = 1337;
     let initialCapital = Number(CAPITAL_DEFAULTS.initialCapital);
     let positionSize = Number(CAPITAL_DEFAULTS.positionSize);
     let commission = Number(CAPITAL_DEFAULTS.commission);
@@ -184,7 +140,7 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
     let tradeFilterMode: TradeFilterMode = "none";
     let slippageBps = 0;
     let allowSameBarExit = true;
-    let dataDir = path.resolve("price-data", "universal");
+    let outputDir = path.resolve("price-data", "universal");
     const positional: string[] = [];
 
     for (let i = 0; i < argv.length; i++) {
@@ -205,12 +161,8 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
                 rangePercent,
                 minTrades,
                 strategies: strategyKeys,
-                seedsPerPair,
-                baseSeed,
                 outFile,
-                verifiedOutFile,
-                autoVerify,
-                verifyMaxCandidates,
+                seed,
                 initialCapital,
                 positionSize,
                 commission,
@@ -220,7 +172,7 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
                 tradeFilterMode,
                 slippageBps,
                 allowSameBarExit,
-                dataDir,
+                outputDir,
             };
         }
         if (arg === "--top") { topN = toPositiveInt(next, topN); i++; continue; }
@@ -242,13 +194,8 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
             i++;
             continue;
         }
-        if (arg === "--seeds") { seedsPerPair = toPositiveInt(next, seedsPerPair); i++; continue; }
-        if (arg === "--seed") { baseSeed = toPositiveInt(next, baseSeed); i++; continue; }
         if (arg === "--out") { outFile = path.resolve(String(next ?? "alpha_report.json")); i++; continue; }
-        if (arg === "--verified-out") { verifiedOutFile = path.resolve(String(next ?? "verified_alpha.json")); i++; continue; }
-        if (arg === "--no-verify") { autoVerify = false; continue; }
-        if (arg === "--auto-verify") { autoVerify = toBoolean(next, autoVerify); i++; continue; }
-        if (arg === "--verify-max-candidates") { verifyMaxCandidates = toPositiveInt(next, verifyMaxCandidates, 0); i++; continue; }
+        if (arg === "--seed") { seed = toPositiveInt(next, seed); i++; continue; }
         if (arg === "--initial-capital") { initialCapital = toFinite(next, initialCapital); i++; continue; }
         if (arg === "--position-size") { positionSize = toFinite(next, positionSize); i++; continue; }
         if (arg === "--commission") { commission = toFinite(next, commission); i++; continue; }
@@ -275,13 +222,14 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
         }
         if (arg === "--slippage-bps") { slippageBps = toFinite(next, slippageBps); i++; continue; }
         if (arg === "--allow-same-bar-exit") { allowSameBarExit = toBoolean(next, allowSameBarExit); i++; continue; }
-        if (arg === "--data-dir") { dataDir = path.resolve(String(next ?? dataDir)); i++; continue; }
+        if (arg === "--data-dir") { outputDir = path.resolve(String(next ?? outputDir)); i++; continue; }
         positional.push(arg);
     }
 
+    // Positional fallback: alpha-sweep.ts [top] [population] [generations]
     if (positional[0]) topN = toPositiveInt(positional[0], topN);
-    if (positional[1]) generations = toPositiveInt(positional[1], generations);
-    if (positional[2]) seedsPerPair = toPositiveInt(positional[2], seedsPerPair);
+    if (positional[1]) population = toPositiveInt(positional[1], population, 10);
+    if (positional[2]) generations = toPositiveInt(positional[2], generations);
 
     return {
         topN,
@@ -296,12 +244,8 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
         rangePercent: Math.max(0, rangePercent),
         minTrades: Math.max(0, minTrades),
         strategies: strategyKeys.length > 0 ? strategyKeys : [...DEFAULT_STRATEGIES],
-        seedsPerPair: Math.max(1, seedsPerPair),
-        baseSeed: Math.max(1, Math.floor(baseSeed)),
         outFile,
-        verifiedOutFile,
-        autoVerify,
-        verifyMaxCandidates: Math.max(0, verifyMaxCandidates),
+        seed: Math.max(1, Math.floor(seed)),
         initialCapital: Math.max(1, initialCapital),
         positionSize: Math.max(0.0001, positionSize),
         commission: Math.max(0, commission),
@@ -311,7 +255,7 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
         tradeFilterMode,
         slippageBps: Math.max(0, slippageBps),
         allowSameBarExit,
-        dataDir,
+        outputDir,
     };
 }
 
@@ -381,35 +325,13 @@ function inferDirection(strategy: Strategy): TradeDirection {
     return "long";
 }
 
-function hashString(baseSeed: number, value: string): number {
+function deriveSeed(baseSeed: number, symbol: string, strategyKey: string): number {
+    const key = `${symbol}|${strategyKey}`;
     let hash = baseSeed >>> 0;
-    for (let i = 0; i < value.length; i++) {
-        hash = Math.imul(hash ^ value.charCodeAt(i), 16777619);
+    for (let i = 0; i < key.length; i++) {
+        hash = Math.imul(hash ^ key.charCodeAt(i), 16777619);
     }
-    return hash >>> 0;
-}
-
-function nextSeed(state: number): number {
-    let x = state || 1;
-    x ^= x << 13;
-    x ^= x >>> 17;
-    x ^= x << 5;
-    return x >>> 0;
-}
-
-function buildPairSeeds(baseSeed: number, symbol: string, strategyKey: string, count: number): number[] {
-    const seen = new Set<number>();
-    const seeds: number[] = [];
-    let state = hashString(baseSeed, `${symbol}|${strategyKey}|massive`);
-
-    while (seeds.length < count) {
-        state = nextSeed(state);
-        const candidate = (state % 2147483646) + 1;
-        if (seen.has(candidate)) continue;
-        seen.add(candidate);
-        seeds.push(candidate);
-    }
-    return seeds;
+    return (hash >>> 0) || 1;
 }
 
 function buildGeneticConfig(options: CliOptions, seed: number): GeneticOptimizerConfig {
@@ -433,118 +355,18 @@ function buildGeneticConfig(options: CliOptions, seed: number): GeneticOptimizer
     };
 }
 
-function median(values: number[]): number {
-    if (values.length === 0) return 0;
-    const sorted = values.slice().sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function aggregateSeedRuns(seedRuns: SeedRun[]): AggregatedFitness {
-    const scoreSeries = seedRuns.map((run) => run.fitness.score).filter(Number.isFinite);
-    const netSeries = seedRuns.map((run) => run.fitness.netProfitPercent).filter(Number.isFinite);
-    const sharpeSeries = seedRuns.map((run) => run.fitness.sharpeRatio).filter(Number.isFinite);
-    const ddSeries = seedRuns.map((run) => run.fitness.maxDrawdownPercent).filter(Number.isFinite);
-    const tradeSeries = seedRuns.map((run) => run.fitness.totalTrades).filter(Number.isFinite);
-
-    const medianScore = median(scoreSeries);
-    const medianNetProfitPercent = median(netSeries);
-    const medianSharpeRatio = median(sharpeSeries);
-    const medianMaxDrawdownPercent = median(ddSeries);
-    const medianTotalTrades = median(tradeSeries);
-    const worstMaxDrawdownPercent = ddSeries.length > 0 ? Math.max(...ddSeries) : 0;
-    const stability = 1 / (1 + (medianMaxDrawdownPercent / 25));
-    const robustScore =
-        medianNetProfitPercent > 0 && medianSharpeRatio > 0
-            ? (medianNetProfitPercent / 100) * medianSharpeRatio * stability
-            : medianScore - Math.abs(Math.min(0, medianNetProfitPercent / 100)) * 0.25;
-
-    return {
-        robustScore,
-        medianScore,
-        medianNetProfitPercent,
-        medianSharpeRatio,
-        medianMaxDrawdownPercent,
-        medianTotalTrades,
-        worstMaxDrawdownPercent,
-    };
-}
-
-function pickRepresentativeRun(seedRuns: SeedRun[], aggregate: AggregatedFitness): SeedRun {
-    if (seedRuns.length === 1) return seedRuns[0];
-
-    let best = seedRuns[0];
-    let bestDistance = Number.POSITIVE_INFINITY;
-    for (const run of seedRuns) {
-        const distance =
-            Math.abs(run.fitness.score - aggregate.medianScore) +
-            Math.abs(run.fitness.netProfitPercent - aggregate.medianNetProfitPercent) * 0.02 +
-            Math.abs(run.fitness.maxDrawdownPercent - aggregate.medianMaxDrawdownPercent) * 0.02;
-        if (distance < bestDistance) {
-            best = run;
-            bestDistance = distance;
-        }
-    }
-    return best;
-}
-
-function toHuntResult(strategyKey: string, seeds: number[], seedRuns: SeedRun[]): HuntResult {
-    const aggregate = aggregateSeedRuns(seedRuns);
-    const representative = pickRepresentativeRun(seedRuns, aggregate);
-    return {
-        strategyKey,
-        elapsedMs: Number(seedRuns.reduce((acc, run) => acc + run.elapsedMs, 0).toFixed(2)),
-        seeds,
-        seedRuns,
-        aggregate,
-        fitness: {
-            score: aggregate.robustScore,
-            netProfitPercent: aggregate.medianNetProfitPercent,
-            sharpeRatio: aggregate.medianSharpeRatio,
-            stability: 1 / (1 + (aggregate.medianMaxDrawdownPercent / 25)),
-            maxDrawdownPercent: aggregate.medianMaxDrawdownPercent,
-            totalTrades: aggregate.medianTotalTrades,
-        },
-        alphaGenome: representative.alphaGenome,
-    };
-}
-
-async function runVerifyAlpha(options: CliOptions): Promise<void> {
-    const verifyArgs = [
-        "--in",
-        options.outFile,
-        "--out",
-        options.verifiedOutFile,
-        "--verify-seeds",
-        "5",
-        "--min-pass-count",
-        "4",
-    ];
-
-    if (options.verifyMaxCandidates > 0) {
-        verifyArgs.push("--max-candidates", String(options.verifyMaxCandidates));
-    }
-
-    const parsed = parseVerifyArgs(verifyArgs);
-    if (parsed.help) {
-        throw new Error("[MassiveSweep] verify:alpha argument parsing returned help mode.");
-    }
-
-    await runVerifyAlphaReport(parsed);
-}
-
-async function runMassiveSweep(options: CliOptions): Promise<void> {
+async function runAlphaSweep(options: CliOptions): Promise<void> {
     const selectedStrategies = options.strategies
         .map((key) => ({ key, strategy: (strategies as Record<string, Strategy>)[key] }))
         .filter((item) => Boolean(item.strategy));
 
     if (selectedStrategies.length === 0) {
-        throw new Error("[MassiveSweep] No valid strategy keys were provided.");
+        throw new Error("[AlphaSweep] No valid strategies provided.");
     }
 
     const invalid = options.strategies.filter((key) => !(key in strategies));
     if (invalid.length > 0) {
-        console.warn(`[MassiveSweep] Skipping unknown strategy keys: ${invalid.join(", ")}`);
+        console.warn(`[AlphaSweep] Skipping unknown strategy keys: ${invalid.join(", ")}`);
     }
 
     const market = await ensureUniversalMarketData({
@@ -552,32 +374,31 @@ async function runMassiveSweep(options: CliOptions): Promise<void> {
         interval: options.interval,
         bars: options.bars,
         freshnessHours: options.freshnessHours,
-        outputDir: options.dataDir,
+        outputDir: options.outputDir,
     });
 
     if (market.datasets.length === 0) {
-        throw new Error("[MassiveSweep] No market datasets are available after data load.");
+        throw new Error("[AlphaSweep] No market datasets available after universal loader run.");
     }
 
-    const huntsPerDataset = selectedStrategies.length;
-    const totalSeedRuns = market.datasets.length * huntsPerDataset * options.seedsPerPair;
-    let completedSeedRuns = 0;
-    const symbolReports: SymbolReport[] = [];
+    const totalHunts = market.datasets.length * selectedStrategies.length;
+    let completedHunts = 0;
+    const symbolReports: AlphaSymbolReport[] = [];
     const startedAt = Date.now();
 
     for (const dataset of market.datasets) {
         const raw = JSON.parse(fs.readFileSync(dataset.filePath, "utf8"));
         const parsedData = parseDataFile(raw);
         const data = trimToClosedCandles(parsedData.bars, dataset.interval);
-        if (data.length < 300) {
-            console.warn(`[MassiveSweep] Skipping ${dataset.symbol}: insufficient closed bars (${data.length}).`);
+        if (data.length < 200) {
+            console.warn(`[AlphaSweep] Skipping ${dataset.symbol}: not enough closed bars (${data.length}).`);
             continue;
         }
 
-        const hunts: HuntResult[] = [];
-
+        const hunts: AlphaHuntResult[] = [];
         for (const item of selectedStrategies) {
-            const settings = resolveBacktestSettingsFromRaw({
+            const strategySeed = deriveSeed(options.seed, dataset.symbol, item.key);
+            const backtestSettings = resolveBacktestSettingsFromRaw({
                 tradeDirection: inferDirection(item.strategy),
                 executionModel: options.executionModel,
                 tradeFilterMode: options.tradeFilterMode,
@@ -587,46 +408,30 @@ async function runMassiveSweep(options: CliOptions): Promise<void> {
                 captureSnapshots: false,
                 coerceWithoutUiToggles: true,
             });
+            const config = buildGeneticConfig(options, strategySeed);
 
-            const seeds = buildPairSeeds(options.baseSeed, dataset.symbol, item.key, options.seedsPerPair);
-            const seedRuns: SeedRun[] = [];
+            const hunt = await runGeneticOptimization({
+                strategyKey: item.key,
+                strategy: item.strategy,
+                data,
+                backtestSettings,
+                config,
+            });
 
-            for (let seedIndex = 0; seedIndex < seeds.length; seedIndex++) {
-                const seed = seeds[seedIndex];
-                const config = buildGeneticConfig(options, seed);
-                const outcome = await runGeneticOptimization({
-                    strategyKey: item.key,
-                    strategy: item.strategy,
-                    data,
-                    backtestSettings: settings,
-                    config,
-                });
+            hunts.push({
+                strategyKey: item.key,
+                elapsedMs: Number(hunt.elapsedMs.toFixed(2)),
+                fitness: hunt.bestGenome.fitness,
+                alphaGenome: hunt.bestGenome.params,
+            });
 
-                const run: SeedRun = {
-                    seed,
-                    elapsedMs: Number(outcome.elapsedMs.toFixed(2)),
-                    fitness: {
-                        score: outcome.bestGenome.fitness.score,
-                        netProfitPercent: outcome.bestGenome.fitness.netProfitPercent,
-                        sharpeRatio: outcome.bestGenome.fitness.sharpeRatio,
-                        stability: outcome.bestGenome.fitness.stability,
-                        maxDrawdownPercent: outcome.bestGenome.fitness.maxDrawdownPercent,
-                        totalTrades: outcome.bestGenome.fitness.totalTrades,
-                    },
-                    alphaGenome: outcome.bestGenome.params,
-                };
-                seedRuns.push(run);
-
-                completedSeedRuns += 1;
-                console.log(
-                    `[MassiveSweep] ${completedSeedRuns}/${totalSeedRuns} ${dataset.symbol} ${item.key} seed=${seed} score=${run.fitness.score.toFixed(6)} net=${run.fitness.netProfitPercent.toFixed(2)}%`
-                );
-            }
-
-            hunts.push(toHuntResult(item.key, seeds, seedRuns));
+            completedHunts += 1;
+            console.log(
+                `[AlphaSweep] ${completedHunts}/${totalHunts} ${dataset.symbol} ${item.key} -> score=${hunt.bestGenome.fitness.score.toFixed(6)} net=${hunt.bestGenome.fitness.netProfitPercent.toFixed(2)}%`
+            );
         }
 
-        hunts.sort((a, b) => b.aggregate.robustScore - a.aggregate.robustScore);
+        hunts.sort((a, b) => b.fitness.score - a.fitness.score);
         symbolReports.push({
             rank: dataset.rank,
             symbol: dataset.symbol,
@@ -640,33 +445,30 @@ async function runMassiveSweep(options: CliOptions): Promise<void> {
     }
 
     symbolReports.sort((a, b) => a.rank - b.rank);
-
-    const winners = symbolReports
+    const winnersOnly = symbolReports
         .filter((report) => report.winner !== null)
         .map((report) => ({
             rank: report.rank,
             symbol: report.symbol,
             interval: report.interval,
             strategyKey: report.winner!.strategyKey,
-            score: report.winner!.aggregate.robustScore,
-            netProfitPercent: report.winner!.aggregate.medianNetProfitPercent,
-            sharpeRatio: report.winner!.aggregate.medianSharpeRatio,
-            maxDrawdownPercent: report.winner!.aggregate.medianMaxDrawdownPercent,
-            totalTrades: report.winner!.aggregate.medianTotalTrades,
+            score: report.winner!.fitness.score,
+            netProfitPercent: report.winner!.fitness.netProfitPercent,
+            sharpeRatio: report.winner!.fitness.sharpeRatio,
+            maxDrawdownPercent: report.winner!.fitness.maxDrawdownPercent,
+            totalTrades: report.winner!.fitness.totalTrades,
             alphaGenome: report.winner!.alphaGenome,
-            seeds: report.winner!.seeds,
         }));
 
     const report = {
         generatedAt: new Date().toISOString(),
         elapsedMs: Date.now() - startedAt,
         config: {
-            mode: "massive",
             topN: options.topN,
             interval: options.interval,
             bars: options.bars,
             freshnessHours: options.freshnessHours,
-            strategies: selectedStrategies.map((item) => item.key),
+            strategies: selectedStrategies.map((s) => s.key),
             population: options.population,
             generations: options.generations,
             eliteCount: options.eliteCount,
@@ -674,48 +476,33 @@ async function runMassiveSweep(options: CliOptions): Promise<void> {
             mutationSigma: options.mutationSigma,
             rangePercent: options.rangePercent,
             minTrades: options.minTrades,
-            seedsPerPair: options.seedsPerPair,
-            baseSeed: options.baseSeed,
-            executionModel: options.executionModel,
-            tradeFilterMode: options.tradeFilterMode,
-            slippageBps: options.slippageBps,
-            allowSameBarExit: options.allowSameBarExit,
         },
         market: {
-            requestedTopN: options.topN,
-            loadedDatasets: market.datasets.length,
-            fetchedNow: market.datasets.filter((item) => item.status === "fetched").length,
-            reusedCached: market.datasets.filter((item) => item.status === "cached").length,
-            interval: options.interval,
-            barsPerDataset: options.bars,
+            fetchedDatasets: market.datasets.length,
+            fetchedNow: market.datasets.filter((d) => d.status === "fetched").length,
+            reusedCached: market.datasets.filter((d) => d.status === "cached").length,
         },
-        winners,
+        winners: winnersOnly,
         symbols: symbolReports,
     };
 
     fs.writeFileSync(options.outFile, JSON.stringify(report, null, 2), "utf8");
-    console.log(`[MassiveSweep] Wrote alpha report: ${options.outFile}`);
-
-    if (options.autoVerify) {
-        console.log("[MassiveSweep] Running verify:alpha...");
-        await runVerifyAlpha(options);
-        console.log(`[MassiveSweep] Wrote verified report: ${options.verifiedOutFile}`);
-    }
+    console.log(`[AlphaSweep] Wrote report: ${options.outFile}`);
 }
 
 async function main(): Promise<void> {
-    const options = parseArgs(process.argv.slice(2));
-    if (options.help) {
+    const opts = parseArgs(process.argv.slice(2));
+    if (opts.help) {
         printUsage();
         return;
     }
-    await runMassiveSweep(options);
+    await runAlphaSweep(opts);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
     main().catch((error) => {
         const message = error instanceof Error ? error.stack || error.message : String(error);
-        console.error(`massive-alpha-sweep failed: ${message}`);
+        console.error(`alpha-sweep failed: ${message}`);
         process.exitCode = 1;
     });
 }

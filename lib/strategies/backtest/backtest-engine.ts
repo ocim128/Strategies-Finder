@@ -2,7 +2,7 @@
 import { BacktestResult, BacktestSettings, OHLCVData, Signal, Time, Trade } from '../../types/index';
 import { ensureCleanData } from '../strategy-helpers';
 import { PositionState, PrecomputedIndicators, TradeSizingConfig } from '../../types/backtest';
-import { compareTime, directionFactorFor, directionToSignalType, needsSnapshotIndicators, normalizeBacktestSettings, normalizeTradeDirection, timeKey } from './backtest-utils';
+import { compareTime, directionFactorFor, directionToSignalType, getTimeIndex, needsSnapshotIndicators, normalizeBacktestSettings, normalizeTradeDirection, timeKey } from './backtest-utils';
 import { calculateSharpeRatioFromReturns } from '../performance-metrics';
 
 import { prepareSignals } from './signal-preparation';
@@ -104,6 +104,28 @@ function collectReturnsFromEquityCurve(
     }
 
     return returns;
+}
+
+function resolvePreparedSignalBarIndexes(data: OHLCVData[], preparedSignals: Signal[]): Int32Array {
+    const indexes = new Int32Array(preparedSignals.length);
+    let fallbackTimeIndex: Map<string, number> | null = null;
+
+    for (let i = 0; i < preparedSignals.length; i++) {
+        const signal = preparedSignals[i];
+        if (Number.isFinite(signal.barIndex as number)) {
+            const barIndex = Math.trunc(signal.barIndex as number);
+            indexes[i] = barIndex >= 0 && barIndex < data.length ? barIndex : -1;
+            continue;
+        }
+
+        if (!fallbackTimeIndex) {
+            fallbackTimeIndex = getTimeIndex(data);
+        }
+        const mappedIndex = fallbackTimeIndex.get(timeKey(signal.time));
+        indexes[i] = mappedIndex === undefined ? -1 : mappedIndex;
+    }
+
+    return indexes;
 }
 
 function combineCompactResults(
@@ -343,6 +365,7 @@ export function runBacktestCompact(
         : null;
 
     const preparedSignals = prepareSignals(data, signals, config, indicatorSeries, tradeDirection, snapshotIndicators);
+    const preparedSignalBarIndexes = resolvePreparedSignalBarIndexes(data, preparedSignals);
 
     let capital = initialCapital;
     let position: PositionState | null = null;
@@ -376,9 +399,10 @@ export function runBacktestCompact(
             if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
         }
 
-        while (signalIdx < preparedSignals.length && compareTime(preparedSignals[signalIdx].time, candle.time) <= 0) {
+        while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
+            const signalBarIndex = preparedSignalBarIndexes[signalIdx];
             const signal = preparedSignals[signalIdx++];
-            if (compareTime(signal.time, candle.time) === 0) {
+            if (signalBarIndex === i) {
                 if (!position) {
                     const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
                     if (opened) {
@@ -482,6 +506,7 @@ export function runBacktest(
         : null;
 
     const preparedSignals = prepareSignals(data, signals, config, indicatorSeries, tradeDirection, snapshotIndicators);
+    const preparedSignalBarIndexes = resolvePreparedSignalBarIndexes(data, preparedSignals);
 
     const doSnapshot = !!settings.captureSnapshots;
 
@@ -508,9 +533,10 @@ export function runBacktest(
             if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
         }
 
-        while (signalIdx < preparedSignals.length && compareTime(preparedSignals[signalIdx].time, candle.time) <= 0) {
+        while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
+            const signalBarIndex = preparedSignalBarIndexes[signalIdx];
             const signal = preparedSignals[signalIdx++];
-            if (compareTime(signal.time, candle.time) === 0) {
+            if (signalBarIndex === i) {
                 if (!position) {
                     const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
                     if (opened) {

@@ -36,6 +36,7 @@ export function prepareSignals(
                 if (exitIndex < 0 || exitIndex >= data.length) return;
                 const exitPrice = resolveExecutionPrice(data, signal, signalIndex, exitIndex, config);
                 prepared.push({
+                    barIndex: exitIndex,
                     time: data[exitIndex].time,
                     type: exitType,
                     price: exitPrice,
@@ -64,6 +65,7 @@ export function prepareSignals(
             const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
 
             prepared.push({
+                barIndex: executionIndex,
                 time: data[executionIndex].time,
                 type: entryType,
                 price: entryPrice,
@@ -93,6 +95,7 @@ export function prepareSignals(
         const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
 
         prepared.push({
+            barIndex: executionIndex,
             time: data[executionIndex].time,
             type: signal.type,
             price: entryPrice,
@@ -103,7 +106,14 @@ export function prepareSignals(
         });
     });
 
-    prepared.sort((a, b) => compareTime(a.time, b.time) || a.order - b.order);
+    prepared.sort((a, b) => {
+        const aBarIndex = Number.isFinite(a.barIndex as number) ? Math.trunc(a.barIndex as number) : null;
+        const bBarIndex = Number.isFinite(b.barIndex as number) ? Math.trunc(b.barIndex as number) : null;
+        if (aBarIndex !== null && bBarIndex !== null && aBarIndex !== bBarIndex) {
+            return aBarIndex - bBarIndex;
+        }
+        return compareTime(a.time, b.time) || a.order - b.order;
+    });
 
     return prepared.map(({ order, ...signal }) => signal);
 }

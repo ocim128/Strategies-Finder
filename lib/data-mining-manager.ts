@@ -9,6 +9,7 @@ import { clearAll } from "./app-actions";
 import { OHLCVData, HistoricalFetchProgress } from "./types/index";
 import { buildFeatureLabDataset, buildFeatureLabMetadata, buildFeatureLabVerdictReport } from "./featureLab/featureLabService";
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import { formatPolymarketDisplayName, parsePolymarketEventInput } from "./dataProviders/polymarket";
 
 interface NormalizedCandle {
     time: number;
@@ -295,8 +296,8 @@ export class DataMiningManager {
 
         const { symbol, interval, bars } = request;
         const provider = assetSearchService.getProvider(symbol);
-        if (provider !== 'binance' && provider !== 'bybit-tradfi') {
-            uiManager.showToast('Historical bulk download is supported for Binance / Bybit TradFi symbols only.', 'error');
+        if (provider !== 'binance' && provider !== 'bybit-tradfi' && provider !== 'polymarket') {
+            uiManager.showToast('Historical bulk download is supported for Binance / Bybit TradFi / Polymarket symbols only.', 'error');
             this.setStatus('Historical download not supported for this provider.', 'error');
             return;
         }
@@ -364,8 +365,8 @@ export class DataMiningManager {
 
         const { symbol, interval, bars } = request;
         const provider = assetSearchService.getProvider(symbol);
-        if (provider !== 'binance' && provider !== 'bybit-tradfi') {
-            uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit TradFi symbols only.', 'error');
+        if (provider !== 'binance' && provider !== 'bybit-tradfi' && provider !== 'polymarket') {
+            uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit TradFi / Polymarket symbols only.', 'error');
             this.setStatus('SQLite sync not supported for this provider.', 'error');
             return;
         }
@@ -573,6 +574,9 @@ export class DataMiningManager {
     }
 
     private formatSymbolDisplay(symbol: string): string {
+        const polymarketLabel = formatPolymarketDisplayName(symbol);
+        if (polymarketLabel) return polymarketLabel;
+
         const mapped = SYMBOL_MAP[symbol];
         if (mapped) return mapped;
 
@@ -598,13 +602,16 @@ export class DataMiningManager {
         const provider = assetSearchService.getProvider(symbol);
         if (provider === 'binance') return 'Binance';
         if (provider === 'bybit-tradfi') return 'Bybit TradFi';
+        if (provider === 'polymarket') return 'Polymarket';
 
         if (provider === 'mock') return 'Mock';
         return provider;
     }
 
     private getHistoricalRequest(): { symbol: string; interval: string; bars: number } | null {
-        const symbol = this.symbolInput?.value?.trim() || state.currentSymbol;
+        const rawSymbol = this.symbolInput?.value?.trim() || state.currentSymbol;
+        const parsedPolymarket = parsePolymarketEventInput(rawSymbol);
+        const symbol = parsedPolymarket?.canonicalSymbol ?? rawSymbol;
         const interval = this.intervalInput?.value?.trim() || state.currentInterval;
         const barsRaw = this.barsInput?.value?.trim() ?? '';
         const bars = Math.floor(Number(barsRaw));

@@ -37,6 +37,7 @@ import { initSettingsUX } from "./lib/handlers/settings-ux-handlers";
 import { initAlertHandlers } from "./lib/handlers/alert-handlers";
 import { handleCrosshairMove } from "./lib/app-actions";
 import { initEngineStatusIndicator } from "./lib/engine-status-indicator";
+import { liveOperationsDashboard } from "./lib/live-operations-dashboard";
 
 async function init() {
 	injectLayout();
@@ -72,6 +73,7 @@ async function init() {
 	initConfirmationStrategyUI();
 	initDebugPanel();
 	initEngineStatusIndicator(); // Show Rust vs TypeScript engine status
+	liveOperationsDashboard.init();
 
 	// Initialize scanner panel with keyboard shortcut
 	window.addEventListener('keydown', (e) => {

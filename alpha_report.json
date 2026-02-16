@@ -1,0 +1,753 @@
+{
+  "generatedAt": "2026-02-15T12:26:19.008Z",
+  "elapsedMs": 1418070,
+  "config": {
+    "mode": "surgical",
+    "target": {
+      "symbol": "XRPUSDT",
+      "interval": "15m",
+      "bars": 10000
+    },
+    "strategies": [
+      "meta_harvest_v2",
+      "bear_hunter_v5"
+    ],
+    "deepDive": {
+      "population": 200,
+      "generations": 150,
+      "runsPerStrategy": 5,
+      "eliteCount": 10
+    },
+    "mutation": {
+      "baseRate": 0.12,
+      "sigma": 0.12,
+      "rangePercent": 35,
+      "adaptive": {
+        "stagnationGenerations": 12,
+        "increaseFactor": 1.35,
+        "decayFactor": 0.92,
+        "minRate": 0.08,
+        "maxRate": 0.45
+      }
+    },
+    "backtest": {
+      "minTrades": 20,
+      "initialCapital": 10000,
+      "positionSize": 100,
+      "commission": 0.1,
+      "sizingMode": "percent",
+      "fixedTradeAmount": 1000,
+      "executionModel": "signal_close",
+      "tradeFilterMode": "none",
+      "slippageBps": 0,
+      "allowSameBarExit": true
+    }
+  },
+  "market": {
+    "fetchedSymbol": "XRPUSDT",
+    "interval": "15m",
+    "bars": 10000,
+    "source": "cached",
+    "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json"
+  },
+  "winners": [
+    {
+      "rank": 1,
+      "symbol": "XRPUSDT",
+      "interval": "15m",
+      "strategyKey": "meta_harvest_v2",
+      "score": 2.3252723363977936,
+      "netProfitPercent": 1183.6349725905893,
+      "sharpeRatio": 0.24693096437402545,
+      "maxDrawdownPercent": 6.4238595490064485,
+      "totalTrades": 615,
+      "alphaGenome": {
+        "depth": 7.15,
+        "atrPeriod": 9.100000000000001,
+        "deviationMult": 3,
+        "levelIndex": 4,
+        "entryMode": 1,
+        "touchUsesWick": 1,
+        "touchTolerancePct": 0.0484,
+        "usePivotContext": 0,
+        "useLong": 1,
+        "useShort": 1,
+        "signalCooldownBars": 6,
+        "trailAtr": 2.9453,
+        "initialStopAtr": 2.025,
+        "maxHoldBars": 43,
+        "killIfNoProfitAfterBars": 15,
+        "entryCooldownBars": 5
+      },
+      "runs": 5,
+      "seeds": [
+        337441316,
+        1094858482,
+        1953313057,
+        459430023,
+        1579460384
+      ]
+    },
+    {
+      "rank": 2,
+      "symbol": "XRPUSDT",
+      "interval": "15m",
+      "strategyKey": "bear_hunter_v5",
+      "score": 0.2166951575173641,
+      "netProfitPercent": 37.64600450587645,
+      "sharpeRatio": 0.6635887034519562,
+      "maxDrawdownPercent": 3.8209755197220487,
+      "totalTrades": 41,
+      "alphaGenome": {
+        "fastPeriod": 37,
+        "slowPeriod": 64,
+        "macroSmaPeriod": 251,
+        "trendSlopeBars": 5.2,
+        "rsiPeriod": 11,
+        "oversoldGuardRsi": 19.5,
+        "volWindow": 18,
+        "volLookback": 84,
+        "spikePercentilePct": 100,
+        "coverPercentilePct": 68.76943757039835,
+        "confirmBars": 1.3,
+        "minHoldBars": 2.7,
+        "cooldownBars": 9,
+        "atrPeriod": 9.100000000000001,
+        "stopAtr": 1.2155,
+        "bankTriggerProfitPct": 4.24316269024209,
+        "bankFractionPct": 67.5,
+        "remainingTrailAtr": 1.4067,
+        "maxHoldBars": 82
+      },
+      "runs": 5,
+      "seeds": [
+        1461264758,
+        365962731,
+        1019266721,
+        645514872,
+        1213336751
+      ]
+    }
+  ],
+  "symbols": [
+    {
+      "rank": 1,
+      "symbol": "XRPUSDT",
+      "interval": "15m",
+      "quoteVolume": 0,
+      "bars": 10000,
+      "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+      "hunts": [
+        {
+          "strategyKey": "meta_harvest_v2",
+          "seeds": [
+            337441316,
+            1094858482,
+            1953313057,
+            459430023,
+            1579460384
+          ],
+          "runs": [
+            {
+              "seed": 337441316,
+              "elapsedMs": 157314.7,
+              "fitness": {
+                "score": 2.3074958939772237,
+                "netProfitPercent": 1172.7559717243867,
+                "sharpeRatio": 0.24731633393648664,
+                "stability": 0.7955738206190669,
+                "maxDrawdownPercent": 6.423859549006436,
+                "totalTrades": 615
+              },
+              "alphaGenome": {
+                "depth": 7.15,
+                "atrPeriod": 9.100000000000001,
+                "deviationMult": 3,
+                "levelIndex": 4,
+                "entryMode": 1,
+                "touchUsesWick": 1,
+                "touchTolerancePct": 0.0564,
+                "usePivotContext": 0,
+                "useLong": 1,
+                "useShort": 1,
+                "signalCooldownBars": 6,
+                "trailAtr": 2.9666,
+                "initialStopAtr": 2.025,
+                "maxHoldBars": 43,
+                "killIfNoProfitAfterBars": 15,
+                "entryCooldownBars": 5
+              }
+            },
+            {
+              "seed": 1094858482,
+              "elapsedMs": 156767.54,
+              "fitness": {
+                "score": 2.3252723363977936,
+                "netProfitPercent": 1183.6349725905893,
+                "sharpeRatio": 0.24693096437402545,
+                "stability": 0.7955738206190666,
+                "maxDrawdownPercent": 6.4238595490064485,
+                "totalTrades": 615
+              },
+              "alphaGenome": {
+                "depth": 7.15,
+                "atrPeriod": 9.100000000000001,
+                "deviationMult": 3,
+                "levelIndex": 4,
+                "entryMode": 1,
+                "touchUsesWick": 1,
+                "touchTolerancePct": 0.0484,
+                "usePivotContext": 0,
+                "useLong": 1,
+                "useShort": 1,
+                "signalCooldownBars": 6,
+                "trailAtr": 2.9453,
+                "initialStopAtr": 2.025,
+                "maxHoldBars": 43,
+                "killIfNoProfitAfterBars": 15,
+                "entryCooldownBars": 5
+              }
+            },
+            {
+              "seed": 1953313057,
+              "elapsedMs": 154563.75,
+              "fitness": {
+                "score": 2.3252723363977936,
+                "netProfitPercent": 1183.6349725905893,
+                "sharpeRatio": 0.24693096437402545,
+                "stability": 0.7955738206190666,
+                "maxDrawdownPercent": 6.4238595490064485,
+                "totalTrades": 615
+              },
+              "alphaGenome": {
+                "depth": 7.15,
+                "atrPeriod": 9.100000000000001,
+                "deviationMult": 3,
+                "levelIndex": 4,
+                "entryMode": 1,
+                "touchUsesWick": 1,
+                "touchTolerancePct": 0.0675,
+                "usePivotContext": 0,
+                "useLong": 1,
+                "useShort": 1,
+                "signalCooldownBars": 6,
+                "trailAtr": 2.9422,
+                "initialStopAtr": 2.025,
+                "maxHoldBars": 43,
+                "killIfNoProfitAfterBars": 15,
+                "entryCooldownBars": 5
+              }
+            },
+            {
+              "seed": 459430023,
+              "elapsedMs": 143142.02,
+              "fitness": {
+                "score": 2.2782992785800915,
+                "netProfitPercent": 1238.9140019026142,
+                "sharpeRatio": 0.23344166266820374,
+                "stability": 0.787755136410502,
+                "maxDrawdownPercent": 6.735749910708816,
+                "totalTrades": 673
+              },
+              "alphaGenome": {
+                "depth": 7.15,
+                "atrPeriod": 10,
+                "deviationMult": 3,
+                "levelIndex": 4,
+                "entryMode": 1,
+                "touchUsesWick": 1,
+                "touchTolerancePct": 0.0557,
+                "usePivotContext": 0,
+                "useLong": 1,
+                "useShort": 1,
+                "signalCooldownBars": 4,
+                "trailAtr": 2.97,
+                "initialStopAtr": 1.9543,
+                "maxHoldBars": 44,
+                "killIfNoProfitAfterBars": 16,
+                "entryCooldownBars": 3
+              }
+            },
+            {
+              "seed": 1579460384,
+              "elapsedMs": 152786.15,
+              "fitness": {
+                "score": 2.3074958939772237,
+                "netProfitPercent": 1172.7559717243867,
+                "sharpeRatio": 0.24731633393648664,
+                "stability": 0.7955738206190669,
+                "maxDrawdownPercent": 6.423859549006436,
+                "totalTrades": 615
+              },
+              "alphaGenome": {
+                "depth": 7.15,
+                "atrPeriod": 9.100000000000001,
+                "deviationMult": 3,
+                "levelIndex": 4,
+                "entryMode": 1,
+                "touchUsesWick": 1,
+                "touchTolerancePct": 0.0429,
+                "usePivotContext": 0,
+                "useLong": 1,
+                "useShort": 1,
+                "signalCooldownBars": 6,
+                "trailAtr": 2.97,
+                "initialStopAtr": 2.025,
+                "maxHoldBars": 43,
+                "killIfNoProfitAfterBars": 15,
+                "entryCooldownBars": 5
+              }
+            }
+          ],
+          "elapsedMs": 764574.16,
+          "aggregate": {
+            "robustScore": 2.3252723363977936,
+            "medianScore": 2.3074958939772237,
+            "medianNetProfitPercent": 1183.6349725905893,
+            "medianSharpeRatio": 0.24693096437402545,
+            "medianMaxDrawdownPercent": 6.4238595490064485,
+            "medianTotalTrades": 615
+          },
+          "alphaGenome": {
+            "depth": 7.15,
+            "atrPeriod": 9.100000000000001,
+            "deviationMult": 3,
+            "levelIndex": 4,
+            "entryMode": 1,
+            "touchUsesWick": 1,
+            "touchTolerancePct": 0.0484,
+            "usePivotContext": 0,
+            "useLong": 1,
+            "useShort": 1,
+            "signalCooldownBars": 6,
+            "trailAtr": 2.9453,
+            "initialStopAtr": 2.025,
+            "maxHoldBars": 43,
+            "killIfNoProfitAfterBars": 15,
+            "entryCooldownBars": 5
+          },
+          "fitness": {
+            "score": 2.3252723363977936,
+            "netProfitPercent": 1183.6349725905893,
+            "sharpeRatio": 0.24693096437402545,
+            "stability": 0.7955738206190666,
+            "maxDrawdownPercent": 6.4238595490064485,
+            "totalTrades": 615
+          }
+        },
+        {
+          "strategyKey": "bear_hunter_v5",
+          "seeds": [
+            1461264758,
+            365962731,
+            1019266721,
+            645514872,
+            1213336751
+          ],
+          "runs": [
+            {
+              "seed": 1461264758,
+              "elapsedMs": 165464.12,
+              "fitness": {
+                "score": 0.14837841621731288,
+                "netProfitPercent": 23.271298317987075,
+                "sharpeRatio": 0.7173889513351661,
+                "stability": 0.8887823753830977,
+                "maxDrawdownPercent": 3.128370557780343,
+                "totalTrades": 31
+              },
+              "alphaGenome": {
+                "fastPeriod": 22.1,
+                "slowPeriod": 58,
+                "macroSmaPeriod": 130,
+                "trendSlopeBars": 6,
+                "rsiPeriod": 12,
+                "oversoldGuardRsi": 33.202837491886896,
+                "volWindow": 26,
+                "volLookback": 84,
+                "spikePercentilePct": 100,
+                "coverPercentilePct": 66.17089616985406,
+                "confirmBars": 2,
+                "minHoldBars": 2,
+                "cooldownBars": 6,
+                "atrPeriod": 9.100000000000001,
+                "stopAtr": 1.4725,
+                "bankTriggerProfitPct": 3.487345451588203,
+                "bankFractionPct": 65.33645692993454,
+                "remainingTrailAtr": 1.1445,
+                "maxHoldBars": 73
+              }
+            },
+            {
+              "seed": 365962731,
+              "elapsedMs": 100417.45,
+              "fitness": {
+                "score": 0.24185958888361678,
+                "netProfitPercent": 40.89014450962801,
+                "sharpeRatio": 0.6719286549217062,
+                "stability": 0.8802813536431853,
+                "maxDrawdownPercent": 3.400010856226248,
+                "totalTrades": 43
+              },
+              "alphaGenome": {
+                "fastPeriod": 26,
+                "slowPeriod": 58,
+                "macroSmaPeriod": 258,
+                "trendSlopeBars": 5.2,
+                "rsiPeriod": 18.9,
+                "oversoldGuardRsi": 19.5,
+                "volWindow": 18,
+                "volLookback": 124,
+                "spikePercentilePct": 98.30679618527249,
+                "coverPercentilePct": 68.61311169003055,
+                "confirmBars": 1.3,
+                "minHoldBars": 2.7,
+                "cooldownBars": 7,
+                "atrPeriod": 18.9,
+                "stopAtr": 0.8773,
+                "bankTriggerProfitPct": 4.048892350426488,
+                "bankFractionPct": 67.5,
+                "remainingTrailAtr": 1.3936,
+                "maxHoldBars": 82
+              }
+            },
+            {
+              "seed": 1019266721,
+              "elapsedMs": 97165.38,
+              "fitness": {
+                "score": 0.22834950340215004,
+                "netProfitPercent": 39.820438200289935,
+                "sharpeRatio": 0.6635887034519562,
+                "stability": 0.864161775752001,
+                "maxDrawdownPercent": 3.929768362231463,
+                "totalTrades": 41
+              },
+              "alphaGenome": {
+                "fastPeriod": 37,
+                "slowPeriod": 64,
+                "macroSmaPeriod": 260,
+                "trendSlopeBars": 5.2,
+                "rsiPeriod": 18.9,
+                "oversoldGuardRsi": 19.5,
+                "volWindow": 19,
+                "volLookback": 123,
+                "spikePercentilePct": 98.18045649743662,
+                "coverPercentilePct": 68.1198198046002,
+                "confirmBars": 1.3,
+                "minHoldBars": 2.7,
+                "cooldownBars": 10.8,
+                "atrPeriod": 9.100000000000001,
+                "stopAtr": 1.0075,
+                "bankTriggerProfitPct": 4.077095827182925,
+                "bankFractionPct": 67.5,
+                "remainingTrailAtr": 1.3622,
+                "maxHoldBars": 65
+              }
+            },
+            {
+              "seed": 645514872,
+              "elapsedMs": 150947.88,
+              "fitness": {
+                "score": 0.15715283841296823,
+                "netProfitPercent": 37.64600450587645,
+                "sharpeRatio": 0.5289269859552672,
+                "stability": 0.7892373217977832,
+                "maxDrawdownPercent": 6.676150264983857,
+                "totalTrades": 54
+              },
+              "alphaGenome": {
+                "fastPeriod": 37,
+                "slowPeriod": 64,
+                "macroSmaPeriod": 251,
+                "trendSlopeBars": 5.2,
+                "rsiPeriod": 11,
+                "oversoldGuardRsi": 19.5,
+                "volWindow": 18,
+                "volLookback": 84,
+                "spikePercentilePct": 100,
+                "coverPercentilePct": 68.76943757039835,
+                "confirmBars": 1.3,
+                "minHoldBars": 2.7,
+                "cooldownBars": 9,
+                "atrPeriod": 9.100000000000001,
+                "stopAtr": 1.2155,
+                "bankTriggerProfitPct": 4.24316269024209,
+                "bankFractionPct": 67.5,
+                "remainingTrailAtr": 1.4067,
+                "maxHoldBars": 82
+              }
+            },
+            {
+              "seed": 1213336751,
+              "elapsedMs": 139495.91,
+              "fitness": {
+                "score": 0.1286734400190057,
+                "netProfitPercent": 23.54856179851673,
+                "sharpeRatio": 0.6630855839732543,
+                "stability": 0.8674237963559779,
+                "maxDrawdownPercent": 3.8209755197220487,
+                "totalTrades": 19
+              },
+              "alphaGenome": {
+                "fastPeriod": 40,
+                "slowPeriod": 112,
+                "macroSmaPeriod": 152,
+                "trendSlopeBars": 5.2,
+                "rsiPeriod": 16,
+                "oversoldGuardRsi": 22.06141307407549,
+                "volWindow": 14,
+                "volLookback": 97,
+                "spikePercentilePct": 100,
+                "coverPercentilePct": 82.62588992793187,
+                "confirmBars": 2.7,
+                "minHoldBars": 2,
+                "cooldownBars": 10,
+                "atrPeriod": 15,
+                "stopAtr": 0.9134,
+                "bankTriggerProfitPct": 3.25,
+                "bankFractionPct": 32.5,
+                "remainingTrailAtr": 1.5881,
+                "maxHoldBars": 81
+              }
+            }
+          ],
+          "elapsedMs": 653490.74,
+          "aggregate": {
+            "robustScore": 0.2166951575173641,
+            "medianScore": 0.15715283841296823,
+            "medianNetProfitPercent": 37.64600450587645,
+            "medianSharpeRatio": 0.6635887034519562,
+            "medianMaxDrawdownPercent": 3.8209755197220487,
+            "medianTotalTrades": 41
+          },
+          "alphaGenome": {
+            "fastPeriod": 37,
+            "slowPeriod": 64,
+            "macroSmaPeriod": 251,
+            "trendSlopeBars": 5.2,
+            "rsiPeriod": 11,
+            "oversoldGuardRsi": 19.5,
+            "volWindow": 18,
+            "volLookback": 84,
+            "spikePercentilePct": 100,
+            "coverPercentilePct": 68.76943757039835,
+            "confirmBars": 1.3,
+            "minHoldBars": 2.7,
+            "cooldownBars": 9,
+            "atrPeriod": 9.100000000000001,
+            "stopAtr": 1.2155,
+            "bankTriggerProfitPct": 4.24316269024209,
+            "bankFractionPct": 67.5,
+            "remainingTrailAtr": 1.4067,
+            "maxHoldBars": 82
+          },
+          "fitness": {
+            "score": 0.2166951575173641,
+            "netProfitPercent": 37.64600450587645,
+            "sharpeRatio": 0.6635887034519562,
+            "stability": 0.8674237963559779,
+            "maxDrawdownPercent": 3.8209755197220487,
+            "totalTrades": 41
+          }
+        }
+      ],
+      "winner": {
+        "strategyKey": "meta_harvest_v2",
+        "seeds": [
+          337441316,
+          1094858482,
+          1953313057,
+          459430023,
+          1579460384
+        ],
+        "runs": [
+          {
+            "seed": 337441316,
+            "elapsedMs": 157314.7,
+            "fitness": {
+              "score": 2.3074958939772237,
+              "netProfitPercent": 1172.7559717243867,
+              "sharpeRatio": 0.24731633393648664,
+              "stability": 0.7955738206190669,
+              "maxDrawdownPercent": 6.423859549006436,
+              "totalTrades": 615
+            },
+            "alphaGenome": {
+              "depth": 7.15,
+              "atrPeriod": 9.100000000000001,
+              "deviationMult": 3,
+              "levelIndex": 4,
+              "entryMode": 1,
+              "touchUsesWick": 1,
+              "touchTolerancePct": 0.0564,
+              "usePivotContext": 0,
+              "useLong": 1,
+              "useShort": 1,
+              "signalCooldownBars": 6,
+              "trailAtr": 2.9666,
+              "initialStopAtr": 2.025,
+              "maxHoldBars": 43,
+              "killIfNoProfitAfterBars": 15,
+              "entryCooldownBars": 5
+            }
+          },
+          {
+            "seed": 1094858482,
+            "elapsedMs": 156767.54,
+            "fitness": {
+              "score": 2.3252723363977936,
+              "netProfitPercent": 1183.6349725905893,
+              "sharpeRatio": 0.24693096437402545,
+              "stability": 0.7955738206190666,
+              "maxDrawdownPercent": 6.4238595490064485,
+              "totalTrades": 615
+            },
+            "alphaGenome": {
+              "depth": 7.15,
+              "atrPeriod": 9.100000000000001,
+              "deviationMult": 3,
+              "levelIndex": 4,
+              "entryMode": 1,
+              "touchUsesWick": 1,
+              "touchTolerancePct": 0.0484,
+              "usePivotContext": 0,
+              "useLong": 1,
+              "useShort": 1,
+              "signalCooldownBars": 6,
+              "trailAtr": 2.9453,
+              "initialStopAtr": 2.025,
+              "maxHoldBars": 43,
+              "killIfNoProfitAfterBars": 15,
+              "entryCooldownBars": 5
+            }
+          },
+          {
+            "seed": 1953313057,
+            "elapsedMs": 154563.75,
+            "fitness": {
+              "score": 2.3252723363977936,
+              "netProfitPercent": 1183.6349725905893,
+              "sharpeRatio": 0.24693096437402545,
+              "stability": 0.7955738206190666,
+              "maxDrawdownPercent": 6.4238595490064485,
+              "totalTrades": 615
+            },
+            "alphaGenome": {
+              "depth": 7.15,
+              "atrPeriod": 9.100000000000001,
+              "deviationMult": 3,
+              "levelIndex": 4,
+              "entryMode": 1,
+              "touchUsesWick": 1,
+              "touchTolerancePct": 0.0675,
+              "usePivotContext": 0,
+              "useLong": 1,
+              "useShort": 1,
+              "signalCooldownBars": 6,
+              "trailAtr": 2.9422,
+              "initialStopAtr": 2.025,
+              "maxHoldBars": 43,
+              "killIfNoProfitAfterBars": 15,
+              "entryCooldownBars": 5
+            }
+          },
+          {
+            "seed": 459430023,
+            "elapsedMs": 143142.02,
+            "fitness": {
+              "score": 2.2782992785800915,
+              "netProfitPercent": 1238.9140019026142,
+              "sharpeRatio": 0.23344166266820374,
+              "stability": 0.787755136410502,
+              "maxDrawdownPercent": 6.735749910708816,
+              "totalTrades": 673
+            },
+            "alphaGenome": {
+              "depth": 7.15,
+              "atrPeriod": 10,
+              "deviationMult": 3,
+              "levelIndex": 4,
+              "entryMode": 1,
+              "touchUsesWick": 1,
+              "touchTolerancePct": 0.0557,
+              "usePivotContext": 0,
+              "useLong": 1,
+              "useShort": 1,
+              "signalCooldownBars": 4,
+              "trailAtr": 2.97,
+              "initialStopAtr": 1.9543,
+              "maxHoldBars": 44,
+              "killIfNoProfitAfterBars": 16,
+              "entryCooldownBars": 3
+            }
+          },
+          {
+            "seed": 1579460384,
+            "elapsedMs": 152786.15,
+            "fitness": {
+              "score": 2.3074958939772237,
+              "netProfitPercent": 1172.7559717243867,
+              "sharpeRatio": 0.24731633393648664,
+              "stability": 0.7955738206190669,
+              "maxDrawdownPercent": 6.423859549006436,
+              "totalTrades": 615
+            },
+            "alphaGenome": {
+              "depth": 7.15,
+              "atrPeriod": 9.100000000000001,
+              "deviationMult": 3,
+              "levelIndex": 4,
+              "entryMode": 1,
+              "touchUsesWick": 1,
+              "touchTolerancePct": 0.0429,
+              "usePivotContext": 0,
+              "useLong": 1,
+              "useShort": 1,
+              "signalCooldownBars": 6,
+              "trailAtr": 2.97,
+              "initialStopAtr": 2.025,
+              "maxHoldBars": 43,
+              "killIfNoProfitAfterBars": 15,
+              "entryCooldownBars": 5
+            }
+          }
+        ],
+        "elapsedMs": 764574.16,
+        "aggregate": {
+          "robustScore": 2.3252723363977936,
+          "medianScore": 2.3074958939772237,
+          "medianNetProfitPercent": 1183.6349725905893,
+          "medianSharpeRatio": 0.24693096437402545,
+          "medianMaxDrawdownPercent": 6.4238595490064485,
+          "medianTotalTrades": 615
+        },
+        "alphaGenome": {
+          "depth": 7.15,
+          "atrPeriod": 9.100000000000001,
+          "deviationMult": 3,
+          "levelIndex": 4,
+          "entryMode": 1,
+          "touchUsesWick": 1,
+          "touchTolerancePct": 0.0484,
+          "usePivotContext": 0,
+          "useLong": 1,
+          "useShort": 1,
+          "signalCooldownBars": 6,
+          "trailAtr": 2.9453,
+          "initialStopAtr": 2.025,
+          "maxHoldBars": 43,
+          "killIfNoProfitAfterBars": 15,
+          "entryCooldownBars": 5
+        },
+        "fitness": {
+          "score": 2.3252723363977936,
+          "netProfitPercent": 1183.6349725905893,
+          "sharpeRatio": 0.24693096437402545,
+          "stability": 0.7955738206190666,
+          "maxDrawdownPercent": 6.4238595490064485,
+          "totalTrades": 615
+        }
+      }
+    }
+  ]
+}

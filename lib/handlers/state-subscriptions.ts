@@ -9,6 +9,7 @@ import { paramManager } from "../param-manager";
 import { getRequiredElement } from "../dom-utils";
 import { SYMBOL_MAP } from "../constants";
 import { clearAll } from "../app-actions";
+import { formatPolymarketDisplayName } from "../dataProviders/polymarket";
 
 export function setupStateSubscriptions() {
     const setPriceLoading = () => {
@@ -153,6 +154,10 @@ export function setupStateSubscriptions() {
 
         // Get display name from map, or generate one for Binance pairs
         let displayName = SYMBOL_MAP[symbol];
+        const polymarketLabel = formatPolymarketDisplayName(symbol);
+        if (polymarketLabel) {
+            displayName = polymarketLabel;
+        }
         if (!displayName) {
             // For Binance pairs like BTCUSDT, format as BTC/USDT
             if (symbol.endsWith('USDT')) {

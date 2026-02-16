@@ -1,0 +1,1297 @@
+{
+  "generatedAt": "2026-02-16T03:30:02.326Z",
+  "config": {
+    "seriesId": "10684",
+    "startDateMin": "2026-02-12T00:00:00Z",
+    "maxEvents": 1500,
+    "pageSize": 500,
+    "concurrency": 12,
+    "fee": 0.01,
+    "trainRatio": 0.7,
+    "minTrainTrades": 80,
+    "minTestTrades": 40,
+    "entryMinutes": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "outPath": "reports/poly-edge-fee-0.01.json"
+  },
+  "counts": {
+    "eventsFetched": 1186,
+    "eventsWithSamples": 1185,
+    "totalSamples": 4738,
+    "rulesEvaluated": 720,
+    "rulesPassingTradeFilters": 686
+  },
+  "topRobust": [
+    {
+      "rule": {
+        "id": "level_mom@4m:thr=0.03",
+        "family": "level_mom",
+        "entryMinute": 4,
+        "threshold": 0.03
+      },
+      "train": {
+        "trades": 206,
+        "wins": 125,
+        "winRate": 0.6067961165048543,
+        "totalPnl": 8.560000000000008,
+        "avgPnl": 0.041553398058252464,
+        "sharpe": 1.2048779284562223,
+        "maxDrawdown": 5.3050000000000015
+      },
+      "test": {
+        "trades": 133,
+        "wins": 84,
+        "winRate": 0.631578947368421,
+        "totalPnl": 7.269999999999997,
+        "avgPnl": 0.05466165413533832,
+        "sharpe": 1.3043546624400402,
+        "maxDrawdown": 3.784999999999998
+      },
+      "robustScore": 0.28996716412806856
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=1,2:thr=0.04",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.04,
+        "w1": 1,
+        "w2": 2
+      },
+      "train": {
+        "trades": 143,
+        "wins": 87,
+        "winRate": 0.6083916083916084,
+        "totalPnl": 5.87,
+        "avgPnl": 0.04104895104895105,
+        "sharpe": 0.9909239541675474,
+        "maxDrawdown": 2.7749999999999995
+      },
+      "test": {
+        "trades": 108,
+        "wins": 70,
+        "winRate": 0.6481481481481481,
+        "totalPnl": 7.139999999999998,
+        "avgPnl": 0.06611111111111109,
+        "sharpe": 1.4322725638231955,
+        "maxDrawdown": 2.935
+      },
+      "robustScore": 0.2798432128851459
+    },
+    {
+      "rule": {
+        "id": "level_mom@3m:thr=0.2",
+        "family": "level_mom",
+        "entryMinute": 3,
+        "threshold": 0.2
+      },
+      "train": {
+        "trades": 140,
+        "wins": 116,
+        "winRate": 0.8285714285714286,
+        "totalPnl": 7.179999999999998,
+        "avgPnl": 0.05128571428571427,
+        "sharpe": 1.6447097181149593,
+        "maxDrawdown": 3.4400000000000004
+      },
+      "test": {
+        "trades": 55,
+        "wins": 45,
+        "winRate": 0.8181818181818182,
+        "totalPnl": 2.8500000000000005,
+        "avgPnl": 0.051818181818181826,
+        "sharpe": 0.9835882111641322,
+        "maxDrawdown": 2.9350000000000005
+      },
+      "robustScore": 0.23359503669533457
+    },
+    {
+      "rule": {
+        "id": "cont@1m:thr=0.05",
+        "family": "cont",
+        "entryMinute": 1,
+        "threshold": 0.05
+      },
+      "train": {
+        "trades": 258,
+        "wins": 219,
+        "winRate": 0.8488372093023255,
+        "totalPnl": 6.485,
+        "avgPnl": 0.025135658914728683,
+        "sharpe": 1.2328828222099248,
+        "maxDrawdown": 4.734999999999999
+      },
+      "test": {
+        "trades": 108,
+        "wins": 92,
+        "winRate": 0.8518518518518519,
+        "totalPnl": 3.158000000000001,
+        "avgPnl": 0.029240740740740748,
+        "sharpe": 0.9808787723449913,
+        "maxDrawdown": 1.8950000000000005
+      },
+      "robustScore": 0.16646742993218996
+    },
+    {
+      "rule": {
+        "id": "mom_d3@4m:thr=0.03",
+        "family": "mom_d3",
+        "entryMinute": 4,
+        "threshold": 0.03
+      },
+      "train": {
+        "trades": 185,
+        "wins": 108,
+        "winRate": 0.5837837837837838,
+        "totalPnl": 3.845000000000001,
+        "avgPnl": 0.020783783783783788,
+        "sharpe": 0.5684339332178191,
+        "maxDrawdown": 5.895
+      },
+      "test": {
+        "trades": 126,
+        "wins": 78,
+        "winRate": 0.6190476190476191,
+        "totalPnl": 5.2449999999999966,
+        "avgPnl": 0.0416269841269841,
+        "sharpe": 0.9640146844547628,
+        "maxDrawdown": 3.355
+      },
+      "robustScore": 0.06554739435912119
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=1,1:thr=0.03",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.03,
+        "w1": 1,
+        "w2": 1
+      },
+      "train": {
+        "trades": 185,
+        "wins": 108,
+        "winRate": 0.5837837837837838,
+        "totalPnl": 3.845000000000001,
+        "avgPnl": 0.020783783783783788,
+        "sharpe": 0.5684339332178191,
+        "maxDrawdown": 5.895
+      },
+      "test": {
+        "trades": 126,
+        "wins": 78,
+        "winRate": 0.6190476190476191,
+        "totalPnl": 5.2449999999999966,
+        "avgPnl": 0.0416269841269841,
+        "sharpe": 0.9640146844547628,
+        "maxDrawdown": 3.355
+      },
+      "robustScore": 0.06554739435912119
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=2,-1:thr=0.05",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.05,
+        "w1": 2,
+        "w2": -1
+      },
+      "train": {
+        "trades": 215,
+        "wins": 124,
+        "winRate": 0.5767441860465117,
+        "totalPnl": 4.995,
+        "avgPnl": 0.023232558139534884,
+        "sharpe": 0.6830468796600344,
+        "maxDrawdown": 5.5600000000000005
+      },
+      "test": {
+        "trades": 134,
+        "wins": 82,
+        "winRate": 0.6119402985074627,
+        "totalPnl": 5.874999999999993,
+        "avgPnl": 0.0438432835820895,
+        "sharpe": 1.05033742750705,
+        "maxDrawdown": 4.63
+      },
+      "robustScore": 0.037436303857847325
+    },
+    {
+      "rule": {
+        "id": "mom_d3@4m:thr=0.02",
+        "family": "mom_d3",
+        "entryMinute": 4,
+        "threshold": 0.02
+      },
+      "train": {
+        "trades": 338,
+        "wins": 193,
+        "winRate": 0.5710059171597633,
+        "totalPnl": 7.284999999999994,
+        "avgPnl": 0.021553254437869804,
+        "sharpe": 0.7979601023857801,
+        "maxDrawdown": 5.505000000000001
+      },
+      "test": {
+        "trades": 187,
+        "wins": 110,
+        "winRate": 0.5882352941176471,
+        "totalPnl": 4.824999999999996,
+        "avgPnl": 0.02580213903743313,
+        "sharpe": 0.7203220297006715,
+        "maxDrawdown": 5.884999999999998
+      },
+      "robustScore": 0.0004863216054050157
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=1,1:thr=0.02",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.02,
+        "w1": 1,
+        "w2": 1
+      },
+      "train": {
+        "trades": 338,
+        "wins": 193,
+        "winRate": 0.5710059171597633,
+        "totalPnl": 7.284999999999994,
+        "avgPnl": 0.021553254437869804,
+        "sharpe": 0.7979601023857801,
+        "maxDrawdown": 5.505000000000001
+      },
+      "test": {
+        "trades": 187,
+        "wins": 110,
+        "winRate": 0.5882352941176471,
+        "totalPnl": 4.824999999999996,
+        "avgPnl": 0.02580213903743313,
+        "sharpe": 0.7203220297006715,
+        "maxDrawdown": 5.884999999999998
+      },
+      "robustScore": 0.0004863216054050157
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=2,1:thr=0.05",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.05,
+        "w1": 2,
+        "w2": 1
+      },
+      "train": {
+        "trades": 215,
+        "wins": 124,
+        "winRate": 0.5767441860465117,
+        "totalPnl": 3.719999999999999,
+        "avgPnl": 0.017302325581395342,
+        "sharpe": 0.5099208350600086,
+        "maxDrawdown": 4.92
+      },
+      "test": {
+        "trades": 137,
+        "wins": 83,
+        "winRate": 0.6058394160583942,
+        "totalPnl": 4.479999999999998,
+        "avgPnl": 0.03270072992700728,
+        "sharpe": 0.7862635519494959,
+        "maxDrawdown": 4.289999999999998
+      },
+      "robustScore": -0.011981471312199954
+    },
+    {
+      "rule": {
+        "id": "cont@1m:thr=0.04",
+        "family": "cont",
+        "entryMinute": 1,
+        "threshold": 0.04
+      },
+      "train": {
+        "trades": 285,
+        "wins": 238,
+        "winRate": 0.8350877192982457,
+        "totalPnl": 4.36,
+        "avgPnl": 0.015298245614035089,
+        "sharpe": 0.7725731516916606,
+        "maxDrawdown": 6.264999999999999
+      },
+      "test": {
+        "trades": 127,
+        "wins": 106,
+        "winRate": 0.8346456692913385,
+        "totalPnl": 2.578,
+        "avgPnl": 0.020299212598425195,
+        "sharpe": 0.7071789809110101,
+        "maxDrawdown": 3.8449999999999998
+      },
+      "robustScore": -0.01984752758109104
+    },
+    {
+      "rule": {
+        "id": "cont@1m:thr=0.03",
+        "family": "cont",
+        "entryMinute": 1,
+        "threshold": 0.03
+      },
+      "train": {
+        "trades": 325,
+        "wins": 268,
+        "winRate": 0.8246153846153846,
+        "totalPnl": 4.644999999999999,
+        "avgPnl": 0.014292307692307687,
+        "sharpe": 0.7522402045993478,
+        "maxDrawdown": 6.8500000000000005
+      },
+      "test": {
+        "trades": 141,
+        "wins": 116,
+        "winRate": 0.8226950354609929,
+        "totalPnl": 2.357999999999999,
+        "avgPnl": 0.016723404255319145,
+        "sharpe": 0.5819964168978077,
+        "maxDrawdown": 4.265000000000001
+      },
+      "robustScore": -0.043538249248335104
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=1,2:thr=0.03",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.03,
+        "w1": 1,
+        "w2": 2
+      },
+      "train": {
+        "trades": 225,
+        "wins": 128,
+        "winRate": 0.5688888888888889,
+        "totalPnl": 2.7149999999999967,
+        "avgPnl": 0.012066666666666653,
+        "sharpe": 0.36339881201932883,
+        "maxDrawdown": 6.2900000000000045
+      },
+      "test": {
+        "trades": 148,
+        "wins": 93,
+        "winRate": 0.6283783783783784,
+        "totalPnl": 8.579999999999998,
+        "avgPnl": 0.057972972972972964,
+        "sharpe": 1.4603109395777312,
+        "maxDrawdown": 3.895
+      },
+      "robustScore": -0.04795266426880315
+    },
+    {
+      "rule": {
+        "id": "mom_d3@4m:thr=0.04",
+        "family": "mom_d3",
+        "entryMinute": 4,
+        "threshold": 0.04
+      },
+      "train": {
+        "trades": 104,
+        "wins": 61,
+        "winRate": 0.5865384615384616,
+        "totalPnl": 0.7349999999999978,
+        "avgPnl": 0.0070673076923076705,
+        "sharpe": 0.14413561852603973,
+        "maxDrawdown": 4.245000000000001
+      },
+      "test": {
+        "trades": 87,
+        "wins": 56,
+        "winRate": 0.6436781609195402,
+        "totalPnl": 4.449999999999999,
+        "avgPnl": 0.05114942528735631,
+        "sharpe": 0.9941726297493578,
+        "maxDrawdown": 2.4099999999999993
+      },
+      "robustScore": -0.05458054226903594
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=1,1:thr=0.04",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.04,
+        "w1": 1,
+        "w2": 1
+      },
+      "train": {
+        "trades": 104,
+        "wins": 61,
+        "winRate": 0.5865384615384616,
+        "totalPnl": 0.7349999999999978,
+        "avgPnl": 0.0070673076923076705,
+        "sharpe": 0.14413561852603973,
+        "maxDrawdown": 4.245000000000001
+      },
+      "test": {
+        "trades": 87,
+        "wins": 56,
+        "winRate": 0.6436781609195402,
+        "totalPnl": 4.449999999999999,
+        "avgPnl": 0.05114942528735631,
+        "sharpe": 0.9941726297493578,
+        "maxDrawdown": 2.4099999999999993
+      },
+      "robustScore": -0.05458054226903594
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=1,2:thr=0.05",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.05,
+        "w1": 1,
+        "w2": 2
+      },
+      "train": {
+        "trades": 92,
+        "wins": 54,
+        "winRate": 0.5869565217391305,
+        "totalPnl": 0.5849999999999987,
+        "avgPnl": 0.006358695652173899,
+        "sharpe": 0.1217402177821299,
+        "maxDrawdown": 4.37
+      },
+      "test": {
+        "trades": 86,
+        "wins": 55,
+        "winRate": 0.6395348837209303,
+        "totalPnl": 4.2250000000000005,
+        "avgPnl": 0.04912790697674419,
+        "sharpe": 0.9464767601419949,
+        "maxDrawdown": 2.29
+      },
+      "robustScore": -0.055531882392772014
+    },
+    {
+      "rule": {
+        "id": "cont@1m:thr=0.02",
+        "family": "cont",
+        "entryMinute": 1,
+        "threshold": 0.02
+      },
+      "train": {
+        "trades": 382,
+        "wins": 307,
+        "winRate": 0.8036649214659686,
+        "totalPnl": 3.9650000000000007,
+        "avgPnl": 0.010379581151832462,
+        "sharpe": 0.5654293023146086,
+        "maxDrawdown": 7.564999999999999
+      },
+      "test": {
+        "trades": 165,
+        "wins": 132,
+        "winRate": 0.8,
+        "totalPnl": 2.258000000000001,
+        "avgPnl": 0.01368484848484849,
+        "sharpe": 0.503826801084054,
+        "maxDrawdown": 4.79
+      },
+      "robustScore": -0.10617186603558315
+    },
+    {
+      "rule": {
+        "id": "cont@1m:thr=0.015",
+        "family": "cont",
+        "entryMinute": 1,
+        "threshold": 0.015
+      },
+      "train": {
+        "trades": 404,
+        "wins": 323,
+        "winRate": 0.7995049504950495,
+        "totalPnl": 3.669999999999999,
+        "avgPnl": 0.009084158415841582,
+        "sharpe": 0.5049515944425973,
+        "maxDrawdown": 6.179999999999999
+      },
+      "test": {
+        "trades": 177,
+        "wins": 139,
+        "winRate": 0.7853107344632768,
+        "totalPnl": 1.6330000000000007,
+        "avgPnl": 0.009225988700564975,
+        "sharpe": 0.3421322024815141,
+        "maxDrawdown": 4.654999999999999
+      },
+      "robustScore": -0.11189313283902041
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=1,-1:thr=0.03",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.03,
+        "w1": 1,
+        "w2": -1
+      },
+      "train": {
+        "trades": 179,
+        "wins": 100,
+        "winRate": 0.5586592178770949,
+        "totalPnl": 1.2099999999999946,
+        "avgPnl": 0.006759776536312819,
+        "sharpe": 0.1807745737209015,
+        "maxDrawdown": 5.485000000000002
+      },
+      "test": {
+        "trades": 122,
+        "wins": 72,
+        "winRate": 0.5901639344262295,
+        "totalPnl": 2.990000000000001,
+        "avgPnl": 0.024508196721311486,
+        "sharpe": 0.5610559592628493,
+        "maxDrawdown": 3.789999999999999
+      },
+      "robustScore": -0.11483582776091324
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=2,1:thr=0.04",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.04,
+        "w1": 2,
+        "w2": 1
+      },
+      "train": {
+        "trades": 316,
+        "wins": 181,
+        "winRate": 0.5727848101265823,
+        "totalPnl": 7.049999999999991,
+        "avgPnl": 0.02231012658227845,
+        "sharpe": 0.7987449643373999,
+        "maxDrawdown": 5.430000000000003
+      },
+      "test": {
+        "trades": 169,
+        "wins": 97,
+        "winRate": 0.5739644970414202,
+        "totalPnl": 1.4899999999999967,
+        "avgPnl": 0.008816568047337258,
+        "sharpe": 0.23333289456485073,
+        "maxDrawdown": 4.82
+      },
+      "robustScore": -0.12638461538461565
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=1,2:thr=0.02",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.02,
+        "w1": 1,
+        "w2": 2
+      },
+      "train": {
+        "trades": 373,
+        "wins": 207,
+        "winRate": 0.5549597855227882,
+        "totalPnl": 3.2049999999999894,
+        "avgPnl": 0.008592493297587102,
+        "sharpe": 0.3335812378053937,
+        "maxDrawdown": 9.2
+      },
+      "test": {
+        "trades": 192,
+        "wins": 114,
+        "winRate": 0.59375,
+        "totalPnl": 6.269999999999996,
+        "avgPnl": 0.03265624999999998,
+        "sharpe": 0.9243385767783242,
+        "maxDrawdown": 5.259999999999998
+      },
+      "robustScore": -0.14393892035907266
+    },
+    {
+      "rule": {
+        "id": "mom_d3@4m:thr=0.015",
+        "family": "mom_d3",
+        "entryMinute": 4,
+        "threshold": 0.015
+      },
+      "train": {
+        "trades": 384,
+        "wins": 215,
+        "winRate": 0.5598958333333334,
+        "totalPnl": 5.124999999999992,
+        "avgPnl": 0.013346354166666645,
+        "sharpe": 0.5257833291456165,
+        "maxDrawdown": 6.724999999999998
+      },
+      "test": {
+        "trades": 210,
+        "wins": 120,
+        "winRate": 0.5714285714285714,
+        "totalPnl": 2.6349999999999967,
+        "avgPnl": 0.012547619047619031,
+        "sharpe": 0.3694176016164602,
+        "maxDrawdown": 6.519999999999999
+      },
+      "robustScore": -0.14416772511328987
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=1,1:thr=0.015",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.015,
+        "w1": 1,
+        "w2": 1
+      },
+      "train": {
+        "trades": 384,
+        "wins": 215,
+        "winRate": 0.5598958333333334,
+        "totalPnl": 5.124999999999992,
+        "avgPnl": 0.013346354166666645,
+        "sharpe": 0.5257833291456165,
+        "maxDrawdown": 6.724999999999998
+      },
+      "test": {
+        "trades": 210,
+        "wins": 120,
+        "winRate": 0.5714285714285714,
+        "totalPnl": 2.6349999999999967,
+        "avgPnl": 0.012547619047619031,
+        "sharpe": 0.3694176016164602,
+        "maxDrawdown": 6.519999999999999
+      },
+      "robustScore": -0.14416772511328987
+    },
+    {
+      "rule": {
+        "id": "mom_d1@4m:thr=0.02",
+        "family": "mom_d1",
+        "entryMinute": 4,
+        "threshold": 0.02
+      },
+      "train": {
+        "trades": 310,
+        "wins": 173,
+        "winRate": 0.5580645161290323,
+        "totalPnl": 2.8199999999999914,
+        "avgPnl": 0.00909677419354836,
+        "sharpe": 0.32127876864735927,
+        "maxDrawdown": 7.765000000000001
+      },
+      "test": {
+        "trades": 170,
+        "wins": 98,
+        "winRate": 0.5764705882352941,
+        "totalPnl": 2.284999999999998,
+        "avgPnl": 0.013441176470588224,
+        "sharpe": 0.35775086098329173,
+        "maxDrawdown": 5.324999999999999
+      },
+      "robustScore": -0.1476425755956683
+    },
+    {
+      "rule": {
+        "id": "mom_d1@4m:thr=0.04",
+        "family": "mom_d1",
+        "entryMinute": 4,
+        "threshold": 0.04
+      },
+      "train": {
+        "trades": 93,
+        "wins": 53,
+        "winRate": 0.5698924731182796,
+        "totalPnl": -0.8800000000000021,
+        "avgPnl": -0.009462365591397872,
+        "sharpe": -0.18166631407405923,
+        "maxDrawdown": 3.665000000000001
+      },
+      "test": {
+        "trades": 81,
+        "wins": 54,
+        "winRate": 0.6666666666666666,
+        "totalPnl": 6.009999999999997,
+        "avgPnl": 0.07419753086419749,
+        "sharpe": 1.4139545135170715,
+        "maxDrawdown": 1.96
+      },
+      "robustScore": -0.18316129032258086
+    }
+  ],
+  "topTrainThenTest": [
+    {
+      "rule": {
+        "id": "level_mom@4m:thr=0.03",
+        "family": "level_mom",
+        "entryMinute": 4,
+        "threshold": 0.03
+      },
+      "train": {
+        "trades": 206,
+        "wins": 125,
+        "winRate": 0.6067961165048543,
+        "totalPnl": 8.560000000000008,
+        "avgPnl": 0.041553398058252464,
+        "sharpe": 1.2048779284562223,
+        "maxDrawdown": 5.3050000000000015
+      },
+      "test": {
+        "trades": 133,
+        "wins": 84,
+        "winRate": 0.631578947368421,
+        "totalPnl": 7.269999999999997,
+        "avgPnl": 0.05466165413533832,
+        "sharpe": 1.3043546624400402,
+        "maxDrawdown": 3.784999999999998
+      },
+      "robustScore": 0.28996716412806856
+    },
+    {
+      "rule": {
+        "id": "mom_d3@4m:thr=0.02",
+        "family": "mom_d3",
+        "entryMinute": 4,
+        "threshold": 0.02
+      },
+      "train": {
+        "trades": 338,
+        "wins": 193,
+        "winRate": 0.5710059171597633,
+        "totalPnl": 7.284999999999994,
+        "avgPnl": 0.021553254437869804,
+        "sharpe": 0.7979601023857801,
+        "maxDrawdown": 5.505000000000001
+      },
+      "test": {
+        "trades": 187,
+        "wins": 110,
+        "winRate": 0.5882352941176471,
+        "totalPnl": 4.824999999999996,
+        "avgPnl": 0.02580213903743313,
+        "sharpe": 0.7203220297006715,
+        "maxDrawdown": 5.884999999999998
+      },
+      "robustScore": 0.0004863216054050157
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=1,1:thr=0.02",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.02,
+        "w1": 1,
+        "w2": 1
+      },
+      "train": {
+        "trades": 338,
+        "wins": 193,
+        "winRate": 0.5710059171597633,
+        "totalPnl": 7.284999999999994,
+        "avgPnl": 0.021553254437869804,
+        "sharpe": 0.7979601023857801,
+        "maxDrawdown": 5.505000000000001
+      },
+      "test": {
+        "trades": 187,
+        "wins": 110,
+        "winRate": 0.5882352941176471,
+        "totalPnl": 4.824999999999996,
+        "avgPnl": 0.02580213903743313,
+        "sharpe": 0.7203220297006715,
+        "maxDrawdown": 5.884999999999998
+      },
+      "robustScore": 0.0004863216054050157
+    },
+    {
+      "rule": {
+        "id": "level_mom@3m:thr=0.2",
+        "family": "level_mom",
+        "entryMinute": 3,
+        "threshold": 0.2
+      },
+      "train": {
+        "trades": 140,
+        "wins": 116,
+        "winRate": 0.8285714285714286,
+        "totalPnl": 7.179999999999998,
+        "avgPnl": 0.05128571428571427,
+        "sharpe": 1.6447097181149593,
+        "maxDrawdown": 3.4400000000000004
+      },
+      "test": {
+        "trades": 55,
+        "wins": 45,
+        "winRate": 0.8181818181818182,
+        "totalPnl": 2.8500000000000005,
+        "avgPnl": 0.051818181818181826,
+        "sharpe": 0.9835882111641322,
+        "maxDrawdown": 2.9350000000000005
+      },
+      "robustScore": 0.23359503669533457
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=2,1:thr=0.02",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.02,
+        "w1": 2,
+        "w2": 1
+      },
+      "train": {
+        "trades": 512,
+        "wins": 284,
+        "winRate": 0.5546875,
+        "totalPnl": 7.664999999999956,
+        "avgPnl": 0.014970703124999913,
+        "sharpe": 0.6806777961476695,
+        "maxDrawdown": 7.56000000000001
+      },
+      "test": {
+        "trades": 241,
+        "wins": 135,
+        "winRate": 0.5601659751037344,
+        "totalPnl": 1.624999999999997,
+        "avgPnl": 0.006742738589211606,
+        "sharpe": 0.2120789636551191,
+        "maxDrawdown": 7.11
+      },
+      "robustScore": -0.2508245482098652
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=2,1:thr=0.04",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.04,
+        "w1": 2,
+        "w2": 1
+      },
+      "train": {
+        "trades": 316,
+        "wins": 181,
+        "winRate": 0.5727848101265823,
+        "totalPnl": 7.049999999999991,
+        "avgPnl": 0.02231012658227845,
+        "sharpe": 0.7987449643373999,
+        "maxDrawdown": 5.430000000000003
+      },
+      "test": {
+        "trades": 169,
+        "wins": 97,
+        "winRate": 0.5739644970414202,
+        "totalPnl": 1.4899999999999967,
+        "avgPnl": 0.008816568047337258,
+        "sharpe": 0.23333289456485073,
+        "maxDrawdown": 4.82
+      },
+      "robustScore": -0.12638461538461565
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=2,1:thr=0.015",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.015,
+        "w1": 2,
+        "w2": 1
+      },
+      "train": {
+        "trades": 536,
+        "wins": 297,
+        "winRate": 0.5541044776119403,
+        "totalPnl": 8.229999999999954,
+        "avgPnl": 0.015354477611940214,
+        "sharpe": 0.7143599024318642,
+        "maxDrawdown": 7.630000000000012
+      },
+      "test": {
+        "trades": 248,
+        "wins": 136,
+        "winRate": 0.5483870967741935,
+        "totalPnl": -1.0200000000000036,
+        "avgPnl": -0.004112903225806466,
+        "sharpe": -0.13106353113091287,
+        "maxDrawdown": 9.23
+      },
+      "robustScore": -0.5262700647700974
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=1,-1:thr=0.02",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.02,
+        "w1": 1,
+        "w2": -1
+      },
+      "train": {
+        "trades": 315,
+        "wins": 179,
+        "winRate": 0.5682539682539682,
+        "totalPnl": 8.109999999999987,
+        "avgPnl": 0.025746031746031704,
+        "sharpe": 0.9179492994813748,
+        "maxDrawdown": 7.020000000000007
+      },
+      "test": {
+        "trades": 175,
+        "wins": 96,
+        "winRate": 0.5485714285714286,
+        "totalPnl": -1.0350000000000024,
+        "avgPnl": -0.005914285714285728,
+        "sharpe": -0.16006370274981893,
+        "maxDrawdown": 7.915
+      },
+      "robustScore": -0.47398864591291023
+    },
+    {
+      "rule": {
+        "id": "always_up@4m",
+        "family": "always_up",
+        "entryMinute": 4,
+        "threshold": 0
+      },
+      "train": {
+        "trades": 828,
+        "wins": 433,
+        "winRate": 0.5229468599033816,
+        "totalPnl": 10.45,
+        "avgPnl": 0.012620772946859902,
+        "sharpe": 0.7276761165977794,
+        "maxDrawdown": 11.285000000000004
+      },
+      "test": {
+        "trades": 356,
+        "wins": 182,
+        "winRate": 0.5112359550561798,
+        "totalPnl": -2.1000000000000103,
+        "avgPnl": -0.005898876404494411,
+        "sharpe": -0.2245779603496495,
+        "maxDrawdown": 6.1150000000000055
+      },
+      "robustScore": -0.4170497774006686
+    },
+    {
+      "rule": {
+        "id": "mom_d1@4m:thr=0.0075",
+        "family": "mom_d1",
+        "entryMinute": 4,
+        "threshold": 0.0075
+      },
+      "train": {
+        "trades": 521,
+        "wins": 292,
+        "winRate": 0.5604606525911708,
+        "totalPnl": 11.534999999999958,
+        "avgPnl": 0.022140115163147712,
+        "sharpe": 1.015595034535635,
+        "maxDrawdown": 7.440000000000014
+      },
+      "test": {
+        "trades": 240,
+        "wins": 129,
+        "winRate": 0.5375,
+        "totalPnl": -3.385000000000003,
+        "avgPnl": -0.014104166666666678,
+        "sharpe": -0.44237369970315077,
+        "maxDrawdown": 9.620000000000001
+      },
+      "robustScore": -0.6995008104485354
+    },
+    {
+      "rule": {
+        "id": "mom_d1@4m:thr=0.01",
+        "family": "mom_d1",
+        "entryMinute": 4,
+        "threshold": 0.01
+      },
+      "train": {
+        "trades": 520,
+        "wins": 291,
+        "winRate": 0.5596153846153846,
+        "totalPnl": 11.079999999999956,
+        "avgPnl": 0.021307692307692222,
+        "sharpe": 0.9762448765904311,
+        "maxDrawdown": 7.440000000000014
+      },
+      "test": {
+        "trades": 239,
+        "wins": 128,
+        "winRate": 0.5355648535564853,
+        "totalPnl": -3.9000000000000035,
+        "avgPnl": -0.01631799163179918,
+        "sharpe": -0.5109058909915669,
+        "maxDrawdown": 10.135000000000002
+      },
+      "robustScore": -0.7590200286677293
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=2,-1:thr=0.02",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.02,
+        "w1": 2,
+        "w2": -1
+      },
+      "train": {
+        "trades": 504,
+        "wins": 277,
+        "winRate": 0.5496031746031746,
+        "totalPnl": 6.624999999999971,
+        "avgPnl": 0.013144841269841211,
+        "sharpe": 0.5921496936081421,
+        "maxDrawdown": 8.505000000000006
+      },
+      "test": {
+        "trades": 236,
+        "wins": 124,
+        "winRate": 0.5254237288135594,
+        "totalPnl": -5.720000000000006,
+        "avgPnl": -0.024237288135593244,
+        "sharpe": -0.7542594254385129,
+        "maxDrawdown": 10.615000000000006
+      },
+      "robustScore": -0.9030902854051569
+    },
+    {
+      "rule": {
+        "id": "lin_mom@4m:w=2,-1:thr=0.015",
+        "family": "lin_mom",
+        "entryMinute": 4,
+        "threshold": 0.015,
+        "w1": 2,
+        "w2": -1
+      },
+      "train": {
+        "trades": 532,
+        "wins": 293,
+        "winRate": 0.5507518796992481,
+        "totalPnl": 8.109999999999953,
+        "avgPnl": 0.015244360902255552,
+        "sharpe": 0.7059018029274443,
+        "maxDrawdown": 8.720000000000017
+      },
+      "test": {
+        "trades": 242,
+        "wins": 126,
+        "winRate": 0.5206611570247934,
+        "totalPnl": -6.840000000000008,
+        "avgPnl": -0.028264462809917387,
+        "sharpe": -0.8911348974957631,
+        "maxDrawdown": 11.240000000000006
+      },
+      "robustScore": -1.0016918530287267
+    },
+    {
+      "rule": {
+        "id": "always_up@3m",
+        "family": "always_up",
+        "entryMinute": 3,
+        "threshold": 0
+      },
+      "train": {
+        "trades": 828,
+        "wins": 433,
+        "winRate": 0.5229468599033816,
+        "totalPnl": 10.649999999999995,
+        "avgPnl": 0.012862318840579704,
+        "sharpe": 0.77670932356736,
+        "maxDrawdown": 12.040000000000004
+      },
+      "test": {
+        "trades": 356,
+        "wins": 182,
+        "winRate": 0.5112359550561798,
+        "totalPnl": -8.420000000000009,
+        "avgPnl": -0.023651685393258452,
+        "sharpe": -0.9308674658091768,
+        "maxDrawdown": 9.725000000000009
+      },
+      "robustScore": -0.9325091074826785
+    },
+    {
+      "rule": {
+        "id": "lin_mom@1m:w=1,2:thr=0.015",
+        "family": "lin_mom",
+        "entryMinute": 1,
+        "threshold": 0.015,
+        "w1": 1,
+        "w2": 2
+      },
+      "train": {
+        "trades": 798,
+        "wins": 577,
+        "winRate": 0.7230576441102757,
+        "totalPnl": 6.589999999999999,
+        "avgPnl": 0.00825814536340852,
+        "sharpe": 0.5725140397916059,
+        "maxDrawdown": 11.295000000000002
+      },
+      "test": {
+        "trades": 346,
+        "wins": 233,
+        "winRate": 0.6734104046242775,
+        "totalPnl": -11.616999999999996,
+        "avgPnl": -0.03357514450867051,
+        "sharpe": -1.5230236811617142,
+        "maxDrawdown": 15.387000000000002
+      },
+      "robustScore": -1.3938837891237155
+    },
+    {
+      "rule": {
+        "id": "lin_mom@1m:w=1,2:thr=0.01",
+        "family": "lin_mom",
+        "entryMinute": 1,
+        "threshold": 0.01,
+        "w1": 1,
+        "w2": 2
+      },
+      "train": {
+        "trades": 802,
+        "wins": 581,
+        "winRate": 0.7244389027431422,
+        "totalPnl": 8.244999999999997,
+        "avgPnl": 0.010280548628428924,
+        "sharpe": 0.7143275886504784,
+        "maxDrawdown": 10.97
+      },
+      "test": {
+        "trades": 351,
+        "wins": 236,
+        "winRate": 0.6723646723646723,
+        "totalPnl": -11.636999999999992,
+        "avgPnl": -0.03315384615384613,
+        "sharpe": -1.506652136192167,
+        "maxDrawdown": 15.056999999999999
+      },
+      "robustScore": -1.3739871086099327
+    },
+    {
+      "rule": {
+        "id": "lin_mom@1m:w=1,2:thr=0.005",
+        "family": "lin_mom",
+        "entryMinute": 1,
+        "threshold": 0.005,
+        "w1": 1,
+        "w2": 2
+      },
+      "train": {
+        "trades": 817,
+        "wins": 590,
+        "winRate": 0.7221542227662179,
+        "totalPnl": 8.245000000000001,
+        "avgPnl": 0.010091799265605876,
+        "sharpe": 0.7071764851690502,
+        "maxDrawdown": 11.185000000000004
+      },
+      "test": {
+        "trades": 354,
+        "wins": 237,
+        "winRate": 0.6694915254237288,
+        "totalPnl": -12.151999999999996,
+        "avgPnl": -0.0343276836158192,
+        "sharpe": -1.5681726591698901,
+        "maxDrawdown": 15.572000000000003
+      },
+      "robustScore": -1.4244715129957621
+    },
+    {
+      "rule": {
+        "id": "lin_mom@1m:w=1,2:thr=0.0025",
+        "family": "lin_mom",
+        "entryMinute": 1,
+        "threshold": 0.0025,
+        "w1": 1,
+        "w2": 2
+      },
+      "train": {
+        "trades": 819,
+        "wins": 591,
+        "winRate": 0.7216117216117216,
+        "totalPnl": 8.015,
+        "avgPnl": 0.009786324786324787,
+        "sharpe": 0.6872073680869105,
+        "maxDrawdown": 11.480000000000002
+      },
+      "test": {
+        "trades": 354,
+        "wins": 237,
+        "winRate": 0.6694915254237288,
+        "totalPnl": -12.151999999999996,
+        "avgPnl": -0.0343276836158192,
+        "sharpe": -1.5681726591698901,
+        "maxDrawdown": 15.572000000000003
+      },
+      "robustScore": -1.4244715129957621
+    },
+    {
+      "rule": {
+        "id": "lin_mom@1m:w=1,2:thr=0",
+        "family": "lin_mom",
+        "entryMinute": 1,
+        "threshold": 0,
+        "w1": 1,
+        "w2": 2
+      },
+      "train": {
+        "trades": 823,
+        "wins": 592,
+        "winRate": 0.7193195625759417,
+        "totalPnl": 7.364999999999994,
+        "avgPnl": 0.008948967193195618,
+        "sharpe": 0.6304015907078635,
+        "maxDrawdown": 12.129999999999999
+      },
+      "test": {
+        "trades": 354,
+        "wins": 237,
+        "winRate": 0.6694915254237288,
+        "totalPnl": -12.151999999999996,
+        "avgPnl": -0.0343276836158192,
+        "sharpe": -1.5681726591698901,
+        "maxDrawdown": 15.572000000000003
+      },
+      "robustScore": -1.4244715129957621
+    },
+    {
+      "rule": {
+        "id": "lin_mom@1m:w=1,2:thr=0.0075",
+        "family": "lin_mom",
+        "entryMinute": 1,
+        "threshold": 0.0075,
+        "w1": 1,
+        "w2": 2
+      },
+      "train": {
+        "trades": 808,
+        "wins": 584,
+        "winRate": 0.7227722772277227,
+        "totalPnl": 7.589999999999992,
+        "avgPnl": 0.009393564356435633,
+        "sharpe": 0.6545500428766339,
+        "maxDrawdown": 11.185000000000002
+      },
+      "test": {
+        "trades": 352,
+        "wins": 236,
+        "winRate": 0.6704545454545454,
+        "totalPnl": -12.221999999999996,
+        "avgPnl": -0.034721590909090896,
+        "sharpe": -1.5783754370507206,
+        "maxDrawdown": 15.642000000000003
+      },
+      "robustScore": -1.4335347888245678
+    }
+  ]
+}

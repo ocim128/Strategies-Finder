@@ -7,6 +7,7 @@ import {
     StrategyParams,
     Time,
     buildEntryBacktestResult,
+    precomputeIndicators,
     runBacktest,
     runBacktestCompact,
     runFixedParamWalkForward,
@@ -337,6 +338,10 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
             fixedConfirmationStatesByInterval.set(dataset.interval, states);
         }
     }
+    const precomputedByInterval = new Map<string, ReturnType<typeof precomputeIndicators>>();
+    for (const dataset of activeDatasets) {
+        precomputedByInterval.set(dataset.interval, precomputeIndicators(dataset.data, input.settings));
+    }
 
     const ranker = new FinderResultRanker(Math.max(input.options.topN, 50), input.options.sortPriority);
     let processedCount = 0;
@@ -398,7 +403,8 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                             positionSize,
                             commission,
                             job.backtestSettings,
-                            { mode: sizingMode, fixedTradeAmount }
+                            { mode: sizingMode, fixedTradeAmount },
+                            precomputedByInterval.get(dataset.interval)
                         );
 
                     timeframeResults.push(result);
@@ -518,6 +524,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         callbacks.setStatus("No closed candles available for finder run.");
         return { results: [] };
     }
+    const singleTfPrecomputed = precomputeIndicators(closedData, input.settings);
 
     const confirmationStates = !shouldRandomizeConfirmations && hasConfirmationStrategies
         ? buildConfirmationStates(closedData, confirmationStrategies, baseConfirmationParams)
@@ -663,7 +670,8 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                             positionSize,
                             commission,
                             job.backtestSettings,
-                            { mode: sizingMode, fixedTradeAmount }
+                            { mode: sizingMode, fixedTradeAmount },
+                            singleTfPrecomputed
                         );
                     insertResult({
                         key: job.key,
@@ -714,7 +722,8 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                     positionSize,
                     commission,
                     run.backtestSettings,
-                    { mode: sizingMode, fixedTradeAmount }
+                    { mode: sizingMode, fixedTradeAmount },
+                    singleTfPrecomputed
                 );
                 insertResult({
                     key: run.key,
@@ -931,6 +940,7 @@ async function reconcileSingleTimeframeTopResults(
     const tradeFilterMode = input.settings.tradeFilterMode ?? input.settings.entryConfirmation ?? "none";
     const tradeDirection = input.settings.tradeDirection ?? "long";
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
+    const precomputed = precomputeIndicators(closedData, input.settings);
     const reconciled: FinderResult[] = [];
 
     for (const candidate of candidates) {
@@ -964,7 +974,8 @@ async function reconcileSingleTimeframeTopResults(
                     positionSize,
                     commission,
                     input.settings,
-                    { mode: sizingMode, fixedTradeAmount }
+                    { mode: sizingMode, fixedTradeAmount },
+                    precomputed
                 );
             const normalizedResult = normalizeResultSharpe(rawResult, initialCapital);
             const adjustment = buildSelection(normalizedResult, lastDataTime, initialCapital);
@@ -1192,6 +1203,10 @@ async function evaluateRobustCell(args: {
 }): Promise<RobustCellEvaluation> {
     const { strategyPlan, dataset, input, runSeed, paramSets, robustSettings, robustCommission, callbacks } = args;
     const cellSeed = deriveCellSeed(runSeed, strategyPlan.key, dataset.interval);
+    const holdoutData = selectRobustHoldoutData(dataset.data);
+    const holdoutPrecomputed = holdoutData.length > 0
+        ? precomputeIndicators(holdoutData, robustSettings)
+        : undefined;
     const rejectionReasons: Record<string, number> = {};
     const recordReject = (reason: string, stage: "A" | "B" | "C", params: StrategyParams) => {
         rejectionReasons[reason] = (rejectionReasons[reason] ?? 0) + 1;
@@ -1205,7 +1220,7 @@ async function evaluateRobustCell(args: {
         const params = paramSets[i];
         try {
             const holdoutResult = runRobustHoldoutEvaluation(
-                dataset.data,
+                holdoutData,
                 strategyPlan.strategy,
                 params,
                 input.initialCapital,
@@ -1213,7 +1228,8 @@ async function evaluateRobustCell(args: {
                 robustCommission,
                 robustSettings,
                 input.sizingMode,
-                input.fixedTradeAmount
+                input.fixedTradeAmount,
+                holdoutPrecomputed
             );
             const stageAReason = getStageARejectReason(holdoutResult);
             if (stageAReason) {
@@ -1431,8 +1447,13 @@ async function evaluateRobustCell(args: {
     return { result, diagnostics };
 }
 
+function selectRobustHoldoutData(data: OHLCVData[]): OHLCVData[] {
+    const holdoutBars = Math.max(40, Math.floor(data.length * 0.30));
+    return data.slice(Math.max(0, data.length - holdoutBars));
+}
+
 function runRobustHoldoutEvaluation(
-    data: OHLCVData[],
+    holdoutData: OHLCVData[],
     strategy: Strategy,
     params: StrategyParams,
     initialCapital: number,
@@ -1440,10 +1461,9 @@ function runRobustHoldoutEvaluation(
     commission: number,
     settings: BacktestSettings,
     sizingMode: "percent" | "fixed",
-    fixedTradeAmount: number
+    fixedTradeAmount: number,
+    precomputed?: ReturnType<typeof precomputeIndicators>
 ): BacktestResult {
-    const holdoutBars = Math.max(40, Math.floor(data.length * 0.30));
-    const holdoutData = data.slice(Math.max(0, data.length - holdoutBars));
     if (holdoutData.length === 0) {
         return createEmptyBacktestResult();
     }
@@ -1460,7 +1480,8 @@ function runRobustHoldoutEvaluation(
             positionSize,
             commission,
             settings,
-            { mode: sizingMode, fixedTradeAmount }
+            { mode: sizingMode, fixedTradeAmount },
+            precomputed
         );
     return normalizeResultSharpe(result, initialCapital);
 }

@@ -5,6 +5,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { defineConfig, type Plugin } from 'vite';
 
 const BYBIT_TRADFI_KLINE_URL = 'https://www.bybit.com/x-api/fapi/copymt5/kline';
+const POLYMARKET_GAMMA_EVENT_SLUG_URL = 'https://gamma-api.polymarket.com/events/slug';
+const POLYMARKET_CLOB_HISTORY_URL = 'https://clob.polymarket.com/prices-history';
 const SQLITE_DB_PATH = resolve(process.cwd(), 'price-data', 'market-data.sqlite');
 const SQLITE_MAX_BODY_BYTES = 80 * 1024 * 1024;
 
@@ -175,6 +177,85 @@ function tradFiKlineProxyPlugin(): Plugin {
                     sendJson(res, 500, { ret_code: 10002, ret_msg: 'TradFi proxy request failed' });
                 }
             });
+        },
+    };
+}
+
+function polymarketProxyPlugin(): Plugin {
+    const register = (middlewares: any) => {
+        middlewares.use('/api/polymarket-event', async (req: any, res: any) => {
+            if (req.method !== 'GET') {
+                sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+                return;
+            }
+
+            try {
+                const requestUrl = new URL(req.url || '/', 'http://localhost');
+                const slug = (requestUrl.searchParams.get('slug') || '').trim().toLowerCase();
+                if (!slug) {
+                    sendJson(res, 400, { ok: false, error: 'slug is required' });
+                    return;
+                }
+
+                const upstream = await fetch(`${POLYMARKET_GAMMA_EVENT_SLUG_URL}/${encodeURIComponent(slug)}`, {
+                    headers: { Accept: 'application/json' },
+                });
+                const body = await upstream.text();
+                res.statusCode = upstream.status;
+                res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
+                res.setHeader('Cache-Control', 'no-store');
+                res.end(body);
+            } catch {
+                sendJson(res, 500, { ok: false, error: 'Polymarket event proxy request failed' });
+            }
+        });
+
+        middlewares.use('/api/polymarket-history', async (req: any, res: any) => {
+            if (req.method !== 'GET') {
+                sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+                return;
+            }
+
+            try {
+                const requestUrl = new URL(req.url || '/', 'http://localhost');
+                const market = (requestUrl.searchParams.get('market') || '').trim();
+                const interval = (requestUrl.searchParams.get('interval') || '').trim();
+                const startTs = (requestUrl.searchParams.get('startTs') || '').trim();
+                const endTs = (requestUrl.searchParams.get('endTs') || '').trim();
+                const fidelity = (requestUrl.searchParams.get('fidelity') || '').trim();
+
+                if (!market) {
+                    sendJson(res, 400, { ok: false, error: 'market is required' });
+                    return;
+                }
+
+                const upstreamParams = new URLSearchParams({ market });
+                if (interval) upstreamParams.set('interval', interval);
+                if (startTs) upstreamParams.set('startTs', startTs);
+                if (endTs) upstreamParams.set('endTs', endTs);
+                if (fidelity) upstreamParams.set('fidelity', fidelity);
+
+                const upstream = await fetch(`${POLYMARKET_CLOB_HISTORY_URL}?${upstreamParams.toString()}`, {
+                    headers: { Accept: 'application/json' },
+                });
+                const body = await upstream.text();
+                res.statusCode = upstream.status;
+                res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
+                res.setHeader('Cache-Control', 'no-store');
+                res.end(body);
+            } catch {
+                sendJson(res, 500, { ok: false, error: 'Polymarket history proxy request failed' });
+            }
+        });
+    };
+
+    return {
+        name: 'polymarket-proxy',
+        configureServer(server) {
+            register(server.middlewares);
+        },
+        configurePreviewServer(server) {
+            register(server.middlewares);
         },
     };
 }
@@ -380,7 +461,7 @@ function localSqlitePlugin(): Plugin {
 }
 
 export default defineConfig({
-    plugins: [tradFiKlineProxyPlugin(), localSqlitePlugin()],
+    plugins: [tradFiKlineProxyPlugin(), polymarketProxyPlugin(), localSqlitePlugin()],
     server: {
         fs: {
             allow: ['../../..']

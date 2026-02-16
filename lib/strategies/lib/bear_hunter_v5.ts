@@ -1,6 +1,6 @@
 import { Strategy, OHLCVData, StrategyParams, Signal } from "../../types/strategies";
 import { createBuySignal, createSellSignal, ensureCleanData, getCloses, getHighs, getLows } from "../strategy-helpers";
-import { calculateATR, calculateRSI, calculateSMA } from "../indicators";
+import { calculateADX, calculateATR, calculateRSI, calculateSMA } from "../indicators";
 
 interface BearHunterV5Config {
     fastPeriod: number;
@@ -18,6 +18,8 @@ interface BearHunterV5Config {
     cooldownBars: number;
     atrPeriod: number;
     stopAtr: number;
+    minAdx: number;
+    maxChoppiness: number;
     bankTriggerProfitPct: number;
     bankFractionPct: number;
     remainingTrailAtr: number;
@@ -76,6 +78,43 @@ function calculatePercentileRank(values: (number | null)[], lookback: number): (
     return out;
 }
 
+function calculateChoppiness(highs: number[], lows: number[], closes: number[], period: number): (number | null)[] {
+    const out: (number | null)[] = new Array(closes.length).fill(null);
+    if (period <= 1 || closes.length === 0) return out;
+
+    const trueRange: number[] = new Array(closes.length).fill(0);
+    for (let i = 0; i < closes.length; i++) {
+        trueRange[i] = i === 0
+            ? Math.max(0, highs[i] - lows[i])
+            : Math.max(
+                highs[i] - lows[i],
+                Math.abs(highs[i] - closes[i - 1]),
+                Math.abs(lows[i] - closes[i - 1])
+            );
+    }
+
+    let trSum = 0;
+    for (let i = 0; i < closes.length; i++) {
+        trSum += trueRange[i];
+        if (i >= period) trSum -= trueRange[i - period];
+        if (i < period - 1) continue;
+
+        let highest = -Infinity;
+        let lowest = Infinity;
+        for (let j = i - period + 1; j <= i; j++) {
+            if (highs[j] > highest) highest = highs[j];
+            if (lows[j] < lowest) lowest = lows[j];
+        }
+
+        const range = highest - lowest;
+        if (!Number.isFinite(range) || range <= 0 || trSum <= 0) continue;
+        const chop = 100 * (Math.log10(trSum / range) / Math.log10(period));
+        out[i] = clamp(chop, 0, 100);
+    }
+
+    return out;
+}
+
 function normalizeConfig(params: StrategyParams): BearHunterV5Config {
     const fastPeriod = Math.max(8, Math.round(params.fastPeriod ?? 34));
     const slowPeriod = Math.max(fastPeriod + 16, Math.round(params.slowPeriod ?? 89));
@@ -101,6 +140,8 @@ function normalizeConfig(params: StrategyParams): BearHunterV5Config {
         cooldownBars: Math.max(0, Math.round(params.cooldownBars ?? 8)),
         atrPeriod: Math.max(5, Math.round(params.atrPeriod ?? 14)),
         stopAtr: Math.max(0.2, params.stopAtr ?? 1.1),
+        minAdx: clamp(params.minAdx ?? 18, 5, 60),
+        maxChoppiness: clamp(params.maxChoppiness ?? 62, 20, 80),
         bankTriggerProfitPct: Math.max(0.5, params.bankTriggerProfitPct ?? 5),
         bankFractionPct: clamp(params.bankFractionPct ?? 50, 5, 95),
         remainingTrailAtr: Math.max(0.2, params.remainingTrailAtr ?? 1.5),
@@ -127,6 +168,8 @@ export const bear_hunter_v5: Strategy = {
         cooldownBars: 8,
         atrPeriod: 14,
         stopAtr: 1.1,
+        minAdx: 18,
+        maxChoppiness: 62,
         bankTriggerProfitPct: 5,
         bankFractionPct: 50,
         remainingTrailAtr: 1.5,
@@ -148,6 +191,8 @@ export const bear_hunter_v5: Strategy = {
         cooldownBars: "Cooldown Bars",
         atrPeriod: "ATR Period",
         stopAtr: "Hard Stop (ATR)",
+        minAdx: "Min ADX",
+        maxChoppiness: "Max Choppiness",
         bankTriggerProfitPct: "Bank Trigger Profit %",
         bankFractionPct: "Bank Fraction (%)",
         remainingTrailAtr: "Remaining Trail (ATR)",
@@ -171,6 +216,8 @@ export const bear_hunter_v5: Strategy = {
         const slow = calculateSMA(closes, cfg.slowPeriod);
         const macro = calculateSMA(closes, cfg.macroSmaPeriod);
         const atr = calculateATR(highs, lows, closes, cfg.atrPeriod);
+        const adx = calculateADX(highs, lows, closes, cfg.atrPeriod);
+        const choppiness = calculateChoppiness(highs, lows, closes, cfg.volWindow);
         const rsi = calculateRSI(closes, cfg.rsiPeriod);
 
         const logReturns = closes.map((close, i) => {
@@ -208,6 +255,8 @@ export const bear_hunter_v5: Strategy = {
             const macroNow = macro[i];
             const slowPast = i >= cfg.trendSlopeBars ? slow[i - cfg.trendSlopeBars] : null;
             const atrNow = atr[i];
+            const adxNow = adx[i];
+            const chopNow = choppiness[i];
             const volNow = volPct[i];
             const rsiNow = rsi[i];
             if (
@@ -216,6 +265,8 @@ export const bear_hunter_v5: Strategy = {
                 macroNow === null ||
                 slowPast === null ||
                 atrNow === null ||
+                adxNow === null ||
+                chopNow === null ||
                 volNow === null ||
                 rsiNow === null
             ) {
@@ -226,8 +277,10 @@ export const bear_hunter_v5: Strategy = {
             const localDowntrend = fastNow < slowNow && slowNow < slowPast && closes[i] < fastNow;
             const highVolWipeout = volNow >= cfg.spikePercentile;
             const notOversold = rsiNow > cfg.oversoldGuardRsi;
-            const entryRegime = macroBear && localDowntrend && highVolWipeout && notOversold;
-            const deRiskRegime = volNow <= cfg.coverPercentile || !macroBear || !localDowntrend;
+            const trendStrengthOk = adxNow >= cfg.minAdx;
+            const chopOk = chopNow <= cfg.maxChoppiness;
+            const entryRegime = macroBear && localDowntrend && highVolWipeout && notOversold && trendStrengthOk && chopOk;
+            const deRiskRegime = volNow <= cfg.coverPercentile || !macroBear || !localDowntrend || !trendStrengthOk || !chopOk;
 
             if (!inShort) {
                 if (cooldown > 0) {
@@ -303,6 +356,8 @@ export const bear_hunter_v5: Strategy = {
             "coverPercentilePct",
             "confirmBars",
             "stopAtr",
+            "minAdx",
+            "maxChoppiness",
             "bankTriggerProfitPct",
             "bankFractionPct",
             "remainingTrailAtr",

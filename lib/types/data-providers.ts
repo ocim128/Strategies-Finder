@@ -1,4 +1,4 @@
-export type DataProvider = 'binance' | 'bybit-tradfi';
+export type DataProvider = 'binance' | 'bybit-tradfi' | 'polymarket';
 
 export type HistoricalFetchProgress = {
     fetched: number;

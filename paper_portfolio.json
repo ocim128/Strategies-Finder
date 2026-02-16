@@ -1,0 +1,43 @@
+{
+  "generatedAt": "2026-02-15T09:57:42.806Z",
+  "cycleAt": "2026-02-15T09:57:42.806Z",
+  "pollSeconds": 5,
+  "settings": {
+    "initialBalanceUsd": 10000,
+    "notionalPerTradeUsd": 1000,
+    "minNotionalUsd": 50,
+    "feeRate": 0.001,
+    "closeOnSignalDisappear": true,
+    "defaultInterval": "15m",
+    "maxClosedTrades": 500
+  },
+  "account": {
+    "initialBalanceUsd": 10000,
+    "cashBalanceUsd": 10000,
+    "realizedPnlUsd": 0,
+    "realizedBalanceUsd": 10000,
+    "floatingPnlUsd": 0,
+    "totalEquityUsd": 10000,
+    "todayPnlUsd": 0,
+    "totalReturnPercent": 0
+  },
+  "stats": {
+    "totalTrades": 0,
+    "wins": 0,
+    "losses": 0,
+    "winRatePercent": 0
+  },
+  "session": {
+    "currentDay": "2026-02-15",
+    "dayStartEquityUsd": 10000
+  },
+  "signalState": {
+    "sourceStatus": "ok",
+    "lastSignalCycleAt": "2026-02-15T09:57:29.721Z",
+    "lastSignalGeneratedAt": "2026-02-15T09:57:32.439Z",
+    "watchlistCount": 3,
+    "activeSignalCount": 0
+  },
+  "openPositions": [],
+  "closedTrades": []
+}

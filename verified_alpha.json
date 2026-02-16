@@ -1,0 +1,1354 @@
+{
+  "generatedAt": "2026-02-15T12:26:28.318Z",
+  "sourceReport": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\alpha_report.json",
+  "config": {
+    "trainRatio": 0.7,
+    "dropThresholdPercent": 50,
+    "maxDrawdownPercent": 25,
+    "torture": {
+      "commissionPercent": 0.2,
+      "slippageBps": 8
+    },
+    "optimizer": {
+      "population": 40,
+      "generations": 12,
+      "eliteCount": 4,
+      "mutationRate": 0.12,
+      "mutationSigma": 0.12,
+      "rangePercent": 35,
+      "minTrades": 20,
+      "seed": 2026
+    },
+    "gauntlet": {
+      "verificationSeeds": 5,
+      "minPassCount": 4
+    }
+  },
+  "summary": {
+    "totalCandidates": 2,
+    "passed": 0,
+    "failed": 2,
+    "passRatePercent": 0,
+    "totalSeedRuns": 10
+  },
+  "winners": [],
+  "symbols": [],
+  "candidates": [
+    {
+      "symbol": "XRPUSDT",
+      "strategyKey": "meta_harvest_v2",
+      "interval": "15m",
+      "quoteVolume": 0,
+      "bars": 10000,
+      "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+      "passCount": 0,
+      "totalRuns": 5,
+      "robustnessScore": "0/5",
+      "seeds": [
+        951115816,
+        3081405884,
+        3898326432,
+        3163020964,
+        3016883672
+      ],
+      "passed": false,
+      "representative": {
+        "seed": 3081405884,
+        "symbol": "XRPUSDT",
+        "strategyKey": "meta_harvest_v2",
+        "interval": "15m",
+        "quoteVolume": 0,
+        "bars": 10000,
+        "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+        "trainBars": 7000,
+        "testBars": 3000,
+        "optimizedParams": {
+          "depth": 9,
+          "atrPeriod": 12,
+          "deviationMult": 3,
+          "levelIndex": 4,
+          "entryMode": 0,
+          "touchUsesWick": 1,
+          "touchTolerancePct": 0.0423,
+          "usePivotContext": 0,
+          "useLong": 1,
+          "useShort": 1,
+          "signalCooldownBars": 7,
+          "trailAtr": 2.7273,
+          "initialStopAtr": 1.2239,
+          "maxHoldBars": 45,
+          "killIfNoProfitAfterBars": 16,
+          "entryCooldownBars": 3
+        },
+        "walkForward": {
+          "trainNetProfitPercent": 270.06517922769467,
+          "trainSharpeRatio": 0.2234842075176871,
+          "testNetProfitPercent": 18.360167211270472,
+          "testSharpeRatio": 0.06276424515982723,
+          "testMaxDrawdownPercent": 13.572183493795123,
+          "testTotalTrades": 130,
+          "dropPercent": 93.20157923958394,
+          "pass": false
+        },
+        "torture": {
+          "commissionPercent": 0.2,
+          "slippageBps": 8,
+          "netProfitPercent": -8.685063342649265,
+          "maxDrawdownPercent": 21.454185747704933,
+          "pass": false
+        },
+        "stability": {
+          "worstMaxDrawdownPercent": 21.454185747704933,
+          "thresholdPercent": 25,
+          "pass": true
+        },
+        "score": -17.34558538665911,
+        "passed": false,
+        "failReasons": [
+          "wf_oos_drop_exceeds_threshold",
+          "torture_negative_profit"
+        ]
+      },
+      "runs": [
+        {
+          "seed": 951115816,
+          "symbol": "XRPUSDT",
+          "strategyKey": "meta_harvest_v2",
+          "interval": "15m",
+          "quoteVolume": 0,
+          "bars": 10000,
+          "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+          "trainBars": 7000,
+          "testBars": 3000,
+          "optimizedParams": {
+            "depth": 7.15,
+            "atrPeriod": 17,
+            "deviationMult": 3,
+            "levelIndex": 4,
+            "entryMode": 0,
+            "touchUsesWick": 1,
+            "touchTolerancePct": 0.0585,
+            "usePivotContext": 0,
+            "useLong": 1,
+            "useShort": 1,
+            "signalCooldownBars": 7,
+            "trailAtr": 2.8954,
+            "initialStopAtr": 1.9629,
+            "maxHoldBars": 26,
+            "killIfNoProfitAfterBars": 14,
+            "entryCooldownBars": 4
+          },
+          "walkForward": {
+            "trainNetProfitPercent": 214.7448922593164,
+            "trainSharpeRatio": 0.20329975264870473,
+            "testNetProfitPercent": 55.35408966538269,
+            "testSharpeRatio": 0.1361008683516015,
+            "testMaxDrawdownPercent": 20.918798404720707,
+            "testTotalTrades": 139,
+            "dropPercent": 74.22332653270301,
+            "pass": false
+          },
+          "torture": {
+            "commissionPercent": 0.2,
+            "slippageBps": 8,
+            "netProfitPercent": 17.748243614501515,
+            "maxDrawdownPercent": 21.52568102868825,
+            "pass": true
+          },
+          "stability": {
+            "worstMaxDrawdownPercent": 21.52568102868825,
+            "thresholdPercent": 25,
+            "pass": true
+          },
+          "score": 16.498677193613304,
+          "passed": false,
+          "failReasons": [
+            "wf_oos_drop_exceeds_threshold"
+          ]
+        },
+        {
+          "seed": 3081405884,
+          "symbol": "XRPUSDT",
+          "strategyKey": "meta_harvest_v2",
+          "interval": "15m",
+          "quoteVolume": 0,
+          "bars": 10000,
+          "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+          "trainBars": 7000,
+          "testBars": 3000,
+          "optimizedParams": {
+            "depth": 9,
+            "atrPeriod": 12,
+            "deviationMult": 3,
+            "levelIndex": 4,
+            "entryMode": 0,
+            "touchUsesWick": 1,
+            "touchTolerancePct": 0.0423,
+            "usePivotContext": 0,
+            "useLong": 1,
+            "useShort": 1,
+            "signalCooldownBars": 7,
+            "trailAtr": 2.7273,
+            "initialStopAtr": 1.2239,
+            "maxHoldBars": 45,
+            "killIfNoProfitAfterBars": 16,
+            "entryCooldownBars": 3
+          },
+          "walkForward": {
+            "trainNetProfitPercent": 270.06517922769467,
+            "trainSharpeRatio": 0.2234842075176871,
+            "testNetProfitPercent": 18.360167211270472,
+            "testSharpeRatio": 0.06276424515982723,
+            "testMaxDrawdownPercent": 13.572183493795123,
+            "testTotalTrades": 130,
+            "dropPercent": 93.20157923958394,
+            "pass": false
+          },
+          "torture": {
+            "commissionPercent": 0.2,
+            "slippageBps": 8,
+            "netProfitPercent": -8.685063342649265,
+            "maxDrawdownPercent": 21.454185747704933,
+            "pass": false
+          },
+          "stability": {
+            "worstMaxDrawdownPercent": 21.454185747704933,
+            "thresholdPercent": 25,
+            "pass": true
+          },
+          "score": -17.34558538665911,
+          "passed": false,
+          "failReasons": [
+            "wf_oos_drop_exceeds_threshold",
+            "torture_negative_profit"
+          ]
+        },
+        {
+          "seed": 3898326432,
+          "symbol": "XRPUSDT",
+          "strategyKey": "meta_harvest_v2",
+          "interval": "15m",
+          "quoteVolume": 0,
+          "bars": 10000,
+          "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+          "trainBars": 7000,
+          "testBars": 3000,
+          "optimizedParams": {
+            "depth": 9,
+            "atrPeriod": 14,
+            "deviationMult": 4,
+            "levelIndex": 4,
+            "entryMode": -1,
+            "touchUsesWick": 1,
+            "touchTolerancePct": 0.0401,
+            "usePivotContext": 0,
+            "useLong": 1,
+            "useShort": 1,
+            "signalCooldownBars": 4,
+            "trailAtr": 2.9545,
+            "initialStopAtr": 1.9946,
+            "maxHoldBars": 48.6,
+            "killIfNoProfitAfterBars": 15,
+            "entryCooldownBars": 4
+          },
+          "walkForward": {
+            "trainNetProfitPercent": 233.95021176056733,
+            "trainSharpeRatio": 0.24460556806983072,
+            "testNetProfitPercent": -27.840086166874478,
+            "testSharpeRatio": -0.0802860863188662,
+            "testMaxDrawdownPercent": 40.09493547498895,
+            "testTotalTrades": 94,
+            "dropPercent": 111.90000468790642,
+            "pass": false
+          },
+          "torture": {
+            "commissionPercent": 0.2,
+            "slippageBps": 8,
+            "netProfitPercent": -40.203426137866636,
+            "maxDrawdownPercent": 46.76269154734023,
+            "pass": false
+          },
+          "stability": {
+            "worstMaxDrawdownPercent": 46.76269154734023,
+            "thresholdPercent": 25,
+            "pass": false
+          },
+          "score": -82.74921375566907,
+          "passed": false,
+          "failReasons": [
+            "wf_oos_drop_exceeds_threshold",
+            "torture_negative_profit",
+            "stability_drawdown_breach"
+          ]
+        },
+        {
+          "seed": 3163020964,
+          "symbol": "XRPUSDT",
+          "strategyKey": "meta_harvest_v2",
+          "interval": "15m",
+          "quoteVolume": 0,
+          "bars": 10000,
+          "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+          "trainBars": 7000,
+          "testBars": 3000,
+          "optimizedParams": {
+            "depth": 8,
+            "atrPeriod": 11,
+            "deviationMult": 3,
+            "levelIndex": 4,
+            "entryMode": 1,
+            "touchUsesWick": 1,
+            "touchTolerancePct": 0.0453,
+            "usePivotContext": 0,
+            "useLong": 1,
+            "useShort": 1,
+            "signalCooldownBars": 4,
+            "trailAtr": 2.97,
+            "initialStopAtr": 1.6915,
+            "maxHoldBars": 48.6,
+            "killIfNoProfitAfterBars": 14,
+            "entryCooldownBars": 4
+          },
+          "walkForward": {
+            "trainNetProfitPercent": 258.2438335720544,
+            "trainSharpeRatio": 0.19096900782549966,
+            "testNetProfitPercent": 78.89669938525127,
+            "testSharpeRatio": 0.15238458482636008,
+            "testMaxDrawdownPercent": 14.842502657285497,
+            "testTotalTrades": 195,
+            "dropPercent": 69.4487576745031,
+            "pass": false
+          },
+          "torture": {
+            "commissionPercent": 0.2,
+            "slippageBps": 8,
+            "netProfitPercent": 21.260989345960173,
+            "maxDrawdownPercent": 19.30759432121252,
+            "pass": true
+          },
+          "stability": {
+            "worstMaxDrawdownPercent": 19.30759432121252,
+            "thresholdPercent": 25,
+            "pass": true
+          },
+          "score": 38.37090266446148,
+          "passed": false,
+          "failReasons": [
+            "wf_oos_drop_exceeds_threshold"
+          ]
+        },
+        {
+          "seed": 3016883672,
+          "symbol": "XRPUSDT",
+          "strategyKey": "meta_harvest_v2",
+          "interval": "15m",
+          "quoteVolume": 0,
+          "bars": 10000,
+          "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+          "trainBars": 7000,
+          "testBars": 3000,
+          "optimizedParams": {
+            "depth": 7.15,
+            "atrPeriod": 16,
+            "deviationMult": 3,
+            "levelIndex": 4,
+            "entryMode": 0,
+            "touchUsesWick": 1,
+            "touchTolerancePct": 0.0648,
+            "usePivotContext": 0,
+            "useLong": 1,
+            "useShort": 1,
+            "signalCooldownBars": 4,
+            "trailAtr": 2.5286,
+            "initialStopAtr": 1.8755,
+            "maxHoldBars": 48,
+            "killIfNoProfitAfterBars": 13,
+            "entryCooldownBars": 4
+          },
+          "walkForward": {
+            "trainNetProfitPercent": 228.2028825771965,
+            "trainSharpeRatio": 0.20797221414054257,
+            "testNetProfitPercent": 15.252207239664587,
+            "testSharpeRatio": 0.051588543756016306,
+            "testMaxDrawdownPercent": 29.994067989554484,
+            "testTotalTrades": 141,
+            "dropPercent": 93.31638274354178,
+            "pass": false
+          },
+          "torture": {
+            "commissionPercent": 0.2,
+            "slippageBps": 8,
+            "netProfitPercent": -13.011285709617479,
+            "maxDrawdownPercent": 34.72102553728397,
+            "pass": false
+          },
+          "stability": {
+            "worstMaxDrawdownPercent": 34.72102553728397,
+            "thresholdPercent": 25,
+            "pass": false
+          },
+          "score": -32.01284372823484,
+          "passed": false,
+          "failReasons": [
+            "wf_oos_drop_exceeds_threshold",
+            "torture_negative_profit",
+            "stability_drawdown_breach"
+          ]
+        }
+      ]
+    },
+    {
+      "symbol": "XRPUSDT",
+      "strategyKey": "bear_hunter_v5",
+      "interval": "15m",
+      "quoteVolume": 0,
+      "bars": 10000,
+      "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+      "passCount": 2,
+      "totalRuns": 5,
+      "robustnessScore": "2/5",
+      "seeds": [
+        267308341,
+        68740731,
+        2759023673,
+        39181023,
+        1870783373
+      ],
+      "passed": false,
+      "representative": {
+        "seed": 2759023673,
+        "symbol": "XRPUSDT",
+        "strategyKey": "bear_hunter_v5",
+        "interval": "15m",
+        "quoteVolume": 0,
+        "bars": 10000,
+        "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+        "trainBars": 7000,
+        "testBars": 3000,
+        "optimizedParams": {
+          "fastPeriod": 23,
+          "slowPeriod": 58,
+          "macroSmaPeriod": 218,
+          "trendSlopeBars": 7,
+          "rsiPeriod": 18.9,
+          "oversoldGuardRsi": 19.5,
+          "volWindow": 24,
+          "volLookback": 120,
+          "spikePercentilePct": 100,
+          "coverPercentilePct": 89.79170318254701,
+          "confirmBars": 1.3,
+          "minHoldBars": 2,
+          "cooldownBars": 8,
+          "atrPeriod": 10,
+          "stopAtr": 1.3397,
+          "bankTriggerProfitPct": 4.088756594108418,
+          "bankFractionPct": 32.5,
+          "remainingTrailAtr": 1.6323,
+          "maxHoldBars": 47
+        },
+        "walkForward": {
+          "trainNetProfitPercent": 8.30310418064948,
+          "trainSharpeRatio": 0.3414847976768882,
+          "testNetProfitPercent": 6.413115380563796,
+          "testSharpeRatio": 0.4181765886451466,
+          "testMaxDrawdownPercent": 5.821993097904587,
+          "testTotalTrades": 14,
+          "dropPercent": 22.762436300514384,
+          "pass": true
+        },
+        "torture": {
+          "commissionPercent": 0.2,
+          "slippageBps": 8,
+          "netProfitPercent": 3.9067954363250466,
+          "maxDrawdownPercent": 6.578969194840399,
+          "pass": true
+        },
+        "stability": {
+          "worstMaxDrawdownPercent": 6.578969194840399,
+          "thresholdPercent": 25,
+          "pass": true
+        },
+        "score": 4.158586356920454,
+        "passed": true,
+        "failReasons": []
+      },
+      "runs": [
+        {
+          "seed": 267308341,
+          "symbol": "XRPUSDT",
+          "strategyKey": "bear_hunter_v5",
+          "interval": "15m",
+          "quoteVolume": 0,
+          "bars": 10000,
+          "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+          "trainBars": 7000,
+          "testBars": 3000,
+          "optimizedParams": {
+            "fastPeriod": 32,
+            "slowPeriod": 62,
+            "macroSmaPeriod": 209,
+            "trendSlopeBars": 6,
+            "rsiPeriod": 11,
+            "oversoldGuardRsi": 21.300303747178987,
+            "volWindow": 14,
+            "volLookback": 166,
+            "spikePercentilePct": 91.2163869014907,
+            "coverPercentilePct": 84.78952458524145,
+            "confirmBars": 1.3,
+            "minHoldBars": 2,
+            "cooldownBars": 10,
+            "atrPeriod": 14,
+            "stopAtr": 1.3802,
+            "bankTriggerProfitPct": 4.978209714987315,
+            "bankFractionPct": 44.35655561634554,
+            "remainingTrailAtr": 1.3918,
+            "maxHoldBars": 80
+          },
+          "walkForward": {
+            "trainNetProfitPercent": 11.804628947251095,
+            "trainSharpeRatio": 0.33986477795668074,
+            "testNetProfitPercent": -8.044685926872717,
+            "testSharpeRatio": -0.06892980898359416,
+            "testMaxDrawdownPercent": 12.533691405824273,
+            "testTotalTrades": 17,
+            "dropPercent": 168.14857089384466,
+            "pass": false
+          },
+          "torture": {
+            "commissionPercent": 0.2,
+            "slippageBps": 8,
+            "netProfitPercent": -10.95065570971312,
+            "maxDrawdownPercent": 14.27594754434041,
+            "pass": false
+          },
+          "stability": {
+            "worstMaxDrawdownPercent": 14.27594754434041,
+            "thresholdPercent": 25,
+            "pass": true
+          },
+          "score": -45.884983345153124,
+          "passed": false,
+          "failReasons": [
+            "wf_oos_drop_exceeds_threshold",
+            "torture_negative_profit"
+          ]
+        },
+        {
+          "seed": 68740731,
+          "symbol": "XRPUSDT",
+          "strategyKey": "bear_hunter_v5",
+          "interval": "15m",
+          "quoteVolume": 0,
+          "bars": 10000,
+          "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+          "trainBars": 7000,
+          "testBars": 3000,
+          "optimizedParams": {
+            "fastPeriod": 33,
+            "slowPeriod": 58,
+            "macroSmaPeriod": 203,
+            "trendSlopeBars": 10,
+            "rsiPeriod": 16,
+            "oversoldGuardRsi": 20.344645170587686,
+            "volWindow": 23,
+            "volLookback": 84,
+            "spikePercentilePct": 100,
+            "coverPercentilePct": 86.14841631473973,
+            "confirmBars": 1.3,
+            "minHoldBars": 2,
+            "cooldownBars": 8,
+            "atrPeriod": 16,
+            "stopAtr": 1.0484,
+            "bankTriggerProfitPct": 5.546253880639823,
+            "bankFractionPct": 50.62815476858257,
+            "remainingTrailAtr": 1.8704,
+            "maxHoldBars": 97
+          },
+          "walkForward": {
+            "trainNetProfitPercent": 7.6430072957257105,
+            "trainSharpeRatio": 0.2056376857575317,
+            "testNetProfitPercent": -1.1158178071503062,
+            "testSharpeRatio": 0.10166244253316037,
+            "testMaxDrawdownPercent": 13.846155914180205,
+            "testTotalTrades": 25,
+            "dropPercent": 114.5991985088686,
+            "pass": false
+          },
+          "torture": {
+            "commissionPercent": 0.2,
+            "slippageBps": 8,
+            "netProfitPercent": -5.744041047306473,
+            "maxDrawdownPercent": 15.90297426316844,
+            "pass": false
+          },
+          "stability": {
+            "worstMaxDrawdownPercent": 15.90297426316844,
+            "thresholdPercent": 25,
+            "pass": true
+          },
+          "score": -30.361962008238923,
+          "passed": false,
+          "failReasons": [
+            "wf_oos_drop_exceeds_threshold",
+            "torture_negative_profit"
+          ]
+        },
+        {
+          "seed": 2759023673,
+          "symbol": "XRPUSDT",
+          "strategyKey": "bear_hunter_v5",
+          "interval": "15m",
+          "quoteVolume": 0,
+          "bars": 10000,
+          "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+          "trainBars": 7000,
+          "testBars": 3000,
+          "optimizedParams": {
+            "fastPeriod": 23,
+            "slowPeriod": 58,
+            "macroSmaPeriod": 218,
+            "trendSlopeBars": 7,
+            "rsiPeriod": 18.9,
+            "oversoldGuardRsi": 19.5,
+            "volWindow": 24,
+            "volLookback": 120,
+            "spikePercentilePct": 100,
+            "coverPercentilePct": 89.79170318254701,
+            "confirmBars": 1.3,
+            "minHoldBars": 2,
+            "cooldownBars": 8,
+            "atrPeriod": 10,
+            "stopAtr": 1.3397,
+            "bankTriggerProfitPct": 4.088756594108418,
+            "bankFractionPct": 32.5,
+            "remainingTrailAtr": 1.6323,
+            "maxHoldBars": 47
+          },
+          "walkForward": {
+            "trainNetProfitPercent": 8.30310418064948,
+            "trainSharpeRatio": 0.3414847976768882,
+            "testNetProfitPercent": 6.413115380563796,
+            "testSharpeRatio": 0.4181765886451466,
+            "testMaxDrawdownPercent": 5.821993097904587,
+            "testTotalTrades": 14,
+            "dropPercent": 22.762436300514384,
+            "pass": true
+          },
+          "torture": {
+            "commissionPercent": 0.2,
+            "slippageBps": 8,
+            "netProfitPercent": 3.9067954363250466,
+            "maxDrawdownPercent": 6.578969194840399,
+            "pass": true
+          },
+          "stability": {
+            "worstMaxDrawdownPercent": 6.578969194840399,
+            "thresholdPercent": 25,
+            "pass": true
+          },
+          "score": 4.158586356920454,
+          "passed": true,
+          "failReasons": []
+        },
+        {
+          "seed": 39181023,
+          "symbol": "XRPUSDT",
+          "strategyKey": "bear_hunter_v5",
+          "interval": "15m",
+          "quoteVolume": 0,
+          "bars": 10000,
+          "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+          "trainBars": 7000,
+          "testBars": 3000,
+          "optimizedParams": {
+            "fastPeriod": 34,
+            "slowPeriod": 60,
+            "macroSmaPeriod": 230,
+            "trendSlopeBars": 7,
+            "rsiPeriod": 18,
+            "oversoldGuardRsi": 22.94848041513933,
+            "volWindow": 15,
+            "volLookback": 127,
+            "spikePercentilePct": 100,
+            "coverPercentilePct": 73.79264143520693,
+            "confirmBars": 1.3,
+            "minHoldBars": 1.3,
+            "cooldownBars": 6,
+            "atrPeriod": 15,
+            "stopAtr": 1.1073,
+            "bankTriggerProfitPct": 4.2314851677641645,
+            "bankFractionPct": 47.25610310268759,
+            "remainingTrailAtr": 1.7033,
+            "maxHoldBars": 63
+          },
+          "walkForward": {
+            "trainNetProfitPercent": 7.335149080574246,
+            "trainSharpeRatio": 0.3002671740488524,
+            "testNetProfitPercent": 5.4601113022606835,
+            "testSharpeRatio": 0.3636667677357133,
+            "testMaxDrawdownPercent": 8.20560906399867,
+            "testTotalTrades": 20,
+            "dropPercent": 25.562367686285274,
+            "pass": true
+          },
+          "torture": {
+            "commissionPercent": 0.2,
+            "slippageBps": 8,
+            "netProfitPercent": 1.951742379710522,
+            "maxDrawdownPercent": 9.491189506383241,
+            "pass": true
+          },
+          "stability": {
+            "worstMaxDrawdownPercent": 9.491189506383241,
+            "thresholdPercent": 25,
+            "pass": true
+          },
+          "score": -0.7350013121648948,
+          "passed": true,
+          "failReasons": []
+        },
+        {
+          "seed": 1870783373,
+          "symbol": "XRPUSDT",
+          "strategyKey": "bear_hunter_v5",
+          "interval": "15m",
+          "quoteVolume": 0,
+          "bars": 10000,
+          "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+          "trainBars": 7000,
+          "testBars": 3000,
+          "optimizedParams": {
+            "fastPeriod": 22.1,
+            "slowPeriod": 79,
+            "macroSmaPeriod": 137,
+            "trendSlopeBars": 7,
+            "rsiPeriod": 17,
+            "oversoldGuardRsi": 19.986013604560867,
+            "volWindow": 14,
+            "volLookback": 94,
+            "spikePercentilePct": 90.11738726100884,
+            "coverPercentilePct": 92.19619725993834,
+            "confirmBars": 2,
+            "minHoldBars": 2,
+            "cooldownBars": 9,
+            "atrPeriod": 18,
+            "stopAtr": 0.9685,
+            "bankTriggerProfitPct": 5.0362661043182015,
+            "bankFractionPct": 56.95246710209176,
+            "remainingTrailAtr": 1.8984,
+            "maxHoldBars": 86
+          },
+          "walkForward": {
+            "trainNetProfitPercent": 9.982088613489632,
+            "trainSharpeRatio": 0.258447922520785,
+            "testNetProfitPercent": -5.482248501376161,
+            "testSharpeRatio": 0.02821470013255922,
+            "testMaxDrawdownPercent": 8.990142882117242,
+            "testTotalTrades": 24,
+            "dropPercent": 154.92085588147896,
+            "pass": false
+          },
+          "torture": {
+            "commissionPercent": 0.2,
+            "slippageBps": 8,
+            "netProfitPercent": -9.73427820236433,
+            "maxDrawdownPercent": 9.881020427994743,
+            "pass": false
+          },
+          "stability": {
+            "worstMaxDrawdownPercent": 9.881020427994743,
+            "thresholdPercent": 25,
+            "pass": true
+          },
+          "score": -35.952551565866855,
+          "passed": false,
+          "failReasons": [
+            "wf_oos_drop_exceeds_threshold",
+            "torture_negative_profit"
+          ]
+        }
+      ]
+    }
+  ],
+  "seedRuns": [
+    {
+      "seed": 951115816,
+      "symbol": "XRPUSDT",
+      "strategyKey": "meta_harvest_v2",
+      "interval": "15m",
+      "quoteVolume": 0,
+      "bars": 10000,
+      "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+      "trainBars": 7000,
+      "testBars": 3000,
+      "optimizedParams": {
+        "depth": 7.15,
+        "atrPeriod": 17,
+        "deviationMult": 3,
+        "levelIndex": 4,
+        "entryMode": 0,
+        "touchUsesWick": 1,
+        "touchTolerancePct": 0.0585,
+        "usePivotContext": 0,
+        "useLong": 1,
+        "useShort": 1,
+        "signalCooldownBars": 7,
+        "trailAtr": 2.8954,
+        "initialStopAtr": 1.9629,
+        "maxHoldBars": 26,
+        "killIfNoProfitAfterBars": 14,
+        "entryCooldownBars": 4
+      },
+      "walkForward": {
+        "trainNetProfitPercent": 214.7448922593164,
+        "trainSharpeRatio": 0.20329975264870473,
+        "testNetProfitPercent": 55.35408966538269,
+        "testSharpeRatio": 0.1361008683516015,
+        "testMaxDrawdownPercent": 20.918798404720707,
+        "testTotalTrades": 139,
+        "dropPercent": 74.22332653270301,
+        "pass": false
+      },
+      "torture": {
+        "commissionPercent": 0.2,
+        "slippageBps": 8,
+        "netProfitPercent": 17.748243614501515,
+        "maxDrawdownPercent": 21.52568102868825,
+        "pass": true
+      },
+      "stability": {
+        "worstMaxDrawdownPercent": 21.52568102868825,
+        "thresholdPercent": 25,
+        "pass": true
+      },
+      "score": 16.498677193613304,
+      "passed": false,
+      "failReasons": [
+        "wf_oos_drop_exceeds_threshold"
+      ]
+    },
+    {
+      "seed": 3081405884,
+      "symbol": "XRPUSDT",
+      "strategyKey": "meta_harvest_v2",
+      "interval": "15m",
+      "quoteVolume": 0,
+      "bars": 10000,
+      "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+      "trainBars": 7000,
+      "testBars": 3000,
+      "optimizedParams": {
+        "depth": 9,
+        "atrPeriod": 12,
+        "deviationMult": 3,
+        "levelIndex": 4,
+        "entryMode": 0,
+        "touchUsesWick": 1,
+        "touchTolerancePct": 0.0423,
+        "usePivotContext": 0,
+        "useLong": 1,
+        "useShort": 1,
+        "signalCooldownBars": 7,
+        "trailAtr": 2.7273,
+        "initialStopAtr": 1.2239,
+        "maxHoldBars": 45,
+        "killIfNoProfitAfterBars": 16,
+        "entryCooldownBars": 3
+      },
+      "walkForward": {
+        "trainNetProfitPercent": 270.06517922769467,
+        "trainSharpeRatio": 0.2234842075176871,
+        "testNetProfitPercent": 18.360167211270472,
+        "testSharpeRatio": 0.06276424515982723,
+        "testMaxDrawdownPercent": 13.572183493795123,
+        "testTotalTrades": 130,
+        "dropPercent": 93.20157923958394,
+        "pass": false
+      },
+      "torture": {
+        "commissionPercent": 0.2,
+        "slippageBps": 8,
+        "netProfitPercent": -8.685063342649265,
+        "maxDrawdownPercent": 21.454185747704933,
+        "pass": false
+      },
+      "stability": {
+        "worstMaxDrawdownPercent": 21.454185747704933,
+        "thresholdPercent": 25,
+        "pass": true
+      },
+      "score": -17.34558538665911,
+      "passed": false,
+      "failReasons": [
+        "wf_oos_drop_exceeds_threshold",
+        "torture_negative_profit"
+      ]
+    },
+    {
+      "seed": 3898326432,
+      "symbol": "XRPUSDT",
+      "strategyKey": "meta_harvest_v2",
+      "interval": "15m",
+      "quoteVolume": 0,
+      "bars": 10000,
+      "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+      "trainBars": 7000,
+      "testBars": 3000,
+      "optimizedParams": {
+        "depth": 9,
+        "atrPeriod": 14,
+        "deviationMult": 4,
+        "levelIndex": 4,
+        "entryMode": -1,
+        "touchUsesWick": 1,
+        "touchTolerancePct": 0.0401,
+        "usePivotContext": 0,
+        "useLong": 1,
+        "useShort": 1,
+        "signalCooldownBars": 4,
+        "trailAtr": 2.9545,
+        "initialStopAtr": 1.9946,
+        "maxHoldBars": 48.6,
+        "killIfNoProfitAfterBars": 15,
+        "entryCooldownBars": 4
+      },
+      "walkForward": {
+        "trainNetProfitPercent": 233.95021176056733,
+        "trainSharpeRatio": 0.24460556806983072,
+        "testNetProfitPercent": -27.840086166874478,
+        "testSharpeRatio": -0.0802860863188662,
+        "testMaxDrawdownPercent": 40.09493547498895,
+        "testTotalTrades": 94,
+        "dropPercent": 111.90000468790642,
+        "pass": false
+      },
+      "torture": {
+        "commissionPercent": 0.2,
+        "slippageBps": 8,
+        "netProfitPercent": -40.203426137866636,
+        "maxDrawdownPercent": 46.76269154734023,
+        "pass": false
+      },
+      "stability": {
+        "worstMaxDrawdownPercent": 46.76269154734023,
+        "thresholdPercent": 25,
+        "pass": false
+      },
+      "score": -82.74921375566907,
+      "passed": false,
+      "failReasons": [
+        "wf_oos_drop_exceeds_threshold",
+        "torture_negative_profit",
+        "stability_drawdown_breach"
+      ]
+    },
+    {
+      "seed": 3163020964,
+      "symbol": "XRPUSDT",
+      "strategyKey": "meta_harvest_v2",
+      "interval": "15m",
+      "quoteVolume": 0,
+      "bars": 10000,
+      "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+      "trainBars": 7000,
+      "testBars": 3000,
+      "optimizedParams": {
+        "depth": 8,
+        "atrPeriod": 11,
+        "deviationMult": 3,
+        "levelIndex": 4,
+        "entryMode": 1,
+        "touchUsesWick": 1,
+        "touchTolerancePct": 0.0453,
+        "usePivotContext": 0,
+        "useLong": 1,
+        "useShort": 1,
+        "signalCooldownBars": 4,
+        "trailAtr": 2.97,
+        "initialStopAtr": 1.6915,
+        "maxHoldBars": 48.6,
+        "killIfNoProfitAfterBars": 14,
+        "entryCooldownBars": 4
+      },
+      "walkForward": {
+        "trainNetProfitPercent": 258.2438335720544,
+        "trainSharpeRatio": 0.19096900782549966,
+        "testNetProfitPercent": 78.89669938525127,
+        "testSharpeRatio": 0.15238458482636008,
+        "testMaxDrawdownPercent": 14.842502657285497,
+        "testTotalTrades": 195,
+        "dropPercent": 69.4487576745031,
+        "pass": false
+      },
+      "torture": {
+        "commissionPercent": 0.2,
+        "slippageBps": 8,
+        "netProfitPercent": 21.260989345960173,
+        "maxDrawdownPercent": 19.30759432121252,
+        "pass": true
+      },
+      "stability": {
+        "worstMaxDrawdownPercent": 19.30759432121252,
+        "thresholdPercent": 25,
+        "pass": true
+      },
+      "score": 38.37090266446148,
+      "passed": false,
+      "failReasons": [
+        "wf_oos_drop_exceeds_threshold"
+      ]
+    },
+    {
+      "seed": 3016883672,
+      "symbol": "XRPUSDT",
+      "strategyKey": "meta_harvest_v2",
+      "interval": "15m",
+      "quoteVolume": 0,
+      "bars": 10000,
+      "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+      "trainBars": 7000,
+      "testBars": 3000,
+      "optimizedParams": {
+        "depth": 7.15,
+        "atrPeriod": 16,
+        "deviationMult": 3,
+        "levelIndex": 4,
+        "entryMode": 0,
+        "touchUsesWick": 1,
+        "touchTolerancePct": 0.0648,
+        "usePivotContext": 0,
+        "useLong": 1,
+        "useShort": 1,
+        "signalCooldownBars": 4,
+        "trailAtr": 2.5286,
+        "initialStopAtr": 1.8755,
+        "maxHoldBars": 48,
+        "killIfNoProfitAfterBars": 13,
+        "entryCooldownBars": 4
+      },
+      "walkForward": {
+        "trainNetProfitPercent": 228.2028825771965,
+        "trainSharpeRatio": 0.20797221414054257,
+        "testNetProfitPercent": 15.252207239664587,
+        "testSharpeRatio": 0.051588543756016306,
+        "testMaxDrawdownPercent": 29.994067989554484,
+        "testTotalTrades": 141,
+        "dropPercent": 93.31638274354178,
+        "pass": false
+      },
+      "torture": {
+        "commissionPercent": 0.2,
+        "slippageBps": 8,
+        "netProfitPercent": -13.011285709617479,
+        "maxDrawdownPercent": 34.72102553728397,
+        "pass": false
+      },
+      "stability": {
+        "worstMaxDrawdownPercent": 34.72102553728397,
+        "thresholdPercent": 25,
+        "pass": false
+      },
+      "score": -32.01284372823484,
+      "passed": false,
+      "failReasons": [
+        "wf_oos_drop_exceeds_threshold",
+        "torture_negative_profit",
+        "stability_drawdown_breach"
+      ]
+    },
+    {
+      "seed": 267308341,
+      "symbol": "XRPUSDT",
+      "strategyKey": "bear_hunter_v5",
+      "interval": "15m",
+      "quoteVolume": 0,
+      "bars": 10000,
+      "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+      "trainBars": 7000,
+      "testBars": 3000,
+      "optimizedParams": {
+        "fastPeriod": 32,
+        "slowPeriod": 62,
+        "macroSmaPeriod": 209,
+        "trendSlopeBars": 6,
+        "rsiPeriod": 11,
+        "oversoldGuardRsi": 21.300303747178987,
+        "volWindow": 14,
+        "volLookback": 166,
+        "spikePercentilePct": 91.2163869014907,
+        "coverPercentilePct": 84.78952458524145,
+        "confirmBars": 1.3,
+        "minHoldBars": 2,
+        "cooldownBars": 10,
+        "atrPeriod": 14,
+        "stopAtr": 1.3802,
+        "bankTriggerProfitPct": 4.978209714987315,
+        "bankFractionPct": 44.35655561634554,
+        "remainingTrailAtr": 1.3918,
+        "maxHoldBars": 80
+      },
+      "walkForward": {
+        "trainNetProfitPercent": 11.804628947251095,
+        "trainSharpeRatio": 0.33986477795668074,
+        "testNetProfitPercent": -8.044685926872717,
+        "testSharpeRatio": -0.06892980898359416,
+        "testMaxDrawdownPercent": 12.533691405824273,
+        "testTotalTrades": 17,
+        "dropPercent": 168.14857089384466,
+        "pass": false
+      },
+      "torture": {
+        "commissionPercent": 0.2,
+        "slippageBps": 8,
+        "netProfitPercent": -10.95065570971312,
+        "maxDrawdownPercent": 14.27594754434041,
+        "pass": false
+      },
+      "stability": {
+        "worstMaxDrawdownPercent": 14.27594754434041,
+        "thresholdPercent": 25,
+        "pass": true
+      },
+      "score": -45.884983345153124,
+      "passed": false,
+      "failReasons": [
+        "wf_oos_drop_exceeds_threshold",
+        "torture_negative_profit"
+      ]
+    },
+    {
+      "seed": 68740731,
+      "symbol": "XRPUSDT",
+      "strategyKey": "bear_hunter_v5",
+      "interval": "15m",
+      "quoteVolume": 0,
+      "bars": 10000,
+      "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+      "trainBars": 7000,
+      "testBars": 3000,
+      "optimizedParams": {
+        "fastPeriod": 33,
+        "slowPeriod": 58,
+        "macroSmaPeriod": 203,
+        "trendSlopeBars": 10,
+        "rsiPeriod": 16,
+        "oversoldGuardRsi": 20.344645170587686,
+        "volWindow": 23,
+        "volLookback": 84,
+        "spikePercentilePct": 100,
+        "coverPercentilePct": 86.14841631473973,
+        "confirmBars": 1.3,
+        "minHoldBars": 2,
+        "cooldownBars": 8,
+        "atrPeriod": 16,
+        "stopAtr": 1.0484,
+        "bankTriggerProfitPct": 5.546253880639823,
+        "bankFractionPct": 50.62815476858257,
+        "remainingTrailAtr": 1.8704,
+        "maxHoldBars": 97
+      },
+      "walkForward": {
+        "trainNetProfitPercent": 7.6430072957257105,
+        "trainSharpeRatio": 0.2056376857575317,
+        "testNetProfitPercent": -1.1158178071503062,
+        "testSharpeRatio": 0.10166244253316037,
+        "testMaxDrawdownPercent": 13.846155914180205,
+        "testTotalTrades": 25,
+        "dropPercent": 114.5991985088686,
+        "pass": false
+      },
+      "torture": {
+        "commissionPercent": 0.2,
+        "slippageBps": 8,
+        "netProfitPercent": -5.744041047306473,
+        "maxDrawdownPercent": 15.90297426316844,
+        "pass": false
+      },
+      "stability": {
+        "worstMaxDrawdownPercent": 15.90297426316844,
+        "thresholdPercent": 25,
+        "pass": true
+      },
+      "score": -30.361962008238923,
+      "passed": false,
+      "failReasons": [
+        "wf_oos_drop_exceeds_threshold",
+        "torture_negative_profit"
+      ]
+    },
+    {
+      "seed": 2759023673,
+      "symbol": "XRPUSDT",
+      "strategyKey": "bear_hunter_v5",
+      "interval": "15m",
+      "quoteVolume": 0,
+      "bars": 10000,
+      "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+      "trainBars": 7000,
+      "testBars": 3000,
+      "optimizedParams": {
+        "fastPeriod": 23,
+        "slowPeriod": 58,
+        "macroSmaPeriod": 218,
+        "trendSlopeBars": 7,
+        "rsiPeriod": 18.9,
+        "oversoldGuardRsi": 19.5,
+        "volWindow": 24,
+        "volLookback": 120,
+        "spikePercentilePct": 100,
+        "coverPercentilePct": 89.79170318254701,
+        "confirmBars": 1.3,
+        "minHoldBars": 2,
+        "cooldownBars": 8,
+        "atrPeriod": 10,
+        "stopAtr": 1.3397,
+        "bankTriggerProfitPct": 4.088756594108418,
+        "bankFractionPct": 32.5,
+        "remainingTrailAtr": 1.6323,
+        "maxHoldBars": 47
+      },
+      "walkForward": {
+        "trainNetProfitPercent": 8.30310418064948,
+        "trainSharpeRatio": 0.3414847976768882,
+        "testNetProfitPercent": 6.413115380563796,
+        "testSharpeRatio": 0.4181765886451466,
+        "testMaxDrawdownPercent": 5.821993097904587,
+        "testTotalTrades": 14,
+        "dropPercent": 22.762436300514384,
+        "pass": true
+      },
+      "torture": {
+        "commissionPercent": 0.2,
+        "slippageBps": 8,
+        "netProfitPercent": 3.9067954363250466,
+        "maxDrawdownPercent": 6.578969194840399,
+        "pass": true
+      },
+      "stability": {
+        "worstMaxDrawdownPercent": 6.578969194840399,
+        "thresholdPercent": 25,
+        "pass": true
+      },
+      "score": 4.158586356920454,
+      "passed": true,
+      "failReasons": []
+    },
+    {
+      "seed": 39181023,
+      "symbol": "XRPUSDT",
+      "strategyKey": "bear_hunter_v5",
+      "interval": "15m",
+      "quoteVolume": 0,
+      "bars": 10000,
+      "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+      "trainBars": 7000,
+      "testBars": 3000,
+      "optimizedParams": {
+        "fastPeriod": 34,
+        "slowPeriod": 60,
+        "macroSmaPeriod": 230,
+        "trendSlopeBars": 7,
+        "rsiPeriod": 18,
+        "oversoldGuardRsi": 22.94848041513933,
+        "volWindow": 15,
+        "volLookback": 127,
+        "spikePercentilePct": 100,
+        "coverPercentilePct": 73.79264143520693,
+        "confirmBars": 1.3,
+        "minHoldBars": 1.3,
+        "cooldownBars": 6,
+        "atrPeriod": 15,
+        "stopAtr": 1.1073,
+        "bankTriggerProfitPct": 4.2314851677641645,
+        "bankFractionPct": 47.25610310268759,
+        "remainingTrailAtr": 1.7033,
+        "maxHoldBars": 63
+      },
+      "walkForward": {
+        "trainNetProfitPercent": 7.335149080574246,
+        "trainSharpeRatio": 0.3002671740488524,
+        "testNetProfitPercent": 5.4601113022606835,
+        "testSharpeRatio": 0.3636667677357133,
+        "testMaxDrawdownPercent": 8.20560906399867,
+        "testTotalTrades": 20,
+        "dropPercent": 25.562367686285274,
+        "pass": true
+      },
+      "torture": {
+        "commissionPercent": 0.2,
+        "slippageBps": 8,
+        "netProfitPercent": 1.951742379710522,
+        "maxDrawdownPercent": 9.491189506383241,
+        "pass": true
+      },
+      "stability": {
+        "worstMaxDrawdownPercent": 9.491189506383241,
+        "thresholdPercent": 25,
+        "pass": true
+      },
+      "score": -0.7350013121648948,
+      "passed": true,
+      "failReasons": []
+    },
+    {
+      "seed": 1870783373,
+      "symbol": "XRPUSDT",
+      "strategyKey": "bear_hunter_v5",
+      "interval": "15m",
+      "quoteVolume": 0,
+      "bars": 10000,
+      "dataFile": "C:\\Users\\user\\Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder\\price-data\\universal\\XRPUSDT-15m.json",
+      "trainBars": 7000,
+      "testBars": 3000,
+      "optimizedParams": {
+        "fastPeriod": 22.1,
+        "slowPeriod": 79,
+        "macroSmaPeriod": 137,
+        "trendSlopeBars": 7,
+        "rsiPeriod": 17,
+        "oversoldGuardRsi": 19.986013604560867,
+        "volWindow": 14,
+        "volLookback": 94,
+        "spikePercentilePct": 90.11738726100884,
+        "coverPercentilePct": 92.19619725993834,
+        "confirmBars": 2,
+        "minHoldBars": 2,
+        "cooldownBars": 9,
+        "atrPeriod": 18,
+        "stopAtr": 0.9685,
+        "bankTriggerProfitPct": 5.0362661043182015,
+        "bankFractionPct": 56.95246710209176,
+        "remainingTrailAtr": 1.8984,
+        "maxHoldBars": 86
+      },
+      "walkForward": {
+        "trainNetProfitPercent": 9.982088613489632,
+        "trainSharpeRatio": 0.258447922520785,
+        "testNetProfitPercent": -5.482248501376161,
+        "testSharpeRatio": 0.02821470013255922,
+        "testMaxDrawdownPercent": 8.990142882117242,
+        "testTotalTrades": 24,
+        "dropPercent": 154.92085588147896,
+        "pass": false
+      },
+      "torture": {
+        "commissionPercent": 0.2,
+        "slippageBps": 8,
+        "netProfitPercent": -9.73427820236433,
+        "maxDrawdownPercent": 9.881020427994743,
+        "pass": false
+      },
+      "stability": {
+        "worstMaxDrawdownPercent": 9.881020427994743,
+        "thresholdPercent": 25,
+        "pass": true
+      },
+      "score": -35.952551565866855,
+      "passed": false,
+      "failReasons": [
+        "wf_oos_drop_exceeds_threshold",
+        "torture_negative_profit"
+      ]
+    }
+  ]
+}

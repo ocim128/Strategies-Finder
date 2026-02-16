@@ -1,20 +1,20 @@
-import { Strategy, OHLCVData, StrategyParams, Signal } from '../../types/strategies';
-import { createBuySignal, createSellSignal, ensureCleanData, getCloses, getHighs, getLows } from '../strategy-helpers';
-import { calculateATR } from '../indicators';
-import { fib_speed_fan_entry } from './fib-speed-fan-entry';
+import { Strategy, OHLCVData, StrategyParams, Signal } from "../../types/strategies";
+import { createBuySignal, createSellSignal, ensureCleanData, getCloses } from "../strategy-helpers";
+import { calculateSMA } from "../indicators";
+import { buildAdvancedFeatureSet } from "../../signals/feature-engineering";
 
 interface Config {
-    depth: number;
+    fastTrendPeriod: number;
+    slowTrendPeriod: number;
     atrPeriod: number;
-    deviationMult: number;
-    levelIndex: number;
-    entryMode: number;
-    touchUsesWick: number;
-    touchTolerancePct: number;
-    usePivotContext: number;
-    useLong: number;
-    useShort: number;
-    signalCooldownBars: number;
+    volatilitySmaPeriod: number;
+    volumeSmaPeriod: number;
+    trendEfficiencyLookback: number;
+    minVolatilityRatio: number;
+    maxVolatilityRatio: number;
+    minRelativeVolume: number;
+    minTrendEfficiency: number;
+    entryConfirmBars: number;
     initialStopAtr: number;
     bankerTriggerProfitPct: number;
     bankerFractionPct: number;
@@ -22,6 +22,8 @@ interface Config {
     maxHoldBars: number;
     killIfNoProfitAfterBars: number;
     entryCooldownBars: number;
+    useLong: number;
+    useShort: number;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -35,147 +37,154 @@ function intClamp(value: number, min: number, max: number): number {
 }
 
 function normalize(params: StrategyParams): Config {
+    const minVolatilityRatio = clamp(params.minVolatilityRatio ?? 0.85, 0.2, 5);
+    const maxVolatilityRatio = Math.max(minVolatilityRatio + 0.05, clamp(params.maxVolatilityRatio ?? 1.9, 0.3, 8));
+
     return {
-        depth: intClamp(params.depth ?? 11, 3, 80),
+        fastTrendPeriod: intClamp(params.fastTrendPeriod ?? 34, 5, 200),
+        slowTrendPeriod: intClamp(params.slowTrendPeriod ?? 144, 20, 600),
         atrPeriod: intClamp(params.atrPeriod ?? 14, 3, 100),
-        deviationMult: clamp(params.deviationMult ?? 3, 0.5, 8),
-        levelIndex: intClamp(params.levelIndex ?? 3, 0, 4),
-        entryMode: intClamp(params.entryMode ?? 0, 0, 2),
-        touchUsesWick: intClamp(params.touchUsesWick ?? 1, 0, 1),
-        touchTolerancePct: clamp(params.touchTolerancePct ?? 0.05, 0, 1),
-        usePivotContext: intClamp(params.usePivotContext ?? 1, 0, 1),
+        volatilitySmaPeriod: intClamp(params.volatilitySmaPeriod ?? 64, 10, 400),
+        volumeSmaPeriod: intClamp(params.volumeSmaPeriod ?? 34, 5, 240),
+        trendEfficiencyLookback: intClamp(params.trendEfficiencyLookback ?? 20, 4, 300),
+        minVolatilityRatio,
+        maxVolatilityRatio,
+        minRelativeVolume: clamp(params.minRelativeVolume ?? 1.05, 0.2, 10),
+        minTrendEfficiency: clamp(params.minTrendEfficiency ?? 0.24, 0, 1),
+        entryConfirmBars: intClamp(params.entryConfirmBars ?? 2, 1, 50),
+        initialStopAtr: clamp(params.initialStopAtr ?? 1.4, 0.2, 12),
+        bankerTriggerProfitPct: clamp(params.bankerTriggerProfitPct ?? 2.5, 0.2, 30),
+        bankerFractionPct: clamp(params.bankerFractionPct ?? 50, 5, 95),
+        bankerTrailAtr: clamp(params.bankerTrailAtr ?? 1.8, 0.2, 12),
+        maxHoldBars: intClamp(params.maxHoldBars ?? 48, 2, 400),
+        killIfNoProfitAfterBars: intClamp(params.killIfNoProfitAfterBars ?? 12, 1, 300),
+        entryCooldownBars: intClamp(params.entryCooldownBars ?? 4, 0, 300),
         useLong: intClamp(params.useLong ?? 1, 0, 1),
         useShort: intClamp(params.useShort ?? 1, 0, 1),
-        signalCooldownBars: intClamp(params.signalCooldownBars ?? 6, 0, 200),
-        initialStopAtr: clamp(params.initialStopAtr ?? 1.5, 0.2, 12),
-        bankerTriggerProfitPct: clamp(params.bankerTriggerProfitPct ?? 3, 0.5, 20),
-        bankerFractionPct: clamp(params.bankerFractionPct ?? 50, 5, 95),
-        bankerTrailAtr: clamp(params.bankerTrailAtr ?? 2, 0.2, 12),
-        maxHoldBars: intClamp(params.maxHoldBars ?? 36, 2, 300),
-        killIfNoProfitAfterBars: intClamp(params.killIfNoProfitAfterBars ?? 12, 1, 200),
-        entryCooldownBars: intClamp(params.entryCooldownBars ?? 4, 0, 200),
-    };
-}
-
-function toFibParams(config: Config): StrategyParams {
-    return {
-        depth: config.depth,
-        atrPeriod: config.atrPeriod,
-        deviationMult: config.deviationMult,
-        levelIndex: config.levelIndex,
-        entryMode: config.entryMode,
-        retestMode: 2,
-        targetPct: 0,
-        touchUsesWick: config.touchUsesWick,
-        touchTolerancePct: config.touchTolerancePct,
-        usePivotContext: config.usePivotContext,
-        useLong: config.useLong,
-        useShort: config.useShort,
-        signalCooldownBars: config.signalCooldownBars,
-        maxBars: 50,
-        maxRetests: 3,
-        minRetestsForWin: 1,
     };
 }
 
 export const meta_harvest_v3: Strategy = {
-    name: 'Meta Harvest v3',
-    description: 'Banker harvest: bank 50% at +3%, move stop to breakeven, and trail remaining size with ATR 2.0.',
+    name: "Meta Harvest v3",
+    description: "Feature-engineered non-repainting regime strategy using volatility ratio, relative volume, and trend efficiency.",
     defaultParams: {
-        depth: 11,
+        fastTrendPeriod: 34,
+        slowTrendPeriod: 144,
         atrPeriod: 14,
-        deviationMult: 3,
-        levelIndex: 3,
-        entryMode: 0,
-        touchUsesWick: 1,
-        touchTolerancePct: 0.05,
-        usePivotContext: 1,
-        useLong: 1,
-        useShort: 1,
-        signalCooldownBars: 6,
-        initialStopAtr: 1.5,
-        bankerTriggerProfitPct: 3,
+        volatilitySmaPeriod: 64,
+        volumeSmaPeriod: 34,
+        trendEfficiencyLookback: 20,
+        minVolatilityRatio: 0.85,
+        maxVolatilityRatio: 1.9,
+        minRelativeVolume: 1.05,
+        minTrendEfficiency: 0.24,
+        entryConfirmBars: 2,
+        initialStopAtr: 1.4,
+        bankerTriggerProfitPct: 2.5,
         bankerFractionPct: 50,
-        bankerTrailAtr: 2,
-        maxHoldBars: 36,
+        bankerTrailAtr: 1.8,
+        maxHoldBars: 48,
         killIfNoProfitAfterBars: 12,
         entryCooldownBars: 4,
+        useLong: 1,
+        useShort: 1,
     },
     paramLabels: {
-        depth: 'Pivot Depth',
-        atrPeriod: 'ATR Period',
-        deviationMult: 'Deviation Multiplier',
-        levelIndex: 'Fib Level Index (0-4)',
-        entryMode: 'Entry Mode',
-        touchUsesWick: 'Touch Uses Wick (0/1)',
-        touchTolerancePct: 'Touch Tolerance %',
-        usePivotContext: 'Use Pivot Context (0/1)',
-        useLong: 'Enable Long (0/1)',
-        useShort: 'Enable Short (0/1)',
-        signalCooldownBars: 'Fib Signal Cooldown',
-        initialStopAtr: 'Initial Stop ATR',
-        bankerTriggerProfitPct: 'Banker Trigger Profit %',
-        bankerFractionPct: 'Banker Fraction %',
-        bankerTrailAtr: 'Banker Trail ATR',
-        maxHoldBars: 'Max Hold Bars',
-        killIfNoProfitAfterBars: 'Kill If No Profit After Bars',
-        entryCooldownBars: 'Post-Exit Cooldown Bars',
+        fastTrendPeriod: "Fast Trend SMA",
+        slowTrendPeriod: "Slow Trend SMA",
+        atrPeriod: "ATR Period",
+        volatilitySmaPeriod: "ATR SMA Period",
+        volumeSmaPeriod: "Volume SMA Period",
+        trendEfficiencyLookback: "Trend Efficiency Lookback",
+        minVolatilityRatio: "Min Volatility Ratio",
+        maxVolatilityRatio: "Max Volatility Ratio",
+        minRelativeVolume: "Min Relative Volume",
+        minTrendEfficiency: "Min Trend Efficiency",
+        entryConfirmBars: "Entry Confirm Bars",
+        initialStopAtr: "Initial Stop ATR",
+        bankerTriggerProfitPct: "Banker Trigger Profit %",
+        bankerFractionPct: "Banker Fraction %",
+        bankerTrailAtr: "Banker Trail ATR",
+        maxHoldBars: "Max Hold Bars",
+        killIfNoProfitAfterBars: "Kill If No Profit After Bars",
+        entryCooldownBars: "Post-Exit Cooldown Bars",
+        useLong: "Enable Long (0/1)",
+        useShort: "Enable Short (0/1)",
     },
     execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
         const cleanData = ensureCleanData(data);
         if (cleanData.length === 0) return [];
 
         const cfg = normalize(params);
-        const fibSignals = fib_speed_fan_entry.execute(cleanData, toFibParams(cfg))
-            .slice()
-            .sort((a, b) => {
-                const ai = typeof a.barIndex === 'number' ? a.barIndex : 0;
-                const bi = typeof b.barIndex === 'number' ? b.barIndex : 0;
-                return ai - bi;
-            });
+        const minBars = Math.max(
+            cfg.slowTrendPeriod + 2,
+            cfg.atrPeriod + cfg.volatilitySmaPeriod + 2,
+            cfg.volumeSmaPeriod + 2,
+            cfg.trendEfficiencyLookback + 2
+        );
+        if (cleanData.length < minBars) return [];
 
-        const atr = calculateATR(getHighs(cleanData), getLows(cleanData), getCloses(cleanData), cfg.atrPeriod);
-        const signalByIndex = new Map<number, { buy: boolean; sell: boolean; reasonBuy?: string; reasonSell?: string }>();
-        for (const signal of fibSignals) {
-            const index = typeof signal.barIndex === 'number' ? signal.barIndex : -1;
-            if (index < 0 || index >= cleanData.length) continue;
-            const row = signalByIndex.get(index) ?? { buy: false, sell: false };
-            if (signal.type === 'buy') {
-                row.buy = true;
-                row.reasonBuy = signal.reason;
-            } else {
-                row.sell = true;
-                row.reasonSell = signal.reason;
-            }
-            signalByIndex.set(index, row);
-        }
+        const closes = getCloses(cleanData);
+        const fastTrend = calculateSMA(closes, cfg.fastTrendPeriod);
+        const slowTrend = calculateSMA(closes, cfg.slowTrendPeriod);
+        const features = buildAdvancedFeatureSet(cleanData, {
+            atrPeriod: cfg.atrPeriod,
+            volatilitySmaPeriod: cfg.volatilitySmaPeriod,
+            volumeSmaPeriod: cfg.volumeSmaPeriod,
+            trendEfficiencyLookback: cfg.trendEfficiencyLookback,
+        });
 
         const signals: Signal[] = [];
-        let side: 'flat' | 'long' | 'short' = 'flat';
+        let side: "flat" | "long" | "short" = "flat";
         let entryPrice = 0;
         let stopPrice = 0;
         let trailRef = 0;
         let barsHeld = 0;
         let cooldown = 0;
         let bankedHalf = false;
+        let longConfirm = 0;
+        let shortConfirm = 0;
 
         for (let i = 1; i < cleanData.length; i++) {
-            if (cooldown > 0) cooldown--;
-            const atrNow = atr[i];
-            if (atrNow === null || atrNow <= 0) continue;
-
             const close = cleanData[i].close;
             const high = cleanData[i].high;
             const low = cleanData[i].low;
-            const fib = signalByIndex.get(i);
+            const atrNow = features.atr[i];
+            const volRatio = features.volatilityRatio[i];
+            const relVolume = features.relativeVolume[i];
+            const efficiency = features.trendEfficiency[i];
+            const fastNow = fastTrend[i];
+            const slowNow = slowTrend[i];
 
-            if (side !== 'flat') {
+            if (
+                atrNow === null ||
+                volRatio === null ||
+                relVolume === null ||
+                efficiency === null ||
+                fastNow === null ||
+                slowNow === null
+            ) {
+                continue;
+            }
+
+            const trendUp = fastNow > slowNow && close > fastNow;
+            const trendDown = fastNow < slowNow && close < fastNow;
+            const efficiencyStrength = Math.abs(efficiency);
+            const regimePass =
+                volRatio >= cfg.minVolatilityRatio &&
+                volRatio <= cfg.maxVolatilityRatio &&
+                relVolume >= cfg.minRelativeVolume &&
+                efficiencyStrength >= cfg.minTrendEfficiency;
+            const longSetup = cfg.useLong > 0 && regimePass && trendUp && efficiency > 0;
+            const shortSetup = cfg.useShort > 0 && regimePass && trendDown && efficiency < 0;
+
+            if (side !== "flat") {
                 barsHeld += 1;
 
-                if (side === 'long') {
+                if (side === "long") {
                     const profitPct = ((close - entryPrice) / entryPrice) * 100;
                     if (!bankedHalf && profitPct >= cfg.bankerTriggerProfitPct) {
-                        signals.push(createSellSignal(cleanData, i, 'Meta v3 banker partial long', cfg.bankerFractionPct / 100));
+                        signals.push(createSellSignal(cleanData, i, "Meta v3 banker partial long", cfg.bankerFractionPct / 100));
                         bankedHalf = true;
                         stopPrice = Math.max(stopPrice, entryPrice);
                         trailRef = high;
@@ -190,26 +199,28 @@ export const meta_harvest_v3: Strategy = {
                     const hitStop = close <= stopPrice;
                     const staleTrade = barsHeld >= cfg.killIfNoProfitAfterBars && profitPct <= 0;
                     const maxHold = barsHeld >= cfg.maxHoldBars;
-                    const oppositeFib = Boolean(fib?.sell);
-
-                    if (hitStop || staleTrade || maxHold || oppositeFib) {
+                    const regimeExit = !longSetup || trendDown;
+                    if (hitStop || staleTrade || maxHold || regimeExit) {
                         const reason = hitStop
-                            ? 'Meta v3 stop/trail long'
+                            ? "Meta v3 stop/trail long"
                             : staleTrade
-                                ? 'Meta v3 no-profit timeout long'
+                                ? "Meta v3 no-profit timeout long"
                                 : maxHold
-                                    ? 'Meta v3 max-hold long'
-                                    : 'Meta v3 opposite fib long';
+                                    ? "Meta v3 max-hold long"
+                                    : "Meta v3 regime exit long";
                         signals.push(createSellSignal(cleanData, i, reason));
-                        side = 'flat';
-                        cooldown = cfg.entryCooldownBars;
+                        side = "flat";
+                        barsHeld = 0;
                         bankedHalf = false;
+                        cooldown = cfg.entryCooldownBars;
+                        longConfirm = 0;
+                        shortConfirm = 0;
                         continue;
                     }
                 } else {
                     const profitPct = ((entryPrice - close) / entryPrice) * 100;
                     if (!bankedHalf && profitPct >= cfg.bankerTriggerProfitPct) {
-                        signals.push(createBuySignal(cleanData, i, 'Meta v3 banker partial short', cfg.bankerFractionPct / 100));
+                        signals.push(createBuySignal(cleanData, i, "Meta v3 banker partial short", cfg.bankerFractionPct / 100));
                         bankedHalf = true;
                         stopPrice = Math.min(stopPrice, entryPrice);
                         trailRef = low;
@@ -224,70 +235,89 @@ export const meta_harvest_v3: Strategy = {
                     const hitStop = close >= stopPrice;
                     const staleTrade = barsHeld >= cfg.killIfNoProfitAfterBars && profitPct <= 0;
                     const maxHold = barsHeld >= cfg.maxHoldBars;
-                    const oppositeFib = Boolean(fib?.buy);
-
-                    if (hitStop || staleTrade || maxHold || oppositeFib) {
+                    const regimeExit = !shortSetup || trendUp;
+                    if (hitStop || staleTrade || maxHold || regimeExit) {
                         const reason = hitStop
-                            ? 'Meta v3 stop/trail short'
+                            ? "Meta v3 stop/trail short"
                             : staleTrade
-                                ? 'Meta v3 no-profit timeout short'
+                                ? "Meta v3 no-profit timeout short"
                                 : maxHold
-                                    ? 'Meta v3 max-hold short'
-                                    : 'Meta v3 opposite fib short';
+                                    ? "Meta v3 max-hold short"
+                                    : "Meta v3 regime exit short";
                         signals.push(createBuySignal(cleanData, i, reason));
-                        side = 'flat';
-                        cooldown = cfg.entryCooldownBars;
+                        side = "flat";
+                        barsHeld = 0;
                         bankedHalf = false;
+                        cooldown = cfg.entryCooldownBars;
+                        longConfirm = 0;
+                        shortConfirm = 0;
                         continue;
                     }
                 }
             }
 
-            if (side !== 'flat' || cooldown > 0 || !fib) continue;
-            if (fib.buy && fib.sell) continue;
-
-            if (fib.buy && cfg.useLong > 0) {
-                signals.push(createBuySignal(cleanData, i, fib.reasonBuy ?? 'Meta v3 fib long'));
-                side = 'long';
-                entryPrice = close;
-                barsHeld = 0;
-                bankedHalf = false;
-                trailRef = high;
-                stopPrice = entryPrice - cfg.initialStopAtr * atrNow;
+            if (side !== "flat") continue;
+            if (cooldown > 0) {
+                cooldown -= 1;
+                longConfirm = 0;
+                shortConfirm = 0;
                 continue;
             }
 
-            if (fib.sell && cfg.useShort > 0) {
-                signals.push(createSellSignal(cleanData, i, fib.reasonSell ?? 'Meta v3 fib short'));
-                side = 'short';
+            longConfirm = longSetup ? longConfirm + 1 : 0;
+            shortConfirm = shortSetup ? shortConfirm + 1 : 0;
+
+            if (longConfirm >= cfg.entryConfirmBars && shortConfirm === 0) {
+                signals.push(createBuySignal(cleanData, i, "Meta v3 feature long"));
+                side = "long";
                 entryPrice = close;
+                stopPrice = entryPrice - cfg.initialStopAtr * atrNow;
+                trailRef = high;
                 barsHeld = 0;
                 bankedHalf = false;
-                trailRef = low;
+                longConfirm = 0;
+                shortConfirm = 0;
+                continue;
+            }
+
+            if (shortConfirm >= cfg.entryConfirmBars && longConfirm === 0) {
+                signals.push(createSellSignal(cleanData, i, "Meta v3 feature short"));
+                side = "short";
+                entryPrice = close;
                 stopPrice = entryPrice + cfg.initialStopAtr * atrNow;
+                trailRef = low;
+                barsHeld = 0;
+                bankedHalf = false;
+                longConfirm = 0;
+                shortConfirm = 0;
             }
         }
 
         return signals;
     },
     metadata: {
-        role: 'entry',
-        direction: 'both',
+        role: "entry",
+        direction: "both",
         walkForwardParams: [
-            'depth',
-            'atrPeriod',
-            'deviationMult',
-            'levelIndex',
-            'entryMode',
-            'touchTolerancePct',
-            'signalCooldownBars',
-            'initialStopAtr',
-            'bankerTriggerProfitPct',
-            'bankerFractionPct',
-            'bankerTrailAtr',
-            'maxHoldBars',
-            'killIfNoProfitAfterBars',
-            'entryCooldownBars',
+            "fastTrendPeriod",
+            "slowTrendPeriod",
+            "atrPeriod",
+            "volatilitySmaPeriod",
+            "volumeSmaPeriod",
+            "trendEfficiencyLookback",
+            "minVolatilityRatio",
+            "maxVolatilityRatio",
+            "minRelativeVolume",
+            "minTrendEfficiency",
+            "entryConfirmBars",
+            "initialStopAtr",
+            "bankerTriggerProfitPct",
+            "bankerFractionPct",
+            "bankerTrailAtr",
+            "maxHoldBars",
+            "killIfNoProfitAfterBars",
+            "entryCooldownBars",
         ],
     },
 };
+

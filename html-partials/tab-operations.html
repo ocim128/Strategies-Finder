@@ -1,0 +1,129 @@
+<div id="operationsTab" style="display: none;">
+    <div class="ops-dashboard">
+        <div class="ops-header">
+            <div>
+                <h3 class="ops-title">Live Operations</h3>
+                <p class="ops-subtitle">Command Center for active signals, alpha rankings, and system pulse.</p>
+            </div>
+            <div class="ops-health-chip" id="opsOverallHealth">
+                <span class="ops-health-dot" id="opsOverallHealthDot"></span>
+                <span id="opsOverallHealthText">Booting...</span>
+            </div>
+        </div>
+
+        <section class="ops-section">
+            <div class="ops-section-header">
+                <h4>Paper Ledger</h4>
+                <span class="ops-section-meta" id="opsLedgerMeta">Waiting for paper_portfolio.json</span>
+            </div>
+            <div class="ops-ledger-kpis">
+                <article class="ops-kpi-card">
+                    <div class="ops-kpi-label">Today's PnL</div>
+                    <div class="ops-kpi-value" id="opsTodayPnl">$0.00</div>
+                    <div class="ops-kpi-subtext" id="opsTodayPnlSubtext">Session delta</div>
+                </article>
+                <article class="ops-kpi-card">
+                    <div class="ops-kpi-label">Total Equity</div>
+                    <div class="ops-kpi-value" id="opsTotalEquity">$10,000.00</div>
+                    <div class="ops-kpi-subtext" id="opsTotalEquitySubtext">Account growth</div>
+                </article>
+                <article class="ops-kpi-card">
+                    <div class="ops-kpi-label">Active Positions</div>
+                    <div class="ops-kpi-value" id="opsActivePositions">0</div>
+                    <div class="ops-kpi-subtext" id="opsActiveFloating">Floating PnL: $0.00</div>
+                </article>
+            </div>
+            <div class="ops-positions-wrap">
+                <table class="ops-positions-table">
+                    <thead>
+                        <tr>
+                            <th>Asset</th>
+                            <th>Strategy</th>
+                            <th>Entry</th>
+                            <th>Mark</th>
+                            <th>Floating</th>
+                            <th>Age</th>
+                        </tr>
+                    </thead>
+                    <tbody id="opsPositionsBody">
+                        <tr>
+                            <td colspan="6" class="ops-table-empty">No open paper positions.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="ops-section">
+            <div class="ops-section-header">
+                <h4>Signal Feed</h4>
+                <span class="ops-section-meta" id="opsSignalFeedMeta">Waiting for active_signals.json</span>
+            </div>
+            <div class="ops-signal-feed">
+                <div class="ops-signal-ticker" id="opsSignalTicker">
+                    <div class="ops-empty-state">Signal Tower not emitting yet.</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="ops-section">
+            <div class="ops-section-header">
+                <h4>Alpha Leaderboard</h4>
+                <span class="ops-section-meta" id="opsLeaderboardMeta">Waiting for alpha_report.json</span>
+            </div>
+            <div class="ops-leaderboard-wrap">
+                <table class="ops-leaderboard-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Asset</th>
+                            <th>Strategy</th>
+                            <th>Score</th>
+                            <th>Win Rate</th>
+                            <th>Profit Factor</th>
+                            <th>Params</th>
+                        </tr>
+                    </thead>
+                    <tbody id="opsLeaderboardBody">
+                        <tr>
+                            <td colspan="7" class="ops-table-empty">No leaderboard data yet.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="ops-section">
+            <div class="ops-section-header">
+                <h4>System Health</h4>
+                <span class="ops-section-meta" id="opsHealthMeta">Monitoring factory heartbeat.</span>
+            </div>
+            <div class="ops-health-grid">
+                <article class="ops-health-card" id="opsLoaderCard">
+                    <div class="ops-health-card-header">
+                        <span class="ops-health-label">Universal Loader</span>
+                        <span class="ops-health-state" id="opsLoaderState">Unknown</span>
+                    </div>
+                    <div class="ops-health-value" id="opsLoaderValue">n/a</div>
+                    <div class="ops-health-detail" id="opsLoaderDetail">Awaiting alpha_report.json.</div>
+                </article>
+                <article class="ops-health-card" id="opsTowerCard">
+                    <div class="ops-health-card-header">
+                        <span class="ops-health-label">Signal Tower</span>
+                        <span class="ops-health-state" id="opsTowerState">Unknown</span>
+                    </div>
+                    <div class="ops-health-value" id="opsTowerValue">n/a</div>
+                    <div class="ops-health-detail" id="opsTowerDetail">Awaiting active_signals.json.</div>
+                </article>
+                <article class="ops-health-card" id="opsPaperCard">
+                    <div class="ops-health-card-header">
+                        <span class="ops-health-label">Paper Trader</span>
+                        <span class="ops-health-state" id="opsPaperState">Unknown</span>
+                    </div>
+                    <div class="ops-health-value" id="opsPaperValue">n/a</div>
+                    <div class="ops-health-detail" id="opsPaperDetail">Awaiting paper_portfolio.json.</div>
+                </article>
+            </div>
+        </section>
+    </div>
+</div>
