@@ -27,6 +27,11 @@ import { simple_regression_line } from "./lib/simple-regression-line";
 import { sol_queen_v1 } from "./lib/sol_queen_v1";
 import { volatility_compression_break } from "./lib/volatility-compression-break";
 import { volatility_compression_break_v2 } from "./lib/volatility_compression_break_v2";
+import { volatility_compression_break_persist } from "./lib/volatility-compression-break-persist";
+import { volatility_compression_break_reexpand } from "./lib/volatility-compression-break-reexpand";
+import { volatility_compression_break_volume } from "./lib/volatility-compression-break-volume";
+import { volatility_compression_break_trend } from "./lib/volatility-compression-break-trend";
+import { volatility_compression_break_impulse } from "./lib/volatility-compression-break-impulse";
 import { gap_fail_reversal } from "./lib/gap-fail-reversal";
 import { exhaustion_spike_pullback } from "./lib/exhaustion-spike-pullback";
 import { session_open_fakeout } from "./lib/session-open-fakeout";
@@ -80,6 +85,11 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "sol_queen_v1", strategy: sol_queen_v1, assets: ["SOL"] },
     { key: "volatility_compression_break", strategy: volatility_compression_break },
     { key: "volatility_compression_break_v2", strategy: volatility_compression_break_v2 },
+    { key: "volatility_compression_break_persist", strategy: volatility_compression_break_persist },
+    { key: "volatility_compression_break_reexpand", strategy: volatility_compression_break_reexpand },
+    { key: "volatility_compression_break_volume", strategy: volatility_compression_break_volume },
+    { key: "volatility_compression_break_trend", strategy: volatility_compression_break_trend },
+    { key: "volatility_compression_break_impulse", strategy: volatility_compression_break_impulse },
     { key: "gap_fail_reversal", strategy: gap_fail_reversal },
     { key: "exhaustion_spike_pullback", strategy: exhaustion_spike_pullback },
     { key: "session_open_fakeout", strategy: session_open_fakeout },
