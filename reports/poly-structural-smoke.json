@@ -1,0 +1,972 @@
+{
+  "generatedAt": "2026-02-16T04:05:09.380Z",
+  "config": {
+    "seriesId": "10684",
+    "startDateMin": "2026-02-10T00:00:00Z",
+    "maxEvents": 300,
+    "pageSize": 500,
+    "concurrency": 8,
+    "windows": 4,
+    "minTrainRows": 120,
+    "minTestRows": 60,
+    "permutations": 20,
+    "outPath": "reports/poly-structural-smoke.json"
+  },
+  "dataset": {
+    "note": "Microstructure fields without historical public endpoints are proxy-derived from tick direction/range in prices-history.",
+    "proxyFeatures": [
+      "bid_ask_spread",
+      "orderbook_imbalance_top5",
+      "trade_aggressor_ratio",
+      "volume_delta",
+      "cumulative_volume_delta"
+    ],
+    "eventsFetched": 300,
+    "eventsUsable": 300
+  },
+  "rowCount": 1200,
+  "windows": [
+    {
+      "id": 1,
+      "trainStart": 0,
+      "trainEnd": 120,
+      "testStart": 120,
+      "testEnd": 336
+    },
+    {
+      "id": 2,
+      "trainStart": 0,
+      "trainEnd": 390,
+      "testStart": 390,
+      "testEnd": 606
+    },
+    {
+      "id": 3,
+      "trainStart": 0,
+      "trainEnd": 660,
+      "testStart": 660,
+      "testEnd": 876
+    },
+    {
+      "id": 4,
+      "trainStart": 0,
+      "trainEnd": 930,
+      "testStart": 930,
+      "testEnd": 1146
+    }
+  ],
+  "aggregateResults": [
+    {
+      "model": "logit",
+      "fee": 0.01,
+      "oos": {
+        "trades": 187,
+        "expectancy": -0.009299854742340404,
+        "sharpe": -0.2391449793483832,
+        "hitRate": 0.5172452491713612
+      },
+      "regimeAverages": [
+        {
+          "name": "high_vol",
+          "trades": 95,
+          "expectancy": -0.019828431315679275,
+          "sharpe": -0.4133393279441855,
+          "hitRate": 0.4847121722550561
+        },
+        {
+          "name": "chop_day",
+          "trades": 187,
+          "expectancy": -0.009299854742340404,
+          "sharpe": -0.2391449793483832,
+          "hitRate": 0.5172452491713612
+        },
+        {
+          "name": "near_0_3_or_0_7",
+          "trades": 60,
+          "expectancy": 0.03824566365007541,
+          "sharpe": 0.7861476383773367,
+          "hitRate": 0.5062567334626158
+        },
+        {
+          "name": "low_vol",
+          "trades": 92,
+          "expectancy": 0.0021158396216701065,
+          "sharpe": 0.05692206979213099,
+          "hitRate": 0.5535898680552491
+        },
+        {
+          "name": "near_0_5",
+          "trades": 66,
+          "expectancy": -0.011158964309994095,
+          "sharpe": -0.16575131583064878,
+          "hitRate": 0.5083937053912767
+        }
+      ],
+      "edgeByBucket": [
+        {
+          "bucket": "0.00-0.30",
+          "trades": 108,
+          "avgEdge": 0.02708333333333333
+        },
+        {
+          "bucket": "0.30-0.40",
+          "trades": 71,
+          "avgEdge": -0.1752816901408451
+        },
+        {
+          "bucket": "0.40-0.45",
+          "trades": 51,
+          "avgEdge": -0.06254901960784316
+        },
+        {
+          "bucket": "0.45-0.55",
+          "trades": 263,
+          "avgEdge": -0.009809885931558937
+        },
+        {
+          "bucket": "0.55-0.60",
+          "trades": 48,
+          "avgEdge": 0.07958333333333334
+        },
+        {
+          "bucket": "0.60-0.70",
+          "trades": 72,
+          "avgEdge": -0.007986111111111133
+        },
+        {
+          "bucket": "0.70-1.00",
+          "trades": 134,
+          "avgEdge": 0.04119402985074627
+        }
+      ],
+      "permutationPValue": 0.3333333333333333
+    },
+    {
+      "model": "logit",
+      "fee": 0.02,
+      "oos": {
+        "trades": 155,
+        "expectancy": -0.02767647688653687,
+        "sharpe": -0.6926886798275845,
+        "hitRate": 0.5154669586239924
+      },
+      "regimeAverages": [
+        {
+          "name": "high_vol",
+          "trades": 79,
+          "expectancy": -0.047169213929335096,
+          "sharpe": -0.9734922005360321,
+          "hitRate": 0.4743845670841394
+        },
+        {
+          "name": "chop_day",
+          "trades": 155,
+          "expectancy": -0.02767647688653687,
+          "sharpe": -0.6926886798275845,
+          "hitRate": 0.5154669586239924
+        },
+        {
+          "name": "near_0_3_or_0_7",
+          "trades": 52,
+          "expectancy": 0.018076040326040325,
+          "sharpe": 0.32357948526326574,
+          "hitRate": 0.5038366288366288
+        },
+        {
+          "name": "low_vol",
+          "trades": 77,
+          "expectancy": -0.006695444196402604,
+          "sharpe": -0.07508403828181678,
+          "hitRate": 0.5597307350097275
+        },
+        {
+          "name": "near_0_5",
+          "trades": 54,
+          "expectancy": -0.02620724505805154,
+          "sharpe": -0.339858999564436,
+          "hitRate": 0.5069654444654444
+        }
+      ],
+      "edgeByBucket": [
+        {
+          "bucket": "0.00-0.30",
+          "trades": 96,
+          "avgEdge": -0.014531250000000008
+        },
+        {
+          "bucket": "0.30-0.40",
+          "trades": 53,
+          "avgEdge": -0.18839622641509438
+        },
+        {
+          "bucket": "0.40-0.45",
+          "trades": 35,
+          "avgEdge": -0.10171428571428573
+        },
+        {
+          "bucket": "0.45-0.55",
+          "trades": 217,
+          "avgEdge": -0.02096774193548391
+        },
+        {
+          "bucket": "0.55-0.60",
+          "trades": 46,
+          "avgEdge": 0.05554347826086956
+        },
+        {
+          "bucket": "0.60-0.70",
+          "trades": 63,
+          "avgEdge": -0.042857142857142885
+        },
+        {
+          "bucket": "0.70-1.00",
+          "trades": 111,
+          "avgEdge": 0.03914414414414417
+        }
+      ],
+      "permutationPValue": null
+    },
+    {
+      "model": "logit",
+      "fee": 0.03,
+      "oos": {
+        "trades": 121,
+        "expectancy": -0.013660820774057865,
+        "sharpe": -0.300930089804466,
+        "hitRate": 0.5395278315608386
+      },
+      "regimeAverages": [
+        {
+          "name": "high_vol",
+          "trades": 60,
+          "expectancy": -0.03806289361223572,
+          "sharpe": -0.7924344396342289,
+          "hitRate": 0.4788011695906433
+        },
+        {
+          "name": "chop_day",
+          "trades": 121,
+          "expectancy": -0.013660820774057865,
+          "sharpe": -0.300930089804466,
+          "hitRate": 0.5395278315608386
+        },
+        {
+          "name": "near_0_3_or_0_7",
+          "trades": 41,
+          "expectancy": 0.03225955298617422,
+          "sharpe": 0.5559113710003851,
+          "hitRate": 0.5178375626566416
+        },
+        {
+          "name": "low_vol",
+          "trades": 61,
+          "expectancy": 0.01245049228276043,
+          "sharpe": 0.2764854043647104,
+          "hitRate": 0.5984247959795752
+        },
+        {
+          "name": "near_0_5",
+          "trades": 40,
+          "expectancy": -0.022834119496855376,
+          "sharpe": -0.21500507094229704,
+          "hitRate": 0.5228930817610064
+        }
+      ],
+      "edgeByBucket": [
+        {
+          "bucket": "0.00-0.30",
+          "trades": 76,
+          "avgEdge": -0.007828947368421057
+        },
+        {
+          "bucket": "0.30-0.40",
+          "trades": 39,
+          "avgEdge": -0.20307692307692307
+        },
+        {
+          "bucket": "0.40-0.45",
+          "trades": 20,
+          "avgEdge": 0.03875
+        },
+        {
+          "bucket": "0.45-0.55",
+          "trades": 158,
+          "avgEdge": -0.012879746835443079
+        },
+        {
+          "bucket": "0.55-0.60",
+          "trades": 41,
+          "avgEdge": 0.04865853658536584
+        },
+        {
+          "bucket": "0.60-0.70",
+          "trades": 60,
+          "avgEdge": -0.05475000000000007
+        },
+        {
+          "bucket": "0.70-1.00",
+          "trades": 89,
+          "avgEdge": 0.05848314606741574
+        }
+      ],
+      "permutationPValue": null
+    },
+    {
+      "model": "lpm",
+      "fee": 0.01,
+      "oos": {
+        "trades": 181,
+        "expectancy": 0.0028095192000730154,
+        "sharpe": 0.10686437537115062,
+        "hitRate": 0.5401767673240936
+      },
+      "regimeAverages": [
+        {
+          "name": "high_vol",
+          "trades": 90,
+          "expectancy": -0.008066557106872591,
+          "sharpe": -0.16553662923332196,
+          "hitRate": 0.5355821025469425
+        },
+        {
+          "name": "chop_day",
+          "trades": 181,
+          "expectancy": 0.0028095192000730154,
+          "sharpe": 0.10686437537115062,
+          "hitRate": 0.5401767673240936
+        },
+        {
+          "name": "near_0_3_or_0_7",
+          "trades": 59,
+          "expectancy": 0.027685768329070756,
+          "sharpe": 0.6601523449059385,
+          "hitRate": 0.5835364377880851
+        },
+        {
+          "name": "low_vol",
+          "trades": 91,
+          "expectancy": 0.016735568103820708,
+          "sharpe": 0.3365351057815002,
+          "hitRate": 0.5524404623990468
+        },
+        {
+          "name": "near_0_5",
+          "trades": 67,
+          "expectancy": -0.0004101648415999401,
+          "sharpe": 0.011030845323383803,
+          "hitRate": 0.5152841895306199
+        }
+      ],
+      "edgeByBucket": [
+        {
+          "bucket": "0.00-0.30",
+          "trades": 113,
+          "avgEdge": -0.00504424778761062
+        },
+        {
+          "bucket": "0.30-0.40",
+          "trades": 62,
+          "avgEdge": -0.13991935483870968
+        },
+        {
+          "bucket": "0.40-0.45",
+          "trades": 45,
+          "avgEdge": 0.06488888888888886
+        },
+        {
+          "bucket": "0.45-0.55",
+          "trades": 269,
+          "avgEdge": 0.0014126394052044453
+        },
+        {
+          "bucket": "0.55-0.60",
+          "trades": 46,
+          "avgEdge": 0.04706521739130433
+        },
+        {
+          "bucket": "0.60-0.70",
+          "trades": 66,
+          "avgEdge": -0.01060606060606061
+        },
+        {
+          "bucket": "0.70-1.00",
+          "trades": 124,
+          "avgEdge": 0.054919354838709675
+        }
+      ],
+      "permutationPValue": 0.14285714285714285
+    },
+    {
+      "model": "lpm",
+      "fee": 0.02,
+      "oos": {
+        "trades": 129,
+        "expectancy": 0.007130775803144213,
+        "sharpe": 0.14071331984560972,
+        "hitRate": 0.584949305080884
+      },
+      "regimeAverages": [
+        {
+          "name": "high_vol",
+          "trades": 67,
+          "expectancy": -0.009547877809660446,
+          "sharpe": -0.2108398548040909,
+          "hitRate": 0.5850836920133907
+        },
+        {
+          "name": "chop_day",
+          "trades": 129,
+          "expectancy": 0.007130775803144213,
+          "sharpe": 0.14071331984560972,
+          "hitRate": 0.584949305080884
+        },
+        {
+          "name": "near_0_3_or_0_7",
+          "trades": 46,
+          "expectancy": 0.016454739245053637,
+          "sharpe": 0.4168091317673439,
+          "hitRate": 0.6321634191816747
+        },
+        {
+          "name": "low_vol",
+          "trades": 62,
+          "expectancy": 0.02652494331065757,
+          "sharpe": 0.4067525564851757,
+          "hitRate": 0.5799773242630386
+        },
+        {
+          "name": "near_0_5",
+          "trades": 43,
+          "expectancy": 0.029937206227967073,
+          "sharpe": 0.292190658714632,
+          "hitRate": 0.5570274467013597
+        }
+      ],
+      "edgeByBucket": [
+        {
+          "bucket": "0.00-0.30",
+          "trades": 86,
+          "avgEdge": 0.014186046511627899
+        },
+        {
+          "bucket": "0.30-0.40",
+          "trades": 41,
+          "avgEdge": -0.17560975609756097
+        },
+        {
+          "bucket": "0.40-0.45",
+          "trades": 30,
+          "avgEdge": -0.016333333333333356
+        },
+        {
+          "bucket": "0.45-0.55",
+          "trades": 173,
+          "avgEdge": 0.017196531791907485
+        },
+        {
+          "bucket": "0.55-0.60",
+          "trades": 34,
+          "avgEdge": 0.04720588235294115
+        },
+        {
+          "bucket": "0.60-0.70",
+          "trades": 54,
+          "avgEdge": 0.015185185185185156
+        },
+        {
+          "bucket": "0.70-1.00",
+          "trades": 98,
+          "avgEdge": 0.024591836734693874
+        }
+      ],
+      "permutationPValue": null
+    },
+    {
+      "model": "lpm",
+      "fee": 0.03,
+      "oos": {
+        "trades": 92,
+        "expectancy": 0.01900837653068889,
+        "sharpe": 0.2334490746900292,
+        "hitRate": 0.6374915483434753
+      },
+      "regimeAverages": [
+        {
+          "name": "high_vol",
+          "trades": 52,
+          "expectancy": -0.011591129272655026,
+          "sharpe": -0.32544674801646745,
+          "hitRate": 0.5997987877583465
+        },
+        {
+          "name": "chop_day",
+          "trades": 92,
+          "expectancy": 0.01900837653068889,
+          "sharpe": 0.2334490746900292,
+          "hitRate": 0.6374915483434753
+        },
+        {
+          "name": "near_0_3_or_0_7",
+          "trades": 37,
+          "expectancy": 0.014959108767576498,
+          "sharpe": 0.27275509767706096,
+          "hitRate": 0.6386889991728701
+        },
+        {
+          "name": "low_vol",
+          "trades": 40,
+          "expectancy": 0.10369141604010024,
+          "sharpe": 0.8331814021497984,
+          "hitRate": 0.6821428571428572
+        },
+        {
+          "name": "near_0_5",
+          "trades": 34,
+          "expectancy": 0.11384833895040919,
+          "sharpe": 0.7373420754720775,
+          "hitRate": 0.6500722195474242
+        }
+      ],
+      "edgeByBucket": [
+        {
+          "bucket": "0.00-0.30",
+          "trades": 72,
+          "avgEdge": -0.0003472222222222237
+        },
+        {
+          "bucket": "0.30-0.40",
+          "trades": 29,
+          "avgEdge": -0.19982758620689656
+        },
+        {
+          "bucket": "0.40-0.45",
+          "trades": 18,
+          "avgEdge": -0.1252777777777778
+        },
+        {
+          "bucket": "0.45-0.55",
+          "trades": 103,
+          "avgEdge": 0.036456310679611595
+        },
+        {
+          "bucket": "0.55-0.60",
+          "trades": 24,
+          "avgEdge": 0.09020833333333333
+        },
+        {
+          "bucket": "0.60-0.70",
+          "trades": 46,
+          "avgEdge": 0.013260869565217352
+        },
+        {
+          "bucket": "0.70-1.00",
+          "trades": 76,
+          "avgEdge": 0.027565789473684196
+        }
+      ],
+      "permutationPValue": null
+    },
+    {
+      "model": "tree",
+      "fee": 0.01,
+      "oos": {
+        "trades": 204,
+        "expectancy": -0.006715275449394962,
+        "sharpe": -0.23703732278139145,
+        "hitRate": 0.47228619739883737
+      },
+      "regimeAverages": [
+        {
+          "name": "high_vol",
+          "trades": 107,
+          "expectancy": -0.016000070315748283,
+          "sharpe": -0.4466866236753203,
+          "hitRate": 0.4386080021673242
+        },
+        {
+          "name": "chop_day",
+          "trades": 204,
+          "expectancy": -0.006715275449394962,
+          "sharpe": -0.23703732278139145,
+          "hitRate": 0.47228619739883737
+        },
+        {
+          "name": "near_0_3_or_0_7",
+          "trades": 64,
+          "expectancy": -0.047068383639938684,
+          "sharpe": -1.0821423824922003,
+          "hitRate": 0.4450786213872585
+        },
+        {
+          "name": "low_vol",
+          "trades": 97,
+          "expectancy": 0.0017315802066614951,
+          "sharpe": 0.04578477071380835,
+          "hitRate": 0.5056175863941833
+        },
+        {
+          "name": "near_0_5",
+          "trades": 72,
+          "expectancy": 0.019972665452987776,
+          "sharpe": 0.32099882565314763,
+          "hitRate": 0.5340032364769995
+        }
+      ],
+      "edgeByBucket": [
+        {
+          "bucket": "0.00-0.30",
+          "trades": 119,
+          "avgEdge": -0.049201680672268905
+        },
+        {
+          "bucket": "0.30-0.40",
+          "trades": 92,
+          "avgEdge": 0.09646739130434781
+        },
+        {
+          "bucket": "0.40-0.45",
+          "trades": 57,
+          "avgEdge": 0.09587719298245614
+        },
+        {
+          "bucket": "0.45-0.55",
+          "trades": 289,
+          "avgEdge": 0.017750865051903115
+        },
+        {
+          "bucket": "0.55-0.60",
+          "trades": 41,
+          "avgEdge": -0.12500000000000003
+        },
+        {
+          "bucket": "0.60-0.70",
+          "trades": 80,
+          "avgEdge": -0.08706250000000004
+        },
+        {
+          "bucket": "0.70-1.00",
+          "trades": 137,
+          "avgEdge": -0.05448905109489051
+        }
+      ],
+      "permutationPValue": 1
+    },
+    {
+      "model": "tree",
+      "fee": 0.02,
+      "oos": {
+        "trades": 194,
+        "expectancy": -0.01760187620461564,
+        "sharpe": -0.5822402167330958,
+        "hitRate": 0.47048684639304983
+      },
+      "regimeAverages": [
+        {
+          "name": "high_vol",
+          "trades": 102,
+          "expectancy": -0.028948418419311762,
+          "sharpe": -0.8009739665899782,
+          "hitRate": 0.4352714976608197
+        },
+        {
+          "name": "chop_day",
+          "trades": 194,
+          "expectancy": -0.01760187620461564,
+          "sharpe": -0.5822402167330958,
+          "hitRate": 0.47048684639304983
+        },
+        {
+          "name": "near_0_3_or_0_7",
+          "trades": 61,
+          "expectancy": -0.05040908069917503,
+          "sharpe": -1.1854789993839399,
+          "hitRate": 0.45805970758800946
+        },
+        {
+          "name": "low_vol",
+          "trades": 92,
+          "expectancy": -0.008520411464061618,
+          "sharpe": -0.15584791239728119,
+          "hitRate": 0.5025871503741562
+        },
+        {
+          "name": "near_0_5",
+          "trades": 70,
+          "expectancy": 0.010612666166854566,
+          "sharpe": 0.15681684441434096,
+          "hitRate": 0.5331288541403916
+        }
+      ],
+      "edgeByBucket": [
+        {
+          "bucket": "0.00-0.30",
+          "trades": 115,
+          "avgEdge": -0.05995652173913046
+        },
+        {
+          "bucket": "0.30-0.40",
+          "trades": 85,
+          "avgEdge": 0.06658823529411763
+        },
+        {
+          "bucket": "0.40-0.45",
+          "trades": 54,
+          "avgEdge": 0.08037037037037037
+        },
+        {
+          "bucket": "0.45-0.55",
+          "trades": 278,
+          "avgEdge": 0.00820143884892084
+        },
+        {
+          "bucket": "0.55-0.60",
+          "trades": 33,
+          "avgEdge": -0.15681818181818186
+        },
+        {
+          "bucket": "0.60-0.70",
+          "trades": 80,
+          "avgEdge": -0.09706250000000004
+        },
+        {
+          "bucket": "0.70-1.00",
+          "trades": 130,
+          "avgEdge": -0.05396153846153848
+        }
+      ],
+      "permutationPValue": null
+    },
+    {
+      "model": "tree",
+      "fee": 0.03,
+      "oos": {
+        "trades": 184,
+        "expectancy": -0.017557824841005557,
+        "sharpe": -0.57303402659418,
+        "hitRate": 0.4765514079407796
+      },
+      "regimeAverages": [
+        {
+          "name": "high_vol",
+          "trades": 96,
+          "expectancy": -0.025565294767389047,
+          "sharpe": -0.711135255391497,
+          "hitRate": 0.4400452472627323
+        },
+        {
+          "name": "chop_day",
+          "trades": 184,
+          "expectancy": -0.017557824841005557,
+          "sharpe": -0.57303402659418,
+          "hitRate": 0.4765514079407796
+        },
+        {
+          "name": "near_0_3_or_0_7",
+          "trades": 59,
+          "expectancy": -0.04863797562878523,
+          "sharpe": -1.1611789244484727,
+          "hitRate": 0.45731774958719207
+        },
+        {
+          "name": "low_vol",
+          "trades": 88,
+          "expectancy": -0.013429374718848426,
+          "sharpe": -0.2407094626560336,
+          "hitRate": 0.5059435447593342
+        },
+        {
+          "name": "near_0_5",
+          "trades": 65,
+          "expectancy": 0.00450762218146507,
+          "sharpe": 0.07099930337062409,
+          "hitRate": 0.5349429999640378
+        }
+      ],
+      "edgeByBucket": [
+        {
+          "bucket": "0.00-0.30",
+          "trades": 113,
+          "avgEdge": -0.07057522123893809
+        },
+        {
+          "bucket": "0.30-0.40",
+          "trades": 83,
+          "avgEdge": 0.07006024096385544
+        },
+        {
+          "bucket": "0.40-0.45",
+          "trades": 52,
+          "avgEdge": 0.07057692307692306
+        },
+        {
+          "bucket": "0.45-0.55",
+          "trades": 259,
+          "avgEdge": 0.00438223938223935
+        },
+        {
+          "bucket": "0.55-0.60",
+          "trades": 27,
+          "avgEdge": -0.10185185185185193
+        },
+        {
+          "bucket": "0.60-0.70",
+          "trades": 79,
+          "avgEdge": -0.11588607594936715
+        },
+        {
+          "bucket": "0.70-1.00",
+          "trades": 122,
+          "avgEdge": -0.0405327868852459
+        }
+      ],
+      "permutationPValue": null
+    }
+  ],
+  "stabilityMatrix": [
+    {
+      "feature": "mid_price",
+      "model": "logit",
+      "windows": 4,
+      "meanCoef": 0.5334615986533174,
+      "stdCoef": 0.042264262873732646,
+      "signConsistency": 1
+    },
+    {
+      "feature": "bid_ask_spread",
+      "model": "logit",
+      "windows": 4,
+      "meanCoef": 0,
+      "stdCoef": 0,
+      "signConsistency": 0
+    },
+    {
+      "feature": "orderbook_imbalance_top5",
+      "model": "logit",
+      "windows": 4,
+      "meanCoef": 0.04415143679756868,
+      "stdCoef": 0.02947343588631632,
+      "signConsistency": 1
+    },
+    {
+      "feature": "trade_aggressor_ratio",
+      "model": "logit",
+      "windows": 4,
+      "meanCoef": 0.044151436797568694,
+      "stdCoef": 0.02947343588631633,
+      "signConsistency": 1
+    },
+    {
+      "feature": "volume_delta",
+      "model": "logit",
+      "windows": 4,
+      "meanCoef": 0.04415143679756868,
+      "stdCoef": 0.02947343588631632,
+      "signConsistency": 1
+    },
+    {
+      "feature": "cumulative_volume_delta",
+      "model": "logit",
+      "windows": 4,
+      "meanCoef": 0.08141004914812362,
+      "stdCoef": 0.07093497978118432,
+      "signConsistency": 1
+    },
+    {
+      "feature": "short_term_realized_vol",
+      "model": "logit",
+      "windows": 4,
+      "meanCoef": -0.21984308457611323,
+      "stdCoef": 0.1312871855356108,
+      "signConsistency": 1
+    },
+    {
+      "feature": "time_to_expiry_decay_slope",
+      "model": "logit",
+      "windows": 4,
+      "meanCoef": 0.32095232568163806,
+      "stdCoef": 0.05175981745975246,
+      "signConsistency": 1
+    },
+    {
+      "feature": "distance_from_0_5",
+      "model": "logit",
+      "windows": 4,
+      "meanCoef": 0.08256684789653013,
+      "stdCoef": 0.056610389374547855,
+      "signConsistency": 1
+    },
+    {
+      "feature": "mid_price",
+      "model": "lpm",
+      "windows": 4,
+      "meanCoef": 0.13677518297541813,
+      "stdCoef": 0.02316521795701913,
+      "signConsistency": 1
+    },
+    {
+      "feature": "bid_ask_spread",
+      "model": "lpm",
+      "windows": 4,
+      "meanCoef": 0,
+      "stdCoef": 0,
+      "signConsistency": 0
+    },
+    {
+      "feature": "orderbook_imbalance_top5",
+      "model": "lpm",
+      "windows": 4,
+      "meanCoef": 0.0030381874004047297,
+      "stdCoef": 0.0021066557348023767,
+      "signConsistency": 1
+    },
+    {
+      "feature": "trade_aggressor_ratio",
+      "model": "lpm",
+      "windows": 4,
+      "meanCoef": 0.0030381874004048156,
+      "stdCoef": 0.0021066557348023915,
+      "signConsistency": 1
+    },
+    {
+      "feature": "volume_delta",
+      "model": "lpm",
+      "windows": 4,
+      "meanCoef": 0.0030381874004047297,
+      "stdCoef": 0.0021066557348023767,
+      "signConsistency": 1
+    },
+    {
+      "feature": "cumulative_volume_delta",
+      "model": "lpm",
+      "windows": 4,
+      "meanCoef": 0.002049678251568093,
+      "stdCoef": 0.016616265534380715,
+      "signConsistency": 0
+    },
+    {
+      "feature": "short_term_realized_vol",
+      "model": "lpm",
+      "windows": 4,
+      "meanCoef": -0.04441865298651211,
+      "stdCoef": 0.03891438529038724,
+      "signConsistency": 1
+    },
+    {
+      "feature": "time_to_expiry_decay_slope",
+      "model": "lpm",
+      "windows": 4,
+      "meanCoef": 0.055680151465725206,
+      "stdCoef": 0.015847005879098288,
+      "signConsistency": 1
+    },
+    {
+      "feature": "distance_from_0_5",
+      "model": "lpm",
+      "windows": 4,
+      "meanCoef": 0.021305444683363196,
+      "stdCoef": 0.02506367937081123,
+      "signConsistency": 0.5
+    }
+  ],
+  "verdict": "No structural edge detected."
+}

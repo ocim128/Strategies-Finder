@@ -60,7 +60,8 @@ export function prepareSignals(
 
             if (!passesTradeFilter(data, decisionIndex, config, indicators, tradeDirection)) return;
             if (!passesRegimeFilters(data, decisionIndex, config, indicators, tradeDirection)) return;
-            if (!passesSnapshotFilters(data, decisionIndex, config, snapshotIndicators ?? null, tradeDirection, signal.price)) return;
+            // Snapshot filters are entry-quality checks and must align with entry snapshots/analysis.
+            if (!passesSnapshotFilters(data, executionIndex, config, snapshotIndicators ?? null, tradeDirection, signal.price)) return;
 
             const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
 
@@ -90,7 +91,8 @@ export function prepareSignals(
         const signalDirection = signalToPositionDirection(signal.type);
         if (!passesTradeFilter(data, decisionIndex, config, indicators, signalDirection)) return;
         if (!passesRegimeFilters(data, decisionIndex, config, indicators, signalDirection)) return;
-        if (!passesSnapshotFilters(data, decisionIndex, config, snapshotIndicators ?? null, signalDirection, signal.price)) return;
+        // Snapshot filters are entry-quality checks and must align with entry snapshots/analysis.
+        if (!passesSnapshotFilters(data, executionIndex, config, snapshotIndicators ?? null, signalDirection, signal.price)) return;
 
         const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
 

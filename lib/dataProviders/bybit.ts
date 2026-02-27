@@ -13,11 +13,13 @@ import {
     resolveRawFetchLimit,
 } from "./fetch-helpers";
 
-const BYBIT_LIMIT_PER_REQUEST = 200;
-const MAX_REQUESTS = 15;
+const BYBIT_LIMIT_PER_REQUEST = 500;
+const MAX_REQUESTS = 60;
 const BYBIT_TRADFI_KLINE_URL = '/api/tradfi-kline';
 const BYBIT_TRADFI_INTERVALS = new Set([
-    '1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'
+    // Bybit TradFi copymt5/kline supports these raw intervals.
+    // Higher custom intervals are fetched from best divisible base + resampled.
+    '1m', '5m', '15m', '30m', '1h', '1d', '1w', '1M'
 ]);
 
 // State for symbol resolution optimization
@@ -95,17 +97,41 @@ function getBybitTradFiRetMsg(response: BybitTradFiKlineResponse): string {
     return 'Bybit TradFi API error';
 }
 
+function normalizeBybitTradFiInterval(interval: string): string {
+    const trimmed = interval.trim();
+    if (!trimmed) return '';
+
+    const minuteHourDayWeek = /^(\d+)([mhdw])$/i.exec(trimmed);
+    if (minuteHourDayWeek) {
+        return `${Number(minuteHourDayWeek[1])}${minuteHourDayWeek[2].toLowerCase()}`;
+    }
+
+    const month = /^(\d+)M$/.exec(trimmed);
+    if (month) {
+        return `${Number(month[1])}M`;
+    }
+
+    return trimmed.toLowerCase();
+}
+
 function mapToBybitTradFiInterval(interval: string): string {
-    const minutes = Math.max(1, Math.floor(getIntervalSeconds(interval) / 60));
+    const normalized = normalizeBybitTradFiInterval(interval);
+    if (normalized === '1d') return 'D+2';
+    if (normalized === '1w') return 'W+2';
+    if (normalized === '1M') return 'M+2';
+
+    const minutes = Math.max(1, Math.floor(getIntervalSeconds(normalized) / 60));
     return String(minutes);
 }
 
 function resolveBybitTradFiInterval(interval: string): { sourceInterval: string; needsResample: boolean } {
-    if (BYBIT_TRADFI_INTERVALS.has(interval)) {
-        return { sourceInterval: interval, needsResample: false };
+    const normalized = normalizeBybitTradFiInterval(interval);
+
+    if (BYBIT_TRADFI_INTERVALS.has(normalized)) {
+        return { sourceInterval: normalized, needsResample: false };
     }
 
-    const targetSeconds = getIntervalSeconds(interval);
+    const targetSeconds = getIntervalSeconds(normalized);
     if (!Number.isFinite(targetSeconds) || targetSeconds <= 0) {
         return { sourceInterval: '1d', needsResample: false };
     }

@@ -1,0 +1,644 @@
+{
+  "generatedAt": "2026-02-16T04:58:26.376Z",
+  "config": {
+    "seriesId": "10684",
+    "symbol": "BTCUSDT",
+    "startDateMin": "2026-02-10T00:00:00Z",
+    "maxEvents": 400,
+    "pageSize": 500,
+    "concurrency": 8,
+    "windows": 4,
+    "minTrainEvents": 120,
+    "minTestEvents": 60,
+    "lookbackSec": 60,
+    "impulseWindowSec": 120,
+    "entryWindowSec": 90,
+    "cooldownSec": 5,
+    "impulseSigma": 2.5,
+    "lagThreshold": 0.01,
+    "maxPolyStalenessSec": 5,
+    "sigmaGrid": [
+      2,
+      2.5,
+      3
+    ],
+    "lagGrid": [
+      0.005,
+      0.01,
+      0.02
+    ],
+    "permutations": 20,
+    "outPath": "reports/poly-cross-smoke.json"
+  },
+  "coverage": {
+    "eventsFetched": 400,
+    "eventsUsable": 400,
+    "features": 400,
+    "checkpoints": 1600,
+    "impulses": 48000,
+    "windows": [
+      {
+        "id": 1,
+        "trainStart": 0,
+        "trainEnd": 120,
+        "testStart": 120,
+        "testEnd": 180
+      },
+      {
+        "id": 2,
+        "trainStart": 0,
+        "trainEnd": 162,
+        "testStart": 162,
+        "testEnd": 222
+      },
+      {
+        "id": 3,
+        "trainStart": 0,
+        "trainEnd": 204,
+        "testStart": 204,
+        "testEnd": 264
+      },
+      {
+        "id": 4,
+        "trainStart": 0,
+        "trainEnd": 246,
+        "testStart": 246,
+        "testEnd": 306
+      }
+    ]
+  },
+  "eventFeatureSummary": {
+    "spotReturnEventMean": 0.00007217749861523478,
+    "spotReturnLast60Mean": -0.00000807495387283759,
+    "spotVolEventMean": 0.00009778666445532609,
+    "maxExcursionAbsMean": 0.0021740585841990047,
+    "directionAcceleration30Mean": 0.00002729878894195749,
+    "pullbackVsBreakoutMean": 1.0424363994106862,
+    "distanceMovedVsImpliedT1Mean": -0.5101972419212751
+  },
+  "latencyDistribution": {
+    "allLast120s": {
+      "count": 2333,
+      "adjustedCount": 910,
+      "unadjustedCount": 1423,
+      "meanSec": 30.647252747252747,
+      "medianSec": 28,
+      "p90Sec": 60,
+      "bins": {
+        "0-1s": 15,
+        "2-5s": 85,
+        "6-10s": 91,
+        "11-30s": 288,
+        "31+s": 431,
+        "no_adjustment": 1423
+      }
+    },
+    "band60to120": {
+      "count": 1189,
+      "adjustedCount": 757,
+      "unadjustedCount": 432,
+      "meanSec": 35.00528401585205,
+      "medianSec": 34,
+      "p90Sec": 62,
+      "bins": {
+        "0-1s": 4,
+        "2-5s": 51,
+        "6-10s": 45,
+        "11-30s": 226,
+        "31+s": 431,
+        "no_adjustment": 432
+      }
+    },
+    "band0to60": {
+      "count": 1144,
+      "adjustedCount": 153,
+      "unadjustedCount": 991,
+      "meanSec": 9.084967320261438,
+      "medianSec": 8,
+      "p90Sec": 15,
+      "bins": {
+        "0-1s": 11,
+        "2-5s": 34,
+        "6-10s": 46,
+        "11-30s": 62,
+        "31+s": 0,
+        "no_adjustment": 991
+      }
+    }
+  },
+  "mispricingDistribution": {
+    "overallMean": 0.007646875000000004,
+    "overallStd": 0.5449836136432876,
+    "byMinute": [
+      {
+        "bucket": "T-1m",
+        "count": 400,
+        "meanEdge": -0.0146625
+      },
+      {
+        "bucket": "T-2m",
+        "count": 400,
+        "meanEdge": -0.014887500000000007
+      },
+      {
+        "bucket": "T-3m",
+        "count": 400,
+        "meanEdge": 0.022099999999999977
+      },
+      {
+        "bucket": "T-4m",
+        "count": 400,
+        "meanEdge": 0.03803750000000004
+      }
+    ],
+    "byVolatilityRegime": [
+      {
+        "bucket": "high_vol",
+        "count": 532,
+        "meanEdge": -0.004313909774436088
+      },
+      {
+        "bucket": "low_vol",
+        "count": 536,
+        "meanEdge": -0.002276119402985073
+      },
+      {
+        "bucket": "mid_vol",
+        "count": 532,
+        "meanEdge": 0.029605263157894714
+      }
+    ],
+    "byDistanceFrom05": [
+      {
+        "bucket": "mid_distance",
+        "count": 530,
+        "meanEdge": -0.025405660377358488
+      },
+      {
+        "bucket": "near_0.3_or_0.7",
+        "count": 515,
+        "meanEdge": 0.023135922330097092
+      },
+      {
+        "bucket": "near_0.5",
+        "count": 555,
+        "meanEdge": 0.024837837837837842
+      }
+    ],
+    "byLateAcceleration": [
+      {
+        "bucket": "high_accel",
+        "count": 532,
+        "meanEdge": -0.017086466165413528
+      },
+      {
+        "bucket": "low_accel",
+        "count": 536,
+        "meanEdge": 0.0025746268656716845
+      },
+      {
+        "bucket": "mid_accel",
+        "count": 532,
+        "meanEdge": 0.03749060150375938
+      }
+    ],
+    "bySpreadSize": [
+      {
+        "bucket": "tight_spread",
+        "count": 1591,
+        "meanEdge": 0.009204902576995605
+      },
+      {
+        "bucket": "wide_spread",
+        "count": 9,
+        "meanEdge": -0.2677777777777778
+      }
+    ]
+  },
+  "strategy": {
+    "baseline": {
+      "sigma": 2.5,
+      "lagY": 0.01,
+      "signals": 53,
+      "byFee": [
+        {
+          "fee": 0.01,
+          "aggregate": {
+            "trades": 11,
+            "expectancy": 0.028537767379679134,
+            "sharpe": 0.18023048186239066,
+            "hitRate": 0.22025401069518719
+          },
+          "byWindow": [
+            {
+              "windowId": 1,
+              "eval": {
+                "trades": 11,
+                "expectancy": 0.15363636363636363,
+                "sharpe": 1.269724163704053,
+                "hitRate": 0.2727272727272727
+              }
+            },
+            {
+              "windowId": 2,
+              "eval": {
+                "trades": 17,
+                "expectancy": -0.013235294117647076,
+                "sharpe": -0.151471691355489,
+                "hitRate": 0.17647058823529413
+              }
+            },
+            {
+              "windowId": 3,
+              "eval": {
+                "trades": 11,
+                "expectancy": -0.065,
+                "sharpe": -0.5163329757641533,
+                "hitRate": 0.18181818181818182
+              }
+            },
+            {
+              "windowId": 4,
+              "eval": {
+                "trades": 4,
+                "expectancy": 0.03874999999999998,
+                "sharpe": 0.11900243086515187,
+                "hitRate": 0.25
+              }
+            }
+          ],
+          "permutationPValue": 0.5238095238095238
+        },
+        {
+          "fee": 0.02,
+          "aggregate": {
+            "trades": 11,
+            "expectancy": 0.018537767379679135,
+            "sharpe": 0.1034214335800338,
+            "hitRate": 0.22025401069518719
+          },
+          "byWindow": [
+            {
+              "windowId": 1,
+              "eval": {
+                "trades": 11,
+                "expectancy": 0.14363636363636362,
+                "sharpe": 1.1870793956523098,
+                "hitRate": 0.2727272727272727
+              }
+            },
+            {
+              "windowId": 2,
+              "eval": {
+                "trades": 17,
+                "expectancy": -0.023235294117647052,
+                "sharpe": -0.26591696926852476,
+                "hitRate": 0.17647058823529413
+              }
+            },
+            {
+              "windowId": 3,
+              "eval": {
+                "trades": 11,
+                "expectancy": -0.075,
+                "sharpe": -0.5957688181894075,
+                "hitRate": 0.18181818181818182
+              }
+            },
+            {
+              "windowId": 4,
+              "eval": {
+                "trades": 4,
+                "expectancy": 0.02874999999999997,
+                "sharpe": 0.08829212612575779,
+                "hitRate": 0.25
+              }
+            }
+          ],
+          "permutationPValue": 0.42857142857142855
+        },
+        {
+          "fee": 0.03,
+          "aggregate": {
+            "trades": 11,
+            "expectancy": 0.00853776737967913,
+            "sharpe": 0.02661238529767699,
+            "hitRate": 0.22025401069518719
+          },
+          "byWindow": [
+            {
+              "windowId": 1,
+              "eval": {
+                "trades": 11,
+                "expectancy": 0.13363636363636364,
+                "sharpe": 1.1044346276005672,
+                "hitRate": 0.2727272727272727
+              }
+            },
+            {
+              "windowId": 2,
+              "eval": {
+                "trades": 17,
+                "expectancy": -0.033235294117647064,
+                "sharpe": -0.3803622471815609,
+                "hitRate": 0.17647058823529413
+              }
+            },
+            {
+              "windowId": 3,
+              "eval": {
+                "trades": 11,
+                "expectancy": -0.08500000000000002,
+                "sharpe": -0.6752046606146621,
+                "hitRate": 0.18181818181818182
+              }
+            },
+            {
+              "windowId": 4,
+              "eval": {
+                "trades": 4,
+                "expectancy": 0.01874999999999996,
+                "sharpe": 0.05758182138636372,
+                "hitRate": 0.25
+              }
+            }
+          ],
+          "permutationPValue": 0.47619047619047616
+        }
+      ]
+    },
+    "sensitivityMatrix": [
+      {
+        "sigma": 2,
+        "lagY": 0.005,
+        "fee": 0.01,
+        "tradesAvg": 14,
+        "expectancy": 0.009394345238095219,
+        "sharpe": 0.3333647218849324,
+        "hitRate": 0.23452380952380952,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2,
+        "lagY": 0.005,
+        "fee": 0.02,
+        "tradesAvg": 14,
+        "expectancy": -0.0006056547619047725,
+        "sharpe": 0.24424782073909868,
+        "hitRate": 0.23452380952380952,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2,
+        "lagY": 0.005,
+        "fee": 0.03,
+        "tradesAvg": 14,
+        "expectancy": -0.010605654761904785,
+        "sharpe": 0.1551309195932647,
+        "hitRate": 0.23452380952380952,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2,
+        "lagY": 0.01,
+        "fee": 0.01,
+        "tradesAvg": 14,
+        "expectancy": 0.014924131016042761,
+        "sharpe": 0.4275235950040711,
+        "hitRate": 0.25421122994652406,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2,
+        "lagY": 0.01,
+        "fee": 0.02,
+        "tradesAvg": 14,
+        "expectancy": 0.004924131016042759,
+        "sharpe": 0.33566217750554206,
+        "hitRate": 0.25421122994652406,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2,
+        "lagY": 0.01,
+        "fee": 0.03,
+        "tradesAvg": 14,
+        "expectancy": -0.005075868983957236,
+        "sharpe": 0.243800760007013,
+        "hitRate": 0.25421122994652406,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2,
+        "lagY": 0.02,
+        "fee": 0.01,
+        "tradesAvg": 14,
+        "expectancy": 0.014924131016042761,
+        "sharpe": 0.4275235950040711,
+        "hitRate": 0.25421122994652406,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2,
+        "lagY": 0.02,
+        "fee": 0.02,
+        "tradesAvg": 14,
+        "expectancy": 0.004924131016042759,
+        "sharpe": 0.33566217750554206,
+        "hitRate": 0.25421122994652406,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2,
+        "lagY": 0.02,
+        "fee": 0.03,
+        "tradesAvg": 14,
+        "expectancy": -0.005075868983957236,
+        "sharpe": 0.243800760007013,
+        "hitRate": 0.25421122994652406,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2.5,
+        "lagY": 0.005,
+        "fee": 0.01,
+        "tradesAvg": 11,
+        "expectancy": 0.028537767379679134,
+        "sharpe": 0.18023048186239066,
+        "hitRate": 0.22025401069518719,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2.5,
+        "lagY": 0.005,
+        "fee": 0.02,
+        "tradesAvg": 11,
+        "expectancy": 0.018537767379679135,
+        "sharpe": 0.1034214335800338,
+        "hitRate": 0.22025401069518719,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2.5,
+        "lagY": 0.005,
+        "fee": 0.03,
+        "tradesAvg": 11,
+        "expectancy": 0.00853776737967913,
+        "sharpe": 0.02661238529767699,
+        "hitRate": 0.22025401069518719,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2.5,
+        "lagY": 0.01,
+        "fee": 0.01,
+        "tradesAvg": 11,
+        "expectancy": 0.028537767379679134,
+        "sharpe": 0.18023048186239066,
+        "hitRate": 0.22025401069518719,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2.5,
+        "lagY": 0.01,
+        "fee": 0.02,
+        "tradesAvg": 11,
+        "expectancy": 0.018537767379679135,
+        "sharpe": 0.1034214335800338,
+        "hitRate": 0.22025401069518719,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2.5,
+        "lagY": 0.01,
+        "fee": 0.03,
+        "tradesAvg": 11,
+        "expectancy": 0.00853776737967913,
+        "sharpe": 0.02661238529767699,
+        "hitRate": 0.22025401069518719,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2.5,
+        "lagY": 0.02,
+        "fee": 0.01,
+        "tradesAvg": 11,
+        "expectancy": 0.028537767379679134,
+        "sharpe": 0.18023048186239066,
+        "hitRate": 0.22025401069518719,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2.5,
+        "lagY": 0.02,
+        "fee": 0.02,
+        "tradesAvg": 11,
+        "expectancy": 0.018537767379679135,
+        "sharpe": 0.1034214335800338,
+        "hitRate": 0.22025401069518719,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 2.5,
+        "lagY": 0.02,
+        "fee": 0.03,
+        "tradesAvg": 11,
+        "expectancy": 0.00853776737967913,
+        "sharpe": 0.02661238529767699,
+        "hitRate": 0.22025401069518719,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 3,
+        "lagY": 0.005,
+        "fee": 0.01,
+        "tradesAvg": 8,
+        "expectancy": 0.05567708333333333,
+        "sharpe": 0.2644282687862876,
+        "hitRate": 0.25,
+        "positiveWindowRate": 0.75
+      },
+      {
+        "sigma": 3,
+        "lagY": 0.005,
+        "fee": 0.02,
+        "tradesAvg": 8,
+        "expectancy": 0.04567708333333332,
+        "sharpe": 0.19714331453773346,
+        "hitRate": 0.25,
+        "positiveWindowRate": 0.75
+      },
+      {
+        "sigma": 3,
+        "lagY": 0.005,
+        "fee": 0.03,
+        "tradesAvg": 8,
+        "expectancy": 0.03567708333333332,
+        "sharpe": 0.1298583602891793,
+        "hitRate": 0.25,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 3,
+        "lagY": 0.01,
+        "fee": 0.01,
+        "tradesAvg": 8,
+        "expectancy": 0.05567708333333333,
+        "sharpe": 0.2644282687862876,
+        "hitRate": 0.25,
+        "positiveWindowRate": 0.75
+      },
+      {
+        "sigma": 3,
+        "lagY": 0.01,
+        "fee": 0.02,
+        "tradesAvg": 8,
+        "expectancy": 0.04567708333333332,
+        "sharpe": 0.19714331453773346,
+        "hitRate": 0.25,
+        "positiveWindowRate": 0.75
+      },
+      {
+        "sigma": 3,
+        "lagY": 0.01,
+        "fee": 0.03,
+        "tradesAvg": 8,
+        "expectancy": 0.03567708333333332,
+        "sharpe": 0.1298583602891793,
+        "hitRate": 0.25,
+        "positiveWindowRate": 0.5
+      },
+      {
+        "sigma": 3,
+        "lagY": 0.02,
+        "fee": 0.01,
+        "tradesAvg": 8,
+        "expectancy": 0.05567708333333333,
+        "sharpe": 0.2644282687862876,
+        "hitRate": 0.25,
+        "positiveWindowRate": 0.75
+      },
+      {
+        "sigma": 3,
+        "lagY": 0.02,
+        "fee": 0.02,
+        "tradesAvg": 8,
+        "expectancy": 0.04567708333333332,
+        "sharpe": 0.19714331453773346,
+        "hitRate": 0.25,
+        "positiveWindowRate": 0.75
+      },
+      {
+        "sigma": 3,
+        "lagY": 0.02,
+        "fee": 0.03,
+        "tradesAvg": 8,
+        "expectancy": 0.03567708333333332,
+        "sharpe": 0.1298583602891793,
+        "hitRate": 0.25,
+        "positiveWindowRate": 0.5
+      }
+    ]
+  },
+  "verdict": "No exploitable cross-market inefficiency detected."
+}

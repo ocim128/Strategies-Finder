@@ -1071,6 +1071,46 @@ describe('Backtesting Engine', () => {
         expect(withFilter.totalTrades).to.equal(1);
         expect(withFilter.trades[0].entryTime).to.equal(data[66].time);
     });
+
+    it('should evaluate TF snapshot filters on the execution bar for next_open entries', () => {
+        const data: OHLCVData[] = [];
+        const startMs = Date.UTC(2023, 6, 1, 0, 0, 0);
+        const closes = [
+            100, 101, 102, 103, 104, 105, 106, 107, 108,
+            100, 101, 102, 103, 104, 106, 110, 112
+        ];
+
+        for (let i = 0; i < closes.length; i++) {
+            const close = closes[i];
+            data.push({
+                time: Math.floor((startMs + i * 30 * 60 * 1000) / 1000) as Time,
+                open: close - 0.2,
+                high: close + 0.8,
+                low: close - 0.8,
+                close,
+                volume: 1200 + (i % 5) * 20
+            });
+        }
+
+        const signals: Signal[] = [
+            { time: data[8].time, type: 'buy', price: data[8].close },
+            { time: data[11].time, type: 'sell', price: data[11].close },
+            { time: data[14].time, type: 'buy', price: data[14].close },
+            { time: data[16].time, type: 'sell', price: data[16].close },
+        ];
+
+        const withoutFilter = runBacktest(data, signals, 10000, 100, 0, {
+            executionModel: 'next_open'
+        });
+        const withFilter = runBacktest(data, signals, 10000, 100, 0, {
+            executionModel: 'next_open',
+            snapshotTf60PerfMin: 1.0
+        });
+
+        expect(withoutFilter.totalTrades).to.equal(2);
+        expect(withFilter.totalTrades).to.equal(1);
+        expect(withFilter.trades[0].entryTime).to.equal(data[15].time);
+    });
 });
 
 describe('Simple Regression Line Strategy', () => {

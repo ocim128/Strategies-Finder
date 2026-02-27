@@ -22,9 +22,9 @@ type SqliteCandleRow = {
 };
 
 function parseLimit(raw: string | null): number {
-    const parsed = Number(raw || '200');
-    if (!Number.isFinite(parsed)) return 200;
-    return Math.max(1, Math.min(200, Math.floor(parsed)));
+    const parsed = Number(raw || '500');
+    if (!Number.isFinite(parsed)) return 500;
+    return Math.max(1, Math.min(500, Math.floor(parsed)));
 }
 
 function parseSqliteLimit(raw: string | null): number {
