@@ -28,6 +28,7 @@ import {
 import { tradfiSearchService } from "./tradfi-search-service";
 import { HistoricalFetchOptions } from "./types/index";
 import { getIntervalSeconds } from "./dataProviders/utils";
+import { parseTimeToUnixSeconds } from "./time-normalization";
 import {
     loadCachedCandles,
     loadSeedCandlesFromPriceData,
@@ -39,6 +40,7 @@ import {
     storeSqliteCandles,
 } from "./local-sqlite-api";
 import type { ResampleOptions, TwoHourCloseParity } from "./strategies/resample-utils";
+import { isTwoHourParityAligned as isTwoHourParityAlignedFromTime } from "./two-hour-parity";
 import {
     DATA_CACHE_SYNC_MIN_MS,
     DATA_CHART_TOTAL_LIMIT,
@@ -48,6 +50,7 @@ import {
 type DataProvider = 'binance' | 'bybit-tradfi' | 'polymarket';
 
 export class DataManager {
+    private static readonly PRICE_JUMP_GUARD_RATIO = 8;
     private nonBinanceProviderOverride: Map<string, DataProvider> = new Map();
     private autoReloadSuppressCount = 0;
     private importedDataByKey: Map<string, OHLCVData[]> = new Map();
@@ -55,7 +58,8 @@ export class DataManager {
     public isStreaming: boolean = false;
     public streamSymbol: string = '';
     public streamInterval: string = '';
-    public streamProvider: string = '';
+    public streamProvider: DataProvider | '' = '';
+    private streamSessionId = 0;
 
     // Polling state for non-GS providers
     private isPolling: boolean = false;
@@ -324,6 +328,7 @@ export class DataManager {
         this.streamSymbol = symbol;
         this.streamInterval = interval;
         this.streamProvider = provider;
+        this.streamSessionId += 1;
         this.reconnectAttempts = 0;
 
         if (provider === 'binance' && !useBinanceAlignedPolling) {
@@ -334,6 +339,7 @@ export class DataManager {
     }
 
     public stopStreaming(): void {
+        this.streamSessionId += 1;
         if (this.reconnectTimeout) {
             clearTimeout(this.reconnectTimeout);
             this.reconnectTimeout = null;
@@ -362,6 +368,20 @@ export class DataManager {
         this.streamSymbol = '';
         this.streamInterval = '';
         this.streamProvider = '';
+    }
+
+    private isActiveStreamContext(
+        sessionId: number,
+        symbol: string,
+        interval: string,
+        provider: DataProvider
+    ): boolean {
+        return this.streamSessionId === sessionId
+            && this.streamSymbol === symbol
+            && this.streamInterval === interval
+            && this.streamProvider === provider
+            && state.currentSymbol === symbol
+            && state.currentInterval === interval;
     }
 
     // ============================================================================
@@ -414,10 +434,93 @@ export class DataManager {
     }
 
     private isTwoHourParityAligned(candles: OHLCVData[], parity: TwoHourCloseParity): boolean {
-        if (!candles.length) return true;
-        const expectedRemainder = parity === 'even' ? 3600 : 0;
-        const mod = ((Number(candles[0].time) % 7200) + 7200) % 7200;
-        return mod === expectedRemainder;
+        return isTwoHourParityAlignedFromTime(candles, parity);
+    }
+
+    private sanitizeBinanceCandles(
+        symbol: string,
+        interval: string,
+        candles: OHLCVData[],
+        source: string
+    ): OHLCVData[] {
+        if (candles.length <= 1) return candles.slice();
+
+        const sorted = candles
+            .slice()
+            .sort((a, b) => (parseTimeToUnixSeconds(a.time) ?? 0) - (parseTimeToUnixSeconds(b.time) ?? 0));
+
+        const cleaned: OHLCVData[] = [];
+        let dropped = 0;
+        const maxRatio = DataManager.PRICE_JUMP_GUARD_RATIO;
+
+        for (const candle of sorted) {
+            const open = Number(candle.open);
+            const high = Number(candle.high);
+            const low = Number(candle.low);
+            const close = Number(candle.close);
+            const timeSec = parseTimeToUnixSeconds(candle.time);
+
+            if (
+                timeSec === null ||
+                !Number.isFinite(open) ||
+                !Number.isFinite(high) ||
+                !Number.isFinite(low) ||
+                !Number.isFinite(close) ||
+                open <= 0 ||
+                high <= 0 ||
+                low <= 0 ||
+                close <= 0 ||
+                low > high
+            ) {
+                dropped += 1;
+                continue;
+            }
+
+            const prev = cleaned[cleaned.length - 1];
+            if (!prev) {
+                cleaned.push(candle);
+                continue;
+            }
+
+            const prevTime = parseTimeToUnixSeconds(prev.time);
+            if (prevTime !== null && prevTime === timeSec) {
+                cleaned[cleaned.length - 1] = candle;
+                continue;
+            }
+
+            const prevClose = Number(prev.close);
+            if (!Number.isFinite(prevClose) || prevClose <= 0) {
+                dropped += 1;
+                continue;
+            }
+
+            const maxPrice = Math.max(open, high, low, close);
+            const minPrice = Math.min(open, high, low, close);
+            const jumpUp = maxPrice / prevClose;
+            const jumpDown = prevClose / Math.max(minPrice, Number.EPSILON);
+            const intraBarRatio = maxPrice / Math.max(minPrice, Number.EPSILON);
+
+            if (jumpUp > maxRatio || jumpDown > maxRatio || intraBarRatio > maxRatio) {
+                dropped += 1;
+                continue;
+            }
+
+            cleaned.push(candle);
+        }
+
+        if (dropped > 0) {
+            debugLogger.warn('data.series.sanitized_outliers', {
+                symbol,
+                interval,
+                source,
+                dropped,
+                input: candles.length,
+                output: cleaned.length,
+                guardRatio: maxRatio,
+            });
+        }
+
+        return cleaned;
     }
 
     private buildCacheKey(symbol: string, interval: string): string {
@@ -443,9 +546,13 @@ export class DataManager {
         const cacheKey = this.buildCacheKey(symbol, storageInterval);
         const imported = this.importedDataByKey.get(cacheKey);
         if (imported && imported.length > 0) {
-            return imported.slice(-effectiveMaxBars);
+            return this.sanitizeBinanceCandles(symbol, storageInterval, imported, 'imported').slice(-effectiveMaxBars);
         }
-        const sqliteLoadedCandles = await loadSqliteCandles(symbol, storageInterval, effectiveMaxBars);
+        const sqliteRaw = await loadSqliteCandles(symbol, storageInterval, effectiveMaxBars);
+        const sqliteLoadedCandles = sqliteRaw
+            ? this.sanitizeBinanceCandles(symbol, storageInterval, sqliteRaw, 'sqlite')
+            : null;
+        const sqliteSanitized = Boolean(sqliteRaw && sqliteLoadedCandles && sqliteLoadedCandles.length < sqliteRaw.length);
         const sqliteCachedCandles = (requiresEven2hAlignment && sqliteLoadedCandles && !this.isTwoHourParityAligned(sqliteLoadedCandles, 'even'))
             ? null
             : sqliteLoadedCandles;
@@ -457,6 +564,18 @@ export class DataManager {
                 source: 'sqlite',
             }
             : await loadCachedCandles(symbol, storageInterval);
+        let cachedSanitized = sqliteSanitized;
+
+        if (cached) {
+            const before = cached.candles.length;
+            cached = {
+                ...cached,
+                candles: this.sanitizeBinanceCandles(symbol, storageInterval, cached.candles, String(cached.source ?? 'cache')),
+            };
+            if (cached.candles.length < before) {
+                cachedSanitized = true;
+            }
+        }
 
         if (requiresEven2hAlignment && cached && !this.isTwoHourParityAligned(cached.candles, 'even')) {
             cached = null;
@@ -468,17 +587,18 @@ export class DataManager {
                 ? null
                 : await loadSeedCandlesFromPriceData(symbol, interval, signal);
             if (seedCandles && seedCandles.length > 0) {
+                const sanitizedSeedCandles = this.sanitizeBinanceCandles(symbol, storageInterval, seedCandles, 'seed-file');
                 cached = {
-                    candles: seedCandles,
+                    candles: sanitizedSeedCandles,
                     updatedAt: Date.now(),
                     source: 'seed-file',
                 };
-                await saveCachedCandles(symbol, storageInterval, seedCandles, 'seed-file');
-                await storeSqliteCandles(symbol, storageInterval, seedCandles, 'Binance', 'seed-file');
+                await saveCachedCandles(symbol, storageInterval, sanitizedSeedCandles, 'seed-file');
+                await storeSqliteCandles(symbol, storageInterval, sanitizedSeedCandles, 'Binance', 'seed-file');
                 debugLogger.event('data.cache.seed_loaded', {
                     symbol,
                     interval,
-                    bars: seedCandles.length,
+                    bars: sanitizedSeedCandles.length,
                 });
             }
         }
@@ -490,9 +610,17 @@ export class DataManager {
         const localOnlyIfPresent = Boolean(options?.localOnlyIfPresent);
 
         if (localOnlyIfPresent && hasCachedData && recentlySynced) {
+            if (cachedSanitized) {
+                await saveCachedCandles(symbol, storageInterval, cached!.candles, 'sanitized');
+                await storeSqliteCandles(symbol, storageInterval, cached!.candles, 'Binance', 'sanitized');
+            }
             return cached!.candles.slice(-effectiveMaxBars);
         }
         if (hasCachedData && recentlySynced) {
+            if (cachedSanitized) {
+                await saveCachedCandles(symbol, storageInterval, cached!.candles, 'sanitized');
+                await storeSqliteCandles(symbol, storageInterval, cached!.candles, 'Binance', 'sanitized');
+            }
             return cached!.candles.slice(-effectiveMaxBars);
         }
 
@@ -523,6 +651,8 @@ export class DataManager {
             return [];
         }
 
+        remoteData = this.sanitizeBinanceCandles(symbol, storageInterval, remoteData, hasCachedData ? 'binance-gap' : 'binance-full');
+
         if (!hasCachedData) {
             const fresh = remoteData.slice(-effectiveMaxBars);
             if (fresh.length > 0) {
@@ -538,7 +668,12 @@ export class DataManager {
             return cached!.candles.slice(-effectiveMaxBars);
         }
 
-        const merged = mergeCandles(cached!.candles, remoteData).slice(-effectiveMaxBars);
+        const merged = this.sanitizeBinanceCandles(
+            symbol,
+            storageInterval,
+            mergeCandles(cached!.candles, remoteData).slice(-effectiveMaxBars),
+            'merged'
+        );
         if (merged.length > 0) {
             await saveCachedCandles(symbol, storageInterval, merged, 'binance-gap');
             if (hasSqliteBase) {
@@ -602,6 +737,7 @@ export class DataManager {
     private connectBinanceStream(): void {
         const symbol = this.streamSymbol;
         const interval = this.streamInterval;
+        const sessionId = this.streamSessionId;
 
         debugLogger.info('data.stream.connecting', { symbol, interval });
 
@@ -609,9 +745,18 @@ export class DataManager {
             this.ws = startBinanceStream(
                 symbol,
                 interval,
-                (candle) => this.handleStreamUpdate(candle),
-                (error) => debugLogger.error('data.stream.error', { error: String(error) }),
-                (event) => this.handleStreamClose(event)
+                (candle) => {
+                    if (!this.isActiveStreamContext(sessionId, symbol, interval, 'binance')) return;
+                    this.handleStreamUpdate(candle, sessionId, symbol, interval, 'binance');
+                },
+                (error) => {
+                    if (!this.isActiveStreamContext(sessionId, symbol, interval, 'binance')) return;
+                    debugLogger.error('data.stream.error', { error: String(error) });
+                },
+                (event) => {
+                    if (!this.isActiveStreamContext(sessionId, symbol, interval, 'binance')) return;
+                    this.handleStreamClose(event);
+                }
             );
 
             // WebSocket state handled by browser API, we just assume connected for now or handle in callbacks
@@ -623,7 +768,22 @@ export class DataManager {
         }
     }
 
-    private handleStreamUpdate(candle: OHLCVData): void {
+    private handleStreamUpdate(
+        candle: OHLCVData,
+        sessionId?: number,
+        symbol?: string,
+        interval?: string,
+        provider?: DataProvider
+    ): void {
+        if (
+            sessionId !== undefined &&
+            symbol !== undefined &&
+            interval !== undefined &&
+            provider !== undefined &&
+            !this.isActiveStreamContext(sessionId, symbol, interval, provider)
+        ) {
+            return;
+        }
         this.applyRealtimeCandle(candle);
 
         const now = Date.now();
@@ -705,6 +865,8 @@ export class DataManager {
 
         const symbol = this.streamSymbol;
         const interval = this.streamInterval;
+        const provider = this.streamProvider;
+        const sessionId = this.streamSessionId;
 
         try {
             let candle: OHLCVData | null = null;
@@ -723,10 +885,8 @@ export class DataManager {
 
             if (abort.signal.aborted) return;
 
-            if (candle) {
-                // Ensure timestamp is strictly increasing or same? 
-                // We trust applyRealtimeCandle specific logic.
-                this.handleStreamUpdate(candle);
+            if (candle && (provider === 'binance' || provider === 'bybit-tradfi' || provider === 'polymarket')) {
+                this.handleStreamUpdate(candle, sessionId, symbol, interval, provider);
             }
         } catch (error) {
             debugLogger.warn('data.stream.poll_error', { error: String(error) });
@@ -737,10 +897,6 @@ export class DataManager {
     }
 
     private applyRealtimeCandle(updatedCandle: OHLCVData): void {
-        if (state.candlestickSeries) {
-            state.candlestickSeries.update(updatedCandle);
-        }
-
         const currentData = state.ohlcvData;
         let changed = false;
         if (currentData.length === 0) {
@@ -748,6 +904,21 @@ export class DataManager {
             changed = true;
         } else {
             const lastCandle = currentData[currentData.length - 1];
+            const lastClose = Number(lastCandle.close);
+            const nextClose = Number(updatedCandle.close);
+            if (Number.isFinite(lastClose) && Number.isFinite(nextClose) && lastClose > 0 && nextClose > 0) {
+                const ratio = nextClose / lastClose;
+                if (ratio > DataManager.PRICE_JUMP_GUARD_RATIO || ratio < (1 / DataManager.PRICE_JUMP_GUARD_RATIO)) {
+                    debugLogger.warn('data.stream.rejected_outlier_candle', {
+                        symbol: this.streamSymbol || state.currentSymbol,
+                        interval: this.streamInterval || state.currentInterval,
+                        lastClose,
+                        nextClose,
+                        ratio,
+                    });
+                    return;
+                }
+            }
             if (lastCandle.time === updatedCandle.time) {
                 currentData[currentData.length - 1] = updatedCandle;
                 changed = true;
@@ -763,6 +934,10 @@ export class DataManager {
         }
 
         if (!changed) return;
+
+        if (state.candlestickSeries) {
+            state.candlestickSeries.update(updatedCandle);
+        }
 
         const persistedData = state.ohlcvData;
         const persistSymbol = this.streamSymbol || state.currentSymbol;

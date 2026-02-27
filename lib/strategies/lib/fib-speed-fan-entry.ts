@@ -262,6 +262,7 @@ function buildSignalsAndContext(
     const depth = Math.max(2, Math.round(params.depth ?? 11));
     const atrPeriod = Math.max(1, Math.round(params.atrPeriod ?? 10));
     const deviation = Number.isFinite(params.deviationMult) ? params.deviationMult : 3;
+    const lockConfirmedPivots = params.lockConfirmedPivots === undefined ? true : params.lockConfirmedPivots !== 0;
     const selectedLevelIndex = resolveLevelIndex(params);
     const selectedLevel = getLevelByIndex(selectedLevelIndex);
 
@@ -276,6 +277,7 @@ function buildSignalsAndContext(
         deviationThreshold: devThreshold,
         extremaMode: 'strict',
         includeConfirmationIndex: true,
+        lockConfirmedPivots,
         deviationInclusive: false
     }).map((pivot): Pivot => ({
         index: pivot.index,
@@ -662,6 +664,7 @@ export const fib_speed_fan_entry: Strategy = {
         usePivotContext: 1,
         useLong: 1,
         useShort: 1,
+        lockConfirmedPivots: 1,
         signalCooldownBars: 5,
         maxBars: 50,
         maxRetests: 3,
@@ -680,6 +683,7 @@ export const fib_speed_fan_entry: Strategy = {
         usePivotContext: 'Use Pivot Context (0/1)',
         useLong: 'Enable Long (0/1)',
         useShort: 'Enable Short (0/1)',
+        lockConfirmedPivots: 'Lock Confirmed Pivots (0/1)',
         signalCooldownBars: 'Min Bars Between Signals',
         maxBars: 'Retest Horizon (bars)',
         maxRetests: 'Retest Count Cap',

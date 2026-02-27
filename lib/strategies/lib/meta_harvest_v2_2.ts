@@ -26,6 +26,7 @@ interface Config {
     trendSmaPeriod: number;
     adxPeriod: number;
     adxTrendThreshold: number;
+    lockConfirmedPivots: number;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -62,6 +63,7 @@ function normalize(params: StrategyParams): Config {
         trendSmaPeriod: intClamp(params.trendSmaPeriod ?? 50, 20, 200),
         adxPeriod: intClamp(params.adxPeriod ?? 14, 5, 50),
         adxTrendThreshold: clamp(params.adxTrendThreshold ?? 25, 10, 60),
+        lockConfirmedPivots: intClamp(params.lockConfirmedPivots ?? 1, 0, 1),
     };
 }
 
@@ -79,6 +81,7 @@ function toFibParams(config: Config): StrategyParams {
         usePivotContext: config.usePivotContext,
         useLong: config.useLong,
         useShort: config.useShort,
+        lockConfirmedPivots: config.lockConfirmedPivots,
         signalCooldownBars: config.signalCooldownBars,
         maxBars: 50,
         maxRetests: 3,
@@ -112,6 +115,7 @@ export const meta_harvest_v2_2: Strategy = {
         trendSmaPeriod: 50,
         adxPeriod: 14,
         adxTrendThreshold: 25,
+        lockConfirmedPivots: 1,
     },
     paramLabels: {
         depth: 'Pivot Depth',
@@ -136,6 +140,7 @@ export const meta_harvest_v2_2: Strategy = {
         trendSmaPeriod: 'Trend SMA Period',
         adxPeriod: 'ADX Period',
         adxTrendThreshold: 'ADX Trend Threshold',
+        lockConfirmedPivots: 'Lock Confirmed Pivots (0/1)',
     },
     execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
         const cleanData = ensureCleanData(data);
@@ -307,6 +312,7 @@ export const meta_harvest_v2_2: Strategy = {
             'trendSmaPeriod',
             'adxPeriod',
             'adxTrendThreshold',
+            'lockConfirmedPivots',
         ],
     },
 };

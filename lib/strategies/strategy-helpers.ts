@@ -163,6 +163,11 @@ export interface DetectPivotsOptions {
     extremaMode?: PivotExtremaMode;
     includeConfirmationIndex?: boolean;
     /**
+     * When true, confirmed pivots are never replaced by later same-direction extrema.
+     * This preserves causal/non-repainting behavior for historical signals.
+     */
+    lockConfirmedPivots?: boolean;
+    /**
      * Inclusive means deviation >= threshold confirms reversal.
      * Exclusive means deviation > threshold confirms reversal.
      */
@@ -230,6 +235,7 @@ export function detectPivots(
 
     const extremaMode = options.extremaMode ?? 'strict';
     const includeConfirmationIndex = options.includeConfirmationIndex === true;
+    const lockConfirmedPivots = options.lockConfirmedPivots === true;
     const deviationInclusive = options.deviationInclusive !== false;
     const thresholds = options.deviationThreshold;
     const thresholdAt = (index: number): number => {
@@ -274,6 +280,9 @@ export function detectPivots(
         const threshold = thresholdAt(cand.index);
 
         if (lastPivot.isHigh === cand.isHigh) {
+            if (lockConfirmedPivots) {
+                continue;
+            }
             if ((cand.isHigh && cand.price > lastPivot.price) || (!cand.isHigh && cand.price < lastPivot.price)) {
                 lastPivot = cand;
                 pivots[pivots.length - 1] = lastPivot;

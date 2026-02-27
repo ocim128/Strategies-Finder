@@ -36,6 +36,7 @@ import {
 } from "./backtest-settings-resolver";
 import { readNumberInputValue } from "./dom-input-readers";
 import { trimToClosedCandles } from "./closed-candle-utils";
+import { resolveTwoHourParityFromTime } from "./two-hour-parity";
 
 export class BacktestService {
     private warnedStrictEngine = false;
@@ -244,10 +245,7 @@ export class BacktestService {
         if (getIntervalSeconds(state.currentInterval) !== 7200 || data.length === 0) {
             return 'odd';
         }
-        const firstTime = Number(data[0].time);
-        if (!Number.isFinite(firstTime)) return 'odd';
-        const mod = ((firstTime % 7200) + 7200) % 7200;
-        return mod === 3600 ? 'even' : 'odd';
+        return resolveTwoHourParityFromTime(data[0].time) ?? 'odd';
     }
 
     private async withTemporaryTwoHourParity<T>(parity: 'odd' | 'even', run: () => Promise<T>): Promise<T> {
