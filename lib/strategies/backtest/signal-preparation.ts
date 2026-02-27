@@ -60,8 +60,9 @@ export function prepareSignals(
 
             if (!passesTradeFilter(data, decisionIndex, config, indicators, tradeDirection)) return;
             if (!passesRegimeFilters(data, decisionIndex, config, indicators, tradeDirection)) return;
-            // Snapshot filters are entry-quality checks and must align with entry snapshots/analysis.
-            if (!passesSnapshotFilters(data, executionIndex, config, snapshotIndicators ?? null, tradeDirection, signal.price)) return;
+            // Snapshot filters use decisionIndex (the signal bar) so they never peek at
+            // execution-bar OHLCV that isn't available yet under next_open.
+            if (!passesSnapshotFilters(data, decisionIndex, config, snapshotIndicators ?? null, tradeDirection, signal.price)) return;
 
             const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
 
@@ -91,8 +92,9 @@ export function prepareSignals(
         const signalDirection = signalToPositionDirection(signal.type);
         if (!passesTradeFilter(data, decisionIndex, config, indicators, signalDirection)) return;
         if (!passesRegimeFilters(data, decisionIndex, config, indicators, signalDirection)) return;
-        // Snapshot filters are entry-quality checks and must align with entry snapshots/analysis.
-        if (!passesSnapshotFilters(data, executionIndex, config, snapshotIndicators ?? null, signalDirection, signal.price)) return;
+        // Snapshot filters use decisionIndex (the signal bar) so they never peek at
+        // execution-bar OHLCV that isn't available yet under next_open.
+        if (!passesSnapshotFilters(data, decisionIndex, config, snapshotIndicators ?? null, signalDirection, signal.price)) return;
 
         const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
 

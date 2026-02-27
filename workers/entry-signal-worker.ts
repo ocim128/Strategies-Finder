@@ -626,7 +626,7 @@ function selectClosedCandleWindow(
     interval: string,
     nowSec: number = Math.floor(Date.now() / 1000),
     minClosedCandles: number = DEFAULT_MIN_CANDLES
-): { candles: OHLCVData[]; closedCandleTimeSec: number } | null {
+): { candles: OHLCVData[]; closedCandleTimeSec: number; nextOpenCandle: OHLCVData | null } | null {
     if (candles.length < 2) return null;
     const intervalSeconds = intervalToSeconds(interval);
     if (!intervalSeconds || intervalSeconds <= 0) return null;
@@ -647,7 +647,48 @@ function selectClosedCandleWindow(
     return {
         candles: candles.slice(0, closedIdx + 1),
         closedCandleTimeSec: closedTime,
+        nextOpenCandle: closedIdx + 1 < candles.length ? candles[closedIdx + 1] : null,
     };
+}
+
+function buildExecutionAwareCandleWindow(
+    closedCandles: OHLCVData[],
+    nextOpenCandle: OHLCVData | null,
+    settings: BacktestSettings
+): OHLCVData[] {
+    if (settings.executionModel !== "next_open") {
+        return closedCandles;
+    }
+    if (!nextOpenCandle) {
+        return closedCandles;
+    }
+    if (closedCandles.length === 0) {
+        return closedCandles;
+    }
+
+    const nextTime = Number(nextOpenCandle.time);
+    const lastTime = Number(closedCandles[closedCandles.length - 1].time);
+    const nextOpen = Number(nextOpenCandle.open);
+
+    if (!Number.isFinite(nextTime) || !Number.isFinite(nextOpen) || nextOpen <= 0) {
+        return closedCandles;
+    }
+    if (Number.isFinite(lastTime) && nextTime <= lastTime) {
+        return closedCandles;
+    }
+
+    // Bridge candle: expose only the known next-bar open for execution timing.
+    // Keep OHLC collapsed to open so no intrabar high/low/close look-ahead is introduced.
+    const bridgeCandle: OHLCVData = {
+        time: nextOpenCandle.time,
+        open: nextOpen,
+        high: nextOpen,
+        low: nextOpen,
+        close: nextOpen,
+        volume: 0,
+    };
+
+    return [...closedCandles, bridgeCandle];
 }
 
 function countClosedCandles(
@@ -1358,6 +1399,12 @@ async function runSubscription(
             };
         }
 
+        const evaluationCandles = buildExecutionAwareCandleWindow(
+            closed.candles,
+            closed.nextOpenCandle,
+            parsedBacktestSettings
+        );
+
         const result = await processSignalPayload(
             {
                 streamId,
@@ -1370,7 +1417,7 @@ async function runSubscription(
                 freshnessBars: effectiveFreshnessBars,
                 notifyTelegram: subscription.notify_telegram === 1,
                 notifyExit: subscription.notify_exit === 1,
-                candles: closed.candles,
+                candles: evaluationCandles,
             },
             env
         );
@@ -1388,7 +1435,7 @@ async function runSubscription(
                         // check latest prepared signal direction vs last entry direction
                         const evaluation = evaluateLatestEntrySignal({
                             strategyKey: subscription.strategy_key,
-                            candles: closed.candles,
+                            candles: evaluationCandles,
                             strategyParams: parsedStrategyParams,
                             backtestSettings: parsedBacktestSettings,
                             // Keep exit alerts fresh and avoid repeated stale exits.

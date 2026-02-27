@@ -2,7 +2,7 @@
 import { BacktestResult, BacktestSettings, OHLCVData, Signal, Time, Trade } from '../../types/index';
 import { ensureCleanData } from '../strategy-helpers';
 import { PositionState, PrecomputedIndicators, TradeSizingConfig } from '../../types/backtest';
-import { compareTime, directionFactorFor, directionToSignalType, getTimeIndex, needsSnapshotIndicators, normalizeBacktestSettings, normalizeTradeDirection, timeKey } from './backtest-utils';
+import { compareTime, directionFactorFor, directionToSignalType, getExecutionShift, getTimeIndex, needsSnapshotIndicators, normalizeBacktestSettings, normalizeTradeDirection, timeKey } from './backtest-utils';
 import { calculateSharpeRatioFromReturns } from '../performance-metrics';
 
 import { prepareSignals } from './signal-preparation';
@@ -509,6 +509,7 @@ export function runBacktest(
     const preparedSignalBarIndexes = resolvePreparedSignalBarIndexes(data, preparedSignals);
 
     const doSnapshot = !!settings.captureSnapshots;
+    const executionShift = getExecutionShift(config);
 
     let capital = initialCapital, position: PositionState | null = null, tradeId = 0, signalIdx = 0;
     let currentSnapshot: TradeSnapshot | null = null;
@@ -543,9 +544,10 @@ export function runBacktest(
                         position = opened.nextPosition;
                         capital -= opened.entryCommission;
                         if (doSnapshot && snapshotIndicators) {
+                            const snapshotBarIndex = Math.max(0, i - executionShift);
                             currentSnapshot = captureTradeSnapshot(
                                 data,
-                                i,
+                                snapshotBarIndex,
                                 indicatorSeries,
                                 snapshotIndicators,
                                 opened.nextPosition.direction,
@@ -589,9 +591,10 @@ export function runBacktest(
                             position = opened.nextPosition;
                             capital -= opened.entryCommission;
                             if (doSnapshot && snapshotIndicators) {
+                                const snapshotBarIndex = Math.max(0, i - executionShift);
                                 currentSnapshot = captureTradeSnapshot(
                                     data,
-                                    i,
+                                    snapshotBarIndex,
                                     indicatorSeries,
                                     snapshotIndicators,
                                     opened.nextPosition.direction,
