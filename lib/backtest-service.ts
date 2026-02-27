@@ -172,6 +172,7 @@ export class BacktestService {
                 engineUsed = singleRun.engineUsed;
             }
 
+            state.set('currentBacktestResultSource', 'backtest');
             state.set('currentBacktestResult', result);
 
             progressFill.style.width = '100%';
@@ -769,6 +770,10 @@ export class BacktestService {
         const executionModel = settings.executionModel ?? 'signal_close';
         const allowSameBarExit = settings.allowSameBarExit ?? true;
         const slippageBps = settings.slippageBps ?? 0;
+        const usesPercentageMaxHold =
+            settings.riskMode === 'percentage'
+            && settings.riskMaxHoldEnabled === true
+            && (settings.riskMaxHoldBars ?? 0) > 0;
         const hasSnapshotFilters =
             (settings.snapshotAtrPercentMin ?? 0) > 0 ||
             (settings.snapshotAtrPercentMax ?? 0) > 0 ||
@@ -822,7 +827,13 @@ export class BacktestService {
             (settings.snapshotTfConfluencePerfMax ?? 0) !== 0 ||
             (settings.snapshotEntryQualityScoreMin ?? 0) > 0 ||
             (settings.snapshotEntryQualityScoreMax ?? 0) > 0;
-        return executionModel !== 'signal_close' || slippageBps > 0 || !allowSameBarExit || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined' || hasSnapshotFilters;
+        return executionModel !== 'signal_close'
+            || slippageBps > 0
+            || !allowSameBarExit
+            || settings.tradeDirection === 'both'
+            || settings.tradeDirection === 'combined'
+            || hasSnapshotFilters
+            || usesPercentageMaxHold;
     }
 
     public addStrategyIndicators(params: StrategyParams) {

@@ -93,9 +93,11 @@ export class FinderUI {
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
             const result = item.result;
+            const netLabel = item.robustMetrics ? "OOS Net" : "Net";
+            const pfLabel = item.robustMetrics ? "OOS PF" : "PF";
 
-            metrics.appendChild(this.createMetricChip(`Net ${this.formatCurrency(result.netProfit)}`));
-            metrics.appendChild(this.createMetricChip(`PF ${this.formatProfitFactor(result.profitFactor)}`));
+            metrics.appendChild(this.createMetricChip(`${netLabel} ${this.formatCurrency(result.netProfit)}`));
+            metrics.appendChild(this.createMetricChip(`${pfLabel} ${this.formatProfitFactor(result.profitFactor)}`));
             metrics.appendChild(this.createMetricChip(`Sharpe ${result.sharpeRatio.toFixed(2)}`));
             metrics.appendChild(this.createMetricChip(`DD ${result.maxDrawdownPercent.toFixed(2)}%`));
             metrics.appendChild(this.createMetricChip(`Trades ${result.totalTrades}`));

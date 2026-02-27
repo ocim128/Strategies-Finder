@@ -95,6 +95,59 @@ type FinderDatasetFlags = {
 
 type CandidateResult = Omit<FinderResult, "selectionResult" | "endpointAdjusted" | "endpointRemovedTrades">;
 
+function clampPercentValue(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
+}
+
+function clampMaxHoldBars(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(1, Math.round(value));
+}
+
+function resolveFinderRiskOverrides(
+    settings: BacktestSettings,
+    rustSettings: BacktestSettings,
+    params: StrategyParams
+): { backtestSettings: BacktestSettings; rustBacktestSettings: BacktestSettings } {
+    if (settings.riskMode !== "percentage") {
+        return { backtestSettings: settings, rustBacktestSettings: rustSettings };
+    }
+
+    let hasBacktestOverrides = false;
+    let hasRustOverrides = false;
+    const backtestOverrides: Partial<BacktestSettings> = {};
+    const rustOverrides: Partial<BacktestSettings> = {};
+
+    const stopLossPercent = params.stopLossPercent;
+    if (settings.stopLossEnabled && Number.isFinite(stopLossPercent)) {
+        const normalized = clampPercentValue(Number(stopLossPercent), 0, 15);
+        backtestOverrides.stopLossPercent = normalized;
+        rustOverrides.stopLossPercent = normalized;
+        hasBacktestOverrides = true;
+        hasRustOverrides = true;
+    }
+
+    const takeProfitPercent = params.takeProfitPercent;
+    if (settings.takeProfitEnabled && Number.isFinite(takeProfitPercent)) {
+        const normalized = clampPercentValue(Number(takeProfitPercent), 0, 100);
+        backtestOverrides.takeProfitPercent = normalized;
+        rustOverrides.takeProfitPercent = normalized;
+        hasBacktestOverrides = true;
+        hasRustOverrides = true;
+    }
+
+    const riskMaxHoldBars = params.riskMaxHoldBars;
+    if (settings.riskMaxHoldEnabled && Number.isFinite(riskMaxHoldBars)) {
+        backtestOverrides.riskMaxHoldBars = clampMaxHoldBars(Number(riskMaxHoldBars));
+        hasBacktestOverrides = true;
+    }
+
+    return {
+        backtestSettings: hasBacktestOverrides ? { ...settings, ...backtestOverrides } : settings,
+        rustBacktestSettings: hasRustOverrides ? { ...rustSettings, ...rustOverrides } : rustSettings,
+    };
+}
+
 export async function runFinderExecution(input: FinderRunInput, callbacks: FinderRunCallbacks): Promise<FinderRunOutput> {
     const {
         options,
@@ -135,6 +188,9 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
             }
             if (settings.takeProfitEnabled) {
                 extendedDefaults.takeProfitPercent = settings.takeProfitPercent ?? 10;
+            }
+            if (settings.riskMaxHoldEnabled) {
+                extendedDefaults.riskMaxHoldBars = clampMaxHoldBars(settings.riskMaxHoldBars ?? 10);
             }
         }
 
@@ -185,20 +241,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
             }
 
             const params = plan.paramSets[paramIndex++];
-            const stopLossPercent = params.stopLossPercent;
-            const takeProfitPercent = params.takeProfitPercent;
-            const hasOverrides = stopLossPercent !== undefined || takeProfitPercent !== undefined;
-            const backtestSettings = hasOverrides ? { ...settings } : settings;
-            const rustBacktestSettings = hasOverrides ? { ...rustSettings } : rustSettings;
-
-            if (stopLossPercent !== undefined) {
-                backtestSettings.stopLossPercent = stopLossPercent;
-                rustBacktestSettings.stopLossPercent = stopLossPercent;
-            }
-            if (takeProfitPercent !== undefined) {
-                backtestSettings.takeProfitPercent = takeProfitPercent;
-                rustBacktestSettings.takeProfitPercent = takeProfitPercent;
-            }
+            const { backtestSettings, rustBacktestSettings } = resolveFinderRiskOverrides(settings, rustSettings, params);
 
             batch.push({
                 id: nextJobId++,
@@ -1217,20 +1260,21 @@ async function evaluateRobustCell(args: {
 
     const stageACandidates: RobustCellCandidate[] = [];
     for (let i = 0; i < paramSets.length; i++) {
-        const params = paramSets[i];
-        try {
-            const holdoutResult = runRobustHoldoutEvaluation(
-                holdoutData,
-                strategyPlan.strategy,
-                params,
+            const params = paramSets[i];
+            const backtestSettings = resolveFinderRiskOverrides(robustSettings, robustSettings, params).backtestSettings;
+            try {
+                const holdoutResult = runRobustHoldoutEvaluation(
+                    holdoutData,
+                    strategyPlan.strategy,
+                    params,
                 input.initialCapital,
                 input.positionSize,
                 robustCommission,
-                robustSettings,
-                input.sizingMode,
-                input.fixedTradeAmount,
-                holdoutPrecomputed
-            );
+                    backtestSettings,
+                    input.sizingMode,
+                    input.fixedTradeAmount,
+                    holdoutPrecomputed
+                );
             const stageAReason = getStageARejectReason(holdoutResult);
             if (stageAReason) {
                 recordReject(stageAReason, "A", params);
@@ -1254,6 +1298,7 @@ async function evaluateRobustCell(args: {
     const stageBCandidates: RobustWfCandidate[] = [];
     for (let i = 0; i < stageASurvivors.length; i++) {
         const candidate = stageASurvivors[i];
+        const backtestSettings = resolveFinderRiskOverrides(robustSettings, robustSettings, candidate.params).backtestSettings;
         try {
             const wfResult = await runRobustFixedParamWalkForward(
                 dataset.data,
@@ -1263,7 +1308,7 @@ async function evaluateRobustCell(args: {
                 input.initialCapital,
                 input.positionSize,
                 robustCommission,
-                robustSettings,
+                backtestSettings,
                 input.sizingMode,
                 input.fixedTradeAmount
             );
@@ -1293,6 +1338,7 @@ async function evaluateRobustCell(args: {
     const stageCCandidates: RobustWfCandidate[] = [];
     for (let i = 0; i < stageBSurvivors.length; i++) {
         const candidate = stageBSurvivors[i];
+        const backtestSettings = resolveFinderRiskOverrides(robustSettings, robustSettings, candidate.params).backtestSettings;
         try {
             const wfResult = await runRobustFixedParamWalkForward(
                 dataset.data,
@@ -1302,7 +1348,7 @@ async function evaluateRobustCell(args: {
                 input.initialCapital,
                 input.positionSize,
                 robustCommission,
-                robustSettings,
+                backtestSettings,
                 input.sizingMode,
                 input.fixedTradeAmount
             );

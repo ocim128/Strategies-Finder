@@ -411,6 +411,32 @@ describe('Backtesting Engine', () => {
         expect(result.netProfit).to.equal(200);
     });
 
+    it('should close by time stop when percentage max hold cap is enabled', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 }, // Buy
+            { time: '2023-01-03' as Time, open: 101, high: 103, low: 100, close: 102, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 102, high: 103, low: 100, close: 101.5, volume: 1000 }, // Max hold hit
+            { time: '2023-01-05' as Time, open: 101.5, high: 102, low: 100, close: 101, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'buy', price: 101 },
+        ];
+
+        const result = runBacktest(data, signals, 1000, 100, 0, {
+            riskMode: 'percentage',
+            stopLossEnabled: false,
+            takeProfitEnabled: false,
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 2,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].exitReason).to.equal('time_stop');
+        expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
+    });
+
     it('scanner settings resolver should mirror backtest toggle behavior', () => {
         const rawScannerSettings = {
             riskSettingsToggle: false,
@@ -474,6 +500,8 @@ describe('Backtesting Engine', () => {
             takeProfitPercent: '7.5',
             stopLossEnabled: 'true',
             takeProfitEnabled: 'false',
+            riskMaxHoldBars: '12',
+            riskMaxHoldEnabled: 'true',
             tradeFilterSettingsToggle: 'true',
             tradeFilterMode: 'rsi',
             confirmLookback: '3',
@@ -502,6 +530,8 @@ describe('Backtesting Engine', () => {
         expect(resolved.takeProfitPercent).to.equal(7.5);
         expect(resolved.stopLossEnabled).to.equal(true);
         expect(resolved.takeProfitEnabled).to.equal(false);
+        expect(resolved.riskMaxHoldBars).to.equal(12);
+        expect(resolved.riskMaxHoldEnabled).to.equal(true);
         expect(resolved.tradeFilterMode).to.equal('rsi');
         expect(resolved.confirmLookback).to.equal(3);
         expect(resolved.volumeSmaPeriod).to.equal(21);

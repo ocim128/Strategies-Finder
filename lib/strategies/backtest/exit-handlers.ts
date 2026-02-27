@@ -56,6 +56,18 @@ export function processPositionExits(
         }
     }
 
+    // Percentage mode max hold cap (hard exit regardless of PnL)
+    if (
+        config.riskMode === 'percentage' &&
+        config.riskMaxHoldEnabled &&
+        config.riskMaxHoldBars > 0 &&
+        position.barsInTrade >= config.riskMaxHoldBars
+    ) {
+        const exitPrice = applySlippage(candle.close, exitSide, slippageRate);
+        onExit(exitPrice, position.size, 'time_stop');
+        return true;
+    }
+
     // Time stop
     if (config.timeStopBars > 0 && position.barsInTrade >= config.timeStopBars) {
         const isLosing = isShortPosition ? candle.close >= position.entryPrice : candle.close <= position.entryPrice;

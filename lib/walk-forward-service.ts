@@ -1,6 +1,4 @@
 import { state } from "./state";
-import { chartManager } from "./chart-manager";
-import { uiManager } from "./ui-manager";
 import { dataManager } from "./data-manager";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
@@ -768,15 +766,10 @@ class WalkForwardService {
         const oos = result.combinedOOSTrades;
         debugLogger.info(`Plotting OOS results: ${oos.trades.length} trades, ${oos.equityCurve.length} equity points`);
 
-        // Clear previous backtest on chart
-        chartManager.clearIndicators();
-
-        // Show OOS results
-        chartManager.displayTradeMarkers(oos.trades, (p) => p.toFixed(2));
-        chartManager.displayEquityCurve(oos.equityCurve);
-
-        // Update results tab as well so user can see detailed OOS stats
-        uiManager.updateResultsUI(oos);
+        // Route OOS output through shared backtest state so Results and Trades stay in sync.
+        state.set('twoHourParityBacktestResults', null);
+        state.set('currentBacktestResultSource', 'walk_forward_oos');
+        state.set('currentBacktestResult', oos);
     }
 
     private setLoading(loading: boolean): void {

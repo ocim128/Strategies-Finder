@@ -699,6 +699,25 @@ export class FinderManager {
 			const input = document.getElementById('takeProfitPercent') as HTMLInputElement | null;
 			if (input) input.value = String(result.params['takeProfitPercent']);
 		}
+		if (result.params['riskMaxHoldBars'] !== undefined) {
+			const input = document.getElementById('riskMaxHoldBars') as HTMLInputElement | null;
+			if (input) input.value = String(result.params['riskMaxHoldBars']);
+		}
+
+		// Robust finder rows represent combined OOS walk-forward outcomes, not a single full-history backtest.
+		// Show the exact robust OOS snapshot to avoid mismatch with an auto-rerun full backtest.
+		if (result.robustMetrics?.mode === 'robust_random_wf') {
+			state.set('twoHourParityBacktestResults', null);
+			state.set('currentBacktestResultSource', 'finder_robust_oos');
+			state.set('currentBacktestResult', result.result);
+			const tradesTab = document.querySelector('.panel-tab[data-tab="trades"]') as HTMLElement | null;
+			if (tradesTab) tradesTab.click();
+			uiManager.showToast(
+				'Applied robust OOS walk-forward snapshot. Full backtest runs can differ from Finder robust metrics.',
+				'info'
+			);
+			return;
+		}
 
 		// Switch to trades tab
 		const tradesTab = document.querySelector('.panel-tab[data-tab="trades"]') as HTMLElement;

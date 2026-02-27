@@ -78,7 +78,7 @@ export function setupStateSubscriptions() {
             applyDefaultVisibleRange(data.length);
         }
 
-        if (state.currentBacktestResult) {
+        if (state.currentBacktestResult && state.currentBacktestResultSource === 'backtest') {
             backtestService.runCurrentBacktest();
         }
     });

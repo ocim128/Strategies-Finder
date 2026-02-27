@@ -7,6 +7,7 @@ export type StateKey = keyof State;
 export type MockChartModel = 'simple' | 'hard' | 'v3' | 'v4' | 'v5' | 'v6';
 export type ChartMode = 'candlestick' | 'heikin-ashi';
 export type TwoHourCloseParity = 'odd' | 'even';
+export type BacktestResultSource = 'backtest' | 'finder_robust_oos' | 'walk_forward_oos';
 
 export interface TwoHourParityBacktestResults {
     odd: BacktestResult;
@@ -29,6 +30,7 @@ export class State {
     public ohlcvData: OHLCVData[] = [];
     public indicators: Indicator[] = [];
     public currentBacktestResult: BacktestResult | null = null;
+    public currentBacktestResultSource: BacktestResultSource = 'backtest';
     public twoHourParityBacktestResults: TwoHourParityBacktestResults | null = null;
     public currentStrategyKey = 'sma_crossover';
 
@@ -60,6 +62,7 @@ export class State {
     // Helper to reset trade-related state
     public clearTradeResults() {
         this.set('currentBacktestResult', null);
+        this.set('currentBacktestResultSource', 'backtest');
         this.set('twoHourParityBacktestResults', null);
         this.set('indicators', []);
         this.set('markersPlugin', null);

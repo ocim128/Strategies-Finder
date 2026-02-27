@@ -33,6 +33,8 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         takeProfitPercent: Math.max(0, toNumberOr(settings?.takeProfitPercent, 0)),
         stopLossEnabled: settings?.stopLossEnabled ?? false,
         takeProfitEnabled: settings?.takeProfitEnabled ?? false,
+        riskMaxHoldBars: Math.max(0, toNumberOr(settings?.riskMaxHoldBars, 0)),
+        riskMaxHoldEnabled: settings?.riskMaxHoldEnabled ?? false,
 
         trendEmaPeriod: Math.max(0, toNumberOr(settings?.trendEmaPeriod, 0)),
         trendEmaSlopeBars: Math.max(0, toNumberOr(settings?.trendEmaSlopeBars, 0)),

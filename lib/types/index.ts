@@ -1,6 +1,6 @@
 import { ISeriesApi, Time, ISeriesMarkersPluginApi, IChartApi } from "lightweight-charts";
 import { BacktestResult, OHLCVData } from "./strategies";
-import type { TwoHourParityBacktestResults } from "../state";
+import type { BacktestResultSource, TwoHourParityBacktestResults } from "../state";
 
 export * from './strategies';
 export * from './backtest';
@@ -31,6 +31,7 @@ export interface AppState {
     ohlcvData: OHLCVData[];
     indicators: Indicator[];
     currentBacktestResult: BacktestResult | null;
+    currentBacktestResultSource: BacktestResultSource;
     twoHourParityBacktestResults: TwoHourParityBacktestResults | null;
     currentStrategyKey: string;
 }

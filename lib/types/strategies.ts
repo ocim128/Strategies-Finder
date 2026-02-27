@@ -168,6 +168,10 @@ export interface BacktestSettings {
     takeProfitPercent?: number;
     stopLossEnabled?: boolean;
     takeProfitEnabled?: boolean;
+    /** Hard cap on bars held when percentage risk mode is active */
+    riskMaxHoldBars?: number;
+    /** Enable max hold bars cap in percentage risk mode */
+    riskMaxHoldEnabled?: boolean;
 
     trendEmaPeriod?: number;
     trendEmaSlopeBars?: number;

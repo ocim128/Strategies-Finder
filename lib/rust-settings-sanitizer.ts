@@ -62,6 +62,8 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "allowSameBarExit",
     "slippageBps",
     "marketMode",
+    "riskMaxHoldBars",
+    "riskMaxHoldEnabled",
     "strategyTimeframeEnabled",
     "strategyTimeframeMinutes",
     "twoHourCloseParity",

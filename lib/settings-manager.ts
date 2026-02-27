@@ -46,6 +46,8 @@ export interface BacktestSettingsData {
     takeProfitPercent: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
+    riskMaxHoldBars: number;
+    riskMaxHoldEnabled: boolean;
     marketMode: MarketMode;
 
     // Trade direction
@@ -204,6 +206,8 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     takeProfitPercent: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitPercent,
     stopLossEnabled: false,
     takeProfitEnabled: false,
+    riskMaxHoldBars: EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars,
+    riskMaxHoldEnabled: EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldEnabled,
     marketMode: EFFECTIVE_BACKTEST_DEFAULTS.marketMode,
 
     // Trade direction
@@ -378,6 +382,8 @@ class SettingsManager {
             takeProfitPercent: this.readNumber('takeProfitPercent', DEFAULT_BACKTEST_SETTINGS.takeProfitPercent),
             stopLossEnabled: this.readCheckbox('stopLossToggle', DEFAULT_BACKTEST_SETTINGS.stopLossEnabled),
             takeProfitEnabled: this.readCheckbox('takeProfitToggle', DEFAULT_BACKTEST_SETTINGS.takeProfitEnabled),
+            riskMaxHoldBars: this.readNumber('riskMaxHoldBars', DEFAULT_BACKTEST_SETTINGS.riskMaxHoldBars),
+            riskMaxHoldEnabled: this.readCheckbox('riskMaxHoldToggle', DEFAULT_BACKTEST_SETTINGS.riskMaxHoldEnabled),
             marketMode: this.readSelect('marketMode', DEFAULT_BACKTEST_SETTINGS.marketMode) as MarketMode,
 
             // Trade direction
@@ -577,6 +583,8 @@ class SettingsManager {
         this.writeNumber('takeProfitPercent', settings.takeProfitPercent);
         this.writeCheckbox('stopLossToggle', settings.stopLossEnabled);
         this.writeCheckbox('takeProfitToggle', settings.takeProfitEnabled);
+        this.writeNumber('riskMaxHoldBars', settings.riskMaxHoldBars ?? DEFAULT_BACKTEST_SETTINGS.riskMaxHoldBars);
+        this.writeCheckbox('riskMaxHoldToggle', settings.riskMaxHoldEnabled ?? DEFAULT_BACKTEST_SETTINGS.riskMaxHoldEnabled);
         this.writeSelect('marketMode', this.resolveMarketMode(settings));
 
         // Trade direction
@@ -993,7 +1001,8 @@ class SettingsManager {
             'snapshotEntryQualityScoreFilterToggle',
 
             'stopLossToggle',
-            'takeProfitToggle'
+            'takeProfitToggle',
+            'riskMaxHoldToggle'
         ];
 
         toggleIds.forEach(id => {
