@@ -1,4 +1,4 @@
-import { BacktestResult, PostEntryPathStats } from "../strategies/index";
+import { BacktestResult, PostEntryPathStats, SnapshotProfileStats, ExitReasonBreakdown } from "../strategies/index";
 import { getRequiredElement, updateTextContent, setVisible } from "../dom-utils";
 import type { TwoHourParityBacktestResults } from "../state";
 
@@ -38,6 +38,8 @@ export class ResultsRenderer {
         updateTextContent('sharpeRatio', result.sharpeRatio.toFixed(2), `stat-value ${sharpeClass}`);
 
         this.renderPostEntryPath(result.postEntryPath);
+        this.renderSnapshotProfile(result.postEntryPath?.snapshotProfile);
+        this.renderExitReasonBreakdown(result.postEntryPath?.exitReasonBreakdown);
 
         const entryStats = result.entryStats;
         const hasEntryStats = Boolean(entryStats);
@@ -267,6 +269,111 @@ export class ResultsRenderer {
         }
     }
 
+    // ── Snapshot Profile: Win vs Lose indicator averages ──
+
+    private renderSnapshotProfile(profile: SnapshotProfileStats | undefined): void {
+        const hasProfile = !!profile && profile.rows.length > 0;
+        setVisible('snapshotProfileTitle', hasProfile);
+        setVisible('snapshotProfileContainer', hasProfile);
+        if (!hasProfile || !profile) return;
+
+        const container = getRequiredElement('snapshotProfileContainer');
+
+        const headerRow = `
+            <div class="snapshot-profile-cell header">Indicator</div>
+            <div class="snapshot-profile-cell header right">Win Avg</div>
+            <div class="snapshot-profile-cell header right">Lose Avg</div>
+            <div class="snapshot-profile-cell header right">Delta</div>
+            <div class="snapshot-profile-cell header right">Edge</div>
+        `;
+
+        const dataRows = profile.rows.map((row) => {
+            const winText = this.formatNumber(row.winAvg, 2);
+            const loseText = this.formatNumber(row.loseAvg, 2);
+            const deltaText = row.delta !== null
+                ? `${row.delta >= 0 ? '+' : ''}${row.delta.toFixed(2)}`
+                : '--';
+            const deltaClass = row.delta !== null
+                ? (row.delta >= 0 ? 'positive' : 'negative')
+                : '';
+
+            let edgeIcon = '--';
+            let edgeClass = '';
+            if (row.significance !== null) {
+                if (row.significance >= 0.5) {
+                    edgeIcon = '✅';
+                    edgeClass = 'edge-strong';
+                } else if (row.significance >= 0.25) {
+                    edgeIcon = '⚠️';
+                    edgeClass = 'edge-weak';
+                } else {
+                    edgeIcon = '—';
+                    edgeClass = 'edge-none';
+                }
+            }
+
+            return `
+                <div class="snapshot-profile-cell metric">${row.label}</div>
+                <div class="snapshot-profile-cell value right">${winText}</div>
+                <div class="snapshot-profile-cell value right">${loseText}</div>
+                <div class="snapshot-profile-cell value right ${deltaClass}">${deltaText}</div>
+                <div class="snapshot-profile-cell value right ${edgeClass}">${edgeIcon}</div>
+            `;
+        }).join('');
+
+        const sampleHint = `Win: ${profile.winSampleSize} trades | Lose: ${profile.loseSampleSize} trades`;
+
+        container.innerHTML = `
+            <div class="snapshot-profile-hint">${sampleHint}</div>
+            <div class="snapshot-profile-grid-shell">
+                <div class="snapshot-profile-grid">
+                    ${headerRow}
+                    ${dataRows}
+                </div>
+            </div>
+        `;
+    }
+
+    // ── Exit Reason Breakdown ──
+
+    private renderExitReasonBreakdown(breakdown: ExitReasonBreakdown | undefined): void {
+        const hasBreakdown = !!breakdown && breakdown.rows.length > 0;
+        setVisible('exitReasonTitle', hasBreakdown);
+        setVisible('exitReasonContainer', hasBreakdown);
+        if (!hasBreakdown || !breakdown) return;
+
+        const container = getRequiredElement('exitReasonContainer');
+
+        const headerRow = `
+            <div class="exit-reason-cell header">Exit Reason</div>
+            <div class="exit-reason-cell header right">Win #</div>
+            <div class="exit-reason-cell header right">Win %</div>
+            <div class="exit-reason-cell header right">Lose #</div>
+            <div class="exit-reason-cell header right">Lose %</div>
+            <div class="exit-reason-cell header right">Total</div>
+        `;
+
+        const dataRows = breakdown.rows.map((row) => {
+            return `
+                <div class="exit-reason-cell metric">${row.reason}</div>
+                <div class="exit-reason-cell value right positive">${row.winCount}</div>
+                <div class="exit-reason-cell value right">${row.winPct.toFixed(1)}%</div>
+                <div class="exit-reason-cell value right negative">${row.loseCount}</div>
+                <div class="exit-reason-cell value right">${row.losePct.toFixed(1)}%</div>
+                <div class="exit-reason-cell value right">${row.totalCount}</div>
+            `;
+        }).join('');
+
+        container.innerHTML = `
+            <div class="exit-reason-grid-shell">
+                <div class="exit-reason-grid">
+                    ${headerRow}
+                    ${dataRows}
+                </div>
+            </div>
+        `;
+    }
+
     private formatPercent(value: number | null, decimals: number, signed = false): string {
         if (value === null || !Number.isFinite(value)) return '--';
         const prefix = signed && value > 0 ? '+' : '';
@@ -289,6 +396,16 @@ export class ResultsRenderer {
         if (container) container.innerHTML = '';
         const hint = document.getElementById('postEntryPathHint');
         if (hint) hint.textContent = '';
+
+        setVisible('snapshotProfileTitle', false);
+        setVisible('snapshotProfileContainer', false);
+        const profileContainer = document.getElementById('snapshotProfileContainer');
+        if (profileContainer) profileContainer.innerHTML = '';
+
+        setVisible('exitReasonTitle', false);
+        setVisible('exitReasonContainer', false);
+        const exitContainer = document.getElementById('exitReasonContainer');
+        if (exitContainer) exitContainer.innerHTML = '';
     }
 }
 

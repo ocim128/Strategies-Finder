@@ -87,8 +87,14 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
 
     let riskPerShare = 0;
     if (config.riskMode === 'percentage') {
-        if (config.stopLossEnabled && config.stopLossPercent > 0) {
-            riskPerShare = entryFillPrice * (config.stopLossPercent / 100);
+        const percentRiskPerShare = config.stopLossPercent > 0
+            ? entryFillPrice * (config.stopLossPercent / 100)
+            : 0;
+        if (config.stopLossEnabled && percentRiskPerShare > 0) {
+            riskPerShare = percentRiskPerShare;
+        } else if (config.riskProbationEnabled && config.riskProbationBars > 0 && percentRiskPerShare > 0) {
+            // Virtual risk reference for weak-start guard when SL is intentionally disabled.
+            riskPerShare = percentRiskPerShare;
         }
     } else if (atrValue !== null && atrValue !== undefined && config.stopLossAtr > 0) {
         riskPerShare = config.stopLossAtr * atrValue;

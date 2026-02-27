@@ -113,6 +113,7 @@ export class TradesRenderer {
             trailing_stop: { label: 'Trail', color: '#f59e0b', icon: 'TRL' },
             time_stop: { label: 'Time', color: '#8b5cf6', icon: 'T' },
             partial: { label: 'Partial', color: '#06b6d4', icon: '1/2' },
+            probation_fail: { label: 'Guard', color: '#ec4899', icon: 'GRD' },
             end_of_data: { label: 'EOD', color: '#f97316', icon: 'EOD' },
         };
 

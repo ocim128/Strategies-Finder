@@ -17,6 +17,15 @@ export interface NormalizedSettings {
     takeProfitEnabled: boolean;
     riskMaxHoldBars: number;
     riskMaxHoldEnabled: boolean;
+    riskProbationBars: number;
+    riskProbationMinR: number;
+    riskProbationCooldownBars: number;
+    riskProbationEnabled: boolean;
+    riskLossStreakConsecutive: number;
+    riskLossStreakWindowSize: number;
+    riskLossStreakWindowLosses: number;
+    riskLossStreakCooldownBars: number;
+    riskLossStreakEnabled: boolean;
 
     trendEmaPeriod: number;
     trendEmaSlopeBars: number;

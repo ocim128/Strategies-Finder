@@ -964,6 +964,7 @@ function getExitReasonBadge(exitReason: string | null | undefined): string {
         trailing_stop: { label: 'Trailing Stop', color: '#f59e0b' },
         time_stop: { label: 'Time Stop', color: '#8b5cf6' },
         partial: { label: 'Partial', color: '#06b6d4' },
+        probation_fail: { label: 'Weak-Start Guard', color: '#ec4899' },
         end_of_data: { label: 'End of Data', color: '#f97316' },
     };
     

@@ -48,6 +48,15 @@ export interface BacktestSettingsData {
     takeProfitEnabled: boolean;
     riskMaxHoldBars: number;
     riskMaxHoldEnabled: boolean;
+    riskProbationBars: number;
+    riskProbationMinR: number;
+    riskProbationCooldownBars: number;
+    riskProbationEnabled: boolean;
+    riskLossStreakConsecutive: number;
+    riskLossStreakWindowSize: number;
+    riskLossStreakWindowLosses: number;
+    riskLossStreakCooldownBars: number;
+    riskLossStreakEnabled: boolean;
     marketMode: MarketMode;
 
     // Trade direction
@@ -208,6 +217,15 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     takeProfitEnabled: false,
     riskMaxHoldBars: EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars,
     riskMaxHoldEnabled: EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldEnabled,
+    riskProbationBars: EFFECTIVE_BACKTEST_DEFAULTS.riskProbationBars,
+    riskProbationMinR: EFFECTIVE_BACKTEST_DEFAULTS.riskProbationMinR,
+    riskProbationCooldownBars: EFFECTIVE_BACKTEST_DEFAULTS.riskProbationCooldownBars,
+    riskProbationEnabled: EFFECTIVE_BACKTEST_DEFAULTS.riskProbationEnabled,
+    riskLossStreakConsecutive: EFFECTIVE_BACKTEST_DEFAULTS.riskLossStreakConsecutive,
+    riskLossStreakWindowSize: EFFECTIVE_BACKTEST_DEFAULTS.riskLossStreakWindowSize,
+    riskLossStreakWindowLosses: EFFECTIVE_BACKTEST_DEFAULTS.riskLossStreakWindowLosses,
+    riskLossStreakCooldownBars: EFFECTIVE_BACKTEST_DEFAULTS.riskLossStreakCooldownBars,
+    riskLossStreakEnabled: EFFECTIVE_BACKTEST_DEFAULTS.riskLossStreakEnabled,
     marketMode: EFFECTIVE_BACKTEST_DEFAULTS.marketMode,
 
     // Trade direction
@@ -384,6 +402,15 @@ class SettingsManager {
             takeProfitEnabled: this.readCheckbox('takeProfitToggle', DEFAULT_BACKTEST_SETTINGS.takeProfitEnabled),
             riskMaxHoldBars: this.readNumber('riskMaxHoldBars', DEFAULT_BACKTEST_SETTINGS.riskMaxHoldBars),
             riskMaxHoldEnabled: this.readCheckbox('riskMaxHoldToggle', DEFAULT_BACKTEST_SETTINGS.riskMaxHoldEnabled),
+            riskProbationBars: this.readNumber('riskProbationBars', DEFAULT_BACKTEST_SETTINGS.riskProbationBars),
+            riskProbationMinR: this.readNumber('riskProbationMinR', DEFAULT_BACKTEST_SETTINGS.riskProbationMinR),
+            riskProbationCooldownBars: this.readNumber('riskProbationCooldownBars', DEFAULT_BACKTEST_SETTINGS.riskProbationCooldownBars),
+            riskProbationEnabled: this.readCheckbox('riskProbationToggle', DEFAULT_BACKTEST_SETTINGS.riskProbationEnabled),
+            riskLossStreakConsecutive: this.readNumber('riskLossStreakConsecutive', DEFAULT_BACKTEST_SETTINGS.riskLossStreakConsecutive),
+            riskLossStreakWindowSize: this.readNumber('riskLossStreakWindowSize', DEFAULT_BACKTEST_SETTINGS.riskLossStreakWindowSize),
+            riskLossStreakWindowLosses: this.readNumber('riskLossStreakWindowLosses', DEFAULT_BACKTEST_SETTINGS.riskLossStreakWindowLosses),
+            riskLossStreakCooldownBars: this.readNumber('riskLossStreakCooldownBars', DEFAULT_BACKTEST_SETTINGS.riskLossStreakCooldownBars),
+            riskLossStreakEnabled: this.readCheckbox('riskLossStreakToggle', DEFAULT_BACKTEST_SETTINGS.riskLossStreakEnabled),
             marketMode: this.readSelect('marketMode', DEFAULT_BACKTEST_SETTINGS.marketMode) as MarketMode,
 
             // Trade direction
@@ -585,6 +612,15 @@ class SettingsManager {
         this.writeCheckbox('takeProfitToggle', settings.takeProfitEnabled);
         this.writeNumber('riskMaxHoldBars', settings.riskMaxHoldBars ?? DEFAULT_BACKTEST_SETTINGS.riskMaxHoldBars);
         this.writeCheckbox('riskMaxHoldToggle', settings.riskMaxHoldEnabled ?? DEFAULT_BACKTEST_SETTINGS.riskMaxHoldEnabled);
+        this.writeNumber('riskProbationBars', settings.riskProbationBars ?? DEFAULT_BACKTEST_SETTINGS.riskProbationBars);
+        this.writeNumber('riskProbationMinR', settings.riskProbationMinR ?? DEFAULT_BACKTEST_SETTINGS.riskProbationMinR);
+        this.writeNumber('riskProbationCooldownBars', settings.riskProbationCooldownBars ?? DEFAULT_BACKTEST_SETTINGS.riskProbationCooldownBars);
+        this.writeCheckbox('riskProbationToggle', settings.riskProbationEnabled ?? DEFAULT_BACKTEST_SETTINGS.riskProbationEnabled);
+        this.writeNumber('riskLossStreakConsecutive', settings.riskLossStreakConsecutive ?? DEFAULT_BACKTEST_SETTINGS.riskLossStreakConsecutive);
+        this.writeNumber('riskLossStreakWindowSize', settings.riskLossStreakWindowSize ?? DEFAULT_BACKTEST_SETTINGS.riskLossStreakWindowSize);
+        this.writeNumber('riskLossStreakWindowLosses', settings.riskLossStreakWindowLosses ?? DEFAULT_BACKTEST_SETTINGS.riskLossStreakWindowLosses);
+        this.writeNumber('riskLossStreakCooldownBars', settings.riskLossStreakCooldownBars ?? DEFAULT_BACKTEST_SETTINGS.riskLossStreakCooldownBars);
+        this.writeCheckbox('riskLossStreakToggle', settings.riskLossStreakEnabled ?? DEFAULT_BACKTEST_SETTINGS.riskLossStreakEnabled);
         this.writeSelect('marketMode', this.resolveMarketMode(settings));
 
         // Trade direction
@@ -1002,7 +1038,9 @@ class SettingsManager {
 
             'stopLossToggle',
             'takeProfitToggle',
-            'riskMaxHoldToggle'
+            'riskMaxHoldToggle',
+            'riskProbationToggle',
+            'riskLossStreakToggle'
         ];
 
         toggleIds.forEach(id => {

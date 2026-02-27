@@ -82,7 +82,7 @@ export interface Trade {
     size: number;
     fees?: number;
     /** Exit reason: how the trade was closed */
-    exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'end_of_data';
+    exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'probation_fail' | 'end_of_data';
     /** Stop-loss price level (populated for open/EOD trades) */
     stopLossPrice?: number | null;
     /** Take-profit price level (populated for open/EOD trades) */
@@ -135,12 +135,49 @@ export interface PostEntryPathOpenTradeProbability {
     matchedSampleSize: number;
 }
 
+/** Aggregated indicator average for a single snapshot metric */
+export interface SnapshotProfileRow {
+    key: string;
+    label: string;
+    winAvg: number | null;
+    loseAvg: number | null;
+    allAvg: number | null;
+    delta: number | null;
+    /** Absolute delta relative to the all-trades standard deviation (higher = more discriminating) */
+    significance: number | null;
+}
+
+export interface SnapshotProfileStats {
+    rows: SnapshotProfileRow[];
+    winSampleSize: number;
+    loseSampleSize: number;
+}
+
+/** Exit reason counts for a single reason category */
+export interface ExitReasonRow {
+    reason: string;
+    winCount: number;
+    winPct: number;
+    loseCount: number;
+    losePct: number;
+    totalCount: number;
+    totalPct: number;
+}
+
+export interface ExitReasonBreakdown {
+    rows: ExitReasonRow[];
+    totalWins: number;
+    totalLosses: number;
+}
+
 export interface PostEntryPathStats {
     horizonBars: number[];
     win: PostEntryPathBucketStats;
     lose: PostEntryPathBucketStats;
     all: PostEntryPathBucketStats;
     openTradeProbability: PostEntryPathOpenTradeProbability;
+    snapshotProfile?: SnapshotProfileStats;
+    exitReasonBreakdown?: ExitReasonBreakdown;
 }
 
 export interface StrategyParams {
@@ -172,6 +209,24 @@ export interface BacktestSettings {
     riskMaxHoldBars?: number;
     /** Enable max hold bars cap in percentage risk mode */
     riskMaxHoldEnabled?: boolean;
+    /** Enable weak-start guard exit in percentage mode */
+    riskProbationEnabled?: boolean;
+    /** Guard horizon in bars for weak-start validation */
+    riskProbationBars?: number;
+    /** Minimum favorable progress in R required by guard horizon */
+    riskProbationMinR?: number;
+    /** Same-direction re-entry cooldown after weak-start exit */
+    riskProbationCooldownBars?: number;
+    /** Enable directional loss-streak entry block in percentage mode */
+    riskLossStreakEnabled?: boolean;
+    /** Trigger after N consecutive losses in the same direction */
+    riskLossStreakConsecutive?: number;
+    /** Rolling window size for directional loss-streak trigger */
+    riskLossStreakWindowSize?: number;
+    /** Trigger when at least N losses occur within the rolling window */
+    riskLossStreakWindowLosses?: number;
+    /** Cooldown bars after directional loss-streak trigger */
+    riskLossStreakCooldownBars?: number;
 
     trendEmaPeriod?: number;
     trendEmaSlopeBars?: number;

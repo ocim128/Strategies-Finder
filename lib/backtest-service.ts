@@ -16,7 +16,11 @@ import {
     Trade,
     timeKey,
 } from "./strategies/index";
-import type { OHLCVData, Strategy } from "./strategies/index";
+import type {
+    OHLCVData, Strategy, TradeSnapshot,
+    SnapshotProfileStats, SnapshotProfileRow,
+    ExitReasonBreakdown, ExitReasonRow,
+} from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
@@ -545,6 +549,8 @@ export class BacktestService {
             lose: this.finalizePostEntryBucket(loseMoves, loseDurationBars, loseDurationMinutes),
             all: this.finalizePostEntryBucket(allMoves, allDurationBars, allDurationMinutes),
             openTradeProbability: this.estimateOpenTradeProbability(result.trades, timeIndex, horizonMaxBars, ohlcvData),
+            snapshotProfile: this.buildSnapshotProfile(result.trades),
+            exitReasonBreakdown: this.buildExitReasonBreakdown(result.trades),
         };
     }
 
@@ -761,6 +767,171 @@ export class BacktestService {
         return values.reduce((min, value) => (value < min ? value : min), values[0]);
     }
 
+    // ── Snapshot Profile: Win vs Lose indicator averages ──
+
+    private static readonly SNAPSHOT_METRIC_DEFS: Array<{ key: keyof TradeSnapshot; label: string }> = [
+        { key: 'rsi', label: 'RSI' },
+        { key: 'adx', label: 'ADX' },
+        { key: 'atrPercent', label: 'ATR %' },
+        { key: 'emaDistance', label: 'EMA Distance %' },
+        { key: 'volumeRatio', label: 'Volume Ratio' },
+        { key: 'priceRangePos', label: 'Price Range Pos' },
+        { key: 'barsFromHigh', label: 'Bars From High' },
+        { key: 'barsFromLow', label: 'Bars From Low' },
+        { key: 'trendEfficiency', label: 'Trend Efficiency' },
+        { key: 'atrRegimeRatio', label: 'ATR Regime Ratio' },
+        { key: 'bodyPercent', label: 'Body %' },
+        { key: 'wickSkew', label: 'Wick Skew' },
+        { key: 'closeLocation', label: 'Close Location' },
+        { key: 'oppositeWickPercent', label: 'Opposite Wick %' },
+        { key: 'rangeAtrMultiple', label: 'Range/ATR Multiple' },
+        { key: 'momentumConsistency', label: 'Momentum Consistency' },
+        { key: 'breakQuality', label: 'Break Quality' },
+        { key: 'entryQualityScore', label: 'Entry Quality Score' },
+        { key: 'volumeTrend', label: 'Volume Trend' },
+        { key: 'volumeBurst', label: 'Volume Burst' },
+        { key: 'volumePriceDivergence', label: 'Vol-Price Divergence' },
+        { key: 'volumeConsistency', label: 'Volume Consistency' },
+        { key: 'tf60Perf', label: '60m Perf %' },
+        { key: 'tf90Perf', label: '90m Perf %' },
+        { key: 'tf120Perf', label: '120m Perf %' },
+        { key: 'tf480Perf', label: '480m Perf %' },
+        { key: 'tfConfluencePerf', label: 'TF Confluence %' },
+    ];
+
+    private buildSnapshotProfile(trades: Trade[]): SnapshotProfileStats | undefined {
+        const withSnapshots = trades.filter((t) => t.entrySnapshot);
+        if (withSnapshots.length === 0) return undefined;
+
+        const winTrades = withSnapshots.filter((t) => t.pnl > 0);
+        const loseTrades = withSnapshots.filter((t) => t.pnl <= 0);
+
+        const rows: SnapshotProfileRow[] = [];
+
+        for (const def of BacktestService.SNAPSHOT_METRIC_DEFS) {
+            const winValues = this.extractSnapshotValues(winTrades, def.key);
+            const loseValues = this.extractSnapshotValues(loseTrades, def.key);
+            const allValues = this.extractSnapshotValues(withSnapshots, def.key);
+
+            // Skip metrics where we have no data at all
+            if (allValues.length === 0) continue;
+
+            const winAvg = this.average(winValues);
+            const loseAvg = this.average(loseValues);
+            const allAvg = this.average(allValues);
+            const delta = (winAvg !== null && loseAvg !== null) ? winAvg - loseAvg : null;
+
+            // Compute significance: |delta| / stddev(all)
+            let significance: number | null = null;
+            if (delta !== null && allValues.length >= 3) {
+                const stddev = this.stddev(allValues);
+                if (stddev !== null && stddev > 0) {
+                    significance = Math.abs(delta) / stddev;
+                }
+            }
+
+            rows.push({
+                key: def.key,
+                label: def.label,
+                winAvg,
+                loseAvg,
+                allAvg,
+                delta,
+                significance,
+            });
+        }
+
+        // Sort by significance descending (most discriminating first)
+        rows.sort((a, b) => {
+            const sa = a.significance ?? -1;
+            const sb = b.significance ?? -1;
+            return sb - sa;
+        });
+
+        return {
+            rows,
+            winSampleSize: winTrades.length,
+            loseSampleSize: loseTrades.length,
+        };
+    }
+
+    private extractSnapshotValues(trades: Trade[], key: keyof TradeSnapshot): number[] {
+        const values: number[] = [];
+        for (const trade of trades) {
+            const snap = trade.entrySnapshot;
+            if (!snap) continue;
+            const val = snap[key];
+            if (typeof val === 'number' && Number.isFinite(val)) {
+                values.push(val);
+            }
+        }
+        return values;
+    }
+
+    private stddev(values: number[]): number | null {
+        if (values.length < 2) return null;
+        const avg = values.reduce((s, v) => s + v, 0) / values.length;
+        const variance = values.reduce((s, v) => s + (v - avg) ** 2, 0) / values.length;
+        return Math.sqrt(variance);
+    }
+
+    // ── Exit Reason Breakdown ──
+
+    private static readonly EXIT_REASON_LABELS: Record<string, string> = {
+        signal: 'Signal',
+        stop_loss: 'Stop Loss',
+        take_profit: 'Take Profit',
+        trailing_stop: 'Trailing Stop',
+        time_stop: 'Time Stop',
+        partial: 'Partial',
+        probation_fail: 'Weak-Start Guard',
+        end_of_data: 'End of Data',
+    };
+
+    private buildExitReasonBreakdown(trades: Trade[]): ExitReasonBreakdown | undefined {
+        if (trades.length === 0) return undefined;
+
+        const winTrades = trades.filter((t) => t.pnl > 0);
+        const loseTrades = trades.filter((t) => t.pnl <= 0);
+
+        // Collect all unique exit reasons
+        const reasonCounts = new Map<string, { win: number; lose: number }>();
+        for (const trade of trades) {
+            const reason = trade.exitReason ?? 'signal';
+            if (!reasonCounts.has(reason)) {
+                reasonCounts.set(reason, { win: 0, lose: 0 });
+            }
+            const entry = reasonCounts.get(reason)!;
+            if (trade.pnl > 0) {
+                entry.win++;
+            } else {
+                entry.lose++;
+            }
+        }
+
+        const totalWins = winTrades.length;
+        const totalLosses = loseTrades.length;
+
+        const rows: ExitReasonRow[] = [];
+        for (const [reason, counts] of reasonCounts) {
+            const totalCount = counts.win + counts.lose;
+            rows.push({
+                reason: BacktestService.EXIT_REASON_LABELS[reason] ?? reason,
+                winCount: counts.win,
+                winPct: totalWins > 0 ? (counts.win / totalWins) * 100 : 0,
+                loseCount: counts.lose,
+                losePct: totalLosses > 0 ? (counts.lose / totalLosses) * 100 : 0,
+                totalCount,
+                totalPct: trades.length > 0 ? (totalCount / trades.length) * 100 : 0,
+            });
+        }
+
+        // Sort by total count descending
+        rows.sort((a, b) => b.totalCount - a.totalCount);
+
+        return { rows, totalWins, totalLosses };
+    }
+
     private toEpochMs(time: Trade['entryTime']): number | null {
         const unixSeconds = parseTimeToUnixSeconds(time);
         return unixSeconds === null ? null : unixSeconds * 1000;
@@ -774,6 +945,14 @@ export class BacktestService {
             settings.riskMode === 'percentage'
             && settings.riskMaxHoldEnabled === true
             && (settings.riskMaxHoldBars ?? 0) > 0;
+        const usesPercentageProbation =
+            settings.riskMode === 'percentage'
+            && settings.riskProbationEnabled === true
+            && (settings.riskProbationBars ?? 0) > 0;
+        const usesPercentageLossStreakGuard =
+            settings.riskMode === 'percentage'
+            && settings.riskLossStreakEnabled === true
+            && (settings.riskLossStreakCooldownBars ?? 0) > 0;
         const hasSnapshotFilters =
             (settings.snapshotAtrPercentMin ?? 0) > 0 ||
             (settings.snapshotAtrPercentMax ?? 0) > 0 ||
@@ -833,7 +1012,9 @@ export class BacktestService {
             || settings.tradeDirection === 'both'
             || settings.tradeDirection === 'combined'
             || hasSnapshotFilters
-            || usesPercentageMaxHold;
+            || usesPercentageMaxHold
+            || usesPercentageProbation
+            || usesPercentageLossStreakGuard;
     }
 
     public addStrategyIndicators(params: StrategyParams) {
