@@ -417,6 +417,16 @@
     }
 }
 
+@media (max-width: 768px) {
+    .wf-actions {
+        flex-direction: column;
+    }
+
+    .wf-actions .btn {
+        width: 100%;
+    }
+}
+
 /* Pointer coarse (touch) devices */
 @media (pointer: coarse) {
 

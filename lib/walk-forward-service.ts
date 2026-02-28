@@ -21,6 +21,55 @@ import {
     WalkForwardProgress
 } from "./strategies/walk-forward";
 
+const DEFAULT_CANDIDATE_VALIDATION_SEEDS = [1337, 7331, 2026, 4242, 9001];
+const DEFAULT_MIN_SEED_PASSES = 3;
+const DEFAULT_MAX_OOS_DD_PERCENT = 30;
+
+type CandidateValidationDecisionReason =
+    | "pass"
+    | "net_loss"
+    | "low_profit_factor"
+    | "drawdown_breach"
+    | "low_trades"
+    | "run_error";
+
+type CandidateSeedValidationRow = {
+    seed: number;
+    pass: boolean;
+    decisionReason: CandidateValidationDecisionReason;
+    netProfitPercent: number | null;
+    profitFactor: number | null;
+    maxDrawdownPercent: number | null;
+    totalTrades: number | null;
+    robustnessScore: number | null;
+    testWindow: number;
+    stepSize: number;
+    commissionPercent: number;
+    slippageBps: number;
+    dataOffset: number;
+    totalWindows: number | null;
+    error?: string;
+};
+
+type CandidateValidationSummary = {
+    seeds: number[];
+    minPasses: number;
+    passCount: number;
+    failCount: number;
+    decision: "PASS" | "FAIL";
+    maxDrawdownLimit: number;
+    minTrades: number;
+    rows: CandidateSeedValidationRow[];
+};
+
+type CandidateSeedValidationProfile = {
+    testWindow: number;
+    stepSize: number;
+    commissionPercent: number;
+    slippageBps: number;
+    dataOffset: number;
+};
+
 // ============================================================================
 // Walk-Forward Service
 // ============================================================================
@@ -459,6 +508,394 @@ class WalkForwardService {
         }
     }
 
+    async runCandidateValidation(): Promise<CandidateValidationSummary | null> {
+        const data = await this.ensureDataReadyForCurrentContext();
+        if (!data || data.length === 0) {
+            debugLogger.error("No data loaded for candidate validation");
+            return null;
+        }
+
+        const strategyKey = state.currentStrategyKey;
+        const strategy = strategyRegistry.get(strategyKey);
+        if (!strategy) {
+            debugLogger.error(`Strategy not found: ${strategyKey}`);
+            return null;
+        }
+
+        const capitalSettings = backtestService.getCapitalSettings();
+        const backtestSettings = backtestService.getBacktestSettings();
+        const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
+
+        const fixedParams = paramManager.getValues(strategy);
+        const seedInput = this.readStringInput("wf-validation-seeds", DEFAULT_CANDIDATE_VALIDATION_SEEDS.join(","));
+        const seeds = this.parseSeedList(seedInput);
+        if (seeds.length === 0) {
+            this.updateStatus("Candidate validation needs at least one valid seed.");
+            return null;
+        }
+
+        const minPassesRaw = Math.round(this.readNumberInput("wf-validation-min-passes", DEFAULT_MIN_SEED_PASSES));
+        const minPasses = Math.max(1, Math.min(seeds.length, minPassesRaw));
+        const maxDrawdownLimit = Math.max(
+            1,
+            this.readNumberInput("wf-validation-max-dd", DEFAULT_MAX_OOS_DD_PERCENT)
+        );
+        const baseMinTrades = Math.max(1, this.readNumberInput("wf-min-trades", 5));
+        const baseTestWindow = Math.max(10, this.readNumberInput("wf-test-window", Math.floor(data.length * 0.2)));
+        const baseStepSize = Math.max(10, this.readNumberInput("wf-step-size", baseTestWindow));
+        const baseCommission = Math.max(0, capitalSettings.commission);
+        const baseSlippageBps = Math.max(0, backtestSettings.slippageBps ?? 0);
+
+        this.setLoading(true, "validation");
+        this.updateStatus(`Validating candidate across ${seeds.length} seed(s)...`);
+
+        try {
+            const rows: CandidateSeedValidationRow[] = [];
+
+            for (let i = 0; i < seeds.length; i++) {
+                const seed = seeds[i];
+                this.updateStatus(`Seed ${i + 1}/${seeds.length}: evaluating...`, false);
+
+                const profile = this.buildCandidateValidationProfile(seed, {
+                    dataLength: data.length,
+                    baseTestWindow,
+                    baseStepSize,
+                    baseCommission,
+                    baseSlippageBps
+                });
+
+                let runData = data.slice(profile.dataOffset);
+                let testWindow = profile.testWindow;
+                if (runData.length < testWindow * 2) {
+                    runData = data;
+                    testWindow = Math.max(10, Math.min(testWindow, Math.floor(runData.length / 3)));
+                }
+
+                if (runData.length < testWindow * 2) {
+                    rows.push({
+                        seed,
+                        pass: false,
+                        decisionReason: "run_error",
+                        netProfitPercent: null,
+                        profitFactor: null,
+                        maxDrawdownPercent: null,
+                        totalTrades: null,
+                        robustnessScore: null,
+                        testWindow,
+                        stepSize: profile.stepSize,
+                        commissionPercent: profile.commissionPercent,
+                        slippageBps: profile.slippageBps,
+                        dataOffset: profile.dataOffset,
+                        totalWindows: null,
+                        error: "insufficient_data"
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                    continue;
+                }
+
+                const seedSettings: BacktestSettings = {
+                    ...backtestSettings,
+                    executionModel: "next_open",
+                    allowSameBarExit: false,
+                    slippageBps: Math.max(baseSlippageBps, profile.slippageBps)
+                };
+
+                try {
+                    const result = await runFixedParamWalkForward(
+                        runData,
+                        { ...strategy, defaultParams: fixedParams },
+                        {
+                            testWindow,
+                            stepSize: Math.max(10, Math.min(profile.stepSize, testWindow)),
+                            fixedParams,
+                            minTrades: baseMinTrades
+                        },
+                        capitalSettings.initialCapital,
+                        capitalSettings.positionSize,
+                        profile.commissionPercent,
+                        seedSettings,
+                        sizing
+                    );
+
+                    const decisionReason = this.resolveCandidateValidationDecisionReason(
+                        result,
+                        maxDrawdownLimit,
+                        baseMinTrades
+                    );
+
+                    rows.push({
+                        seed,
+                        pass: decisionReason === "pass",
+                        decisionReason,
+                        netProfitPercent: result.combinedOOSTrades.netProfitPercent,
+                        profitFactor: result.combinedOOSTrades.profitFactor,
+                        maxDrawdownPercent: result.combinedOOSTrades.maxDrawdownPercent,
+                        totalTrades: result.combinedOOSTrades.totalTrades,
+                        robustnessScore: result.robustnessScore,
+                        testWindow,
+                        stepSize: Math.max(10, Math.min(profile.stepSize, testWindow)),
+                        commissionPercent: profile.commissionPercent,
+                        slippageBps: seedSettings.slippageBps ?? profile.slippageBps,
+                        dataOffset: profile.dataOffset,
+                        totalWindows: result.totalWindows
+                    });
+                } catch (error) {
+                    rows.push({
+                        seed,
+                        pass: false,
+                        decisionReason: "run_error",
+                        netProfitPercent: null,
+                        profitFactor: null,
+                        maxDrawdownPercent: null,
+                        totalTrades: null,
+                        robustnessScore: null,
+                        testWindow,
+                        stepSize: profile.stepSize,
+                        commissionPercent: profile.commissionPercent,
+                        slippageBps: profile.slippageBps,
+                        dataOffset: profile.dataOffset,
+                        totalWindows: null,
+                        error: error instanceof Error ? error.message : String(error)
+                    });
+                }
+
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+
+            const passCount = rows.filter(row => row.pass).length;
+            const summary: CandidateValidationSummary = {
+                seeds,
+                minPasses,
+                passCount,
+                failCount: rows.length - passCount,
+                decision: passCount >= minPasses ? "PASS" : "FAIL",
+                maxDrawdownLimit,
+                minTrades: baseMinTrades,
+                rows
+            };
+
+            this.renderCandidateValidationSummary(summary);
+            this.updateStatus(
+                `Candidate validation ${summary.decision}: ${summary.passCount}/${summary.seeds.length} seeds passed (required ${summary.minPasses}).`
+            );
+            debugLogger.info("[WalkForward] Candidate validation complete", {
+                strategyKey,
+                decision: summary.decision,
+                passCount: summary.passCount,
+                seedCount: summary.seeds.length,
+                minPasses: summary.minPasses,
+                maxDrawdownLimit: summary.maxDrawdownLimit
+            });
+            return summary;
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            debugLogger.error(`Candidate validation failed: ${msg}`);
+            this.updateStatus(`Candidate validation error: ${msg}`);
+            return null;
+        } finally {
+            this.setLoading(false, "validation");
+        }
+    }
+
+    private resolveCandidateValidationDecisionReason(
+        result: WalkForwardResult,
+        maxDrawdownLimit: number,
+        minTrades: number
+    ): CandidateValidationDecisionReason {
+        const oos = result.combinedOOSTrades;
+        if (oos.totalTrades < minTrades) return "low_trades";
+        if (oos.netProfit <= 0) return "net_loss";
+        if (!Number.isFinite(oos.profitFactor) || oos.profitFactor < 1) return "low_profit_factor";
+        if (oos.maxDrawdownPercent > maxDrawdownLimit) return "drawdown_breach";
+        return "pass";
+    }
+
+    private buildCandidateValidationProfile(
+        seed: number,
+        base: {
+            dataLength: number;
+            baseTestWindow: number;
+            baseStepSize: number;
+            baseCommission: number;
+            baseSlippageBps: number;
+        }
+    ): CandidateSeedValidationProfile {
+        const rand = this.createSeededRandom(seed);
+        const maxTestWindow = Math.max(20, Math.floor(base.dataLength * 0.45));
+        const testScale = 0.85 + rand() * 0.35; // 85%-120%
+        const stepScale = 0.85 + rand() * 0.25; // 85%-110%
+
+        const testWindow = Math.max(
+            10,
+            Math.min(maxTestWindow, Math.round(base.baseTestWindow * testScale))
+        );
+        const stepSize = Math.max(10, Math.round(base.baseStepSize * stepScale));
+
+        const minRequiredBars = Math.max(40, testWindow * 2);
+        const offsetBudget = Math.max(0, base.dataLength - minRequiredBars);
+        const maxOffset = Math.min(offsetBudget, Math.max(0, base.baseStepSize * 3));
+        const dataOffset = maxOffset > 0 ? Math.floor(rand() * (maxOffset + 1)) : 0;
+
+        const stressedCommissionBase = Math.max(0.02, base.baseCommission);
+        const commissionPercent = Number((stressedCommissionBase * (1.1 + rand() * 0.35)).toFixed(4));
+        const slippageBps = Math.max(base.baseSlippageBps + 1, Math.round(base.baseSlippageBps + 1 + rand() * 6));
+
+        return {
+            testWindow,
+            stepSize,
+            commissionPercent,
+            slippageBps,
+            dataOffset
+        };
+    }
+
+    private createSeededRandom(seed: number): () => number {
+        let state = (Math.floor(seed) >>> 0) || 1;
+        return () => {
+            state += 0x6D2B79F5;
+            let t = state;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+
+    private parseSeedList(raw: string): number[] {
+        const source = raw.trim().length > 0 ? raw : DEFAULT_CANDIDATE_VALIDATION_SEEDS.join(",");
+        const parsed = source
+            .split(/[\s,]+/)
+            .map(token => Number(token.trim()))
+            .filter(value => Number.isFinite(value))
+            .map(value => (Math.trunc(value) >>> 0) || 1);
+
+        const unique: number[] = [];
+        const seen = new Set<number>();
+        for (const value of parsed) {
+            if (seen.has(value)) continue;
+            seen.add(value);
+            unique.push(value);
+        }
+
+        return unique.length > 0 ? unique : [...DEFAULT_CANDIDATE_VALIDATION_SEEDS];
+    }
+
+    private readStringInput(id: string, fallback: string): string {
+        const el = document.getElementById(id) as HTMLInputElement | null;
+        if (!el) return fallback;
+        const value = el.value.trim();
+        return value.length > 0 ? value : fallback;
+    }
+
+    private formatCandidateValidationDecision(reason: CandidateValidationDecisionReason): string {
+        if (reason === "pass") return "PASS";
+        if (reason === "net_loss") return "FAIL(net)";
+        if (reason === "low_profit_factor") return "FAIL(pf)";
+        if (reason === "drawdown_breach") return "FAIL(dd)";
+        if (reason === "low_trades") return "FAIL(trades)";
+        return "FAIL(error)";
+    }
+
+    private formatSignedPercent(value: number | null): string {
+        if (!Number.isFinite(value)) return "-";
+        const n = Number(value);
+        const sign = n >= 0 ? "+" : "";
+        return `${sign}${n.toFixed(2)}%`;
+    }
+
+    private formatNumber(value: number | null, digits: number = 2): string {
+        if (value === Infinity) return "Inf";
+        if (!Number.isFinite(value)) return "-";
+        return Number(value).toFixed(digits);
+    }
+
+    private formatPercent(value: number | null, digits: number = 2): string {
+        if (!Number.isFinite(value)) return "-";
+        return `${Number(value).toFixed(digits)}%`;
+    }
+
+    private renderCandidateValidationSummary(summary: CandidateValidationSummary | null): void {
+        const panel = document.getElementById("wf-validation-panel");
+        if (!panel) return;
+
+        if (!summary) {
+            panel.innerHTML = `
+                <div class="empty-state">
+                    <p>Run Validate Candidate to check 5-seed pass/fail status.</p>
+                </div>
+            `;
+            return;
+        }
+
+        const decisionClass = summary.decision === "PASS" ? "positive" : "negative";
+        const rowsHtml = summary.rows.map(row => `
+            <tr class="${row.pass ? "positive" : "negative"}">
+                <td>${row.seed}</td>
+                <td class="${row.pass ? "positive" : "negative"}">${this.formatCandidateValidationDecision(row.decisionReason)}</td>
+                <td>${this.formatSignedPercent(row.netProfitPercent)}</td>
+                <td>${this.formatNumber(row.profitFactor, 2)}</td>
+                <td>${this.formatPercent(row.maxDrawdownPercent, 2)}</td>
+                <td>${row.totalTrades ?? "-"}</td>
+                <td>${this.formatNumber(row.robustnessScore, 0)}</td>
+                <td>${row.totalWindows ?? "-"}</td>
+                <td>${row.testWindow}/${row.stepSize}</td>
+                <td>${row.commissionPercent.toFixed(4)}%</td>
+                <td>${row.slippageBps}</td>
+            </tr>
+        `).join("");
+
+        panel.innerHTML = `
+            <div class="wf-validation-header">
+                <div class="wf-validation-title ${decisionClass}">
+                    ${summary.decision} ${summary.passCount}/${summary.seeds.length} seeds
+                </div>
+                <div class="wf-validation-note">
+                    Rule: pass if >= ${summary.minPasses}/${summary.seeds.length}. Per-seed checks:
+                    net > 0, PF >= 1, DD <= ${summary.maxDrawdownLimit.toFixed(1)}%, trades >= ${summary.minTrades}.
+                </div>
+            </div>
+            <div class="wf-summary">
+                <div class="wf-stat">
+                    <span class="wf-label">Seed Passes</span>
+                    <span class="wf-value ${decisionClass}">${summary.passCount}/${summary.seeds.length}</span>
+                </div>
+                <div class="wf-stat">
+                    <span class="wf-label">Required Passes</span>
+                    <span class="wf-value">${summary.minPasses}</span>
+                </div>
+                <div class="wf-stat">
+                    <span class="wf-label">Fail Count</span>
+                    <span class="wf-value negative">${summary.failCount}</span>
+                </div>
+                <div class="wf-stat">
+                    <span class="wf-label">DD Limit</span>
+                    <span class="wf-value">${summary.maxDrawdownLimit.toFixed(1)}%</span>
+                </div>
+            </div>
+            <div class="wf-table-wrapper wf-validation-table-wrap">
+                <table class="wf-table wf-validation-table">
+                    <thead>
+                        <tr>
+                            <th>Seed</th>
+                            <th>Decision</th>
+                            <th>OOS Net%</th>
+                            <th>PF</th>
+                            <th>Max DD%</th>
+                            <th>Trades</th>
+                            <th>Robust</th>
+                            <th>Windows</th>
+                            <th>T/S</th>
+                            <th>Fee%</th>
+                            <th>Slip</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rowsHtml}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
 
     /**
      * Build parameter ranges from current params with reasonable bounds
@@ -772,20 +1209,25 @@ class WalkForwardService {
         state.set('currentBacktestResult', oos);
     }
 
-    private setLoading(loading: boolean): void {
-        const btn = document.getElementById('wf-run-btn') as HTMLButtonElement | null;
-        const quickBtn = document.getElementById('wf-quick-btn') as HTMLButtonElement | null;
-        const spinner = document.getElementById('wf-spinner');
+    private setLoading(loading: boolean, mode: "analysis" | "validation" = "analysis"): void {
+        const runBtn = document.getElementById("wf-run-btn") as HTMLButtonElement | null;
+        const quickBtn = document.getElementById("wf-quick-btn") as HTMLButtonElement | null;
+        const validateBtn = document.getElementById("wf-validate-btn") as HTMLButtonElement | null;
+        const spinner = document.getElementById("wf-spinner");
 
-        if (btn) {
-            btn.disabled = loading;
-            btn.textContent = loading ? 'Analyzing...' : 'Run Walk-Forward';
+        if (runBtn) {
+            runBtn.disabled = loading;
+            runBtn.setAttribute("aria-busy", loading && mode === "analysis" ? "true" : "false");
         }
         if (quickBtn) {
             quickBtn.disabled = loading;
         }
+        if (validateBtn) {
+            validateBtn.disabled = loading;
+            validateBtn.setAttribute("aria-busy", loading && mode === "validation" ? "true" : "false");
+        }
         if (spinner) {
-            spinner.style.display = loading ? 'inline-block' : 'none';
+            spinner.style.display = loading ? "inline-block" : "none";
         }
     }
 
@@ -841,12 +1283,16 @@ class WalkForwardService {
     initUI(): void {
         const runBtn = document.getElementById('wf-run-btn');
         const quickBtn = document.getElementById('wf-quick-btn');
+        const validateBtn = document.getElementById('wf-validate-btn');
 
         if (runBtn) {
             runBtn.addEventListener('click', () => this.runAnalysis());
         }
         if (quickBtn) {
             quickBtn.addEventListener('click', () => this.runQuickAnalysis());
+        }
+        if (validateBtn) {
+            validateBtn.addEventListener('click', () => this.runCandidateValidation());
         }
 
         debugLogger.info('Walk-Forward Service initialized');
