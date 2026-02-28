@@ -10,6 +10,7 @@ import { uiManager } from "../ui-manager";
 import { chartManager } from "../chart-manager";
 import { dataManager } from "../data-manager";
 import { assetSearchService, Asset } from "../asset-search-service";
+import { getLocalSp500Assets } from "../local-sp500-catalog";
 import { finderManager } from "../finder-manager";
 import { scannerManager } from "../scanner/scanner-manager";
 import { getIntervalSeconds } from "../dataProviders/utils";
@@ -24,6 +25,7 @@ export function setupEventHandlers() {
     const symbolSearchClear = getOptionalElement<HTMLElement>('symbolSearchClear');
     const symbolSearchLoading = getOptionalElement<HTMLElement>('symbolSearchLoading');
     const symbolSearchEmpty = getOptionalElement<HTMLElement>('symbolSearchEmpty');
+    const localSp500Select = getOptionalElement<HTMLSelectElement>('localSp500Select');
     const mockModelSelect = getOptionalElement<HTMLSelectElement>('mockModelSelect');
     const mockBarsInput = getOptionalElement<HTMLInputElement>('mockBarsInput');
     const chartModeToggle = getOptionalElement<HTMLButtonElement>('chartModeToggle');
@@ -31,6 +33,88 @@ export function setupEventHandlers() {
 
     let isSearchInitialized = false;
     let selectedIndex = -1;
+    const localSp500Symbols = new Set<string>();
+
+    const syncLocalSp500Picker = () => {
+        if (!localSp500Select) return;
+        const currentSymbol = state.currentSymbol.trim().toUpperCase();
+        if (localSp500Symbols.has(currentSymbol)) {
+            localSp500Select.value = currentSymbol;
+            return;
+        }
+        localSp500Select.value = '';
+    };
+
+    const applyLocalSp500Symbol = (symbol: string) => {
+        const normalizedSymbol = symbol.trim().toUpperCase();
+        if (!normalizedSymbol) return;
+
+        dataManager.setProviderOverride(normalizedSymbol, 'bybit-tradfi');
+        symbolDropdown.classList.remove('active');
+
+        const symbolChanged = normalizedSymbol !== state.currentSymbol;
+        const intervalChanged = state.currentInterval !== '1d';
+
+        if (intervalChanged) {
+            state.set('currentInterval', '1d');
+        }
+        if (symbolChanged) {
+            state.set('currentSymbol', normalizedSymbol);
+        }
+        if (!symbolChanged && !intervalChanged) {
+            void dataManager.loadData(normalizedSymbol, '1d');
+        }
+
+        debugLogger.event('ui.symbol.local_sp500_select', { symbol: normalizedSymbol, interval: '1d' });
+    };
+
+    const initializeLocalSp500Picker = async () => {
+        if (!localSp500Select) return;
+
+        localSp500Select.disabled = true;
+        localSp500Select.innerHTML = '<option value="">Loading local tickers...</option>';
+
+        try {
+            const assets = await getLocalSp500Assets();
+            localSp500Symbols.clear();
+            localSp500Select.innerHTML = '';
+
+            if (assets.length === 0) {
+                localSp500Select.innerHTML = '<option value="">Local S&P500 catalog not found</option>';
+                localSp500Select.disabled = true;
+                return;
+            }
+
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = 'Pick local 1D ticker...';
+            localSp500Select.appendChild(placeholder);
+
+            assets.forEach((asset) => {
+                localSp500Symbols.add(asset.symbol);
+                const option = document.createElement('option');
+                option.value = asset.symbol;
+                option.textContent = `${asset.symbol} - ${asset.name}`;
+                localSp500Select.appendChild(option);
+            });
+
+            localSp500Select.disabled = false;
+            syncLocalSp500Picker();
+        } catch {
+            localSp500Select.innerHTML = '<option value="">Failed to load local tickers</option>';
+            localSp500Select.disabled = true;
+        }
+    };
+
+    if (localSp500Select) {
+        localSp500Select.addEventListener('change', () => {
+            const selectedSymbol = localSp500Select.value.trim();
+            if (!selectedSymbol) return;
+            applyLocalSp500Symbol(selectedSymbol);
+        });
+
+        void initializeLocalSp500Picker();
+    }
 
     if (mockModelSelect) {
         const allowedMockModels = new Set<MockChartModel>(['simple', 'hard', 'v3', 'v4', 'v5', 'v6']);
@@ -211,6 +295,8 @@ export function setupEventHandlers() {
         if (symbol !== state.currentSymbol) {
             debugLogger.event('ui.symbol.select', { symbol, displayName, provider });
             state.set('currentSymbol', symbol);
+        } else if (provider === 'bybit-tradfi' && state.currentInterval === '1d') {
+            syncLocalSp500Picker();
         }
     };
 
@@ -701,6 +787,12 @@ export function setupEventHandlers() {
             applyParityAvailability();
         });
         applyParityAvailability();
+    }
+
+    if (localSp500Select) {
+        state.subscribe('currentSymbol', () => {
+            syncLocalSp500Picker();
+        });
     }
 
     // Finder settings toggles

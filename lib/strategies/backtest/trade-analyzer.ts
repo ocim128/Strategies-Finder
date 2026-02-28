@@ -165,10 +165,7 @@ const EXCLUDED_ENTRY_QUALITY_FEATURES = new Set<keyof TradeSnapshot>([
     'entryQualityScore',
     'closeLocation',
     'oppositeWickPercent',
-    'emaDistance',
     'breakQuality',
-    'rsi',
-    'priceRangePos',
 ]);
 
 /**
