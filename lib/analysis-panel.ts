@@ -11,7 +11,8 @@ import {
     AnalysisFinderCandidate,
     AnalysisFilterFinderResult
 } from './strategies/backtest/trade-analyzer';
-import { Trade, TradeSnapshot } from './types/index';
+import { Trade, TradeSnapshot, OHLCVData } from './types/index';
+import { timeKey } from './strategies/index';
 import { uiManager } from './ui-manager';
 
 /**
@@ -69,6 +70,11 @@ const FEATURE_TO_SETTINGS: Record<keyof TradeSnapshot, {
 class AnalysisPanel {
     private lastResults: FeatureAnalysis[] = [];
     private lastFinderCandidates: AnalysisFinderCandidate[] = [];
+    private readonly entryShapeSampleHardLimit = 500;
+    private entryShapeImageUrls: { wins: string | null; losses: string | null } = {
+        wins: null,
+        losses: null
+    };
 
 
     /** Run analysis on the current backtest result and render results. */
@@ -81,6 +87,7 @@ class AnalysisPanel {
             if (emptyEl) emptyEl.style.display = '';
             if (contentEl) contentEl.style.display = 'none';
             this.resetFinderResults();
+            this.hideEntryShapeSection();
             return;
         }
 
@@ -94,6 +101,7 @@ class AnalysisPanel {
             }
             if (contentEl) contentEl.style.display = 'none';
             this.resetFinderResults();
+            this.hideEntryShapeSection();
             return;
         }
 
@@ -117,6 +125,7 @@ class AnalysisPanel {
 
         // Render table
         this.renderTable(analyses, result.trades);
+        this.renderEntryShapeSection(result.trades);
 
         // Auto-compute and render combo filter
         this.renderComboFilter(analyses, result.trades, options);
@@ -576,6 +585,188 @@ class AnalysisPanel {
         resultsEl.style.display = '';
     }
 
+    private hideEntryShapeSection() {
+        const section = document.getElementById('analysisEntryShapes');
+        if (section) section.style.display = 'none';
+        this.entryShapeImageUrls.wins = null;
+        this.entryShapeImageUrls.losses = null;
+    }
+
+    private readEntryShapeMaxCandles(): number {
+        const input = document.getElementById('analysisEntryShapeMaxCandles') as HTMLInputElement | null;
+        const parsed = input ? Number.parseInt(input.value, 10) : NaN;
+        const fallback = this.entryShapeSampleHardLimit;
+        const clamped = Number.isFinite(parsed)
+            ? Math.max(10, Math.min(this.entryShapeSampleHardLimit, parsed))
+            : fallback;
+        if (input) input.value = String(clamped);
+        return clamped;
+    }
+
+    private renderEntryShapeSection(trades: Trade[]) {
+        const section = document.getElementById('analysisEntryShapes');
+        const winsCanvas = document.getElementById('analysisWinsShapeCanvas') as HTMLCanvasElement | null;
+        const lossesCanvas = document.getElementById('analysisLossesShapeCanvas') as HTMLCanvasElement | null;
+        const winsMeta = document.getElementById('analysisWinsShapeMeta');
+        const lossesMeta = document.getElementById('analysisLossesShapeMeta');
+        if (!section || !winsCanvas || !lossesCanvas || !winsMeta || !lossesMeta) return;
+
+        const maxCandles = this.readEntryShapeMaxCandles();
+        const buckets = this.collectEntryCandles(trades);
+        const wins = buckets.wins.slice(0, maxCandles);
+        const losses = buckets.losses.slice(0, maxCandles);
+
+        this.drawEntryShapeCanvas(winsCanvas, wins);
+        this.drawEntryShapeCanvas(lossesCanvas, losses);
+
+        winsMeta.textContent = `${wins.length}/${buckets.wins.length} entry candles shown`;
+        lossesMeta.textContent = `${losses.length}/${buckets.losses.length} entry candles shown`;
+
+        this.entryShapeImageUrls.wins = wins.length > 0 ? winsCanvas.toDataURL('image/png') : null;
+        this.entryShapeImageUrls.losses = losses.length > 0 ? lossesCanvas.toDataURL('image/png') : null;
+
+        section.style.display = (wins.length > 0 || losses.length > 0) ? '' : 'none';
+    }
+
+    private collectEntryCandles(trades: Trade[]): { wins: OHLCVData[]; losses: OHLCVData[] } {
+        const byTime = new Map<string, OHLCVData>();
+        for (const candle of state.ohlcvData) {
+            byTime.set(timeKey(candle.time), candle);
+        }
+
+        const wins: OHLCVData[] = [];
+        const losses: OHLCVData[] = [];
+        for (const trade of trades) {
+            const candle = byTime.get(timeKey(trade.entryTime));
+            if (!candle) continue;
+            if (trade.pnl > 0) wins.push(candle);
+            else losses.push(candle);
+        }
+        return { wins, losses };
+    }
+
+    private drawEntryShapeCanvas(canvas: HTMLCanvasElement, candles: OHLCVData[]) {
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        const count = candles.length;
+        const cellWidth = 9;
+        const cellHeight = 24;
+        const colGap = 2;
+        const rowGap = 4;
+        const padX = 8;
+        const padY = 8;
+        const maxCols = 40;
+        const cols = count > 0
+            ? Math.max(1, Math.min(maxCols, Math.ceil(Math.sqrt(count * 1.8))))
+            : 1;
+        const rows = count > 0 ? Math.ceil(count / cols) : 1;
+        const logicalWidth = padX * 2 + cols * cellWidth + Math.max(0, cols - 1) * colGap;
+        const logicalHeight = padY * 2 + rows * cellHeight + Math.max(0, rows - 1) * rowGap;
+
+        canvas.width = Math.max(1, Math.floor(logicalWidth * dpr));
+        canvas.height = Math.max(1, Math.floor(logicalHeight * dpr));
+        canvas.style.width = `${logicalWidth}px`;
+        canvas.style.height = `${logicalHeight}px`;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        const root = getComputedStyle(document.documentElement);
+        const bg = root.getPropertyValue('--surface').trim() || 'rgba(128, 128, 128, 0.06)';
+        const border = root.getPropertyValue('--border').trim() || 'rgba(128, 128, 128, 0.2)';
+
+        ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+        ctx.strokeStyle = border;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(0.5, 0.5, logicalWidth - 1, logicalHeight - 1);
+
+        if (count === 0) {
+            const text = root.getPropertyValue('--text-secondary').trim() || '#8a8a8a';
+            ctx.fillStyle = text;
+            ctx.font = '11px sans-serif';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('No entry candles', 10, logicalHeight / 2);
+            return;
+        }
+
+        for (let i = 0; i < count; i++) {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            const x = padX + col * (cellWidth + colGap);
+            const y = padY + row * (cellHeight + rowGap);
+            this.drawEntryShapeCandle(ctx, candles[i], x, y, cellWidth, cellHeight);
+        }
+    }
+
+    private drawEntryShapeCandle(
+        ctx: CanvasRenderingContext2D,
+        candle: OHLCVData,
+        x: number,
+        y: number,
+        width: number,
+        height: number
+    ) {
+        const high = Number.isFinite(candle.high) ? candle.high : candle.close;
+        const low = Number.isFinite(candle.low) ? candle.low : candle.close;
+        const open = Number.isFinite(candle.open) ? candle.open : candle.close;
+        const close = Number.isFinite(candle.close) ? candle.close : candle.open;
+        const top = y + 1;
+        const bottom = y + height - 1;
+        const range = Math.max(1e-8, high - low);
+        const mapY = (price: number) => top + ((high - price) / range) * (bottom - top);
+        const centerX = x + width / 2;
+        const openY = mapY(open);
+        const closeY = mapY(close);
+        const highY = mapY(high);
+        const lowY = mapY(low);
+
+        ctx.strokeStyle = 'rgba(220, 220, 220, 0.75)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(centerX, highY);
+        ctx.lineTo(centerX, lowY);
+        ctx.stroke();
+
+        const bodyWidth = Math.max(2, Math.floor(width * 0.58));
+        const bodyX = x + (width - bodyWidth) / 2;
+        const bodyTop = Math.min(openY, closeY);
+        const bodyBottom = Math.max(openY, closeY);
+        const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+
+        if (close >= open) {
+            ctx.fillStyle = '#00c853';
+            ctx.strokeStyle = '#00c853';
+        } else {
+            ctx.fillStyle = '#ff5252';
+            ctx.strokeStyle = '#ff5252';
+        }
+
+        if (bodyHeight <= 1.25) {
+            ctx.beginPath();
+            ctx.moveTo(bodyX, bodyTop);
+            ctx.lineTo(bodyX + bodyWidth, bodyTop);
+            ctx.stroke();
+        } else {
+            ctx.fillRect(bodyX, bodyTop, bodyWidth, bodyHeight);
+        }
+    }
+
+    private downloadEntryShapeImage(kind: 'wins' | 'losses') {
+        const dataUrl = this.entryShapeImageUrls[kind];
+        if (!dataUrl) {
+            uiManager.showToast(`No ${kind} entry-candle image to download`, 'warning');
+            return;
+        }
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = `${state.currentSymbol}-${state.currentInterval}-${kind}-entry-candles.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
     private applyFinderCandidate(candidate: AnalysisFinderCandidate, buttonEl?: HTMLElement): boolean {
         let allApplied = true;
         for (const filter of candidate.filters) {
@@ -730,6 +921,34 @@ class AnalysisPanel {
         const btn = document.getElementById('runAnalysisBtn');
         if (btn) {
             btn.addEventListener('click', () => this.runAnalysis());
+        }
+        const renderEntryShapesBtn = document.getElementById('analysisRenderEntryShapesBtn');
+        if (renderEntryShapesBtn) {
+            renderEntryShapesBtn.addEventListener('click', () => {
+                const result = state.currentBacktestResult;
+                if (result?.trades?.length) {
+                    this.renderEntryShapeSection(result.trades);
+                } else {
+                    this.hideEntryShapeSection();
+                }
+            });
+        }
+        const downloadWinsBtn = document.getElementById('analysisDownloadWinsShapeBtn');
+        if (downloadWinsBtn) {
+            downloadWinsBtn.addEventListener('click', () => this.downloadEntryShapeImage('wins'));
+        }
+        const downloadLossesBtn = document.getElementById('analysisDownloadLossesShapeBtn');
+        if (downloadLossesBtn) {
+            downloadLossesBtn.addEventListener('click', () => this.downloadEntryShapeImage('losses'));
+        }
+        const entryShapeMaxCandlesInput = document.getElementById('analysisEntryShapeMaxCandles') as HTMLInputElement | null;
+        if (entryShapeMaxCandlesInput) {
+            entryShapeMaxCandlesInput.addEventListener('change', () => {
+                const result = state.currentBacktestResult;
+                if (result?.trades?.length) {
+                    this.renderEntryShapeSection(result.trades);
+                }
+            });
         }
         const runFinderBtn = document.getElementById('analysisRunFinderBtn');
         if (runFinderBtn) {

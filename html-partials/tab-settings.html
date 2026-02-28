@@ -853,6 +853,35 @@
                 </div>
             </div>
 
+            <div class="param-row snapshot-filter-row">
+                <div class="param-group" style="flex: 1;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Opposite Wick %
+                            <span class="tooltip-icon"
+                                data-tooltip="Percent of candle range in the opposite direction. Lower values usually indicate cleaner momentum entries.">&#9432;</span>
+                        </label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle Opposite Wick filter">
+                            <input type="checkbox" id="snapshotOppositeWickFilterToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotOppositeWickMin" value="0" min="0"
+                                max="100" step="1">
+                            <div class="param-hint">Min %</div>
+                        </div>
+                        <div style="flex: 1;">
+                            <input type="number" class="param-input" id="snapshotOppositeWickMax" value="0" min="0"
+                                max="100" step="1">
+                            <div class="param-hint">Max %</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
 
             <div class="param-row snapshot-filter-row">
                 <div class="param-group" style="flex: 1;">

@@ -38,6 +38,37 @@
             </div>
         </div>
 
+        <div class="analysis-entry-shapes" id="analysisEntryShapes" style="display: none;">
+            <div class="analysis-entry-shapes-header">
+                <h4 class="analysis-finder-title">Entry Candle Shapes</h4>
+                <div class="analysis-finder-controls">
+                    <label class="analysis-control" for="analysisEntryShapeMaxCandles">
+                        <span>Max Candles</span>
+                        <input type="number" id="analysisEntryShapeMaxCandles" min="10" max="500" step="10" value="500">
+                    </label>
+                    <button class="btn btn-primary btn-compact" id="analysisRenderEntryShapesBtn" type="button">Render</button>
+                </div>
+            </div>
+            <div class="analysis-entry-shapes-grid">
+                <div class="analysis-entry-shape-card">
+                    <div class="analysis-entry-shape-card-header">
+                        <div class="analysis-entry-shape-title">Winning Entry Candles</div>
+                        <button class="btn-simulate" id="analysisDownloadWinsShapeBtn" type="button">Download PNG</button>
+                    </div>
+                    <div class="analysis-entry-shape-meta" id="analysisWinsShapeMeta"></div>
+                    <canvas class="analysis-entry-shape-canvas" id="analysisWinsShapeCanvas"></canvas>
+                </div>
+                <div class="analysis-entry-shape-card">
+                    <div class="analysis-entry-shape-card-header">
+                        <div class="analysis-entry-shape-title">Losing Entry Candles</div>
+                        <button class="btn-simulate" id="analysisDownloadLossesShapeBtn" type="button">Download PNG</button>
+                    </div>
+                    <div class="analysis-entry-shape-meta" id="analysisLossesShapeMeta"></div>
+                    <canvas class="analysis-entry-shape-canvas" id="analysisLossesShapeCanvas"></canvas>
+                </div>
+            </div>
+        </div>
+
         <div class="analysis-table-wrap">
             <table class="analysis-table" id="analysisTable">
                 <thead>
