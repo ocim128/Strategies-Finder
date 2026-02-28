@@ -230,7 +230,6 @@ export class DataManager {
         
         if (provider === 'binance') {
             const result = await this.fetchBinanceDataHybridWithMeta(symbol, interval, signal, {
-                localOnlyIfPresent: true,
                 maxBars,
             });
             return result;
@@ -469,9 +468,15 @@ export class DataManager {
     ): OHLCVData[] {
         if (candles.length <= 1) return candles.slice();
 
+        // Pre-parse times once to avoid repeated parsing in sort and validation loops
+        const timeCache = new Map<OHLCVData, number | null>();
+        for (const candle of candles) {
+            timeCache.set(candle, parseTimeToUnixSeconds(candle.time));
+        }
+
         const sorted = candles
             .slice()
-            .sort((a, b) => (parseTimeToUnixSeconds(a.time) ?? 0) - (parseTimeToUnixSeconds(b.time) ?? 0));
+            .sort((a, b) => (timeCache.get(a) ?? 0) - (timeCache.get(b) ?? 0));
 
         const cleaned: OHLCVData[] = [];
         let dropped = 0;
@@ -482,7 +487,7 @@ export class DataManager {
             const high = Number(candle.high);
             const low = Number(candle.low);
             const close = Number(candle.close);
-            const timeSec = parseTimeToUnixSeconds(candle.time);
+            const timeSec = timeCache.get(candle) ?? null;
 
             if (
                 timeSec === null ||
@@ -506,7 +511,7 @@ export class DataManager {
                 continue;
             }
 
-            const prevTime = parseTimeToUnixSeconds(prev.time);
+            const prevTime = timeCache.get(prev) ?? null;
             if (prevTime !== null && prevTime === timeSec) {
                 cleaned[cleaned.length - 1] = candle;
                 continue;
@@ -555,7 +560,7 @@ export class DataManager {
         symbol: string,
         interval: string,
         signal?: AbortSignal,
-        options?: { localOnlyIfPresent?: boolean; maxBars?: number }
+        options?: { maxBars?: number }
     ): Promise<OHLCVData[]> {
         const result = await this.fetchBinanceDataHybridInternal(symbol, interval, signal, options);
         return result.data;
@@ -571,7 +576,7 @@ export class DataManager {
         symbol: string,
         interval: string,
         signal?: AbortSignal,
-        options?: { localOnlyIfPresent?: boolean; maxBars?: number }
+        options?: { maxBars?: number }
     ): Promise<{ data: OHLCVData[]; source: 'local' | 'network' }> {
         const result = await this.fetchBinanceDataHybridInternal(symbol, interval, signal, options);
         return { data: result.data, source: result.source };
@@ -585,7 +590,7 @@ export class DataManager {
         symbol: string,
         interval: string,
         signal?: AbortSignal,
-        options?: { localOnlyIfPresent?: boolean; maxBars?: number }
+        options?: { maxBars?: number }
     ): Promise<{ data: OHLCVData[]; source: 'local' | 'network'; cached: { candles: OHLCVData[]; updatedAt: number; source: string } | null; hasSqliteBase: boolean; cacheKey: string; storageInterval: string; effectiveMaxBars: number }> {
         const requestedMaxBars = options?.maxBars;
         const hasMaxBars = typeof requestedMaxBars === 'number' && Number.isFinite(requestedMaxBars);
@@ -661,10 +666,8 @@ export class DataManager {
         const lastSyncAt = this.cacheSyncAtByKey.get(cacheKey) ?? 0;
         const recentlySynced = now - lastSyncAt < DATA_CACHE_SYNC_MIN_MS;
         const hasCachedData = Boolean(cached && cached.candles.length > 0);
-        const localOnlyIfPresent = Boolean(options?.localOnlyIfPresent);
-
-        // Return local-only data if fresh enough
-        if ((localOnlyIfPresent && hasCachedData && recentlySynced) || (hasCachedData && recentlySynced)) {
+        // Return cache immediately when recently synced.
+        if (hasCachedData && recentlySynced) {
             if (cachedSanitized) {
                 await saveCachedCandles(symbol, storageInterval, cached!.candles, 'sanitized');
                 await storeSqliteCandles(symbol, storageInterval, cached!.candles, 'Binance', 'sanitized');

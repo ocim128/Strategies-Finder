@@ -87,14 +87,35 @@ function resolveCurrentConfigName(
     return matched?.name ?? null;
 }
 
-function resolveSubscriptionConfigName(
+type SavedConfig = {
+    name: string;
+    strategyKey: string;
+    strategyParams: unknown;
+    backtestSettings: unknown;
+};
+
+type ConfigIndexEntry = {
+    name: string;
+    strategyKey: string;
+    paramsKey: string;
+    settingsKey: string;
+};
+
+/**
+ * Precompute stable keys for saved configs to avoid repeated stringify in loops.
+ */
+function buildConfigIndex(savedConfigs: SavedConfig[]): ConfigIndexEntry[] {
+    return savedConfigs.map((config) => ({
+        name: config.name,
+        strategyKey: config.strategyKey,
+        paramsKey: stableStringify(config.strategyParams),
+        settingsKey: stableStringify(config.backtestSettings),
+    }));
+}
+
+function resolveSubscriptionConfigNameFromIndex(
     sub: AlertSubscription,
-    savedConfigs: Array<{
-        name: string;
-        strategyKey: string;
-        strategyParams: unknown;
-        backtestSettings: unknown;
-    }>
+    configIndex: ConfigIndexEntry[]
 ): string | null {
     const parsedFromStreamId = parseAlertConfigNameFromStreamId(sub.stream_id);
     if (parsedFromStreamId) return parsedFromStreamId;
@@ -104,13 +125,25 @@ function resolveSubscriptionConfigName(
     const subParamsKey = stableStringify(subParams);
     const subSettingsKey = stableStringify(subSettings);
 
-    const matched = savedConfigs.find((config) =>
+    const matched = configIndex.find((config) =>
         config.strategyKey === sub.strategy_key &&
-        stableStringify(config.strategyParams) === subParamsKey &&
-        stableStringify(config.backtestSettings) === subSettingsKey
+        config.paramsKey === subParamsKey &&
+        config.settingsKey === subSettingsKey
     );
 
     return matched?.name ?? null;
+}
+
+/**
+ * Legacy compatibility: resolve config name from raw saved configs.
+ * Prefer resolveSubscriptionConfigNameFromIndex when calling in batches.
+ */
+function resolveSubscriptionConfigName(
+    sub: AlertSubscription,
+    savedConfigs: SavedConfig[]
+): string | null {
+    const configIndex = buildConfigIndex(savedConfigs);
+    return resolveSubscriptionConfigNameFromIndex(sub, configIndex);
 }
 
 let subscriptionsByStreamId: Map<string, AlertSubscription> = new Map();
@@ -417,6 +450,7 @@ function renderSubscriptions(subs: AlertSubscription[]) {
 
     const active = subs.filter((s) => Number(s.enabled) === 1);
     const savedConfigs = settingsManager.loadAllStrategyConfigs();
+    const configIndex = buildConfigIndex(savedConfigs);
     subscriptionsByStreamId = new Map(subs.map((sub) => [sub.stream_id, sub]));
 
     if (active.length === 0) {
@@ -433,7 +467,7 @@ function renderSubscriptions(subs: AlertSubscription[]) {
         const telegramTag = sub.notify_telegram ? 'TG' : '--';
         const exitTag = sub.notify_exit ? 'EXIT' : '--';
         const lastStatus = sub.last_status ?? '--';
-        const configName = resolveSubscriptionConfigName(sub, savedConfigs);
+        const configName = resolveSubscriptionConfigNameFromIndex(sub, configIndex);
         const parity = resolveSubscriptionParity(sub);
         const paritySuffix = getIntervalSeconds(sub.interval) === 7200 && parity ? ` [2H-${parity}]` : '';
         const strategyDisplay = `${configName ?? sub.strategy_key}${paritySuffix}`;
@@ -472,7 +506,7 @@ function renderSubscriptions(subs: AlertSubscription[]) {
         subs.forEach((sub) => {
             const opt = document.createElement('option');
             opt.value = sub.stream_id;
-            const configName = resolveSubscriptionConfigName(sub, savedConfigs);
+            const configName = resolveSubscriptionConfigNameFromIndex(sub, configIndex);
             const parity = resolveSubscriptionParity(sub);
             const paritySuffix = getIntervalSeconds(sub.interval) === 7200 && parity ? ` | 2H-${parity}` : '';
             opt.textContent = `${sub.symbol} | ${sub.interval}${paritySuffix} | ${configName ?? sub.strategy_key}`;

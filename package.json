@@ -1,7 +1,6 @@
 {
   "scripts": {
     "test": "..\\..\\..\\node_modules\\.bin\\esno strategies.spec.ts",
-    "test:strategies": "npm run test",
     "test:e2e": "..\\..\\..\\node_modules\\.bin\\esno e2e.spec.ts",
     "typecheck": "tsc --noEmit",
     "robust:summary": "node scripts/robust-matrix-summary.mjs",
@@ -15,7 +14,6 @@
     "hunt:massive": "..\\..\\..\\node_modules\\.bin\\esno scripts\\massive-alpha-sweep.ts",
     "hunt:walk-forward": "..\\..\\..\\node_modules\\.bin\\esno scripts\\walk-forward-hunt.ts",
     "hunt:quality": "..\\..\\..\\node_modules\\.bin\\esno scripts\\quality-hunt.ts",
-    "alpha:sweep:legacy": "..\\..\\..\\node_modules\\.bin\\esno scripts\\massive-alpha-sweep.ts",
     "signal:tower": "..\\..\\..\\node_modules\\.bin\\esno scripts\\signal-tower.ts",
     "paper:trade": "..\\..\\..\\node_modules\\.bin\\esno scripts\\paper-trader.ts",
     "poly:integrity": "..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-universe-integrity.ts",
@@ -23,7 +21,6 @@
     "poly:behavior": "..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-btc5m-behavior.ts",
     "alpha:evolve": "..\\..\\..\\node_modules\\.bin\\esno scripts\\strategy-evolution-sweep.ts",
     "alpha:surgical": "..\\..\\..\\node_modules\\.bin\\esno scripts\\surgical-optimization.ts",
-    "optimize:surgical": "..\\..\\..\\node_modules\\.bin\\esno scripts\\surgical-optimization.ts",
     "build:types": "tsc -p tsconfig.types.json",
     "dev": "vite",
     "build": "vite build"

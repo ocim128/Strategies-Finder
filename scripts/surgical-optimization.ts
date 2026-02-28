@@ -46,7 +46,7 @@ type StrategySurgicalResult = {
 const DEFAULT_STRATEGIES = ["meta_harvest_v2", "bear_hunter_v5"];
 
 function usage(): void {
-  console.log(["Usage: npm run optimize:surgical", "Defaults: XRPUSDT 15m, pop=200, gens=150, runs=5"].join("\n"));
+  console.log(["Usage: npm run alpha:surgical", "Defaults: XRPUSDT 15m, pop=200, gens=150, runs=5"].join("\n"));
 }
 
 function num(v: string | undefined, d: number): number { const x = Number(v); return Number.isFinite(x) ? x : d; }

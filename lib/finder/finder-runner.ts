@@ -27,6 +27,7 @@ import { FinderResultRanker } from "./finder-result-ranker";
 import { hasNonZeroSnapshotFilter, sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { FinderDataset } from "./finder-timeframe-loader";
 import type { EndpointSelectionAdjustment, FinderOptions, FinderResult } from "../types/finder";
+import type { TradeDirection, TradeFilterMode } from "../types/strategies";
 import { trimToClosedCandles } from "../closed-candle-utils";
 
 export interface FinderSelectedStrategy {
@@ -94,6 +95,35 @@ type FinderDatasetFlags = {
 };
 
 type CandidateResult = Omit<FinderResult, "selectionResult" | "endpointAdjusted" | "endpointRemovedTrades">;
+
+function resolveTradeFilterMode(settings: BacktestSettings): TradeFilterMode {
+    const mode = settings.tradeFilterMode ?? settings.entryConfirmation;
+    if (
+        mode === "none" ||
+        mode === "close" ||
+        mode === "volume" ||
+        mode === "rsi" ||
+        mode === "trend" ||
+        mode === "adx" ||
+        mode === "htf_drift"
+    ) {
+        return mode;
+    }
+    return "none";
+}
+
+function resolveTradeDirection(settings: BacktestSettings): TradeDirection {
+    const direction = settings.tradeDirection;
+    if (
+        direction === "long" ||
+        direction === "short" ||
+        direction === "both" ||
+        direction === "combined"
+    ) {
+        return direction;
+    }
+    return "long";
+}
 
 function clampPercentValue(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
@@ -542,6 +572,82 @@ interface SingleTimeframeRunParams {
     rustSettings: BacktestSettings;
 }
 
+/**
+ * Shared helper to generate and filter signals for a job.
+ * Extracted to eliminate duplication between TS and Rust branches.
+ */
+function generateAndFilterSignalsForJob(
+    job: ParamJob,
+    data: OHLCVData[],
+    confirmationContext: { states: Int8Array[]; params?: Record<string, StrategyParams> },
+    tradeFilterMode: TradeFilterMode,
+    tradeDirection: TradeDirection
+): { signals: Signal[]; confirmationParams?: Record<string, StrategyParams> } {
+    let signals = job.strategy.execute(data, job.params);
+    if (confirmationContext.states.length > 0) {
+        signals = (job.strategy.metadata?.role === "entry" || tradeDirection === "both" || tradeDirection === "combined")
+            ? filterSignalsWithConfirmationsBoth(
+                data,
+                signals,
+                confirmationContext.states,
+                tradeFilterMode
+            )
+            : filterSignalsWithConfirmations(
+                data,
+                signals,
+                confirmationContext.states,
+                tradeFilterMode,
+                tradeDirection
+            );
+    }
+    return { signals, confirmationParams: confirmationContext.params };
+}
+
+/**
+ * Shared helper to run backtest and insert result.
+ * Eliminates duplication between TS fallback paths.
+ */
+function runBacktestAndInsert(
+    data: OHLCVData[],
+    signals: Signal[],
+    job: ParamJob,
+    backtestFn: typeof runBacktest,
+    initialCapital: number,
+    positionSize: number,
+    commission: number,
+    sizingMode: "percent" | "fixed",
+    fixedTradeAmount: number,
+    precomputed: ReturnType<typeof precomputeIndicators>,
+    insertResult: (candidate: CandidateResult) => void,
+    confirmationParams?: Record<string, StrategyParams>
+): void {
+    try {
+        const evaluation = job.strategy.evaluate?.(data, job.params, signals);
+        const entryStats = evaluation?.entryStats;
+        const result = job.strategy.metadata?.role === "entry" && entryStats
+            ? buildEntryBacktestResult(entryStats)
+            : backtestFn(
+                data,
+                signals,
+                initialCapital,
+                positionSize,
+                commission,
+                job.backtestSettings,
+                { mode: sizingMode, fixedTradeAmount },
+                precomputed
+            );
+        insertResult({
+            key: job.key,
+            name: job.name,
+            params: job.params,
+            result,
+            confirmationParams,
+        });
+    } catch (error) {
+        console.warn(`[Finder] Backtest failed for ${job.key}:`, error);
+    }
+}
+
 async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<FinderRunOutput> {
     const {
         input,
@@ -681,48 +787,32 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         batchNum++;
 
         if (!useRustForFinder) {
+            const tradeFilterMode = resolveTradeFilterMode(input.settings);
+            const tradeDirection = resolveTradeDirection(input.settings);
             for (const job of batchJobs) {
                 try {
                     const confirmationContext = buildConfirmationContext();
-                    let signals = job.strategy.execute(closedData, job.params);
-                    if (confirmationContext.states.length > 0) {
-                        signals = (job.strategy.metadata?.role === "entry" || input.settings.tradeDirection === "both" || input.settings.tradeDirection === "combined")
-                            ? filterSignalsWithConfirmationsBoth(
-                                closedData,
-                                signals,
-                                confirmationContext.states,
-                                input.settings.tradeFilterMode ?? input.settings.entryConfirmation ?? "none"
-                            )
-                            : filterSignalsWithConfirmations(
-                                closedData,
-                                signals,
-                                confirmationContext.states,
-                                input.settings.tradeFilterMode ?? input.settings.entryConfirmation ?? "none",
-                                input.settings.tradeDirection ?? "long"
-                            );
-                    }
-
-                    const evaluation = job.strategy.evaluate?.(closedData, job.params, signals);
-                    const entryStats = evaluation?.entryStats;
-                    const result = job.strategy.metadata?.role === "entry" && entryStats
-                        ? buildEntryBacktestResult(entryStats)
-                        : backtestFn(
-                            closedData,
-                            signals,
-                            initialCapital,
-                            positionSize,
-                            commission,
-                            job.backtestSettings,
-                            { mode: sizingMode, fixedTradeAmount },
-                            singleTfPrecomputed
-                        );
-                    insertResult({
-                        key: job.key,
-                        name: job.name,
-                        params: job.params,
-                        result,
-                        confirmationParams: confirmationContext.params,
-                    });
+                    const { signals, confirmationParams } = generateAndFilterSignalsForJob(
+                        job,
+                        closedData,
+                        confirmationContext,
+                        tradeFilterMode,
+                        tradeDirection
+                    );
+                    runBacktestAndInsert(
+                        closedData,
+                        signals,
+                        job,
+                        backtestFn,
+                        initialCapital,
+                        positionSize,
+                        commission,
+                        sizingMode,
+                        fixedTradeAmount,
+                        singleTfPrecomputed,
+                        insertResult,
+                        confirmationParams
+                    );
                 } catch (error) {
                     console.warn(`[Finder] Backtest failed for ${job.key}:`, error);
                 }
@@ -746,60 +836,42 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
 
         type PreparedRun = {
             id: string;
-            key: string;
-            name: string;
-            params: StrategyParams;
+            job: ParamJob;
             signals: Signal[];
-            backtestSettings: BacktestSettings;
-            rustBacktestSettings: BacktestSettings;
             confirmationParams?: Record<string, StrategyParams>;
         };
         const batchRuns: PreparedRun[] = [];
 
         const runBacktestFallback = (run: PreparedRun): void => {
-            try {
-                const result = backtestFn(
-                    closedData,
-                    run.signals,
-                    initialCapital,
-                    positionSize,
-                    commission,
-                    run.backtestSettings,
-                    { mode: sizingMode, fixedTradeAmount },
-                    singleTfPrecomputed
-                );
-                insertResult({
-                    key: run.key,
-                    name: run.name,
-                    params: run.params,
-                    result,
-                    confirmationParams: run.confirmationParams,
-                });
-            } catch (error) {
-                console.warn(`[Finder] Backtest failed for ${run.key}:`, error);
-            }
+            runBacktestAndInsert(
+                closedData,
+                run.signals,
+                run.job,
+                backtestFn,
+                initialCapital,
+                positionSize,
+                commission,
+                sizingMode,
+                fixedTradeAmount,
+                singleTfPrecomputed,
+                insertResult,
+                run.confirmationParams
+            );
         };
+
+        const tradeFilterMode = resolveTradeFilterMode(input.settings);
+        const tradeDirection = resolveTradeDirection(input.settings);
 
         for (const job of batchJobs) {
             try {
                 const confirmationContext = buildConfirmationContext();
-                let signals = job.strategy.execute(closedData, job.params);
-                if (confirmationContext.states.length > 0) {
-                    signals = (job.strategy.metadata?.role === "entry" || input.settings.tradeDirection === "both" || input.settings.tradeDirection === "combined")
-                        ? filterSignalsWithConfirmationsBoth(
-                            closedData,
-                            signals,
-                            confirmationContext.states,
-                            input.settings.tradeFilterMode ?? input.settings.entryConfirmation ?? "none"
-                        )
-                        : filterSignalsWithConfirmations(
-                            closedData,
-                            signals,
-                            confirmationContext.states,
-                            input.settings.tradeFilterMode ?? input.settings.entryConfirmation ?? "none",
-                            input.settings.tradeDirection ?? "long"
-                        );
-                }
+                const { signals, confirmationParams } = generateAndFilterSignalsForJob(
+                    job,
+                    closedData,
+                    confirmationContext,
+                    tradeFilterMode,
+                    tradeDirection
+                );
 
                 const evaluation = job.strategy.evaluate?.(closedData, job.params, signals);
                 const entryStats = evaluation?.entryStats;
@@ -810,7 +882,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                         name: job.name,
                         params: job.params,
                         result,
-                        confirmationParams: confirmationContext.params,
+                        confirmationParams,
                     });
                     signals.length = 0;
                     continue;
@@ -818,13 +890,9 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
 
                 batchRuns.push({
                     id: `${job.key}-${job.id}`,
-                    key: job.key,
-                    name: job.name,
-                    params: job.params,
+                    job,
                     signals,
-                    backtestSettings: job.backtestSettings,
-                    rustBacktestSettings: job.rustBacktestSettings,
-                    confirmationParams: confirmationContext.params,
+                    confirmationParams,
                 });
             } catch (error) {
                 console.warn(`[Finder] Signal generation failed for ${job.key}:`, error);
@@ -840,7 +908,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         const batchItems = batchRuns.map((run) => ({
             id: run.id,
             signals: run.signals,
-            settings: run.rustBacktestSettings,
+            settings: run.job.rustBacktestSettings,
         }));
 
         try {
@@ -878,15 +946,15 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                     }
 
                     if (!isBacktestResultConsistent(batchEntry.result)) {
-                        debugLogger.warn(`[Finder] Rust batch result inconsistent for ${run.key}, using TypeScript fallback.`);
+                        debugLogger.warn(`[Finder] Rust batch result inconsistent for ${run.job.key}, using TypeScript fallback.`);
                         runBacktestFallback(run);
                         continue;
                     }
 
                     insertResult({
-                        key: run.key,
-                        name: run.name,
-                        params: run.params,
+                        key: run.job.key,
+                        name: run.job.name,
+                        params: run.job.params,
                         result: batchEntry.result,
                         confirmationParams: run.confirmationParams,
                     });
