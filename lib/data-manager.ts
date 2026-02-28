@@ -146,6 +146,18 @@ export class DataManager {
         return 'binance';
     }
 
+    public setProviderOverride(symbol: string, provider: 'binance' | 'bybit-tradfi' | 'polymarket' | null): void {
+        const normalizedSymbol = symbol.trim().toUpperCase();
+        if (!normalizedSymbol) return;
+
+        if (!provider || provider === 'binance') {
+            this.nonBinanceProviderOverride.delete(normalizedSymbol);
+            return;
+        }
+
+        this.nonBinanceProviderOverride.set(normalizedSymbol, provider);
+    }
+
     public async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
         const lookbackBars = this.chartLookbackBars;
         const resampleOptions = this.getResampleOptions(interval);
@@ -161,6 +173,12 @@ export class DataManager {
         }
 
         const provider = this.getProvider(symbol);
+        if (provider !== 'binance') {
+            const seedData = await loadSeedCandlesFromPriceData(symbol, interval, signal);
+            if (seedData && seedData.length > 0) {
+                return typeof lookbackBars === 'number' ? seedData.slice(-lookbackBars) : seedData;
+            }
+        }
 
         if (provider === 'binance') {
             return this.fetchBinanceDataHybrid(symbol, interval, signal, {
@@ -227,6 +245,16 @@ export class DataManager {
             ? Math.max(200, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(lookbackBars!)))
             : 1000;
         const resampleOptions = this.getResampleOptions(interval);
+
+        if (provider !== 'binance') {
+            const seedData = await loadSeedCandlesFromPriceData(symbol, interval, signal);
+            if (seedData && seedData.length > 0) {
+                return {
+                    data: seedData.slice(-maxBars),
+                    source: 'local',
+                };
+            }
+        }
         
         if (provider === 'binance') {
             const result = await this.fetchBinanceDataHybridWithMeta(symbol, interval, signal, {

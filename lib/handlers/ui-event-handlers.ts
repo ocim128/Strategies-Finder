@@ -124,6 +124,7 @@ export function setupEventHandlers() {
             const item = document.createElement('div');
             item.className = 'symbol-search-item';
             item.dataset.symbol = asset.symbol;
+            item.dataset.provider = asset.provider;
             item.role = 'button';
             item.tabIndex = 0;
 
@@ -171,13 +172,13 @@ export function setupEventHandlers() {
             item.appendChild(details);
 
             // Click handler
-            item.addEventListener('click', () => selectSymbol(asset.symbol, asset.displayName));
+            item.addEventListener('click', () => selectSymbol(asset.symbol, asset.displayName, asset.provider));
 
             // Keyboard handler
             item.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    selectSymbol(asset.symbol, asset.displayName);
+                    selectSymbol(asset.symbol, asset.displayName, asset.provider);
                 }
             });
 
@@ -188,7 +189,11 @@ export function setupEventHandlers() {
     };
 
     // Select symbol handler
-    const selectSymbol = (symbol: string, displayName?: string) => {
+    const selectSymbol = (symbol: string, displayName?: string, provider?: Asset['provider']) => {
+        if (provider && provider !== 'mock') {
+            dataManager.setProviderOverride(symbol, provider);
+        }
+
         // Update UI
         document.querySelectorAll('.symbol-search-item, .dropdown-item').forEach(i => i.classList.remove('active'));
         const selectedItem = document.querySelector(`[data-symbol="${symbol}"]`);
@@ -204,7 +209,7 @@ export function setupEventHandlers() {
         symbolSearchClear?.classList.add('is-hidden');
 
         if (symbol !== state.currentSymbol) {
-            debugLogger.event('ui.symbol.select', { symbol, displayName });
+            debugLogger.event('ui.symbol.select', { symbol, displayName, provider });
             state.set('currentSymbol', symbol);
         }
     };
@@ -306,7 +311,8 @@ export function setupEventHandlers() {
                 if (selected) {
                     const symbol = selected.dataset.symbol!;
                     const displayName = selected.querySelector('.symbol-item-name')?.textContent?.trim();
-                    selectSymbol(symbol, displayName);
+                    const provider = selected.dataset.provider as Asset['provider'] | undefined;
+                    selectSymbol(symbol, displayName, provider);
                 }
             } else if (e.key === 'Escape') {
                 symbolDropdown.classList.remove('active');

@@ -32,6 +32,10 @@ export type CachedCandles = {
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 const missingSeedFiles = new Set<string>();
+const missingSp500CsvFiles = new Set<string>();
+const sp500CsvCache = new Map<string, OHLCVData[]>();
+const SP500_INDIVIDUAL_ANALYSIS_BASE_PATH =
+    '/price-data/sp500_comprehensive_dataset/sp500_comprehensive/individual_analysis';
 
 function toCacheKey(symbol: string, interval: string): string {
     return `${symbol.trim().toUpperCase()}::${interval.trim().toLowerCase()}`;
@@ -128,6 +132,161 @@ function parseRawCandle(row: unknown): OHLCVData | null {
         const close = Number(value.close ?? value.c);
         const volume = Number(value.volume ?? value.v ?? 0);
         return buildCandle(time, open, high, low, close, volume);
+    }
+
+    return null;
+}
+
+function parseCsvLine(line: string): string[] {
+    const values: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i += 1) {
+        const ch = line[i];
+        if (ch === '"') {
+            if (inQuotes && line[i + 1] === '"') {
+                current += '"';
+                i += 1;
+                continue;
+            }
+            inQuotes = !inQuotes;
+            continue;
+        }
+        if (ch === ',' && !inQuotes) {
+            values.push(current.trim());
+            current = '';
+            continue;
+        }
+        current += ch;
+    }
+
+    values.push(current.trim());
+    return values;
+}
+
+function normalizeSp500Date(raw: string): string {
+    const trimmed = raw.trim();
+    if (!trimmed) return trimmed;
+    if (trimmed.includes('T')) return trimmed;
+    if (trimmed.includes(' ')) {
+        return trimmed.replace(' ', 'T');
+    }
+    return trimmed;
+}
+
+function extractCandlesFromCsvPayload(payload: string): OHLCVData[] {
+    const lines = payload
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    if (lines.length <= 1) return [];
+
+    const header = parseCsvLine(lines[0]).map((value) => value.toLowerCase());
+    const dateIdx = header.findIndex((value) => value === 'date' || value === 'time' || value === 'timestamp');
+    const openIdx = header.indexOf('open');
+    const highIdx = header.indexOf('high');
+    const lowIdx = header.indexOf('low');
+    const closeIdx = header.indexOf('close');
+    const volumeIdx = header.indexOf('volume');
+
+    if (dateIdx < 0 || openIdx < 0 || highIdx < 0 || lowIdx < 0 || closeIdx < 0) {
+        return [];
+    }
+
+    const candles: OHLCVData[] = [];
+    for (let i = 1; i < lines.length; i += 1) {
+        const columns = parseCsvLine(lines[i]);
+        if (columns.length <= closeIdx) continue;
+
+        const time = parseTimeToUnixSeconds(normalizeSp500Date(columns[dateIdx] ?? ''));
+        const open = Number(columns[openIdx]);
+        const high = Number(columns[highIdx]);
+        const low = Number(columns[lowIdx]);
+        const close = Number(columns[closeIdx]);
+        const volume = volumeIdx >= 0 ? Number(columns[volumeIdx] ?? 0) : 0;
+        const candle = buildCandle(time, open, high, low, close, volume);
+        if (candle) {
+            candles.push(candle);
+        }
+    }
+
+    return sanitizeCandles(candles);
+}
+
+function buildSp500SymbolCandidates(symbol: string): string[] {
+    const normalized = symbol.trim().toUpperCase().replace(/\s+/g, '').replace(/\//g, '');
+    if (!normalized) return [];
+
+    const candidates = new Set<string>();
+    const addCandidate = (value: string) => {
+        const next = value.trim().toUpperCase();
+        if (next) {
+            candidates.add(next);
+        }
+    };
+
+    addCandidate(normalized);
+    if (normalized.endsWith('.S')) {
+        addCandidate(normalized.slice(0, -2));
+    }
+    if (normalized.endsWith('+')) {
+        addCandidate(normalized.slice(0, -1));
+    }
+    if (normalized.includes('.')) {
+        addCandidate(normalized.replace(/\./g, '-'));
+    }
+    if (normalized.includes('-')) {
+        addCandidate(normalized.replace(/-/g, '.'));
+    }
+
+    return Array.from(candidates);
+}
+
+async function loadSp500IndividualAnalysisCandles(
+    symbol: string,
+    interval: string,
+    signal?: AbortSignal
+): Promise<OHLCVData[] | null> {
+    const baseInterval = interval.trim().toLowerCase().split('@')[0];
+    if (baseInterval !== '1d') return null;
+
+    const candidates = buildSp500SymbolCandidates(symbol);
+    for (const candidate of candidates) {
+        if (sp500CsvCache.has(candidate)) {
+            return sp500CsvCache.get(candidate)!;
+        }
+        if (missingSp500CsvFiles.has(candidate)) {
+            continue;
+        }
+
+        const filePath = `${SP500_INDIVIDUAL_ANALYSIS_BASE_PATH}/${encodeURIComponent(candidate)}.csv`;
+        try {
+            const response = await fetch(filePath, {
+                signal,
+                cache: 'no-store',
+            });
+
+            if (response.status === 404) {
+                missingSp500CsvFiles.add(candidate);
+                continue;
+            }
+            if (!response.ok) {
+                continue;
+            }
+
+            const payload = await response.text();
+            const candles = extractCandlesFromCsvPayload(payload);
+            if (candles.length === 0) {
+                missingSp500CsvFiles.add(candidate);
+                continue;
+            }
+
+            sp500CsvCache.set(candidate, candles);
+            return candles;
+        } catch {
+            return null;
+        }
     }
 
     return null;
@@ -280,6 +439,8 @@ export async function loadSeedCandlesFromPriceData(
 
     const fileName = `${normalizedSymbol}-${normalizedInterval}.json`;
     const filePath = `/price-data/${fileName}`;
+    let markMissing = false;
+
     try {
         const response = await fetch(filePath, {
             signal,
@@ -287,21 +448,29 @@ export async function loadSeedCandlesFromPriceData(
         });
 
         if (response.status === 404) {
-            missingSeedFiles.add(key);
+            markMissing = true;
+        } else if (response.ok) {
+            const payload = await response.json();
+            const candles = extractCandlesFromPayload(payload);
+            if (candles.length > 0) {
+                return candles;
+            }
+            markMissing = true;
+        } else {
             return null;
         }
-        if (!response.ok) {
-            return null;
-        }
-
-        const payload = await response.json();
-        const candles = extractCandlesFromPayload(payload);
-        if (candles.length === 0) {
-            missingSeedFiles.add(key);
-            return null;
-        }
-        return candles;
     } catch {
-        return null;
+        // Keep fallback path below.
     }
+
+    const sp500Candles = await loadSp500IndividualAnalysisCandles(normalizedSymbol, normalizedInterval, signal);
+    if (sp500Candles && sp500Candles.length > 0) {
+        return sp500Candles;
+    }
+
+    if (markMissing) {
+        missingSeedFiles.add(key);
+    }
+
+    return null;
 }

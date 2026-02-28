@@ -5,6 +5,7 @@
 
 import { binanceSearchService, BinanceSymbol } from './binance-search-service';
 import { tradfiSearchService, type TradFiSymbol } from './tradfi-search-service';
+import { getLocalSp500Assets, searchLocalSp500Assets } from './local-sp500-catalog';
 import {
     formatPolymarketDisplayName,
     parsePolymarketEventInput,
@@ -26,6 +27,15 @@ export interface Asset {
 const POPULAR_ASSETS: Asset[] = [];
 
 class AssetSearchService {
+    private mapLocalSp500Asset(asset: { symbol: string; name: string }): Asset {
+        return {
+            symbol: asset.symbol,
+            displayName: asset.name,
+            type: 'stock',
+            provider: 'bybit-tradfi',
+        };
+    }
+
     private mapPolymarketAsset(query: string): Asset | null {
         const parsed = parsePolymarketEventInput(query);
         if (!parsed) return null;
@@ -62,7 +72,17 @@ class AssetSearchService {
      */
     async searchAssets(query: string, limit = 50): Promise<Asset[]> {
         if (!query.trim()) {
-            return this.getPopularAssets(limit);
+            const popular = this.getPopularAssets(limit);
+            try {
+                const localSp500 = await searchLocalSp500Assets('', limit);
+                const merged = this.dedupeAssets([
+                    ...popular,
+                    ...localSp500.map(asset => this.mapLocalSp500Asset(asset)),
+                ]);
+                return merged.slice(0, limit);
+            } catch {
+                return popular;
+            }
         }
 
         const results: Asset[] = [];
@@ -78,6 +98,14 @@ class AssetSearchService {
             results.push(...tradfiResults.map(symbol => this.mapTradFiAsset(symbol)));
         } catch (error) {
             console.warn('Bybit TradFi search failed:', error);
+        }
+
+        // Search local S&P500 dataset symbols
+        try {
+            const localSp500 = await searchLocalSp500Assets(query, Math.floor(limit / 2) + 10);
+            results.push(...localSp500.map(asset => this.mapLocalSp500Asset(asset)));
+        } catch (error) {
+            console.warn('Local S&P500 search failed:', error);
         }
 
         // Search Binance (crypto)
@@ -180,6 +208,16 @@ class AssetSearchService {
             return true;
         }
 
+        try {
+            const localSp500 = await getLocalSp500Assets();
+            const normalized = symbol.trim().toUpperCase();
+            if (localSp500.some(asset => asset.symbol.toUpperCase() === normalized)) {
+                return true;
+            }
+        } catch {
+            // Continue to other checks
+        }
+
         // Check if it's a known popular asset
         if (POPULAR_ASSETS.some(a => a.symbol === symbol)) {
             return true;
@@ -206,6 +244,17 @@ class AssetSearchService {
         const tradfiAsset = tradfiSearchService.getSymbolInfo(symbol);
         if (tradfiAsset) {
             return this.mapTradFiAsset(tradfiAsset);
+        }
+
+        try {
+            const normalized = symbol.trim().toUpperCase();
+            const localSp500 = await getLocalSp500Assets();
+            const localAsset = localSp500.find(asset => asset.symbol.toUpperCase() === normalized);
+            if (localAsset) {
+                return this.mapLocalSp500Asset(localAsset);
+            }
+        } catch {
+            // Continue
         }
 
         // Check popular assets first
