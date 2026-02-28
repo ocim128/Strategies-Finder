@@ -460,6 +460,35 @@ export class DataManager {
         return isTwoHourParityAlignedFromTime(candles, parity);
     }
 
+    private getIntervalAlignment(interval: string): { intervalSeconds: number; phaseOffsetSeconds: number } | null {
+        const normalized = interval.trim().toLowerCase();
+        const baseInterval = normalized.split('@')[0];
+        const intervalSeconds = getIntervalSeconds(baseInterval);
+        if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
+            return null;
+        }
+
+        // Keep weekly/monthly anchors untouched to avoid provider-dependent boundary assumptions.
+        if (intervalSeconds > 86400) {
+            return null;
+        }
+
+        const phaseOffsetSeconds = intervalSeconds === 7200 && normalized.includes('@close-even')
+            ? 3600
+            : 0;
+        return { intervalSeconds, phaseOffsetSeconds };
+    }
+
+    private isIntervalAlignedTime(timeSec: number, interval: string): boolean {
+        if (!Number.isFinite(timeSec)) return false;
+        const alignment = this.getIntervalAlignment(interval);
+        if (!alignment) return true;
+
+        const { intervalSeconds, phaseOffsetSeconds } = alignment;
+        const remainder = ((timeSec - phaseOffsetSeconds) % intervalSeconds + intervalSeconds) % intervalSeconds;
+        return remainder === 0;
+    }
+
     private sanitizeBinanceCandles(
         symbol: string,
         interval: string,
@@ -501,6 +530,10 @@ export class DataManager {
                 close <= 0 ||
                 low > high
             ) {
+                dropped += 1;
+                continue;
+            }
+            if (!this.isIntervalAlignedTime(timeSec, interval)) {
                 dropped += 1;
                 continue;
             }
@@ -951,6 +984,17 @@ export class DataManager {
     }
 
     private applyRealtimeCandle(updatedCandle: OHLCVData): void {
+        const streamInterval = this.streamInterval || state.currentInterval;
+        const updatedTimeSec = parseTimeToUnixSeconds(updatedCandle.time);
+        if (updatedTimeSec === null || !this.isIntervalAlignedTime(updatedTimeSec, streamInterval)) {
+            debugLogger.warn('data.stream.rejected_misaligned_candle', {
+                symbol: this.streamSymbol || state.currentSymbol,
+                interval: streamInterval,
+                time: updatedCandle.time,
+            });
+            return;
+        }
+
         const currentData = state.ohlcvData;
         let changed = false;
         if (currentData.length === 0) {
