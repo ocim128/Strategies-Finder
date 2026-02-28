@@ -283,6 +283,9 @@ export function analyzeTradePatterns(trades: Trade[], options: AnalysisOptions =
 /**
  * Simulate applying a filter to trades and return projected metrics.
  * Now includes expectancy and profit factor alongside win rate.
+ * 
+ * SINGLE-PASS OPTIMIZED: Computes all metrics in one traversal to minimize
+ * array allocations and iterations over large trade sets.
  */
 export function simulateFilter(
     trades: Trade[],
@@ -290,53 +293,79 @@ export function simulateFilter(
     direction: 'above' | 'below',
     threshold: number
 ): FilterSimulationResult {
-    const tradesWithSnapshots = trades.filter(t => t.entrySnapshot);
-    const originalWins = tradesWithSnapshots.filter(t => t.pnl > 0).length;
-    const originalWinRate = tradesWithSnapshots.length > 0
-        ? (originalWins / tradesWithSnapshots.length) * 100
-        : 0;
-    const originalNetPnl = tradesWithSnapshots.reduce((sum, t) => sum + t.pnl, 0);
-    const originalExpectancy = tradesWithSnapshots.length > 0
-        ? originalNetPnl / tradesWithSnapshots.length
-        : 0;
-    const originalMaxDrawdown = computeMaxDrawdownFromTradeSequence(tradesWithSnapshots);
-
-    const remaining = tradesWithSnapshots.filter(t => {
-        const val = t.entrySnapshot![feature] as number | null;
-        if (val === null || val === undefined) return true; // Keep trades without data
-        return direction === 'above' ? val >= threshold : val <= threshold;
-    });
-
-    const filteredWins = remaining.filter(t => t.pnl > 0).length;
-    const filteredWinRate = remaining.length > 0
-        ? (filteredWins / remaining.length) * 100
-        : 0;
-
-    const filteredNetPnl = remaining.reduce((sum, t) => sum + t.pnl, 0);
-    const filteredExpectancy = remaining.length > 0
-        ? filteredNetPnl / remaining.length
-        : 0;
-
-    // Profit factor
-    const filteredGrossProfit = remaining.filter(t => t.pnl > 0).reduce((s, t) => s + t.pnl, 0);
-    const filteredGrossLoss = Math.abs(remaining.filter(t => t.pnl <= 0).reduce((s, t) => s + t.pnl, 0));
+    // Single pass to compute original stats AND filter in one go
+    let originalWins = 0;
+    let originalNetPnl = 0;
+    let originalEquity = 0;
+    let originalPeak = 0;
+    let originalMaxDrawdown = 0;
+    
+    let filteredWins = 0;
+    let filteredLosses = 0;
+    let filteredNetPnl = 0;
+    let filteredGrossProfit = 0;
+    let filteredGrossLoss = 0;
+    let filteredEquity = 0;
+    let filteredPeak = 0;
+    let filteredMaxDrawdown = 0;
+    let remainingCount = 0;
+    
+    for (const t of trades) {
+        if (!t.entrySnapshot) continue;
+        
+        // Original stats computation
+        const pnl = t.pnl;
+        originalNetPnl += pnl;
+        if (pnl > 0) originalWins++;
+        originalEquity += pnl;
+        if (originalEquity > originalPeak) originalPeak = originalEquity;
+        const originalDD = originalPeak - originalEquity;
+        if (originalDD > originalMaxDrawdown) originalMaxDrawdown = originalDD;
+        
+        // Filter check
+        const val = t.entrySnapshot[feature] as number | null;
+        const passesFilter = val === null || val === undefined 
+            ? true 
+            : direction === 'above' ? val >= threshold : val <= threshold;
+        
+        if (passesFilter) {
+            remainingCount++;
+            filteredNetPnl += pnl;
+            if (pnl > 0) {
+                filteredWins++;
+                filteredGrossProfit += pnl;
+            } else {
+                filteredLosses++;
+                filteredGrossLoss += Math.abs(pnl);
+            }
+            filteredEquity += pnl;
+            if (filteredEquity > filteredPeak) filteredPeak = filteredEquity;
+            const filteredDD = filteredPeak - filteredEquity;
+            if (filteredDD > filteredMaxDrawdown) filteredMaxDrawdown = filteredDD;
+        }
+    }
+    
+    const totalWithSnapshots = originalWins + (trades.filter(t => t.entrySnapshot && t.pnl <= 0).length);
+    const originalTrades = totalWithSnapshots;
+    const removedCount = originalTrades - remainingCount;
+    
+    const originalWinRate = originalTrades > 0 ? (originalWins / originalTrades) * 100 : 0;
+    const originalExpectancy = originalTrades > 0 ? originalNetPnl / originalTrades : 0;
+    
+    const filteredWinRate = remainingCount > 0 ? (filteredWins / remainingCount) * 100 : 0;
+    const filteredExpectancy = remainingCount > 0 ? filteredNetPnl / remainingCount : 0;
     const filteredProfitFactor = filteredGrossLoss > 0
         ? filteredGrossProfit / filteredGrossLoss
         : filteredGrossProfit > 0 ? Infinity : 0;
-    const filteredMaxDrawdown = computeMaxDrawdownFromTradeSequence(remaining);
-
-    const removedCount = tradesWithSnapshots.length - remaining.length;
 
     return {
         feature,
         direction,
         threshold,
-        originalTrades: tradesWithSnapshots.length,
-        remainingTrades: remaining.length,
+        originalTrades,
+        remainingTrades: remainingCount,
         removedTrades: removedCount,
-        removedPercent: tradesWithSnapshots.length > 0
-            ? (removedCount / tradesWithSnapshots.length) * 100
-            : 0,
+        removedPercent: originalTrades > 0 ? (removedCount / originalTrades) * 100 : 0,
         originalWinRate,
         filteredWinRate,
         winRateImprovement: filteredWinRate - originalWinRate,
@@ -381,21 +410,6 @@ function computeStats(values: number[]): FeatureStats {
     const stddev = Math.sqrt(variance);
 
     return { mean, median, stddev, count };
-}
-
-function computeMaxDrawdownFromTradeSequence(trades: Trade[]): number {
-    let equity = 0;
-    let peak = 0;
-    let maxDrawdown = 0;
-
-    for (const trade of trades) {
-        equity += trade.pnl;
-        if (equity > peak) peak = equity;
-        const drawdown = peak - equity;
-        if (drawdown > maxDrawdown) maxDrawdown = drawdown;
-    }
-
-    return maxDrawdown;
 }
 
 /**
@@ -566,64 +580,103 @@ export interface ComboFilterResult {
 /**
  * Simulate applying multiple filters simultaneously (AND logic).
  * A trade is kept only if it passes ALL filter conditions.
+ * 
+ * SINGLE-PASS OPTIMIZED: Computes all metrics in one traversal to minimize
+ * array allocations and iterations over large trade sets.
  */
 export function simulateComboFilter(
     trades: Trade[],
     filters: ComboFilterEntry[]
 ): ComboFilterResult {
-    const tradesWithSnapshots = trades.filter(t => t.entrySnapshot);
-    const originalWins = tradesWithSnapshots.filter(t => t.pnl > 0).length;
-    const originalLosses = tradesWithSnapshots.length - originalWins;
-    const originalWinRate = tradesWithSnapshots.length > 0
-        ? (originalWins / tradesWithSnapshots.length) * 100
-        : 0;
-    const originalNetPnl = tradesWithSnapshots.reduce((sum, t) => sum + t.pnl, 0);
-    const originalExpectancy = tradesWithSnapshots.length > 0
-        ? originalNetPnl / tradesWithSnapshots.length
-        : 0;
-    const originalMaxDrawdown = computeMaxDrawdownFromTradeSequence(tradesWithSnapshots);
-
-    const remaining = tradesWithSnapshots.filter(t => {
-        for (const f of filters) {
-            const val = t.entrySnapshot![f.feature] as number | null;
-            if (val === null || val === undefined) continue; // Skip null values
-            if (f.direction === 'above' && val < f.threshold) return false;
-            if (f.direction === 'below' && val > f.threshold) return false;
+    // Single pass to compute original stats AND filter in one go
+    let originalWins = 0;
+    let originalLosses = 0;
+    let originalNetPnl = 0;
+    let originalEquity = 0;
+    let originalPeak = 0;
+    let originalMaxDrawdown = 0;
+    
+    let filteredWins = 0;
+    let filteredLosses = 0;
+    let filteredNetPnl = 0;
+    let filteredGrossProfit = 0;
+    let filteredGrossLoss = 0;
+    let filteredEquity = 0;
+    let filteredPeak = 0;
+    let filteredMaxDrawdown = 0;
+    let remainingCount = 0;
+    
+    for (const t of trades) {
+        if (!t.entrySnapshot) continue;
+        
+        // Original stats computation
+        const pnl = t.pnl;
+        originalNetPnl += pnl;
+        if (pnl > 0) {
+            originalWins++;
+        } else {
+            originalLosses++;
         }
-        return true;
-    });
-
-    const filteredWins = remaining.filter(t => t.pnl > 0).length;
-    const filteredLosses = remaining.length - filteredWins;
-    const filteredWinRate = remaining.length > 0
-        ? (filteredWins / remaining.length) * 100
-        : 0;
-    const removedCount = tradesWithSnapshots.length - remaining.length;
-    const filteredNetPnl = remaining.reduce((sum, t) => sum + t.pnl, 0);
-    const filteredExpectancy = remaining.length > 0
-        ? filteredNetPnl / remaining.length
-        : 0;
-
-    // Profit factor
-    const filteredGrossProfit = remaining.filter(t => t.pnl > 0).reduce((s, t) => s + t.pnl, 0);
-    const filteredGrossLoss = Math.abs(remaining.filter(t => t.pnl <= 0).reduce((s, t) => s + t.pnl, 0));
+        originalEquity += pnl;
+        if (originalEquity > originalPeak) originalPeak = originalEquity;
+        const originalDD = originalPeak - originalEquity;
+        if (originalDD > originalMaxDrawdown) originalMaxDrawdown = originalDD;
+        
+        // Combo filter check (AND logic) - inline for performance
+        let passesFilter = true;
+        for (let i = 0; i < filters.length; i++) {
+            const f = filters[i];
+            const val = t.entrySnapshot![f.feature] as number | null;
+            if (val === null || val === undefined) continue;
+            if (f.direction === 'above' && val < f.threshold) {
+                passesFilter = false;
+                break;
+            }
+            if (f.direction === 'below' && val > f.threshold) {
+                passesFilter = false;
+                break;
+            }
+        }
+        
+        if (passesFilter) {
+            remainingCount++;
+            filteredNetPnl += pnl;
+            if (pnl > 0) {
+                filteredWins++;
+                filteredGrossProfit += pnl;
+            } else {
+                filteredLosses++;
+                filteredGrossLoss += Math.abs(pnl);
+            }
+            filteredEquity += pnl;
+            if (filteredEquity > filteredPeak) filteredPeak = filteredEquity;
+            const filteredDD = filteredPeak - filteredEquity;
+            if (filteredDD > filteredMaxDrawdown) filteredMaxDrawdown = filteredDD;
+        }
+    }
+    
+    const originalTrades = originalWins + originalLosses;
+    const removedCount = originalTrades - remainingCount;
+    
+    const originalWinRate = originalTrades > 0 ? (originalWins / originalTrades) * 100 : 0;
+    const originalExpectancy = originalTrades > 0 ? originalNetPnl / originalTrades : 0;
+    
+    const filteredWinRate = remainingCount > 0 ? (filteredWins / remainingCount) * 100 : 0;
+    const filteredExpectancy = remainingCount > 0 ? filteredNetPnl / remainingCount : 0;
     const filteredProfitFactor = filteredGrossLoss > 0
         ? filteredGrossProfit / filteredGrossLoss
         : filteredGrossProfit > 0 ? Infinity : 0;
-    const filteredMaxDrawdown = computeMaxDrawdownFromTradeSequence(remaining);
 
     return {
         filters,
-        originalTrades: tradesWithSnapshots.length,
+        originalTrades,
         originalWinningTrades: originalWins,
         originalLosingTrades: originalLosses,
-        remainingTrades: remaining.length,
+        remainingTrades: remainingCount,
         remainingWinningTrades: filteredWins,
         remainingLosingTrades: filteredLosses,
         removedTrades: removedCount,
-        removedPercent: tradesWithSnapshots.length > 0
-            ? (removedCount / tradesWithSnapshots.length) * 100
-            : 0,
+        removedPercent: originalTrades > 0 ? (removedCount / originalTrades) * 100 : 0,
         originalWinRate,
         filteredWinRate,
         winRateImprovement: filteredWinRate - originalWinRate,

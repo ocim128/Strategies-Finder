@@ -126,3 +126,19 @@ test_e2e_output.txt
 
 # Data files
 price-data/
+
+# Generated run artifacts (batch runs, seed logs, hunt outputs)
+batch-runs/
+run-seed-*.txt
+quality_hunt*.json
+walk_forward_hunt*.json
+alpha_report.json
+go-no-go-*.json
+matrix-summary-*.json
+
+# Accidental top-level generated files
+/8
+/3000
+
+# Archive directory
+archive/

@@ -151,7 +151,10 @@ export class DataManager {
         const resampleOptions = this.getResampleOptions(interval);
 
         if (this.isMockSymbol(symbol)) {
-            await new Promise(resolve => setTimeout(resolve, 600)); // Simulate latency
+            // Artificial latency only in dev mode (enabled via Vite's import.meta.env.DEV)
+            if (import.meta.env?.DEV) {
+                await new Promise(resolve => setTimeout(resolve, 100)); // Minimal dev latency
+            }
             if (signal?.aborted) return [];
             const mockData = generateMockData(symbol, interval);
             return typeof lookbackBars === 'number' ? mockData.slice(-lookbackBars) : mockData;
@@ -196,13 +199,27 @@ export class DataManager {
         signal?: AbortSignal,
         lookbackBars?: number
     ): Promise<OHLCVData[]> {
+        const result = await this.fetchDataForScanWithMeta(symbol, interval, signal, lookbackBars);
+        return result.data;
+    }
+
+    /**
+     * Fetch data for scanner with metadata about the data source.
+     * Returns whether the data came from local cache or required a network fetch.
+     */
+    public async fetchDataForScanWithMeta(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        lookbackBars?: number
+    ): Promise<{ data: OHLCVData[]; source: 'mock' | 'local' | 'network' }> {
         if (this.isMockSymbol(symbol)) {
-            if (signal?.aborted) return [];
+            if (signal?.aborted) return { data: [], source: 'mock' };
             const mockData = generateMockData(symbol, interval);
             const maxBars = Number.isFinite(lookbackBars)
                 ? Math.max(200, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(lookbackBars!)))
                 : 1000;
-            return mockData.slice(-maxBars);
+            return { data: mockData.slice(-maxBars), source: 'mock' };
         }
 
         const provider = this.getProvider(symbol);
@@ -210,25 +227,32 @@ export class DataManager {
             ? Math.max(200, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(lookbackBars!)))
             : 1000;
         const resampleOptions = this.getResampleOptions(interval);
+        
         if (provider === 'binance') {
-            return this.fetchBinanceDataHybrid(symbol, interval, signal, {
+            const result = await this.fetchBinanceDataHybridWithMeta(symbol, interval, signal, {
                 localOnlyIfPresent: true,
                 maxBars,
             });
+            return result;
         }
+        
+        // Non-Binance providers always hit network
         if (provider === 'bybit-tradfi') {
-            return fetchBybitTradFiDataWithLimit(symbol, interval, maxBars, {
+            const data = await fetchBybitTradFiDataWithLimit(symbol, interval, maxBars, {
                 signal,
                 ...(resampleOptions ?? {}),
             });
+            return { data, source: 'network' };
         }
         if (provider === 'polymarket') {
-            return fetchPolymarketDataWithLimit(symbol, interval, maxBars, {
+            const data = await fetchPolymarketDataWithLimit(symbol, interval, maxBars, {
                 signal,
             });
+            return { data, source: 'network' };
         }
+        
         const fallbackData = await this.fetchNonBinanceData(symbol, interval, signal);
-        return fallbackData.slice(-maxBars);
+        return { data: fallbackData.slice(-maxBars), source: 'network' };
     }
 
     public async fetchDataWithLimit(
@@ -533,6 +557,36 @@ export class DataManager {
         signal?: AbortSignal,
         options?: { localOnlyIfPresent?: boolean; maxBars?: number }
     ): Promise<OHLCVData[]> {
+        const result = await this.fetchBinanceDataHybridInternal(symbol, interval, signal, options);
+        return result.data;
+    }
+
+    /**
+     * Fetch Binance data with metadata about the source.
+     * Source semantics:
+     * - 'local': Data came from cache ONLY (imported, sqlite, indexeddb, or seed), no network call made
+     * - 'network': Network was attempted (regardless of whether new data was returned)
+     */
+    private async fetchBinanceDataHybridWithMeta(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        options?: { localOnlyIfPresent?: boolean; maxBars?: number }
+    ): Promise<{ data: OHLCVData[]; source: 'local' | 'network' }> {
+        const result = await this.fetchBinanceDataHybridInternal(symbol, interval, signal, options);
+        return { data: result.data, source: result.source };
+    }
+
+    /**
+     * Shared internal implementation for Binance data fetching.
+     * Eliminates logic drift between fetchBinanceDataHybrid and fetchBinanceDataHybridWithMeta.
+     */
+    private async fetchBinanceDataHybridInternal(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+        options?: { localOnlyIfPresent?: boolean; maxBars?: number }
+    ): Promise<{ data: OHLCVData[]; source: 'local' | 'network'; cached: { candles: OHLCVData[]; updatedAt: number; source: string } | null; hasSqliteBase: boolean; cacheKey: string; storageInterval: string; effectiveMaxBars: number }> {
         const requestedMaxBars = options?.maxBars;
         const hasMaxBars = typeof requestedMaxBars === 'number' && Number.isFinite(requestedMaxBars);
         const effectiveMaxBars = hasMaxBars
@@ -544,10 +598,14 @@ export class DataManager {
         const storageInterval = this.getStorageInterval(interval);
         const resampleOptions = this.getResampleOptions(interval);
         const cacheKey = this.buildCacheKey(symbol, storageInterval);
+
+        // Load local cache
         const imported = this.importedDataByKey.get(cacheKey);
         if (imported && imported.length > 0) {
-            return this.sanitizeBinanceCandles(symbol, storageInterval, imported, 'imported').slice(-effectiveMaxBars);
+            const data = this.sanitizeBinanceCandles(symbol, storageInterval, imported, 'imported').slice(-effectiveMaxBars);
+            return { data, source: 'local', cached: null, hasSqliteBase: false, cacheKey, storageInterval, effectiveMaxBars };
         }
+
         const sqliteRaw = await loadSqliteCandles(symbol, storageInterval, effectiveMaxBars);
         const sqliteLoadedCandles = sqliteRaw
             ? this.sanitizeBinanceCandles(symbol, storageInterval, sqliteRaw, 'sqlite')
@@ -557,12 +615,9 @@ export class DataManager {
             ? null
             : sqliteLoadedCandles;
         const hasSqliteBase = Boolean(sqliteCachedCandles && sqliteCachedCandles.length > 0);
-        let cached = hasSqliteBase
-            ? {
-                candles: sqliteCachedCandles!,
-                updatedAt: Date.now(),
-                source: 'sqlite',
-            }
+
+        let cached: { candles: OHLCVData[]; updatedAt: number; source: string } | null = hasSqliteBase
+            ? { candles: sqliteCachedCandles!, updatedAt: Date.now(), source: 'sqlite' }
             : await loadCachedCandles(symbol, storageInterval);
         let cachedSanitized = sqliteSanitized;
 
@@ -582,7 +637,6 @@ export class DataManager {
         }
 
         if (!cached || cached.candles.length === 0) {
-            // Seed files are plain interval snapshots; for 2h-even they can be odd-aligned.
             const seedCandles = requiresEven2hAlignment
                 ? null
                 : await loadSeedCandlesFromPriceData(symbol, interval, signal);
@@ -609,22 +663,18 @@ export class DataManager {
         const hasCachedData = Boolean(cached && cached.candles.length > 0);
         const localOnlyIfPresent = Boolean(options?.localOnlyIfPresent);
 
-        if (localOnlyIfPresent && hasCachedData && recentlySynced) {
+        // Return local-only data if fresh enough
+        if ((localOnlyIfPresent && hasCachedData && recentlySynced) || (hasCachedData && recentlySynced)) {
             if (cachedSanitized) {
                 await saveCachedCandles(symbol, storageInterval, cached!.candles, 'sanitized');
                 await storeSqliteCandles(symbol, storageInterval, cached!.candles, 'Binance', 'sanitized');
             }
-            return cached!.candles.slice(-effectiveMaxBars);
-        }
-        if (hasCachedData && recentlySynced) {
-            if (cachedSanitized) {
-                await saveCachedCandles(symbol, storageInterval, cached!.candles, 'sanitized');
-                await storeSqliteCandles(symbol, storageInterval, cached!.candles, 'Binance', 'sanitized');
-            }
-            return cached!.candles.slice(-effectiveMaxBars);
+            return { data: cached!.candles.slice(-effectiveMaxBars), source: 'local', cached, hasSqliteBase, cacheKey, storageInterval, effectiveMaxBars };
         }
 
+        // Need network fetch
         let remoteData: OHLCVData[] = [];
+        
         if (hasCachedData) {
             const cachedCandles = cached!.candles;
             const lastCachedTime = Number(cachedCandles[cachedCandles.length - 1]?.time ?? 0);
@@ -648,11 +698,12 @@ export class DataManager {
         }
 
         if (signal?.aborted) {
-            return [];
+            return { data: [], source: 'network', cached, hasSqliteBase, cacheKey, storageInterval, effectiveMaxBars };
         }
 
         remoteData = this.sanitizeBinanceCandles(symbol, storageInterval, remoteData, hasCachedData ? 'binance-gap' : 'binance-full');
 
+        // No cached data case: always network
         if (!hasCachedData) {
             const fresh = remoteData.slice(-effectiveMaxBars);
             if (fresh.length > 0) {
@@ -660,14 +711,16 @@ export class DataManager {
                 await storeSqliteCandles(symbol, storageInterval, fresh, 'Binance', 'binance-full');
                 this.cacheSyncAtByKey.set(cacheKey, Date.now());
             }
-            return fresh;
+            return { data: fresh, source: 'network', cached, hasSqliteBase, cacheKey, storageInterval, effectiveMaxBars };
         }
 
+        // Have cached data, network returned nothing new
         if (remoteData.length === 0) {
             this.cacheSyncAtByKey.set(cacheKey, Date.now());
-            return cached!.candles.slice(-effectiveMaxBars);
+            return { data: cached!.candles.slice(-effectiveMaxBars), source: 'network', cached, hasSqliteBase, cacheKey, storageInterval, effectiveMaxBars };
         }
 
+        // Have cached data, merge with network
         const merged = this.sanitizeBinanceCandles(
             symbol,
             storageInterval,
@@ -682,10 +735,8 @@ export class DataManager {
                 await storeSqliteCandles(symbol, storageInterval, merged, 'Binance', 'binance-gap');
             }
             this.cacheSyncAtByKey.set(cacheKey, Date.now());
-            return merged;
         }
-
-        return cached!.candles.slice(-effectiveMaxBars);
+        return { data: merged.length > 0 ? merged : cached!.candles.slice(-effectiveMaxBars), source: 'network', cached, hasSqliteBase, cacheKey, storageInterval, effectiveMaxBars };
     }
 
     private queuePersistCandles(symbol: string, interval: string, candles: OHLCVData[]): void {

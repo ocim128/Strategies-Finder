@@ -12,7 +12,7 @@ import { runFinderExecution, type FinderSelectedStrategy } from "./finder/finder
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderTimeframeLoader, type FinderDataset } from "./finder/finder-timeframe-loader";
 import { FinderUI } from "./finder/finder-ui";
-import { debugLogger } from "./debug-logger";
+import { debugLogger, robustAuditSink } from "./debug-logger";
 import { readNumberInputValue, readToggleValue } from "./dom-input-readers";
 import type {
 	FinderMetric,
@@ -626,7 +626,8 @@ export class FinderManager {
 			return;
 		}
 
-		const matchingEntries = debugLogger.getEntries().filter((entry) => {
+		// Query from robust audit sink for complete audit trail (not capped like debugLogger)
+		const matchingEntries = robustAuditSink.query((entry) => {
 			if (entry.message !== '[Finder][robust_random_wf][cell_audit]') return false;
 			if (!entry.data || typeof entry.data !== 'object') return false;
 			const dataSeed = Number((entry.data as Record<string, unknown>).seed);

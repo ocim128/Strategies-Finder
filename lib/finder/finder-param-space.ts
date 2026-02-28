@@ -10,6 +10,46 @@ export function isToggleParam(key: string, value: number): boolean {
     return /^use[A-Z]/.test(key) && (value === 0 || value === 1);
 }
 
+/**
+ * Compute parameter range bounds with key-aware clamping.
+ * Centralized to prevent divergence across random/grid generation paths.
+ */
+function computeParamRange(
+    key: string,
+    baseValue: number,
+    rangePercent: number
+): { min: number; max: number } {
+    const rangeRatio = Math.max(0, rangePercent) / 100;
+    const rawRange = Math.abs(baseValue) * rangeRatio;
+    const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
+    let min = baseValue - range;
+    let max = baseValue + range;
+
+    // Key-specific bounds
+    if (key === "clusterChoice") {
+        min = 0;
+        max = 2;
+    } else if (/(iteration|iterations|interval|alpha)/i.test(key)) {
+        min = Math.max(1, min);
+    } else if (key === "warmupBars") {
+        min = Math.max(0, min);
+    }
+
+    // Percent-param clamping
+    if (key === "stopLossPercent") {
+        min = Math.max(0, min);
+        max = Math.min(15, max);
+    } else if (key === "targetPct") {
+        min = 0;
+        max = 2;
+    } else if (key === "takeProfitPercent") {
+        min = Math.max(0, min);
+        max = Math.min(100, max);
+    }
+
+    return { min, max };
+}
+
 export class FinderParamSpace {
     public generateParamSets(defaultParams: StrategyParams, options: FinderOptions): StrategyParams[] {
         const keys = Object.keys(defaultParams);
@@ -54,35 +94,7 @@ export class FinderParamSpace {
             return [0, 1];
         }
 
-        const rangeRatio = Math.max(0, options.rangePercent) / 100;
-        const rawRange = Math.abs(baseValue) * rangeRatio;
-        const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
-        let min = baseValue - range;
-        let max = baseValue + range;
-
-        if (key === "clusterChoice") {
-            min = 0;
-            max = 2;
-        } else if (/(iteration|iterations|interval|alpha)/i.test(key)) {
-            min = Math.max(1, min);
-        } else if (key === "warmupBars") {
-            min = Math.max(0, min);
-        }
-
-        // Special clamping for percent params
-        if (key === "stopLossPercent") {
-            // Clamp to valid range: 0-15%
-            min = Math.max(0, min);
-            max = Math.min(15, max);
-        } else if (key === "targetPct") {
-            min = 0;
-            max = 2;
-        } else if (key === "takeProfitPercent") {
-            // Clamp to valid range: 0-100%
-            min = Math.max(0, min);
-            max = Math.min(100, max);
-        }
-
+        const { min, max } = computeParamRange(key, baseValue, options.rangePercent);
         const steps = Math.max(2, options.steps);
         const stepSize = steps > 1 ? (max - min) / (steps - 1) : 0;
 
@@ -167,24 +179,7 @@ export class FinderParamSpace {
             if (isToggleParam(key, baseValue)) {
                 toggleKeys.push(key);
             } else {
-                const rangeRatio = Math.max(0, options.rangePercent) / 100;
-                const rawRange = Math.abs(baseValue) * rangeRatio;
-                const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
-                let min = baseValue - range;
-                let max = baseValue + range;
-
-                // Special clamping for percent params
-                if (key === "stopLossPercent") {
-                    min = Math.max(0, min);
-                    max = Math.min(15, max);
-                } else if (key === "targetPct") {
-                    min = 0;
-                    max = 2;
-                } else if (key === "takeProfitPercent") {
-                    min = Math.max(0, min);
-                    max = Math.min(100, max);
-                }
-
+                const { min, max } = computeParamRange(key, baseValue, options.rangePercent);
                 numericRanges.push({ key, baseValue, min, max });
             }
         }
@@ -226,24 +221,7 @@ export class FinderParamSpace {
                 continue;
             }
 
-            const rangeRatio = Math.max(0, options.rangePercent) / 100;
-            const rawRange = Math.abs(baseValue) * rangeRatio;
-            const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
-            let min = baseValue - range;
-            let max = baseValue + range;
-
-            // Special clamping for percent params
-            if (key === "stopLossPercent") {
-                min = Math.max(0, min);
-                max = Math.min(15, max);
-            } else if (key === "targetPct") {
-                min = 0;
-                max = 2;
-            } else if (key === "takeProfitPercent") {
-                min = Math.max(0, min);
-                max = Math.min(100, max);
-            }
-
+            const { min, max } = computeParamRange(key, baseValue, options.rangePercent);
             numericRanges.push({ key, baseValue, min, max });
         }
 

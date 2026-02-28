@@ -261,7 +261,18 @@ export class ScannerEngine {
             try {
                 // Scanner mode: prefer local cache (SQLite/seed) and only refresh
                 // from network when cache is stale.
-                const data = await dataManager.fetchDataForScan(pair.symbol, interval, signal, lookbackBars);
+                const { data, source } = await dataManager.fetchDataForScanWithMeta(
+                    pair.symbol, 
+                    interval, 
+                    signal, 
+                    lookbackBars
+                );
+                
+                // Track if any network fetch occurred
+                if (source === 'network') {
+                    hadNetworkFetch = true;
+                }
+                
                 if (data && data.length >= MIN_DATA_BARS) {
                     pairDataMap.set(pair.symbol, {
                         symbol: pair.symbol,

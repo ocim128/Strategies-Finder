@@ -14,7 +14,7 @@ import {
 } from "../strategies/index";
 import { rustEngine } from "../rust-engine-client";
 import { shouldUseRustEngine } from "../engine-preferences";
-import { debugLogger } from "../debug-logger";
+import { debugLogger, robustAuditSink } from "../debug-logger";
 import {
     buildConfirmationStates,
     filterSignalsWithConfirmations,
@@ -1149,6 +1149,9 @@ async function runRobustRandomWalkForward(params: RobustRandomRunParams): Promis
         return { results: [] };
     }
     const runSeed = normalizeSeed(Number(input.options.robustSeed));
+    
+    // Start new audit run scope to ensure seed export returns current run only
+    robustAuditSink.startRun(`robust-${input.symbol}-${input.interval}-${runSeed}-${Date.now()}`);
 
     const robustSettings: BacktestSettings = {
         ...input.settings,
@@ -1250,12 +1253,47 @@ async function evaluateRobustCell(args: {
     const holdoutPrecomputed = holdoutData.length > 0
         ? precomputeIndicators(holdoutData, robustSettings)
         : undefined;
-    const rejectionReasons: Record<string, number> = {};
+    // Per-stage rejection tracking to avoid cross-stage count contamination
+    const stageRejectionReasons: Record<"A" | "B" | "C", Record<string, number>> = { A: {}, B: {}, C: {} };
+    const stageRejectSamples: Record<"A" | "B" | "C", Map<string, StrategyParams[]>> = {
+        A: new Map(),
+        B: new Map(),
+        C: new Map(),
+    };
+    
     const recordReject = (reason: string, stage: "A" | "B" | "C", params: StrategyParams) => {
-        rejectionReasons[reason] = (rejectionReasons[reason] ?? 0) + 1;
-        debugLogger.info(`[Finder][robust_random_wf][reject][${stage}] ${strategyPlan.key}@${dataset.interval}: ${reason}`, {
-            params: summarizeParams(params),
-        });
+        stageRejectionReasons[stage][reason] = (stageRejectionReasons[stage][reason] ?? 0) + 1;
+        // Only store first 3 samples per reason for diagnostics
+        const samples = stageRejectSamples[stage].get(reason);
+        if (!samples) {
+            stageRejectSamples[stage].set(reason, [{ ...params }]);
+        } else if (samples.length < 3) {
+            samples.push({ ...params });
+        }
+    };
+    
+    // Log aggregated rejects once per stage (using that stage's isolated counters)
+    const flushRejectLogs = (stage: "A" | "B" | "C") => {
+        const samples = stageRejectSamples[stage];
+        const reasons = stageRejectionReasons[stage];
+        if (samples.size === 0) return;
+        for (const [reason, sampleParams] of samples) {
+            debugLogger.info(`[Finder][robust_random_wf][reject][${stage}] ${strategyPlan.key}@${dataset.interval}: ${reason} (count: ${reasons[reason] ?? 0})`, {
+                sampleParams: sampleParams.map(summarizeParams),
+            });
+        }
+        samples.clear();
+    };
+    
+    // Merge per-stage counts into final diagnostics (keeps counts separate per stage)
+    const mergeRejectionReasons = (): Record<string, number> => {
+        const merged: Record<string, number> = {};
+        for (const stage of ["A", "B", "C"] as const) {
+            for (const [reason, count] of Object.entries(stageRejectionReasons[stage])) {
+                merged[`${reason}`] = (merged[`${reason}`] ?? 0) + count;
+            }
+        }
+        return merged;
     };
 
     const stageACandidates: RobustCellCandidate[] = [];
@@ -1293,6 +1331,7 @@ async function evaluateRobustCell(args: {
         }
     }
 
+    flushRejectLogs("A");
     const stageASurvivors = stageACandidates;
 
     const stageBCandidates: RobustWfCandidate[] = [];
@@ -1333,6 +1372,7 @@ async function evaluateRobustCell(args: {
         }
     }
 
+    flushRejectLogs("B");
     const stageBSurvivors = stageBCandidates;
 
     const stageCCandidates: RobustWfCandidate[] = [];
@@ -1373,6 +1413,7 @@ async function evaluateRobustCell(args: {
         }
     }
 
+    flushRejectLogs("C");
     stageCCandidates.sort((a, b) => compareRobustCandidates(b, a));
     const passRate = paramSets.length > 0 ? stageCCandidates.length / paramSets.length : 0;
     const topDecileCount = Math.max(1, Math.ceil(Math.max(1, stageCCandidates.length) * ROBUST_WF_DEFAULTS.topDecileFraction));
@@ -1427,9 +1468,11 @@ async function evaluateRobustCell(args: {
         robustScore,
         decision,
         decisionReason,
-        rejectionReasons,
+        rejectionReasons: mergeRejectionReasons(),
     };
+    // Emit to both debug logger (UI) and robust audit sink (complete export)
     debugLogger.event("[Finder][robust_random_wf][cell_audit]", auditPayload);
+    robustAuditSink.log("[Finder][robust_random_wf][cell_audit]", auditPayload);
 
     const diagnostics: RobustCellEvaluation["diagnostics"] = {
         strategyKey: strategyPlan.key,
@@ -1449,7 +1492,7 @@ async function evaluateRobustCell(args: {
         robustScore,
         decision,
         decisionReason,
-        rejectionReasons,
+        rejectionReasons: mergeRejectionReasons(),
     };
 
     if (decision !== "PASS" || stageCCandidates.length === 0) {
@@ -1486,7 +1529,7 @@ async function evaluateRobustCell(args: {
             medianFoldStabilityPenalty,
             topDecileMedianDDBreachRate,
             robustScore,
-            rejectionReasons,
+            rejectionReasons: mergeRejectionReasons(),
         },
     };
 
