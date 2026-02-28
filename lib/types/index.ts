@@ -8,7 +8,6 @@ export * from './finder';
 
 export * from './scanner';
 export * from './data-providers';
-export * from './feature-lab';
 
 export interface Indicator {
     id: string;
