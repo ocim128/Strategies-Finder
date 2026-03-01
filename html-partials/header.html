@@ -1,4 +1,4 @@
-<header class="header">
+﻿<header class="header">
     <div class="header-left">
         <div class="logo">
             <svg viewBox="0 0 24 24" fill="currentColor">
@@ -128,6 +128,53 @@
             </button>
         </div>
 
+        <!-- Block Selector — video-edit style IN/OUT range picker -->
+        <div class="block-selector" id="blockSelector">
+            <div class="block-selector-divider"></div>
+
+            <!-- IN / OUT pin buttons -->
+            <button class="block-pin-btn" id="blockSelectorIn" type="button" title="Set IN point (I)">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
+                    <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/>
+                </svg>
+                IN
+            </button>
+            <button class="block-pin-btn" id="blockSelectorOut" type="button" title="Set OUT point (O)">
+                OUT
+                <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
+                    <path d="M6 18l8.5-6L6 6v12zm8.5-6v6H17V6h-2.5v6z"/>
+                </svg>
+            </button>
+
+            <!-- Quick preset chips -->
+            <div class="block-presets">
+                <button class="block-preset-btn" id="blockPresetFull" type="button" title="Use full dataset">Full</button>
+                <button class="block-preset-btn" id="blockPresetLast2Y" type="button" title="Last 2 years">2Y</button>
+                <button class="block-preset-btn" id="blockPresetVisible" type="button" title="Current visible range">Visible</button>
+                <button class="block-preset-btn" id="blockSelectorInvert" type="button" title="Invert: OUT becomes new IN, last candle becomes new OUT" disabled>
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/></svg>
+                    Invert
+                </button>
+                <button class="block-invert-reset-btn" id="blockSelectorInvertReset" type="button" title="Restore original range" style="display:none">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="10" height="10"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                </button>
+            </div>
+
+            <!-- Active range badge -->
+            <div class="block-selector-badge" id="blockSelectorBadge" style="display:none" title="Active block range">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="10" height="10">
+                    <path d="M17 12h-5v5h5v-5zM16 1v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-1V1h-2zm3 18H5V8h14v11z"/>
+                </svg>
+                <span id="blockSelectorBadgeText">-</span>
+            </div>
+
+            <!-- Clear button -->
+            <button class="block-clear-btn" id="blockSelectorClear" style="display:none" type="button" title="Clear block (Esc)">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                </svg>
+            </button>
+        </div>
     </div>
 
     <div class="header-right">

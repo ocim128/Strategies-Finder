@@ -98,14 +98,18 @@ export class BacktestService {
 
             state.set('twoHourParityBacktestResults', null);
 
+            // Use the FULL dataset — signals are generated with complete indicator history.
+            // Block range is applied as a signal-time filter inside runBacktestForData.
+            const baseData = state.ohlcvData;
+
             let result: BacktestResult;
             let engineUsed: 'rust' | 'typescript';
             let parityComparison: { odd: BacktestResult; even: BacktestResult; baseline: 'odd' | 'even' } | null = null;
 
             if (parityMode === 'both') {
-                const baselineParity = this.inferBaselineParity(state.ohlcvData);
-                const oddData = await this.getBacktestDataForParity('odd');
-                const evenData = await this.getBacktestDataForParity('even');
+                const baselineParity = this.inferBaselineParity(baseData);
+                const oddData = await this.getBacktestDataForParity('odd', baseData);
+                const evenData = await this.getBacktestDataForParity('even', baseData);
 
                 progressFill.style.width = '65%';
                 progressText.textContent = 'Running odd + even backtests...';
@@ -161,7 +165,7 @@ export class BacktestService {
                 await this.sleep(100);
 
                 const singleRun = await this.withTemporaryTwoHourParity(parityMode, async () => this.runBacktestForData(
-                    state.ohlcvData,
+                    baseData,
                     state.currentInterval,
                     strategy,
                     params,
@@ -269,13 +273,14 @@ export class BacktestService {
         }
     }
 
-    private async getBacktestDataForParity(parity: 'odd' | 'even'): Promise<OHLCVData[]> {
+    private async getBacktestDataForParity(parity: 'odd' | 'even', baseData?: OHLCVData[]): Promise<OHLCVData[]> {
         if (getIntervalSeconds(state.currentInterval) !== 7200) {
-            return state.ohlcvData;
+            return baseData ?? state.ohlcvData;
         }
         return this.withTemporaryTwoHourParity(parity, async () => {
             try {
                 const fetched = await dataManager.fetchData(state.currentSymbol, state.currentInterval);
+                // Return full fetched data — block filtering happens at signal level
                 return fetched.length > 0 ? fetched : state.ohlcvData;
             } catch (error) {
                 debugLogger.warn('[Backtest] Failed to fetch parity data, falling back to current chart candles', {
@@ -284,7 +289,7 @@ export class BacktestService {
                     interval: state.currentInterval,
                     error: error instanceof Error ? error.message : String(error),
                 });
-                return state.ohlcvData;
+                return baseData ?? state.ohlcvData;
             }
         });
     }
@@ -351,10 +356,22 @@ export class BacktestService {
             : signals;
         timing.confirmationFilter = performance.now() - t4;
 
+        // ── Block range signal filter ──────────────────────────────────────────
+        // If a block is active, remove signals outside [from, to] so only trades
+        // that ORIGINATE within the block are executed.  The strategy still ran on
+        // the full dataset, so all indicators have their proper warmup history.
+        const block = state.blockRange;
+        const blockFilteredSignals = (block && block.from !== block.to)
+            ? filteredSignals.filter(s => {
+                const t = typeof s.time === 'number' ? s.time : Number(s.time);
+                return t >= block.from && t <= block.to;
+            })
+            : filteredSignals;
+
         let result: BacktestResult | undefined;
         let engineUsed: 'rust' | 'typescript' = 'typescript';
 
-        const evaluation = strategy.evaluate?.(backtestData, params, filteredSignals);
+        const evaluation = strategy.evaluate?.(backtestData, params, blockFilteredSignals);
         const entryStats = evaluation?.entryStats;
 
         if (strategy.metadata?.role === 'entry' && entryStats) {
@@ -366,7 +383,7 @@ export class BacktestService {
             const tRust = performance.now();
             const rustResult = await rustEngine.runBacktest(
                 backtestData,
-                filteredSignals,
+                blockFilteredSignals,
                 initialCapital,
                 positionSize,
                 commission,
@@ -395,7 +412,7 @@ export class BacktestService {
             }
             result = runBacktest(
                 backtestData,
-                filteredSignals,
+                blockFilteredSignals,
                 initialCapital,
                 positionSize,
                 commission,

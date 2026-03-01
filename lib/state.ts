@@ -28,6 +28,7 @@ export class State {
     public chartMode: ChartMode = 'candlestick';
     public isDarkTheme = true;
     public ohlcvData: OHLCVData[] = [];
+    public blockRange: { from: number; to: number } | null = null;
     public indicators: Indicator[] = [];
     public currentBacktestResult: BacktestResult | null = null;
     public currentBacktestResultSource: BacktestResultSource = 'backtest';

@@ -14,6 +14,7 @@ import { FinderTimeframeLoader, type FinderDataset } from "./finder/finder-timef
 import { FinderUI } from "./finder/finder-ui";
 import { debugLogger, robustAuditSink } from "./debug-logger";
 import { readNumberInputValue, readToggleValue } from "./dom-input-readers";
+import { sliceOhlcvByBlock } from "./block-selector";
 import type {
 	FinderMetric,
 	FinderMode,
@@ -427,9 +428,12 @@ export class FinderManager {
 			const settings = backtestService.getBacktestSettings();
 			const requiresTsEngine = backtestService.requiresTypescriptEngine(settings);
 
+			// Slice OHLCV data to the block range if one is active
+			const ohlcvData = sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
+
 			const output = await runFinderExecution(
 				{
-					ohlcvData: state.ohlcvData,
+					ohlcvData,
 					symbol: state.currentSymbol,
 					interval: state.currentInterval,
 					options,

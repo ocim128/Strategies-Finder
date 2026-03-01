@@ -9,6 +9,7 @@ import { shouldUseRustEngine } from "./engine-preferences";
 import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
 import { runBacktestCompact } from "./strategies/backtest";
 import type { Strategy, StrategyParams, BacktestSettings, OHLCVData } from "./strategies/index";
+import { sliceOhlcvByBlock } from "./block-selector";
 import {
     runWalkForwardAnalysis,
     runFixedParamWalkForward,
@@ -82,13 +83,13 @@ class WalkForwardService {
         const contextKey = `${state.currentSymbol}|${state.currentInterval}`;
         const needsRefresh = state.ohlcvData.length === 0 || this.lastPreparedDataContext !== contextKey;
         if (!needsRefresh) {
-            return state.ohlcvData;
+            return sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
         }
 
         this.updateStatus('Syncing data for selected symbol/interval...');
         await dataManager.loadData(state.currentSymbol, state.currentInterval);
         this.lastPreparedDataContext = contextKey;
-        return state.ohlcvData;
+        return sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
     }
 
     private estimateWindowCount(totalBars: number, optimizationWindow: number, testWindow: number, stepSize: number): number {
@@ -1031,7 +1032,7 @@ class WalkForwardService {
         parameterRanges: ParameterRange[],
         tradeAwareThresholds?: { minOOSTradesPerWindow: number; minTotalOOSTrades: number } | null
     ): WalkForwardConfig {
-        const data = state.ohlcvData || [];
+        const data = sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
         const totalBars = data.length;
 
         // Default: 70% optimization, 30% test, 5 windows

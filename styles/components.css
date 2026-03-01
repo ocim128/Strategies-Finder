@@ -1163,3 +1163,190 @@
 :where(.symbol-selector, .dropdown-item, .timeframe-tab, .panel-tab, .tool-btn, .theme-toggle, .open-editor-btn, .finder-row, .trade-item, .preset-item, .preset-delete, .indicator-remove):active {
     transform: translateY(1px);
 }
+
+/* ============================================================
+   Block Selector  video-edit style IN/OUT range toolbar
+   ============================================================ */
+.block-selector {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 4px;
+}
+
+.block-selector-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--border-color);
+    margin: 0 4px;
+    flex-shrink: 0;
+}
+
+/* IN / OUT pin buttons */
+.block-pin-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: var(--radius-s);
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    letter-spacing: 0.03em;
+}
+
+.block-pin-btn svg {
+    color: hsl(30 95% 55%);
+    flex-shrink: 0;
+}
+
+.block-pin-btn:hover {
+    border-color: hsl(30 95% 55% / 0.5);
+    color: var(--text-primary);
+    background: hsl(30 95% 55% / 0.08);
+}
+
+.block-pin-btn:active {
+    transform: scale(0.95);
+}
+
+.block-pin-btn.is-set {
+    border-color: hsl(30 95% 55% / 0.5);
+    color: hsl(30 95% 60%);
+    background: hsl(30 95% 55% / 0.1);
+}
+
+/* Quick preset buttons */
+.block-presets {
+    display: flex;
+    gap: 2px;
+    margin-left: 2px;
+}
+
+.block-preset-btn {
+    padding: 3px 7px;
+    border-radius: var(--radius-xs);
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.block-preset-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: hsl(var(--hsl-accent) / 0.3);
+}
+
+.block-preset-btn:active {
+    transform: scale(0.94);
+}
+
+/* Active date range badge */
+.block-selector-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: var(--radius-pill);
+    background: hsl(30 95% 55% / 0.12);
+    border: 1px solid hsl(30 95% 55% / 0.35);
+    color: hsl(30 95% 62%);
+    font-size: 10px;
+    font-weight: var(--font-weight-semibold);
+    font-family: var(--font-family-mono);
+    white-space: nowrap;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.block-selector-badge svg {
+    flex-shrink: 0;
+    opacity: 0.8;
+}
+
+/* Clear X button */
+.block-clear-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--radius-xs);
+    border: 1px solid hsl(30 95% 55% / 0.3);
+    background: hsl(30 95% 55% / 0.08);
+    color: hsl(30 95% 60%);
+    cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
+    padding: 0;
+}
+
+.block-clear-btn:hover {
+    background: hsl(0 80% 55% / 0.15);
+    border-color: hsl(0 80% 55% / 0.4);
+    color: hsl(0 80% 60%);
+}
+
+.block-clear-btn:active {
+    transform: scale(0.9);
+}
+
+/* Finder tab  block mode active badge */
+.finder-block-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: var(--radius-pill);
+    background: hsl(30 95% 55% / 0.12);
+    border: 1px solid hsl(30 95% 55% / 0.35);
+    color: hsl(30 95% 62%);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    margin-bottom: var(--space-2);
+}
+
+.finder-block-badge svg {
+    flex-shrink: 0;
+}
+
+/* Invert preset button \u2014 dimmed when no range active */
+#blockSelectorInvert:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+
+/* Invert-reset X button  tiny, sits flush next to Invert */
+.block-invert-reset-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    margin-left: -4px;
+    border: 1px solid hsl(30 60% 40%);
+    border-radius: 50%;
+    background: transparent;
+    color: hsl(30 95% 65%);
+    cursor: pointer;
+    opacity: 0.75;
+    transition: opacity 0.15s, background 0.15s;
+    vertical-align: middle;
+}
+.block-invert-reset-btn:hover {
+    opacity: 1;
+    background: hsl(30 95% 20% / 0.4);
+}

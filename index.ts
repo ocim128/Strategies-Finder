@@ -38,6 +38,7 @@ import { initAlertHandlers } from "./lib/handlers/alert-handlers";
 import { handleCrosshairMove } from "./lib/app-actions";
 import { initEngineStatusIndicator } from "./lib/engine-status-indicator";
 import { liveOperationsDashboard } from "./lib/live-operations-dashboard";
+import { blockSelectorManager } from "./lib/block-selector-manager";
 
 async function init() {
 	injectLayout();
@@ -61,6 +62,7 @@ async function init() {
 
 	setupStateSubscriptions();
 	setupEventHandlers();
+	blockSelectorManager.init();
 	finderManager.init();
 
 	dataMiningManager.init();
