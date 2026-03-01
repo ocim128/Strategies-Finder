@@ -1,5 +1,6 @@
 import type { Time } from "lightweight-charts";
 export type { Time };
+export type { EdgeStatistics, EdgeRatioHorizon, TTestResult, StreakAnalysis } from '../strategies/backtest/edge-statistics';
 
 // ============================================================================
 // Types & Interfaces
@@ -110,6 +111,7 @@ export interface BacktestResult {
     equityCurve: { time: Time; value: number }[];
     entryStats?: EntryStats;
     postEntryPath?: PostEntryPathStats;
+    edgeStatistics?: import('../strategies/backtest/edge-statistics').EdgeStatistics;
 }
 
 export interface PostEntryPathBucketStats {
@@ -197,6 +199,8 @@ export interface BacktestSettings {
     partialTakeProfitAtR?: number;
     partialTakeProfitPercent?: number;
     breakEvenAtR?: number;
+    /** When price moves this % in your favor, move stop to entry price. Works in percentage mode without requiring a stop loss. */
+    breakEvenPercent?: number;
     timeStopBars?: number;
 
     // Risk management percentage mode

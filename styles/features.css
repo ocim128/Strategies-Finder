@@ -643,6 +643,262 @@
 .exit-reason-cell.negative {
     color: var(--red);
 }
+
+/* ── Edge Analysis Section ── */
+
+.edge-analysis-section {
+    margin-bottom: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.edge-verdict-banner {
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--glass-border);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.edge-verdict-strong {
+    background: linear-gradient(135deg, hsl(var(--hsl-success) / 0.15) 0%, hsl(var(--hsl-success) / 0.05) 100%);
+    border-color: hsl(var(--hsl-success) / 0.35);
+}
+
+.edge-verdict-moderate {
+    background: linear-gradient(135deg, hsl(50 85% 50% / 0.15) 0%, hsl(50 85% 50% / 0.05) 100%);
+    border-color: hsl(50 85% 50% / 0.35);
+}
+
+.edge-verdict-weak {
+    background: linear-gradient(135deg, hsl(30 90% 50% / 0.15) 0%, hsl(30 90% 50% / 0.05) 100%);
+    border-color: hsl(30 90% 50% / 0.35);
+}
+
+.edge-verdict-none {
+    background: linear-gradient(135deg, hsl(var(--hsl-danger) / 0.15) 0%, hsl(var(--hsl-danger) / 0.05) 100%);
+    border-color: hsl(var(--hsl-danger) / 0.35);
+}
+
+.edge-verdict-label {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+}
+
+.edge-verdict-summary {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.edge-subsection {
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    overflow: hidden;
+    background: hsl(var(--hsl-surface-2) / 0.5);
+}
+
+.edge-subsection-title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.edge-subsection-desc {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border-color);
+    line-height: 1.5;
+}
+
+.edge-subsection-desc em {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.edge-ratio-grid-shell {
+    overflow-x: auto;
+}
+
+.edge-ratio-grid {
+    display: grid;
+    grid-template-columns: minmax(80px, 0.8fr) repeat(4, minmax(80px, 1fr));
+    min-width: 440px;
+}
+
+.edge-ratio-cell {
+    padding: var(--space-2) var(--space-3);
+    border-top: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+}
+
+.edge-ratio-cell:last-child,
+.edge-ratio-grid .edge-ratio-cell:nth-child(5n) {
+    border-right: none;
+}
+
+.edge-ratio-grid .edge-ratio-cell:nth-child(-n+5) {
+    border-top: none;
+}
+
+.edge-ratio-cell.header {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
+}
+
+.edge-ratio-cell.value {
+    font-family: var(--font-family-mono);
+}
+
+.edge-ratio-cell.right {
+    text-align: right;
+}
+
+.edge-ratio-cell.positive {
+    color: var(--green);
+}
+
+.edge-ratio-cell.negative {
+    color: var(--red);
+}
+
+.edge-composite {
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border-top: 1px solid var(--border-color);
+    font-family: var(--font-family-mono);
+}
+
+.edge-composite .positive {
+    color: var(--green);
+}
+
+.edge-composite .negative {
+    color: var(--red);
+}
+
+.edge-composite-hint {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-normal);
+    color: var(--text-tertiary);
+    font-family: var(--font-family-base);
+}
+
+.edge-ttest-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0;
+}
+
+.edge-ttest-item {
+    padding: var(--space-2) var(--space-3);
+    border-top: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+}
+
+.edge-ttest-item:nth-child(2n) {
+    border-right: none;
+}
+
+.edge-ttest-item:nth-child(-n+2) {
+    border-top: none;
+}
+
+.edge-ttest-label {
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    margin-bottom: 2px;
+}
+
+.edge-ttest-value {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    font-family: var(--font-family-mono);
+    color: var(--text-primary);
+}
+
+.edge-ttest-value.positive {
+    color: var(--green);
+}
+
+.edge-ttest-value.negative {
+    color: var(--red);
+}
+
+.edge-streak-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0;
+}
+
+.edge-streak-item {
+    padding: var(--space-2) var(--space-3);
+    border-top: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+}
+
+.edge-streak-item:nth-child(2n) {
+    border-right: none;
+}
+
+.edge-streak-item:nth-child(-n+2) {
+    border-top: none;
+}
+
+.edge-streak-item.full-width {
+    grid-column: span 2;
+    border-right: none;
+}
+
+.edge-streak-label {
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    margin-bottom: 2px;
+}
+
+.edge-streak-value {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    font-family: var(--font-family-mono);
+    color: var(--text-primary);
+}
+
+.edge-streak-expected {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-normal);
+    color: var(--text-tertiary);
+}
+
+.edge-streak-value .positive {
+    color: var(--green);
+}
+
+.edge-streak-value .edge-none {
+    color: var(--text-tertiary);
+    font-weight: var(--font-weight-normal);
+}
 
 .entry-stats-hint {
     font-size: var(--font-size-xs);

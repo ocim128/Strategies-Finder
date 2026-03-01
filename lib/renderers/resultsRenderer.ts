@@ -1,4 +1,5 @@
 import { BacktestResult, PostEntryPathStats, SnapshotProfileStats, ExitReasonBreakdown } from "../strategies/index";
+import type { EdgeStatistics } from "../types/strategies";
 import { getRequiredElement, updateTextContent, setVisible } from "../dom-utils";
 import type { TwoHourParityBacktestResults } from "../state";
 
@@ -37,6 +38,7 @@ export class ResultsRenderer {
         const sharpeClass = result.sharpeRatio >= 1 ? 'positive' : result.sharpeRatio < 0 ? 'negative' : '';
         updateTextContent('sharpeRatio', result.sharpeRatio.toFixed(2), `stat-value ${sharpeClass}`);
 
+        this.renderEdgeAnalysis(result.edgeStatistics);
         this.renderPostEntryPath(result.postEntryPath);
         this.renderSnapshotProfile(result.postEntryPath?.snapshotProfile);
         this.renderExitReasonBreakdown(result.postEntryPath?.exitReasonBreakdown);
@@ -374,6 +376,150 @@ export class ResultsRenderer {
         `;
     }
 
+    // ── Edge Analysis ──
+
+    private renderEdgeAnalysis(edge: EdgeStatistics | undefined): void {
+        const hasEdge = !!edge;
+        setVisible('edgeAnalysisTitle', hasEdge);
+        setVisible('edgeAnalysisContainer', hasEdge);
+        if (!hasEdge || !edge) return;
+
+        const container = getRequiredElement('edgeAnalysisContainer');
+
+        // ── Verdict Badge ──
+        const verdictColors: Record<string, string> = {
+            strong: 'edge-verdict-strong',
+            moderate: 'edge-verdict-moderate',
+            weak: 'edge-verdict-weak',
+            none: 'edge-verdict-none',
+        };
+        const verdictLabels: Record<string, string> = {
+            strong: '🟢 Strong Edge',
+            moderate: '🟡 Moderate Edge',
+            weak: '🟠 Weak Edge',
+            none: '🔴 No Edge',
+        };
+        const verdictClass = verdictColors[edge.verdict] ?? 'edge-verdict-none';
+        const verdictLabel = verdictLabels[edge.verdict] ?? 'Unknown';
+
+        // ── Edge Ratio Table ──
+        const edgeRatioRows = edge.edgeRatios.map(er => {
+            const erClass = er.edgeRatio >= 1.5 ? 'positive' : er.edgeRatio >= 1.0 ? '' : 'negative';
+            return `
+                <div class="edge-ratio-cell value">${er.bars} bars</div>
+                <div class="edge-ratio-cell value right">${er.avgMFE.toFixed(3)}%</div>
+                <div class="edge-ratio-cell value right">${er.avgMAE.toFixed(3)}%</div>
+                <div class="edge-ratio-cell value right ${erClass}">${er.edgeRatio.toFixed(2)}</div>
+                <div class="edge-ratio-cell value right">${er.sampleSize}</div>
+            `;
+        }).join('');
+
+        const compositeClass = edge.compositeEdgeRatio >= 1.5 ? 'positive'
+            : edge.compositeEdgeRatio >= 1.0 ? '' : 'negative';
+
+        // ── T-Test Card ──
+        const t = edge.tTest;
+        const pClass = t.isSignificant ? 'positive' : 'negative';
+        const confLabel = {
+            very_high: '★★★ Very High (p < 0.01)',
+            high: '★★ High (p < 0.05)',
+            moderate: '★ Moderate (p < 0.10)',
+            low: '— Low (p ≥ 0.10)',
+        }[t.confidence];
+        const pDisplay = t.pValue < 0.001 ? t.pValue.toExponential(2) : t.pValue.toFixed(4);
+
+        // ── Streak Card ──
+        const s = edge.streaks;
+        const clusterLabel = s.hasRegimeClustering
+            ? '<span class="positive">✅ Yes — Captures market regimes</span>'
+            : '<span class="edge-none">— Random-like streak patterns</span>';
+
+        container.innerHTML = `
+            <div class="edge-verdict-banner ${verdictClass}">
+                <div class="edge-verdict-label">${verdictLabel}</div>
+                <div class="edge-verdict-summary">${edge.summary}</div>
+            </div>
+
+            <div class="edge-subsection">
+                <div class="edge-subsection-title">Edge Ratio (Entry Quality Proof)</div>
+                <div class="edge-subsection-desc">Measures MFE vs MAE: how far price moves <em>for</em> you vs <em>against</em> you. Exit-independent.</div>
+                <div class="edge-ratio-grid-shell">
+                    <div class="edge-ratio-grid">
+                        <div class="edge-ratio-cell header">Horizon</div>
+                        <div class="edge-ratio-cell header right">Avg MFE %</div>
+                        <div class="edge-ratio-cell header right">Avg MAE %</div>
+                        <div class="edge-ratio-cell header right">Edge Ratio</div>
+                        <div class="edge-ratio-cell header right">Samples</div>
+                        ${edgeRatioRows}
+                    </div>
+                </div>
+                <div class="edge-composite">Composite Edge Ratio: <span class="${compositeClass}">${edge.compositeEdgeRatio.toFixed(2)}</span> <span class="edge-composite-hint">(> 1.0 = edge, > 1.5 = strong)</span></div>
+            </div>
+
+            <div class="edge-subsection">
+                <div class="edge-subsection-title">T-Test on Returns (Statistical Significance)</div>
+                <div class="edge-subsection-desc">Tests H₀: μ=0 (no edge). Low p-value = high confidence the returns are not random luck.</div>
+                <div class="edge-ttest-grid">
+                    <div class="edge-ttest-item">
+                        <div class="edge-ttest-label">Mean Return</div>
+                        <div class="edge-ttest-value ${t.meanReturn >= 0 ? 'positive' : 'negative'}">${t.meanReturn >= 0 ? '+' : ''}${t.meanReturn.toFixed(4)}%</div>
+                    </div>
+                    <div class="edge-ttest-item">
+                        <div class="edge-ttest-label">T-Statistic</div>
+                        <div class="edge-ttest-value">${t.tStatistic.toFixed(3)}</div>
+                    </div>
+                    <div class="edge-ttest-item">
+                        <div class="edge-ttest-label">P-Value</div>
+                        <div class="edge-ttest-value ${pClass}">${pDisplay}</div>
+                    </div>
+                    <div class="edge-ttest-item">
+                        <div class="edge-ttest-label">Confidence</div>
+                        <div class="edge-ttest-value">${confLabel}</div>
+                    </div>
+                    <div class="edge-ttest-item">
+                        <div class="edge-ttest-label">Samples</div>
+                        <div class="edge-ttest-value">${t.sampleSize} (df=${t.degreesOfFreedom})</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="edge-subsection">
+                <div class="edge-subsection-title">Streak Analysis (Regime Detection)</div>
+                <div class="edge-subsection-desc">Compares actual win/loss streak patterns to random Bernoulli expectations.</div>
+                <div class="edge-streak-grid">
+                    <div class="edge-streak-item">
+                        <div class="edge-streak-label">Max Win Streak</div>
+                        <div class="edge-streak-value">${s.maxWinStreak} <span class="edge-streak-expected">(expected: ${s.expectedMaxWinStreak.toFixed(1)})</span></div>
+                    </div>
+                    <div class="edge-streak-item">
+                        <div class="edge-streak-label">Max Loss Streak</div>
+                        <div class="edge-streak-value">${s.maxLossStreak} <span class="edge-streak-expected">(expected: ${s.expectedMaxLossStreak.toFixed(1)})</span></div>
+                    </div>
+                    <div class="edge-streak-item">
+                        <div class="edge-streak-label">Avg Win Streak</div>
+                        <div class="edge-streak-value">${s.avgWinStreak.toFixed(2)}</div>
+                    </div>
+                    <div class="edge-streak-item">
+                        <div class="edge-streak-label">Avg Loss Streak</div>
+                        <div class="edge-streak-value">${s.avgLossStreak.toFixed(2)}</div>
+                    </div>
+                    <div class="edge-streak-item">
+                        <div class="edge-streak-label">Win Streak Z-Score</div>
+                        <div class="edge-streak-value">${s.winStreakZScore.toFixed(2)}</div>
+                    </div>
+                    <div class="edge-streak-item">
+                        <div class="edge-streak-label">Loss Streak Z-Score</div>
+                        <div class="edge-streak-value">${s.lossStreakZScore.toFixed(2)}</div>
+                    </div>
+                    <div class="edge-streak-item full-width">
+                        <div class="edge-streak-label">Regime Clustering</div>
+                        <div class="edge-streak-value">${clusterLabel}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     private formatPercent(value: number | null, decimals: number, signed = false): string {
         if (value === null || !Number.isFinite(value)) return '--';
         const prefix = signed && value > 0 ? '+' : '';
@@ -406,6 +552,11 @@ export class ResultsRenderer {
         setVisible('exitReasonContainer', false);
         const exitContainer = document.getElementById('exitReasonContainer');
         if (exitContainer) exitContainer.innerHTML = '';
+
+        setVisible('edgeAnalysisTitle', false);
+        setVisible('edgeAnalysisContainer', false);
+        const edgeContainer = document.getElementById('edgeAnalysisContainer');
+        if (edgeContainer) edgeContainer.innerHTML = '';
     }
 }
 

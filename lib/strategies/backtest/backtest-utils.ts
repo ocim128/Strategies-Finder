@@ -26,6 +26,7 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         partialTakeProfitAtR: Math.max(0, toNumberOr(settings?.partialTakeProfitAtR, 0)),
         partialTakeProfitPercent: clamp(Math.max(0, toNumberOr(settings?.partialTakeProfitPercent, 0)), 0, 100),
         breakEvenAtR: Math.max(0, toNumberOr(settings?.breakEvenAtR, 0)),
+        breakEvenPercent: Math.max(0, toNumberOr(settings?.breakEvenPercent, 0)),
         timeStopBars: Math.max(0, toNumberOr(settings?.timeStopBars, 0)),
 
         riskMode: settings?.riskMode ?? 'simple',
@@ -61,8 +62,8 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         rsiBullish: clamp(toNumberOr(settings?.rsiBullish, 55), 0, 100),
         rsiBearish: clamp(toNumberOr(settings?.rsiBearish, 45), 0, 100),
         marketMode: settings?.marketMode === 'uptrend' || settings?.marketMode === 'downtrend' || settings?.marketMode === 'sideway'
-            ? settings.marketMode
-            : 'all',
+                ? settings.marketMode
+                : 'all',
         executionModel,
         allowSameBarExit: settings?.allowSameBarExit ?? true,
         slippageBps: Math.max(0, toNumberOr(settings?.slippageBps, 0)),
@@ -119,108 +120,108 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         snapshotTfConfluencePerfMax: toNumberOr(settings?.snapshotTfConfluencePerfMax, 0),
         snapshotEntryQualityScoreMin: clamp(toNumberOr(settings?.snapshotEntryQualityScoreMin, 0), 0, 100),
         snapshotEntryQualityScoreMax: clamp(toNumberOr(settings?.snapshotEntryQualityScoreMax, 0), 0, 100),
-    };
-}
+        };
+    }
 
-export function timeKey(time: Time): string {
-    return toTimeKey(time);
-}
+    export function timeKey(time: Time): string {
+        return toTimeKey(time);
+    }
 
-export function timeToNumber(time: Time): number | null {
-    if (typeof time === 'number') return time;
-    if (typeof time === 'string') {
+    export function timeToNumber(time: Time): number | null {
+        if (typeof time === 'number') return time;
+        if (typeof time === 'string') {
         const parsed = Date.parse(time);
         return Number.isNaN(parsed) ? null : parsed;
-    }
-    if (time && typeof time === 'object' && 'year' in time) {
+        }
+        if (time && typeof time === 'object' && 'year' in time) {
         const businessDay = time as { year: number; month: number; day: number };
         return Date.UTC(businessDay.year, businessDay.month - 1, businessDay.day);
+        }
+        return null;
     }
-    return null;
-}
 
-export function compareTime(a: Time, b: Time): number {
-    const aNum = timeToNumber(a);
-    const bNum = timeToNumber(b);
-    if (aNum !== null && bNum !== null) return aNum - bNum;
+    export function compareTime(a: Time, b: Time): number {
+        const aNum = timeToNumber(a);
+        const bNum = timeToNumber(b);
+        if (aNum !== null && bNum !== null) return aNum - bNum;
 
-    const aKey = timeKey(a);
-    const bKey = timeKey(b);
-    if (aKey === bKey) return 0;
-    return aKey < bKey ? -1 : 1;
-}
+        const aKey = timeKey(a);
+        const bKey = timeKey(b);
+        if (aKey === bKey) return 0;
+        return aKey < bKey ? -1 : 1;
+    }
 
-export function getExecutionShift(config: NormalizedSettings): number {
-    return config.executionModel === 'signal_close' ? 0 : 1;
-}
+    export function getExecutionShift(config: NormalizedSettings): number {
+        return config.executionModel === 'signal_close' ? 0 : 1;
+    }
 
-export function resolveExecutionPrice(
-    data: OHLCVData[],
-    signal: Signal,
-    signalIndex: number,
-    executionIndex: number,
-    config: NormalizedSettings
-): number {
-    if (config.executionModel === 'signal_close' && executionIndex === signalIndex) {
+    export function resolveExecutionPrice(
+        data: OHLCVData[],
+        signal: Signal,
+        signalIndex: number,
+        executionIndex: number,
+        config: NormalizedSettings
+    ): number {
+        if (config.executionModel === 'signal_close' && executionIndex === signalIndex) {
         return signal.price;
+        }
+        const candle = data[executionIndex];
+        return config.executionModel === 'next_open' ? candle.open : candle.close;
     }
-    const candle = data[executionIndex];
-    return config.executionModel === 'next_open' ? candle.open : candle.close;
-}
 
-export function applySlippage(price: number, side: 'buy' | 'sell', slippageRate: number): number {
-    if (!Number.isFinite(slippageRate) || slippageRate <= 0) return price;
-    return side === 'buy' ? price * (1 + slippageRate) : price * (1 - slippageRate);
-}
+    export function applySlippage(price: number, side: 'buy' | 'sell', slippageRate: number): number {
+        if (!Number.isFinite(slippageRate) || slippageRate <= 0) return price;
+        return side === 'buy' ? price * (1 + slippageRate) : price * (1 - slippageRate);
+    }
 
-export function normalizeTradeDirection(settings?: BacktestSettings): TradeDirection {
-    return settings?.tradeDirection === 'short' || settings?.tradeDirection === 'both' || settings?.tradeDirection === 'combined'
-        ? settings.tradeDirection
-        : 'long';
-}
+    export function normalizeTradeDirection(settings?: BacktestSettings): TradeDirection {
+        return settings?.tradeDirection === 'short' || settings?.tradeDirection === 'both' || settings?.tradeDirection === 'combined'
+            ? settings.tradeDirection
+            : 'long';
+    }
 
-export function signalToPositionDirection(type: Signal['type']): 'long' | 'short' {
-    return type === 'buy' ? 'long' : 'short';
-}
+    export function signalToPositionDirection(type: Signal['type']): 'long' | 'short' {
+        return type === 'buy' ? 'long' : 'short';
+    }
 
-export function directionToSignalType(direction: 'long' | 'short'): Signal['type'] {
-    return direction === 'short' ? 'sell' : 'buy';
-}
+    export function directionToSignalType(direction: 'long' | 'short'): Signal['type'] {
+        return direction === 'short' ? 'sell' : 'buy';
+    }
 
-export function entrySideForDirection(direction: 'long' | 'short'): 'buy' | 'sell' {
-    return direction === 'short' ? 'sell' : 'buy';
-}
+    export function entrySideForDirection(direction: 'long' | 'short'): 'buy' | 'sell' {
+        return direction === 'short' ? 'sell' : 'buy';
+    }
 
-export function exitSideForDirection(direction: 'long' | 'short'): 'buy' | 'sell' {
-    return direction === 'short' ? 'buy' : 'sell';
-}
+    export function exitSideForDirection(direction: 'long' | 'short'): 'buy' | 'sell' {
+        return direction === 'short' ? 'buy' : 'sell';
+    }
 
-export function directionFactorFor(direction: 'long' | 'short'): number {
-    return direction === 'short' ? -1 : 1;
-}
+    export function directionFactorFor(direction: 'long' | 'short'): number {
+        return direction === 'short' ? -1 : 1;
+    }
 
-export function allowsSignalAsEntry(signalType: Signal['type'], tradeDirection: TradeDirection): boolean {
-    if (tradeDirection === 'both' || tradeDirection === 'combined') return true;
-    if (tradeDirection === 'short') return signalType === 'sell';
-    return signalType === 'buy';
-}
+    export function allowsSignalAsEntry(signalType: Signal['type'], tradeDirection: TradeDirection): boolean {
+        if (tradeDirection === 'both' || tradeDirection === 'combined') return true;
+        if (tradeDirection === 'short') return signalType === 'sell';
+        return signalType === 'buy';
+    }
 
-export const timeIndexCache = new WeakMap<OHLCVData[], Map<string, number>>();
+    export const timeIndexCache = new WeakMap<OHLCVData[], Map<string, number>>();
 
-export function getTimeIndex(data: OHLCVData[]): Map<string, number> {
-    let cached = timeIndexCache.get(data);
-    if (!cached) {
+    export function getTimeIndex(data: OHLCVData[]): Map<string, number> {
+        let cached = timeIndexCache.get(data);
+        if (!cached) {
         cached = new Map<string, number>();
         data.forEach((candle, index) => {
-            cached!.set(timeKey(candle.time), index);
-        });
+                cached!.set(timeKey(candle.time), index);
+            });
         timeIndexCache.set(data, cached);
+        }
+        return cached;
     }
-    return cached;
-}
 
-export function needsSnapshotIndicators(config: NormalizedSettings, captureSnapshots = false): boolean {
-    return captureSnapshots ||
+    export function needsSnapshotIndicators(config: NormalizedSettings, captureSnapshots = false): boolean {
+        return captureSnapshots ||
         config.snapshotAtrPercentMin > 0 || config.snapshotAtrPercentMax > 0 ||
         config.snapshotVolumeRatioMin > 0 || config.snapshotVolumeRatioMax > 0 ||
         config.snapshotAdxMin > 0 || config.snapshotAdxMax > 0 ||
@@ -247,6 +248,6 @@ export function needsSnapshotIndicators(config: NormalizedSettings, captureSnaps
         config.snapshotTf480PerfMin !== 0 || config.snapshotTf480PerfMax !== 0 ||
         config.snapshotTfConfluencePerfMin !== 0 || config.snapshotTfConfluencePerfMax !== 0 ||
         config.snapshotEntryQualityScoreMin > 0 || config.snapshotEntryQualityScoreMax > 0;
-}
+    }
 
 

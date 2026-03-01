@@ -8,6 +8,8 @@ export interface NormalizedSettings {
     partialTakeProfitAtR: number;
     partialTakeProfitPercent: number;
     breakEvenAtR: number;
+    /** Percentage-based break-even. When price moves this % in favor, stop → entry price. */
+    breakEvenPercent: number;
     timeStopBars: number;
 
     riskMode: 'simple' | 'advanced' | 'percentage';

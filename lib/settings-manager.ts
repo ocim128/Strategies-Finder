@@ -41,6 +41,7 @@ export interface BacktestSettingsData {
     partialTakeProfitAtR: number;
     partialTakeProfitPercent: number;
     breakEvenAtR: number;
+    breakEvenPercent: number;
     timeStopBars: number;
     stopLossPercent: number;
     takeProfitPercent: number;
@@ -210,6 +211,7 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     partialTakeProfitAtR: EFFECTIVE_BACKTEST_DEFAULTS.partialTakeProfitAtR,
     partialTakeProfitPercent: EFFECTIVE_BACKTEST_DEFAULTS.partialTakeProfitPercent,
     breakEvenAtR: EFFECTIVE_BACKTEST_DEFAULTS.breakEvenAtR,
+    breakEvenPercent: EFFECTIVE_BACKTEST_DEFAULTS.breakEvenPercent,
     timeStopBars: EFFECTIVE_BACKTEST_DEFAULTS.timeStopBars,
     stopLossPercent: EFFECTIVE_BACKTEST_DEFAULTS.stopLossPercent,
     takeProfitPercent: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitPercent,
@@ -395,6 +397,7 @@ class SettingsManager {
             partialTakeProfitAtR: this.readNumber('partialTakeProfitAtR', DEFAULT_BACKTEST_SETTINGS.partialTakeProfitAtR),
             partialTakeProfitPercent: this.readNumber('partialTakeProfitPercent', DEFAULT_BACKTEST_SETTINGS.partialTakeProfitPercent),
             breakEvenAtR: this.readNumber('breakEvenAtR', DEFAULT_BACKTEST_SETTINGS.breakEvenAtR),
+            breakEvenPercent: this.readNumber('breakEvenPercent', DEFAULT_BACKTEST_SETTINGS.breakEvenPercent),
             timeStopBars: this.readNumber('timeStopBars', DEFAULT_BACKTEST_SETTINGS.timeStopBars),
             stopLossPercent: this.readNumber('stopLossPercent', DEFAULT_BACKTEST_SETTINGS.stopLossPercent),
             takeProfitPercent: this.readNumber('takeProfitPercent', DEFAULT_BACKTEST_SETTINGS.takeProfitPercent),
@@ -605,6 +608,7 @@ class SettingsManager {
         this.writeNumber('partialTakeProfitAtR', settings.partialTakeProfitAtR);
         this.writeNumber('partialTakeProfitPercent', settings.partialTakeProfitPercent);
         this.writeNumber('breakEvenAtR', settings.breakEvenAtR);
+        this.writeNumber('breakEvenPercent', settings.breakEvenPercent ?? 0);
         this.writeNumber('timeStopBars', settings.timeStopBars);
         this.writeNumber('stopLossPercent', settings.stopLossPercent);
         this.writeNumber('takeProfitPercent', settings.takeProfitPercent);

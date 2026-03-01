@@ -105,6 +105,7 @@ export function processPositionExits(
     return false;
 }
 
+
 /**
  * Updates position state variables like trailing stops and extreme prices.
  * Should be called after exit checks if the position is still open.
@@ -141,6 +142,17 @@ export function updatePositionState(
             if (shouldUpdateStop) {
                 position.stopLossPrice = trailStop;
             }
+        }
+    }
+
+    // Percentage-based break-even (works without ATR or stop loss)
+    if (config.breakEvenPercent > 0 && !position.breakEvenApplied) {
+        const targetMove = position.entryPrice * (config.breakEvenPercent / 100);
+        const breakEvenTarget = position.entryPrice + directionFactor * targetMove;
+        const breakEvenHit = isShortPosition ? candle.low <= breakEvenTarget : candle.high >= breakEvenTarget;
+        if (breakEvenHit) {
+            position.stopLossPrice = position.entryPrice;
+            position.breakEvenApplied = true;
         }
     }
 

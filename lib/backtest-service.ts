@@ -28,6 +28,7 @@ import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
 import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth, getConfirmationStrategyParams, getConfirmationStrategyValues } from "./confirmation-strategies";
 import { calculateSharpeRatioFromReturns } from "./strategies/performance-metrics";
+import { computeEdgeStatistics } from "./strategies/backtest/edge-statistics";
 import { getIntervalSeconds } from "./dataProviders/utils";
 import { getOptionalElement, getRequiredElement } from "./dom-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -410,6 +411,9 @@ export class BacktestService {
             result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
         }
         result.postEntryPath = this.buildPostEntryPathStats(result, 5, backtestData);
+        if (result.trades.length >= 3) {
+            result.edgeStatistics = computeEdgeStatistics(result, backtestData);
+        }
         timing.postProcessing = performance.now() - tPost;
 
         timing.total = performance.now() - runStart;
