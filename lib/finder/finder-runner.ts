@@ -94,6 +94,54 @@ type FinderDatasetFlags = {
     isHeavyFinderConfig: boolean;
 };
 
+/**
+ * Pure helper to decide if Rust cached mode should be used.
+ * Enables cache for large datasets OR when estimated batch count is high.
+ */
+export function shouldUseRustCachedMode(
+    dataSize: number,
+    totalRuns: number,
+    batchSize: number,
+    options?: { minBatchesForCache?: number }
+): { useCache: boolean; reason: 'large_dataset' | 'high_batch_count' | 'none' } {
+    const normalizedDataSize = Number.isFinite(dataSize) ? Math.max(0, Math.floor(dataSize)) : 0;
+    const normalizedTotalRuns = Number.isFinite(totalRuns) ? Math.max(0, Math.floor(totalRuns)) : 0;
+    const normalizedBatchSize = Number.isFinite(batchSize) ? Math.max(1, Math.floor(batchSize)) : 1;
+
+    const isLargeDataset = normalizedDataSize > 500_000;
+    if (isLargeDataset) {
+        return { useCache: true, reason: 'large_dataset' };
+    }
+
+    const estimatedBatches = Math.ceil(normalizedTotalRuns / normalizedBatchSize);
+    const minBatches = options?.minBatchesForCache ?? 8;
+    if (estimatedBatches >= minBatches) {
+        return { useCache: true, reason: 'high_batch_count' };
+    }
+
+    return { useCache: false, reason: 'none' };
+}
+
+/**
+ * Compact signal shape for Rust transport - strips optional fields to reduce payload size.
+ * Only keeps fields required by Rust endpoint: time, type, price, barIndex.
+ */
+type CompactSignal = {
+    time: Signal['time'];
+    type: Signal['type'];
+    price: Signal['price'];
+    barIndex: Signal['barIndex'];
+};
+
+function compactSignalsForRust(signals: Signal[]): CompactSignal[] {
+    return signals.map((s) => ({
+        time: s.time,
+        type: s.type,
+        price: s.price,
+        barIndex: s.barIndex,
+    }));
+}
+
 type CandidateResult = Omit<FinderResult, "selectionResult" | "endpointAdjusted" | "endpointRemovedTrades">;
 
 function resolveTradeFilterMode(settings: BacktestSettings): TradeFilterMode {
@@ -619,7 +667,8 @@ function runBacktestAndInsert(
     fixedTradeAmount: number,
     precomputed: ReturnType<typeof precomputeIndicators>,
     insertResult: (candidate: CandidateResult) => void,
-    confirmationParams?: Record<string, StrategyParams>
+    confirmationParams?: Record<string, StrategyParams>,
+    onInsertTiming?: (durationMs: number) => void
 ): void {
     try {
         const evaluation = job.strategy.evaluate?.(data, job.params, signals);
@@ -636,6 +685,7 @@ function runBacktestAndInsert(
                 { mode: sizingMode, fixedTradeAmount },
                 precomputed
             );
+        const insertStartedAt = performance.now();
         insertResult({
             key: job.key,
             name: job.name,
@@ -643,6 +693,7 @@ function runBacktestAndInsert(
             result,
             confirmationParams,
         });
+        onInsertTiming?.(performance.now() - insertStartedAt);
     } catch (error) {
         console.warn(`[Finder] Backtest failed for ${job.key}:`, error);
     }
@@ -668,6 +719,17 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         fixedTradeAmount,
         rustSettings,
     } = params;
+
+    // Timing instrumentation for finder run
+    const timing = {
+        signalGeneration: 0,
+        rustBatchRequest: 0,
+        tsFallback: 0,
+        resultInsertion: 0,
+        total: 0,
+    };
+    const runStart = performance.now();
+
     const closedData = trimToClosedCandles(input.ohlcvData, input.interval);
     if (closedData.length === 0) {
         callbacks.setStatus("No closed candles available for finder run.");
@@ -708,21 +770,30 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         callbacks.setStatus("Realism settings enabled - using TypeScript engine.");
     }
 
+    // Adaptive cache mode decision based on dataset size OR batch count
+    const cacheDecision = shouldUseRustCachedMode(flags.dataSize, totalRuns, flags.batchSize);
     let cacheId: string | null = null;
-    const useCachedMode = flags.isLargeDataset;
+    const useCachedMode = cacheDecision.useCache;
     if (useCachedMode && rustHealthy) {
-        callbacks.setStatus("Caching data on Rust engine...");
+        const cacheReasonText = cacheDecision.reason === 'large_dataset'
+            ? `large dataset (${flags.dataSize} bars)`
+            : `high batch count (${Math.ceil(totalRuns / flags.batchSize)} batches)`;
+        callbacks.setStatus(`Caching data on Rust engine (${cacheReasonText})...`);
         callbacks.setProgress(8, "Uploading data to Rust...");
         cacheId = await rustEngine.cacheData(closedData);
         if (cacheId) {
-            debugLogger.info(`[Finder] Data cached with ID: ${cacheId} (${flags.dataSize} bars)`);
+            debugLogger.info(`[Finder] Data cached with ID: ${cacheId} (${cacheReasonText})`);
         } else {
-            debugLogger.warn("[Finder] Failed to cache data, falling back to TypeScript");
+            if (flags.isLargeDataset) {
+                debugLogger.warn("[Finder] Failed to cache data on large dataset, falling back to TypeScript");
+            } else {
+                debugLogger.warn("[Finder] Failed to cache data, continuing with Rust direct mode");
+            }
         }
     }
 
     const useRustCached = useCachedMode && cacheId !== null;
-    const useRustDirect = rustHealthy && !flags.isLargeDataset;
+    const useRustDirect = rustHealthy && (!useCachedMode || (!flags.isLargeDataset && cacheId === null));
     const rustAvailable = flags.isExtremeDataset ? false : (useRustCached || useRustDirect);
     const forceTsForSharpe = input.options.sortPriority.includes("sharpeRatio") && flags.shouldUseCompactBacktest;
     const useRustForFinder = rustAvailable && !forceTsForSharpe;
@@ -734,9 +805,12 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     if (flags.isExtremeDataset) {
         debugLogger.info(`[Finder] Extreme dataset (${(flags.dataSize / 1_000_000).toFixed(1)}M bars) - using TypeScript ultra-memory mode`);
         callbacks.setStatus(`Ultra-memory mode: TypeScript only (${(flags.dataSize / 1_000_000).toFixed(1)}M bars)`);
-    } else if (flags.isVeryLargeDataset && useRustForFinder) {
-        callbacks.setStatus("Using Rust engine with cached data...");
-    } else if (!useRustForFinder && flags.isLargeDataset) {
+    } else if (useRustCached) {
+        const cacheReasonText = cacheDecision.reason === 'large_dataset' ? 'large dataset' : 'high batch count';
+        callbacks.setStatus(`Using Rust engine with cached data (${cacheReasonText})...`);
+    } else if (useRustForFinder) {
+        callbacks.setStatus("Using Rust engine...");
+    } else if (!useRustForFinder && useCachedMode) {
         if (forceTsForSharpe && rustAvailable) {
             debugLogger.info(`[Finder] Using TypeScript for ${flags.dataSize} bars (Rust disabled for Sharpe consistency).`);
         } else {
@@ -791,6 +865,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
             const tradeDirection = resolveTradeDirection(input.settings);
             for (const job of batchJobs) {
                 try {
+                    const tSignalStart = performance.now();
                     const confirmationContext = buildConfirmationContext();
                     const { signals, confirmationParams } = generateAndFilterSignalsForJob(
                         job,
@@ -799,6 +874,9 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                         tradeFilterMode,
                         tradeDirection
                     );
+                    timing.signalGeneration += performance.now() - tSignalStart;
+
+                    const tTsStart = performance.now();
                     runBacktestAndInsert(
                         closedData,
                         signals,
@@ -811,8 +889,10 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                         fixedTradeAmount,
                         singleTfPrecomputed,
                         insertResult,
-                        confirmationParams
+                        confirmationParams,
+                        (durationMs) => { timing.resultInsertion += durationMs; }
                     );
+                    timing.tsFallback += performance.now() - tTsStart;
                 } catch (error) {
                     console.warn(`[Finder] Backtest failed for ${job.key}:`, error);
                 }
@@ -843,6 +923,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         const batchRuns: PreparedRun[] = [];
 
         const runBacktestFallback = (run: PreparedRun): void => {
+            const tTsStart = performance.now();
             runBacktestAndInsert(
                 closedData,
                 run.signals,
@@ -855,13 +936,16 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                 fixedTradeAmount,
                 singleTfPrecomputed,
                 insertResult,
-                run.confirmationParams
+                run.confirmationParams,
+                (durationMs) => { timing.resultInsertion += durationMs; }
             );
+            timing.tsFallback += performance.now() - tTsStart;
         };
 
         const tradeFilterMode = resolveTradeFilterMode(input.settings);
         const tradeDirection = resolveTradeDirection(input.settings);
 
+        const tSignalStart = performance.now();
         for (const job of batchJobs) {
             try {
                 const confirmationContext = buildConfirmationContext();
@@ -877,6 +961,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                 const entryStats = evaluation?.entryStats;
                 if (job.strategy.metadata?.role === "entry" && entryStats) {
                     const result = buildEntryBacktestResult(entryStats);
+                    const insertStartedAt = performance.now();
                     insertResult({
                         key: job.key,
                         name: job.name,
@@ -884,6 +969,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                         result,
                         confirmationParams,
                     });
+                    timing.resultInsertion += performance.now() - insertStartedAt;
                     signals.length = 0;
                     continue;
                 }
@@ -899,18 +985,21 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
             }
             await maybeYieldByBudget(false);
         }
+        timing.signalGeneration += performance.now() - tSignalStart;
 
         if (batchRuns.length === 0) {
             processedCount += batchJobs.length;
             continue;
         }
 
+        // Use compact signal shape for Rust payload to reduce transport overhead
         const batchItems = batchRuns.map((run) => ({
             id: run.id,
-            signals: run.signals,
+            signals: compactSignalsForRust(run.signals),
             settings: run.job.rustBacktestSettings,
         }));
 
+        const tRustStart = performance.now();
         try {
             const batchResult = cacheId
                 ? await rustEngine.runCachedBatchBacktest(
@@ -951,6 +1040,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                         continue;
                     }
 
+                    const tInsertStart = performance.now();
                     insertResult({
                         key: run.job.key,
                         name: run.job.name,
@@ -958,6 +1048,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                         result: batchEntry.result,
                         confirmationParams: run.confirmationParams,
                     });
+                    timing.resultInsertion += performance.now() - tInsertStart;
                     completedRunIds.add(run.id);
                 }
 
@@ -978,6 +1069,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                 runBacktestFallback(run);
             }
         }
+        timing.rustBatchRequest += performance.now() - tRustStart;
 
         for (const run of batchRuns) {
             run.signals.length = 0;
@@ -1031,6 +1123,23 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         statusParts.push("(memory-efficient mode)");
     }
     callbacks.setStatus(`Complete. ${statusParts.join(", ")}.`);
+
+    // Emit timing breakdown event
+    timing.total = performance.now() - runStart;
+    debugLogger.event('finder.timing_breakdown', {
+        datasetSize: flags.dataSize,
+        totalRuns,
+        engineMode: useRustForFinder ? (cacheId ? 'rust_cached' : 'rust_direct') : 'typescript',
+        batchCount: totalBatches,
+        durations: {
+            signalGeneration: timing.signalGeneration,
+            rustBatchRequest: timing.rustBatchRequest,
+            tsFallback: timing.tsFallback,
+            resultInsertion: timing.resultInsertion,
+            total: timing.total,
+        },
+    });
+
     return { results: trimmed };
 }
 

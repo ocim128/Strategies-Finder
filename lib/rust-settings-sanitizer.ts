@@ -1,5 +1,64 @@
 import type { BacktestSettings } from "./types/strategies";
 
+/**
+ * Determines if TypeScript engine is required for given backtest settings.
+ * This is the single-source-of-truth for Rust eligibility decisions.
+ * 
+ * Returns true if any setting is incompatible with Rust backend, including:
+ * - Non-default executionModel (not 'signal_close')
+ * - Slippage (slippageBps > 0)
+ * - Disabled same-bar exit (!allowSameBarExit)
+ * - tradeDirection 'both' or 'combined'
+ * - marketMode !== 'all'
+ * - Any non-zero snapshot filter
+ * - Percentage-based risk guards (max hold, probation, loss streak)
+ */
+export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
+    const executionModel = settings.executionModel ?? 'signal_close';
+    const allowSameBarExit = settings.allowSameBarExit ?? true;
+    const slippageBps = settings.slippageBps ?? 0;
+    const marketMode = settings.marketMode ?? 'all';
+
+    // Realism constraints
+    const usesRealismConstraints =
+        executionModel !== 'signal_close'
+        || slippageBps > 0
+        || !allowSameBarExit;
+
+    // Trade direction constraints
+    const usesCombinedDirection =
+        settings.tradeDirection === 'both'
+        || settings.tradeDirection === 'combined';
+
+    // Market mode constraint (Rust only supports 'all')
+    const usesNonAllMarketMode = marketMode !== 'all';
+
+    // Percentage-based risk guards
+    const usesPercentageMaxHold =
+        settings.riskMode === 'percentage'
+        && settings.riskMaxHoldEnabled === true
+        && (settings.riskMaxHoldBars ?? 0) > 0;
+    const usesPercentageProbation =
+        settings.riskMode === 'percentage'
+        && settings.riskProbationEnabled === true
+        && (settings.riskProbationBars ?? 0) > 0;
+    const usesPercentageLossStreakGuard =
+        settings.riskMode === 'percentage'
+        && settings.riskLossStreakEnabled === true
+        && (settings.riskLossStreakCooldownBars ?? 0) > 0;
+
+    // Snapshot filters
+    const hasSnapshotFilters = hasNonZeroSnapshotFilter(settings);
+
+    return usesRealismConstraints
+        || usesCombinedDirection
+        || usesNonAllMarketMode
+        || usesPercentageMaxHold
+        || usesPercentageProbation
+        || usesPercentageLossStreakGuard
+        || hasSnapshotFilters;
+}
+
 export const SNAPSHOT_FILTER_SETTING_KEYS = [
     "snapshotAtrPercentMin",
     "snapshotAtrPercentMax",

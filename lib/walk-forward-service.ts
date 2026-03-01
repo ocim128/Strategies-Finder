@@ -981,12 +981,9 @@ class WalkForwardService {
 
 
     private toRustBacktestSettings(settings: BacktestSettings): BacktestSettings {
-        const sanitized = sanitizeBacktestSettingsForRust(settings);
-        // Preserve 2H parity in walk-forward requests to keep prior tuning behavior.
-        if (settings.twoHourCloseParity) {
-            sanitized.twoHourCloseParity = settings.twoHourCloseParity;
-        }
-        return sanitized;
+        // Sanitize settings for Rust - do not re-add removed fields
+        // to maintain sanitizer contract consistency.
+        return sanitizeBacktestSettingsForRust(settings);
     }
 
     private toRustWalkForwardConfig(config: WalkForwardConfig): {

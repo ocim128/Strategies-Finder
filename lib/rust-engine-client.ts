@@ -109,6 +109,8 @@ export class RustEngineClient {
     private engineVersion: string | null = null;
     private lastHealthCheck: number = 0;
     private readonly healthCheckInterval = 30000; // 30 seconds
+    private readonly healthCheckFailureBackoff = 5000; // 5 seconds negative cache
+    private lastHealthCheckFailed: boolean = false;
     private readonly backtestTimeoutMs = 30_000;
     private readonly batchBacktestTimeoutMs = 120_000;
     private readonly cacheTimeoutMs = 180_000;
@@ -195,9 +197,14 @@ export class RustEngineClient {
     async checkHealth(): Promise<boolean> {
         const now = Date.now();
 
-        // Use cached result if recent
+        // Use cached positive result if recent
         if (now - this.lastHealthCheck < this.healthCheckInterval && this.isAvailable) {
             return true;
+        }
+
+        // Use cached negative result for shorter backoff (avoid repeated timeouts while down)
+        if (now - this.lastHealthCheck < this.healthCheckFailureBackoff && this.lastHealthCheckFailed) {
+            return false;
         }
 
         try {
@@ -210,15 +217,24 @@ export class RustEngineClient {
                 const data: RustHealthResponse = await response.json();
                 this.isAvailable = data.status === 'healthy';
                 this.engineVersion = typeof data.version === 'string' ? data.version : null;
+                this.lastHealthCheckFailed = !this.isAvailable;
                 this.lastHealthCheck = now;
-                rustLog.info(`[RustEngine] Connected: v${this.engineVersion ?? 'unknown'}`);
+                if (this.isAvailable) {
+                    rustLog.info(`[RustEngine] Connected: v${this.engineVersion ?? 'unknown'}`);
+                } else {
+                    rustLog.warn(`[RustEngine] Health check returned status "${data.status}", using TypeScript fallback`);
+                }
                 return this.isAvailable;
             }
             this.isAvailable = false;
             this.engineVersion = null;
+            this.lastHealthCheckFailed = true;
+            this.lastHealthCheck = now;
         } catch (error) {
             this.isAvailable = false;
             this.engineVersion = null;
+            this.lastHealthCheckFailed = true;
+            this.lastHealthCheck = now;
             rustLog.warn('[RustEngine] Server not available, using TypeScript fallback');
         }
 

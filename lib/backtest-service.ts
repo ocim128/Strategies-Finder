@@ -31,7 +31,7 @@ import { calculateSharpeRatioFromReturns } from "./strategies/performance-metric
 import { getIntervalSeconds } from "./dataProviders/utils";
 import { getOptionalElement, getRequiredElement } from "./dom-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
-import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
+import { sanitizeBacktestSettingsForRust, requiresTypescriptEngine as requiresTsEngine } from "./rust-settings-sanitizer";
 import {
     BACKTEST_DOM_SETTING_IDS,
     CAPITAL_DEFAULTS,
@@ -301,14 +301,37 @@ export class BacktestService {
         fixedTradeAmount: number,
         requiresTsEngine: boolean
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
+        // Stage-level timing instrumentation
+        const timing = {
+            selectClosedCandleData: 0,
+            strategyExecute: 0,
+            confirmationBuild: 0,
+            confirmationFilter: 0,
+            rustRequest: 0,
+            tsBacktest: 0,
+            postProcessing: 0,
+            total: 0,
+        };
+        const runStart = performance.now();
+
+        const t1 = performance.now();
         const backtestData = this.selectClosedCandleData(ohlcvData, interval);
+        timing.selectClosedCandleData = performance.now() - t1;
+
+        const t2 = performance.now();
         const signals = strategy.execute(backtestData, params);
+        timing.strategyExecute = performance.now() - t2;
 
         const confirmationStrategies = settings.confirmationStrategies ?? [];
         const tradeFilterMode = this.resolveTradeFilterMode(settings);
+
+        const t3 = performance.now();
         const confirmationStates = confirmationStrategies.length > 0
             ? buildConfirmationStates(backtestData, confirmationStrategies, settings.confirmationStrategyParams)
             : [];
+        timing.confirmationBuild = performance.now() - t3;
+
+        const t4 = performance.now();
         const filteredSignals = confirmationStates.length > 0
             ? ((strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined')
                 ? filterSignalsWithConfirmationsBoth(
@@ -325,6 +348,7 @@ export class BacktestService {
                     settings.tradeDirection ?? 'long'
                 ))
             : signals;
+        timing.confirmationFilter = performance.now() - t4;
 
         let result: BacktestResult | undefined;
         let engineUsed: 'rust' | 'typescript' = 'typescript';
@@ -338,6 +362,7 @@ export class BacktestService {
         }
 
         if (!result && shouldUseRustEngine() && !requiresTsEngine) {
+            const tRust = performance.now();
             const rustResult = await rustEngine.runBacktest(
                 backtestData,
                 filteredSignals,
@@ -347,6 +372,7 @@ export class BacktestService {
                 this.buildRustCompatibleSettings(settings),
                 { mode: sizingMode, fixedTradeAmount }
             );
+            timing.rustRequest = performance.now() - tRust;
 
             if (rustResult) {
                 if (this.isResultConsistent(rustResult)) {
@@ -361,6 +387,7 @@ export class BacktestService {
         }
 
         if (!result) {
+            const tTs = performance.now();
             if (requiresTsEngine && shouldUseRustEngine() && !this.warnedStrictEngine) {
                 this.warnedStrictEngine = true;
                 uiManager.showToast('Realism or snapshot filter settings require TypeScript engine (Rust skipped).', 'info');
@@ -375,12 +402,36 @@ export class BacktestService {
                 { mode: sizingMode, fixedTradeAmount }
             );
             engineUsed = 'typescript';
+            timing.tsBacktest = performance.now() - tTs;
         }
 
+        const tPost = performance.now();
         if (!result.entryStats) {
             result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
         }
         result.postEntryPath = this.buildPostEntryPathStats(result, 5, backtestData);
+        timing.postProcessing = performance.now() - tPost;
+
+        timing.total = performance.now() - runStart;
+
+        // Emit structured timing breakdown event
+        debugLogger.event('backtest.timing_breakdown', {
+            engineUsed,
+            bars: backtestData.length,
+            signalsCount: signals.length,
+            filteredSignalsCount: filteredSignals.length,
+            durations: {
+                selectClosedCandleData: timing.selectClosedCandleData,
+                strategyExecute: timing.strategyExecute,
+                confirmationBuild: timing.confirmationBuild,
+                confirmationFilter: timing.confirmationFilter,
+                rustRequest: timing.rustRequest,
+                tsBacktest: timing.tsBacktest,
+                postProcessing: timing.postProcessing,
+                total: timing.total,
+            },
+        });
+
         return { result, engineUsed };
     }
 
@@ -938,83 +989,8 @@ export class BacktestService {
     }
 
     public requiresTypescriptEngine(settings: BacktestSettings): boolean {
-        const executionModel = settings.executionModel ?? 'signal_close';
-        const allowSameBarExit = settings.allowSameBarExit ?? true;
-        const slippageBps = settings.slippageBps ?? 0;
-        const usesPercentageMaxHold =
-            settings.riskMode === 'percentage'
-            && settings.riskMaxHoldEnabled === true
-            && (settings.riskMaxHoldBars ?? 0) > 0;
-        const usesPercentageProbation =
-            settings.riskMode === 'percentage'
-            && settings.riskProbationEnabled === true
-            && (settings.riskProbationBars ?? 0) > 0;
-        const usesPercentageLossStreakGuard =
-            settings.riskMode === 'percentage'
-            && settings.riskLossStreakEnabled === true
-            && (settings.riskLossStreakCooldownBars ?? 0) > 0;
-        const hasSnapshotFilters =
-            (settings.snapshotAtrPercentMin ?? 0) > 0 ||
-            (settings.snapshotAtrPercentMax ?? 0) > 0 ||
-            (settings.snapshotVolumeRatioMin ?? 0) > 0 ||
-            (settings.snapshotVolumeRatioMax ?? 0) > 0 ||
-            (settings.snapshotAdxMin ?? 0) > 0 ||
-            (settings.snapshotAdxMax ?? 0) > 0 ||
-            (settings.snapshotEmaDistanceMin ?? 0) !== 0 ||
-            (settings.snapshotEmaDistanceMax ?? 0) !== 0 ||
-            (settings.snapshotRsiMin ?? 0) > 0 ||
-            (settings.snapshotRsiMax ?? 0) > 0 ||
-            (settings.snapshotPriceRangePosMin ?? 0) > 0 ||
-            (settings.snapshotPriceRangePosMax ?? 0) > 0 ||
-            (settings.snapshotBarsFromHighMax ?? 0) > 0 ||
-            (settings.snapshotBarsFromLowMax ?? 0) > 0 ||
-            (settings.snapshotTrendEfficiencyMin ?? 0) > 0 ||
-            (settings.snapshotTrendEfficiencyMax ?? 0) > 0 ||
-            (settings.snapshotAtrRegimeRatioMin ?? 0) > 0 ||
-            (settings.snapshotAtrRegimeRatioMax ?? 0) > 0 ||
-            (settings.snapshotBodyPercentMin ?? 0) > 0 ||
-            (settings.snapshotBodyPercentMax ?? 0) > 0 ||
-            (settings.snapshotWickSkewMin ?? 0) !== 0 ||
-            (settings.snapshotWickSkewMax ?? 0) !== 0 ||
-            (settings.snapshotVolumeTrendMin ?? 0) > 0 ||
-            (settings.snapshotVolumeTrendMax ?? 0) > 0 ||
-            (settings.snapshotVolumeBurstMin ?? 0) !== 0 ||
-            (settings.snapshotVolumeBurstMax ?? 0) !== 0 ||
-            (settings.snapshotVolumePriceDivergenceMin ?? 0) !== 0 ||
-            (settings.snapshotVolumePriceDivergenceMax ?? 0) !== 0 ||
-            (settings.snapshotVolumeConsistencyMin ?? 0) > 0 ||
-            (settings.snapshotVolumeConsistencyMax ?? 0) > 0 ||
-            (settings.snapshotCloseLocationMin ?? 0) > 0 ||
-            (settings.snapshotCloseLocationMax ?? 0) > 0 ||
-            (settings.snapshotOppositeWickMin ?? 0) > 0 ||
-            (settings.snapshotOppositeWickMax ?? 0) > 0 ||
-            (settings.snapshotRangeAtrMultipleMin ?? 0) > 0 ||
-            (settings.snapshotRangeAtrMultipleMax ?? 0) > 0 ||
-            (settings.snapshotMomentumConsistencyMin ?? 0) > 0 ||
-            (settings.snapshotMomentumConsistencyMax ?? 0) > 0 ||
-            (settings.snapshotBreakQualityMin ?? 0) > 0 ||
-            (settings.snapshotBreakQualityMax ?? 0) > 0 ||
-            (settings.snapshotTf60PerfMin ?? 0) !== 0 ||
-            (settings.snapshotTf60PerfMax ?? 0) !== 0 ||
-            (settings.snapshotTf90PerfMin ?? 0) !== 0 ||
-            (settings.snapshotTf90PerfMax ?? 0) !== 0 ||
-            (settings.snapshotTf120PerfMin ?? 0) !== 0 ||
-            (settings.snapshotTf120PerfMax ?? 0) !== 0 ||
-            (settings.snapshotTf480PerfMin ?? 0) !== 0 ||
-            (settings.snapshotTf480PerfMax ?? 0) !== 0 ||
-            (settings.snapshotTfConfluencePerfMin ?? 0) !== 0 ||
-            (settings.snapshotTfConfluencePerfMax ?? 0) !== 0 ||
-            (settings.snapshotEntryQualityScoreMin ?? 0) > 0 ||
-            (settings.snapshotEntryQualityScoreMax ?? 0) > 0;
-        return executionModel !== 'signal_close'
-            || slippageBps > 0
-            || !allowSameBarExit
-            || settings.tradeDirection === 'both'
-            || settings.tradeDirection === 'combined'
-            || hasSnapshotFilters
-            || usesPercentageMaxHold
-            || usesPercentageProbation
-            || usesPercentageLossStreakGuard;
+        // Use shared helper for single-source-of-truth Rust eligibility
+        return requiresTsEngine(settings);
     }
 
     public addStrategyIndicators(params: StrategyParams) {

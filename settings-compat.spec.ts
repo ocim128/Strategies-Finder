@@ -4,6 +4,7 @@ import { normalizeBacktestSettings } from './lib/strategies/backtest/backtest-ut
 import {
     hasNonZeroSnapshotFilter,
     sanitizeBacktestSettingsForRust,
+    requiresTypescriptEngine,
 } from './lib/rust-settings-sanitizer';
 import type { BacktestSettings } from './lib/types/strategies';
 
@@ -51,5 +52,51 @@ describe('Backtest settings compatibility', () => {
         expect(hasNonZeroSnapshotFilter({ snapshotRsiMin: 0 })).to.equal(false);
         expect(hasNonZeroSnapshotFilter({ snapshotRsiMin: 42 })).to.equal(true);
         expect(hasNonZeroSnapshotFilter({ snapshotWickSkewMin: -5 })).to.equal(true);
+    });
+
+    it('requires TS engine when marketMode is not "all"', () => {
+        // Default marketMode is 'all', should not require TS
+        expect(requiresTypescriptEngine({})).to.equal(false);
+        expect(requiresTypescriptEngine({ marketMode: 'all' })).to.equal(false);
+
+        // Any non-'all' marketMode should require TS
+        expect(requiresTypescriptEngine({ marketMode: 'uptrend' })).to.equal(true);
+        expect(requiresTypescriptEngine({ marketMode: 'downtrend' })).to.equal(true);
+        expect(requiresTypescriptEngine({ marketMode: 'sideway' })).to.equal(true);
+    });
+
+    it('enforces sanitizer contract for twoHourCloseParity', () => {
+        const settings: BacktestSettings = {
+            atrPeriod: 14,
+            twoHourCloseParity: 'even',
+        };
+
+        const sanitized = sanitizeBacktestSettingsForRust(settings);
+
+        // twoHourCloseParity must be removed by sanitizer
+        expect('twoHourCloseParity' in sanitized).to.equal(false);
+    });
+
+    it('requires TS engine for realism constraints', () => {
+        // signal_close (default) with no slippage and allowSameBarExit should not require TS
+        expect(requiresTypescriptEngine({})).to.equal(false);
+        expect(requiresTypescriptEngine({ executionModel: 'signal_close', slippageBps: 0, allowSameBarExit: true })).to.equal(false);
+
+        // Non-signal_close execution model requires TS
+        expect(requiresTypescriptEngine({ executionModel: 'next_open' })).to.equal(true);
+        expect(requiresTypescriptEngine({ executionModel: 'next_close' })).to.equal(true);
+
+        // Slippage requires TS
+        expect(requiresTypescriptEngine({ slippageBps: 5 })).to.equal(true);
+
+        // Disabled same-bar exit requires TS
+        expect(requiresTypescriptEngine({ allowSameBarExit: false })).to.equal(true);
+    });
+
+    it('requires TS engine for combined trade directions', () => {
+        expect(requiresTypescriptEngine({ tradeDirection: 'long' })).to.equal(false);
+        expect(requiresTypescriptEngine({ tradeDirection: 'short' })).to.equal(false);
+        expect(requiresTypescriptEngine({ tradeDirection: 'both' })).to.equal(true);
+        expect(requiresTypescriptEngine({ tradeDirection: 'combined' })).to.equal(true);
     });
 });
