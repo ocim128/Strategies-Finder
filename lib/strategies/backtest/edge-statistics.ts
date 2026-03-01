@@ -1,4 +1,5 @@
 import type { BacktestResult, OHLCVData, Time, Trade } from '../../types/index';
+import { toTimeKey } from '../../time-key';
 
 // ============================================================================
 // Types
@@ -56,8 +57,12 @@ export interface StreakAnalysis {
     winStreakZScore: number;
     /** Z-score: how unusual the loss streaks are compared to random */
     lossStreakZScore: number;
-    /** Whether win clustering is statistically unusual (|z| > 2) */
+    /** Whether any clustering is statistically unusual (z > 2 on either side) */
     hasRegimeClustering: boolean;
+    /** Whether win streaks are unusually long (z > 2) */
+    hasWinRegimeClustering: boolean;
+    /** Whether loss streaks are unusually long (z > 2) */
+    hasLossRegimeClustering: boolean;
     /** All win streak lengths for distribution analysis */
     winStreakDistribution: number[];
     /** All loss streak lengths for distribution analysis */
@@ -129,8 +134,9 @@ export function computeEdgeRatios(
             if (entryIdx === undefined) continue;
             if (!Number.isFinite(trade.entryPrice) || trade.entryPrice <= 0) continue;
 
-            const endIdx = Math.min(entryIdx + horizonBars, ohlcvData.length - 1);
-            if (endIdx <= entryIdx) continue;
+            const endIdx = entryIdx + horizonBars;
+            // Only evaluate trades that have the full horizon available.
+            if (endIdx >= ohlcvData.length) continue;
 
             const isLong = trade.type === 'long';
             let mfe = 0; // best favorable excursion
@@ -217,11 +223,16 @@ export function computeTTest(trades: Trade[]): TTestResult {
     const variance = returns.reduce((s, v) => s + (v - mean) ** 2, 0) / (n - 1); // Bessel's correction
     const stdDev = Math.sqrt(variance);
     const standardError = stdDev / Math.sqrt(n);
-    const tStatistic = standardError > 0 ? mean / standardError : 0;
+    const hasZeroVariance = standardError <= 1e-12;
+    const tStatistic = hasZeroVariance
+        ? (mean > 0 ? Number.POSITIVE_INFINITY : mean < 0 ? Number.NEGATIVE_INFINITY : 0)
+        : mean / standardError;
     const df = n - 1;
 
     // Approximate two-tailed p-value using Student's t-distribution
-    const pValue = tDistributionPValue(Math.abs(tStatistic), df);
+    const pValue = hasZeroVariance
+        ? (mean === 0 ? 1 : 0)
+        : tDistributionPValue(Math.abs(tStatistic), df);
 
     let confidence: TTestResult['confidence'];
     if (pValue < 0.01) confidence = 'very_high';
@@ -308,7 +319,9 @@ export function computeStreakAnalysis(trades: Trade[]): StreakAnalysis {
     const lossStreakZScore = lossStreakStd > 0 ? (maxLossStreak - expectedMaxLossStreak) / lossStreakStd : 0;
 
     // Regime clustering if either Z > 2 (streaks are unusually long)
-    const hasRegimeClustering = Math.abs(winStreakZScore) > 2 || Math.abs(lossStreakZScore) > 2;
+    const hasWinRegimeClustering = winStreakZScore > 2;
+    const hasLossRegimeClustering = lossStreakZScore > 2;
+    const hasRegimeClustering = hasWinRegimeClustering || hasLossRegimeClustering;
 
     return {
         maxWinStreak,
@@ -320,6 +333,8 @@ export function computeStreakAnalysis(trades: Trade[]): StreakAnalysis {
         winStreakZScore: round4(winStreakZScore),
         lossStreakZScore: round4(lossStreakZScore),
         hasRegimeClustering,
+        hasWinRegimeClustering,
+        hasLossRegimeClustering,
         winStreakDistribution: winStreaks,
         lossStreakDistribution: lossStreaks,
         sampleSize: n,
@@ -383,9 +398,11 @@ export function computeEdgeStatistics(
     }
 
     // Streak scoring (0-2 points)
-    if (streaks.hasRegimeClustering && streaks.winStreakZScore > 2) {
+    if (streaks.hasWinRegimeClustering) {
         score += 2;
         reasons.push('Win clustering detected (captures regimes)');
+    } else if (streaks.hasLossRegimeClustering) {
+        reasons.push('Loss clustering detected (adverse regimes)');
     } else if (streaks.avgWinStreak > streaks.avgLossStreak * 1.2) {
         score += 1;
         reasons.push('Wins tend to cluster');
@@ -417,7 +434,7 @@ export function computeEdgeStatistics(
 // ============================================================================
 
 function timeKey(time: Time): string {
-    return typeof time === 'number' ? time.toString() : String(time);
+    return toTimeKey(time);
 }
 
 function round4(v: number): number {
@@ -583,6 +600,8 @@ function emptyStreakAnalysis(sampleSize: number): StreakAnalysis {
         winStreakZScore: 0,
         lossStreakZScore: 0,
         hasRegimeClustering: false,
+        hasWinRegimeClustering: false,
+        hasLossRegimeClustering: false,
         winStreakDistribution: [],
         lossStreakDistribution: [],
         sampleSize,

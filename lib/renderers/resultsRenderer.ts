@@ -427,12 +427,17 @@ export class ResultsRenderer {
             low: '— Low (p ≥ 0.10)',
         }[t.confidence];
         const pDisplay = t.pValue < 0.001 ? t.pValue.toExponential(2) : t.pValue.toFixed(4);
+        const tStatisticDisplay = Number.isFinite(t.tStatistic)
+            ? t.tStatistic.toFixed(3)
+            : (t.tStatistic > 0 ? 'INF' : '-INF');
 
         // ── Streak Card ──
         const s = edge.streaks;
-        const clusterLabel = s.hasRegimeClustering
-            ? '<span class="positive">✅ Yes — Captures market regimes</span>'
-            : '<span class="edge-none">— Random-like streak patterns</span>';
+        const clusterLabel = s.hasWinRegimeClustering
+            ? '<span class="positive">✅ Win-side clustering detected</span>'
+            : s.hasLossRegimeClustering
+                ? '<span class="negative">⚠ Loss-side clustering detected</span>'
+                : '<span class="edge-none">— Random-like streak patterns</span>';
 
         container.innerHTML = `
             <div class="edge-verdict-banner ${verdictClass}">
@@ -466,7 +471,7 @@ export class ResultsRenderer {
                     </div>
                     <div class="edge-ttest-item">
                         <div class="edge-ttest-label">T-Statistic</div>
-                        <div class="edge-ttest-value">${t.tStatistic.toFixed(3)}</div>
+                        <div class="edge-ttest-value">${tStatisticDisplay}</div>
                     </div>
                     <div class="edge-ttest-item">
                         <div class="edge-ttest-label">P-Value</div>
