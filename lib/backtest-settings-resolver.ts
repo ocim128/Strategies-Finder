@@ -42,6 +42,7 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     riskLossStreakEnabled: false,
     marketMode: "all" as MarketMode,
     tradeFilterMode: "none" as TradeFilterMode,
+    htfBiasEmaPeriod: 200,
     confirmLookback: 1,
     volumeSmaPeriod: 20,
     volumeMultiplier: 1.5,
@@ -128,6 +129,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "riskLossStreakToggle",
     "marketMode",
     "tradeFilterMode",
+    "htfBiasEmaPeriod",
     "confirmLookback",
     "volumeSmaPeriod",
     "volumeMultiplier",
@@ -371,6 +373,9 @@ export function resolveBacktestSettingsFromRaw(
         adxMax: 0,
         tradeFilterMode,
         entryConfirmation: tradeFilterMode,
+        htfBiasEmaPeriod: tradeFilterEnabled
+            ? readNumber(raw, "htfBiasEmaPeriod", EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod)
+            : EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod,
         confirmLookback: tradeFilterEnabled ? readNumber(raw, "confirmLookback", EFFECTIVE_BACKTEST_DEFAULTS.confirmLookback) : EFFECTIVE_BACKTEST_DEFAULTS.confirmLookback,
         volumeSmaPeriod: tradeFilterEnabled ? readNumber(raw, "volumeSmaPeriod", EFFECTIVE_BACKTEST_DEFAULTS.volumeSmaPeriod) : EFFECTIVE_BACKTEST_DEFAULTS.volumeSmaPeriod,
         volumeMultiplier: tradeFilterEnabled ? readNumber(raw, "volumeMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.volumeMultiplier) : EFFECTIVE_BACKTEST_DEFAULTS.volumeMultiplier,

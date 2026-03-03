@@ -245,6 +245,8 @@ export interface BacktestSettings {
     riskLossStreakCooldownBars?: number;
 
     trendEmaPeriod?: number;
+    /** EMA period used by HTF bias filters (trend_htf_bias / trend_mtf_stack). */
+    htfBiasEmaPeriod?: number;
     trendEmaSlopeBars?: number;
     atrPercentMin?: number;
     atrPercentMax?: number;

@@ -737,6 +737,7 @@ export function setupEventHandlers() {
 
     const tradeFilterModeSelect = getRequiredElement<HTMLSelectElement>('tradeFilterMode');
     const tradeFilterFieldConfig: Array<{ inputId: string; modes: string[] }> = [
+        { inputId: 'htfBiasEmaPeriod', modes: ['trend_htf_bias', 'trend_mtf_stack'] },
         { inputId: 'confirmLookback', modes: ['close', 'trend', 'htf_drift'] },
         { inputId: 'volumeSmaPeriod', modes: ['volume'] },
         { inputId: 'volumeMultiplier', modes: ['volume'] },

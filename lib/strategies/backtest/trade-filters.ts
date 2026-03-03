@@ -48,6 +48,11 @@ export function resolveTrendPeriod(config: NormalizedSettings): number {
     return config.marketMode === 'all' ? 0 : MARKET_MODE_DEFAULT_EMA_PERIOD;
 }
 
+export function resolveHtfBiasPeriod(config: NormalizedSettings): number {
+    if (config.htfBiasEmaPeriod > 0) return Math.round(config.htfBiasEmaPeriod);
+    return TRADE_FILTER_HTF_BIAS_EMA_PERIOD;
+}
+
 function readIndicator(series: (number | null)[], index: number): number | null {
     const value = series[index];
     return value === null || value === undefined || !Number.isFinite(value) ? null : value;
@@ -56,9 +61,13 @@ function readIndicator(series: (number | null)[], index: number): number | null 
 function passesHtfBiasFilter(
     data: OHLCVData[],
     entryIndex: number,
+    config: NormalizedSettings,
     indicators: IndicatorSeries,
     tradeDirection: 'long' | 'short'
 ): boolean {
+    const htfBiasPeriod = resolveHtfBiasPeriod(config);
+    if (entryIndex < htfBiasPeriod - 1) return false;
+
     const ema = readIndicator(indicators.emaSlow, entryIndex);
     if (ema === null || ema === 0) return false;
 
@@ -217,7 +226,7 @@ export function passesTradeFilter(
     }
 
     if (config.tradeFilterMode === 'trend_htf_bias') {
-        return passesHtfBiasFilter(data, entryIndex, indicators, tradeDirection);
+        return passesHtfBiasFilter(data, entryIndex, config, indicators, tradeDirection);
     }
 
     if (config.tradeFilterMode === 'trend_exec_alignment') {
@@ -237,7 +246,7 @@ export function passesTradeFilter(
         if (adx === null || adx === undefined) return false;
         const minAdx = config.adxMin > 0 ? config.adxMin : TRADE_FILTER_STACK_ADX_MIN;
         if (adx < minAdx) return false;
-        return passesHtfBiasFilter(data, entryIndex, indicators, tradeDirection)
+        return passesHtfBiasFilter(data, entryIndex, config, indicators, tradeDirection)
             && passesExecutionAlignmentFilter(data, entryIndex, indicators, tradeDirection)
             && passesNoChaseFilter(data, entryIndex, indicators, tradeDirection)
             && passesHysteresisFilter(data, entryIndex, indicators, tradeDirection);

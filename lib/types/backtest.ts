@@ -33,6 +33,7 @@ export interface NormalizedSettings {
     minTradesBeforeFirstFlip: number;
 
     trendEmaPeriod: number;
+    htfBiasEmaPeriod: number;
     trendEmaSlopeBars: number;
     atrPercentMin: number;
     atrPercentMax: number;

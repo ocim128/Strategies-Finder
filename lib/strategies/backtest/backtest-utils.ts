@@ -50,6 +50,7 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         minTradesBeforeFirstFlip: Math.max(0, Math.round(toNumberOr(settings?.minTradesBeforeFirstFlip, 0))),
 
         trendEmaPeriod: Math.max(0, toNumberOr(settings?.trendEmaPeriod, 0)),
+        htfBiasEmaPeriod: Math.max(1, Math.round(toNumberOr(settings?.htfBiasEmaPeriod, 200))),
         trendEmaSlopeBars: Math.max(0, toNumberOr(settings?.trendEmaSlopeBars, 0)),
         atrPercentMin: Math.max(0, toNumberOr(settings?.atrPercentMin, 0)),
         atrPercentMax: Math.max(0, toNumberOr(settings?.atrPercentMax, 0)),

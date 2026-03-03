@@ -73,6 +73,7 @@ export interface BacktestSettingsData {
     entrySettingsToggle?: boolean;
     /** @deprecated Legacy key retained for backward compatibility when loading old configs */
     entryConfirmation?: string;
+    htfBiasEmaPeriod: number;
     confirmLookback: number;
     volumeSmaPeriod: number;
     volumeMultiplier: number;
@@ -242,6 +243,7 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     // Trade filter
     tradeFilterSettingsToggle: false,
     tradeFilterMode: EFFECTIVE_BACKTEST_DEFAULTS.tradeFilterMode,
+    htfBiasEmaPeriod: EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod,
     confirmLookback: EFFECTIVE_BACKTEST_DEFAULTS.confirmLookback,
     volumeSmaPeriod: EFFECTIVE_BACKTEST_DEFAULTS.volumeSmaPeriod,
     volumeMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.volumeMultiplier,
@@ -431,6 +433,7 @@ class SettingsManager {
             // Trade filter
             tradeFilterSettingsToggle: this.readCheckbox('tradeFilterSettingsToggle', DEFAULT_BACKTEST_SETTINGS.tradeFilterSettingsToggle),
             tradeFilterMode: this.resolveTradeFilterModeValue(this.readSelect('tradeFilterMode', DEFAULT_BACKTEST_SETTINGS.tradeFilterMode)),
+            htfBiasEmaPeriod: this.readNumber('htfBiasEmaPeriod', DEFAULT_BACKTEST_SETTINGS.htfBiasEmaPeriod),
             confirmLookback: this.readNumber('confirmLookback', DEFAULT_BACKTEST_SETTINGS.confirmLookback),
             volumeSmaPeriod: this.readNumber('volumeSmaPeriod', DEFAULT_BACKTEST_SETTINGS.volumeSmaPeriod),
             volumeMultiplier: this.readNumber('volumeMultiplier', DEFAULT_BACKTEST_SETTINGS.volumeMultiplier),
@@ -645,12 +648,13 @@ class SettingsManager {
         // Trade filter
         this.writeCheckbox('tradeFilterSettingsToggle', this.resolveTradeFilterToggle(settings));
         this.writeSelect('tradeFilterMode', this.resolveTradeFilterMode(settings));
-        this.writeNumber('confirmLookback', settings.confirmLookback);
-        this.writeNumber('volumeSmaPeriod', settings.volumeSmaPeriod);
-        this.writeNumber('volumeMultiplier', settings.volumeMultiplier);
-        this.writeNumber('confirmRsiPeriod', settings.confirmRsiPeriod);
-        this.writeNumber('confirmRsiBullish', settings.confirmRsiBullish);
-        this.writeNumber('confirmRsiBearish', settings.confirmRsiBearish);
+        this.writeNumber('htfBiasEmaPeriod', settings.htfBiasEmaPeriod ?? DEFAULT_BACKTEST_SETTINGS.htfBiasEmaPeriod);
+        this.writeNumber('confirmLookback', settings.confirmLookback ?? DEFAULT_BACKTEST_SETTINGS.confirmLookback);
+        this.writeNumber('volumeSmaPeriod', settings.volumeSmaPeriod ?? DEFAULT_BACKTEST_SETTINGS.volumeSmaPeriod);
+        this.writeNumber('volumeMultiplier', settings.volumeMultiplier ?? DEFAULT_BACKTEST_SETTINGS.volumeMultiplier);
+        this.writeNumber('confirmRsiPeriod', settings.confirmRsiPeriod ?? DEFAULT_BACKTEST_SETTINGS.confirmRsiPeriod);
+        this.writeNumber('confirmRsiBullish', settings.confirmRsiBullish ?? DEFAULT_BACKTEST_SETTINGS.confirmRsiBullish);
+        this.writeNumber('confirmRsiBearish', settings.confirmRsiBearish ?? DEFAULT_BACKTEST_SETTINGS.confirmRsiBearish);
         this.writeCheckbox('snapshotAtrFilterToggle', settings.snapshotAtrFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotAtrFilterToggle);
         this.writeNumber('snapshotAtrPercentMin', settings.snapshotAtrPercentMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotAtrPercentMin);
         this.writeNumber('snapshotAtrPercentMax', settings.snapshotAtrPercentMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotAtrPercentMax);
