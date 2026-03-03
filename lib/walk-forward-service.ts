@@ -105,6 +105,78 @@ class WalkForwardService {
         el.value = String(Math.max(1, Math.round(value)));
     }
 
+    private applyWindowSuggestion(
+        suggestion: {
+            optimizationWindow: number;
+            testWindow: number;
+            stepSize: number;
+            estimatedWindows: number;
+            expectedOOSTradesPerWindow: number;
+            minTrades: number;
+        },
+        statusPrefix: string
+    ): boolean {
+        const nextOptWindow = Math.max(1, Math.round(suggestion.optimizationWindow));
+        const nextTestWindow = Math.max(1, Math.round(suggestion.testWindow));
+        const nextStepSize = Math.max(1, Math.round(suggestion.stepSize));
+        const nextMinTrades = Math.max(1, Math.round(suggestion.minTrades));
+
+        const currentOptWindow = this.readNumberInput('wf-opt-window', nextOptWindow);
+        const currentTestWindow = this.readNumberInput('wf-test-window', nextTestWindow);
+        const currentStepSize = this.readNumberInput('wf-step-size', nextStepSize);
+        const currentMinTrades = this.readNumberInput('wf-min-trades', nextMinTrades);
+
+        const changed =
+            currentOptWindow !== nextOptWindow ||
+            currentTestWindow !== nextTestWindow ||
+            currentStepSize !== nextStepSize ||
+            currentMinTrades !== nextMinTrades;
+
+        if (!changed) {
+            return false;
+        }
+
+        this.setNumberInput('wf-opt-window', nextOptWindow);
+        this.setNumberInput('wf-test-window', nextTestWindow);
+        this.setNumberInput('wf-step-size', nextStepSize);
+        this.setNumberInput('wf-min-trades', nextMinTrades);
+
+        this.updateStatus(
+            `${statusPrefix}: ${suggestion.estimatedWindows} windows, ~${suggestion.expectedOOSTradesPerWindow.toFixed(1)} OOS trades/window`
+        );
+        return true;
+    }
+
+    private refreshAutoSuggestionFromCurrentResult(): void {
+        if (!this.isToggleEnabled('wf-auto-suggest', false)) {
+            return;
+        }
+        if (!state.currentBacktestResult) {
+            return;
+        }
+        // Ignore walk-forward OOS snapshots to prevent self-feedback updates.
+        if (state.currentBacktestResultSource === 'walk_forward_oos') {
+            return;
+        }
+
+        const data = sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
+        if (data.length === 0) {
+            return;
+        }
+
+        const totalTrades = Math.max(0, state.currentBacktestResult.totalTrades);
+        const tradesPerBar = totalTrades / Math.max(1, data.length);
+        const suggestion = this.suggestWindowsFromTradeFrequency(data.length, totalTrades, tradesPerBar);
+        const applied = this.applyWindowSuggestion(suggestion, 'Auto window suggestion updated');
+        if (!applied) {
+            return;
+        }
+
+        debugLogger.info(
+            `[WalkForward] Auto-suggest refreshed from backtest result | source=${state.currentBacktestResultSource} | trades=${totalTrades} | opt=${suggestion.optimizationWindow} | test=${suggestion.testWindow} | step=${suggestion.stepSize} | windows=${suggestion.estimatedWindows}`
+        );
+    }
+
     private estimateTradeFrequency(
         data: OHLCVData[],
         strategy: Strategy,
@@ -224,17 +296,12 @@ class WalkForwardService {
 
         const autoApply = this.isToggleEnabled('wf-auto-suggest', false);
         if (shouldAdjust && autoApply) {
-            this.setNumberInput('wf-opt-window', suggestion.optimizationWindow);
-            this.setNumberInput('wf-test-window', suggestion.testWindow);
-            this.setNumberInput('wf-step-size', suggestion.stepSize);
-            this.setNumberInput('wf-min-trades', suggestion.minTrades);
-
-            this.updateStatus(
-                `Auto window suggestion applied: ${suggestion.estimatedWindows} windows, ~${suggestion.expectedOOSTradesPerWindow.toFixed(1)} OOS trades/window`
-            );
-            debugLogger.info(
-                `[WalkForward] Auto-suggested windows | trades=${tradeStats.totalTrades} | opt=${suggestion.optimizationWindow} | test=${suggestion.testWindow} | step=${suggestion.stepSize} | windows=${suggestion.estimatedWindows}`
-            );
+            const applied = this.applyWindowSuggestion(suggestion, 'Auto window suggestion applied');
+            if (applied) {
+                debugLogger.info(
+                    `[WalkForward] Auto-suggested windows | trades=${tradeStats.totalTrades} | opt=${suggestion.optimizationWindow} | test=${suggestion.testWindow} | step=${suggestion.stepSize} | windows=${suggestion.estimatedWindows}`
+                );
+            }
         } else if (shouldAdjust && !autoApply) {
             debugLogger.info(
                 `[WalkForward] Auto-suggest available (disabled) | trades=${tradeStats.totalTrades} | suggested opt=${suggestion.optimizationWindow} | test=${suggestion.testWindow} | step=${suggestion.stepSize} | windows=${suggestion.estimatedWindows}`
@@ -1282,6 +1349,7 @@ class WalkForwardService {
         const runBtn = document.getElementById('wf-run-btn');
         const quickBtn = document.getElementById('wf-quick-btn');
         const validateBtn = document.getElementById('wf-validate-btn');
+        const autoSuggestToggle = document.getElementById('wf-auto-suggest') as HTMLInputElement | null;
 
         if (runBtn) {
             runBtn.addEventListener('click', () => this.runAnalysis());
@@ -1292,6 +1360,18 @@ class WalkForwardService {
         if (validateBtn) {
             validateBtn.addEventListener('click', () => this.runCandidateValidation());
         }
+        if (autoSuggestToggle) {
+            autoSuggestToggle.addEventListener('change', () => {
+                if (autoSuggestToggle.checked) {
+                    this.refreshAutoSuggestionFromCurrentResult();
+                }
+            });
+        }
+
+        state.subscribe('currentBacktestResult', (result) => {
+            if (!result) return;
+            this.refreshAutoSuggestionFromCurrentResult();
+        });
 
         debugLogger.info('Walk-Forward Service initialized');
     }

@@ -186,7 +186,19 @@ export interface StrategyParams {
     [key: string]: number;
 }
 
-export type TradeFilterMode = 'none' | 'close' | 'volume' | 'rsi' | 'trend' | 'adx' | 'htf_drift';
+export type TradeFilterMode =
+    | 'none'
+    | 'close'
+    | 'volume'
+    | 'rsi'
+    | 'trend'
+    | 'adx'
+    | 'htf_drift'
+    | 'trend_htf_bias'
+    | 'trend_exec_alignment'
+    | 'trend_no_chase'
+    | 'trend_hysteresis'
+    | 'trend_mtf_stack';
 export type TradeDirection = 'long' | 'short' | 'both' | 'combined';
 export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';

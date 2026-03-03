@@ -32,11 +32,110 @@ export const TRADE_FILTER_DEFAULT_TREND_EMA_PERIOD = 50;
 export const TRADE_FILTER_DEFAULT_ADX_MIN = 20;
 export const TRADE_FILTER_DEFAULT_HTF_DRIFT_THRESHOLD_PCT = 2;
 export const TRADE_FILTER_DEFAULT_HTF_DRIFT_BARS = 5;
+export const TRADE_FILTER_HTF_BIAS_EMA_PERIOD = 200;
+export const TRADE_FILTER_HTF_BIAS_SLOPE_LOOKBACK = 20;
+export const TRADE_FILTER_HTF_BIAS_SLOPE_THRESHOLD = 0.001;
+export const TRADE_FILTER_EXEC_ALIGNMENT_EMA_PERIOD = 50;
+export const TRADE_FILTER_EXEC_ALIGNMENT_SLOPE_LOOKBACK = 5;
+export const TRADE_FILTER_NO_CHASE_MIN_DISTANCE = 0.002;
+export const TRADE_FILTER_NO_CHASE_MAX_DISTANCE = 0.018;
+export const TRADE_FILTER_HYSTERESIS_CONFIRM_BARS = 2;
+export const TRADE_FILTER_STACK_ADX_MIN = 18;
 
 export function resolveTrendPeriod(config: NormalizedSettings): number {
     if (config.trendEmaPeriod > 0) return config.trendEmaPeriod;
     if (config.tradeFilterMode === 'trend') return TRADE_FILTER_DEFAULT_TREND_EMA_PERIOD;
     return config.marketMode === 'all' ? 0 : MARKET_MODE_DEFAULT_EMA_PERIOD;
+}
+
+function readIndicator(series: (number | null)[], index: number): number | null {
+    const value = series[index];
+    return value === null || value === undefined || !Number.isFinite(value) ? null : value;
+}
+
+function passesHtfBiasFilter(
+    data: OHLCVData[],
+    entryIndex: number,
+    indicators: IndicatorSeries,
+    tradeDirection: 'long' | 'short'
+): boolean {
+    const ema = readIndicator(indicators.emaSlow, entryIndex);
+    if (ema === null || ema === 0) return false;
+
+    const slopeIndex = entryIndex - TRADE_FILTER_HTF_BIAS_SLOPE_LOOKBACK;
+    if (slopeIndex < 0) return false;
+    const previousEma = readIndicator(indicators.emaSlow, slopeIndex);
+    if (previousEma === null || previousEma === 0) return false;
+
+    const close = data[entryIndex].close;
+    const slope = (ema - previousEma) / previousEma;
+    if (tradeDirection === 'short') {
+        return close < ema && slope <= -TRADE_FILTER_HTF_BIAS_SLOPE_THRESHOLD;
+    }
+    return close > ema && slope >= TRADE_FILTER_HTF_BIAS_SLOPE_THRESHOLD;
+}
+
+function passesExecutionAlignmentFilter(
+    data: OHLCVData[],
+    entryIndex: number,
+    indicators: IndicatorSeries,
+    tradeDirection: 'long' | 'short'
+): boolean {
+    const ema = readIndicator(indicators.emaFast, entryIndex);
+    if (ema === null || ema === 0) return false;
+
+    const slopeIndex = entryIndex - TRADE_FILTER_EXEC_ALIGNMENT_SLOPE_LOOKBACK;
+    if (slopeIndex < 0) return false;
+    const previousEma = readIndicator(indicators.emaFast, slopeIndex);
+    if (previousEma === null || previousEma === 0) return false;
+
+    const close = data[entryIndex].close;
+    if (tradeDirection === 'short') {
+        return close < ema && ema < previousEma;
+    }
+    return close > ema && ema > previousEma;
+}
+
+function passesNoChaseFilter(
+    data: OHLCVData[],
+    entryIndex: number,
+    indicators: IndicatorSeries,
+    tradeDirection: 'long' | 'short'
+): boolean {
+    const ema = readIndicator(indicators.emaFast, entryIndex);
+    if (ema === null || ema <= 0) return false;
+
+    const distance = (data[entryIndex].close - ema) / ema;
+    if (tradeDirection === 'short') {
+        return distance <= -TRADE_FILTER_NO_CHASE_MIN_DISTANCE
+            && distance >= -TRADE_FILTER_NO_CHASE_MAX_DISTANCE;
+    }
+    return distance >= TRADE_FILTER_NO_CHASE_MIN_DISTANCE
+        && distance <= TRADE_FILTER_NO_CHASE_MAX_DISTANCE;
+}
+
+function passesHysteresisFilter(
+    data: OHLCVData[],
+    entryIndex: number,
+    indicators: IndicatorSeries,
+    tradeDirection: 'long' | 'short'
+): boolean {
+    const requiredBars = TRADE_FILTER_HYSTERESIS_CONFIRM_BARS;
+    if (entryIndex - (requiredBars - 1) < 0) return false;
+
+    for (let offset = 0; offset < requiredBars; offset++) {
+        const idx = entryIndex - offset;
+        const ema = readIndicator(indicators.emaFast, idx);
+        if (ema === null) return false;
+        const close = data[idx].close;
+        if (tradeDirection === 'short') {
+            if (close >= ema) return false;
+        } else if (close <= ema) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 export function passesTradeFilter(
@@ -115,6 +214,33 @@ export function passesTradeFilter(
         if (adx === null || adx === undefined) return false;
         const minAdx = config.adxMin > 0 ? config.adxMin : TRADE_FILTER_DEFAULT_ADX_MIN;
         return adx >= minAdx;
+    }
+
+    if (config.tradeFilterMode === 'trend_htf_bias') {
+        return passesHtfBiasFilter(data, entryIndex, indicators, tradeDirection);
+    }
+
+    if (config.tradeFilterMode === 'trend_exec_alignment') {
+        return passesExecutionAlignmentFilter(data, entryIndex, indicators, tradeDirection);
+    }
+
+    if (config.tradeFilterMode === 'trend_no_chase') {
+        return passesNoChaseFilter(data, entryIndex, indicators, tradeDirection);
+    }
+
+    if (config.tradeFilterMode === 'trend_hysteresis') {
+        return passesHysteresisFilter(data, entryIndex, indicators, tradeDirection);
+    }
+
+    if (config.tradeFilterMode === 'trend_mtf_stack') {
+        const adx = indicators.adx[entryIndex];
+        if (adx === null || adx === undefined) return false;
+        const minAdx = config.adxMin > 0 ? config.adxMin : TRADE_FILTER_STACK_ADX_MIN;
+        if (adx < minAdx) return false;
+        return passesHtfBiasFilter(data, entryIndex, indicators, tradeDirection)
+            && passesExecutionAlignmentFilter(data, entryIndex, indicators, tradeDirection)
+            && passesNoChaseFilter(data, entryIndex, indicators, tradeDirection)
+            && passesHysteresisFilter(data, entryIndex, indicators, tradeDirection);
     }
 
     return true;

@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { normalizeBacktestSettings } from './lib/strategies/backtest/backtest-utils';
+import { resolveBacktestSettingsFromRaw } from './lib/backtest-settings-resolver';
 import {
     hasNonZeroSnapshotFilter,
     sanitizeBacktestSettingsForRust,
@@ -98,5 +99,15 @@ describe('Backtest settings compatibility', () => {
         expect(requiresTypescriptEngine({ tradeDirection: 'short' })).to.equal(false);
         expect(requiresTypescriptEngine({ tradeDirection: 'both' })).to.equal(true);
         expect(requiresTypescriptEngine({ tradeDirection: 'combined' })).to.equal(true);
+    });
+
+    it('preserves new trend filter modes and keeps them on TS engine', () => {
+        const resolved = resolveBacktestSettingsFromRaw({
+            tradeFilterSettingsToggle: true,
+            tradeFilterMode: 'trend_mtf_stack',
+        } as unknown as BacktestSettings);
+
+        expect(resolved.tradeFilterMode).to.equal('trend_mtf_stack');
+        expect(requiresTypescriptEngine(resolved)).to.equal(true);
     });
 });

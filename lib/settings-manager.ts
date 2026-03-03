@@ -969,7 +969,20 @@ class SettingsManager {
     }
 
     private resolveTradeFilterModeValue(value: unknown): TradeFilterMode {
-        if (value === 'none' || value === 'close' || value === 'volume' || value === 'rsi' || value === 'trend' || value === 'adx' || value === 'htf_drift') {
+        if (
+            value === 'none'
+            || value === 'close'
+            || value === 'volume'
+            || value === 'rsi'
+            || value === 'trend'
+            || value === 'adx'
+            || value === 'htf_drift'
+            || value === 'trend_htf_bias'
+            || value === 'trend_exec_alignment'
+            || value === 'trend_no_chase'
+            || value === 'trend_hysteresis'
+            || value === 'trend_mtf_stack'
+        ) {
             return value;
         }
         return DEFAULT_BACKTEST_SETTINGS.tradeFilterMode;
@@ -1058,6 +1071,10 @@ class SettingsManager {
         const riskMode = document.getElementById('riskMode');
         if (riskMode) {
             riskMode.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        const tradeFilterMode = document.getElementById('tradeFilterMode');
+        if (tradeFilterMode) {
+            tradeFilterMode.dispatchEvent(new Event('change', { bubbles: true }));
         }
         const tradeDirection = document.getElementById('tradeDirection');
         if (tradeDirection) {

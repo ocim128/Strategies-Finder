@@ -107,6 +107,8 @@ export interface NormalizedSettings {
 export interface IndicatorSeries {
     atr: (number | null)[];
     emaTrend: (number | null)[];
+    emaFast: (number | null)[];
+    emaSlow: (number | null)[];
     adx: (number | null)[];
     volumeSma: (number | null)[];
     rsi: (number | null)[];

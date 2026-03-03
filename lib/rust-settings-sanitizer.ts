@@ -1,5 +1,13 @@
 import type { BacktestSettings } from "./types/strategies";
 
+const RUST_UNSUPPORTED_TRADE_FILTER_MODES = new Set([
+    "trend_htf_bias",
+    "trend_exec_alignment",
+    "trend_no_chase",
+    "trend_hysteresis",
+    "trend_mtf_stack",
+]);
+
 /**
  * Determines if TypeScript engine is required for given backtest settings.
  * This is the single-source-of-truth for Rust eligibility decisions.
@@ -18,6 +26,7 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const allowSameBarExit = settings.allowSameBarExit ?? true;
     const slippageBps = settings.slippageBps ?? 0;
     const marketMode = settings.marketMode ?? 'all';
+    const tradeFilterMode = settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none';
 
     // Realism constraints
     const usesRealismConstraints =
@@ -32,6 +41,7 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
 
     // Market mode constraint (Rust only supports 'all')
     const usesNonAllMarketMode = marketMode !== 'all';
+    const usesUnsupportedTradeFilterMode = RUST_UNSUPPORTED_TRADE_FILTER_MODES.has(tradeFilterMode);
 
     // Percentage-based risk guards
     const usesPercentageMaxHold =
@@ -53,6 +63,7 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     return usesRealismConstraints
         || usesCombinedDirection
         || usesNonAllMarketMode
+        || usesUnsupportedTradeFilterMode
         || usesPercentageMaxHold
         || usesPercentageProbation
         || usesPercentageLossStreakGuard

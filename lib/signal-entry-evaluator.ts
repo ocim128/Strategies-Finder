@@ -66,6 +66,11 @@ const TRADE_FILTER_MODES: ReadonlySet<TradeFilterMode> = new Set([
     "trend",
     "adx",
     "htf_drift",
+    "trend_htf_bias",
+    "trend_exec_alignment",
+    "trend_no_chase",
+    "trend_hysteresis",
+    "trend_mtf_stack",
 ]);
 
 function toUnixSeconds(value: Time): number | null {

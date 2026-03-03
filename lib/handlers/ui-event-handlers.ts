@@ -713,6 +713,51 @@ export function setupEventHandlers() {
     riskModeSelect.addEventListener('change', applyRiskMode);
     applyRiskMode();
 
+    const tradeFilterModeSelect = getRequiredElement<HTMLSelectElement>('tradeFilterMode');
+    const tradeFilterFieldConfig: Array<{ inputId: string; modes: string[] }> = [
+        { inputId: 'confirmLookback', modes: ['close', 'trend', 'htf_drift'] },
+        { inputId: 'volumeSmaPeriod', modes: ['volume'] },
+        { inputId: 'volumeMultiplier', modes: ['volume'] },
+        { inputId: 'confirmRsiPeriod', modes: ['rsi'] },
+        { inputId: 'confirmRsiBullish', modes: ['rsi'] },
+        { inputId: 'confirmRsiBearish', modes: ['rsi'] },
+    ];
+    const tradeFilterFields = tradeFilterFieldConfig.map(({ inputId, modes }) => {
+        const input = getRequiredElement<HTMLInputElement>(inputId);
+        const group = input.closest<HTMLElement>('.param-group');
+        if (!group) {
+            throw new Error(`Trade filter input #${inputId} must be inside .param-group`);
+        }
+        return { input, group, modes };
+    });
+    const tradeFilterRows = Array.from(
+        new Set(
+            tradeFilterFields
+                .map(({ group }) => group.closest<HTMLElement>('.param-row'))
+                .filter((row): row is HTMLElement => Boolean(row))
+        )
+    );
+
+    const applyTradeFilterMode = () => {
+        const mode = tradeFilterModeSelect.value;
+
+        tradeFilterFields.forEach(({ input, group, modes }) => {
+            const isRelevant = modes.includes(mode);
+            group.classList.toggle('is-hidden', !isRelevant);
+            group.classList.toggle('is-disabled', !isRelevant);
+            input.disabled = !isRelevant;
+        });
+
+        tradeFilterRows.forEach((row) => {
+            const hasVisibleGroup = Array.from(row.querySelectorAll<HTMLElement>('.param-group'))
+                .some((group) => !group.classList.contains('is-hidden'));
+            row.classList.toggle('is-hidden', !hasVisibleGroup);
+        });
+    };
+
+    tradeFilterModeSelect.addEventListener('change', applyTradeFilterMode);
+    applyTradeFilterMode();
+
     const strategyTimeframeToggle = getRequiredElement<HTMLInputElement>('strategyTimeframeToggle');
     const strategyTimeframeMinutes = getRequiredElement<HTMLInputElement>('strategyTimeframeMinutes');
     const strategyTimeframeMinutesGroup = document.getElementById('strategyTimeframeMinutesGroup');

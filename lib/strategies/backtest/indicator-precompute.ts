@@ -4,7 +4,11 @@ import { calculateADX, calculateATR, calculateEMA, calculateRSI, calculateSMA } 
 import { getCloses, getHighs, getLows, getVolumes } from '../strategy-helpers';
 import { IndicatorSeries, NormalizedSettings, PrecomputedIndicators } from '../../types/backtest';
 import { normalizeBacktestSettings } from './backtest-utils';
-import { resolveTrendPeriod } from './trade-filters';
+import {
+    resolveTrendPeriod,
+    TRADE_FILTER_EXEC_ALIGNMENT_EMA_PERIOD,
+    TRADE_FILTER_HTF_BIAS_EMA_PERIOD
+} from './trade-filters';
 
 const MAX_SETTINGS_CACHE_PER_DATASET = 24;
 const indicatorCache = new WeakMap<OHLCVData[], Map<string, PrecomputedIndicators>>();
@@ -51,8 +55,19 @@ function precomputeIndicatorsFromConfig(
     const atr = needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : [];
     const trendPeriod = resolveTrendPeriod(config);
     const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
+    const useFastTrendFilter = config.tradeFilterMode === 'trend_exec_alignment'
+        || config.tradeFilterMode === 'trend_no_chase'
+        || config.tradeFilterMode === 'trend_hysteresis'
+        || config.tradeFilterMode === 'trend_mtf_stack';
+    const useSlowTrendFilter = config.tradeFilterMode === 'trend_htf_bias'
+        || config.tradeFilterMode === 'trend_mtf_stack';
+    const emaFast = useFastTrendFilter ? calculateEMA(closes, TRADE_FILTER_EXEC_ALIGNMENT_EMA_PERIOD) : [];
+    const emaSlow = useSlowTrendFilter ? calculateEMA(closes, TRADE_FILTER_HTF_BIAS_EMA_PERIOD) : [];
 
-    const useAdx = config.tradeFilterMode === 'adx' || config.adxMin > 0 || config.adxMax > 0;
+    const useAdx = config.tradeFilterMode === 'adx'
+        || config.tradeFilterMode === 'trend_mtf_stack'
+        || config.adxMin > 0
+        || config.adxMax > 0;
     const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
     const adx = useAdx ? calculateADX(highs, lows, closes, adxPeriod) : [];
 
@@ -66,6 +81,8 @@ function precomputeIndicatorsFromConfig(
     return {
         atr,
         emaTrend,
+        emaFast,
+        emaSlow,
         adx,
         volumeSma,
         rsi,
@@ -127,6 +144,8 @@ export function resolveIndicators(
     return {
         atr: computed.atr,
         emaTrend: computed.emaTrend,
+        emaFast: computed.emaFast,
+        emaSlow: computed.emaSlow,
         adx: computed.adx,
         volumeSma: computed.volumeSma,
         rsi: computed.rsi
