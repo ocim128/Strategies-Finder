@@ -3,6 +3,13 @@ import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, g
 import { calculateATR, calculateEMA } from '../indicators';
 import { COLORS } from '../constants';
 
+const INTERNAL_MIN_FACTOR = 1;
+const INTERNAL_FACTOR_STEP = 0.5;
+const INTERNAL_PERF_ALPHA = 10;
+const INTERNAL_KMEANS_ITERATIONS = 50;
+const INTERNAL_KMEANS_INTERVAL = 3;
+const INTERNAL_WARMUP_BARS = 50;
+
 type Cluster = {
     centroid: number;
     values: number[];
@@ -83,14 +90,15 @@ function computeCore(data: OHLCVData[], params: StrategyParams) {
     if (cleanData.length === 0) return null;
 
     const atrPeriod = Math.max(1, Math.round(params.atrPeriod ?? 10));
-    const minFactor = Math.max(0.1, params.minFactor ?? 1);
+    const minFactor = INTERNAL_MIN_FACTOR;
     const maxFactor = Math.max(minFactor, params.maxFactor ?? 13);
-    const factorStep = Math.max(0.1, params.factorStep ?? 0.5);
-    const perfAlpha = Math.max(1, Math.round(params.perfAlpha ?? 10));
-    const kMeansIterations = Math.max(1, Math.round(params.kMeansIterations ?? 50));
-    const kMeansInterval = Math.max(1, Math.round(params.kMeansInterval ?? 3));
-    const clusterChoice = Math.min(2, Math.max(0, Math.round(params.clusterChoice ?? 2)));
-    const warmupBars = Math.max(0, Math.round(params.warmupBars ?? 50));
+    const factorStep = INTERNAL_FACTOR_STEP;
+    const perfAlpha = INTERNAL_PERF_ALPHA;
+    const kMeansIterations = INTERNAL_KMEANS_ITERATIONS;
+    const kMeansInterval = INTERNAL_KMEANS_INTERVAL;
+    const qualityBias = params.qualityBias ?? params.clusterChoice ?? 2;
+    const clusterChoice = Math.min(2, Math.max(0, Math.round(qualityBias)));
+    const warmupBars = INTERNAL_WARMUP_BARS;
 
     const highs = getHighs(cleanData);
     const lows = getLows(cleanData);
@@ -188,28 +196,16 @@ function computeCore(data: OHLCVData[], params: StrategyParams) {
 
 export const adaptive_supertrend_kmeans: Strategy = {
     name: 'Adaptive Supertrend (K-Means)',
-    description: 'Adaptive Supertrend that clusters factor performance and trades trend flips.',
+    description: 'Adaptive Supertrend with simplified controls: ATR, max factor, and quality bias.',
     defaultParams: {
         atrPeriod: 10,
-        minFactor: 1,
         maxFactor: 13,
-        factorStep: 0.5,
-        perfAlpha: 10,
-        kMeansIterations: 50,
-        kMeansInterval: 3,
-        clusterChoice: 2,
-        warmupBars: 50
+        qualityBias: 2
     },
     paramLabels: {
         atrPeriod: 'ATR Period',
-        minFactor: 'Min Factor',
         maxFactor: 'Max Factor',
-        factorStep: 'Factor Step',
-        perfAlpha: 'Performance EMA',
-        kMeansIterations: 'K-Means Iterations',
-        kMeansInterval: 'K-Means Interval',
-        clusterChoice: 'Cluster (0 Worst, 1 Avg, 2 Best)',
-        warmupBars: 'Warmup Bars'
+        qualityBias: 'Quality Bias (0 Conservative, 1 Balanced, 2 Aggressive)'
     },
     execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
         const core = computeCore(data, params);
@@ -250,6 +246,6 @@ export const adaptive_supertrend_kmeans: Strategy = {
     metadata: {
         role: 'entry',
         direction: 'both',
-        walkForwardParams: ['atrPeriod', 'minFactor', 'maxFactor', 'factorStep']
+        walkForwardParams: ['atrPeriod', 'maxFactor', 'qualityBias']
     }
 };

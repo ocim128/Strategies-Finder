@@ -21,6 +21,13 @@ interface ZoneCandidates {
 }
 
 const RETEST_COOLDOWN = 3;
+const INTERNAL_ATR_PERIOD = 14;
+const INTERNAL_MAX_ZONES = 10;
+const INTERNAL_MIN_ZONE_DISTANCE_MULTIPLIER = 2;
+const INTERNAL_INVALIDATION_MODE = 0; // 0 = close-based invalidation
+const INTERNAL_MAX_ZONE_AGE = 1000;
+const INTERNAL_STRENGTH_DECAY_BARS = 200;
+const INTERNAL_RETEST_PENALTY = 1.5;
 
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
@@ -39,19 +46,13 @@ function createSupplyZone(
     pivotIndex: number,
     createdIndex: number,
     atrValue: number,
-    forceAtr: number
+    zoneWidthAtr: number
 ): Zone | null {
     const bar = data[pivotIndex];
-    let top = bar.high;
-    let bottom = Math.min(bar.open, bar.close);
-
-    let height = top - bottom;
+    const top = bar.high;
+    const height = atrValue * zoneWidthAtr;
     if (height <= 0) return null;
-
-    if (forceAtr > 0 && height < atrValue * forceAtr) {
-        height = atrValue * forceAtr;
-        bottom = top - height;
-    }
+    const bottom = top - height;
 
     return {
         id: pivotIndex,
@@ -71,19 +72,13 @@ function createDemandZone(
     pivotIndex: number,
     createdIndex: number,
     atrValue: number,
-    forceAtr: number
+    zoneWidthAtr: number
 ): Zone | null {
     const bar = data[pivotIndex];
-    let bottom = bar.low;
-    let top = Math.max(bar.open, bar.close);
-
-    let height = top - bottom;
+    const bottom = bar.low;
+    const height = atrValue * zoneWidthAtr;
     if (height <= 0) return null;
-
-    if (forceAtr > 0 && height < atrValue * forceAtr) {
-        height = atrValue * forceAtr;
-        top = bottom + height;
-    }
+    const top = bottom + height;
 
     return {
         id: pivotIndex,
@@ -96,13 +91,6 @@ function createDemandZone(
         lastRetestIndex: createdIndex,
         active: true,
     };
-}
-
-function filterZoneByAtr(height: number, atrValue: number, minAtr: number, maxAtr: number): boolean {
-    if (atrValue <= 0) return false;
-    if (maxAtr > 0 && height > atrValue * maxAtr) return false;
-    if (minAtr > 0 && height < atrValue * minAtr) return false;
-    return true;
 }
 
 function updateZoneState(
@@ -151,59 +139,80 @@ function selectStrongestZone(zones: Zone[], index: number, decayBars: number, re
     return best;
 }
 
+function findEntryCandidates(
+    zones: ZoneCandidates,
+    bar: OHLCVData,
+    index: number,
+    minStrength: number,
+    strengthDecayBars: number,
+    retestPenalty: number
+): {
+    bestLong: Zone | null;
+    bestLongStrength: number;
+    bestShort: Zone | null;
+    bestShortStrength: number;
+} {
+    let bestLong: Zone | null = null;
+    let bestLongStrength = -Infinity;
+    let bestShort: Zone | null = null;
+    let bestShortStrength = -Infinity;
+
+    for (const zone of zones.demand) {
+        if (!zone.active || index <= zone.createdIndex) continue;
+        const touched = bar.low <= zone.top && bar.high >= zone.bottom;
+        const rejected = bar.close >= zone.top && bar.close > bar.open;
+        if (!touched || !rejected) continue;
+
+        const strength = computeStrength(zone, index, strengthDecayBars, retestPenalty);
+        if (strength >= minStrength && strength > bestLongStrength) {
+            bestLongStrength = strength;
+            bestLong = zone;
+        }
+    }
+
+    for (const zone of zones.supply) {
+        if (!zone.active || index <= zone.createdIndex) continue;
+        const touched = bar.high >= zone.bottom && bar.low <= zone.top;
+        const rejected = bar.close <= zone.bottom && bar.close < bar.open;
+        if (!touched || !rejected) continue;
+
+        const strength = computeStrength(zone, index, strengthDecayBars, retestPenalty);
+        if (strength >= minStrength && strength > bestShortStrength) {
+            bestShortStrength = strength;
+            bestShort = zone;
+        }
+    }
+
+    return { bestLong, bestLongStrength, bestShort, bestShortStrength };
+}
+
 export const supply_demand_zones: Strategy = {
     name: 'Supply Demand Zones',
-    description: 'Trades fresh supply/demand zones using pivot swings, ATR filters, and strength ranking',
+    description: 'Trades supply/demand zone rejections with structural exits (zone invalidation or opposite signal)',
     defaultParams: {
         swingLength: 12,
-        maxZones: 10,
-        maxZoneAtr: 1.0,
-        minZoneAtr: 1.0,
-        forceZoneAtr: 1.0,
-        minZoneDistance: 44,
-        invalidationMode: 0,
-        maxZoneAge: 1000,
-        atrPeriod: 14,
-        strengthDecayBars: 200,
-        retestPenalty: 1.5,
+        zoneWidthAtr: 1.0,
         minStrength: 6,
-        stopAtrMult: 1.0,
-        targetAtrMult: 2.0,
     },
     paramLabels: {
         swingLength: 'Swing Length',
-        maxZones: 'Max Zones',
-        maxZoneAtr: 'Max Zone Height (ATR)',
-        minZoneAtr: 'Min Zone Height (ATR)',
-        forceZoneAtr: 'Force Zone Height (ATR)',
-        minZoneDistance: 'Min Distance Between Zones (bars)',
-        invalidationMode: 'Invalidation Mode (0=Close, 1=Wick)',
-        maxZoneAge: 'Max Zone Age (bars)',
-        atrPeriod: 'ATR Period',
-        strengthDecayBars: 'Strength Decay Bars',
-        retestPenalty: 'Retest Penalty',
+        zoneWidthAtr: 'Zone Width (ATR)',
         minStrength: 'Min Strength',
-        stopAtrMult: 'Stop ATR Mult',
-        targetAtrMult: 'Target ATR Mult',
     },
     execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
         const cleanData = ensureCleanData(data);
         if (cleanData.length === 0) return [];
 
         const swingLength = Math.max(2, Math.floor(params.swingLength));
-        const maxZones = Math.max(1, Math.floor(params.maxZones));
-        const maxZoneAtr = Math.max(0, params.maxZoneAtr ?? 0);
-        const minZoneAtr = Math.max(0, params.minZoneAtr ?? 0);
-        const forceZoneAtr = Math.max(0, params.forceZoneAtr ?? 0);
-        const minZoneDistance = Math.max(0, Math.floor(params.minZoneDistance));
-        const invalidationMode = Math.round(params.invalidationMode ?? 0);
-        const maxZoneAge = Math.max(0, Math.floor(params.maxZoneAge ?? 0));
-        const atrPeriod = Math.max(2, Math.floor(params.atrPeriod));
-        const strengthDecayBars = Math.max(1, Math.floor(params.strengthDecayBars));
-        const retestPenalty = Math.max(0, params.retestPenalty ?? 1.5);
+        const zoneWidthAtr = clamp(params.zoneWidthAtr ?? 1.0, 0.2, 3);
         const minStrength = clamp(params.minStrength ?? 6, 1, 10);
-        const stopAtrMult = Math.max(0, params.stopAtrMult ?? 1.0);
-        const targetAtrMult = Math.max(0.1, params.targetAtrMult ?? 2.0);
+        const atrPeriod = INTERNAL_ATR_PERIOD;
+        const maxZones = INTERNAL_MAX_ZONES;
+        const minZoneDistance = Math.max(1, Math.floor(swingLength * INTERNAL_MIN_ZONE_DISTANCE_MULTIPLIER));
+        const invalidationMode = INTERNAL_INVALIDATION_MODE;
+        const maxZoneAge = INTERNAL_MAX_ZONE_AGE;
+        const strengthDecayBars = INTERNAL_STRENGTH_DECAY_BARS;
+        const retestPenalty = INTERNAL_RETEST_PENALTY;
 
         const highs = getHighs(cleanData);
         const lows = getLows(cleanData);
@@ -218,8 +227,7 @@ export const supply_demand_zones: Strategy = {
         let lastDemandCreated = -Infinity;
 
         let position: 'none' | 'long' | 'short' = 'none';
-        let stopPrice = 0;
-        let targetPrice = 0;
+        let entryZone: Zone | null = null;
 
         for (let i = 0; i < cleanData.length; i++) {
             const bar = cleanData[i];
@@ -230,26 +238,20 @@ export const supply_demand_zones: Strategy = {
                 const atrVal = atr[pivotIndex];
                 if (atrVal !== null && atrVal > 0) {
                     if (pivotHighs[pivotIndex] && i - lastSupplyCreated >= minZoneDistance) {
-                        const zone = createSupplyZone(cleanData, pivotIndex, i, atrVal, forceZoneAtr);
+                        const zone = createSupplyZone(cleanData, pivotIndex, i, atrVal, zoneWidthAtr);
                         if (zone) {
-                            const height = zone.top - zone.bottom;
-                            if (filterZoneByAtr(height, atrVal, minZoneAtr, maxZoneAtr)) {
-                                zones.supply.push(zone);
-                                lastSupplyCreated = i;
-                                if (zones.supply.length > maxZones) zones.supply.shift();
-                            }
+                            zones.supply.push(zone);
+                            lastSupplyCreated = i;
+                            if (zones.supply.length > maxZones) zones.supply.shift();
                         }
                     }
 
                     if (pivotLows[pivotIndex] && i - lastDemandCreated >= minZoneDistance) {
-                        const zone = createDemandZone(cleanData, pivotIndex, i, atrVal, forceZoneAtr);
+                        const zone = createDemandZone(cleanData, pivotIndex, i, atrVal, zoneWidthAtr);
                         if (zone) {
-                            const height = zone.top - zone.bottom;
-                            if (filterZoneByAtr(height, atrVal, minZoneAtr, maxZoneAtr)) {
-                                zones.demand.push(zone);
-                                lastDemandCreated = i;
-                                if (zones.demand.length > maxZones) zones.demand.shift();
-                            }
+                            zones.demand.push(zone);
+                            lastDemandCreated = i;
+                            if (zones.demand.length > maxZones) zones.demand.shift();
                         }
                     }
                 }
@@ -266,68 +268,42 @@ export const supply_demand_zones: Strategy = {
             const atrNow = atr[i];
             if (atrNow === null || atrNow <= 0) continue;
 
+            const { bestLong, bestLongStrength, bestShort, bestShortStrength } = findEntryCandidates(
+                zones,
+                bar,
+                i,
+                minStrength,
+                strengthDecayBars,
+                retestPenalty
+            );
+
             if (position === 'none') {
-                let bestLong: Zone | null = null;
-                let bestLongStrength = -Infinity;
-                let bestShort: Zone | null = null;
-                let bestShortStrength = -Infinity;
-
-                for (const zone of zones.demand) {
-                    if (!zone.active || i <= zone.createdIndex) continue;
-                    const touched = bar.low <= zone.top && bar.high >= zone.bottom;
-                    const rejected = bar.close >= zone.top && bar.close > bar.open;
-                    if (!touched || !rejected) continue;
-
-                    const strength = computeStrength(zone, i, strengthDecayBars, retestPenalty);
-                    if (strength >= minStrength && strength > bestLongStrength) {
-                        bestLongStrength = strength;
-                        bestLong = zone;
-                    }
-                }
-
-                for (const zone of zones.supply) {
-                    if (!zone.active || i <= zone.createdIndex) continue;
-                    const touched = bar.high >= zone.bottom && bar.low <= zone.top;
-                    const rejected = bar.close <= zone.bottom && bar.close < bar.open;
-                    if (!touched || !rejected) continue;
-
-                    const strength = computeStrength(zone, i, strengthDecayBars, retestPenalty);
-                    if (strength >= minStrength && strength > bestShortStrength) {
-                        bestShortStrength = strength;
-                        bestShort = zone;
-                    }
-                }
-
                 if (bestLong && (!bestShort || bestLongStrength >= bestShortStrength)) {
                     position = 'long';
-                    stopPrice = bestLong.bottom - atrNow * stopAtrMult;
-                    targetPrice = bar.close + atrNow * targetAtrMult;
+                    entryZone = bestLong;
                     signals.push(createBuySignal(cleanData, i, 'Supply/Demand long entry'));
                 } else if (bestShort) {
                     position = 'short';
-                    stopPrice = bestShort.top + atrNow * stopAtrMult;
-                    targetPrice = bar.close - atrNow * targetAtrMult;
+                    entryZone = bestShort;
                     signals.push(createSellSignal(cleanData, i, 'Supply/Demand short entry'));
                 }
             } else if (position === 'long') {
-                const hitStop = bar.low <= stopPrice;
-                const hitTarget = bar.high >= targetPrice;
+                const invalidated = entryZone === null || !entryZone.active || bar.close < entryZone.bottom;
+                const oppositeShort = bestShort !== null && (!bestLong || bestShortStrength >= bestLongStrength);
 
-                if (hitStop || hitTarget) {
-                    signals.push(createSellSignal(cleanData, i, hitStop ? 'Supply/Demand stop' : 'Supply/Demand target'));
+                if (invalidated || oppositeShort) {
+                    signals.push(createSellSignal(cleanData, i, invalidated ? 'Supply/Demand zone invalidated' : 'Supply/Demand opposite rejection'));
                     position = 'none';
-                    stopPrice = 0;
-                    targetPrice = 0;
+                    entryZone = null;
                 }
             } else if (position === 'short') {
-                const hitStop = bar.high >= stopPrice;
-                const hitTarget = bar.low <= targetPrice;
+                const invalidated = entryZone === null || !entryZone.active || bar.close > entryZone.top;
+                const oppositeLong = bestLong !== null && (!bestShort || bestLongStrength >= bestShortStrength);
 
-                if (hitStop || hitTarget) {
-                    signals.push(createBuySignal(cleanData, i, hitStop ? 'Supply/Demand stop' : 'Supply/Demand target'));
+                if (invalidated || oppositeLong) {
+                    signals.push(createBuySignal(cleanData, i, invalidated ? 'Supply/Demand zone invalidated' : 'Supply/Demand opposite rejection'));
                     position = 'none';
-                    stopPrice = 0;
-                    targetPrice = 0;
+                    entryZone = null;
                 }
             }
         }
@@ -339,16 +315,14 @@ export const supply_demand_zones: Strategy = {
         if (cleanData.length === 0) return [];
 
         const swingLength = Math.max(2, Math.floor(params.swingLength));
-        const maxZones = Math.max(1, Math.floor(params.maxZones));
-        const maxZoneAtr = Math.max(0, params.maxZoneAtr ?? 0);
-        const minZoneAtr = Math.max(0, params.minZoneAtr ?? 0);
-        const forceZoneAtr = Math.max(0, params.forceZoneAtr ?? 0);
-        const minZoneDistance = Math.max(0, Math.floor(params.minZoneDistance));
-        const invalidationMode = Math.round(params.invalidationMode ?? 0);
-        const maxZoneAge = Math.max(0, Math.floor(params.maxZoneAge ?? 0));
-        const atrPeriod = Math.max(2, Math.floor(params.atrPeriod));
-        const strengthDecayBars = Math.max(1, Math.floor(params.strengthDecayBars));
-        const retestPenalty = Math.max(0, params.retestPenalty ?? 1.5);
+        const zoneWidthAtr = clamp(params.zoneWidthAtr ?? 1.0, 0.2, 3);
+        const atrPeriod = INTERNAL_ATR_PERIOD;
+        const maxZones = INTERNAL_MAX_ZONES;
+        const minZoneDistance = Math.max(1, Math.floor(swingLength * INTERNAL_MIN_ZONE_DISTANCE_MULTIPLIER));
+        const invalidationMode = INTERNAL_INVALIDATION_MODE;
+        const maxZoneAge = INTERNAL_MAX_ZONE_AGE;
+        const strengthDecayBars = INTERNAL_STRENGTH_DECAY_BARS;
+        const retestPenalty = INTERNAL_RETEST_PENALTY;
 
         const highs = getHighs(cleanData);
         const lows = getLows(cleanData);
@@ -374,26 +348,20 @@ export const supply_demand_zones: Strategy = {
                 const atrVal = atr[pivotIndex];
                 if (atrVal !== null && atrVal > 0) {
                     if (pivotHighs[pivotIndex] && i - lastSupplyCreated >= minZoneDistance) {
-                        const zone = createSupplyZone(cleanData, pivotIndex, i, atrVal, forceZoneAtr);
+                        const zone = createSupplyZone(cleanData, pivotIndex, i, atrVal, zoneWidthAtr);
                         if (zone) {
-                            const height = zone.top - zone.bottom;
-                            if (filterZoneByAtr(height, atrVal, minZoneAtr, maxZoneAtr)) {
-                                zones.supply.push(zone);
-                                lastSupplyCreated = i;
-                                if (zones.supply.length > maxZones) zones.supply.shift();
-                            }
+                            zones.supply.push(zone);
+                            lastSupplyCreated = i;
+                            if (zones.supply.length > maxZones) zones.supply.shift();
                         }
                     }
 
                     if (pivotLows[pivotIndex] && i - lastDemandCreated >= minZoneDistance) {
-                        const zone = createDemandZone(cleanData, pivotIndex, i, atrVal, forceZoneAtr);
+                        const zone = createDemandZone(cleanData, pivotIndex, i, atrVal, zoneWidthAtr);
                         if (zone) {
-                            const height = zone.top - zone.bottom;
-                            if (filterZoneByAtr(height, atrVal, minZoneAtr, maxZoneAtr)) {
-                                zones.demand.push(zone);
-                                lastDemandCreated = i;
-                                if (zones.demand.length > maxZones) zones.demand.shift();
-                            }
+                            zones.demand.push(zone);
+                            lastDemandCreated = i;
+                            if (zones.demand.length > maxZones) zones.demand.shift();
                         }
                     }
                 }

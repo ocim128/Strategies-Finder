@@ -11,6 +11,9 @@ import {
 } from '../strategy-helpers';
 import { calculateDonchianChannels, calculateSMA } from '../indicators';
 
+const INTERNAL_MIN_VACUUM_BARS = 5;
+const INTERNAL_COOLDOWN_BARS = 4;
+
 function clampInt(value: number, min: number, max: number): number {
     const rounded = Math.round(value);
     if (!Number.isFinite(rounded)) return min;
@@ -24,22 +27,18 @@ function clamp(value: number, min: number, max: number): number {
 
 export const liquidity_void_rider: Strategy = {
     name: 'Liquidity Void Rider',
-    description: 'Detects low-liquidity vacuums and enters on the first range expansion break after volume drought.',
+    description: 'Detects low-liquidity vacuums and enters on first range expansion with a simplified control set.',
     defaultParams: {
         volumeLookback: 20,
         vacuumThresholdRatio: 0.5,
-        minVacuumBars: 5,
         breakoutLookback: 12,
         breakoutBufferPct: 0.0005,
-        cooldownBars: 4,
     },
     paramLabels: {
         volumeLookback: 'Volume Lookback',
         vacuumThresholdRatio: 'Vacuum Threshold Ratio',
-        minVacuumBars: 'Minimum Vacuum Bars',
         breakoutLookback: 'Breakout Lookback',
         breakoutBufferPct: 'Breakout Buffer (pct)',
-        cooldownBars: 'Cooldown Bars',
     },
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
@@ -47,10 +46,10 @@ export const liquidity_void_rider: Strategy = {
 
         const volumeLookback = clampInt(params.volumeLookback ?? 20, 5, 500);
         const vacuumThresholdRatio = clamp(params.vacuumThresholdRatio ?? 0.5, 0.05, 1.2);
-        const minVacuumBars = clampInt(params.minVacuumBars ?? 5, 2, 30);
+        const minVacuumBars = clampInt(params.minVacuumBars ?? INTERNAL_MIN_VACUUM_BARS, 2, 30);
         const breakoutLookback = clampInt(params.breakoutLookback ?? 12, 3, 200);
         const breakoutBufferPct = clamp(params.breakoutBufferPct ?? 0.0005, 0, 0.02);
-        const cooldownBars = clampInt(params.cooldownBars ?? 4, 0, 200);
+        const cooldownBars = clampInt(params.cooldownBars ?? INTERNAL_COOLDOWN_BARS, 0, 200);
 
         const highs = getHighs(cleanData);
         const lows = getLows(cleanData);
@@ -110,11 +109,8 @@ export const liquidity_void_rider: Strategy = {
         walkForwardParams: [
             'volumeLookback',
             'vacuumThresholdRatio',
-            'minVacuumBars',
             'breakoutLookback',
             'breakoutBufferPct',
-            'cooldownBars',
         ],
     },
 };
-

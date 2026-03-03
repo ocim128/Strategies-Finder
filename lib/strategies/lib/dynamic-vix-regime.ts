@@ -268,10 +268,14 @@ function resolveAdaptivePeriods(
 }
 
 function normalizeConfig(params: StrategyParams): RegimeConfig {
-    const volWindow = Math.max(10, Math.round(params.volWindow ?? 21));
-    const volLookback = Math.max(volWindow + 20, Math.round(params.volLookback ?? 126));
-    const fastPeriod = Math.max(10, Math.round(params.fastPeriod ?? 50));
-    const slowPeriod = Math.max(fastPeriod + 20, Math.round(params.slowPeriod ?? 200));
+    // Keep simplified profile within WFA-safe bounds to avoid silent no-trade regimes
+    // from stale or extreme saved parameter values.
+    const fastPeriod = Math.round(clamp(Math.round(params.fastPeriod ?? 50), 10, 120));
+    const slowPeriod = Math.round(clamp(Math.round(params.slowPeriod ?? 200), fastPeriod + 20, 360));
+    const derivedVolWindow = clamp(Math.round(fastPeriod * 0.42), 10, 60);
+    const derivedVolLookback = Math.max(derivedVolWindow + 20, clamp(Math.round(slowPeriod * 0.63), 60, 420));
+    const volWindow = Math.round(clamp(Math.round(params.volWindow ?? derivedVolWindow), 10, 60));
+    const volLookback = Math.round(clamp(Math.round(params.volLookback ?? derivedVolLookback), volWindow + 20, 360));
 
     const spikePercentile = clamp(params.spikePercentilePct ?? 80, 45, 99) / 100;
     const calmRaw = clamp(params.calmPercentilePct ?? 25, 1, 65) / 100;
@@ -288,7 +292,8 @@ function normalizeConfig(params: StrategyParams): RegimeConfig {
         useRecoveryRegime: asToggle(params.useRecoveryRegime, true),
         useLowVolDeRisk: asToggle(params.useLowVolDeRisk, true),
         useMlOverlay: asToggle(params.useMlOverlay, true),
-        adaptiveLookbacks: asToggle(params.adaptiveLookbacks, true),
+        // Keep this simplified profile strictly causal: no dataset-level adaptive calibration.
+        adaptiveLookbacks: false,
         adaptiveStrength,
         minAdaptiveFactor,
         maxAdaptiveFactor,
@@ -446,56 +451,20 @@ function buildRegimeSeries(cleanData: OHLCVData[], config: RegimeConfig): Regime
 
 export const dynamic_vix_regime: Strategy = {
     name: 'Dynamic VIX Regime',
-    description: 'Volatility-regime allocator inspired by VIX spike/recovery logic with adaptive lookbacks that auto-scale by realized volatility regime.',
+    description: 'Volatility-regime allocator with simplified controls (trend periods, spike trigger, and entry/exit thresholds).',
     defaultParams: {
-        useSpikeRegime: 1,
-        useRecoveryRegime: 1,
-        useLowVolDeRisk: 1,
-        useMlOverlay: 1,
-        adaptiveLookbacks: 1,
-        adaptiveStrengthPct: 55,
-        minAdaptiveFactor: 0.65,
-        maxAdaptiveFactor: 1.55,
-        volWindow: 21,
-        volLookback: 126,
         fastPeriod: 50,
         slowPeriod: 200,
         spikePercentilePct: 80,
-        calmPercentilePct: 25,
-        oversoldRetPct: 3,
-        extensionPct: 5,
-        mlBullThresholdPct: 60,
         entryExposurePct: 66,
         exitExposurePct: 38,
-        entryConfirmBars: 2,
-        exitConfirmBars: 2,
-        minHoldBars: 10,
-        cooldownBars: 6,
     },
     paramLabels: {
-        useSpikeRegime: 'Use Spike Regime (0/1)',
-        useRecoveryRegime: 'Use Recovery Regime (0/1)',
-        useLowVolDeRisk: 'Use Low-Vol DeRisk (0/1)',
-        useMlOverlay: 'Use ML Overlay (0/1)',
-        adaptiveLookbacks: 'Adaptive Lookbacks (0/1)',
-        adaptiveStrengthPct: 'Adaptive Strength (%)',
-        minAdaptiveFactor: 'Adaptive Min Scale',
-        maxAdaptiveFactor: 'Adaptive Max Scale',
-        volWindow: 'Volatility Window',
-        volLookback: 'Volatility Lookback',
         fastPeriod: 'Fast SMA Period',
         slowPeriod: 'Slow SMA Period',
         spikePercentilePct: 'Spike Percentile (%)',
-        calmPercentilePct: 'Calm Percentile (%)',
-        oversoldRetPct: '5-Bar Oversold Return (%)',
-        extensionPct: 'Extension Above Fast SMA (%)',
-        mlBullThresholdPct: 'ML Bull Threshold (%)',
         entryExposurePct: 'Entry Exposure Threshold (%)',
         exitExposurePct: 'Exit Exposure Threshold (%)',
-        entryConfirmBars: 'Entry Confirm Bars',
-        exitConfirmBars: 'Exit Confirm Bars',
-        minHoldBars: 'Min Hold Bars',
-        cooldownBars: 'Signal Cooldown Bars',
     },
     execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
         const cleanData = ensureCleanData(data);
@@ -572,18 +541,11 @@ export const dynamic_vix_regime: Strategy = {
     metadata: {
         direction: 'long',
         walkForwardParams: [
-            'volWindow',
-            'volLookback',
             'fastPeriod',
             'slowPeriod',
-            'adaptiveStrengthPct',
-            'minAdaptiveFactor',
-            'maxAdaptiveFactor',
             'spikePercentilePct',
-            'calmPercentilePct',
             'entryExposurePct',
             'exitExposurePct',
-            'minHoldBars',
         ],
     },
 };
