@@ -24,6 +24,16 @@ import { hypothesis_trend_persistence } from "./lib/hypothesis-trend-persistence
 import { liquidity_void_rider } from "./lib/liquidity-void-rider";
 import { volatility_compression_trigger } from "./lib/volatility-compression-trigger";
 import { liquidity_sweep_reclaim_v1 } from "./lib/liquidity_sweep_reclaim_v1";
+import { stochastic_momentum_divergence_entry } from "./lib/stochastic-momentum-divergence-entry";
+import { volume_dry_up_reversal } from "./lib/volume-dry-up-reversal";
+import { inside_bar_momentum_burst } from "./lib/inside-bar-momentum-burst";
+import { vwap_reclaim_sniper } from "./lib/vwap-reclaim-sniper";
+import { parabolic_sar_flip_adx_gate } from "./lib/parabolic-sar-flip-adx-gate";
+import { bollinger_squeeze_breakout } from "./lib/bollinger-squeeze-breakout";
+import { roc_reversal_at_extremes } from "./lib/roc-reversal-at-extremes";
+import { ema_ribbon_compression_entry } from "./lib/ema-ribbon-compression-entry";
+import { gap_fill_momentum } from "./lib/gap-fill-momentum";
+import { candle_pattern_persistence_score } from "./lib/candle-pattern-persistence-score";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -57,6 +67,16 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "liquidity_void_rider", strategy: liquidity_void_rider },
     { key: "volatility_compression_trigger", strategy: volatility_compression_trigger },
     { key: "liquidity_sweep_reclaim_v1", strategy: liquidity_sweep_reclaim_v1 },
+    { key: "stochastic_momentum_divergence_entry", strategy: stochastic_momentum_divergence_entry },
+    { key: "volume_dry_up_reversal", strategy: volume_dry_up_reversal },
+    { key: "inside_bar_momentum_burst", strategy: inside_bar_momentum_burst },
+    { key: "vwap_reclaim_sniper", strategy: vwap_reclaim_sniper },
+    { key: "parabolic_sar_flip_adx_gate", strategy: parabolic_sar_flip_adx_gate },
+    { key: "bollinger_squeeze_breakout", strategy: bollinger_squeeze_breakout },
+    { key: "roc_reversal_at_extremes", strategy: roc_reversal_at_extremes },
+    { key: "ema_ribbon_compression_entry", strategy: ema_ribbon_compression_entry },
+    { key: "gap_fill_momentum", strategy: gap_fill_momentum },
+    { key: "candle_pattern_persistence_score", strategy: candle_pattern_persistence_score },
 ];
 
 export function createStrategiesRecordFromManifest(
