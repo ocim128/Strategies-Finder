@@ -199,7 +199,7 @@ export type TradeFilterMode =
     | 'trend_no_chase'
     | 'trend_hysteresis'
     | 'trend_mtf_stack';
-export type TradeDirection = 'long' | 'short' | 'both' | 'combined';
+export type TradeDirection = 'long' | 'short' | 'both' | 'both_flip_loss_2' | 'combined';
 export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';
 
@@ -267,6 +267,12 @@ export interface BacktestSettings {
     /** Optional parameter overrides for confirmation strategies */
     confirmationStrategyParams?: Record<string, StrategyParams>;
     tradeDirection?: TradeDirection;
+    /** For both_flip_loss_2: flip side after this many consecutive losses on active side */
+    flipAfterConsecutiveLosses?: number;
+    /** For both_flip_loss_2: after a flip, block additional flips for this many closed trades */
+    flipCooldownTrades?: number;
+    /** For both_flip_loss_2: require at least this many closed trades before first flip is allowed */
+    minTradesBeforeFirstFlip?: number;
     /** Execution timing model for signal fills */
     executionModel?: ExecutionModel;
     /** Allow exits on the same bar as entry */

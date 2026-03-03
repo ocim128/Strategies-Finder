@@ -45,6 +45,9 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         riskLossStreakWindowLosses: Math.max(0, Math.round(toNumberOr(settings?.riskLossStreakWindowLosses, 0))),
         riskLossStreakCooldownBars: Math.max(0, Math.round(toNumberOr(settings?.riskLossStreakCooldownBars, 0))),
         riskLossStreakEnabled: settings?.riskLossStreakEnabled ?? false,
+        flipAfterConsecutiveLosses: Math.max(1, Math.round(toNumberOr(settings?.flipAfterConsecutiveLosses, 2))),
+        flipCooldownTrades: Math.max(0, Math.round(toNumberOr(settings?.flipCooldownTrades, 0))),
+        minTradesBeforeFirstFlip: Math.max(0, Math.round(toNumberOr(settings?.minTradesBeforeFirstFlip, 0))),
 
         trendEmaPeriod: Math.max(0, toNumberOr(settings?.trendEmaPeriod, 0)),
         trendEmaSlopeBars: Math.max(0, toNumberOr(settings?.trendEmaSlopeBars, 0)),
@@ -175,9 +178,24 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
     }
 
     export function normalizeTradeDirection(settings?: BacktestSettings): TradeDirection {
-        return settings?.tradeDirection === 'short' || settings?.tradeDirection === 'both' || settings?.tradeDirection === 'combined'
+        return settings?.tradeDirection === 'short'
+            || settings?.tradeDirection === 'both'
+            || settings?.tradeDirection === 'both_flip_loss_2'
+            || settings?.tradeDirection === 'combined'
             ? settings.tradeDirection
             : 'long';
+    }
+
+    export function isBothLikeTradeDirection(
+        tradeDirection: TradeDirection
+    ): tradeDirection is 'both' | 'both_flip_loss_2' | 'combined' {
+        return tradeDirection === 'both'
+            || tradeDirection === 'both_flip_loss_2'
+            || tradeDirection === 'combined';
+    }
+
+    export function isLossStreakFlipTradeDirection(tradeDirection: TradeDirection): boolean {
+        return tradeDirection === 'both_flip_loss_2';
     }
 
     export function signalToPositionDirection(type: Signal['type']): 'long' | 'short' {
@@ -201,7 +219,7 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
     }
 
     export function allowsSignalAsEntry(signalType: Signal['type'], tradeDirection: TradeDirection): boolean {
-        if (tradeDirection === 'both' || tradeDirection === 'combined') return true;
+        if (isBothLikeTradeDirection(tradeDirection)) return true;
         if (tradeDirection === 'short') return signalType === 'sell';
         return signalType === 'buy';
     }

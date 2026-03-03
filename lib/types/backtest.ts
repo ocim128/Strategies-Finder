@@ -28,6 +28,9 @@ export interface NormalizedSettings {
     riskLossStreakWindowLosses: number;
     riskLossStreakCooldownBars: number;
     riskLossStreakEnabled: boolean;
+    flipAfterConsecutiveLosses: number;
+    flipCooldownTrades: number;
+    minTradesBeforeFirstFlip: number;
 
     trendEmaPeriod: number;
     trendEmaSlopeBars: number;

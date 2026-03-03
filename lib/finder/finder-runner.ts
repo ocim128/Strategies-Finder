@@ -166,6 +166,7 @@ function resolveTradeDirection(settings: BacktestSettings): TradeDirection {
         direction === "long" ||
         direction === "short" ||
         direction === "both" ||
+        direction === "both_flip_loss_2" ||
         direction === "combined"
     ) {
         return direction;
@@ -495,7 +496,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                             : (fixedConfirmationStatesByInterval.get(dataset.interval) ?? []);
 
                     if (confirmationStates.length > 0) {
-                        signals = (job.strategy.metadata?.role === "entry" || input.settings.tradeDirection === "both" || input.settings.tradeDirection === "combined")
+                        signals = (job.strategy.metadata?.role === "entry" || input.settings.tradeDirection === "both" || input.settings.tradeDirection === "both_flip_loss_2" || input.settings.tradeDirection === "combined")
                             ? filterSignalsWithConfirmationsBoth(
                                 dataset.data,
                                 signals,
@@ -633,7 +634,7 @@ function generateAndFilterSignalsForJob(
 ): { signals: Signal[]; confirmationParams?: Record<string, StrategyParams> } {
     let signals = job.strategy.execute(data, job.params);
     if (confirmationContext.states.length > 0) {
-        signals = (job.strategy.metadata?.role === "entry" || tradeDirection === "both" || tradeDirection === "combined")
+        signals = (job.strategy.metadata?.role === "entry" || tradeDirection === "both" || tradeDirection === "both_flip_loss_2" || tradeDirection === "combined")
             ? filterSignalsWithConfirmationsBoth(
                 data,
                 signals,
@@ -1177,7 +1178,7 @@ async function reconcileSingleTimeframeTopResults(
                 const confirmationParams = candidate.confirmationParams ?? input.settings.confirmationStrategyParams ?? {};
                 const confirmationStates = buildConfirmationStates(closedData, confirmationStrategies, confirmationParams);
                 if (confirmationStates.length > 0) {
-                    signals = (strategy.metadata?.role === "entry" || tradeDirection === "both" || tradeDirection === "combined")
+                    signals = (strategy.metadata?.role === "entry" || tradeDirection === "both" || tradeDirection === "both_flip_loss_2" || tradeDirection === "combined")
                         ? filterSignalsWithConfirmationsBoth(closedData, signals, confirmationStates, tradeFilterMode)
                         : filterSignalsWithConfirmations(closedData, signals, confirmationStates, tradeFilterMode, tradeDirection);
                 }

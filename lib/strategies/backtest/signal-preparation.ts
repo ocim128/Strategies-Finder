@@ -1,7 +1,7 @@
 
 import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../../types/index';
 import { IndicatorSeries, NormalizedSettings, PreparedSignal } from '../../types/backtest';
-import { getTimeIndex, getExecutionShift, resolveExecutionPrice, compareTime, needsSnapshotIndicators as checkSnapshotNeeded, normalizeBacktestSettings, normalizeTradeDirection, timeToNumber, timeKey, signalToPositionDirection } from './backtest-utils';
+import { getTimeIndex, getExecutionShift, resolveExecutionPrice, compareTime, isBothLikeTradeDirection, needsSnapshotIndicators as checkSnapshotNeeded, normalizeBacktestSettings, normalizeTradeDirection, timeToNumber, timeKey, signalToPositionDirection } from './backtest-utils';
 import { passesTradeFilter, passesRegimeFilters, passesSnapshotFilters } from './trade-filters';
 import { SnapshotIndicators, computeSnapshotIndicators } from './snapshot-capture';
 import { resolveIndicators } from './indicator-precompute';
@@ -27,7 +27,7 @@ export function prepareSignals(
             : timeIndex.get(timeKey(signal.time));
         if (signalIndex === undefined || signalIndex < 0 || signalIndex >= data.length) return;
 
-        if (tradeDirection !== 'both' && tradeDirection !== 'combined') {
+        if (!isBothLikeTradeDirection(tradeDirection)) {
             const entryType: Signal['type'] = tradeDirection === 'short' ? 'sell' : 'buy';
             const exitType: Signal['type'] = tradeDirection === 'short' ? 'buy' : 'sell';
 

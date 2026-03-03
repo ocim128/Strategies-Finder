@@ -62,6 +62,9 @@ export interface BacktestSettingsData {
 
     // Trade direction
     tradeDirection: TradeDirection;
+    flipAfterConsecutiveLosses: number;
+    flipCooldownTrades: number;
+    minTradesBeforeFirstFlip: number;
 
     // Trade filter
     tradeFilterSettingsToggle: boolean;
@@ -232,6 +235,9 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
 
     // Trade direction
     tradeDirection: EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection,
+    flipAfterConsecutiveLosses: EFFECTIVE_BACKTEST_DEFAULTS.flipAfterConsecutiveLosses,
+    flipCooldownTrades: EFFECTIVE_BACKTEST_DEFAULTS.flipCooldownTrades,
+    minTradesBeforeFirstFlip: EFFECTIVE_BACKTEST_DEFAULTS.minTradesBeforeFirstFlip,
 
     // Trade filter
     tradeFilterSettingsToggle: false,
@@ -418,6 +424,9 @@ class SettingsManager {
 
             // Trade direction
             tradeDirection: this.readSelect('tradeDirection', DEFAULT_BACKTEST_SETTINGS.tradeDirection) as TradeDirection,
+            flipAfterConsecutiveLosses: this.readNumber('flipAfterConsecutiveLosses', DEFAULT_BACKTEST_SETTINGS.flipAfterConsecutiveLosses),
+            flipCooldownTrades: this.readNumber('flipCooldownTrades', DEFAULT_BACKTEST_SETTINGS.flipCooldownTrades),
+            minTradesBeforeFirstFlip: this.readNumber('minTradesBeforeFirstFlip', DEFAULT_BACKTEST_SETTINGS.minTradesBeforeFirstFlip),
 
             // Trade filter
             tradeFilterSettingsToggle: this.readCheckbox('tradeFilterSettingsToggle', DEFAULT_BACKTEST_SETTINGS.tradeFilterSettingsToggle),
@@ -629,6 +638,9 @@ class SettingsManager {
 
         // Trade direction
         this.writeSelect('tradeDirection', this.resolveTradeDirection(settings));
+        this.writeNumber('flipAfterConsecutiveLosses', settings.flipAfterConsecutiveLosses ?? DEFAULT_BACKTEST_SETTINGS.flipAfterConsecutiveLosses);
+        this.writeNumber('flipCooldownTrades', settings.flipCooldownTrades ?? DEFAULT_BACKTEST_SETTINGS.flipCooldownTrades);
+        this.writeNumber('minTradesBeforeFirstFlip', settings.minTradesBeforeFirstFlip ?? DEFAULT_BACKTEST_SETTINGS.minTradesBeforeFirstFlip);
 
         // Trade filter
         this.writeCheckbox('tradeFilterSettingsToggle', this.resolveTradeFilterToggle(settings));
@@ -943,7 +955,13 @@ class SettingsManager {
 
 
     private resolveTradeDirection(settings: Partial<BacktestSettingsData>): TradeDirection {
-        if (settings.tradeDirection === 'long' || settings.tradeDirection === 'short' || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined') {
+        if (
+            settings.tradeDirection === 'long'
+            || settings.tradeDirection === 'short'
+            || settings.tradeDirection === 'both'
+            || settings.tradeDirection === 'both_flip_loss_2'
+            || settings.tradeDirection === 'combined'
+        ) {
             return settings.tradeDirection;
         }
 

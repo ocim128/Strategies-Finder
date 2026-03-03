@@ -16,7 +16,7 @@ const RUST_UNSUPPORTED_TRADE_FILTER_MODES = new Set([
  * - Non-default executionModel (not 'signal_close')
  * - Slippage (slippageBps > 0)
  * - Disabled same-bar exit (!allowSameBarExit)
- * - tradeDirection 'both' or 'combined'
+ * - tradeDirection 'both', 'both_flip_loss_2', or 'combined'
  * - marketMode !== 'all'
  * - Any non-zero snapshot filter
  * - Percentage-based risk guards (max hold, probation, loss streak)
@@ -37,6 +37,7 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     // Trade direction constraints
     const usesCombinedDirection =
         settings.tradeDirection === 'both'
+        || settings.tradeDirection === 'both_flip_loss_2'
         || settings.tradeDirection === 'combined';
 
     // Market mode constraint (Rust only supports 'all')
@@ -143,6 +144,9 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "riskLossStreakWindowLosses",
     "riskLossStreakCooldownBars",
     "riskLossStreakEnabled",
+    "flipAfterConsecutiveLosses",
+    "flipCooldownTrades",
+    "minTradesBeforeFirstFlip",
     "strategyTimeframeEnabled",
     "strategyTimeframeMinutes",
     "twoHourCloseParity",

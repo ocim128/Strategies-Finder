@@ -49,6 +49,9 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     rsiBullish: 55,
     rsiBearish: 45,
     tradeDirection: "short" as TradeDirection,
+    flipAfterConsecutiveLosses: 2,
+    flipCooldownTrades: 0,
+    minTradesBeforeFirstFlip: 0,
     executionModel: "next_open" as ExecutionModel,
     allowSameBarExit: false,
     slippageBps: 5,
@@ -132,6 +135,9 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "confirmRsiBullish",
     "confirmRsiBearish",
     "tradeDirection",
+    "flipAfterConsecutiveLosses",
+    "flipCooldownTrades",
+    "minTradesBeforeFirstFlip",
     "executionModel",
     "allowSameBarExitToggle",
     "slippageBps",
@@ -157,7 +163,7 @@ const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>([
     "trend_hysteresis",
     "trend_mtf_stack",
 ]);
-const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "combined"]);
+const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_flip_loss_2", "combined"]);
 
 function toBooleanLike(rawValue: unknown): boolean | null {
     if (typeof rawValue === "boolean") return rawValue;
@@ -380,6 +386,9 @@ export function resolveBacktestSettingsFromRaw(
         confirmationStrategies,
         confirmationStrategyParams,
         tradeDirection,
+        flipAfterConsecutiveLosses: readNumber(raw, "flipAfterConsecutiveLosses", EFFECTIVE_BACKTEST_DEFAULTS.flipAfterConsecutiveLosses),
+        flipCooldownTrades: readNumber(raw, "flipCooldownTrades", EFFECTIVE_BACKTEST_DEFAULTS.flipCooldownTrades),
+        minTradesBeforeFirstFlip: readNumber(raw, "minTradesBeforeFirstFlip", EFFECTIVE_BACKTEST_DEFAULTS.minTradesBeforeFirstFlip),
         executionModel,
         allowSameBarExit: readBooleanAny(raw, ["allowSameBarExit", "allowSameBarExitToggle"], EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit),
         slippageBps: readNumber(raw, "slippageBps", EFFECTIVE_BACKTEST_DEFAULTS.slippageBps),

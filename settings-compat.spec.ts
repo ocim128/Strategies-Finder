@@ -31,6 +31,9 @@ describe('Backtest settings compatibility', () => {
             tradeFilterMode: 'volume',
             entryConfirmation: 'volume',
             executionModel: 'next_open',
+            flipAfterConsecutiveLosses: 3,
+            flipCooldownTrades: 2,
+            minTradesBeforeFirstFlip: 10,
             confirmationStrategies: ['rsi_reversal'],
             confirmationStrategyParams: { rsi_reversal: { period: 14 } },
             twoHourCloseParity: 'even',
@@ -43,6 +46,9 @@ describe('Backtest settings compatibility', () => {
         expect(sanitized.tradeFilterMode).to.equal('volume');
         expect(sanitized.entryConfirmation).to.equal('volume');
         expect('executionModel' in sanitized).to.equal(false);
+        expect('flipAfterConsecutiveLosses' in sanitized).to.equal(false);
+        expect('flipCooldownTrades' in sanitized).to.equal(false);
+        expect('minTradesBeforeFirstFlip' in sanitized).to.equal(false);
         expect('confirmationStrategies' in sanitized).to.equal(false);
         expect('confirmationStrategyParams' in sanitized).to.equal(false);
         expect('twoHourCloseParity' in sanitized).to.equal(false);
@@ -98,6 +104,7 @@ describe('Backtest settings compatibility', () => {
         expect(requiresTypescriptEngine({ tradeDirection: 'long' })).to.equal(false);
         expect(requiresTypescriptEngine({ tradeDirection: 'short' })).to.equal(false);
         expect(requiresTypescriptEngine({ tradeDirection: 'both' })).to.equal(true);
+        expect(requiresTypescriptEngine({ tradeDirection: 'both_flip_loss_2' })).to.equal(true);
         expect(requiresTypescriptEngine({ tradeDirection: 'combined' })).to.equal(true);
     });
 

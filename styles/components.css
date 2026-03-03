@@ -629,20 +629,25 @@
 }
 
 .panel-tab .badge {
-    background: hsl(var(--tab-accent));
-    color: white;
-    font-size: 9px;
-    padding: 1px 4px;
+    background: hsl(var(--tab-accent) / 0.15);
+    color: hsl(var(--tab-accent));
+    border: 1px solid hsl(var(--tab-accent) / 0.3);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-bold);
+    font-family: var(--font-family-mono);
+    padding: 2px 6px;
     border-radius: var(--radius-pill);
-    min-width: 14px;
+    min-width: 20px;
     text-align: center;
-    font-weight: bold;
     display: none;
-    line-height: 1.2;
+    line-height: 1;
+    box-shadow: 0 0 10px hsl(var(--tab-accent) / 0.15);
 }
 
 .panel-tab .badge.active {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 /* Inputs & Form Elements - Enhanced */
@@ -1346,6 +1351,7 @@
     transition: opacity 0.15s, background 0.15s;
     vertical-align: middle;
 }
+
 .block-invert-reset-btn:hover {
     opacity: 1;
     background: hsl(30 95% 20% / 0.4);

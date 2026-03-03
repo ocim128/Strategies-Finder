@@ -339,7 +339,7 @@ export class BacktestService {
 
         const t4 = performance.now();
         const filteredSignals = confirmationStates.length > 0
-            ? ((strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both' || settings.tradeDirection === 'combined')
+            ? ((strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both' || settings.tradeDirection === 'both_flip_loss_2' || settings.tradeDirection === 'combined')
                 ? filterSignalsWithConfirmationsBoth(
                     backtestData,
                     signals,

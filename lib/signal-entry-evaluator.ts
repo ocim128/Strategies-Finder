@@ -302,7 +302,7 @@ function filterSignalsWithConfirmationsDirectional(
     tradeFilterMode: TradeFilterMode,
     tradeDirection: TradeDirection
 ): Signal[] {
-    if (tradeDirection === "both" || tradeDirection === "combined") {
+    if (tradeDirection === "both" || tradeDirection === "both_flip_loss_2" || tradeDirection === "combined") {
         return filterSignalsWithConfirmationsBoth(data, signals, confirmationStates, tradeFilterMode);
     }
     if (confirmationStates.length === 0 || signals.length === 0) return signals;
@@ -374,6 +374,7 @@ function applyConfirmationFilters(
     const tradeFilterMode = resolveTradeFilterMode(settings);
     const useBothFilter = strategyRole === "entry"
         || tradeDirection === "both"
+        || tradeDirection === "both_flip_loss_2"
         || tradeDirection === "combined";
 
     if (useBothFilter) {

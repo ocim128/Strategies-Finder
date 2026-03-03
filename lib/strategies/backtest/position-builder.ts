@@ -1,5 +1,5 @@
 
-import { Signal } from '../../types/index';
+import { Signal, type TradeDirection } from '../../types/index';
 import { NormalizedSettings, PositionState } from '../../types/backtest';
 import { allowsSignalAsEntry, applySlippage, directionFactorFor, entrySideForDirection, signalToPositionDirection } from './backtest-utils';
 
@@ -13,7 +13,7 @@ export interface PositionBuilderParams {
     slippageRate: number;
     settings: NormalizedSettings;
     atrArray: (number | null)[];
-    tradeDirection: 'long' | 'short' | 'both' | 'combined';
+    tradeDirection: TradeDirection;
     sizingMode: 'percent' | 'fixed';
     fixedTradeAmount: number;
 }

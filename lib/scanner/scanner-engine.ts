@@ -352,7 +352,7 @@ export class ScannerEngine {
                     ? buildConfirmationStates(scanData, confirmationStrategies, backtestSettings.confirmationStrategyParams)
                     : [];
                 const filteredSignals = confirmationStates.length > 0
-                    ? ((strategy.metadata?.role === 'entry' || backtestSettings.tradeDirection === 'both' || backtestSettings.tradeDirection === 'combined')
+                    ? ((strategy.metadata?.role === 'entry' || backtestSettings.tradeDirection === 'both' || backtestSettings.tradeDirection === 'both_flip_loss_2' || backtestSettings.tradeDirection === 'combined')
                         ? filterSignalsWithConfirmationsBoth(scanData, rawSignals, confirmationStates, tradeFilterMode)
                         : filterSignalsWithConfirmations(
                             scanData,

@@ -80,10 +80,29 @@
                         <option value="long">Long</option>
                         <option value="short" selected>Short</option>
                         <option value="both">Both (Flip)</option>
+                        <option value="both_flip_loss_2">Both (Flip After 2 Losses)</option>
                         <option value="combined">Combined (L+S)</option>
                     </select>
-                    <div class="param-hint">Both flips on opposite signals. Combined runs long+short books in parallel
-                        and ignores same-bar opposite entries.</div>
+                    <div class="param-hint">Both flips on opposite signals. Flip-after-2 keeps an active side and
+                        switches only after 2 consecutive losses on that side. Combined runs long+short books in
+                        parallel and ignores same-bar opposite entries.</div>
+                </div>
+            </div>
+            <div class="param-row is-hidden" id="flipLossStreakSettingsRow">
+                <div class="param-group">
+                    <label class="param-label">Flip After Consecutive Losses (N)</label>
+                    <input type="number" class="param-input" id="flipAfterConsecutiveLosses" value="2" min="1" step="1">
+                    <div class="param-hint">Used by Both (Flip After 2 Losses) mode. Flip active side after N losing closed trades in a row.</div>
+                </div>
+                <div class="param-group">
+                    <label class="param-label">Flip Cooldown Trades (K)</label>
+                    <input type="number" class="param-input" id="flipCooldownTrades" value="0" min="0" step="1">
+                    <div class="param-hint">After a flip, require K closed trades before another flip is allowed.</div>
+                </div>
+                <div class="param-group">
+                    <label class="param-label">Min Trades Before First Flip</label>
+                    <input type="number" class="param-input" id="minTradesBeforeFirstFlip" value="0" min="0" step="1">
+                    <div class="param-hint">Block first flip until at least this many trades have closed.</div>
                 </div>
             </div>
         </div>

@@ -713,6 +713,28 @@ export function setupEventHandlers() {
     riskModeSelect.addEventListener('change', applyRiskMode);
     applyRiskMode();
 
+    const tradeDirectionSelect = getRequiredElement<HTMLSelectElement>('tradeDirection');
+    const flipLossStreakSettingsRow = document.getElementById('flipLossStreakSettingsRow');
+    const flipLossStreakInputs = [
+        getRequiredElement<HTMLInputElement>('flipAfterConsecutiveLosses'),
+        getRequiredElement<HTMLInputElement>('flipCooldownTrades'),
+        getRequiredElement<HTMLInputElement>('minTradesBeforeFirstFlip'),
+    ];
+
+    const applyTradeDirectionMode = () => {
+        const isFlipLossMode = tradeDirectionSelect.value === 'both_flip_loss_2';
+        if (flipLossStreakSettingsRow) {
+            flipLossStreakSettingsRow.classList.toggle('is-hidden', !isFlipLossMode);
+        }
+        flipLossStreakInputs.forEach((input) => {
+            input.disabled = !isFlipLossMode;
+            input.closest<HTMLElement>('.param-group')?.classList.toggle('is-disabled', !isFlipLossMode);
+        });
+    };
+
+    tradeDirectionSelect.addEventListener('change', applyTradeDirectionMode);
+    applyTradeDirectionMode();
+
     const tradeFilterModeSelect = getRequiredElement<HTMLSelectElement>('tradeFilterMode');
     const tradeFilterFieldConfig: Array<{ inputId: string; modes: string[] }> = [
         { inputId: 'confirmLookback', modes: ['close', 'trend', 'htf_drift'] },
