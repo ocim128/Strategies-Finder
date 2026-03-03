@@ -1,9 +1,10 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade, Strategy } from './lib/strategies/index';
+import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateATR, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade, Strategy } from './lib/strategies/index';
 import { buildPivotFlags, detectPivots, detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
 import { simple_regression_line } from './lib/strategies/lib/simple-regression-line';
 import { hypothesis_trend_persistence } from './lib/strategies/lib/hypothesis-trend-persistence';
+import { inside_bar_momentum_burst } from './lib/strategies/lib/inside-bar-momentum-burst';
 import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/backtest/trade-analyzer';
 import { getOpenPositionForScanner } from './lib/strategies/backtest/signal-preparation';
 import { resolveScannerBacktestSettings } from './lib/scanner/scanner-engine';
@@ -150,6 +151,26 @@ describe('Strategy Calculations', () => {
         expect(last).to.be.at.least(0);
         expect(last).to.be.at.most(100);
     });
+
+    it('should key ATR/ADX caches by OHLC inputs, not close only', () => {
+        const close = [10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10];
+        const highTrend = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
+        const lowTrend = [9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9];
+        const highChop = [11, 10, 11, 10, 11, 10, 11, 10, 11, 10, 11, 10];
+        const lowChop = [9, 10, 9, 10, 9, 10, 9, 10, 9, 10, 9, 10];
+
+        const atrTrend = calculateATR(highTrend, lowTrend, close, 3);
+        const atrChop = calculateATR(highChop, lowChop, close, 3);
+        const atrChopFreshClose = calculateATR(highChop, lowChop, [...close], 3);
+        expect(atrChop).to.deep.equal(atrChopFreshClose);
+        expect(atrTrend).to.not.deep.equal(atrChop);
+
+        const adxTrend = calculateADX(highTrend, lowTrend, close, 3);
+        const adxChop = calculateADX(highChop, lowChop, close, 3);
+        const adxChopFreshClose = calculateADX(highChop, lowChop, [...close], 3);
+        expect(adxChop).to.deep.equal(adxChopFreshClose);
+        expect(adxTrend).to.not.deep.equal(adxChop);
+    });
 });
 
 describe('2H Parity Normalization', () => {
@@ -242,8 +263,8 @@ describe('Causal Signal Stability', () => {
         expectPrefixStable('fib_speed_fan_entry');
     });
 
-    it('meta_harvest_v2_2 should keep prior signals stable when candles are appended', () => {
-        expectPrefixStable('meta_harvest_v2_2');
+    it('stochastic_momentum_divergence_entry should keep prior signals stable when candles are appended', () => {
+        expectPrefixStable('stochastic_momentum_divergence_entry');
     });
 });
 
@@ -1343,6 +1364,27 @@ describe('Hypothesis Trend Persistence Strategy', () => {
         expect(signals.some((signal) => signal.type === 'sell')).to.equal(true);
         expect(hypothesis_trend_persistence.metadata?.walkForwardParams).to.include('trendLookback');
         expect(hypothesis_trend_persistence.metadata?.walkForwardParams).to.include('persistenceBars');
+    });
+});
+
+describe('Inside Bar Momentum Burst Strategy', () => {
+    it('should keep inside-bar chain anchored to mother bar range', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 5, high: 10, low: 0, close: 5, volume: 100 },
+            { time: 2 as Time, open: 5, high: 9, low: 1, close: 5, volume: 100 },   // inside mother
+            { time: 3 as Time, open: 5, high: 9.5, low: 1.5, close: 6, volume: 100 }, // inside mother, not inside previous
+            { time: 4 as Time, open: 6, high: 10.4, low: 5.8, close: 10.2, volume: 100 }, // breakout
+        ];
+
+        const signals = inside_bar_momentum_burst.execute(data, {
+            minInsideBars: 2,
+            breakoutBufferPct: 0,
+            momentumLookback: 2,
+        });
+
+        expect(signals.length).to.equal(1);
+        expect(signals[0].type).to.equal('buy');
+        expect(signals[0].barIndex).to.equal(3);
     });
 });
 

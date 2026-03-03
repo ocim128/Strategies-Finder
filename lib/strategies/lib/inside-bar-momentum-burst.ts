@@ -41,15 +41,20 @@ export const inside_bar_momentum_burst: Strategy = {
         let motherLow = 0;
 
         for (let i = 1; i < cleanData.length; i++) {
-            const isInside = highs[i] <= highs[i - 1] && lows[i] >= lows[i - 1];
-
-            if (isInside) {
-                if (insideCount === 0) {
+            if (insideCount === 0) {
+                const firstInside = highs[i] <= highs[i - 1] && lows[i] >= lows[i - 1];
+                if (firstInside) {
                     motherHigh = highs[i - 1];
                     motherLow = lows[i - 1];
+                    insideCount = 1;
+                    continue;
                 }
-                insideCount++;
-                continue;
+            } else {
+                const isInsideMother = highs[i] <= motherHigh && lows[i] >= motherLow;
+                if (isInsideMother) {
+                    insideCount++;
+                    continue;
+                }
             }
 
             const mom = momentum[i];
@@ -74,4 +79,3 @@ export const inside_bar_momentum_burst: Strategy = {
         walkForwardParams: ["minInsideBars", "breakoutBufferPct", "momentumLookback"],
     },
 };
-

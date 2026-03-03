@@ -25,8 +25,8 @@ const __emaCache: WeakMap<number[], Map<number, (number | null)[]>> = new WeakMa
 const __rsiCache: WeakMap<number[], Map<number, (number | null)[]>> = new WeakMap();
 const __macDCache: WeakMap<number[], Map<string, { macd: (number | null)[]; signal: (number | null)[]; histogram: (number | null)[]; }>> = new WeakMap();
 const __bbCache: WeakMap<number[], Map<string, { upper: (number | null)[]; middle: (number | null)[]; lower: (number | null)[]; }>> = new WeakMap();
-const __atrCache: WeakMap<number[], Map<number, (number | null)[]>> = new WeakMap();
-const __adxCache: WeakMap<number[], Map<number, (number | null)[]>> = new WeakMap();
+const __atrCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>> = new WeakMap();
+const __adxCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>> = new WeakMap();
 
 function getOrCompute<D extends object, K, V>(cache: WeakMap<D, Map<K, V>>, data: D, key: K, compute: () => V): V {
     let m = cache.get(data);
@@ -35,6 +35,40 @@ function getOrCompute<D extends object, K, V>(cache: WeakMap<D, Map<K, V>>, data
     if (cached) return cached;
     const result = compute();
     m.set(key, result);
+    return result;
+}
+
+function getOrComputeOHLC(
+    cache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>>,
+    high: number[],
+    low: number[],
+    close: number[],
+    period: number,
+    compute: () => (number | null)[]
+): (number | null)[] {
+    let byLow = cache.get(high);
+    if (!byLow) {
+        byLow = new WeakMap();
+        cache.set(high, byLow);
+    }
+
+    let byClose = byLow.get(low);
+    if (!byClose) {
+        byClose = new WeakMap();
+        byLow.set(low, byClose);
+    }
+
+    let byPeriod = byClose.get(close);
+    if (!byPeriod) {
+        byPeriod = new Map();
+        byClose.set(close, byPeriod);
+    }
+
+    const cached = byPeriod.get(period);
+    if (cached) return cached;
+
+    const result = compute();
+    byPeriod.set(period, result);
     return result;
 }
 
@@ -258,7 +292,7 @@ export function calculateATR(
     close: number[],
     period: number
 ): (number | null)[] {
-    return getOrCompute(__atrCache, close, period, () => {
+    return getOrComputeOHLC(__atrCache, high, low, close, period, () => {
         const length = close.length;
         const atr: (number | null)[] = new Array(length).fill(null);
         let initialTRSum = 0, prevATR = 0;
@@ -289,7 +323,7 @@ export function calculateADX(
     close: number[],
     period: number
 ): (number | null)[] {
-    return getOrCompute(__adxCache, close, period, () => {
+    return getOrComputeOHLC(__adxCache, high, low, close, period, () => {
         const length = close.length;
         const adx: (number | null)[] = new Array(length).fill(null);
         if (length < period * 2 || period < 1) return adx;
