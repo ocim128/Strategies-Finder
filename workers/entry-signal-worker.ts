@@ -1154,62 +1154,74 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
     const backtestSettings = payload.backtestSettings
         ?? safeJsonParse(existing?.backtest_settings_json ?? "{}", {} as BacktestSettings);
 
-    await env.SIGNALS_DB.prepare(
-        `
-        INSERT INTO signal_subscriptions (
-            stream_id,
-            enabled,
-            symbol,
-            interval,
-            strategy_key,
-            strategy_params_json,
-            backtest_settings_json,
-            freshness_bars,
-            notify_telegram,
-            notify_exit,
-            candle_limit,
-            last_processed_closed_candle_time
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-        ON CONFLICT(stream_id) DO UPDATE SET
-            enabled = excluded.enabled,
-            symbol = excluded.symbol,
-            interval = excluded.interval,
-            strategy_key = excluded.strategy_key,
-            strategy_params_json = excluded.strategy_params_json,
-            backtest_settings_json = excluded.backtest_settings_json,
-            freshness_bars = excluded.freshness_bars,
-            notify_telegram = excluded.notify_telegram,
-            notify_exit = excluded.notify_exit,
-            candle_limit = excluded.candle_limit,
-            updated_at = CURRENT_TIMESTAMP
-        `
-    )
-        .bind(
-            streamId,
-            enabled,
-            symbol,
-            interval,
-            strategyKey,
-            JSON.stringify(strategyParams),
-            JSON.stringify(backtestSettings),
-            freshnessBars,
-            notifyTelegram,
-            notifyExit,
-            candleLimit
+    try {
+        await env.SIGNALS_DB.prepare(
+            `
+            INSERT INTO signal_subscriptions (
+                stream_id,
+                enabled,
+                symbol,
+                interval,
+                strategy_key,
+                strategy_params_json,
+                backtest_settings_json,
+                freshness_bars,
+                notify_telegram,
+                notify_exit,
+                candle_limit,
+                last_processed_closed_candle_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            ON CONFLICT(stream_id) DO UPDATE SET
+                enabled = excluded.enabled,
+                symbol = excluded.symbol,
+                interval = excluded.interval,
+                strategy_key = excluded.strategy_key,
+                strategy_params_json = excluded.strategy_params_json,
+                backtest_settings_json = excluded.backtest_settings_json,
+                freshness_bars = excluded.freshness_bars,
+                notify_telegram = excluded.notify_telegram,
+                notify_exit = excluded.notify_exit,
+                candle_limit = excluded.candle_limit,
+                updated_at = CURRENT_TIMESTAMP
+            `
         )
-        .run();
+            .bind(
+                streamId,
+                enabled,
+                symbol,
+                interval,
+                strategyKey,
+                JSON.stringify(strategyParams),
+                JSON.stringify(backtestSettings),
+                freshnessBars,
+                notifyTelegram,
+                notifyExit,
+                candleLimit
+            )
+            .run();
 
-    const subscription = await env.SIGNALS_DB.prepare(
-        `SELECT * FROM signal_subscriptions WHERE stream_id = ? LIMIT 1`
-    )
-        .bind(streamId)
-        .first<SubscriptionRow>();
+        const subscription = await env.SIGNALS_DB.prepare(
+            `SELECT * FROM signal_subscriptions WHERE stream_id = ? LIMIT 1`
+        )
+            .bind(streamId)
+            .first<SubscriptionRow>();
 
-    return toJsonResponse({
-        ok: true,
-        streamId,
-        subscription,
-    });
+        return toJsonResponse({
+            ok: true,
+            streamId,
+            subscription,
+        });
+    } catch (error) {
+        const detail = normalizeStatusText(error instanceof Error ? error.message : String(error), 260);
+        return toJsonResponse(
+            {
+                ok: false,
+                error: `subscription_upsert_failed:${detail}`,
+                streamId,
+            },
+            500
+        );
+    }
 }
 
 async function handleSubscriptionList(_request: Request, env: Env): Promise<Response> {
