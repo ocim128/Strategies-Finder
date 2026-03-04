@@ -743,8 +743,25 @@ export class FinderManager {
 		this.ui.setStatus(text);
 	}
 
+	private lastRealYieldAt = 0;
+
 	private async yieldControl(): Promise<void> {
-		await new Promise(resolve => setTimeout(resolve, 0));
+		if (document.hidden) {
+			// Skip most yields for near-100% CPU speed when backgrounded.
+			// But every ~4s do a real macrotask yield so the browser can update
+			// document.hidden when the tab becomes visible again.
+			const now = performance.now();
+			if (now - this.lastRealYieldAt < 4_000) return;
+			this.lastRealYieldAt = now;
+			await new Promise<void>(resolve => setTimeout(resolve, 0));
+			return;
+		}
+
+		await new Promise<void>(resolve => {
+			const ch = new MessageChannel();
+			ch.port1.onmessage = () => resolve();
+			ch.port2.postMessage(undefined);
+		});
 	}
 }
 

@@ -186,6 +186,7 @@ export class FinderParamSpace {
 
         let attempts = 0;
         const maxAttempts = options.maxRuns * 10;
+        const skipDedup = options.maxRuns >= 50;
         while (combos.length < options.maxRuns && attempts < maxAttempts) {
             const params: StrategyParams = {};
 
@@ -200,7 +201,13 @@ export class FinderParamSpace {
                 params[range.key] = this.normalizeParamValue(range.key, raw, range.baseValue);
             }
 
-            this.tryAddCombo(params, combos, seen, options.maxRuns);
+            if (skipDedup) {
+                if (this.validateParams(params)) {
+                    combos.push(params);
+                }
+            } else {
+                this.tryAddCombo(params, combos, seen, options.maxRuns);
+            }
             attempts += 1;
         }
         return combos;

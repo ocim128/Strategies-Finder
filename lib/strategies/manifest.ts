@@ -39,6 +39,11 @@ import { candle_pattern_persistence_score_rsi_midline } from "./lib/candle-patte
 import { candle_pattern_persistence_score_cci_zero } from "./lib/candle-pattern-persistence-score-cci-zero";
 import { candle_pattern_persistence_score_macd_phase } from "./lib/candle-pattern-persistence-score-macd-phase";
 import { candle_pattern_persistence_score_stoch_mid } from "./lib/candle-pattern-persistence-score-stoch-mid";
+import { candle_pattern_persistence_score_macd_zero } from "./lib/candle-pattern-persistence-score-macd-zero";
+import { candle_pattern_persistence_score_macd_signal_cross } from "./lib/candle-pattern-persistence-score-macd-signal-cross";
+import { candle_pattern_persistence_score_macd_hist_slope } from "./lib/candle-pattern-persistence-score-macd-hist-slope";
+import { candle_pattern_persistence_score_macd_div_gate } from "./lib/candle-pattern-persistence-score-macd-div-gate";
+import { candle_pattern_persistence_score_macd_dual_tf } from "./lib/candle-pattern-persistence-score-macd-dual-tf";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -87,6 +92,11 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "candle_pattern_persistence_score_cci_zero", strategy: candle_pattern_persistence_score_cci_zero },
     { key: "candle_pattern_persistence_score_macd_phase", strategy: candle_pattern_persistence_score_macd_phase },
     { key: "candle_pattern_persistence_score_stoch_mid", strategy: candle_pattern_persistence_score_stoch_mid },
+    { key: "candle_pattern_persistence_score_macd_zero", strategy: candle_pattern_persistence_score_macd_zero },
+    { key: "candle_pattern_persistence_score_macd_signal_cross", strategy: candle_pattern_persistence_score_macd_signal_cross },
+    { key: "candle_pattern_persistence_score_macd_hist_slope", strategy: candle_pattern_persistence_score_macd_hist_slope },
+    { key: "candle_pattern_persistence_score_macd_div_gate", strategy: candle_pattern_persistence_score_macd_div_gate },
+    { key: "candle_pattern_persistence_score_macd_dual_tf", strategy: candle_pattern_persistence_score_macd_dual_tf },
 ];
 
 export function createStrategiesRecordFromManifest(

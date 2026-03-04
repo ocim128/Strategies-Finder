@@ -338,12 +338,12 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     let lastUiUpdateAt = 0;
     const shouldUpdateUi = (force = false): boolean => {
         const now = performance.now();
-        if (!force && (now - lastUiUpdateAt) < 120) return false;
+        if (!force && (now - lastUiUpdateAt) < 250) return false;
         lastUiUpdateAt = now;
         return true;
     };
 
-    const yieldBudgetMs = flags.isHeavyFinderConfig ? 16 : 28;
+    const yieldBudgetMs = flags.isHeavyFinderConfig ? 32 : 50;
     let sliceStart = performance.now();
     const maybeYieldByBudget = async (force = false): Promise<void> => {
         const now = performance.now();
@@ -572,7 +572,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
             }
 
             processedCount++;
-            if (processedCount % 5 === 0 || processedCount === totalRuns) {
+            if (processedCount % 16 === 0 || processedCount === totalRuns) {
                 if (shouldUpdateUi(processedCount === totalRuns)) {
                     const progress = 12 + (processedCount / totalRuns) * 84;
                     callbacks.setProgress(progress, `${processedCount}/${totalRuns} runs (${activeDatasets.length} TF)`);
@@ -984,7 +984,6 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
             } catch (error) {
                 console.warn(`[Finder] Signal generation failed for ${job.key}:`, error);
             }
-            await maybeYieldByBudget(false);
         }
         timing.signalGeneration += performance.now() - tSignalStart;
 
@@ -1327,7 +1326,7 @@ async function runRobustRandomWalkForward(params: RobustRandomRunParams): Promis
         return { results: [] };
     }
     const runSeed = normalizeSeed(Number(input.options.robustSeed));
-    
+
     // Start new audit run scope to ensure seed export returns current run only
     robustAuditSink.startRun(`robust-${input.symbol}-${input.interval}-${runSeed}-${Date.now()}`);
 
@@ -1438,7 +1437,7 @@ async function evaluateRobustCell(args: {
         B: new Map(),
         C: new Map(),
     };
-    
+
     const recordReject = (reason: string, stage: "A" | "B" | "C", params: StrategyParams) => {
         stageRejectionReasons[stage][reason] = (stageRejectionReasons[stage][reason] ?? 0) + 1;
         // Only store first 3 samples per reason for diagnostics
@@ -1449,7 +1448,7 @@ async function evaluateRobustCell(args: {
             samples.push({ ...params });
         }
     };
-    
+
     // Log aggregated rejects once per stage (using that stage's isolated counters)
     const flushRejectLogs = (stage: "A" | "B" | "C") => {
         const samples = stageRejectSamples[stage];
@@ -1462,7 +1461,7 @@ async function evaluateRobustCell(args: {
         }
         samples.clear();
     };
-    
+
     // Merge per-stage counts into final diagnostics (keeps counts separate per stage)
     const mergeRejectionReasons = (): Record<string, number> => {
         const merged: Record<string, number> = {};
@@ -1476,21 +1475,21 @@ async function evaluateRobustCell(args: {
 
     const stageACandidates: RobustCellCandidate[] = [];
     for (let i = 0; i < paramSets.length; i++) {
-            const params = paramSets[i];
-            const backtestSettings = resolveFinderRiskOverrides(robustSettings, robustSettings, params).backtestSettings;
-            try {
-                const holdoutResult = runRobustHoldoutEvaluation(
-                    holdoutData,
-                    strategyPlan.strategy,
-                    params,
+        const params = paramSets[i];
+        const backtestSettings = resolveFinderRiskOverrides(robustSettings, robustSettings, params).backtestSettings;
+        try {
+            const holdoutResult = runRobustHoldoutEvaluation(
+                holdoutData,
+                strategyPlan.strategy,
+                params,
                 input.initialCapital,
                 input.positionSize,
                 robustCommission,
-                    backtestSettings,
-                    input.sizingMode,
-                    input.fixedTradeAmount,
-                    holdoutPrecomputed
-                );
+                backtestSettings,
+                input.sizingMode,
+                input.fixedTradeAmount,
+                holdoutPrecomputed
+            );
             const stageAReason = getStageARejectReason(holdoutResult);
             if (stageAReason) {
                 recordReject(stageAReason, "A", params);
@@ -1990,8 +1989,8 @@ function computeDatasetFlags(
             : isLargeDataset
                 ? 8
                 : isHeavyFinderConfig
-                    ? 4
-                    : 20;
+                    ? 12
+                    : 64;
 
     return {
         dataSize,
@@ -2007,6 +2006,11 @@ function computeDatasetFlags(
 }
 
 function normalizeResultSharpe(result: BacktestResult, initialCapital: number): BacktestResult {
+    // Fast path: if sharpe is already finite and reasonable, skip recomputation
+    if (Number.isFinite(result.sharpeRatio) && Math.abs(result.sharpeRatio) <= 8) {
+        return result;
+    }
+
     if (Array.isArray(result.trades) && result.trades.length > 0) {
         return {
             ...result,
