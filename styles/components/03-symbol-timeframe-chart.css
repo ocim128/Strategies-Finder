@@ -1,0 +1,254 @@
+/* Symbol Selector */
+.symbol-selector {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1-5) var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-s);
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.symbol-selector:hover {
+    background: var(--bg-elevated);
+}
+
+.symbol-name {
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-base);
+}
+
+.symbol-price {
+    font-size: var(--font-size-sm);
+    color: var(--green);
+    font-family: var(--font-family-mono);
+}
+
+.symbol-price.negative {
+    color: var(--red);
+}
+
+.symbol-change {
+    font-size: var(--font-size-xs);
+    padding: 2px 6px;
+    border-radius: var(--radius-xs);
+    background: var(--success-soft);
+    color: var(--green);
+    font-family: var(--font-family-mono);
+}
+
+.symbol-change.negative {
+    background: var(--danger-soft);
+    color: var(--red);
+}
+
+/* Tabs */
+/* Timeframe Tabs - Enhanced */
+.timeframe-tabs {
+    display: flex;
+    gap: 1px;
+    background: hsl(var(--hsl-surface-3) / 0.5);
+    border-radius: var(--radius-m);
+    padding: 2px;
+    border: 1px solid var(--glass-border);
+}
+
+.timeframe-tab {
+    padding: var(--space-1-5) var(--space-3);
+    border-radius: var(--radius-s);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+    color: var(--text-tertiary);
+    border: none;
+    background: transparent;
+    position: relative;
+}
+
+.timeframe-tab:hover {
+    color: var(--text-secondary);
+    background: hsl(var(--hsl-surface-4) / 0.4);
+}
+
+.timeframe-tab:active {
+    transform: scale(0.97);
+}
+
+.timeframe-tab.active {
+    background: var(--accent-color);
+    color: var(--text-on-accent);
+}
+
+.timeframe-custom {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: var(--radius-xs);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.timeframe-custom.active {
+    border-color: var(--accent-color);
+    box-shadow: var(--focus-ring-soft);
+}
+
+.timeframe-custom-input {
+    width: 56px;
+    padding: 2px 4px;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    font-family: var(--font-family-mono);
+    text-align: right;
+}
+
+.timeframe-custom-input:focus {
+    outline: none;
+}
+
+.timeframe-custom-input::-webkit-outer-spin-button,
+.timeframe-custom-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.timeframe-custom-suffix {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.timeframe-custom-apply {
+    padding: 2px 6px;
+    border-radius: var(--radius-xs);
+    border: none;
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+    transition: background 0.1s ease, color 0.1s ease;
+}
+
+.timeframe-custom-apply:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+}
+
+.timeframe-custom-apply:active {
+    transform: translateY(1px);
+}
+
+/* Chart Mode Selector */
+.chart-mode-selector {
+    display: flex;
+    align-items: center;
+    margin-left: var(--space-2);
+}
+
+.chart-mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-s);
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+    transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
+    white-space: nowrap;
+}
+
+.chart-mode-toggle svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.chart-mode-toggle:hover {
+    border-color: hsl(var(--hsl-accent) / 0.4);
+    color: var(--text-primary);
+    background: var(--bg-elevated);
+}
+
+.chart-mode-toggle.active {
+    border-color: hsl(var(--hsl-accent) / 0.5);
+    color: var(--accent-color);
+    background: hsl(var(--hsl-accent) / 0.08);
+}
+
+.panel-tabs {
+    display: flex;
+    flex-direction: column;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    flex-shrink: 0;
+    z-index: 10;
+    padding: var(--space-1) var(--space-2) 0;
+}
+
+.panel-tabs-row {
+    display: flex;
+    gap: 1px;
+}
+
+.panel-tab {
+    padding: var(--space-1-5) var(--space-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+    position: relative;
+    white-space: nowrap;
+    flex: 1;
+    border-bottom: 2px solid transparent;
+}
+
+.panel-tab:hover {
+    color: var(--text-secondary);
+    background: hsl(var(--hsl-surface-4) / 0.25);
+    border-bottom-color: hsl(var(--hsl-border) / 0.8);
+}
+
+.panel-tab.active {
+    color: var(--accent-color);
+    background: hsl(var(--hsl-accent) / 0.1);
+    border-bottom-color: var(--accent-color);
+    font-weight: var(--font-weight-semibold);
+}
+
+.panel-tab .badge {
+    background: var(--accent-soft);
+    color: var(--accent-color);
+    border: 1px solid hsl(var(--hsl-accent) / 0.25);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-bold);
+    font-family: var(--font-family-mono);
+    padding: 2px 6px;
+    border-radius: var(--radius-pill);
+    min-width: 20px;
+    text-align: center;
+    display: none;
+    line-height: 1;
+}
+
+.panel-tab .badge.active {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+

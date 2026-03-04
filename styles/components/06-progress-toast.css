@@ -1,0 +1,130 @@
+/* Progress Bar - Enhanced */
+.progress-container {
+    margin-top: var(--space-3);
+    display: none;
+    padding: var(--space-3);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--glass-border);
+    background: hsl(var(--hsl-surface-3) / 0.6);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+.progress-container.active {
+    display: block;
+    animation: fadeInScale 0.25s ease-out;
+}
+
+.progress-bar {
+    height: 8px;
+    background: hsl(var(--hsl-surface-1));
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+    box-shadow: inset 0 1px 3px hsl(var(--hsl-shadow) / 0.3);
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--gradient-accent);
+    width: 0%;
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: var(--radius-pill);
+    position: relative;
+}
+
+.progress-fill::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg,
+            transparent 0%,
+            hsl(0 0% 100% / 0.3) 50%,
+            transparent 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.progress-container.active .progress-fill {
+    box-shadow: var(--glow-accent);
+}
+
+.progress-text {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    margin-top: var(--space-2);
+    text-align: center;
+    font-weight: var(--font-weight-medium);
+}
+
+/* Toast - Enhanced */
+.toast-container {
+    position: fixed;
+    bottom: var(--space-6);
+    right: var(--space-4);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    pointer-events: none;
+}
+
+.toast {
+    padding: var(--space-3) var(--space-4);
+    background: hsl(var(--hsl-surface-3) / 0.95);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-l);
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    box-shadow: var(--shadow-floating);
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    animation: slideInToast 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    pointer-events: auto;
+    min-width: 280px;
+    max-width: 400px;
+    position: relative;
+    overflow: hidden;
+}
+
+.toast::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--accent-color);
+}
+
+.toast.success::before {
+    background: var(--gradient-success);
+}
+
+.toast.success {
+    box-shadow: var(--shadow-floating), 0 0 20px hsl(var(--hsl-success) / 0.15);
+}
+
+.toast.error::before {
+    background: var(--gradient-danger);
+}
+
+.toast.error {
+    box-shadow: var(--shadow-floating), 0 0 20px hsl(var(--hsl-danger) / 0.15);
+}
+
+.toast.info::before {
+    background: var(--gradient-accent);
+}
+
+.toast.info {
+    box-shadow: var(--shadow-floating), 0 0 20px hsl(var(--hsl-accent) / 0.15);
+}
+
+.toast.fade-out {
+    animation: fadeOutToast 0.3s ease forwards;
+}
+
