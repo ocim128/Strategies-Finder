@@ -209,15 +209,20 @@
 
     .stat-card {
         border-right: none;
-        min-height: 64px;
+        min-height: 52px;
+        padding: var(--space-2) var(--space-3);
+    }
+
+    .stat-label {
+        font-size: var(--font-size-xs);
+    }
+
+    .stat-value {
+        font-size: var(--font-size-base);
     }
 
     .stat-card.full-width {
         grid-column: span 1;
-    }
-
-    .stat-card:not(.positive):not(.negative):nth-child(even) {
-        background: var(--bg-secondary);
     }
 
     .param-row {
@@ -328,11 +333,16 @@
 
     /* Reduce stat card padding */
     .stat-card {
-        padding: var(--space-2);
+        padding: var(--space-1-5) var(--space-2);
+        min-height: 48px;
+    }
+
+    .stat-label {
+        font-size: 10px;
     }
 
     .stat-value {
-        font-size: var(--font-size-base);
+        font-size: var(--font-size-sm);
     }
 
     /* Trade list compact */
@@ -408,7 +418,7 @@
     /* Add active states instead */
     .btn:active,
     .tool-btn:active {
-        transform: scale(0.97);
+        transform: scale(0.96);
     }
 
     .trade-item:active,

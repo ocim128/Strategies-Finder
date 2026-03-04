@@ -5,7 +5,7 @@
     font-size: var(--font-size-sm);
     font-weight: var(--font-weight-medium);
     cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
     border: 1px solid transparent;
     display: flex;
     align-items: center;
@@ -29,8 +29,7 @@
 
 .btn-primary:hover {
     background: var(--accent-hover);
-    box-shadow: var(--glow-subtle), var(--shadow-sm);
-    transform: translateY(-1px);
+    box-shadow: var(--glow-subtle);
 }
 
 .btn-secondary {
@@ -41,8 +40,7 @@
 
 .btn-secondary:hover {
     background: var(--bg-elevated);
-    border-color: hsl(var(--hsl-accent) / 0.3);
-    transform: translateY(-1px);
+    border-color: hsl(var(--hsl-accent) / 0.25);
 }
 
 .btn-success {
@@ -53,8 +51,6 @@
 
 .btn-success:hover {
     background: var(--green-hover);
-    box-shadow: var(--glow-success), var(--shadow-sm);
-    transform: translateY(-1px);
 }
 
 .btn-danger {
@@ -65,8 +61,6 @@
 
 .btn-danger:hover {
     background: hsl(2 79% 50%);
-    box-shadow: var(--glow-danger), var(--shadow-sm);
-    transform: translateY(-1px);
 }
 
 .btn-warning {
@@ -77,7 +71,6 @@
 
 .btn-warning:hover {
     background: var(--warning-hover);
-    transform: translateY(-1px);
 }
 
 .btn-icon {
@@ -101,16 +94,10 @@
 .btn svg {
     width: 16px;
     height: 16px;
-    transition: transform 0.2s ease;
-}
-
-.btn:hover svg {
-    transform: scale(1.05);
 }
 
 .btn:active {
-    transform: scale(0.97);
-    transition-duration: 0.1s;
+    transform: scale(0.98);
 }
 
 /* Ripple effect container */
@@ -160,43 +147,18 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
     position: relative;
     overflow: hidden;
-}
-
-.tool-btn::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: var(--accent-soft);
-    transform: scale(0);
-    border-radius: inherit;
-    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.tool-btn:hover::before {
-    transform: scale(1);
-}
-
-.tool-btn svg {
-    position: relative;
-    z-index: 1;
-    transition: transform 0.2s ease, color 0.2s ease;
-}
-
-.tool-btn:hover svg {
-    transform: scale(1.1);
-    color: var(--text-primary);
-}
-
-.tool-btn:active {
-    transform: scale(0.92);
 }
 
 .tool-btn:hover {
     background: var(--bg-tertiary);
     color: var(--text-primary);
+}
+
+.tool-btn:active {
+    transform: scale(0.96);
 }
 
 .tool-btn.active {
@@ -252,7 +214,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    transition: all 0.15s ease;
+    transition: background 0.1s ease;
     position: relative;
     margin: 0 var(--space-1);
     border-radius: var(--radius-s);
@@ -354,7 +316,7 @@
     background: var(--bg-tertiary);
     border-radius: var(--radius-s);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background 0.15s ease;
 }
 
 .symbol-selector:hover {
@@ -407,16 +369,16 @@
     font-size: var(--font-size-sm);
     font-weight: var(--font-weight-medium);
     cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    color: var(--text-secondary);
+    transition: background 0.15s ease, color 0.15s ease;
+    color: var(--text-tertiary);
     border: none;
     background: transparent;
     position: relative;
 }
 
 .timeframe-tab:hover {
-    color: var(--text-primary);
-    background: hsl(var(--hsl-surface-4) / 0.5);
+    color: var(--text-secondary);
+    background: hsl(var(--hsl-surface-4) / 0.4);
 }
 
 .timeframe-tab:active {
@@ -474,11 +436,11 @@
     border-radius: var(--radius-xs);
     border: none;
     background: var(--bg-tertiary);
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-medium);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background 0.1s ease, color 0.1s ease;
 }
 
 .timeframe-custom-apply:hover {
@@ -505,11 +467,11 @@
     border-radius: var(--radius-s);
     border: 1px solid var(--border-color);
     background: var(--bg-tertiary);
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-medium);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
     white-space: nowrap;
 }
 
@@ -547,91 +509,41 @@
 }
 
 .panel-tab {
-    --tab-accent: 224 100% 62%;
     padding: var(--space-1-5) var(--space-2);
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 4px;
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-secondary);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-tertiary);
     cursor: pointer;
     border: none;
     background: transparent;
-    transition: all 0.15s ease;
+    transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
     position: relative;
     white-space: nowrap;
     flex: 1;
     border-bottom: 2px solid transparent;
-    box-shadow: inset 0 -1px 0 hsl(var(--tab-accent) / 0.06);
 }
 
 .panel-tab:hover {
-    color: hsl(var(--tab-accent));
-    background: hsl(var(--tab-accent) / 0.09);
-    border-bottom-color: hsl(var(--tab-accent) / 0.45);
+    color: var(--text-secondary);
+    background: hsl(var(--hsl-surface-4) / 0.25);
+    border-bottom-color: hsl(var(--hsl-border) / 0.8);
 }
 
 .panel-tab.active {
-    color: hsl(var(--tab-accent));
-    background: hsl(var(--tab-accent) / 0.16);
-    border-bottom-color: hsl(var(--tab-accent));
-    text-shadow: 0 0 10px hsl(var(--tab-accent) / 0.32);
-}
-
-.panel-tab[data-tab="settings"] {
-    --tab-accent: 224 100% 66%;
-}
-
-.panel-tab[data-tab="finder"] {
-    --tab-accent: 160 82% 52%;
-}
-
-.panel-tab[data-tab="paircombiner"] {
-    --tab-accent: 285 82% 66%;
-}
-
-.panel-tab[data-tab="walkforward"] {
-    --tab-accent: 44 96% 57%;
-}
-
-.panel-tab[data-tab="montecarlo"] {
-    --tab-accent: 10 88% 62%;
-}
-
-.panel-tab[data-tab="logictest"] {
-    --tab-accent: 188 84% 54%;
-}
-
-.panel-tab[data-tab="replay"] {
-    --tab-accent: 335 78% 62%;
-}
-
-.panel-tab[data-tab="results"] {
-    --tab-accent: 210 90% 63%;
-}
-
-.panel-tab[data-tab="trades"] {
-    --tab-accent: 146 75% 51%;
-}
-
-.panel-tab[data-tab="analysis"] {
-    --tab-accent: 271 84% 68%;
-}
-
-.panel-tab[data-tab="datamining"] {
-    --tab-accent: 33 92% 58%;
-}
-
-.panel-tab[data-tab="alerts"] {
-    --tab-accent: 4 86% 62%;
+    color: var(--accent-color);
+    background: hsl(var(--hsl-accent) / 0.1);
+    border-bottom-color: var(--accent-color);
+    font-weight: var(--font-weight-semibold);
 }
 
 .panel-tab .badge {
-    background: hsl(var(--tab-accent) / 0.15);
-    color: hsl(var(--tab-accent));
-    border: 1px solid hsl(var(--tab-accent) / 0.3);
+    background: var(--accent-soft);
+    color: var(--accent-color);
+    border: 1px solid hsl(var(--hsl-accent) / 0.25);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-bold);
     font-family: var(--font-family-mono);
@@ -641,7 +553,6 @@
     text-align: center;
     display: none;
     line-height: 1;
-    box-shadow: 0 0 10px hsl(var(--tab-accent) / 0.15);
 }
 
 .panel-tab .badge.active {
@@ -687,7 +598,7 @@
     color: var(--text-primary);
     font-size: var(--font-size-md);
     font-variant-numeric: tabular-nums;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
 .param-input:hover {
@@ -773,7 +684,7 @@
     cursor: pointer;
     padding: 4px;
     border-radius: var(--radius-s);
-    transition: all 0.15s ease;
+    transition: background 0.1s ease, color 0.1s ease;
 }
 
 .confirmation-remove-btn:hover {
@@ -858,7 +769,7 @@
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
     position: relative;
-    transition: all 0.2s ease;
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .section-toggle-track:hover {
@@ -940,7 +851,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.15s;
+    transition: background 0.1s ease, color 0.1s ease;
 }
 
 .modal-close:hover {
@@ -966,7 +877,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
     position: relative;
     overflow: hidden;
 }
@@ -974,18 +885,11 @@
 .theme-toggle:hover {
     background: var(--bg-elevated);
     border-color: hsl(var(--hsl-accent) / 0.4);
-    box-shadow: var(--glow-subtle);
-    transform: rotate(15deg);
 }
 
 .theme-toggle svg {
     width: 20px;
     height: 20px;
-    transition: transform 0.3s ease, opacity 0.2s ease;
-}
-
-.theme-toggle:hover svg {
-    transform: scale(1.1);
 }
 
 #sunIcon {
@@ -1123,35 +1027,7 @@
 }
 
 /* Generic Focus Ring */
-/* Empty state - Enhanced */
-.empty-state {
-    text-align: center;
-    padding: var(--space-8) var(--space-5);
-    color: var(--text-secondary);
-}
-
-.empty-state svg {
-    width: 56px;
-    height: 56px;
-    margin-bottom: var(--space-4);
-    opacity: 0.4;
-    color: var(--accent-color);
-    animation: pulse 3s ease-in-out infinite;
-}
-
-.empty-state h3 {
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-semibold);
-    margin-bottom: var(--space-2);
-    color: var(--text-primary);
-}
-
-.empty-state p {
-    font-size: var(--font-size-sm);
-    max-width: 280px;
-    margin: 0 auto;
-    line-height: var(--line-height-relaxed);
-}
+/* Note: .empty-state styles moved to onboarding.css for single ownership */
 
 .param-hint {
     margin-top: var(--space-1);
