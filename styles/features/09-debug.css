@@ -1,0 +1,130 @@
+/* Debug Module */
+
+.debug-panel {
+
+    position: fixed;
+
+    right: var(--space-4);
+
+    bottom: 44px;
+
+    width: 360px;
+
+    max-height: 70vh;
+
+    background: var(--bg-secondary);
+
+    border: 1px solid var(--border-color);
+
+    border-radius: var(--radius-l);
+
+    box-shadow: var(--shadow-floating);
+
+    display: none;
+
+    flex-direction: column;
+
+    overflow: hidden;
+
+    z-index: 2200;
+
+}
+
+
+
+.debug-panel.active {
+
+    display: flex;
+
+    animation: fadeIn 0.2s ease;
+
+}
+
+
+
+.debug-section {
+
+    border: 1px solid var(--border-color);
+
+    border-radius: var(--radius-s);
+
+    padding: var(--space-2);
+
+    background: var(--bg-primary);
+
+}
+
+
+
+.debug-log {
+
+    max-height: 200px;
+
+    overflow-y: auto;
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: var(--space-1);
+
+    font-family: var(--font-family-mono);
+
+    font-size: var(--font-size-xs);
+
+}
+
+
+
+.debug-log-entry {
+
+    padding: var(--space-1);
+
+    border-radius: var(--radius-xs);
+
+    border: 1px solid var(--border-color);
+
+    background: var(--bg-secondary);
+
+    color: var(--text-primary);
+
+    line-height: var(--line-height-normal);
+
+}
+
+
+
+.debug-log-entry.event {
+
+    background: var(--accent-soft);
+
+    border-color: hsl(var(--hsl-accent) / 0.35);
+
+}
+
+
+
+.debug-log-entry.warn {
+
+    background: hsl(var(--hsl-warning) / 0.18);
+
+    border-color: hsl(var(--hsl-warning) / 0.35);
+
+    color: var(--warning);
+
+}
+
+
+
+.debug-log-entry.error {
+
+    background: var(--danger-soft);
+
+    border-color: hsl(var(--hsl-danger) / 0.35);
+
+    color: var(--red);
+
+}
+
+
+

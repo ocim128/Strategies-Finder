@@ -1,0 +1,219 @@
+/* Strategy Panel Tabs Initialization */
+
+#finderTab,
+
+#paircombinerTab,
+
+#walkforwardTab,
+
+#montecarloTab,
+
+#logictestTab,
+
+#replayTab,
+
+#resultsTab,
+
+#resultsContent,
+
+#tradesTab {
+
+    display: none;
+
+}
+
+
+
+.open-editor-btn {
+
+    width: 100%;
+
+    margin-top: var(--space-4);
+
+    padding: var(--space-3);
+
+    background: var(--bg-tertiary);
+
+    border: 1px dashed var(--border-color);
+
+    border-radius: var(--radius-m);
+
+    color: var(--text-secondary);
+
+    font-size: var(--font-size-sm);
+
+    font-weight: var(--font-weight-medium);
+
+    cursor: pointer;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    gap: var(--space-2);
+
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+
+}
+
+
+
+.open-editor-btn:hover {
+
+    background: var(--accent-soft);
+
+    border-color: var(--accent-color);
+
+    color: var(--accent-color);
+
+    border-style: solid;
+
+}
+
+
+
+.open-editor-btn svg {
+
+    width: 18px;
+
+    height: 18px;
+
+}
+
+
+
+/* OHLC Info Panel - Enhanced */
+
+.ohlc-panel {
+
+    position: absolute;
+
+    top: var(--space-3);
+
+    left: var(--space-3);
+
+    display: flex;
+
+    gap: var(--space-3);
+
+    font-size: var(--font-size-sm);
+
+    z-index: 10;
+
+    background: hsl(var(--hsl-surface-1) / 0.85);
+
+    padding: var(--space-2) var(--space-3);
+
+    border-radius: var(--radius-l);
+
+    border: 1px solid var(--glass-border);
+
+    box-shadow: var(--shadow-md);
+
+    backdrop-filter: blur(16px) saturate(140%);
+
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+
+    transition: background 0.15s ease;
+
+}
+
+
+
+.ohlc-panel:hover {
+
+    box-shadow: var(--shadow-lg);
+
+}
+.light-theme .ohlc-panel {
+
+    background: hsl(220 33% 98% / 0.9);
+
+    border-color: hsl(220 20% 80% / 0.4);
+
+    box-shadow: var(--shadow-md);
+
+}
+
+
+
+.ohlc-item {
+
+    display: flex;
+
+    align-items: baseline;
+
+    gap: 5px;
+
+}
+
+
+
+.ohlc-label {
+
+    color: var(--text-tertiary);
+
+    font-size: var(--font-size-xs);
+
+    font-weight: var(--font-weight-medium);
+
+    text-transform: uppercase;
+
+    letter-spacing: 0.03em;
+
+}
+
+
+
+.ohlc-value {
+
+    font-weight: var(--font-weight-semibold);
+
+    font-family: var(--font-family-mono);
+
+    font-size: var(--font-size-sm);
+
+    transition: color 0.2s ease, text-shadow 0.2s ease;
+
+}
+
+
+
+.ohlc-value.positive {
+
+    color: var(--green);
+
+    text-shadow: 0 0 12px hsl(var(--hsl-success) / 0.4);
+
+}
+
+
+
+.ohlc-value.negative {
+
+    color: var(--red);
+
+    text-shadow: 0 0 12px hsl(var(--hsl-danger) / 0.4);
+
+}
+
+
+
+/* OHLC separator */
+
+.ohlc-separator {
+
+    width: 1px;
+
+    height: 16px;
+
+    background: linear-gradient(180deg, transparent, var(--border-color), transparent);
+
+    margin: 0 var(--space-1);
+
+}
+
+
+

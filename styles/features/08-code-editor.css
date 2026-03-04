@@ -1,0 +1,300 @@
+/* Code Editor Module */
+
+.code-editor-modal {
+
+    width: 1000px;
+
+    max-width: 98vw;
+
+    height: 800px;
+
+    max-height: 90vh;
+
+    display: flex;
+
+    flex-direction: column;
+
+}
+
+
+
+.code-editor-modal .modal-body {
+
+    display: flex;
+
+    padding: 0;
+
+    flex: 1;
+
+    overflow: hidden;
+
+}
+
+
+
+.editor-sidebar {
+
+    width: 240px;
+
+    background: var(--bg-tertiary);
+
+    border-right: 1px solid var(--border-color);
+
+    display: flex;
+
+    flex-direction: column;
+
+    flex-shrink: 0;
+
+    overflow-y: auto;
+
+}
+
+
+
+.sidebar-section {
+
+    padding: var(--space-3);
+
+    border-bottom: 1px solid var(--border-color);
+
+}
+
+
+
+.sidebar-title {
+
+    font-size: var(--font-size-xs);
+
+    font-weight: var(--font-weight-semibold);
+
+    text-transform: uppercase;
+
+    color: var(--text-secondary);
+
+    margin-bottom: var(--space-2);
+
+    letter-spacing: var(--tracking-wide);
+
+}
+
+
+
+#monaco-container {
+
+    flex: 1;
+
+    min-height: 0;
+
+    background: #1e1e1e;
+
+}
+
+
+
+.editor-main {
+
+    flex: 1;
+
+    display: flex;
+
+    flex-direction: column;
+
+    min-width: 0;
+
+    background: var(--bg-primary);
+
+}
+
+
+
+.panel-content {
+
+    flex: 1;
+
+    overflow-y: auto;
+
+    padding: var(--space-3);
+
+    /* Reduced from space-4 for more room */
+
+    position: relative;
+
+    background: var(--bg-primary);
+
+}
+
+
+
+.editor-toolbar {
+
+    display: flex;
+
+    align-items: center;
+
+    gap: var(--space-4);
+
+    padding: var(--space-3) var(--space-4);
+
+    background: var(--bg-secondary);
+
+    border-bottom: 1px solid var(--border-color);
+
+}
+
+
+
+.editor-input-group {
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: 2px;
+
+}
+
+
+
+.editor-input-group label {
+
+    font-size: 10px;
+
+    text-transform: uppercase;
+
+    color: var(--text-secondary);
+
+    font-weight: var(--font-weight-semibold);
+
+}
+
+
+
+.editor-input-group input {
+
+    background: var(--bg-tertiary);
+
+    border: 1px solid var(--border-color);
+
+    border-radius: var(--radius-s);
+
+    padding: 4px 8px;
+
+    color: var(--text-primary);
+
+    font-size: var(--font-size-sm);
+
+    width: 200px;
+
+}
+
+
+
+.editor-spacer {
+
+    flex: 1;
+
+}
+
+
+
+.editor-footer {
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+    padding: var(--space-3) var(--space-4);
+
+    background: var(--bg-secondary);
+
+    border-top: 1px solid var(--border-color);
+
+}
+
+
+
+.editor-status {
+
+    font-size: var(--font-size-xs);
+
+    color: var(--text-secondary);
+
+    font-family: var(--font-family-mono);
+
+}
+
+
+
+.editor-actions {
+
+    display: flex;
+
+    gap: var(--space-2);
+
+}
+
+
+
+.editor-help {
+
+    padding: var(--space-4);
+
+    font-size: var(--font-size-xs);
+
+}
+
+
+
+.editor-help h4 {
+
+    margin-top: var(--space-4);
+
+    margin-bottom: var(--space-2);
+
+    color: var(--accent-color);
+
+    font-size: var(--font-size-xs);
+
+    text-transform: uppercase;
+
+}
+
+
+
+.editor-help h4:first-child {
+
+    margin-top: 0;
+
+}
+
+
+
+.editor-help p {
+
+    margin-bottom: var(--space-2);
+
+    line-height: var(--line-height-relaxed);
+
+}
+
+
+
+.editor-help code {
+
+    background: var(--accent-soft);
+
+    color: var(--accent-color);
+
+    padding: 2px 4px;
+
+    border-radius: var(--radius-xs);
+
+    word-break: break-all;
+
+}
+
+
+

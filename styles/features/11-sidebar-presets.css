@@ -1,0 +1,162 @@
+/* Sidebar & Presets */
+
+.preset-item {
+
+    padding: var(--space-2-5) var(--space-3);
+
+    border-radius: var(--radius-s);
+
+    cursor: pointer;
+
+    margin-bottom: var(--space-1);
+
+    transition: all 0.15s;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+}
+
+
+
+.preset-item:hover {
+
+    background: var(--bg-secondary);
+
+}
+
+
+
+.preset-item.active {
+
+    background: var(--accent-soft-strong);
+
+    color: var(--accent-color);
+
+}
+
+
+
+.preset-delete {
+
+    width: 20px;
+
+    height: 20px;
+
+    border-radius: var(--radius-xs);
+
+    border: none;
+
+    background: transparent;
+
+    color: var(--text-secondary);
+
+    cursor: pointer;
+
+    opacity: 0;
+
+    transition: all 0.15s;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+}
+
+
+
+.preset-item:hover .preset-delete {
+
+    opacity: 1;
+
+}
+
+
+
+.preset-delete:hover {
+
+    background: var(--red);
+
+    color: var(--text-on-accent);
+
+}
+
+
+
+/* ============================================================================
+
+   Monte-Carlo Robustness Lab
+
+   ============================================================================ */
+
+
+
+#montecarloTab {
+
+    display: none;
+
+}
+
+
+
+#montecarloTab .section-desc {
+
+    font-size: var(--font-size-sm);
+
+    color: var(--text-secondary);
+
+    margin-bottom: var(--space-4);
+
+    line-height: var(--line-height-relaxed);
+
+}
+
+
+
+.mc-actions {
+
+    display: flex;
+
+    gap: var(--space-2);
+
+    margin-bottom: var(--space-4);
+
+}
+
+
+
+.mc-actions .btn {
+
+    flex: 1;
+
+    justify-content: center;
+
+}
+
+
+
+.mc-status-bar {
+
+    padding: var(--space-2) var(--space-3);
+
+    background: var(--bg-tertiary);
+
+    border-radius: var(--radius-s);
+
+    font-size: var(--font-size-sm);
+
+    color: var(--text-secondary);
+
+    margin-bottom: var(--space-4);
+
+    text-align: center;
+
+}
+
+
+

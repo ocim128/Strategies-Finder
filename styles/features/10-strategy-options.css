@@ -1,0 +1,94 @@
+/* Strategy Options (Modal) */
+
+.strategy-option {
+
+    display: flex;
+
+    align-items: flex-start;
+
+    gap: var(--space-3-5);
+
+    padding: var(--space-3-5);
+
+    border-radius: var(--radius-m);
+
+    cursor: pointer;
+
+    transition: all 0.15s;
+
+    margin-bottom: var(--space-2);
+
+    border: 1px solid transparent;
+
+}
+
+
+
+.strategy-option:hover {
+
+    background: var(--bg-tertiary);
+
+    border-color: var(--border-color);
+
+}
+
+
+
+.strategy-option.selected {
+
+    background: var(--accent-soft);
+
+    border-color: var(--accent-color);
+
+}
+
+
+
+.strategy-icon {
+
+    width: 44px;
+
+    height: 44px;
+
+    border-radius: var(--radius-l);
+
+    background: var(--bg-tertiary);
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    color: var(--accent-color);
+
+    flex-shrink: 0;
+
+}
+
+
+
+.strategy-info h4 {
+
+    font-weight: var(--font-weight-semibold);
+
+    font-size: var(--font-size-base);
+
+    margin-bottom: var(--space-1);
+
+}
+
+
+
+.strategy-info p {
+
+    font-size: var(--font-size-sm);
+
+    color: var(--text-secondary);
+
+    line-height: var(--line-height-relaxed);
+
+}
+
+
+
