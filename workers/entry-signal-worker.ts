@@ -125,7 +125,7 @@ interface SubscriptionRow {
     notify_telegram: number;
     notify_exit: number;
     candle_limit: number;
-    last_processed_closed_candle_time: number;
+    last_processed_candle_open_time: number;
     last_run_at: string | null;
     last_status: string | null;
     created_at: string;
@@ -181,6 +181,15 @@ const RESPONSE_SNIPPET_MAX = 320;
 // Cloudflare cron granularity is 1 minute, so second-level precision is done in code.
 const SCHEDULE_TARGET_SECOND = 10;
 const MAX_SCHEDULED_CONCURRENCY = 4;
+const MAX_TELEGRAM_RETRIES = 5;
+
+function parseTelegramFailCount(status: string | null): number {
+    if (!status) return 0;
+    const match = /telegram_send_failed\[(\d+)]/.exec(status);
+    if (match) return Number(match[1]);
+    if (status.includes('telegram_send_failed')) return 1;
+    return 0;
+}
 const BINANCE_INTERVALS = new Set([
     "1m", "3m", "5m", "15m", "30m",
     "1h", "2h", "4h", "6h", "8h", "12h",
@@ -447,15 +456,19 @@ function getResampleBucketStart(timeSec: number, intervalSec: number, parity: "o
 function resampleCandles(
     candles: OHLCVData[],
     targetInterval: string,
-    parity: "odd" | "even"
+    parity: "odd" | "even",
+    sourceIntervalSec?: number
 ): OHLCVData[] {
     if (candles.length === 0) return [];
     const targetSec = intervalToSeconds(targetInterval);
     if (!targetSec || targetSec <= 0) return candles;
 
+    // When only one candle is available the gap heuristic is unreliable.
+    // Fall back to the explicitly supplied source interval, or to targetSec
+    // (which makes targetSec <= sourceSec true and returns candles as-is — safe).
     const sourceSec = candles.length > 1
         ? Math.max(1, Number(candles[1].time) - Number(candles[0].time))
-        : 60;
+        : (sourceIntervalSec ?? targetSec);
     if (targetSec <= sourceSec) return candles;
 
     const out: OHLCVData[] = [];
@@ -560,10 +573,12 @@ async function fetchBinanceCandles(
         ? Math.max(minClosedCandles, Math.min(MAX_SUBSCRIPTION_CANDLE_LIMIT, targetBarsWithSpare * 2 + 6))
         : targetBarsWithSpare;
     const bases = readBinanceApiBases(env);
-    const attempts = bases.map(async (base): Promise<OHLCVData[]> => {
+    const endpointErrors: string[] = [];
+    for (const base of bases) {
         const providerInterval = translateIntervalForApiBase(base, binanceInterval);
         if (!providerInterval) {
-            throw new Error(`${base} -> unsupported_interval:${binanceInterval}`);
+            endpointErrors.push(`${base} -> unsupported_interval:${binanceInterval}`);
+            continue;
         }
 
         const endpoint = `${base}/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(providerInterval)}&limit=${sourceLimit}`;
@@ -597,26 +612,18 @@ async function fetchBinanceCandles(
             if (!useTwoHourResample) {
                 return sourceCandles.slice(-targetBarsWithSpare);
             }
-            return resampleCandles(sourceCandles, interval, twoHourCloseParity).slice(-targetBarsWithSpare);
+            return resampleCandles(sourceCandles, interval, twoHourCloseParity, 3600).slice(-targetBarsWithSpare);
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
-            if (detail.startsWith(`${base} ->`)) {
-                throw new Error(normalizeStatusText(detail, 120));
-            }
-            throw new Error(`${base} -> ${normalizeStatusText(detail, 120)}`);
+            const normalized = detail.startsWith(`${base} ->`)
+                ? normalizeStatusText(detail, 120)
+                : `${base} -> ${normalizeStatusText(detail, 120)}`;
+            endpointErrors.push(normalized);
         }
-    });
-
-    try {
-        return await Promise.any(attempts);
-    } catch (error) {
-        const reasons = error instanceof AggregateError ? error.errors : [error];
-        const endpointErrors = reasons
-            .map((reason) => reason instanceof Error ? reason.message : String(reason))
-            .filter((value) => Boolean(value && value.trim()));
-        const summary = normalizeStatusText(endpointErrors.join(" | "), 900);
-        throw new Error(`Binance API unavailable: ${summary || "all endpoints failed"}`);
     }
+
+    const summary = normalizeStatusText(endpointErrors.join(" | "), 900);
+    throw new Error(`Binance API unavailable: ${summary || "all endpoints failed"}`);
 }
 
 async function fetchMarketCandles(
@@ -1004,12 +1011,12 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         preparedSignalCount: evaluation.preparedSignalCount,
         latestEvaluatedEntry: evaluation.latestEntry
             ? {
-                  direction: evaluation.latestEntry.direction,
-                  signalTimeSec: evaluation.latestEntry.signalTimeSec,
-                  signalPrice: evaluation.latestEntry.signal.price,
-                  fingerprint: evaluation.latestEntry.fingerprint,
-                  signal: { price: evaluation.latestEntry.signal.price },
-              }
+                direction: evaluation.latestEntry.direction,
+                signalTimeSec: evaluation.latestEntry.signalTimeSec,
+                signalPrice: evaluation.latestEntry.signal.price,
+                fingerprint: evaluation.latestEntry.fingerprint,
+                signal: { price: evaluation.latestEntry.signal.price },
+            }
             : null,
     };
 }
@@ -1214,7 +1221,7 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
                 notify_telegram,
                 notify_exit,
                 candle_limit,
-                last_processed_closed_candle_time
+                last_processed_candle_open_time
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
             ON CONFLICT(stream_id) DO UPDATE SET
                 enabled = excluded.enabled,
@@ -1275,7 +1282,7 @@ async function handleSubscriptionList(_request: Request, env: Env): Promise<Resp
     }
 
     const result = await env.SIGNALS_DB.prepare(
-        `SELECT * FROM signal_subscriptions ORDER BY updated_at DESC`
+        `SELECT * FROM signal_subscriptions ORDER BY updated_at DESC LIMIT 500`
     ).all<SubscriptionRow>();
 
     return toJsonResponse({
@@ -1298,16 +1305,37 @@ async function handleSubscriptionDelete(request: Request, env: Env): Promise<Res
     }
 
     if (payload.hardDelete === true) {
+        // Read subscription before deleting so we can also delete entry_signals that were
+        // written under the bare channel key (symbol:interval:strategyKey) — which happens
+        // when signals are posted via /api/stream/signal without an explicit streamId.
+        const subForDelete = await env.SIGNALS_DB.prepare(
+            `SELECT symbol, interval, strategy_key FROM signal_subscriptions WHERE stream_id = ? LIMIT 1`
+        )
+            .bind(streamId)
+            .first<{ symbol: string; interval: string; strategy_key: string }>();
+
         const subsDelete = await env.SIGNALS_DB.prepare(
             `DELETE FROM signal_subscriptions WHERE stream_id = ?`
         )
             .bind(streamId)
             .run();
-        const signalsDelete = await env.SIGNALS_DB.prepare(
-            `DELETE FROM entry_signals WHERE stream_id = ? OR channel_key = ?`
-        )
-            .bind(streamId, streamId.toLowerCase())
-            .run();
+
+        const channelKey = streamId.toLowerCase();
+        const bareKey = subForDelete
+            ? `${subForDelete.symbol}:${subForDelete.interval}:${subForDelete.strategy_key}`.toLowerCase()
+            : null;
+
+        const signalsDelete = bareKey && bareKey !== channelKey
+            ? await env.SIGNALS_DB.prepare(
+                `DELETE FROM entry_signals WHERE stream_id = ? OR channel_key = ? OR channel_key = ?`
+            )
+                .bind(streamId, channelKey, bareKey)
+                .run()
+            : await env.SIGNALS_DB.prepare(
+                `DELETE FROM entry_signals WHERE stream_id = ? OR channel_key = ?`
+            )
+                .bind(streamId, channelKey)
+                .run();
 
         return toJsonResponse({
             ok: true,
@@ -1357,7 +1385,7 @@ function shouldPollSubscriptionOnSchedule(
     const intervalSeconds = intervalToSeconds(subscription.interval);
     if (!intervalSeconds || intervalSeconds <= 0) return true;
 
-    const lastProcessedOpenTimeSec = Number(subscription.last_processed_closed_candle_time ?? 0);
+    const lastProcessedOpenTimeSec = Number(subscription.last_processed_candle_open_time ?? 0);
     if (!Number.isFinite(lastProcessedOpenTimeSec) || lastProcessedOpenTimeSec <= 0) return true;
 
     // last_processed_closed_candle_time stores candle OPEN time.
@@ -1386,7 +1414,7 @@ async function updateSubscriptionStatus(
             `
             UPDATE signal_subscriptions
             SET
-                last_processed_closed_candle_time = ?,
+                last_processed_candle_open_time = ?,
                 last_run_at = CURRENT_TIMESTAMP,
                 last_status = ?,
                 updated_at = CURRENT_TIMESTAMP
@@ -1432,6 +1460,8 @@ async function runSubscription(
     const effectiveFreshnessBars = force
         ? Math.max(subscriptionFreshnessBars, subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT)
         : subscriptionFreshnessBars;
+    const prevTelegramFailCount = parseTelegramFailCount(subscription.last_status);
+    const telegramRetriesExhausted = prevTelegramFailCount >= MAX_TELEGRAM_RETRIES;
 
     try {
         const candles = await fetchMarketCandles(
@@ -1451,7 +1481,7 @@ async function runSubscription(
             return { streamId, status };
         }
 
-        if (!force && closed.closedCandleTimeSec <= (subscription.last_processed_closed_candle_time || 0)) {
+        if (!force && closed.closedCandleTimeSec <= (subscription.last_processed_candle_open_time || 0)) {
             const status = composeSubscriptionStatus("no_new_closed_candle", persistedExitAlertKey);
             await updateSubscriptionStatus(env, streamId, status);
             return {
@@ -1477,7 +1507,7 @@ async function runSubscription(
                 strategyParams: parsedStrategyParams,
                 backtestSettings: parsedBacktestSettings,
                 freshnessBars: effectiveFreshnessBars,
-                notifyTelegram: subscription.notify_telegram === 1,
+                notifyTelegram: telegramRetriesExhausted ? false : subscription.notify_telegram === 1,
                 notifyExit: subscription.notify_exit === 1,
                 candles: evaluationCandles,
             },
@@ -1490,8 +1520,8 @@ async function runSubscription(
         if (result.ok && !result.newEntry && subscription.notify_exit === 1 && subscription.notify_telegram === 1) {
             try {
                 const lastEntry = await env.SIGNALS_DB.prepare(
-                    `SELECT payload_json FROM entry_signals WHERE stream_id = ? ORDER BY signal_time DESC, id DESC LIMIT 1`
-                ).bind(streamId).first<{ payload_json: string }>();
+                    `SELECT payload_json FROM entry_signals WHERE channel_key = ? ORDER BY signal_time DESC, id DESC LIMIT 1`
+                ).bind(streamId.toLowerCase()).first<{ payload_json: string }>();
                 if (lastEntry) {
                     const lastPayload = safeJsonParse(lastEntry.payload_json, null as StoredSignalPayload | null);
                     // Use cached latestEvaluatedEntry from result instead of re-evaluating (Issue #1 fix)
@@ -1531,11 +1561,19 @@ async function runSubscription(
             persistedExitAlertKey = null;
         }
 
-        const baseStatus = result.ok
-            ? result.newEntry
-                ? "new_entry"
-                : result.reason ?? "no_entry"
-            : result.error ?? "processing_error";
+        let baseStatus: string;
+        if (result.ok) {
+            if (result.newEntry && telegramRetriesExhausted && subscription.notify_telegram === 1) {
+                baseStatus = `new_entry(telegram_skipped_after_${prevTelegramFailCount}_failures)`;
+            } else {
+                baseStatus = result.newEntry ? "new_entry" : (result.reason ?? "no_entry");
+            }
+        } else if (result.error?.startsWith("telegram_send_failed:")) {
+            const newCount = prevTelegramFailCount + 1;
+            baseStatus = `telegram_send_failed[${newCount}]:${result.error.slice("telegram_send_failed:".length)}`;
+        } else {
+            baseStatus = result.error ?? "processing_error";
+        }
         const status = composeSubscriptionStatus(baseStatus, persistedExitAlertKey);
 
         if (result.ok) {
@@ -1581,6 +1619,13 @@ async function handleRunNow(request: Request, env: Env): Promise<Response> {
 
     if (!subscription) {
         return toJsonResponse({ ok: false, error: "Subscription not found" }, 404);
+    }
+
+    // Bug fix: respect `enabled` flag — a soft-disabled subscription must not be
+    // triggered via run-now, as it may re-send Telegram alerts for a stream the
+    // user intentionally paused. Re-enable the subscription first if needed.
+    if (!subscription.enabled) {
+        return toJsonResponse({ ok: false, error: "Subscription is disabled. Re-enable it before running manually." }, 400);
     }
 
     const run = await runSubscription(env, subscription, payload.force === true);

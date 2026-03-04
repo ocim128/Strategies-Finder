@@ -1,0 +1,1 @@
+ALTER TABLE signal_subscriptions RENAME COLUMN last_processed_closed_candle_time TO last_processed_candle_open_time;
