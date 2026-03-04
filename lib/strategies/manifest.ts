@@ -34,6 +34,11 @@ import { roc_reversal_at_extremes } from "./lib/roc-reversal-at-extremes";
 import { ema_ribbon_compression_entry } from "./lib/ema-ribbon-compression-entry";
 import { gap_fill_momentum } from "./lib/gap-fill-momentum";
 import { candle_pattern_persistence_score } from "./lib/candle-pattern-persistence-score";
+import { candle_pattern_persistence_score_ema_bias } from "./lib/candle-pattern-persistence-score-ema-bias";
+import { candle_pattern_persistence_score_rsi_midline } from "./lib/candle-pattern-persistence-score-rsi-midline";
+import { candle_pattern_persistence_score_cci_zero } from "./lib/candle-pattern-persistence-score-cci-zero";
+import { candle_pattern_persistence_score_macd_phase } from "./lib/candle-pattern-persistence-score-macd-phase";
+import { candle_pattern_persistence_score_stoch_mid } from "./lib/candle-pattern-persistence-score-stoch-mid";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -77,6 +82,11 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "ema_ribbon_compression_entry", strategy: ema_ribbon_compression_entry },
     { key: "gap_fill_momentum", strategy: gap_fill_momentum },
     { key: "candle_pattern_persistence_score", strategy: candle_pattern_persistence_score },
+    { key: "candle_pattern_persistence_score_ema_bias", strategy: candle_pattern_persistence_score_ema_bias },
+    { key: "candle_pattern_persistence_score_rsi_midline", strategy: candle_pattern_persistence_score_rsi_midline },
+    { key: "candle_pattern_persistence_score_cci_zero", strategy: candle_pattern_persistence_score_cci_zero },
+    { key: "candle_pattern_persistence_score_macd_phase", strategy: candle_pattern_persistence_score_macd_phase },
+    { key: "candle_pattern_persistence_score_stoch_mid", strategy: candle_pattern_persistence_score_stoch_mid },
 ];
 
 export function createStrategiesRecordFromManifest(
