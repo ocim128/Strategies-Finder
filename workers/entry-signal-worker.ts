@@ -159,6 +159,14 @@ interface ProcessSignalResult {
     telegramSent?: boolean;
     telegramError?: string;
     error?: string;
+    /** The latest evaluated entry signal from the evaluation (may be null if no signals) */
+    latestEvaluatedEntry?: {
+        direction: "long" | "short";
+        signalTimeSec: number;
+        signalPrice: number;
+        fingerprint: string;
+        signal: { price: number };
+    } | null;
 }
 
 const DEFAULT_MIN_CANDLES = 200;
@@ -807,6 +815,7 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
             error: evaluation.reason ?? "evaluation_failed",
             rawSignalCount: evaluation.rawSignalCount,
             preparedSignalCount: evaluation.preparedSignalCount,
+            latestEvaluatedEntry: null,
         };
     }
 
@@ -831,6 +840,13 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                 rawSignalCount: evaluation.rawSignalCount,
                 preparedSignalCount: evaluation.preparedSignalCount,
                 latestEntry: evaluation.latestEntry,
+                latestEvaluatedEntry: {
+                    direction: evaluation.latestEntry.direction,
+                    signalTimeSec: evaluation.latestEntry.signalTimeSec,
+                    signalPrice: evaluation.latestEntry.signal.price,
+                    fingerprint: evaluation.latestEntry.fingerprint,
+                    signal: { price: evaluation.latestEntry.signal.price },
+                },
             };
         }
 
@@ -850,6 +866,13 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                 signalAgeBars: evaluation.latestEntry.signalAgeBars,
                 rawSignalCount: evaluation.rawSignalCount,
                 preparedSignalCount: evaluation.preparedSignalCount,
+                latestEvaluatedEntry: {
+                    direction: evaluation.latestEntry.direction,
+                    signalTimeSec: evaluation.latestEntry.signalTimeSec,
+                    signalPrice: evaluation.latestEntry.signal.price,
+                    fingerprint: evaluation.latestEntry.fingerprint,
+                    signal: { price: evaluation.latestEntry.signal.price },
+                },
                 latestEntry: evaluation.latestEntry,
             };
         }
@@ -940,9 +963,22 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
             telegramSent = false;
             telegramError = error instanceof Error ? error.message : String(error);
             // Keep dedupe open so retries can resend when Telegram recovers.
-            await env.SIGNALS_DB.prepare(`DELETE FROM entry_signals WHERE dedupe_key = ?`)
-                .bind(dedupeKey)
-                .run();
+            // Issue #3 fix: Wrap delete in try-catch with logging to handle crash-recovery scenario.
+            try {
+                await env.SIGNALS_DB.prepare(`DELETE FROM entry_signals WHERE dedupe_key = ?`)
+                    .bind(dedupeKey)
+                    .run();
+            } catch (deleteError) {
+                // Log for manual intervention - row exists but Telegram failed.
+                const deleteMsg = deleteError instanceof Error ? deleteError.message : String(deleteError);
+                console.error(JSON.stringify({
+                    event: "telegram_delete_failed",
+                    dedupeKey,
+                    streamId: entryPayload.streamId,
+                    telegramError,
+                    deleteError: deleteMsg,
+                }));
+            }
 
             return {
                 ok: false,
@@ -966,6 +1002,15 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         entry: entryPayload,
         rawSignalCount: evaluation.rawSignalCount,
         preparedSignalCount: evaluation.preparedSignalCount,
+        latestEvaluatedEntry: evaluation.latestEntry
+            ? {
+                  direction: evaluation.latestEntry.direction,
+                  signalTimeSec: evaluation.latestEntry.signalTimeSec,
+                  signalPrice: evaluation.latestEntry.signal.price,
+                  fingerprint: evaluation.latestEntry.fingerprint,
+                  signal: { price: evaluation.latestEntry.signal.price },
+              }
+            : null,
     };
 }
 
@@ -1316,10 +1361,15 @@ function shouldPollSubscriptionOnSchedule(
     if (!Number.isFinite(lastProcessedOpenTimeSec) || lastProcessedOpenTimeSec <= 0) return true;
 
     // last_processed_closed_candle_time stores candle OPEN time.
-    // A new closed candle can only exist after two interval lengths from that open:
-    // - one interval to close the processed candle
-    // - one more interval for the next candle to close
-    const nextPossibleNewClosedCandleSec = lastProcessedOpenTimeSec + intervalSeconds * 2;
+    // The processed candle closes at lastProcessedOpenTimeSec + intervalSeconds.
+    // The next candle opens at that same time and closes one more interval later.
+    // Poll slightly before that close so we never miss boundary candles due to
+    // timing jitter, API propagation delay, or exchange clock skew.
+    // The extra API calls are cheap  runSubscription short-circuits immediately
+    // if no new closed candle exists (closedCandleTimeSec <= last_processed).
+    const EARLY_POLL_GRACE_SEC = 60;
+    const nextPossibleNewClosedCandleSec =
+        lastProcessedOpenTimeSec + intervalSeconds * 2 - EARLY_POLL_GRACE_SEC;
     return nowSec >= nextPossibleNewClosedCandleSec;
 }
 
@@ -1435,7 +1485,8 @@ async function runSubscription(
         );
 
         // Exit signal detection: if no new entry and exit alerts enabled,
-        // check if the last entry's opposite signal has fired
+        // check if the last entry's opposite signal has fired.
+        // Uses cached evaluation result (fixes race condition) and ignores freshness (exit alerts always fire).
         if (result.ok && !result.newEntry && subscription.notify_exit === 1 && subscription.notify_telegram === 1) {
             try {
                 const lastEntry = await env.SIGNALS_DB.prepare(
@@ -1443,40 +1494,31 @@ async function runSubscription(
                 ).bind(streamId).first<{ payload_json: string }>();
                 if (lastEntry) {
                     const lastPayload = safeJsonParse(lastEntry.payload_json, null as StoredSignalPayload | null);
-                    if (lastPayload && result.preparedSignalCount > 0) {
-                        // check latest prepared signal direction vs last entry direction
-                        const evaluation = evaluateLatestEntrySignal({
-                            strategyKey: subscription.strategy_key,
-                            candles: evaluationCandles,
-                            strategyParams: parsedStrategyParams,
-                            backtestSettings: parsedBacktestSettings,
-                            // Keep exit alerts fresh and avoid repeated stale exits.
-                            freshnessBars: Math.max(0, subscription.freshness_bars ?? 1),
-                        });
-                        if (
-                            evaluation.ok &&
-                            evaluation.latestEntry &&
-                            evaluation.latestEntry.isFresh &&
-                            evaluation.latestEntry.direction !== lastPayload.direction &&
-                            evaluation.latestEntry.signalTimeSec > lastPayload.signalTimeSec
-                        ) {
-                            const exitAlertKey = `${lastPayload.fingerprint}:${evaluation.latestEntry.fingerprint}`;
-                            if (persistedExitAlertKey !== exitAlertKey) {
-                                const exitMsg = buildExitTelegramMessage(
-                                    lastPayload.direction,
-                                    subscription.symbol,
-                                    subscription.interval,
-                                    subscription.strategy_key,
-                                    parseConfigNameFromStreamId(streamId),
-                                    evaluation.latestEntry.signal.price,
-                                    evaluation.latestEntry.signalTimeSec
-                                );
-                                try {
-                                    await sendTelegramText(env, exitMsg);
-                                    persistedExitAlertKey = exitAlertKey;
-                                } catch {
-                                    // Exit alerts are best effort.
-                                }
+                    // Use cached latestEvaluatedEntry from result instead of re-evaluating (Issue #1 fix)
+                    // Exit alerts ignore freshness - they fire regardless of signal age (Issue #2 fix)
+                    if (
+                        lastPayload &&
+                        result.preparedSignalCount > 0 &&
+                        result.latestEvaluatedEntry &&
+                        result.latestEvaluatedEntry.direction !== lastPayload.direction &&
+                        result.latestEvaluatedEntry.signalTimeSec > lastPayload.signalTimeSec
+                    ) {
+                        const exitAlertKey = `${lastPayload.fingerprint}:${result.latestEvaluatedEntry.fingerprint}`;
+                        if (persistedExitAlertKey !== exitAlertKey) {
+                            const exitMsg = buildExitTelegramMessage(
+                                lastPayload.direction,
+                                subscription.symbol,
+                                subscription.interval,
+                                subscription.strategy_key,
+                                parseConfigNameFromStreamId(streamId),
+                                result.latestEvaluatedEntry.signal.price,
+                                result.latestEvaluatedEntry.signalTimeSec
+                            );
+                            try {
+                                await sendTelegramText(env, exitMsg);
+                                persistedExitAlertKey = exitAlertKey;
+                            } catch {
+                                // Exit alerts are best effort.
                             }
                         }
                     }
