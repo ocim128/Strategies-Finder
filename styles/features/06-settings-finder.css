@@ -144,7 +144,7 @@
 
 .finder-status {
 
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
 
     color: var(--text-secondary);
 
@@ -196,7 +196,7 @@
 
     border: 1px solid var(--border-color);
 
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
 
     color: var(--text-primary);
 
@@ -212,13 +212,27 @@
 
     color: var(--text-secondary);
 
-    font-size: 11px;
+    font-size: 12px;
 
     line-height: 1;
 
     cursor: pointer;
 
     padding: 0;
+
+}
+
+
+
+.finder-timeframe-chip-remove:focus-visible {
+
+    outline: none;
+
+    box-shadow: var(--focus-ring);
+
+    background: var(--bg-elevated);
+
+    border-radius: var(--radius-xs);
 
 }
 
@@ -234,7 +248,7 @@
 
 .finder-timeframe-empty {
 
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
 
     color: var(--text-tertiary);
 
@@ -246,7 +260,7 @@
 
     margin-top: var(--space-2);
 
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
 
     color: var(--text-secondary);
 
@@ -280,11 +294,11 @@
 
     display: grid;
 
-    grid-template-columns: 44px 1fr 100px;
+    grid-template-columns: 52px 1fr 110px;
 
     gap: var(--space-3);
 
-    font-size: var(--font-size-2xs);
+    font-size: var(--font-size-xs);
 
     text-transform: uppercase;
 
@@ -316,7 +330,7 @@
 
     display: grid;
 
-    grid-template-columns: 44px 1fr 100px;
+    grid-template-columns: 52px 1fr 110px;
 
     gap: var(--space-3);
 
@@ -330,9 +344,9 @@
 
     border: 1px solid var(--glass-border);
 
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 
-    animation: fadeInUp 0.3s ease-out both;
+    animation: fadeIn 0.2s ease-out both;
 
     position: relative;
 
@@ -394,9 +408,7 @@
 
     background: var(--bg-elevated);
 
-    transform: translateY(-2px);
-
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-sm);
 
 }
 
@@ -406,7 +418,23 @@
 
     border-color: var(--accent-color);
 
-    box-shadow: var(--focus-ring-soft), var(--focus-ring);
+    box-shadow: var(--focus-ring);
+
+}
+
+
+
+/* Reduced motion support */
+
+@media (prefers-reduced-motion: reduce) {
+
+    .finder-row {
+
+        animation: none;
+
+        transition: none;
+
+    }
 
 }
 
@@ -416,9 +444,9 @@
 
 .finder-rank {
 
-    width: 36px;
+    width: 40px;
 
-    height: 36px;
+    height: 40px;
 
     display: flex;
 
@@ -428,7 +456,7 @@
 
     font-weight: var(--font-weight-bold);
 
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-base);
 
     color: var(--text-secondary);
 
@@ -438,7 +466,7 @@
 
     border: 2px solid var(--border-color);
 
-    transition: all 0.2s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
 
 }
 
@@ -498,11 +526,13 @@
 
 .finder-title {
 
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-base);
 
     font-weight: var(--font-weight-semibold);
 
     color: var(--text-primary);
+
+    line-height: 1.4;
 
 }
 
@@ -510,11 +540,13 @@
 
 .finder-sub {
 
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
 
     color: var(--text-secondary);
 
-    margin-top: 3px;
+    margin-top: 2px;
+
+    line-height: 1.4;
 
 }
 
@@ -526,13 +558,13 @@
 
     color: var(--text-tertiary);
 
-    margin-top: 4px;
+    margin-top: 6px;
 
     font-family: var(--font-family-mono);
 
     word-break: break-word;
 
-    background: hsl(var(--hsl-surface-3) / 0.5);
+    background: hsl(var(--hsl-surface-3) / 0.3);
 
     padding: var(--space-1) var(--space-2);
 
@@ -554,7 +586,7 @@
 
     margin-top: 8px;
 
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
 
 }
 
