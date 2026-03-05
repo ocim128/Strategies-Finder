@@ -45,6 +45,8 @@ export interface WalkForwardConfig {
     minTotalOOSTrades?: number;
     /** Optional progress callback for UI feedback */
     onProgress?: (progress: WalkForwardProgress) => void;
+    /** Optional AbortSignal to cancel a running analysis */
+    signal?: AbortSignal;
 }
 
 export interface ParameterRange {
@@ -177,10 +179,22 @@ function getRangeStepCount(range: ParameterRange): number {
     return Math.max(1, Math.floor((range.max - range.min) / range.step) + 1);
 }
 
+function createDeterministicRandom(seed: number = 42): () => number {
+    let s = (seed >>> 0) || 1;
+    return () => {
+        s += 0x6D2B79F5;
+        let t = s;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
 function generateSampledParameterGrid(ranges: ParameterRange[], maxCombinations: number): StrategyParams[] {
     if (ranges.length === 0) return [{}];
 
     const target = Math.max(1, Math.floor(maxCombinations));
+    const random = createDeterministicRandom(12345);
     const grid: StrategyParams[] = [];
     const seen = new Set<string>();
     const stepCounts = ranges.map(getRangeStepCount);
@@ -207,7 +221,7 @@ function generateSampledParameterGrid(ranges: ParameterRange[], maxCombinations:
         for (let i = 0; i < ranges.length; i++) {
             const range = ranges[i];
             const count = stepCounts[i];
-            const idx = Math.floor(Math.random() * count);
+            const idx = Math.floor(random() * count);
             const value = range.min + idx * range.step;
             params[range.name] = Math.round(Math.min(range.max, value) * 1000) / 1000;
         }
@@ -437,7 +451,8 @@ async function optimizeWindow(
     sizing: TradeSizing | undefined,
     minTrades: number,
     topN: number,
-    onProgress?: (processed: number, total: number) => void
+    onProgress?: (processed: number, total: number) => void,
+    signal?: AbortSignal
 ): Promise<OptimizationResult[]> {
     const topResults: OptimizationResult[] = [];
     const BATCH_SIZE = 240;
@@ -474,6 +489,7 @@ async function optimizeWindow(
         // PERF: Yield less frequently - every YIELD_INTERVAL batches
         if (batchCount % YIELD_INTERVAL === 0) {
             await new Promise(resolve => setTimeout(resolve, 0));
+            if (signal?.aborted) return topResults;
             if (onProgress) {
                 onProgress(Math.min(batchEnd, paramGrid.length), paramGrid.length);
             }
@@ -676,7 +692,8 @@ export async function runWalkForwardAnalysis(
         maxCombinations = 5000,
         minOOSTradesPerWindow = 1,
         minTotalOOSTrades = 50,
-        onProgress
+        onProgress,
+        signal
     } = config;
 
     if (!Number.isFinite(optimizationWindow) || optimizationWindow <= 0) {
@@ -718,6 +735,7 @@ export async function runWalkForwardAnalysis(
     const combinedEquityCurve: { time: Time; value: number }[] = [];
 
     while (currentStart + windowSize <= totalDataLength) {
+        if (signal?.aborted) break;
         const optimizationStart = currentStart;
         const optimizationEnd = currentStart + optimizationWindow;
         const testStart = optimizationEnd;
@@ -749,7 +767,8 @@ export async function runWalkForwardAnalysis(
                 totalWindows,
                 comboIndex: processed,
                 comboTotal: total
-            })
+            }),
+            signal
         );
 
         const optimizedParams = averageParameters(topResults, parameterRanges);
@@ -885,7 +904,8 @@ export async function quickWalkForward(
     commissionPercent: number = 0.1,
     backtestSettings: BacktestSettings = {},
     sizing?: TradeSizing,
-    onProgress?: (progress: WalkForwardProgress) => void
+    onProgress?: (progress: WalkForwardProgress) => void,
+    signal?: AbortSignal
 ): Promise<WalkForwardResult> {
     // Clean data at the entry point
     data = ensureCleanData(data);
@@ -960,7 +980,8 @@ export async function quickWalkForward(
             topN: 2,
             minTrades: 2,
             maxCombinations,
-            onProgress
+            onProgress,
+            signal
         },
         initialCapital,
         positionSizePercent,
@@ -999,6 +1020,8 @@ export interface FixedParamWalkForwardConfig {
     minTrades?: number;
     /** Optional progress callback for UI feedback */
     onProgress?: (progress: WalkForwardProgress) => void;
+    /** Optional AbortSignal to cancel a running analysis */
+    signal?: AbortSignal;
 }
 
 /**
@@ -1021,7 +1044,7 @@ export async function runFixedParamWalkForward(
     // Clean input data
     data = ensureCleanData(data);
 
-    const { testWindow, stepSize, minTrades = 1, onProgress } = config;
+    const { testWindow, stepSize, minTrades = 1, onProgress, signal } = config;
     if (!Number.isFinite(testWindow) || testWindow <= 0) {
         throw new Error(`Invalid test window: ${testWindow}`);
     }
@@ -1048,6 +1071,7 @@ export async function runFixedParamWalkForward(
     const totalWindows = Math.floor((totalDataLength - testWindow) / stepSize) + 1;
 
     while (currentStart + testWindow <= totalDataLength) {
+        if (signal?.aborted) break;
         const windowStart = currentStart;
         const windowEnd = Math.min(currentStart + testWindow, totalDataLength);
 

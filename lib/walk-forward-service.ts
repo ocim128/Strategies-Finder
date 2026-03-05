@@ -78,6 +78,9 @@ type CandidateSeedValidationProfile = {
 class WalkForwardService {
     private lastResult: WalkForwardResult | null = null;
     private lastPreparedDataContext: string | null = null;
+    private isRunning = false;
+    private abortController: AbortController | null = null;
+    private previousBacktestSnapshot: { result: any; source: string | null } | null = null;
 
     private async ensureDataReadyForCurrentContext(): Promise<OHLCVData[]> {
         const contextKey = `${state.currentSymbol}|${state.currentInterval}`;
@@ -318,8 +321,18 @@ class WalkForwardService {
      * Run walk-forward analysis with current strategy and data
      */
     async runAnalysis(): Promise<WalkForwardResult | null> {
+        if (this.isRunning) {
+            this.updateStatus('Analysis already running.');
+            return null;
+        }
+        this.isRunning = true;
+        this.abortController = new AbortController();
+        const signal = this.abortController.signal;
+
         const data = await this.ensureDataReadyForCurrentContext();
         if (!data || data.length === 0) {
+            this.isRunning = false;
+            this.abortController = null;
             debugLogger.error('No data loaded for walk-forward analysis');
             return null;
         }
@@ -327,6 +340,8 @@ class WalkForwardService {
         const strategyKey = state.currentStrategyKey;
         const strategy = strategyRegistry.get(strategyKey);
         if (!strategy) {
+            this.isRunning = false;
+            this.abortController = null;
             debugLogger.error(`Strategy not found: ${strategyKey}`);
             return null;
         }
@@ -417,7 +432,8 @@ class WalkForwardService {
                     stepSize,
                     fixedParams: currentParams,
                     minTrades,
-                    onProgress: progressReporter
+                    onProgress: progressReporter,
+                    signal
                 };
 
                 result = await runFixedParamWalkForward(
@@ -438,7 +454,8 @@ class WalkForwardService {
                 // Get config from UI
                 const config: WalkForwardConfig = {
                     ...baseConfig,
-                    onProgress: progressReporter
+                    onProgress: progressReporter,
+                    signal
                 };
 
                 result = await runWalkForwardAnalysis(
@@ -472,6 +489,8 @@ class WalkForwardService {
             this.updateStatus(`Error: ${msg}`);
             return null;
         } finally {
+            this.isRunning = false;
+            this.abortController = null;
             this.setLoading(false);
         }
     }
@@ -482,8 +501,18 @@ class WalkForwardService {
      * Quick analysis with auto-detected settings
      */
     async runQuickAnalysis(): Promise<WalkForwardResult | null> {
+        if (this.isRunning) {
+            this.updateStatus('Analysis already running.');
+            return null;
+        }
+        this.isRunning = true;
+        this.abortController = new AbortController();
+        const signal = this.abortController.signal;
+
         const data = await this.ensureDataReadyForCurrentContext();
         if (!data || data.length === 0) {
+            this.isRunning = false;
+            this.abortController = null;
             debugLogger.error('No data loaded for walk-forward analysis');
             return null;
         }
@@ -491,6 +520,8 @@ class WalkForwardService {
         const strategyKey = state.currentStrategyKey;
         const strategy = strategyRegistry.get(strategyKey);
         if (!strategy) {
+            this.isRunning = false;
+            this.abortController = null;
             debugLogger.error(`Strategy not found: ${strategyKey}`);
             return null;
         }
@@ -499,7 +530,7 @@ class WalkForwardService {
         const backtestSettings = backtestService.getBacktestSettings();
         const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
 
-        this.setLoading(true);
+        this.setLoading(true, "quick");
 
         try {
             // Check if has no tunable parameters
@@ -513,7 +544,7 @@ class WalkForwardService {
                 Object.keys(strategy.defaultParams).length === 0 ||
                 parameterRanges.length === 0;
 
-            let result: WalkForwardResult;
+            let result: WalkForwardResult | null = null;
             const progressReporter = this.createProgressReporter();
 
             if (useFixedParam) {
@@ -532,7 +563,8 @@ class WalkForwardService {
                     stepSize,
                     fixedParams: currentParams,
                     minTrades: 1,
-                    onProgress: progressReporter
+                    onProgress: progressReporter,
+                    signal
                 };
 
                 result = await runFixedParamWalkForward(
@@ -557,8 +589,13 @@ class WalkForwardService {
                     capitalSettings.commission,
                     backtestSettings,
                     sizing,
-                    progressReporter
+                    progressReporter,
+                    signal
                 );
+            }
+
+            if (!result) {
+                throw new Error('Walk-forward did not produce a result.');
             }
 
             this.lastResult = result;
@@ -572,13 +609,25 @@ class WalkForwardService {
             this.updateStatus(`Error: ${msg}`);
             return null;
         } finally {
+            this.isRunning = false;
+            this.abortController = null;
             this.setLoading(false);
         }
     }
 
     async runCandidateValidation(): Promise<CandidateValidationSummary | null> {
+        if (this.isRunning) {
+            this.updateStatus('Analysis already running.');
+            return null;
+        }
+        this.isRunning = true;
+        this.abortController = new AbortController();
+        const signal = this.abortController.signal;
+
         const data = await this.ensureDataReadyForCurrentContext();
         if (!data || data.length === 0) {
+            this.isRunning = false;
+            this.abortController = null;
             debugLogger.error("No data loaded for candidate validation");
             return null;
         }
@@ -586,6 +635,8 @@ class WalkForwardService {
         const strategyKey = state.currentStrategyKey;
         const strategy = strategyRegistry.get(strategyKey);
         if (!strategy) {
+            this.isRunning = false;
+            this.abortController = null;
             debugLogger.error(`Strategy not found: ${strategyKey}`);
             return null;
         }
@@ -598,6 +649,8 @@ class WalkForwardService {
         const seedInput = this.readStringInput("wf-validation-seeds", DEFAULT_CANDIDATE_VALIDATION_SEEDS.join(","));
         const seeds = this.parseSeedList(seedInput);
         if (seeds.length === 0) {
+            this.isRunning = false;
+            this.abortController = null;
             this.updateStatus("Candidate validation needs at least one valid seed.");
             return null;
         }
@@ -621,6 +674,7 @@ class WalkForwardService {
             const rows: CandidateSeedValidationRow[] = [];
 
             for (let i = 0; i < seeds.length; i++) {
+                if (signal.aborted) break;
                 const seed = seeds[i];
                 this.updateStatus(`Seed ${i + 1}/${seeds.length}: evaluating...`, false);
 
@@ -761,6 +815,8 @@ class WalkForwardService {
             this.updateStatus(`Candidate validation error: ${msg}`);
             return null;
         } finally {
+            this.isRunning = false;
+            this.abortController = null;
             this.setLoading(false, "validation");
         }
     }
@@ -1268,17 +1324,28 @@ class WalkForwardService {
         const oos = result.combinedOOSTrades;
         debugLogger.info(`Plotting OOS results: ${oos.trades.length} trades, ${oos.equityCurve.length} equity points`);
 
+        // Preserve previous backtest state so it is not silently lost.
+        if (state.currentBacktestResultSource !== 'walk_forward_oos') {
+            this.previousBacktestSnapshot = {
+                result: state.currentBacktestResult,
+                source: state.currentBacktestResultSource ?? null
+            };
+        }
+
         // Route OOS output through shared backtest state so Results and Trades stay in sync.
         state.set('twoHourParityBacktestResults', null);
         state.set('currentBacktestResultSource', 'walk_forward_oos');
         state.set('currentBacktestResult', oos);
     }
 
-    private setLoading(loading: boolean, mode: "analysis" | "validation" = "analysis"): void {
+    private setLoading(loading: boolean, mode: "analysis" | "quick" | "validation" = "analysis"): void {
         const runBtn = document.getElementById("wf-run-btn") as HTMLButtonElement | null;
         const quickBtn = document.getElementById("wf-quick-btn") as HTMLButtonElement | null;
         const validateBtn = document.getElementById("wf-validate-btn") as HTMLButtonElement | null;
-        const spinner = document.getElementById("wf-spinner");
+        const cancelBtn = document.getElementById("wf-cancel-btn") as HTMLButtonElement | null;
+        const runSpinner = document.getElementById("wf-spinner");
+        const quickSpinner = document.getElementById("wf-quick-spinner");
+        const validateSpinner = document.getElementById("wf-validate-spinner");
 
         if (runBtn) {
             runBtn.disabled = loading;
@@ -1286,14 +1353,20 @@ class WalkForwardService {
         }
         if (quickBtn) {
             quickBtn.disabled = loading;
+            quickBtn.setAttribute("aria-busy", loading && mode === "quick" ? "true" : "false");
         }
         if (validateBtn) {
             validateBtn.disabled = loading;
             validateBtn.setAttribute("aria-busy", loading && mode === "validation" ? "true" : "false");
         }
-        if (spinner) {
-            spinner.style.display = loading ? "inline-block" : "none";
+        if (cancelBtn) {
+            cancelBtn.style.display = loading ? "inline-flex" : "none";
         }
+
+        // Show spinner only on the active button
+        if (runSpinner) runSpinner.style.display = loading && mode === "analysis" ? "inline-block" : "none";
+        if (quickSpinner) quickSpinner.style.display = loading && mode === "quick" ? "inline-block" : "none";
+        if (validateSpinner) validateSpinner.style.display = loading && mode === "validation" ? "inline-block" : "none";
     }
 
     private updateStatus(message: string, log: boolean = true): void {
@@ -1336,10 +1409,27 @@ class WalkForwardService {
     }
 
     /**
+     * Get the backtest state that was active before WFA overwrote it.
+     */
+    getPreviousBacktestSnapshot(): { result: any; source: string | null } | null {
+        return this.previousBacktestSnapshot;
+    }
+
+    /**
      * Get last analysis result
      */
     getLastResult(): WalkForwardResult | null {
         return this.lastResult;
+    }
+
+    /**
+     * Cancel a running analysis
+     */
+    cancelRun(): void {
+        if (this.abortController) {
+            this.abortController.abort();
+            this.updateStatus('Cancelling...');
+        }
     }
 
     /**
@@ -1349,6 +1439,7 @@ class WalkForwardService {
         const runBtn = document.getElementById('wf-run-btn');
         const quickBtn = document.getElementById('wf-quick-btn');
         const validateBtn = document.getElementById('wf-validate-btn');
+        const cancelBtn = document.getElementById('wf-cancel-btn');
         const autoSuggestToggle = document.getElementById('wf-auto-suggest') as HTMLInputElement | null;
 
         if (runBtn) {
@@ -1359,6 +1450,9 @@ class WalkForwardService {
         }
         if (validateBtn) {
             validateBtn.addEventListener('click', () => this.runCandidateValidation());
+        }
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => this.cancelRun());
         }
         if (autoSuggestToggle) {
             autoSuggestToggle.addEventListener('change', () => {

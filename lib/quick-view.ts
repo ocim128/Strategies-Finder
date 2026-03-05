@@ -230,7 +230,7 @@ class QuickViewManager {
                 </div>
                 <div class="qv-stat-card">
                     <div class="qv-stat-label">Max Drawdown</div>
-                    <div class="qv-stat-value negative">${result.maxDrawdown.toFixed(2)}%</div>
+                    <div class="qv-stat-value negative">${result.maxDrawdownPercent.toFixed(2)}%</div>
                 </div>
             </div>
 
