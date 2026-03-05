@@ -432,6 +432,20 @@
                 <div class="param-group">
                     <div
                         style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Warm-Up Entry</label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle warm-up entry queue">
+                            <input type="checkbox" id="warmUpEntryToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div class="param-hint">Queue skipped signals when position is open. If the position closes on the next bar, the queued entry fires at that bar's open.</div>
+                </div>
+            </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
                         <label class="param-label" style="margin-bottom: 0;">Use Strategy Timeframe</label>
                         <label class="section-toggle" style="transform: scale(0.8);"
                             aria-label="Toggle global strategy timeframe">

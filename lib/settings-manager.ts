@@ -170,6 +170,7 @@ export interface BacktestSettingsData {
     allowSameBarExit: boolean;
     slippageBps: number;
     maxOpenTrades: number;
+    warmUpEntryEnabled: boolean;
     strategyTimeframeEnabled: boolean;
     strategyTimeframeMinutes: number;
     twoHourCloseParity: 'odd' | 'even' | 'both';
@@ -341,6 +342,7 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     allowSameBarExit: EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit,
     slippageBps: EFFECTIVE_BACKTEST_DEFAULTS.slippageBps,
     maxOpenTrades: EFFECTIVE_BACKTEST_DEFAULTS.maxOpenTrades,
+    warmUpEntryEnabled: EFFECTIVE_BACKTEST_DEFAULTS.warmUpEntryEnabled,
     strategyTimeframeEnabled: EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeEnabled,
     strategyTimeframeMinutes: EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeMinutes,
     twoHourCloseParity: EFFECTIVE_BACKTEST_DEFAULTS.twoHourCloseParity,
@@ -532,6 +534,7 @@ class SettingsManager {
             allowSameBarExit: this.readCheckbox('allowSameBarExitToggle', DEFAULT_BACKTEST_SETTINGS.allowSameBarExit),
             slippageBps: this.readNumber('slippageBps', DEFAULT_BACKTEST_SETTINGS.slippageBps),
             maxOpenTrades: Number(this.readSelect('maxOpenTrades', String(DEFAULT_BACKTEST_SETTINGS.maxOpenTrades))),
+            warmUpEntryEnabled: this.readCheckbox('warmUpEntryToggle', DEFAULT_BACKTEST_SETTINGS.warmUpEntryEnabled),
             strategyTimeframeEnabled: this.readCheckbox('strategyTimeframeToggle', DEFAULT_BACKTEST_SETTINGS.strategyTimeframeEnabled),
             strategyTimeframeMinutes: this.readNumber('strategyTimeframeMinutes', DEFAULT_BACKTEST_SETTINGS.strategyTimeframeMinutes),
             twoHourCloseParity: this.resolveTwoHourCloseParity(
@@ -749,6 +752,7 @@ class SettingsManager {
         this.writeCheckbox('allowSameBarExitToggle', settings.allowSameBarExit ?? DEFAULT_BACKTEST_SETTINGS.allowSameBarExit);
         this.writeNumber('slippageBps', settings.slippageBps ?? DEFAULT_BACKTEST_SETTINGS.slippageBps);
         this.writeSelect('maxOpenTrades', String(settings.maxOpenTrades ?? DEFAULT_BACKTEST_SETTINGS.maxOpenTrades));
+        this.writeCheckbox('warmUpEntryToggle', settings.warmUpEntryEnabled ?? DEFAULT_BACKTEST_SETTINGS.warmUpEntryEnabled);
         this.writeCheckbox('strategyTimeframeToggle', settings.strategyTimeframeEnabled ?? DEFAULT_BACKTEST_SETTINGS.strategyTimeframeEnabled);
         this.writeNumber('strategyTimeframeMinutes', settings.strategyTimeframeMinutes ?? DEFAULT_BACKTEST_SETTINGS.strategyTimeframeMinutes);
         this.writeSelect('twoHourCloseParity', this.resolveTwoHourCloseParity(settings.twoHourCloseParity));

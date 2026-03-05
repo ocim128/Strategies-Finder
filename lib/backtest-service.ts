@@ -456,8 +456,8 @@ export class BacktestService {
         return { result, engineUsed };
     }
 
-    private selectClosedCandleData(ohlcvData: OHLCVData[], interval: string): OHLCVData[] {
-        return trimToClosedCandles(ohlcvData, interval);
+    private selectClosedCandleData(ohlcvData: OHLCVData[], _interval: string): OHLCVData[] {
+        return ohlcvData;
     }
 
     private buildRustCompatibleSettings(settings: BacktestSettings): BacktestSettings {

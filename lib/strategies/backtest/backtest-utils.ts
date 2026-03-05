@@ -72,6 +72,7 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         allowSameBarExit: settings?.allowSameBarExit ?? true,
         slippageBps: Math.max(0, toNumberOr(settings?.slippageBps, 0)),
         maxOpenTrades: clamp(Math.round(toNumberOr(settings?.maxOpenTrades, 1)), 1, 2),
+        warmUpEntryEnabled: settings?.warmUpEntryEnabled === true,
 
         snapshotAtrPercentMin: Math.max(0, toNumberOr(settings?.snapshotAtrPercentMin, 0)),
         snapshotAtrPercentMax: Math.max(0, toNumberOr(settings?.snapshotAtrPercentMax, 0)),

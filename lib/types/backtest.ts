@@ -55,6 +55,8 @@ export interface NormalizedSettings {
 
     /** Maximum number of concurrently open positions (1 = classic, 2 = allow overlap) */
     maxOpenTrades: number;
+    /** When true, queue skipped same-direction signals and execute on next bar if a position closes */
+    warmUpEntryEnabled: boolean;
 
     // Snapshot-based trade filters
     snapshotAtrPercentMin: number;
@@ -144,6 +146,8 @@ export interface PositionState {
     partialTargetPrice: number | null;
     partialTaken: boolean;
     breakEvenApplied: boolean;
+    /** True when this position was opened from a warm-up pending entry queue */
+    warmUpEntry?: boolean;
 }
 
 export interface TradeSizingConfig {

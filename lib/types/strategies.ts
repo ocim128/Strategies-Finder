@@ -84,6 +84,8 @@ export interface Trade {
     fees?: number;
     /** Exit reason: how the trade was closed */
     exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'probation_fail' | 'end_of_data';
+    /** Entry mode: 'normal' for standard entries, 'warm_up' for queued pending entries */
+    entryMode?: 'normal' | 'warm_up';
     /** Stop-loss price level (populated for open/EOD trades) */
     stopLossPrice?: number | null;
     /** Take-profit price level (populated for open/EOD trades) */
@@ -283,6 +285,8 @@ export interface BacktestSettings {
     slippageBps?: number;
     /** Maximum concurrent open positions (1 = classic single-position, 2 = allow overlap). Default 1. */
     maxOpenTrades?: number;
+    /** Queue skipped signals and execute when a position closes on the next bar */
+    warmUpEntryEnabled?: boolean;
     /** Run strategy logic on a global higher timeframe and map signals back to chart bars */
     strategyTimeframeEnabled?: boolean;
     /** Higher timeframe in minutes for global strategy execution */

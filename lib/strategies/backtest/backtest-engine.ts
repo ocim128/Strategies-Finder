@@ -3,7 +3,7 @@ import { BacktestResult, BacktestSettings, OHLCVData, Signal, Time, Trade } from
 import { ensureCleanData } from '../strategy-helpers';
 import { NormalizedSettings, PositionState, PrecomputedIndicators, TradeSizingConfig } from '../../types/backtest';
 import { compareTime, directionFactorFor, getExecutionShift, getTimeIndex, isLossStreakFlipTradeDirection, needsSnapshotIndicators, normalizeBacktestSettings, normalizeTradeDirection, signalToPositionDirection, timeKey } from './backtest-utils';
-import { calculateSharpeRatioFromReturns } from '../performance-metrics';
+import { calculateSharpeRatioFromMoments } from '../performance-metrics';
 
 import { prepareSignals } from './signal-preparation';
 import { calculateTradeExitDetails, createEmptyBacktestResult, finalizeBacktestMetrics, calculateBacktestStats, calculateMaxDrawdown } from './position-stats';
@@ -12,6 +12,12 @@ import { buildPositionFromSignal } from './position-builder';
 import { processPositionExits, updatePositionState } from './exit-handlers';
 import { captureTradeSnapshot, computeSnapshotIndicators, SnapshotIndicators } from './snapshot-capture';
 import { TradeSnapshot } from '../../types/index';
+
+export type CompactMoments = {
+    avgReturn: number;
+    returnM2: number;
+    tradeCount: number;
+};
 
 export { precomputeIndicators };
 
@@ -70,41 +76,6 @@ function buildCombinedEquityCurve(
     return curve;
 }
 
-function collectReturnsFromEquityArray(
-    equityValues: ArrayLike<number>,
-    initialCapital: number
-): number[] {
-    const returns: number[] = [];
-    let prevEquity = initialCapital;
-
-    for (let i = 0; i < equityValues.length; i++) {
-        const equity = equityValues[i];
-        if (prevEquity > 0) {
-            returns.push((equity - prevEquity) / prevEquity);
-        }
-        prevEquity = equity;
-    }
-
-    return returns;
-}
-
-function collectReturnsFromEquityCurve(
-    equityCurve: { time: Time; value: number }[],
-    initialCapital: number
-): number[] {
-    const returns: number[] = [];
-    let prevEquity = initialCapital;
-
-    for (const point of equityCurve) {
-        const equity = point.value;
-        if (prevEquity > 0) {
-            returns.push((equity - prevEquity) / prevEquity);
-        }
-        prevEquity = equity;
-    }
-
-    return returns;
-}
 
 function resolvePreparedSignalBarIndexes(data: OHLCVData[], preparedSignals: Signal[]): Int32Array {
     const indexes = new Int32Array(preparedSignals.length);
@@ -312,6 +283,8 @@ function combineCompactResults(
     shortResult: BacktestResult,
     longEquity: Float64Array,
     shortEquity: Float64Array,
+    longMoments: CompactMoments,
+    shortMoments: CompactMoments,
 ): BacktestResult {
     const totalTrades = longResult.totalTrades + shortResult.totalTrades;
     const winningTrades = longResult.winningTrades + shortResult.winningTrades;
@@ -355,8 +328,18 @@ function combineCompactResults(
         }
     }
 
-    const combinedReturns = collectReturnsFromEquityArray(combinedEquity, initialCapital);
-    const sharpeRatio = calculateSharpeRatioFromReturns(combinedReturns);
+    // Combine per-trade Welford moments (parallel combine formula)
+    const nA = longMoments.tradeCount;
+    const nB = shortMoments.tradeCount;
+    const nTotal = nA + nB;
+    let sharpeRatio = 0;
+    if (nTotal > 0) {
+        const combinedAvg = (nA * longMoments.avgReturn + nB * shortMoments.avgReturn) / nTotal;
+        const delta = shortMoments.avgReturn - longMoments.avgReturn;
+        const combinedM2 = longMoments.returnM2 + shortMoments.returnM2 + delta * delta * nA * nB / nTotal;
+        const combinedStd = nTotal > 1 ? Math.sqrt(combinedM2 / (nTotal - 1)) : 0;
+        sharpeRatio = calculateSharpeRatioFromMoments(combinedAvg, combinedStd, nTotal);
+    }
 
     return {
         trades: [],
@@ -401,9 +384,11 @@ function runCombinedBacktestCompact(
         fixedTradeAmount: sizing?.fixedTradeAmount ?? 0,
     };
 
-    // Allocate per-bar equity buffers for proper combined drawdown/Sharpe calculation
+    // Allocate per-bar equity buffers for proper combined drawdown calculation
     const longEquity = new Float64Array(data.length);
     const shortEquity = new Float64Array(data.length);
+    const longMoments: CompactMoments = { avgReturn: 0, returnM2: 0, tradeCount: 0 };
+    const shortMoments: CompactMoments = { avgReturn: 0, returnM2: 0, tradeCount: 0 };
 
     const longResult = runBacktestCompact(
         data,
@@ -414,7 +399,8 @@ function runCombinedBacktestCompact(
         { ...settings, tradeDirection: 'long' },
         splitSizing,
         precomputed,
-        longEquity
+        longEquity,
+        longMoments
     );
     const shortResult = runBacktestCompact(
         data,
@@ -425,10 +411,11 @@ function runCombinedBacktestCompact(
         { ...settings, tradeDirection: 'short' },
         splitSizing,
         precomputed,
-        shortEquity
+        shortEquity,
+        shortMoments
     );
 
-    return combineCompactResults(initialCapital, longResult, shortResult, longEquity, shortEquity);
+    return combineCompactResults(initialCapital, longResult, shortResult, longEquity, shortEquity, longMoments, shortMoments);
 }
 
 function runCombinedBacktest(
@@ -489,9 +476,7 @@ function runCombinedBacktest(
     );
     const finalCapital = initialCapital + longResult.netProfit + shortResult.netProfit;
     const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(equityCurve, initialCapital);
-    const combinedReturns = collectReturnsFromEquityCurve(equityCurve, initialCapital);
-    const combinedSharpe = calculateSharpeRatioFromReturns(combinedReturns);
-    const result = calculateBacktestStats(
+    return calculateBacktestStats(
         mergedTrades,
         equityCurve,
         initialCapital,
@@ -499,8 +484,6 @@ function runCombinedBacktest(
         maxDrawdown,
         maxDrawdownPercent
     );
-    result.sharpeRatio = combinedSharpe;
-    return result;
 }
 
 /**
@@ -515,7 +498,8 @@ export function runBacktestCompact(
     settings: BacktestSettings = {},
     sizing?: Partial<TradeSizingConfig>,
     precomputed?: PrecomputedIndicators,
-    equityOut?: Float64Array
+    equityOut?: Float64Array,
+    momentsOut?: CompactMoments
 ): BacktestResult {
     if (signals.length === 0) return createEmptyBacktestResult();
 
@@ -560,6 +544,8 @@ export function runBacktestCompact(
     const cooldown = createCooldownState();
     const lossStreak = createLossStreakState();
     const flipLossDirection = createFlipLossDirectionState();
+    const warmUpEnabled = config.warmUpEntryEnabled;
+    let pendingEntry: Signal | null = null;
 
     const recordExit = (pos: PositionState, exitPrice: number, exitSize: number) => {
         const details = calculateTradeExitDetails(pos, exitPrice, exitSize, commissionRate);
@@ -617,6 +603,29 @@ export function runBacktestCompact(
             if (positions.indexOf(pos) >= 0) updatePositionState(candle, pos, config, indicatorSeries.atr[i]);
         }
 
+        // Warm-up: if a position just closed and we have a pending entry, execute it now
+        if (warmUpEnabled && pendingEntry && positions.length < maxOpenTrades) {
+            const warmUpSignal: Signal = Object.assign({}, pendingEntry, { price: candle.open, time: candle.time });
+            if (canEnterLossFlipDirection(tradeDirection, flipLossDirection, warmUpSignal)) {
+                const opened = buildPositionFromSignal({ signal: warmUpSignal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
+                if (opened) {
+                    if (!(entryCooldownActive && isDirectionOnCooldown(cooldown, opened.nextPosition.direction, i))) {
+                        positions.push(opened.nextPosition);
+                        if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
+                            flipLossDirection.activeDirection = opened.nextPosition.direction;
+                        }
+                        capital -= opened.entryCommission;
+                        if (config.executionModel === 'next_open') {
+                            tryProcessExitsAfterEntry(opened.nextPosition, candle, i);
+                        }
+                    }
+                }
+            }
+            pendingEntry = null;
+        } else if (warmUpEnabled) {
+            pendingEntry = null; // Expire after 1 bar even if not used
+        }
+
         while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
             const signalBarIndex = preparedSignalBarIndexes[signalIdx];
             const signal = preparedSignals[signalIdx++];
@@ -645,6 +654,9 @@ export function runBacktestCompact(
                             tryProcessExitsAfterEntry(opened.nextPosition, candle, i);
                         }
                     }
+                } else if (!exitTarget && positions.length >= maxOpenTrades && warmUpEnabled) {
+                    // Capacity full and no exit target — queue as pending warm-up entry
+                    pendingEntry = signal;
                 } else if (exitTarget) {
                     // Signal exit: close the opposite-direction position
                     const exitFractionRaw = Number.isFinite(signal.sizeFraction as number) ? Number(signal.sizeFraction) : 1;
@@ -718,6 +730,12 @@ export function runBacktestCompact(
         }
     }
 
+    if (momentsOut) {
+        momentsOut.avgReturn = avgReturn;
+        momentsOut.returnM2 = returnM2;
+        momentsOut.tradeCount = totalTrades;
+    }
+
     return finalizeBacktestMetrics(initialCapital, capital, totalTrades, winningTrades, totalProfit, totalLoss, avgReturn, returnM2, maxDrawdown, maxDrawdownPercent) as BacktestResult;
 }
 
@@ -780,12 +798,15 @@ export function runBacktest(
     const cooldown = createCooldownState();
     const lossStreak = createLossStreakState();
     const flipLossDirection = createFlipLossDirectionState();
+    const warmUpEnabled = config.warmUpEntryEnabled;
+    let pendingEntry: Signal | null = null;
 
     const recordExitFull = (pos: PositionState, candle: OHLCVData, exitPrice: number, exitSize: number, reason: Trade['exitReason']) => {
         const d = calculateTradeExitDetails(pos, exitPrice, exitSize, commissionRate);
         capital += d.rawPnl - d.commission;
         const snap = snapshots.get(pos) ?? null;
         const trade: Trade = { id: ++tradeId, type: pos.direction, entryTime: pos.entryTime, entryPrice: pos.entryPrice, exitTime: candle.time, exitPrice, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: reason };
+        if (pos.warmUpEntry) trade.entryMode = 'warm_up';
         if (snap) trade.entrySnapshot = snap;
         trades.push(trade);
         pos.size -= d.size;
@@ -844,6 +865,31 @@ export function runBacktest(
             if (positions.indexOf(pos) >= 0) updatePositionState(candle, pos, config, indicatorSeries.atr[i]);
         }
 
+        // Warm-up: if a position just closed and we have a pending entry, execute it now
+        if (warmUpEnabled && pendingEntry && positions.length < maxOpenTrades) {
+            const warmUpSignal: Signal = Object.assign({}, pendingEntry, { price: candle.open, time: candle.time });
+            if (canEnterLossFlipDirection(tradeDirection, flipLossDirection, warmUpSignal)) {
+                const opened = buildPositionFromSignal({ signal: warmUpSignal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
+                if (opened) {
+                    if (!(entryCooldownActive && isDirectionOnCooldown(cooldown, opened.nextPosition.direction, i))) {
+                        positions.push(opened.nextPosition);
+                        opened.nextPosition.warmUpEntry = true;
+                        if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
+                            flipLossDirection.activeDirection = opened.nextPosition.direction;
+                        }
+                        capital -= opened.entryCommission;
+                        captureSnapshotForPosition(opened.nextPosition, i, warmUpSignal);
+                        if (config.executionModel === 'next_open') {
+                            tryProcessExitsAfterEntryFull(opened.nextPosition, candle, i);
+                        }
+                    }
+                }
+            }
+            pendingEntry = null;
+        } else if (warmUpEnabled) {
+            pendingEntry = null;
+        }
+
         while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
             const signalBarIndex = preparedSignalBarIndexes[signalIdx];
             const signal = preparedSignals[signalIdx++];
@@ -872,6 +918,8 @@ export function runBacktest(
                             tryProcessExitsAfterEntryFull(opened.nextPosition, candle, i);
                         }
                     }
+                } else if (!exitTarget && positions.length >= maxOpenTrades && warmUpEnabled) {
+                    pendingEntry = signal;
                 } else if (exitTarget) {
                     // Signal exit
                     const exitFractionRaw = Number.isFinite(signal.sizeFraction as number) ? Number(signal.sizeFraction) : 1;
@@ -940,6 +988,7 @@ export function runBacktest(
             capital += d.rawPnl - d.commission;
             const snap = snapshots.get(pos) ?? null;
             const eodTrade: Trade = { id: ++tradeId, type: pos.direction, entryTime: pos.entryTime, entryPrice: pos.entryPrice, exitTime: candle.time, exitPrice: candle.close, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: 'end_of_data', stopLossPrice: pos.stopLossPrice, takeProfitPrice: pos.takeProfitPrice };
+            if (pos.warmUpEntry) eodTrade.entryMode = 'warm_up';
             if (snap) eodTrade.entrySnapshot = snap;
             trades.push(eodTrade);
             positions.splice(0, 1);

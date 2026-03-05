@@ -63,6 +63,7 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
 
     // Multi-position constraint
     const usesMultiPosition = (settings.maxOpenTrades ?? 1) > 1;
+    const usesWarmUpEntry = settings.warmUpEntryEnabled === true;
 
     return usesRealismConstraints
         || usesCombinedDirection
@@ -72,7 +73,8 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         || usesPercentageProbation
         || usesPercentageLossStreakGuard
         || hasSnapshotFilters
-        || usesMultiPosition;
+        || usesMultiPosition
+        || usesWarmUpEntry;
 }
 
 export const SNAPSHOT_FILTER_SETTING_KEYS = [
@@ -137,6 +139,7 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "allowSameBarExit",
     "slippageBps",
     "maxOpenTrades",
+    "warmUpEntryEnabled",
     "marketMode",
     "riskMaxHoldBars",
     "riskMaxHoldEnabled",
