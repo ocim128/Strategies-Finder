@@ -169,6 +169,7 @@ export interface BacktestSettingsData {
     executionModel: ExecutionModel;
     allowSameBarExit: boolean;
     slippageBps: number;
+    maxOpenTrades: number;
     strategyTimeframeEnabled: boolean;
     strategyTimeframeMinutes: number;
     twoHourCloseParity: 'odd' | 'even' | 'both';
@@ -339,6 +340,7 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     executionModel: EFFECTIVE_BACKTEST_DEFAULTS.executionModel,
     allowSameBarExit: EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit,
     slippageBps: EFFECTIVE_BACKTEST_DEFAULTS.slippageBps,
+    maxOpenTrades: EFFECTIVE_BACKTEST_DEFAULTS.maxOpenTrades,
     strategyTimeframeEnabled: EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeEnabled,
     strategyTimeframeMinutes: EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeMinutes,
     twoHourCloseParity: EFFECTIVE_BACKTEST_DEFAULTS.twoHourCloseParity,
@@ -529,6 +531,7 @@ class SettingsManager {
             executionModel: this.resolveExecutionModelValue(this.readSelect('executionModel', DEFAULT_BACKTEST_SETTINGS.executionModel)),
             allowSameBarExit: this.readCheckbox('allowSameBarExitToggle', DEFAULT_BACKTEST_SETTINGS.allowSameBarExit),
             slippageBps: this.readNumber('slippageBps', DEFAULT_BACKTEST_SETTINGS.slippageBps),
+            maxOpenTrades: Number(this.readSelect('maxOpenTrades', String(DEFAULT_BACKTEST_SETTINGS.maxOpenTrades))),
             strategyTimeframeEnabled: this.readCheckbox('strategyTimeframeToggle', DEFAULT_BACKTEST_SETTINGS.strategyTimeframeEnabled),
             strategyTimeframeMinutes: this.readNumber('strategyTimeframeMinutes', DEFAULT_BACKTEST_SETTINGS.strategyTimeframeMinutes),
             twoHourCloseParity: this.resolveTwoHourCloseParity(
@@ -745,6 +748,7 @@ class SettingsManager {
         this.writeSelect('executionModel', settings.executionModel ?? DEFAULT_BACKTEST_SETTINGS.executionModel);
         this.writeCheckbox('allowSameBarExitToggle', settings.allowSameBarExit ?? DEFAULT_BACKTEST_SETTINGS.allowSameBarExit);
         this.writeNumber('slippageBps', settings.slippageBps ?? DEFAULT_BACKTEST_SETTINGS.slippageBps);
+        this.writeSelect('maxOpenTrades', String(settings.maxOpenTrades ?? DEFAULT_BACKTEST_SETTINGS.maxOpenTrades));
         this.writeCheckbox('strategyTimeframeToggle', settings.strategyTimeframeEnabled ?? DEFAULT_BACKTEST_SETTINGS.strategyTimeframeEnabled);
         this.writeNumber('strategyTimeframeMinutes', settings.strategyTimeframeMinutes ?? DEFAULT_BACKTEST_SETTINGS.strategyTimeframeMinutes);
         this.writeSelect('twoHourCloseParity', this.resolveTwoHourCloseParity(settings.twoHourCloseParity));

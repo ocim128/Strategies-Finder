@@ -167,6 +167,14 @@ interface ProcessSignalResult {
         fingerprint: string;
         signal: { price: number };
     } | null;
+    /** A pending entry signal that was skipped because the backtest position was occupied */
+    pendingEvaluatedEntry?: {
+        direction: "long" | "short";
+        signalTimeSec: number;
+        signalPrice: number;
+        fingerprint: string;
+        isFresh: boolean;
+    } | null;
 }
 
 const DEFAULT_MIN_CANDLES = 200;
@@ -769,6 +777,41 @@ function buildExitTelegramMessage(
     ].join("\n");
 }
 
+function buildPendingEntryTelegramMessage(
+    symbol: string,
+    interval: string,
+    strategyKey: string,
+    configName: string | null,
+    direction: "long" | "short",
+    price: number,
+    timeSec: number,
+    takeProfitPrice?: number,
+    takeProfitPercent?: number,
+    stopLossPrice?: number,
+    stopLossPercent?: number
+): string {
+    const icon = direction === "long" ? "\u{1F7E2}" : "\u{1F534}";
+    const configLabel = configName ?? strategyKey;
+    const lines = [
+        `\u{23F3} ${icon} Pending Entry Signal`,
+        `Symbol: ${symbol}`,
+        `Interval: ${interval}`,
+        `Configuration: ${configLabel}`,
+        `Strategy: ${strategyKey}`,
+        `Direction: ${direction.toUpperCase()}`,
+        `Price: ${price}`,
+        `Note: Current position still open. Watch for entry when it closes.`,
+    ];
+    if (takeProfitPrice != null && takeProfitPercent != null) {
+        lines.push(`\u{1F3AF} Take Profit: ${takeProfitPrice.toFixed(4)} (${formatPercent(takeProfitPercent)})`);
+    }
+    if (stopLossPrice != null && stopLossPercent != null) {
+        lines.push(`\u{1F6D1} Stop Loss: ${stopLossPrice.toFixed(4)} (${formatPercent(-Math.abs(stopLossPercent))})`);
+    }
+    lines.push(`Time (UTC): ${new Date(timeSec * 1000).toISOString()}`);
+    return lines.join("\n");
+}
+
 async function sendTelegramText(env: Env, text: string): Promise<void> {
     const token = env.TELEGRAM_BOT_TOKEN;
     const chatId = env.TELEGRAM_CHAT_ID;
@@ -854,6 +897,15 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                     fingerprint: evaluation.latestEntry.fingerprint,
                     signal: { price: evaluation.latestEntry.signal.price },
                 },
+                pendingEvaluatedEntry: evaluation.pendingEntry
+                    ? {
+                        direction: evaluation.pendingEntry.direction,
+                        signalTimeSec: evaluation.pendingEntry.signalTimeSec,
+                        signalPrice: evaluation.pendingEntry.signal.price,
+                        fingerprint: evaluation.pendingEntry.fingerprint,
+                        isFresh: evaluation.pendingEntry.isFresh,
+                    }
+                    : null,
             };
         }
 
@@ -880,6 +932,15 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                     fingerprint: evaluation.latestEntry.fingerprint,
                     signal: { price: evaluation.latestEntry.signal.price },
                 },
+                pendingEvaluatedEntry: evaluation.pendingEntry
+                    ? {
+                        direction: evaluation.pendingEntry.direction,
+                        signalTimeSec: evaluation.pendingEntry.signalTimeSec,
+                        signalPrice: evaluation.pendingEntry.signal.price,
+                        fingerprint: evaluation.pendingEntry.fingerprint,
+                        isFresh: evaluation.pendingEntry.isFresh,
+                    }
+                    : null,
                 latestEntry: evaluation.latestEntry,
             };
         }
@@ -1016,6 +1077,15 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                 signalPrice: evaluation.latestEntry.signal.price,
                 fingerprint: evaluation.latestEntry.fingerprint,
                 signal: { price: evaluation.latestEntry.signal.price },
+            }
+            : null,
+        pendingEvaluatedEntry: evaluation.pendingEntry
+            ? {
+                direction: evaluation.pendingEntry.direction,
+                signalTimeSec: evaluation.pendingEntry.signalTimeSec,
+                signalPrice: evaluation.pendingEntry.signal.price,
+                fingerprint: evaluation.pendingEntry.fingerprint,
+                isFresh: evaluation.pendingEntry.isFresh,
             }
             : null,
     };
@@ -1554,6 +1624,70 @@ async function runSubscription(
                     }
                 }
             } catch { /* exit alerts are best effort */ }
+        }
+
+        // Pending entry alert: a signal fired while the backtest position was occupied.
+        // Send a heads-up so the user can manually enter when their current position closes.
+        if (
+            result.ok &&
+            !result.newEntry &&
+            result.pendingEvaluatedEntry?.isFresh &&
+            subscription.notify_telegram === 1 &&
+            !telegramRetriesExhausted
+        ) {
+            try {
+                const pe = result.pendingEvaluatedEntry;
+                const pendingDedupeKey = `pending:${streamId.toLowerCase()}:${pe.fingerprint}`;
+                const pendingInsert = await env.SIGNALS_DB.prepare(
+                    `INSERT INTO entry_signals (channel_key, dedupe_key, stream_id, symbol, interval, strategy_key, direction, signal_time, signal_price, signal_reason, payload_json)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(dedupe_key) DO NOTHING`
+                ).bind(
+                    streamId.toLowerCase(),
+                    pendingDedupeKey,
+                    streamId,
+                    subscription.symbol,
+                    subscription.interval,
+                    subscription.strategy_key,
+                    pe.direction,
+                    pe.signalTimeSec,
+                    pe.signalPrice,
+                    'pending_entry',
+                    JSON.stringify({ pending: true, direction: pe.direction, signalTimeSec: pe.signalTimeSec, signalPrice: pe.signalPrice, fingerprint: pe.fingerprint })
+                ).run();
+
+                if ((pendingInsert.meta?.changes ?? 0) > 0) {
+                    // Compute TP/SL for the pending entry using backtest settings
+                    const bs = parsedBacktestSettings;
+                    const isLong = pe.direction === 'long';
+                    let peTp: number | undefined, peTpPct: number | undefined;
+                    let peSl: number | undefined, peSlPct: number | undefined;
+                    if (bs.riskMode === 'percentage') {
+                        if (bs.takeProfitEnabled && bs.takeProfitPercent && bs.takeProfitPercent > 0) {
+                            peTpPct = bs.takeProfitPercent;
+                            peTp = isLong ? pe.signalPrice * (1 + bs.takeProfitPercent / 100) : pe.signalPrice * (1 - bs.takeProfitPercent / 100);
+                        }
+                        if (bs.stopLossEnabled && bs.stopLossPercent && bs.stopLossPercent > 0) {
+                            peSlPct = bs.stopLossPercent;
+                            peSl = isLong ? pe.signalPrice * (1 - bs.stopLossPercent / 100) : pe.signalPrice * (1 + bs.stopLossPercent / 100);
+                        }
+                    }
+
+                    const pendingMsg = buildPendingEntryTelegramMessage(
+                        subscription.symbol,
+                        subscription.interval,
+                        subscription.strategy_key,
+                        parseConfigNameFromStreamId(streamId),
+                        pe.direction,
+                        pe.signalPrice,
+                        pe.signalTimeSec,
+                        peTp, peTpPct, peSl, peSlPct
+                    );
+                    try {
+                        await sendTelegramText(env, pendingMsg);
+                    } catch { /* pending alerts are best effort */ }
+                }
+            } catch { /* pending entry alerts are best effort */ }
         }
 
         if (result.ok && result.newEntry) {

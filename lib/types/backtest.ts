@@ -53,6 +53,9 @@ export interface NormalizedSettings {
     allowSameBarExit: boolean;
     slippageBps: number;
 
+    /** Maximum number of concurrently open positions (1 = classic, 2 = allow overlap) */
+    maxOpenTrades: number;
+
     // Snapshot-based trade filters
     snapshotAtrPercentMin: number;
     snapshotAtrPercentMax: number;

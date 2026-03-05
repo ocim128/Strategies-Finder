@@ -61,6 +61,9 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     // Snapshot filters
     const hasSnapshotFilters = hasNonZeroSnapshotFilter(settings);
 
+    // Multi-position constraint
+    const usesMultiPosition = (settings.maxOpenTrades ?? 1) > 1;
+
     return usesRealismConstraints
         || usesCombinedDirection
         || usesNonAllMarketMode
@@ -68,7 +71,8 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         || usesPercentageMaxHold
         || usesPercentageProbation
         || usesPercentageLossStreakGuard
-        || hasSnapshotFilters;
+        || hasSnapshotFilters
+        || usesMultiPosition;
 }
 
 export const SNAPSHOT_FILTER_SETTING_KEYS = [
@@ -132,6 +136,7 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "executionModel",
     "allowSameBarExit",
     "slippageBps",
+    "maxOpenTrades",
     "marketMode",
     "riskMaxHoldBars",
     "riskMaxHoldEnabled",

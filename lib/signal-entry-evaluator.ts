@@ -45,15 +45,16 @@ export interface EvaluatedLatestTradeContext {
 export interface EntrySignalEvaluationResult {
     ok: boolean;
     reason?:
-        | "strategy_not_found"
-        | "invalid_input"
-        | "insufficient_data"
-        | "no_signals"
-        | "signal_time_not_found";
+    | "strategy_not_found"
+    | "invalid_input"
+    | "insufficient_data"
+    | "no_signals"
+    | "signal_time_not_found";
     rawSignalCount: number;
     preparedSignalCount: number;
     latestEntry: EvaluatedEntrySignal | null;
     latestTrade: EvaluatedLatestTradeContext | null;
+    pendingEntry?: EvaluatedEntrySignal | null;
 }
 
 type StrategyRole = NonNullable<NonNullable<Strategy["metadata"]>["role"]>;
@@ -599,6 +600,42 @@ export function evaluateLatestEntrySignal(
         ),
     };
 
+    // Detect pending (skipped) entry signal when the latest trade is still open.
+    // A "pending" signal fired while the backtest position was occupied — in live
+    // trading this means there is a potential entry once the current position closes.
+    let pendingEntry: EvaluatedEntrySignal | null = null;
+    if (latestTrade.exitReason === 'end_of_data') {
+        for (const signal of entrySignals) {
+            const sigTimeSec = toUnixSeconds(signal.time);
+            if (sigTimeSec === null || sigTimeSec <= signalTimeSec) continue;
+
+            const pendingDirection: "long" | "short" = signal.type === "buy" ? "long" : "short";
+            const pendingSignalIndex = candleTimeToLastIndex.get(sigTimeSec);
+            if (pendingSignalIndex === undefined) continue;
+
+            const pendingAgeBars = request.candles.length - 1 - pendingSignalIndex;
+
+            // Keep the NEWEST pending signal
+            if (!pendingEntry || sigTimeSec > pendingEntry.signalTimeSec) {
+                pendingEntry = {
+                    strategyKey: request.strategyKey,
+                    strategyName: strategy.name,
+                    signal,
+                    direction: pendingDirection,
+                    signalTimeSec: sigTimeSec,
+                    signalAgeBars: pendingAgeBars,
+                    isFresh: pendingAgeBars <= maxAge,
+                    fingerprint: buildSignalFingerprint(
+                        request.strategyKey,
+                        pendingDirection,
+                        sigTimeSec,
+                        signal.price
+                    ),
+                };
+            }
+        }
+    }
+
     return {
         ok: true,
         rawSignalCount: rawSignals.length,
@@ -609,5 +646,6 @@ export function evaluateLatestEntrySignal(
             exitReason: latestTrade.exitReason ?? null,
             isOpen: latestTrade.exitReason === "end_of_data",
         },
+        pendingEntry,
     };
 }

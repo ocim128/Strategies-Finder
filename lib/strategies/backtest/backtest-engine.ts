@@ -2,7 +2,7 @@
 import { BacktestResult, BacktestSettings, OHLCVData, Signal, Time, Trade } from '../../types/index';
 import { ensureCleanData } from '../strategy-helpers';
 import { NormalizedSettings, PositionState, PrecomputedIndicators, TradeSizingConfig } from '../../types/backtest';
-import { compareTime, directionFactorFor, directionToSignalType, getExecutionShift, getTimeIndex, isLossStreakFlipTradeDirection, needsSnapshotIndicators, normalizeBacktestSettings, normalizeTradeDirection, signalToPositionDirection, timeKey } from './backtest-utils';
+import { compareTime, directionFactorFor, getExecutionShift, getTimeIndex, isLossStreakFlipTradeDirection, needsSnapshotIndicators, normalizeBacktestSettings, normalizeTradeDirection, signalToPositionDirection, timeKey } from './backtest-utils';
 import { calculateSharpeRatioFromReturns } from '../performance-metrics';
 
 import { prepareSignals } from './signal-preparation';
@@ -546,7 +546,8 @@ export function runBacktestCompact(
     const preparedSignalBarIndexes = resolvePreparedSignalBarIndexes(data, preparedSignals);
 
     let capital = initialCapital;
-    let position: PositionState | null = null;
+    const positions: PositionState[] = [];
+    const maxOpenTrades = config.maxOpenTrades;
     let totalTrades = 0, winningTrades = 0, totalProfit = 0, totalLoss = 0;
     let avgReturn = 0, returnM2 = 0, peakEquity = initialCapital, maxDrawdown = 0, maxDrawdownPercent = 0;
     let signalIdx = 0;
@@ -560,45 +561,73 @@ export function runBacktestCompact(
     const lossStreak = createLossStreakState();
     const flipLossDirection = createFlipLossDirectionState();
 
-    const recordExit = (exitPrice: number, exitSize: number) => {
-        const details = calculateTradeExitDetails(position!, exitPrice, exitSize, commissionRate);
+    const recordExit = (pos: PositionState, exitPrice: number, exitSize: number) => {
+        const details = calculateTradeExitDetails(pos, exitPrice, exitSize, commissionRate);
         capital += details.rawPnl - details.commission;
         totalTrades++;
         if (details.totalPnl > 0) { winningTrades++; totalProfit += details.totalPnl; } else { totalLoss += Math.abs(details.totalPnl); }
         const delta = details.pnlPercent - avgReturn;
         avgReturn += delta / totalTrades;
         returnM2 += delta * (details.pnlPercent - avgReturn);
-        position!.size -= details.size;
-        if (position!.size <= 0) position = null;
+        pos.size -= details.size;
+        if (pos.size <= 0) {
+            const idx = positions.indexOf(pos);
+            if (idx >= 0) positions.splice(idx, 1);
+        }
         return details;
+    };
+
+    const tryProcessExitsAfterEntry = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
+        processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
+            const exitDirection = pos.direction;
+            const details = recordExit(pos, exitPrice, exitSize);
+            if (probationCooldownActive && reason === 'probation_fail') {
+                armDirectionCooldown(cooldown, exitDirection, barIndex, config.riskProbationCooldownBars);
+            }
+            if (lossStreakGuardActive && positions.indexOf(pos) < 0) {
+                updateLossStreakCooldown(lossStreak, cooldown, exitDirection, details.totalPnl, barIndex, config);
+            }
+            if (positions.indexOf(pos) < 0) {
+                updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, details.totalPnl);
+            }
+        });
+        if (positions.indexOf(pos) >= 0) updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
     };
 
     for (let i = 0; i < data.length; i++) {
         const candle = data[i];
 
-        if (position) {
-            position.barsInTrade += 1;
-            processPositionExits(candle, position, config, slippageRate, (exitPrice, exitSize, reason) => {
-                const exitDirection = position!.direction;
-                const details = recordExit(exitPrice, exitSize);
+        // Process exits for ALL open positions (iterate backwards for safe splice)
+        for (let p = positions.length - 1; p >= 0; p--) {
+            const pos = positions[p];
+            pos.barsInTrade += 1;
+            processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
+                const exitDirection = pos.direction;
+                const details = recordExit(pos, exitPrice, exitSize);
                 if (probationCooldownActive && reason === 'probation_fail') {
                     armDirectionCooldown(cooldown, exitDirection, i, config.riskProbationCooldownBars);
                 }
-                if (lossStreakGuardActive && !position) {
+                if (lossStreakGuardActive && positions.indexOf(pos) < 0) {
                     updateLossStreakCooldown(lossStreak, cooldown, exitDirection, details.totalPnl, i, config);
                 }
-                if (!position) {
+                if (positions.indexOf(pos) < 0) {
                     updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, details.totalPnl);
                 }
             });
-            if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
+            if (positions.indexOf(pos) >= 0) updatePositionState(candle, pos, config, indicatorSeries.atr[i]);
         }
 
         while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
             const signalBarIndex = preparedSignalBarIndexes[signalIdx];
             const signal = preparedSignals[signalIdx++];
             if (signalBarIndex === i) {
-                if (!position) {
+                // Check for signal exit: does this signal close an existing opposite-direction position?
+                const signalDir = signalToPositionDirection(signal.type);
+                const oppositeDir: 'long' | 'short' = signalDir === 'long' ? 'short' : 'long';
+                const exitTarget = positions.find(p => p.direction === oppositeDir && (config.allowSameBarExit || compareTime(signal.time, p.entryTime) !== 0));
+
+                if (!exitTarget && positions.length < maxOpenTrades) {
+                    // New entry (no opposite position to close, and we have room)
                     if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
                         continue;
                     }
@@ -607,47 +636,34 @@ export function runBacktestCompact(
                         if (entryCooldownActive && isDirectionOnCooldown(cooldown, opened.nextPosition.direction, i)) {
                             continue;
                         }
-                        position = opened.nextPosition;
+                        positions.push(opened.nextPosition);
                         if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                             flipLossDirection.activeDirection = opened.nextPosition.direction;
                         }
                         capital -= opened.entryCommission;
                         if (config.executionModel === 'next_open') {
-                            processPositionExits(candle, position, config, slippageRate, (exitPrice, exitSize, reason) => {
-                                const exitDirection = position!.direction;
-                                const details = recordExit(exitPrice, exitSize);
-                                if (probationCooldownActive && reason === 'probation_fail') {
-                                    armDirectionCooldown(cooldown, exitDirection, i, config.riskProbationCooldownBars);
-                                }
-                                if (lossStreakGuardActive && !position) {
-                                    updateLossStreakCooldown(lossStreak, cooldown, exitDirection, details.totalPnl, i, config);
-                                }
-                                if (!position) {
-                                    updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, details.totalPnl);
-                                }
-                            });
-                            if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
+                            tryProcessExitsAfterEntry(opened.nextPosition, candle, i);
                         }
                     }
-                } else if (signal.type === directionToSignalType(position.direction === 'long' ? 'short' : 'long') && (config.allowSameBarExit || compareTime(signal.time, position.entryTime) !== 0)) {
-                    // Signal exit
-                    const exitPrice = signal.price;
+                } else if (exitTarget) {
+                    // Signal exit: close the opposite-direction position
                     const exitFractionRaw = Number.isFinite(signal.sizeFraction as number) ? Number(signal.sizeFraction) : 1;
                     const exitFraction = Math.max(0, Math.min(1, exitFractionRaw));
-                    const exitSize = position.size * exitFraction;
+                    const exitSize = exitTarget.size * exitFraction;
                     if (exitSize <= 0) {
                         continue;
                     }
                     const wasPartial = exitFraction < 1;
-                    const exitDirection = position.direction;
-                    const details = recordExit(exitPrice, exitSize);
-                    if (lossStreakGuardActive && !position) {
+                    const exitDirection = exitTarget.direction;
+                    const details = recordExit(exitTarget, signal.price, exitSize);
+                    if (lossStreakGuardActive && positions.indexOf(exitTarget) < 0) {
                         updateLossStreakCooldown(lossStreak, cooldown, exitDirection, details.totalPnl, i, config);
                     }
-                    if (!position) {
+                    if (positions.indexOf(exitTarget) < 0) {
                         updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, details.totalPnl);
                     }
-                    const immediateReentryAllowed = !wasPartial && (
+                    const fullyClosed = positions.indexOf(exitTarget) < 0;
+                    const immediateReentryAllowed = fullyClosed && !wasPartial && (
                         tradeDirection === 'both'
                         || (
                             isLossStreakFlipTradeDirection(tradeDirection)
@@ -655,32 +671,19 @@ export function runBacktestCompact(
                             && signalToPositionDirection(signal.type) === flipLossDirection.activeDirection
                         )
                     );
-                    if (!position && immediateReentryAllowed) {
+                    if (immediateReentryAllowed && positions.length < maxOpenTrades) {
                         const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
                         if (opened) {
                             if (entryCooldownActive && isDirectionOnCooldown(cooldown, opened.nextPosition.direction, i)) {
                                 continue;
                             }
-                            position = opened.nextPosition;
+                            positions.push(opened.nextPosition);
                             if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                                 flipLossDirection.activeDirection = opened.nextPosition.direction;
                             }
                             capital -= opened.entryCommission;
                             if (config.executionModel === 'next_open') {
-                                processPositionExits(candle, position, config, slippageRate, (exitPrice, exitSize, reason) => {
-                                    const exitDirection = position!.direction;
-                                    const details = recordExit(exitPrice, exitSize);
-                                    if (probationCooldownActive && reason === 'probation_fail') {
-                                        armDirectionCooldown(cooldown, exitDirection, i, config.riskProbationCooldownBars);
-                                    }
-                                    if (lossStreakGuardActive && !position) {
-                                        updateLossStreakCooldown(lossStreak, cooldown, exitDirection, details.totalPnl, i, config);
-                                    }
-                                    if (!position) {
-                                        updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, details.totalPnl);
-                                    }
-                                });
-                                if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
+                                tryProcessExitsAfterEntry(opened.nextPosition, candle, i);
                             }
                         }
                     }
@@ -688,7 +691,12 @@ export function runBacktestCompact(
             }
         }
 
-        const equity = capital + (position ? (candle.close - position.entryPrice) * position.size * directionFactorFor(position.direction) : 0);
+        // Equity: capital + sum of unrealized PnL across all open positions
+        let unrealizedPnl = 0;
+        for (let p = 0; p < positions.length; p++) {
+            unrealizedPnl += (candle.close - positions[p].entryPrice) * positions[p].size * directionFactorFor(positions[p].direction);
+        }
+        const equity = capital + unrealizedPnl;
         if (equityOut) equityOut[i] = equity;
         if (equity > peakEquity) peakEquity = equity; else {
             const dd = peakEquity - equity;
@@ -696,10 +704,12 @@ export function runBacktestCompact(
         }
     }
 
-    // Match full backtest behavior: close any remaining position at the final close.
-    if (position && data.length > 0) {
+    // Match full backtest behavior: close any remaining positions at the final close.
+    if (positions.length > 0 && data.length > 0) {
         const finalCandle = data[data.length - 1];
-        recordExit(finalCandle.close, position.size);
+        while (positions.length > 0) {
+            recordExit(positions[0], finalCandle.close, positions[0].size);
+        }
         const finalEquity = capital;
         if (equityOut) equityOut[data.length - 1] = finalEquity;
         if (finalEquity > peakEquity) peakEquity = finalEquity; else {
@@ -756,8 +766,10 @@ export function runBacktest(
     const doSnapshot = !!settings.captureSnapshots;
     const executionShift = getExecutionShift(config);
 
-    let capital = initialCapital, position: PositionState | null = null, tradeId = 0, signalIdx = 0;
-    let currentSnapshot: TradeSnapshot | null = null;
+    let capital = initialCapital, tradeId = 0, signalIdx = 0;
+    const positions: PositionState[] = [];
+    const snapshots = new Map<PositionState, TradeSnapshot | null>();
+    const maxOpenTrades = config.maxOpenTrades;
     const trades: Trade[] = [];
     const equityCurve: { time: Time; value: number }[] = [];
     const commissionRate = commissionPercent / 100;
@@ -769,37 +781,79 @@ export function runBacktest(
     const lossStreak = createLossStreakState();
     const flipLossDirection = createFlipLossDirectionState();
 
+    const recordExitFull = (pos: PositionState, candle: OHLCVData, exitPrice: number, exitSize: number, reason: Trade['exitReason']) => {
+        const d = calculateTradeExitDetails(pos, exitPrice, exitSize, commissionRate);
+        capital += d.rawPnl - d.commission;
+        const snap = snapshots.get(pos) ?? null;
+        const trade: Trade = { id: ++tradeId, type: pos.direction, entryTime: pos.entryTime, entryPrice: pos.entryPrice, exitTime: candle.time, exitPrice, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: reason };
+        if (snap) trade.entrySnapshot = snap;
+        trades.push(trade);
+        pos.size -= d.size;
+        if (pos.size <= 0) {
+            const idx = positions.indexOf(pos);
+            if (idx >= 0) positions.splice(idx, 1);
+            snapshots.delete(pos);
+        }
+        return d;
+    };
+
+    const captureSnapshotForPosition = (pos: PositionState, barIndex: number, signal: Signal) => {
+        if (doSnapshot && snapshotIndicators) {
+            const snapshotBarIndex = Math.max(0, barIndex - executionShift);
+            snapshots.set(pos, captureTradeSnapshot(data, snapshotBarIndex, indicatorSeries, snapshotIndicators, pos.direction, signal.triggerPrice ?? signal.price));
+        }
+    };
+
+    const tryProcessExitsAfterEntryFull = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
+        processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
+            const exitDirection = pos.direction;
+            const d = recordExitFull(pos, candle, exitPrice, exitSize, reason);
+            if (probationCooldownActive && reason === 'probation_fail') {
+                armDirectionCooldown(cooldown, exitDirection, barIndex, config.riskProbationCooldownBars);
+            }
+            if (lossStreakGuardActive && positions.indexOf(pos) < 0) {
+                updateLossStreakCooldown(lossStreak, cooldown, exitDirection, d.totalPnl, barIndex, config);
+            }
+            if (positions.indexOf(pos) < 0) {
+                updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, d.totalPnl);
+            }
+        });
+        if (positions.indexOf(pos) >= 0) updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
+    };
+
     for (let i = 0; i < data.length; i++) {
         const candle = data[i];
-        if (position) {
-            position.barsInTrade += 1;
-            processPositionExits(candle, position, config, slippageRate, (exitPrice, exitSize, reason) => {
-                const exitDirection = position!.direction;
-                const d = calculateTradeExitDetails(position!, exitPrice, exitSize, commissionRate);
-                capital += d.rawPnl - d.commission;
-                const trade: Trade = { id: ++tradeId, type: position!.direction, entryTime: position!.entryTime, entryPrice: position!.entryPrice, exitTime: candle.time, exitPrice, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: reason };
-                if (currentSnapshot) trade.entrySnapshot = currentSnapshot;
-                trades.push(trade);
-                position!.size -= d.size;
-                if (position!.size <= 0) { position = null; currentSnapshot = null; }
+
+        // Process exits for ALL open positions
+        for (let p = positions.length - 1; p >= 0; p--) {
+            const pos = positions[p];
+            pos.barsInTrade += 1;
+            processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
+                const exitDirection = pos.direction;
+                const d = recordExitFull(pos, candle, exitPrice, exitSize, reason);
                 if (probationCooldownActive && reason === 'probation_fail') {
                     armDirectionCooldown(cooldown, exitDirection, i, config.riskProbationCooldownBars);
                 }
-                if (lossStreakGuardActive && !position) {
+                if (lossStreakGuardActive && positions.indexOf(pos) < 0) {
                     updateLossStreakCooldown(lossStreak, cooldown, exitDirection, d.totalPnl, i, config);
                 }
-                if (!position) {
+                if (positions.indexOf(pos) < 0) {
                     updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, d.totalPnl);
                 }
             });
-            if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
+            if (positions.indexOf(pos) >= 0) updatePositionState(candle, pos, config, indicatorSeries.atr[i]);
         }
 
         while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
             const signalBarIndex = preparedSignalBarIndexes[signalIdx];
             const signal = preparedSignals[signalIdx++];
             if (signalBarIndex === i) {
-                if (!position) {
+                const signalDir = signalToPositionDirection(signal.type);
+                const oppositeDir: 'long' | 'short' = signalDir === 'long' ? 'short' : 'long';
+                const exitTarget = positions.find(p => p.direction === oppositeDir && (config.allowSameBarExit || compareTime(signal.time, p.entryTime) !== 0));
+
+                if (!exitTarget && positions.length < maxOpenTrades) {
+                    // New entry
                     if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
                         continue;
                     }
@@ -808,63 +862,36 @@ export function runBacktest(
                         if (entryCooldownActive && isDirectionOnCooldown(cooldown, opened.nextPosition.direction, i)) {
                             continue;
                         }
-                        position = opened.nextPosition;
+                        positions.push(opened.nextPosition);
                         if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                             flipLossDirection.activeDirection = opened.nextPosition.direction;
                         }
                         capital -= opened.entryCommission;
-                        if (doSnapshot && snapshotIndicators) {
-                            const snapshotBarIndex = Math.max(0, i - executionShift);
-                            currentSnapshot = captureTradeSnapshot(
-                                data,
-                                snapshotBarIndex,
-                                indicatorSeries,
-                                snapshotIndicators,
-                                opened.nextPosition.direction,
-                                signal.triggerPrice ?? signal.price
-                            );
-                        }
+                        captureSnapshotForPosition(opened.nextPosition, i, signal);
                         if (config.executionModel === 'next_open') {
-                            processPositionExits(candle, position, config, slippageRate, (exitPrice, exitSize, reason) => {
-                                const exitDirection = position!.direction;
-                                const d = calculateTradeExitDetails(position!, exitPrice, exitSize, commissionRate);
-                                capital += d.rawPnl - d.commission;
-                                const trade: Trade = { id: ++tradeId, type: position!.direction, entryTime: position!.entryTime, entryPrice: position!.entryPrice, exitTime: candle.time, exitPrice, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: reason };
-                                if (currentSnapshot) trade.entrySnapshot = currentSnapshot;
-                                trades.push(trade);
-                                position!.size -= d.size;
-                                if (position!.size <= 0) { position = null; currentSnapshot = null; }
-                                if (probationCooldownActive && reason === 'probation_fail') {
-                                    armDirectionCooldown(cooldown, exitDirection, i, config.riskProbationCooldownBars);
-                                }
-                                if (lossStreakGuardActive && !position) {
-                                    updateLossStreakCooldown(lossStreak, cooldown, exitDirection, d.totalPnl, i, config);
-                                }
-                                if (!position) {
-                                    updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, d.totalPnl);
-                                }
-                            });
-                            if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
+                            tryProcessExitsAfterEntryFull(opened.nextPosition, candle, i);
                         }
                     }
-                } else if (signal.type === directionToSignalType(position.direction === 'long' ? 'short' : 'long') && (config.allowSameBarExit || compareTime(signal.time, position.entryTime) !== 0)) {
+                } else if (exitTarget) {
+                    // Signal exit
                     const exitFractionRaw = Number.isFinite(signal.sizeFraction as number) ? Number(signal.sizeFraction) : 1;
                     const exitFraction = Math.max(0, Math.min(1, exitFractionRaw));
-                    const exitSize = position.size * exitFraction;
-                    if (exitSize <= 0) {
-                        continue;
-                    }
-                    const details = calculateTradeExitDetails(position, signal.price, exitSize, commissionRate);
+                    const exitSize = exitTarget.size * exitFraction;
+                    if (exitSize <= 0) continue;
+
+                    const exitDirection = exitTarget.direction;
+                    const details = calculateTradeExitDetails(exitTarget, signal.price, exitSize, commissionRate);
                     capital += details.rawPnl - details.commission;
-                    const exitDirection = position.direction;
-                    const sigTrade: Trade = { id: ++tradeId, type: position.direction, entryTime: position.entryTime, entryPrice: position.entryPrice, exitTime: candle.time, exitPrice: signal.price, pnl: details.totalPnl, pnlPercent: details.pnlPercent, size: details.size, fees: details.fees, exitReason: 'signal' };
-                    if (currentSnapshot) sigTrade.entrySnapshot = currentSnapshot;
+                    const snap = snapshots.get(exitTarget) ?? null;
+                    const sigTrade: Trade = { id: ++tradeId, type: exitTarget.direction, entryTime: exitTarget.entryTime, entryPrice: exitTarget.entryPrice, exitTime: candle.time, exitPrice: signal.price, pnl: details.totalPnl, pnlPercent: details.pnlPercent, size: details.size, fees: details.fees, exitReason: 'signal' };
+                    if (snap) sigTrade.entrySnapshot = snap;
                     trades.push(sigTrade);
-                    position.size -= details.size;
-                    const fullyClosed = position.size <= 0;
+                    exitTarget.size -= details.size;
+                    const fullyClosed = exitTarget.size <= 0;
                     if (fullyClosed) {
-                        position = null;
-                        currentSnapshot = null;
+                        const idx = positions.indexOf(exitTarget);
+                        if (idx >= 0) positions.splice(idx, 1);
+                        snapshots.delete(exitTarget);
                         if (lossStreakGuardActive) {
                             updateLossStreakCooldown(lossStreak, cooldown, exitDirection, details.totalPnl, i, config);
                         }
@@ -878,69 +905,51 @@ export function runBacktest(
                             && signalToPositionDirection(signal.type) === flipLossDirection.activeDirection
                         )
                     );
-                    if (immediateReentryAllowed) {
+                    if (immediateReentryAllowed && positions.length < maxOpenTrades) {
                         const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
                         if (opened) {
                             if (entryCooldownActive && isDirectionOnCooldown(cooldown, opened.nextPosition.direction, i)) {
                                 continue;
                             }
-                            position = opened.nextPosition;
+                            positions.push(opened.nextPosition);
                             if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                                 flipLossDirection.activeDirection = opened.nextPosition.direction;
                             }
                             capital -= opened.entryCommission;
-                            if (doSnapshot && snapshotIndicators) {
-                                const snapshotBarIndex = Math.max(0, i - executionShift);
-                                currentSnapshot = captureTradeSnapshot(
-                                    data,
-                                    snapshotBarIndex,
-                                    indicatorSeries,
-                                    snapshotIndicators,
-                                    opened.nextPosition.direction,
-                                    signal.triggerPrice ?? signal.price
-                                );
-                            }
+                            captureSnapshotForPosition(opened.nextPosition, i, signal);
                             if (config.executionModel === 'next_open') {
-                                processPositionExits(candle, position, config, slippageRate, (exitPrice, exitSize, reason) => {
-                                    const exitDirection = position!.direction;
-                                    const d = calculateTradeExitDetails(position!, exitPrice, exitSize, commissionRate);
-                                    capital += d.rawPnl - d.commission;
-                                    const trade: Trade = { id: ++tradeId, type: position!.direction, entryTime: position!.entryTime, entryPrice: position!.entryPrice, exitTime: candle.time, exitPrice, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: reason };
-                                    if (currentSnapshot) trade.entrySnapshot = currentSnapshot;
-                                    trades.push(trade);
-                                    position!.size -= d.size;
-                                    if (position!.size <= 0) { position = null; currentSnapshot = null; }
-                                    if (probationCooldownActive && reason === 'probation_fail') {
-                                        armDirectionCooldown(cooldown, exitDirection, i, config.riskProbationCooldownBars);
-                                    }
-                                    if (lossStreakGuardActive && !position) {
-                                        updateLossStreakCooldown(lossStreak, cooldown, exitDirection, d.totalPnl, i, config);
-                                    }
-                                    if (!position) {
-                                        updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, d.totalPnl);
-                                    }
-                                });
-                                if (position) updatePositionState(candle, position, config, indicatorSeries.atr[i]);
+                                tryProcessExitsAfterEntryFull(opened.nextPosition, candle, i);
                             }
                         }
                     }
                 }
             }
         }
-        equityCurve.push({ time: candle.time, value: capital + (position ? (candle.close - position.entryPrice) * position.size * directionFactorFor(position.direction) : 0) });
+        let unrealizedPnl = 0;
+        for (let p = 0; p < positions.length; p++) {
+            unrealizedPnl += (candle.close - positions[p].entryPrice) * positions[p].size * directionFactorFor(positions[p].direction);
+        }
+        equityCurve.push({ time: candle.time, value: capital + unrealizedPnl });
     }
 
-    if (position && data.length > 0) {
+    if (positions.length > 0 && data.length > 0) {
         const candle = data[data.length - 1];
-        const d = calculateTradeExitDetails(position, candle.close, position.size, commissionRate);
-        capital += d.rawPnl - d.commission;
-        const eodTrade: Trade = { id: ++tradeId, type: position.direction, entryTime: position.entryTime, entryPrice: position.entryPrice, exitTime: candle.time, exitPrice: candle.close, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: 'end_of_data', stopLossPrice: position.stopLossPrice, takeProfitPrice: position.takeProfitPrice };
-        if (currentSnapshot) eodTrade.entrySnapshot = currentSnapshot;
-        trades.push(eodTrade);
+        while (positions.length > 0) {
+            const pos = positions[0];
+            const d = calculateTradeExitDetails(pos, candle.close, pos.size, commissionRate);
+            capital += d.rawPnl - d.commission;
+            const snap = snapshots.get(pos) ?? null;
+            const eodTrade: Trade = { id: ++tradeId, type: pos.direction, entryTime: pos.entryTime, entryPrice: pos.entryPrice, exitTime: candle.time, exitPrice: candle.close, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: 'end_of_data', stopLossPrice: pos.stopLossPrice, takeProfitPrice: pos.takeProfitPrice };
+            if (snap) eodTrade.entrySnapshot = snap;
+            trades.push(eodTrade);
+            positions.splice(0, 1);
+            snapshots.delete(pos);
+        }
         if (equityCurve.length > 0) {
             equityCurve[equityCurve.length - 1] = { time: candle.time, value: capital };
         }
     }
+
 
     const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(equityCurve, initialCapital);
     return calculateBacktestStats(trades, equityCurve, initialCapital, capital, maxDrawdown, maxDrawdownPercent);
