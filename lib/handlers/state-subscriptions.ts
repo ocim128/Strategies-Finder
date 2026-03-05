@@ -10,6 +10,7 @@ import { getRequiredElement } from "../dom-utils";
 import { SYMBOL_MAP } from "../constants";
 import { clearAll } from "../app-actions";
 import { formatPolymarketDisplayName } from "../dataProviders/polymarket";
+import { quickViewManager } from "../quick-view";
 
 export function setupStateSubscriptions() {
     const setPriceLoading = () => {
@@ -110,6 +111,10 @@ export function setupStateSubscriptions() {
             } else {
                 uiManager.updateTradesList(result.trades, jumpToTrade);
             }
+
+            // Auto-show Quick View overlay
+            quickViewManager.setJumpToTrade(jumpToTrade);
+            quickViewManager.onBacktestComplete(result);
         }
     });
 

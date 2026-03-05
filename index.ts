@@ -39,6 +39,7 @@ import { handleCrosshairMove } from "./lib/app-actions";
 import { initEngineStatusIndicator } from "./lib/engine-status-indicator";
 import { liveOperationsDashboard } from "./lib/live-operations-dashboard";
 import { blockSelectorManager } from "./lib/block-selector-manager";
+import { quickViewManager } from "./lib/quick-view";
 
 async function init() {
 	injectLayout();
@@ -76,6 +77,7 @@ async function init() {
 	initDebugPanel();
 	initEngineStatusIndicator(); // Show Rust vs TypeScript engine status
 	liveOperationsDashboard.init();
+	quickViewManager.init();
 
 	// Initialize scanner panel with keyboard shortcut
 	window.addEventListener('keydown', (e) => {

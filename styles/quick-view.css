@@ -1,0 +1,388 @@
+/* ── Quick View Overlay ─────────────────────────────────── */
+/* Overlays the chart-wrapper with a compact results + trades view */
+
+.quick-view-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    display: none;
+    flex-direction: column;
+    background: linear-gradient(160deg,
+            hsl(var(--hsl-surface-2) / 0.97),
+            hsl(var(--hsl-surface-1) / 0.95));
+    backdrop-filter: blur(24px) saturate(120%);
+    -webkit-backdrop-filter: blur(24px) saturate(120%);
+    border-radius: inherit;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.quick-view-overlay.is-visible {
+    display: flex;
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Header bar */
+.qv-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid hsl(var(--hsl-border) / 0.4);
+    background: hsl(var(--hsl-surface-3) / 0.4);
+    flex-shrink: 0;
+}
+
+.qv-title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    letter-spacing: 0.02em;
+}
+
+.qv-title svg {
+    width: 16px;
+    height: 16px;
+    color: var(--accent-color);
+}
+
+.qv-hint {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.qv-hint kbd {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 5px;
+    border-radius: var(--radius-xs);
+    background: hsl(var(--hsl-surface-3) / 0.6);
+    border: 1px solid hsl(var(--hsl-border) / 0.5);
+    font-size: 10px;
+    font-family: var(--font-family-mono);
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.qv-close-btn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.qv-close-btn:hover {
+    background: hsl(var(--hsl-surface-3) / 0.8);
+    color: var(--text-primary);
+}
+
+.qv-close-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* Body — two-panel split */
+.qv-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* Results pane (left) */
+.qv-results-pane {
+    flex: 0 0 320px;
+    overflow-y: auto;
+    padding: 14px 16px;
+    border-right: 1px solid hsl(var(--hsl-border) / 0.3);
+}
+
+/* Stats grid inside quick view */
+.qv-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.qv-stat-card {
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    background: hsl(var(--hsl-surface-3) / 0.35);
+    border: 1px solid hsl(var(--hsl-border) / 0.25);
+    transition: background 0.15s ease;
+}
+
+.qv-stat-card:hover {
+    background: hsl(var(--hsl-surface-3) / 0.55);
+}
+
+.qv-stat-card.full-width {
+    grid-column: 1 / -1;
+}
+
+.qv-stat-label {
+    font-size: 10px;
+    font-weight: var(--font-weight-medium);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+}
+
+.qv-stat-value {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    font-family: var(--font-family-mono);
+}
+
+.qv-stat-value.positive {
+    color: var(--green);
+}
+
+.qv-stat-value.negative {
+    color: var(--red);
+}
+
+/* Section headers */
+.qv-section-title {
+    font-size: 11px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 14px 0 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid hsl(var(--hsl-border) / 0.2);
+}
+
+.qv-section-title:first-child {
+    margin-top: 0;
+}
+
+/* Trades pane (right) */
+.qv-trades-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.qv-trades-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid hsl(var(--hsl-border) / 0.25);
+    flex-shrink: 0;
+}
+
+.qv-trades-title {
+    font-size: 11px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.qv-trades-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: var(--radius-pill);
+    background: hsl(var(--hsl-accent) / 0.15);
+    color: var(--accent-color);
+    font-size: 10px;
+    font-weight: var(--font-weight-semibold);
+    font-family: var(--font-family-mono);
+}
+
+.qv-sort-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border: 1px solid hsl(var(--hsl-border) / 0.35);
+    border-radius: var(--radius-sm);
+    background: hsl(var(--hsl-surface-3) / 0.3);
+    color: var(--text-tertiary);
+    font-size: 10px;
+    font-family: var(--font-family-base);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.qv-sort-btn:hover {
+    background: hsl(var(--hsl-surface-3) / 0.6);
+    color: var(--text-secondary);
+    border-color: hsl(var(--hsl-border) / 0.5);
+}
+
+.qv-sort-btn svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.qv-trades-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+/* Trade items in quick view */
+.qv-trade-item {
+    display: grid;
+    grid-template-columns: 60px 1fr 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background 0.12s ease;
+    font-size: var(--font-size-xs);
+    border-bottom: 1px solid hsl(var(--hsl-border) / 0.1);
+}
+
+.qv-trade-item:last-child {
+    border-bottom: none;
+}
+
+.qv-trade-item:hover {
+    background: hsl(var(--hsl-surface-3) / 0.5);
+}
+
+.qv-trade-type {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 8px;
+    border-radius: var(--radius-xs);
+    font-size: 10px;
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.qv-trade-type.long {
+    background: hsl(var(--hsl-green) / 0.12);
+    color: var(--green);
+}
+
+.qv-trade-type.short {
+    background: hsl(var(--hsl-red) / 0.12);
+    color: var(--red);
+}
+
+.qv-trade-prices {
+    color: var(--text-secondary);
+    font-family: var(--font-family-mono);
+    font-size: 11px;
+}
+
+.qv-trade-prices span {
+    color: var(--text-tertiary);
+    font-size: 10px;
+}
+
+.qv-trade-date {
+    color: var(--text-tertiary);
+    font-size: 10px;
+}
+
+.qv-trade-pnl {
+    font-family: var(--font-family-mono);
+    font-weight: var(--font-weight-semibold);
+    font-size: 11px;
+    text-align: right;
+    min-width: 70px;
+}
+
+.qv-trade-pnl.positive {
+    color: var(--green);
+}
+
+.qv-trade-pnl.negative {
+    color: var(--red);
+}
+
+/* Empty state */
+.qv-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    padding: 32px;
+    color: var(--text-tertiary);
+    font-size: var(--font-size-sm);
+    gap: 8px;
+}
+
+.qv-empty svg {
+    width: 32px;
+    height: 32px;
+    opacity: 0.4;
+}
+
+/* Toolbar toggle button active state */
+.tool-btn.qv-active {
+    color: var(--accent-color);
+    background: hsl(var(--hsl-accent) / 0.12);
+}
+
+/* Scrollbar styling for the overlay */
+.qv-trades-list::-webkit-scrollbar,
+.qv-results-pane::-webkit-scrollbar {
+    width: 5px;
+}
+
+.qv-trades-list::-webkit-scrollbar-track,
+.qv-results-pane::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.qv-trades-list::-webkit-scrollbar-thumb,
+.qv-results-pane::-webkit-scrollbar-thumb {
+    background: hsl(var(--hsl-border) / 0.4);
+    border-radius: 4px;
+}
+
+/* Exit reason badge */
+.qv-exit-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 5px;
+    border-radius: var(--radius-xs);
+    font-size: 9px;
+    font-weight: var(--font-weight-medium);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: hsl(var(--hsl-surface-3) / 0.5);
+    color: var(--text-tertiary);
+    margin-left: 4px;
+}

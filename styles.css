@@ -28,6 +28,7 @@
 @import './styles/analysis-styles.css';
 @import './styles/alerts.css';
 @import './styles/settings-ux.css';
+@import './styles/quick-view.css';
 
 /* Accessibility must be last to override other styles */
 @import './styles/accessibility.css';
