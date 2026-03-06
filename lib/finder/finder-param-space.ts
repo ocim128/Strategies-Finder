@@ -168,7 +168,17 @@ export class FinderParamSpace {
         const combos: StrategyParams[] = [];
         const seen = new Set<string>();
         const normalizedDefault = this.normalizeParams(defaultParams);
-        this.tryAddCombo(normalizedDefault, combos, seen, options.maxRuns);
+        const optimizeForRandom = options.mode === "random";
+        const discreteSpaceSize = optimizeForRandom
+            ? this.estimateDiscreteSpaceSize(keys, defaultParams, options)
+            : null;
+        const targetRuns = Math.max(
+            1,
+            discreteSpaceSize === null
+                ? options.maxRuns
+                : Math.min(options.maxRuns, discreteSpaceSize)
+        );
+        this.tryAddCombo(normalizedDefault, combos, seen, targetRuns);
 
         // Separate toggle params from numeric params
         const toggleKeys: string[] = [];
@@ -185,9 +195,11 @@ export class FinderParamSpace {
         }
 
         let attempts = 0;
-        const maxAttempts = options.maxRuns * 10;
-        const skipDedup = options.maxRuns >= 50;
-        while (combos.length < options.maxRuns && attempts < maxAttempts) {
+        const maxAttempts = optimizeForRandom
+            ? Math.max(targetRuns * 20, 200)
+            : options.maxRuns * 10;
+        const skipDedup = !optimizeForRandom && options.maxRuns >= 50;
+        while (combos.length < targetRuns && attempts < maxAttempts) {
             const params: StrategyParams = {};
 
             // Randomize toggle params (50% chance on/off)
@@ -206,11 +218,43 @@ export class FinderParamSpace {
                     combos.push(params);
                 }
             } else {
-                this.tryAddCombo(params, combos, seen, options.maxRuns);
+                this.tryAddCombo(params, combos, seen, targetRuns);
             }
             attempts += 1;
         }
         return combos;
+    }
+
+    private estimateDiscreteSpaceSize(
+        keys: string[],
+        defaultParams: StrategyParams,
+        options: FinderOptions
+    ): number | null {
+        let total = 1;
+        for (const key of keys) {
+            const baseValue = defaultParams[key];
+            if (isToggleParam(key, baseValue)) {
+                total *= 2;
+            } else {
+                const { min, max } = computeParamRange(key, baseValue, options.rangePercent);
+                const minNorm = this.normalizeParamValue(key, min, baseValue);
+                const maxNorm = this.normalizeParamValue(key, max, baseValue);
+                const baseNorm = this.normalizeParamValue(key, baseValue, baseValue);
+                if (!Number.isInteger(minNorm) || !Number.isInteger(maxNorm) || !Number.isInteger(baseNorm)) {
+                    return null;
+                }
+                const low = Math.min(minNorm, maxNorm);
+                const high = Math.max(minNorm, maxNorm);
+                const count = Math.max(1, Math.floor(high) - Math.ceil(low) + 1);
+                total *= count;
+            }
+
+            if (!Number.isFinite(total) || total > 1_000_000) {
+                return null;
+            }
+        }
+
+        return Math.max(1, Math.floor(total));
     }
 
     private generateRandomParams(defaultParams: StrategyParams, options: FinderOptions, rand: () => number): StrategyParams {

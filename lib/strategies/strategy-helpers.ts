@@ -14,6 +14,7 @@ const _h = new WeakMap<OHLCVData[], number[]>();
 const _l = new WeakMap<OHLCVData[], number[]>();
 const _c = new WeakMap<OHLCVData[], number[]>();
 const _v = new WeakMap<OHLCVData[], number[]>();
+const _clean = new WeakMap<OHLCVData[], OHLCVData[]>();
 
 export const getHighs = (data: OHLCVData[]): number[] => getMemoized(_h, data, d => d.high);
 export const getLows = (data: OHLCVData[]): number[] => getMemoized(_l, data, d => d.low);
@@ -97,7 +98,26 @@ export function checkCrossover(
  */
 export function ensureCleanData(data: OHLCVData[] | undefined | null): OHLCVData[] {
     if (!data) return [];
-    return data.filter(d => d !== undefined && d !== null);
+    if (data.length === 0) return data;
+
+    const cached = _clean.get(data);
+    if (cached) return cached;
+
+    // Fast path: most callers already provide clean arrays.
+    for (let i = 0; i < data.length; i++) {
+        if (data[i] == null) {
+            const cleaned: OHLCVData[] = [];
+            for (let j = 0; j < data.length; j++) {
+                const point = data[j];
+                if (point != null) cleaned.push(point);
+            }
+            _clean.set(data, cleaned);
+            return cleaned;
+        }
+    }
+
+    _clean.set(data, data);
+    return data;
 }
 
 /**

@@ -24,7 +24,6 @@ import { FinderResultRanker } from "./finder-result-ranker";
 import { hasNonZeroSnapshotFilter, sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { FinderDataset } from "./finder-timeframe-loader";
 import type { EndpointSelectionAdjustment, FinderOptions, FinderResult } from "../types/finder";
-import type { TradeDirection, TradeFilterMode } from "../types/strategies";
 import { trimToClosedCandles } from "../closed-candle-utils";
 
 export interface FinderSelectedStrategy {
@@ -618,10 +617,16 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     let endpointAdjustedCount = 0;
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
 
-    const rustHealthy = !input.requiresTsEngine && shouldUseRustEngine() && await rustEngine.checkHealth();
-    if (input.requiresTsEngine) {
-        debugLogger.info("[Finder] Realism settings enabled - forcing TypeScript engine.");
+    const rustPreferred = shouldUseRustEngine();
+    const rustHealthy = rustPreferred && await rustEngine.checkHealth();
+    const rustUnavailableReason = !rustPreferred
+        ? "engine preference is TypeScript"
+        : "Rust health check failed";
+    if (input.requiresTsEngine && !rustHealthy) {
+        debugLogger.info("[Finder] Realism settings enabled and Rust unavailable - forcing TypeScript engine.");
         callbacks.setStatus("Realism settings enabled - using TypeScript engine.");
+    } else if (input.requiresTsEngine && rustHealthy) {
+        debugLogger.info("[Finder] Realism settings enabled - using Rust screening with TypeScript reconciliation for top results.");
     }
 
     // Adaptive cache mode decision based on dataset size OR batch count
@@ -638,39 +643,38 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         if (cacheId) {
             debugLogger.info(`[Finder] Data cached with ID: ${cacheId} (${cacheReasonText})`);
         } else {
-            if (flags.isLargeDataset) {
-                debugLogger.warn("[Finder] Failed to cache data on large dataset, falling back to TypeScript");
-            } else {
-                debugLogger.warn("[Finder] Failed to cache data, continuing with Rust direct mode");
-            }
+            debugLogger.warn("[Finder] Failed to cache data, continuing with Rust direct mode.");
         }
     }
 
     const useRustCached = useCachedMode && cacheId !== null;
-    const useRustDirect = rustHealthy && (!useCachedMode || (!flags.isLargeDataset && cacheId === null));
-    const rustAvailable = flags.isExtremeDataset ? false : (useRustCached || useRustDirect);
-    const forceTsForSharpe = input.options.sortPriority.includes("sharpeRatio") && flags.shouldUseCompactBacktest;
-    const useRustForFinder = rustAvailable && !forceTsForSharpe;
-
-    if (forceTsForSharpe && rustAvailable) {
-        debugLogger.info("[Finder] Sharpe sort in compact mode - forcing TypeScript for Sharpe consistency.");
-    }
+    const useRustDirect = rustHealthy && (!useCachedMode || cacheId === null);
+    const rustAvailable = useRustCached || useRustDirect;
+    const useRustForFinder = rustAvailable;
 
     if (flags.isExtremeDataset) {
-        debugLogger.info(`[Finder] Extreme dataset (${(flags.dataSize / 1_000_000).toFixed(1)}M bars) - using TypeScript ultra-memory mode`);
-        callbacks.setStatus(`Ultra-memory mode: TypeScript only (${(flags.dataSize / 1_000_000).toFixed(1)}M bars)`);
+        if (useRustForFinder) {
+            debugLogger.info(`[Finder] Extreme dataset (${(flags.dataSize / 1_000_000).toFixed(1)}M bars) - using Rust mode.`);
+            if (useRustCached) {
+                callbacks.setStatus(`Using Rust engine with cached data (extreme dataset, ${(flags.dataSize / 1_000_000).toFixed(1)}M bars)...`);
+            } else {
+                callbacks.setStatus(`Using Rust engine (direct mode, extreme dataset, ${(flags.dataSize / 1_000_000).toFixed(1)}M bars)...`);
+            }
+        } else {
+            debugLogger.info(`[Finder] Extreme dataset (${(flags.dataSize / 1_000_000).toFixed(1)}M bars) - using TypeScript ultra-memory mode`);
+            callbacks.setStatus(`Ultra-memory mode: TypeScript only (${(flags.dataSize / 1_000_000).toFixed(1)}M bars)`);
+        }
     } else if (useRustCached) {
         const cacheReasonText = cacheDecision.reason === 'large_dataset' ? 'large dataset' : 'high batch count';
         callbacks.setStatus(`Using Rust engine with cached data (${cacheReasonText})...`);
     } else if (useRustForFinder) {
         callbacks.setStatus("Using Rust engine...");
     } else if (!useRustForFinder && useCachedMode) {
-        if (forceTsForSharpe && rustAvailable) {
-            debugLogger.info(`[Finder] Using TypeScript for ${flags.dataSize} bars (Rust disabled for Sharpe consistency).`);
-        } else {
-            debugLogger.warn(`[Finder] Using TypeScript for ${flags.dataSize} bars (Rust unavailable)`);
-        }
-        callbacks.setStatus("Using TypeScript engine...");
+        debugLogger.warn(`[Finder] Using TypeScript for ${flags.dataSize} bars (${rustUnavailableReason})`);
+        callbacks.setStatus(`Using TypeScript engine (${rustUnavailableReason})...`);
+    } else if (!useRustForFinder) {
+        debugLogger.warn(`[Finder] Using TypeScript for ${flags.dataSize} bars (${rustUnavailableReason}).`);
+        callbacks.setStatus(`Using TypeScript engine (${rustUnavailableReason})...`);
     }
 
     const insertResult = (candidate: CandidateResult): void => {
@@ -1792,7 +1796,9 @@ function computeDatasetFlags(
     const hasSnapshotFilters = hasHeavySnapshotFilters(settings);
     const hasHeavyTradeFiltering = options.tradeFilterEnabled && options.minTrades >= 1_000;
     const isHeavyFinderConfig = hasSnapshotFilters || hasHeavyTradeFiltering || hasConfirmationStrategies;
-    const compactBacktestThreshold = isHeavyFinderConfig ? 50_000 : 500_000;
+    const compactBacktestThreshold = options.mode === "random"
+        ? (isHeavyFinderConfig ? 50_000 : 100_000)
+        : (isHeavyFinderConfig ? 50_000 : 500_000);
     const shouldUseCompactBacktest = dataSize >= compactBacktestThreshold;
 
     const batchSize = isExtremeDataset
