@@ -44,6 +44,7 @@ import { candle_pattern_persistence_score_macd_signal_cross } from "./lib/candle
 import { candle_pattern_persistence_score_macd_hist_slope } from "./lib/candle-pattern-persistence-score-macd-hist-slope";
 import { candle_pattern_persistence_score_macd_div_gate } from "./lib/candle-pattern-persistence-score-macd-div-gate";
 import { candle_pattern_persistence_score_macd_dual_tf } from "./lib/candle-pattern-persistence-score-macd-dual-tf";
+import { candle_return_rate_mean_reversion } from "./lib/candle-return-rate-mean-reversion";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -97,6 +98,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "candle_pattern_persistence_score_macd_hist_slope", strategy: candle_pattern_persistence_score_macd_hist_slope },
     { key: "candle_pattern_persistence_score_macd_div_gate", strategy: candle_pattern_persistence_score_macd_div_gate },
     { key: "candle_pattern_persistence_score_macd_dual_tf", strategy: candle_pattern_persistence_score_macd_dual_tf },
+    { key: "candle_return_rate_mean_reversion", strategy: candle_return_rate_mean_reversion },
 ];
 
 export function createStrategiesRecordFromManifest(
