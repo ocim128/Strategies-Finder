@@ -34,6 +34,8 @@ import { getIntervalSeconds } from "./dataProviders/utils";
 import { getOptionalElement, getRequiredElement } from "./dom-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { sanitizeBacktestSettingsForRust, requiresTypescriptEngine as requiresTsEngine } from "./rust-settings-sanitizer";
+import { trimToClosedCandles } from "./closed-candle-utils";
+import { sliceOhlcvByBlock } from "./block-selector";
 import {
     BACKTEST_DOM_SETTING_IDS,
     CAPITAL_DEFAULTS,
@@ -106,9 +108,7 @@ export class BacktestService {
             await this.sleep(100);
 
             state.set('twoHourParityBacktestResults', null);
-
-            // Use the FULL dataset — signals are generated with complete indicator history.
-            // Block range is applied as a signal-time filter inside runBacktestForData.
+            // Data normalization (closed candles + block range) is applied inside runBacktestForData.
             const baseData = state.ohlcvData;
 
             let result: BacktestResult;
@@ -289,7 +289,7 @@ export class BacktestService {
         return this.withTemporaryTwoHourParity(parity, async () => {
             try {
                 const fetched = await dataManager.fetchData(state.currentSymbol, state.currentInterval);
-                // Return full fetched data — block filtering happens at signal level
+                // Return full fetched data; normalization/slicing is applied in runBacktestForData.
                 return fetched.length > 0 ? fetched : state.ohlcvData;
             } catch (error) {
                 debugLogger.warn('[Backtest] Failed to fetch parity data, falling back to current chart candles', {
@@ -337,10 +337,8 @@ export class BacktestService {
 
         const filteredSignals = signals;
 
-        // ── Block range signal filter ──────────────────────────────────────────
-        // If a block is active, remove signals outside [from, to] so only trades
-        // that ORIGINATE within the block are executed.  The strategy still ran on
-        // the full dataset, so all indicators have their proper warmup history.
+        // Block range signal filter (defensive): selectClosedCandleData already slices data.
+        // Keep this to guard against any non-sliced signals when data sources change.
         const block = state.blockRange;
         const blockFilteredSignals = (block && block.from !== block.to)
             ? filteredSignals.filter(s => {
@@ -436,8 +434,9 @@ export class BacktestService {
         return { result, engineUsed };
     }
 
-    private selectClosedCandleData(ohlcvData: OHLCVData[], _interval: string): OHLCVData[] {
-        return ohlcvData;
+    private selectClosedCandleData(ohlcvData: OHLCVData[], interval: string): OHLCVData[] {
+        const closed = trimToClosedCandles(ohlcvData, interval);
+        return sliceOhlcvByBlock(closed, state.blockRange);
     }
 
     private buildRustCompatibleSettings(settings: BacktestSettings): BacktestSettings {

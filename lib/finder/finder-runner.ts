@@ -988,6 +988,7 @@ async function reconcileSingleTimeframeTopResults(
 ): Promise<FinderResult[]> {
     const strategyByKey = new Map(input.selectedStrategies.map((item) => [item.key, item.strategy]));
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
+    const rustSettings = sanitizeBacktestSettingsForRust(input.settings);
     const precomputed = precomputeIndicators(closedData, input.settings);
     const reconciled: FinderResult[] = [];
 
@@ -999,7 +1000,8 @@ async function reconcileSingleTimeframeTopResults(
         }
 
         try {
-            const signals = applySignalPolarity(strategy.execute(closedData, candidate.params), input.settings);
+            const { backtestSettings } = resolveFinderRiskOverrides(input.settings, rustSettings, candidate.params);
+            const signals = applySignalPolarity(strategy.execute(closedData, candidate.params), backtestSettings);
             const evaluation = strategy.evaluate?.(closedData, candidate.params, signals);
             const entryStats = evaluation?.entryStats;
             const rawResult = strategy.metadata?.role === "entry" && entryStats
@@ -1010,7 +1012,7 @@ async function reconcileSingleTimeframeTopResults(
                     initialCapital,
                     positionSize,
                     commission,
-                    input.settings,
+                    backtestSettings,
                     { mode: sizingMode, fixedTradeAmount },
                     precomputed
                 );
