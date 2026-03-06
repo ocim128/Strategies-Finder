@@ -1,6 +1,7 @@
 import headerHtml from '../html-partials/header.html?raw';
 import toolbarHtml from '../html-partials/toolbar.html?raw';
 import chartWrapperHtml from '../html-partials/chart-wrapper.html?raw';
+import livePositionsHtml from '../html-partials/live-positions.html?raw';
 import strategyPanelShellHtml from '../html-partials/strategy-panel-shell.html?raw';
 import tabSettingsHtml from '../html-partials/tab-settings.html?raw';
 import tabDataminingHtml from '../html-partials/tab-datamining.html?raw';
@@ -52,6 +53,8 @@ export function injectLayout() {
 
     // Toolbar
     mainContent.insertAdjacentHTML('beforeend', toolbarHtml);
+    // Live Positions Panel (left-side column next to toolbar)
+    mainContent.insertAdjacentHTML('beforeend', livePositionsHtml);
 
     // Chart Area
     const chartArea = document.createElement('div');

@@ -388,6 +388,7 @@ function openSubscriptionInfoModal(sub: AlertSubscription, configName: string | 
 
     const executionLines = [
         `Trade Direction: ${formatValue(settings.tradeDirection)}`,
+        `Invert Signals: ${formatValue(settings.invertSignals)}`,
         `Execution Model: ${formatValue(settings.executionModel)}`,
         `Allow Same Bar Exit: ${formatValue(settings.allowSameBarExit)}`,
         `Slippage Bps: ${formatValue(settings.slippageBps)}`,
@@ -484,7 +485,7 @@ function renderSubscriptions(subs: AlertSubscription[]) {
         actionsTd.className = 'alert-cell-actions';
         actionsTd.appendChild(createActionButton('info', sub.stream_id, 'View full alert configuration', 'Info'));
         actionsTd.appendChild(createActionButton('run', sub.stream_id, 'Run Now', 'Run'));
-        actionsTd.appendChild(createActionButton('sync', sub.stream_id, 'Use currently loaded strategy/settings', 'Use Current'));
+        actionsTd.appendChild(createActionButton('sync', sub.stream_id, 'Sync with currently loaded strategy/settings', 'Sync'));
         actionsTd.appendChild(createActionButton('disable', sub.stream_id, 'Disable', 'Disable'));
         actionsTd.appendChild(createActionButton('lastTrade', sub.stream_id, 'Show last trade from backtest', 'Last Trade'));
         tr.appendChild(actionsTd);
@@ -594,6 +595,27 @@ function collectCurrentStrategyParams(): Record<string, number> {
     return strategyParams;
 }
 
+function collectCurrentSubscriptionBacktestSettings(): Record<string, unknown> {
+    const settings = backtestService.getBacktestSettings() as Record<string, unknown>;
+    const uiSettings = settingsManager.getBacktestSettings() as Record<string, unknown>;
+    const capital = backtestService.getCapitalSettings();
+    const uiToggleSettings = Object.fromEntries(
+        Object.entries(uiSettings).filter(
+            ([key, value]) => key.endsWith('Toggle') && typeof value === 'boolean'
+        )
+    );
+
+    return {
+        ...settings,
+        ...uiToggleSettings,
+        initialCapital: capital.initialCapital,
+        positionSize: capital.positionSize,
+        commission: capital.commission,
+        fixedTradeToggle: capital.sizingMode === 'fixed',
+        fixedTradeAmount: capital.fixedTradeAmount,
+    };
+}
+
 async function quickSubscribe() {
     const telegramToggle = getOptionalElement<HTMLInputElement>('alertTelegramToggle');
     const exitToggle = getOptionalElement<HTMLInputElement>('alertExitToggle');
@@ -609,7 +631,7 @@ async function quickSubscribe() {
     }
 
     const strategyParams = collectCurrentStrategyParams();
-    const rawBacktestSettings = backtestService.getBacktestSettings() as Record<string, unknown>;
+    const rawBacktestSettings = collectCurrentSubscriptionBacktestSettings();
     const configName = resolveCurrentConfigName(strategyKey, strategyParams, rawBacktestSettings);
     const intervalSeconds = getIntervalSeconds(interval);
     const parityMode = resolveParityModeFromUi();
@@ -685,7 +707,11 @@ async function handleTableAction(action: string, streamId: string) {
 
             const sub = subscriptionsByStreamId.get(streamId);
             const streamParity = sub ? resolveSubscriptionParity(sub) : parseAlertTwoHourParityFromStreamId(streamId);
-            const currentSettings = backtestService.getBacktestSettings() as Record<string, unknown>;
+            const currentSettings = collectCurrentSubscriptionBacktestSettings();
+            const syncedCandleLimit = Math.max(
+                200,
+                Math.min(50000, state.ohlcvData.length || sub?.candle_limit || 350)
+            );
             const isTwoHourInterval = getIntervalSeconds(sub?.interval ?? state.currentInterval) === 7200;
             const currentParity = normalizeSubscriptionParity(currentSettings.twoHourCloseParity);
             const currentWantsBoth = currentSettings.twoHourCloseParity === 'both';
@@ -713,6 +739,7 @@ async function handleTableAction(action: string, streamId: string) {
                     strategyKey,
                     strategyParams: collectCurrentStrategyParams(),
                     backtestSettings: syncedSettingsCurrent,
+                    candleLimit: syncedCandleLimit,
                 });
 
                 const syncedSettingsOther = applyTwoHourParityToBacktestSettings(currentSettings, otherParity);
@@ -721,6 +748,7 @@ async function handleTableAction(action: string, streamId: string) {
                     strategyKey,
                     strategyParams: collectCurrentStrategyParams(),
                     backtestSettings: syncedSettingsOther,
+                    candleLimit: syncedCandleLimit,
                 });
 
                 uiManager.showToast(`Updated ${streamId} and synced pair ${otherStreamId}.`, 'success');
@@ -735,6 +763,7 @@ async function handleTableAction(action: string, streamId: string) {
                     strategyKey,
                     strategyParams: collectCurrentStrategyParams(),
                     backtestSettings: syncedSettings,
+                    candleLimit: syncedCandleLimit,
                 });
                 uiManager.showToast(`Updated ${streamId} to current strategy (${strategyKey}).`, 'success');
             }

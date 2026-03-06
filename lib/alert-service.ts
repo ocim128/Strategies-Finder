@@ -10,6 +10,7 @@ import {
 } from "./alert-stream-id";
 
 const WORKER_URL_KEY = 'alert_worker_url';
+export const ALERT_WORKER_URL_CHANGED_EVENT = 'alert-worker-url-changed';
 export type AlertTwoHourCloseParity = 'odd' | 'even';
 
 // Types
@@ -70,6 +71,35 @@ export interface RunNowResult {
     result?: Record<string, unknown>;
 }
 
+export interface AlertEvaluatedTradeContext {
+    entryTimeSec: number;
+    exitReason: string | null;
+    isOpen: boolean;
+}
+
+export interface AlertEvaluatedEntrySignal {
+    direction: 'long' | 'short';
+    signalTimeSec: number;
+    signalPrice: number;
+    signalAgeBars: number;
+    isFresh: boolean;
+    fingerprint: string;
+}
+
+export interface AlertSubscriptionState {
+    ok: boolean;
+    streamId: string;
+    symbol: string;
+    interval: string;
+    strategyKey: string;
+    evaluatedAt: string;
+    closedCandleTimeSec: number | null;
+    reason: string | null;
+    latestTrade: AlertEvaluatedTradeContext | null;
+    latestEntry: AlertEvaluatedEntrySignal | null;
+    pendingEntry: AlertEvaluatedEntrySignal | null;
+}
+
 /**
  * Build deterministic stream id. Keeps legacy format when no configName is provided.
  */
@@ -101,7 +131,13 @@ function getWorkerUrl(): string {
 }
 
 function setWorkerUrl(url: string): void {
-    localStorage.setItem(WORKER_URL_KEY, url.replace(/\/+$/, ''));
+    const normalized = url.replace(/\/+$/, '');
+    const prev = getWorkerUrl();
+    localStorage.setItem(WORKER_URL_KEY, normalized);
+
+    if (prev !== normalized && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(ALERT_WORKER_URL_CHANGED_EVENT, { detail: { url: normalized } }));
+    }
 }
 
 function requireUrl(): string {
@@ -246,5 +282,21 @@ export const alertService = {
             `/api/stream/signals?streamId=${encodeURIComponent(streamId)}&limit=${limit}`
         );
         return data.items ?? data.signals ?? [];
+    },
+
+    /**
+     * Read-only worker-side state for a subscription.
+     * This endpoint evaluates current worker market data without mutating subscription state.
+     */
+    async getSubscriptionState(streamId: string): Promise<AlertSubscriptionState> {
+        const data = await apiFetch<{ ok: boolean; state?: AlertSubscriptionState; item?: AlertSubscriptionState }>(
+            `/api/subscriptions/state?streamId=${encodeURIComponent(streamId)}`
+        );
+
+        const state = data.state ?? data.item;
+        if (!state) {
+            throw new Error('Subscription state response missing payload.');
+        }
+        return state;
     },
 };

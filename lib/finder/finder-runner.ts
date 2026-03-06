@@ -11,6 +11,7 @@ import {
     runBacktest,
     runBacktestCompact,
     runFixedParamWalkForward,
+    applySignalPolarity,
 } from "../strategies/index";
 import { rustEngine } from "../rust-engine-client";
 import { shouldUseRustEngine } from "../engine-preferences";
@@ -413,7 +414,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
             const timeframeResults: BacktestResult[] = [];
             for (const dataset of activeDatasets) {
                 try {
-                    let signals = job.strategy.execute(dataset.data, job.params);
+                    let signals = applySignalPolarity(job.strategy.execute(dataset.data, job.params), job.backtestSettings);
                     const evaluation = job.strategy.evaluate?.(dataset.data, job.params, signals);
                     const entryStats = evaluation?.entryStats;
                     const datasetUseCompact = dataset.data.length >= flags.compactBacktestThreshold;
@@ -526,7 +527,7 @@ function generateSignalsForJob(
     job: ParamJob,
     data: OHLCVData[]
 ): Signal[] {
-    return job.strategy.execute(data, job.params);
+    return applySignalPolarity(job.strategy.execute(data, job.params), job.backtestSettings);
 }
 
 /**
@@ -994,7 +995,7 @@ async function reconcileSingleTimeframeTopResults(
         }
 
         try {
-            const signals = strategy.execute(closedData, candidate.params);
+            const signals = applySignalPolarity(strategy.execute(closedData, candidate.params), input.settings);
             const evaluation = strategy.evaluate?.(closedData, candidate.params, signals);
             const entryStats = evaluation?.entryStats;
             const rawResult = strategy.metadata?.role === "entry" && entryStats
@@ -1546,7 +1547,7 @@ function runRobustHoldoutEvaluation(
         return createEmptyBacktestResult();
     }
 
-    const signals = strategy.execute(holdoutData, params);
+    const signals = applySignalPolarity(strategy.execute(holdoutData, params), settings);
     const evaluation = strategy.evaluate?.(holdoutData, params, signals);
     const entryStats = evaluation?.entryStats;
     const result = strategy.metadata?.role === "entry" && entryStats

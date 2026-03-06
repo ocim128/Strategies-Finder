@@ -7,7 +7,7 @@ import { binanceSearchService, type BinanceSymbol } from '../binance-search-serv
 import { strategyRegistry } from '../../strategyRegistry';
 
 import type { BacktestSettings, Signal, StrategyParams, TradeFilterMode } from '../types/strategies';
-import { getOpenPositionForScanner } from '../strategies/backtest';
+import { applySignalPolarity, getOpenPositionForScanner } from '../strategies/backtest';
 import { resolveBacktestSettingsFromRaw } from '../backtest-settings-resolver';
 import { trimToClosedCandles } from '../closed-candle-utils';
 import type {
@@ -326,13 +326,14 @@ export class ScannerEngine {
             try {
                 // Use saved params from config, fall back to defaults
                 const params = normalizeStrategyParams(strategy.defaultParams, stratConfig.strategyParams);
-                const rawSignals = strategy.execute(scanData, params);
+                const generatedSignals = strategy.execute(scanData, params);
 
                 // Early exit: no signals at all → skip
-                if (rawSignals.length === 0) continue;
+                if (generatedSignals.length === 0) continue;
 
                 // Normalize persisted UI config into effective backtest settings.
                 const backtestSettings = resolveScannerBacktestSettings(stratConfig.backtestSettings);
+                const rawSignals = applySignalPolarity(generatedSignals, backtestSettings);
 
                 // Early exit: no raw signals → skip
                 if (rawSignals.length === 0) continue;

@@ -177,12 +177,45 @@ interface ProcessSignalResult {
     } | null;
 }
 
+interface SubscriptionStateResult {
+    ok: boolean;
+    streamId: string;
+    symbol: string;
+    interval: string;
+    strategyKey: string;
+    evaluatedAt: string;
+    closedCandleTimeSec: number | null;
+    reason: string | null;
+    latestTrade: {
+        entryTimeSec: number;
+        exitReason: string | null;
+        isOpen: boolean;
+    } | null;
+    latestEntry: {
+        direction: "long" | "short";
+        signalTimeSec: number;
+        signalPrice: number;
+        signalAgeBars: number;
+        isFresh: boolean;
+        fingerprint: string;
+    } | null;
+    pendingEntry: {
+        direction: "long" | "short";
+        signalTimeSec: number;
+        signalPrice: number;
+        signalAgeBars: number;
+        isFresh: boolean;
+        fingerprint: string;
+    } | null;
+}
+
 const DEFAULT_MIN_CANDLES = 200;
 const MIN_CANDLES_LOWER_BOUND = 50;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const DEFAULT_SUBSCRIPTION_CANDLE_LIMIT = 350;
-const MAX_SUBSCRIPTION_CANDLE_LIMIT = 1000;
+const MAX_SUBSCRIPTION_CANDLE_LIMIT = 50000;
+const MAX_BINANCE_KLINES_PER_REQUEST = 1000;
 const STATUS_TEXT_MAX = 1200;
 const RESPONSE_SNIPPET_MAX = 320;
 // Keep scheduled runs aligned shortly after minute boundary.
@@ -589,26 +622,52 @@ async function fetchBinanceCandles(
             continue;
         }
 
-        const endpoint = `${base}/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(providerInterval)}&limit=${sourceLimit}`;
         try {
-            const res = await fetch(endpoint, {
-                headers: {
-                    accept: "application/json",
-                    "user-agent": "strategy-entry-signal-worker/1.0",
-                },
-            });
+            let endTimeMs: number | null = null;
+            const collectedRows: Array<[number, string, string, string, string, string]> = [];
 
-            if (!res.ok) {
-                const body = normalizeBinanceResponseSnippet(await res.text());
-                throw new Error(`${base} -> ${res.status}${body ? ` ${body}` : ""}`);
+            while (collectedRows.length < sourceLimit) {
+                const remaining = sourceLimit - collectedRows.length;
+                const requestLimit = Math.max(1, Math.min(MAX_BINANCE_KLINES_PER_REQUEST, remaining));
+                const endTimeQuery = typeof endTimeMs === "number" ? `&endTime=${endTimeMs}` : "";
+                const endpoint = `${base}/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(providerInterval)}&limit=${requestLimit}${endTimeQuery}`;
+
+                const res = await fetch(endpoint, {
+                    headers: {
+                        accept: "application/json",
+                        "user-agent": "strategy-entry-signal-worker/1.0",
+                    },
+                });
+
+                if (!res.ok) {
+                    const body = normalizeBinanceResponseSnippet(await res.text());
+                    throw new Error(`${base} -> ${res.status}${body ? ` ${body}` : ""}`);
+                }
+
+                const rows = (await res.json()) as Array<[number, string, string, string, string, string]>;
+                if (!Array.isArray(rows) || rows.length === 0) {
+                    break;
+                }
+
+                // Each paged request returns oldest->newest; prepend older pages.
+                collectedRows.unshift(...rows);
+
+                if (rows.length < requestLimit) {
+                    break;
+                }
+
+                const oldestOpenMs = Number(rows[0]?.[0]);
+                if (!Number.isFinite(oldestOpenMs) || oldestOpenMs <= 0) {
+                    break;
+                }
+                endTimeMs = oldestOpenMs - 1;
             }
 
-            const rows = (await res.json()) as Array<[number, string, string, string, string, string]>;
-            if (!Array.isArray(rows) || rows.length === 0) {
+            if (collectedRows.length === 0) {
                 throw new Error(`${base} -> empty_response`);
             }
 
-            const sourceCandles = rows.map((kline) => ({
+            const sourceCandles = collectedRows.map((kline) => ({
                 time: Math.floor(kline[0] / 1000) as CandleTime,
                 open: Number(kline[1]),
                 high: Number(kline[2]),
@@ -1733,6 +1792,147 @@ async function runSubscription(
     }
 }
 
+async function evaluateSubscriptionState(
+    env: Env,
+    subscription: SubscriptionRow
+): Promise<SubscriptionStateResult> {
+    const streamId = subscription.stream_id;
+    const parsedStrategyParams = safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>);
+    const parsedBacktestSettings = safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings);
+    const twoHourCloseParity = resolveTwoHourCloseParity(
+        subscription.interval,
+        parsedBacktestSettings,
+        streamId
+    );
+    const minClosedCandles = readMinClosedCandles(env);
+
+    const base: Omit<SubscriptionStateResult, "ok" | "reason" | "closedCandleTimeSec" | "latestTrade" | "latestEntry" | "pendingEntry"> = {
+        streamId,
+        symbol: subscription.symbol,
+        interval: subscription.interval,
+        strategyKey: subscription.strategy_key,
+        evaluatedAt: new Date().toISOString(),
+    };
+
+    const candles = await fetchMarketCandles(
+        subscription.symbol,
+        subscription.interval,
+        subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT,
+        env,
+        twoHourCloseParity
+    );
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const closed = selectClosedCandleWindow(candles, subscription.interval, nowSec, minClosedCandles);
+    if (!closed) {
+        const closedCount = countClosedCandles(candles, subscription.interval, nowSec);
+        return {
+            ...base,
+            ok: false,
+            reason: `insufficient_candles:${closedCount}/${minClosedCandles}`,
+            closedCandleTimeSec: null,
+            latestTrade: null,
+            latestEntry: null,
+            pendingEntry: null,
+        };
+    }
+
+    const evaluationCandles = buildExecutionAwareCandleWindow(
+        closed.candles,
+        closed.nextOpenCandle,
+        parsedBacktestSettings
+    );
+
+    const evaluation = evaluateLatestEntrySignal({
+        strategyKey: subscription.strategy_key,
+        candles: evaluationCandles,
+        strategyParams: parsedStrategyParams,
+        backtestSettings: parsedBacktestSettings,
+        freshnessBars: Math.max(0, subscription.freshness_bars ?? 1),
+    });
+
+    const latestEntry = evaluation.latestEntry
+        ? {
+            direction: evaluation.latestEntry.direction,
+            signalTimeSec: evaluation.latestEntry.signalTimeSec,
+            signalPrice: evaluation.latestEntry.signal.price,
+            signalAgeBars: evaluation.latestEntry.signalAgeBars,
+            isFresh: evaluation.latestEntry.isFresh,
+            fingerprint: evaluation.latestEntry.fingerprint,
+        }
+        : null;
+
+    const pendingEntry = evaluation.pendingEntry
+        ? {
+            direction: evaluation.pendingEntry.direction,
+            signalTimeSec: evaluation.pendingEntry.signalTimeSec,
+            signalPrice: evaluation.pendingEntry.signal.price,
+            signalAgeBars: evaluation.pendingEntry.signalAgeBars,
+            isFresh: evaluation.pendingEntry.isFresh,
+            fingerprint: evaluation.pendingEntry.fingerprint,
+        }
+        : null;
+
+    return {
+        ...base,
+        ok: evaluation.ok,
+        reason: evaluation.reason ?? null,
+        closedCandleTimeSec: closed.closedCandleTimeSec,
+        latestTrade: evaluation.latestTrade ?? null,
+        latestEntry,
+        pendingEntry,
+    };
+}
+
+async function handleSubscriptionState(request: Request, env: Env): Promise<Response> {
+    if (!env.SIGNALS_DB) {
+        return toJsonResponse({ ok: false, error: "Missing SIGNALS_DB binding" }, 500);
+    }
+
+    const url = new URL(request.url);
+    const streamId = url.searchParams.get("streamId")?.trim();
+    if (!streamId) {
+        return toJsonResponse({ ok: false, error: "streamId is required" }, 400);
+    }
+
+    const subscription = await env.SIGNALS_DB.prepare(
+        `SELECT * FROM signal_subscriptions WHERE stream_id = ? LIMIT 1`
+    )
+        .bind(streamId)
+        .first<SubscriptionRow>();
+
+    if (!subscription) {
+        return toJsonResponse({ ok: false, error: "Subscription not found" }, 404);
+    }
+
+    try {
+        const state = await evaluateSubscriptionState(env, subscription);
+        return toJsonResponse({ ok: true, state, item: state });
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        return toJsonResponse(
+            {
+                ok: false,
+                error: normalizeStatusText(detail, 320),
+                state: {
+                    ok: false,
+                    streamId: subscription.stream_id,
+                    symbol: subscription.symbol,
+                    interval: subscription.interval,
+                    strategyKey: subscription.strategy_key,
+                    evaluatedAt: new Date().toISOString(),
+                    closedCandleTimeSec: null,
+                    reason: "evaluation_failed",
+                    latestTrade: null,
+                    latestEntry: null,
+                    pendingEntry: null,
+                } as SubscriptionStateResult,
+            },
+            500
+        );
+    }
+}
+
 async function handleRunNow(request: Request, env: Env): Promise<Response> {
     if (!env.SIGNALS_DB) {
         return toJsonResponse({ ok: false, error: "Missing SIGNALS_DB binding" }, 500);
@@ -1859,6 +2059,10 @@ export default {
 
         if (request.method === "GET" && pathname === "/api/subscriptions") {
             return handleSubscriptionList(request, env);
+        }
+
+        if (request.method === "GET" && pathname === "/api/subscriptions/state") {
+            return handleSubscriptionState(request, env);
         }
 
         if (request.method === "POST" && pathname === "/api/subscriptions/delete") {

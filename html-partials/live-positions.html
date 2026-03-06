@@ -1,0 +1,78 @@
+<!-- Live Positions Panel -->
+<div class="live-positions-panel" id="livePositionsPanel">
+    <div class="lp-header">
+        <div class="lp-title">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+            </svg>
+            Live Positions
+            <span class="lp-count" id="lpOpenCount">0</span>
+        </div>
+        <div class="lp-actions">
+            <button class="lp-toggle-btn" id="lpViewToggle" title="Toggle open/closed trades">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
+                    <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 13c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                </svg>
+            </button>
+            <button class="lp-refresh-btn" id="lpRefreshBtn" title="Refresh now">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
+                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                </svg>
+            </button>
+            <button class="lp-collapse-btn" id="lpCollapseBtn" title="Collapse/Expand">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12" id="lpCollapseIcon">
+                    <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+    
+    <div class="lp-body" id="lpBody">
+        <div class="lp-status-bar">
+            <span class="lp-last-updated" id="lpLastUpdated">Never</span>
+            <span class="lp-polling-status" id="lpPollingStatus">
+                <span class="lp-dot"></span>
+                Auto
+            </span>
+        </div>
+        
+        <div class="lp-list" id="lpList">
+            <div class="lp-empty" id="lpEmpty">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24">
+                    <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 2h2v2h-2V5zm0 4h2v2h-2V9zm0 4h2v2h-2v-2zm-4-8h2v2H8V5zm0 4h2v2H8V9zm0 4h2v2H8v-2zM5 17h14v2H5v-2zm2-12h12v10H7V5z"/>
+                </svg>
+                <p>No open positions</p>
+                <span class="lp-hint">Subscribe to alerts to track positions</span>
+            </div>
+        </div>
+        
+        <div class="lp-mismatch-banner" id="lpMismatchBanner" style="display:none;">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+            </svg>
+            <span id="lpMismatchText">1 mismatch detected</span>
+        </div>
+    </div>
+</div>
+
+<!-- Live Position Detail Modal -->
+<div class="modal-overlay" id="lpDetailModal">
+    <div class="modal lp-detail-modal">
+        <div class="modal-header">
+            <span class="modal-title" id="lpDetailTitle">Position Details</span>
+            <button class="modal-close" id="lpDetailClose" aria-label="Close">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                    <path d="M18.3 5.71 12 12l6.3 6.29-1.41 1.41L10.59 13.4 4.29 19.7 2.88 18.29 9.17 12 2.88 5.71 4.29 4.3l6.3 6.3 6.29-6.3z"/>
+                </svg>
+            </button>
+        </div>
+        <div class="modal-body" id="lpDetailBody">
+            <div class="lp-detail-loading" id="lpDetailLoading">
+                <div class="spinner"></div>
+                <p>Loading position details...</p>
+            </div>
+            <div class="lp-detail-content" id="lpDetailContent" style="display:none;">
+            </div>
+        </div>
+    </div>
+</div>

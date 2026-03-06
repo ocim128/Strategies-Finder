@@ -1,5 +1,5 @@
 import { OHLCVData, BacktestResult, StrategyParams, BacktestSettings, Strategy, Time, Signal } from '../types/strategies';
-import { runBacktest, runBacktestCompact, calculateBacktestStats, calculateMaxDrawdown, compareTime, timeToNumber } from './backtest';
+import { runBacktest, runBacktestCompact, calculateBacktestStats, calculateMaxDrawdown, compareTime, timeToNumber, applySignalPolarity } from './backtest';
 import { ensureCleanData } from './strategy-helpers';
 import { sanitizeSharpeRatio } from './performance-metrics';
 
@@ -346,9 +346,10 @@ function filterSignalsForWindow(allSignals: Signal[], context: WindowBacktestCon
 function prepareWindowBacktest(
     context: WindowBacktestContext,
     strategy: Strategy,
-    params: StrategyParams
+    params: StrategyParams,
+    backtestSettings: BacktestSettings
 ): { windowSignals: Signal[] } {
-    const allSignals = strategy.execute(context.bufferedData, params);
+    const allSignals = applySignalPolarity(strategy.execute(context.bufferedData, params), backtestSettings);
     const windowSignals = filterSignalsForWindow(allSignals, context);
     return { windowSignals };
 }
@@ -365,7 +366,7 @@ function runBacktestFast(
     context?: WindowBacktestContext
 ): BacktestResult {
     const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback);
-    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params);
+    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings);
 
     const fullResult = runBacktest(
         windowContext.bufferedData,
@@ -393,7 +394,7 @@ function runBacktestFastCompact(
     context?: WindowBacktestContext
 ): BacktestResult {
     const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback);
-    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params);
+    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings);
     return runBacktestCompact(
         windowContext.bufferedData,
         windowSignals,

@@ -150,6 +150,7 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "riskLossStreakWindowLosses",
     "riskLossStreakCooldownBars",
     "riskLossStreakEnabled",
+    "invertSignals",
     "flipAfterConsecutiveLosses",
     "flipCooldownTrades",
     "minTradesBeforeFirstFlip",

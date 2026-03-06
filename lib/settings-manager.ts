@@ -62,6 +62,7 @@ export interface BacktestSettingsData {
 
     // Trade direction
     tradeDirection: TradeDirection;
+    invertSignals: boolean;
     flipAfterConsecutiveLosses: number;
     flipCooldownTrades: number;
     minTradesBeforeFirstFlip: number;
@@ -233,6 +234,7 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
 
     // Trade direction
     tradeDirection: EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection,
+    invertSignals: EFFECTIVE_BACKTEST_DEFAULTS.invertSignals,
     flipAfterConsecutiveLosses: EFFECTIVE_BACKTEST_DEFAULTS.flipAfterConsecutiveLosses,
     flipCooldownTrades: EFFECTIVE_BACKTEST_DEFAULTS.flipCooldownTrades,
     minTradesBeforeFirstFlip: EFFECTIVE_BACKTEST_DEFAULTS.minTradesBeforeFirstFlip,
@@ -420,6 +422,7 @@ class SettingsManager {
 
             // Trade direction
             tradeDirection: this.readSelect('tradeDirection', DEFAULT_BACKTEST_SETTINGS.tradeDirection) as TradeDirection,
+            invertSignals: this.readCheckbox('invertSignalsToggle', DEFAULT_BACKTEST_SETTINGS.invertSignals),
             flipAfterConsecutiveLosses: this.readNumber('flipAfterConsecutiveLosses', DEFAULT_BACKTEST_SETTINGS.flipAfterConsecutiveLosses),
             flipCooldownTrades: this.readNumber('flipCooldownTrades', DEFAULT_BACKTEST_SETTINGS.flipCooldownTrades),
             minTradesBeforeFirstFlip: this.readNumber('minTradesBeforeFirstFlip', DEFAULT_BACKTEST_SETTINGS.minTradesBeforeFirstFlip),
@@ -632,6 +635,7 @@ class SettingsManager {
 
         // Trade direction
         this.writeSelect('tradeDirection', this.resolveTradeDirection(settings));
+        this.writeCheckbox('invertSignalsToggle', settings.invertSignals ?? DEFAULT_BACKTEST_SETTINGS.invertSignals);
         this.writeNumber('flipAfterConsecutiveLosses', settings.flipAfterConsecutiveLosses ?? DEFAULT_BACKTEST_SETTINGS.flipAfterConsecutiveLosses);
         this.writeNumber('flipCooldownTrades', settings.flipCooldownTrades ?? DEFAULT_BACKTEST_SETTINGS.flipCooldownTrades);
         this.writeNumber('minTradesBeforeFirstFlip', settings.minTradesBeforeFirstFlip ?? DEFAULT_BACKTEST_SETTINGS.minTradesBeforeFirstFlip);
@@ -1032,6 +1036,7 @@ class SettingsManager {
             'fixedTradeToggle',
             'riskSettingsToggle',
             'tradeFilterSettingsToggle',
+            'invertSignalsToggle',
             'useRustEngineToggle',
             'snapshotAtrFilterToggle',
             'snapshotVolumeFilterToggle',

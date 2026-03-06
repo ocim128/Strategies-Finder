@@ -7,7 +7,7 @@ import { backtestService } from "./backtest-service";
 import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
 import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
-import { runBacktestCompact } from "./strategies/backtest";
+import { applySignalPolarity, runBacktestCompact } from "./strategies/backtest";
 import type { Strategy, StrategyParams, BacktestSettings, OHLCVData } from "./strategies/index";
 import { sliceOhlcvByBlock } from "./block-selector";
 import {
@@ -188,7 +188,7 @@ class WalkForwardService {
         backtestSettings: BacktestSettings
     ): { totalTrades: number; tradesPerBar: number } | null {
         try {
-            const signals = strategy.execute(data, params);
+            const signals = applySignalPolarity(strategy.execute(data, params), backtestSettings);
             const result = runBacktestCompact(
                 data,
                 signals,

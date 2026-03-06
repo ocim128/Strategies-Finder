@@ -3,7 +3,7 @@ import { state } from "./state";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { backtestService } from "./backtest-service";
-import { runBacktest, OHLCVData } from "./strategies/index";
+import { applySignalPolarity, runBacktest, OHLCVData } from "./strategies/index";
 import { debugLogger } from "./debug-logger";
 
 
@@ -109,7 +109,7 @@ class LogicTestService {
                 const mockData = this.generateMockData(config, i);
 
                 // Generate signals and run backtest
-                const signals = strategy.execute(mockData, params);
+                const signals = applySignalPolarity(strategy.execute(mockData, params), backtestSettings);
                 const backtestResult = runBacktest(
                     mockData,
                     signals,

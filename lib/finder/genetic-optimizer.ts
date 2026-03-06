@@ -1,4 +1,5 @@
 import {
+    applySignalPolarity,
     precomputeIndicators,
     runBacktestCompact,
     type BacktestResult,
@@ -410,7 +411,7 @@ export async function runGeneticOptimization(input: GeneticOptimizerInput): Prom
         const cached = fitnessCache.get(key);
         if (cached) return cached;
 
-        const signals = strategy.execute(data, params);
+        const signals = applySignalPolarity(strategy.execute(data, params), backtestSettings);
         const result = runBacktestCompact(
             data,
             signals,

@@ -15,6 +15,7 @@ import {
     PostEntryPathOpenTradeProbability,
     Trade,
     timeKey,
+    applySignalPolarity,
 } from "./strategies/index";
 import type {
     OHLCVData, Strategy, TradeSnapshot,
@@ -42,6 +43,14 @@ import {
 import { readNumberInputValue } from "./dom-input-readers";
 
 import { resolveTwoHourParityFromTime } from "./two-hour-parity";
+
+const SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS = Object.freeze({
+    initialCapital: 10000,
+    positionSize: 100,
+    commission: 0,
+    sizingMode: 'percent' as const,
+    fixedTradeAmount: 0,
+});
 
 export class BacktestService {
     private warnedStrictEngine = false;
@@ -323,7 +332,7 @@ export class BacktestService {
         timing.selectClosedCandleData = performance.now() - t1;
 
         const t2 = performance.now();
-        const signals = strategy.execute(backtestData, params);
+        const signals = applySignalPolarity(strategy.execute(backtestData, params), settings);
         timing.strategyExecute = performance.now() - t2;
 
         const filteredSignals = signals;
@@ -489,6 +498,65 @@ export class BacktestService {
 
     private readNumberInput(id: string, fallback: number): number {
         return readNumberInputValue(id, fallback);
+    }
+
+    private readFiniteNumber(value: unknown): number | null {
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+        if (typeof value === 'string' && value.trim() !== '') {
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : null;
+        }
+        return null;
+    }
+
+    private readBooleanLike(value: unknown): boolean | null {
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'number' && Number.isFinite(value)) return value !== 0;
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') return true;
+            if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') return false;
+        }
+        return null;
+    }
+
+    private readSizingMode(value: unknown): 'percent' | 'fixed' | null {
+        if (value === 'percent' || value === 'fixed') return value;
+        return null;
+    }
+
+    private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): {
+        initialCapital: number;
+        positionSize: number;
+        commission: number;
+        sizingMode: 'percent' | 'fixed';
+        fixedTradeAmount: number;
+    } {
+        const raw = backtestSettings as Record<string, unknown>;
+
+        const initialCapital = Math.max(
+            0,
+            this.readFiniteNumber(raw.initialCapital) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.initialCapital
+        );
+        const positionSize = Math.max(
+            0,
+            this.readFiniteNumber(raw.positionSize) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.positionSize
+        );
+        const commission = Math.max(
+            0,
+            this.readFiniteNumber(raw.commission) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.commission
+        );
+        const fixedTradeAmount = Math.max(
+            0,
+            this.readFiniteNumber(raw.fixedTradeAmount) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.fixedTradeAmount
+        );
+
+        const explicitSizingMode = this.readSizingMode(raw.sizingMode);
+        const fixedTradeToggle = this.readBooleanLike(raw.fixedTradeToggle);
+        const sizingMode: 'percent' | 'fixed' = explicitSizingMode
+            ?? (fixedTradeToggle === true ? 'fixed' : SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.sizingMode);
+
+        return { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount };
     }
 
     private sleep(ms: number): Promise<void> {
@@ -1038,7 +1106,8 @@ export class BacktestService {
             throw new Error(`Strategy not found: ${strategyKey}`);
         }
 
-        const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = this.getCapitalSettings();
+        const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } =
+            this.resolveSubscriptionCapitalSettings(backtestSettings);
         // Keep Alerts "Last Trade" aligned with Worker evaluation (TypeScript engine path).
         const requiresTsEngine = true;
 

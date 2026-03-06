@@ -3,13 +3,14 @@ import type {
     OHLCVData,
     Signal,
     Strategy,
+    StrategyParams,
     Time,
     Trade,
     TradeFilterMode,
 } from "./types/strategies";
 import { strategies } from "./strategies/library";
 import { prepareSignalsForScanner } from "./strategies/backtest/signal-preparation";
-import { allowsSignalAsEntry, normalizeTradeDirection } from "./strategies/backtest/backtest-utils";
+import { allowsSignalAsEntry, applySignalPolarity, normalizeTradeDirection } from "./strategies/backtest/backtest-utils";
 import { runBacktest } from "./strategies/backtest/backtest-engine";
 import { getResampleBucketStart, resampleOHLCV, type ResampleOptions } from "./strategies/resample-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -20,7 +21,17 @@ export interface EntrySignalEvaluationRequest {
     candles: OHLCVData[];
     strategyParams?: Record<string, number>;
     backtestSettings?: BacktestSettings;
+    capitalSettings?: EntrySignalCapitalSettings;
     freshnessBars?: number;
+}
+
+export interface EntrySignalCapitalSettings {
+    initialCapital?: number;
+    positionSize?: number;
+    commission?: number;
+    sizingMode?: "percent" | "fixed";
+    fixedTradeAmount?: number;
+    fixedTradeToggle?: boolean;
 }
 
 export interface EvaluatedEntrySignal {
@@ -71,9 +82,84 @@ const TRADE_FILTER_MODES: ReadonlySet<TradeFilterMode> = new Set([
     "trend_hysteresis",
     "trend_mtf_stack",
 ]);
+const EVALUATION_CAPITAL_DEFAULTS = Object.freeze({
+    initialCapital: 10000,
+    positionSize: 100,
+    commission: 0,
+    sizingMode: "percent" as const,
+    fixedTradeAmount: 0,
+});
 
 function toUnixSeconds(value: Time): number | null {
     return parseTimeToUnixSeconds(value);
+}
+
+function toFiniteNumber(value: unknown): number | null {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+
+function toBooleanLike(value: unknown): boolean | null {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number" && Number.isFinite(value)) return value !== 0;
+    if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") return true;
+        if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false;
+    }
+    return null;
+}
+
+function toSizingMode(value: unknown): "percent" | "fixed" | null {
+    return value === "fixed" || value === "percent" ? value : null;
+}
+
+function resolveEvaluationCapitalSettings(request: EntrySignalEvaluationRequest): {
+    initialCapital: number;
+    positionSize: number;
+    commission: number;
+    sizingMode: "percent" | "fixed";
+    fixedTradeAmount: number;
+} {
+    const rawBacktestSettings = request.backtestSettings as Record<string, unknown> | undefined;
+    const rawCapitalSettings = request.capitalSettings as Record<string, unknown> | undefined;
+
+    const initialCapital = Math.max(
+        0,
+        toFiniteNumber(rawCapitalSettings?.initialCapital)
+        ?? toFiniteNumber(rawBacktestSettings?.initialCapital)
+        ?? EVALUATION_CAPITAL_DEFAULTS.initialCapital
+    );
+    const positionSize = Math.max(
+        0,
+        toFiniteNumber(rawCapitalSettings?.positionSize)
+        ?? toFiniteNumber(rawBacktestSettings?.positionSize)
+        ?? EVALUATION_CAPITAL_DEFAULTS.positionSize
+    );
+    const commission = Math.max(
+        0,
+        toFiniteNumber(rawCapitalSettings?.commission)
+        ?? toFiniteNumber(rawBacktestSettings?.commission)
+        ?? EVALUATION_CAPITAL_DEFAULTS.commission
+    );
+    const fixedTradeAmount = Math.max(
+        0,
+        toFiniteNumber(rawCapitalSettings?.fixedTradeAmount)
+        ?? toFiniteNumber(rawBacktestSettings?.fixedTradeAmount)
+        ?? EVALUATION_CAPITAL_DEFAULTS.fixedTradeAmount
+    );
+
+    const explicitSizingMode = toSizingMode(rawCapitalSettings?.sizingMode)
+        ?? toSizingMode(rawBacktestSettings?.sizingMode);
+    const fixedTradeToggle = toBooleanLike(rawCapitalSettings?.fixedTradeToggle)
+        ?? toBooleanLike(rawBacktestSettings?.fixedTradeToggle);
+    const sizingMode = explicitSizingMode ?? (fixedTradeToggle === true ? "fixed" : EVALUATION_CAPITAL_DEFAULTS.sizingMode);
+
+    return { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount };
 }
 
 function resolveTradeFilterMode(settings: BacktestSettings | undefined): TradeFilterMode {
@@ -174,19 +260,19 @@ function executeStrategyWithSettings(
 ): Signal[] {
     const tfConfig = readStrategyTimeframeConfig(settings);
     if (!tfConfig.enabled || data.length === 0) {
-        return strategy.execute(data, params);
+        return applySignalPolarity(strategy.execute(data, params), settings);
     }
 
     const numericData = toNumericTimeData(data);
     if (!numericData) {
-        return strategy.execute(data, params);
+        return applySignalPolarity(strategy.execute(data, params), settings);
     }
 
     const higherData = resampleOHLCV(numericData, tfConfig.interval, tfConfig.resampleOptions);
     if (higherData.length === 0) return [];
 
     const higherSignals = strategy.execute(higherData, params);
-    return mapSignalsFromHigherTimeframe(
+    const mappedSignals = mapSignalsFromHigherTimeframe(
         data,
         numericData,
         higherData,
@@ -194,6 +280,7 @@ function executeStrategyWithSettings(
         tfConfig.interval,
         tfConfig.resampleOptions
     );
+    return applySignalPolarity(mappedSignals, settings);
 }
 
 function buildSignalFingerprint(
@@ -310,14 +397,19 @@ export function evaluateLatestEntrySignal(
     const entrySignals = preparedSignals.filter((signal) =>
         allowsSignalAsEntry(signal.type, tradeDirection)
     );
+    const capitalSettings = resolveEvaluationCapitalSettings(request);
 
     const backtestResult = runBacktest(
         request.candles,
         rawSignals,
-        10000,
-        100,
-        0,
-        settings
+        capitalSettings.initialCapital,
+        capitalSettings.positionSize,
+        capitalSettings.commission,
+        settings,
+        {
+            mode: capitalSettings.sizingMode,
+            fixedTradeAmount: capitalSettings.fixedTradeAmount,
+        }
     );
 
     if (backtestResult.trades.length === 0) {

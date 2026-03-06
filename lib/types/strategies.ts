@@ -265,6 +265,8 @@ export interface BacktestSettings {
     rsiBearish?: number;
     marketMode?: MarketMode;
     tradeDirection?: TradeDirection;
+    /** Invert strategy output by swapping buy/sell signals before execution handling */
+    invertSignals?: boolean;
     /** For both_flip_loss_2: flip side after this many consecutive losses on active side */
     flipAfterConsecutiveLosses?: number;
     /** For both_flip_loss_2: after a flip, block additional flips for this many closed trades */

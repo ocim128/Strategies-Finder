@@ -88,6 +88,19 @@
                         parallel and ignores same-bar opposite entries.</div>
                 </div>
             </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Invert Strategy Signals</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle signal inversion">
+                            <input type="checkbox" id="invertSignalsToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div class="param-hint">Swap BUY/SELL strategy outputs before backtest, finder, scanner, and walk-forward execution.</div>
+                </div>
+            </div>
             <div class="param-row is-hidden" id="flipLossStreakSettingsRow">
                 <div class="param-group">
                     <label class="param-label">Flip After Consecutive Losses (N)</label>

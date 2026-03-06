@@ -49,6 +49,7 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     rsiBullish: 55,
     rsiBearish: 45,
     tradeDirection: "short" as TradeDirection,
+    invertSignals: false,
     flipAfterConsecutiveLosses: 2,
     flipCooldownTrades: 0,
     minTradesBeforeFirstFlip: 0,
@@ -138,6 +139,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "confirmRsiBullish",
     "confirmRsiBearish",
     "tradeDirection",
+    "invertSignalsToggle",
     "flipAfterConsecutiveLosses",
     "flipCooldownTrades",
     "minTradesBeforeFirstFlip",
@@ -260,6 +262,7 @@ export function hasUiToggleSettings(raw: Record<string, unknown>): boolean {
         "entrySettingsToggle",
         "riskProbationToggle",
         "riskLossStreakToggle",
+        "invertSignalsToggle",
         ...SNAPSHOT_CONFIGS.map((snapshot) => snapshot.toggleKey),
     ].some((key) => key in raw);
 }
@@ -370,6 +373,7 @@ export function resolveBacktestSettingsFromRaw(
             : EFFECTIVE_BACKTEST_DEFAULTS.rsiBearish,
 
         tradeDirection,
+        invertSignals: readBooleanAny(raw, ["invertSignals", "invertSignalsToggle"], EFFECTIVE_BACKTEST_DEFAULTS.invertSignals),
         flipAfterConsecutiveLosses: readNumber(raw, "flipAfterConsecutiveLosses", EFFECTIVE_BACKTEST_DEFAULTS.flipAfterConsecutiveLosses),
         flipCooldownTrades: readNumber(raw, "flipCooldownTrades", EFFECTIVE_BACKTEST_DEFAULTS.flipCooldownTrades),
         minTradesBeforeFirstFlip: readNumber(raw, "minTradesBeforeFirstFlip", EFFECTIVE_BACKTEST_DEFAULTS.minTradesBeforeFirstFlip),

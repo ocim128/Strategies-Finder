@@ -1,5 +1,5 @@
 import { OHLCVData, BacktestResult, Trade, StrategyParams, BacktestSettings, Strategy } from '../types/strategies';
-import { runBacktest } from './backtest';
+import { applySignalPolarity, runBacktest } from './backtest';
 import { ensureCleanData } from './strategy-helpers';
 
 // ============================================================================
@@ -272,7 +272,7 @@ async function simulateBlockBootstrap(
     const latencyShift = Math.floor(Math.random() * (config.latencyBars + 1));
 
     // Run backtest on bootstrapped data
-    const signals = strategy.execute(fixedData, params);
+    const signals = applySignalPolarity(strategy.execute(fixedData, params), backtestSettings);
 
     // Apply latency: shift signal times forward
     const delayedSignals = signals.map(s => {

@@ -189,6 +189,26 @@ export function normalizeTradeDirection(settings?: BacktestSettings): TradeDirec
         : 'long';
 }
 
+export function shouldInvertSignals(settings?: BacktestSettings): boolean {
+    return settings?.invertSignals === true;
+}
+
+export function applySignalPolarity(signals: Signal[], settings?: BacktestSettings): Signal[] {
+    if (!shouldInvertSignals(settings) || signals.length === 0) {
+        return signals;
+    }
+
+    return signals.map((signal) => {
+        if (signal.type === 'buy') {
+            return { ...signal, type: 'sell' };
+        }
+        if (signal.type === 'sell') {
+            return { ...signal, type: 'buy' };
+        }
+        return signal;
+    });
+}
+
 export function isBothLikeTradeDirection(
     tradeDirection: TradeDirection
 ): tradeDirection is 'both' | 'both_flip_loss_2' | 'combined' {

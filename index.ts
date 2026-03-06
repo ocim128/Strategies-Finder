@@ -35,6 +35,7 @@ import { setupEventHandlers } from "./lib/handlers/ui-event-handlers";
 import { setupSettingsHandlers } from "./lib/handlers/settings-handlers";
 import { initSettingsUX } from "./lib/handlers/settings-ux-handlers";
 import { initAlertHandlers } from "./lib/handlers/alert-handlers";
+import { initLivePositionsHandlers } from "./lib/handlers/live-positions-handlers";
 import { handleCrosshairMove } from "./lib/app-actions";
 import { initEngineStatusIndicator } from "./lib/engine-status-indicator";
 import { liveOperationsDashboard } from "./lib/live-operations-dashboard";
@@ -72,6 +73,7 @@ async function init() {
 	logicTestService.initUI();
 	analysisPanel.init();
 	initAlertHandlers();
+	initLivePositionsHandlers();
 
 	initDebugPanel();
 	initEngineStatusIndicator(); // Show Rust vs TypeScript engine status
