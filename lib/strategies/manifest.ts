@@ -44,6 +44,16 @@ import { candle_pattern_persistence_score_macd_signal_cross } from "./lib/candle
 import { candle_pattern_persistence_score_macd_hist_slope } from "./lib/candle-pattern-persistence-score-macd-hist-slope";
 import { candle_pattern_persistence_score_macd_div_gate } from "./lib/candle-pattern-persistence-score-macd-div-gate";
 import { candle_pattern_persistence_score_macd_dual_tf } from "./lib/candle-pattern-persistence-score-macd-dual-tf";
+import { wick_dominance_persistence } from "./lib/wick-dominance-persistence";
+import { close_position_momentum_score } from "./lib/close-position-momentum-score";
+import { sequential_gap_fill_pressure } from "./lib/sequential-gap-fill-pressure";
+import { range_expansion_directional_bias } from "./lib/range-expansion-directional-bias";
+import { open_to_close_drift_consistency } from "./lib/open-to-close-drift-consistency";
+import { high_low_bias_accumulator } from "./lib/high-low-bias-accumulator";
+import { shadow_reversal_frequency_score } from "./lib/shadow-reversal-frequency-score";
+import { close_displacement_velocity } from "./lib/close-displacement-velocity";
+import { intrabar_polarity_reversal_count } from "./lib/intrabar-polarity-reversal-count";
+import { consecutive_midpoint_advance_score } from "./lib/consecutive-midpoint-advance-score";
 import { candle_return_rate_mean_reversion } from "./lib/candle-return-rate-mean-reversion";
 import { adx_slope_pivot_entry } from "./lib/adx_slope_pivot_entry";
 
@@ -99,6 +109,16 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "candle_pattern_persistence_score_macd_hist_slope", strategy: candle_pattern_persistence_score_macd_hist_slope },
     { key: "candle_pattern_persistence_score_macd_div_gate", strategy: candle_pattern_persistence_score_macd_div_gate },
     { key: "candle_pattern_persistence_score_macd_dual_tf", strategy: candle_pattern_persistence_score_macd_dual_tf },
+    { key: "wick_dominance_persistence", strategy: wick_dominance_persistence },
+    { key: "close_position_momentum_score", strategy: close_position_momentum_score },
+    { key: "sequential_gap_fill_pressure", strategy: sequential_gap_fill_pressure },
+    { key: "range_expansion_directional_bias", strategy: range_expansion_directional_bias },
+    { key: "open_to_close_drift_consistency", strategy: open_to_close_drift_consistency },
+    { key: "high_low_bias_accumulator", strategy: high_low_bias_accumulator },
+    { key: "shadow_reversal_frequency_score", strategy: shadow_reversal_frequency_score },
+    { key: "close_displacement_velocity", strategy: close_displacement_velocity },
+    { key: "intrabar_polarity_reversal_count", strategy: intrabar_polarity_reversal_count },
+    { key: "consecutive_midpoint_advance_score", strategy: consecutive_midpoint_advance_score },
     { key: "candle_return_rate_mean_reversion", strategy: candle_return_rate_mean_reversion },
     { key: "adx_slope_pivot_entry", strategy: adx_slope_pivot_entry },
 ];
