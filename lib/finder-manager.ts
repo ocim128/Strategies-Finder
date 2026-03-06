@@ -6,7 +6,7 @@ import { paramManager } from "./param-manager";
 import { uiManager } from "./ui-manager";
 import { getRequiredElement, setVisible } from "./dom-utils";
 import { dataManager } from "./data-manager";
-import { getConfirmationStrategyValues, renderConfirmationStrategyList, setConfirmationStrategyParams } from "./confirmation-strategies";
+
 import { DEFAULT_SORT_PRIORITY, METRIC_FULL_LABELS } from "./finder/constants";
 import { runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
 import { FinderParamSpace } from "./finder/finder-param-space";
@@ -687,13 +687,6 @@ export class FinderManager {
 		if (!strategy) return;
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, result.params);
-
-		if (result.confirmationParams) {
-			setConfirmationStrategyParams(result.confirmationParams);
-		} else {
-			setConfirmationStrategyParams({});
-		}
-		renderConfirmationStrategyList(getConfirmationStrategyValues());
 
 		// Also apply global risk settings if present in result
 		if (result.params['stopLossPercent'] !== undefined) {

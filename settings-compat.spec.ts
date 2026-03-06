@@ -10,32 +10,21 @@ import {
 import type { BacktestSettings } from './lib/types/strategies';
 
 describe('Backtest settings compatibility', () => {
-    it('prefers tradeFilterMode over legacy entryConfirmation', () => {
+    it('uses tradeFilterMode when provided', () => {
         const normalized = normalizeBacktestSettings({
             tradeFilterMode: 'rsi',
-            entryConfirmation: 'adx',
         });
         expect(normalized.tradeFilterMode).to.equal('rsi');
-    });
-
-    it('falls back to legacy entryConfirmation when tradeFilterMode is missing', () => {
-        const normalized = normalizeBacktestSettings({
-            entryConfirmation: 'trend',
-        });
-        expect(normalized.tradeFilterMode).to.equal('trend');
     });
 
     it('sanitizes Rust payloads without dropping compatibility fields', () => {
         const settings: BacktestSettings = {
             atrPeriod: 14,
             tradeFilterMode: 'volume',
-            entryConfirmation: 'volume',
             executionModel: 'next_open',
             flipAfterConsecutiveLosses: 3,
             flipCooldownTrades: 2,
             minTradesBeforeFirstFlip: 10,
-            confirmationStrategies: ['rsi_reversal'],
-            confirmationStrategyParams: { rsi_reversal: { period: 14 } },
             twoHourCloseParity: 'even',
             snapshotRsiMin: 40,
         };
@@ -44,13 +33,10 @@ describe('Backtest settings compatibility', () => {
 
         expect(sanitized.atrPeriod).to.equal(14);
         expect(sanitized.tradeFilterMode).to.equal('volume');
-        expect(sanitized.entryConfirmation).to.equal('volume');
         expect('executionModel' in sanitized).to.equal(false);
         expect('flipAfterConsecutiveLosses' in sanitized).to.equal(false);
         expect('flipCooldownTrades' in sanitized).to.equal(false);
         expect('minTradesBeforeFirstFlip' in sanitized).to.equal(false);
-        expect('confirmationStrategies' in sanitized).to.equal(false);
-        expect('confirmationStrategyParams' in sanitized).to.equal(false);
         expect('twoHourCloseParity' in sanitized).to.equal(false);
         expect('snapshotRsiMin' in sanitized).to.equal(false);
     });

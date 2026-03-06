@@ -405,14 +405,6 @@ function openSubscriptionInfoModal(sub: AlertSubscription, configName: string | 
         .map((key) => `${key}: ${formatValue(strategyParams[key])}`);
     appendModalSection(bodyEl, 'Strategy Params', paramsLines);
 
-    const confirmationStrategies = Array.isArray(settings.confirmationStrategies)
-        ? settings.confirmationStrategies
-        : [];
-    const confirmationLines = confirmationStrategies.length > 0
-        ? confirmationStrategies.map((value) => String(value))
-        : [];
-    appendModalSection(bodyEl, 'Confirmation Strategies', confirmationLines);
-
     // Show numeric snapshot values with non-zero values even when toggle state is inconsistent.
     const inferredSnapshotLines = Object.keys(settings)
         .filter((key) => key.startsWith('snapshot') && !key.endsWith('FilterToggle'))

@@ -12,8 +12,8 @@ import { state, type ChartMode } from "./state";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
-import { getConfirmationStrategyParams, getConfirmationStrategyValues, renderConfirmationStrategyList, setConfirmationStrategyParams } from "./confirmation-strategies";
-import type { BacktestSettings, ExecutionModel, MarketMode, StrategyParams, TradeDirection, TradeFilterMode } from './types/strategies';
+
+import type { BacktestSettings, ExecutionModel, MarketMode, TradeDirection, TradeFilterMode } from './types/strategies';
 import { EFFECTIVE_BACKTEST_DEFAULTS } from "./backtest-settings-resolver";
 
 // ============================================================================
@@ -159,11 +159,6 @@ export interface BacktestSettingsData {
     snapshotEntryQualityScoreFilterToggle: boolean;
     snapshotEntryQualityScoreMin: number;
     snapshotEntryQualityScoreMax: number;
-
-    // Confirmation strategies
-    confirmationStrategiesToggle: boolean;
-    confirmationStrategies: string[];
-    confirmationStrategyParams: Record<string, StrategyParams>;
 
     // Execution realism
     executionModel: ExecutionModel;
@@ -331,11 +326,6 @@ const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     snapshotEntryQualityScoreFilterToggle: false,
     snapshotEntryQualityScoreMin: 0,
     snapshotEntryQualityScoreMax: 0,
-
-    // Confirmation strategies
-    confirmationStrategiesToggle: false,
-    confirmationStrategies: [],
-    confirmationStrategyParams: {},
 
     // Execution realism
     executionModel: EFFECTIVE_BACKTEST_DEFAULTS.executionModel,
@@ -523,11 +513,6 @@ class SettingsManager {
             snapshotEntryQualityScoreFilterToggle: this.readCheckbox('snapshotEntryQualityScoreFilterToggle', DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreFilterToggle),
             snapshotEntryQualityScoreMin: this.readNumber('snapshotEntryQualityScoreMin', DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMin),
             snapshotEntryQualityScoreMax: this.readNumber('snapshotEntryQualityScoreMax', DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMax),
-
-            // Confirmation strategies
-            confirmationStrategiesToggle: this.readCheckbox('confirmationStrategiesToggle', DEFAULT_BACKTEST_SETTINGS.confirmationStrategiesToggle),
-            confirmationStrategies: getConfirmationStrategyValues(),
-            confirmationStrategyParams: getConfirmationStrategyParams(),
 
             // Execution realism
             executionModel: this.resolveExecutionModelValue(this.readSelect('executionModel', DEFAULT_BACKTEST_SETTINGS.executionModel)),
@@ -740,12 +725,6 @@ class SettingsManager {
         this.writeCheckbox('snapshotEntryQualityScoreFilterToggle', settings.snapshotEntryQualityScoreFilterToggle ?? DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreFilterToggle);
         this.writeNumber('snapshotEntryQualityScoreMin', settings.snapshotEntryQualityScoreMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMin);
         this.writeNumber('snapshotEntryQualityScoreMax', settings.snapshotEntryQualityScoreMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMax);
-
-        // Confirmation strategies
-        this.writeCheckbox('confirmationStrategiesToggle', settings.confirmationStrategiesToggle ?? DEFAULT_BACKTEST_SETTINGS.confirmationStrategiesToggle);
-        setConfirmationStrategyParams(settings.confirmationStrategyParams ?? {});
-        const confirmationList = Array.isArray(settings.confirmationStrategies) ? settings.confirmationStrategies : [];
-        renderConfirmationStrategyList(confirmationList);
 
         // Execution realism
         this.writeSelect('executionModel', settings.executionModel ?? DEFAULT_BACKTEST_SETTINGS.executionModel);
@@ -1053,7 +1032,6 @@ class SettingsManager {
             'fixedTradeToggle',
             'riskSettingsToggle',
             'tradeFilterSettingsToggle',
-            'confirmationStrategiesToggle',
             'useRustEngineToggle',
             'snapshotAtrFilterToggle',
             'snapshotVolumeFilterToggle',

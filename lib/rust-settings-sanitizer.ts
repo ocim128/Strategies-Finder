@@ -26,7 +26,7 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const allowSameBarExit = settings.allowSameBarExit ?? true;
     const slippageBps = settings.slippageBps ?? 0;
     const marketMode = settings.marketMode ?? 'all';
-    const tradeFilterMode = settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none';
+    const tradeFilterMode = settings.tradeFilterMode ?? 'none';
 
     // Realism constraints
     const usesRealismConstraints =
@@ -133,8 +133,6 @@ export const SNAPSHOT_FILTER_SETTING_KEYS = [
 ] as const satisfies readonly (keyof BacktestSettings)[];
 
 export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
-    "confirmationStrategies",
-    "confirmationStrategyParams",
     "executionModel",
     "allowSameBarExit",
     "slippageBps",

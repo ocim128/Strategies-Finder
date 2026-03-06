@@ -662,8 +662,7 @@ export function setupEventHandlers() {
     // Strategy settings toggles
     [
         { toggleId: 'riskSettingsToggle', sectionId: 'riskSettings' },
-        { toggleId: 'tradeFilterSettingsToggle', sectionId: 'tradeFilterSettings' },
-        { toggleId: 'confirmationStrategiesToggle', sectionId: 'confirmationStrategies' }
+        { toggleId: 'tradeFilterSettingsToggle', sectionId: 'tradeFilterSettings' }
     ].forEach(({ toggleId, sectionId }) => {
         const toggle = getRequiredElement<HTMLInputElement>(toggleId);
         const section = getRequiredElement<HTMLElement>(sectionId);

@@ -45,7 +45,6 @@ export interface FinderResult {
     selectionResult: BacktestResult;
     endpointAdjusted: boolean;
     endpointRemovedTrades: number;
-    confirmationParams?: Record<string, StrategyParams>;
     robustMetrics?: {
         mode: 'robust_random_wf';
         seed: number;

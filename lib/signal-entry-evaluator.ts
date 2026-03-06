@@ -3,10 +3,8 @@ import type {
     OHLCVData,
     Signal,
     Strategy,
-    StrategyParams,
     Time,
     Trade,
-    TradeDirection,
     TradeFilterMode,
 } from "./types/strategies";
 import { strategies } from "./strategies/library";
@@ -79,17 +77,11 @@ function toUnixSeconds(value: Time): number | null {
 }
 
 function resolveTradeFilterMode(settings: BacktestSettings | undefined): TradeFilterMode {
-    const raw = settings?.tradeFilterMode ?? settings?.entryConfirmation ?? "none";
+    const raw = settings?.tradeFilterMode ?? "none";
     return TRADE_FILTER_MODES.has(raw as TradeFilterMode) ? (raw as TradeFilterMode) : "none";
 }
 
-function getTimeIndex(data: OHLCVData[]): Map<string, number> {
-    const out = new Map<string, number>();
-    data.forEach((bar, idx) => {
-        out.set(toTimeKey(bar.time), idx);
-    });
-    return out;
-}
+
 
 function toNumericTimeData(data: OHLCVData[]): OHLCVData[] | null {
     const mapped: OHLCVData[] = new Array(data.length);
@@ -204,193 +196,6 @@ function executeStrategyWithSettings(
     );
 }
 
-function buildConfirmationStates(
-    data: OHLCVData[],
-    strategyKeys: string[],
-    settings: BacktestSettings,
-    paramsByKey?: Record<string, StrategyParams>
-): Int8Array[] {
-    if (data.length === 0 || strategyKeys.length === 0) return [];
-
-    const timeIndex = getTimeIndex(data);
-    const states: Int8Array[] = [];
-
-    strategyKeys.forEach((key) => {
-        const strategy = strategies[key];
-        if (!strategy) return;
-
-        const params = paramsByKey?.[key] ?? strategy.defaultParams;
-        const signals = executeStrategyWithSettings(data, strategy, params, settings);
-        if (signals.length === 0) {
-            states.push(new Int8Array(data.length));
-            return;
-        }
-
-        const entries: Array<{ index: number; direction: number; order: number }> = [];
-        signals.forEach((signal, order) => {
-            const index = timeIndex.get(toTimeKey(signal.time));
-            if (index === undefined) return;
-            const direction = signal.type === "buy" ? 1 : -1;
-            entries.push({ index, direction, order });
-        });
-
-        if (entries.length === 0) {
-            states.push(new Int8Array(data.length));
-            return;
-        }
-
-        entries.sort((a, b) => a.index - b.index || a.order - b.order);
-
-        const state = new Int8Array(data.length);
-        let current = 0;
-        let cursor = 0;
-        for (let i = 0; i < data.length; i++) {
-            while (cursor < entries.length && entries[cursor].index === i) {
-                current = entries[cursor].direction;
-                cursor += 1;
-            }
-            state[i] = current;
-        }
-        states.push(state);
-    });
-
-    return states;
-}
-
-function filterSignalsWithConfirmationsBoth(
-    data: OHLCVData[],
-    signals: Signal[],
-    confirmationStates: Int8Array[],
-    tradeFilterMode: TradeFilterMode
-): Signal[] {
-    if (confirmationStates.length === 0 || signals.length === 0) return signals;
-
-    const timeIndex = getTimeIndex(data);
-    const useCloseConfirm = tradeFilterMode === "close";
-    const filtered: Signal[] = [];
-
-    for (const signal of signals) {
-        const signalIndex = timeIndex.get(toTimeKey(signal.time));
-        if (signalIndex === undefined) {
-            filtered.push(signal);
-            continue;
-        }
-
-        const entryIndex = useCloseConfirm ? signalIndex + 1 : signalIndex;
-        if (entryIndex >= data.length) continue;
-
-        const requiredState = signal.type === "buy" ? 1 : -1;
-        let confirmed = true;
-        for (const state of confirmationStates) {
-            if (state[entryIndex] !== requiredState) {
-                confirmed = false;
-                break;
-            }
-        }
-
-        if (confirmed) {
-            filtered.push(signal);
-        }
-    }
-
-    return filtered;
-}
-
-function filterSignalsWithConfirmationsDirectional(
-    data: OHLCVData[],
-    signals: Signal[],
-    confirmationStates: Int8Array[],
-    tradeFilterMode: TradeFilterMode,
-    tradeDirection: TradeDirection
-): Signal[] {
-    if (tradeDirection === "both" || tradeDirection === "both_flip_loss_2" || tradeDirection === "combined") {
-        return filterSignalsWithConfirmationsBoth(data, signals, confirmationStates, tradeFilterMode);
-    }
-    if (confirmationStates.length === 0 || signals.length === 0) return signals;
-
-    const timeIndex = getTimeIndex(data);
-    const entryType: Signal["type"] = tradeDirection === "short" ? "sell" : "buy";
-    const requiredState = tradeDirection === "short" ? -1 : 1;
-    const useCloseConfirm = tradeFilterMode === "close";
-    const filtered: Signal[] = [];
-
-    for (const signal of signals) {
-        if (signal.type !== entryType) {
-            filtered.push(signal);
-            continue;
-        }
-
-        const signalIndex = timeIndex.get(toTimeKey(signal.time));
-        if (signalIndex === undefined) {
-            filtered.push(signal);
-            continue;
-        }
-
-        const entryIndex = useCloseConfirm ? signalIndex + 1 : signalIndex;
-        if (entryIndex >= data.length) continue;
-
-        let confirmed = true;
-        for (const state of confirmationStates) {
-            if (state[entryIndex] !== requiredState) {
-                confirmed = false;
-                break;
-            }
-        }
-
-        if (confirmed) {
-            filtered.push(signal);
-        }
-    }
-
-    return filtered;
-}
-
-function applyConfirmationFilters(
-    data: OHLCVData[],
-    signals: Signal[],
-    settings: BacktestSettings,
-    strategyRole: StrategyRole | undefined
-): Signal[] {
-    const confirmationStrategies = Array.isArray(settings.confirmationStrategies)
-        ? settings.confirmationStrategies
-            .filter((value): value is string => typeof value === "string" && value.trim() !== "")
-            .slice(0, 5)
-        : [];
-
-    if (confirmationStrategies.length === 0 || signals.length === 0) {
-        return signals;
-    }
-
-    const confirmationStates = buildConfirmationStates(
-        data,
-        confirmationStrategies,
-        settings,
-        settings.confirmationStrategyParams
-    );
-    if (confirmationStates.length === 0) {
-        return signals;
-    }
-
-    const tradeDirection = normalizeTradeDirection(settings);
-    const tradeFilterMode = resolveTradeFilterMode(settings);
-    const useBothFilter = strategyRole === "entry"
-        || tradeDirection === "both"
-        || tradeDirection === "both_flip_loss_2"
-        || tradeDirection === "combined";
-
-    if (useBothFilter) {
-        return filterSignalsWithConfirmationsBoth(data, signals, confirmationStates, tradeFilterMode);
-    }
-
-    return filterSignalsWithConfirmationsDirectional(
-        data,
-        signals,
-        confirmationStates,
-        tradeFilterMode,
-        tradeDirection
-    );
-}
-
 function buildSignalFingerprint(
     strategyKey: string,
     direction: "long" | "short",
@@ -496,15 +301,9 @@ export function evaluateLatestEntrySignal(
     const settings = request.backtestSettings ?? {};
     const mergedParams = { ...strategy.defaultParams, ...(request.strategyParams ?? {}) };
     const rawSignals = executeStrategyWithSettings(request.candles, strategy, mergedParams, settings);
-    const filteredSignals = applyConfirmationFilters(
-        request.candles,
-        rawSignals,
-        settings,
-        strategy.metadata?.role
-    );
     const preparedSignals = prepareSignalsForScanner(
         request.candles,
-        filteredSignals,
+        rawSignals,
         settings
     );
     const tradeDirection = normalizeTradeDirection(settings);
@@ -514,7 +313,7 @@ export function evaluateLatestEntrySignal(
 
     const backtestResult = runBacktest(
         request.candles,
-        filteredSignals,
+        rawSignals,
         10000,
         100,
         0,

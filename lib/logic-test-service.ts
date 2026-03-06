@@ -5,7 +5,7 @@ import { paramManager } from "./param-manager";
 import { backtestService } from "./backtest-service";
 import { runBacktest, OHLCVData } from "./strategies/index";
 import { debugLogger } from "./debug-logger";
-import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth } from "./confirmation-strategies";
+
 
 // ============================================================================
 // Logic Test Configuration
@@ -85,9 +85,7 @@ class LogicTestService {
             const params = paramManager.getValues(strategy);
             const capitalSettings = backtestService.getCapitalSettings();
             const backtestSettings = backtestService.getBacktestSettings();
-            const confirmationStrategies = backtestSettings.confirmationStrategies ?? [];
-            const confirmationParams = backtestSettings.confirmationStrategyParams;
-            const hasConfirmationFilters = confirmationStrategies.length > 0;
+
 
             const results: IndividualTestResult[] = [];
             let completedTests = 0;
@@ -110,29 +108,8 @@ class LogicTestService {
                 // Generate mock data with unique seed
                 const mockData = this.generateMockData(config, i);
 
-                // Generate signals
-                let signals = strategy.execute(mockData, params);
-                if (hasConfirmationFilters) {
-                    const confirmationStates = buildConfirmationStates(mockData, confirmationStrategies, confirmationParams);
-                    if (confirmationStates.length > 0) {
-                        signals = strategy.metadata?.role === 'entry' || backtestSettings.tradeDirection === 'both' || backtestSettings.tradeDirection === 'both_flip_loss_2' || backtestSettings.tradeDirection === 'combined'
-                            ? filterSignalsWithConfirmationsBoth(
-                                mockData,
-                                signals,
-                                confirmationStates,
-                                backtestSettings.tradeFilterMode ?? backtestSettings.entryConfirmation ?? 'none'
-                            )
-                            : filterSignalsWithConfirmations(
-                                mockData,
-                                signals,
-                                confirmationStates,
-                                backtestSettings.tradeFilterMode ?? backtestSettings.entryConfirmation ?? 'none',
-                                backtestSettings.tradeDirection ?? 'long'
-                            );
-                    }
-                }
-
-                // Run backtest
+                // Generate signals and run backtest
+                const signals = strategy.execute(mockData, params);
                 const backtestResult = runBacktest(
                     mockData,
                     signals,

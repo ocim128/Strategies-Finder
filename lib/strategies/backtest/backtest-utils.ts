@@ -12,7 +12,7 @@ export function clamp(value: number, min: number, max: number): number {
 }
 
 export function normalizeBacktestSettings(settings?: BacktestSettings): NormalizedSettings {
-    const tradeFilterMode = settings?.tradeFilterMode ?? settings?.entryConfirmation ?? 'none';
+    const tradeFilterMode = settings?.tradeFilterMode ?? 'none';
     const rawExecutionModel = settings?.executionModel;
     const executionModel = rawExecutionModel === 'next_open' || rawExecutionModel === 'next_close' || rawExecutionModel === 'signal_close'
         ? rawExecutionModel

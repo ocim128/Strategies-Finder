@@ -2,7 +2,6 @@ import type {
     BacktestSettings,
     ExecutionModel,
     MarketMode,
-    StrategyParams,
     TradeDirection,
     TradeFilterMode,
 } from "./types/strategies";
@@ -103,7 +102,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "riskSettingsToggle",
     "tradeFilterSettingsToggle",
     "entrySettingsToggle",
-    "confirmationStrategiesToggle",
+
     "riskMode",
     "atrPeriod",
     "stopLossAtr",
@@ -250,26 +249,6 @@ function readTradeDirection(rawValue: unknown, fallback: TradeDirection): TradeD
     return fallback;
 }
 
-function readConfirmationStrategies(rawValue: unknown): string[] {
-    if (!Array.isArray(rawValue)) return [];
-    return rawValue.filter((value): value is string => typeof value === "string" && value.length > 0);
-}
-
-function readConfirmationParams(rawValue: unknown): Record<string, StrategyParams> {
-    if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) return {};
-    const normalized: Record<string, StrategyParams> = {};
-    for (const [strategyKey, params] of Object.entries(rawValue as Record<string, unknown>)) {
-        if (!params || typeof params !== "object" || Array.isArray(params)) continue;
-        const normalizedParams: StrategyParams = {};
-        for (const [paramKey, paramValue] of Object.entries(params as Record<string, unknown>)) {
-            const parsed = toFiniteNumber(paramValue);
-            if (parsed !== null) normalizedParams[paramKey] = parsed;
-        }
-        normalized[strategyKey] = normalizedParams;
-    }
-    return normalized;
-}
-
 function resolveSnapshotValue(raw: Record<string, unknown>, toggleKey: string, valueKey: string): number {
     return readBoolean(raw, toggleKey, false) ? readNumber(raw, valueKey, 0) : 0;
 }
@@ -279,7 +258,6 @@ export function hasUiToggleSettings(raw: Record<string, unknown>): boolean {
         "riskSettingsToggle",
         "tradeFilterSettingsToggle",
         "entrySettingsToggle",
-        "confirmationStrategiesToggle",
         "riskProbationToggle",
         "riskLossStreakToggle",
         ...SNAPSHOT_CONFIGS.map((snapshot) => snapshot.toggleKey),
@@ -322,9 +300,7 @@ export function resolveBacktestSettingsFromRaw(
         )
         : "none";
 
-    const confirmationEnabled = readBoolean(raw, "confirmationStrategiesToggle", false);
-    const confirmationStrategies = confirmationEnabled ? readConfirmationStrategies(raw["confirmationStrategies"]) : [];
-    const confirmationStrategyParams = confirmationEnabled ? readConfirmationParams(raw["confirmationStrategyParams"]) : {};
+
 
     const executionModelRaw = raw["executionModel"];
     const executionModel: ExecutionModel =
@@ -376,7 +352,7 @@ export function resolveBacktestSettingsFromRaw(
         adxMin: 0,
         adxMax: 0,
         tradeFilterMode,
-        entryConfirmation: tradeFilterMode,
+
         htfBiasEmaPeriod: tradeFilterEnabled
             ? readNumber(raw, "htfBiasEmaPeriod", EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod)
             : EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod,
@@ -392,8 +368,7 @@ export function resolveBacktestSettingsFromRaw(
         rsiBearish: tradeFilterEnabled
             ? readNumber(raw, "rsiBearish", readNumber(raw, "confirmRsiBearish", EFFECTIVE_BACKTEST_DEFAULTS.rsiBearish))
             : EFFECTIVE_BACKTEST_DEFAULTS.rsiBearish,
-        confirmationStrategies,
-        confirmationStrategyParams,
+
         tradeDirection,
         flipAfterConsecutiveLosses: readNumber(raw, "flipAfterConsecutiveLosses", EFFECTIVE_BACKTEST_DEFAULTS.flipAfterConsecutiveLosses),
         flipCooldownTrades: readNumber(raw, "flipCooldownTrades", EFFECTIVE_BACKTEST_DEFAULTS.flipCooldownTrades),

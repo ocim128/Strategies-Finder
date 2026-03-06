@@ -257,8 +257,6 @@ export interface BacktestSettings {
     adxMax?: number;
 
     tradeFilterMode?: TradeFilterMode;
-    // Internal field for Rust engine and legacy config compatibility. Use tradeFilterMode.
-    entryConfirmation?: TradeFilterMode;
     confirmLookback?: number;
     volumeSmaPeriod?: number;
     volumeMultiplier?: number;
@@ -266,10 +264,6 @@ export interface BacktestSettings {
     rsiBullish?: number;
     rsiBearish?: number;
     marketMode?: MarketMode;
-    /** Optional list of strategy keys used as additional trade filters */
-    confirmationStrategies?: string[];
-    /** Optional parameter overrides for confirmation strategies */
-    confirmationStrategyParams?: Record<string, StrategyParams>;
     tradeDirection?: TradeDirection;
     /** For both_flip_loss_2: flip side after this many consecutive losses on active side */
     flipAfterConsecutiveLosses?: number;

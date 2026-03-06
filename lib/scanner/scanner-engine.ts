@@ -5,7 +5,7 @@
 
 import { binanceSearchService, type BinanceSymbol } from '../binance-search-service';
 import { strategyRegistry } from '../../strategyRegistry';
-import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth } from '../confirmation-strategies';
+
 import type { BacktestSettings, Signal, StrategyParams, TradeFilterMode } from '../types/strategies';
 import { getOpenPositionForScanner } from '../strategies/backtest';
 import { resolveBacktestSettingsFromRaw } from '../backtest-settings-resolver';
@@ -39,14 +39,6 @@ const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>([
     'trend_hysteresis',
     'trend_mtf_stack',
 ]);
-
-function readTradeFilterMode(rawValue: unknown, fallback: TradeFilterMode = 'none'): TradeFilterMode {
-    if (typeof rawValue === 'string') {
-        const mode = rawValue.trim().toLowerCase() as TradeFilterMode;
-        if (VALID_TRADE_FILTER_MODES.has(mode)) return mode;
-    }
-    return fallback;
-}
 
 // ============================================================================
 // Scan Result Cache
@@ -342,36 +334,15 @@ export class ScannerEngine {
                 // Normalize persisted UI config into effective backtest settings.
                 const backtestSettings = resolveScannerBacktestSettings(stratConfig.backtestSettings);
 
-                // Apply confirmation-strategy filtering to match backtest flow.
-                const confirmationStrategies = backtestSettings.confirmationStrategies ?? [];
-                const tradeFilterMode = readTradeFilterMode(
-                    backtestSettings.tradeFilterMode ?? backtestSettings.entryConfirmation ?? 'none',
-                    'none'
-                );
-                const confirmationStates = confirmationStrategies.length > 0
-                    ? buildConfirmationStates(scanData, confirmationStrategies, backtestSettings.confirmationStrategyParams)
-                    : [];
-                const filteredSignals = confirmationStates.length > 0
-                    ? ((strategy.metadata?.role === 'entry' || backtestSettings.tradeDirection === 'both' || backtestSettings.tradeDirection === 'both_flip_loss_2' || backtestSettings.tradeDirection === 'combined')
-                        ? filterSignalsWithConfirmationsBoth(scanData, rawSignals, confirmationStates, tradeFilterMode)
-                        : filterSignalsWithConfirmations(
-                            scanData,
-                            rawSignals,
-                            confirmationStates,
-                            tradeFilterMode,
-                            backtestSettings.tradeDirection ?? 'long'
-                        ))
-                    : rawSignals;
-
-                // Early exit: no filtered signals → skip
-                if (filteredSignals.length === 0) continue;
+                // Early exit: no raw signals → skip
+                if (rawSignals.length === 0) continue;
 
                 // ── Phase 2: Early exit if newest signal is too old ───────────
                 // A position opened N bars ago has barsInTrade = N. If the most
                 // recent signal is older than maxSignalAgeBars, no position from
                 // it can pass the freshness check, so we skip the full backtest.
                 if (maxSignalAgeBars < Number.POSITIVE_INFINITY) {
-                    const lastSignal = filteredSignals[filteredSignals.length - 1];
+                    const lastSignal = rawSignals[rawSignals.length - 1];
                     const lastSignalTime = lastSignal.time;
                     const lastBarTime = scanData[dataLen - 1].time;
 
@@ -400,7 +371,7 @@ export class ScannerEngine {
                 }
 
                 // Run a backtest simulation to get the current open position (if any)
-                const openPosition = getOpenPositionForScanner(scanData, filteredSignals, backtestSettings);
+                const openPosition = getOpenPositionForScanner(scanData, rawSignals, backtestSettings);
 
                 // Only add to results if there's an open and fresh-enough position
                 if (openPosition && openPosition.barsInTrade <= maxSignalAgeBars) {

@@ -26,7 +26,7 @@ import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
 import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
-import { buildConfirmationStates, filterSignalsWithConfirmations, filterSignalsWithConfirmationsBoth, getConfirmationStrategyParams, getConfirmationStrategyValues } from "./confirmation-strategies";
+
 import { calculateSharpeRatioFromReturns } from "./strategies/performance-metrics";
 import { computeEdgeStatistics } from "./strategies/backtest/edge-statistics";
 import { getIntervalSeconds } from "./dataProviders/utils";
@@ -40,14 +40,14 @@ import {
     resolveBacktestSettingsFromRaw
 } from "./backtest-settings-resolver";
 import { readNumberInputValue } from "./dom-input-readers";
-import { trimToClosedCandles } from "./closed-candle-utils";
+
 import { resolveTwoHourParityFromTime } from "./two-hour-parity";
 
 export class BacktestService {
     private warnedStrictEngine = false;
 
     private resolveTradeFilterMode(settings: BacktestSettings): TradeFilterMode {
-        return (settings.tradeFilterMode ?? settings.entryConfirmation ?? 'none') as TradeFilterMode;
+        return settings.tradeFilterMode ?? 'none';
     }
 
     public async runCurrentBacktest() {
@@ -311,8 +311,6 @@ export class BacktestService {
         const timing = {
             selectClosedCandleData: 0,
             strategyExecute: 0,
-            confirmationBuild: 0,
-            confirmationFilter: 0,
             rustRequest: 0,
             tsBacktest: 0,
             postProcessing: 0,
@@ -328,33 +326,7 @@ export class BacktestService {
         const signals = strategy.execute(backtestData, params);
         timing.strategyExecute = performance.now() - t2;
 
-        const confirmationStrategies = settings.confirmationStrategies ?? [];
-        const tradeFilterMode = this.resolveTradeFilterMode(settings);
-
-        const t3 = performance.now();
-        const confirmationStates = confirmationStrategies.length > 0
-            ? buildConfirmationStates(backtestData, confirmationStrategies, settings.confirmationStrategyParams)
-            : [];
-        timing.confirmationBuild = performance.now() - t3;
-
-        const t4 = performance.now();
-        const filteredSignals = confirmationStates.length > 0
-            ? ((strategy.metadata?.role === 'entry' || settings.tradeDirection === 'both' || settings.tradeDirection === 'both_flip_loss_2' || settings.tradeDirection === 'combined')
-                ? filterSignalsWithConfirmationsBoth(
-                    backtestData,
-                    signals,
-                    confirmationStates,
-                    tradeFilterMode
-                )
-                : filterSignalsWithConfirmations(
-                    backtestData,
-                    signals,
-                    confirmationStates,
-                    tradeFilterMode,
-                    settings.tradeDirection ?? 'long'
-                ))
-            : signals;
-        timing.confirmationFilter = performance.now() - t4;
+        const filteredSignals = signals;
 
         // ── Block range signal filter ──────────────────────────────────────────
         // If a block is active, remove signals outside [from, to] so only trades
@@ -444,8 +416,7 @@ export class BacktestService {
             durations: {
                 selectClosedCandleData: timing.selectClosedCandleData,
                 strategyExecute: timing.strategyExecute,
-                confirmationBuild: timing.confirmationBuild,
-                confirmationFilter: timing.confirmationFilter,
+
                 rustRequest: timing.rustRequest,
                 tsBacktest: timing.tsBacktest,
                 postProcessing: timing.postProcessing,
@@ -490,9 +461,6 @@ export class BacktestService {
                 raw[id] = value;
             }
         }
-
-        raw.confirmationStrategies = getConfirmationStrategyValues();
-        raw.confirmationStrategyParams = getConfirmationStrategyParams();
 
         const settings = resolveBacktestSettingsFromRaw(raw as BacktestSettings, {
             captureSnapshots: true,

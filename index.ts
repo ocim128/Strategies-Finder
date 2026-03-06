@@ -25,7 +25,7 @@ import { analysisPanel } from "./lib/analysis-panel";
 import { dataMiningManager } from "./lib/data-mining-manager";
 
 
-import { initConfirmationStrategyUI } from "./lib/confirmation-strategies";
+
 import { scannerPanel, scannerManager } from "./lib/scanner";
 
 // Handlers
@@ -73,7 +73,6 @@ async function init() {
 	analysisPanel.init();
 	initAlertHandlers();
 
-	initConfirmationStrategyUI();
 	initDebugPanel();
 	initEngineStatusIndicator(); // Show Rust vs TypeScript engine status
 	liveOperationsDashboard.init();
