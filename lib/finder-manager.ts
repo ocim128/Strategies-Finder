@@ -1,4 +1,4 @@
-import { StrategyParams } from "./strategies/index";
+import { StrategyParams, applySignalPolarity } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtest-service";
@@ -6,6 +6,8 @@ import { paramManager } from "./param-manager";
 import { uiManager } from "./ui-manager";
 import { getRequiredElement, setVisible } from "./dom-utils";
 import { dataManager } from "./data-manager";
+import { settingsManager, type StrategyConfig } from "./settings-manager";
+import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
 
 import { DEFAULT_SORT_PRIORITY, METRIC_FULL_LABELS } from "./finder/constants";
 import { runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
@@ -15,6 +17,7 @@ import { FinderUI } from "./finder/finder-ui";
 import { debugLogger, robustAuditSink } from "./debug-logger";
 import { readNumberInputValue, readToggleValue } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
+import { trimToClosedCandles } from "./closed-candle-utils";
 import type {
 	FinderMetric,
 	FinderMode,
@@ -31,6 +34,7 @@ export class FinderManager {
 	];
 	private isRunning = false;
 	private displayResults: FinderResult[] = [];
+	private lastFinderRunBacktestSettings: ReturnType<typeof backtestService.getBacktestSettings> | null = null;
 	private strategyToggles: Map<string, HTMLInputElement> = new Map();
 	private selectedFinderTimeframes: string[] = [];
 	private readonly ui = new FinderUI();
@@ -74,6 +78,7 @@ export class FinderManager {
 
 		this.initSortingUI();
 		this.initMultiTimeframeUI();
+		this.initComboUI();
 
 
 		state.subscribe('currentInterval', () => {
@@ -206,6 +211,46 @@ export class FinderManager {
 		});
 
 		this.applyMockRestrictionToMultiTimeframe();
+	}
+
+	private initComboUI(): void {
+		const toggle = document.getElementById('finderComboToggle') as HTMLInputElement | null;
+		if (!toggle) return;
+
+		this.populateComboDropdown();
+		this.setComboControlsEnabled(toggle.checked);
+
+		toggle.addEventListener('change', () => {
+			this.setComboControlsEnabled(toggle.checked);
+		});
+	}
+
+	public populateComboDropdown(): void {
+		const select = document.getElementById('finderComboPrimarySelect') as HTMLSelectElement | null;
+		if (!select) return;
+
+		const configs = settingsManager.loadAllStrategyConfigs();
+		const currentValue = select.value;
+
+		select.innerHTML = '<option value="">-- Select primary config --</option>';
+		configs.forEach(config => {
+			const option = document.createElement('option');
+			option.value = config.name;
+			option.textContent = `${config.name} (${config.strategyKey})`;
+			select.appendChild(option);
+		});
+
+		if (currentValue && configs.some(c => c.name === currentValue)) {
+			select.value = currentValue;
+		}
+	}
+
+	private setComboControlsEnabled(enabled: boolean): void {
+		const settings = document.getElementById('finderComboSettings');
+		if (!settings) return;
+		settings.classList.toggle('is-disabled', !enabled);
+		const select = document.getElementById('finderComboPrimarySelect') as HTMLSelectElement | null;
+		if (select) select.disabled = !enabled;
 	}
 
 	public clearTimeframeCache(): void {
@@ -397,6 +442,7 @@ export class FinderManager {
 		}
 
 		this.isRunning = true;
+		this.lastFinderRunBacktestSettings = null;
 		const options = this.readOptions();
 		const runButton = getRequiredElement<HTMLButtonElement>('runFinder');
 		const setLoading = (loading: boolean) => {
@@ -427,10 +473,57 @@ export class FinderManager {
 
 			const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = backtestService.getCapitalSettings();
 			const settings = backtestService.getBacktestSettings();
+			this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settings);
 			const requiresTsEngine = backtestService.requiresTypescriptEngine(settings);
 
-			// Slice OHLCV data to the block range if one is active
-			const ohlcvData = sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
+			// Freeze run dataset to closed candles within the selected block for deterministic combo pairing.
+			const ohlcvData = trimToClosedCandles(
+				sliceOhlcvByBlock(state.ohlcvData, state.blockRange),
+				state.currentInterval
+			);
+			if (ohlcvData.length === 0) {
+				this.setStatus('No closed candles available for finder run.');
+				return;
+			}
+
+			// --- Combo Mode: resolve primary config, generate primary signals once ---
+			let comboPrimarySignals: undefined | ReturnType<typeof applySignalPolarity>;
+			let comboPrimarySettings: undefined | typeof settings;
+			let comboPrimaryCapital: undefined | { initialCapital: number; positionSize: number; commission: number; sizingMode: "percent" | "fixed"; fixedTradeAmount: number };
+
+			if (options.comboEnabled && options.comboPrimaryConfigName) {
+				const primaryConfig = settingsManager.loadStrategyConfig(options.comboPrimaryConfigName);
+				if (!primaryConfig) {
+					this.setStatus(`Primary config "${options.comboPrimaryConfigName}" not found.`);
+					return;
+				}
+				const primaryStrategy = strategyRegistry.get(primaryConfig.strategyKey);
+				if (!primaryStrategy) {
+					this.setStatus(`Primary strategy "${primaryConfig.strategyKey}" not found in registry.`);
+					return;
+				}
+
+				this.setStatus('Combo mode: generating primary signals...');
+				comboPrimarySettings = resolveBacktestSettingsFromRaw(
+					primaryConfig.backtestSettings as unknown as typeof settings,
+					{ captureSnapshots: false, coerceWithoutUiToggles: true }
+				);
+				comboPrimarySignals = applySignalPolarity(
+					primaryStrategy.execute(ohlcvData, primaryConfig.strategyParams),
+					comboPrimarySettings
+				);
+				comboPrimaryCapital = settingsManager.resolveCapitalFromConfig(primaryConfig);
+
+				debugLogger.event('finder.combo.primary_resolved', {
+					primaryConfig: options.comboPrimaryConfigName,
+					primaryStrategy: primaryConfig.strategyKey,
+					primarySignals: comboPrimarySignals.length,
+				});
+			} else if (options.comboEnabled && !options.comboPrimaryConfigName) {
+				uiManager.showToast('Combo mode enabled but no primary config selected.', 'error');
+				this.setStatus('Select a primary config for combo mode.');
+				return;
+			}
 
 			const output = await runFinderExecution(
 				{
@@ -449,7 +542,10 @@ export class FinderManager {
 					getFinderTimeframesForRun: (finderOptions) => this.getFinderTimeframesForRun(finderOptions),
 					loadMultiTimeframeDatasets: (symbol, intervals) => this.loadMultiTimeframeDatasets(symbol, intervals),
 					generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
-					buildRandomConfirmationParams: (strategyKeys, finderOptions) => this.buildRandomConfirmationParams(strategyKeys, finderOptions)
+					buildRandomConfirmationParams: (strategyKeys, finderOptions) => this.buildRandomConfirmationParams(strategyKeys, finderOptions),
+					comboPrimarySignals,
+					comboPrimarySettings,
+					comboPrimaryCapital,
 				},
 				{
 					setProgress: (percent, text) => this.setProgress(true, percent, text),
@@ -513,6 +609,9 @@ export class FinderManager {
 			? Math.round(readNumberInputValue('finderTradesMax', Number.POSITIVE_INFINITY, 0))
 			: Number.POSITIVE_INFINITY;
 		const maxTrades = Math.max(minTrades, maxTradesRaw);
+		const comboEnabled = readToggleValue('finderComboToggle', false);
+		const comboPrimarySelect = document.getElementById('finderComboPrimarySelect') as HTMLSelectElement | null;
+		const comboPrimaryConfigName = comboEnabled ? (comboPrimarySelect?.value || undefined) : undefined;
 		return {
 			mode,
 			sortPriority,
@@ -526,7 +625,9 @@ export class FinderManager {
 			maxRuns,
 			tradeFilterEnabled,
 			minTrades,
-			maxTrades
+			maxTrades,
+			comboEnabled,
+			comboPrimaryConfigName,
 		};
 	}
 
@@ -719,6 +820,60 @@ export class FinderManager {
 			return;
 		}
 
+		if (result.comboMode) {
+			const comboSelect = document.getElementById('finderComboPrimarySelect') as HTMLSelectElement | null;
+			const primaryConfigName = result.comboPrimaryConfigName || comboSelect?.value || '';
+			if (!primaryConfigName) {
+				uiManager.showToast('Combo result needs a primary config. Re-select it in Finder Combo Mode.', 'error');
+				return;
+			}
+
+			const primaryConfig = settingsManager.loadStrategyConfig(primaryConfigName);
+			if (!primaryConfig) {
+				uiManager.showToast(`Primary config "${primaryConfigName}" not found.`, 'error');
+				return;
+			}
+
+			const now = new Date().toISOString();
+			const secondaryBacktestSettings: StrategyConfig['backtestSettings'] = this.lastFinderRunBacktestSettings
+				? this.cloneBacktestSettings(this.lastFinderRunBacktestSettings) as StrategyConfig['backtestSettings']
+				: settingsManager.getBacktestSettings();
+			const secondaryConfig: StrategyConfig = {
+				name: `finder_combo_secondary_${result.key}`,
+				createdAt: now,
+				updatedAt: now,
+				strategyKey: result.key,
+				strategyParams: { ...result.params },
+				backtestSettings: secondaryBacktestSettings,
+			};
+
+			const combinerPrimary = document.getElementById('combinerPrimarySelect') as HTMLSelectElement | null;
+			const combinerSecondary = document.getElementById('combinerSecondarySelect') as HTMLSelectElement | null;
+			const combinerMode = document.getElementById('combinerMode') as HTMLSelectElement | null;
+			if (combinerPrimary) combinerPrimary.value = primaryConfigName;
+			if (combinerSecondary) combinerSecondary.value = '';
+			if (combinerMode) combinerMode.value = 'and';
+
+			const tradesTab = document.querySelector('.panel-tab[data-tab="trades"]') as HTMLElement | null;
+			if (tradesTab) tradesTab.click();
+
+			setTimeout(() => {
+				backtestService.runCombinedStrategyBacktest(primaryConfig, secondaryConfig, 'and')
+					.then(() => {
+						uiManager.showToast(`Applied combo result with primary "${primaryConfigName}" (AND).`, 'success');
+					})
+					.catch(err => {
+						debugLogger.error('finder.apply_combo_result_backtest_failed', {
+							primaryConfigName,
+							secondaryStrategy: result.key,
+							error: err instanceof Error ? err.message : String(err)
+						});
+						uiManager.showToast('Combined backtest failed for combo result.', 'error');
+					});
+			}, 0);
+			return;
+		}
+
 		// Switch to trades tab
 		const tradesTab = document.querySelector('.panel-tab[data-tab="trades"]') as HTMLElement;
 		if (tradesTab) tradesTab.click();
@@ -757,6 +912,10 @@ export class FinderManager {
 			ch.port1.onmessage = () => resolve();
 			ch.port2.postMessage(undefined);
 		});
+	}
+
+	private cloneBacktestSettings<T>(settings: T): T {
+		return JSON.parse(JSON.stringify(settings)) as T;
 	}
 }
 

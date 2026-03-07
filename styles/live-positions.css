@@ -492,18 +492,43 @@
 
 @media (max-width: 900px) {
     .live-positions-panel {
-        position: absolute;
-        left: 56px;
-        top: 60px;
-        z-index: 100;
-        max-height: 50vh;
+        position: relative;
+        left: auto;
+        top: auto;
+        width: 100%;
+        min-width: 0;
+        max-width: none;
+        max-height: 40vh;
         box-shadow: var(--shadow-lg);
     }
     
     .live-positions-panel.collapsed {
-        width: 48px;
+        width: 100%;
         position: relative;
+        min-width: 0;
         left: auto;
         top: auto;
+    }
+
+    .live-positions-panel.collapsed .lp-header {
+        flex-direction: row;
+        gap: 8px;
+        padding: 10px 12px;
+        border-bottom: 1px solid hsl(var(--hsl-border) / 0.3);
+    }
+
+    .live-positions-panel.collapsed .lp-title {
+        writing-mode: initial;
+        text-orientation: mixed;
+        transform: none;
+        gap: 6px;
+    }
+
+    .live-positions-panel.collapsed .lp-title svg {
+        transform: none;
+    }
+
+    .live-positions-panel.collapsed .lp-actions {
+        flex-direction: row;
     }
 }

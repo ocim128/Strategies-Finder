@@ -95,7 +95,15 @@ export class FinderUI {
 
             const title = document.createElement("div");
             title.className = "finder-title";
-            title.textContent = item.name;
+            const titleText = document.createElement("span");
+            titleText.textContent = item.name;
+            title.appendChild(titleText);
+            if (item.comboMode) {
+                const comboBadge = document.createElement("span");
+                comboBadge.className = "finder-title-badge finder-title-badge-combo";
+                comboBadge.textContent = "COMBO";
+                title.appendChild(comboBadge);
+            }
 
             const sub = document.createElement("div");
             sub.className = "finder-sub";

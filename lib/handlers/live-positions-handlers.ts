@@ -16,6 +16,7 @@ import { state } from '../state';
 import { dataManager } from '../data-manager';
 import { settingsManager } from '../settings-manager';
 import { strategyRegistry } from '../../strategyRegistry';
+import { createAccessibleModal, type AccessibleModalController } from '../modal-accessibility';
 
 
 
@@ -31,6 +32,7 @@ let collapseBtn: HTMLElement | null = null;
 let collapseIcon: HTMLElement | null = null;
 let mismatchBanner: HTMLElement | null = null;
 let mismatchText: HTMLElement | null = null;
+let detailModalController: AccessibleModalController | null = null;
 
 // State
 let isCollapsed = false;
@@ -356,7 +358,7 @@ async function openDetailModal(streamId: string): Promise<void> {
     
     if (!modal || !title || !loading || !content) return;
     
-    modal.classList.add('active');
+    detailModalController?.open();
     loading.style.display = '';
     content.style.display = 'none';
     
@@ -519,12 +521,17 @@ async function openDetailModal(streamId: string): Promise<void> {
 }
 
 function closeDetailModal(): void {
-    const modal = getOptionalElement('lpDetailModal');
-    modal?.classList.remove('active');
+    detailModalController?.close();
 }
 
 // Initialization
 export function initLivePositionsHandlers(): void {
+    detailModalController = createAccessibleModal({
+        overlayId: 'lpDetailModal',
+        titleId: 'lpDetailTitle',
+        initialFocusSelector: '#lpDetailClose',
+    });
+
     // Get DOM elements
     panel = getOptionalElement('livePositionsPanel');
     list = getOptionalElement('lpList');

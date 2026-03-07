@@ -9,6 +9,7 @@
  */
 
 import { debugLogger } from '../debug-logger';
+import { bindFormAccessibility } from '../form-accessibility';
 
 // ============================================================================
 // Types
@@ -28,29 +29,52 @@ function initAccordion(): void {
 
     const headers = settingsTab.querySelectorAll<HTMLElement>('.section-header.collapsible');
 
+    const applyAccordionState = (header: HTMLElement, body: HTMLElement): void => {
+        const expanded = !header.classList.contains('collapsed');
+        header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        body.setAttribute('aria-hidden', expanded ? 'false' : 'true');
+        body.toggleAttribute('inert', !expanded);
+    };
+
     headers.forEach(header => {
+        const targetId = header.dataset.target;
+        const body = targetId ? document.getElementById(targetId) : null;
+
+        header.setAttribute('role', 'button');
+        header.tabIndex = 0;
+        if (targetId) {
+            header.setAttribute('aria-controls', targetId);
+        }
+        if (body) {
+            applyAccordionState(header, body);
+        }
+
+        const toggleSection = () => {
+            const sectionTargetId = header.dataset.target;
+            if (!sectionTargetId) return;
+
+            const sectionBody = document.getElementById(sectionTargetId);
+            if (!sectionBody) return;
+
+            const isCollapsed = header.classList.contains('collapsed');
+            header.classList.toggle('collapsed', !isCollapsed);
+            sectionBody.classList.toggle('collapsed', !isCollapsed);
+            applyAccordionState(header, sectionBody);
+        };
+
         header.addEventListener('click', (e) => {
             // Don't toggle if they clicked the section-toggle (checkbox)
             const target = e.target as HTMLElement;
             if (target.closest('.section-toggle')) return;
+            toggleSection();
+        });
 
-            const targetId = header.dataset.target;
-            if (!targetId) return;
-
-            const body = document.getElementById(targetId);
-            if (!body) return;
-
-            const isCollapsed = header.classList.contains('collapsed');
-
-            if (isCollapsed) {
-                // Expand
-                header.classList.remove('collapsed');
-                body.classList.remove('collapsed');
-            } else {
-                // Collapse
-                header.classList.add('collapsed');
-                body.classList.add('collapsed');
-            }
+        header.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            const target = e.target as HTMLElement;
+            if (target.closest('.section-toggle')) return;
+            e.preventDefault();
+            toggleSection();
         });
     });
 }
@@ -186,4 +210,5 @@ export function initSettingsUX(): void {
     initAccordion();
     initPresets();
     initTooltips();
+    bindFormAccessibility(document);
 }

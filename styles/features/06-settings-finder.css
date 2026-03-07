@@ -320,6 +320,30 @@
 
 
 
+.finder-combo-note {
+
+    margin-top: var(--space-2);
+
+    font-size: var(--font-size-sm);
+
+    color: var(--text-secondary);
+
+}
+
+
+
+#finderComboSettings.is-disabled {
+
+    opacity: 0.55;
+
+    pointer-events: none;
+
+    user-select: none;
+
+}
+
+
+
 .finder-results {
 
     margin-top: var(--space-3-5);
@@ -578,6 +602,14 @@
 
 .finder-title {
 
+    display: flex;
+
+    align-items: center;
+
+    gap: 8px;
+
+    flex-wrap: wrap;
+
     font-size: var(--font-size-base);
 
     font-weight: var(--font-weight-semibold);
@@ -585,6 +617,38 @@
     color: var(--text-primary);
 
     line-height: 1.4;
+
+}
+
+.finder-title-badge {
+
+    display: inline-flex;
+
+    align-items: center;
+
+    padding: 2px 8px;
+
+    border-radius: var(--radius-pill);
+
+    border: 1px solid transparent;
+
+    font-size: 10px;
+
+    letter-spacing: var(--tracking-wide);
+
+    font-weight: var(--font-weight-bold);
+
+    line-height: 1.2;
+
+}
+
+.finder-title-badge-combo {
+
+    color: hsl(36 100% 64%);
+
+    background: hsl(36 100% 55% / 0.12);
+
+    border-color: hsl(36 100% 55% / 0.35);
 
 }
 

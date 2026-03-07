@@ -1,5 +1,6 @@
 import { StrategyParams, Strategy } from "./strategies/index";
 import { getRequiredElement } from "./dom-utils";
+import { bindFormAccessibility } from "./form-accessibility";
 
 export class ParamManager {
     public render(strategy: Strategy) {
@@ -15,7 +16,7 @@ export class ParamManager {
                 const label = strategy.paramLabels[key] || key;
                 html += `
 					<div class="param-group" id="param_group_${key}">
-						<label class="param-label">${label}</label>
+						<label class="param-label" id="param_label_${key}" for="param_${key}">${label}</label>
 						${this.renderParamInput(key, value)}
 					</div>
 				`;
@@ -23,6 +24,7 @@ export class ParamManager {
             html += '</div>';
         }
         container.innerHTML = html;
+        bindFormAccessibility(container);
 
         this.bindParamDependencies(strategy);
     }

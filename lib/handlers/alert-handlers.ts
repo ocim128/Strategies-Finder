@@ -22,6 +22,7 @@ import { Trade, BacktestSettings, Time } from '../strategies/index';
 import { formatJakartaTime, isBusinessDayTime } from '../timezone-utils';
 import { getOptionalElement } from '../dom-utils';
 import { parseTimeToUnixSeconds } from '../time-normalization';
+import { createAccessibleModal, type AccessibleModalController } from '../modal-accessibility';
 
 function safeJsonParse<T>(raw: string, fallback: T): T {
     try {
@@ -147,6 +148,8 @@ function resolveSubscriptionConfigName(
 }
 
 let subscriptionsByStreamId: Map<string, AlertSubscription> = new Map();
+let alertConfigModalController: AccessibleModalController | null = null;
+let lastTradeModalController: AccessibleModalController | null = null;
 
 function humanizeKey(input: string): string {
     if (!input) return input;
@@ -326,8 +329,7 @@ function collectEnabledSnapshotFilterLines(settings: Record<string, unknown>): s
 }
 
 function closeAlertConfigModal(): void {
-    const overlay = getOptionalElement<HTMLElement>('alertConfigModal');
-    if (overlay) overlay.classList.remove('active');
+    alertConfigModalController?.close();
 }
 
 function openSubscriptionInfoModal(sub: AlertSubscription, configName: string | null): void {
@@ -415,7 +417,7 @@ function openSubscriptionInfoModal(sub: AlertSubscription, configName: string | 
         .map((row) => `${humanizeKey(row.key.replace(/^snapshot/, ''))}: ${row.value}`);
     appendModalSection(bodyEl, 'Snapshot Values (Non-zero)', inferredSnapshotLines);
 
-    overlay.classList.add('active');
+    alertConfigModalController?.open();
 }
 
 function createActionButton(
@@ -597,7 +599,7 @@ function collectCurrentStrategyParams(): Record<string, number> {
 
 function collectCurrentSubscriptionBacktestSettings(): Record<string, unknown> {
     const settings = backtestService.getBacktestSettings() as Record<string, unknown>;
-    const uiSettings = settingsManager.getBacktestSettings() as Record<string, unknown>;
+    const uiSettings = settingsManager.getBacktestSettings();
     const capital = backtestService.getCapitalSettings();
     const uiToggleSettings = Object.fromEntries(
         Object.entries(uiSettings).filter(
@@ -798,8 +800,7 @@ async function loadSignalHistory() {
 
 // Last Trade Modal Functions
 function closeLastTradeModal(): void {
-    const overlay = getOptionalElement<HTMLElement>('lastTradeModal');
-    if (overlay) overlay.classList.remove('active');
+    lastTradeModalController?.close();
 }
 
 function openLastTradeModal(title: string): void {
@@ -818,7 +819,7 @@ function openLastTradeModal(title: string): void {
     if (contentEl) contentEl.style.display = 'none';
     if (errorEl) errorEl.style.display = 'none';
     
-    overlay.classList.add('active');
+    lastTradeModalController?.open();
 }
 
 function showLastTradeError(message: string): void {
@@ -1120,6 +1121,17 @@ async function handleLastTradeAction(streamId: string): Promise<void> {
 }
 
 export function initAlertHandlers() {
+    alertConfigModalController = createAccessibleModal({
+        overlayId: 'alertConfigModal',
+        titleId: 'alertConfigModalTitle',
+        initialFocusSelector: '#alertConfigModalClose',
+    });
+    lastTradeModalController = createAccessibleModal({
+        overlayId: 'lastTradeModal',
+        titleId: 'lastTradeModalTitle',
+        initialFocusSelector: '#lastTradeModalClose',
+    });
+
     const urlInput = getOptionalElement<HTMLInputElement>('alertWorkerUrl');
     if (urlInput) {
         urlInput.value = alertService.getWorkerUrl();
@@ -1155,12 +1167,6 @@ export function initAlertHandlers() {
     getOptionalElement('lastTradeModalClose')?.addEventListener('click', closeLastTradeModal);
     getOptionalElement('lastTradeModal')?.addEventListener('click', (e) => {
         if (e.target === e.currentTarget) {
-            closeLastTradeModal();
-        }
-    });
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            closeAlertConfigModal();
             closeLastTradeModal();
         }
     });

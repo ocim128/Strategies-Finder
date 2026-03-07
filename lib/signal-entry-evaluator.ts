@@ -6,7 +6,6 @@ import type {
     StrategyParams,
     Time,
     Trade,
-    TradeFilterMode,
 } from "./types/strategies";
 import { strategies } from "./strategies/library";
 import { prepareSignalsForScanner } from "./strategies/backtest/signal-preparation";
@@ -14,7 +13,7 @@ import { allowsSignalAsEntry, applySignalPolarity, normalizeTradeDirection } fro
 import { runBacktest } from "./strategies/backtest/backtest-engine";
 import { getResampleBucketStart, resampleOHLCV, type ResampleOptions } from "./strategies/resample-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
-import { toTimeKey } from "./time-key";
+import { mergeStrategySignals } from "./signal-merge";
 
 export interface EntrySignalEvaluationRequest {
     strategyKey: string;
@@ -66,22 +65,6 @@ export interface EntrySignalEvaluationResult {
     pendingEntry?: EvaluatedEntrySignal | null;
 }
 
-type StrategyRole = NonNullable<NonNullable<Strategy["metadata"]>["role"]>;
-
-const TRADE_FILTER_MODES: ReadonlySet<TradeFilterMode> = new Set([
-    "none",
-    "close",
-    "volume",
-    "rsi",
-    "trend",
-    "adx",
-    "htf_drift",
-    "trend_htf_bias",
-    "trend_exec_alignment",
-    "trend_no_chase",
-    "trend_hysteresis",
-    "trend_mtf_stack",
-]);
 const EVALUATION_CAPITAL_DEFAULTS = Object.freeze({
     initialCapital: 10000,
     positionSize: 100,
@@ -161,13 +144,6 @@ function resolveEvaluationCapitalSettings(request: EntrySignalEvaluationRequest)
 
     return { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount };
 }
-
-function resolveTradeFilterMode(settings: BacktestSettings | undefined): TradeFilterMode {
-    const raw = settings?.tradeFilterMode ?? "none";
-    return TRADE_FILTER_MODES.has(raw as TradeFilterMode) ? (raw as TradeFilterMode) : "none";
-}
-
-
 
 function toNumericTimeData(data: OHLCVData[]): OHLCVData[] | null {
     const mapped: OHLCVData[] = new Array(data.length);
@@ -283,6 +259,34 @@ function executeStrategyWithSettings(
     return applySignalPolarity(mappedSignals, settings);
 }
 
+function applyConfirmationStrategies(
+    candles: OHLCVData[],
+    baseSignals: Signal[],
+    settings: BacktestSettings,
+): Signal[] {
+    const keys = Array.isArray(settings.confirmationStrategies)
+        ? settings.confirmationStrategies.filter((key): key is string => typeof key === "string" && key.trim().length > 0)
+        : [];
+    if (keys.length === 0 || baseSignals.length === 0) return baseSignals;
+
+    const confirmationParamsByStrategy = settings.confirmationStrategyParams ?? {};
+    let mergedSignals: Signal[] = baseSignals;
+    for (const key of keys) {
+        const confirmationStrategy = strategies[key];
+        if (!confirmationStrategy) continue;
+
+        const confirmationParams = {
+            ...confirmationStrategy.defaultParams,
+            ...(confirmationParamsByStrategy[key] ?? {}),
+        };
+        const confirmationSignals = executeStrategyWithSettings(candles, confirmationStrategy, confirmationParams, settings);
+        mergedSignals = mergeStrategySignals(mergedSignals, confirmationSignals, "and") as Signal[];
+        if (mergedSignals.length === 0) break;
+    }
+
+    return mergedSignals;
+}
+
 function buildSignalFingerprint(
     strategyKey: string,
     direction: "long" | "short",
@@ -388,9 +392,10 @@ export function evaluateLatestEntrySignal(
     const settings = request.backtestSettings ?? {};
     const mergedParams = { ...strategy.defaultParams, ...(request.strategyParams ?? {}) };
     const rawSignals = executeStrategyWithSettings(request.candles, strategy, mergedParams, settings);
+    const entrySignalsRaw = applyConfirmationStrategies(request.candles, rawSignals, settings);
     const preparedSignals = prepareSignalsForScanner(
         request.candles,
-        rawSignals,
+        entrySignalsRaw,
         settings
     );
     const tradeDirection = normalizeTradeDirection(settings);
@@ -401,7 +406,7 @@ export function evaluateLatestEntrySignal(
 
     const backtestResult = runBacktest(
         request.candles,
-        rawSignals,
+        entrySignalsRaw,
         capitalSettings.initialCapital,
         capitalSettings.positionSize,
         capitalSettings.commission,

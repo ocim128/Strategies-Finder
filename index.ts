@@ -41,6 +41,7 @@ import { initEngineStatusIndicator } from "./lib/engine-status-indicator";
 import { liveOperationsDashboard } from "./lib/live-operations-dashboard";
 import { blockSelectorManager } from "./lib/block-selector-manager";
 import { quickViewManager } from "./lib/quick-view";
+import { bindFormAccessibility } from "./lib/form-accessibility";
 
 async function init() {
 	injectLayout();
@@ -138,6 +139,7 @@ async function init() {
 	// Setup settings event handlers
 	setupSettingsHandlers();
 	initSettingsUX();
+	bindFormAccessibility(document);
 
 	// Setup auto-save for settings changes
 	settingsManager.setupAutoSave();

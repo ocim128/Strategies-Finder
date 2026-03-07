@@ -2,6 +2,7 @@ import type {
     BacktestSettings,
     ExecutionModel,
     MarketMode,
+    StrategyParams,
     TradeDirection,
     TradeFilterMode,
 } from "./types/strategies";
@@ -251,6 +252,51 @@ function readTradeDirection(rawValue: unknown, fallback: TradeDirection): TradeD
     return fallback;
 }
 
+function readStringArray(rawValue: unknown): string[] {
+    if (!Array.isArray(rawValue)) return [];
+    const seen = new Set<string>();
+    const items: string[] = [];
+    for (const item of rawValue) {
+        if (typeof item !== "string") continue;
+        const normalized = item.trim();
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        items.push(normalized);
+    }
+    return items;
+}
+
+function readConfirmationStrategyParams(
+    rawValue: unknown,
+    allowedStrategies?: ReadonlySet<string>
+): Record<string, StrategyParams> {
+    if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) return {};
+
+    const source = coerceDeepValue(rawValue);
+    if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+
+    const result: Record<string, StrategyParams> = {};
+    for (const [strategyKey, strategyParamsRaw] of Object.entries(source as Record<string, unknown>)) {
+        if (allowedStrategies && allowedStrategies.size > 0 && !allowedStrategies.has(strategyKey)) {
+            continue;
+        }
+        if (!strategyParamsRaw || typeof strategyParamsRaw !== "object" || Array.isArray(strategyParamsRaw)) {
+            continue;
+        }
+
+        const params: StrategyParams = {};
+        for (const [paramKey, paramValue] of Object.entries(strategyParamsRaw as Record<string, unknown>)) {
+            const parsed = toFiniteNumber(paramValue);
+            if (parsed !== null) {
+                params[paramKey] = parsed;
+            }
+        }
+        result[strategyKey] = params;
+    }
+
+    return result;
+}
+
 function resolveSnapshotValue(raw: Record<string, unknown>, toggleKey: string, valueKey: string): number {
     return readBoolean(raw, toggleKey, false) ? readNumber(raw, valueKey, 0) : 0;
 }
@@ -302,6 +348,12 @@ export function resolveBacktestSettingsFromRaw(
             EFFECTIVE_BACKTEST_DEFAULTS.tradeFilterMode
         )
         : "none";
+    const confirmationStrategiesEnabled = readBoolean(raw, "confirmationStrategiesToggle", false);
+    const confirmationStrategies = confirmationStrategiesEnabled ? readStringArray(raw["confirmationStrategies"]) : [];
+    const allowedConfirmationStrategies = new Set(confirmationStrategies);
+    const confirmationStrategyParams = confirmationStrategiesEnabled
+        ? readConfirmationStrategyParams(raw["confirmationStrategyParams"], allowedConfirmationStrategies)
+        : {};
 
 
 
@@ -355,6 +407,8 @@ export function resolveBacktestSettingsFromRaw(
         adxMin: 0,
         adxMax: 0,
         tradeFilterMode,
+        confirmationStrategies,
+        confirmationStrategyParams,
 
         htfBiasEmaPeriod: tradeFilterEnabled
             ? readNumber(raw, "htfBiasEmaPeriod", EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod)

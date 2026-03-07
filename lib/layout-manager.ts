@@ -48,8 +48,9 @@ export function injectLayout() {
     appContainer.insertAdjacentHTML('beforeend', headerHtml);
 
     // 3. Main Content (Toolbar + Chart Area)
-    const mainContent = document.createElement('div');
+    const mainContent = document.createElement('main');
     mainContent.className = 'main-content';
+    mainContent.id = 'mainContent';
 
     // Toolbar
     mainContent.insertAdjacentHTML('beforeend', toolbarHtml);

@@ -4,6 +4,7 @@ import { debugLogger } from "../debug-logger";
 import { refreshEngineStatus } from "../engine-status-indicator";
 import { state } from "../state";
 import { backtestService } from "../backtest-service";
+import { finderManager } from "../finder-manager";
 import {
     createStrategyShareLink,
     parseStrategyConfigFromCurrentUrl,
@@ -487,6 +488,8 @@ export function updateConfigDropdown(selectName?: string) {
 
     // Also refresh combiner dropdowns
     updateCombinerDropdowns();
+    // Also refresh finder combo dropdown
+    finderManager.populateComboDropdown();
 }
 
 /**

@@ -7,7 +7,6 @@ import {
     runBacktest,
     StrategyParams,
     BacktestSettings,
-    TradeFilterMode,
     buildEntryBacktestResult,
     BacktestResult,
     PostEntryPathStats,
@@ -44,6 +43,7 @@ import {
 } from "./backtest-settings-resolver";
 import { readNumberInputValue } from "./dom-input-readers";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
+import { mergeStrategySignals } from "./signal-merge";
 
 import { resolveTwoHourParityFromTime } from "./two-hour-parity";
 
@@ -57,10 +57,6 @@ const SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS = Object.freeze({
 
 export class BacktestService {
     private warnedStrictEngine = false;
-
-    private resolveTradeFilterMode(settings: BacktestSettings): TradeFilterMode {
-        return settings.tradeFilterMode ?? 'none';
-    }
 
     public async runCurrentBacktest() {
         const startedAt = Date.now();
@@ -473,62 +469,13 @@ export class BacktestService {
         }
     }
 
-    /**
-     * Merge signals from two strategy runs.
-     * 
-     * AND mode: keep only signals where both strategies fire on the same bar
-     *           with the same direction (buy/sell). Uses primary signal's price.
-     * 
-     * OR mode:  union of both signal sets; if both fire on the same bar,
-     *           primary signal takes precedence.
-     */
+    /** Delegates to the standalone mergeStrategySignals utility. */
     private mergeSignals(
         primarySignals: { time: any; type: 'buy' | 'sell'; price: number; triggerPrice?: number; reason?: string; barIndex?: number; sizeFraction?: number }[],
         secondarySignals: { time: any; type: 'buy' | 'sell'; price: number; triggerPrice?: number; reason?: string; barIndex?: number; sizeFraction?: number }[],
         mode: 'and' | 'or'
     ): { time: any; type: 'buy' | 'sell'; price: number; triggerPrice?: number; reason?: string; barIndex?: number; sizeFraction?: number }[] {
-        // Build a map of secondary signals keyed by timeKey for O(1) lookup
-        const secondaryMap = new Map<string, typeof secondarySignals[0]>();
-        for (const signal of secondarySignals) {
-            const key = timeKey(signal.time);
-            secondaryMap.set(key, signal);
-        }
-
-        if (mode === 'and') {
-            // AND: keep primary signals only if secondary agrees (same bar + same direction)
-            const merged: typeof primarySignals = [];
-            for (const primary of primarySignals) {
-                const key = timeKey(primary.time);
-                const secondary = secondaryMap.get(key);
-                if (secondary && secondary.type === primary.type) {
-                    merged.push(primary); // use primary's price
-                }
-            }
-            return merged;
-        }
-
-        // OR: union — primary wins on conflicts
-        const primaryMap = new Map<string, typeof primarySignals[0]>();
-        for (const signal of primarySignals) {
-            primaryMap.set(timeKey(signal.time), signal);
-        }
-
-        const merged: typeof primarySignals = [...primarySignals];
-        for (const secondary of secondarySignals) {
-            const key = timeKey(secondary.time);
-            if (!primaryMap.has(key)) {
-                merged.push(secondary);
-            }
-        }
-
-        // Sort by time
-        merged.sort((a, b) => {
-            const ta = typeof a.time === 'number' ? a.time : Number(a.time);
-            const tb = typeof b.time === 'number' ? b.time : Number(b.time);
-            return ta - tb;
-        });
-
-        return merged;
+        return mergeStrategySignals(primarySignals, secondarySignals, mode);
     }
 
 

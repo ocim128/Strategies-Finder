@@ -326,7 +326,7 @@
     border: 1px solid var(--border-color);
     border-radius: var(--float-radius);
     font-size: var(--font-size-xs);
-    color: var(--text-tertiary);
+    color: var(--text-secondary);
     height: 28px;
     flex-shrink: 0;
     animation: panelEnter 0.4s var(--ease-out-expo) 0.12s both;
@@ -353,7 +353,7 @@
 }
 
 .status-viewbars-label {
-    color: var(--text-tertiary);
+    color: var(--text-secondary);
 }
 
 .status-viewbars input {
@@ -390,7 +390,7 @@
 }
 
 .status-item span {
-    color: var(--text-tertiary);
+    color: var(--text-secondary);
 }
 
 .status-dot {

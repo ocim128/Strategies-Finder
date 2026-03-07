@@ -1,0 +1,73 @@
+/**
+ * Standalone signal merge utility — extracted from BacktestService for reuse
+ * by both the Strategy Combiner backtest and the Combo Finder.
+ */
+import { timeKey } from "./strategies/backtest/backtest-utils";
+
+type MergeableSignal = {
+    time: any;
+    type: 'buy' | 'sell';
+    price: number;
+    triggerPrice?: number;
+    reason?: string;
+    barIndex?: number;
+    sizeFraction?: number;
+};
+
+/**
+ * Merge signals from two strategy runs.
+ *
+ * AND mode: keep only signals where both strategies fire on the same bar
+ *           with the same direction (buy/sell). Uses primary signal's price.
+ *
+ * OR mode:  union of both signal sets; if both fire on the same bar,
+ *           primary signal takes precedence.
+ */
+export function mergeStrategySignals(
+    primarySignals: MergeableSignal[],
+    secondarySignals: MergeableSignal[],
+    mode: 'and' | 'or'
+): MergeableSignal[] {
+    // Build a map of secondary signals keyed by timeKey for O(1) lookup
+    const secondaryMap = new Map<string, MergeableSignal>();
+    for (const signal of secondarySignals) {
+        const key = timeKey(signal.time);
+        secondaryMap.set(key, signal);
+    }
+
+    if (mode === 'and') {
+        // AND: keep primary signals only if secondary agrees (same bar + same direction)
+        const merged: MergeableSignal[] = [];
+        for (const primary of primarySignals) {
+            const key = timeKey(primary.time);
+            const secondary = secondaryMap.get(key);
+            if (secondary && secondary.type === primary.type) {
+                merged.push(primary); // use primary's price
+            }
+        }
+        return merged;
+    }
+
+    // OR: union — primary wins on conflicts
+    const primaryMap = new Map<string, MergeableSignal>();
+    for (const signal of primarySignals) {
+        primaryMap.set(timeKey(signal.time), signal);
+    }
+
+    const merged: MergeableSignal[] = [...primarySignals];
+    for (const secondary of secondarySignals) {
+        const key = timeKey(secondary.time);
+        if (!primaryMap.has(key)) {
+            merged.push(secondary);
+        }
+    }
+
+    // Sort by time
+    merged.sort((a, b) => {
+        const ta = typeof a.time === 'number' ? a.time : Number(a.time);
+        const tb = typeof b.time === 'number' ? b.time : Number(b.time);
+        return ta - tb;
+    });
+
+    return merged;
+}

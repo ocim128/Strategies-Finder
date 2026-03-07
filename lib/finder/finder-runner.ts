@@ -26,6 +26,7 @@ import { hasNonZeroSnapshotFilter, sanitizeBacktestSettingsForRust } from "../ru
 import type { FinderDataset } from "./finder-timeframe-loader";
 import type { EndpointSelectionAdjustment, FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
 import { trimToClosedCandles } from "../closed-candle-utils";
+import { mergeStrategySignals } from "../signal-merge";
 
 export interface FinderSelectedStrategy {
     key: string;
@@ -50,6 +51,12 @@ export interface FinderRunInput {
     loadMultiTimeframeDatasets: (symbol: string, intervals: string[]) => Promise<FinderDataset[]>;
     generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
     buildRandomConfirmationParams: (strategyKeys: string[], options: FinderOptions) => Record<string, StrategyParams>;
+    /** Combo Finder: cached primary signals (generated once from locked primary config). */
+    comboPrimarySignals?: Signal[];
+    /** Combo Finder: primary config's resolved backtest settings for the merged run. */
+    comboPrimarySettings?: BacktestSettings;
+    /** Combo Finder: primary config's capital settings for the merged run. */
+    comboPrimaryCapital?: { initialCapital: number; positionSize: number; commission: number; sizingMode: "percent" | "fixed"; fixedTradeAmount: number };
 }
 
 export interface FinderRunCallbacks {
@@ -537,6 +544,12 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
         fixedTradeAmount,
         runTimeframes,
     } = params;
+    const effectiveInitialCapital = input.comboPrimaryCapital?.initialCapital ?? initialCapital;
+    const effectivePositionSize = input.comboPrimaryCapital?.positionSize ?? positionSize;
+    const effectiveCommission = input.comboPrimaryCapital?.commission ?? commission;
+    const effectiveSizingMode = input.comboPrimaryCapital?.sizingMode ?? sizingMode;
+    const effectiveFixedTradeAmount = input.comboPrimaryCapital?.fixedTradeAmount ?? fixedTradeAmount;
+    const effectiveBacktestSettings = input.comboPrimarySettings ?? input.settings;
 
     callbacks.setProgress(8, `Loading ${runTimeframes.length} timeframe datasets...`);
     callbacks.setStatus(`Loading timeframe datasets (${runTimeframes.length})...`);
@@ -557,8 +570,39 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
 
     const precomputedByInterval = new Map<string, ReturnType<typeof precomputeIndicators>>();
     for (const dataset of activeDatasets) {
-        precomputedByInterval.set(dataset.interval, precomputeIndicators(dataset.data, input.settings));
+        precomputedByInterval.set(dataset.interval, precomputeIndicators(dataset.data, effectiveBacktestSettings));
     }
+
+    // Combo mode: pre-generate primary signals per timeframe
+    const comboPrimarySignalsByInterval = new Map<string, Signal[]>();
+    if (input.comboPrimarySignals) {
+        // For multi-timeframe combo, we need primary signals from each TF's data.
+        // The primary strategy must be re-executed per timeframe.
+        const { strategyRegistry } = await import('../../strategyRegistry');
+        const { settingsManager } = await import('../settings-manager');
+        const { resolveBacktestSettingsFromRaw } = await import('../backtest-settings-resolver');
+        const primaryConfigName = input.options.comboPrimaryConfigName;
+        if (primaryConfigName) {
+            const primaryConfig = settingsManager.loadStrategyConfig(primaryConfigName);
+            if (primaryConfig) {
+                const primaryStrategy = strategyRegistry.get(primaryConfig.strategyKey);
+                if (primaryStrategy) {
+                    const primarySettings = resolveBacktestSettingsFromRaw(
+                        primaryConfig.backtestSettings as any,
+                        { captureSnapshots: false, coerceWithoutUiToggles: true }
+                    );
+                    for (const dataset of activeDatasets) {
+                        const primarySigs = applySignalPolarity(
+                            primaryStrategy.execute(dataset.data, primaryConfig.strategyParams),
+                            primarySettings
+                        );
+                        comboPrimarySignalsByInterval.set(dataset.interval, primarySigs);
+                    }
+                }
+            }
+        }
+    }
+
 
     const ranker = new FinderResultRanker(Math.max(input.options.topN, 50), input.options.sortPriority);
     let processedCount = 0;
@@ -575,6 +619,11 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
             for (const dataset of activeDatasets) {
                 try {
                     let signals = applySignalPolarity(job.strategy.execute(dataset.data, job.params), job.backtestSettings);
+                    // Combo mode: AND-merge with primary signals for this timeframe
+                    const tfPrimarySignals = comboPrimarySignalsByInterval.get(dataset.interval);
+                    if (tfPrimarySignals) {
+                        signals = mergeStrategySignals(tfPrimarySignals, signals, 'and') as Signal[];
+                    }
                     const evaluation = job.strategy.evaluate?.(dataset.data, job.params, signals);
                     const entryStats = evaluation?.entryStats;
                     const datasetUseCompact = dataset.data.length >= flags.compactBacktestThreshold;
@@ -584,11 +633,11 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                         : timeframeBacktestFn(
                             dataset.data,
                             signals,
-                            initialCapital,
-                            positionSize,
-                            commission,
-                            job.backtestSettings,
-                            { mode: sizingMode, fixedTradeAmount },
+                            effectiveInitialCapital,
+                            effectivePositionSize,
+                            effectiveCommission,
+                            effectiveBacktestSettings,
+                            { mode: effectiveSizingMode, fixedTradeAmount: effectiveFixedTradeAmount },
                             precomputedByInterval.get(dataset.interval)
                         );
 
@@ -600,7 +649,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
             }
 
             if (timeframeResults.length > 0) {
-                const aggregatedResult = aggregateFinderBacktestResults(timeframeResults, initialCapital);
+                const aggregatedResult = aggregateFinderBacktestResults(timeframeResults, effectiveInitialCapital);
                 if (input.options.tradeFilterEnabled && aggregatedResult.totalTrades < input.options.minTrades) {
                     processedCount++;
                     await maybeYieldByBudget(processedCount === totalRuns);
@@ -610,10 +659,12 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                 const lastDataTime = activeDatasets.length === 1
                     ? activeDatasets[0].data[activeDatasets[0].data.length - 1]?.time ?? null
                     : null;
-                const adjustment = buildSelectionResult(aggregatedResult, lastDataTime, initialCapital);
+                const adjustment = buildSelectionResult(aggregatedResult, lastDataTime, effectiveInitialCapital);
                 const enriched: FinderResult = {
                     key: job.key,
                     name: job.name,
+                    comboMode: Boolean(input.comboPrimarySignals),
+                    comboPrimaryConfigName: input.options.comboPrimaryConfigName,
                     timeframes: timeframeLabels,
                     params: job.params,
                     result: aggregatedResult,
@@ -691,6 +742,19 @@ function generateSignalsForJob(
 }
 
 /**
+ * In combo mode, AND-merges secondary signals with primarySignals.
+ * In normal mode, returns signals unchanged.
+ */
+function applyComboMerge(
+    signals: Signal[],
+    input: FinderRunInput
+): Signal[] {
+    if (!input.comboPrimarySignals) return signals;
+    return mergeStrategySignals(input.comboPrimarySignals, signals, 'and') as Signal[];
+}
+
+
+/**
  * Shared helper to run backtest and insert result.
  * Eliminates duplication between TS fallback paths.
  */
@@ -702,6 +766,7 @@ function runBacktestAndInsert(
     initialCapital: number,
     positionSize: number,
     commission: number,
+    backtestSettings: BacktestSettings,
     sizingMode: "percent" | "fixed",
     fixedTradeAmount: number,
     precomputed: ReturnType<typeof precomputeIndicators>,
@@ -719,7 +784,7 @@ function runBacktestAndInsert(
                 initialCapital,
                 positionSize,
                 commission,
-                job.backtestSettings,
+                backtestSettings,
                 { mode: sizingMode, fixedTradeAmount },
                 precomputed
             );
@@ -752,6 +817,12 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         fixedTradeAmount,
         rustSettings,
     } = params;
+    const effectiveInitialCapital = input.comboPrimaryCapital?.initialCapital ?? initialCapital;
+    const effectivePositionSize = input.comboPrimaryCapital?.positionSize ?? positionSize;
+    const effectiveCommission = input.comboPrimaryCapital?.commission ?? commission;
+    const effectiveSizingMode = input.comboPrimaryCapital?.sizingMode ?? sizingMode;
+    const effectiveFixedTradeAmount = input.comboPrimaryCapital?.fixedTradeAmount ?? fixedTradeAmount;
+    const effectiveBacktestSettings = input.comboPrimarySettings ?? input.settings;
 
     // Timing instrumentation for finder run
     const timing = {
@@ -768,7 +839,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         callbacks.setStatus("No closed candles available for finder run.");
         return { results: [] };
     }
-    const singleTfPrecomputed = precomputeIndicators(closedData, input.settings);
+    const singleTfPrecomputed = precomputeIndicators(closedData, effectiveBacktestSettings);
 
     callbacks.setProgress(10, `Running ${totalRuns} backtests (batch mode)...`);
 
@@ -778,29 +849,33 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     let endpointAdjustedCount = 0;
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
 
-    const rustPreferred = shouldUseRustEngine();
+    const comboActive = !!input.comboPrimarySignals;
+    const rustPreferred = !comboActive && shouldUseRustEngine();
     const rustHealthy = rustPreferred && await rustEngine.checkHealth();
-    const rustUnavailableReason = !rustPreferred
-        ? "engine preference is TypeScript"
-        : "Rust health check failed";
+    const rustUnavailableReason = comboActive
+        ? "combo mode requires TypeScript engine"
+        : !rustPreferred
+            ? "engine preference is TypeScript"
+            : "Rust health check failed";
     const canTryRustNativeFinder =
+        !comboActive &&
         input.options.mode === "random" &&
         !input.options.multiTimeframeEnabled &&
         !input.requiresTsEngine &&
         rustHealthy &&
         input.selectedStrategies.length === 1 &&
         Object.prototype.hasOwnProperty.call(builtInStrategies, input.selectedStrategies[0]?.key ?? "");
-    if (input.requiresTsEngine && !rustHealthy) {
+    if (!comboActive && input.requiresTsEngine && !rustHealthy) {
         debugLogger.info("[Finder] Realism settings enabled and Rust unavailable - forcing TypeScript engine.");
         callbacks.setStatus("Realism settings enabled - using TypeScript engine.");
-    } else if (input.requiresTsEngine && rustHealthy) {
+    } else if (!comboActive && input.requiresTsEngine && rustHealthy) {
         debugLogger.info("[Finder] Realism settings enabled - using Rust screening with TypeScript reconciliation for top results.");
     }
 
     // Adaptive cache mode decision based on dataset size OR batch count
     const cacheDecision = shouldUseRustCachedMode(flags.dataSize, totalRuns, flags.batchSize);
     let cacheId: string | null = null;
-    const useCachedMode = canTryRustNativeFinder ? false : cacheDecision.useCache;
+    const useCachedMode = comboActive || canTryRustNativeFinder ? false : cacheDecision.useCache;
     if (useCachedMode && rustHealthy) {
         const cacheReasonText = cacheDecision.reason === 'large_dataset'
             ? `large dataset (${flags.dataSize} bars)`
@@ -818,7 +893,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     const useRustCached = useCachedMode && cacheId !== null;
     const useRustDirect = rustHealthy && (!useCachedMode || cacheId === null);
     const rustAvailable = useRustCached || useRustDirect;
-    const useRustForFinder = rustAvailable;
+    const useRustForFinder = rustAvailable && !comboActive;
 
     if (flags.isExtremeDataset) {
         if (useRustForFinder) {
@@ -845,6 +920,10 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         callbacks.setStatus(`Using TypeScript engine (${rustUnavailableReason})...`);
     }
 
+    if (comboActive) {
+        callbacks.setStatus(`Combo mode: TS engine (${input.comboPrimarySignals!.length} primary signals)...`);
+    }
+
     const insertResult = (candidate: CandidateResult): void => {
         if (input.options.tradeFilterEnabled) {
             const rawTrades = candidate.result.totalTrades;
@@ -854,10 +933,12 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
             }
         }
 
-        const normalizedResult = normalizeResultSharpe(candidate.result, initialCapital);
-        const adjustment = buildSelection(normalizedResult, lastDataTime, initialCapital);
+        const normalizedResult = normalizeResultSharpe(candidate.result, effectiveInitialCapital);
+        const adjustment = buildSelection(normalizedResult, lastDataTime, effectiveInitialCapital);
         const enriched: FinderResult = {
             ...candidate,
+            comboMode: Boolean(input.comboPrimarySignals),
+            comboPrimaryConfigName: input.options.comboPrimaryConfigName,
             result: normalizedResult,
             selectionResult: adjustment.result,
             endpointAdjusted: adjustment.adjusted,
@@ -893,11 +974,11 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                 fastTop,
                 input,
                 closedData,
-                initialCapital,
-                positionSize,
-                commission,
-                sizingMode,
-                fixedTradeAmount,
+                effectiveInitialCapital,
+                effectivePositionSize,
+                effectiveCommission,
+                effectiveSizingMode,
+                effectiveFixedTradeAmount,
                 maybeYieldByBudget
             );
         }
@@ -967,7 +1048,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         return { results: trimmed, randomBenchmark };
     };
 
-    const rustNativeFinderEligible = canTryRustNativeFinder && useRustForFinder;
+    const rustNativeFinderEligible = canTryRustNativeFinder && useRustForFinder && !comboActive;
 
     if (rustNativeFinderEligible) {
         const selected = input.selectedStrategies[0];
@@ -1026,6 +1107,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         input.options.mode === "random" &&
         !useRustForFinder &&
         !input.options.multiTimeframeEnabled &&
+        input.selectedStrategies.length === 1 &&
         totalRuns >= 220;
 
     if (useTsRandomFunnel) {
@@ -1041,7 +1123,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         const quickMinTrades = input.options.tradeFilterEnabled
             ? Math.max(1, Math.floor(input.options.minTrades * shortCoverage * 0.35))
             : 0;
-        const shortPrecomputed = precomputeIndicators(shortData, input.settings);
+        const shortPrecomputed = precomputeIndicators(shortData, effectiveBacktestSettings);
         const quickCandidates: QuickFunnelCandidate[] = [];
         const shortlistCount = resolveQuickFunnelShortlistCount(allJobs.length, input.options.topN);
         const quickBacktestFn = runBacktestCompact;
@@ -1053,8 +1135,9 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
             const job = allJobs[i];
             try {
                 const tSignalStart = performance.now();
-                const signals = generateSignalsForJob(job, shortData);
+                let signals = generateSignalsForJob(job, shortData);
                 timing.signalGeneration += performance.now() - tSignalStart;
+                signals = applyComboMerge(signals, input);
 
                 const tQuickStart = performance.now();
                 const evaluation = job.strategy.evaluate?.(shortData, job.params, signals);
@@ -1068,16 +1151,16 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                     : quickBacktestFn(
                         shortData,
                         signals,
-                        initialCapital,
-                        positionSize,
-                        commission,
-                        job.backtestSettings,
-                        { mode: sizingMode, fixedTradeAmount },
+                        effectiveInitialCapital,
+                        effectivePositionSize,
+                        effectiveCommission,
+                        effectiveBacktestSettings,
+                        { mode: effectiveSizingMode, fixedTradeAmount: effectiveFixedTradeAmount },
                         shortPrecomputed
                     );
                 timing.tsFallback += performance.now() - tQuickStart;
 
-                const quickResult = normalizeResultSharpe(quickRawResult, initialCapital);
+                const quickResult = normalizeResultSharpe(quickRawResult, effectiveInitialCapital);
                 if (quickMinTrades > 0 && quickResult.totalTrades < quickMinTrades) {
                     signals.length = 0;
                     continue;
@@ -1112,8 +1195,9 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
             const { job } = shortlisted[i];
             try {
                 const tSignalStart = performance.now();
-                const signals = generateSignalsForJob(job, closedData);
+                let signals = generateSignalsForJob(job, closedData);
                 timing.signalGeneration += performance.now() - tSignalStart;
+                signals = applyComboMerge(signals, input);
 
                 const tTsStart = performance.now();
                 runBacktestAndInsert(
@@ -1121,11 +1205,12 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                     signals,
                     job,
                     backtestFn,
-                    initialCapital,
-                    positionSize,
-                    commission,
-                    sizingMode,
-                    fixedTradeAmount,
+                    effectiveInitialCapital,
+                    effectivePositionSize,
+                    effectiveCommission,
+                    effectiveBacktestSettings,
+                    effectiveSizingMode,
+                    effectiveFixedTradeAmount,
                     singleTfPrecomputed,
                     insertResult,
                     (durationMs) => { timing.resultInsertion += durationMs; }
@@ -1173,17 +1258,19 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                     const signals = generateSignalsForJob(job, closedData);
                     timing.signalGeneration += performance.now() - tSignalStart;
 
+                    const mergedSignals = applyComboMerge(signals, input);
                     const tTsStart = performance.now();
                     runBacktestAndInsert(
                         closedData,
-                        signals,
+                        mergedSignals,
                         job,
                         backtestFn,
-                        initialCapital,
-                        positionSize,
-                        commission,
-                        sizingMode,
-                        fixedTradeAmount,
+                        effectiveInitialCapital,
+                        effectivePositionSize,
+                        effectiveCommission,
+                        effectiveBacktestSettings,
+                        effectiveSizingMode,
+                        effectiveFixedTradeAmount,
                         singleTfPrecomputed,
                         insertResult,
                         (durationMs) => { timing.resultInsertion += durationMs; }
@@ -1227,6 +1314,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                 initialCapital,
                 positionSize,
                 commission,
+                run.job.backtestSettings,
                 sizingMode,
                 fixedTradeAmount,
                 singleTfPrecomputed,
@@ -1400,7 +1488,9 @@ async function reconcileSingleTimeframeTopResults(
     const strategyByKey = new Map(input.selectedStrategies.map((item) => [item.key, item.strategy]));
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
     const rustSettings = sanitizeBacktestSettingsForRust(input.settings);
-    const precomputed = precomputeIndicators(closedData, input.settings);
+    const comboActive = Boolean(input.comboPrimarySignals);
+    const comboBacktestSettings = input.comboPrimarySettings ?? input.settings;
+    const precomputed = precomputeIndicators(closedData, comboBacktestSettings);
     const reconciled: FinderResult[] = [];
 
     for (const candidate of candidates) {
@@ -1413,17 +1503,18 @@ async function reconcileSingleTimeframeTopResults(
         try {
             const { backtestSettings } = resolveFinderRiskOverrides(input.settings, rustSettings, candidate.params);
             const signals = applySignalPolarity(strategy.execute(closedData, candidate.params), backtestSettings);
-            const evaluation = strategy.evaluate?.(closedData, candidate.params, signals);
+            const mergedSignals = comboActive ? applyComboMerge(signals, input) : signals;
+            const evaluation = strategy.evaluate?.(closedData, candidate.params, mergedSignals);
             const entryStats = evaluation?.entryStats;
             const rawResult = strategy.metadata?.role === "entry" && entryStats
                 ? buildEntryBacktestResult(entryStats)
                 : runBacktest(
                     closedData,
-                    signals,
+                    mergedSignals,
                     initialCapital,
                     positionSize,
                     commission,
-                    backtestSettings,
+                    comboBacktestSettings,
                     { mode: sizingMode, fixedTradeAmount },
                     precomputed
                 );
@@ -1910,6 +2001,8 @@ async function evaluateRobustCell(args: {
     const result: FinderResult = {
         key: strategyPlan.key,
         name: `${strategyPlan.name} (${dataset.interval})`,
+        comboMode: Boolean(input.comboPrimarySignals),
+        comboPrimaryConfigName: input.options.comboPrimaryConfigName,
         timeframes: [dataset.interval],
         params: best.params,
         result: normalizeResultSharpe(best.wfResult.combinedOOSTrades, input.initialCapital),

@@ -257,6 +257,14 @@ export interface BacktestSettings {
     adxMax?: number;
 
     tradeFilterMode?: TradeFilterMode;
+    /** @deprecated Legacy key retained for backward compatibility when loading old configs */
+    entryConfirmation?: string;
+    /** @deprecated Legacy UI toggle retained for compatibility with persisted finder/scanner configs */
+    entrySettingsToggle?: boolean;
+    /** Optional secondary confirmation strategies (legacy combiner path). */
+    confirmationStrategies?: string[];
+    /** Optional params keyed by confirmation strategy id. */
+    confirmationStrategyParams?: Record<string, StrategyParams>;
     confirmLookback?: number;
     volumeSmaPeriod?: number;
     volumeMultiplier?: number;

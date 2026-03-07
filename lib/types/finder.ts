@@ -27,6 +27,8 @@ export interface FinderOptions {
     tradeFilterEnabled: boolean;
     minTrades: number;
     maxTrades: number;
+    comboEnabled?: boolean;
+    comboPrimaryConfigName?: string;
 }
 
 export interface EndpointSelectionAdjustment {
@@ -38,6 +40,8 @@ export interface EndpointSelectionAdjustment {
 export interface FinderResult {
     key: string;
     name: string;
+    comboMode?: boolean;
+    comboPrimaryConfigName?: string;
     timeframes?: string[];
     params: StrategyParams;
     /** Raw backtest result (includes any final forced liquidation). */
