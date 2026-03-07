@@ -152,6 +152,58 @@
 
 }
 
+.finder-benchmark {
+
+    margin-top: var(--space-2);
+
+    padding: var(--space-2) var(--space-2-5);
+
+    border: 1px solid var(--glass-border);
+
+    border-radius: var(--radius-m);
+
+    background: hsl(var(--hsl-surface-3) / 0.35);
+
+}
+
+.finder-benchmark-title {
+
+    font-size: var(--font-size-xs);
+
+    letter-spacing: var(--tracking-wide);
+
+    text-transform: uppercase;
+
+    color: var(--text-tertiary);
+
+    margin-bottom: var(--space-1-5);
+
+}
+
+.finder-benchmark-body {
+
+    font-size: var(--font-size-xs);
+
+    color: var(--text-secondary);
+
+}
+
+.finder-benchmark-grid {
+
+    display: grid;
+
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+
+    gap: var(--space-1) var(--space-2);
+
+}
+
+.finder-benchmark-grid strong {
+
+    color: var(--text-primary);
+
+}
+
 
 
 #finderMultiTimeframeSettings.is-disabled {

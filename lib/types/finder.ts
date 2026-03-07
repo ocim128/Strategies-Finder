@@ -17,6 +17,7 @@ export interface FinderOptions {
     sortPriority: FinderMetric[];
     useAdvancedSort: boolean;
     robustSeed?: number;
+    randomSeed?: number;
     multiTimeframeEnabled?: boolean;
     timeframes?: string[];
     topN: number;
@@ -67,4 +68,20 @@ export interface FinderResult {
         robustScore: number;
         rejectionReasons: Record<string, number>;
     };
+}
+
+export interface FinderRandomBenchmark {
+    pipeline: 'standard' | 'rust_native' | 'ts_funnel';
+    engineMode: string;
+    totalRuns: number;
+    processedRuns: number;
+    prescreenRuns: number;
+    shortlistRuns: number;
+    fullRuns: number;
+    shown: number;
+    shortBars: number;
+    shortCoverage: number;
+    rustCandidateCount: number;
+    runsPerSecond: number;
+    msPerRun: number;
 }

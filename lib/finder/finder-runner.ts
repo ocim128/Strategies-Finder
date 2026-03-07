@@ -16,6 +16,7 @@ import {
 import { rustEngine } from "../rust-engine-client";
 import { shouldUseRustEngine } from "../engine-preferences";
 import { debugLogger, robustAuditSink } from "../debug-logger";
+import { strategies as builtInStrategies } from "../strategies/library";
 
 import { calculateSharpeRatioFromReturns } from "../strategies/performance-metrics";
 import { buildSelectionResult } from "./endpoint";
@@ -23,7 +24,7 @@ import { aggregateFinderBacktestResults, compareFinderResults } from "./finder-e
 import { FinderResultRanker } from "./finder-result-ranker";
 import { hasNonZeroSnapshotFilter, sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { FinderDataset } from "./finder-timeframe-loader";
-import type { EndpointSelectionAdjustment, FinderOptions, FinderResult } from "../types/finder";
+import type { EndpointSelectionAdjustment, FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
 import { trimToClosedCandles } from "../closed-candle-utils";
 
 export interface FinderSelectedStrategy {
@@ -59,6 +60,7 @@ export interface FinderRunCallbacks {
 
 export interface FinderRunOutput {
     results: FinderResult[];
+    randomBenchmark?: FinderRandomBenchmark;
 }
 
 type StrategyPlan = {
@@ -140,6 +142,28 @@ function compactSignalsForRust(signals: Signal[]): CompactSignal[] {
 
 type CandidateResult = Omit<FinderResult, "selectionResult" | "endpointAdjusted" | "endpointRemovedTrades">;
 
+type RustFinderCandidatePayload = {
+    key: string;
+    name: string;
+    params: StrategyParams;
+    result: BacktestResult;
+};
+
+type QuickFunnelCandidate = {
+    job: ParamJob;
+    result: BacktestResult;
+};
+
+type RandomBenchmarkMeta = {
+    pipeline: "standard" | "rust_native" | "ts_funnel";
+    prescreenRuns: number;
+    fullRuns: number;
+    shortlistRuns: number;
+    shortBars: number;
+    shortCoverage: number;
+    rustCandidateCount: number;
+};
+
 function clampPercentValue(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
 }
@@ -190,6 +214,143 @@ function resolveFinderRiskOverrides(
     return {
         backtestSettings: hasBacktestOverrides ? { ...settings, ...backtestOverrides } : settings,
         rustBacktestSettings: hasRustOverrides ? { ...rustSettings, ...rustOverrides } : rustSettings,
+    };
+}
+
+function isFiniteNumber(value: unknown): value is number {
+    return typeof value === "number" && Number.isFinite(value);
+}
+
+function coerceFiniteNumber(value: unknown, fallback = 0): number {
+    if (isFiniteNumber(value)) return value;
+    const asNumber = Number(value);
+    return Number.isFinite(asNumber) ? asNumber : fallback;
+}
+
+function normalizeRustBacktestResult(raw: unknown): BacktestResult | null {
+    if (!raw || typeof raw !== "object") return null;
+    const source = raw as Record<string, unknown>;
+    const totalTrades = Math.max(0, Math.round(coerceFiniteNumber(source.totalTrades, 0)));
+    const winningTrades = Math.max(0, Math.round(coerceFiniteNumber(source.winningTrades, 0)));
+    const losingTrades = Math.max(0, Math.round(coerceFiniteNumber(source.losingTrades, 0)));
+    if (!Number.isFinite(totalTrades) || !Number.isFinite(winningTrades) || !Number.isFinite(losingTrades)) {
+        return null;
+    }
+
+    const trades = Array.isArray(source.trades) ? source.trades : [];
+    const equityCurve = Array.isArray(source.equityCurve) ? source.equityCurve : [];
+    return {
+        trades: trades as BacktestResult["trades"],
+        netProfit: coerceFiniteNumber(source.netProfit, 0),
+        netProfitPercent: coerceFiniteNumber(source.netProfitPercent, 0),
+        winRate: coerceFiniteNumber(source.winRate, 0),
+        expectancy: coerceFiniteNumber(source.expectancy, 0),
+        avgTrade: coerceFiniteNumber(source.avgTrade, 0),
+        profitFactor: coerceFiniteNumber(source.profitFactor, 0),
+        maxDrawdown: coerceFiniteNumber(source.maxDrawdown, 0),
+        maxDrawdownPercent: coerceFiniteNumber(source.maxDrawdownPercent, 0),
+        totalTrades,
+        winningTrades,
+        losingTrades,
+        avgWin: coerceFiniteNumber(source.avgWin, 0),
+        avgLoss: coerceFiniteNumber(source.avgLoss, 0),
+        sharpeRatio: coerceFiniteNumber(source.sharpeRatio, 0),
+        equityCurve: equityCurve as BacktestResult["equityCurve"],
+    };
+}
+
+function extractRustFinderCandidates(
+    raw: unknown,
+    strategyKey: string,
+    strategyName: string,
+    fallbackParams: StrategyParams
+): RustFinderCandidatePayload[] {
+    if (!Array.isArray(raw)) return [];
+    const candidates: RustFinderCandidatePayload[] = [];
+
+    for (const entry of raw) {
+        if (!entry || typeof entry !== "object") continue;
+        const source = entry as Record<string, unknown>;
+        const rawParams = (source.params ?? source.parameters ?? source.bestParams) as Record<string, unknown> | undefined;
+        const normalizedParams: StrategyParams = {};
+        if (rawParams && typeof rawParams === "object") {
+            for (const [paramKey, value] of Object.entries(rawParams)) {
+                const numeric = Number(value);
+                if (Number.isFinite(numeric)) {
+                    normalizedParams[paramKey] = numeric;
+                }
+            }
+        }
+        const params = Object.keys(normalizedParams).length > 0
+            ? normalizedParams
+            : { ...fallbackParams };
+
+        const rawResult =
+            source.result ??
+            source.backtestResult ??
+            source.metrics ??
+            source;
+        const normalizedResult = normalizeRustBacktestResult(rawResult);
+        if (!normalizedResult) continue;
+
+        candidates.push({
+            key: strategyKey,
+            name: strategyName,
+            params,
+            result: normalizedResult,
+        });
+    }
+
+    return candidates;
+}
+
+function buildRustFinderBaseParams(strategy: Strategy, settings: BacktestSettings): StrategyParams {
+    const baseParams: StrategyParams = { ...strategy.defaultParams };
+    if (settings.riskMode !== "percentage") {
+        return baseParams;
+    }
+
+    if (settings.stopLossEnabled && Number.isFinite(settings.stopLossPercent)) {
+        baseParams.stopLossPercent = clampPercentValue(Number(settings.stopLossPercent), 0, 15);
+    }
+    if (settings.takeProfitEnabled && Number.isFinite(settings.takeProfitPercent)) {
+        baseParams.takeProfitPercent = clampPercentValue(Number(settings.takeProfitPercent), 0, 100);
+    }
+    if (settings.riskMaxHoldEnabled && Number.isFinite(settings.riskMaxHoldBars)) {
+        baseParams.riskMaxHoldBars = clampMaxHoldBars(Number(settings.riskMaxHoldBars));
+    }
+    return baseParams;
+}
+
+function selectPrescreenDataSlice(data: OHLCVData[]): OHLCVData[] {
+    if (data.length <= 900) return data;
+    const targetByRatio = Math.floor(data.length * 0.15);
+    const targetLength = Math.min(Math.max(targetByRatio, 900), 4000);
+    return data.slice(Math.max(0, data.length - targetLength));
+}
+
+function resolveQuickFunnelShortlistCount(totalRuns: number, topN: number): number {
+    if (totalRuns <= 200) return totalRuns;
+    const ratio = totalRuns >= 1200 ? 0.15 : 0.25;
+    const ratioCount = Math.ceil(totalRuns * ratio);
+    const absoluteFloor = Math.max(topN * 20, 60);
+    return Math.max(1, Math.min(totalRuns, Math.max(ratioCount, absoluteFloor)));
+}
+
+function buildComparableFinderResult(
+    key: string,
+    name: string,
+    params: StrategyParams,
+    result: BacktestResult
+): FinderResult {
+    return {
+        key,
+        name,
+        params,
+        result,
+        selectionResult: result,
+        endpointAdjusted: false,
+        endpointRemovedTrades: 0,
     };
 }
 
@@ -622,6 +783,13 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     const rustUnavailableReason = !rustPreferred
         ? "engine preference is TypeScript"
         : "Rust health check failed";
+    const canTryRustNativeFinder =
+        input.options.mode === "random" &&
+        !input.options.multiTimeframeEnabled &&
+        !input.requiresTsEngine &&
+        rustHealthy &&
+        input.selectedStrategies.length === 1 &&
+        Object.prototype.hasOwnProperty.call(builtInStrategies, input.selectedStrategies[0]?.key ?? "");
     if (input.requiresTsEngine && !rustHealthy) {
         debugLogger.info("[Finder] Realism settings enabled and Rust unavailable - forcing TypeScript engine.");
         callbacks.setStatus("Realism settings enabled - using TypeScript engine.");
@@ -632,7 +800,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     // Adaptive cache mode decision based on dataset size OR batch count
     const cacheDecision = shouldUseRustCachedMode(flags.dataSize, totalRuns, flags.batchSize);
     let cacheId: string | null = null;
-    const useCachedMode = cacheDecision.useCache;
+    const useCachedMode = canTryRustNativeFinder ? false : cacheDecision.useCache;
     if (useCachedMode && rustHealthy) {
         const cacheReasonText = cacheDecision.reason === 'large_dataset'
             ? `large dataset (${flags.dataSize} bars)`
@@ -708,6 +876,286 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         }
         ranker.offer(enriched);
     };
+
+    const finalizeRun = async (
+        processedRunCount: number,
+        batchCount: number,
+        engineMode: string,
+        benchmarkMeta?: RandomBenchmarkMeta
+    ): Promise<FinderRunOutput> => {
+        const fastTop = ranker.toSortedArray(input.options.topN);
+        let trimmed = fastTop;
+        const shouldReconcileTopResults = flags.shouldUseCompactBacktest || useRustForFinder;
+        if (shouldReconcileTopResults && fastTop.length > 0) {
+            callbacks.setStatus("Reconciling top results with full backtest...");
+            callbacks.setProgress(99, "Reconciling top results...");
+            trimmed = await reconcileSingleTimeframeTopResults(
+                fastTop,
+                input,
+                closedData,
+                initialCapital,
+                positionSize,
+                commission,
+                sizingMode,
+                fixedTradeAmount,
+                maybeYieldByBudget
+            );
+        }
+
+        endpointAdjustedCount = trimmed.reduce((count, item) => count + (item.endpointAdjusted ? 1 : 0), 0);
+        callbacks.setProgress(100, totalRuns > 0 ? `${totalRuns}/${totalRuns} runs` : "Complete");
+        const statusParts = [`${processedRunCount} runs`];
+        if (input.options.tradeFilterEnabled) {
+            statusParts.push(`${filteredCount} matched`);
+        }
+        if (endpointAdjustedCount > 0) {
+            statusParts.push(`${endpointAdjustedCount} endpoint-adjusted`);
+        }
+        statusParts.push(`${trimmed.length} shown`);
+        if (flags.isVeryLargeDataset) {
+            statusParts.push("(memory-efficient mode)");
+        }
+        callbacks.setStatus(`Complete. ${statusParts.join(", ")}.`);
+
+        timing.total = performance.now() - runStart;
+        debugLogger.event('finder.timing_breakdown', {
+            datasetSize: flags.dataSize,
+            totalRuns,
+            engineMode,
+            batchCount,
+            durations: {
+                signalGeneration: timing.signalGeneration,
+                rustBatchRequest: timing.rustBatchRequest,
+                tsFallback: timing.tsFallback,
+                resultInsertion: timing.resultInsertion,
+                total: timing.total,
+            },
+        });
+
+        let randomBenchmark: FinderRandomBenchmark | undefined;
+        if (input.options.mode === "random" && benchmarkMeta) {
+            const seconds = Math.max(0.001, timing.total / 1000);
+            randomBenchmark = {
+                pipeline: benchmarkMeta.pipeline,
+                engineMode,
+                totalRuns,
+                processedRuns: processedRunCount,
+                prescreenRuns: benchmarkMeta.prescreenRuns,
+                shortlistRuns: benchmarkMeta.shortlistRuns,
+                fullRuns: benchmarkMeta.fullRuns,
+                shown: trimmed.length,
+                shortBars: benchmarkMeta.shortBars,
+                shortCoverage: Number(benchmarkMeta.shortCoverage.toFixed(4)),
+                rustCandidateCount: benchmarkMeta.rustCandidateCount,
+                runsPerSecond: Number((processedRunCount / seconds).toFixed(2)),
+                msPerRun: Number((timing.total / Math.max(1, processedRunCount)).toFixed(2)),
+            };
+            debugLogger.event("finder.random_benchmark", {
+                symbol: input.symbol,
+                interval: input.interval,
+                ...randomBenchmark,
+                durations: {
+                    signalGeneration: timing.signalGeneration,
+                    rustBatchRequest: timing.rustBatchRequest,
+                    tsFallback: timing.tsFallback,
+                    resultInsertion: timing.resultInsertion,
+                    total: timing.total,
+                },
+            });
+        }
+
+        return { results: trimmed, randomBenchmark };
+    };
+
+    const rustNativeFinderEligible = canTryRustNativeFinder && useRustForFinder;
+
+    if (rustNativeFinderEligible) {
+        const selected = input.selectedStrategies[0];
+        callbacks.setStatus("Using Rust native random finder...");
+        callbacks.setProgress(12, "Rust native finder running...");
+
+        const baseParams = buildRustFinderBaseParams(selected.strategy, input.settings);
+        const rustFinderOptions = {
+            mode: "random" as const,
+            sortPriority: input.options.sortPriority,
+            useAdvancedSort: input.options.useAdvancedSort,
+            topN: Math.max(input.options.topN * 3, 30),
+            steps: input.options.steps,
+            rangePercent: input.options.rangePercent,
+            maxRuns: input.options.maxRuns,
+            tradeFilterEnabled: input.options.tradeFilterEnabled,
+            minTrades: input.options.minTrades,
+            maxTrades: input.options.maxTrades,
+        };
+
+        const rustRawResults = await rustEngine.runFinder(
+            closedData,
+            selected.key,
+            baseParams,
+            initialCapital,
+            positionSize,
+            commission,
+            rustSettings,
+            rustFinderOptions,
+            (progress) => {
+                const percent = Number.isFinite(progress.percent) ? Math.max(12, Math.min(97, progress.percent)) : 12;
+                callbacks.setProgress(percent, progress.status || "Rust native finder running...");
+            }
+        );
+
+        const rustCandidates = extractRustFinderCandidates(rustRawResults, selected.key, selected.name, baseParams);
+        if (rustCandidates.length > 0) {
+            for (const candidate of rustCandidates) {
+                insertResult(candidate);
+            }
+            return finalizeRun(totalRuns, 1, "rust_native_finder", {
+                pipeline: "rust_native",
+                prescreenRuns: 0,
+                fullRuns: totalRuns,
+                shortlistRuns: rustCandidates.length,
+                shortBars: closedData.length,
+                shortCoverage: 1,
+                rustCandidateCount: rustCandidates.length,
+            });
+        }
+
+        debugLogger.warn("[Finder] Rust native finder returned no usable candidates. Falling back to batch pipeline.");
+    }
+
+    const useTsRandomFunnel =
+        input.options.mode === "random" &&
+        !useRustForFinder &&
+        !input.options.multiTimeframeEnabled &&
+        totalRuns >= 220;
+
+    if (useTsRandomFunnel) {
+        const allJobs: ParamJob[] = [];
+        while (allJobs.length < totalRuns) {
+            const jobs = nextJobBatch(Math.max(flags.batchSize, 64));
+            if (jobs.length === 0) break;
+            allJobs.push(...jobs);
+        }
+
+        const shortData = selectPrescreenDataSlice(closedData);
+        const shortCoverage = Math.min(1, shortData.length / Math.max(1, closedData.length));
+        const quickMinTrades = input.options.tradeFilterEnabled
+            ? Math.max(1, Math.floor(input.options.minTrades * shortCoverage * 0.35))
+            : 0;
+        const shortPrecomputed = precomputeIndicators(shortData, input.settings);
+        const quickCandidates: QuickFunnelCandidate[] = [];
+        const shortlistCount = resolveQuickFunnelShortlistCount(allJobs.length, input.options.topN);
+        const quickBacktestFn = runBacktestCompact;
+
+        callbacks.setStatus(`Random funnel stage A/B: ${allJobs.length} quick checks...`);
+        callbacks.setProgress(10, `Stage A/B on ${shortData.length} bars...`);
+
+        for (let i = 0; i < allJobs.length; i++) {
+            const job = allJobs[i];
+            try {
+                const tSignalStart = performance.now();
+                const signals = generateSignalsForJob(job, shortData);
+                timing.signalGeneration += performance.now() - tSignalStart;
+
+                const tQuickStart = performance.now();
+                const evaluation = job.strategy.evaluate?.(shortData, job.params, signals);
+                const entryStats = evaluation?.entryStats;
+                if (job.strategy.metadata?.role !== "entry" && signals.length === 0) {
+                    signals.length = 0;
+                    continue;
+                }
+                const quickRawResult = job.strategy.metadata?.role === "entry" && entryStats
+                    ? buildEntryBacktestResult(entryStats)
+                    : quickBacktestFn(
+                        shortData,
+                        signals,
+                        initialCapital,
+                        positionSize,
+                        commission,
+                        job.backtestSettings,
+                        { mode: sizingMode, fixedTradeAmount },
+                        shortPrecomputed
+                    );
+                timing.tsFallback += performance.now() - tQuickStart;
+
+                const quickResult = normalizeResultSharpe(quickRawResult, initialCapital);
+                if (quickMinTrades > 0 && quickResult.totalTrades < quickMinTrades) {
+                    signals.length = 0;
+                    continue;
+                }
+                quickCandidates.push({ job, result: quickResult });
+                signals.length = 0;
+            } catch (error) {
+                console.warn(`[Finder] Random funnel prescreen failed for ${job.key}:`, error);
+            }
+
+            if ((i + 1) % 20 === 0 || i + 1 === allJobs.length) {
+                const progress = 10 + ((i + 1) / Math.max(1, allJobs.length)) * 45;
+                if (shouldUpdateUi(i + 1 === allJobs.length)) {
+                    callbacks.setProgress(progress, `Stage A/B ${i + 1}/${allJobs.length}`);
+                }
+            }
+            await maybeYieldByBudget(i + 1 === allJobs.length);
+        }
+
+        quickCandidates.sort((a, b) => compareFinderResults(
+            buildComparableFinderResult(a.job.key, a.job.name, a.job.params, a.result),
+            buildComparableFinderResult(b.job.key, b.job.name, b.job.params, b.result),
+            input.options.sortPriority
+        ));
+        const shortlisted = quickCandidates.slice(0, shortlistCount);
+
+        callbacks.setStatus(`Random funnel stage C: full backtest on ${shortlisted.length}/${allJobs.length} survivors...`);
+        callbacks.setProgress(56, `Stage C ${shortlisted.length} survivors`);
+
+        const backtestFn = flags.shouldUseCompactBacktest ? runBacktestCompact : runBacktest;
+        for (let i = 0; i < shortlisted.length; i++) {
+            const { job } = shortlisted[i];
+            try {
+                const tSignalStart = performance.now();
+                const signals = generateSignalsForJob(job, closedData);
+                timing.signalGeneration += performance.now() - tSignalStart;
+
+                const tTsStart = performance.now();
+                runBacktestAndInsert(
+                    closedData,
+                    signals,
+                    job,
+                    backtestFn,
+                    initialCapital,
+                    positionSize,
+                    commission,
+                    sizingMode,
+                    fixedTradeAmount,
+                    singleTfPrecomputed,
+                    insertResult,
+                    (durationMs) => { timing.resultInsertion += durationMs; }
+                );
+                timing.tsFallback += performance.now() - tTsStart;
+            } catch (error) {
+                console.warn(`[Finder] Random funnel full run failed for ${job.key}:`, error);
+            }
+
+            processedCount = i + 1;
+            if ((i + 1) % 10 === 0 || i + 1 === shortlisted.length) {
+                const progress = 56 + ((i + 1) / Math.max(1, shortlisted.length)) * 41;
+                if (shouldUpdateUi(i + 1 === shortlisted.length)) {
+                    callbacks.setProgress(progress, `Stage C ${i + 1}/${shortlisted.length}`);
+                    callbacks.setStatus(`Processing funnel survivors ${i + 1}/${shortlisted.length}...`);
+                }
+            }
+            await maybeYieldByBudget(i + 1 === shortlisted.length);
+        }
+
+        return finalizeRun(allJobs.length, 1, "typescript_random_funnel", {
+            pipeline: "ts_funnel",
+            prescreenRuns: allJobs.length,
+            fullRuns: shortlisted.length,
+            shortlistRuns: shortlisted.length,
+            shortBars: shortData.length,
+            shortCoverage,
+            rustCandidateCount: 0,
+        });
+    }
 
     const totalBatches = Math.ceil(totalRuns / flags.batchSize);
     let batchNum = 0;
@@ -922,57 +1370,20 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         await maybeYieldByBudget(true);
     }
 
-    const fastTop = ranker.toSortedArray(input.options.topN);
-    let trimmed = fastTop;
-    const shouldReconcileTopResults = flags.shouldUseCompactBacktest || useRustForFinder;
-    if (shouldReconcileTopResults && fastTop.length > 0) {
-        callbacks.setStatus("Reconciling top results with full backtest...");
-        callbacks.setProgress(99, "Reconciling top results...");
-        trimmed = await reconcileSingleTimeframeTopResults(
-            fastTop,
-            input,
-            closedData,
-            initialCapital,
-            positionSize,
-            commission,
-            sizingMode,
-            fixedTradeAmount,
-            maybeYieldByBudget
-        );
-    }
-
-    endpointAdjustedCount = trimmed.reduce((count, item) => count + (item.endpointAdjusted ? 1 : 0), 0);
-    callbacks.setProgress(100, totalRuns > 0 ? `${totalRuns}/${totalRuns} runs` : "Complete");
-    const statusParts = [`${processedCount} runs`];
-    if (input.options.tradeFilterEnabled) {
-        statusParts.push(`${filteredCount} matched`);
-    }
-    if (endpointAdjustedCount > 0) {
-        statusParts.push(`${endpointAdjustedCount} endpoint-adjusted`);
-    }
-    statusParts.push(`${trimmed.length} shown`);
-    if (flags.isVeryLargeDataset) {
-        statusParts.push("(memory-efficient mode)");
-    }
-    callbacks.setStatus(`Complete. ${statusParts.join(", ")}.`);
-
-    // Emit timing breakdown event
-    timing.total = performance.now() - runStart;
-    debugLogger.event('finder.timing_breakdown', {
-        datasetSize: flags.dataSize,
-        totalRuns,
-        engineMode: useRustForFinder ? (cacheId ? 'rust_cached' : 'rust_direct') : 'typescript',
-        batchCount: totalBatches,
-        durations: {
-            signalGeneration: timing.signalGeneration,
-            rustBatchRequest: timing.rustBatchRequest,
-            tsFallback: timing.tsFallback,
-            resultInsertion: timing.resultInsertion,
-            total: timing.total,
-        },
-    });
-
-    return { results: trimmed };
+    return finalizeRun(
+        processedCount,
+        totalBatches,
+        useRustForFinder ? (cacheId ? "rust_cached" : "rust_direct") : "typescript",
+        {
+            pipeline: "standard",
+            prescreenRuns: 0,
+            fullRuns: processedCount,
+            shortlistRuns: processedCount,
+            shortBars: closedData.length,
+            shortCoverage: 1,
+            rustCandidateCount: 0,
+        }
+    );
 }
 
 async function reconcileSingleTimeframeTopResults(

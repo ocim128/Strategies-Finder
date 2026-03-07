@@ -1,5 +1,5 @@
 import { getRequiredElement, setVisible } from "../dom-utils";
-import type { FinderResult } from "../types/finder";
+import type { FinderMode, FinderRandomBenchmark, FinderResult } from "../types/finder";
 import type { StrategyParams } from "../types/strategies";
 
 export class FinderUI {
@@ -9,6 +9,8 @@ export class FinderUI {
     private progressFill: HTMLElement | null = null;
     private progressLabel: HTMLElement | null = null;
     private statusElement: HTMLElement | null = null;
+    private benchmarkContainer: HTMLElement | null = null;
+    private benchmarkBody: HTMLElement | null = null;
     private lastProgressActive: boolean | null = null;
     private lastProgressPercent = -1;
     private lastProgressText = "";
@@ -50,6 +52,19 @@ export class FinderUI {
             this.statusElement = getRequiredElement("finderStatus");
         }
         return this.statusElement;
+    }
+
+    private getBenchmarkElements(): { container: HTMLElement; body: HTMLElement } {
+        if (!this.benchmarkContainer) {
+            this.benchmarkContainer = getRequiredElement("finderBenchmark");
+        }
+        if (!this.benchmarkBody) {
+            this.benchmarkBody = getRequiredElement("finderBenchmarkBody");
+        }
+        return {
+            container: this.benchmarkContainer,
+            body: this.benchmarkBody
+        };
     }
 
     public renderResults(results: FinderResult[]): void {
@@ -153,6 +168,30 @@ export class FinderUI {
         if (this.lastStatusText === text) return;
         this.getStatusElement().textContent = text;
         this.lastStatusText = text;
+    }
+
+    public renderRandomBenchmark(mode: FinderMode, benchmark?: FinderRandomBenchmark): void {
+        const { container, body } = this.getBenchmarkElements();
+        if (mode !== "random" || !benchmark) {
+            container.style.display = "none";
+            body.textContent = "";
+            return;
+        }
+
+        const coveragePct = (benchmark.shortCoverage * 100).toFixed(1);
+        body.innerHTML = `
+            <div class="finder-benchmark-grid">
+                <span><strong>Pipeline:</strong> ${benchmark.pipeline}</span>
+                <span><strong>Engine:</strong> ${benchmark.engineMode}</span>
+                <span><strong>Throughput:</strong> ${benchmark.runsPerSecond.toFixed(2)} runs/s</span>
+                <span><strong>Cost:</strong> ${benchmark.msPerRun.toFixed(2)} ms/run</span>
+                <span><strong>Runs:</strong> ${benchmark.processedRuns}/${benchmark.totalRuns}</span>
+                <span><strong>Stages:</strong> pre ${benchmark.prescreenRuns}, short ${benchmark.shortlistRuns}, full ${benchmark.fullRuns}</span>
+                <span><strong>Short slice:</strong> ${benchmark.shortBars} bars (${coveragePct}%)</span>
+                <span><strong>Shown:</strong> ${benchmark.shown}</span>
+            </div>
+        `;
+        container.style.display = "";
     }
 
     private createMetricChip(text: string): HTMLSpanElement {

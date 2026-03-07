@@ -194,11 +194,19 @@ export class FinderParamSpace {
             }
         }
 
-        let attempts = 0;
         const maxAttempts = optimizeForRandom
             ? Math.max(targetRuns * 20, 200)
             : options.maxRuns * 10;
         const skipDedup = !optimizeForRandom && options.maxRuns >= 50;
+
+        if (optimizeForRandom && combos.length < targetRuns) {
+            this.generateLatinHypercubeCombos(toggleKeys, numericRanges, combos, seen, targetRuns, rand);
+            if (combos.length < targetRuns) {
+                this.generateLatinHypercubeCombos(toggleKeys, numericRanges, combos, seen, targetRuns, rand);
+            }
+        }
+
+        let attempts = 0;
         while (combos.length < targetRuns && attempts < maxAttempts) {
             const params: StrategyParams = {};
 
@@ -223,6 +231,41 @@ export class FinderParamSpace {
             attempts += 1;
         }
         return combos;
+    }
+
+    private generateLatinHypercubeCombos(
+        toggleKeys: string[],
+        numericRanges: Array<{ key: string; baseValue: number; min: number; max: number }>,
+        combos: StrategyParams[],
+        seen: Set<string>,
+        targetRuns: number,
+        rand: () => number
+    ): void {
+        const sampleCount = Math.max(0, targetRuns - combos.length);
+        if (sampleCount <= 0) return;
+
+        const toggleStrata = toggleKeys.map(() => this.createPermutation(sampleCount, rand));
+        const numericStrata = numericRanges.map(() => this.createPermutation(sampleCount, rand));
+
+        for (let i = 0; i < sampleCount && combos.length < targetRuns; i++) {
+            const params: StrategyParams = {};
+
+            for (let t = 0; t < toggleKeys.length; t++) {
+                const key = toggleKeys[t];
+                const stratum = toggleStrata[t][i];
+                params[key] = stratum < (sampleCount / 2) ? 0 : 1;
+            }
+
+            for (let n = 0; n < numericRanges.length; n++) {
+                const range = numericRanges[n];
+                const stratum = numericStrata[n][i];
+                const fraction = (stratum + rand()) / sampleCount;
+                const raw = range.min + fraction * (range.max - range.min);
+                params[range.key] = this.normalizeParamValue(range.key, raw, range.baseValue);
+            }
+
+            this.tryAddCombo(params, combos, seen, targetRuns);
+        }
     }
 
     private estimateDiscreteSpaceSize(
@@ -298,11 +341,14 @@ export class FinderParamSpace {
     }
 
     private resolveRandom(options: FinderOptions): () => number {
-        if (options.mode !== "robust_random_wf") {
-            return Math.random;
+        if (options.mode === "robust_random_wf") {
+            const seedValue = Number.isFinite(options.robustSeed) ? Number(options.robustSeed) : 1337;
+            return this.createSeededRandom(seedValue);
         }
-        const seedValue = Number.isFinite(options.robustSeed) ? Number(options.robustSeed) : 1337;
-        return this.createSeededRandom(seedValue);
+        if (options.mode === "random" && Number.isFinite(options.randomSeed)) {
+            return this.createSeededRandom(Number(options.randomSeed));
+        }
+        return Math.random;
     }
 
     private createSeededRandom(seed: number): () => number {
@@ -314,6 +360,17 @@ export class FinderParamSpace {
             t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
             return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
         };
+    }
+
+    private createPermutation(size: number, rand: () => number): number[] {
+        const arr = Array.from({ length: Math.max(0, size) }, (_, i) => i);
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(rand() * (i + 1));
+            const tmp = arr[i];
+            arr[i] = arr[j];
+            arr[j] = tmp;
+        }
+        return arr;
     }
 
     private tryAddCombo(params: StrategyParams, combos: StrategyParams[], seen: Set<string>, maxRuns: number): void {

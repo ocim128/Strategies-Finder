@@ -408,6 +408,7 @@ export class FinderManager {
 		setLoading(true);
 		this.setProgress(true, 0, 'Preparing...');
 		this.setStatus('Running strategy finder...');
+		this.ui.renderRandomBenchmark(options.mode);
 		this.displayResults = [];
 		this.renderResults([], options.sortPriority[0]);
 
@@ -459,6 +460,7 @@ export class FinderManager {
 
 			this.displayResults = output.results;
 			this.renderResults(output.results, options.sortPriority[0]);
+			this.ui.renderRandomBenchmark(options.mode, output.randomBenchmark);
 		} finally {
 			setLoading(false);
 			this.isRunning = false;
