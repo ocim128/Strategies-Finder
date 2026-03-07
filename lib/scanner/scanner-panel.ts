@@ -8,6 +8,7 @@ import { settingsManager } from '../settings-manager';
 import { alertService, buildAlertStreamId } from '../alert-service';
 import { uiManager } from '../ui-manager';
 import type { ScanResult, ScanProgress, StrategyConfigEntry } from '../types/scanner';
+import { isWorkerSupportedStrategyKey } from '../alert-subscription-utils';
 
 // ============================================================================
 // Scanner Panel Class
@@ -501,6 +502,11 @@ export class ScannerPanel {
         const matched = config.strategyConfigs.find(c => c.strategyKey === strategyKey && (!configName || c.name === configName))
             ?? config.strategyConfigs.find(c => c.strategyKey === strategyKey);
         const streamId = buildAlertStreamId(symbol, config.interval, strategyKey, matched?.name ?? configName);
+
+        if (!isWorkerSupportedStrategyKey(strategyKey)) {
+            uiManager.showToast(`Alert failed: "${strategyKey}" is not available in the worker strategy library.`, 'error');
+            return;
+        }
 
         try {
             await alertService.upsertSubscription({

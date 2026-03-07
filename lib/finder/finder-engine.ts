@@ -5,8 +5,12 @@ function isAscendingMetric(metric: FinderMetric): boolean {
     return metric === "maxDrawdownPercent";
 }
 
+export function getFinderSelectionResult(item: FinderResult): BacktestResult {
+    return item.selectionResult;
+}
+
 export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): number {
-    const result = item.result;
+    const result = getFinderSelectionResult(item);
     switch (metric) {
         case "netProfit":
             return result.netProfit;

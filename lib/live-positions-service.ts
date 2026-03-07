@@ -18,6 +18,7 @@ import { dataManager } from './data-manager';
 import { parseIntervalSeconds } from './interval-utils';
 import { parseTimeToUnixSeconds } from './time-normalization';
 import type { BacktestSettings, Trade } from './strategies/index';
+import { resolveSubscriptionExecutionBacktestSettings } from './alert-subscription-utils';
 
 export interface LivePosition {
     streamId: string;
@@ -73,6 +74,7 @@ interface WorkerEntrySnapshot {
 }
 
 interface WorkerSnapshot {
+    stateAvailable: boolean;
     hasOpen: boolean;
     latestEntry: WorkerEntrySnapshot | null;
 }
@@ -237,7 +239,7 @@ class LivePositionsService {
         const localSnapshot = this.deriveLocalSnapshot(localTrades);
         const mismatch = this.detectMismatch(workerSnapshot, localSnapshot, sub.interval);
 
-        const shouldShowOpen = workerSnapshot.hasOpen || localSnapshot.openTrade !== null;
+        const shouldShowOpen = localSnapshot.openTrade !== null || (workerSnapshot.stateAvailable && workerSnapshot.hasOpen);
         const currentPrice = shouldShowOpen ? await this.fetchCurrentPrice(sub.symbol) : null;
 
         const openPosition = shouldShowOpen
@@ -408,6 +410,7 @@ class LivePositionsService {
     ): WorkerSnapshot {
         if (workerState?.latestTrade) {
             return {
+                stateAvailable: true,
                 hasOpen: workerState.latestTrade.isOpen === true,
                 latestEntry: workerState.latestEntry
                     ? {
@@ -419,9 +422,12 @@ class LivePositionsService {
             };
         }
 
-        // Backward compatibility for older workers without /api/subscriptions/state.
+        // Do not infer "open" from entry history alone. History only records entries,
+        // so using it as position state creates false positives when worker state
+        // is unavailable or the endpoint fails.
         return {
-            hasOpen: latestWorkerSignal !== null,
+            stateAvailable: false,
+            hasOpen: false,
             latestEntry: this.signalToEntrySnapshot(latestWorkerSignal),
         };
     }
@@ -431,6 +437,9 @@ class LivePositionsService {
         local: LocalSnapshot,
         interval: string
     ): { mismatch: boolean; reason: string | null } {
+        if (!worker.stateAvailable) {
+            return { mismatch: false, reason: null };
+        }
         const localHasOpen = local.openTrade !== null;
 
         if (worker.hasOpen && !localHasOpen) {
@@ -492,7 +501,9 @@ class LivePositionsService {
     }
 
     private resolveBacktestSettings(sub: AlertSubscription): BacktestSettings {
-        const parsed = this.safeJsonParse<BacktestSettings>(sub.backtest_settings_json, {});
+        const parsed = resolveSubscriptionExecutionBacktestSettings(
+            this.safeJsonParse<BacktestSettings>(sub.backtest_settings_json, {})
+        );
         if (parseIntervalSeconds(sub.interval) !== 7200) {
             return parsed;
         }

@@ -7,6 +7,10 @@ import {
     parseConfigNameFromStreamId as parseConfigNameFromAlertStreamId,
     parseTwoHourParityFromStreamId as parseTwoHourParityFromAlertStreamId,
 } from "../lib/alert-stream-id";
+import {
+    isWorkerSupportedStrategyKey,
+    resolveSubscriptionExecutionBacktestSettings,
+} from "../lib/alert-subscription-utils";
 
 type CandleTime = OHLCVData["time"];
 
@@ -1305,6 +1309,12 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
             400
         );
     }
+    if (!isWorkerSupportedStrategyKey(strategyKey)) {
+        return toJsonResponse(
+            { ok: false, error: `worker_strategy_not_supported:${strategyKey}` },
+            400
+        );
+    }
 
     const streamId = incomingStreamId
         ? incomingStreamId
@@ -1332,8 +1342,10 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
     );
     const strategyParams = payload.strategyParams
         ?? safeJsonParse(existing?.strategy_params_json ?? "{}", {} as Record<string, number>);
-    const backtestSettings = payload.backtestSettings
-        ?? safeJsonParse(existing?.backtest_settings_json ?? "{}", {} as BacktestSettings);
+    const backtestSettings = resolveSubscriptionExecutionBacktestSettings(
+        (payload.backtestSettings
+            ?? safeJsonParse(existing?.backtest_settings_json ?? "{}", {} as BacktestSettings)) as BacktestSettings
+    );
 
     try {
         await env.SIGNALS_DB.prepare(
@@ -1578,7 +1590,9 @@ async function runSubscription(
     const lastExitAlertKey = extractExitAlertKey(subscription.last_status);
     let persistedExitAlertKey: string | null = lastExitAlertKey;
     const parsedStrategyParams = safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>);
-    const parsedBacktestSettings = safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings);
+    const parsedBacktestSettings = resolveSubscriptionExecutionBacktestSettings(
+        safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings)
+    );
     const twoHourCloseParity = resolveTwoHourCloseParity(
         subscription.interval,
         parsedBacktestSettings,
@@ -1798,7 +1812,9 @@ async function evaluateSubscriptionState(
 ): Promise<SubscriptionStateResult> {
     const streamId = subscription.stream_id;
     const parsedStrategyParams = safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>);
-    const parsedBacktestSettings = safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings);
+    const parsedBacktestSettings = resolveSubscriptionExecutionBacktestSettings(
+        safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings)
+    );
     const twoHourCloseParity = resolveTwoHourCloseParity(
         subscription.interval,
         parsedBacktestSettings,

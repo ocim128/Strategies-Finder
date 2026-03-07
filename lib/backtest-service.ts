@@ -44,6 +44,7 @@ import {
 import { readNumberInputValue } from "./dom-input-readers";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { mergeStrategySignals } from "./signal-merge";
+import { resolveSubscriptionExecutionBacktestSettings } from "./alert-subscription-utils";
 
 import { resolveTwoHourParityFromTime } from "./two-hour-parity";
 
@@ -1276,13 +1277,14 @@ export class BacktestService {
         strategyParams: Record<string, number>,
         backtestSettings: BacktestSettings
     ): Promise<BacktestResult> {
+        const effectiveBacktestSettings = resolveSubscriptionExecutionBacktestSettings(backtestSettings);
         const strategy = strategyRegistry.get(strategyKey);
         if (!strategy) {
             throw new Error(`Strategy not found: ${strategyKey}`);
         }
 
         const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } =
-            this.resolveSubscriptionCapitalSettings(backtestSettings);
+            this.resolveSubscriptionCapitalSettings(effectiveBacktestSettings);
         // Keep Alerts "Last Trade" aligned with Worker evaluation (TypeScript engine path).
         const requiresTsEngine = true;
 
@@ -1292,7 +1294,7 @@ export class BacktestService {
             interval,
             strategy,
             strategyParams,
-            backtestSettings,
+            effectiveBacktestSettings,
             initialCapital,
             positionSize,
             commission,

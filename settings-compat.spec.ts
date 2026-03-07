@@ -8,6 +8,10 @@ import {
     requiresTypescriptEngine,
 } from './lib/rust-settings-sanitizer';
 import type { BacktestSettings } from './lib/types/strategies';
+import {
+    isWorkerSupportedStrategyKey,
+    resolveSubscriptionExecutionBacktestSettings,
+} from './lib/alert-subscription-utils';
 
 describe('Backtest settings compatibility', () => {
     it('uses tradeFilterMode when provided', () => {
@@ -102,5 +106,37 @@ describe('Backtest settings compatibility', () => {
 
         expect(resolved.tradeFilterMode).to.equal('trend_mtf_stack');
         expect(requiresTypescriptEngine(resolved)).to.equal(true);
+    });
+
+    it('hydrates subscription execution defaults to the UI-compatible semantics', () => {
+        const resolved = resolveSubscriptionExecutionBacktestSettings({});
+
+        expect(resolved.tradeDirection).to.equal('short');
+        expect(resolved.executionModel).to.equal('next_open');
+        expect(resolved.allowSameBarExit).to.equal(false);
+        expect(resolved.slippageBps).to.equal(5);
+    });
+
+    it('preserves subscription capital fields while normalizing execution settings', () => {
+        const resolved = resolveSubscriptionExecutionBacktestSettings({
+            initialCapital: 25000,
+            positionSize: 50,
+            commission: 0.2,
+            fixedTradeToggle: true,
+            fixedTradeAmount: 1200,
+            executionModel: 'next_close',
+        } as unknown as BacktestSettings);
+
+        expect((resolved as Record<string, unknown>).initialCapital).to.equal(25000);
+        expect((resolved as Record<string, unknown>).positionSize).to.equal(50);
+        expect((resolved as Record<string, unknown>).commission).to.equal(0.2);
+        expect((resolved as Record<string, unknown>).fixedTradeToggle).to.equal(true);
+        expect((resolved as Record<string, unknown>).fixedTradeAmount).to.equal(1200);
+        expect(resolved.executionModel).to.equal('next_close');
+    });
+
+    it('exposes worker strategy compatibility checks for alert subscriptions', () => {
+        expect(isWorkerSupportedStrategyKey('close_position_momentum_score')).to.equal(true);
+        expect(isWorkerSupportedStrategyKey('definitely_not_a_worker_strategy')).to.equal(false);
     });
 });

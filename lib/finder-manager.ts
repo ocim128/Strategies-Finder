@@ -34,7 +34,7 @@ export class FinderManager {
 	];
 	private isRunning = false;
 	private displayResults: FinderResult[] = [];
-	private lastFinderRunBacktestSettings: ReturnType<typeof backtestService.getBacktestSettings> | null = null;
+	private lastFinderRunBacktestSettings: ReturnType<typeof settingsManager.getBacktestSettings> | null = null;
 	private strategyToggles: Map<string, HTMLInputElement> = new Map();
 	private selectedFinderTimeframes: string[] = [];
 	private readonly ui = new FinderUI();
@@ -473,7 +473,7 @@ export class FinderManager {
 
 			const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = backtestService.getCapitalSettings();
 			const settings = backtestService.getBacktestSettings();
-			this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settings);
+			this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settingsManager.getBacktestSettings());
 			const requiresTsEngine = backtestService.requiresTypescriptEngine(settings);
 
 			// Freeze run dataset to closed candles within the selected block for deterministic combo pairing.
@@ -645,6 +645,7 @@ export class FinderManager {
 
 	private buildMetadataPayload(result: FinderResult, rank: number) {
 		const strategy = strategyRegistry.get(result.key);
+		const displayedResult = result.selectionResult;
 		return {
 			rank,
 			strategyId: result.key,
@@ -653,19 +654,19 @@ export class FinderManager {
 			params: result.params,
 			metadata: strategy?.metadata ?? null,
 			metrics: {
-				netProfit: result.result.netProfit,
-				netProfitPercent: result.result.netProfitPercent,
-				expectancy: result.result.expectancy,
-				avgTrade: result.result.avgTrade,
-				winRate: result.result.winRate,
-				profitFactor: result.result.profitFactor,
-				totalTrades: result.result.totalTrades,
-				maxDrawdownPercent: result.result.maxDrawdownPercent,
-				winningTrades: result.result.winningTrades,
-				losingTrades: result.result.losingTrades,
-				avgWin: result.result.avgWin,
-				avgLoss: result.result.avgLoss,
-				sharpeRatio: result.result.sharpeRatio
+				netProfit: displayedResult.netProfit,
+				netProfitPercent: displayedResult.netProfitPercent,
+				expectancy: displayedResult.expectancy,
+				avgTrade: displayedResult.avgTrade,
+				winRate: displayedResult.winRate,
+				profitFactor: displayedResult.profitFactor,
+				totalTrades: displayedResult.totalTrades,
+				maxDrawdownPercent: displayedResult.maxDrawdownPercent,
+				winningTrades: displayedResult.winningTrades,
+				losingTrades: displayedResult.losingTrades,
+				avgWin: displayedResult.avgWin,
+				avgLoss: displayedResult.avgLoss,
+				sharpeRatio: displayedResult.sharpeRatio
 			},
 			rawMetrics: {
 				netProfit: result.result.netProfit,
@@ -791,20 +792,6 @@ export class FinderManager {
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, result.params);
 
-		// Also apply global risk settings if present in result
-		if (result.params['stopLossPercent'] !== undefined) {
-			const input = document.getElementById('stopLossPercent') as HTMLInputElement | null;
-			if (input) input.value = String(result.params['stopLossPercent']);
-		}
-		if (result.params['takeProfitPercent'] !== undefined) {
-			const input = document.getElementById('takeProfitPercent') as HTMLInputElement | null;
-			if (input) input.value = String(result.params['takeProfitPercent']);
-		}
-		if (result.params['riskMaxHoldBars'] !== undefined) {
-			const input = document.getElementById('riskMaxHoldBars') as HTMLInputElement | null;
-			if (input) input.value = String(result.params['riskMaxHoldBars']);
-		}
-
 		// Robust finder rows represent combined OOS walk-forward outcomes, not a single full-history backtest.
 		// Show the exact robust OOS snapshot to avoid mismatch with an auto-rerun full backtest.
 		if (result.robustMetrics?.mode === 'robust_random_wf') {
@@ -874,15 +861,46 @@ export class FinderManager {
 			return;
 		}
 
+		this.applyFinderBacktestSettings(result);
+
+		state.set('twoHourParityBacktestResults', null);
+		state.set('currentBacktestResultSource', 'backtest');
+		state.set('currentBacktestResult', result.selectionResult);
+
 		// Switch to trades tab
 		const tradesTab = document.querySelector('.panel-tab[data-tab="trades"]') as HTMLElement;
 		if (tradesTab) tradesTab.click();
+	}
 
-		setTimeout(() => {
-			backtestService.runCurrentBacktest().catch(err => {
-				debugLogger.error('finder.apply_result_backtest_failed', { error: err instanceof Error ? err.message : String(err) });
-			});
-		}, 0);
+	private applyFinderBacktestSettings(result: FinderResult): void {
+		const baseSettings = this.lastFinderRunBacktestSettings
+			? this.cloneBacktestSettings(this.lastFinderRunBacktestSettings)
+			: settingsManager.getBacktestSettings();
+		const mergedSettings = this.mergeFinderRiskParamsIntoBacktestSettings(baseSettings, result.params);
+		settingsManager.applyBacktestSettings(mergedSettings);
+	}
+
+	private mergeFinderRiskParamsIntoBacktestSettings<T extends ReturnType<typeof settingsManager.getBacktestSettings>>(
+		settings: T,
+		params: StrategyParams
+	): T {
+		const merged = this.cloneBacktestSettings(settings);
+		const stopLossPercent = params['stopLossPercent'];
+		if (typeof stopLossPercent === 'number' && Number.isFinite(stopLossPercent)) {
+			merged.stopLossPercent = stopLossPercent;
+		}
+
+		const takeProfitPercent = params['takeProfitPercent'];
+		if (typeof takeProfitPercent === 'number' && Number.isFinite(takeProfitPercent)) {
+			merged.takeProfitPercent = takeProfitPercent;
+		}
+
+		const riskMaxHoldBars = params['riskMaxHoldBars'];
+		if (typeof riskMaxHoldBars === 'number' && Number.isFinite(riskMaxHoldBars)) {
+			merged.riskMaxHoldBars = riskMaxHoldBars;
+		}
+
+		return merged;
 	}
 
 	private setProgress(active: boolean, percent: number, text: string): void {

@@ -23,6 +23,7 @@ import { formatJakartaTime, isBusinessDayTime } from '../timezone-utils';
 import { getOptionalElement } from '../dom-utils';
 import { parseTimeToUnixSeconds } from '../time-normalization';
 import { createAccessibleModal, type AccessibleModalController } from '../modal-accessibility';
+import { isWorkerSupportedStrategyKey } from '../alert-subscription-utils';
 
 function safeJsonParse<T>(raw: string, fallback: T): T {
     try {
@@ -631,6 +632,10 @@ async function quickSubscribe() {
         uiManager.showToast('Load a chart and select a strategy first.', 'error');
         return;
     }
+    if (!isWorkerSupportedStrategyKey(strategyKey)) {
+        uiManager.showToast(`Alerts only support worker-registered strategies. "${strategyKey}" is not available in the worker library.`, 'error');
+        return;
+    }
 
     const strategyParams = collectCurrentStrategyParams();
     const rawBacktestSettings = collectCurrentSubscriptionBacktestSettings();
@@ -704,6 +709,10 @@ async function handleTableAction(action: string, streamId: string) {
             const strategyKey = state.currentStrategyKey;
             if (!strategyKey) {
                 uiManager.showToast('Select a strategy first.', 'error');
+                return;
+            }
+            if (!isWorkerSupportedStrategyKey(strategyKey)) {
+                uiManager.showToast(`Alerts only support worker-registered strategies. "${strategyKey}" is not available in the worker library.`, 'error');
                 return;
             }
 

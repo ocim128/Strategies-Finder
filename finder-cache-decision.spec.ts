@@ -1,6 +1,12 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { shouldUseRustCachedMode } from './lib/finder/finder-runner';
+import type { BacktestSettings } from './lib/types/strategies';
+import type { FinderResult } from './lib/types/finder';
+import { getFinderMetricValue } from './lib/finder/finder-engine';
+import {
+    resolveFinderCandidateBacktestSettings,
+    shouldUseRustCachedMode,
+} from './lib/finder/finder-runner';
 
 describe('Finder adaptive cache mode decision', () => {
     it('enables cache for large dataset (>500k bars)', () => {
@@ -67,5 +73,98 @@ describe('Finder adaptive cache mode decision', () => {
         const result = shouldUseRustCachedMode(100_000, 1, 0);
         expect(result.useCache).to.equal(false);
         expect(result.reason).to.equal('none');
+    });
+});
+
+describe('Finder candidate backtest settings resolution', () => {
+    it('uses candidate-specific risk settings for normal finder runs', () => {
+        const candidateSettings: BacktestSettings = {
+            riskMode: 'percentage',
+            stopLossEnabled: true,
+            stopLossPercent: 2,
+            takeProfitEnabled: true,
+            takeProfitPercent: 6,
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 4,
+        };
+
+        const resolved = resolveFinderCandidateBacktestSettings(candidateSettings);
+
+        expect(resolved).to.equal(candidateSettings);
+        expect(resolved.stopLossPercent).to.equal(2);
+        expect(resolved.takeProfitPercent).to.equal(6);
+        expect(resolved.riskMaxHoldBars).to.equal(4);
+    });
+
+    it('prefers combo primary settings when finder runs in combo mode', () => {
+        const candidateSettings: BacktestSettings = {
+            riskMode: 'percentage',
+            stopLossPercent: 2,
+            takeProfitPercent: 6,
+        };
+        const primarySettings: BacktestSettings = {
+            riskMode: 'simple',
+            executionModel: 'next_close',
+            stopLossPercent: 9,
+            takeProfitPercent: 12,
+        };
+
+        const resolved = resolveFinderCandidateBacktestSettings(candidateSettings, primarySettings);
+
+        expect(resolved).to.equal(primarySettings);
+        expect(resolved.executionModel).to.equal('next_close');
+        expect(resolved.stopLossPercent).to.equal(9);
+    });
+});
+
+describe('Finder selection metrics', () => {
+    it('ranks and displays selectionResult metrics instead of raw endpoint-biased results', () => {
+        const candidate: FinderResult = {
+            key: 'demo',
+            name: 'Demo',
+            params: {},
+            result: {
+                trades: [],
+                netProfit: 8829,
+                netProfitPercent: 88.29,
+                winRate: 84.5,
+                expectancy: 21.38,
+                avgTrade: 21.38,
+                profitFactor: 1.83,
+                maxDrawdown: 517,
+                maxDrawdownPercent: 5.17,
+                totalTrades: 413,
+                winningTrades: 349,
+                losingTrades: 64,
+                avgWin: 55.75,
+                avgLoss: 166.04,
+                sharpeRatio: 0.25,
+                equityCurve: [],
+            },
+            selectionResult: {
+                trades: [],
+                netProfit: 4285.25,
+                netProfitPercent: 42.85,
+                winRate: 70,
+                expectancy: 39.68,
+                avgTrade: 39.68,
+                profitFactor: 1.66,
+                maxDrawdown: 727,
+                maxDrawdownPercent: 7.27,
+                totalTrades: 108,
+                winningTrades: 76,
+                losingTrades: 32,
+                avgWin: 88,
+                avgLoss: 52,
+                sharpeRatio: 0.23,
+                equityCurve: [],
+            },
+            endpointAdjusted: true,
+            endpointRemovedTrades: 1,
+        };
+
+        expect(getFinderMetricValue(candidate, 'netProfit')).to.equal(4285.25);
+        expect(getFinderMetricValue(candidate, 'totalTrades')).to.equal(108);
+        expect(getFinderMetricValue(candidate, 'profitFactor')).to.equal(1.66);
     });
 });

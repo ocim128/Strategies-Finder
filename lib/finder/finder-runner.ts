@@ -224,6 +224,13 @@ function resolveFinderRiskOverrides(
     };
 }
 
+export function resolveFinderCandidateBacktestSettings(
+    candidateBacktestSettings: BacktestSettings,
+    comboPrimarySettings?: BacktestSettings
+): BacktestSettings {
+    return comboPrimarySettings ?? candidateBacktestSettings;
+}
+
 function isFiniteNumber(value: unknown): value is number {
     return typeof value === "number" && Number.isFinite(value);
 }
@@ -636,7 +643,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                             effectiveInitialCapital,
                             effectivePositionSize,
                             effectiveCommission,
-                            effectiveBacktestSettings,
+                            resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
                             { mode: effectiveSizingMode, fixedTradeAmount: effectiveFixedTradeAmount },
                             precomputedByInterval.get(dataset.interval)
                         );
@@ -1154,7 +1161,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                         effectiveInitialCapital,
                         effectivePositionSize,
                         effectiveCommission,
-                        effectiveBacktestSettings,
+                        resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
                         { mode: effectiveSizingMode, fixedTradeAmount: effectiveFixedTradeAmount },
                         shortPrecomputed
                     );
@@ -1208,7 +1215,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                     effectiveInitialCapital,
                     effectivePositionSize,
                     effectiveCommission,
-                    effectiveBacktestSettings,
+                    resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
                     effectiveSizingMode,
                     effectiveFixedTradeAmount,
                     singleTfPrecomputed,
@@ -1268,7 +1275,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
                         effectiveInitialCapital,
                         effectivePositionSize,
                         effectiveCommission,
-                        effectiveBacktestSettings,
+                        resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
                         effectiveSizingMode,
                         effectiveFixedTradeAmount,
                         singleTfPrecomputed,
@@ -1514,7 +1521,7 @@ async function reconcileSingleTimeframeTopResults(
                     initialCapital,
                     positionSize,
                     commission,
-                    comboBacktestSettings,
+                    resolveFinderCandidateBacktestSettings(backtestSettings, input.comboPrimarySettings),
                     { mode: sizingMode, fixedTradeAmount },
                     precomputed
                 );
