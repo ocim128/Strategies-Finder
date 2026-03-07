@@ -33,6 +33,57 @@
         </div>
     </div>
 
+    <!-- ── Strategy Combiner ── -->
+    <div class="settings-section combiner-section" data-complexity="standard" data-section="combiner">
+        <div class="section-header collapsible collapsed" data-target="combinerBody">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Strategy Combiner</div>
+            </div>
+        </div>
+        <div class="section-body accordion-body collapsed" id="combinerBody">
+            <div class="param-hint">Merge signals from two saved configurations. Use the same config for both to verify
+                results match a single run (sanity check).</div>
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label">Primary Config</label>
+                    <select class="param-input config-select" id="combinerPrimarySelect">
+                        <option value="">-- Select primary --</option>
+                    </select>
+                    <div class="param-hint">Provides signals + all backtest settings (risk, capital, execution).</div>
+                </div>
+                <div class="param-group">
+                    <label class="param-label">Secondary Config</label>
+                    <select class="param-input config-select" id="combinerSecondarySelect">
+                        <option value="">-- Select secondary --</option>
+                    </select>
+                    <div class="param-hint">Provides signals only. Backtest settings are ignored.</div>
+                </div>
+            </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label">Combine Mode</label>
+                    <select class="param-input" id="combinerMode">
+                        <option value="and">AND (both must agree)</option>
+                        <option value="or">OR (union, primary wins ties)</option>
+                    </select>
+                    <div class="param-hint">AND keeps only signals where both fire same bar+direction. OR takes all
+                        signals, deduplicating by bar.</div>
+                </div>
+                <div class="param-group" style="display:flex;align-items:flex-end;">
+                    <button class="btn btn-primary" id="runCombinedStrategyBtn" style="width:100%;">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" style="margin-right:4px;vertical-align:middle;">
+                            <path d="M8 5v14l11-7z" />
+                        </svg>
+                        Run Combined Backtest
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <select class="strategy-select" id="strategySelect">
         <option value="sma_crossover">SMA Crossover</option>
         <option value="ema_crossover">EMA Crossover</option>

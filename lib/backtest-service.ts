@@ -43,6 +43,7 @@ import {
     resolveBacktestSettingsFromRaw
 } from "./backtest-settings-resolver";
 import { readNumberInputValue } from "./dom-input-readers";
+import { settingsManager, type StrategyConfig } from "./settings-manager";
 
 import { resolveTwoHourParityFromTime } from "./two-hour-parity";
 
@@ -302,6 +303,234 @@ export class BacktestService {
             }
         });
     }
+
+    // ========================================================================
+    // Combined Strategy Backtest
+    // ========================================================================
+
+    /**
+     * Run a combined backtest by merging signals from two saved configurations.
+     * Primary config provides both signals AND backtest settings (risk, capital, execution).
+     * Secondary config provides signals only.
+     *
+     * @param primaryConfig  Saved config providing signals + settings
+     * @param secondaryConfig  Saved config providing signals only
+     * @param mode  'and' = keep only where both agree (same bar + direction),
+     *              'or'  = union of both (primary wins on same bar)
+     */
+    public async runCombinedStrategyBacktest(
+        primaryConfig: StrategyConfig,
+        secondaryConfig: StrategyConfig,
+        mode: 'and' | 'or'
+    ): Promise<void> {
+        const startedAt = Date.now();
+        debugLogger.event('backtest.combined.start', {
+            primary: primaryConfig.strategyKey,
+            secondary: secondaryConfig.strategyKey,
+            mode,
+        });
+
+        const statusEl = getRequiredElement('strategyStatus');
+        const progressContainer = getRequiredElement('progressContainer');
+        const progressFill = getRequiredElement('progressFill');
+        const progressText = getRequiredElement('progressText');
+        const runButton = getOptionalElement<HTMLButtonElement>('runCombinedStrategyBtn');
+
+        const setLoading = (loading: boolean) => {
+            if (runButton) {
+                runButton.disabled = loading;
+                runButton.classList.toggle('is-loading', loading);
+            }
+        };
+
+        setLoading(true);
+        progressContainer.classList.add('active');
+        statusEl.textContent = 'Running combined backtest...';
+
+        try {
+            // --- 1. Resolve both strategies from registry ---
+            progressFill.style.width = '10%';
+            progressText.textContent = 'Resolving strategies...';
+            await this.sleep(50);
+
+            const primaryStrategy = strategyRegistry.get(primaryConfig.strategyKey);
+            const secondaryStrategy = strategyRegistry.get(secondaryConfig.strategyKey);
+
+            if (!primaryStrategy) {
+                statusEl.textContent = `Primary strategy "${primaryConfig.strategyKey}" not found`;
+                return;
+            }
+            if (!secondaryStrategy) {
+                statusEl.textContent = `Secondary strategy "${secondaryConfig.strategyKey}" not found`;
+                return;
+            }
+
+            // --- 2. Prepare data ---
+            progressFill.style.width = '20%';
+            progressText.textContent = 'Preparing data...';
+            await this.sleep(50);
+
+            const backtestData = this.selectClosedCandleData(state.ohlcvData, state.currentInterval);
+
+            // --- 3. Execute both strategies ---
+            progressFill.style.width = '40%';
+            progressText.textContent = 'Generating signals from both strategies...';
+            await this.sleep(50);
+
+            const primarySettings = resolveBacktestSettingsFromRaw(
+                primaryConfig.backtestSettings as unknown as BacktestSettings,
+                { captureSnapshots: true, coerceWithoutUiToggles: true }
+            );
+            const secondarySettings = resolveBacktestSettingsFromRaw(
+                secondaryConfig.backtestSettings as unknown as BacktestSettings,
+                { captureSnapshots: false, coerceWithoutUiToggles: true }
+            );
+
+            const primarySignals = applySignalPolarity(
+                primaryStrategy.execute(backtestData, primaryConfig.strategyParams),
+                primarySettings
+            );
+            const secondarySignals = applySignalPolarity(
+                secondaryStrategy.execute(backtestData, secondaryConfig.strategyParams),
+                secondarySettings
+            );
+
+            // --- 4. Merge signals ---
+            progressFill.style.width = '60%';
+            progressText.textContent = `Merging signals (${mode.toUpperCase()})...`;
+            await this.sleep(50);
+
+            const mergedSignals = this.mergeSignals(primarySignals, secondarySignals, mode);
+
+            // --- 5. Apply block-range filter ---
+            const block = state.blockRange;
+            const blockFilteredSignals = (block && block.from !== block.to)
+                ? mergedSignals.filter(s => {
+                    const t = typeof s.time === 'number' ? s.time : Number(s.time);
+                    return t >= block.from && t <= block.to;
+                })
+                : mergedSignals;
+
+            // --- 6. Run backtest using primary config's settings + capital ---
+            progressFill.style.width = '80%';
+            progressText.textContent = 'Running backtest on merged signals...';
+            await this.sleep(50);
+
+            const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } =
+                settingsManager.resolveCapitalFromConfig(primaryConfig);
+
+            let result: BacktestResult = runBacktest(
+                backtestData,
+                blockFilteredSignals,
+                initialCapital,
+                positionSize,
+                commission,
+                primarySettings,
+                { mode: sizingMode, fixedTradeAmount }
+            );
+
+            // --- 7. Post-process ---
+            result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
+            result.postEntryPath = this.buildPostEntryPathStats(result, 5, backtestData);
+            if (result.trades.length >= 3) {
+                result.edgeStatistics = computeEdgeStatistics(result, backtestData);
+            }
+
+            // --- 8. Update state and UI ---
+            state.set('currentBacktestResultSource', 'backtest');
+            state.set('currentBacktestResult', result);
+
+            progressFill.style.width = '100%';
+            progressText.textContent = 'Complete!';
+            const expectancyText = `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`;
+            const pfText = result.profitFactor === Infinity ? 'Inf' : result.profitFactor.toFixed(2);
+            statusEl.textContent = `Combined (${mode.toUpperCase()}) | ${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}`;
+
+            debugLogger.event('backtest.combined.success', {
+                primary: primaryConfig.strategyKey,
+                secondary: secondaryConfig.strategyKey,
+                mode,
+                primarySignals: primarySignals.length,
+                secondarySignals: secondarySignals.length,
+                mergedSignals: blockFilteredSignals.length,
+                trades: result.totalTrades,
+                durationMs: Date.now() - startedAt,
+            });
+
+            await this.sleep(500);
+        } catch (error) {
+            debugLogger.error('backtest.combined.error', {
+                primary: primaryConfig.strategyKey,
+                secondary: secondaryConfig.strategyKey,
+                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+            });
+            statusEl.textContent = 'Combined backtest failed';
+            throw error;
+        } finally {
+            progressContainer.classList.remove('active');
+            progressFill.style.width = '0%';
+            setLoading(false);
+        }
+    }
+
+    /**
+     * Merge signals from two strategy runs.
+     * 
+     * AND mode: keep only signals where both strategies fire on the same bar
+     *           with the same direction (buy/sell). Uses primary signal's price.
+     * 
+     * OR mode:  union of both signal sets; if both fire on the same bar,
+     *           primary signal takes precedence.
+     */
+    private mergeSignals(
+        primarySignals: { time: any; type: 'buy' | 'sell'; price: number; triggerPrice?: number; reason?: string; barIndex?: number; sizeFraction?: number }[],
+        secondarySignals: { time: any; type: 'buy' | 'sell'; price: number; triggerPrice?: number; reason?: string; barIndex?: number; sizeFraction?: number }[],
+        mode: 'and' | 'or'
+    ): { time: any; type: 'buy' | 'sell'; price: number; triggerPrice?: number; reason?: string; barIndex?: number; sizeFraction?: number }[] {
+        // Build a map of secondary signals keyed by timeKey for O(1) lookup
+        const secondaryMap = new Map<string, typeof secondarySignals[0]>();
+        for (const signal of secondarySignals) {
+            const key = timeKey(signal.time);
+            secondaryMap.set(key, signal);
+        }
+
+        if (mode === 'and') {
+            // AND: keep primary signals only if secondary agrees (same bar + same direction)
+            const merged: typeof primarySignals = [];
+            for (const primary of primarySignals) {
+                const key = timeKey(primary.time);
+                const secondary = secondaryMap.get(key);
+                if (secondary && secondary.type === primary.type) {
+                    merged.push(primary); // use primary's price
+                }
+            }
+            return merged;
+        }
+
+        // OR: union — primary wins on conflicts
+        const primaryMap = new Map<string, typeof primarySignals[0]>();
+        for (const signal of primarySignals) {
+            primaryMap.set(timeKey(signal.time), signal);
+        }
+
+        const merged: typeof primarySignals = [...primarySignals];
+        for (const secondary of secondarySignals) {
+            const key = timeKey(secondary.time);
+            if (!primaryMap.has(key)) {
+                merged.push(secondary);
+            }
+        }
+
+        // Sort by time
+        merged.sort((a, b) => {
+            const ta = typeof a.time === 'number' ? a.time : Number(a.time);
+            const tb = typeof b.time === 'number' ? b.time : Number(b.time);
+            return ta - tb;
+        });
+
+        return merged;
+    }
+
 
     private async runBacktestForData(
         ohlcvData: OHLCVData[],

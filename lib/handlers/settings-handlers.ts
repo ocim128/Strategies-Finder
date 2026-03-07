@@ -238,6 +238,46 @@ export function setupSettingsHandlers() {
     }
 
 
+    //  Strategy Combiner handler 
+    const runCombinedBtn = document.getElementById('runCombinedStrategyBtn') as HTMLButtonElement | null;
+    if (runCombinedBtn) {
+        runCombinedBtn.addEventListener('click', async () => {
+            const primarySelect = document.getElementById('combinerPrimarySelect') as HTMLSelectElement | null;
+            const secondarySelect = document.getElementById('combinerSecondarySelect') as HTMLSelectElement | null;
+            const modeSelect = document.getElementById('combinerMode') as HTMLSelectElement | null;
+
+            const primaryName = primarySelect?.value;
+            const secondaryName = secondarySelect?.value;
+
+            if (!primaryName) {
+                uiManager.showToast('Please select a primary configuration', 'error');
+                return;
+            }
+            if (!secondaryName) {
+                uiManager.showToast('Please select a secondary configuration', 'error');
+                return;
+            }
+
+            const primaryConfig = settingsManager.loadStrategyConfig(primaryName);
+            const secondaryConfig = settingsManager.loadStrategyConfig(secondaryName);
+
+            if (!primaryConfig || !secondaryConfig) {
+                uiManager.showToast('Failed to load selected configurations', 'error');
+                return;
+            }
+
+            const mode = (modeSelect?.value === 'or' ? 'or' : 'and') as 'and' | 'or';
+
+            try {
+                await backtestService.runCombinedStrategyBacktest(primaryConfig, secondaryConfig, mode);
+                uiManager.showToast('Combined backtest complete (' + mode.toUpperCase() + ')', 'success');
+            } catch (error) {
+                console.error('[Combiner] Error:', error);
+                uiManager.showToast('Combined backtest failed', 'error');
+            }
+        });
+    }
+
     setupEnginePreferenceHandlers();
 
     // Initialize dropdown with saved configs
@@ -443,5 +483,35 @@ export function updateConfigDropdown(selectName?: string) {
     // Restore selection if still valid or specifically requested
     if (currentValue && configs.some(c => c.name === currentValue)) {
         configSelect.value = currentValue;
+    }
+
+    // Also refresh combiner dropdowns
+    updateCombinerDropdowns();
+}
+
+/**
+ * Populates the Strategy Combiner primary/secondary dropdowns from saved configs.
+ */
+function updateCombinerDropdowns() {
+    const primarySelect = document.getElementById('combinerPrimarySelect') as HTMLSelectElement | null;
+    const secondarySelect = document.getElementById('combinerSecondarySelect') as HTMLSelectElement | null;
+    if (!primarySelect && !secondarySelect) return;
+
+    const configs = settingsManager.loadAllStrategyConfigs();
+
+    for (const select of [primarySelect, secondarySelect]) {
+        if (!select) continue;
+        const currentValue = select.value;
+        const placeholder = select === primarySelect ? '-- Select primary --' : '-- Select secondary --';
+        select.innerHTML = `<option value="">${placeholder}</option>`;
+        configs.forEach(config => {
+            const option = document.createElement('option');
+            option.value = config.name;
+            option.textContent = `${config.name} (${config.strategyKey})`;
+            select.appendChild(option);
+        });
+        if (currentValue && configs.some(c => c.name === currentValue)) {
+            select.value = currentValue;
+        }
     }
 }

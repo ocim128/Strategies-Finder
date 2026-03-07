@@ -886,6 +886,27 @@ class SettingsManager {
         return false;
     }
 
+    /**
+     * Resolve capital/sizing settings directly from a StrategyConfig
+     * without touching the DOM. Used by combined-strategy flow.
+     */
+    public resolveCapitalFromConfig(config: StrategyConfig): {
+        initialCapital: number;
+        positionSize: number;
+        commission: number;
+        sizingMode: 'percent' | 'fixed';
+        fixedTradeAmount: number;
+    } {
+        const s = config.backtestSettings;
+        return {
+            initialCapital: Math.max(0, s.initialCapital ?? 10000),
+            positionSize: Math.max(0, s.positionSize ?? 100),
+            commission: Math.max(0, s.commission ?? 0.1),
+            sizingMode: s.fixedTradeToggle ? 'fixed' : 'percent',
+            fixedTradeAmount: Math.max(0, s.fixedTradeAmount ?? 1000),
+        };
+    }
+
     // ========================================================================
     // Auto-Save Event Listeners
     // ========================================================================
