@@ -20,6 +20,11 @@ export function setupStateSubscriptions() {
         priceEl.className = 'symbol-price';
         changeEl.textContent = '--';
         changeEl.className = 'symbol-change';
+        uiManager.updateSymbolDataSource(
+            'Loading',
+            'loading',
+            'Loading chart data for the selected symbol and timeframe.'
+        );
     };
 
     const applyDefaultVisibleRange = (dataLength: number) => {

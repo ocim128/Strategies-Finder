@@ -11,6 +11,18 @@ import { formatJakartaTime, isBusinessDayTime } from "./timezone-utils";
 import { formatDisplayPrice } from "./price-format";
 
 export class UIManager {
+    public updateSymbolDataSource(
+        label: string,
+        tone: 'live' | 'seed' | 'warning' | 'loading' = 'seed',
+        title?: string
+    ): void {
+        const el = document.getElementById('symbolDataSource') as HTMLElement | null;
+        if (!el) return;
+        el.textContent = label;
+        el.className = `symbol-source ${tone}`;
+        el.title = title ?? label;
+    }
+
     public formatPrice(price: number): string {
         return formatDisplayPrice(price);
     }

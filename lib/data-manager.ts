@@ -48,6 +48,7 @@ import {
 } from "./data/constants";
 
 type DataProvider = 'binance' | 'bybit-tradfi' | 'polymarket';
+type NonBinanceLocalSource = 'imported' | 'sqlite' | 'cache' | 'seed';
 
 export class DataManager {
     private static readonly PRICE_JUMP_GUARD_RATIO = 8;
@@ -169,21 +170,67 @@ export class DataManager {
             }
             if (signal?.aborted) return [];
             const mockData = generateMockData(symbol, interval);
+            uiManager.updateSymbolDataSource('Mock data', 'seed', 'Chart is using generated mock candles.');
             return typeof lookbackBars === 'number' ? mockData.slice(-lookbackBars) : mockData;
         }
 
         const provider = this.getProvider(symbol);
-        if (provider !== 'binance') {
-            const seedData = await loadSeedCandlesFromPriceData(symbol, interval, signal);
-            if (seedData && seedData.length > 0) {
-                return typeof lookbackBars === 'number' ? seedData.slice(-lookbackBars) : seedData;
+        const maxBars = lookbackBars ?? DATA_CHART_TOTAL_LIMIT;
+        const localNonBinance = provider !== 'binance'
+            ? await this.loadNonBinanceLocalData(symbol, interval, maxBars, signal)
+            : null;
+
+        if (provider === 'bybit-tradfi' && localNonBinance && interval.trim().toLowerCase() === '1d') {
+            const seededWithLatest = await this.mergeBybitRecentIntoSeed(
+                symbol,
+                interval,
+                localNonBinance.candles,
+                signal,
+                resampleOptions
+            );
+            if (seededWithLatest.liveRefreshed) {
+                void this.persistNonBinanceData(
+                    symbol,
+                    interval,
+                    provider,
+                    seededWithLatest.candles,
+                    `local-${localNonBinance.source}-overlay`
+                );
+                uiManager.updateSymbolDataSource(
+                    localNonBinance.source === 'seed' ? 'CSV + Bybit' : 'Local + Bybit',
+                    'live',
+                    localNonBinance.source === 'seed'
+                        ? 'Historical candles came from the local CSV seed and the latest candle was refreshed from Bybit.'
+                        : 'Historical candles came from local cache/SQLite and the latest candle was refreshed from Bybit.'
+                );
+                return this.sliceToLookback(seededWithLatest.candles, lookbackBars);
             }
+
+            const localSourceMeta = this.describeLocalSource(localNonBinance.source);
+            uiManager.updateSymbolDataSource(
+                localSourceMeta.label,
+                localNonBinance.source === 'seed' ? 'warning' : 'seed',
+                `${localSourceMeta.title} Latest refresh from Bybit did not return a candle.`
+            );
+            return this.sliceToLookback(seededWithLatest.candles, lookbackBars);
+        }
+
+        if (provider !== 'binance' && localNonBinance && provider !== 'bybit-tradfi') {
+            const localSourceMeta = this.describeLocalSource(localNonBinance.source);
+            uiManager.updateSymbolDataSource(localSourceMeta.label, 'seed', localSourceMeta.title);
+            return this.sliceToLookback(localNonBinance.candles, lookbackBars);
         }
 
         if (provider === 'binance') {
-            return this.fetchBinanceDataHybrid(symbol, interval, signal, {
+            const data = await this.fetchBinanceDataHybrid(symbol, interval, signal, {
                 maxBars: lookbackBars ?? undefined,
             });
+            uiManager.updateSymbolDataSource(
+                'Live: Binance',
+                'live',
+                'Chart data is loaded from Binance.'
+            );
+            return data;
         }
 
         if (provider === 'bybit-tradfi') {
@@ -193,21 +240,64 @@ export class DataManager {
                     ...(resampleOptions ?? {}),
                 })
                 : await fetchBybitTradFiData(symbol, interval, signal, resampleOptions);
-            if (data.length > 0) return data;
+            if (data.length > 0) {
+                const merged = localNonBinance
+                    ? mergeCandles(localNonBinance.candles, data)
+                    : data;
+                void this.persistNonBinanceData(symbol, interval, provider, merged, 'network');
+                uiManager.updateSymbolDataSource(
+                    'Live: Bybit',
+                    'live',
+                    'Chart data is loaded directly from Bybit TradFi.'
+                );
+                return this.sliceToLookback(merged, lookbackBars);
+            }
+            if (localNonBinance && localNonBinance.candles.length > 0) {
+                const localSourceMeta = this.describeLocalSource(localNonBinance.source);
+                uiManager.updateSymbolDataSource(
+                    localSourceMeta.label,
+                    'warning',
+                    `${localSourceMeta.title} Bybit TradFi did not return fresh intraday chart data, so local data is being used.`
+                );
+                return this.sliceToLookback(localNonBinance.candles, lookbackBars);
+            }
             uiManager.showToast('Bybit TradFi returned no data.', 'error');
+            uiManager.updateSymbolDataSource(
+                'Bybit unavailable',
+                'warning',
+                'Bybit TradFi did not return chart data for this symbol and timeframe.'
+            );
             return [];
         }
         if (provider === 'polymarket') {
             const data = typeof lookbackBars === 'number'
                 ? await fetchPolymarketDataWithLimit(symbol, interval, lookbackBars, { signal })
                 : await fetchPolymarketData(symbol, interval, signal);
-            if (data.length > 0) return data;
+            if (data.length > 0) {
+                void this.persistNonBinanceData(symbol, interval, provider, data, 'network');
+                uiManager.updateSymbolDataSource(
+                    'Live: Polymarket',
+                    'live',
+                    'Chart data is loaded from Polymarket.'
+                );
+                return data;
+            }
             uiManager.showToast('Polymarket returned no data for this market.', 'error');
+            uiManager.updateSymbolDataSource(
+                'Polymarket unavailable',
+                'warning',
+                'Polymarket did not return chart data for this market.'
+            );
             return [];
         }
 
         // Fallback or explicit provider logic for others
         const fallback = await this.fetchNonBinanceData(symbol, interval, signal);
+        uiManager.updateSymbolDataSource(
+            'Fallback',
+            'warning',
+            'Primary data source was unavailable, so fallback data is being used.'
+        );
         return typeof lookbackBars === 'number' ? fallback.slice(-lookbackBars) : fallback;
     }
 
@@ -247,10 +337,10 @@ export class DataManager {
         const resampleOptions = this.getResampleOptions(interval);
 
         if (provider !== 'binance') {
-            const seedData = await loadSeedCandlesFromPriceData(symbol, interval, signal);
-            if (seedData && seedData.length > 0) {
+            const localData = await this.loadNonBinanceLocalData(symbol, interval, maxBars, signal);
+            if (localData) {
                 return {
-                    data: seedData.slice(-maxBars),
+                    data: localData.candles.slice(-maxBars),
                     source: 'local',
                 };
             }
@@ -269,12 +359,18 @@ export class DataManager {
                 signal,
                 ...(resampleOptions ?? {}),
             });
+            if (data.length > 0) {
+                void this.persistNonBinanceData(symbol, interval, provider, data, 'network');
+            }
             return { data, source: 'network' };
         }
         if (provider === 'polymarket') {
             const data = await fetchPolymarketDataWithLimit(symbol, interval, maxBars, {
                 signal,
             });
+            if (data.length > 0) {
+                void this.persistNonBinanceData(symbol, interval, provider, data, 'network');
+            }
             return { data, source: 'network' };
         }
         
@@ -295,6 +391,9 @@ export class DataManager {
 
         const provider = this.getProvider(symbol);
         const resampleOptions = this.getResampleOptions(interval);
+        const localNonBinance = provider !== 'binance'
+            ? await this.loadNonBinanceLocalData(symbol, interval, limit, options?.signal)
+            : null;
 
         if (provider === 'binance') {
             return fetchBinanceDataWithLimit(symbol, interval, limit, {
@@ -304,13 +403,29 @@ export class DataManager {
         }
 
         if (provider === 'bybit-tradfi') {
-            return fetchBybitTradFiDataWithLimit(symbol, interval, limit, {
+            if (localNonBinance && localNonBinance.candles.length >= limit) {
+                return localNonBinance.candles.slice(-limit);
+            }
+            const data = await fetchBybitTradFiDataWithLimit(symbol, interval, limit, {
                 ...options,
                 ...(resampleOptions ?? {}),
             });
+            if (data.length > 0) {
+                void this.persistNonBinanceData(symbol, interval, provider, data, 'network');
+                return data;
+            }
+            return localNonBinance?.candles.slice(-limit) ?? [];
         }
         if (provider === 'polymarket') {
-            return fetchPolymarketDataWithLimit(symbol, interval, limit, options);
+            if (localNonBinance && localNonBinance.candles.length >= limit) {
+                return localNonBinance.candles.slice(-limit);
+            }
+            const data = await fetchPolymarketDataWithLimit(symbol, interval, limit, options);
+            if (data.length > 0) {
+                void this.persistNonBinanceData(symbol, interval, provider, data, 'network');
+                return data;
+            }
+            return localNonBinance?.candles.slice(-limit) ?? [];
         }
 
         // For others, fall back to standard fetch (no specific limit optimization yet implemented for 12data/yahoo historical)
@@ -445,6 +560,125 @@ export class DataManager {
         return generateMockData(symbol, interval);
     }
 
+    private normalizeExternalCandles(candles: OHLCVData[]): OHLCVData[] {
+        return mergeCandles([], candles);
+    }
+
+    private describeLocalSource(source: NonBinanceLocalSource): { label: string; title: string } {
+        if (source === 'sqlite') {
+            return {
+                label: 'SQLite cache',
+                title: 'Chart is using local SQLite history for this symbol and interval.',
+            };
+        }
+        if (source === 'cache') {
+            return {
+                label: 'Local cache',
+                title: 'Chart is using the browser candle cache for this symbol and interval.',
+            };
+        }
+        if (source === 'imported') {
+            return {
+                label: 'Imported',
+                title: 'Chart is using imported local candles for this symbol and interval.',
+            };
+        }
+        return {
+            label: 'Local seed',
+            title: 'Chart is using bundled local seed data for this symbol and interval.',
+        };
+    }
+
+    private getProviderStorageLabel(provider: DataProvider): string {
+        if (provider === 'bybit-tradfi') return 'Bybit TradFi';
+        if (provider === 'polymarket') return 'Polymarket';
+        return 'Binance';
+    }
+
+    private async loadNonBinanceLocalData(
+        symbol: string,
+        interval: string,
+        maxBars: number,
+        signal?: AbortSignal
+    ): Promise<{ candles: OHLCVData[]; source: NonBinanceLocalSource } | null> {
+        const normalizedLimit = Math.max(1, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(maxBars)));
+        const storageInterval = this.getStorageInterval(interval);
+        const cacheKey = this.buildCacheKey(symbol, storageInterval);
+        const candidates: Array<{ candles: OHLCVData[]; source: NonBinanceLocalSource }> = [];
+
+        const imported = this.importedDataByKey.get(cacheKey);
+        if (imported && imported.length > 0) {
+            candidates.push({
+                candles: this.normalizeExternalCandles(imported).slice(-normalizedLimit),
+                source: 'imported',
+            });
+        }
+
+        const sqliteRaw = await loadSqliteCandles(symbol, storageInterval, normalizedLimit);
+        if (sqliteRaw && sqliteRaw.length > 0) {
+            candidates.push({
+                candles: this.normalizeExternalCandles(sqliteRaw).slice(-normalizedLimit),
+                source: 'sqlite',
+            });
+        }
+
+        const cached = await loadCachedCandles(symbol, storageInterval);
+        if (cached && cached.candles.length > 0) {
+            candidates.push({
+                candles: this.normalizeExternalCandles(cached.candles).slice(-normalizedLimit),
+                source: 'cache',
+            });
+        }
+
+        const seedData = await loadSeedCandlesFromPriceData(symbol, interval, signal);
+        if (seedData && seedData.length > 0) {
+            candidates.push({
+                candles: this.normalizeExternalCandles(seedData).slice(-normalizedLimit),
+                source: 'seed',
+            });
+        }
+
+        if (candidates.length === 0) {
+            return null;
+        }
+
+        const priority: Record<NonBinanceLocalSource, number> = {
+            imported: 4,
+            cache: 3,
+            sqlite: 2,
+            seed: 1,
+        };
+
+        candidates.sort((a, b) => {
+            if (b.candles.length !== a.candles.length) {
+                return b.candles.length - a.candles.length;
+            }
+            return priority[b.source] - priority[a.source];
+        });
+
+        return candidates[0];
+    }
+
+    private async persistNonBinanceData(
+        symbol: string,
+        interval: string,
+        provider: DataProvider,
+        candles: OHLCVData[],
+        source: string
+    ): Promise<void> {
+        if (candles.length === 0) return;
+        const storageInterval = this.getStorageInterval(interval);
+        const normalized = this.normalizeExternalCandles(candles);
+        await saveCachedCandles(symbol, storageInterval, normalized, source);
+        await storeSqliteCandles(
+            symbol,
+            storageInterval,
+            normalized,
+            this.getProviderStorageLabel(provider),
+            source
+        );
+    }
+
     private getTwoHourCloseParity(): TwoHourCloseParity {
         if (typeof document === 'undefined') return 'odd';
         const select = document.getElementById('twoHourCloseParity') as HTMLSelectElement | null;
@@ -478,6 +712,60 @@ export class DataManager {
             return `${normalized}@close-${this.getTwoHourCloseParity()}`;
         }
         return normalized;
+    }
+
+    private sliceToLookback(candles: OHLCVData[], lookbackBars: number | null): OHLCVData[] {
+        return typeof lookbackBars === 'number' ? candles.slice(-lookbackBars) : candles;
+    }
+
+    private getBybitSeedOverlayBars(interval: string, seedData: OHLCVData[]): number {
+        const intervalSeconds = getIntervalSeconds(interval);
+        if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
+            return 30;
+        }
+
+        const lastSeedTime = seedData.length > 0
+            ? parseTimeToUnixSeconds(seedData[seedData.length - 1].time)
+            : null;
+        if (lastSeedTime === null) {
+            return 30;
+        }
+
+        const nowSec = Math.floor(Date.now() / 1000);
+        const gapSec = Math.max(0, nowSec - lastSeedTime);
+        const estimatedGapBars = Math.ceil(gapSec / intervalSeconds);
+        return Math.max(12, Math.min(240, estimatedGapBars + 10));
+    }
+
+    private async mergeBybitRecentIntoSeed(
+        symbol: string,
+        interval: string,
+        seedData: OHLCVData[],
+        signal?: AbortSignal,
+        options?: ResampleOptions
+    ): Promise<{ candles: OHLCVData[]; liveRefreshed: boolean }> {
+        try {
+            const overlayBars = this.getBybitSeedOverlayBars(interval, seedData);
+            const recent = await fetchBybitTradFiDataWithLimit(symbol, interval, overlayBars, {
+                signal,
+                ...(options ?? {}),
+            });
+            if (recent.length === 0) {
+                return { candles: seedData, liveRefreshed: false };
+            }
+            const merged = mergeCandles(seedData, recent);
+            return {
+                candles: merged,
+                liveRefreshed: true,
+            };
+        } catch (error) {
+            debugLogger.warn('data.bybit_tradfi.seed_overlay_failed', {
+                symbol,
+                interval,
+                error: String(error),
+            });
+            return { candles: seedData, liveRefreshed: false };
+        }
     }
 
     private shouldUseBinanceAlignedPolling(interval: string): boolean {
@@ -803,7 +1091,12 @@ export class DataManager {
         return { data: merged.length > 0 ? merged : cached!.candles.slice(-effectiveMaxBars), source: 'network', cached, hasSqliteBase, cacheKey, storageInterval, effectiveMaxBars };
     }
 
-    private queuePersistCandles(symbol: string, interval: string, candles: OHLCVData[]): void {
+    private queuePersistCandles(
+        symbol: string,
+        interval: string,
+        candles: OHLCVData[],
+        provider: DataProvider | '' = ''
+    ): void {
         if (!symbol || !interval || candles.length === 0) return;
         const storageInterval = this.getStorageInterval(interval);
         const cacheKey = this.buildCacheKey(symbol, storageInterval);
@@ -831,7 +1124,7 @@ export class DataManager {
                     pending.symbol,
                     pending.storageInterval,
                     delta,
-                    'Binance',
+                    provider ? this.getProviderStorageLabel(provider) : 'Binance',
                     'stream'
                 );
                 const lastSync = this.cacheSyncAtByKey.get(cacheKey) ?? 0;
@@ -953,13 +1246,18 @@ export class DataManager {
 
         if (this.pollTimeout) clearTimeout(this.pollTimeout);
 
-        const delay = delayMs ?? this.getPollingDelayMs(this.streamInterval);
+        const delay = delayMs ?? this.getPollingDelayMs(this.streamInterval, this.streamProvider);
         this.pollTimeout = setTimeout(() => this.pollLatest(), delay);
     }
 
-    private getPollingDelayMs(interval: string): number {
+    private getPollingDelayMs(interval: string, provider: DataProvider | '' = ''): number {
         const seconds = getIntervalSeconds(interval);
         if (!Number.isFinite(seconds) || seconds <= 0) return 30000;
+        if (provider === 'bybit-tradfi') {
+            if (seconds <= 300) return 15000;
+            if (seconds <= 3600) return 30000;
+            return 60000;
+        }
         if (seconds <= 60) return 15000;
         if (seconds <= 300) return 30000;
         if (seconds <= 3600) return 60000;
@@ -1001,10 +1299,24 @@ export class DataManager {
             if (abort.signal.aborted) return;
 
             if (candle && (provider === 'binance' || provider === 'bybit-tradfi' || provider === 'polymarket')) {
+                if (provider === 'bybit-tradfi') {
+                    uiManager.updateSymbolDataSource(
+                        'Live: Bybit',
+                        'live',
+                        'Latest candle refresh from Bybit TradFi is active.'
+                    );
+                }
                 this.handleStreamUpdate(candle, sessionId, symbol, interval, provider);
             }
         } catch (error) {
             debugLogger.warn('data.stream.poll_error', { error: String(error) });
+            if (provider === 'bybit-tradfi') {
+                uiManager.updateSymbolDataSource(
+                    'Bybit refresh failed',
+                    'warning',
+                    'Latest refresh from Bybit TradFi failed. The chart is showing the last loaded data.'
+                );
+            }
         } finally {
             this.pollingInFlight = false;
             this.scheduleNextPoll();
@@ -1068,7 +1380,12 @@ export class DataManager {
         const persistedData = state.ohlcvData;
         const persistSymbol = this.streamSymbol || state.currentSymbol;
         const persistInterval = this.streamInterval || state.currentInterval;
-        this.queuePersistCandles(persistSymbol, persistInterval, persistedData);
+        this.queuePersistCandles(
+            persistSymbol,
+            persistInterval,
+            persistedData,
+            this.streamProvider || this.getProvider(persistSymbol)
+        );
 
         const now = Date.now();
         if (!this.lastUiUpdateTime || now - this.lastUiUpdateTime > 1000) {

@@ -43,6 +43,41 @@
     color: var(--red-light);
 }
 
+.symbol-source {
+    font-size: 10px;
+    line-height: 1;
+    padding: 3px 7px;
+    border-radius: var(--radius-pill);
+    border: 1px solid transparent;
+    background: hsl(var(--hsl-surface-4) / 0.45);
+    color: var(--text-tertiary);
+    white-space: nowrap;
+}
+
+.symbol-source.live {
+    background: hsl(var(--hsl-success-strong) / 0.18);
+    border-color: hsl(var(--hsl-success-strong) / 0.3);
+    color: var(--green-light);
+}
+
+.symbol-source.seed {
+    background: hsl(var(--hsl-accent) / 0.14);
+    border-color: hsl(var(--hsl-accent) / 0.22);
+    color: var(--accent-light);
+}
+
+.symbol-source.warning {
+    background: hsl(var(--hsl-warning) / 0.16);
+    border-color: hsl(var(--hsl-warning) / 0.28);
+    color: var(--yellow-light);
+}
+
+.symbol-source.loading {
+    background: hsl(var(--hsl-surface-4) / 0.55);
+    border-color: hsl(var(--hsl-border) / 0.24);
+    color: var(--text-secondary);
+}
+
 /* Tabs */
 /* Timeframe Tabs - Enhanced */
 .timeframe-tabs {

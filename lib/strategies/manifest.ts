@@ -56,6 +56,16 @@ import { intrabar_polarity_reversal_count } from "./lib/intrabar-polarity-revers
 import { consecutive_midpoint_advance_score } from "./lib/consecutive-midpoint-advance-score";
 import { candle_return_rate_mean_reversion } from "./lib/candle-return-rate-mean-reversion";
 import { adx_slope_pivot_entry } from "./lib/adx_slope_pivot_entry";
+import { wick_imbalance_persistence_score } from "./lib/wick-imbalance-persistence-score";
+import { previous_midpoint_reclaim_score } from "./lib/previous-midpoint-reclaim-score";
+import { failed_range_expansion_flip } from "./lib/failed-range-expansion-flip";
+import { tail_echo_pressure_score } from "./lib/tail-echo-pressure-score";
+import { body_overlap_drift_score } from "./lib/body-overlap-drift-score";
+import { close_location_failure_score } from "./lib/close-location-failure-score";
+import { compression_reclaim_impulse } from "./lib/compression-reclaim-impulse";
+import { prior_range_open_trap } from "./lib/prior-range-open-trap";
+import { micro_sweep_reclaim_score } from "./lib/micro-sweep-reclaim-score";
+import { follow_through_failure_persistence } from "./lib/follow-through-failure-persistence";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -121,6 +131,16 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "consecutive_midpoint_advance_score", strategy: consecutive_midpoint_advance_score },
     { key: "candle_return_rate_mean_reversion", strategy: candle_return_rate_mean_reversion },
     { key: "adx_slope_pivot_entry", strategy: adx_slope_pivot_entry },
+    { key: "wick_imbalance_persistence_score", strategy: wick_imbalance_persistence_score },
+    { key: "previous_midpoint_reclaim_score", strategy: previous_midpoint_reclaim_score },
+    { key: "failed_range_expansion_flip", strategy: failed_range_expansion_flip },
+    { key: "tail_echo_pressure_score", strategy: tail_echo_pressure_score },
+    { key: "body_overlap_drift_score", strategy: body_overlap_drift_score },
+    { key: "close_location_failure_score", strategy: close_location_failure_score },
+    { key: "compression_reclaim_impulse", strategy: compression_reclaim_impulse },
+    { key: "prior_range_open_trap", strategy: prior_range_open_trap },
+    { key: "micro_sweep_reclaim_score", strategy: micro_sweep_reclaim_score },
+    { key: "follow_through_failure_persistence", strategy: follow_through_failure_persistence },
 ];
 
 export function createStrategiesRecordFromManifest(

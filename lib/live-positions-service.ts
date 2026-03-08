@@ -15,6 +15,8 @@ import {
 } from './alert-service';
 import { backtestService } from './backtest-service';
 import { dataManager } from './data-manager';
+import { assetSearchService } from './asset-search-service';
+import { fetchBybitTradFiLatest } from './dataProviders/bybit';
 import { parseIntervalSeconds } from './interval-utils';
 import { parseTimeToUnixSeconds } from './time-normalization';
 import type { BacktestSettings, Trade } from './strategies/index';
@@ -91,11 +93,12 @@ interface AnalysisResult {
 }
 
 const POLL_INTERVAL_MS = 30000;
-const PRICE_CACHE_TTL_MS = 10000;
+const PRICE_CACHE_TTL_MS = Math.max(POLL_INTERVAL_MS, 60000);
 const SIGNAL_HISTORY_LIMIT = 30;
 const ANALYZE_CONCURRENCY = 4;
 const MAX_LOCAL_COMPARE_CANDLE_LIMIT = 50000;
 const PRICE_CACHE: Map<string, PriceCache> = new Map();
+const PRICE_REQUESTS: Map<string, Promise<number | null>> = new Map();
 
 class LivePositionsService {
     private state: LivePositionsState = {
@@ -240,7 +243,7 @@ class LivePositionsService {
         const mismatch = this.detectMismatch(workerSnapshot, localSnapshot, sub.interval);
 
         const shouldShowOpen = localSnapshot.openTrade !== null || (workerSnapshot.stateAvailable && workerSnapshot.hasOpen);
-        const currentPrice = shouldShowOpen ? await this.fetchCurrentPrice(sub.symbol) : null;
+        const currentPrice = shouldShowOpen ? await this.fetchCurrentPrice(sub.symbol, sub.interval) : null;
 
         const openPosition = shouldShowOpen
             ? this.buildOpenPosition(
@@ -551,39 +554,67 @@ class LivePositionsService {
         }
     }
 
-    private async fetchCurrentPrice(symbol: string): Promise<number | null> {
-        const cached = PRICE_CACHE.get(symbol);
+    private async fetchCurrentPrice(symbol: string, interval: string): Promise<number | null> {
+        const normalizedSymbol = symbol.trim().toUpperCase();
+        const cached = PRICE_CACHE.get(normalizedSymbol);
         if (cached && Date.now() - cached.timestamp < PRICE_CACHE_TTL_MS) {
             return cached.price;
         }
 
-        try {
-            const response = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`);
-            if (!response.ok) throw new Error('Price fetch failed');
-
-            const data = await response.json() as { price: string };
-            const price = parseFloat(data.price);
-            if (Number.isFinite(price)) {
-                PRICE_CACHE.set(symbol, { symbol, price, timestamp: Date.now() });
-                return price;
-            }
-        } catch (err) {
-            try {
-                const response = await fetch(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${symbol}`);
-                if (!response.ok) throw new Error('Bybit price fetch failed');
-
-                const data = await response.json() as { result?: { list?: Array<{ lastPrice: string }> } };
-                const price = parseFloat(data.result?.list?.[0]?.lastPrice || '');
-                if (Number.isFinite(price)) {
-                    PRICE_CACHE.set(symbol, { symbol, price, timestamp: Date.now() });
-                    return price;
-                }
-            } catch {
-                console.warn(`[LivePositions] Failed to fetch price for ${symbol}:`, err);
-            }
+        const inFlight = PRICE_REQUESTS.get(normalizedSymbol);
+        if (inFlight) {
+            return inFlight;
         }
 
-        return null;
+        const request = (async () => {
+            const provider = assetSearchService.getProvider(normalizedSymbol);
+
+            try {
+                if (provider === 'bybit-tradfi') {
+                    const fast = await fetchBybitTradFiLatest(normalizedSymbol, '1m');
+                    const slow = fast ?? await fetchBybitTradFiLatest(normalizedSymbol, interval || '1d');
+                    const price = Number(slow?.close);
+                    if (Number.isFinite(price)) {
+                        PRICE_CACHE.set(normalizedSymbol, { symbol: normalizedSymbol, price, timestamp: Date.now() });
+                        return price;
+                    }
+                    return null;
+                }
+
+                if (provider === 'binance') {
+                    const response = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${normalizedSymbol}`);
+                    if (!response.ok) throw new Error('Price fetch failed');
+
+                    const data = await response.json() as { price: string };
+                    const price = parseFloat(data.price);
+                    if (Number.isFinite(price)) {
+                        PRICE_CACHE.set(normalizedSymbol, { symbol: normalizedSymbol, price, timestamp: Date.now() });
+                        return price;
+                    }
+                }
+            } catch (err) {
+                try {
+                    const response = await fetch(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${normalizedSymbol}`);
+                    if (!response.ok) throw new Error('Bybit price fetch failed');
+
+                    const data = await response.json() as { result?: { list?: Array<{ lastPrice: string }> } };
+                    const price = parseFloat(data.result?.list?.[0]?.lastPrice || '');
+                    if (Number.isFinite(price)) {
+                        PRICE_CACHE.set(normalizedSymbol, { symbol: normalizedSymbol, price, timestamp: Date.now() });
+                        return price;
+                    }
+                } catch {
+                    console.warn(`[LivePositions] Failed to fetch price for ${normalizedSymbol}:`, err);
+                }
+            }
+
+            return null;
+        })().finally(() => {
+            PRICE_REQUESTS.delete(normalizedSymbol);
+        });
+
+        PRICE_REQUESTS.set(normalizedSymbol, request);
+        return request;
     }
 
     private async fetchSubscription(streamId: string): Promise<AlertSubscription | null> {

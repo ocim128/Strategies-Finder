@@ -331,6 +331,10 @@
         font-size: var(--font-size-sm);
     }
 
+    .symbol-source {
+        display: none;
+    }
+
     /* Reduce stat card padding */
     .stat-card {
         padding: var(--space-1-5) var(--space-2);

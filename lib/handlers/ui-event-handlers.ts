@@ -64,6 +64,11 @@ export function setupEventHandlers() {
             state.set('currentSymbol', normalizedSymbol);
         }
         if (!symbolChanged && !intervalChanged) {
+            uiManager.updateSymbolDataSource(
+                'Loading',
+                'loading',
+                'Reloading local seed data and refreshing the latest Bybit candle.'
+            );
             void dataManager.loadData(normalizedSymbol, '1d');
         }
 
@@ -89,7 +94,7 @@ export function setupEventHandlers() {
 
             const placeholder = document.createElement('option');
             placeholder.value = '';
-            placeholder.textContent = 'Pick local 1D ticker...';
+            placeholder.textContent = 'Pick local 1D seed...';
             localSp500Select.appendChild(placeholder);
 
             assets.forEach((asset) => {
