@@ -587,8 +587,6 @@ export function initLivePositionsHandlers(): void {
         syncPollingWithWorkerUrl(nextUrl);
     };
     window.addEventListener(ALERT_WORKER_URL_CHANGED_EVENT, workerUrlListener as EventListener);
-    
-    console.log('[LivePositions] Handlers initialized');
 }
 
 // Cleanup function for HMR

@@ -1,10 +1,7 @@
 {
   "strategyKeys": [
-    "regime_donchian_breakout",
-    "momentum_volatility_rotation",
     "long_short_harvest",
     "mean_reversion_zscore",
-    "shock_reversion_trend_gate",
     "liquidity_void_rider",
     "hypothesis_trend_persistence",
     "volatility_compression_break",

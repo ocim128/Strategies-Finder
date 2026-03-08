@@ -225,4 +225,4 @@ If you change behavior substantially, update the docs that actually carry that c
 - `AGENTS.md` for safe-change guidance
 - `workers/README.md` for worker API and cron behavior
 
-Keep repo-level docs broad and operational. Strategy-specific lore belongs in dedicated docs like `EMPIRE_CONSTITUTION.md`, not in the main README.
+Keep repo-level docs broad and operational. Strategy-specific lore belongs in dedicated docs, not in the main README.

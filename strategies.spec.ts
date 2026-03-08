@@ -2,7 +2,6 @@ import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateATR, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade, Strategy } from './lib/strategies/index';
 import { buildPivotFlags, detectPivots, detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
-import { simple_regression_line } from './lib/strategies/lib/simple-regression-line';
 import { hypothesis_trend_persistence } from './lib/strategies/lib/hypothesis-trend-persistence';
 import { inside_bar_momentum_burst } from './lib/strategies/lib/inside-bar-momentum-burst';
 import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/backtest/trade-analyzer';
@@ -258,10 +257,6 @@ describe('Causal Signal Stability', () => {
             }
         }
     };
-
-    it('fib_speed_fan_entry should keep prior signals stable when candles are appended', () => {
-        expectPrefixStable('fib_speed_fan_entry');
-    });
 
     it('stochastic_momentum_divergence_entry should keep prior signals stable when candles are appended', () => {
         expectPrefixStable('stochastic_momentum_divergence_entry');
@@ -1408,56 +1403,6 @@ describe('Backtesting Engine', () => {
         // 60m lookback on 30m data resolves to two bars back from the signal bar (14 -> 12).
         const expectedTf60Perf = ((data[14].close - data[12].close) / data[12].close) * 100;
         expect(result.trades[0].entrySnapshot?.tf60Perf ?? null).to.be.closeTo(expectedTf60Perf, 1e-9);
-    });
-});
-
-describe('Simple Regression Line Strategy', () => {
-    it('should produce stable signals and expose walk-forward metadata', () => {
-        const data: OHLCVData[] = [];
-
-        for (let i = 0; i < 320; i++) {
-            const trend = i < 160 ? (100 + (i * 0.28)) : (145 - ((i - 160) * 0.24));
-            const cycle = Math.sin(i / 6) * 2.2;
-            const shock =
-                i % 37 === 0 ? -4.5 :
-                    i % 41 === 0 ? 4.2 :
-                        i % 23 === 0 ? -2.8 :
-                            0;
-            const close = trend + cycle + shock;
-
-            data.push({
-                time: (i + 1) as unknown as Time,
-                open: close - 0.4,
-                high: close + 0.9,
-                low: close - 0.9,
-                close,
-                volume: 1000 + (i % 15) * 25
-            });
-        }
-
-        const params = {
-            lookback: 50,
-            slopeThresholdPct: 0.015,
-            zEntry: 1.05,
-            zExit: 0.3,
-            maxHoldBars: 45,
-            cooldownBars: 3,
-            useShorts: 1
-        };
-
-        const signals = simple_regression_line.execute(data, params);
-        expect(signals.length).to.be.greaterThan(4);
-        expect(signals.some(s => s.type === 'buy')).to.equal(true);
-        expect(signals.some(s => s.type === 'sell')).to.equal(true);
-        expect(signals.every(s => Number.isFinite(s.price))).to.equal(true);
-
-        const indicators = simple_regression_line.indicators?.(data, params) ?? [];
-        expect(indicators.length).to.equal(3);
-        expect((indicators[0].values as (number | null)[]).length).to.equal(data.length);
-
-        expect(simple_regression_line.metadata?.walkForwardParams).to.include('lookback');
-        expect(simple_regression_line.metadata?.walkForwardParams).to.include('zEntry');
-        expect(simple_regression_line.metadata?.walkForwardParams).to.include('zExit');
     });
 });
 

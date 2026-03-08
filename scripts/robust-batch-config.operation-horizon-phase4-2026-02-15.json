@@ -1,8 +1,7 @@
 {
   "strategyKeys": [
     "bear_hunter_v4",
-    "momentum_rsi_pullback_entry",
-    "sol_queen_v1"
+    "momentum_rsi_pullback_entry"
   ],
   "seeds": [1337, 7331, 2026, 4242, 9001],
   "finder": {
@@ -81,15 +80,6 @@
           "requireReclaim": 0
         }
       },
-      "tradeDirections": ["long"]
-    },
-    {
-      "label": "phase4-exotic-sol-4h",
-      "enabled": true,
-      "dataPath": "price-data/robust-lab/generated/strategy-evolution-2026-02-15-btc-sol-15m-4h/SOLUSDT-4h.json",
-      "symbol": "SOLUSDT",
-      "interval": "4h",
-      "strategyKeys": ["sol_queen_v1"],
       "tradeDirections": ["long"]
     }
   ]

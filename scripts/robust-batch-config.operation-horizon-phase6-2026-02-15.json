@@ -1,8 +1,7 @@
 {
   "strategyKeys": [
     "bear_hunter_v5",
-    "meta_harvest_v3",
-    "simple_regression_line"
+    "meta_harvest_v3"
   ],
   "seeds": [1337, 7331, 2026, 4242, 9001],
   "finder": {
@@ -71,21 +70,6 @@
           "bankerTriggerProfitPct": 3,
           "bankerFractionPct": 50,
           "bankerTrailAtr": 2
-        }
-      },
-      "tradeDirections": ["both"]
-    },
-    {
-      "label": "phase6-trend-eth-1h",
-      "enabled": true,
-      "dataPath": "price-data/robust-lab/generated/operation-horizon-phase6-2026-02-15/ETHUSDT-1h.json",
-      "symbol": "ETHUSDT",
-      "interval": "1h",
-      "strategyKeys": ["simple_regression_line"],
-      "strategyParams": {
-        "simple_regression_line": {
-          "lookback": 80,
-          "zEntry": 2
         }
       },
       "tradeDirections": ["both"]

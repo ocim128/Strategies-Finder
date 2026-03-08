@@ -4,7 +4,7 @@
  * Shows whether the Rust backend is connected and being used.
  */
 
-import { rustEngine, getEngineStatus } from './rust-engine-client';
+import { rustEngine } from './rust-engine-client';
 import { getEnginePreference, toggleEnginePreference } from './engine-preferences';
 
 // ============================================================================
@@ -97,36 +97,3 @@ export async function refreshEngineStatus(): Promise<void> {
     await updateStatus();
 }
 
-/**
- * Get current engine info for display
- */
-export async function getEngineInfo(): Promise<{
-    engine: 'rust' | 'typescript';
-    status: string;
-    color: string;
-}> {
-    const preference = getEnginePreference();
-    if (preference === 'typescript') {
-        return {
-            engine: 'typescript',
-            status: 'TypeScript (forced)',
-            color: '#3178c6'
-        };
-    }
-
-    const status = await getEngineStatus();
-
-    if (status.engine === 'rust') {
-        return {
-            engine: 'rust',
-            status: `Rust v${status.version || 'unknown'}`,
-            color: '#ff6b35'
-        };
-    }
-
-    return {
-        engine: 'typescript',
-        status: 'TypeScript (fallback)',
-        color: '#3178c6'
-    };
-}

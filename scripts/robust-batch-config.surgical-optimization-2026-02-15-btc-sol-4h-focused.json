@@ -1,7 +1,6 @@
 {
   "strategyKeys": [
     "dynamic_vix_regime",
-    "fib_speed_fan_entry",
     "mean_reversion_zscore"
   ],
   "seeds": [

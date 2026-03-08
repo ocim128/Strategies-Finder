@@ -11,7 +11,7 @@ import {
     parseAlertConfigNameFromStreamId,
     parseAlertTwoHourParityFromStreamId,
 } from '../alert-service';
-import { parseIntervalSeconds } from '../interval-utils';
+import { isTwoHourInterval } from '../interval-utils';
 import { replaceTwoHourParityInStreamId, stripTwoHourParityFromStreamId } from '../alert-stream-id';
 import { uiManager } from '../ui-manager';
 import { state } from '../state';
@@ -183,10 +183,6 @@ function getNumber(value: unknown): number | null {
     return null;
 }
 
-function getIntervalSeconds(interval: string): number {
-    return parseIntervalSeconds(interval) ?? 0;
-}
-
 function resolveParityModeFromUi(): 'odd' | 'even' | 'both' {
     const select = getOptionalElement<HTMLSelectElement>('twoHourCloseParity');
     if (select?.value === 'even' || select?.value === 'both') return select.value;
@@ -207,7 +203,7 @@ function resolveSubscriptionParity(sub: AlertSubscription): AlertTwoHourClosePar
 }
 
 function resolveEffectiveTwoHourParity(sub: AlertSubscription): { parity: AlertTwoHourCloseParity; source: 'stream' | 'settings' | 'default' } | null {
-    if (getIntervalSeconds(sub.interval) !== 7200) return null;
+    if (!isTwoHourInterval(sub.interval)) return null;
     const fromStream = parseAlertTwoHourParityFromStreamId(sub.stream_id);
     if (fromStream) return { parity: fromStream, source: 'stream' };
     const settings = safeJsonParse<Record<string, unknown>>(sub.backtest_settings_json, {});
@@ -217,13 +213,13 @@ function resolveEffectiveTwoHourParity(sub: AlertSubscription): { parity: AlertT
 }
 
 function resolvePairedTwoHourParity(sub: AlertSubscription): AlertTwoHourCloseParity | null {
-    if (getIntervalSeconds(sub.interval) !== 7200) return null;
+    if (!isTwoHourInterval(sub.interval)) return null;
     const baseKey = stripTwoHourParityFromStreamId(sub.stream_id);
     let hasOdd = false;
     let hasEven = false;
 
     for (const item of subscriptionsByStreamId.values()) {
-        if (getIntervalSeconds(item.interval) !== 7200) continue;
+        if (!isTwoHourInterval(item.interval)) continue;
         if (stripTwoHourParityFromStreamId(item.stream_id) !== baseKey) continue;
         const parity = resolveSubscriptionParity(item);
         if (parity === 'odd') hasOdd = true;
@@ -465,7 +461,7 @@ function renderSubscriptions(subs: AlertSubscription[]) {
         const lastStatus = sub.last_status ?? '--';
         const configName = resolveSubscriptionConfigNameFromIndex(sub, configIndex);
         const parity = resolveSubscriptionParity(sub);
-        const paritySuffix = getIntervalSeconds(sub.interval) === 7200 && parity ? ` [2H-${parity}]` : '';
+        const paritySuffix = isTwoHourInterval(sub.interval) && parity ? ` [2H-${parity}]` : '';
         const strategyDisplay = `${configName ?? sub.strategy_key}${paritySuffix}`;
         const statusClass = lastStatus.startsWith('new_entry') ? 'alert-status-new'
             : lastStatus.startsWith('error') ? 'alert-status-error'
@@ -504,7 +500,7 @@ function renderSubscriptions(subs: AlertSubscription[]) {
             opt.value = sub.stream_id;
             const configName = resolveSubscriptionConfigNameFromIndex(sub, configIndex);
             const parity = resolveSubscriptionParity(sub);
-            const paritySuffix = getIntervalSeconds(sub.interval) === 7200 && parity ? ` | 2H-${parity}` : '';
+            const paritySuffix = isTwoHourInterval(sub.interval) && parity ? ` | 2H-${parity}` : '';
             opt.textContent = `${sub.symbol} | ${sub.interval}${paritySuffix} | ${configName ?? sub.strategy_key}`;
             historySelect.appendChild(opt);
         });
@@ -640,9 +636,8 @@ async function quickSubscribe() {
     const strategyParams = collectCurrentStrategyParams();
     const rawBacktestSettings = collectCurrentSubscriptionBacktestSettings();
     const configName = resolveCurrentConfigName(strategyKey, strategyParams, rawBacktestSettings);
-    const intervalSeconds = getIntervalSeconds(interval);
     const parityMode = resolveParityModeFromUi();
-    const parityTargets: AlertTwoHourCloseParity[] = intervalSeconds === 7200
+    const parityTargets: AlertTwoHourCloseParity[] = isTwoHourInterval(interval)
         ? (parityMode === 'both' ? ['odd', 'even'] : [parityMode === 'even' ? 'even' : 'odd'])
         : [];
 
@@ -723,12 +718,12 @@ async function handleTableAction(action: string, streamId: string) {
                 200,
                 Math.min(50000, state.ohlcvData.length || sub?.candle_limit || 350)
             );
-            const isTwoHourInterval = getIntervalSeconds(sub?.interval ?? state.currentInterval) === 7200;
+            const subscriptionIsTwoHour = isTwoHourInterval(sub?.interval ?? state.currentInterval);
             const currentParity = normalizeSubscriptionParity(currentSettings.twoHourCloseParity);
             const currentWantsBoth = currentSettings.twoHourCloseParity === 'both';
             const streamIdHasParity = parseAlertTwoHourParityFromStreamId(streamId) !== null;
 
-            if (isTwoHourInterval && currentWantsBoth && !streamIdHasParity) {
+            if (subscriptionIsTwoHour && currentWantsBoth && !streamIdHasParity) {
                 uiManager.showToast(
                     'This 2H alert has no parity tag in its ID. "both" requires separate tagged subscriptions; re-subscribe from Alerts.',
                     'error'
@@ -736,11 +731,11 @@ async function handleTableAction(action: string, streamId: string) {
                 return;
             }
 
-            const syncParity: AlertTwoHourCloseParity | null = isTwoHourInterval
+            const syncParity: AlertTwoHourCloseParity | null = subscriptionIsTwoHour
                 ? (streamParity ?? currentParity ?? 'odd')
                 : null;
 
-            if (isTwoHourInterval && currentWantsBoth && syncParity) {
+            if (subscriptionIsTwoHour && currentWantsBoth && syncParity) {
                 const otherParity = syncParity === 'odd' ? 'even' : 'odd';
                 const otherStreamId = replaceTwoHourParityInStreamId(streamId, otherParity);
 
@@ -1067,7 +1062,7 @@ async function handleLastTradeAction(streamId: string): Promise<void> {
         const strategyParams = safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
         const backtestSettings = safeJsonParse<BacktestSettings>(sub.backtest_settings_json, {});
 
-        const parityOverride = getIntervalSeconds(sub.interval) === 7200
+        const parityOverride = isTwoHourInterval(sub.interval)
             ? resolveSubscriptionParity(sub)
             : null;
         const effectiveBacktestSettings = applyTwoHourParityToBacktestSettings(

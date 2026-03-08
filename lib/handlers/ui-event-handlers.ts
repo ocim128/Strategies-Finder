@@ -13,7 +13,7 @@ import { assetSearchService, Asset } from "../asset-search-service";
 import { getLocalSp500Assets } from "../local-sp500-catalog";
 import { finderManager } from "../finder-manager";
 import { scannerManager } from "../scanner/scanner-manager";
-import { getIntervalSeconds } from "../dataProviders/utils";
+import { isTwoHourInterval } from "../interval-utils";
 
 export function setupEventHandlers() {
     const dom = createUiEventHandlersDom();
@@ -813,11 +813,11 @@ export function setupEventHandlers() {
         const parityHint = twoHourCloseParity.parentElement?.querySelector('.param-hint') as HTMLElement | null;
         const defaultParityHint = parityHint?.textContent ?? '';
         const applyParityAvailability = () => {
-            const isTwoHourInterval = getIntervalSeconds(state.currentInterval) === 7200;
-            twoHourCloseParity.disabled = !isTwoHourInterval;
-            twoHourCloseParity.parentElement?.classList.toggle('is-disabled', !isTwoHourInterval);
+            const currentIntervalIsTwoHour = isTwoHourInterval(state.currentInterval);
+            twoHourCloseParity.disabled = !currentIntervalIsTwoHour;
+            twoHourCloseParity.parentElement?.classList.toggle('is-disabled', !currentIntervalIsTwoHour);
             if (parityHint) {
-                parityHint.textContent = isTwoHourInterval
+                parityHint.textContent = currentIntervalIsTwoHour
                     ? defaultParityHint
                     : 'Available only on 2H interval.';
             }
@@ -830,7 +830,7 @@ export function setupEventHandlers() {
 
         let lastAppliedParity: 'odd' | 'even' | 'both' = resolveParityMode(twoHourCloseParity.value);
         twoHourCloseParity.addEventListener('change', () => {
-            if (getIntervalSeconds(state.currentInterval) !== 7200) {
+            if (!isTwoHourInterval(state.currentInterval)) {
                 twoHourCloseParity.value = 'odd';
                 lastAppliedParity = 'odd';
                 return;

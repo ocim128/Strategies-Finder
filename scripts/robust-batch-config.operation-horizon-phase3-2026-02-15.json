@@ -1,7 +1,6 @@
 {
   "strategyKeys": [
     "bear_hunter_v3",
-    "asian_session_breakout_v2",
     "mean_reversion_zscore"
   ],
   "seeds": [1337, 7331, 2026, 4242, 9001],
@@ -64,15 +63,6 @@
       "interval": "4h",
       "strategyKeys": ["bear_hunter_v3"],
       "tradeDirections": ["short"]
-    },
-    {
-      "label": "phase3-scalper-sol-15m",
-      "enabled": true,
-      "dataPath": "price-data/robust-lab/generated/operation-horizon-2026-02-15/SOLUSDT-15m.json",
-      "symbol": "SOLUSDT",
-      "interval": "15m",
-      "strategyKeys": ["asian_session_breakout_v2"],
-      "tradeDirections": ["both"]
     },
     {
       "label": "phase3-exotic-eth-4h",

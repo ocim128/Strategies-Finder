@@ -614,7 +614,6 @@ async function main(): Promise<void> {
         .slice(0, 5);
 
     const failureTargets = [
-        { symbol: "BTCUSDT", strategyKey: "fib_speed_fan_entry" },
         { symbol: "BTCUSDT", strategyKey: "volatility_compression_trigger" },
         { symbol: "SOLUSDT", strategyKey: "long_short_harvest" },
     ];

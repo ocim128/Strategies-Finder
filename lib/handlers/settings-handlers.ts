@@ -34,7 +34,6 @@ export function setupSettingsHandlers() {
     const performSave = () => {
         if (!configNameInput) return;
 
-        console.log('[UI] Save Config Triggered');
         try {
             const name = configNameInput.value.trim();
             if (!name) {
@@ -43,7 +42,6 @@ export function setupSettingsHandlers() {
                 return;
             }
 
-            console.log('[UI] Saving config:', name);
             settingsManager.saveStrategyConfig(name);
 
             // Update dropdown and select the new config
@@ -59,7 +57,7 @@ export function setupSettingsHandlers() {
                 setTimeout(() => saveConfigBtn.classList.remove('btn-pulse-success'), 1000);
             }
         } catch (error) {
-            console.error('[UI] Save Config Error:', error);
+            debugLogger.error('ui.config.save_failed', { error: error instanceof Error ? error.message : String(error) });
             uiManager.showToast('Failed to save configuration', 'error');
         }
     };
@@ -273,7 +271,7 @@ export function setupSettingsHandlers() {
                 await backtestService.runCombinedStrategyBacktest(primaryConfig, secondaryConfig, mode);
                 uiManager.showToast('Combined backtest complete (' + mode.toUpperCase() + ')', 'success');
             } catch (error) {
-                console.error('[Combiner] Error:', error);
+                debugLogger.error('ui.combiner.run_failed', { error: error instanceof Error ? error.message : String(error) });
                 uiManager.showToast('Combined backtest failed', 'error');
             }
         });
@@ -442,7 +440,7 @@ function scheduleSharedAutoBacktest(options: SharedBacktestWaitOptions): void {
 
         if (symbolReady && intervalReady && hasData && dataReloaded && configReady && !isBusy) {
             void backtestService.runCurrentBacktest().catch((error) => {
-                console.error('[SharedConfig] Auto backtest failed:', error);
+                debugLogger.error('ui.config.shared.autobacktest_failed', { error: error instanceof Error ? error.message : String(error) });
                 uiManager.showToast('Auto backtest failed. Run manually.', 'error');
             });
             return;

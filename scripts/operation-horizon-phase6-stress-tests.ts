@@ -60,16 +60,6 @@ async function main(): Promise<void> {
             tickSize: 0.01,
             backtestSettingsOverrides: { tradeDirection: "both" },
         },
-        {
-            id: "eth-1h-simple_regression_line",
-            strategyKey: "simple_regression_line",
-            dataPath: "price-data/robust-lab/generated/operation-horizon-phase6-2026-02-15/ETHUSDT-1h.json",
-            tickSize: 0.01,
-            backtestSettingsOverrides: { tradeDirection: "both" },
-            walkForwardOptimizationWindowBars: 24 * 20,
-            walkForwardTestWindowBars: 24 * 10,
-            walkForwardMaxCombinations: 180,
-        },
     ];
 
     const runs: StressRun[] = [];

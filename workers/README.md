@@ -25,16 +25,17 @@ It deduplicates signals in D1, so the same entry is only produced once.
 
 ```json
 {
-  "streamId": "ethusdt-1h-shock",
+  "streamId": "ethusdt-1h-exhaustion",
   "symbol": "ETHUSDT",
   "interval": "1h",
-  "strategyKey": "shock_reversion_trend_gate",
+  "strategyKey": "exhaustion_spike_pullback",
   "strategyParams": {
-    "shockLookback": 99,
-    "shockZ": 11.7095
+    "spikeAtrMult": 2.5,
+    "pullbackEma": 21,
+    "maxWaitBars": 4
   },
   "backtestSettings": {
-    "tradeDirection": "short",
+    "tradeDirection": "both",
     "executionModel": "next_open"
   },
   "freshnessBars": 1,

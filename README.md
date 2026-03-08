@@ -170,7 +170,6 @@ npm run robust:summary -- run-seed-1337.txt run-seed-7331.txt
 
 These are intentionally narrower than the repo itself:
 - `workers/README.md`: Worker endpoints, cron behavior, D1 setup, Telegram
-- `EMPIRE_CONSTITUTION.md`: locked portfolio / empire-specific rules
 - `DEPLOY_TO_VERCEL.md`: deployment notes
 
 The old README content about the Twin Towers / Empire setup belongs in those specialized docs, not as the main project entrypoint.

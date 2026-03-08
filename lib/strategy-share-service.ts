@@ -159,9 +159,3 @@ export function parseStrategyConfigFromCurrentUrl(): StrategyConfig | null {
     return parseToken(token);
 }
 
-export function clearSharedConfigParamFromUrl(): void {
-    const url = new URL(window.location.href);
-    if (!url.searchParams.has(SHARE_QUERY_PARAM)) return;
-    url.searchParams.delete(SHARE_QUERY_PARAM);
-    window.history.replaceState({}, document.title, url.toString());
-}
