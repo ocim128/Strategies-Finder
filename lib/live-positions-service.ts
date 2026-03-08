@@ -94,11 +94,18 @@ interface AnalysisResult {
 
 const POLL_INTERVAL_MS = 30000;
 const PRICE_CACHE_TTL_MS = Math.max(POLL_INTERVAL_MS, 60000);
+const LOCAL_BACKTEST_CACHE_GRACE_MS = 5000;
 const SIGNAL_HISTORY_LIMIT = 30;
 const ANALYZE_CONCURRENCY = 4;
 const MAX_LOCAL_COMPARE_CANDLE_LIMIT = 50000;
 const PRICE_CACHE: Map<string, PriceCache> = new Map();
 const PRICE_REQUESTS: Map<string, Promise<number | null>> = new Map();
+
+interface LocalBacktestCacheEntry {
+    signature: string;
+    trades: Trade[];
+    expiresAt: number;
+}
 
 class LivePositionsService {
     private state: LivePositionsState = {
@@ -112,6 +119,7 @@ class LivePositionsService {
 
     private pollTimer: number | null = null;
     private listeners: Set<(state: LivePositionsState) => void> = new Set();
+    private localBacktestCache: Map<string, LocalBacktestCacheEntry> = new Map();
 
     getState(): Readonly<LivePositionsState> {
         return { ...this.state };
@@ -127,8 +135,11 @@ class LivePositionsService {
         this.notifyListeners();
     }
 
-    async refresh(): Promise<void> {
-        await this.pollPositions();
+    async refresh(force = false): Promise<void> {
+        if (force) {
+            this.clearCaches();
+        }
+        await this.pollPositions(force);
     }
 
     startPolling(): void {
@@ -175,7 +186,12 @@ class LivePositionsService {
         this.listeners.forEach((cb) => cb(snapshot));
     }
 
-    private async pollPositions(): Promise<void> {
+    private clearCaches(): void {
+        this.localBacktestCache.clear();
+        PRICE_CACHE.clear();
+    }
+
+    private async pollPositions(force = false): Promise<void> {
         if (this.state.isPolling) return;
 
         this.state = { ...this.state, isPolling: true, error: null };
@@ -190,7 +206,7 @@ class LivePositionsService {
                 ANALYZE_CONCURRENCY,
                 async (sub) => {
                     try {
-                        return await this.analyzeSubscription(sub);
+                        return await this.analyzeSubscription(sub, force);
                     } catch (err) {
                         console.warn(`[LivePositions] Failed to analyze ${sub.stream_id}:`, err);
                         return { openPosition: null, closedTrade: null } as AnalysisResult;
@@ -226,7 +242,7 @@ class LivePositionsService {
         this.notifyListeners();
     }
 
-    private async analyzeSubscription(sub: AlertSubscription): Promise<AnalysisResult> {
+    private async analyzeSubscription(sub: AlertSubscription, force = false): Promise<AnalysisResult> {
         const strategyParams = this.safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
         const backtestSettings = this.resolveBacktestSettings(sub);
         const configName = parseAlertConfigNameFromStreamId(sub.stream_id);
@@ -234,7 +250,7 @@ class LivePositionsService {
         const [signals, workerState, localTrades] = await Promise.all([
             alertService.getSignalHistory(sub.stream_id, SIGNAL_HISTORY_LIMIT),
             this.fetchWorkerState(sub.stream_id),
-            this.runLocalBacktest(sub, strategyParams, backtestSettings),
+            this.runLocalBacktest(sub, strategyParams, backtestSettings, force),
         ]);
 
         const latestWorkerSignal = this.getLatestActionableSignal(signals);
@@ -519,14 +535,51 @@ class LivePositionsService {
         };
     }
 
+    private getLocalBacktestCacheKey(sub: AlertSubscription): string {
+        return sub.stream_id;
+    }
+
+    private getLocalBacktestCacheSignature(sub: AlertSubscription): string {
+        return [
+            sub.symbol,
+            sub.interval,
+            sub.strategy_key,
+            String(sub.candle_limit || 350),
+            sub.strategy_params_json,
+            sub.backtest_settings_json,
+            parseAlertTwoHourParityFromStreamId(sub.stream_id) ?? '',
+            sub.updated_at,
+        ].join('::');
+    }
+
+    private getLocalBacktestCacheExpiry(sub: AlertSubscription, nowMs = Date.now()): number {
+        const intervalSec = parseIntervalSeconds(sub.interval) ?? 60;
+        const parity = parseIntervalSeconds(sub.interval) === 7200
+            ? parseAlertTwoHourParityFromStreamId(sub.stream_id)
+            : null;
+        const phaseOffsetSec = parity === 'even' ? 3600 : 0;
+        const nowSec = Math.floor(nowMs / 1000);
+        const alignedCursor = Math.floor((nowSec - phaseOffsetSec) / intervalSec);
+        const nextCloseSec = (alignedCursor + 1) * intervalSec + phaseOffsetSec;
+        return nextCloseSec * 1000 + LOCAL_BACKTEST_CACHE_GRACE_MS;
+    }
+
     private async runLocalBacktest(
         sub: AlertSubscription,
         strategyParams?: Record<string, number>,
-        backtestSettings?: BacktestSettings
+        backtestSettings?: BacktestSettings,
+        force = false
     ): Promise<Trade[]> {
         try {
             const resolvedParams = strategyParams ?? this.safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
             const resolvedSettings = backtestSettings ?? this.resolveBacktestSettings(sub);
+            const cacheKey = this.getLocalBacktestCacheKey(sub);
+            const cacheSignature = this.getLocalBacktestCacheSignature(sub);
+            const cached = this.localBacktestCache.get(cacheKey);
+
+            if (!force && cached && cached.signature === cacheSignature && Date.now() < cached.expiresAt) {
+                return cached.trades;
+            }
 
             const ohlcvData = await dataManager.fetchDataWithLimit(
                 sub.symbol,
@@ -537,7 +590,14 @@ class LivePositionsService {
                 )
             );
 
-            if (ohlcvData.length === 0) return [];
+            if (ohlcvData.length === 0) {
+                this.localBacktestCache.set(cacheKey, {
+                    signature: cacheSignature,
+                    trades: [],
+                    expiresAt: this.getLocalBacktestCacheExpiry(sub),
+                });
+                return [];
+            }
 
             const result = await backtestService.runBacktestForSubscription(
                 ohlcvData,
@@ -547,7 +607,13 @@ class LivePositionsService {
                 resolvedSettings
             );
 
-            return result.trades ?? [];
+            const trades = result.trades ?? [];
+            this.localBacktestCache.set(cacheKey, {
+                signature: cacheSignature,
+                trades,
+                expiresAt: this.getLocalBacktestCacheExpiry(sub),
+            });
+            return trades;
         } catch (err) {
             console.warn(`[LivePositions] Backtest failed for ${sub.stream_id}:`, err);
             return [];

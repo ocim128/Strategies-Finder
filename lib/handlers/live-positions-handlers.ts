@@ -303,7 +303,7 @@ async function handlePositionClick(position: LivePosition | ClosedTrade): Promis
 function handleRefresh(): void {
     if (!refreshBtn) return;
     refreshBtn.classList.add('spinning');
-    livePositionsService.refresh().finally(() => {
+    livePositionsService.refresh(true).finally(() => {
         setTimeout(() => refreshBtn?.classList.remove('spinning'), 500);
     });
 }
