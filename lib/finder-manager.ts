@@ -18,6 +18,7 @@ import { debugLogger, robustAuditSink } from "./debug-logger";
 import { readNumberInputValue, readToggleValue } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { trimToClosedCandles } from "./closed-candle-utils";
+import { strategyPanelController } from "./strategy-panel-controller";
 import {
 	createFinderManagerDom,
 	createPairCombinerBridgeDom,
@@ -806,8 +807,7 @@ export class FinderManager {
 			state.set('twoHourParityBacktestResults', null);
 			state.set('currentBacktestResultSource', 'finder_robust_oos');
 			state.set('currentBacktestResult', result.result);
-			const tradesTab = document.querySelector('.panel-tab[data-tab="trades"]') as HTMLElement | null;
-			if (tradesTab) tradesTab.click();
+			strategyPanelController.switchTab('trades');
 			uiManager.showToast(
 				'Applied robust OOS walk-forward snapshot. Full backtest runs can differ from Finder robust metrics.',
 				'info'
@@ -846,8 +846,7 @@ export class FinderManager {
 			pairCombinerDom.combinerSecondarySelect.value = '';
 			pairCombinerDom.combinerMode.value = 'and';
 
-			const tradesTab = document.querySelector('.panel-tab[data-tab="trades"]') as HTMLElement | null;
-			if (tradesTab) tradesTab.click();
+			strategyPanelController.switchTab('trades');
 
 			setTimeout(() => {
 				backtestService.runCombinedStrategyBacktest(primaryConfig, secondaryConfig, 'and')
@@ -873,8 +872,7 @@ export class FinderManager {
 		state.set('currentBacktestResult', result.selectionResult);
 
 		// Switch to trades tab
-		const tradesTab = document.querySelector('.panel-tab[data-tab="trades"]') as HTMLElement;
-		if (tradesTab) tradesTab.click();
+		strategyPanelController.switchTab('trades');
 	}
 
 	private applyFinderBacktestSettings(result: FinderResult): void {

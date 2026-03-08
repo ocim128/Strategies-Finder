@@ -1175,21 +1175,11 @@ export function initAlertHandlers() {
         }
     });
 
-    const observer = new MutationObserver((mutations) => {
-        for (const m of mutations) {
-            if (m.attributeName === 'style') {
-                const tab = getOptionalElement('alertsTab');
-                if (tab && tab.style.display !== 'none') {
-                    void refreshSubscriptions();
-                    break;
-                }
-            }
+    window.addEventListener('strategy-panel:tab-change', ((event: Event) => {
+        const customEvent = event as CustomEvent<{ tabId?: string }>;
+        if (customEvent.detail?.tabId === 'alerts') {
+            void refreshSubscriptions();
         }
-    });
-
-    const alertsTab = getOptionalElement('alertsTab');
-    if (alertsTab) {
-        observer.observe(alertsTab, { attributes: true, attributeFilter: ['style'] });
-    }
+    }) as EventListener);
 }
 

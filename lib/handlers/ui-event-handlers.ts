@@ -14,6 +14,7 @@ import { getLocalSp500Assets } from "../local-sp500-catalog";
 import { finderManager } from "../finder-manager";
 import { scannerManager } from "../scanner/scanner-manager";
 import { isTwoHourInterval } from "../interval-utils";
+import { strategyPanelController } from "../strategy-panel-controller";
 
 export function setupEventHandlers() {
     const dom = createUiEventHandlersDom();
@@ -557,63 +558,11 @@ export function setupEventHandlers() {
         state.set('currentStrategyKey', strategySelect.value);
     });
 
-    // Panel tabs
-    document.querySelectorAll('.panel-tab').forEach(tab => {
-        tab.addEventListener('click', (e) => {
-            const target = e.currentTarget as HTMLElement;
-            const tabName = target.dataset.tab!;
-
-            // Update active state and ARIA
-            document.querySelectorAll('.panel-tab').forEach(t => {
-                t.classList.remove('active');
-                t.setAttribute('aria-selected', 'false');
-            });
-            target.classList.add('active');
-            target.setAttribute('aria-selected', 'true');
-
-            // Toggle visibility dynamically
-            const tabDivs = dom.panelContent.querySelectorAll('[id$="Tab"]');
-            tabDivs.forEach(div => {
-                (div as HTMLElement).style.display = div.id === `${tabName}Tab` ? 'block' : 'none';
-            });
-
-            debugLogger.event('ui.tab.switch', { tab: tabName });
-        });
-
-        // Keyboard navigation within tab list
-        tab.addEventListener('keydown', (e) => {
-            const keyboardEvent = e as KeyboardEvent;
-            const tabs = Array.from(document.querySelectorAll('.panel-tab')) as HTMLElement[];
-            const currentIndex = tabs.indexOf(e.currentTarget as HTMLElement);
-
-            if (keyboardEvent.key === 'ArrowDown' || keyboardEvent.key === 'ArrowRight') {
-                e.preventDefault();
-                const nextIndex = (currentIndex + 1) % tabs.length;
-                tabs[nextIndex].focus();
-            } else if (keyboardEvent.key === 'ArrowUp' || keyboardEvent.key === 'ArrowLeft') {
-                e.preventDefault();
-                const prevIndex = (currentIndex - 1 + tabs.length) % tabs.length;
-                tabs[prevIndex].focus();
-            } else if (keyboardEvent.key === 'Home') {
-                e.preventDefault();
-                tabs[0].focus();
-            } else if (keyboardEvent.key === 'End') {
-                e.preventDefault();
-                tabs[tabs.length - 1].focus();
-            }
-        });
-    });
-
     // Run backtest button
     dom.runBacktest.addEventListener('click', () => backtestService.runCurrentBacktest());
 
     // Clear trades button
     dom.clearTradesBtn.addEventListener('click', clearAll);
-
-    // Toggle panel
-    dom.togglePanel.addEventListener('click', () => {
-        dom.strategyPanel.classList.toggle('collapsed');
-    });
 
     // Zoom controls - using enhanced chartManager methods
     dom.zoomInTool.addEventListener('click', () => {
@@ -908,44 +857,6 @@ export function setupEventHandlers() {
     fixedTradeToggle.addEventListener('change', applyTradeSizingMode);
     applyTradeSizingMode();
 
-    // Resizable panel
-    const panel = dom.strategyPanel;
-    const handle = dom.panelResizeHandle;
-    let isResizing = false;
-
-    handle.addEventListener('mousedown', (e) => {
-        isResizing = true;
-        document.body.classList.add('is-resizing');
-        handle.classList.add('is-resizing');
-        e.preventDefault();
-    });
-
-    window.addEventListener('mousemove', (e) => {
-        if (!isResizing) return;
-
-        // Calculate new width: viewport width - mouse X position
-        const newWidth = window.innerWidth - e.clientX;
-        const minWidth = 280;
-        const maxWidth = window.innerWidth * 0.8;
-
-        if (newWidth >= minWidth && newWidth <= maxWidth) {
-            panel.style.width = `${newWidth}px`;
-            // Trigger chart resize if needed
-            state.chart.resize(0, 0);
-            state.equityChart.resize(0, 0);
-        }
-    });
-
-    window.addEventListener('mouseup', () => {
-        if (isResizing) {
-            isResizing = false;
-            document.body.classList.remove('is-resizing');
-            handle.classList.remove('is-resizing');
-            // Final chart sync
-            window.dispatchEvent(new Event('resize'));
-        }
-    });
-
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') symbolDropdown.classList.remove('active');
@@ -955,11 +866,8 @@ export function setupEventHandlers() {
         if (e.altKey && e.key >= '1' && e.key <= '9') {
             e.preventDefault();
             const shortcut = e.key;
-            const tab = document.querySelector(`.panel-tab[data-shortcut="${shortcut}"]`) as HTMLElement;
-            if (tab) {
-                tab.click();
-                tab.focus();
-                debugLogger.event('ui.shortcut.tab_switch', { shortcut, tab: tab.dataset.tab });
+            if (strategyPanelController.switchToShortcut(shortcut)) {
+                debugLogger.event('ui.shortcut.tab_switch', { shortcut });
             }
         }
     });

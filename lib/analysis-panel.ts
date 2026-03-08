@@ -944,18 +944,17 @@ class AnalysisPanel {
         // Auto-run analysis when backtest completes
         state.subscribe('currentBacktestResult', () => {
             // Only auto-analyze if the analysis tab is visible
-            if (dom.analysisTab.style.display !== 'none') {
+            if (!dom.analysisTab.hidden) {
                 this.runAnalysis();
             }
         });
 
-        // Also run when switching to the analysis tab
-        const analysisTabBtn = document.querySelector('.panel-tab[data-tab="analysis"]');
-        if (analysisTabBtn) {
-            analysisTabBtn.addEventListener('click', () => {
+        window.addEventListener('strategy-panel:tab-change', ((event: Event) => {
+            const customEvent = event as CustomEvent<{ tabId?: string }>;
+            if (customEvent.detail?.tabId === 'analysis') {
                 setTimeout(() => this.runAnalysis(), 50);
-            });
-        }
+            }
+        }) as EventListener);
     }
 }
 

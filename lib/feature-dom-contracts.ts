@@ -5,6 +5,7 @@ export const UI_EVENT_HANDLER_REQUIRED_IDS = [
     "symbolDropdown",
     "themeToggle",
     "strategySelect",
+    "strategyTabs",
     "panelContent",
     "runBacktest",
     "clearTradesBtn",
@@ -65,6 +66,7 @@ export interface UiEventHandlersDom {
     visibleCandlesApply: HTMLElement | null;
     themeToggle: HTMLElement;
     strategySelect: HTMLSelectElement;
+    strategyTabs: HTMLElement;
     panelContent: HTMLElement;
     runBacktest: HTMLElement;
     clearTradesBtn: HTMLElement;
@@ -133,6 +135,7 @@ export function createUiEventHandlersDom(): UiEventHandlersDom {
         visibleCandlesApply: getOptionalElement("visibleCandlesApply"),
         themeToggle: getRequiredElement("themeToggle"),
         strategySelect: getRequiredElement<HTMLSelectElement>("strategySelect"),
+        strategyTabs: getRequiredElement("strategyTabs"),
         panelContent: getRequiredElement("panelContent"),
         runBacktest: getRequiredElement("runBacktest"),
         clearTradesBtn: getRequiredElement("clearTradesBtn"),
@@ -177,6 +180,24 @@ export function createUiEventHandlersDom(): UiEventHandlersDom {
         initialCapital: getRequiredElement<HTMLInputElement>("initialCapital"),
         fixedTradeAmount: getRequiredElement<HTMLInputElement>("fixedTradeAmount"),
         positionSize: getRequiredElement<HTMLInputElement>("positionSize"),
+        panelResizeHandle: getRequiredElement("panelResizeHandle"),
+    };
+}
+
+export interface StrategyPanelDom {
+    togglePanel: HTMLElement;
+    strategyPanel: HTMLElement;
+    strategyTabs: HTMLElement;
+    panelContent: HTMLElement;
+    panelResizeHandle: HTMLElement;
+}
+
+export function createStrategyPanelDom(): StrategyPanelDom {
+    return {
+        togglePanel: getRequiredElement("togglePanel"),
+        strategyPanel: getRequiredElement("strategyPanel"),
+        strategyTabs: getRequiredElement("strategyTabs"),
+        panelContent: getRequiredElement("panelContent"),
         panelResizeHandle: getRequiredElement("panelResizeHandle"),
     };
 }

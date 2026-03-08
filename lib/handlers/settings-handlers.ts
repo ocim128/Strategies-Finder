@@ -10,6 +10,7 @@ import {
     parseStrategyConfigFromCurrentUrl,
     parseStrategyConfigFromSharedInput,
 } from "../strategy-share-service";
+import { strategyPanelController } from "../strategy-panel-controller";
 
 const SHARED_DEFAULT_SYMBOL = 'ETHUSDT';
 const SHARED_DEFAULT_INTERVAL = '120m';
@@ -336,23 +337,8 @@ function getSharedChartContextFromUrl(): { symbol: string; interval: string } {
 
 function activateSharedLinkViewMode(): void {
     const allowedTabs = new Set(['results', 'trades']);
-    const panelTabs = Array.from(document.querySelectorAll<HTMLElement>('.panel-tab'));
-
-    panelTabs.forEach((tab) => {
-        const tabName = tab.dataset.tab ?? '';
-        const isAllowed = allowedTabs.has(tabName);
-        tab.style.display = isAllowed ? '' : 'none';
-        tab.setAttribute('aria-hidden', isAllowed ? 'false' : 'true');
-        tab.tabIndex = isAllowed ? 0 : -1;
-        if (tab instanceof HTMLButtonElement) {
-            tab.disabled = !isAllowed;
-        }
-    });
-
-    const resultsTab = document.querySelector<HTMLElement>('.panel-tab[data-tab="results"]');
-    if (resultsTab) {
-        resultsTab.click();
-    }
+    strategyPanelController.setVisibleTabs(allowedTabs);
+    strategyPanelController.switchTab('results');
 }
 
 interface SharedBacktestWaitOptions {

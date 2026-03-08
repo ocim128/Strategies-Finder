@@ -3,6 +3,7 @@ import { strategyRegistry, getStrategyList } from "../strategyRegistry";
 import { backtestService } from "./backtest-service";
 import { clearAll } from "./app-actions";
 import { debugLogger } from "./debug-logger";
+import { strategyPanelController } from "./strategy-panel-controller";
 
 interface CommandItem {
     id: string;
@@ -164,8 +165,7 @@ export class CommandPaletteManager {
                 icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z" /></svg>',
                 category: 'Navigation' as const,
                 action: () => {
-                    const tabBtn = document.querySelector(`.panel-tab[data-tab="${tab.id}"]`) as HTMLElement;
-                    tabBtn?.click();
+                    strategyPanelController.switchTab(tab.id);
                 }
             })),
 

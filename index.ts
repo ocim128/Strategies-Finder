@@ -42,6 +42,7 @@ import { liveOperationsDashboard } from "./lib/live-operations-dashboard";
 import { blockSelectorManager } from "./lib/block-selector-manager";
 import { quickViewManager } from "./lib/quick-view";
 import { bindFormAccessibility } from "./lib/form-accessibility";
+import { strategyPanelController } from "./lib/strategy-panel-controller";
 
 async function init() {
 	injectLayout();
@@ -62,6 +63,7 @@ async function init() {
 
 	chartManager.initCharts();
 	state.chart.subscribeCrosshairMove(handleCrosshairMove);
+	strategyPanelController.init();
 
 	setupStateSubscriptions();
 	setupEventHandlers();
