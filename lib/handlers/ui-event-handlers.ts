@@ -1,8 +1,8 @@
-import { getOptionalElement, getRequiredElement } from "../dom-utils";
 import { state, type ChartMode, type MockChartModel } from "../state";
 import { debugLogger } from "../debug-logger";
 import { debounce } from "../debounce";
 import { MAX_MOCK_BARS, MIN_MOCK_BARS } from "../dataProviders/mock";
+import { createUiEventHandlersDom } from "../feature-dom-contracts";
 
 import { backtestService } from "../backtest-service";
 import { clearAll } from "../app-actions";
@@ -16,20 +16,22 @@ import { scannerManager } from "../scanner/scanner-manager";
 import { getIntervalSeconds } from "../dataProviders/utils";
 
 export function setupEventHandlers() {
+    const dom = createUiEventHandlersDom();
+
     // Symbol dropdown with search
-    const symbolSelector = getRequiredElement('symbolSelector');
-    const symbolDropdown = getRequiredElement('symbolDropdown');
-    const symbolSearchInput = getOptionalElement<HTMLInputElement>('symbolSearchInput');
-    const symbolSearchResults = getOptionalElement<HTMLElement>('symbolSearchResults');
-    const symbolSearchSpinner = getOptionalElement<HTMLElement>('symbolSearchSpinner');
-    const symbolSearchClear = getOptionalElement<HTMLElement>('symbolSearchClear');
-    const symbolSearchLoading = getOptionalElement<HTMLElement>('symbolSearchLoading');
-    const symbolSearchEmpty = getOptionalElement<HTMLElement>('symbolSearchEmpty');
-    const localSp500Select = getOptionalElement<HTMLSelectElement>('localSp500Select');
-    const mockModelSelect = getOptionalElement<HTMLSelectElement>('mockModelSelect');
-    const mockBarsInput = getOptionalElement<HTMLInputElement>('mockBarsInput');
-    const chartModeToggle = getOptionalElement<HTMLButtonElement>('chartModeToggle');
-    const chartModeLabel = getOptionalElement<HTMLElement>('chartModeLabel');
+    const symbolSelector = dom.symbolSelector;
+    const symbolDropdown = dom.symbolDropdown;
+    const symbolSearchInput = dom.symbolSearchInput;
+    const symbolSearchResults = dom.symbolSearchResults;
+    const symbolSearchSpinner = dom.symbolSearchSpinner;
+    const symbolSearchClear = dom.symbolSearchClear;
+    const symbolSearchLoading = dom.symbolSearchLoading;
+    const symbolSearchEmpty = dom.symbolSearchEmpty;
+    const localSp500Select = dom.localSp500Select;
+    const mockModelSelect = dom.mockModelSelect;
+    const mockBarsInput = dom.mockBarsInput;
+    const chartModeToggle = dom.chartModeToggle;
+    const chartModeLabel = dom.chartModeLabel;
 
     let isSearchInitialized = false;
     let selectedIndex = -1;
@@ -458,11 +460,11 @@ export function setupEventHandlers() {
         });
     });
 
-    const timeframeMinutesInput = document.getElementById('timeframeMinutesInput') as HTMLInputElement | null;
-    const timeframeMinutesApply = document.getElementById('timeframeMinutesApply');
+    const timeframeMinutesInput = dom.timeframeMinutesInput;
+    const timeframeMinutesApply = dom.timeframeMinutesApply;
     const MAX_CUSTOM_MINUTES = 60 * 24 * 7;
-    const visibleCandlesInput = document.getElementById('visibleCandlesInput') as HTMLInputElement | null;
-    const visibleCandlesApply = document.getElementById('visibleCandlesApply');
+    const visibleCandlesInput = dom.visibleCandlesInput;
+    const visibleCandlesApply = dom.visibleCandlesApply;
     const MIN_VISIBLE_CANDLES = 200;
     const MAX_VISIBLE_CANDLES = 50000;
 
@@ -540,12 +542,12 @@ export function setupEventHandlers() {
     }
 
     // Theme toggle
-    getRequiredElement('themeToggle').addEventListener('click', () => {
+    dom.themeToggle.addEventListener('click', () => {
         state.set('isDarkTheme', !state.isDarkTheme);
     });
 
     // Strategy selector
-    const strategySelect = getRequiredElement<HTMLSelectElement>('strategySelect');
+    const strategySelect = dom.strategySelect;
     strategySelect.addEventListener('change', () => {
         state.set('currentStrategyKey', strategySelect.value);
     });
@@ -565,13 +567,10 @@ export function setupEventHandlers() {
             target.setAttribute('aria-selected', 'true');
 
             // Toggle visibility dynamically
-            const content = document.getElementById('panelContent');
-            if (content) {
-                const tabDivs = content.querySelectorAll('[id$="Tab"]');
-                tabDivs.forEach(div => {
-                    (div as HTMLElement).style.display = div.id === `${tabName}Tab` ? 'block' : 'none';
-                });
-            }
+            const tabDivs = dom.panelContent.querySelectorAll('[id$="Tab"]');
+            tabDivs.forEach(div => {
+                (div as HTMLElement).style.display = div.id === `${tabName}Tab` ? 'block' : 'none';
+            });
 
             debugLogger.event('ui.tab.switch', { tab: tabName });
         });
@@ -601,32 +600,32 @@ export function setupEventHandlers() {
     });
 
     // Run backtest button
-    getRequiredElement('runBacktest').addEventListener('click', () => backtestService.runCurrentBacktest());
+    dom.runBacktest.addEventListener('click', () => backtestService.runCurrentBacktest());
 
     // Clear trades button
-    getRequiredElement('clearTradesBtn').addEventListener('click', clearAll);
+    dom.clearTradesBtn.addEventListener('click', clearAll);
 
     // Toggle panel
-    getRequiredElement('togglePanel').addEventListener('click', () => {
-        getRequiredElement('strategyPanel').classList.toggle('collapsed');
+    dom.togglePanel.addEventListener('click', () => {
+        dom.strategyPanel.classList.toggle('collapsed');
     });
 
     // Zoom controls - using enhanced chartManager methods
-    getRequiredElement('zoomInTool').addEventListener('click', () => {
+    dom.zoomInTool.addEventListener('click', () => {
         chartManager.zoomIn(0.7);
     });
 
-    getRequiredElement('zoomOutTool').addEventListener('click', () => {
+    dom.zoomOutTool.addEventListener('click', () => {
         chartManager.zoomOut(1.4);
     });
 
-    getRequiredElement('fitTool').addEventListener('click', () => {
+    dom.fitTool.addEventListener('click', () => {
         state.chart.timeScale().fitContent();
         state.equityChart.timeScale().fitContent();
     });
 
     // Screenshot button
-    const screenshotBtn = document.getElementById('screenshotTool');
+    const screenshotBtn = dom.screenshotTool;
     if (screenshotBtn) {
         screenshotBtn.addEventListener('click', async () => {
             try {
@@ -641,7 +640,7 @@ export function setupEventHandlers() {
     }
 
     // Copy chart to clipboard button
-    const copyChartBtn = document.getElementById('copyChartBtn');
+    const copyChartBtn = dom.copyChartBtn;
     if (copyChartBtn) {
         copyChartBtn.addEventListener('click', async () => {
             try {
@@ -664,8 +663,8 @@ export function setupEventHandlers() {
         { toggleId: 'riskSettingsToggle', sectionId: 'riskSettings' },
         { toggleId: 'tradeFilterSettingsToggle', sectionId: 'tradeFilterSettings' }
     ].forEach(({ toggleId, sectionId }) => {
-        const toggle = getRequiredElement<HTMLInputElement>(toggleId);
-        const section = getRequiredElement<HTMLElement>(sectionId);
+        const toggle = toggleId === 'riskSettingsToggle' ? dom.riskSettingsToggle : dom.tradeFilterSettingsToggle;
+        const section = sectionId === 'riskSettings' ? dom.riskSettings : dom.tradeFilterSettings;
         const applyState = () => {
             section.classList.toggle('is-hidden', !toggle.checked);
         };
@@ -674,10 +673,10 @@ export function setupEventHandlers() {
         applyState();
     });
 
-    const riskModeSelect = getRequiredElement<HTMLSelectElement>('riskMode');
-    const riskSimpleAdvanced = document.getElementById('riskSimpleAdvanced');
-    const riskPercentage = document.getElementById('riskPercentage');
-    const riskAdvanced = getRequiredElement<HTMLElement>('riskAdvanced');
+    const riskModeSelect = dom.riskMode;
+    const riskSimpleAdvanced = dom.riskSimpleAdvanced;
+    const riskPercentage = dom.riskPercentage;
+    const riskAdvanced = dom.riskAdvanced;
     const riskAdvancedGroups = Array.from(riskAdvanced.querySelectorAll<HTMLElement>('.param-group'));
     const riskAdvancedInputs = Array.from(riskAdvanced.querySelectorAll<HTMLInputElement>('input'));
 
@@ -712,12 +711,12 @@ export function setupEventHandlers() {
     riskModeSelect.addEventListener('change', applyRiskMode);
     applyRiskMode();
 
-    const tradeDirectionSelect = getRequiredElement<HTMLSelectElement>('tradeDirection');
-    const flipLossStreakSettingsRow = document.getElementById('flipLossStreakSettingsRow');
+    const tradeDirectionSelect = dom.tradeDirection;
+    const flipLossStreakSettingsRow = dom.flipLossStreakSettingsRow;
     const flipLossStreakInputs = [
-        getRequiredElement<HTMLInputElement>('flipAfterConsecutiveLosses'),
-        getRequiredElement<HTMLInputElement>('flipCooldownTrades'),
-        getRequiredElement<HTMLInputElement>('minTradesBeforeFirstFlip'),
+        dom.flipAfterConsecutiveLosses,
+        dom.flipCooldownTrades,
+        dom.minTradesBeforeFirstFlip,
     ];
 
     const applyTradeDirectionMode = () => {
@@ -734,7 +733,7 @@ export function setupEventHandlers() {
     tradeDirectionSelect.addEventListener('change', applyTradeDirectionMode);
     applyTradeDirectionMode();
 
-    const tradeFilterModeSelect = getRequiredElement<HTMLSelectElement>('tradeFilterMode');
+    const tradeFilterModeSelect = dom.tradeFilterMode;
     const tradeFilterFieldConfig: Array<{ inputId: string; modes: string[] }> = [
         { inputId: 'htfBiasEmaPeriod', modes: ['trend_htf_bias', 'trend_mtf_stack'] },
         { inputId: 'confirmLookback', modes: ['close', 'trend', 'htf_drift'] },
@@ -745,7 +744,16 @@ export function setupEventHandlers() {
         { inputId: 'confirmRsiBearish', modes: ['rsi'] },
     ];
     const tradeFilterFields = tradeFilterFieldConfig.map(({ inputId, modes }) => {
-        const input = getRequiredElement<HTMLInputElement>(inputId);
+        const inputMap: Record<string, HTMLInputElement> = {
+            htfBiasEmaPeriod: dom.htfBiasEmaPeriod,
+            confirmLookback: dom.confirmLookback,
+            volumeSmaPeriod: dom.volumeSmaPeriod,
+            volumeMultiplier: dom.volumeMultiplier,
+            confirmRsiPeriod: dom.confirmRsiPeriod,
+            confirmRsiBullish: dom.confirmRsiBullish,
+            confirmRsiBearish: dom.confirmRsiBearish,
+        };
+        const input = inputMap[inputId];
         const group = input.closest<HTMLElement>('.param-group');
         if (!group) {
             throw new Error(`Trade filter input #${inputId} must be inside .param-group`);
@@ -780,9 +788,9 @@ export function setupEventHandlers() {
     tradeFilterModeSelect.addEventListener('change', applyTradeFilterMode);
     applyTradeFilterMode();
 
-    const strategyTimeframeToggle = getRequiredElement<HTMLInputElement>('strategyTimeframeToggle');
-    const strategyTimeframeMinutes = getRequiredElement<HTMLInputElement>('strategyTimeframeMinutes');
-    const strategyTimeframeMinutesGroup = document.getElementById('strategyTimeframeMinutesGroup');
+    const strategyTimeframeToggle = dom.strategyTimeframeToggle;
+    const strategyTimeframeMinutes = dom.strategyTimeframeMinutes;
+    const strategyTimeframeMinutesGroup = dom.strategyTimeframeMinutesGroup;
 
     const applyStrategyTimeframeMode = () => {
         const enabled = strategyTimeframeToggle.checked;
@@ -795,7 +803,7 @@ export function setupEventHandlers() {
     strategyTimeframeToggle.addEventListener('change', applyStrategyTimeframeMode);
     applyStrategyTimeframeMode();
 
-    const twoHourCloseParity = document.getElementById('twoHourCloseParity') as HTMLSelectElement | null;
+    const twoHourCloseParity = dom.twoHourCloseParity;
     if (twoHourCloseParity) {
         const parityHint = twoHourCloseParity.parentElement?.querySelector('.param-hint') as HTMLElement | null;
         const defaultParityHint = parityHint?.textContent ?? '';
@@ -863,27 +871,23 @@ export function setupEventHandlers() {
     }
 
     // Finder settings toggles
-    [
-        { toggleId: 'finderTradesToggle', sectionId: 'finderTradeFilters' }
-    ].forEach(({ toggleId, sectionId }) => {
-        const toggle = getRequiredElement<HTMLInputElement>(toggleId);
-        const section = getRequiredElement<HTMLElement>(sectionId);
-        const applyState = () => {
-            section.classList.toggle('disabled', !toggle.checked);
-        };
+    const finderTradesToggle = dom.finderTradesToggle;
+    const finderTradeFilters = dom.finderTradeFilters;
+    const applyFinderTradeFilterState = () => {
+        finderTradeFilters.classList.toggle('disabled', !finderTradesToggle.checked);
+    };
 
-        toggle.addEventListener('change', applyState);
-        applyState();
-    });
+    finderTradesToggle.addEventListener('change', applyFinderTradeFilterState);
+    applyFinderTradeFilterState();
 
     // Trade sizing mode toggle
-    const fixedTradeToggle = getRequiredElement<HTMLInputElement>('fixedTradeToggle');
-    const initialCapitalGroup = getRequiredElement<HTMLElement>('initialCapitalGroup');
-    const fixedTradeGroup = getRequiredElement<HTMLElement>('fixedTradeGroup');
-    const positionSizeGroup = getRequiredElement<HTMLElement>('positionSizeGroup');
-    const initialCapitalInput = getRequiredElement<HTMLInputElement>('initialCapital');
-    const fixedTradeAmountInput = getRequiredElement<HTMLInputElement>('fixedTradeAmount');
-    const positionSizeInput = getRequiredElement<HTMLInputElement>('positionSize');
+    const fixedTradeToggle = dom.fixedTradeToggle;
+    const initialCapitalGroup = dom.initialCapitalGroup;
+    const fixedTradeGroup = dom.fixedTradeGroup;
+    const positionSizeGroup = dom.positionSizeGroup;
+    const initialCapitalInput = dom.initialCapital;
+    const fixedTradeAmountInput = dom.fixedTradeAmount;
+    const positionSizeInput = dom.positionSize;
 
     const applyTradeSizingMode = () => {
         const useFixedAmount = fixedTradeToggle.checked;
@@ -900,8 +904,8 @@ export function setupEventHandlers() {
     applyTradeSizingMode();
 
     // Resizable panel
-    const panel = getRequiredElement('strategyPanel');
-    const handle = getRequiredElement('panelResizeHandle');
+    const panel = dom.strategyPanel;
+    const handle = dom.panelResizeHandle;
     let isResizing = false;
 
     handle.addEventListener('mousedown', (e) => {

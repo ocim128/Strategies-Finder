@@ -21,6 +21,10 @@ import {
     FixedParamWalkForwardConfig,
     WalkForwardProgress
 } from "./strategies/walk-forward";
+import {
+    createWalkForwardServiceDom,
+    type WalkForwardServiceDom
+} from "./feature-dom-contracts";
 
 const DEFAULT_CANDIDATE_VALIDATION_SEEDS = [1337, 7331, 2026, 4242, 9001];
 const DEFAULT_MIN_SEED_PASSES = 3;
@@ -81,6 +85,11 @@ class WalkForwardService {
     private isRunning = false;
     private abortController: AbortController | null = null;
     private previousBacktestSnapshot: { result: any; source: string | null } | null = null;
+    private dom: WalkForwardServiceDom | null = null;
+
+    private getDom(): WalkForwardServiceDom {
+        return this.dom ??= createWalkForwardServiceDom();
+    }
 
     private async ensureDataReadyForCurrentContext(): Promise<OHLCVData[]> {
         const contextKey = `${state.currentSymbol}|${state.currentInterval}`;
@@ -103,7 +112,18 @@ class WalkForwardService {
     }
 
     private setNumberInput(id: string, value: number): void {
-        const el = document.getElementById(id) as HTMLInputElement | null;
+        const dom = this.getDom();
+        const elementMap: Record<string, HTMLInputElement> = {
+            "wf-opt-window": dom.wfOptWindow,
+            "wf-test-window": dom.wfTestWindow,
+            "wf-step-size": dom.wfStepSize,
+            "wf-min-trades": dom.wfMinTrades,
+            "wf-top-n": dom.wfTopN,
+            "wf-validation-seeds": dom.wfValidationSeeds,
+            "wf-validation-min-passes": dom.wfValidationMinPasses,
+            "wf-validation-max-dd": dom.wfValidationMaxDd,
+        };
+        const el = elementMap[id];
         if (!el) return;
         el.value = String(Math.max(1, Math.round(value)));
     }
@@ -904,7 +924,11 @@ class WalkForwardService {
     }
 
     private readStringInput(id: string, fallback: string): string {
-        const el = document.getElementById(id) as HTMLInputElement | null;
+        const dom = this.getDom();
+        const elementMap: Record<string, HTMLInputElement> = {
+            "wf-validation-seeds": dom.wfValidationSeeds,
+        };
+        const el = elementMap[id];
         if (!el) return fallback;
         const value = el.value.trim();
         return value.length > 0 ? value : fallback;
@@ -938,8 +962,7 @@ class WalkForwardService {
     }
 
     private renderCandidateValidationSummary(summary: CandidateValidationSummary | null): void {
-        const panel = document.getElementById("wf-validation-panel");
-        if (!panel) return;
+        const { wfValidationPanel: panel } = this.getDom();
 
         if (!summary) {
             panel.innerHTML = `
@@ -1182,14 +1205,28 @@ class WalkForwardService {
     }
 
     private readNumberInput(id: string, fallback: number): number {
-        const el = document.getElementById(id) as HTMLInputElement | null;
+        const dom = this.getDom();
+        const elementMap: Record<string, HTMLInputElement> = {
+            "wf-opt-window": dom.wfOptWindow,
+            "wf-test-window": dom.wfTestWindow,
+            "wf-step-size": dom.wfStepSize,
+            "wf-min-trades": dom.wfMinTrades,
+            "wf-top-n": dom.wfTopN,
+            "wf-validation-min-passes": dom.wfValidationMinPasses,
+            "wf-validation-max-dd": dom.wfValidationMaxDd,
+        };
+        const el = elementMap[id];
         if (!el) return fallback;
         const val = parseFloat(el.value);
         return Number.isFinite(val) ? val : fallback;
     }
 
     private isToggleEnabled(id: string, fallback: boolean): boolean {
-        const toggle = document.getElementById(id) as HTMLInputElement | null;
+        const { wfAutoSuggest } = this.getDom();
+        const toggleMap: Record<string, HTMLInputElement> = {
+            "wf-auto-suggest": wfAutoSuggest,
+        };
+        const toggle = toggleMap[id];
         return toggle ? toggle.checked : fallback;
     }
 
@@ -1214,8 +1251,7 @@ class WalkForwardService {
     }
 
     private updateSummaryPanel(result: WalkForwardResult): void {
-        const panel = document.getElementById('wf-summary-panel');
-        if (!panel) return;
+        const { wfSummaryPanel: panel } = this.getDom();
 
         const oos = result.combinedOOSTrades;
         const wfePercent = (result.walkForwardEfficiency * 100).toFixed(1);
@@ -1269,8 +1305,7 @@ class WalkForwardService {
     }
 
     private updateWindowTable(result: WalkForwardResult): void {
-        const tbody = document.getElementById('wf-window-table-body');
-        if (!tbody) return;
+        const { wfWindowTableBody: tbody } = this.getDom();
 
         tbody.innerHTML = result.windows.map(w => {
             const isProfit = w.outOfSampleResult.netProfit >= 0;
@@ -1297,27 +1332,24 @@ class WalkForwardService {
     }
 
     private updateRobustnessGauge(score: number): void {
-        const gauge = document.getElementById('wf-robustness-gauge');
-        const scoreEl = document.getElementById('wf-robustness-score');
-        const descEl = document.getElementById('wf-robustness-desc');
+        const {
+            wfRobustnessGauge: gauge,
+            wfRobustnessScore: scoreEl,
+            wfRobustnessDesc: descEl
+        } = this.getDom();
 
-        if (scoreEl) scoreEl.textContent = `${score}`;
-        if (gauge) {
-            gauge.style.setProperty('--score', `${score}`);
-            // Color based on score
-            if (score >= 80) gauge.className = 'wf-gauge excellent';
-            else if (score >= 60) gauge.className = 'wf-gauge good';
-            else if (score >= 40) gauge.className = 'wf-gauge moderate';
-            else if (score >= 20) gauge.className = 'wf-gauge poor';
-            else gauge.className = 'wf-gauge critical';
-        }
-        if (descEl) {
-            if (score >= 80) descEl.textContent = 'Strong robustness. Low overfitting risk.';
-            else if (score >= 60) descEl.textContent = 'Reasonably robust. Monitor for degradation.';
-            else if (score >= 40) descEl.textContent = 'Some overfitting. Consider parameter constraints.';
-            else if (score >= 20) descEl.textContent = 'Significant overfitting. May not perform forward.';
-            else descEl.textContent = 'Severe overfitting. Strategy is curve-fitted.';
-        }
+        scoreEl.textContent = `${score}`;
+        gauge.style.setProperty('--score', `${score}`);
+        if (score >= 80) gauge.className = 'wf-gauge excellent';
+        else if (score >= 60) gauge.className = 'wf-gauge good';
+        else if (score >= 40) gauge.className = 'wf-gauge moderate';
+        else if (score >= 20) gauge.className = 'wf-gauge poor';
+        else gauge.className = 'wf-gauge critical';
+        if (score >= 80) descEl.textContent = 'Strong robustness. Low overfitting risk.';
+        else if (score >= 60) descEl.textContent = 'Reasonably robust. Monitor for degradation.';
+        else if (score >= 40) descEl.textContent = 'Some overfitting. Consider parameter constraints.';
+        else if (score >= 20) descEl.textContent = 'Significant overfitting. May not perform forward.';
+        else descEl.textContent = 'Severe overfitting. Strategy is curve-fitted.';
     }
 
     private plotEquityCurve(result: WalkForwardResult): void {
@@ -1339,39 +1371,31 @@ class WalkForwardService {
     }
 
     private setLoading(loading: boolean, mode: "analysis" | "quick" | "validation" = "analysis"): void {
-        const runBtn = document.getElementById("wf-run-btn") as HTMLButtonElement | null;
-        const quickBtn = document.getElementById("wf-quick-btn") as HTMLButtonElement | null;
-        const validateBtn = document.getElementById("wf-validate-btn") as HTMLButtonElement | null;
-        const cancelBtn = document.getElementById("wf-cancel-btn") as HTMLButtonElement | null;
-        const runSpinner = document.getElementById("wf-spinner");
-        const quickSpinner = document.getElementById("wf-quick-spinner");
-        const validateSpinner = document.getElementById("wf-validate-spinner");
+        const {
+            wfRunBtn: runBtn,
+            wfQuickBtn: quickBtn,
+            wfValidateBtn: validateBtn,
+            wfCancelBtn: cancelBtn,
+            wfSpinner: runSpinner,
+            wfQuickSpinner: quickSpinner,
+            wfValidateSpinner: validateSpinner,
+        } = this.getDom();
 
-        if (runBtn) {
-            runBtn.disabled = loading;
-            runBtn.setAttribute("aria-busy", loading && mode === "analysis" ? "true" : "false");
-        }
-        if (quickBtn) {
-            quickBtn.disabled = loading;
-            quickBtn.setAttribute("aria-busy", loading && mode === "quick" ? "true" : "false");
-        }
-        if (validateBtn) {
-            validateBtn.disabled = loading;
-            validateBtn.setAttribute("aria-busy", loading && mode === "validation" ? "true" : "false");
-        }
-        if (cancelBtn) {
-            cancelBtn.style.display = loading ? "inline-flex" : "none";
-        }
+        runBtn.disabled = loading;
+        runBtn.setAttribute("aria-busy", loading && mode === "analysis" ? "true" : "false");
+        quickBtn.disabled = loading;
+        quickBtn.setAttribute("aria-busy", loading && mode === "quick" ? "true" : "false");
+        validateBtn.disabled = loading;
+        validateBtn.setAttribute("aria-busy", loading && mode === "validation" ? "true" : "false");
+        cancelBtn.style.display = loading ? "inline-flex" : "none";
 
-        // Show spinner only on the active button
-        if (runSpinner) runSpinner.style.display = loading && mode === "analysis" ? "inline-block" : "none";
-        if (quickSpinner) quickSpinner.style.display = loading && mode === "quick" ? "inline-block" : "none";
-        if (validateSpinner) validateSpinner.style.display = loading && mode === "validation" ? "inline-block" : "none";
+        runSpinner.style.display = loading && mode === "analysis" ? "inline-block" : "none";
+        quickSpinner.style.display = loading && mode === "quick" ? "inline-block" : "none";
+        validateSpinner.style.display = loading && mode === "validation" ? "inline-block" : "none";
     }
 
     private updateStatus(message: string, log: boolean = true): void {
-        const statusEl = document.getElementById('wf-status');
-        if (statusEl) statusEl.textContent = message;
+        this.getDom().wfStatus.textContent = message;
         if (log) {
             debugLogger.info(`[WalkForward] ${message}`);
         }
@@ -1436,31 +1460,23 @@ class WalkForwardService {
      * Initialize UI event listeners
      */
     initUI(): void {
-        const runBtn = document.getElementById('wf-run-btn');
-        const quickBtn = document.getElementById('wf-quick-btn');
-        const validateBtn = document.getElementById('wf-validate-btn');
-        const cancelBtn = document.getElementById('wf-cancel-btn');
-        const autoSuggestToggle = document.getElementById('wf-auto-suggest') as HTMLInputElement | null;
+        const {
+            wfRunBtn: runBtn,
+            wfQuickBtn: quickBtn,
+            wfValidateBtn: validateBtn,
+            wfCancelBtn: cancelBtn,
+            wfAutoSuggest: autoSuggestToggle,
+        } = this.getDom();
 
-        if (runBtn) {
-            runBtn.addEventListener('click', () => this.runAnalysis());
-        }
-        if (quickBtn) {
-            quickBtn.addEventListener('click', () => this.runQuickAnalysis());
-        }
-        if (validateBtn) {
-            validateBtn.addEventListener('click', () => this.runCandidateValidation());
-        }
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', () => this.cancelRun());
-        }
-        if (autoSuggestToggle) {
-            autoSuggestToggle.addEventListener('change', () => {
-                if (autoSuggestToggle.checked) {
-                    this.refreshAutoSuggestionFromCurrentResult();
-                }
-            });
-        }
+        runBtn.addEventListener('click', () => this.runAnalysis());
+        quickBtn.addEventListener('click', () => this.runQuickAnalysis());
+        validateBtn.addEventListener('click', () => this.runCandidateValidation());
+        cancelBtn.addEventListener('click', () => this.cancelRun());
+        autoSuggestToggle.addEventListener('change', () => {
+            if (autoSuggestToggle.checked) {
+                this.refreshAutoSuggestionFromCurrentResult();
+            }
+        });
 
         state.subscribe('currentBacktestResult', (result) => {
             if (!result) return;

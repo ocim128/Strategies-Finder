@@ -17,6 +17,7 @@ import { state } from "./state";
 import { darkTheme, lightTheme, ENHANCED_CANDLE_COLORS } from "./constants";
 import { toHeikinAshi } from "./heikin-ashi-utils";
 import { formatJakartaTickMark, formatJakartaTime } from "./timezone-utils";
+import { formatDisplayPrice } from "./price-format";
 
 import { Trade, OHLCVData } from "./strategies/index";
 
@@ -233,11 +234,7 @@ export class ChartManager {
         this.tooltip.style.top = `${top}px`;
 
         // Update content
-        const formatPrice = (p: number) => {
-            if (p >= 1000) return p.toFixed(2);
-            if (p >= 1) return p.toFixed(4);
-            return p.toFixed(6);
-        };
+        const formatPrice = (p: number) => formatDisplayPrice(p);
 
         const formatVolume = (v: number) => {
             if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';

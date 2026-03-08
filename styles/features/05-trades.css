@@ -510,6 +510,10 @@
 
     color: var(--text-primary);
 
+    font-variant-numeric: tabular-nums;
+
+    letter-spacing: 0.01em;
+
     flex-wrap: wrap;
 
 }
@@ -733,6 +737,5 @@
     font-size: 10px;
 
 }
-
 
 

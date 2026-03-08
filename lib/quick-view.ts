@@ -10,6 +10,7 @@
 import { state } from "./state";
 import type { BacktestResult, Trade } from "./strategies/index";
 import { Time } from "lightweight-charts";
+import { formatDisplayPrice } from "./price-format";
 
 class QuickViewManager {
     private overlay: HTMLElement | null = null;
@@ -340,9 +341,7 @@ class QuickViewManager {
     // ── Helpers ─────────────────────────────────────────────
 
     private fmtPrice(price: number): string {
-        if (price >= 1000) return price.toFixed(2);
-        if (price >= 1) return price.toFixed(4);
-        return price.toFixed(6);
+        return formatDisplayPrice(price);
     }
 
     private formatTradeTime(time: Time): string {

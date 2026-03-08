@@ -8,12 +8,11 @@ import { resultsRenderer } from "./renderers/resultsRenderer";
 import { tradesRenderer } from "./renderers/tradesRenderer";
 import { paramManager } from "./param-manager";
 import { formatJakartaTime, isBusinessDayTime } from "./timezone-utils";
+import { formatDisplayPrice } from "./price-format";
 
 export class UIManager {
     public formatPrice(price: number): string {
-        if (price >= 1000) return price.toFixed(2);
-        if (price >= 1) return price.toFixed(4);
-        return price.toFixed(6);
+        return formatDisplayPrice(price);
     }
 
     public formatDate(timestamp: Time): string {

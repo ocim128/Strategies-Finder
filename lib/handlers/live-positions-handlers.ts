@@ -17,6 +17,7 @@ import { dataManager } from '../data-manager';
 import { settingsManager } from '../settings-manager';
 import { strategyRegistry } from '../../strategyRegistry';
 import { createAccessibleModal, type AccessibleModalController } from '../modal-accessibility';
+import { formatDisplayPrice } from '../price-format';
 
 
 
@@ -112,8 +113,7 @@ function buildUiCompatibleBacktestSettings(source: unknown): Record<string, unkn
 }
 
 function formatPrice(price: number | null): string {
-    if (price === null || !Number.isFinite(price)) return '-';
-    return price.toFixed(4);
+    return formatDisplayPrice(price);
 }
 
 function formatPnl(pnl: number | null, percent: number | null): string {

@@ -1,218 +1,228 @@
 # AGENTS.md
 
 ## Mission
-This repository is a Vite + TypeScript trading strategy playground with a heavy UI layer, local caching, and optional Cloudflare Worker alerts.
-Use this guide to make safe, high-signal changes with GPT-5.3 Codex.
+This repository is a Vite + TypeScript trading strategy playground with a large UI surface, local market-data caching, optional Rust acceleration, and optional Cloudflare Worker alerts.
 
-## What This Codebase Actually Is
-- Frontend app bootstrap: `index.ts`
-- Layout is assembled from HTML partials at runtime: `lib/layout-manager.ts`, `html-partials/*`
-- Strategy runtime and registry: `strategyRegistry.ts`, `lib/strategies/*`
-- Backtest engine (TypeScript) with optional Rust backend client:
-  - TS engine: `lib/strategies/backtest/*`, `lib/backtest-service.ts`
-  - Rust client: `lib/rust-engine-client.ts`, preference UI in `lib/engine-preferences.ts`
-- Data pipeline (multi-source, cached):
-  - Manager: `lib/data-manager.ts`
-  - Providers: `lib/dataProviders/*`
-  - Browser cache (IndexedDB): `lib/candle-cache.ts`
-  - Local SQLite API client: `lib/local-sqlite-api.ts`
-  - Vite dev server SQLite endpoints: `vite.config.ts`
-- Advanced features:
-  - Finder: `lib/finder-manager.ts`, `lib/finder/*`
-  - Scanner: `lib/scanner/*`
-  - Replay: `lib/replay/*`
-  - Pair Combiner: `lib/pair-combiner-manager.ts`, `lib/pairCombiner/*`
-  - Data Mining / feature export: `lib/data-mining-manager.ts`, `lib/featureLab/*`
-- Cloudflare Worker alerting and subscriptions:
-  - Worker: `workers/entry-signal-worker.ts`
-  - SQL migrations: `workers/migrations/*.sql`
-  - Client API wrapper: `lib/alert-service.ts`
+Use this file as the short operational handbook for making safe changes quickly.
 
-## Ground Rules For Changes
-- Prefer surgical changes; this repo has broad cross-file coupling via DOM ids and shared settings fields.
-- Preserve existing localStorage schema keys unless migration logic is added.
-- Keep strategy signal timing semantics consistent (`executionModel`, `barIndex`, `time` mapping).
-- Do not bypass normalization helpers for time and settings.
-- If a setting impacts Rust fallback behavior, verify both:
-  - `BacktestService` Rust sanitization path in `lib/backtest-service.ts`
-  - Finder Rust sanitization path in `lib/finder-manager.ts`
+## Start Here
 
-## High-Risk Couplings (Do Not Miss)
-- Strategy registration split:
-  - UI/backtest uses `strategyRegistry` (dynamic + HMR + custom strategies).
-  - Worker entry evaluation uses static `strategies` from `lib/strategies/library.ts`.
-  - If you add/rename a strategy, update `lib/strategies/library.ts` or worker-side lookup will fail.
-- Runtime layout and handlers:
-  - DOM ids/classes are defined in `html-partials/*`.
-  - Event wiring is spread across `lib/handlers/*`, managers, and e2e checks.
-  - Renaming ids without updating handlers breaks runtime silently.
-- Time normalization:
-  - Code accepts unix seconds, unix ms, ISO strings, and BusinessDay objects.
-  - Reuse existing `timeKey`, `timeToNumber`, and parse helpers.
-- Settings compatibility:
-  - `tradeFilterMode` is canonical.
-  - `entryConfirmation` is legacy compatibility and still consumed in some paths.
+Before editing anything important:
+1. Read `README.md` for the repo-level map.
+2. Read `index.ts` to understand initialization order.
+3. Check `git status --short` so you do not trample unrelated work.
+4. Identify which contracts your change touches:
+   - UI ids / partials
+   - settings schema / localStorage
+   - strategy registration
+   - backtest engine semantics
+   - Rust fallback compatibility
+   - Worker compatibility
 
-## Strategy Workflows
+## Mental Model
 
-### Add a new built-in strategy
-1. Create file in `lib/strategies/lib/<strategy-name>.ts`.
-2. Use helpers from `lib/strategies/strategy-helpers.ts`:
-   - `ensureCleanData`
-   - `createSignalLoop`
-   - `createBuySignal` / `createSellSignal`
-3. Export strategy with:
-   - `name`, `description`
-   - `defaultParams`, `paramLabels`
-   - `execute(data, params)`
-   - `metadata` (`role`, `direction`, `walkForwardParams`) when applicable
-4. Register in `lib/strategies/library.ts`.
-5. If intended for worker alert evaluation, registration in `library.ts` is mandatory.
-6. Run tests and verify strategy appears in dropdown at runtime.
+This codebase is a collection of tightly-coupled subsystems:
+- runtime-injected UI assembled from `html-partials/*`
+- id-driven handlers and feature managers
+- strategy execution and backtesting
+- multi-source data loading and caching
+- optional worker-side signal evaluation and subscriptions
 
-### Add/modify strategy parameters safely
-- Keep param key names stable when possible (saved configs and finder output depend on keys).
-- If renaming keys, add backward-compat mapping where params are loaded.
-- Update any walk-forward parameter lists (`metadata.walkForwardParams`) to avoid unexpected optimization scope.
+Most breakages come from contract drift, not algorithm bugs.
 
-## Backtest And Engine Workflows
+## The Contracts Most Likely To Break
 
-### Change backtest behavior
-- Primary logic lives in `lib/strategies/backtest/*`.
-- UI orchestrator and engine selection logic live in `lib/backtest-service.ts`.
-- Validate:
-  - long/short/both/combined direction paths
-  - `executionModel` behavior (`signal_close`, `next_open`, `next_close`)
-  - snapshot/trade filters if touched
-
-### Rust engine compatibility
-- Rust backend is optional.
-- Any new setting not supported by Rust must be stripped from Rust requests in:
-  - `lib/backtest-service.ts`
-  - `lib/finder-manager.ts`
-- Ensure TypeScript fallback remains correct.
-
-## Data Pipeline Workflows
-
-### Data source order and caching model
-`DataManager` currently prefers:
-1. Local SQLite cache (`/api/sqlite/*` via Vite plugin)
-2. IndexedDB cache
-3. Seed files under `price-data/`
-4. Remote provider fetch (Binance/Bybit)
-
-- If changing fetch behavior, preserve merge/de-dup semantics and time ordering.
-- Scanner uses `fetchDataForScan` and depends on fast local cache hits.
-
-### Intervals and resampling
-- Binance provider supports custom minute intervals by resampling base intervals.
-- Reuse `resolveFetchInterval` and `resampleOHLCV`; do not duplicate interval math.
-
-## Worker + Alerts Workflows
-- Worker endpoint surface is documented in `workers/README.md`.
-- DB schema changes require new migration under `workers/migrations/`.
-- Keep API contract aligned with `lib/alert-service.ts` and alert tab UI (`html-partials/tab-alerts.html`, handlers).
-- Subscriptions and signal dedupe rely on stable stream/channel keys.
-
-## UI Workflows
-- Layout source of truth is `html-partials/*` + `lib/layout-manager.ts`.
-- Most interactivity wiring lives in:
+### 1. UI DOM contracts
+- Structural ids are defined in `lib/feature-dom-contracts.ts`
+- HTML source of truth is `html-partials/*`
+- Consumers live in handlers and managers such as:
   - `lib/handlers/ui-event-handlers.ts`
-  - `lib/handlers/state-subscriptions.ts`
-  - feature managers (`finder`, `scanner`, `pair-combiner`, etc.)
-- If adding controls:
-  - add id/class in partial
-  - wire in handler/manager
-  - include settings persistence if user-configurable
+  - `lib/analysis-panel.ts`
+  - `lib/finder-manager.ts`
+  - `lib/walk-forward-service.ts`
 
-## Finder/Scanner Notes
-- Finder is memory-sensitive and includes adaptive batching for large datasets.
-- Scanner uses cache fingerprinting and open-position detection via backtest replay logic.
-- Keep these paths performant; avoid introducing expensive per-bar allocations in hot loops.
+If you rename or remove a structural id:
+1. update the partial
+2. update `lib/feature-dom-contracts.ts`
+3. update the feature code
+4. run `feature-dom-contracts.spec.ts`
 
-## Edge Validation Protocol (robust_random_wf)
-This repo now supports a survivability-first finder mode. Treat it as a validation engine, not an optimizer.
+### 2. Strategy registration split
+- Main UI/runtime uses `strategyRegistry.ts`
+- Worker uses static built-ins from `lib/strategies/library.ts`
 
-### Objective and non-goals
-- Objective: detect ideas that repeatedly survive strict OOS constraints under realistic execution assumptions.
-- Non-goal: maximize backtest equity or discover one lucky parameter set.
+If a built-in strategy is added or renamed and `library.ts` is not updated, worker-side alert evaluation will silently fail.
 
-### Hard requirements for this mode
-- Deterministic seeded runs are mandatory (`robustSeed`).
-- Pass rate is computed from Stage C survivors only.
-- Cell decision is explicit and binary:
-  - `PASS`
-  - `FAIL` with `decisionReason`
-- Cell audit payload is emitted for both passes and fails:
-  - event: `[Finder][robust_random_wf][cell_audit]`
+### 3. Settings compatibility
+- Preserve localStorage/backward compatibility unless you add migration logic
+- `tradeFilterMode` is canonical
+- `entryConfirmation` is legacy compatibility still consumed in some paths
 
-### Current robust flow
-1. Stage A: cheap holdout filter with hard constraints.
-2. Stage B: short fixed-param walk-forward with hard constraints.
-3. Stage C: full fixed-param walk-forward with hard constraints.
-4. Cell gates decide final `PASS/FAIL` from survivor density + stability constraints.
+If a new setting is unsupported by Rust, strip it in both:
+- `lib/backtest-service.ts`
+- `lib/finder-manager.ts`
 
-### Deterministic experiment discipline
-- Freeze config during an experiment:
-  - strategy set, symbol list, timeframe list, data span, costs, runs/range/steps.
-- Use a fixed seed list for validation (example):
-  - `1337, 7331, 2026, 4242, 9001`
-- Never reroll seeds until you get a pass. That reintroduces optimizer behavior.
+### 4. Time normalization
+This repo accepts multiple time shapes:
+- unix seconds
+- unix milliseconds
+- ISO strings
+- `BusinessDay`
 
-### Recommended acceptance policy
-- Per-cell seed pass rule:
-  - pass at least `3/5` seeds.
-- Reject if behavior is unstable across seeds:
-  - pass rate collapses
-  - DD breach rate spikes
-  - fold stability degrades materially
+Prefer existing helpers:
+- `timeKey`
+- `timeToNumber`
+- existing parse/normalize helpers
 
-### Reason-code interpretation
-- `cell_low_stage_c_survivors`: weak edge density; too few robust survivors.
-- `cell_low_pass_rate`: robust region too narrow; likely fragile.
-- `cell_high_dd_breach_rate`: structural risk flaw under OOS pressure.
-- `cell_high_fold_variance`: unstable behavior / probable overfit.
+Do not introduce new ad hoc time conversion paths unless there is no existing seam.
 
-### Scope reminders
-- Cluster reporting is for confirmation, not ranking.
-- `mock` symbols are useful for pipeline checks but not evidence of tradable edge.
-- Promote only after multi-seed, multi-cell validation on real markets.
+## First-Tier File Map
 
-## Validation Commands
-Run from this directory.
+### Bootstrap and app wiring
+- `index.ts`
+- `lib/layout-manager.ts`
+- `lib/handlers/*`
 
-- Type check: `npm run typecheck`
-- Strategy test suite: `npm run test`
-- E2E smoke: `npm run test:e2e`
-- Robust matrix summary utility:
-  - `npm run robust:summary -- run-seed-1337.txt run-seed-7331.txt`
-  - `npm run robust:summary -- --format json --out matrix-summary.json run-seed-*.txt`
+### Trading engine
+- `lib/strategies/backtest/*`
+- `lib/backtest-service.ts`
+- `lib/rust-engine-client.ts`
+- `lib/rust-settings-sanitizer.ts`
 
-Additional useful test file:
-- Pair combiner tests: `..\..\..\node_modules\.bin\esno pairCombiner.spec.ts`
+### Data layer
+- `lib/data-manager.ts`
+- `lib/dataProviders/*`
+- `lib/candle-cache.ts`
+- `lib/local-sqlite-api.ts`
+- `vite.config.ts`
 
-## Current Baseline Test Notes (observed on 2026-02-14)
-- `npm run typecheck`: passes
-- `npm run test`: passes
-- `npm run test:e2e`: historical instability possible (Puppeteer timeout), re-check in your environment if touched.
-
-Treat these as existing baseline issues unless your change directly targets them.
-
-## Fast File Map For Common Tasks
-- Add strategy: `lib/strategies/lib/*`, `lib/strategies/library.ts`
-- Strategy registry/HMR/custom runtime: `strategyRegistry.ts`
-- Backtest core: `lib/strategies/backtest/*`
-- Backtest orchestration/UI: `lib/backtest-service.ts`
-- Data fetching/streaming/cache: `lib/data-manager.ts`, `lib/dataProviders/*`, `lib/candle-cache.ts`, `lib/local-sqlite-api.ts`
+### Research tools
 - Finder: `lib/finder-manager.ts`, `lib/finder/*`
+- Walk Forward: `lib/walk-forward-service.ts`
+- Analysis: `lib/analysis-panel.ts`
 - Scanner: `lib/scanner/*`
 - Replay: `lib/replay/*`
-- Alerts worker: `workers/entry-signal-worker.ts`, `workers/migrations/*`
-- Alert client/UI: `lib/alert-service.ts`, `html-partials/tab-alerts.html`
-- Settings persistence: `lib/settings-manager.ts`
+- Pair Combiner: `lib/pair-combiner-manager.ts`, `lib/pairCombiner/*`
+- Data Mining: `lib/data-mining-manager.ts`, `lib/featureLab/*`
 
-## Codex Output Standard For This Repo
-- Explain what changed and why in terms of feature flow.
-- Explicitly list affected subsystems when a change crosses boundaries.
-- Include exact validation commands run and whether failures are pre-existing or introduced.
-- When touching strategy or settings contracts, note compatibility impact on saved configs and worker evaluation.
+### Alerts / Worker
+- `workers/entry-signal-worker.ts`
+- `workers/migrations/*`
+- `lib/alert-service.ts`
+- `workers/README.md`
+
+## Safe Change Checklist
+
+### Any UI change
+- Confirm whether the element is structural or optional
+- If structural, add it to `lib/feature-dom-contracts.ts`
+- Update the relevant partial and manager/handler together
+- Run:
+  - `npm run typecheck`
+  - `..\..\..\node_modules\.bin\esno feature-dom-contracts.spec.ts`
+
+### Any backtest behavior change
+- Validate:
+  - long
+  - short
+  - both / combined if touched
+  - `signal_close`
+  - `next_open`
+  - `next_close` if touched
+- Recheck snapshot filters and entry timing if signals/fills moved
+
+### Any settings change
+- Keep key names stable when possible
+- Check UI load/save path in `lib/settings-manager.ts`
+- Check any resolver/sanitizer path that mirrors those settings
+
+### Any worker-facing change
+- Check `lib/alert-service.ts`
+- Check `workers/entry-signal-worker.ts`
+- If schema changes, add a migration
+
+## Feature-Specific Workflows
+
+### Add a built-in strategy
+1. Create `lib/strategies/lib/<strategy-name>.ts`
+2. Use helpers from `lib/strategies/strategy-helpers.ts`
+3. Export:
+   - `name`
+   - `description`
+   - `defaultParams`
+   - `paramLabels`
+   - `execute(data, params)`
+   - `metadata` when applicable
+4. Register in `lib/strategies/library.ts`
+5. Verify dropdown + worker compatibility
+
+### Modify Finder
+- Expect performance sensitivity
+- Avoid expensive per-bar allocations in hot loops
+- Preserve cache decisions and deterministic seeded behavior
+- If touching robust mode, keep explicit `PASS`/`FAIL` decision semantics
+
+### Modify Walk Forward
+- Be careful with UI state versus backtest state handoff
+- `walk_forward_oos` snapshots intentionally route through shared result state
+- Keep robustness summary / candidate validation panels aligned with actual run data
+
+### Modify trade analysis
+- `lib/analysis-panel.ts` is part UI controller, part feature orchestration
+- Keep heavy computation in backtest analysis modules, not in DOM rendering code
+
+## Robust Random WF Discipline
+
+Treat `robust_random_wf` as survivability validation, not as a peak-profit optimizer.
+
+Hard expectations:
+- deterministic `robustSeed`
+- explicit `PASS` or `FAIL`
+- pass rate computed from Stage C survivors
+- audit event emitted for both passes and fails:
+  - `[Finder][robust_random_wf][cell_audit]`
+
+Recommended validation habit:
+- hold strategy set, symbols, timeframes, data span, and cost assumptions fixed
+- use a fixed seed set such as `1337, 7331, 2026, 4242, 9001`
+- do not reroll seeds until the result passes
+
+## Validation Commands
+
+Run from this directory.
+
+Core:
+- `npm run typecheck`
+- `npm run test`
+- `npm run test:e2e`
+
+Useful extras:
+- `..\..\..\node_modules\.bin\esno feature-dom-contracts.spec.ts`
+- `..\..\..\node_modules\.bin\esno pairCombiner.spec.ts`
+- `npm run robust:summary -- run-seed-1337.txt run-seed-7331.txt`
+
+## Current Baseline
+
+Observed baseline as of `2026-03-08`:
+- `npm run typecheck`: expected to pass
+- `npm run test`: expected to pass
+- `npm run test:e2e`: may still be environment-sensitive because of browser timing
+
+Treat unrelated pre-existing failures carefully. Do not assume your change caused them without checking.
+
+## Common Failure Modes
+- Renamed UI id in `html-partials/*` but forgot handler or contract update
+- Added a strategy to the UI registry but not to `lib/strategies/library.ts`
+- Added a new setting but forgot Rust sanitization or finder parity
+- Used raw `document.getElementById(...)` for structural UI instead of a typed contract
+- Broke time handling by coercing `BusinessDay` like a number
+- Changed signal timing semantics without rechecking entry snapshots / execution model behavior
+
+## Documentation Standard
+
+If you change behavior substantially, update the docs that actually carry that contract:
+- `README.md` for repo-level usage and architecture
+- `AGENTS.md` for safe-change guidance
+- `workers/README.md` for worker API and cron behavior
+
+Keep repo-level docs broad and operational. Strategy-specific lore belongs in dedicated docs like `EMPIRE_CONSTITUTION.md`, not in the main README.

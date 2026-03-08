@@ -14,6 +14,7 @@ import {
 import { Trade, TradeSnapshot, OHLCVData } from './types/index';
 import { timeKey } from './strategies/index';
 import { uiManager } from './ui-manager';
+import { type AnalysisPanelDom, createAnalysisPanelDom } from './feature-dom-contracts';
 
 /**
  * Maps TradeSnapshot feature keys -> settings UI element IDs.
@@ -68,6 +69,7 @@ const FEATURE_TO_SETTINGS: Record<keyof TradeSnapshot, {
  * pure win rate, so filters don't remove profitable-but-lossy trades.
  */
 class AnalysisPanel {
+    private dom: AnalysisPanelDom | null = null;
     private lastResults: FeatureAnalysis[] = [];
     private lastFinderCandidates: AnalysisFinderCandidate[] = [];
     private readonly entryShapeSampleHardLimit = 500;
@@ -76,12 +78,17 @@ class AnalysisPanel {
         losses: null
     };
 
+    private getDom(): AnalysisPanelDom {
+        return this.dom ??= createAnalysisPanelDom();
+    }
+
 
     /** Run analysis on the current backtest result and render results. */
     runAnalysis() {
         const result = state.currentBacktestResult;
-        const emptyEl = document.getElementById('emptyAnalysis');
-        const contentEl = document.getElementById('analysisContent');
+        const dom = this.getDom();
+        const emptyEl = dom.emptyAnalysis;
+        const contentEl = dom.analysisContent;
 
         if (!result || result.trades.length === 0) {
             if (emptyEl) emptyEl.style.display = '';
@@ -114,7 +121,7 @@ class AnalysisPanel {
         if (contentEl) contentEl.style.display = '';
 
         // Update summary
-        const summaryEl = document.getElementById('analysisSummary');
+        const summaryEl = dom.analysisSummary;
         if (summaryEl) {
             const wins = result.trades.filter(t => t.pnl > 0).length;
             const total = result.trades.length;
@@ -131,15 +138,13 @@ class AnalysisPanel {
         this.renderComboFilter(analyses, result.trades, options);
 
         // Hide single-filter simulation initially
-        const simEl = document.getElementById('analysisSimulation');
-        if (simEl) simEl.style.display = 'none';
+        dom.analysisSimulation.style.display = 'none';
 
         this.resetFinderResults('Finder ready. Click "Run Finder" to search threshold combinations.');
     }
 
     private renderTable(analyses: FeatureAnalysis[], trades: Trade[]) {
-        const tbody = document.getElementById('analysisTableBody');
-        if (!tbody) return;
+        const { analysisTableBody: tbody } = this.getDom();
 
         if (analyses.length === 0) {
             tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:20px;">
@@ -223,8 +228,8 @@ class AnalysisPanel {
     }
 
     private renderComboFilter(analyses: FeatureAnalysis[], trades: Trade[], options: AnalysisOptions) {
-        const comboEl = document.getElementById('comboFilterSection');
-        if (!comboEl) return;
+        const dom = this.getDom();
+        const comboEl = dom.comboFilterSection;
 
         const comboMaxRemoval = this.resolveComboMaxRemoval(options);
         const best = findBestComboFilter(trades, analyses, comboMaxRemoval);
@@ -234,8 +239,7 @@ class AnalysisPanel {
         }
 
         comboEl.style.display = '';
-        const comboGrid = document.getElementById('comboFilterGrid');
-        if (!comboGrid) return;
+        const comboGrid = dom.comboFilterGrid;
 
         const filterDesc = best.filters
             .map(f => `<span class="filter-badge">${f.label} ${f.direction === 'above' ? '>=' : '<='} ${this.fmtThreshold(f.threshold)}</span>`)
@@ -323,9 +327,7 @@ class AnalysisPanel {
         threshold: number
     ) {
         const sim = simulateFilter(trades, feature, direction, threshold);
-        const simEl = document.getElementById('analysisSimulation');
-        const grid = document.getElementById('simulationGrid');
-        if (!simEl || !grid) return;
+        const { analysisSimulation: simEl, simulationGrid: grid } = this.getDom();
 
         simEl.style.display = '';
 
@@ -402,11 +404,10 @@ class AnalysisPanel {
             }
         }
 
-        const runBtn = document.getElementById('analysisRunFinderBtn') as HTMLButtonElement | null;
-        if (runBtn) runBtn.disabled = true;
+        const { analysisRunFinderBtn: runBtn, analysisFinderStatus: statusEl } = this.getDom();
+        runBtn.disabled = true;
 
-        const statusEl = document.getElementById('analysisFinderStatus');
-        if (statusEl) statusEl.textContent = 'Running finder...';
+        statusEl.textContent = 'Running finder...';
 
         try {
             const finderResult = runAnalysisFilterFinder(
@@ -416,7 +417,7 @@ class AnalysisPanel {
             );
             this.renderFinderResults(finderResult);
         } finally {
-            if (runBtn) runBtn.disabled = false;
+            runBtn.disabled = false;
         }
     }
 
@@ -449,27 +450,19 @@ class AnalysisPanel {
 
     private resetFinderResults(statusText: string = 'Finder ready.') {
         this.lastFinderCandidates = [];
-
-        const statusEl = document.getElementById('analysisFinderStatus');
-        if (statusEl) statusEl.textContent = statusText;
-
-        const resultsEl = document.getElementById('analysisFinderResults');
-        if (resultsEl) resultsEl.style.display = 'none';
-
-        const bestGrid = document.getElementById('analysisFinderBestGrid');
-        if (bestGrid) bestGrid.innerHTML = '';
-
-        const topBody = document.getElementById('analysisFinderTopBody');
-        if (topBody) topBody.innerHTML = '';
+        const dom = this.getDom();
+        dom.analysisFinderStatus.textContent = statusText;
+        dom.analysisFinderResults.style.display = 'none';
+        dom.analysisFinderBestGrid.innerHTML = '';
+        dom.analysisFinderTopBody.innerHTML = '';
     }
 
     private renderFinderResults(result: AnalysisFilterFinderResult) {
-        const statusEl = document.getElementById('analysisFinderStatus');
-        const resultsEl = document.getElementById('analysisFinderResults');
-        const bestGrid = document.getElementById('analysisFinderBestGrid');
-        const topBody = document.getElementById('analysisFinderTopBody');
-
-        if (!statusEl || !resultsEl || !bestGrid || !topBody) return;
+        const dom = this.getDom();
+        const statusEl = dom.analysisFinderStatus;
+        const resultsEl = dom.analysisFinderResults;
+        const bestGrid = dom.analysisFinderBestGrid;
+        const topBody = dom.analysisFinderTopBody;
 
         this.lastFinderCandidates = result.topCandidates;
 
@@ -586,30 +579,29 @@ class AnalysisPanel {
     }
 
     private hideEntryShapeSection() {
-        const section = document.getElementById('analysisEntryShapes');
-        if (section) section.style.display = 'none';
+        this.getDom().analysisEntryShapes.style.display = 'none';
         this.entryShapeImageUrls.wins = null;
         this.entryShapeImageUrls.losses = null;
     }
 
     private readEntryShapeMaxCandles(): number {
-        const input = document.getElementById('analysisEntryShapeMaxCandles') as HTMLInputElement | null;
-        const parsed = input ? Number.parseInt(input.value, 10) : NaN;
+        const input = this.getDom().analysisEntryShapeMaxCandles;
+        const parsed = Number.parseInt(input.value, 10);
         const fallback = this.entryShapeSampleHardLimit;
         const clamped = Number.isFinite(parsed)
             ? Math.max(10, Math.min(this.entryShapeSampleHardLimit, parsed))
             : fallback;
-        if (input) input.value = String(clamped);
+        input.value = String(clamped);
         return clamped;
     }
 
     private renderEntryShapeSection(trades: Trade[]) {
-        const section = document.getElementById('analysisEntryShapes');
-        const winsCanvas = document.getElementById('analysisWinsShapeCanvas') as HTMLCanvasElement | null;
-        const lossesCanvas = document.getElementById('analysisLossesShapeCanvas') as HTMLCanvasElement | null;
-        const winsMeta = document.getElementById('analysisWinsShapeMeta');
-        const lossesMeta = document.getElementById('analysisLossesShapeMeta');
-        if (!section || !winsCanvas || !lossesCanvas || !winsMeta || !lossesMeta) return;
+        const dom = this.getDom();
+        const section = dom.analysisEntryShapes;
+        const winsCanvas = dom.analysisWinsShapeCanvas;
+        const lossesCanvas = dom.analysisLossesShapeCanvas;
+        const winsMeta = dom.analysisWinsShapeMeta;
+        const lossesMeta = dom.analysisLossesShapeMeta;
 
         const maxCandles = this.readEntryShapeMaxCandles();
         const buckets = this.collectEntryCandles(trades);
@@ -806,14 +798,13 @@ class AnalysisPanel {
     }
 
     private readAnalysisOptions(): AnalysisOptions {
-        const relaxToggle = document.getElementById('analysisRelaxModeToggle') as HTMLInputElement | null;
-        const maxRemovalInput = document.getElementById('analysisMaxRemovalPercent') as HTMLInputElement | null;
+        const { analysisRelaxModeToggle: relaxToggle, analysisMaxRemovalPercent: maxRemovalInput } = this.getDom();
 
-        if (!relaxToggle?.checked) {
+        if (!relaxToggle.checked) {
             return { mode: 'quality' };
         }
 
-        const parsed = maxRemovalInput ? parseFloat(maxRemovalInput.value) : NaN;
+        const parsed = parseFloat(maxRemovalInput.value);
         const maxSingleRemoval = Number.isFinite(parsed) ? Math.max(5, Math.min(90, parsed)) : 20;
         return {
             mode: 'relax_aware',
@@ -829,9 +820,7 @@ class AnalysisPanel {
     }
 
     private applyRelaxModeControlState() {
-        const relaxToggle = document.getElementById('analysisRelaxModeToggle') as HTMLInputElement | null;
-        const maxRemovalInput = document.getElementById('analysisMaxRemovalPercent') as HTMLInputElement | null;
-        if (!relaxToggle || !maxRemovalInput) return;
+        const { analysisRelaxModeToggle: relaxToggle, analysisMaxRemovalPercent: maxRemovalInput } = this.getDom();
         maxRemovalInput.disabled = !relaxToggle.checked;
     }
 
@@ -918,66 +907,44 @@ class AnalysisPanel {
     }
     /** Wire button and auto-run on backtest completion. */
     init() {
-        const btn = document.getElementById('runAnalysisBtn');
-        if (btn) {
-            btn.addEventListener('click', () => this.runAnalysis());
-        }
-        const renderEntryShapesBtn = document.getElementById('analysisRenderEntryShapesBtn');
-        if (renderEntryShapesBtn) {
-            renderEntryShapesBtn.addEventListener('click', () => {
-                const result = state.currentBacktestResult;
-                if (result?.trades?.length) {
-                    this.renderEntryShapeSection(result.trades);
-                } else {
-                    this.hideEntryShapeSection();
-                }
-            });
-        }
-        const downloadWinsBtn = document.getElementById('analysisDownloadWinsShapeBtn');
-        if (downloadWinsBtn) {
-            downloadWinsBtn.addEventListener('click', () => this.downloadEntryShapeImage('wins'));
-        }
-        const downloadLossesBtn = document.getElementById('analysisDownloadLossesShapeBtn');
-        if (downloadLossesBtn) {
-            downloadLossesBtn.addEventListener('click', () => this.downloadEntryShapeImage('losses'));
-        }
-        const entryShapeMaxCandlesInput = document.getElementById('analysisEntryShapeMaxCandles') as HTMLInputElement | null;
-        if (entryShapeMaxCandlesInput) {
-            entryShapeMaxCandlesInput.addEventListener('change', () => {
-                const result = state.currentBacktestResult;
-                if (result?.trades?.length) {
-                    this.renderEntryShapeSection(result.trades);
-                }
-            });
-        }
-        const runFinderBtn = document.getElementById('analysisRunFinderBtn');
-        if (runFinderBtn) {
-            runFinderBtn.addEventListener('click', () => this.runFinder());
-        }
+        const dom = this.getDom();
+        dom.runAnalysisBtn.addEventListener('click', () => this.runAnalysis());
+        dom.analysisRenderEntryShapesBtn.addEventListener('click', () => {
+            const result = state.currentBacktestResult;
+            if (result?.trades?.length) {
+                this.renderEntryShapeSection(result.trades);
+            } else {
+                this.hideEntryShapeSection();
+            }
+        });
+        dom.analysisDownloadWinsShapeBtn.addEventListener('click', () => this.downloadEntryShapeImage('wins'));
+        dom.analysisDownloadLossesShapeBtn.addEventListener('click', () => this.downloadEntryShapeImage('losses'));
+        dom.analysisEntryShapeMaxCandles.addEventListener('change', () => {
+            const result = state.currentBacktestResult;
+            if (result?.trades?.length) {
+                this.renderEntryShapeSection(result.trades);
+            }
+        });
+        dom.analysisRunFinderBtn.addEventListener('click', () => this.runFinder());
         this.resetFinderResults('Finder ready. Click "Run Finder" after Analyze.');
 
-        const relaxToggle = document.getElementById('analysisRelaxModeToggle') as HTMLInputElement | null;
-        const maxRemovalInput = document.getElementById('analysisMaxRemovalPercent') as HTMLInputElement | null;
-        if (relaxToggle) {
-            relaxToggle.addEventListener('change', () => {
-                this.applyRelaxModeControlState();
+        const relaxToggle = dom.analysisRelaxModeToggle;
+        const maxRemovalInput = dom.analysisMaxRemovalPercent;
+        relaxToggle.addEventListener('change', () => {
+            this.applyRelaxModeControlState();
+            this.runAnalysis();
+        });
+        maxRemovalInput.addEventListener('input', () => {
+            if (dom.analysisRelaxModeToggle.checked) {
                 this.runAnalysis();
-            });
-        }
-        if (maxRemovalInput) {
-            maxRemovalInput.addEventListener('input', () => {
-                if ((document.getElementById('analysisRelaxModeToggle') as HTMLInputElement | null)?.checked) {
-                    this.runAnalysis();
-                }
-            });
-        }
+            }
+        });
         this.applyRelaxModeControlState();
 
         // Auto-run analysis when backtest completes
         state.subscribe('currentBacktestResult', () => {
             // Only auto-analyze if the analysis tab is visible
-            const tab = document.getElementById('analysisTab');
-            if (tab && tab.style.display !== 'none') {
+            if (dom.analysisTab.style.display !== 'none') {
                 this.runAnalysis();
             }
         });

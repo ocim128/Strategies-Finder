@@ -4,7 +4,7 @@ import { state } from "./state";
 import { backtestService } from "./backtest-service";
 import { paramManager } from "./param-manager";
 import { uiManager } from "./ui-manager";
-import { getRequiredElement, setVisible } from "./dom-utils";
+import { setVisible } from "./dom-utils";
 import { dataManager } from "./data-manager";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
@@ -18,6 +18,12 @@ import { debugLogger, robustAuditSink } from "./debug-logger";
 import { readNumberInputValue, readToggleValue } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { trimToClosedCandles } from "./closed-candle-utils";
+import {
+	createFinderManagerDom,
+	createPairCombinerBridgeDom,
+	type FinderManagerDom,
+	type PairCombinerBridgeDom
+} from "./feature-dom-contracts";
 import type {
 	FinderMetric,
 	FinderMode,
@@ -40,24 +46,35 @@ export class FinderManager {
 	private readonly ui = new FinderUI();
 	private readonly paramSpace = new FinderParamSpace();
 	private readonly timeframeLoader = new FinderTimeframeLoader(FinderManager.MAX_MULTI_TIMEFRAMES);
+	private dom: FinderManagerDom | null = null;
+	private pairCombinerDom: PairCombinerBridgeDom | null = null;
+
+	private getDom(): FinderManagerDom {
+		return this.dom ??= createFinderManagerDom();
+	}
+
+	private getPairCombinerDom(): PairCombinerBridgeDom {
+		return this.pairCombinerDom ??= createPairCombinerBridgeDom();
+	}
 
 	public init() {
-		getRequiredElement('runFinder').addEventListener('click', () => {
+		const dom = this.getDom();
+		dom.runFinder.addEventListener('click', () => {
 			void this.runFinder();
 		});
 
-		const copyTopButton = getRequiredElement<HTMLButtonElement>('finderCopyTopResults');
+		const copyTopButton = dom.finderCopyTopResults;
 		copyTopButton.disabled = true;
 		copyTopButton.addEventListener('click', () => {
 			void this.copyTopResultsMetadata();
 		});
 
-		const saveSeedAuditButton = getRequiredElement<HTMLButtonElement>('finderSaveSeedAudit');
+		const saveSeedAuditButton = dom.finderSaveSeedAudit;
 		saveSeedAuditButton.addEventListener('click', () => {
 			void this.saveCurrentSeedAuditFile();
 		});
 
-		getRequiredElement('finderList').addEventListener('click', (event) => {
+		dom.finderList.addEventListener('click', (event) => {
 			const target = event.target as HTMLElement | null;
 			const button = target?.closest<HTMLButtonElement>('.finder-apply');
 			if (!button) return;
@@ -69,7 +86,7 @@ export class FinderManager {
 		});
 
 		this.renderStrategySelection();
-		getRequiredElement('finderStrategiesToggleAll').addEventListener('change', (event) => {
+		dom.finderStrategiesToggleAll.addEventListener('change', (event) => {
 			const checked = (event.target as HTMLInputElement).checked;
 			this.strategyToggles.forEach(toggle => {
 				toggle.checked = checked;
@@ -92,8 +109,7 @@ export class FinderManager {
 
 	private initSortingUI(): void {
 		// Populate Dropdowns
-		const sortPrimary = getRequiredElement<HTMLSelectElement>('finderSort');
-		const sortSecondary = getRequiredElement<HTMLSelectElement>('finderSortSecondary');
+		const { finderSort: sortPrimary, finderSortSecondary: sortSecondary, finderAdvancedToggle: toggle, finderSimpleSort: simpleSection, finderSortList: advancedSection } = this.getDom();
 
 		const optionsHtml = DEFAULT_SORT_PRIORITY.map(key =>
 			`<option value="${key}">${METRIC_FULL_LABELS[key]}</option>`
@@ -107,10 +123,6 @@ export class FinderManager {
 		sortSecondary.value = 'profitFactor';
 
 		// Advanced Toggle Logic
-		const toggle = getRequiredElement<HTMLInputElement>('finderAdvancedToggle');
-		const simpleSection = getRequiredElement('finderSimpleSort');
-		const advancedSection = getRequiredElement('finderSortList');
-
 		toggle.addEventListener('change', () => {
 			setVisible(simpleSection.id, !toggle.checked);
 			setVisible(advancedSection.id, toggle.checked);
@@ -121,7 +133,7 @@ export class FinderManager {
 	}
 
 	private initSortList(): void {
-		const list = getRequiredElement('finderSortList');
+		const { finderSortList: list } = this.getDom();
 
 		// Event delegation for move buttons
 		list.addEventListener('click', (e) => {
@@ -147,7 +159,7 @@ export class FinderManager {
 	}
 
 	private renderSortList(): void {
-		const container = getRequiredElement('finderSortList');
+		const { finderSortList: container } = this.getDom();
 		container.innerHTML = '';
 
 		DEFAULT_SORT_PRIORITY.forEach(metric => {
@@ -166,10 +178,11 @@ export class FinderManager {
 	}
 
 	private initMultiTimeframeUI(): void {
-		const toggle = getRequiredElement<HTMLInputElement>('finderMultiTimeframeToggle');
-		const addPresetBtn = getRequiredElement<HTMLButtonElement>('finderMultiTimeframeAdd');
-		const addCustomBtn = getRequiredElement<HTMLButtonElement>('finderMultiTimeframeCustomAdd');
-		const customInput = getRequiredElement<HTMLInputElement>('finderMultiTimeframeCustom');
+		const dom = this.getDom();
+		const toggle = dom.finderMultiTimeframeToggle;
+		const addPresetBtn = dom.finderMultiTimeframeAdd;
+		const addCustomBtn = dom.finderMultiTimeframeCustomAdd;
+		const customInput = dom.finderMultiTimeframeCustom;
 
 		this.populateMultiTimeframePresets();
 		this.renderSelectedFinderTimeframes();
@@ -182,7 +195,7 @@ export class FinderManager {
 		});
 
 		addPresetBtn.addEventListener('click', () => {
-			const select = getRequiredElement<HTMLSelectElement>('finderMultiTimeframeSelect');
+			const select = this.getDom().finderMultiTimeframeSelect;
 			this.addFinderTimeframe(select.value, false);
 		});
 
@@ -201,7 +214,7 @@ export class FinderManager {
 			}
 		});
 
-		getRequiredElement('finderMultiTimeframeSelected').addEventListener('click', (event) => {
+		dom.finderMultiTimeframeSelected.addEventListener('click', (event) => {
 			const target = event.target as HTMLElement | null;
 			const removeBtn = target?.closest<HTMLButtonElement>('.finder-timeframe-chip-remove');
 			if (!removeBtn) return;
@@ -214,8 +227,7 @@ export class FinderManager {
 	}
 
 	private initComboUI(): void {
-		const toggle = document.getElementById('finderComboToggle') as HTMLInputElement | null;
-		if (!toggle) return;
+		const { finderComboToggle: toggle } = this.getDom();
 
 		this.populateComboDropdown();
 		this.setComboControlsEnabled(toggle.checked);
@@ -226,8 +238,7 @@ export class FinderManager {
 	}
 
 	public populateComboDropdown(): void {
-		const select = document.getElementById('finderComboPrimarySelect') as HTMLSelectElement | null;
-		if (!select) return;
+		const select = this.getDom().finderComboPrimarySelect;
 
 		const configs = settingsManager.loadAllStrategyConfigs();
 		const currentValue = select.value;
@@ -246,11 +257,9 @@ export class FinderManager {
 	}
 
 	private setComboControlsEnabled(enabled: boolean): void {
-		const settings = document.getElementById('finderComboSettings');
-		if (!settings) return;
+		const { finderComboSettings: settings, finderComboPrimarySelect: select } = this.getDom();
 		settings.classList.toggle('is-disabled', !enabled);
-		const select = document.getElementById('finderComboPrimarySelect') as HTMLSelectElement | null;
-		if (select) select.disabled = !enabled;
+		select.disabled = !enabled;
 	}
 
 	public clearTimeframeCache(): void {
@@ -258,8 +267,7 @@ export class FinderManager {
 	}
 
 	private populateMultiTimeframePresets(): void {
-		const select = document.getElementById('finderMultiTimeframeSelect') as HTMLSelectElement | null;
-		if (!select) return;
+		const select = this.getDom().finderMultiTimeframeSelect;
 
 		const intervals = [...FinderManager.MULTI_TIMEFRAME_PRESETS];
 		if (!intervals.includes(state.currentInterval)) {
@@ -280,8 +288,7 @@ export class FinderManager {
 	}
 
 	private applyMockRestrictionToMultiTimeframe(): void {
-		const toggle = getRequiredElement<HTMLInputElement>('finderMultiTimeframeToggle');
-		const note = getRequiredElement('finderMultiTimeframeNote');
+		const { finderMultiTimeframeToggle: toggle, finderMultiTimeframeNote: note } = this.getDom();
 		const isMock = dataManager.isMockSymbol(state.currentSymbol);
 		const enabled = !isMock;
 
@@ -297,11 +304,12 @@ export class FinderManager {
 	}
 
 	private setMultiTimeframeControlsEnabled(enabled: boolean): void {
-		const settings = getRequiredElement('finderMultiTimeframeSettings');
-		const select = getRequiredElement<HTMLSelectElement>('finderMultiTimeframeSelect');
-		const addPresetBtn = getRequiredElement<HTMLButtonElement>('finderMultiTimeframeAdd');
-		const customInput = getRequiredElement<HTMLInputElement>('finderMultiTimeframeCustom');
-		const addCustomBtn = getRequiredElement<HTMLButtonElement>('finderMultiTimeframeCustomAdd');
+		const dom = this.getDom();
+		const settings = dom.finderMultiTimeframeSettings;
+		const select = dom.finderMultiTimeframeSelect;
+		const addPresetBtn = dom.finderMultiTimeframeAdd;
+		const customInput = dom.finderMultiTimeframeCustom;
+		const addCustomBtn = dom.finderMultiTimeframeCustomAdd;
 
 		settings.classList.toggle('is-disabled', !enabled);
 		select.disabled = !enabled;
@@ -356,7 +364,7 @@ export class FinderManager {
 	}
 
 	private renderSelectedFinderTimeframes(): void {
-		const container = getRequiredElement('finderMultiTimeframeSelected');
+		const container = this.getDom().finderMultiTimeframeSelected;
 		container.innerHTML = '';
 
 		if (this.selectedFinderTimeframes.length === 0) {
@@ -389,7 +397,7 @@ export class FinderManager {
 	}
 
 	private renderStrategySelection(): void {
-		const container = getRequiredElement('finderStrategyList');
+		const container = this.getDom().finderStrategyList;
 		container.innerHTML = '';
 		this.strategyToggles.clear();
 
@@ -444,7 +452,7 @@ export class FinderManager {
 		this.isRunning = true;
 		this.lastFinderRunBacktestSettings = null;
 		const options = this.readOptions();
-		const runButton = getRequiredElement<HTMLButtonElement>('runFinder');
+		const runButton = this.getDom().runFinder;
 		const setLoading = (loading: boolean) => {
 			runButton.disabled = loading;
 			runButton.classList.toggle('is-loading', loading);
@@ -580,8 +588,8 @@ export class FinderManager {
 			}
 		} else {
 			// Simple Sort Mode
-			const p1 = getRequiredElement<HTMLSelectElement>('finderSort').value as FinderMetric;
-			const p2 = getRequiredElement<HTMLSelectElement>('finderSortSecondary').value as FinderMetric;
+			const p1 = this.getDom().finderSort.value as FinderMetric;
+			const p2 = this.getDom().finderSortSecondary.value as FinderMetric;
 			sortPriority.push(p1);
 			if (p1 !== p2) {
 				sortPriority.push(p2);
@@ -592,7 +600,8 @@ export class FinderManager {
 			}
 		}
 
-		const mode = getRequiredElement<HTMLSelectElement>('finderMode').value as FinderMode;
+		const dom = this.getDom();
+		const mode = dom.finderMode.value as FinderMode;
 		const multiTimeframeRequested = readToggleValue('finderMultiTimeframeToggle', false);
 		const multiTimeframeEnabled = multiTimeframeRequested && !dataManager.isMockSymbol(state.currentSymbol);
 		const timeframes = multiTimeframeEnabled
@@ -610,8 +619,7 @@ export class FinderManager {
 			: Number.POSITIVE_INFINITY;
 		const maxTrades = Math.max(minTrades, maxTradesRaw);
 		const comboEnabled = readToggleValue('finderComboToggle', false);
-		const comboPrimarySelect = document.getElementById('finderComboPrimarySelect') as HTMLSelectElement | null;
-		const comboPrimaryConfigName = comboEnabled ? (comboPrimarySelect?.value || undefined) : undefined;
+		const comboPrimaryConfigName = comboEnabled ? (dom.finderComboPrimarySelect.value || undefined) : undefined;
 		return {
 			mode,
 			sortPriority,
@@ -722,7 +730,7 @@ export class FinderManager {
 	}
 
 	private async saveCurrentSeedAuditFile(): Promise<void> {
-		const mode = getRequiredElement<HTMLSelectElement>('finderMode').value as FinderMode;
+		const mode = this.getDom().finderMode.value as FinderMode;
 		if (mode !== 'robust_random_wf') {
 			uiManager.showToast('Seed audit export is available only in Robust Random WF mode.', 'info');
 			return;
@@ -808,8 +816,7 @@ export class FinderManager {
 		}
 
 		if (result.comboMode) {
-			const comboSelect = document.getElementById('finderComboPrimarySelect') as HTMLSelectElement | null;
-			const primaryConfigName = result.comboPrimaryConfigName || comboSelect?.value || '';
+			const primaryConfigName = result.comboPrimaryConfigName || this.getDom().finderComboPrimarySelect.value || '';
 			if (!primaryConfigName) {
 				uiManager.showToast('Combo result needs a primary config. Re-select it in Finder Combo Mode.', 'error');
 				return;
@@ -834,12 +841,10 @@ export class FinderManager {
 				backtestSettings: secondaryBacktestSettings,
 			};
 
-			const combinerPrimary = document.getElementById('combinerPrimarySelect') as HTMLSelectElement | null;
-			const combinerSecondary = document.getElementById('combinerSecondarySelect') as HTMLSelectElement | null;
-			const combinerMode = document.getElementById('combinerMode') as HTMLSelectElement | null;
-			if (combinerPrimary) combinerPrimary.value = primaryConfigName;
-			if (combinerSecondary) combinerSecondary.value = '';
-			if (combinerMode) combinerMode.value = 'and';
+			const pairCombinerDom = this.getPairCombinerDom();
+			pairCombinerDom.combinerPrimarySelect.value = primaryConfigName;
+			pairCombinerDom.combinerSecondarySelect.value = '';
+			pairCombinerDom.combinerMode.value = 'and';
 
 			const tradesTab = document.querySelector('.panel-tab[data-tab="trades"]') as HTMLElement | null;
 			if (tradesTab) tradesTab.click();
