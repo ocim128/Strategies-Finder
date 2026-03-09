@@ -19,6 +19,7 @@ import tabLogictestHtml from '../html-partials/tab-logictest.html?raw';
 import tabResultsHtml from '../html-partials/tab-results.html?raw';
 import tabTradesHtml from '../html-partials/tab-trades.html?raw';
 import tabAnalysisHtml from '../html-partials/tab-analysis.html?raw';
+import tabPortfolioHtml from '../html-partials/tab-portfolio.html?raw';
 import tabAlertsHtml from '../html-partials/tab-alerts.html?raw';
 import tabOperationsHtml from '../html-partials/tab-operations.html?raw';
 import statusBarHtml from '../html-partials/status-bar.html?raw';
@@ -85,6 +86,7 @@ export function injectLayout() {
         tabResultsHtml +
         tabTradesHtml +
         tabAnalysisHtml +
+        tabPortfolioHtml +
         tabAlertsHtml +
         tabOperationsHtml;
 

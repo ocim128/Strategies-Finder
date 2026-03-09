@@ -603,6 +603,71 @@ export class BacktestService {
         return { result, engineUsed };
     }
 
+    private async runBacktestForPreparedSignals(
+        ohlcvData: OHLCVData[],
+        interval: string,
+        signals: ReturnType<typeof applySignalPolarity>,
+        settings: BacktestSettings,
+        initialCapital: number,
+        positionSize: number,
+        commission: number,
+        sizingMode: 'percent' | 'fixed',
+        fixedTradeAmount: number,
+        requiresTsEngine: boolean
+    ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
+        const backtestData = this.selectClosedCandleData(ohlcvData, interval);
+        const block = state.blockRange;
+        const blockFilteredSignals = (block && block.from !== block.to)
+            ? signals.filter(s => {
+                const t = typeof s.time === 'number' ? s.time : Number(s.time);
+                return t >= block.from && t <= block.to;
+            })
+            : signals;
+
+        let result: BacktestResult | undefined;
+        let engineUsed: 'rust' | 'typescript' = 'typescript';
+
+        if (shouldUseRustEngine() && !requiresTsEngine) {
+            const rustResult = await rustEngine.runBacktest(
+                backtestData,
+                blockFilteredSignals,
+                initialCapital,
+                positionSize,
+                commission,
+                this.buildRustCompatibleSettings(settings),
+                { mode: sizingMode, fixedTradeAmount }
+            );
+
+            if (rustResult && this.isResultConsistent(rustResult)) {
+                result = rustResult;
+                engineUsed = 'rust';
+            }
+        }
+
+        if (!result) {
+            result = runBacktest(
+                backtestData,
+                blockFilteredSignals,
+                initialCapital,
+                positionSize,
+                commission,
+                settings,
+                { mode: sizingMode, fixedTradeAmount }
+            );
+            engineUsed = 'typescript';
+        }
+
+        if (!result.entryStats) {
+            result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
+        }
+        result.postEntryPath = this.buildPostEntryPathStats(result, 5, backtestData);
+        if (result.trades.length >= 3) {
+            result.edgeStatistics = computeEdgeStatistics(result, backtestData);
+        }
+
+        return { result, engineUsed };
+    }
+
     private selectClosedCandleData(ohlcvData: OHLCVData[], interval: string): OHLCVData[] {
         const closed = trimToClosedCandles(ohlcvData, interval);
         return sliceOhlcvByBlock(closed, state.blockRange);
@@ -774,6 +839,78 @@ export class BacktestService {
     public requiresTypescriptEngine(settings: BacktestSettings): boolean {
         // Use shared helper for single-source-of-truth Rust eligibility
         return requiresTsEngine(settings);
+    }
+
+    public async evaluateStrategyOnData(
+        ohlcvData: OHLCVData[],
+        interval: string,
+        strategy: Strategy,
+        params: StrategyParams,
+        settings: BacktestSettings = this.getBacktestSettings(),
+        capitalSettings: {
+            initialCapital: number;
+            positionSize: number;
+            commission: number;
+            sizingMode: 'percent' | 'fixed';
+            fixedTradeAmount: number;
+        } = this.getCapitalSettings()
+    ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
+        const {
+            initialCapital,
+            positionSize,
+            commission,
+            sizingMode,
+            fixedTradeAmount,
+        } = capitalSettings;
+
+        return this.runBacktestForData(
+            ohlcvData,
+            interval,
+            strategy,
+            params,
+            settings,
+            initialCapital,
+            positionSize,
+            commission,
+            sizingMode,
+            fixedTradeAmount,
+            this.requiresTypescriptEngine(settings)
+        );
+    }
+
+    public async evaluateSignalsOnData(
+        ohlcvData: OHLCVData[],
+        interval: string,
+        signals: ReturnType<typeof applySignalPolarity>,
+        settings: BacktestSettings = this.getBacktestSettings(),
+        capitalSettings: {
+            initialCapital: number;
+            positionSize: number;
+            commission: number;
+            sizingMode: 'percent' | 'fixed';
+            fixedTradeAmount: number;
+        } = this.getCapitalSettings()
+    ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
+        const {
+            initialCapital,
+            positionSize,
+            commission,
+            sizingMode,
+            fixedTradeAmount,
+        } = capitalSettings;
+
+        return this.runBacktestForPreparedSignals(
+            ohlcvData,
+            interval,
+            signals,
+            settings,
+            initialCapital,
+            positionSize,
+            commission,
+            sizingMode,
+            fixedTradeAmount,
+            this.requiresTypescriptEngine(settings)
+        );
     }
 
     public addStrategyIndicators(params: StrategyParams) {

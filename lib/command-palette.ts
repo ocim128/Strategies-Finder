@@ -123,6 +123,7 @@ export class CommandPaletteManager {
             { id: 'finder', name: 'Strategy Finder', icon: 'search' },
             { id: 'paircombiner', name: 'Pair Combiner', icon: 'compare_arrows' },
             { id: 'walkforward', name: 'Walk-Forward Analysis', icon: 'fast_forward' },
+            { id: 'portfolio', name: 'Portfolio Lab', icon: 'hub' },
             { id: 'results', name: 'Backtest Results', icon: 'bar_chart' },
             { id: 'trades', name: 'Trade History', icon: 'history' }
         ];

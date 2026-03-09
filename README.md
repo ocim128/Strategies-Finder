@@ -15,6 +15,7 @@ It is not just a chart page. The app combines:
 - Compare strategies, inspect trades, and analyze entry-quality patterns
 - Search parameter spaces with Finder, including `robust_random_wf`
 - Validate robustness with walk-forward analysis
+- Run one strategy across multiple pairs with Portfolio Lab to compare dispersion and correlations
 - Build live or scheduled alert subscriptions through the Worker API
 
 ## Quick Start
@@ -62,6 +63,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Finder: `lib/finder-manager.ts`, `lib/finder/*`
 - Walk Forward: `lib/walk-forward-service.ts`
 - Trade analysis: `lib/analysis-panel.ts`
+- Portfolio Lab: `lib/portfolio-lab-service.ts`
 - Scanner: `lib/scanner/*`
 - Replay: `lib/replay/*`
 - Pair Combiner: `lib/pair-combiner-manager.ts`, `lib/pairCombiner/*`

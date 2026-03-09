@@ -23,6 +23,7 @@ import { commandPaletteManager } from "./lib/command-palette";
 
 import { analysisPanel } from "./lib/analysis-panel";
 import { dataMiningManager } from "./lib/data-mining-manager";
+import { portfolioLabService } from "./lib/portfolio-lab-service";
 
 
 
@@ -75,6 +76,7 @@ async function init() {
 	monteCarloService.initUI();
 	logicTestService.initUI();
 	analysisPanel.init();
+	portfolioLabService.init();
 	initAlertHandlers();
 	initLivePositionsHandlers();
 
