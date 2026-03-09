@@ -11,6 +11,7 @@ import { SYMBOL_MAP } from "../constants";
 import { clearAll } from "../app-actions";
 import { formatPolymarketDisplayName } from "../dataProviders/polymarket";
 import { quickViewManager } from "../quick-view";
+import { livePositionsService } from "../live-positions-service";
 
 export function setupStateSubscriptions() {
     const setPriceLoading = () => {
@@ -63,6 +64,7 @@ export function setupStateSubscriptions() {
         // Use chartManager to apply chart mode transformation (Heikin Ashi if enabled)
         chartManager.updateChartData();
         uiManager.updatePriceDisplay();
+        livePositionsService.syncActiveChartPrice();
 
         getRequiredElement('dataPoints').textContent = `${data.length} candles`;
         const candlesInput = document.getElementById('visibleCandlesInput') as HTMLInputElement | null;

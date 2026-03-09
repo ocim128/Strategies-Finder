@@ -15,6 +15,7 @@ import { uiManager } from '../ui-manager';
 import { state } from '../state';
 import { dataManager } from '../data-manager';
 import { settingsManager } from '../settings-manager';
+import { backtestService } from '../backtest-service';
 import { strategyRegistry } from '../../strategyRegistry';
 import { createAccessibleModal, type AccessibleModalController } from '../modal-accessibility';
 import { formatDisplayPrice } from '../price-format';
@@ -285,7 +286,7 @@ async function handlePositionClick(position: LivePosition | ClosedTrade): Promis
 
         if (strategyRegistry.has(position.strategyKey)) {
             const backtestSettings = buildUiCompatibleBacktestSettings(position.backtestSettings);
-            settingsManager.applyStrategyConfig({
+            await settingsManager.applyStrategyConfig({
                 name: '__live_positions_nav__',
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
@@ -302,6 +303,7 @@ async function handlePositionClick(position: LivePosition | ClosedTrade): Promis
 
         uiManager.showToast(`Loading ${position.symbol} ${position.interval}...`, 'info');
         await dataManager.loadData();
+        await backtestService.runCurrentBacktest();
         uiManager.showToast(`Loaded ${position.symbol}`, 'success');
     } catch (err) {
         uiManager.showToast('Failed to load chart: ' + (err instanceof Error ? err.message : String(err)), 'error');

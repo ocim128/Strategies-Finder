@@ -27,6 +27,10 @@ import { sanitizeBacktestSettingsForRust, requiresTypescriptEngine as requiresTs
 import { trimToClosedCandles } from "./closed-candle-utils";
 import { sliceOhlcvByBlock } from "./block-selector";
 import {
+    buildExecutionAwareCandleWindow,
+    selectClosedCandleWindow,
+} from "./alert-evaluation-window";
+import {
     BACKTEST_DOM_SETTING_IDS,
     CAPITAL_DEFAULTS,
     EFFECTIVE_BACKTEST_DEFAULTS,
@@ -100,7 +104,6 @@ export class BacktestService {
             state.set('twoHourParityBacktestResults', null);
             // Data normalization (closed candles + block range) is applied inside runBacktestForData.
             const baseData = state.ohlcvData;
-
             let result: BacktestResult;
             let engineUsed: 'rust' | 'typescript';
             let parityComparison: { odd: BacktestResult; even: BacktestResult; baseline: 'odd' | 'even' } | null = null;
@@ -209,7 +212,6 @@ export class BacktestService {
                 engine: engineUsed,
                 parityMode,
             });
-
             // Enable replay button if there are results
             const replayStartBtn = getOptionalElement<HTMLButtonElement>('replayStartBtn');
             if (replayStartBtn) {
@@ -221,7 +223,6 @@ export class BacktestService {
                 error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
                 durationMs: Date.now() - startedAt,
             });
-
             // Disable replay button on error
             const replayStartBtn = getOptionalElement<HTMLButtonElement>('replayStartBtn');
             if (replayStartBtn) {
@@ -359,13 +360,6 @@ export class BacktestService {
             progressText.textContent = 'Preparing data...';
             await this.sleep(50);
 
-            const backtestData = this.selectClosedCandleData(state.ohlcvData, state.currentInterval);
-
-            // --- 3. Execute both strategies ---
-            progressFill.style.width = '40%';
-            progressText.textContent = 'Generating signals from both strategies...';
-            await this.sleep(50);
-
             const primarySettings = resolveBacktestSettingsFromRaw(
                 primaryConfig.backtestSettings as unknown as BacktestSettings,
                 { captureSnapshots: true, coerceWithoutUiToggles: true }
@@ -374,6 +368,16 @@ export class BacktestService {
                 secondaryConfig.backtestSettings as unknown as BacktestSettings,
                 { captureSnapshots: false, coerceWithoutUiToggles: true }
             );
+            const backtestData = this.selectClosedCandleData(
+                state.ohlcvData,
+                state.currentInterval,
+                primarySettings
+            );
+
+            // --- 3. Execute both strategies ---
+            progressFill.style.width = '40%';
+            progressText.textContent = 'Generating signals from both strategies...';
+            await this.sleep(50);
 
             const primarySignals = applySignalPolarity(
                 primaryStrategy.execute(backtestData, primaryConfig.strategyParams),
@@ -497,9 +501,8 @@ export class BacktestService {
         const runStart = performance.now();
 
         const t1 = performance.now();
-        const backtestData = this.selectClosedCandleData(ohlcvData, interval);
+        const backtestData = this.selectClosedCandleData(ohlcvData, interval, settings);
         timing.selectClosedCandleData = performance.now() - t1;
-
         const t2 = performance.now();
         const signals = applySignalPolarity(strategy.execute(backtestData, params), settings);
         timing.strategyExecute = performance.now() - t2;
@@ -615,7 +618,7 @@ export class BacktestService {
         fixedTradeAmount: number,
         requiresTsEngine: boolean
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
-        const backtestData = this.selectClosedCandleData(ohlcvData, interval);
+        const backtestData = this.selectClosedCandleData(ohlcvData, interval, settings);
         const block = state.blockRange;
         const blockFilteredSignals = (block && block.from !== block.to)
             ? signals.filter(s => {
@@ -668,9 +671,30 @@ export class BacktestService {
         return { result, engineUsed };
     }
 
-    private selectClosedCandleData(ohlcvData: OHLCVData[], interval: string): OHLCVData[] {
+    private selectClosedCandleData(
+        ohlcvData: OHLCVData[],
+        interval: string,
+        settings: BacktestSettings
+    ): OHLCVData[] {
+        const closedWindow = selectClosedCandleWindow(
+            ohlcvData,
+            interval,
+            Math.floor(Date.now() / 1000),
+            1
+        );
+
+        if (closedWindow) {
+            const executionAware = buildExecutionAwareCandleWindow(
+                closedWindow.candles,
+                closedWindow.nextOpenCandle,
+                settings
+            );
+            return sliceOhlcvByBlock(executionAware, state.blockRange);
+        }
+
         const closed = trimToClosedCandles(ohlcvData, interval);
-        return sliceOhlcvByBlock(closed, state.blockRange);
+        const executionAware = buildExecutionAwareCandleWindow(closed, null, settings);
+        return sliceOhlcvByBlock(executionAware, state.blockRange);
     }
 
     private buildRustCompatibleSettings(settings: BacktestSettings): BacktestSettings {

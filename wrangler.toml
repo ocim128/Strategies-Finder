@@ -17,6 +17,6 @@ crons = ["* * * * *"]
 
 [vars]
 # Optional: override Binance-compatible candle sources (CSV, ordered fallback).
-MARKET_DATA_API_BASES = "https://api.mexc.com,https://api.binance.us,https://data-api.binance.vision"
+MARKET_DATA_API_BASES = "https://data-api.binance.vision,https://api.binance.com,https://api.binance.us,https://api.mexc.com"
 # Minimum required closed candles for subscription evaluation.
 MIN_CLOSED_CANDLES = "120"

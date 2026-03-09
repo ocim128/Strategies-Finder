@@ -799,7 +799,7 @@ class SettingsManager {
         return configs.find(c => c.name === name) || null;
     }
 
-    public applyStrategyConfig(config: StrategyConfig): void {
+    public async applyStrategyConfig(config: StrategyConfig): Promise<void> {
         this.autoSaveEnabled = false;
         try {
             // Apply backtest settings
@@ -815,12 +815,15 @@ class SettingsManager {
             }
 
             // Apply strategy params with a slight delay to ensure params are rendered
-            setTimeout(() => {
-                const strategy = strategyRegistry.get(config.strategyKey);
-                if (strategy) {
-                    paramManager.setValues(strategy, config.strategyParams);
-                }
-            }, 50);
+            await new Promise<void>((resolve) => {
+                setTimeout(() => {
+                    const strategy = strategyRegistry.get(config.strategyKey);
+                    if (strategy) {
+                        paramManager.setValues(strategy, config.strategyParams);
+                    }
+                    resolve();
+                }, 50);
+            });
 
             debugLogger.event('settings.config.applied', { name: config.name, strategy: config.strategyKey });
         } finally {

@@ -19,8 +19,19 @@ import { assetSearchService } from './asset-search-service';
 import { fetchBybitTradFiLatest } from './dataProviders/bybit';
 import { parseIntervalSeconds } from './interval-utils';
 import { parseTimeToUnixSeconds } from './time-normalization';
+import { state } from './state';
 import type { BacktestSettings, Trade } from './strategies/index';
 import { resolveSubscriptionExecutionBacktestSettings } from './alert-subscription-utils';
+import {
+    buildExecutionAwareCandleWindow,
+    getDefaultAlertMinClosedCandles,
+    selectClosedCandleWindow,
+} from './alert-evaluation-window';
+import {
+    buildAlertWorkerProviderMismatchMessage,
+    isAlertWorkerProviderCompatible,
+} from './alert-worker-compat';
+import { applySlippage, entrySideForDirection } from './strategies/backtest/backtest-utils';
 
 export interface LivePosition {
     streamId: string;
@@ -93,7 +104,7 @@ interface AnalysisResult {
 }
 
 const POLL_INTERVAL_MS = 30000;
-const PRICE_CACHE_TTL_MS = Math.max(POLL_INTERVAL_MS, 60000);
+const PRICE_CACHE_TTL_MS = Math.max(5000, Math.floor(POLL_INTERVAL_MS / 2));
 const LOCAL_BACKTEST_CACHE_GRACE_MS = 5000;
 const SIGNAL_HISTORY_LIMIT = 30;
 const ANALYZE_CONCURRENCY = 4;
@@ -128,6 +139,52 @@ class LivePositionsService {
     subscribe(callback: (state: LivePositionsState) => void): () => void {
         this.listeners.add(callback);
         return () => this.listeners.delete(callback);
+    }
+
+    syncActiveChartPrice(): void {
+        const symbol = state.currentSymbol.trim().toUpperCase();
+        const interval = state.currentInterval;
+        const lastClose = Number(state.ohlcvData[state.ohlcvData.length - 1]?.close);
+        if (!symbol || !interval || !Number.isFinite(lastClose)) {
+            return;
+        }
+
+        let changed = false;
+        const positions = this.state.positions.map((position) => {
+            if (!position.isOpen) return position;
+            if (position.symbol.trim().toUpperCase() !== symbol) return position;
+            if (position.interval !== interval) return position;
+            if (position.currentPrice === lastClose) return position;
+
+            let unrealizedPnl: number | null = null;
+            let unrealizedPnlPercent: number | null = null;
+            if (position.entryPrice > 0) {
+                const diff = position.direction === 'long'
+                    ? lastClose - position.entryPrice
+                    : position.entryPrice - lastClose;
+                unrealizedPnl = diff;
+                unrealizedPnlPercent = (diff / position.entryPrice) * 100;
+            }
+
+            changed = true;
+            return {
+                ...position,
+                currentPrice: lastClose,
+                unrealizedPnl,
+                unrealizedPnlPercent,
+                lastUpdated: Date.now(),
+            };
+        });
+
+        if (!changed) {
+            return;
+        }
+
+        this.state = {
+            ...this.state,
+            positions,
+        };
+        this.notifyListeners();
     }
 
     setViewMode(mode: 'open' | 'closed'): void {
@@ -246,17 +303,26 @@ class LivePositionsService {
         const strategyParams = this.safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
         const backtestSettings = this.resolveBacktestSettings(sub);
         const configName = parseAlertConfigNameFromStreamId(sub.stream_id);
+        const provider = dataManager.getProvider(sub.symbol);
+        const localComparisonCompatible = isAlertWorkerProviderCompatible(provider);
 
         const [signals, workerState, localTrades] = await Promise.all([
             alertService.getSignalHistory(sub.stream_id, SIGNAL_HISTORY_LIMIT),
             this.fetchWorkerState(sub.stream_id),
-            this.runLocalBacktest(sub, strategyParams, backtestSettings, force),
+            localComparisonCompatible
+                ? this.runLocalBacktest(sub, strategyParams, backtestSettings, force)
+                : Promise.resolve([]),
         ]);
 
         const latestWorkerSignal = this.getLatestActionableSignal(signals);
         const workerSnapshot = this.deriveWorkerSnapshot(workerState, latestWorkerSignal);
         const localSnapshot = this.deriveLocalSnapshot(localTrades);
-        const mismatch = this.detectMismatch(workerSnapshot, localSnapshot, sub.interval);
+        const mismatch = localComparisonCompatible
+            ? this.detectMismatch(workerSnapshot, localSnapshot, sub.interval, backtestSettings)
+            : {
+                mismatch: true,
+                reason: buildAlertWorkerProviderMismatchMessage(sub.symbol, provider),
+            };
 
         const shouldShowOpen = localSnapshot.openTrade !== null || (workerSnapshot.stateAvailable && workerSnapshot.hasOpen);
         const currentPrice = shouldShowOpen ? await this.fetchCurrentPrice(sub.symbol, sub.interval) : null;
@@ -303,14 +369,20 @@ class LivePositionsService {
     ): LivePosition | null {
         const localOpen = localSnapshot.openTrade;
         const localOpenEntryTime = localOpen ? parseTimeToUnixSeconds(localOpen.entryTime) : null;
+        const workerOpenEntry = workerSnapshot.stateAvailable && workerSnapshot.hasOpen
+            ? workerSnapshot.latestEntry
+            : null;
 
-        const direction = workerSnapshot.latestEntry?.direction
+        const direction = workerOpenEntry?.direction
             ?? localOpen?.type
             ?? null;
-        const entryPrice = workerSnapshot.latestEntry?.signalPrice
+        const workerEntryPrice = workerOpenEntry
+            ? this.resolveEffectiveWorkerEntryPrice(workerOpenEntry, backtestSettings)
+            : null;
+        const entryPrice = workerEntryPrice
             ?? localOpen?.entryPrice
             ?? null;
-        const entryTime = workerSnapshot.latestEntry?.signalTimeSec
+        const entryTime = workerOpenEntry?.signalTimeSec
             ?? localOpenEntryTime
             ?? null;
 
@@ -454,7 +526,8 @@ class LivePositionsService {
     private detectMismatch(
         worker: WorkerSnapshot,
         local: LocalSnapshot,
-        interval: string
+        interval: string,
+        backtestSettings: BacktestSettings
     ): { mismatch: boolean; reason: string | null } {
         if (!worker.stateAvailable) {
             return { mismatch: false, reason: null };
@@ -484,8 +557,9 @@ class LivePositionsService {
             }
         }
 
-        if (worker.latestEntry.signalPrice > 0) {
-            const priceDiffPct = Math.abs(worker.latestEntry.signalPrice - local.openTrade.entryPrice) / worker.latestEntry.signalPrice * 100;
+        const effectiveWorkerEntryPrice = this.resolveEffectiveWorkerEntryPrice(worker.latestEntry, backtestSettings);
+        if (effectiveWorkerEntryPrice > 0) {
+            const priceDiffPct = Math.abs(effectiveWorkerEntryPrice - local.openTrade.entryPrice) / effectiveWorkerEntryPrice * 100;
             if (priceDiffPct > 0.5) {
                 return { mismatch: true, reason: 'Open trade entry price differs materially (worker vs local)' };
             }
@@ -517,6 +591,23 @@ class LivePositionsService {
             signalTimeSec: signal.signal_time,
             signalPrice: signal.signal_price,
         };
+    }
+
+    private resolveEffectiveWorkerEntryPrice(
+        entry: WorkerEntrySnapshot,
+        backtestSettings: BacktestSettings
+    ): number {
+        const basePrice = Number(entry.signalPrice);
+        if (!Number.isFinite(basePrice) || basePrice <= 0) {
+            return basePrice;
+        }
+
+        const slippageBps = Number(backtestSettings.slippageBps ?? 0);
+        const slippageRate = Number.isFinite(slippageBps) && slippageBps > 0
+            ? slippageBps / 10000
+            : 0;
+
+        return applySlippage(basePrice, entrySideForDirection(entry.direction), slippageRate);
     }
 
     private resolveBacktestSettings(sub: AlertSubscription): BacktestSettings {
@@ -599,8 +690,28 @@ class LivePositionsService {
                 return [];
             }
 
-            const result = await backtestService.runBacktestForSubscription(
+            const closedWindow = selectClosedCandleWindow(
                 ohlcvData,
+                sub.interval,
+                Math.floor(Date.now() / 1000),
+                getDefaultAlertMinClosedCandles()
+            );
+            if (!closedWindow) {
+                this.localBacktestCache.set(cacheKey, {
+                    signature: cacheSignature,
+                    trades: [],
+                    expiresAt: this.getLocalBacktestCacheExpiry(sub),
+                });
+                return [];
+            }
+
+            const evaluationCandles = buildExecutionAwareCandleWindow(
+                closedWindow.candles,
+                closedWindow.nextOpenCandle,
+                resolvedSettings
+            );
+            const result = await backtestService.runBacktestForSubscription(
+                evaluationCandles,
                 sub.interval,
                 sub.strategy_key,
                 resolvedParams,
@@ -622,6 +733,11 @@ class LivePositionsService {
 
     private async fetchCurrentPrice(symbol: string, interval: string): Promise<number | null> {
         const normalizedSymbol = symbol.trim().toUpperCase();
+        const activeChartPrice = this.getActiveChartPrice(normalizedSymbol, interval);
+        if (activeChartPrice !== null) {
+            return activeChartPrice;
+        }
+
         const cached = PRICE_CACHE.get(normalizedSymbol);
         if (cached && Date.now() - cached.timestamp < PRICE_CACHE_TTL_MS) {
             return cached.price;
@@ -681,6 +797,21 @@ class LivePositionsService {
 
         PRICE_REQUESTS.set(normalizedSymbol, request);
         return request;
+    }
+
+    private getActiveChartPrice(symbol: string, interval: string): number | null {
+        if (state.currentSymbol.trim().toUpperCase() !== symbol) {
+            return null;
+        }
+        if (state.currentInterval !== interval) {
+            return null;
+        }
+        if (state.ohlcvData.length === 0) {
+            return null;
+        }
+
+        const lastClose = Number(state.ohlcvData[state.ohlcvData.length - 1]?.close);
+        return Number.isFinite(lastClose) ? lastClose : null;
     }
 
     private async fetchSubscription(streamId: string): Promise<AlertSubscription | null> {

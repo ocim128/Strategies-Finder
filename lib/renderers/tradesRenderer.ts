@@ -1,6 +1,7 @@
 import { Time } from "lightweight-charts";
 import { Trade } from "../strategies/index";
 import { getRequiredElement, setVisible } from "../dom-utils";
+import { state } from "../state";
 
 export class TradesRenderer {
     public render(
@@ -128,9 +129,10 @@ export class TradesRenderer {
     }
 
     private renderTradeItem(trade: Trade, formatPrice: (p: number) => string, formatDate: (t: Time) => string): string {
-        const isProfit = trade.pnl >= 0;
+        const display = this.getDisplayTradeMetrics(trade);
+        const isProfit = display.pnl >= 0;
         const statusClass = isProfit ? 'win' : 'loss';
-        const duration = this.formatDuration(this.getTimestamp(trade.exitTime) - this.getTimestamp(trade.entryTime));
+        const duration = this.formatDuration(display.durationMs);
         const fees = trade.fees ? `Fees: $${trade.fees.toFixed(2)}` : '';
         const exitReasonBadge = this.getExitReasonBadge(trade.exitReason);
         const entryDate = formatDate(trade.entryTime);
@@ -162,7 +164,7 @@ export class TradesRenderer {
                             <div class="trade-price-flow">
                                 <span class="price-val">${formatPrice(trade.entryPrice)}</span>
                                 <span class="price-arrow">-></span>
-                                <span class="price-val">${formatPrice(trade.exitPrice)}</span>
+                                <span class="price-val">${formatPrice(display.exitPrice)}</span>
                             </div>
                             <div class="trade-sub-info">
                                 <span class="trade-time">${entryDate}</span>
@@ -175,16 +177,58 @@ export class TradesRenderer {
                     </div>
                     <div class="trade-result-group">
                         <div class="trade-pnl">
-                            ${isProfit ? '+' : ''}$${trade.pnl.toFixed(2)}
+                            ${isProfit ? '+' : ''}$${display.pnl.toFixed(2)}
                         </div>
                         <div class="trade-pct">
-                            ${Math.abs(trade.pnlPercent).toFixed(2)}%
+                            ${Math.abs(display.pnlPercent).toFixed(2)}%
                         </div>
                     </div>
                 </div>
                 ${targetRow}
             </div>
         `;
+    }
+
+    private getDisplayTradeMetrics(trade: Trade): {
+        exitPrice: number;
+        pnl: number;
+        pnlPercent: number;
+        durationMs: number;
+    } {
+        const entryTs = this.getTimestamp(trade.entryTime);
+        const defaultDurationMs = this.getTimestamp(trade.exitTime) - entryTs;
+        const base = {
+            exitPrice: trade.exitPrice,
+            pnl: trade.pnl,
+            pnlPercent: trade.pnlPercent,
+            durationMs: defaultDurationMs,
+        };
+
+        if (trade.exitReason !== 'end_of_data' || !Number.isFinite(trade.entryPrice) || trade.entryPrice <= 0) {
+            return base;
+        }
+        if (state.ohlcvData.length === 0) {
+            return base;
+        }
+
+        const lastClose = Number(state.ohlcvData[state.ohlcvData.length - 1]?.close);
+        if (!Number.isFinite(lastClose)) {
+            return base;
+        }
+
+        const directionFactor = trade.type === 'long' ? 1 : -1;
+        const rawPnl = (lastClose - trade.entryPrice) * directionFactor * trade.size;
+        const pnl = rawPnl - (trade.fees ?? 0);
+        const entryValue = trade.size * trade.entryPrice;
+        const pnlPercent = entryValue > 0 ? (pnl / entryValue) * 100 : trade.pnlPercent;
+        const durationMs = entryTs > 0 ? Math.max(0, Date.now() - entryTs) : defaultDurationMs;
+
+        return {
+            exitPrice: lastClose,
+            pnl,
+            pnlPercent,
+            durationMs,
+        };
     }
 
     private bindTradeJumpHandlers(container: HTMLElement, jumpToTrade: (time: Time) => void): void {

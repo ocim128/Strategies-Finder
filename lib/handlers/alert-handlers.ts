@@ -24,6 +24,16 @@ import { getOptionalElement } from '../dom-utils';
 import { parseTimeToUnixSeconds } from '../time-normalization';
 import { createAccessibleModal, type AccessibleModalController } from '../modal-accessibility';
 import { isWorkerSupportedStrategyKey } from '../alert-subscription-utils';
+import {
+    buildAlertWorkerProviderMismatchMessage,
+    isAlertWorkerProviderCompatible,
+} from '../alert-worker-compat';
+import {
+    buildExecutionAwareCandleWindow,
+    getDefaultAlertMinClosedCandles,
+    selectClosedCandleWindow,
+} from '../alert-evaluation-window';
+import { applySlippage, entrySideForDirection } from '../strategies/backtest/backtest-utils';
 
 function safeJsonParse<T>(raw: string, fallback: T): T {
     try {
@@ -620,6 +630,13 @@ function collectCurrentSubscriptionBacktestSettings(): Record<string, unknown> {
     };
 }
 
+function getAlertWorkerProviderCompatibilityError(symbol: string): string | null {
+    const provider = dataManager.getProvider(symbol);
+    return isAlertWorkerProviderCompatible(provider)
+        ? null
+        : buildAlertWorkerProviderMismatchMessage(symbol, provider);
+}
+
 async function quickSubscribe() {
     const telegramToggle = getOptionalElement<HTMLInputElement>('alertTelegramToggle');
     const exitToggle = getOptionalElement<HTMLInputElement>('alertExitToggle');
@@ -631,6 +648,11 @@ async function quickSubscribe() {
 
     if (!symbol || !interval || !strategyKey) {
         uiManager.showToast('Load a chart and select a strategy first.', 'error');
+        return;
+    }
+    const providerError = getAlertWorkerProviderCompatibilityError(symbol);
+    if (providerError) {
+        uiManager.showToast(providerError, 'error');
         return;
     }
     if (!isWorkerSupportedStrategyKey(strategyKey)) {
@@ -717,6 +739,11 @@ async function handleTableAction(action: string, streamId: string) {
             }
 
             const sub = subscriptionsByStreamId.get(streamId);
+            const providerError = getAlertWorkerProviderCompatibilityError(sub?.symbol ?? state.currentSymbol);
+            if (providerError) {
+                uiManager.showToast(providerError, 'error');
+                return;
+            }
             const streamParity = sub ? resolveSubscriptionParity(sub) : parseAlertTwoHourParityFromStreamId(streamId);
             const currentSettings = collectCurrentSubscriptionBacktestSettings();
             const syncedCandleLimit = Math.max(
@@ -906,24 +933,55 @@ function selectLastTradeForDisplay(trades: Trade[]): { trade: Trade | null; trad
     return { trade: latestTrade, tradeNumber: trades.length, openTrade: latestTrade };
 }
 
-function createOpenTradeFromSignalRecord(signal: AlertSignalRecord): Trade | null {
+function createOpenTradeFromSignalRecord(
+    signal: AlertSignalRecord,
+    backtestSettings: BacktestSettings = {}
+): Trade | null {
     if (!signal || !Number.isFinite(signal.signal_time) || !Number.isFinite(signal.signal_price)) {
         return null;
     }
 
     const payload = safeJsonParse<Record<string, unknown>>(signal.payload_json, {});
-    const tpValue = Number(payload.takeProfitPrice);
-    const slValue = Number(payload.stopLossPrice);
-    const takeProfitPrice = Number.isFinite(tpValue) ? tpValue : null;
-    const stopLossPrice = Number.isFinite(slValue) ? slValue : null;
+    const rawSignalPrice = Number(signal.signal_price);
+    const slippageBps = Number(backtestSettings.slippageBps ?? 0);
+    const slippageRate = Number.isFinite(slippageBps) && slippageBps > 0
+        ? slippageBps / 10000
+        : 0;
+    const entryPrice = applySlippage(rawSignalPrice, entrySideForDirection(signal.direction), slippageRate);
+
+    let takeProfitPrice: number | null = null;
+    let stopLossPrice: number | null = null;
+    if (backtestSettings.riskMode === 'percentage') {
+        if (backtestSettings.takeProfitEnabled && Number(backtestSettings.takeProfitPercent) > 0) {
+            const tpPct = Number(backtestSettings.takeProfitPercent);
+            takeProfitPrice = signal.direction === 'long'
+                ? entryPrice * (1 + tpPct / 100)
+                : entryPrice * (1 - tpPct / 100);
+        }
+        if (backtestSettings.stopLossEnabled && Number(backtestSettings.stopLossPercent) > 0) {
+            const slPct = Number(backtestSettings.stopLossPercent);
+            stopLossPrice = signal.direction === 'long'
+                ? entryPrice * (1 - slPct / 100)
+                : entryPrice * (1 + slPct / 100);
+        }
+    }
+
+    if (takeProfitPrice === null) {
+        const tpValue = Number(payload.takeProfitPrice);
+        takeProfitPrice = Number.isFinite(tpValue) ? tpValue : null;
+    }
+    if (stopLossPrice === null) {
+        const slValue = Number(payload.stopLossPrice);
+        stopLossPrice = Number.isFinite(slValue) ? slValue : null;
+    }
 
     return {
         id: Number.isFinite(signal.id) ? signal.id : 0,
         type: signal.direction === 'short' ? 'short' : 'long',
         entryTime: signal.signal_time as Time,
-        entryPrice: Number(signal.signal_price),
+        entryPrice,
         exitTime: signal.signal_time as Time,
-        exitPrice: Number(signal.signal_price),
+        exitPrice: entryPrice,
         pnl: 0,
         pnlPercent: 0,
         size: 0,
@@ -1063,6 +1121,12 @@ async function handleLastTradeAction(streamId: string): Promise<void> {
     openLastTradeModal(`Last Trade: ${sub.symbol} ${sub.interval}`);
     
     try {
+        const providerError = getAlertWorkerProviderCompatibilityError(sub.symbol);
+        if (providerError) {
+            showLastTradeError(providerError);
+            return;
+        }
+
         // Parse subscription configuration
         const strategyParams = safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
         const backtestSettings = safeJsonParse<BacktestSettings>(sub.backtest_settings_json, {});
@@ -1088,10 +1152,25 @@ async function handleLastTradeAction(streamId: string): Promise<void> {
         if (ohlcvData.length === 0) {
             throw new Error(`No data available for ${sub.symbol} ${sub.interval}`);
         }
+
+        const closedWindow = selectClosedCandleWindow(
+            ohlcvData,
+            sub.interval,
+            Math.floor(Date.now() / 1000),
+            getDefaultAlertMinClosedCandles()
+        );
+        if (!closedWindow) {
+            throw new Error(`Not enough closed candles available for ${sub.symbol} ${sub.interval}`);
+        }
+        const evaluationCandles = buildExecutionAwareCandleWindow(
+            closedWindow.candles,
+            closedWindow.nextOpenCandle,
+            effectiveBacktestSettings
+        );
         
         // Run backtest with the subscription's configuration
         const result = await backtestService.runBacktestForSubscription(
-            ohlcvData,
+            evaluationCandles,
             sub.interval,
             sub.strategy_key,
             strategyParams,
@@ -1101,7 +1180,9 @@ async function handleLastTradeAction(streamId: string): Promise<void> {
         const tradeSelection = selectLastTradeForDisplay(result.trades);
         if (!tradeSelection.trade) {
             const history = await alertService.getSignalHistory(streamId, 1);
-            const fallbackTrade = history.length > 0 ? createOpenTradeFromSignalRecord(history[0]) : null;
+            const fallbackTrade = history.length > 0
+                ? createOpenTradeFromSignalRecord(history[0], effectiveBacktestSettings)
+                : null;
             if (fallbackTrade) {
                 showLastTradeResult(
                     fallbackTrade,

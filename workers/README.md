@@ -64,10 +64,15 @@ Behavior:
 - Worker aligns processing to around second `10` of each minute before evaluating subscriptions.
 - Interval gating prevents unnecessary checks for higher timeframes (for example, `2h` subscriptions are skipped on non-due minutes/hours).
 - For each enabled subscription, worker fetches market candles from Binance-compatible endpoints.
+- Exact parity with the app requires the symbol to use Binance data as well; non-Binance chart providers are not exact-match Worker inputs.
 - `2h` subscriptions are composed from `1h` source candles inside the worker so close-hour parity (`odd`/`even`) stays deterministic across providers.
 - It only evaluates when a **new closed candle** exists (`last_processed_closed_candle_time` guard).
 - This avoids duplicate alerts between candle closes.
 - Worker queries configured Binance-compatible hosts in parallel and uses the first successful response.
+
+Live Positions / Last Trade parity notes:
+- Local verification now trims to the latest closed candle before comparing against the Worker.
+- For `next_open`, local verification also appends the same synthetic next-open bridge candle used by the Worker.
 
 Create subscription example:
 

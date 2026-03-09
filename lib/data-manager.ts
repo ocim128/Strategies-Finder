@@ -162,6 +162,7 @@ export class DataManager {
     public async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
         const lookbackBars = this.chartLookbackBars;
         const resampleOptions = this.getResampleOptions(interval);
+        const provider = this.getProvider(symbol);
 
         if (this.isMockSymbol(symbol)) {
             // Artificial latency only in dev mode (enabled via Vite's import.meta.env.DEV)
@@ -174,7 +175,6 @@ export class DataManager {
             return typeof lookbackBars === 'number' ? mockData.slice(-lookbackBars) : mockData;
         }
 
-        const provider = this.getProvider(symbol);
         const maxBars = lookbackBars ?? DATA_CHART_TOTAL_LIMIT;
         const localNonBinance = provider !== 'binance'
             ? await this.loadNonBinanceLocalData(symbol, interval, maxBars, signal)
@@ -222,9 +222,10 @@ export class DataManager {
         }
 
         if (provider === 'binance') {
-            const data = await this.fetchBinanceDataHybrid(symbol, interval, signal, {
+            const result = await this.fetchBinanceDataHybridWithMeta(symbol, interval, signal, {
                 maxBars: lookbackBars ?? undefined,
             });
+            const data = result.data;
             uiManager.updateSymbolDataSource(
                 'Live: Binance',
                 'live',
@@ -298,7 +299,8 @@ export class DataManager {
             'warning',
             'Primary data source was unavailable, so fallback data is being used.'
         );
-        return typeof lookbackBars === 'number' ? fallback.slice(-lookbackBars) : fallback;
+        const sliced = typeof lookbackBars === 'number' ? fallback.slice(-lookbackBars) : fallback;
+        return sliced;
     }
 
     public async fetchDataForScan(
@@ -903,16 +905,6 @@ export class DataManager {
 
     private buildCacheKey(symbol: string, interval: string): string {
         return `${symbol.trim().toUpperCase()}::${this.getStorageInterval(interval)}`;
-    }
-
-    private async fetchBinanceDataHybrid(
-        symbol: string,
-        interval: string,
-        signal?: AbortSignal,
-        options?: { maxBars?: number }
-    ): Promise<OHLCVData[]> {
-        const result = await this.fetchBinanceDataHybridInternal(symbol, interval, signal, options);
-        return result.data;
     }
 
     /**

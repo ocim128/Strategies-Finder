@@ -25,10 +25,6 @@ export function isBinanceInterval(interval: string): boolean {
     return BINANCE_INTERVALS.has(interval);
 }
 
-function normalizeTwoHourParity(options?: ResampleOptions): 'odd' | 'even' {
-    return options?.twoHourCloseParity === 'even' ? 'even' : 'odd';
-}
-
 function parseCustomMinutes(interval: string): number | null {
     if (isBinanceInterval(interval)) return null;
     if (!interval.endsWith('m')) return null;
@@ -39,10 +35,12 @@ function parseCustomMinutes(interval: string): number | null {
 
 export function resolveFetchInterval(
     interval: string,
-    options?: ResampleOptions
+    _options?: ResampleOptions
 ): { sourceInterval: string; needsResample: boolean } {
     const intervalSeconds = getIntervalSeconds(interval);
-    if (intervalSeconds === 7200 && normalizeTwoHourParity(options) === 'even') {
+    if (intervalSeconds === 7200) {
+        // Match the Worker path exactly: always compose 2H from 1H candles so
+        // odd/even parity is deterministic and does not depend on exchange-native 2H bars.
         return { sourceInterval: '1h', needsResample: true };
     }
     if (isBinanceInterval(interval)) {
