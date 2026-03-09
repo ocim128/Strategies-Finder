@@ -17,6 +17,7 @@
     }
 
     .panel-content {
+        --panel-content-padding: var(--space-3);
         padding: var(--space-3);
     }
 

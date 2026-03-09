@@ -3,7 +3,11 @@ import toolbarHtml from '../html-partials/toolbar.html?raw';
 import chartWrapperHtml from '../html-partials/chart-wrapper.html?raw';
 import livePositionsHtml from '../html-partials/live-positions.html?raw';
 import strategyPanelShellHtml from '../html-partials/strategy-panel-shell.html?raw';
-import tabSettingsHtml from '../html-partials/tab-settings.html?raw';
+import tabSettingsStartHtml from '../html-partials/tab-settings-start.html?raw';
+import tabSettingsSectionCoreHtml from '../html-partials/tab-settings-section-core.html?raw';
+import tabSettingsSectionExecutionHtml from '../html-partials/tab-settings-section-execution.html?raw';
+import tabSettingsSectionEntryQualityHtml from '../html-partials/tab-settings-section-entry-quality.html?raw';
+import tabSettingsEndHtml from '../html-partials/tab-settings-end.html?raw';
 import tabDataminingHtml from '../html-partials/tab-datamining.html?raw';
 import tabFinderHtml from '../html-partials/tab-finder.html?raw';
 
@@ -66,7 +70,11 @@ export function injectLayout() {
 
     // Strategy Panel
     const tabsContent =
-        tabSettingsHtml +
+        tabSettingsStartHtml +
+        tabSettingsSectionCoreHtml +
+        tabSettingsSectionExecutionHtml +
+        tabSettingsSectionEntryQualityHtml +
+        tabSettingsEndHtml +
         tabDataminingHtml +
         tabFinderHtml +
 

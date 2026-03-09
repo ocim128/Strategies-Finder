@@ -202,6 +202,38 @@ export function createStrategyPanelDom(): StrategyPanelDom {
     };
 }
 
+export const SETTINGS_WORKSPACE_REQUIRED_IDS = [
+    "settingsTab",
+    "strategyWorkspaceHeader",
+    "strategyWorkspaceSections",
+    "strategyMetaName",
+    "strategyMetaDescription",
+    "strategyMetaKey",
+    "strategyParamCount",
+] as const;
+
+export interface SettingsWorkspaceDom {
+    settingsTab: HTMLElement;
+    strategyWorkspaceHeader: HTMLElement;
+    strategyWorkspaceSections: HTMLElement;
+    strategyMetaName: HTMLElement;
+    strategyMetaDescription: HTMLElement;
+    strategyMetaKey: HTMLElement;
+    strategyParamCount: HTMLElement;
+}
+
+export function createSettingsWorkspaceDom(): SettingsWorkspaceDom {
+    return {
+        settingsTab: getRequiredElement("settingsTab"),
+        strategyWorkspaceHeader: getRequiredElement("strategyWorkspaceHeader"),
+        strategyWorkspaceSections: getRequiredElement("strategyWorkspaceSections"),
+        strategyMetaName: getRequiredElement("strategyMetaName"),
+        strategyMetaDescription: getRequiredElement("strategyMetaDescription"),
+        strategyMetaKey: getRequiredElement("strategyMetaKey"),
+        strategyParamCount: getRequiredElement("strategyParamCount"),
+    };
+}
+
 export const ANALYSIS_PANEL_REQUIRED_IDS = [
     "emptyAnalysis",
     "analysisContent",

@@ -247,9 +247,10 @@
 }
 
 .panel-content {
+    --panel-content-padding: var(--space-4);
     flex: 1;
     overflow-y: auto;
-    padding: var(--space-4);
+    padding: var(--panel-content-padding);
     position: relative;
     background: linear-gradient(180deg,
             hsl(var(--hsl-surface-1) / 0.38),

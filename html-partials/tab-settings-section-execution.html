@@ -1,0 +1,188 @@
+    <div class="settings-section" data-complexity="standard" data-section="engine">
+        <div class="section-header collapsible" data-target="engineBody">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Backend Engine</div>
+            </div>
+            <label class="section-toggle" aria-label="Toggle Rust backend">
+                <input type="checkbox" id="useRustEngineToggle" checked>
+                <span class="section-toggle-track"></span>
+            </label>
+        </div>
+        <div class="section-body accordion-body" id="engineBody">
+            <div class="param-hint">Prefer Rust for faster backtests when available. Turn off to force TypeScript.</div>
+        </div>
+    </div>
+
+    <div class="settings-section" data-complexity="standard" data-section="realism">
+        <div class="section-header collapsible collapsed" data-target="realismBody">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Backtest Realism</div>
+                <span class="section-changed-dot" id="realismChangedDot"></span>
+            </div>
+        </div>
+        <div class="section-body accordion-body collapsed" id="realismBody">
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label">Execution Model</label>
+                    <select class="param-input" id="executionModel">
+                        <option value="next_open" selected>Next Bar Open (realistic)</option>
+                        <option value="next_close">Next Bar Close (conservative)</option>
+                        <option value="signal_close">Signal Bar Close (optimistic)</option>
+                    </select>
+                    <div class="param-hint">Next-bar execution reduces look-ahead bias.</div>
+                </div>
+                <div class="param-group">
+                    <label class="param-label">Slippage (bps)</label>
+                    <input type="number" class="param-input" id="slippageBps" value="5" min="0" max="100" step="1">
+                    <div class="param-hint">Applied on entry and exit fills.</div>
+                </div>
+            </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Allow Same-Bar Exits</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle same-bar exits">
+                            <input type="checkbox" id="allowSameBarExitToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div class="param-hint">Disable to avoid entry/exit on the same bar.</div>
+                </div>
+                <div class="param-group">
+                    <label class="param-label">Max Open Trades</label>
+                    <select class="param-input" id="maxOpenTrades">
+                        <option value="1" selected>1 (classic)</option>
+                        <option value="2">2 (allow overlap)</option>
+                    </select>
+                    <div class="param-hint">Allow up to 2 concurrent positions when a new signal fires while an existing
+                        trade is open.</div>
+                </div>
+            </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Warm-Up Entry</label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle warm-up entry queue">
+                            <input type="checkbox" id="warmUpEntryToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div class="param-hint">Queue skipped signals when position is open. If the position closes on the
+                        next bar, the queued entry fires at that bar's open.</div>
+                </div>
+            </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Use Strategy Timeframe</label>
+                        <label class="section-toggle" style="transform: scale(0.8);"
+                            aria-label="Toggle global strategy timeframe">
+                            <input type="checkbox" id="strategyTimeframeToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div class="param-hint">Run signal logic on higher timeframe, map entries back to current chart
+                        bars.</div>
+                </div>
+                <div class="param-group" id="strategyTimeframeMinutesGroup">
+                    <label class="param-label">Strategy TF (minutes)</label>
+                    <input type="number" class="param-input" id="strategyTimeframeMinutes" value="120" min="1" step="1">
+                    <div class="param-hint">Example: chart 5m + strategy 120m.</div>
+                </div>
+            </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label">2H Close-Hour Parity</label>
+                    <select class="param-input" id="twoHourCloseParity">
+                        <option value="odd" selected>Odd Close Hour (default)</option>
+                        <option value="even">Even Close Hour (+1h phase)</option>
+                        <option value="both">Both (run odd + even compare)</option>
+                    </select>
+                    <div class="param-hint">Controls 2H bucket alignment for chart/fetch/resample paths. Both keeps
+                        chart data unchanged and runs two independent backtests for comparison.</div>
+                </div>
+            </div>
+            <div class="param-hint">Realism settings use the TypeScript engine (Rust skipped for accuracy).</div>
+        </div>
+    </div>
+
+    <div class="settings-section" data-complexity="standard" data-section="tradeFilter">
+        <div class="section-header collapsible collapsed" data-target="tradeFilterSectionBody">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Trade Filter</div>
+                <span class="section-changed-dot" id="filterChangedDot"></span>
+            </div>
+            <label class="section-toggle" aria-label="Toggle trade filter">
+                <input type="checkbox" id="tradeFilterSettingsToggle">
+                <span class="section-toggle-track"></span>
+            </label>
+        </div>
+        <div class="section-body accordion-body collapsed" id="tradeFilterSectionBody">
+            <div class="section-feature-body" id="tradeFilterSettings">
+                <div class="param-group">
+                    <label class="param-label">Filter Mode</label>
+                    <select class="param-input" id="tradeFilterMode">
+                        <option value="none" selected>None</option>
+                        <option value="close">Close Breakout</option>
+                        <option value="volume">Volume Expansion</option>
+                        <option value="rsi">RSI Confirmation</option>
+                        <option value="trend">Trend Alignment (EMA)</option>
+                        <option value="adx">ADX Strength</option>
+                        <option value="htf_drift">HTF Drift Alignment</option>
+                        <option value="trend_htf_bias">HTF Bias (EMA)</option>
+                        <option value="trend_exec_alignment">Execution Alignment (EMA50)</option>
+                        <option value="trend_no_chase">No-Chase Band (EMA50 Distance)</option>
+                        <option value="trend_hysteresis">Hysteresis (2x EMA50 Closes)</option>
+                        <option value="trend_mtf_stack">Trend Stack (HTF+Exec+Band+ADX+Hysteresis)</option>
+                    </select>
+                    <div class="param-hint">Simple trade-quality filter applied before opening positions.</div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <label class="param-label">HTF Bias EMA Period</label>
+                        <input type="number" class="param-input" id="htfBiasEmaPeriod" value="200" min="1">
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <label class="param-label">Filter Lookback (bars)</label>
+                        <input type="number" class="param-input" id="confirmLookback" value="1" min="1">
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label">Volume SMA Period</label>
+                        <input type="number" class="param-input" id="volumeSmaPeriod" value="20" min="1">
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <label class="param-label">Volume Multiplier</label>
+                        <input type="number" class="param-input" id="volumeMultiplier" value="1.5" min="0" step="0.1">
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label">RSI Period</label>
+                        <input type="number" class="param-input" id="confirmRsiPeriod" value="14" min="1">
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <label class="param-label">RSI Bullish</label>
+                        <input type="number" class="param-input" id="confirmRsiBullish" value="55" min="0" max="100">
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label">RSI Bearish</label>
+                        <input type="number" class="param-input" id="confirmRsiBearish" value="45" min="0" max="100">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>

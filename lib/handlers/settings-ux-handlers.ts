@@ -1,33 +1,25 @@
 /**
  * Settings UX Enhancements
- * 
+ *
  * 1. Collapsible accordion sections
  * 2. Preset mode selector (Simple / Standard / Advanced)
  * 3. Info-icon tooltips converting inline .param-hint text
- * 
- * Call `initSettingsUX()` once after the DOM (settings tab HTML) is loaded.
  */
 
 import { debugLogger } from '../debug-logger';
 import { bindFormAccessibility } from '../form-accessibility';
-
-// ============================================================================
-// Types
-// ============================================================================
-
-type PresetMode = 'simple' | 'standard' | 'advanced';
+import {
+    STRATEGY_PANEL_SETTINGS_SECTIONS,
+    type SettingsPresetMode,
+    getSettingsSectionDefinition,
+    isSettingsSectionVisibleForPreset,
+} from '../strategy-panel-settings-registry';
 
 const PRESET_STORAGE_KEY = 'playground_settings_preset';
-
-// ============================================================================
-// 1. Accordion Collapse
-// ============================================================================
 
 function initAccordion(): void {
     const settingsTab = document.getElementById('settingsTab');
     if (!settingsTab) return;
-
-    const headers = settingsTab.querySelectorAll<HTMLElement>('.section-header.collapsible');
 
     const applyAccordionState = (header: HTMLElement, body: HTMLElement): void => {
         const expanded = !header.classList.contains('collapsed');
@@ -36,24 +28,26 @@ function initAccordion(): void {
         body.toggleAttribute('inert', !expanded);
     };
 
-    headers.forEach(header => {
-        const targetId = header.dataset.target;
-        const body = targetId ? document.getElementById(targetId) : null;
+    STRATEGY_PANEL_SETTINGS_SECTIONS.forEach((sectionDef) => {
+        const section = settingsTab.querySelector<HTMLElement>(`.settings-section[data-section="${sectionDef.id}"]`);
+        const header = section?.querySelector<HTMLElement>('.section-header.collapsible');
+        if (!section || !header) {
+            return;
+        }
 
+        const targetId = sectionDef.accordionBodyId;
+        const body = document.getElementById(targetId);
+        header.dataset.target = targetId;
         header.setAttribute('role', 'button');
         header.tabIndex = 0;
-        if (targetId) {
-            header.setAttribute('aria-controls', targetId);
-        }
+        header.setAttribute('aria-controls', targetId);
+
         if (body) {
             applyAccordionState(header, body);
         }
 
         const toggleSection = () => {
-            const sectionTargetId = header.dataset.target;
-            if (!sectionTargetId) return;
-
-            const sectionBody = document.getElementById(sectionTargetId);
+            const sectionBody = document.getElementById(targetId);
             if (!sectionBody) return;
 
             const isCollapsed = header.classList.contains('collapsed');
@@ -62,46 +56,39 @@ function initAccordion(): void {
             applyAccordionState(header, sectionBody);
         };
 
-        header.addEventListener('click', (e) => {
-            // Don't toggle if they clicked the section-toggle (checkbox)
-            const target = e.target as HTMLElement;
+        header.addEventListener('click', (event) => {
+            const target = event.target as HTMLElement;
             if (target.closest('.section-toggle')) return;
             toggleSection();
         });
 
-        header.addEventListener('keydown', (e) => {
-            if (e.key !== 'Enter' && e.key !== ' ') return;
-            const target = e.target as HTMLElement;
+        header.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            const target = event.target as HTMLElement;
             if (target.closest('.section-toggle')) return;
-            e.preventDefault();
+            event.preventDefault();
             toggleSection();
         });
     });
 }
-
-// ============================================================================
-// 2. Preset Mode Selector
-// ============================================================================
 
 function initPresets(): void {
     const settingsTab = document.getElementById('settingsTab');
     const presetBar = document.getElementById('settingsPresetBar');
     if (!settingsTab || !presetBar) return;
 
-    // Load saved preset
-    const savedPreset = localStorage.getItem(PRESET_STORAGE_KEY) as PresetMode | null;
-    const initialPreset: PresetMode = savedPreset && ['simple', 'standard', 'advanced'].includes(savedPreset)
+    const savedPreset = localStorage.getItem(PRESET_STORAGE_KEY) as SettingsPresetMode | null;
+    const initialPreset: SettingsPresetMode = savedPreset && ['simple', 'standard', 'advanced'].includes(savedPreset)
         ? savedPreset
         : 'standard';
 
     applyPreset(initialPreset, settingsTab, presetBar);
 
-    // Button click handlers
-    presetBar.addEventListener('click', (e) => {
-        const btn = (e.target as HTMLElement).closest<HTMLElement>('.settings-preset-btn');
-        if (!btn) return;
+    presetBar.addEventListener('click', (event) => {
+        const button = (event.target as HTMLElement).closest<HTMLElement>('.settings-preset-btn');
+        if (!button) return;
 
-        const preset = btn.dataset.preset as PresetMode;
+        const preset = button.dataset.preset as SettingsPresetMode;
         if (!preset) return;
 
         applyPreset(preset, settingsTab, presetBar);
@@ -110,85 +97,46 @@ function initPresets(): void {
     });
 }
 
-function applyPreset(preset: PresetMode, settingsTab: HTMLElement, presetBar: HTMLElement): void {
-    // Update data attribute for CSS-driven visibility
+function applyPreset(preset: SettingsPresetMode, settingsTab: HTMLElement, presetBar: HTMLElement): void {
     settingsTab.dataset.preset = preset;
 
-    // Update active button
-    presetBar.querySelectorAll('.settings-preset-btn').forEach(btn => {
-        btn.classList.toggle('active', (btn as HTMLElement).dataset.preset === preset);
+    presetBar.querySelectorAll('.settings-preset-btn').forEach((button) => {
+        button.classList.toggle('active', (button as HTMLElement).dataset.preset === preset);
     });
 
-    // Auto-expand sections that become visible, auto-collapse hidden ones
-    const sections = settingsTab.querySelectorAll<HTMLElement>('.settings-section');
-    sections.forEach(section => {
-        const complexity = section.dataset.complexity || 'simple';
-        const isVisible = isSectionVisibleForPreset(complexity, preset);
+    STRATEGY_PANEL_SETTINGS_SECTIONS.forEach((sectionDef) => {
+        const section = settingsTab.querySelector<HTMLElement>(`.settings-section[data-section="${sectionDef.id}"]`);
+        if (!section) return;
 
-        // If a section just became visible and was collapsed, keep it as-is
-        // If a section is being hidden, no special action needed (CSS handles display:none)
-        if (!isVisible) return;
-
-        // For sections that are visible in this preset and were previously hidden,
-        // make sure the header/body state is consistent
-        const header = section.querySelector<HTMLElement>('.section-header.collapsible');
-        const targetId = header?.dataset.target;
-        if (header && targetId) {
-            const body = document.getElementById(targetId);
-            // The section-toggle (on/off toggle for the feature) drives section-body visibility
-            // via `is-hidden`. The accordion only controls collapsed/expanded within that.
-            // No auto-expand needed; respect user's accordion state.
-            if (body) {
-                // nothing to force here. The accordion state is preserved.
-            }
-        }
+        section.hidden = !isSettingsSectionVisibleForPreset(sectionDef.preset, preset);
     });
 }
-
-function isSectionVisibleForPreset(complexity: string, preset: PresetMode): boolean {
-    if (preset === 'advanced') return true;
-    if (preset === 'standard') return complexity !== 'advanced';
-    // simple
-    return complexity === 'simple';
-}
-
-// ============================================================================
-// 3. Info-icon Tooltips
-// ============================================================================
 
 function initTooltips(): void {
     const settingsTab = document.getElementById('settingsTab');
     if (!settingsTab) return;
 
-    // Add the tooltips-active class to enable CSS hiding of .param-hint
     settingsTab.classList.add('tooltips-active');
 
-    // Find all .param-hint elements and convert them
     const hints = settingsTab.querySelectorAll<HTMLElement>('.param-hint');
 
-    hints.forEach(hint => {
+    hints.forEach((hint) => {
         const text = hint.textContent?.trim();
         if (!text) return;
 
-        // Find the closest param-label sibling (walk up to param-group, find label)
         const paramGroup = hint.closest('.param-group');
         if (!paramGroup) return;
 
         const label = paramGroup.querySelector<HTMLElement>('.param-label');
-        if (!label) return;
+        if (!label || label.querySelector('.info-tip-trigger')) return;
 
-        // Skip if already has a tooltip
-        if (label.querySelector('.info-tip-trigger')) return;
-
-        // Create the info icon with tooltip
         const tipTrigger = document.createElement('span');
         tipTrigger.className = 'info-tip-trigger';
         tipTrigger.setAttribute('tabindex', '0');
         tipTrigger.setAttribute('role', 'button');
         tipTrigger.setAttribute('aria-label', text);
-        tipTrigger.innerHTML = `ⓘ<span class="info-tip-content">${escapeHTML(text)}</span>`;
+        tipTrigger.innerHTML = `â“˜<span class="info-tip-content">${escapeHTML(text)}</span>`;
 
-        // Wrap label text + icon
         if (!label.classList.contains('param-label-with-tip')) {
             label.classList.add('param-label-with-tip');
         }
@@ -202,11 +150,36 @@ function escapeHTML(str: string): string {
     return div.innerHTML;
 }
 
-// ============================================================================
-// Public Init
-// ============================================================================
+function syncRegistryMarkup(): void {
+    const settingsTab = document.getElementById('settingsTab');
+    if (!settingsTab) return;
+
+    STRATEGY_PANEL_SETTINGS_SECTIONS.forEach((sectionDef) => {
+        const section = settingsTab.querySelector<HTMLElement>(`.settings-section[data-section="${sectionDef.id}"]`);
+        if (!section) return;
+
+        section.dataset.complexity = sectionDef.preset;
+
+        const header = section.querySelector<HTMLElement>('.section-header.collapsible');
+        if (header) {
+            header.dataset.target = sectionDef.accordionBodyId;
+        }
+    });
+
+    const headers = settingsTab.querySelectorAll<HTMLElement>('.settings-section .section-header.collapsible');
+    headers.forEach((header) => {
+        const sectionId = header.closest<HTMLElement>('.settings-section')?.dataset.section;
+        if (!sectionId) return;
+
+        const sectionDef = getSettingsSectionDefinition(sectionId);
+        if (!sectionDef) return;
+
+        header.dataset.target = sectionDef.accordionBodyId;
+    });
+}
 
 export function initSettingsUX(): void {
+    syncRegistryMarkup();
     initAccordion();
     initPresets();
     initTooltips();

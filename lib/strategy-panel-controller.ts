@@ -77,6 +77,7 @@ class StrategyPanelController {
 
             if (panel) {
                 panel.hidden = !isActive;
+                panel.style.display = isActive ? "block" : "none";
             }
         });
 
@@ -132,6 +133,7 @@ class StrategyPanelController {
             this.activeTabId = null;
             this.tabPanels.forEach((panel) => {
                 panel.hidden = true;
+                panel.style.display = "none";
             });
             return;
         }

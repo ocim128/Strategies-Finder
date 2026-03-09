@@ -15,6 +15,7 @@ import { finderManager } from "../finder-manager";
 import { scannerManager } from "../scanner/scanner-manager";
 import { isTwoHourInterval } from "../interval-utils";
 import { strategyPanelController } from "../strategy-panel-controller";
+import { STRATEGY_PANEL_SETTINGS_SECTIONS } from "../strategy-panel-settings-registry";
 
 export function setupEventHandlers() {
     const dom = createUiEventHandlersDom();
@@ -612,18 +613,36 @@ export function setupEventHandlers() {
         });
     }
 
-    // Strategy settings toggles
-    [
-        { toggleId: 'riskSettingsToggle', sectionId: 'riskSettings' },
-        { toggleId: 'tradeFilterSettingsToggle', sectionId: 'tradeFilterSettings' }
-    ].forEach(({ toggleId, sectionId }) => {
-        const toggle = toggleId === 'riskSettingsToggle' ? dom.riskSettingsToggle : dom.tradeFilterSettingsToggle;
-        const section = sectionId === 'riskSettings' ? dom.riskSettings : dom.tradeFilterSettings;
+    // Strategy section feature toggles
+    const sectionFeatureBindings = {
+        riskSettingsToggle: {
+            toggle: dom.riskSettingsToggle,
+            content: dom.riskSettings,
+        },
+        tradeFilterSettingsToggle: {
+            toggle: dom.tradeFilterSettingsToggle,
+            content: dom.tradeFilterSettings,
+        },
+    } as const;
+
+    STRATEGY_PANEL_SETTINGS_SECTIONS.forEach((sectionDef) => {
+        if (!sectionDef.featureToggleId || !sectionDef.featureContentId) {
+            return;
+        }
+
+        const binding = sectionFeatureBindings[sectionDef.featureToggleId as keyof typeof sectionFeatureBindings];
+        if (!binding) {
+            return;
+        }
+
         const applyState = () => {
-            section.classList.toggle('is-hidden', !toggle.checked);
+            const enabled = binding.toggle.checked;
+            binding.content.classList.toggle('is-hidden', !enabled);
+            binding.content.toggleAttribute('inert', !enabled);
+            binding.content.setAttribute('aria-hidden', enabled ? 'false' : 'true');
         };
 
-        toggle.addEventListener('change', applyState);
+        binding.toggle.addEventListener('change', applyState);
         applyState();
     });
 

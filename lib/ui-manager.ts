@@ -3,12 +3,13 @@ import { OHLCVData, BacktestResult, Trade, EntryPreview } from "./strategies/ind
 import { state } from "./state";
 import type { TwoHourParityBacktestResults } from "./state";
 import { strategyRegistry, getStrategyList } from "../strategyRegistry";
-import { getRequiredElement, updateTextContent } from "./dom-utils";
+import { getOptionalElement, getRequiredElement, updateTextContent } from "./dom-utils";
 import { resultsRenderer } from "./renderers/resultsRenderer";
 import { tradesRenderer } from "./renderers/tradesRenderer";
 import { paramManager } from "./param-manager";
 import { formatJakartaTime, isBusinessDayTime } from "./timezone-utils";
 import { formatDisplayPrice } from "./price-format";
+import { createSettingsWorkspaceDom } from "./feature-dom-contracts";
 
 export class UIManager {
     public updateSymbolDataSource(
@@ -161,6 +162,7 @@ export class UIManager {
     public updateStrategyParams(currentStrategyKey: string) {
         const strategy = strategyRegistry.get(currentStrategyKey);
         if (strategy) {
+            this.updateStrategyWorkspaceContext(currentStrategyKey, strategy.name, strategy.description, Object.keys(strategy.defaultParams).length);
             paramManager.render(strategy);
         }
     }
@@ -171,10 +173,11 @@ export class UIManager {
         const currentValue = strategySelect.value || currentStrategyKey;
 
         strategySelect.innerHTML = '';
-        strategies.forEach(({ key, name }) => {
+        strategies.forEach(({ key, name, description }) => {
             const option = document.createElement('option');
             option.value = key;
             option.textContent = name;
+            option.title = description;
             strategySelect.appendChild(option);
         });
 
@@ -185,6 +188,23 @@ export class UIManager {
             strategySelect.value = fallbackKey;
             state.set('currentStrategyKey', fallbackKey);
         }
+    }
+
+    private updateStrategyWorkspaceContext(strategyKey: string, name: string, description: string, paramCount: number): void {
+        const workspaceExists = getOptionalElement('strategyMetaName')
+            && getOptionalElement('strategyMetaDescription')
+            && getOptionalElement('strategyMetaKey')
+            && getOptionalElement('strategyParamCount');
+
+        if (!workspaceExists) {
+            return;
+        }
+
+        const workspace = createSettingsWorkspaceDom();
+        workspace.strategyMetaName.textContent = name;
+        workspace.strategyMetaDescription.textContent = description;
+        workspace.strategyMetaKey.textContent = strategyKey.replace(/_/g, ' ');
+        workspace.strategyParamCount.textContent = `${paramCount} param${paramCount === 1 ? '' : 's'}`;
     }
 
     public updateTimeframeUI(interval: string) {
