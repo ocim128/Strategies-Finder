@@ -72,6 +72,12 @@
     margin-top: 12px;
 }
 
+.portfolio-lab__table-caption {
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
 .portfolio-lab__insights {
     display: grid;
     gap: 8px;
@@ -87,8 +93,46 @@
     font-size: 12px;
 }
 
+.portfolio-lab__insight strong {
+    color: var(--text-primary);
+}
+
 .portfolio-lab__matrix-wrap {
     overflow: auto;
+}
+
+.portfolio-lab__diagnostics {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.015);
+}
+
+.portfolio-lab__diagnostics-summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 14px 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.portfolio-lab__diagnostics-summary::-webkit-details-marker {
+    display: none;
+}
+
+.portfolio-lab__diagnostics-summary::after {
+    content: "+";
+    float: right;
+    color: var(--text-secondary);
+}
+
+.portfolio-lab__diagnostics[open] .portfolio-lab__diagnostics-summary::after {
+    content: "-";
+}
+
+.portfolio-lab__diagnostics-body {
+    display: grid;
+    gap: 12px;
+    padding: 0 12px 12px;
 }
 
 .portfolio-lab__matrix-table {

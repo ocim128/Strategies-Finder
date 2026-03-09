@@ -76,6 +76,14 @@
             <div class="simulation-grid" id="portfolioSummary"></div>
         </div>
 
+        <div class="analysis-finder-section portfolio-lab__section" id="portfolioLiveContextSection" style="display: none;">
+            <div class="analysis-finder-header">
+                <h4 class="analysis-finder-title">Current Context</h4>
+            </div>
+            <div class="simulation-grid" id="portfolioLiveContextSummary"></div>
+            <div class="portfolio-lab__insights" id="portfolioLiveContextDetails"></div>
+        </div>
+
         <div class="analysis-finder-section portfolio-lab__section" id="portfolioInsightSection" style="display: none;">
             <div class="analysis-finder-header">
                 <h4 class="analysis-finder-title">Insights</h4>
@@ -83,20 +91,82 @@
             <div class="portfolio-lab__insights" id="portfolioInsights"></div>
         </div>
 
-        <div class="analysis-finder-section portfolio-lab__section" id="portfolioConsensusSection" style="display: none;">
+        <div class="analysis-finder-section portfolio-lab__section" id="portfolioExecutionSection" style="display: none;">
             <div class="analysis-finder-header">
-                <h4 class="analysis-finder-title">Pair Context Probability</h4>
+                <h4 class="analysis-finder-title">Execution Filters</h4>
                 <div class="analysis-finder-controls">
                     <label class="analysis-control" for="portfolioBreadthMinAgree">
                         Min Agree
                         <input type="number" id="portfolioBreadthMinAgree" min="0" max="12" step="1" value="4" />
                     </label>
+                    <label class="analysis-control" for="portfolioMaxOppose">
+                        Max Oppose
+                        <input type="number" id="portfolioMaxOppose" min="0" max="12" step="1" value="1" />
+                    </label>
                     <button class="btn btn-secondary btn-compact" id="portfolioRunBreadthBacktestBtn" type="button">Breadth Backtest</button>
+                    <button class="btn btn-secondary btn-compact" id="portfolioRunFilterBacktestBtn" type="button">Filter Backtest</button>
                     <button class="btn btn-secondary btn-compact" id="portfolioRunBreadthSweepBtn" type="button">Sweep Breadth</button>
+                    <button class="btn btn-secondary btn-compact" id="portfolioRunOppositionSweepBtn" type="button">Sweep Opposition</button>
                 </div>
+            </div>
+            <div class="simulation-grid" id="portfolioExecutionSummary"></div>
+            <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap" id="portfolioBreadthSweepSection" style="display: none;">
+                <div class="portfolio-lab__table-caption">Target-symbol breadth sweep</div>
+                <table class="analysis-table portfolio-lab__table">
+                    <thead>
+                        <tr>
+                            <th>Min Agree</th>
+                            <th>Signals</th>
+                            <th>Trades</th>
+                            <th>Win %</th>
+                            <th>Net %</th>
+                            <th>Exp</th>
+                            <th>PF</th>
+                            <th>Max DD %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="portfolioBreadthSweepTableBody">
+                        <tr>
+                            <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                Run Breadth Sweep to compare agreement thresholds.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap" id="portfolioOppositionSweepSection" style="display: none;">
+                <div class="portfolio-lab__table-caption">Target-symbol opposition sweep</div>
+                <table class="analysis-table portfolio-lab__table">
+                    <thead>
+                        <tr>
+                            <th>Max Oppose</th>
+                            <th>Signals</th>
+                            <th>Trades</th>
+                            <th>Win %</th>
+                            <th>Net %</th>
+                            <th>Exp</th>
+                            <th>PF</th>
+                            <th>Max DD %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="portfolioOppositionSweepTableBody">
+                        <tr>
+                            <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                Run Sweep Opposition to compare conflict thresholds.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="analysis-finder-section portfolio-lab__section" id="portfolioConsensusSection" style="display: none;">
+            <div class="analysis-finder-header">
+                <h4 class="analysis-finder-title">Pair Context Probability</h4>
             </div>
             <div class="simulation-grid" id="portfolioConsensusSummary"></div>
             <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
+                <div class="portfolio-lab__table-caption">Descriptive context buckets across the tested basket</div>
                 <table class="analysis-table portfolio-lab__table">
                     <thead>
                         <tr>
@@ -120,12 +190,50 @@
                     </tbody>
                 </table>
             </div>
-            <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap" id="portfolioBreadthSweepSection" style="display: none;">
+        </div>
+
+        <div class="analysis-finder-section portfolio-lab__section" id="portfolioRankingSection" style="display: none;">
+            <div class="analysis-finder-header">
+                <h4 class="analysis-finder-title">Pair Ranking</h4>
+            </div>
+            <div class="simulation-grid" id="portfolioRankingSummary"></div>
+            <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
                 <table class="analysis-table portfolio-lab__table">
                     <thead>
                         <tr>
-                            <th>Min Agree</th>
-                            <th>Signals</th>
+                            <th>Pair</th>
+                            <th>Role</th>
+                            <th>Exp</th>
+                            <th>Max DD %</th>
+                            <th>Breadth Lift</th>
+                            <th>Market Corr</th>
+                            <th>Strategy Corr</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="portfolioRankingTableBody">
+                        <tr>
+                            <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                Run Portfolio Lab to rank pairs by quality, diversification, and context response.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="analysis-finder-section portfolio-lab__section" id="portfolioSizingSection" style="display: none;">
+            <div class="analysis-finder-header">
+                <h4 class="analysis-finder-title">Sizing Scenarios</h4>
+            </div>
+            <div class="simulation-grid" id="portfolioSizingSummary"></div>
+            <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
+                <div class="portfolio-lab__table-caption">Estimated target-symbol outcome if size is scaled by pair context instead of filtering trades out</div>
+                <table class="analysis-table portfolio-lab__table">
+                    <thead>
+                        <tr>
+                            <th>Scenario</th>
+                            <th>Avg Size</th>
                             <th>Trades</th>
                             <th>Win %</th>
                             <th>Net %</th>
@@ -134,10 +242,10 @@
                             <th>Max DD %</th>
                         </tr>
                     </thead>
-                    <tbody id="portfolioBreadthSweepTableBody">
+                    <tbody id="portfolioSizingTableBody">
                         <tr>
                             <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                                Run Breadth Sweep to compare agreement thresholds.
+                                Run Portfolio Lab to compare context-weighted sizing scenarios.
                             </td>
                         </tr>
                     </tbody>
@@ -145,37 +253,43 @@
             </div>
         </div>
 
-        <div class="analysis-finder-section portfolio-lab__section" id="portfolioMatrixSection" style="display: none;">
-            <div class="analysis-finder-header">
-                <h4 class="analysis-finder-title">Price Return Correlation Matrix</h4>
-            </div>
-            <div class="portfolio-lab__matrix-wrap" id="portfolioCorrelationMatrix"></div>
-        </div>
+        <details class="analysis-finder-section portfolio-lab__section portfolio-lab__diagnostics" id="portfolioDiagnosticsSection">
+            <summary class="portfolio-lab__diagnostics-summary">Diagnostics</summary>
+            <div class="portfolio-lab__diagnostics-body">
+                <div class="analysis-finder-section portfolio-lab__section" id="portfolioMatrixSection" style="display: none;">
+                    <div class="analysis-finder-header">
+                        <h4 class="analysis-finder-title">Price Return Correlation Matrix</h4>
+                    </div>
+                    <div class="portfolio-lab__matrix-wrap" id="portfolioCorrelationMatrix"></div>
+                </div>
 
-        <div class="analysis-table-wrap portfolio-lab__section">
-            <table class="analysis-table portfolio-lab__table">
-                <thead>
-                    <tr>
-                        <th>Pair</th>
-                        <th>Trades</th>
-                        <th>Net %</th>
-                        <th>Win %</th>
-                        <th>PF</th>
-                        <th>Max DD %</th>
-                        <th>Exp</th>
-                        <th>Market Corr</th>
-                        <th>Strategy Corr</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody id="portfolioPairsTableBody">
-                    <tr>
-                        <td colspan="10" style="text-align:center;color:var(--text-secondary);padding:20px;">
-                            Run Portfolio Lab to populate pair metrics.
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
+                <div class="analysis-table-wrap portfolio-lab__section">
+                    <div class="portfolio-lab__table-caption">Full per-pair diagnostics</div>
+                    <table class="analysis-table portfolio-lab__table">
+                        <thead>
+                            <tr>
+                                <th>Pair</th>
+                                <th>Trades</th>
+                                <th>Net %</th>
+                                <th>Win %</th>
+                                <th>PF</th>
+                                <th>Max DD %</th>
+                                <th>Exp</th>
+                                <th>Market Corr</th>
+                                <th>Strategy Corr</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="portfolioPairsTableBody">
+                            <tr>
+                                <td colspan="10" style="text-align:center;color:var(--text-secondary);padding:20px;">
+                                    Run Portfolio Lab to populate pair metrics.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </details>
     </div>
 </div>

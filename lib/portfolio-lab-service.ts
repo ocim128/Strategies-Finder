@@ -10,6 +10,7 @@ import { applySignalPolarity, timeKey, type BacktestResult, type OHLCVData, type
 import { strategyPanelController } from "./strategy-panel-controller";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { uiManager } from "./ui-manager";
+import { getOpenPositionForScanner, type OpenPosition } from "./strategies/backtest/signal-preparation";
 
 const MIN_LOOKBACK_BARS = 200;
 const MAX_LOOKBACK_BARS = 20000;
@@ -74,6 +75,7 @@ interface ConsensusBucketSummary {
 interface ConsensusAnalysis {
     qualifyingBuckets: ConsensusBucketSummary[];
     allSamples: ConsensusTradeSample[];
+    samplesBySymbol: Map<string, ConsensusTradeSample[]>;
     qualifyingSampleCount: number;
     lagBars: number;
     minSamples: number;
@@ -81,6 +83,7 @@ interface ConsensusAnalysis {
     bestLongBucket: ConsensusBucketSummary | null;
     bestShortBucket: ConsensusBucketSummary | null;
     baselineBucket: ConsensusBucketSummary | null;
+    profilesBySymbol: Map<string, PairConsensusProfile>;
 }
 
 interface PortfolioRunContext {
@@ -97,11 +100,91 @@ interface PortfolioRunContext {
     runCache: Map<string, PairRunArtifacts>;
 }
 
+interface PairConsensusProfile {
+    symbol: string;
+    qualifyingBuckets: ConsensusBucketSummary[];
+    baselineBucket: ConsensusBucketSummary | null;
+    strongestBucket: ConsensusBucketSummary | null;
+    bestBucket: ConsensusBucketSummary | null;
+}
+
 interface BreadthSweepRow {
     minAgree: number;
     signals: number;
     result: BacktestResult;
     engineUsed: "rust" | "typescript";
+}
+
+interface OppositionSweepRow {
+    maxOppose: number;
+    signals: number;
+    result: BacktestResult;
+    engineUsed: "rust" | "typescript";
+}
+
+interface SignalContext {
+    timeKey: string;
+    signalType: Signal["type"];
+    sameCount: number;
+    oppositeCount: number;
+    agreeingSymbols: string[];
+    opposingSymbols: string[];
+}
+
+interface ExecutionFilter {
+    minAgree: number;
+    maxOppose: number | null;
+}
+
+interface ExecutionFilterRun {
+    filter: ExecutionFilter;
+    signals: number;
+    result: BacktestResult;
+    engineUsed: "rust" | "typescript";
+}
+
+interface PairRankingRow {
+    row: PairAnalysisRow;
+    role: string;
+    breadthLift: number | null;
+    breadthExpectancyLift: number | null;
+}
+
+interface ScenarioSummary {
+    totalTrades: number;
+    winRate: number;
+    netProfitPercent: number;
+    expectancy: number;
+    profitFactor: number;
+    maxDrawdownPercent: number;
+    avgMultiplier: number;
+}
+
+interface SizingScenarioRow {
+    name: string;
+    description: string;
+    result: ScenarioSummary;
+}
+
+interface LiveContextOdds {
+    sampleCount: number;
+    winRate: number;
+    lossRate: number;
+    expectancy: number;
+    label: string;
+}
+
+interface LiveContextSnapshot {
+    basis: "open_trade" | "latest_signal" | "none";
+    targetSymbol: string;
+    direction: Trade["type"] | null;
+    agreementCount: number;
+    oppositionCount: number;
+    agreeingSymbols: string[];
+    opposingSymbols: string[];
+    bucketLabel: string | null;
+    odds: LiveContextOdds | null;
+    openPosition: OpenPosition | null;
 }
 
 class PortfolioLabService {
@@ -143,8 +226,14 @@ class PortfolioLabService {
         dom.portfolioRunBreadthBacktestBtn.addEventListener("click", () => {
             void this.runBreadthBacktest();
         });
+        dom.portfolioRunFilterBacktestBtn.addEventListener("click", () => {
+            void this.runFilterBacktest();
+        });
         dom.portfolioRunBreadthSweepBtn.addEventListener("click", () => {
             void this.runBreadthSweep();
+        });
+        dom.portfolioRunOppositionSweepBtn.addEventListener("click", () => {
+            void this.runOppositionSweep();
         });
 
         dom.portfolioBenchmarkSymbol.addEventListener("input", () => {
@@ -212,6 +301,8 @@ class PortfolioLabService {
         const windowMode = this.readWindowMode(dom.portfolioWindowMode.value);
         const lagBars = this.readClampedInt(dom.portfolioConsensusLagBars.value, 1, 0, 5);
         const minSamples = this.readClampedInt(dom.portfolioConsensusMinSamples.value, 8, 3, 200);
+        const minAgree = this.readClampedInt(dom.portfolioBreadthMinAgree.value, 4, 0, Math.max(0, selectedSymbols.length));
+        const maxOppose = this.readClampedInt(dom.portfolioMaxOppose.value, 1, 0, Math.max(0, selectedSymbols.length));
         const params = paramManager.getValues(strategy);
         const settings = backtestService.getBacktestSettings();
         const capitalSettings = backtestService.getCapitalSettings();
@@ -282,6 +373,59 @@ class PortfolioLabService {
 
             rows.sort((a, b) => b.result.netProfitPercent - a.result.netProfitPercent);
             const consensus = this.buildConsensusAnalysis(rows, runCache, lagBars, minSamples);
+            const breadthSweep = await this.buildBreadthSweepRows({
+                strategy,
+                params,
+                settings,
+                capitalSettings,
+                interval: state.currentInterval,
+                selectedSymbols,
+                benchmarkSymbol,
+                lagBars,
+                windowMode,
+                dataCache,
+                runCache,
+            });
+            const oppositionSweep = await this.buildOppositionSweepRows({
+                strategy,
+                params,
+                settings,
+                capitalSettings,
+                interval: state.currentInterval,
+                selectedSymbols,
+                benchmarkSymbol,
+                lagBars,
+                windowMode,
+                dataCache,
+                runCache,
+            }, minAgree, maxOppose);
+            const rankingRows = this.buildRankingRows(rows, consensus, benchmarkSymbol);
+            const sizingRows = this.buildSizingScenarios({
+                strategy,
+                params,
+                settings,
+                capitalSettings,
+                interval: state.currentInterval,
+                selectedSymbols,
+                benchmarkSymbol,
+                lagBars,
+                windowMode,
+                dataCache,
+                runCache,
+            }, rows, minAgree, maxOppose);
+            const liveContext = this.buildLiveContextSnapshot({
+                strategy,
+                params,
+                settings,
+                capitalSettings,
+                interval: state.currentInterval,
+                selectedSymbols,
+                benchmarkSymbol,
+                lagBars,
+                windowMode,
+                dataCache,
+                runCache,
+            }, consensus);
             this.lastRunContext = {
                 strategy,
                 params,
@@ -295,7 +439,22 @@ class PortfolioLabService {
                 dataCache,
                 runCache,
             };
-            this.render(rows, selectedSymbols, dataCache, benchmarkSymbol, skipped, consensus, windowMode);
+            this.render(
+                rows,
+                selectedSymbols,
+                dataCache,
+                benchmarkSymbol,
+                skipped,
+                consensus,
+                windowMode,
+                breadthSweep,
+                oppositionSweep,
+                rankingRows,
+                sizingRows,
+                liveContext,
+                minAgree,
+                maxOppose
+            );
         } catch (error) {
             console.error("[PortfolioLab] Run failed:", error);
             uiManager.showToast(`Portfolio Lab failed: ${error instanceof Error ? error.message : String(error)}`, "error");
@@ -321,29 +480,15 @@ class PortfolioLabService {
             0,
             Math.max(0, context.selectedSymbols.length)
         );
-        const targetSymbol = context.benchmarkSymbol;
         dom.portfolioRunBreadthBacktestBtn.disabled = true;
         dom.portfolioRunBreadthBacktestBtn.setAttribute("aria-busy", "true");
-        this.updateStatus(`Running breadth-filtered backtest on ${targetSymbol} with min agree ${minAgree}...`);
+        this.updateStatus(`Running breadth-filtered backtest on ${context.benchmarkSymbol} with min agree ${minAgree}...`);
 
         try {
-            const breadthRun = await this.buildBreadthRun(context, minAgree);
-            if (!breadthRun) {
-                uiManager.showToast(`No ${targetSymbol} signals met breadth >= ${minAgree}.`, "warning");
-                this.updateStatus(`Breadth filter removed all ${targetSymbol} signals at min agree ${minAgree}.`);
-                return;
-            }
-
-            state.set('currentBacktestResultSource', 'backtest');
-            state.set('currentBacktestResult', breadthRun.result);
-            strategyPanelController.switchTab('results');
-            uiManager.showToast(
-                `Breadth backtest complete: ${targetSymbol} with breadth >= ${minAgree} (${breadthRun.signals} signals).`,
-                'success'
-            );
-            this.updateStatus(
-                `Breadth backtest ready for ${targetSymbol}: ${breadthRun.result.totalTrades} trades, ` +
-                `${breadthRun.result.winRate.toFixed(1)}% win rate, ${this.formatCurrency(breadthRun.result.expectancy)} expectancy.`
+            await this.runExecutionBacktest(
+                context,
+                { minAgree, maxOppose: null },
+                `breadth >= ${minAgree}`
             );
         } catch (error) {
             console.error("[PortfolioLab] Breadth backtest failed:", error);
@@ -352,6 +497,48 @@ class PortfolioLabService {
         } finally {
             dom.portfolioRunBreadthBacktestBtn.disabled = false;
             dom.portfolioRunBreadthBacktestBtn.setAttribute("aria-busy", "false");
+        }
+    }
+
+    private async runFilterBacktest(): Promise<void> {
+        const context = this.lastRunContext;
+        if (!context) {
+            uiManager.showToast("Run Portfolio Lab first.", "error");
+            return;
+        }
+
+        const dom = this.getDom();
+        const minAgree = this.readClampedInt(
+            dom.portfolioBreadthMinAgree.value,
+            Math.min(4, Math.max(0, context.selectedSymbols.length - 1)),
+            0,
+            Math.max(0, context.selectedSymbols.length)
+        );
+        const maxOppose = this.readClampedInt(
+            dom.portfolioMaxOppose.value,
+            1,
+            0,
+            Math.max(0, context.selectedSymbols.length)
+        );
+        dom.portfolioRunFilterBacktestBtn.disabled = true;
+        dom.portfolioRunFilterBacktestBtn.setAttribute("aria-busy", "true");
+        this.updateStatus(
+            `Running filtered backtest on ${context.benchmarkSymbol} with agree >= ${minAgree} and oppose <= ${maxOppose}...`
+        );
+
+        try {
+            await this.runExecutionBacktest(
+                context,
+                { minAgree, maxOppose },
+                `agree >= ${minAgree}, oppose <= ${maxOppose}`
+            );
+        } catch (error) {
+            console.error("[PortfolioLab] Filter backtest failed:", error);
+            uiManager.showToast(`Filter backtest failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+            this.updateStatus("Filter backtest failed. Check console for details.");
+        } finally {
+            dom.portfolioRunFilterBacktestBtn.disabled = false;
+            dom.portfolioRunFilterBacktestBtn.setAttribute("aria-busy", "false");
         }
     }
 
@@ -364,46 +551,43 @@ class PortfolioLabService {
 
         const dom = this.getDom();
         const targetSymbol = context.benchmarkSymbol;
-        const maxAgree = Math.max(0, context.selectedSymbols.length - (context.selectedSymbols.includes(targetSymbol) ? 1 : 0));
         dom.portfolioRunBreadthSweepBtn.disabled = true;
         dom.portfolioRunBreadthSweepBtn.setAttribute("aria-busy", "true");
         this.updateStatus(`Sweeping breadth thresholds for ${targetSymbol}...`);
 
         try {
-            const rows: BreadthSweepRow[] = [];
-            for (let minAgree = 0; minAgree <= maxAgree; minAgree += 1) {
-                this.updateStatus(`Sweeping breadth thresholds for ${targetSymbol} (${minAgree}/${maxAgree})...`);
-                const breadthRun = await this.buildBreadthRun(context, minAgree);
-                if (breadthRun) {
-                    rows.push({
-                        minAgree,
-                        signals: breadthRun.signals,
-                        result: breadthRun.result,
-                        engineUsed: breadthRun.engineUsed,
-                    });
-                }
-            }
+            const rows = await this.buildBreadthSweepRows(context);
+            const oppositionRows = await this.buildOppositionSweepRows(
+                context,
+                this.readClampedInt(dom.portfolioBreadthMinAgree.value, 4, 0, Math.max(0, context.selectedSymbols.length)),
+                this.readClampedInt(dom.portfolioMaxOppose.value, 1, 0, Math.max(0, context.selectedSymbols.length))
+            );
 
             this.renderBreadthSweep(rows);
+            dom.portfolioExecutionSummary.innerHTML = this.renderExecutionSummary(
+                rows,
+                oppositionRows,
+                this.findBestFilterRun(rows, oppositionRows, this.readClampedInt(dom.portfolioBreadthMinAgree.value, 4, 0, Math.max(0, context.selectedSymbols.length)), this.readClampedInt(dom.portfolioMaxOppose.value, 1, 0, Math.max(0, context.selectedSymbols.length))),
+                context.benchmarkSymbol,
+                this.readClampedInt(dom.portfolioBreadthMinAgree.value, 4, 0, Math.max(0, context.selectedSymbols.length)),
+                this.readClampedInt(dom.portfolioMaxOppose.value, 1, 0, Math.max(0, context.selectedSymbols.length))
+            );
             if (rows.length === 0) {
                 uiManager.showToast(`No breadth thresholds produced usable signals for ${targetSymbol}.`, "warning");
                 this.updateStatus(`Breadth sweep found no usable thresholds for ${targetSymbol}.`);
                 return;
             }
 
-            const best = rows
-                .slice()
-                .sort((a, b) => {
-                    if (b.result.expectancy !== a.result.expectancy) {
-                        return b.result.expectancy - a.result.expectancy;
-                    }
-                    return b.result.netProfitPercent - a.result.netProfitPercent;
-                })[0];
+            const bestExp = this.findSweepWinner(rows, (row) => row.result.expectancy, (row) => `>= ${row.minAgree} agree`);
+            const bestNet = this.findSweepWinner(rows, (row) => row.result.netProfitPercent, (row) => `>= ${row.minAgree} agree`);
+            const bestDd = this.findSweepWinner(rows, (row) => -Math.abs(row.result.maxDrawdownPercent), (row) => `>= ${row.minAgree} agree`);
 
-            uiManager.showToast(`Breadth sweep complete for ${targetSymbol}. Best expectancy at min agree ${best.minAgree}.`, "success");
+            uiManager.showToast(`Breadth sweep complete for ${targetSymbol}.`, "success");
             this.updateStatus(
-                `Breadth sweep ready for ${targetSymbol}. Best threshold: ${best.minAgree} agree, ` +
-                `${best.result.winRate.toFixed(1)}% win rate, ${this.formatCurrency(best.result.expectancy)} expectancy.`
+                `Breadth sweep ready for ${targetSymbol}. ` +
+                `Best exp ${bestExp?.label ?? "-"} ${bestExp ? this.formatCurrency(bestExp.result.expectancy) : "-"}. ` +
+                `Best net ${bestNet?.label ?? "-"} ${bestNet ? this.formatPercent(bestNet.result.netProfitPercent) : "-"}. ` +
+                `Best DD ${bestDd?.label ?? "-"} ${bestDd ? this.formatDrawdownPercent(bestDd.result.maxDrawdownPercent) : "-"}.`
             );
         } catch (error) {
             console.error("[PortfolioLab] Breadth sweep failed:", error);
@@ -412,6 +596,70 @@ class PortfolioLabService {
         } finally {
             dom.portfolioRunBreadthSweepBtn.disabled = false;
             dom.portfolioRunBreadthSweepBtn.setAttribute("aria-busy", "false");
+        }
+    }
+
+    private async runOppositionSweep(): Promise<void> {
+        const context = this.lastRunContext;
+        if (!context) {
+            uiManager.showToast("Run Portfolio Lab first.", "error");
+            return;
+        }
+
+        const dom = this.getDom();
+        const minAgree = this.readClampedInt(
+            dom.portfolioBreadthMinAgree.value,
+            Math.min(4, Math.max(0, context.selectedSymbols.length - 1)),
+            0,
+            Math.max(0, context.selectedSymbols.length)
+        );
+        const maxOppose = this.readClampedInt(
+            dom.portfolioMaxOppose.value,
+            1,
+            0,
+            Math.max(0, context.selectedSymbols.length)
+        );
+        dom.portfolioRunOppositionSweepBtn.disabled = true;
+        dom.portfolioRunOppositionSweepBtn.setAttribute("aria-busy", "true");
+        this.updateStatus(`Sweeping opposition thresholds for ${context.benchmarkSymbol} at min agree ${minAgree}...`);
+
+        try {
+            const rows = await this.buildOppositionSweepRows(context, minAgree, maxOppose);
+            this.renderOppositionSweep(rows);
+            const breadthRows = await this.buildBreadthSweepRows(context);
+            dom.portfolioExecutionSummary.innerHTML = this.renderExecutionSummary(
+                breadthRows,
+                rows,
+                this.findBestFilterRun(breadthRows, rows, minAgree, maxOppose),
+                context.benchmarkSymbol,
+                minAgree,
+                maxOppose
+            );
+
+            if (rows.length === 0) {
+                uiManager.showToast(`No opposition thresholds produced usable signals for ${context.benchmarkSymbol}.`, "warning");
+                this.updateStatus(`Opposition sweep found no usable thresholds for ${context.benchmarkSymbol}.`);
+                return;
+            }
+
+            const bestExp = this.findSweepWinner(rows, (row) => row.result.expectancy, (row) => `<= ${row.maxOppose} oppose`);
+            const bestNet = this.findSweepWinner(rows, (row) => row.result.netProfitPercent, (row) => `<= ${row.maxOppose} oppose`);
+            const bestDd = this.findSweepWinner(rows, (row) => -Math.abs(row.result.maxDrawdownPercent), (row) => `<= ${row.maxOppose} oppose`);
+
+            uiManager.showToast(`Opposition sweep complete for ${context.benchmarkSymbol}.`, "success");
+            this.updateStatus(
+                `Opposition sweep ready for ${context.benchmarkSymbol}. ` +
+                `Best exp ${bestExp?.label ?? "-"} ${bestExp ? this.formatCurrency(bestExp.result.expectancy) : "-"}. ` +
+                `Best net ${bestNet?.label ?? "-"} ${bestNet ? this.formatPercent(bestNet.result.netProfitPercent) : "-"}. ` +
+                `Best DD ${bestDd?.label ?? "-"} ${bestDd ? this.formatDrawdownPercent(bestDd.result.maxDrawdownPercent) : "-"}.`
+            );
+        } catch (error) {
+            console.error("[PortfolioLab] Opposition sweep failed:", error);
+            uiManager.showToast(`Opposition sweep failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+            this.updateStatus("Opposition sweep failed. Check console for details.");
+        } finally {
+            dom.portfolioRunOppositionSweepBtn.disabled = false;
+            dom.portfolioRunOppositionSweepBtn.setAttribute("aria-busy", "false");
         }
     }
 
@@ -484,19 +732,33 @@ class PortfolioLabService {
         benchmarkSymbol: string,
         skipped: string[],
         consensus: ConsensusAnalysis,
-        windowMode: PortfolioWindowMode
+        windowMode: PortfolioWindowMode,
+        breadthSweep: BreadthSweepRow[],
+        oppositionSweep: OppositionSweepRow[],
+        rankingRows: PairRankingRow[],
+        sizingRows: SizingScenarioRow[],
+        liveContext: LiveContextSnapshot,
+        minAgree: number,
+        maxOppose: number
     ): void {
         const dom = this.getDom();
         dom.portfolioContent.style.display = "";
         dom.portfolioEmpty.style.display = rows.length > 0 ? "none" : "";
         dom.portfolioResults.style.display = rows.length > 0 ? "" : "none";
+        dom.portfolioLiveContextSection.style.display = rows.length > 0 ? "" : "none";
         dom.portfolioInsightSection.style.display = rows.length > 0 ? "" : "none";
+        dom.portfolioExecutionSection.style.display = rows.length > 0 ? "" : "none";
         dom.portfolioConsensusSection.style.display = rows.length > 0 ? "" : "none";
+        dom.portfolioRankingSection.style.display = rows.length > 0 ? "" : "none";
+        dom.portfolioSizingSection.style.display = rows.length > 0 ? "" : "none";
         dom.portfolioMatrixSection.style.display = rows.length > 1 ? "" : "none";
 
         if (rows.length === 0) {
             dom.portfolioSummary.innerHTML = "";
+            dom.portfolioLiveContextSummary.innerHTML = "";
+            dom.portfolioLiveContextDetails.innerHTML = "";
             dom.portfolioInsights.innerHTML = "";
+            dom.portfolioExecutionSummary.innerHTML = "";
             dom.portfolioConsensusSummary.innerHTML = "";
             dom.portfolioConsensusTableBody.innerHTML = `
                 <tr>
@@ -510,6 +772,30 @@ class PortfolioLabService {
                 <tr>
                     <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
                         Run Breadth Sweep to compare agreement thresholds.
+                    </td>
+                </tr>
+            `;
+            dom.portfolioOppositionSweepSection.style.display = "none";
+            dom.portfolioOppositionSweepTableBody.innerHTML = `
+                <tr>
+                    <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                        Run Sweep Opposition to compare conflict thresholds.
+                    </td>
+                </tr>
+            `;
+            dom.portfolioRankingSummary.innerHTML = "";
+            dom.portfolioRankingTableBody.innerHTML = `
+                <tr>
+                    <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                        Run Portfolio Lab to rank pairs by quality, diversification, and context response.
+                    </td>
+                </tr>
+            `;
+            dom.portfolioSizingSummary.innerHTML = "";
+            dom.portfolioSizingTableBody.innerHTML = `
+                <tr>
+                    <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                        Run Portfolio Lab to compare context-weighted sizing scenarios.
                     </td>
                 </tr>
             `;
@@ -530,9 +816,25 @@ class PortfolioLabService {
         }
 
         dom.portfolioSummary.innerHTML = this.renderSummary(rows, benchmarkSymbol);
-        dom.portfolioInsights.innerHTML = this.renderInsights(rows, benchmarkSymbol, skipped, consensus, windowMode);
+        dom.portfolioLiveContextSummary.innerHTML = this.renderLiveContextSummary(liveContext);
+        dom.portfolioLiveContextDetails.innerHTML = this.renderLiveContextDetails(liveContext);
+        dom.portfolioInsights.innerHTML = this.renderInsights(rows, benchmarkSymbol, skipped, windowMode);
+        dom.portfolioExecutionSummary.innerHTML = this.renderExecutionSummary(
+            breadthSweep,
+            oppositionSweep,
+            this.findBestFilterRun(breadthSweep, oppositionSweep, minAgree, maxOppose),
+            benchmarkSymbol,
+            minAgree,
+            maxOppose
+        );
         dom.portfolioConsensusSummary.innerHTML = this.renderConsensusSummary(consensus);
         dom.portfolioConsensusTableBody.innerHTML = this.renderConsensusTable(consensus);
+        this.renderBreadthSweep(breadthSweep);
+        this.renderOppositionSweep(oppositionSweep);
+        dom.portfolioRankingSummary.innerHTML = this.renderRankingSummary(rankingRows);
+        dom.portfolioRankingTableBody.innerHTML = this.renderRankingTable(rankingRows, benchmarkSymbol);
+        dom.portfolioSizingSummary.innerHTML = this.renderSizingSummary(sizingRows);
+        dom.portfolioSizingTableBody.innerHTML = this.renderSizingTable(sizingRows);
         dom.portfolioCorrelationMatrix.innerHTML = this.renderCorrelationMatrix(rows, selectedSymbols, dataCache);
         dom.portfolioPairsTableBody.innerHTML = rows.map((row) => this.renderRow(row, benchmarkSymbol)).join("");
         this.bindRowActions();
@@ -574,11 +876,287 @@ class PortfolioLabService {
         `;
     }
 
+    private renderExecutionSummary(
+        breadthRows: BreadthSweepRow[],
+        oppositionRows: OppositionSweepRow[],
+        currentFilter: ExecutionFilterRun | null,
+        targetSymbol: string,
+        minAgree: number,
+        maxOppose: number
+    ): string {
+        const bestBreadth = this.renderBestBreadthSweep(breadthRows);
+        const bestOpposition = this.renderBestOppositionSweep(oppositionRows);
+        const breadthNet = this.findSweepWinner(
+            breadthRows,
+            (row) => row.result.netProfitPercent,
+            (row) => `>= ${row.minAgree} agree`
+        );
+        const breadthDd = this.findSweepWinner(
+            breadthRows,
+            (row) => -Math.abs(row.result.maxDrawdownPercent),
+            (row) => `>= ${row.minAgree} agree`
+        );
+        const oppositionNet = this.findSweepWinner(
+            oppositionRows,
+            (row) => row.result.netProfitPercent,
+            (row) => `<= ${row.maxOppose} oppose`
+        );
+        const oppositionDd = this.findSweepWinner(
+            oppositionRows,
+            (row) => -Math.abs(row.result.maxDrawdownPercent),
+            (row) => `<= ${row.maxOppose} oppose`
+        );
+        return [
+            this.renderSummaryCard(
+                "Target Pair",
+                this.toDisplaySymbol(targetSymbol),
+                `execution filters are evaluated on the benchmark/current target`
+            ),
+            this.renderSummaryCard(
+                "Breadth Best Exp",
+                bestBreadth ? `>= ${bestBreadth.minAgree} agree` : "-",
+                bestBreadth
+                    ? `${bestBreadth.result.winRate.toFixed(1)}% win | ${this.formatCurrency(bestBreadth.result.expectancy)}`
+                    : "Run produced no valid breadth thresholds"
+            ),
+            this.renderSummaryCard(
+                "Breadth Best Net",
+                breadthNet?.label ?? "-",
+                breadthNet ? `${this.formatPercent(breadthNet.result.netProfitPercent)} | ${this.formatDrawdownPercent(breadthNet.result.maxDrawdownPercent)}` : "Run produced no valid breadth thresholds"
+            ),
+            this.renderSummaryCard(
+                "Breadth Best DD",
+                breadthDd?.label ?? "-",
+                breadthDd ? `${this.formatDrawdownPercent(breadthDd.result.maxDrawdownPercent)} | ${this.formatCurrency(breadthDd.result.expectancy)}` : "Run produced no valid breadth thresholds"
+            ),
+            this.renderSummaryCard(
+                "Oppose Best Exp",
+                bestOpposition ? `<= ${bestOpposition.maxOppose} oppose` : "-",
+                bestOpposition
+                    ? `${bestOpposition.result.winRate.toFixed(1)}% win | ${this.formatCurrency(bestOpposition.result.expectancy)}`
+                    : "Run produced no valid opposition thresholds"
+            ),
+            this.renderSummaryCard(
+                "Oppose Best Net",
+                oppositionNet?.label ?? "-",
+                oppositionNet ? `${this.formatPercent(oppositionNet.result.netProfitPercent)} | ${this.formatDrawdownPercent(oppositionNet.result.maxDrawdownPercent)}` : "Run produced no valid opposition thresholds"
+            ),
+            this.renderSummaryCard(
+                "Oppose Best DD",
+                oppositionDd?.label ?? "-",
+                oppositionDd ? `${this.formatDrawdownPercent(oppositionDd.result.maxDrawdownPercent)} | ${this.formatCurrency(oppositionDd.result.expectancy)}` : "Run produced no valid opposition thresholds"
+            ),
+            this.renderSummaryCard(
+                "Current Filter",
+                `>= ${minAgree} agree, <= ${maxOppose} oppose`,
+                currentFilter
+                    ? `${currentFilter.result.winRate.toFixed(1)}% win | ${this.formatCurrency(currentFilter.result.expectancy)}`
+                    : "Current threshold removed all signals"
+            ),
+        ].join("");
+    }
+
+    private renderLiveContextSummary(liveContext: LiveContextSnapshot): string {
+        if (liveContext.basis === "none" || !liveContext.direction) {
+            return `
+                <div class="sim-card" style="grid-column: 1 / -1;">
+                    <div class="sim-card-label">Current Context</div>
+                    <div class="sim-card-value">No active setup</div>
+                    <div class="sim-card-delta">No open trade or recent signal was available for the target symbol.</div>
+                </div>
+            `;
+        }
+
+        const basisLabel = liveContext.basis === "open_trade" ? "Open Trade" : "Latest Signal";
+        return [
+            this.renderSummaryCard("Context Basis", basisLabel, this.toDisplaySymbol(liveContext.targetSymbol)),
+            this.renderSummaryCard("Direction", liveContext.direction.toUpperCase(), `${liveContext.bucketLabel ?? "No bucket"} | ${liveContext.agreementCount} agree / ${liveContext.oppositionCount} oppose`),
+            this.renderSummaryCard(
+                "Historical Odds",
+                liveContext.odds ? `${liveContext.odds.winRate.toFixed(1)}% win` : "Not enough samples",
+                liveContext.odds ? `${liveContext.odds.label} | ${liveContext.odds.sampleCount} samples` : "Need more historical matches for this context"
+            ),
+            this.renderSummaryCard(
+                "Estimated Expectancy",
+                liveContext.odds ? this.formatCurrency(liveContext.odds.expectancy) : "-",
+                liveContext.openPosition
+                    ? `${liveContext.openPosition.unrealizedPnlPercent >= 0 ? "+" : ""}${liveContext.openPosition.unrealizedPnlPercent.toFixed(2)}% unrealized | ${liveContext.openPosition.barsInTrade} bars held`
+                    : "One-shot context estimate only; no live stream"
+            ),
+        ].join("");
+    }
+
+    private renderLiveContextDetails(liveContext: LiveContextSnapshot): string {
+        if (liveContext.basis === "none" || !liveContext.direction) {
+            return `<div class="portfolio-lab__insight">Run Portfolio Lab after loading enough data on the target symbol to calculate current agreement and historical odds.</div>`;
+        }
+
+        const details: string[] = [];
+        const basisLabel = liveContext.basis === "open_trade" ? "open trade" : "latest signal";
+        details.push(
+            `<strong>Current ${basisLabel}:</strong> ${this.toDisplaySymbol(liveContext.targetSymbol)} ` +
+            `${liveContext.direction.toUpperCase()} with ${liveContext.agreementCount} agreeing pair${liveContext.agreementCount === 1 ? "" : "s"} ` +
+            `and ${liveContext.oppositionCount} opposing pair${liveContext.oppositionCount === 1 ? "" : "s"}.`
+        );
+
+        if (liveContext.agreeingSymbols.length > 0) {
+            details.push(`<strong>Agreeing pairs:</strong> ${liveContext.agreeingSymbols.map((symbol) => this.toDisplaySymbol(symbol)).join(", ")}.`);
+        }
+        if (liveContext.opposingSymbols.length > 0) {
+            details.push(`<strong>Opposing pairs:</strong> ${liveContext.opposingSymbols.map((symbol) => this.toDisplaySymbol(symbol)).join(", ")}.`);
+        }
+        if (liveContext.odds) {
+            details.push(
+                `<strong>Historical match:</strong> ${liveContext.odds.label} returned ${liveContext.odds.winRate.toFixed(1)}% win / ` +
+                `${liveContext.odds.lossRate.toFixed(1)}% loss across ${liveContext.odds.sampleCount} closed trades, with ` +
+                `${this.formatCurrency(liveContext.odds.expectancy)} average expectancy.`
+            );
+        } else {
+            details.push(`<strong>Historical match:</strong> not enough similar closed trades yet for a reliable estimate.`);
+        }
+        if (liveContext.openPosition) {
+            details.push(
+                `<strong>Open-trade state:</strong> entry ${liveContext.openPosition.entryPrice.toFixed(4)}, current ${liveContext.openPosition.currentPrice.toFixed(4)}, ` +
+                `${liveContext.openPosition.unrealizedPnlPercent >= 0 ? "+" : ""}${liveContext.openPosition.unrealizedPnlPercent.toFixed(2)}% unrealized.`
+            );
+        }
+
+        return details.map((detail) => `<div class="portfolio-lab__insight">${detail}</div>`).join("");
+    }
+
+    private findSweepWinner<T extends BreadthSweepRow | OppositionSweepRow>(
+        rows: T[],
+        score: (row: T) => number,
+        label: (row: T) => string
+    ): { label: string; result: BacktestResult } | null {
+        if (rows.length === 0) {
+            return null;
+        }
+        const winner = rows
+            .slice()
+            .sort((a, b) => {
+                const delta = score(b) - score(a);
+                if (delta !== 0) {
+                    return delta;
+                }
+                return b.result.expectancy - a.result.expectancy;
+            })[0];
+        return winner ? { label: label(winner), result: winner.result } : null;
+    }
+
+    private renderRankingSummary(rows: PairRankingRow[]): string {
+        if (rows.length === 0) {
+            return "";
+        }
+
+        const core = rows.find((row) => row.role === "Core" || row.role === "Target") ?? rows[0];
+        const diversifier = rows
+            .slice()
+            .sort((a, b) => {
+                const corrDelta = Math.abs(a.row.marketCorrelation ?? 0) - Math.abs(b.row.marketCorrelation ?? 0);
+                if (corrDelta !== 0) {
+                    return corrDelta;
+                }
+                return b.row.result.expectancy - a.row.result.expectancy;
+            })[0] ?? rows[0];
+        const responder = rows
+            .filter((row) => typeof row.breadthExpectancyLift === "number" && row.breadthExpectancyLift > 0)
+            .sort((a, b) => (b.breadthExpectancyLift ?? -Infinity) - (a.breadthExpectancyLift ?? -Infinity))[0] ?? rows[0];
+
+        return [
+            this.renderSummaryCard("Core Pair", core.row.displayName, `${this.formatCurrency(core.row.result.expectancy)} expectancy | ${this.formatDrawdownPercent(core.row.result.maxDrawdownPercent)} DD`),
+            this.renderSummaryCard("Best Diversifier", diversifier.row.displayName, `${this.formatCorrelation(diversifier.row.marketCorrelation)} market corr | ${this.formatCurrency(diversifier.row.result.expectancy)}`),
+            this.renderSummaryCard(
+                "Strongest Responder",
+                responder.row.displayName,
+                responder.breadthExpectancyLift !== null
+                    ? `${this.formatCurrency(responder.breadthExpectancyLift)} expectancy lift when breadth is strong`
+                    : "No clear breadth-response edge"
+            ),
+        ].join("");
+    }
+
+    private renderRankingTable(rows: PairRankingRow[], benchmarkSymbol: string): string {
+        if (rows.length === 0) {
+            return `
+                <tr>
+                    <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                        Run Portfolio Lab to rank pairs by quality, diversification, and context response.
+                    </td>
+                </tr>
+            `;
+        }
+
+        return rows.map((item) => {
+            const row = item.row;
+            const roleClass = row.symbol === benchmarkSymbol ? " portfolio-lab__pair-badge--benchmark" : "";
+            return `
+                <tr>
+                    <td>
+                        <div class="portfolio-lab__pair-cell">
+                            <span>${row.displayName}</span>
+                            <span class="portfolio-lab__pair-badge${roleClass}">${row.engineUsed === "rust" ? "Rust" : "TS"}</span>
+                        </div>
+                    </td>
+                    <td>${item.role}</td>
+                    <td class="${row.result.expectancy >= 0 ? "positive" : "negative"}">${this.formatCurrency(row.result.expectancy)}</td>
+                    <td class="negative">${this.formatDrawdownPercent(row.result.maxDrawdownPercent)}</td>
+                    <td class="${(item.breadthExpectancyLift ?? 0) >= 0 ? "positive" : "negative"}">${this.formatCurrency(item.breadthExpectancyLift)}</td>
+                    <td>${this.formatCorrelation(row.marketCorrelation)}</td>
+                    <td>${this.formatCorrelation(row.strategyCorrelation)}</td>
+                    <td><button class="btn-simulate portfolio-lab__load-btn" data-symbol="${row.symbol}" type="button">Load</button></td>
+                </tr>
+            `;
+        }).join("");
+    }
+
+    private renderSizingSummary(rows: SizingScenarioRow[]): string {
+        if (rows.length === 0) {
+            return "";
+        }
+
+        const bestNet = rows.slice().sort((a, b) => b.result.netProfitPercent - a.result.netProfitPercent)[0];
+        const bestDefensive = rows.slice().sort((a, b) => Math.abs(a.result.maxDrawdownPercent) - Math.abs(b.result.maxDrawdownPercent))[0];
+
+        return [
+            this.renderSummaryCard("Best Net Scenario", bestNet.name, `${this.formatPercent(bestNet.result.netProfitPercent)} | ${this.formatCurrency(bestNet.result.expectancy)}`),
+            this.renderSummaryCard("Lowest DD Scenario", bestDefensive.name, `${this.formatDrawdownPercent(bestDefensive.result.maxDrawdownPercent)} | ${bestDefensive.result.winRate.toFixed(1)}% win`),
+            this.renderSummaryCard("Sizing Note", "Context-weighted", "These scenarios scale trade size by pair context instead of filtering trades out."),
+        ].join("");
+    }
+
+    private renderSizingTable(rows: SizingScenarioRow[]): string {
+        if (rows.length === 0) {
+            return `
+                <tr>
+                    <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                        Run Portfolio Lab to compare context-weighted sizing scenarios.
+                    </td>
+                </tr>
+            `;
+        }
+
+        return rows.map((row) => `
+            <tr>
+                <td>
+                    <div>${row.name}</div>
+                    <div class="portfolio-lab__table-caption">${row.description}</div>
+                </td>
+                <td>${row.result.avgMultiplier.toFixed(2)}x</td>
+                <td>${row.result.totalTrades}</td>
+                <td>${row.result.winRate.toFixed(1)}%</td>
+                <td class="${row.result.netProfitPercent >= 0 ? "positive" : "negative"}">${this.formatPercent(row.result.netProfitPercent)}</td>
+                <td class="${row.result.expectancy >= 0 ? "positive" : "negative"}">${this.formatCurrency(row.result.expectancy)}</td>
+                <td>${this.formatProfitFactor(row.result.profitFactor)}</td>
+                <td class="negative">${this.formatDrawdownPercent(row.result.maxDrawdownPercent)}</td>
+            </tr>
+        `).join("");
+    }
+
     private renderInsights(
         rows: PairAnalysisRow[],
         benchmarkSymbol: string,
         skipped: string[],
-        consensus: ConsensusAnalysis,
         windowMode: PortfolioWindowMode
     ): string {
         const profitablePairs = rows.filter((row) => row.result.netProfitPercent > 0).length;
@@ -618,20 +1196,6 @@ class PortfolioLabService {
 
         if (highestStrategyCorr) {
             insights.push(`${highestStrategyCorr.displayName} has the closest strategy-path behavior to ${benchmarkSymbol} at ${this.formatCorrelation(highestStrategyCorr.strategyCorrelation)}. Treat those two as partially redundant.`);
-        }
-
-        if (consensus.bestBucket) {
-            insights.push(
-                `Best conditional bucket is ${consensus.bestBucket.label} with ${consensus.bestBucket.samples} samples, ` +
-                `${consensus.bestBucket.winRate.toFixed(1)}% win rate, and ${this.formatCurrency(consensus.bestBucket.avgExpectancy)} average expectancy.`
-            );
-        }
-
-        if (consensus.baselineBucket && consensus.bestBucket && consensus.bestBucket.label !== consensus.baselineBucket.label) {
-            insights.push(
-                `Baseline ${consensus.baselineBucket.label} win rate is ${consensus.baselineBucket.winRate.toFixed(1)}%. ` +
-                `Compare that with stronger agreement buckets before treating consensus as a real edge.`
-            );
         }
 
         if (skipped.length > 0) {
@@ -789,7 +1353,9 @@ class PortfolioLabService {
 
     private bindRowActions(): void {
         const dom = this.getDom();
-        dom.portfolioPairsTableBody.querySelectorAll<HTMLButtonElement>(".portfolio-lab__load-btn").forEach((button) => {
+        const buttons = Array.from(dom.portfolioPairsTableBody.querySelectorAll<HTMLButtonElement>(".portfolio-lab__load-btn"))
+            .concat(Array.from(dom.portfolioRankingTableBody.querySelectorAll<HTMLButtonElement>(".portfolio-lab__load-btn")));
+        buttons.forEach((button) => {
             button.addEventListener("click", () => {
                 const symbol = button.dataset.symbol;
                 if (!symbol) {
@@ -898,10 +1464,78 @@ class PortfolioLabService {
         return lookup;
     }
 
-    private async buildBreadthRun(
+    private async buildBreadthSweepRows(context: PortfolioRunContext): Promise<BreadthSweepRow[]> {
+        const maxAgree = Math.max(0, context.selectedSymbols.length - (context.selectedSymbols.includes(context.benchmarkSymbol) ? 1 : 0));
+        const rows: BreadthSweepRow[] = [];
+
+        for (let minAgree = 0; minAgree <= maxAgree; minAgree += 1) {
+            const breadthRun = await this.buildFilterRun(context, { minAgree, maxOppose: null });
+            if (breadthRun) {
+                rows.push({
+                    minAgree,
+                    signals: breadthRun.signals,
+                    result: breadthRun.result,
+                    engineUsed: breadthRun.engineUsed,
+                });
+            }
+        }
+
+        return rows;
+    }
+
+    private async buildOppositionSweepRows(
         context: PortfolioRunContext,
-        minAgree: number
-    ): Promise<{ signals: number; result: BacktestResult; engineUsed: "rust" | "typescript" } | null> {
+        minAgree: number,
+        _maxOpposeHint: number
+    ): Promise<OppositionSweepRow[]> {
+        const maxOppose = Math.max(0, context.selectedSymbols.length - (context.selectedSymbols.includes(context.benchmarkSymbol) ? 1 : 0));
+        const rows: OppositionSweepRow[] = [];
+
+        for (let threshold = 0; threshold <= maxOppose; threshold += 1) {
+            const filterRun = await this.buildFilterRun(context, { minAgree, maxOppose: threshold });
+            if (filterRun) {
+                rows.push({
+                    maxOppose: threshold,
+                    signals: filterRun.signals,
+                    result: filterRun.result,
+                    engineUsed: filterRun.engineUsed,
+                });
+            }
+        }
+
+        return rows;
+    }
+
+    private async runExecutionBacktest(
+        context: PortfolioRunContext,
+        filter: ExecutionFilter,
+        label: string
+    ): Promise<void> {
+        const targetSymbol = context.benchmarkSymbol;
+        const filterRun = await this.buildFilterRun(context, filter);
+        if (!filterRun) {
+            uiManager.showToast(`No ${targetSymbol} signals met ${label}.`, "warning");
+            this.updateStatus(`Execution filter removed all ${targetSymbol} signals at ${label}.`);
+            return;
+        }
+
+        state.set('currentBacktestResultSource', 'backtest');
+        state.set('currentBacktestResult', filterRun.result);
+        strategyPanelController.switchTab('results');
+        uiManager.showToast(
+            `Execution backtest complete: ${targetSymbol} with ${label} (${filterRun.signals} signals).`,
+            'success'
+        );
+        this.updateStatus(
+            `Execution backtest ready for ${targetSymbol}: ${filterRun.result.totalTrades} trades, ` +
+            `${filterRun.result.winRate.toFixed(1)}% win rate, ${this.formatCurrency(filterRun.result.expectancy)} expectancy.`
+        );
+    }
+
+    private async buildFilterRun(
+        context: PortfolioRunContext,
+        filter: ExecutionFilter
+    ): Promise<ExecutionFilterRun | null> {
         const targetSymbol = context.benchmarkSymbol;
         const targetData = context.dataCache.get(targetSymbol)?.data;
         if (!targetData || targetData.length < MIN_LOOKBACK_BARS) {
@@ -920,12 +1554,16 @@ class PortfolioLabService {
                 context.capitalSettings
             );
 
-        const filteredSignals = this.buildBreadthFilteredSignals(
+        const signalContexts = this.buildSignalContexts(
             targetSymbol,
             targetArtifacts,
             context.runCache,
-            context.lagBars,
-            minAgree
+            context.lagBars
+        );
+        const filteredSignals = this.buildFilteredSignals(
+            targetArtifacts,
+            signalContexts,
+            filter
         );
 
         if (filteredSignals.length === 0) {
@@ -941,20 +1579,44 @@ class PortfolioLabService {
         );
 
         return {
+            filter,
             signals: filteredSignals.length,
             result: runResult.result,
             engineUsed: runResult.engineUsed,
         };
     }
 
-    private buildBreadthFilteredSignals(
+    private buildFilteredSignals(
+        targetArtifacts: PairRunArtifacts,
+        signalContexts: Map<string, SignalContext>,
+        filter: ExecutionFilter
+    ): ReturnType<typeof applySignalPolarity> {
+        const filtered: ReturnType<typeof applySignalPolarity> = [];
+
+        for (const signal of targetArtifacts.fullSignals) {
+            const context = signalContexts.get(this.buildSignalContextKey(timeKey(signal.time), signal.type));
+            if (!context) {
+                continue;
+            }
+            if (context.sameCount < filter.minAgree) {
+                continue;
+            }
+            if (typeof filter.maxOppose === "number" && context.oppositeCount > filter.maxOppose) {
+                continue;
+            }
+            filtered.push(signal);
+        }
+
+        return filtered;
+    }
+
+    private buildSignalContexts(
         targetSymbol: string,
         targetArtifacts: PairRunArtifacts,
         artifactsBySymbol: Map<string, PairRunArtifacts>,
-        lagBars: number,
-        minAgree: number
-    ): ReturnType<typeof applySignalPolarity> {
-        const filtered: ReturnType<typeof applySignalPolarity> = [];
+        lagBars: number
+    ): Map<string, SignalContext> {
+        const contexts = new Map<string, SignalContext>();
 
         for (const [timeKeyValue, signalType] of targetArtifacts.signalByTime.entries()) {
             const entryIndex = targetArtifacts.timeIndex.get(timeKeyValue);
@@ -965,6 +1627,9 @@ class PortfolioLabService {
             const startIndex = Math.max(0, entryIndex - lagBars);
             const windowKeys = targetArtifacts.timeKeys.slice(startIndex, entryIndex + 1);
             let sameCount = 0;
+            let oppositeCount = 0;
+            const agreeingSymbols: string[] = [];
+            const opposingSymbols: string[] = [];
 
             for (const [symbol, artifacts] of artifactsBySymbol.entries()) {
                 if (symbol === targetSymbol) {
@@ -981,26 +1646,28 @@ class PortfolioLabService {
 
                 if (latestType === signalType) {
                     sameCount += 1;
+                    agreeingSymbols.push(symbol);
+                } else if (latestType) {
+                    oppositeCount += 1;
+                    opposingSymbols.push(symbol);
                 }
             }
 
-            if (sameCount >= minAgree) {
-                const sourceSignal = this.findSignalByTime(targetArtifacts, timeKeyValue, signalType);
-                if (sourceSignal) {
-                    filtered.push(sourceSignal);
-                }
-            }
+            contexts.set(this.buildSignalContextKey(timeKeyValue, signalType), {
+                timeKey: timeKeyValue,
+                signalType,
+                sameCount,
+                oppositeCount,
+                agreeingSymbols,
+                opposingSymbols,
+            });
         }
 
-        return filtered;
+        return contexts;
     }
 
-    private findSignalByTime(
-        artifacts: PairRunArtifacts,
-        desiredTimeKey: string,
-        desiredType: Signal["type"]
-    ): Signal | null {
-        return artifacts.fullSignals.find((signal) => timeKey(signal.time) === desiredTimeKey && signal.type === desiredType) ?? null;
+    private buildSignalContextKey(timeValue: string, signalType: Signal["type"]): string {
+        return `${timeValue}|${signalType}`;
     }
 
     private renderBreadthSweep(rows: BreadthSweepRow[]): void {
@@ -1032,6 +1699,106 @@ class PortfolioLabService {
         `).join("");
     }
 
+    private renderOppositionSweep(rows: OppositionSweepRow[]): void {
+        const dom = this.getDom();
+        dom.portfolioOppositionSweepSection.style.display = "";
+
+        if (rows.length === 0) {
+            dom.portfolioOppositionSweepTableBody.innerHTML = `
+                <tr>
+                    <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                        No opposition thresholds produced usable filtered signals.
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        const displayRows = this.collapseOppositionSweepRows(rows);
+        dom.portfolioOppositionSweepTableBody.innerHTML = displayRows.map(({ label, row }) => `
+            <tr>
+                <td>${label}</td>
+                <td>${row.signals}</td>
+                <td>${row.result.totalTrades}</td>
+                <td>${row.result.winRate.toFixed(1)}%</td>
+                <td class="${row.result.netProfitPercent >= 0 ? "positive" : "negative"}">${this.formatPercent(row.result.netProfitPercent)}</td>
+                <td class="${row.result.expectancy >= 0 ? "positive" : "negative"}">${this.formatCurrency(row.result.expectancy)}</td>
+                <td>${this.formatProfitFactor(row.result.profitFactor)}</td>
+                <td class="negative">${this.formatDrawdownPercent(row.result.maxDrawdownPercent)}</td>
+            </tr>
+        `).join("");
+    }
+
+    private renderBestBreadthSweep(rows: BreadthSweepRow[]): BreadthSweepRow | null {
+        return rows
+            .slice()
+            .sort((a, b) => {
+                if (b.result.expectancy !== a.result.expectancy) {
+                    return b.result.expectancy - a.result.expectancy;
+                }
+                return b.result.netProfitPercent - a.result.netProfitPercent;
+            })[0] ?? null;
+    }
+
+    private collapseOppositionSweepRows(rows: OppositionSweepRow[]): Array<{ label: string; row: OppositionSweepRow }> {
+        if (rows.length === 0) {
+            return [];
+        }
+
+        const collapsed: Array<{ start: number; end: number; row: OppositionSweepRow }> = [];
+        for (const row of rows) {
+            const last = collapsed[collapsed.length - 1];
+            if (last && this.isEquivalentSweepResult(last.row.result, row.result) && last.row.signals === row.signals) {
+                last.end = row.maxOppose;
+            } else {
+                collapsed.push({ start: row.maxOppose, end: row.maxOppose, row });
+            }
+        }
+
+        return collapsed.map((entry) => ({
+            label: entry.start === entry.end ? `${entry.start}` : `${entry.start}+`,
+            row: entry.row,
+        }));
+    }
+
+    private isEquivalentSweepResult(a: BacktestResult, b: BacktestResult): boolean {
+        return a.totalTrades === b.totalTrades
+            && Math.abs(a.netProfitPercent - b.netProfitPercent) < 0.0001
+            && Math.abs(a.expectancy - b.expectancy) < 0.0001
+            && Math.abs(a.profitFactor - b.profitFactor) < 0.0001
+            && Math.abs(a.maxDrawdownPercent - b.maxDrawdownPercent) < 0.0001
+            && Math.abs(a.winRate - b.winRate) < 0.0001;
+    }
+
+    private renderBestOppositionSweep(rows: OppositionSweepRow[]): OppositionSweepRow | null {
+        return rows
+            .slice()
+            .sort((a, b) => {
+                if (b.result.expectancy !== a.result.expectancy) {
+                    return b.result.expectancy - a.result.expectancy;
+                }
+                return b.result.netProfitPercent - a.result.netProfitPercent;
+            })[0] ?? null;
+    }
+
+    private findBestFilterRun(
+        _breadthRows: BreadthSweepRow[],
+        oppositionRows: OppositionSweepRow[],
+        minAgree: number,
+        maxOppose: number
+    ): ExecutionFilterRun | null {
+        const current = oppositionRows.find((row) => row.maxOppose === maxOppose);
+        if (!current) {
+            return null;
+        }
+        return {
+            filter: { minAgree, maxOppose },
+            signals: current.signals,
+            result: current.result,
+            engineUsed: current.engineUsed,
+        };
+    }
+
     private buildConsensusAnalysis(
         rows: PairAnalysisRow[],
         artifactsBySymbol: Map<string, PairRunArtifacts>,
@@ -1039,6 +1806,7 @@ class PortfolioLabService {
         minSamples: number
     ): ConsensusAnalysis {
         const allSamples: ConsensusTradeSample[] = [];
+        const samplesBySymbol = new Map<string, ConsensusTradeSample[]>();
         const relevantArtifacts = new Map<string, PairRunArtifacts>();
 
         for (const row of rows) {
@@ -1058,6 +1826,12 @@ class PortfolioLabService {
                 const sample = this.buildConsensusTradeSample(row.symbol, trade, relevantArtifacts, targetArtifacts, lagBars);
                 if (sample) {
                     allSamples.push(sample);
+                    const symbolSamples = samplesBySymbol.get(row.symbol);
+                    if (symbolSamples) {
+                        symbolSamples.push(sample);
+                    } else {
+                        samplesBySymbol.set(row.symbol, [sample]);
+                    }
                 }
             }
         }
@@ -1092,10 +1866,23 @@ class PortfolioLabService {
         const bestShortBucket = qualifyingBuckets
             .filter((bucket) => bucket.shortSamples >= minSamples)
             .sort((a, b) => this.compareDirectionBuckets(a.shortWinRate, a.avgExpectancy, b.shortWinRate, b.avgExpectancy))[0] ?? null;
+        const profilesBySymbol = new Map<string, PairConsensusProfile>();
+
+        for (const [symbol, samples] of samplesBySymbol.entries()) {
+            const summaries = this.summarizeSymbolBuckets(samples, minSamples);
+            profilesBySymbol.set(symbol, {
+                symbol,
+                qualifyingBuckets: summaries.qualifyingBuckets,
+                baselineBucket: summaries.baselineBucket,
+                strongestBucket: summaries.strongestBucket,
+                bestBucket: summaries.bestBucket,
+            });
+        }
 
         return {
             qualifyingBuckets,
             allSamples,
+            samplesBySymbol,
             qualifyingSampleCount,
             lagBars,
             minSamples,
@@ -1103,6 +1890,49 @@ class PortfolioLabService {
             bestLongBucket,
             bestShortBucket,
             baselineBucket,
+            profilesBySymbol,
+        };
+    }
+
+    private summarizeSymbolBuckets(
+        samples: ConsensusTradeSample[],
+        minSamples: number
+    ): {
+        qualifyingBuckets: ConsensusBucketSummary[];
+        baselineBucket: ConsensusBucketSummary | null;
+        strongestBucket: ConsensusBucketSummary | null;
+        bestBucket: ConsensusBucketSummary | null;
+    } {
+        const maxSameCount = samples.reduce((max, sample) => Math.max(max, sample.sameCount), 0);
+        const bucketMap = new Map<string, { sortValue: number; samples: ConsensusTradeSample[] }>();
+
+        for (const sample of samples) {
+            const bucket = this.getConsensusBucket(sample.sameCount, maxSameCount);
+            const existing = bucketMap.get(bucket.label);
+            if (existing) {
+                existing.samples.push(sample);
+            } else {
+                bucketMap.set(bucket.label, { sortValue: bucket.sortValue, samples: [sample] });
+            }
+        }
+
+        const summaries = Array.from(bucketMap.entries())
+            .map(([label, value]) => this.summarizeConsensusBucket(label, value.sortValue, value.samples))
+            .sort((a, b) => a.sortValue - b.sortValue);
+        const qualifyingBuckets = summaries.filter((bucket) => bucket.samples >= minSamples);
+        const baselineBucket = qualifyingBuckets.find((bucket) => bucket.sortValue === 0) ?? null;
+        const strongestBucket = qualifyingBuckets
+            .slice()
+            .sort((a, b) => b.sortValue - a.sortValue)[0] ?? null;
+        const bestBucket = qualifyingBuckets
+            .slice()
+            .sort((a, b) => this.compareConsensusBuckets(a, b))[0] ?? null;
+
+        return {
+            qualifyingBuckets,
+            baselineBucket,
+            strongestBucket,
+            bestBucket,
         };
     }
 
@@ -1212,6 +2042,351 @@ class PortfolioLabService {
             return safeB - safeA;
         }
         return bExpectancy - aExpectancy;
+    }
+
+    private buildRankingRows(
+        rows: PairAnalysisRow[],
+        consensus: ConsensusAnalysis,
+        benchmarkSymbol: string
+    ): PairRankingRow[] {
+        return rows
+            .map((row) => {
+                const profile = consensus.profilesBySymbol.get(row.symbol);
+                const breadthLift = this.computeBreadthWinLift(profile);
+                const breadthExpectancyLift = this.computeBreadthExpectancyLift(profile);
+                return {
+                    row,
+                    role: this.classifyPairRole(row, profile, benchmarkSymbol),
+                    breadthLift,
+                    breadthExpectancyLift,
+                };
+            })
+            .sort((a, b) => {
+                if (b.row.result.expectancy !== a.row.result.expectancy) {
+                    return b.row.result.expectancy - a.row.result.expectancy;
+                }
+                return Math.abs(a.row.result.maxDrawdownPercent) - Math.abs(b.row.result.maxDrawdownPercent);
+            });
+    }
+
+    private computeBreadthWinLift(profile: PairConsensusProfile | undefined): number | null {
+        if (!profile?.baselineBucket || !profile.strongestBucket) {
+            return null;
+        }
+        return profile.strongestBucket.winRate - profile.baselineBucket.winRate;
+    }
+
+    private computeBreadthExpectancyLift(profile: PairConsensusProfile | undefined): number | null {
+        if (!profile?.baselineBucket || !profile.strongestBucket) {
+            return null;
+        }
+        return profile.strongestBucket.avgExpectancy - profile.baselineBucket.avgExpectancy;
+    }
+
+    private classifyPairRole(
+        row: PairAnalysisRow,
+        profile: PairConsensusProfile | undefined,
+        benchmarkSymbol: string
+    ): string {
+        if (row.symbol === benchmarkSymbol) {
+            return "Target";
+        }
+
+        const marketCorr = Math.abs(row.marketCorrelation ?? 0);
+        const strategyCorr = Math.abs(row.strategyCorrelation ?? 0);
+        const breadthLift = this.computeBreadthExpectancyLift(profile) ?? 0;
+
+        if (marketCorr <= 0.5 && strategyCorr <= 0.3 && row.result.expectancy > 0) {
+            return "Diversifier";
+        }
+        if (breadthLift >= 2) {
+            return "Responder";
+        }
+        if (row.result.expectancy >= 0 && Math.abs(row.result.maxDrawdownPercent) <= 6) {
+            return "Core";
+        }
+        return "Satellite";
+    }
+
+    private buildLiveContextSnapshot(
+        context: PortfolioRunContext,
+        consensus: ConsensusAnalysis
+    ): LiveContextSnapshot {
+        const targetArtifacts = context.runCache.get(context.benchmarkSymbol);
+        const targetData = context.dataCache.get(context.benchmarkSymbol)?.data ?? [];
+        if (!targetArtifacts || targetData.length === 0) {
+            return {
+                basis: "none",
+                targetSymbol: context.benchmarkSymbol,
+                direction: null,
+                agreementCount: 0,
+                oppositionCount: 0,
+                agreeingSymbols: [],
+                opposingSymbols: [],
+                bucketLabel: null,
+                odds: null,
+                openPosition: null,
+            };
+        }
+
+        const signalContexts = this.buildSignalContexts(
+            context.benchmarkSymbol,
+            targetArtifacts,
+            context.runCache,
+            context.lagBars
+        );
+        const openPosition = getOpenPositionForScanner(targetData, targetArtifacts.fullSignals, context.settings);
+        const currentSetup = this.findCurrentSetup(targetArtifacts, signalContexts, openPosition);
+        if (!currentSetup) {
+            return {
+                basis: "none",
+                targetSymbol: context.benchmarkSymbol,
+                direction: null,
+                agreementCount: 0,
+                oppositionCount: 0,
+                agreeingSymbols: [],
+                opposingSymbols: [],
+                bucketLabel: null,
+                odds: null,
+                openPosition,
+            };
+        }
+
+        const odds = this.estimateLiveContextOdds(
+            consensus.samplesBySymbol.get(context.benchmarkSymbol) ?? [],
+            currentSetup.direction,
+            currentSetup.context,
+            consensus.minSamples
+        );
+
+        return {
+            basis: currentSetup.basis,
+            targetSymbol: context.benchmarkSymbol,
+            direction: currentSetup.direction,
+            agreementCount: currentSetup.context.sameCount,
+            oppositionCount: currentSetup.context.oppositeCount,
+            agreeingSymbols: currentSetup.context.agreeingSymbols,
+            opposingSymbols: currentSetup.context.opposingSymbols,
+            bucketLabel: this.getConsensusBucket(currentSetup.context.sameCount, currentSetup.context.sameCount).label,
+            odds,
+            openPosition,
+        };
+    }
+
+    private findCurrentSetup(
+        targetArtifacts: PairRunArtifacts,
+        signalContexts: Map<string, SignalContext>,
+        openPosition: OpenPosition | null
+    ): { basis: "open_trade" | "latest_signal"; direction: Trade["type"]; context: SignalContext } | null {
+        if (openPosition) {
+            const signalType: Signal["type"] = openPosition.direction === "long" ? "buy" : "sell";
+            const context = signalContexts.get(this.buildSignalContextKey(timeKey(openPosition.entryTime), signalType));
+            if (context) {
+                return {
+                    basis: "open_trade",
+                    direction: openPosition.direction,
+                    context,
+                };
+            }
+        }
+
+        const latestSignal = targetArtifacts.fullSignals[targetArtifacts.fullSignals.length - 1];
+        if (!latestSignal) {
+            return null;
+        }
+        const latestContext = signalContexts.get(this.buildSignalContextKey(timeKey(latestSignal.time), latestSignal.type));
+        if (!latestContext) {
+            return null;
+        }
+
+        return {
+            basis: "latest_signal",
+            direction: latestSignal.type === "buy" ? "long" : "short",
+            context: latestContext,
+        };
+    }
+
+    private estimateLiveContextOdds(
+        samples: ConsensusTradeSample[],
+        direction: Trade["type"],
+        currentContext: SignalContext,
+        minSamples: number
+    ): LiveContextOdds | null {
+        const exactDirectional = samples.filter((sample) =>
+            sample.direction === direction &&
+            sample.sameCount >= currentContext.sameCount &&
+            sample.oppositeCount <= currentContext.oppositeCount
+        );
+        if (exactDirectional.length >= minSamples) {
+            return this.summarizeLiveContextOdds(
+                exactDirectional,
+                `${direction.toUpperCase()} trades with >= ${currentContext.sameCount} agree and <= ${currentContext.oppositeCount} oppose`
+            );
+        }
+
+        const bucketLabel = this.getConsensusBucket(currentContext.sameCount, currentContext.sameCount).label;
+        const bucketDirectional = samples.filter((sample) =>
+            sample.direction === direction &&
+            this.getConsensusBucket(sample.sameCount, currentContext.sameCount).label === bucketLabel
+        );
+        if (bucketDirectional.length >= minSamples) {
+            return this.summarizeLiveContextOdds(
+                bucketDirectional,
+                `${direction.toUpperCase()} trades in ${bucketLabel}`
+            );
+        }
+
+        const bucketAll = samples.filter((sample) =>
+            this.getConsensusBucket(sample.sameCount, currentContext.sameCount).label === bucketLabel
+        );
+        if (bucketAll.length >= minSamples) {
+            return this.summarizeLiveContextOdds(bucketAll, `All ${bucketLabel} trades`);
+        }
+
+        return null;
+    }
+
+    private summarizeLiveContextOdds(samples: ConsensusTradeSample[], label: string): LiveContextOdds {
+        const wins = samples.filter((sample) => sample.isWin).length;
+        return {
+            sampleCount: samples.length,
+            winRate: (wins / samples.length) * 100,
+            lossRate: ((samples.length - wins) / samples.length) * 100,
+            expectancy: samples.reduce((sum, sample) => sum + sample.pnl, 0) / samples.length,
+            label,
+        };
+    }
+
+    private buildSizingScenarios(
+        context: PortfolioRunContext,
+        _rows: PairAnalysisRow[],
+        minAgree: number,
+        maxOppose: number
+    ): SizingScenarioRow[] {
+        const targetArtifacts = context.runCache.get(context.benchmarkSymbol);
+        if (!targetArtifacts) {
+            return [];
+        }
+
+        const signalContexts = this.buildSignalContexts(
+            context.benchmarkSymbol,
+            targetArtifacts,
+            context.runCache,
+            context.lagBars
+        );
+        const tradeContextByKey = new Map<string, SignalContext>();
+        for (const trade of targetArtifacts.result.trades) {
+            const signalType: Signal["type"] = trade.type === "long" ? "buy" : "sell";
+            const contextKey = this.buildSignalContextKey(timeKey(trade.entryTime), signalType);
+            const signalContext = signalContexts.get(contextKey);
+            if (signalContext) {
+                tradeContextByKey.set(`${timeKey(trade.entryTime)}|${trade.type}`, signalContext);
+            }
+        }
+
+        const scenarios: Array<{ name: string; description: string; getMultiplier: (context: SignalContext | null) => number }> = [
+            {
+                name: "Base",
+                description: "Current position sizing on every trade.",
+                getMultiplier: () => 1,
+            },
+            {
+                name: "Conflict Trim",
+                description: `Cut size when opposition exceeds ${maxOppose}, keep normal size otherwise.`,
+                getMultiplier: (signalContext) => {
+                    if (!signalContext) return 1;
+                    return signalContext.oppositeCount > maxOppose ? 0.45 : 1;
+                },
+            },
+            {
+                name: "Breadth Tilt",
+                description: `Keep all trades, but reduce size below ${minAgree} agreement and stay full size on strong breadth.`,
+                getMultiplier: (signalContext) => {
+                    if (!signalContext) return 1;
+                    return signalContext.sameCount >= minAgree ? 1 : 0.6;
+                },
+            },
+            {
+                name: "Clean Context",
+                description: `Full size only when agree >= ${minAgree} and oppose <= ${maxOppose}; otherwise trade smaller.`,
+                getMultiplier: (signalContext) => {
+                    if (!signalContext) return 1;
+                    if (signalContext.sameCount >= minAgree && signalContext.oppositeCount <= maxOppose) {
+                        return 1;
+                    }
+                    if (signalContext.sameCount >= Math.max(1, minAgree - 1)) {
+                        return 0.65;
+                    }
+                    return 0.35;
+                },
+            },
+        ];
+
+        return scenarios.map((scenario) => ({
+            name: scenario.name,
+            description: scenario.description,
+            result: this.simulateScenario(
+                targetArtifacts.result,
+                tradeContextByKey,
+                scenario.getMultiplier,
+                context.capitalSettings
+            ),
+        }));
+    }
+
+    private simulateScenario(
+        result: BacktestResult,
+        tradeContexts: Map<string, SignalContext>,
+        getMultiplier: (context: SignalContext | null) => number,
+        capitalSettings: ReturnType<typeof backtestService.getCapitalSettings>
+    ): ScenarioSummary {
+        let capital = Math.max(0, capitalSettings.initialCapital);
+        let peak = capital;
+        let maxDrawdownPercent = 0;
+        let totalProfit = 0;
+        let totalLoss = 0;
+        let wins = 0;
+        let multiplierSum = 0;
+
+        for (const trade of result.trades) {
+            const context = tradeContexts.get(`${timeKey(trade.entryTime)}|${trade.type}`) ?? null;
+            const multiplier = Math.max(0, getMultiplier(context));
+            multiplierSum += multiplier;
+
+            const baseEntryValue = trade.size * trade.entryPrice;
+            const tradeReturn = baseEntryValue > 0 ? trade.pnl / baseEntryValue : 0;
+            const baseAllocation = capitalSettings.sizingMode === "fixed" && capitalSettings.fixedTradeAmount > 0
+                ? capitalSettings.fixedTradeAmount
+                : capital * (capitalSettings.positionSize / 100);
+            const allocatedCapital = Math.min(capital, Math.max(0, baseAllocation * multiplier));
+            const pnl = allocatedCapital * tradeReturn;
+
+            capital += pnl;
+            if (pnl > 0) {
+                totalProfit += pnl;
+                wins += 1;
+            } else if (pnl < 0) {
+                totalLoss += Math.abs(pnl);
+            }
+
+            peak = Math.max(peak, capital);
+            if (peak > 0) {
+                maxDrawdownPercent = Math.max(maxDrawdownPercent, ((peak - capital) / peak) * 100);
+            }
+        }
+
+        const tradeCount = result.trades.length;
+        const netProfit = capital - capitalSettings.initialCapital;
+
+        return {
+            totalTrades: tradeCount,
+            winRate: tradeCount > 0 ? (wins / tradeCount) * 100 : 0,
+            netProfitPercent: capitalSettings.initialCapital > 0 ? (netProfit / capitalSettings.initialCapital) * 100 : 0,
+            expectancy: tradeCount > 0 ? netProfit / tradeCount : 0,
+            profitFactor: totalLoss === 0 ? (totalProfit > 0 ? Infinity : 0) : totalProfit / totalLoss,
+            maxDrawdownPercent,
+            avgMultiplier: tradeCount > 0 ? multiplierSum / tradeCount : 0,
+        };
     }
 
     private computeCloseReturnCorrelation(a: OHLCVData[], b: OHLCVData[]): number | null {

@@ -100,6 +100,7 @@ Do not introduce new ad hoc time conversion paths unless there is no existing se
 - Finder: `lib/finder-manager.ts`, `lib/finder/*`
 - Walk Forward: `lib/walk-forward-service.ts`
 - Analysis: `lib/analysis-panel.ts`
+- Portfolio Lab: `lib/portfolio-lab-service.ts`
 - Scanner: `lib/scanner/*`
 - Replay: `lib/replay/*`
 - Pair Combiner: `lib/pair-combiner-manager.ts`, `lib/pairCombiner/*`
@@ -171,6 +172,45 @@ Do not introduce new ad hoc time conversion paths unless there is no existing se
 - `lib/analysis-panel.ts` is part UI controller, part feature orchestration
 - Keep heavy computation in backtest analysis modules, not in DOM rendering code
 
+### Modify Portfolio Lab
+- Treat `Portfolio Lab` as two features in one:
+  - execution decision support for the target symbol
+  - descriptive diagnostics for the whole basket
+- High-value sections are:
+  - `Current Context`
+  - `Execution Filters`
+  - `Pair Ranking`
+  - `Sizing Scenarios`
+- Lower-value sections are diagnostics only:
+  - aggregate agreement buckets
+  - correlation matrix
+  - full per-pair table
+
+When touching Portfolio Lab, check these contracts:
+- `html-partials/tab-portfolio.html`
+- `lib/feature-dom-contracts.ts`
+- `lib/portfolio-lab-service.ts`
+- `lib/backtest-service.ts` if custom-signal or custom-data backtests change
+
+Behavior expectations:
+- use the current selected strategy and current UI backtest/capital settings
+- keep context calculations causal; only same-bar or backward-looking lag windows are valid
+- keep `Current Context` one-shot only unless a separate live mode is intentionally introduced
+- preserve the distinction between:
+  - target-symbol filter sweeps
+  - basket-level descriptive bucket summaries
+- if the benchmark/target is outside the ranked pair rows, target-specific sections must still render
+
+Validation habit after Portfolio Lab changes:
+- `npm run typecheck`
+- `npm run test`
+- `..\..\..\node_modules\.bin\esno feature-dom-contracts.spec.ts`
+- if a UI regression is suspected, manually verify:
+  - `Current Context`
+  - `Execution Filters`
+  - `Sizing Scenarios`
+  - collapsed diagnostics state
+
 ## Robust Random WF Discipline
 
 Treat `robust_random_wf` as survivability validation, not as a peak-profit optimizer.
@@ -217,6 +257,8 @@ Treat unrelated pre-existing failures carefully. Do not assume your change cause
 - Used raw `document.getElementById(...)` for structural UI instead of a typed contract
 - Broke time handling by coercing `BusinessDay` like a number
 - Changed signal timing semantics without rechecking entry snapshots / execution model behavior
+- Treated basket-level consensus tables as if they were already validated target-symbol filters
+- Broke benchmark-only target handling in Portfolio Lab, causing sizing or current-context sections to go empty
 
 ## Documentation Standard
 

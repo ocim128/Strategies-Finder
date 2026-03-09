@@ -15,7 +15,7 @@ It is not just a chart page. The app combines:
 - Compare strategies, inspect trades, and analyze entry-quality patterns
 - Search parameter spaces with Finder, including `robust_random_wf`
 - Validate robustness with walk-forward analysis
-- Run one strategy across multiple pairs with Portfolio Lab to compare dispersion and correlations
+- Run one strategy across multiple pairs with Portfolio Lab to compare dispersion, execution filters, pair ranking, sizing scenarios, and correlations
 - Build live or scheduled alert subscriptions through the Worker API
 
 ## Quick Start
@@ -121,6 +121,27 @@ Reuse existing helpers instead of inventing new conversions:
 
 ## Common Workflows
 
+### Use Portfolio Lab effectively
+Portfolio Lab is most useful when you separate decision outputs from diagnostics.
+
+High-signal outputs:
+- `Current Context`: current target-pair agreement, opposition, matching pairs, and historical odds for the current open trade or latest signal
+- `Execution Filters`: breadth and opposition sweeps for the target pair, with separate winners for best expectancy, best net, and best drawdown
+- `Pair Ranking`: quick view of likely core pairs, diversifiers, and strong breadth responders
+- `Sizing Scenarios`: estimate whether context-weighted sizing is better than hard filtering
+
+Lower-signal diagnostics:
+- aggregate agreement-bucket tables across the whole basket
+- raw correlation matrices
+- full per-pair diagnostics table
+
+Recommended workflow:
+1. Run Portfolio Lab in `Common Overlap` mode when comparing pairs fairly matters.
+2. Start from `Current Context` and `Execution Filters` before reading the diagnostic sections.
+3. Do not treat the highest win-rate threshold as automatically best; compare expectancy, net, and drawdown separately.
+4. If hard breadth filters reduce net too much, prefer the `Sizing Scenarios` section over removing trades completely.
+5. Use diagnostics only to confirm diversification or redundancy after you already have a trade decision.
+
 ### Add a built-in strategy
 1. Create `lib/strategies/lib/<strategy-name>.ts`
 2. Export `name`, `description`, `defaultParams`, `paramLabels`, `execute(...)`
@@ -138,6 +159,26 @@ Reuse existing helpers instead of inventing new conversions:
 2. Add the required id to `lib/feature-dom-contracts.ts` if it is structural
 3. Wire the feature through its typed DOM contract
 4. Run the smoke test and typecheck
+
+### Modify Portfolio Lab
+- Main controller: `lib/portfolio-lab-service.ts`
+- Markup: `html-partials/tab-portfolio.html`
+- DOM contract: `lib/feature-dom-contracts.ts`
+- Shared backtest seam: `lib/backtest-service.ts`
+
+Important behavior:
+- pair runs use the current selected strategy and current live UI settings
+- `Latest N Bars` keeps each symbol on its own latest history window
+- `Common Overlap` trims all selected symbols to the shared overlapping calendar window
+- `Current Context` is a one-shot calculation, not a live stream
+- `Execution Filters` are target-symbol decisions; `Pair Context Probability` is basket-level descriptive analysis
+
+If you change Portfolio Lab logic, verify:
+- target symbol handling when the benchmark is not one of the ranked pair rows
+- breadth/opposition sweeps still use causal same-bar or trailing-lag context only
+- sizing scenarios still render when the target symbol is benchmark-only
+- repeated sweep rows collapse correctly when thresholds stop changing outcomes
+- structural ids stay aligned with `feature-dom-contracts.spec.ts`
 
 ### Work on alerts / subscriptions
 - Read `workers/README.md`
