@@ -11,6 +11,13 @@ import { strategyPanelController } from "./strategy-panel-controller";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { uiManager } from "./ui-manager";
 import { getOpenPositionForScanner, type OpenPosition } from "./strategies/backtest/signal-preparation";
+import {
+    buildPortfolioSignalPresenceLookup,
+    buildRunnablePortfolioUniverse,
+    resolveLatestPortfolioSignalType,
+    resolvePortfolioSignalType,
+    type PortfolioSignalPresence,
+} from "./portfolio-lab-helpers";
 
 const MIN_LOOKBACK_BARS = 200;
 const MAX_LOOKBACK_BARS = 20000;
@@ -31,7 +38,7 @@ interface PairRunArtifacts {
     result: BacktestResult;
     engineUsed: "rust" | "typescript";
     fullSignals: ReturnType<typeof applySignalPolarity>;
-    signalByTime: Map<string, Signal["type"]>;
+    signalPresenceByTime: Map<string, PortfolioSignalPresence>;
     timeKeys: string[];
     timeIndex: Map<string, number>;
 }
@@ -206,18 +213,19 @@ class PortfolioLabService {
         this.bindEvents(dom);
         this.syncReadouts(dom);
         this.seedInitialUniverse(dom);
+        this.setDerivedActionsEnabled(false);
         this.initialized = true;
     }
 
     private bindEvents(dom: PortfolioLabDom): void {
         dom.portfolioUseCurrentBtn.addEventListener("click", () => {
-            dom.portfolioSymbolList.value = state.currentSymbol;
-            this.updateStatus(`Universe reset to ${state.currentSymbol}.`);
+            dom.portfolioSymbolList.value = this.buildCurrentUniverse(dom.portfolioBenchmarkSymbol.value).join("\n");
+            this.invalidateRunContext(`Universe reset to ${state.currentSymbol}. Run Portfolio Lab again.`);
         });
 
         dom.portfolioFillMajorsBtn.addEventListener("click", () => {
             dom.portfolioSymbolList.value = this.buildMajorUniverse().join("\n");
-            this.updateStatus("Universe filled with the current symbol plus major pairs.");
+            this.invalidateRunContext("Universe filled with the current symbol plus major pairs. Run Portfolio Lab again.");
         });
 
         dom.portfolioRunBtn.addEventListener("click", () => {
@@ -238,6 +246,22 @@ class PortfolioLabService {
 
         dom.portfolioBenchmarkSymbol.addEventListener("input", () => {
             this.benchmarkDirty = dom.portfolioBenchmarkSymbol.value.trim().length > 0;
+            this.invalidateRunContext("Benchmark changed. Run Portfolio Lab again.");
+        });
+        dom.portfolioSymbolList.addEventListener("input", () => {
+            this.invalidateRunContext("Universe changed. Run Portfolio Lab again.");
+        });
+        dom.portfolioLookbackBars.addEventListener("input", () => {
+            this.invalidateRunContext("Lookback changed. Run Portfolio Lab again.");
+        });
+        dom.portfolioWindowMode.addEventListener("change", () => {
+            this.invalidateRunContext("Window mode changed. Run Portfolio Lab again.");
+        });
+        dom.portfolioConsensusLagBars.addEventListener("input", () => {
+            this.invalidateRunContext("Consensus lag changed. Run Portfolio Lab again.");
+        });
+        dom.portfolioConsensusMinSamples.addEventListener("input", () => {
+            this.invalidateRunContext("Minimum sample threshold changed. Run Portfolio Lab again.");
         });
 
         state.subscribe("currentSymbol", () => {
@@ -245,14 +269,17 @@ class PortfolioLabService {
             if (!this.benchmarkDirty || !dom.portfolioBenchmarkSymbol.value.trim()) {
                 dom.portfolioBenchmarkSymbol.value = state.currentSymbol;
             }
+            this.invalidateRunContext("Target symbol changed. Run Portfolio Lab again.");
         });
 
         state.subscribe("currentInterval", () => {
             this.syncReadouts(dom);
+            this.invalidateRunContext("Timeframe changed. Run Portfolio Lab again.");
         });
 
         state.subscribe("currentStrategyKey", () => {
             this.syncReadouts(dom);
+            this.invalidateRunContext("Strategy changed. Run Portfolio Lab again.");
         });
     }
 
@@ -275,6 +302,13 @@ class PortfolioLabService {
     private buildMajorUniverse(): string[] {
         const unique = new Set<string>([state.currentSymbol, ...MAJOR_SYMBOLS]);
         return Array.from(unique).slice(0, 6);
+    }
+
+    private buildCurrentUniverse(benchmarkInput: string): string[] {
+        return buildRunnablePortfolioUniverse(
+            state.currentSymbol,
+            this.normalizeSymbol(benchmarkInput)
+        );
     }
 
     private async run(): Promise<void> {
@@ -309,6 +343,7 @@ class PortfolioLabService {
 
         dom.portfolioRunBtn.disabled = true;
         dom.portfolioRunBtn.setAttribute("aria-busy", "true");
+        this.setDerivedActionsEnabled(false);
         this.updateStatus(
             `Running ${strategy.name} on ${selectedSymbols.length} pairs ` +
             `(${state.currentInterval}, ${windowMode === "common_overlap" ? "common overlap" : "latest bars"})...`
@@ -439,6 +474,7 @@ class PortfolioLabService {
                 dataCache,
                 runCache,
             };
+            this.setDerivedActionsEnabled(true);
             this.render(
                 rows,
                 selectedSymbols,
@@ -460,6 +496,7 @@ class PortfolioLabService {
             uiManager.showToast(`Portfolio Lab failed: ${error instanceof Error ? error.message : String(error)}`, "error");
             this.updateStatus("Portfolio Lab failed. Check console for details.");
             this.lastRunContext = null;
+            this.setDerivedActionsEnabled(false);
         } finally {
             dom.portfolioRunBtn.disabled = false;
             dom.portfolioRunBtn.setAttribute("aria-busy", "false");
@@ -706,7 +743,7 @@ class PortfolioLabService {
             capitalSettings
         );
         const fullSignals = applySignalPolarity(strategy.execute(data, params), settings);
-        const signalByTime = this.buildSignalLookup(fullSignals);
+        const signalPresenceByTime = buildPortfolioSignalPresenceLookup(fullSignals);
         const timeKeys = data.map((candle) => timeKey(candle.time));
         const timeIndex = new Map<string, number>();
         timeKeys.forEach((key, index) => {
@@ -717,7 +754,7 @@ class PortfolioLabService {
             result: runResult.result,
             engineUsed: runResult.engineUsed,
             fullSignals,
-            signalByTime,
+            signalPresenceByTime,
             timeKeys,
             timeIndex,
         };
@@ -1456,14 +1493,6 @@ class PortfolioLabService {
         return parseTimeToUnixSeconds(candle.time);
     }
 
-    private buildSignalLookup(signals: ReturnType<typeof applySignalPolarity>): Map<string, Signal["type"]> {
-        const lookup = new Map<string, Signal["type"]>();
-        for (const signal of signals) {
-            lookup.set(timeKey(signal.time), signal.type);
-        }
-        return lookup;
-    }
-
     private async buildBreadthSweepRows(context: PortfolioRunContext): Promise<BreadthSweepRow[]> {
         const maxAgree = Math.max(0, context.selectedSymbols.length - (context.selectedSymbols.includes(context.benchmarkSymbol) ? 1 : 0));
         const rows: BreadthSweepRow[] = [];
@@ -1618,7 +1647,11 @@ class PortfolioLabService {
     ): Map<string, SignalContext> {
         const contexts = new Map<string, SignalContext>();
 
-        for (const [timeKeyValue, signalType] of targetArtifacts.signalByTime.entries()) {
+        for (const [timeKeyValue, signalPresence] of targetArtifacts.signalPresenceByTime.entries()) {
+            const signalType = resolvePortfolioSignalType(signalPresence);
+            if (!signalType) {
+                continue;
+            }
             const entryIndex = targetArtifacts.timeIndex.get(timeKeyValue);
             if (entryIndex === undefined) {
                 continue;
@@ -1636,13 +1669,7 @@ class PortfolioLabService {
                     continue;
                 }
 
-                let latestType: Signal["type"] | null = null;
-                for (const key of windowKeys) {
-                    const candidate = artifacts.signalByTime.get(key);
-                    if (candidate) {
-                        latestType = candidate;
-                    }
-                }
+                const latestType = resolveLatestPortfolioSignalType(windowKeys, artifacts.signalPresenceByTime);
 
                 if (latestType === signalType) {
                     sameCount += 1;
@@ -1960,13 +1987,7 @@ class PortfolioLabService {
                 continue;
             }
 
-            let latestType: Signal["type"] | null = null;
-            for (const key of windowKeys) {
-                const candidate = artifacts.signalByTime.get(key);
-                if (candidate) {
-                    latestType = candidate;
-                }
-            }
+            const latestType = resolveLatestPortfolioSignalType(windowKeys, artifacts.signalPresenceByTime);
 
             if (!latestType) {
                 continue;
@@ -2235,20 +2256,20 @@ class PortfolioLabService {
         targetArtifacts: PairRunArtifacts,
         signalContexts: Map<string, SignalContext>
     ): { basis: "latest_signal"; direction: Trade["type"]; context: SignalContext } | null {
-        const latestSignal = targetArtifacts.fullSignals[targetArtifacts.fullSignals.length - 1];
-        if (!latestSignal) {
-            return null;
-        }
-        const latestContext = signalContexts.get(this.buildSignalContextKey(timeKey(latestSignal.time), latestSignal.type));
-        if (!latestContext) {
-            return null;
-        }
+        for (let index = targetArtifacts.fullSignals.length - 1; index >= 0; index -= 1) {
+            const signal = targetArtifacts.fullSignals[index];
+            const latestContext = signalContexts.get(this.buildSignalContextKey(timeKey(signal.time), signal.type));
+            if (!latestContext) {
+                continue;
+            }
 
-        return {
-            basis: "latest_signal",
-            direction: latestSignal.type === "buy" ? "long" : "short",
-            context: latestContext,
-        };
+            return {
+                basis: "latest_signal",
+                direction: signal.type === "buy" ? "long" : "short",
+                context: latestContext,
+            };
+        }
+        return null;
     }
 
     private estimateLiveContextOdds(
@@ -2588,6 +2609,24 @@ class PortfolioLabService {
             return `${symbol.slice(0, -4)}/USDT`;
         }
         return symbol;
+    }
+
+    private invalidateRunContext(message: string): void {
+        if (!this.lastRunContext) {
+            return;
+        }
+        this.lastRunContext = null;
+        this.setDerivedActionsEnabled(false);
+        this.updateStatus(message);
+    }
+
+    private setDerivedActionsEnabled(enabled: boolean): void {
+        const dom = this.getDom();
+        const disabled = !enabled;
+        dom.portfolioRunBreadthBacktestBtn.disabled = disabled;
+        dom.portfolioRunFilterBacktestBtn.disabled = disabled;
+        dom.portfolioRunBreadthSweepBtn.disabled = disabled;
+        dom.portfolioRunOppositionSweepBtn.disabled = disabled;
     }
 
     private updateStatus(message: string): void {
