@@ -2136,7 +2136,17 @@ class PortfolioLabService {
             context.lagBars
         );
         const openPosition = getOpenPositionForScanner(targetData, targetArtifacts.fullSignals, context.settings);
-        const currentSetup = this.findCurrentSetup(targetArtifacts, signalContexts, openPosition);
+        const currentSetup = openPosition
+            ? (() => {
+                const currentContext = this.buildCurrentOpenPositionContext(
+                    context,
+                    openPosition.direction
+                );
+                return currentContext
+                    ? { basis: "open_trade" as const, direction: openPosition.direction, context: currentContext }
+                    : null;
+            })()
+            : this.findLatestSignalSetup(targetArtifacts, signalContexts);
         if (!currentSetup) {
             return {
                 basis: "none",
@@ -2173,23 +2183,58 @@ class PortfolioLabService {
         };
     }
 
-    private findCurrentSetup(
-        targetArtifacts: PairRunArtifacts,
-        signalContexts: Map<string, SignalContext>,
-        openPosition: OpenPosition | null
-    ): { basis: "open_trade" | "latest_signal"; direction: Trade["type"]; context: SignalContext } | null {
-        if (openPosition) {
-            const signalType: Signal["type"] = openPosition.direction === "long" ? "buy" : "sell";
-            const context = signalContexts.get(this.buildSignalContextKey(timeKey(openPosition.entryTime), signalType));
-            if (context) {
-                return {
-                    basis: "open_trade",
-                    direction: openPosition.direction,
-                    context,
-                };
+    private buildCurrentOpenPositionContext(
+        context: PortfolioRunContext,
+        targetDirection: Trade["type"]
+    ): SignalContext | null {
+        const targetArtifacts = context.runCache.get(context.benchmarkSymbol);
+        if (!targetArtifacts || targetArtifacts.timeKeys.length === 0) {
+            return null;
+        }
+
+        const agreeingSymbols: string[] = [];
+        const opposingSymbols: string[] = [];
+        let sameCount = 0;
+        let oppositeCount = 0;
+
+        for (const [symbol, artifacts] of context.runCache.entries()) {
+            if (symbol === context.benchmarkSymbol) {
+                continue;
+            }
+
+            const peerData = context.dataCache.get(symbol)?.data ?? [];
+            if (peerData.length === 0) {
+                continue;
+            }
+
+            const peerOpenPosition = getOpenPositionForScanner(peerData, artifacts.fullSignals, context.settings);
+            if (!peerOpenPosition) {
+                continue;
+            }
+
+            if (peerOpenPosition.direction === targetDirection) {
+                sameCount += 1;
+                agreeingSymbols.push(symbol);
+            } else {
+                oppositeCount += 1;
+                opposingSymbols.push(symbol);
             }
         }
 
+        return {
+            timeKey: targetArtifacts.timeKeys[targetArtifacts.timeKeys.length - 1],
+            signalType: targetDirection === "long" ? "buy" : "sell",
+            sameCount,
+            oppositeCount,
+            agreeingSymbols,
+            opposingSymbols,
+        };
+    }
+
+    private findLatestSignalSetup(
+        targetArtifacts: PairRunArtifacts,
+        signalContexts: Map<string, SignalContext>
+    ): { basis: "latest_signal"; direction: Trade["type"]; context: SignalContext } | null {
         const latestSignal = targetArtifacts.fullSignals[targetArtifacts.fullSignals.length - 1];
         if (!latestSignal) {
             return null;
