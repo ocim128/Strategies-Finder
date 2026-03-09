@@ -10,6 +10,7 @@ import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
 import { applySignalPolarity, runBacktestCompact } from "./strategies/backtest";
 import type { Strategy, StrategyParams, BacktestSettings, OHLCVData } from "./strategies/index";
 import { sliceOhlcvByBlock } from "./block-selector";
+import { deriveWalkForwardTradeThresholds } from "./walk-forward-thresholds";
 import {
     runWalkForwardAnalysis,
     runFixedParamWalkForward,
@@ -277,20 +278,14 @@ class WalkForwardService {
             optimizationWindow = Math.min(totalBars - testWindow, Math.max(testWindow * 2, Math.floor(totalBars / 2)));
             estimatedWindows = this.estimateWindowCount(totalBars, optimizationWindow, testWindow, stepSize);
         }
-
-        const expectedOOSTradesPerWindow = tradesPerBar * testWindow;
-        const minOOSTradesPerWindow = Math.max(1, Math.floor(expectedOOSTradesPerWindow * 0.5));
-        const minTotalOOSTrades = Math.max(20, Math.min(totalTrades, Math.floor(minOOSTradesPerWindow * Math.max(5, estimatedWindows * 0.5))));
+        const thresholds = deriveWalkForwardTradeThresholds(totalTrades, tradesPerBar, testWindow, estimatedWindows);
 
         return {
             optimizationWindow,
             testWindow,
             stepSize,
             estimatedWindows,
-            expectedOOSTradesPerWindow,
-            minTrades: Math.max(1, minOOSTradesPerWindow),
-            minOOSTradesPerWindow,
-            minTotalOOSTrades
+            ...thresholds
         };
     }
 
@@ -313,6 +308,12 @@ class WalkForwardService {
 
         const currentWindows = this.estimateWindowCount(data.length, currentOptWindow, currentTestWindow, currentStep);
         const currentExpectedOOSTrades = tradeStats.tradesPerBar * currentTestWindow;
+        const currentThresholds = deriveWalkForwardTradeThresholds(
+            tradeStats.totalTrades,
+            tradeStats.tradesPerBar,
+            currentTestWindow,
+            currentWindows
+        );
 
         const suggestion = this.suggestWindowsFromTradeFrequency(data.length, tradeStats.totalTrades, tradeStats.tradesPerBar);
         const shouldAdjust = currentWindows > 120 || currentExpectedOOSTrades < 2 || currentWindows < 3;
@@ -331,9 +332,19 @@ class WalkForwardService {
             );
         }
 
+        const activeThresholds = shouldAdjust && autoApply
+            ? {
+                minOOSTradesPerWindow: suggestion.minOOSTradesPerWindow,
+                minTotalOOSTrades: suggestion.minTotalOOSTrades
+            }
+            : {
+                minOOSTradesPerWindow: currentThresholds.minOOSTradesPerWindow,
+                minTotalOOSTrades: currentThresholds.minTotalOOSTrades
+            };
+
         return {
-            minOOSTradesPerWindow: suggestion.minOOSTradesPerWindow,
-            minTotalOOSTrades: suggestion.minTotalOOSTrades
+            minOOSTradesPerWindow: activeThresholds.minOOSTradesPerWindow,
+            minTotalOOSTrades: activeThresholds.minTotalOOSTrades
         };
     }
 

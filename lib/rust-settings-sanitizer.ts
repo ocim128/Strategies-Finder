@@ -19,7 +19,7 @@ const RUST_UNSUPPORTED_TRADE_FILTER_MODES = new Set([
  * - tradeDirection 'both', 'both_flip_loss_2', or 'combined'
  * - marketMode !== 'all'
  * - Any non-zero snapshot filter
- * - Percentage-based risk guards (max hold, probation, loss streak)
+ * - Percentage-based risk extras (max hold, win-streak stop-loss override)
  */
 export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const executionModel = settings.executionModel ?? 'signal_close';
@@ -49,14 +49,11 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         settings.riskMode === 'percentage'
         && settings.riskMaxHoldEnabled === true
         && (settings.riskMaxHoldBars ?? 0) > 0;
-    const usesPercentageProbation =
+    const usesPercentageWinStreakStopLoss =
         settings.riskMode === 'percentage'
-        && settings.riskProbationEnabled === true
-        && (settings.riskProbationBars ?? 0) > 0;
-    const usesPercentageLossStreakGuard =
-        settings.riskMode === 'percentage'
-        && settings.riskLossStreakEnabled === true
-        && (settings.riskLossStreakCooldownBars ?? 0) > 0;
+        && settings.riskWinStreakStopLossEnabled === true
+        && (settings.riskWinStreakStopLossAfterWins ?? 0) > 0
+        && (settings.riskWinStreakStopLossPercent ?? 0) > 0;
 
     // Snapshot filters
     const hasSnapshotFilters = hasNonZeroSnapshotFilter(settings);
@@ -70,8 +67,7 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         || usesNonAllMarketMode
         || usesUnsupportedTradeFilterMode
         || usesPercentageMaxHold
-        || usesPercentageProbation
-        || usesPercentageLossStreakGuard
+        || usesPercentageWinStreakStopLoss
         || hasSnapshotFilters
         || usesMultiPosition
         || usesWarmUpEntry;
@@ -141,15 +137,9 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "marketMode",
     "riskMaxHoldBars",
     "riskMaxHoldEnabled",
-    "riskProbationBars",
-    "riskProbationMinR",
-    "riskProbationCooldownBars",
-    "riskProbationEnabled",
-    "riskLossStreakConsecutive",
-    "riskLossStreakWindowSize",
-    "riskLossStreakWindowLosses",
-    "riskLossStreakCooldownBars",
-    "riskLossStreakEnabled",
+    "riskWinStreakStopLossEnabled",
+    "riskWinStreakStopLossAfterWins",
+    "riskWinStreakStopLossPercent",
     "invertSignals",
     "flipAfterConsecutiveLosses",
     "flipCooldownTrades",

@@ -365,6 +365,11 @@ function openSubscriptionInfoModal(sub: AlertSubscription, configName: string | 
         `Risk Mode: ${formatValue(settings.riskMode)}`,
         `Take Profit: ${settings.takeProfitEnabled === true ? `on (${formatValue(settings.takeProfitPercent)}%)` : 'off'}`,
         `Stop Loss: ${settings.stopLossEnabled === true ? `on (${formatValue(settings.stopLossPercent)}%)` : 'off'}`,
+        `Win-Streak SL Override: ${(settings.riskWinStreakStopLossEnabled === true || settings.riskWinStreakStopLossToggle === true)
+            && getNumber(settings.riskWinStreakStopLossAfterWins)
+            && getNumber(settings.riskWinStreakStopLossPercent)
+            ? `after ${formatValue(settings.riskWinStreakStopLossAfterWins)} wins => ${formatValue(settings.riskWinStreakStopLossPercent)}%`
+            : 'off'}`,
         `ATR Period: ${formatValue(settings.atrPeriod)}`,
         `Stop Loss ATR: ${formatValue(settings.stopLossAtr)}`,
         `Take Profit ATR: ${formatValue(settings.takeProfitAtr)}`,

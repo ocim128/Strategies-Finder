@@ -453,83 +453,43 @@ describe('Backtesting Engine', () => {
         expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
     });
 
-    it('should close weak-start trades and enforce same-direction cooldown in percentage mode', () => {
+    it('should override percentage stop loss after the configured win streak', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
-            { time: '2023-01-02' as Time, open: 100, high: 100.3, low: 99.2, close: 100, volume: 1000 }, // Initial buy
-            { time: '2023-01-03' as Time, open: 100, high: 100.2, low: 99.1, close: 99.8, volume: 1000 },
-            { time: '2023-01-04' as Time, open: 99.8, high: 100.3, low: 99.0, close: 99.9, volume: 1000 }, // Guard check fails
-            { time: '2023-01-05' as Time, open: 99.9, high: 101.0, low: 99.3, close: 100.5, volume: 1000 }, // Cooldown still active
-            { time: '2023-01-06' as Time, open: 100.5, high: 103.0, low: 100.0, close: 102.0, volume: 1000 }, // Re-entry allowed
+            { time: '2023-01-02' as Time, open: 100, high: 104.5, low: 99.5, close: 104, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 104, high: 104.5, low: 103.5, close: 104, volume: 1000 }, // Sell #1 win
+            { time: '2023-01-04' as Time, open: 100, high: 104.5, low: 99.5, close: 104, volume: 1000 },
+            { time: '2023-01-05' as Time, open: 104, high: 104.5, low: 103.5, close: 104, volume: 1000 }, // Sell #2 win
+            { time: '2023-01-06' as Time, open: 100, high: 100.3, low: 99.8, close: 100, volume: 1000 }, // Buy #3
+            { time: '2023-01-07' as Time, open: 100, high: 100.2, low: 98.9, close: 99.2, volume: 1000 }, // 1% SL hit
         ];
 
         const signals: Signal[] = [
             { time: '2023-01-02' as Time, type: 'buy', price: 100 },
-            { time: '2023-01-04' as Time, type: 'buy', price: 99.9 },
-            { time: '2023-01-05' as Time, type: 'buy', price: 100.5 },
-            { time: '2023-01-06' as Time, type: 'buy', price: 102.0 },
+            { time: '2023-01-03' as Time, type: 'sell', price: 104 },
+            { time: '2023-01-04' as Time, type: 'buy', price: 100 },
+            { time: '2023-01-05' as Time, type: 'sell', price: 104 },
+            { time: '2023-01-06' as Time, type: 'buy', price: 100 },
         ];
 
         const result = runBacktest(data, signals, 1000, 100, 0, {
             riskMode: 'percentage',
             stopLossEnabled: false,
+            takeProfitEnabled: false,
             stopLossPercent: 2,
-            takeProfitEnabled: false,
-            riskProbationEnabled: true,
-            riskProbationBars: 2,
-            riskProbationMinR: 0.5,
-            riskProbationCooldownBars: 1,
-        });
-
-        expect(result.totalTrades).to.equal(2);
-        expect(result.trades[0].exitReason).to.equal('probation_fail');
-        expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
-        expect(result.trades[0].type).to.equal('long');
-        expect(result.trades[1].entryTime).to.equal('2023-01-06' as Time);
-        expect(result.trades[1].exitReason).to.equal('end_of_data');
-        expect(result.trades.some((trade) => trade.entryTime === ('2023-01-04' as Time))).to.equal(false);
-        expect(result.trades.some((trade) => trade.entryTime === ('2023-01-05' as Time))).to.equal(false);
-    });
-
-    it('should block same-direction entries after directional loss streak trigger', () => {
-        const data: OHLCVData[] = [
-            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
-            { time: '2023-01-02' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 }, // Buy #1
-            { time: '2023-01-03' as Time, open: 100, high: 100, low: 94, close: 95, volume: 1000 }, // Sell #1 (loss)
-            { time: '2023-01-04' as Time, open: 95, high: 96, low: 94, close: 95, volume: 1000 },  // Buy #2
-            { time: '2023-01-05' as Time, open: 95, high: 95, low: 89, close: 90, volume: 1000 },  // Sell #2 (loss, trigger)
-            { time: '2023-01-06' as Time, open: 90, high: 92, low: 89, close: 91, volume: 1000 },  // Buy blocked
-            { time: '2023-01-07' as Time, open: 91, high: 94, low: 90, close: 93, volume: 1000 },  // Buy blocked
-            { time: '2023-01-08' as Time, open: 93, high: 97, low: 92, close: 96, volume: 1000 },  // Buy allowed
-        ];
-
-        const signals: Signal[] = [
-            { time: '2023-01-02' as Time, type: 'buy', price: 100 },
-            { time: '2023-01-03' as Time, type: 'sell', price: 95 },
-            { time: '2023-01-04' as Time, type: 'buy', price: 95 },
-            { time: '2023-01-05' as Time, type: 'sell', price: 90 },
-            { time: '2023-01-06' as Time, type: 'buy', price: 91 },
-            { time: '2023-01-07' as Time, type: 'buy', price: 93 },
-            { time: '2023-01-08' as Time, type: 'buy', price: 96 },
-        ];
-
-        const result = runBacktest(data, signals, 1000, 100, 0, {
-            riskMode: 'percentage',
-            stopLossEnabled: false,
-            takeProfitEnabled: false,
-            riskLossStreakEnabled: true,
-            riskLossStreakConsecutive: 2,
-            riskLossStreakWindowSize: 0,
-            riskLossStreakWindowLosses: 0,
-            riskLossStreakCooldownBars: 2,
+            riskWinStreakStopLossEnabled: true,
+            riskWinStreakStopLossAfterWins: 2,
+            riskWinStreakStopLossPercent: 1,
         });
 
         expect(result.totalTrades).to.equal(3);
         expect(result.trades[0].entryTime).to.equal('2023-01-02' as Time);
         expect(result.trades[1].entryTime).to.equal('2023-01-04' as Time);
-        expect(result.trades[2].entryTime).to.equal('2023-01-08' as Time);
-        expect(result.trades.some((trade) => trade.entryTime === ('2023-01-06' as Time))).to.equal(false);
-        expect(result.trades.some((trade) => trade.entryTime === ('2023-01-07' as Time))).to.equal(false);
+        expect(result.trades[2].entryTime).to.equal('2023-01-06' as Time);
+        expect(result.trades[0].exitReason).to.equal('signal');
+        expect(result.trades[1].exitReason).to.equal('signal');
+        expect(result.trades[2].exitReason).to.equal('stop_loss');
+        expect(result.trades[2].exitTime).to.equal('2023-01-07' as Time);
     });
 
     it('scanner settings resolver should mirror backtest toggle behavior', () => {
@@ -606,15 +566,9 @@ describe('Backtesting Engine', () => {
             takeProfitEnabled: 'false',
             riskMaxHoldBars: '12',
             riskMaxHoldEnabled: 'true',
-            riskProbationBars: '4',
-            riskProbationMinR: '0.35',
-            riskProbationCooldownBars: '7',
-            riskProbationToggle: 'true',
-            riskLossStreakConsecutive: '2',
-            riskLossStreakWindowSize: '6',
-            riskLossStreakWindowLosses: '4',
-            riskLossStreakCooldownBars: '9',
-            riskLossStreakToggle: 'true',
+            riskWinStreakStopLossToggle: 'true',
+            riskWinStreakStopLossAfterWins: '4',
+            riskWinStreakStopLossPercent: '1.25',
             tradeFilterSettingsToggle: 'true',
             tradeFilterMode: 'rsi',
             confirmLookback: '3',
@@ -645,15 +599,9 @@ describe('Backtesting Engine', () => {
         expect(resolved.takeProfitEnabled).to.equal(false);
         expect(resolved.riskMaxHoldBars).to.equal(12);
         expect(resolved.riskMaxHoldEnabled).to.equal(true);
-        expect(resolved.riskProbationBars).to.equal(4);
-        expect(resolved.riskProbationMinR).to.equal(0.35);
-        expect(resolved.riskProbationCooldownBars).to.equal(7);
-        expect(resolved.riskProbationEnabled).to.equal(true);
-        expect(resolved.riskLossStreakConsecutive).to.equal(2);
-        expect(resolved.riskLossStreakWindowSize).to.equal(6);
-        expect(resolved.riskLossStreakWindowLosses).to.equal(4);
-        expect(resolved.riskLossStreakCooldownBars).to.equal(9);
-        expect(resolved.riskLossStreakEnabled).to.equal(true);
+        expect(resolved.riskWinStreakStopLossEnabled).to.equal(true);
+        expect(resolved.riskWinStreakStopLossAfterWins).to.equal(4);
+        expect(resolved.riskWinStreakStopLossPercent).to.equal(1.25);
         expect(resolved.tradeFilterMode).to.equal('rsi');
         expect(resolved.confirmLookback).to.equal(3);
         expect(resolved.volumeSmaPeriod).to.equal(21);

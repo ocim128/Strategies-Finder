@@ -246,63 +246,24 @@
                     <div class="param-row">
                         <div class="param-group">
                             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                                <label class="param-label" style="margin-bottom: 0;">Weak-Start Guard</label>
+                                <label class="param-label" style="margin-bottom: 0;">Win Streak Trigger (N)</label>
                                 <label class="section-toggle" style="transform: scale(0.8);"
-                                    aria-label="Toggle weak-start guard">
-                                    <input type="checkbox" id="riskProbationToggle">
+                                    aria-label="Toggle win-streak stop loss override">
+                                    <input type="checkbox" id="riskWinStreakStopLossToggle">
                                     <span class="section-toggle-track"></span>
                                 </label>
                             </div>
-                            <input type="number" class="param-input" id="riskProbationBars" value="3" min="1" step="1">
-                            <div class="param-hint">Exit if trade fails to show minimum favorable progress by N bars.</div>
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Min Progress (R)</label>
-                            <input type="number" class="param-input" id="riskProbationMinR" value="0.2" min="0"
-                                step="0.05">
-                            <div class="param-hint">Uses MFE / initial risk (R). Reference R comes from Stop Loss % even
-                                when SL toggle is off.</div>
-                        </div>
-                    </div>
-                    <div class="param-row">
-                        <div class="param-group">
-                            <label class="param-label">Cooldown (bars)</label>
-                            <input type="number" class="param-input" id="riskProbationCooldownBars" value="5" min="0"
+                            <input type="number" class="param-input" id="riskWinStreakStopLossAfterWins" value="3" min="1"
                                 step="1">
-                            <div class="param-hint">Blocks same-direction re-entry after weak-start exit.</div>
-                        </div>
-                    </div>
-                    <div class="param-row">
-                        <div class="param-group">
-                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                                <label class="param-label" style="margin-bottom: 0;">Loss-Streak Guard</label>
-                                <label class="section-toggle" style="transform: scale(0.8);"
-                                    aria-label="Toggle loss-streak guard">
-                                    <input type="checkbox" id="riskLossStreakToggle">
-                                    <span class="section-toggle-track"></span>
-                                </label>
-                            </div>
-                            <input type="number" class="param-input" id="riskLossStreakConsecutive" value="2" min="1"
-                                step="1">
-                            <div class="param-hint">Trigger after N consecutive losses per direction.</div>
+                            <div class="param-hint">After N consecutive profitable closed trades, new entries can switch
+                                to the stop loss below.</div>
                         </div>
                         <div class="param-group">
-                            <label class="param-label">Cooldown (bars)</label>
-                            <input type="number" class="param-input" id="riskLossStreakCooldownBars" value="5" min="1"
-                                step="1">
-                            <div class="param-hint">Block same-direction entries during cooldown.</div>
-                        </div>
-                    </div>
-                    <div class="param-row">
-                        <div class="param-group">
-                            <label class="param-label">Window Size</label>
-                            <input type="number" class="param-input" id="riskLossStreakWindowSize" value="5" min="1"
-                                step="1">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Losses In Window</label>
-                            <input type="number" class="param-input" id="riskLossStreakWindowLosses" value="3" min="1"
-                                step="1">
+                            <label class="param-label">Stop Loss After Streak (%)</label>
+                            <input type="number" class="param-input" id="riskWinStreakStopLossPercent" value="0" min="0"
+                                max="15" step="0.1">
+                            <div class="param-hint">0 = off. Overrides the regular Stop Loss % for new entries while the
+                                win streak stays active.</div>
                         </div>
                     </div>
                 </div>

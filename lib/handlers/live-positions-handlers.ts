@@ -69,8 +69,16 @@ function inferRiskToggle(settings: Record<string, unknown>): boolean {
             || toFiniteNumber(settings.stopLossPercent) > 0
             || toFiniteNumber(settings.takeProfitPercent) > 0
             || (toBoolean(settings.riskMaxHoldEnabled) === true)
-            || (toBoolean(settings.riskProbationEnabled) === true)
-            || (toBoolean(settings.riskLossStreakEnabled) === true);
+            || (
+                toBoolean(settings.riskWinStreakStopLossEnabled) === true
+                && toFiniteNumber(settings.riskWinStreakStopLossAfterWins) > 0
+                && toFiniteNumber(settings.riskWinStreakStopLossPercent) > 0
+            )
+            || (
+                toBoolean(settings.riskWinStreakStopLossToggle) === true
+                && toFiniteNumber(settings.riskWinStreakStopLossAfterWins) > 0
+                && toFiniteNumber(settings.riskWinStreakStopLossPercent) > 0
+            );
     }
     return toFiniteNumber(settings.stopLossAtr) > 0
         || toFiniteNumber(settings.takeProfitAtr) > 0

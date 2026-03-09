@@ -227,24 +227,12 @@ export interface BacktestSettings {
     riskMaxHoldBars?: number;
     /** Enable max hold bars cap in percentage risk mode */
     riskMaxHoldEnabled?: boolean;
-    /** Enable weak-start guard exit in percentage mode */
-    riskProbationEnabled?: boolean;
-    /** Guard horizon in bars for weak-start validation */
-    riskProbationBars?: number;
-    /** Minimum favorable progress in R required by guard horizon */
-    riskProbationMinR?: number;
-    /** Same-direction re-entry cooldown after weak-start exit */
-    riskProbationCooldownBars?: number;
-    /** Enable directional loss-streak entry block in percentage mode */
-    riskLossStreakEnabled?: boolean;
-    /** Trigger after N consecutive losses in the same direction */
-    riskLossStreakConsecutive?: number;
-    /** Rolling window size for directional loss-streak trigger */
-    riskLossStreakWindowSize?: number;
-    /** Trigger when at least N losses occur within the rolling window */
-    riskLossStreakWindowLosses?: number;
-    /** Cooldown bars after directional loss-streak trigger */
-    riskLossStreakCooldownBars?: number;
+    /** Enable the win-streak stop loss override in percentage mode */
+    riskWinStreakStopLossEnabled?: boolean;
+    /** After N consecutive winning trades, new entries switch to the override stop loss % */
+    riskWinStreakStopLossAfterWins?: number;
+    /** Override stop loss % applied after the configured win streak. 0 disables the feature. */
+    riskWinStreakStopLossPercent?: number;
 
     trendEmaPeriod?: number;
     /** EMA period used by HTF bias filters (trend_htf_bias / trend_mtf_stack). */

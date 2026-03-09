@@ -99,19 +99,8 @@ function resolvePreparedSignalBarIndexes(data: OHLCVData[], preparedSignals: Sig
     return indexes;
 }
 
-type CooldownState = {
-    longUntilBar: number;
-    shortUntilBar: number;
-};
-
-type DirectionLossState = {
-    consecutiveLosses: number;
-    recentLosses: boolean[];
-};
-
-type LossStreakState = {
-    long: DirectionLossState;
-    short: DirectionLossState;
+type WinStreakRiskState = {
+    consecutiveWins: number;
 };
 
 type FlipLossDirectionState = {
@@ -123,17 +112,9 @@ type FlipLossDirectionState = {
     hasFlipped: boolean;
 };
 
-function createCooldownState(): CooldownState {
+function createWinStreakRiskState(): WinStreakRiskState {
     return {
-        longUntilBar: -1,
-        shortUntilBar: -1,
-    };
-}
-
-function createLossStreakState(): LossStreakState {
-    return {
-        long: { consecutiveLosses: 0, recentLosses: [] },
-        short: { consecutiveLosses: 0, recentLosses: [] },
+        consecutiveWins: 0,
     };
 }
 
@@ -207,74 +188,30 @@ function updateLossFlipDirectionAfterClose(
     setDirectionLossStreakCount(state, direction, 0);
 }
 
-function shouldApplyProbationCooldown(config: BacktestSettings): boolean {
-    return config.riskMode === 'percentage'
-        && config.riskProbationEnabled === true
-        && (config.riskProbationCooldownBars ?? 0) > 0;
+function updateWinStreakRiskState(state: WinStreakRiskState, tradePnl: number): void {
+    state.consecutiveWins = tradePnl > 0 ? state.consecutiveWins + 1 : 0;
 }
 
-function shouldApplyLossStreakGuard(config: BacktestSettings): boolean {
-    if (config.riskMode !== 'percentage' || config.riskLossStreakEnabled !== true) return false;
-    const cooldownBars = config.riskLossStreakCooldownBars ?? 0;
-    const consecutive = config.riskLossStreakConsecutive ?? 0;
-    const windowSize = config.riskLossStreakWindowSize ?? 0;
-    const windowLosses = config.riskLossStreakWindowLosses ?? 0;
-    if (cooldownBars <= 0) return false;
-    return consecutive > 0 || (windowSize > 0 && windowLosses > 0);
+function resolveWinStreakStopLossPercent(
+    config: NormalizedSettings,
+    state: WinStreakRiskState
+): number | null {
+    if (config.riskMode !== 'percentage') return null;
+    if (config.riskWinStreakStopLossEnabled !== true) return null;
+    if (config.riskWinStreakStopLossAfterWins <= 0) return null;
+    if (config.riskWinStreakStopLossPercent <= 0) return null;
+    if (state.consecutiveWins < config.riskWinStreakStopLossAfterWins) return null;
+    return config.riskWinStreakStopLossPercent;
 }
 
-function isDirectionOnCooldown(cooldown: CooldownState, direction: 'long' | 'short', barIndex: number): boolean {
-    const blockedUntil = direction === 'long' ? cooldown.longUntilBar : cooldown.shortUntilBar;
-    return barIndex <= blockedUntil;
-}
-
-function armDirectionCooldown(
-    cooldown: CooldownState,
-    direction: 'long' | 'short',
-    barIndex: number,
-    cooldownBars: number
-): void {
-    if (cooldownBars <= 0) return;
-    const nextBlockedUntil = barIndex + cooldownBars;
-    if (direction === 'long') {
-        cooldown.longUntilBar = Math.max(cooldown.longUntilBar, nextBlockedUntil);
-        return;
-    }
-    cooldown.shortUntilBar = Math.max(cooldown.shortUntilBar, nextBlockedUntil);
-}
-
-function updateLossStreakCooldown(
-    lossStreak: LossStreakState,
-    cooldown: CooldownState,
-    direction: 'long' | 'short',
-    tradePnl: number,
-    barIndex: number,
-    settings: BacktestSettings
-): void {
-    const state = direction === 'long' ? lossStreak.long : lossStreak.short;
-    const isLoss = tradePnl <= 0;
-    state.consecutiveLosses = isLoss ? state.consecutiveLosses + 1 : 0;
-
-    const windowSize = Math.max(0, settings.riskLossStreakWindowSize ?? 0);
-    if (windowSize > 0) {
-        state.recentLosses.push(isLoss);
-        while (state.recentLosses.length > windowSize) {
-            state.recentLosses.shift();
-        }
-    }
-
-    const consecutiveTarget = Math.max(0, settings.riskLossStreakConsecutive ?? 0);
-    const windowLossTarget = Math.max(0, settings.riskLossStreakWindowLosses ?? 0);
-    const windowLossCount = windowSize > 0
-        ? state.recentLosses.reduce((count, loss) => count + (loss ? 1 : 0), 0)
-        : 0;
-
-    const consecutiveTriggered = consecutiveTarget > 0 && state.consecutiveLosses >= consecutiveTarget;
-    const windowTriggered = windowSize > 0 && windowLossTarget > 0 && windowLossCount >= windowLossTarget;
-
-    if (consecutiveTriggered || windowTriggered) {
-        armDirectionCooldown(cooldown, direction, barIndex, settings.riskLossStreakCooldownBars ?? 0);
-    }
+function buildPositionRiskOverrides(config: NormalizedSettings, state: WinStreakRiskState) {
+    const overrideStopLossPercent = resolveWinStreakStopLossPercent(config, state);
+    return {
+        effectiveStopLossPercent: overrideStopLossPercent ?? config.stopLossPercent,
+        enablePercentageStopLoss: config.riskMode === 'percentage'
+            ? (config.stopLossEnabled || (overrideStopLossPercent ?? 0) > 0)
+            : undefined,
+    };
 }
 
 function combineCompactResults(
@@ -538,11 +475,7 @@ export function runBacktestCompact(
 
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
-    const probationCooldownActive = shouldApplyProbationCooldown(config);
-    const lossStreakGuardActive = shouldApplyLossStreakGuard(config);
-    const entryCooldownActive = probationCooldownActive || lossStreakGuardActive;
-    const cooldown = createCooldownState();
-    const lossStreak = createLossStreakState();
+    const winStreakRisk = createWinStreakRiskState();
     const flipLossDirection = createFlipLossDirectionState();
     const warmUpEnabled = config.warmUpEntryEnabled;
     let pendingEntry: Signal | null = null;
@@ -564,17 +497,11 @@ export function runBacktestCompact(
     };
 
     const tryProcessExitsAfterEntry = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
-        processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
-            const exitDirection = pos.direction;
+        processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize) => {
             const details = recordExit(pos, exitPrice, exitSize);
-            if (probationCooldownActive && reason === 'probation_fail') {
-                armDirectionCooldown(cooldown, exitDirection, barIndex, config.riskProbationCooldownBars);
-            }
-            if (lossStreakGuardActive && positions.indexOf(pos) < 0) {
-                updateLossStreakCooldown(lossStreak, cooldown, exitDirection, details.totalPnl, barIndex, config);
-            }
             if (positions.indexOf(pos) < 0) {
-                updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, details.totalPnl);
+                updateWinStreakRiskState(winStreakRisk, details.totalPnl);
+                updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, pos.direction, details.totalPnl);
             }
         });
         if (positions.indexOf(pos) >= 0) updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
@@ -587,17 +514,11 @@ export function runBacktestCompact(
         for (let p = positions.length - 1; p >= 0; p--) {
             const pos = positions[p];
             pos.barsInTrade += 1;
-            processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
-                const exitDirection = pos.direction;
+            processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize) => {
                 const details = recordExit(pos, exitPrice, exitSize);
-                if (probationCooldownActive && reason === 'probation_fail') {
-                    armDirectionCooldown(cooldown, exitDirection, i, config.riskProbationCooldownBars);
-                }
-                if (lossStreakGuardActive && positions.indexOf(pos) < 0) {
-                    updateLossStreakCooldown(lossStreak, cooldown, exitDirection, details.totalPnl, i, config);
-                }
                 if (positions.indexOf(pos) < 0) {
-                    updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, details.totalPnl);
+                    updateWinStreakRiskState(winStreakRisk, details.totalPnl);
+                    updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, pos.direction, details.totalPnl);
                 }
             });
             if (positions.indexOf(pos) >= 0) updatePositionState(candle, pos, config, indicatorSeries.atr[i]);
@@ -607,17 +528,29 @@ export function runBacktestCompact(
         if (warmUpEnabled && pendingEntry && positions.length < maxOpenTrades) {
             const warmUpSignal: Signal = Object.assign({}, pendingEntry, { price: candle.open, time: candle.time });
             if (canEnterLossFlipDirection(tradeDirection, flipLossDirection, warmUpSignal)) {
-                const opened = buildPositionFromSignal({ signal: warmUpSignal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
+                const opened = buildPositionFromSignal({
+                    signal: warmUpSignal,
+                    barIndex: i,
+                    capital,
+                    initialCapital,
+                    positionSizePercent,
+                    commissionRate,
+                    slippageRate,
+                    settings: config,
+                    atrArray: indicatorSeries.atr,
+                    tradeDirection,
+                    sizingMode,
+                    fixedTradeAmount,
+                    ...buildPositionRiskOverrides(config, winStreakRisk),
+                });
                 if (opened) {
-                    if (!(entryCooldownActive && isDirectionOnCooldown(cooldown, opened.nextPosition.direction, i))) {
-                        positions.push(opened.nextPosition);
-                        if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
-                            flipLossDirection.activeDirection = opened.nextPosition.direction;
-                        }
-                        capital -= opened.entryCommission;
-                        if (config.executionModel === 'next_open') {
-                            tryProcessExitsAfterEntry(opened.nextPosition, candle, i);
-                        }
+                    positions.push(opened.nextPosition);
+                    if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
+                        flipLossDirection.activeDirection = opened.nextPosition.direction;
+                    }
+                    capital -= opened.entryCommission;
+                    if (config.executionModel === 'next_open') {
+                        tryProcessExitsAfterEntry(opened.nextPosition, candle, i);
                     }
                 }
             }
@@ -640,11 +573,22 @@ export function runBacktestCompact(
                     if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
                         continue;
                     }
-                    const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
+                    const opened = buildPositionFromSignal({
+                        signal,
+                        barIndex: i,
+                        capital,
+                        initialCapital,
+                        positionSizePercent,
+                        commissionRate,
+                        slippageRate,
+                        settings: config,
+                        atrArray: indicatorSeries.atr,
+                        tradeDirection,
+                        sizingMode,
+                        fixedTradeAmount,
+                        ...buildPositionRiskOverrides(config, winStreakRisk),
+                    });
                     if (opened) {
-                        if (entryCooldownActive && isDirectionOnCooldown(cooldown, opened.nextPosition.direction, i)) {
-                            continue;
-                        }
                         positions.push(opened.nextPosition);
                         if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                             flipLossDirection.activeDirection = opened.nextPosition.direction;
@@ -666,13 +610,10 @@ export function runBacktestCompact(
                         continue;
                     }
                     const wasPartial = exitFraction < 1;
-                    const exitDirection = exitTarget.direction;
                     const details = recordExit(exitTarget, signal.price, exitSize);
-                    if (lossStreakGuardActive && positions.indexOf(exitTarget) < 0) {
-                        updateLossStreakCooldown(lossStreak, cooldown, exitDirection, details.totalPnl, i, config);
-                    }
                     if (positions.indexOf(exitTarget) < 0) {
-                        updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, details.totalPnl);
+                        updateWinStreakRiskState(winStreakRisk, details.totalPnl);
+                        updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitTarget.direction, details.totalPnl);
                     }
                     const fullyClosed = positions.indexOf(exitTarget) < 0;
                     const immediateReentryAllowed = fullyClosed && !wasPartial && (
@@ -684,11 +625,22 @@ export function runBacktestCompact(
                         )
                     );
                     if (immediateReentryAllowed && positions.length < maxOpenTrades) {
-                        const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
+                        const opened = buildPositionFromSignal({
+                            signal,
+                            barIndex: i,
+                            capital,
+                            initialCapital,
+                            positionSizePercent,
+                            commissionRate,
+                            slippageRate,
+                            settings: config,
+                            atrArray: indicatorSeries.atr,
+                            tradeDirection,
+                            sizingMode,
+                            fixedTradeAmount,
+                            ...buildPositionRiskOverrides(config, winStreakRisk),
+                        });
                         if (opened) {
-                            if (entryCooldownActive && isDirectionOnCooldown(cooldown, opened.nextPosition.direction, i)) {
-                                continue;
-                            }
                             positions.push(opened.nextPosition);
                             if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                                 flipLossDirection.activeDirection = opened.nextPosition.direction;
@@ -792,11 +744,7 @@ export function runBacktest(
     const equityCurve: { time: Time; value: number }[] = [];
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
-    const probationCooldownActive = shouldApplyProbationCooldown(config);
-    const lossStreakGuardActive = shouldApplyLossStreakGuard(config);
-    const entryCooldownActive = probationCooldownActive || lossStreakGuardActive;
-    const cooldown = createCooldownState();
-    const lossStreak = createLossStreakState();
+    const winStreakRisk = createWinStreakRiskState();
     const flipLossDirection = createFlipLossDirectionState();
     const warmUpEnabled = config.warmUpEntryEnabled;
     let pendingEntry: Signal | null = null;
@@ -827,16 +775,10 @@ export function runBacktest(
 
     const tryProcessExitsAfterEntryFull = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
         processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
-            const exitDirection = pos.direction;
             const d = recordExitFull(pos, candle, exitPrice, exitSize, reason);
-            if (probationCooldownActive && reason === 'probation_fail') {
-                armDirectionCooldown(cooldown, exitDirection, barIndex, config.riskProbationCooldownBars);
-            }
-            if (lossStreakGuardActive && positions.indexOf(pos) < 0) {
-                updateLossStreakCooldown(lossStreak, cooldown, exitDirection, d.totalPnl, barIndex, config);
-            }
             if (positions.indexOf(pos) < 0) {
-                updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, d.totalPnl);
+                updateWinStreakRiskState(winStreakRisk, d.totalPnl);
+                updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, pos.direction, d.totalPnl);
             }
         });
         if (positions.indexOf(pos) >= 0) updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
@@ -850,16 +792,10 @@ export function runBacktest(
             const pos = positions[p];
             pos.barsInTrade += 1;
             processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
-                const exitDirection = pos.direction;
                 const d = recordExitFull(pos, candle, exitPrice, exitSize, reason);
-                if (probationCooldownActive && reason === 'probation_fail') {
-                    armDirectionCooldown(cooldown, exitDirection, i, config.riskProbationCooldownBars);
-                }
-                if (lossStreakGuardActive && positions.indexOf(pos) < 0) {
-                    updateLossStreakCooldown(lossStreak, cooldown, exitDirection, d.totalPnl, i, config);
-                }
                 if (positions.indexOf(pos) < 0) {
-                    updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, d.totalPnl);
+                    updateWinStreakRiskState(winStreakRisk, d.totalPnl);
+                    updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, pos.direction, d.totalPnl);
                 }
             });
             if (positions.indexOf(pos) >= 0) updatePositionState(candle, pos, config, indicatorSeries.atr[i]);
@@ -869,19 +805,31 @@ export function runBacktest(
         if (warmUpEnabled && pendingEntry && positions.length < maxOpenTrades) {
             const warmUpSignal: Signal = Object.assign({}, pendingEntry, { price: candle.open, time: candle.time });
             if (canEnterLossFlipDirection(tradeDirection, flipLossDirection, warmUpSignal)) {
-                const opened = buildPositionFromSignal({ signal: warmUpSignal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
+                const opened = buildPositionFromSignal({
+                    signal: warmUpSignal,
+                    barIndex: i,
+                    capital,
+                    initialCapital,
+                    positionSizePercent,
+                    commissionRate,
+                    slippageRate,
+                    settings: config,
+                    atrArray: indicatorSeries.atr,
+                    tradeDirection,
+                    sizingMode,
+                    fixedTradeAmount,
+                    ...buildPositionRiskOverrides(config, winStreakRisk),
+                });
                 if (opened) {
-                    if (!(entryCooldownActive && isDirectionOnCooldown(cooldown, opened.nextPosition.direction, i))) {
-                        positions.push(opened.nextPosition);
-                        opened.nextPosition.warmUpEntry = true;
-                        if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
-                            flipLossDirection.activeDirection = opened.nextPosition.direction;
-                        }
-                        capital -= opened.entryCommission;
-                        captureSnapshotForPosition(opened.nextPosition, i, warmUpSignal);
-                        if (config.executionModel === 'next_open') {
-                            tryProcessExitsAfterEntryFull(opened.nextPosition, candle, i);
-                        }
+                    positions.push(opened.nextPosition);
+                    opened.nextPosition.warmUpEntry = true;
+                    if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
+                        flipLossDirection.activeDirection = opened.nextPosition.direction;
+                    }
+                    capital -= opened.entryCommission;
+                    captureSnapshotForPosition(opened.nextPosition, i, warmUpSignal);
+                    if (config.executionModel === 'next_open') {
+                        tryProcessExitsAfterEntryFull(opened.nextPosition, candle, i);
                     }
                 }
             }
@@ -903,11 +851,22 @@ export function runBacktest(
                     if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
                         continue;
                     }
-                    const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
+                    const opened = buildPositionFromSignal({
+                        signal,
+                        barIndex: i,
+                        capital,
+                        initialCapital,
+                        positionSizePercent,
+                        commissionRate,
+                        slippageRate,
+                        settings: config,
+                        atrArray: indicatorSeries.atr,
+                        tradeDirection,
+                        sizingMode,
+                        fixedTradeAmount,
+                        ...buildPositionRiskOverrides(config, winStreakRisk),
+                    });
                     if (opened) {
-                        if (entryCooldownActive && isDirectionOnCooldown(cooldown, opened.nextPosition.direction, i)) {
-                            continue;
-                        }
                         positions.push(opened.nextPosition);
                         if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                             flipLossDirection.activeDirection = opened.nextPosition.direction;
@@ -927,7 +886,6 @@ export function runBacktest(
                     const exitSize = exitTarget.size * exitFraction;
                     if (exitSize <= 0) continue;
 
-                    const exitDirection = exitTarget.direction;
                     const details = calculateTradeExitDetails(exitTarget, signal.price, exitSize, commissionRate);
                     capital += details.rawPnl - details.commission;
                     const snap = snapshots.get(exitTarget) ?? null;
@@ -940,10 +898,8 @@ export function runBacktest(
                         const idx = positions.indexOf(exitTarget);
                         if (idx >= 0) positions.splice(idx, 1);
                         snapshots.delete(exitTarget);
-                        if (lossStreakGuardActive) {
-                            updateLossStreakCooldown(lossStreak, cooldown, exitDirection, details.totalPnl, i, config);
-                        }
-                        updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitDirection, details.totalPnl);
+                        updateWinStreakRiskState(winStreakRisk, details.totalPnl);
+                        updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitTarget.direction, details.totalPnl);
                     }
                     const immediateReentryAllowed = fullyClosed && exitFraction >= 1 && (
                         tradeDirection === 'both'
@@ -954,11 +910,22 @@ export function runBacktest(
                         )
                     );
                     if (immediateReentryAllowed && positions.length < maxOpenTrades) {
-                        const opened = buildPositionFromSignal({ signal, barIndex: i, capital, initialCapital, positionSizePercent, commissionRate, slippageRate, settings: config, atrArray: indicatorSeries.atr, tradeDirection, sizingMode, fixedTradeAmount });
+                        const opened = buildPositionFromSignal({
+                            signal,
+                            barIndex: i,
+                            capital,
+                            initialCapital,
+                            positionSizePercent,
+                            commissionRate,
+                            slippageRate,
+                            settings: config,
+                            atrArray: indicatorSeries.atr,
+                            tradeDirection,
+                            sizingMode,
+                            fixedTradeAmount,
+                            ...buildPositionRiskOverrides(config, winStreakRisk),
+                        });
                         if (opened) {
-                            if (entryCooldownActive && isDirectionOnCooldown(cooldown, opened.nextPosition.direction, i)) {
-                                continue;
-                            }
                             positions.push(opened.nextPosition);
                             if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                                 flipLossDirection.activeDirection = opened.nextPosition.direction;

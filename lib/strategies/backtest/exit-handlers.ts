@@ -56,30 +56,6 @@ export function processPositionExits(
         }
     }
 
-    // Percentage mode weak-start guard
-    if (
-        config.riskMode === 'percentage' &&
-        config.riskProbationEnabled &&
-        config.riskProbationBars > 0 &&
-        position.barsInTrade >= config.riskProbationBars
-    ) {
-        const riskPerShare = position.riskPerShare;
-        if (riskPerShare > 0) {
-            const bestExtreme = isShortPosition
-                ? Math.min(position.extremePrice, candle.low)
-                : Math.max(position.extremePrice, candle.high);
-            const favorableMove = isShortPosition
-                ? position.entryPrice - bestExtreme
-                : bestExtreme - position.entryPrice;
-            const favorableR = favorableMove / riskPerShare;
-            if (!Number.isFinite(favorableR) || favorableR < config.riskProbationMinR) {
-                const exitPrice = applySlippage(candle.close, exitSide, slippageRate);
-                onExit(exitPrice, position.size, 'probation_fail');
-                return true;
-            }
-        }
-    }
-
     // Percentage mode max hold cap (hard exit regardless of PnL)
     if (
         config.riskMode === 'percentage' &&

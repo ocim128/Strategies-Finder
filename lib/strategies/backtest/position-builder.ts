@@ -16,6 +16,8 @@ export interface PositionBuilderParams {
     tradeDirection: TradeDirection;
     sizingMode: 'percent' | 'fixed';
     fixedTradeAmount: number;
+    effectiveStopLossPercent?: number;
+    enablePercentageStopLoss?: boolean;
 }
 
 export interface BuiltPosition {
@@ -39,7 +41,9 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
         atrArray,
         tradeDirection,
         sizingMode,
-        fixedTradeAmount
+        fixedTradeAmount,
+        effectiveStopLossPercent,
+        enablePercentageStopLoss
     } = params;
 
     if (!allowsSignalAsEntry(signal.type, tradeDirection)) return null;
@@ -87,13 +91,12 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
 
     let riskPerShare = 0;
     if (config.riskMode === 'percentage') {
-        const percentRiskPerShare = config.stopLossPercent > 0
-            ? entryFillPrice * (config.stopLossPercent / 100)
+        const activeStopLossPercent = Math.max(0, effectiveStopLossPercent ?? config.stopLossPercent);
+        const stopLossIsEnabled = enablePercentageStopLoss ?? config.stopLossEnabled;
+        const percentRiskPerShare = activeStopLossPercent > 0
+            ? entryFillPrice * (activeStopLossPercent / 100)
             : 0;
-        if (config.stopLossEnabled && percentRiskPerShare > 0) {
-            riskPerShare = percentRiskPerShare;
-        } else if (config.riskProbationEnabled && config.riskProbationBars > 0 && percentRiskPerShare > 0) {
-            // Virtual risk reference for weak-start guard when SL is intentionally disabled.
+        if (stopLossIsEnabled && percentRiskPerShare > 0) {
             riskPerShare = percentRiskPerShare;
         }
     } else if (atrValue !== null && atrValue !== undefined && config.stopLossAtr > 0) {
@@ -108,8 +111,10 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
     let finalTakeProfitPrice = takeProfitPrice;
 
     if (config.riskMode === 'percentage') {
-        if (config.stopLossEnabled && config.stopLossPercent > 0) {
-            finalStopLossPrice = entryFillPrice * (1 - directionFactor * (config.stopLossPercent / 100));
+        const activeStopLossPercent = Math.max(0, effectiveStopLossPercent ?? config.stopLossPercent);
+        const stopLossIsEnabled = enablePercentageStopLoss ?? config.stopLossEnabled;
+        if (stopLossIsEnabled && activeStopLossPercent > 0) {
+            finalStopLossPrice = entryFillPrice * (1 - directionFactor * (activeStopLossPercent / 100));
         }
         if (config.takeProfitEnabled && config.takeProfitPercent > 0) {
             finalTakeProfitPrice = entryFillPrice * (1 + directionFactor * (config.takeProfitPercent / 100));

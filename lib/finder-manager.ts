@@ -903,6 +903,16 @@ export class FinderManager {
 			merged.riskMaxHoldBars = riskMaxHoldBars;
 		}
 
+		const riskWinStreakStopLossAfterWins = params['riskWinStreakStopLossAfterWins'];
+		if (typeof riskWinStreakStopLossAfterWins === 'number' && Number.isFinite(riskWinStreakStopLossAfterWins)) {
+			merged.riskWinStreakStopLossAfterWins = riskWinStreakStopLossAfterWins;
+		}
+
+		const riskWinStreakStopLossPercent = params['riskWinStreakStopLossPercent'];
+		if (typeof riskWinStreakStopLossPercent === 'number' && Number.isFinite(riskWinStreakStopLossPercent)) {
+			merged.riskWinStreakStopLossPercent = riskWinStreakStopLossPercent;
+		}
+
 		return merged;
 	}
 
