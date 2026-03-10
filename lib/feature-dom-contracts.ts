@@ -478,6 +478,12 @@ export const FINDER_MANAGER_REQUIRED_IDS = [
     "finderSaveSeedAudit",
     "finderList",
     "finderStrategiesToggleAll",
+    "finderStrategySearch",
+    "finderStrategySelectAll",
+    "finderStrategySelectNone",
+    "finderStrategyInvertVisible",
+    "finderStrategySelectVisible",
+    "finderStrategySummary",
     "finderSort",
     "finderSortSecondary",
     "finderAdvancedToggle",
@@ -512,6 +518,12 @@ export interface FinderManagerDom {
     finderSaveSeedAudit: HTMLButtonElement;
     finderList: HTMLElement;
     finderStrategiesToggleAll: HTMLInputElement;
+    finderStrategySearch: HTMLInputElement;
+    finderStrategySelectAll: HTMLButtonElement;
+    finderStrategySelectNone: HTMLButtonElement;
+    finderStrategyInvertVisible: HTMLButtonElement;
+    finderStrategySelectVisible: HTMLButtonElement;
+    finderStrategySummary: HTMLElement;
     finderSort: HTMLSelectElement;
     finderSortSecondary: HTMLSelectElement;
     finderAdvancedToggle: HTMLInputElement;
@@ -547,6 +559,12 @@ export function createFinderManagerDom(): FinderManagerDom {
         finderSaveSeedAudit: getRequiredElement<HTMLButtonElement>("finderSaveSeedAudit"),
         finderList: getRequiredElement("finderList"),
         finderStrategiesToggleAll: getRequiredElement<HTMLInputElement>("finderStrategiesToggleAll"),
+        finderStrategySearch: getRequiredElement<HTMLInputElement>("finderStrategySearch"),
+        finderStrategySelectAll: getRequiredElement<HTMLButtonElement>("finderStrategySelectAll"),
+        finderStrategySelectNone: getRequiredElement<HTMLButtonElement>("finderStrategySelectNone"),
+        finderStrategyInvertVisible: getRequiredElement<HTMLButtonElement>("finderStrategyInvertVisible"),
+        finderStrategySelectVisible: getRequiredElement<HTMLButtonElement>("finderStrategySelectVisible"),
+        finderStrategySummary: getRequiredElement("finderStrategySummary"),
         finderSort: getRequiredElement<HTMLSelectElement>("finderSort"),
         finderSortSecondary: getRequiredElement<HTMLSelectElement>("finderSortSecondary"),
         finderAdvancedToggle: getRequiredElement<HTMLInputElement>("finderAdvancedToggle"),

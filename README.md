@@ -47,7 +47,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Runtime HTML source: `html-partials/*`
 
 ### Core trading engine
-- Strategy registry and loading: `strategyRegistry.ts`, `lib/strategies/library.ts`
+- Strategy registry and loading: `strategyRegistry.ts`, `lib/strategies/manifest.ts`, `lib/strategies/library.ts`
 - Backtest orchestration/UI: `lib/backtest-service.ts`
 - TS backtest engine: `lib/strategies/backtest/*`
 - Rust engine client: `lib/rust-engine-client.ts`
@@ -99,10 +99,11 @@ This ordering matters because Finder, Scanner, and repeated backtests depend on 
 ## Important Contracts
 
 ### Strategy registration is split
-- UI and runtime editing use `strategyRegistry`
-- Worker entry evaluation uses static `lib/strategies/library.ts`
+- UI and runtime loading use `strategyRegistry`
+- Built-in source of truth is `lib/strategies/manifest.ts`
+- `lib/strategies/library.ts` is derived from that manifest and is what worker-side evaluation imports
 
-If you add or rename a built-in strategy, update `lib/strategies/library.ts` or Worker-side evaluation will fail.
+If you add or rename a built-in strategy, update `lib/strategies/manifest.ts` or the strategy will not load consistently.
 
 ### Settings compatibility is real
 - `tradeFilterMode` is the canonical filter field
@@ -143,11 +144,56 @@ Recommended workflow:
 5. Use diagnostics only to confirm diversification or redundancy after you already have a trade decision.
 
 ### Add a built-in strategy
-1. Create `lib/strategies/lib/<strategy-name>.ts`
-2. Export `name`, `description`, `defaultParams`, `paramLabels`, `execute(...)`
-3. Add `metadata` if the strategy participates in walk-forward/finder logic
-4. Register it in `lib/strategies/library.ts`
-5. Verify it appears in the UI dropdown
+1. Pick a stable key and use it consistently for the file name, exported const, and manifest entry.
+2. Create `lib/strategies/lib/<strategy-key>.ts`.
+3. Export a `Strategy` with `name`, `description`, `defaultParams`, `paramLabels`, and `execute(...)`.
+4. Add `metadata` when the strategy should participate in walk-forward/finder optimization.
+5. Register it in `lib/strategies/manifest.ts`.
+6. Run `npm run typecheck`.
+7. Verify it appears in the UI dropdown.
+
+Minimal template:
+```ts
+import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
+
+export const my_strategy_key: Strategy = {
+  name: "My Strategy Name",
+  description: "One-line thesis.",
+  defaultParams: {
+    lookback: 20,
+    threshold: 1,
+  },
+  paramLabels: {
+    lookback: "Lookback",
+    threshold: "Threshold",
+  },
+  execute: (data: OHLCVData[], params: StrategyParams) => {
+    const cleanData = ensureCleanData(data);
+    if (cleanData.length < 3) return [];
+
+    return createSignalLoop(cleanData, [], (i) => {
+      if (/* bullish condition */) {
+        return createBuySignal(cleanData, i, "Bullish reason");
+      }
+      if (/* bearish condition */) {
+        return createSellSignal(cleanData, i, "Bearish reason");
+      }
+      return null;
+    });
+  },
+  metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "threshold"],
+  },
+};
+```
+
+Helpful helper files:
+- `lib/strategies/strategy-helpers.ts`: signal creation, clean-data guards, base OHLCV series extractors
+- `lib/strategies/lib/price-action-frequency-core.ts`: candle geometry and trailing range/high-low helpers
+- `lib/strategies/lib/price-action-statistics-core.ts`: percentile, z-score, skewness, streak, ROC, ER, and decay helpers
 
 ### Change backtest behavior
 - Engine logic: `lib/strategies/backtest/*`

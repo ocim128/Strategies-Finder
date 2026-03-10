@@ -287,6 +287,7 @@ export type BarMetricExtractor =
 	| "lowerWick"
 	| "range"
 	| "body"
+	| "bodyMid"
 	| "wickImbalance"     // (lowerWick - upperWick) / range
 	| "bodyMidDelta"      // bodyMid[i] - bodyMid[i-1], normalized by range
 	| "closeReturn";      // (close[i] - close[i-1]) / close[i-1]
@@ -318,6 +319,9 @@ export function extractBarMetricSeries(
 				break;
 			case "body":
 				result[i] = m.body;
+				break;
+			case "bodyMid":
+				result[i] = m.bodyMid;
 				break;
 			case "wickImbalance":
 				result[i] = m.range > 0 ? (m.lowerWick - m.upperWick) / m.range : 0;

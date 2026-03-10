@@ -48,10 +48,11 @@ If you rename or remove a structural id:
 4. run `feature-dom-contracts.spec.ts`
 
 ### 2. Strategy registration split
-- Main UI/runtime uses `strategyRegistry.ts`
-- Worker uses static built-ins from `lib/strategies/library.ts`
+- Main UI/runtime registers built-ins through `strategyRegistry.ts`
+- Built-in source of truth is `lib/strategies/manifest.ts`
+- `lib/strategies/library.ts` is derived from that manifest and is what worker-side evaluation imports
 
-If a built-in strategy is added or renamed and `library.ts` is not updated, worker-side alert evaluation will silently fail.
+If a built-in strategy is added or renamed and `manifest.ts` is not updated, the strategy will not load consistently in the UI/worker path.
 
 ### 3. Settings compatibility
 - Preserve localStorage/backward compatibility unless you add migration logic
@@ -145,17 +146,90 @@ Do not introduce new ad hoc time conversion paths unless there is no existing se
 ## Feature-Specific Workflows
 
 ### Add a built-in strategy
-1. Create `lib/strategies/lib/<strategy-name>.ts`
-2. Use helpers from `lib/strategies/strategy-helpers.ts`
-3. Export:
+1. Pick the key first. Keep the file name and exported const aligned with that key when possible.
+2. Create `lib/strategies/lib/<strategy-key>.ts`
+3. Export `const <strategy_key>: Strategy = { ... }`
+4. Always include:
    - `name`
    - `description`
    - `defaultParams`
    - `paramLabels`
    - `execute(data, params)`
-   - `metadata` when applicable
-4. Register in `lib/strategies/library.ts`
-5. Verify dropdown + worker compatibility
+   - `metadata` with `role`, `direction`, and `walkForwardParams` when applicable
+5. Register the strategy in `lib/strategies/manifest.ts`
+6. Do not manually wire `strategyRegistry.ts`; built-ins are loaded from the manifest
+7. Verify dropdown + worker compatibility
+
+Recommended strategy-lib skeleton:
+```ts
+import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
+
+export const my_strategy_key: Strategy = {
+	name: "My Strategy Name",
+	description: "One-line thesis.",
+	defaultParams: {
+		lookback: 20,
+		threshold: 1,
+	},
+	paramLabels: {
+		lookback: "Lookback",
+		threshold: "Threshold",
+	},
+	execute: (data: OHLCVData[], params: StrategyParams) => {
+		const cleanData = ensureCleanData(data);
+		if (cleanData.length < 3) return [];
+
+		return createSignalLoop(cleanData, [], (i) => {
+			if (/* bullish condition */) {
+				return createBuySignal(cleanData, i, "My bullish reason");
+			}
+			if (/* bearish condition */) {
+				return createSellSignal(cleanData, i, "My bearish reason");
+			}
+			return null;
+		});
+	},
+	metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+};
+```
+
+Useful helper map when adding strategies:
+- `lib/strategies/strategy-helpers.ts`
+  - `ensureCleanData`
+  - `createSignalLoop`
+  - `createBuySignal` / `createSellSignal`
+  - `getCloses` / `getHighs` / `getLows` / `getVolumes`
+- `lib/strategies/lib/price-action-frequency-core.ts`
+  - `getPriceActionBarMetrics`
+  - `buildRollingAverage`
+  - `buildTrailingAverageRange`
+  - `buildTrailingHighLow`
+  - `buildTrailingWindowSpan`
+- `lib/strategies/lib/price-action-statistics-core.ts`
+  - `extractBarMetricSeries`
+  - `buildRollingZScore`
+  - `buildPercentileRank`
+  - `buildRollingStdDev`
+  - `buildRollingSkewness`
+  - `buildStreakCount`
+  - `buildRateOfChange`
+  - `buildEfficiencyRatio`
+  - `buildCumulativeDecaySum`
+  - `buildThresholdCrossingCount`
+
+Strategy-lib checklist before you stop:
+- file exists in `lib/strategies/lib/*`
+- exported const name matches manifest import
+- `defaultParams` keys match `paramLabels` keys
+- `metadata.walkForwardParams` only references real params
+- manifest import + entry added in `lib/strategies/manifest.ts`
+- `npm run typecheck` passes
+- manually confirm the strategy appears in the dropdown if UI behavior changed
 
 ### Modify Finder
 - Expect performance sensitivity
@@ -252,7 +326,8 @@ Treat unrelated pre-existing failures carefully. Do not assume your change cause
 
 ## Common Failure Modes
 - Renamed UI id in `html-partials/*` but forgot handler or contract update
-- Added a strategy to the UI registry but not to `lib/strategies/library.ts`
+- Added a strategy file but forgot `lib/strategies/manifest.ts`
+- Added params in `defaultParams` but forgot matching `paramLabels` or `metadata.walkForwardParams`
 - Added a new setting but forgot Rust sanitization or finder parity
 - Used raw `document.getElementById(...)` for structural UI instead of a typed contract
 - Broke time handling by coercing `BusinessDay` like a number

@@ -56,9 +56,11 @@ import { follow_through_failure_persistence } from "./lib/follow-through-failure
 import { high_low_midpoint_crossover_momentum } from "./lib/high-low-midpoint-crossover-momentum";
 import { volatility_efficiency_breakout } from "./lib/volatility_efficiency_breakout";
 import { efficiency_ratio_pinch_trigger } from "./lib/efficiency_ratio_pinch_trigger";
-import { dead_zone_efficiency_breakout } from "./lib/dead_zone_efficiency_breakout";
 import { absorptive_wick_decay_wave } from "./lib/absorptive_wick_decay_wave";
 import { fractal_volatility_pinch_impulse } from "./lib/fractal_volatility_pinch_impulse";
+import { dead_zone_efficiency_breakout } from "./lib/dead_zone_efficiency_breakout";
+import { stddev_compression_to_roc_surge } from "./lib/stddev_compression_to_roc_surge";
+import { noise_to_signal_efficiency_breakout } from "./lib/noise_to_signal_efficiency_breakout";
 
 
 export interface StrategyManifestEntry {
@@ -125,8 +127,10 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "volatility_efficiency_breakout", strategy: volatility_efficiency_breakout },
     { key: "efficiency_ratio_pinch_trigger", strategy: efficiency_ratio_pinch_trigger },
     { key: "dead_zone_efficiency_breakout", strategy: dead_zone_efficiency_breakout },
-    { key: "absorptive_wick_decay_wave", strategy: absorptive_wick_decay_wave },
     { key: "fractal_volatility_pinch_impulse", strategy: fractal_volatility_pinch_impulse },
+    { key: "stddev_compression_to_roc_surge", strategy: stddev_compression_to_roc_surge },
+    { key: "noise_to_signal_efficiency_breakout", strategy: noise_to_signal_efficiency_breakout },
+    { key: "absorptive_wick_decay_wave", strategy: absorptive_wick_decay_wave },
 ];
 
 export function createStrategiesRecordFromManifest(

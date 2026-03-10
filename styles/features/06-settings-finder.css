@@ -330,6 +330,88 @@
 
 }
 
+.finder-strategy-toolbar {
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: var(--space-2);
+
+    margin-bottom: var(--space-2);
+
+}
+
+.finder-strategy-actions {
+
+    display: flex;
+
+    flex-wrap: wrap;
+
+    gap: var(--space-2);
+
+}
+
+.finder-strategy-actions .btn {
+
+    min-width: 72px;
+
+}
+
+.finder-strategy-summary {
+
+    font-size: var(--font-size-xs);
+
+    color: var(--text-secondary);
+
+}
+
+.strategy-list-container {
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: var(--space-1-5);
+
+    max-height: 320px;
+
+    overflow-y: auto;
+
+}
+
+.strategy-list-item {
+
+    display: grid;
+
+    grid-template-columns: auto 1fr;
+
+    align-items: center;
+
+    gap: var(--space-2);
+
+    padding: var(--space-1) 0;
+
+    font-size: var(--font-size-sm);
+
+    color: var(--text-primary);
+
+}
+
+.strategy-list-item label {
+
+    cursor: pointer;
+
+    min-width: 0;
+
+}
+
+.strategy-list-item input[type="checkbox"] {
+
+    margin: 0;
+
+}
+
 
 
 #finderComboSettings.is-disabled {

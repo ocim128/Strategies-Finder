@@ -132,6 +132,19 @@
             <span class="section-toggle-track"></span>
         </label>
     </div>
+    <div class="section-body finder-strategy-toolbar">
+        <div class="param-group">
+            <label class="param-label" for="finderStrategySearch">Search</label>
+            <input type="text" class="param-input" id="finderStrategySearch" placeholder="Filter strategies by name">
+        </div>
+        <div class="finder-strategy-actions" role="group" aria-label="Bulk strategy selection actions">
+            <button class="btn btn-secondary btn-compact" id="finderStrategySelectAll" type="button">All</button>
+            <button class="btn btn-secondary btn-compact" id="finderStrategySelectNone" type="button">None</button>
+            <button class="btn btn-secondary btn-compact" id="finderStrategyInvertVisible" type="button">Invert</button>
+            <button class="btn btn-secondary btn-compact" id="finderStrategySelectVisible" type="button">Visible</button>
+        </div>
+        <div class="finder-strategy-summary" id="finderStrategySummary">0 selected</div>
+    </div>
     <div class="section-body strategy-list-container" id="finderStrategyList">
         <!-- Strategies will be injected here -->
     </div>
