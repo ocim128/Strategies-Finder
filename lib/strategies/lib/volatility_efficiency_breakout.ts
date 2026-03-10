@@ -4,7 +4,7 @@ import { buildEfficiencyRatio, buildRateOfChange } from "./price-action-statisti
 
 export const volatility_efficiency_breakout: Strategy = {
 	name: "Volatility Efficiency Breakout",
-	description: "Triggers when low-efficiency compression hands off to a clean directional rate-of-change breakout.",
+	description: "Triggers when a prior low-efficiency compression state hands off to a clean directional rate-of-change breakout.",
 	defaultParams: {
 		erLength: 14,
 		compressionThreshold: 0.25,
@@ -26,9 +26,9 @@ export const volatility_efficiency_breakout: Strategy = {
 		const roc = buildRateOfChange(getCloses(cleanData), erLength);
 
 		return createSignalLoop(cleanData, [efficiencyRatio, roc], (i) => {
-			const er = efficiencyRatio[i] as number;
+			const priorEr = efficiencyRatio[i - 1] as number;
 			const rocValue = roc[i] as number;
-			if (er > compressionThreshold) return null;
+			if (priorEr > compressionThreshold) return null;
 
 			if (rocValue >= rocThreshold) {
 				return createBuySignal(cleanData, i, "Efficiency compression bullish breakout");
