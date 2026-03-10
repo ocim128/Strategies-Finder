@@ -41,10 +41,12 @@ export function buildRollingStdDev(
  */
 export function buildRollingZScore(
 	values: number[],
-	lookbackInput: number
+	lookbackInput: number,
+	minStdDev = 1e-9
 ): (number | null)[] {
 	const lookback = Math.max(2, Math.round(lookbackInput));
 	const result: (number | null)[] = new Array(values.length).fill(null);
+	const varianceFloor = Math.max(minStdDev, 1e-12);
 
 	for (let i = lookback - 1; i < values.length; i++) {
 		let sum = 0;
@@ -58,9 +60,7 @@ export function buildRollingZScore(
 			const diff = values[j] - mean;
 			sumSqDiff += diff * diff;
 		}
-		const stddev = Math.sqrt(sumSqDiff / lookback);
-
-		if (stddev <= 0) continue;
+		const stddev = Math.max(Math.sqrt(sumSqDiff / lookback), varianceFloor);
 		result[i] = (values[i] - mean) / stddev;
 	}
 
@@ -81,11 +81,17 @@ export function buildPercentileRank(
 
 	for (let i = lookback - 1; i < values.length; i++) {
 		const current = values[i];
+		if (!Number.isFinite(current)) continue;
 		let countBelow = 0;
+		let validCount = 0;
 		for (let j = i - lookback + 1; j <= i; j++) {
-			if (values[j] < current) countBelow++;
+			const sample = values[j];
+			if (!Number.isFinite(sample)) continue;
+			validCount++;
+			if (sample < current) countBelow++;
 		}
-		result[i] = countBelow / (lookback - 1);
+		if (validCount < 2) continue;
+		result[i] = countBelow / (validCount - 1);
 	}
 
 	return result;
@@ -236,9 +242,9 @@ export function buildCumulativeDecaySum(
 
 /**
  * Rolling threshold crossing counter.
- * Counts how many values in the lookback window exceed `threshold` (if positive)
- * or fall below `-threshold` (if negative).
- * Returns the net count: bullish crossings - bearish crossings, normalized to [-1, 1].
+ * Counts how many times a series crosses through +threshold or -threshold
+ * over the lookback window. With threshold = 0 this becomes a zero-line
+ * crossing count, useful for measuring whipsaw around a reference level.
  */
 export function buildThresholdCrossingCount(
 	values: number[],
@@ -248,16 +254,22 @@ export function buildThresholdCrossingCount(
 	const lookback = Math.max(2, Math.round(lookbackInput));
 	const absThreshold = Math.abs(threshold);
 	const result: (number | null)[] = new Array(values.length).fill(null);
+	const crossingEvents: number[] = new Array(values.length).fill(0);
+
+	for (let i = 1; i < values.length; i++) {
+		const prev = values[i - 1];
+		const curr = values[i];
+		const crossedUp = prev <= absThreshold && curr > absThreshold;
+		const crossedDown = prev >= -absThreshold && curr < -absThreshold;
+		crossingEvents[i] = crossedUp || crossedDown ? 1 : 0;
+	}
 
 	for (let i = lookback - 1; i < values.length; i++) {
-		let bullCount = 0;
-		let bearCount = 0;
+		let count = 0;
 		for (let j = i - lookback + 1; j <= i; j++) {
-			if (values[j] > absThreshold) bullCount++;
-			else if (values[j] < -absThreshold) bearCount++;
+			count += crossingEvents[j];
 		}
-
-		result[i] = (bullCount - bearCount) / lookback;
+		result[i] = count;
 	}
 
 	return result;
