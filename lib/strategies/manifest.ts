@@ -53,6 +53,8 @@ import { compression_reclaim_impulse } from "./lib/compression-reclaim-impulse";
 import { prior_range_open_trap } from "./lib/prior-range-open-trap";
 import { micro_sweep_reclaim_score } from "./lib/micro-sweep-reclaim-score";
 import { follow_through_failure_persistence } from "./lib/follow-through-failure-persistence";
+import { high_low_midpoint_crossover_momentum } from "./lib/high-low-midpoint-crossover-momentum";
+
 
 export interface StrategyManifestEntry {
     key: string;
@@ -114,6 +116,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "prior_range_open_trap", strategy: prior_range_open_trap },
     { key: "micro_sweep_reclaim_score", strategy: micro_sweep_reclaim_score },
     { key: "follow_through_failure_persistence", strategy: follow_through_failure_persistence },
+    { key: "high_low_midpoint_crossover_momentum", strategy: high_low_midpoint_crossover_momentum },
 ];
 
 export function createStrategiesRecordFromManifest(
