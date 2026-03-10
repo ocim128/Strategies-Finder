@@ -29,6 +29,15 @@ function computeParamRange(
     if (key === "clusterChoice") {
         min = 0;
         max = 2;
+    } else if (key === "midpointBars") {
+        min = Math.max(1, min);
+        max = Math.min(6, max);
+    } else if (key === "crossThreshold") {
+        min = Math.max(0, min);
+        max = Math.min(0.05, max);
+    } else if (key === "minRangePct") {
+        min = Math.max(0, min);
+        max = Math.min(0.05, max);
     } else if (/(iteration|iterations|interval|alpha)/i.test(key)) {
         min = Math.max(1, min);
     } else if (key === "warmupBars") {
@@ -404,6 +413,10 @@ export class FinderParamSpace {
             next = Math.max(0, Math.round(next));
         } else if (key === "clusterChoice") {
             next = Math.min(2, Math.max(0, Math.round(next)));
+        } else if (key === "midpointBars") {
+            next = Math.min(6, Math.max(1, Math.round(next)));
+        } else if (key === "crossThreshold" || key === "minRangePct") {
+            next = Math.min(0.05, Math.max(0, Number(next.toFixed(4))));
         } else if (periodLike) {
             next = Math.max(1, Math.round(next));
         } else if (key === "targetPct") {

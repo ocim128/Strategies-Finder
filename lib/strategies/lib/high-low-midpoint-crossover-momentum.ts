@@ -8,6 +8,17 @@ import {
     getLows,
 } from "../strategy-helpers";
 
+function clampInteger(value: number, min: number, max: number): number {
+    const rounded = Math.round(value);
+    if (!Number.isFinite(rounded)) return min;
+    return Math.max(min, Math.min(max, rounded));
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+    if (!Number.isFinite(value)) return min;
+    return Math.max(min, Math.min(max, value));
+}
+
 /**
  * High-Low Midpoint Crossover Momentum
  *
@@ -36,9 +47,9 @@ export const high_low_midpoint_crossover_momentum: Strategy = {
         const cleanData = ensureCleanData(data);
         if (cleanData.length < 6) return [];
 
-        const midpointBars = Math.max(2, Math.min(6, Math.round(params.midpointBars ?? 3)));
-        const crossThreshold = Math.max(0, params.crossThreshold ?? 0.001);
-        const minRangePct = Math.max(0.001, params.minRangePct ?? 0.003);
+        const midpointBars = clampInteger(params.midpointBars ?? 3, 1, 6);
+        const crossThreshold = clampNumber(params.crossThreshold ?? 0.001, 0, 0.05);
+        const minRangePct = clampNumber(params.minRangePct ?? 0.003, 0, 0.05);
 
         const highs = getHighs(cleanData);
         const lows = getLows(cleanData);
@@ -97,6 +108,9 @@ export const high_low_midpoint_crossover_momentum: Strategy = {
             const prevHigh = highs[i - 1];
             const prevLow = lows[i - 1];
             const priceRef = Math.max(Math.abs(prevClose), 1e-9);
+            const currRangePct = (highs[i] - lows[i]) / Math.max(Math.abs(currClose), 1e-9);
+
+            if (currRangePct < minRangePct) continue;
 
             // Check for bullish continuation
             if (allAboveMidpoint) {

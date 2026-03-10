@@ -947,7 +947,16 @@ export async function quickWalkForward(
         let max: number;
         let step: number;
 
-        if (isDecimal) {
+        if (name === "midpointBars") {
+            min = 1;
+            max = 6;
+            step = 1;
+        } else if (name === "crossThreshold" || name === "minRangePct") {
+            min = 0;
+            max = Math.min(0.05, Math.max(defaultValue * 2, 0.01));
+            const rawStep = (max - min) / stepsPerParam;
+            step = Math.max(0.0005, rawStep);
+        } else if (isDecimal) {
             // For decimal params between 0-1 (like Fib ratios), use proportional range
             min = Math.max(0.1, defaultValue * 0.5);
             max = Math.min(1.0, defaultValue * 1.5);
