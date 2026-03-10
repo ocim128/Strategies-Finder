@@ -61,7 +61,8 @@ import { fractal_volatility_pinch_impulse } from "./lib/fractal_volatility_pinch
 import { dead_zone_efficiency_breakout } from "./lib/dead_zone_efficiency_breakout";
 import { stddev_compression_to_roc_surge } from "./lib/stddev_compression_to_roc_surge";
 import { noise_to_signal_efficiency_breakout } from "./lib/noise_to_signal_efficiency_breakout";
-
+import { crossing_persistence_event_regime } from "./lib/crossing_persistence_event_regime";
+import { efficiency_pinch_roc_breakout } from "./lib/efficiency_pinch_roc_breakout";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -131,6 +132,8 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "stddev_compression_to_roc_surge", strategy: stddev_compression_to_roc_surge },
     { key: "noise_to_signal_efficiency_breakout", strategy: noise_to_signal_efficiency_breakout },
     { key: "absorptive_wick_decay_wave", strategy: absorptive_wick_decay_wave },
+    { key: "crossing_persistence_event_regime", strategy: crossing_persistence_event_regime },
+    { key: "efficiency_pinch_roc_breakout", strategy: efficiency_pinch_roc_breakout },
 ];
 
 export function createStrategiesRecordFromManifest(
