@@ -22,6 +22,7 @@ import { injectLayout } from "./lib/layout-manager";
 import { commandPaletteManager } from "./lib/command-palette";
 
 import { analysisPanel } from "./lib/analysis-panel";
+import { parameterAuditService } from "./lib/parameter-audit-service";
 import { dataMiningManager } from "./lib/data-mining-manager";
 import { portfolioLabService } from "./lib/portfolio-lab-service";
 
@@ -73,6 +74,7 @@ async function init() {
 
 	dataMiningManager.init();
 	walkForwardService.initUI();
+	parameterAuditService.init();
 	monteCarloService.initUI();
 	logicTestService.initUI();
 	analysisPanel.init();

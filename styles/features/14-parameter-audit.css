@@ -1,0 +1,116 @@
+.parameter-audit {
+    display: grid;
+    gap: 14px;
+}
+
+.parameter-audit-readout {
+    display: grid;
+    gap: 6px;
+    padding: 12px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.parameter-audit-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.parameter-audit-summary-card {
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.parameter-audit-summary-label {
+    color: var(--text-secondary);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+
+.parameter-audit-summary-value {
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.parameter-audit-warning {
+    margin-top: 12px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 183, 77, 0.35);
+    background: rgba(255, 183, 77, 0.08);
+    color: #ffd79a;
+}
+
+.parameter-audit-table th:nth-child(10),
+.parameter-audit-table td:nth-child(10) {
+    min-width: 280px;
+}
+
+.parameter-audit-parameter-name {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.parameter-audit-parameter-key {
+    color: var(--text-secondary);
+    font-size: 11px;
+    margin-top: 4px;
+}
+
+.parameter-audit-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.parameter-audit-pill--core {
+    background: rgba(76, 175, 80, 0.18);
+    color: #94e39a;
+}
+
+.parameter-audit-pill--weak {
+    background: rgba(255, 193, 7, 0.18);
+    color: #ffd978;
+}
+
+.parameter-audit-pill--redundant,
+.parameter-audit-pill--likely_useless,
+.parameter-audit-pill--boundary_problem,
+.parameter-audit-pill--interaction_only {
+    background: rgba(244, 67, 54, 0.16);
+    color: #ff9a91;
+}
+
+.parameter-audit-pill--action {
+    background: rgba(33, 150, 243, 0.16);
+    color: #9fd4ff;
+}
+
+.parameter-audit-notes-cell {
+    line-height: 1.45;
+}
+
+.parameter-audit-evidence-strength {
+    margin-top: 8px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}

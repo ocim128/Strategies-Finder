@@ -1083,6 +1083,21 @@ export class FinderManager {
 	private cloneBacktestSettings<T>(settings: T): T {
 		return JSON.parse(JSON.stringify(settings)) as T;
 	}
+
+	public getLatestResults(): FinderResult[] {
+		return JSON.parse(JSON.stringify(this.displayResults)) as FinderResult[];
+	}
+
+	public getLatestCandidate(): FinderResult | null {
+		if (this.displayResults.length === 0) return null;
+		return JSON.parse(JSON.stringify(this.displayResults[0])) as FinderResult;
+	}
+
+	public getLastRunBacktestSettings(): ReturnType<typeof settingsManager.getBacktestSettings> | null {
+		return this.lastFinderRunBacktestSettings
+			? this.cloneBacktestSettings(this.lastFinderRunBacktestSettings)
+			: null;
+	}
 }
 
 export const finderManager = new FinderManager();

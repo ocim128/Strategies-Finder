@@ -1518,6 +1518,14 @@ class WalkForwardService {
         return this.lastResult;
     }
 
+    getLastRunBaseParams(): { strategyKey: string; params: StrategyParams } | null {
+        if (!this.lastRunBaseParams) return null;
+        return {
+            strategyKey: this.lastRunBaseParams.strategyKey,
+            params: { ...this.lastRunBaseParams.params }
+        };
+    }
+
     /**
      * Cancel a running analysis
      */

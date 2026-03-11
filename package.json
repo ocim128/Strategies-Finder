@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "test": "..\\..\\..\\node_modules\\.bin\\esno strategies.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno settings-compat.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno finder-cache-decision.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno edge-statistics.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno walk-forward-thresholds.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno feature-dom-contracts.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno portfolio-lab.spec.ts",
+    "test": "..\\..\\..\\node_modules\\.bin\\esno strategies.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno settings-compat.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno finder-cache-decision.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno edge-statistics.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno walk-forward-thresholds.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno parameter-audit.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno feature-dom-contracts.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno portfolio-lab.spec.ts",
     "test:e2e": "..\\..\\..\\node_modules\\.bin\\esno e2e.spec.ts",
     "typecheck": "tsc --noEmit",
     "robust:summary": "node scripts/robust-matrix-summary.mjs",

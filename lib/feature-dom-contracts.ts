@@ -693,3 +693,56 @@ export function createWalkForwardServiceDom(): WalkForwardServiceDom {
         wfStatus: getRequiredElement("wf-status"),
     };
 }
+
+export const PARAMETER_AUDIT_REQUIRED_IDS = [
+    "parameterAuditSource",
+    "parameterAuditSavedConfigGroup",
+    "parameterAuditSavedConfig",
+    "parameterAuditRun",
+    "parameterAuditProgress",
+    "parameterAuditProgressFill",
+    "parameterAuditProgressText",
+    "parameterAuditStatus",
+    "parameterAuditSourceSummary",
+    "parameterAuditIncludedParams",
+    "parameterAuditEvidence",
+    "parameterAuditSummary",
+    "parameterAuditEmpty",
+    "parameterAuditTableBody",
+] as const;
+
+export interface ParameterAuditDom {
+    parameterAuditSource: HTMLSelectElement;
+    parameterAuditSavedConfigGroup: HTMLElement;
+    parameterAuditSavedConfig: HTMLSelectElement;
+    parameterAuditRun: HTMLButtonElement;
+    parameterAuditProgress: HTMLElement;
+    parameterAuditProgressFill: HTMLElement;
+    parameterAuditProgressText: HTMLElement;
+    parameterAuditStatus: HTMLElement;
+    parameterAuditSourceSummary: HTMLElement;
+    parameterAuditIncludedParams: HTMLElement;
+    parameterAuditEvidence: HTMLElement;
+    parameterAuditSummary: HTMLElement;
+    parameterAuditEmpty: HTMLElement;
+    parameterAuditTableBody: HTMLElement;
+}
+
+export function createParameterAuditDom(): ParameterAuditDom {
+    return {
+        parameterAuditSource: getRequiredElement<HTMLSelectElement>("parameterAuditSource"),
+        parameterAuditSavedConfigGroup: getRequiredElement("parameterAuditSavedConfigGroup"),
+        parameterAuditSavedConfig: getRequiredElement<HTMLSelectElement>("parameterAuditSavedConfig"),
+        parameterAuditRun: getRequiredElement<HTMLButtonElement>("parameterAuditRun"),
+        parameterAuditProgress: getRequiredElement("parameterAuditProgress"),
+        parameterAuditProgressFill: getRequiredElement("parameterAuditProgressFill"),
+        parameterAuditProgressText: getRequiredElement("parameterAuditProgressText"),
+        parameterAuditStatus: getRequiredElement("parameterAuditStatus"),
+        parameterAuditSourceSummary: getRequiredElement("parameterAuditSourceSummary"),
+        parameterAuditIncludedParams: getRequiredElement("parameterAuditIncludedParams"),
+        parameterAuditEvidence: getRequiredElement("parameterAuditEvidence"),
+        parameterAuditSummary: getRequiredElement("parameterAuditSummary"),
+        parameterAuditEmpty: getRequiredElement("parameterAuditEmpty"),
+        parameterAuditTableBody: getRequiredElement("parameterAuditTableBody"),
+    };
+}

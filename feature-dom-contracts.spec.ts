@@ -5,6 +5,7 @@ import path from "node:path";
 import {
     ANALYSIS_PANEL_REQUIRED_IDS,
     FINDER_MANAGER_REQUIRED_IDS,
+    PARAMETER_AUDIT_REQUIRED_IDS,
     PAIR_COMBINER_BRIDGE_REQUIRED_IDS,
     PORTFOLIO_LAB_REQUIRED_IDS,
     SETTINGS_WORKSPACE_REQUIRED_IDS,
@@ -43,6 +44,7 @@ describe("Feature DOM contracts", () => {
         analysisPanel: [...ANALYSIS_PANEL_REQUIRED_IDS],
         portfolioLab: [...PORTFOLIO_LAB_REQUIRED_IDS],
         finderManager: [...FINDER_MANAGER_REQUIRED_IDS],
+        parameterAudit: [...PARAMETER_AUDIT_REQUIRED_IDS],
         pairCombinerBridge: [...PAIR_COMBINER_BRIDGE_REQUIRED_IDS],
         walkForwardService: [...WALK_FORWARD_SERVICE_REQUIRED_IDS],
     } as const;
