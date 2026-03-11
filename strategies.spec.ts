@@ -2,8 +2,7 @@ import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateATR, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade, Strategy } from './lib/strategies/index';
 import { buildPivotFlags, detectPivots, detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
-import { hypothesis_trend_persistence } from './lib/strategies/lib/hypothesis-trend-persistence';
-import { inside_bar_momentum_burst } from './lib/strategies/lib/inside-bar-momentum-burst';
+
 import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/backtest/trade-analyzer';
 import { getOpenPositionForScanner } from './lib/strategies/backtest/signal-preparation';
 import { resolveScannerBacktestSettings } from './lib/scanner/scanner-engine';
@@ -258,8 +257,8 @@ describe('Causal Signal Stability', () => {
         }
     };
 
-    it('stochastic_momentum_divergence_entry should keep prior signals stable when candles are appended', () => {
-        expectPrefixStable('stochastic_momentum_divergence_entry');
+    it('volatility_compression_break should keep prior signals stable when candles are appended', () => {
+        expectPrefixStable('volatility_compression_break');
     });
 });
 
@@ -1351,62 +1350,6 @@ describe('Backtesting Engine', () => {
         // 60m lookback on 30m data resolves to two bars back from the signal bar (14 -> 12).
         const expectedTf60Perf = ((data[14].close - data[12].close) / data[12].close) * 100;
         expect(result.trades[0].entrySnapshot?.tf60Perf ?? null).to.be.closeTo(expectedTf60Perf, 1e-9);
-    });
-});
-
-describe('Hypothesis Trend Persistence Strategy', () => {
-    it('should emit entry signals on persistent trend shifts', () => {
-        const data: OHLCVData[] = [];
-        for (let i = 0; i < 220; i++) {
-            let close = 120;
-            if (i < 80) close = 140 - i * 0.35;
-            else if (i < 150) close = 112 + (i - 80) * 0.55;
-            else close = 150 - (i - 150) * 0.50;
-
-            data.push({
-                time: (i + 1) as unknown as Time,
-                open: close - 0.3,
-                high: close + 0.9,
-                low: close - 0.9,
-                close,
-                volume: 1000 + (i % 10) * 25
-            });
-        }
-
-        const signals = hypothesis_trend_persistence.execute(data, {
-            trendLookback: 40,
-            persistenceBars: 3,
-            entryBufferPct: 0.0005,
-            exitBufferPct: 0,
-            allowShorts: 1
-        });
-
-        expect(signals.length).to.be.greaterThan(2);
-        expect(signals.some((signal) => signal.type === 'buy')).to.equal(true);
-        expect(signals.some((signal) => signal.type === 'sell')).to.equal(true);
-        expect(hypothesis_trend_persistence.metadata?.walkForwardParams).to.include('trendLookback');
-        expect(hypothesis_trend_persistence.metadata?.walkForwardParams).to.include('persistenceBars');
-    });
-});
-
-describe('Inside Bar Momentum Burst Strategy', () => {
-    it('should keep inside-bar chain anchored to mother bar range', () => {
-        const data: OHLCVData[] = [
-            { time: 1 as Time, open: 5, high: 10, low: 0, close: 5, volume: 100 },
-            { time: 2 as Time, open: 5, high: 9, low: 1, close: 5, volume: 100 },   // inside mother
-            { time: 3 as Time, open: 5, high: 9.5, low: 1.5, close: 6, volume: 100 }, // inside mother, not inside previous
-            { time: 4 as Time, open: 6, high: 10.4, low: 5.8, close: 10.2, volume: 100 }, // breakout
-        ];
-
-        const signals = inside_bar_momentum_burst.execute(data, {
-            minInsideBars: 2,
-            breakoutBufferPct: 0,
-            momentumLookback: 2,
-        });
-
-        expect(signals.length).to.equal(1);
-        expect(signals[0].type).to.equal('buy');
-        expect(signals[0].barIndex).to.equal(3);
     });
 });
 
