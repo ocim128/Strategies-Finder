@@ -276,6 +276,260 @@ export function buildThresholdCrossingCount(
 }
 
 /**
+ * Rolling excess kurtosis of a numeric series.
+ * Positive = fat tails (leptokurtic), negative = thin tails (platykurtic).
+ * Excess kurtosis subtracts 3 so that a normal distribution equals 0.
+ */
+export function buildRollingKurtosis(
+	values: number[],
+	lookbackInput: number
+): (number | null)[] {
+	const lookback = Math.max(4, Math.round(lookbackInput));
+	const result: (number | null)[] = new Array(values.length).fill(null);
+
+	for (let i = lookback - 1; i < values.length; i++) {
+		let sum = 0;
+		for (let j = i - lookback + 1; j <= i; j++) {
+			sum += values[j];
+		}
+		const mean = sum / lookback;
+
+		let m2 = 0;
+		let m4 = 0;
+		for (let j = i - lookback + 1; j <= i; j++) {
+			const diff = values[j] - mean;
+			const d2 = diff * diff;
+			m2 += d2;
+			m4 += d2 * d2;
+		}
+		m2 /= lookback;
+		m4 /= lookback;
+
+		if (m2 <= 0) continue;
+		result[i] = (m4 / (m2 * m2)) - 3;
+	}
+
+	return result;
+}
+
+/**
+ * Rolling median over a fixed lookback window.
+ * Robust to outliers — useful as an alternative center-of-gravity to mean.
+ * Uses insertion-sort on the window for simplicity at typical lookback sizes.
+ */
+export function buildRollingMedian(
+	values: number[],
+	lookbackInput: number
+): (number | null)[] {
+	const lookback = Math.max(1, Math.round(lookbackInput));
+	const result: (number | null)[] = new Array(values.length).fill(null);
+
+	for (let i = lookback - 1; i < values.length; i++) {
+		const window: number[] = [];
+		for (let j = i - lookback + 1; j <= i; j++) {
+			window.push(values[j]);
+		}
+		window.sort((a, b) => a - b);
+
+		const mid = lookback >> 1;
+		result[i] = (lookback & 1) ? window[mid] : (window[mid - 1] + window[mid]) / 2;
+	}
+
+	return result;
+}
+
+/**
+ * Rolling autocorrelation at a given lag.
+ * Measures serial dependence: positive = trending, negative = mean-reverting.
+ * Default lag is 1 (adjacent bar correlation).
+ */
+export function buildRollingAutoCorrelation(
+	values: number[],
+	lookbackInput: number,
+	lag = 1
+): (number | null)[] {
+	const lookback = Math.max(3, Math.round(lookbackInput));
+	const safeLag = Math.max(1, Math.round(lag));
+	const result: (number | null)[] = new Array(values.length).fill(null);
+
+	for (let i = lookback - 1 + safeLag; i < values.length; i++) {
+		let sumX = 0;
+		let sumY = 0;
+		const n = lookback;
+
+		for (let j = 0; j < n; j++) {
+			const idx = i - n + 1 + j;
+			sumX += values[idx - safeLag];
+			sumY += values[idx];
+		}
+		const meanX = sumX / n;
+		const meanY = sumY / n;
+
+		let cov = 0;
+		let varX = 0;
+		let varY = 0;
+		for (let j = 0; j < n; j++) {
+			const idx = i - n + 1 + j;
+			const dx = values[idx - safeLag] - meanX;
+			const dy = values[idx] - meanY;
+			cov += dx * dy;
+			varX += dx * dx;
+			varY += dy * dy;
+		}
+
+		const denom = Math.sqrt(varX * varY);
+		if (denom <= 0) continue;
+		result[i] = cov / denom;
+	}
+
+	return result;
+}
+
+/**
+ * Rolling Pearson correlation between two numeric series.
+ * Measures co-movement over a lookback window.
+ * Returns null when variance of either series is zero or lookback not filled.
+ */
+export function buildRollingCorrelation(
+	seriesA: number[],
+	seriesB: number[],
+	lookbackInput: number
+): (number | null)[] {
+	const len = Math.min(seriesA.length, seriesB.length);
+	const lookback = Math.max(2, Math.round(lookbackInput));
+	const result: (number | null)[] = new Array(len).fill(null);
+
+	for (let i = lookback - 1; i < len; i++) {
+		let sumA = 0;
+		let sumB = 0;
+		for (let j = i - lookback + 1; j <= i; j++) {
+			sumA += seriesA[j];
+			sumB += seriesB[j];
+		}
+		const meanA = sumA / lookback;
+		const meanB = sumB / lookback;
+
+		let cov = 0;
+		let varA = 0;
+		let varB = 0;
+		for (let j = i - lookback + 1; j <= i; j++) {
+			const da = seriesA[j] - meanA;
+			const db = seriesB[j] - meanB;
+			cov += da * db;
+			varA += da * da;
+			varB += db * db;
+		}
+
+		const denom = Math.sqrt(varA * varB);
+		if (denom <= 0) continue;
+		result[i] = cov / denom;
+	}
+
+	return result;
+}
+
+/**
+ * Rolling Shannon entropy of a discretized numeric series.
+ * Bins values into `numBins` equal-width buckets over the rolling window.
+ * Low entropy = concentrated/predictable, high entropy = disordered/random.
+ */
+export function buildRollingEntropy(
+	values: number[],
+	lookbackInput: number,
+	numBins = 5
+): (number | null)[] {
+	const lookback = Math.max(3, Math.round(lookbackInput));
+	const bins = Math.max(2, Math.round(numBins));
+	const result: (number | null)[] = new Array(values.length).fill(null);
+
+	for (let i = lookback - 1; i < values.length; i++) {
+		let wMin = Infinity;
+		let wMax = -Infinity;
+		for (let j = i - lookback + 1; j <= i; j++) {
+			if (values[j] < wMin) wMin = values[j];
+			if (values[j] > wMax) wMax = values[j];
+		}
+
+		const wRange = wMax - wMin;
+		if (wRange <= 0) {
+			result[i] = 0; // all identical → zero entropy
+			continue;
+		}
+
+		const counts = new Array(bins).fill(0);
+		for (let j = i - lookback + 1; j <= i; j++) {
+			let bin = Math.floor(((values[j] - wMin) / wRange) * bins);
+			if (bin >= bins) bin = bins - 1; // clamp max edge
+			counts[bin]++;
+		}
+
+		let entropy = 0;
+		for (let b = 0; b < bins; b++) {
+			if (counts[b] === 0) continue;
+			const p = counts[b] / lookback;
+			entropy -= p * Math.log2(p);
+		}
+		result[i] = entropy;
+	}
+
+	return result;
+}
+
+/**
+ * Generic dual-timeframe ratio: applies `buildFn` at two window sizes
+ * and returns fast / slow. Useful for fractal comparisons of any metric
+ * (stddev, skewness, efficiency, etc.).
+ * Returns null when either window is null or slow value is zero.
+ */
+export function buildDualTimeframeRatio(
+	values: number[],
+	fastWindow: number,
+	slowWindow: number,
+	buildFn: (v: number[], w: number) => (number | null)[]
+): (number | null)[] {
+	const fast = buildFn(values, fastWindow);
+	const slow = buildFn(values, slowWindow);
+	const len = Math.min(fast.length, slow.length);
+	const result: (number | null)[] = new Array(len).fill(null);
+
+	for (let i = 0; i < len; i++) {
+		const f = fast[i];
+		const s = slow[i];
+		if (f === null || s === null || s === 0) continue;
+		result[i] = f / s;
+	}
+
+	return result;
+}
+
+/**
+ * Rolling min and max of an arbitrary numeric series.
+ * Unlike buildTrailingHighLow which operates on OHLCV high/low,
+ * this works on any computed series (z-score, skewness, ER, etc.).
+ */
+export function buildRollingMinMax(
+	values: number[],
+	lookbackInput: number
+): { min: (number | null)[]; max: (number | null)[] } {
+	const lookback = Math.max(1, Math.round(lookbackInput));
+	const min: (number | null)[] = new Array(values.length).fill(null);
+	const max: (number | null)[] = new Array(values.length).fill(null);
+
+	for (let i = lookback - 1; i < values.length; i++) {
+		let lo = Infinity;
+		let hi = -Infinity;
+		for (let j = i - lookback + 1; j <= i; j++) {
+			if (values[j] < lo) lo = values[j];
+			if (values[j] > hi) hi = values[j];
+		}
+		min[i] = lo;
+		max[i] = hi;
+	}
+
+	return { min, max };
+}
+
+/**
  * Extracts a per-bar numeric series from OHLCV data using bar metrics.
  * Useful for feeding any metric into statistical helpers without
  * recomputing `getPriceActionBarMetrics` in every strategy.
@@ -290,7 +544,11 @@ export type BarMetricExtractor =
 	| "bodyMid"
 	| "wickImbalance"     // (lowerWick - upperWick) / range
 	| "bodyMidDelta"      // bodyMid[i] - bodyMid[i-1], normalized by range
-	| "closeReturn";      // (close[i] - close[i-1]) / close[i-1]
+	| "closeReturn"       // (close[i] - close[i-1]) / close[i-1]
+	| "gapPct"            // (open[i] - close[i-1]) / close[i-1]
+	| "trueRange"         // max(H-L, |H-prevC|, |L-prevC|)
+	| "bodyDirection"     // +1 bullish, -1 bearish, 0 doji
+	| "closeMidpointDev"; // (close - midpoint) / range
 
 export function extractBarMetricSeries(
 	data: OHLCVData[],
@@ -341,6 +599,32 @@ export function extractBarMetricSeries(
 				} else {
 					result[i] = (data[i].close - data[i - 1].close) / data[i - 1].close;
 				}
+				break;
+			case "gapPct":
+				if (i === 0 || data[i - 1].close === 0) {
+					result[i] = 0;
+				} else {
+					result[i] = (data[i].open - data[i - 1].close) / data[i - 1].close;
+				}
+				break;
+			case "trueRange": {
+				if (i === 0) {
+					result[i] = m.range;
+				} else {
+					const prevClose = data[i - 1].close;
+					result[i] = Math.max(
+						m.range,
+						Math.abs(data[i].high - prevClose),
+						Math.abs(data[i].low - prevClose)
+					);
+				}
+				break;
+			}
+			case "bodyDirection":
+				result[i] = data[i].close > data[i].open ? 1 : data[i].close < data[i].open ? -1 : 0;
+				break;
+			case "closeMidpointDev":
+				result[i] = m.range > 0 ? (data[i].close - m.midpoint) / m.range : 0;
 				break;
 		}
 	}

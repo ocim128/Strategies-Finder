@@ -27,6 +27,7 @@ import { noise_to_signal_efficiency_breakout } from "./lib/noise_to_signal_effic
 import { crossing_persistence_event_regime } from "./lib/crossing_persistence_event_regime";
 import { efficiency_pinch_roc_breakout } from "./lib/efficiency_pinch_roc_breakout";
 import { cumulative_decay_regime_filter } from "./lib/cumulative_decay_regime_filter";
+import { skewness_deadzone_break } from "./lib/skewness_deadzone_break";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -61,6 +62,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "crossing_persistence_event_regime", strategy: crossing_persistence_event_regime },
     { key: "efficiency_pinch_roc_breakout", strategy: efficiency_pinch_roc_breakout },
     { key: "cumulative_decay_regime_filter", strategy: cumulative_decay_regime_filter },
+    { key: "skewness_deadzone_break", strategy: skewness_deadzone_break },
 ];
 
 export function createStrategiesRecordFromManifest(
