@@ -28,6 +28,8 @@ import { crossing_persistence_event_regime } from "./lib/crossing_persistence_ev
 import { efficiency_pinch_roc_breakout } from "./lib/efficiency_pinch_roc_breakout";
 import { cumulative_decay_regime_filter } from "./lib/cumulative_decay_regime_filter";
 import { skewness_deadzone_break } from "./lib/skewness_deadzone_break";
+import { crossing_churn_suppression } from "./lib/crossing_churn_suppression";
+import { median_deviation_streak } from "./lib/median_deviation_streak";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -63,6 +65,8 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "efficiency_pinch_roc_breakout", strategy: efficiency_pinch_roc_breakout },
     { key: "cumulative_decay_regime_filter", strategy: cumulative_decay_regime_filter },
     { key: "skewness_deadzone_break", strategy: skewness_deadzone_break },
+    { key: "median_deviation_streak", strategy: median_deviation_streak },
+    { key: "crossing_churn_suppression", strategy: crossing_churn_suppression },
 ];
 
 export function createStrategiesRecordFromManifest(

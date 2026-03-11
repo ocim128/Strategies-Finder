@@ -136,7 +136,7 @@ describe('Backtest settings compatibility', () => {
     });
 
     it('exposes worker strategy compatibility checks for alert subscriptions', () => {
-        expect(isWorkerSupportedStrategyKey('close_position_momentum_score')).to.equal(true);
+        expect(isWorkerSupportedStrategyKey('volatility_compression_break')).to.equal(true);
         expect(isWorkerSupportedStrategyKey('definitely_not_a_worker_strategy')).to.equal(false);
     });
 });
