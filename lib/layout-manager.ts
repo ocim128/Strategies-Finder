@@ -14,15 +14,12 @@ import tabParameterAuditHtml from '../html-partials/tab-parameter-audit.html?raw
 
 
 import tabWalkforwardHtml from '../html-partials/tab-walkforward.html?raw';
-import tabMontecarloHtml from '../html-partials/tab-montecarlo.html?raw';
-import tabLogictestHtml from '../html-partials/tab-logictest.html?raw';
 
 import tabResultsHtml from '../html-partials/tab-results.html?raw';
 import tabTradesHtml from '../html-partials/tab-trades.html?raw';
 import tabAnalysisHtml from '../html-partials/tab-analysis.html?raw';
 import tabPortfolioHtml from '../html-partials/tab-portfolio.html?raw';
 import tabAlertsHtml from '../html-partials/tab-alerts.html?raw';
-import tabOperationsHtml from '../html-partials/tab-operations.html?raw';
 import statusBarHtml from '../html-partials/status-bar.html?raw';
 import debugPanelHtml from '../html-partials/debug-panel.html?raw';
 import codeEditorHtml from '../html-partials/code-editor.html?raw';
@@ -82,15 +79,12 @@ export function injectLayout() {
         tabParameterAuditHtml +
 
         tabWalkforwardHtml +
-        tabMontecarloHtml +
-        tabLogictestHtml +
 
         tabResultsHtml +
         tabTradesHtml +
         tabAnalysisHtml +
         tabPortfolioHtml +
-        tabAlertsHtml +
-        tabOperationsHtml;
+        tabAlertsHtml;
 
     // Create the panel shell
     const strategyPanelContainer = document.createElement('div');

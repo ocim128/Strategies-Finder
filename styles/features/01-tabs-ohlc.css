@@ -6,10 +6,6 @@
 
 #walkforwardTab,
 
-#montecarloTab,
-
-#logictestTab,
-
 #replayTab,
 
 #resultsTab,
@@ -214,6 +210,5 @@
     margin: 0 var(--space-1);
 
 }
-
 
 

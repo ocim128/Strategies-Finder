@@ -15,8 +15,6 @@ import { finderManager } from "./lib/finder-manager";
 import { debugLogger } from "./lib/debug-logger";
 import { initDebugPanel } from "./lib/debug-panel";
 import { walkForwardService } from "./lib/walk-forward-service";
-import { monteCarloService } from "./lib/monte-carlo-service";
-import { logicTestService } from "./lib/logic-test-service";
 import { settingsManager } from "./lib/settings-manager";
 import { injectLayout } from "./lib/layout-manager";
 import { commandPaletteManager } from "./lib/command-palette";
@@ -40,7 +38,6 @@ import { initAlertHandlers } from "./lib/handlers/alert-handlers";
 import { initLivePositionsHandlers } from "./lib/handlers/live-positions-handlers";
 import { handleCrosshairMove } from "./lib/app-actions";
 import { initEngineStatusIndicator } from "./lib/engine-status-indicator";
-import { liveOperationsDashboard } from "./lib/live-operations-dashboard";
 import { blockSelectorManager } from "./lib/block-selector-manager";
 import { quickViewManager } from "./lib/quick-view";
 import { bindFormAccessibility } from "./lib/form-accessibility";
@@ -75,8 +72,6 @@ async function init() {
 	dataMiningManager.init();
 	walkForwardService.initUI();
 	parameterAuditService.init();
-	monteCarloService.initUI();
-	logicTestService.initUI();
 	analysisPanel.init();
 	portfolioLabService.init();
 	initAlertHandlers();
@@ -84,7 +79,6 @@ async function init() {
 
 	initDebugPanel();
 	initEngineStatusIndicator(); // Show Rust vs TypeScript engine status
-	liveOperationsDashboard.init();
 	quickViewManager.init();
 
 	// Initialize scanner panel with keyboard shortcut

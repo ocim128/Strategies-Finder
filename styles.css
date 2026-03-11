@@ -10,7 +10,6 @@
 @import './styles/layout.css';
 @import './styles/components.css';
 @import './styles/tab-groups.css';
-@import './styles/command-center.css';
 @import './styles/features.css';
 @import './styles/data-mining.css';
 
@@ -21,7 +20,6 @@
 
 @import './styles/scanner-styles.css';
 @import './styles/media-queries.css';
-@import './styles/logictest.css';
 @import './styles/symbol-search.css';
 @import './styles/engine-status.css';
 @import './styles/onboarding.css';

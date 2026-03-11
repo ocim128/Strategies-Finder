@@ -6,7 +6,7 @@ It is not just a chart page. The app combines:
 - a browser UI assembled from HTML partials at runtime
 - a TypeScript backtest engine with optional Rust acceleration
 - a multi-source data pipeline with local caching
-- strategy research tools such as Finder, Walk-Forward, Scanner, Replay, Monte Carlo, Pair Combiner, and Analysis
+- strategy research tools such as Finder, Walk-Forward, Scanner, Replay, Pair Combiner, and Analysis
 - optional Cloudflare Worker alerting and subscription execution
 
 ## What You Can Do Here
