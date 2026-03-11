@@ -30,6 +30,10 @@ import { cumulative_decay_regime_filter } from "./lib/cumulative_decay_regime_fi
 import { skewness_deadzone_break } from "./lib/skewness_deadzone_break";
 import { crossing_churn_suppression } from "./lib/crossing_churn_suppression";
 import { median_deviation_streak } from "./lib/median_deviation_streak";
+import { autocorr_deadband_release } from "./lib/autocorr_deadband_release";
+import { entropy_ratio_regime_alignment } from "./lib/entropy_ratio_regime_alignment";
+import { skew_entropy_polarization_entry } from "./lib/skew_entropy_polarization_entry";
+
 
 export interface StrategyManifestEntry {
     key: string;
@@ -67,6 +71,9 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "skewness_deadzone_break", strategy: skewness_deadzone_break },
     { key: "median_deviation_streak", strategy: median_deviation_streak },
     { key: "crossing_churn_suppression", strategy: crossing_churn_suppression },
+    { key: "autocorr_deadband_release", strategy: autocorr_deadband_release },
+    { key: "skew_entropy_polarization_entry", strategy: skew_entropy_polarization_entry },
+    { key: "entropy_ratio_regime_alignment", strategy: entropy_ratio_regime_alignment },
 ];
 
 export function createStrategiesRecordFromManifest(
