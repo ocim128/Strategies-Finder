@@ -240,6 +240,7 @@ export function setupStateSubscriptions() {
 
     // Strategy selection
     state.subscribe('currentStrategyKey', (key) => {
+        uiManager.updateStrategyDropdown(key);
         uiManager.updateStrategyParams(key);
     });
 

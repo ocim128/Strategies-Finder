@@ -81,6 +81,8 @@ export class DataManager {
     private cacheSyncAtByKey: Map<string, number> = new Map();
     private cachePersistTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private cachePersistPendingByKey: Map<string, { symbol: string; storageInterval: string; candles: OHLCVData[] }> = new Map();
+    private loadedSymbol: string | null = null;
+    private loadedInterval: string | null = null;
 
     // ============================================================================
     // Public API
@@ -128,6 +130,11 @@ export class DataManager {
 
     public getChartLookbackBars(): number | null {
         return this.chartLookbackBars;
+    }
+
+    public getLoadedContextKey(): string | null {
+        if (!this.loadedSymbol || !this.loadedInterval) return null;
+        return `${this.loadedSymbol}|${this.loadedInterval}`;
     }
 
     public getProvider(symbol: string): DataProvider {
@@ -453,6 +460,8 @@ export class DataManager {
 
         const data = await this.fetchData(symbol, interval);
         state.set('ohlcvData', data);
+        this.loadedSymbol = symbol;
+        this.loadedInterval = interval;
 
         this.startStreaming(symbol, interval);
 

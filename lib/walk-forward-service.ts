@@ -8,9 +8,15 @@ import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
 import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
 import { applySignalPolarity, runBacktestCompact } from "./strategies/backtest";
+import { parseInputNumber } from "./dom-input-readers";
 import type { Strategy, StrategyParams, BacktestSettings, OHLCVData } from "./strategies/index";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { deriveWalkForwardTradeThresholds } from "./walk-forward-thresholds";
+import {
+    deriveAutoWalkForwardRange,
+    resolveFiniteRangeReferenceValue,
+    shouldTreatParamAsWholeNumber
+} from "./walk-forward-range-utils";
 import {
     runWalkForwardAnalysis,
     runFixedParamWalkForward,
@@ -82,26 +88,72 @@ type CandidateSeedValidationProfile = {
 
 class WalkForwardService {
     private lastResult: WalkForwardResult | null = null;
-    private lastPreparedDataContext: string | null = null;
     private isRunning = false;
     private abortController: AbortController | null = null;
     private previousBacktestSnapshot: { result: any; source: string | null } | null = null;
+    private lastRunBaseParams: { strategyKey: string; params: StrategyParams } | null = null;
     private dom: WalkForwardServiceDom | null = null;
 
     private getDom(): WalkForwardServiceDom {
         return this.dom ??= createWalkForwardServiceDom();
     }
 
+    private normalizeStrategyParams(strategy: Strategy, params: StrategyParams): StrategyParams {
+        const nextParams = { ...params };
+        return strategy.normalizeParams ? strategy.normalizeParams(nextParams) : nextParams;
+    }
+
+    private captureLastRunBaseParams(strategy: Strategy, params: StrategyParams): void {
+        const allowedParams = strategy.metadata?.walkForwardParams;
+        const source = allowedParams && allowedParams.length > 0
+            ? allowedParams
+            : Object.keys(params);
+
+        const filtered: StrategyParams = {};
+        for (const key of source) {
+            if (params[key] !== undefined) {
+                filtered[key] = params[key];
+            }
+        }
+
+        this.lastRunBaseParams = {
+            strategyKey: state.currentStrategyKey,
+            params: filtered
+        };
+    }
+
+    private formatParamValue(value: number): string {
+        if (!Number.isFinite(value)) return String(value);
+        if (Number.isInteger(value)) return String(value);
+        return value.toFixed(3).replace(/\.?0+$/, '');
+    }
+
+    private formatBaseParamsSummary(): string | null {
+        if (!this.lastRunBaseParams) return null;
+        const entries = Object.entries(this.lastRunBaseParams.params);
+        if (entries.length === 0) return null;
+        return entries
+            .map(([key, value]) => `${key}:${this.formatParamValue(value)}`)
+            .join(', ');
+    }
+
+    private formatWindowParams(params: StrategyParams): string {
+        return Object.entries(params)
+            .map(([key, value]) => `${key}:${this.formatParamValue(value)}`)
+            .join(', ');
+    }
+
     private async ensureDataReadyForCurrentContext(): Promise<OHLCVData[]> {
         const contextKey = `${state.currentSymbol}|${state.currentInterval}`;
-        const needsRefresh = state.ohlcvData.length === 0 || this.lastPreparedDataContext !== contextKey;
-        if (!needsRefresh) {
+        const loadedContextKey = dataManager.getLoadedContextKey();
+        const canReuseCurrentData = state.ohlcvData.length > 0 && loadedContextKey === contextKey;
+
+        if (canReuseCurrentData) {
             return sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
         }
 
         this.updateStatus('Syncing data for selected symbol/interval...');
         await dataManager.loadData(state.currentSymbol, state.currentInterval);
-        this.lastPreparedDataContext = contextKey;
         return sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
     }
 
@@ -169,6 +221,28 @@ class WalkForwardService {
             `${statusPrefix}: ${suggestion.estimatedWindows} windows, ~${suggestion.expectedOOSTradesPerWindow.toFixed(1)} OOS trades/window`
         );
         return true;
+    }
+
+    private normalizeRangeForParam(
+        name: string,
+        min: number,
+        max: number,
+        step: number,
+        referenceValue: number
+    ): ParameterRange {
+        if (shouldTreatParamAsWholeNumber(name, referenceValue)) {
+            const normalizedMin = Math.max(1, Math.round(min));
+            const normalizedMax = Math.max(normalizedMin + 1, Math.round(max));
+            const normalizedStep = Math.max(1, Math.round(step));
+            return { name, min: normalizedMin, max: normalizedMax, step: normalizedStep };
+        }
+
+        return {
+            name,
+            min: Math.round(min * 1000) / 1000,
+            max: Math.round(max * 1000) / 1000,
+            step: Math.round(step * 1000) / 1000
+        };
     }
 
     private refreshAutoSuggestionFromCurrentResult(): void {
@@ -388,7 +462,8 @@ class WalkForwardService {
             const startTime = performance.now();
 
             // Get current parameters
-            const currentParams = paramManager.getValues(strategy);
+            const currentParams = this.normalizeStrategyParams(strategy, paramManager.getValues(strategy));
+            this.captureLastRunBaseParams(strategy, currentParams);
             const tradeAwareThresholds = this.autoSuggestWindowSettings(
                 data,
                 strategy,
@@ -565,7 +640,8 @@ class WalkForwardService {
 
         try {
             // Check if has no tunable parameters
-            const currentParams = paramManager.getValues(strategy);
+            const currentParams = this.normalizeStrategyParams(strategy, paramManager.getValues(strategy));
+            this.captureLastRunBaseParams(strategy, currentParams);
             const parameterRanges = this.buildParameterRanges(
                 strategy.defaultParams,
                 currentParams,
@@ -676,7 +752,7 @@ class WalkForwardService {
         const backtestSettings = backtestService.getBacktestSettings();
         const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
 
-        const fixedParams = paramManager.getValues(strategy);
+        const fixedParams = this.normalizeStrategyParams(strategy, paramManager.getValues(strategy));
         const seedInput = this.readStringInput("wf-validation-seeds", DEFAULT_CANDIDATE_VALIDATION_SEEDS.join(","));
         const seeds = this.parseSeedList(seedInput);
         if (seeds.length === 0) {
@@ -1079,9 +1155,9 @@ class WalkForwardService {
                     customRanges.set(paramName, { min: 0, max: 0, step: 1 });
                 }
                 const range = customRanges.get(paramName)!;
-                if (rangeType === 'min') range.min = parseFloat(el.value) || 0;
-                if (rangeType === 'max') range.max = parseFloat(el.value) || 0;
-                if (rangeType === 'step') range.step = parseFloat(el.value) || 1;
+                if (rangeType === 'min') range.min = parseInputNumber(el.value) ?? 0;
+                if (rangeType === 'max') range.max = parseInputNumber(el.value) ?? 0;
+                if (rangeType === 'step') range.step = parseInputNumber(el.value) ?? 1;
             }
         });
 
@@ -1092,7 +1168,8 @@ class WalkForwardService {
             if (customRanges.has(name)) {
                 const custom = customRanges.get(name)!;
                 if (custom.min < custom.max && Number.isFinite(custom.step) && custom.step > 0) {
-                    ranges.push({ name, ...custom });
+                    const referenceValue = resolveFiniteRangeReferenceValue(value, defaults[name], 10);
+                    ranges.push(this.normalizeRangeForParam(name, custom.min, custom.max, custom.step, referenceValue));
                     continue;
                 }
             }
@@ -1104,33 +1181,12 @@ class WalkForwardService {
                 continue;
             }
 
-            const baseValue = value || defaults[name] || 10;
-
-            // Handle decimal parameters (like Fib levels 0.618, 0.382) differently
-            const isSmallDecimal = !Number.isInteger(baseValue) && Math.abs(baseValue) < 2;
-
-            let min: number;
-            let max: number;
-            let step: number;
-
-            if (isSmallDecimal) {
-                // For small decimal params, use proportional range with decimal precision
-                min = Math.max(0.1, baseValue * 0.5);
-                max = Math.max(min + 0.1, baseValue * 1.5);
-                // Ensure at least 2-3 steps
-                const rawStep = (max - min) / 3;
-                step = Math.max(0.05, rawStep);
-            } else {
-                // For integer-like params
-                min = Math.max(1, Math.floor(baseValue * 0.5));
-                max = Math.max(min + 1, Math.ceil(baseValue * 1.5));
-                const rawStep = (max - min) / 4;
-                step = Math.max(1, Math.floor(rawStep));
-            }
+            const baseValue = resolveFiniteRangeReferenceValue(value, defaults[name], 10);
+            const { min, max, step } = deriveAutoWalkForwardRange(name, baseValue);
 
             // Only add range if it's valid (min < max)
             if (min < max) {
-                ranges.push({ name, min, max, step });
+                ranges.push(this.normalizeRangeForParam(name, min, max, step, baseValue));
             }
         }
 
@@ -1228,8 +1284,8 @@ class WalkForwardService {
         };
         const el = elementMap[id];
         if (!el) return fallback;
-        const val = parseFloat(el.value);
-        return Number.isFinite(val) ? val : fallback;
+        const val = parseInputNumber(el.value);
+        return val ?? fallback;
     }
 
     private isToggleEnabled(id: string, fallback: boolean): boolean {
@@ -1268,8 +1324,15 @@ class WalkForwardService {
         const wfePercent = (result.walkForwardEfficiency * 100).toFixed(1);
         const wfeClass = result.walkForwardEfficiency >= 0.7 ? 'positive' :
             result.walkForwardEfficiency >= 0.4 ? 'neutral' : 'negative';
+        const baseParamsSummary = this.formatBaseParamsSummary();
 
         panel.innerHTML = `
+            ${baseParamsSummary ? `
+            <div class="wf-stat" style="grid-column: 1 / -1;">
+                <span class="wf-label">Base Params Used</span>
+                <span class="wf-value">${baseParamsSummary}</span>
+            </div>
+            ` : ''}
             <div class="wf-stat">
                 <span class="wf-label">Windows</span>
                 <span class="wf-value">${result.totalWindows}</span>
@@ -1323,9 +1386,7 @@ class WalkForwardService {
             const statusIcon = isProfit ? '✓' : '✗';
             const statusClass = isProfit ? 'positive' : 'negative';
 
-            // Format optimized params (just show first 2)
-            const paramKeys = Object.keys(w.optimizedParams).slice(0, 2);
-            const paramsStr = paramKeys.map(k => `${k}:${w.optimizedParams[k]}`).join(', ');
+            const paramsStr = this.formatWindowParams(w.optimizedParams);
 
             return `
                 <tr class="${statusClass}">

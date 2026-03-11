@@ -11,6 +11,7 @@ import {
     parseStrategyConfigFromSharedInput,
 } from "../strategy-share-service";
 import { strategyPanelController } from "../strategy-panel-controller";
+import { parseInputNumber } from "../dom-input-readers";
 
 const SHARED_DEFAULT_SYMBOL = 'ETHUSDT';
 const SHARED_DEFAULT_INTERVAL = '120m';
@@ -395,8 +396,8 @@ function isSharedConfigApplied(config: StrategyConfig): boolean {
     for (const [paramKey, expected] of Object.entries(config.strategyParams)) {
         const input = document.getElementById(`param_${paramKey}`) as HTMLInputElement | HTMLSelectElement | null;
         if (!input) return false;
-        const parsed = parseFloat(input.value);
-        if (!Number.isFinite(parsed) || !isNumberClose(parsed, expected)) {
+        const parsed = parseInputNumber(input.value);
+        if (parsed === null || !isNumberClose(parsed, expected)) {
             return false;
         }
     }

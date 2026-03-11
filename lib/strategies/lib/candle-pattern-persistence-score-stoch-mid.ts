@@ -6,6 +6,20 @@ import {
     computeCandlePatternPersistenceState,
 } from "./candle-pattern-persistence-core";
 
+function normalizeCandlePatternPersistenceScoreStochMidParams(params: StrategyParams): StrategyParams {
+    const scoreLookback = Math.max(2, Math.round(params.scoreLookback ?? 5));
+    const rawScoreThreshold = Number(params.scoreThreshold ?? 0.6);
+    const scoreThreshold = Math.max(0, Math.min(1, Number.isFinite(rawScoreThreshold) ? rawScoreThreshold : 0.6));
+    const stochLen = Math.max(3, Math.round(params.stochLen ?? 14));
+
+    return {
+        ...params,
+        scoreLookback,
+        scoreThreshold,
+        stochLen,
+    };
+}
+
 export const candle_pattern_persistence_score_stoch_mid: Strategy = {
     name: "Candle Pattern Persistence Score (Stochastic Mid)",
     description: "CPPS entries filtered by Stochastic mid-band regime to keep high signal frequency with directional bias.",
@@ -19,11 +33,13 @@ export const candle_pattern_persistence_score_stoch_mid: Strategy = {
         scoreThreshold: "Persistence Threshold",
         stochLen: "Stochastic %K Period",
     },
+    normalizeParams: normalizeCandlePatternPersistenceScoreStochMidParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
-        const scoreThreshold = Math.max(0, Math.min(1, params.scoreThreshold ?? 0.6));
-        const stochLen = Math.max(3, Math.round(params.stochLen ?? 14));
+        const normalizedParams = normalizeCandlePatternPersistenceScoreStochMidParams(params);
+        const scoreThreshold = normalizedParams.scoreThreshold;
+        const stochLen = normalizedParams.stochLen;
 
-        const state = computeCandlePatternPersistenceState(data, params.scoreLookback ?? 5);
+        const state = computeCandlePatternPersistenceState(data, normalizedParams.scoreLookback);
         const { cleanData, highs, lows, closes, avgScore, avgBodyPct } = state;
         if (cleanData.length < 3) return [];
 

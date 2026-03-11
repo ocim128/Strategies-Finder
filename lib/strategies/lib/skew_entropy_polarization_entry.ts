@@ -1,5 +1,6 @@
 import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
+import { buildRollingEntropy, buildRollingMedian, buildRollingSkewness } from "./price-action-statistics-core";
 
 function buildReturns(series: number[]): number[] {
     const res = new Array(series.length).fill(0);
@@ -10,70 +11,37 @@ function buildReturns(series: number[]): number[] {
     return res;
 }
 
-function buildRollingSkewness(series: number[], window: number): number[] {
-    const result = new Array(series.length).fill(0);
-    if (window < 3) return result;
-    
-    for (let i = window - 1; i < series.length; i++) {
-        let sum = 0;
-        for (let j = 0; j < window; j++) sum += series[i - j];
-        const mean = sum / window;
-        
-        let m2 = 0;
-        for (let j = 0; j < window; j++) m2 += Math.pow(series[i - j] - mean, 2);
-        const variance = m2 / window;
-        const stdDev = Math.sqrt(variance);
-        
-        if (stdDev === 0) {
-            result[i] = 0;
-            continue;
-        }
-        
-        let m3 = 0;
-        for (let j = 0; j < window; j++) m3 += Math.pow(series[i - j] - mean, 3);
-        m3 = m3 / window;
-        
-        result[i] = m3 / Math.pow(stdDev, 3);
-    }
-    return result;
+type SkewEntropyPrepared = {
+    cleanData: OHLCVData[];
+    closes: number[];
+    returns: number[];
+    skewByLookback: Map<number, number[]>;
+    entropyByLookback: Map<number, number[]>;
+    medianByLookback: Map<number, number[]>;
+};
+
+function normalizeSeries(series: (number | null)[]): number[] {
+    return series.map((value) => value ?? 0);
 }
 
-function buildRollingEntropy(series: number[], window: number): number[] {
-    const res = new Array(series.length).fill(0);
-    for (let i = window - 1; i < series.length; i++) {
-        const slice = series.slice(i - window + 1, i + 1);
-        const min = Math.min(...slice);
-        const max = Math.max(...slice);
-        if (max === min) {
-            res[i] = 0;
-            continue;
-        }
-        const bins = 10;
-        const counts = new Array(bins).fill(0);
-        for (let v of slice) {
-            let bin = Math.floor(((v - min) / (max - min)) * bins);
-            if (bin === bins) bin--;
-            counts[bin]++;
-        }
-        let entropy = 0;
-        for (let c of counts) {
-            if (c > 0) {
-                const p = c / window;
-                entropy -= p * Math.log2(p);
-            }
-        }
-        res[i] = entropy;
-    }
-    return res;
+function prepareSkewEntropyData(data: OHLCVData[]): SkewEntropyPrepared {
+    const cleanData = ensureCleanData(data);
+    const closes = getCloses(cleanData);
+    return {
+        cleanData,
+        closes,
+        returns: buildReturns(closes),
+        skewByLookback: new Map<number, number[]>(),
+        entropyByLookback: new Map<number, number[]>(),
+        medianByLookback: new Map<number, number[]>(),
+    };
 }
 
-function buildRollingMedian(series: number[], window: number): number[] {
-    const res = new Array(series.length).fill(0);
-    for (let i = window - 1; i < series.length; i++) {
-        const slice = series.slice(i - window + 1, i + 1).sort((a,b)=>a-b);
-        res[i] = slice[Math.floor(window / 2)];
+function getPreparedSkewEntropyData(preparedData: unknown, data: OHLCVData[]): SkewEntropyPrepared {
+    if (preparedData && typeof preparedData === "object" && "skewByLookback" in preparedData) {
+        return preparedData as SkewEntropyPrepared;
     }
-    return res;
+    return prepareSkewEntropyData(data);
 }
 
 export const skew_entropy_polarization_entry: Strategy = {
@@ -89,20 +57,32 @@ export const skew_entropy_polarization_entry: Strategy = {
         entropyCeiling: "Entropy Ceiling",
         skewThreshold: "Abs Skew Threshold",
     },
-    execute: (data: OHLCVData[], params: StrategyParams) => {
-        const cleanData = ensureCleanData(data);
-        const closes = getCloses(cleanData);
-        
-        const lookback = params.lookback as number;
-        const entropyCeiling = params.entropyCeiling as number;
-        const skewThreshold = params.skewThreshold as number;
+    prepareFinderData: (data) => prepareSkewEntropyData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
+        const prepared = getPreparedSkewEntropyData(preparedData, data);
+        const { cleanData, closes, returns, skewByLookback, entropyByLookback, medianByLookback } = prepared;
+
+        const lookback = Math.max(3, Math.round(params.lookback ?? 30));
+        const entropyCeiling = Number(params.entropyCeiling ?? 1);
+        const skewThreshold = Number(params.skewThreshold ?? 0.35);
 
         if (cleanData.length < lookback + 2) return [];
 
-        const returns = buildReturns(closes);
-        const skew = buildRollingSkewness(returns, lookback);
-        const entropy = buildRollingEntropy(returns, lookback);
-        const median = buildRollingMedian(closes, lookback);
+        let skew = skewByLookback.get(lookback);
+        if (!skew) {
+            skew = normalizeSeries(buildRollingSkewness(returns, lookback));
+            skewByLookback.set(lookback, skew);
+        }
+        let entropy = entropyByLookback.get(lookback);
+        if (!entropy) {
+            entropy = normalizeSeries(buildRollingEntropy(returns, lookback, 10));
+            entropyByLookback.set(lookback, entropy);
+        }
+        let median = medianByLookback.get(lookback);
+        if (!median) {
+            median = normalizeSeries(buildRollingMedian(closes, lookback));
+            medianByLookback.set(lookback, median);
+        }
 
         return createSignalLoop(cleanData, [], (i) => {
             if (i < lookback + 1) return null;
@@ -118,6 +98,8 @@ export const skew_entropy_polarization_entry: Strategy = {
             return null;
         });
     },
+    execute: (data: OHLCVData[], params: StrategyParams) =>
+        skew_entropy_polarization_entry.executePrepared?.(prepareSkewEntropyData(data), params, data) ?? [],
     metadata: {
         role: "entry",
         direction: "both",

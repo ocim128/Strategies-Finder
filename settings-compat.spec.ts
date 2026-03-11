@@ -12,6 +12,7 @@ import {
     isWorkerSupportedStrategyKey,
     resolveSubscriptionExecutionBacktestSettings,
 } from './lib/alert-subscription-utils';
+import { parseInputNumber } from './lib/dom-input-readers';
 
 describe('Backtest settings compatibility', () => {
     it('uses tradeFilterMode when provided', () => {
@@ -138,5 +139,11 @@ describe('Backtest settings compatibility', () => {
     it('exposes worker strategy compatibility checks for alert subscriptions', () => {
         expect(isWorkerSupportedStrategyKey('volatility_compression_break')).to.equal(true);
         expect(isWorkerSupportedStrategyKey('definitely_not_a_worker_strategy')).to.equal(false);
+    });
+
+    it('parses comma-decimal user inputs consistently', () => {
+        expect(parseInputNumber('0,78')).to.equal(0.78);
+        expect(parseInputNumber('1.234,56')).to.equal(1234.56);
+        expect(parseInputNumber('1,234.56')).to.equal(1234.56);
     });
 });

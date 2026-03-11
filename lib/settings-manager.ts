@@ -12,6 +12,7 @@ import { state, type ChartMode } from "./state";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
+import { parseInputNumber } from "./dom-input-readers";
 
 import type { BacktestSettings, ExecutionModel, MarketMode, TradeDirection, TradeFilterMode } from './types/strategies';
 import { EFFECTIVE_BACKTEST_DEFAULTS } from "./backtest-settings-resolver";
@@ -910,8 +911,8 @@ class SettingsManager {
     private readNumber(id: string, fallback: number): number {
         const input = document.getElementById(id) as HTMLInputElement | null;
         if (!input) return fallback;
-        const value = parseFloat(input.value);
-        return Number.isFinite(value) ? value : fallback;
+        const value = parseInputNumber(input.value);
+        return value ?? fallback;
     }
 
 

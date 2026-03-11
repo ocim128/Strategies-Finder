@@ -120,6 +120,11 @@ type TradeSizing = {
     fixedTradeAmount: number;
 };
 
+function normalizeStrategyParams(strategy: Strategy, params: StrategyParams): StrategyParams {
+    const nextParams = { ...params };
+    return strategy.normalizeParams ? strategy.normalizeParams(nextParams) : nextParams;
+}
+
 // ============================================================================
 // Parameter Grid Generation
 // ============================================================================
@@ -129,6 +134,58 @@ function validateRange(range: ParameterRange): void {
         throw new Error(`Invalid parameter step for ${range.name}: ${range.step}`);
     if (!Number.isFinite(range.min) || !Number.isFinite(range.max) || range.min >= range.max)
         throw new Error(`Invalid parameter range for ${range.name}: ${range.min} to ${range.max}`);
+}
+
+function roundRangeValue(value: number): number {
+    return Math.round(value * 1000) / 1000;
+}
+
+function snapValueToRange(range: ParameterRange, value: number): number {
+    validateRange(range);
+    if (!Number.isFinite(value)) {
+        return roundRangeValue(range.min);
+    }
+
+    const span = range.max - range.min;
+    const maxIndex = Math.max(0, Math.round(span / range.step));
+    const relativeIndex = (value - range.min) / range.step;
+    const snappedIndex = Math.max(0, Math.min(maxIndex, Math.round(relativeIndex)));
+    const snappedValue = range.min + snappedIndex * range.step;
+    const clampedValue = Math.max(range.min, Math.min(range.max, snappedValue));
+    return roundRangeValue(clampedValue);
+}
+
+function isLikelyIntegerOptimizationParam(name: string, value: number): boolean {
+    if (!Number.isFinite(value)) return false;
+    if (!Number.isInteger(Math.round(value))) return false;
+    return /(lookback|window|period|bars|bins|length|len|lag|count|crossings|hour|hours)/i.test(name);
+}
+
+function normalizeRangeForParameter(
+    name: string,
+    min: number,
+    max: number,
+    step: number,
+    referenceValue: number
+): ParameterRange {
+    if (isLikelyIntegerOptimizationParam(name, referenceValue)) {
+        const normalizedMin = Math.max(1, Math.round(min));
+        const normalizedMax = Math.max(normalizedMin + 1, Math.round(max));
+        const normalizedStep = Math.max(1, Math.round(step));
+        return {
+            name,
+            min: normalizedMin,
+            max: normalizedMax,
+            step: normalizedStep
+        };
+    }
+
+    return {
+        name,
+        min: roundRangeValue(min),
+        max: roundRangeValue(max),
+        step: roundRangeValue(step)
+    };
 }
 
 function generateParameterGrid(ranges: ParameterRange[]): StrategyParams[] {
@@ -149,7 +206,7 @@ function generateParameterGrid(ranges: ParameterRange[]): StrategyParams[] {
         const maxIterations = Math.ceil((range.max - range.min) / range.step) + 2;
         let iterations = 0;
         for (let value = range.min; value <= range.max; value += range.step) {
-            current[range.name] = Math.round(value * 1000) / 1000; // Avoid floating point issues
+            current[range.name] = snapValueToRange(range, value);
             generate(index + 1, current);
             iterations++;
             if (iterations > maxIterations) break;
@@ -210,7 +267,7 @@ function generateSampledParameterGrid(ranges: ParameterRange[], maxCombinations:
     // Seed with a deterministic midpoint combo.
     const midpoint: StrategyParams = {};
     for (const range of ranges) {
-        midpoint[range.name] = Math.round((((range.min + range.max) / 2) * 1000)) / 1000;
+        midpoint[range.name] = snapValueToRange(range, (range.min + range.max) / 2);
     }
     add(midpoint);
 
@@ -223,7 +280,7 @@ function generateSampledParameterGrid(ranges: ParameterRange[], maxCombinations:
             const count = stepCounts[i];
             const idx = Math.floor(random() * count);
             const value = range.min + idx * range.step;
-            params[range.name] = Math.round(Math.min(range.max, value) * 1000) / 1000;
+            params[range.name] = snapValueToRange(range, Math.min(range.max, value));
         }
         add(params);
         attempts++;
@@ -499,7 +556,7 @@ async function optimizeWindow(
         // Process batch without slice (avoid array allocation)
         for (let j = i; j < batchEnd; j++) {
             const paramOverrides = paramGrid[j];
-            const params = { ...baseParams, ...paramOverrides };
+            const params = normalizeStrategyParams(strategy, { ...baseParams, ...paramOverrides });
 
             try {
                 // Use compact backtest during optimization to keep memory stable.
@@ -550,7 +607,7 @@ function averageParameters(topResults: OptimizationResult[], ranges: ParameterRa
     if (topResults.length === 0) {
         const params: StrategyParams = {};
         for (const range of ranges) {
-            params[range.name] = (range.min + range.max) / 2;
+            params[range.name] = snapValueToRange(range, (range.min + range.max) / 2);
         }
         return params;
     }
@@ -573,7 +630,7 @@ function averageParameters(topResults: OptimizationResult[], ranges: ParameterRa
             const weight = Math.max(0, r.score) / totalScore;
             weightedSum += (r.params[range.name] ?? 0) * weight;
         }
-        avgParams[range.name] = Math.round(weightedSum / range.step) * range.step;
+        avgParams[range.name] = snapValueToRange(range, weightedSum);
     }
 
     return avgParams;
@@ -773,7 +830,7 @@ export async function runWalkForwardAnalysis(
         );
 
         const optimizedParams = averageParameters(topResults, parameterRanges);
-        const finalParams = { ...strategy.defaultParams, ...optimizedParams };
+        const finalParams = normalizeStrategyParams(strategy, { ...strategy.defaultParams, ...optimizedParams });
 
         const inSampleResult = runBacktestFastCompact(
             data,
@@ -910,6 +967,7 @@ export async function quickWalkForward(
 ): Promise<WalkForwardResult> {
     // Clean data at the entry point
     data = ensureCleanData(data);
+    const normalizedDefaultParams = normalizeStrategyParams(strategy, strategy.defaultParams);
 
     const totalBars = data.length;
     // Keep quick mode bounded on very large datasets.
@@ -922,7 +980,7 @@ export async function quickWalkForward(
 
     const allowedParams = strategy.metadata?.walkForwardParams;
     const allowSet = allowedParams ? new Set(allowedParams) : null;
-    const tunableParamEntries = Object.entries(strategy.defaultParams)
+    const tunableParamEntries = Object.entries(normalizedDefaultParams)
         .filter(([name]) => !allowSet || allowSet.has(name));
 
     // Strict quick-mode optimization budget.
@@ -976,12 +1034,12 @@ export async function quickWalkForward(
             continue;
         }
 
-        parameterRanges.push({ name, min, max, step });
+        parameterRanges.push(normalizeRangeForParameter(name, min, max, step, defaultValue));
     }
 
     return runWalkForwardAnalysis(
         data,
-        strategy,
+        { ...strategy, defaultParams: normalizedDefaultParams },
         {
             optimizationWindow,
             testWindow,
@@ -1076,7 +1134,7 @@ export async function runFixedParamWalkForward(
     const combinedEquityCurve: { time: Time; value: number }[] = [];
 
     // Fixed params must be explicitly injected by callers that evaluate candidates.
-    const fixedParams = config.fixedParams ?? strategy.defaultParams;
+    const fixedParams = normalizeStrategyParams(strategy, config.fixedParams ?? strategy.defaultParams);
 
     const totalWindows = Math.floor((totalDataLength - testWindow) / stepSize) + 1;
 

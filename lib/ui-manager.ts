@@ -170,7 +170,9 @@ export class UIManager {
     public updateStrategyDropdown(currentStrategyKey: string) {
         const strategySelect = getRequiredElement<HTMLSelectElement>('strategySelect');
         const strategies = getStrategyList();
-        const currentValue = strategySelect.value || currentStrategyKey;
+        const currentValue = strategyRegistry.has(currentStrategyKey)
+            ? currentStrategyKey
+            : strategySelect.value;
 
         strategySelect.innerHTML = '';
         strategies.forEach(({ key, name, description }) => {

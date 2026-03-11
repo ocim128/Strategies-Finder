@@ -13,7 +13,7 @@ It is not just a chart page. The app combines:
 - Load market data from local SQLite, IndexedDB, bundled price files, or remote providers
 - Run backtests with realistic execution settings, risk controls, and snapshot filters
 - Compare strategies, inspect trades, and analyze entry-quality patterns
-- Search parameter spaces with Finder, including `robust_random_wf`
+- Search parameter spaces with Finder, including random, genetic, and `robust_random_wf`
 - Validate robustness with walk-forward analysis
 - Run one strategy across multiple pairs with Portfolio Lab to compare dispersion, execution filters, pair ranking, sizing scenarios, and correlations
 - Build live or scheduled alert subscriptions through the Worker API

@@ -295,7 +295,7 @@ return signals;`;
     private applyAndRun() {
         this.savePreset();
         const key = (document.getElementById('strategyKey') as HTMLInputElement).value.trim();
-        state.currentStrategyKey = key;
+        state.set('currentStrategyKey', key);
         document.getElementById('codeEditorModal')!.classList.remove('active');
         setTimeout(() => backtestService.runCurrentBacktest(), 100);
     }

@@ -21,6 +21,7 @@ import { dataManager } from '../data-manager';
 import { Trade, BacktestSettings, Time } from '../strategies/index';
 import { formatJakartaTime, isBusinessDayTime } from '../timezone-utils';
 import { getOptionalElement } from '../dom-utils';
+import { parseInputNumber } from '../dom-input-readers';
 import { parseTimeToUnixSeconds } from '../time-normalization';
 import { createAccessibleModal, type AccessibleModalController } from '../modal-accessibility';
 import { isWorkerSupportedStrategyKey } from '../alert-subscription-utils';
@@ -603,8 +604,8 @@ function collectCurrentStrategyParams(): Record<string, number> {
     document.querySelectorAll<HTMLInputElement>('#settingsTab .param-input[data-param]').forEach((input) => {
         const key = input.dataset.param;
         if (!key) return;
-        const parsed = Number.parseFloat(input.value);
-        strategyParams[key] = Number.isFinite(parsed) ? parsed : 0;
+        const parsed = parseInputNumber(input.value);
+        strategyParams[key] = parsed ?? 0;
     });
     return strategyParams;
 }

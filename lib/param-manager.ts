@@ -1,10 +1,20 @@
 import { StrategyParams, Strategy } from "./strategies/index";
 import { getRequiredElement } from "./dom-utils";
 import { bindFormAccessibility } from "./form-accessibility";
+import { parseInputNumber } from "./dom-input-readers";
 
 export class ParamManager {
+    private getParamContainer(): HTMLElement {
+        return getRequiredElement('strategyParams');
+    }
+
+    private getParamInput(key: string): HTMLInputElement | HTMLSelectElement | null {
+        const container = this.getParamContainer();
+        return container.querySelector(`#param_${key}`) as HTMLInputElement | HTMLSelectElement | null;
+    }
+
     public render(strategy: Strategy) {
-        const container = getRequiredElement('strategyParams');
+        const container = this.getParamContainer();
         let html = '';
         const paramKeys = Object.keys(strategy.defaultParams);
 
@@ -32,15 +42,15 @@ export class ParamManager {
     public getValues(strategy: Strategy): StrategyParams {
         const params: StrategyParams = {};
         for (const key of Object.keys(strategy.defaultParams)) {
-            const input = document.getElementById(`param_${key}`) as HTMLInputElement | HTMLSelectElement | null;
+            const input = this.getParamInput(key);
             if (!input) {
                 params[key] = strategy.defaultParams[key];
                 continue;
             }
 
             if (input instanceof HTMLSelectElement) {
-                const parsed = parseFloat(input.value);
-                params[key] = Number.isNaN(parsed) ? strategy.defaultParams[key] : parsed;
+                const parsed = parseInputNumber(input.value);
+                params[key] = parsed === null ? strategy.defaultParams[key] : parsed;
                 continue;
             }
 
@@ -49,15 +59,15 @@ export class ParamManager {
                 continue;
             }
 
-            const parsed = parseFloat(input.value);
-            params[key] = Number.isNaN(parsed) ? strategy.defaultParams[key] : parsed;
+            const parsed = parseInputNumber(input.value);
+            params[key] = parsed === null ? strategy.defaultParams[key] : parsed;
         }
         return params;
     }
 
     public setValues(strategy: Strategy, params: StrategyParams): void {
         for (const key of Object.keys(strategy.defaultParams)) {
-            const input = document.getElementById(`param_${key}`) as HTMLInputElement | HTMLSelectElement | null;
+            const input = this.getParamInput(key);
             if (!input || params[key] === undefined) continue;
 
             if (input instanceof HTMLSelectElement) {
@@ -127,10 +137,10 @@ export class ParamManager {
             }
         };
 
-        const entryModeEl = document.getElementById('param_entryMode') as HTMLElement | null;
-        const retestModeEl = document.getElementById('param_retestMode') as HTMLElement | null;
-        const touchUsesWickEl = document.getElementById('param_touchUsesWick') as HTMLElement | null;
-        const targetPctEl = document.getElementById('param_targetPct') as HTMLElement | null;
+        const entryModeEl = this.getParamInput('entryMode') as HTMLElement | null;
+        const retestModeEl = this.getParamInput('retestMode') as HTMLElement | null;
+        const touchUsesWickEl = this.getParamInput('touchUsesWick') as HTMLElement | null;
+        const targetPctEl = this.getParamInput('targetPct') as HTMLElement | null;
 
         if (entryModeEl && entryModeEl.dataset.bound !== '1') {
             entryModeEl.addEventListener('change', updateDependencies);
@@ -153,22 +163,23 @@ export class ParamManager {
     }
 
     private readParamValue(key: string, defaults: StrategyParams): number {
-        const input = document.getElementById(`param_${key}`) as HTMLInputElement | HTMLSelectElement | null;
+        const input = this.getParamInput(key);
         if (!input) return defaults[key];
         if (input instanceof HTMLSelectElement) {
-            const parsed = parseFloat(input.value);
-            return Number.isNaN(parsed) ? defaults[key] : parsed;
+            const parsed = parseInputNumber(input.value);
+            return parsed === null ? defaults[key] : parsed;
         }
         if (input.type === 'checkbox') {
             return input.checked ? 1 : 0;
         }
-        const parsed = parseFloat(input.value);
-        return Number.isNaN(parsed) ? defaults[key] : parsed;
+        const parsed = parseInputNumber(input.value);
+        return parsed === null ? defaults[key] : parsed;
     }
 
     private setGroupEnabled(key: string, enabled: boolean): void {
-        const group = document.getElementById(`param_group_${key}`);
-        const input = document.getElementById(`param_${key}`) as HTMLInputElement | HTMLSelectElement | null;
+        const container = this.getParamContainer();
+        const group = container.querySelector(`#param_group_${key}`);
+        const input = this.getParamInput(key);
         if (!group || !input) return;
         group.classList.toggle('is-disabled', !enabled);
         input.disabled = !enabled;

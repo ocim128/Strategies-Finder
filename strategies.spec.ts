@@ -9,6 +9,8 @@ import { resolveScannerBacktestSettings } from './lib/scanner/scanner-engine';
 import { evaluateLatestEntrySignal } from './lib/signal-entry-evaluator';
 import { strategies } from './lib/strategies/library';
 import { isTwoHourParityAligned, resolveTwoHourParityFromTime } from './lib/two-hour-parity';
+import { quickWalkForward, runWalkForwardAnalysis } from './lib/strategies/walk-forward';
+import { deriveAutoWalkForwardRange, resolveFiniteRangeReferenceValue } from './lib/walk-forward-range-utils';
 
 
 describe('Strategy Calculations', () => {
@@ -259,6 +261,170 @@ describe('Causal Signal Stability', () => {
 
     it('volatility_compression_break should keep prior signals stable when candles are appended', () => {
         expectPrefixStable('volatility_compression_break');
+    });
+});
+
+describe('Walk-forward parameter normalization', () => {
+    it('preserves zero-valued WFA seed params instead of falling back to defaults', () => {
+        expect(resolveFiniteRangeReferenceValue(0, 1, 10)).to.equal(0);
+        expect(resolveFiniteRangeReferenceValue(undefined, 1, 10)).to.equal(1);
+        expect(resolveFiniteRangeReferenceValue(undefined, undefined, 10)).to.equal(10);
+    });
+
+    it('keeps zero-capable threshold params anchored at zero in auto WFA ranges', () => {
+        const range = deriveAutoWalkForwardRange('rocThreshold', 0);
+        expect(range.min).to.equal(0);
+        expect(range.max).to.be.greaterThan(0);
+        expect(range.step).to.be.greaterThan(0);
+    });
+
+    it('keeps integer-like quick WFA params on-grid', async () => {
+        const bars: OHLCVData[] = [];
+        for (let i = 0; i < 160; i++) {
+            bars.push({
+                time: (i + 1) as Time,
+                open: 100 + i,
+                high: 101 + i,
+                low: 99 + i,
+                close: 100 + i,
+                volume: 10
+            });
+        }
+
+        const strategy: Strategy = {
+            name: 'Integer Param Guard',
+            description: 'Fails if quick WFA passes fractional lookback values.',
+            defaultParams: {
+                lookback: 18,
+                threshold: 0.5
+            },
+            paramLabels: {
+                lookback: 'Lookback',
+                threshold: 'Threshold'
+            },
+            execute: (_data, params) => {
+                if (!Number.isInteger(params.lookback)) {
+                    throw new Error(`fractional lookback: ${params.lookback}`);
+                }
+                return [];
+            },
+            metadata: {
+                role: 'entry',
+                direction: 'both',
+                walkForwardParams: ['lookback', 'threshold']
+            }
+        };
+
+        const result = await quickWalkForward(
+            bars,
+            strategy,
+            10_000,
+            100,
+            0.1
+        );
+
+        for (const window of result.windows) {
+            expect(Number.isInteger(window.optimizedParams.lookback)).to.equal(true);
+        }
+    });
+
+    it('normalizes strategy-specific WFA params before execution and reporting', async () => {
+        const bars: OHLCVData[] = [];
+        for (let i = 0; i < 180; i++) {
+            bars.push({
+                time: (i + 1) as Time,
+                open: 100 + i,
+                high: 101 + i,
+                low: 99 + i,
+                close: 100 + i,
+                volume: 10
+            });
+        }
+
+        const strategy: Strategy = {
+            name: 'Relational Param Guard',
+            description: 'Ensures slowWindow is always greater than fastWindow.',
+            defaultParams: {
+                fastWindow: 10,
+                slowWindow: 10,
+            },
+            paramLabels: {
+                fastWindow: 'Fast Window',
+                slowWindow: 'Slow Window',
+            },
+            normalizeParams: (params) => {
+                const fastWindow = Math.max(2, Math.round(params.fastWindow ?? 10));
+                const slowWindow = Math.max(fastWindow + 1, Math.round(params.slowWindow ?? 10));
+                return { ...params, fastWindow, slowWindow };
+            },
+            execute: (_data, params) => {
+                if (params.slowWindow <= params.fastWindow) {
+                    throw new Error(`invalid normalized params: ${params.fastWindow}/${params.slowWindow}`);
+                }
+                return [];
+            },
+            metadata: {
+                role: 'entry',
+                direction: 'both',
+                walkForwardParams: ['fastWindow', 'slowWindow']
+            }
+        };
+
+        const result = await runWalkForwardAnalysis(
+            bars,
+            strategy,
+            {
+                optimizationWindow: 60,
+                testWindow: 20,
+                stepSize: 20,
+                parameterRanges: [
+                    { name: 'fastWindow', min: 8, max: 12, step: 2 },
+                    { name: 'slowWindow', min: 8, max: 12, step: 2 },
+                ],
+                minTrades: 0,
+                topN: 2
+            },
+            10_000,
+            100,
+            0.1
+        );
+
+        expect(result.windows.length).to.be.greaterThan(0);
+        for (const window of result.windows) {
+            expect(window.optimizedParams.slowWindow).to.be.greaterThan(window.optimizedParams.fastWindow);
+        }
+    });
+
+    it('exposes normalized base params for noise-to-signal efficiency breakout', () => {
+        const strategy = strategies['noise_to_signal_efficiency_breakout'];
+        expect(strategy).to.not.equal(undefined);
+        expect(typeof strategy.normalizeParams).to.equal('function');
+
+        const normalized = strategy.normalizeParams!({
+            erPeriod: 30,
+            choppyThreshold: 0.611,
+            rocThreshold: -4
+        });
+
+        expect(normalized.erPeriod).to.equal(30);
+        expect(normalized.choppyThreshold).to.equal(0.611);
+        expect(normalized.rocThreshold).to.equal(0);
+    });
+
+    it('exposes normalized base params for candle pattern persistence score stoch mid', () => {
+        const strategy = strategies['candle_pattern_persistence_score_stoch_mid'];
+        expect(strategy).to.not.equal(undefined);
+        expect(typeof strategy.normalizeParams).to.equal('function');
+
+        const normalized = strategy.normalizeParams!({
+            scoreLookback: 32.4,
+            scoreThreshold: -0.419,
+            stochLen: 55.6
+        });
+
+        expect(normalized.scoreLookback).to.equal(32);
+        expect(normalized.scoreThreshold).to.equal(0);
+        expect(normalized.stochLen).to.equal(56);
     });
 });
 

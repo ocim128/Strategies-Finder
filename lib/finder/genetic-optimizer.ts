@@ -403,6 +403,7 @@ export async function runGeneticOptimization(input: GeneticOptimizerInput): Prom
     }
 
     const precomputed = precomputeIndicators(data, backtestSettings);
+    const preparedFinderData = strategy.prepareFinderData?.(data, backtestSettings);
     const fitnessCache = new Map<string, { fitness: FitnessScore; result: BacktestResult }>();
     let nextGenomeId = 1;
 
@@ -411,7 +412,10 @@ export async function runGeneticOptimization(input: GeneticOptimizerInput): Prom
         const cached = fitnessCache.get(key);
         if (cached) return cached;
 
-        const signals = applySignalPolarity(strategy.execute(data, params), backtestSettings);
+        const rawSignals = strategy.executePrepared
+            ? strategy.executePrepared(preparedFinderData, params, data)
+            : strategy.execute(data, params);
+        const signals = applySignalPolarity(rawSignals, backtestSettings);
         const result = runBacktestCompact(
             data,
             signals,

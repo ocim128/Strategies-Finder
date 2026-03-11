@@ -1,6 +1,6 @@
 import type { BacktestResult, StrategyParams, TradeDirection, TradeFilterMode } from "../types/strategies";
 
-export type FinderMode = 'default' | 'grid' | 'random' | 'robust_random_wf';
+export type FinderMode = 'default' | 'grid' | 'random' | 'genetic' | 'robust_random_wf';
 export type FinderMetric =
     | 'netProfit'
     | 'profitFactor'
@@ -75,7 +75,7 @@ export interface FinderResult {
 }
 
 export interface FinderRandomBenchmark {
-    pipeline: 'standard' | 'rust_native' | 'ts_funnel';
+    pipeline: 'standard' | 'rust_native' | 'ts_funnel' | 'rust_funnel';
     engineMode: string;
     totalRuns: number;
     processedRuns: number;

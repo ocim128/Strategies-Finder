@@ -475,7 +475,19 @@ export interface Strategy {
     description: string;
     defaultParams: StrategyParams;
     paramLabels: { [key: string]: string };
+    /** Optional parameter sanitizer used before execution/optimization. */
+    normalizeParams?: (params: StrategyParams) => StrategyParams;
     execute: (data: OHLCVData[], params: StrategyParams) => Signal[];
+    /**
+     * Optional Finder/optimizer precompute seam for reusing dataset-derived state
+     * across many candidate evaluations on the same bars/settings.
+     */
+    prepareFinderData?: (data: OHLCVData[], settings?: BacktestSettings) => unknown;
+    /**
+     * Optional execute variant that consumes data produced by prepareFinderData.
+     * The original OHLCV array is still provided so strategies can opt in gradually.
+     */
+    executePrepared?: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => Signal[];
     evaluate?: (data: OHLCVData[], params: StrategyParams, signals?: Signal[]) => StrategyEvaluation;
     indicators?: (data: OHLCVData[], params: StrategyParams) => StrategyIndicator[];
     /** Optional entry preview for live chart hinting */
