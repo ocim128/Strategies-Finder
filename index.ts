@@ -23,6 +23,7 @@ import { analysisPanel } from "./lib/analysis-panel";
 import { parameterAuditService } from "./lib/parameter-audit-service";
 import { dataMiningManager } from "./lib/data-mining-manager";
 import { portfolioLabService } from "./lib/portfolio-lab-service";
+import { strategyEnsembleService } from "./lib/strategy-ensemble-service";
 
 
 
@@ -74,6 +75,7 @@ async function init() {
 	parameterAuditService.init();
 	analysisPanel.init();
 	portfolioLabService.init();
+	strategyEnsembleService.init();
 	initAlertHandlers();
 	initLivePositionsHandlers();
 

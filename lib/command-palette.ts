@@ -124,6 +124,7 @@ export class CommandPaletteManager {
             { id: 'paircombiner', name: 'Pair Combiner', icon: 'compare_arrows' },
             { id: 'walkforward', name: 'Walk-Forward Analysis', icon: 'fast_forward' },
             { id: 'portfolio', name: 'Portfolio Lab', icon: 'hub' },
+            { id: 'ensemble', name: 'Strategy Ensemble Lab', icon: 'layers' },
             { id: 'results', name: 'Backtest Results', icon: 'bar_chart' },
             { id: 'trades', name: 'Trade History', icon: 'history' }
         ];

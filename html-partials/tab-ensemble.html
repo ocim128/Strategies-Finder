@@ -1,0 +1,142 @@
+<div id="ensembleTab" style="display: none;">
+    <div class="empty-state empty-state-illustrated" id="ensembleEmpty">
+        <div class="empty-state-icon">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" />
+            </svg>
+        </div>
+        <h3 class="empty-state-title">Strategy Ensemble Lab</h3>
+        <p class="empty-state-description">
+            Analyze multiple saved strategy configurations on the current chart.
+            Save at least one strategy configuration first, then select a target and context strategies
+            to evaluate consensus, disagreement, and ensemble trade filtering.
+        </p>
+    </div>
+
+    <div class="portfolio-lab" id="ensembleContent">
+        <div class="analysis-finder-section">
+            <div class="analysis-finder-header">
+                <h4 class="analysis-finder-title">Config Selection</h4>
+                <div class="analysis-finder-controls">
+                    <button class="btn btn-secondary btn-compact" id="ensembleRefreshConfigsBtn" type="button">Refresh</button>
+                    <button class="btn btn-primary btn-compact" id="ensembleRunBtn" type="button">Run Ensemble Lab</button>
+                </div>
+            </div>
+
+            <div class="portfolio-lab__controls">
+                <div class="portfolio-lab__control-grid">
+                    <label class="analysis-control" for="ensembleTargetSelect">
+                        Target Config
+                        <select id="ensembleTargetSelect">
+                            <option value="" disabled selected>Select target config</option>
+                        </select>
+                    </label>
+                    <label class="analysis-control" for="ensembleMinSamples">
+                        Min Samples
+                        <input type="number" id="ensembleMinSamples" min="3" max="200" step="1" value="5" />
+                    </label>
+                    <div class="analysis-control portfolio-lab__readout">
+                        Symbol
+                        <div class="portfolio-lab__badge" id="ensembleSymbolBadge">-</div>
+                    </div>
+                    <div class="analysis-control portfolio-lab__readout">
+                        Timeframe
+                        <div class="portfolio-lab__badge" id="ensembleIntervalBadge">-</div>
+                    </div>
+                </div>
+                <label class="analysis-control portfolio-lab__control-block" for="ensembleContextList">
+                    Context Configs
+                    <div class="ensemble-lab__context-list" id="ensembleContextList">
+                        <p style="color:var(--text-secondary);padding:8px;margin:0;">No saved configs loaded yet.</p>
+                    </div>
+                </label>
+            </div>
+
+            <div class="analysis-finder-status" id="ensembleStatus">Save strategy configurations, then select a target and context strategies to run ensemble analysis.</div>
+        </div>
+
+        <div class="analysis-simulation" id="ensembleResults" style="display: none;">
+            <h4 class="simulation-title">Ensemble Summary</h4>
+            <div class="simulation-grid" id="ensembleSummary"></div>
+        </div>
+
+        <div class="analysis-finder-section portfolio-lab__section" id="ensembleCurrentContextSection" style="display: none;">
+            <div class="analysis-finder-header">
+                <h4 class="analysis-finder-title">Current Context</h4>
+            </div>
+            <div class="simulation-grid" id="ensembleCurrentContextSummary"></div>
+            <div class="portfolio-lab__insights" id="ensembleCurrentContextDetails"></div>
+        </div>
+
+        <div class="analysis-finder-section portfolio-lab__section" id="ensembleHistoricalOddsSection" style="display: none;">
+            <div class="analysis-finder-header">
+                <h4 class="analysis-finder-title">Historical Conditional Odds</h4>
+            </div>
+            <div class="simulation-grid" id="ensembleHistoricalOddsSummary"></div>
+            <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
+                <div class="portfolio-lab__table-caption">Target trades bucketed by context agreement at entry bar</div>
+                <table class="analysis-table portfolio-lab__table">
+                    <thead>
+                        <tr>
+                            <th>Agreement Bucket</th>
+                            <th>Samples</th>
+                            <th>Win %</th>
+                            <th>Loss %</th>
+                            <th>Avg Exp</th>
+                            <th>Avg Net %</th>
+                            <th>Avg Oppose</th>
+                            <th>Long Win %</th>
+                            <th>Short Win %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ensembleHistoricalOddsTableBody">
+                        <tr>
+                            <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                Run Ensemble Lab to calculate conditional outcome probabilities.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="analysis-finder-section portfolio-lab__section" id="ensembleBuilderSection" style="display: none;">
+            <div class="analysis-finder-header">
+                <h4 class="analysis-finder-title">Ensemble Builder</h4>
+            </div>
+            <div class="simulation-grid" id="ensembleBuilderSummary"></div>
+            <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
+                <div class="portfolio-lab__table-caption">Ensemble rule comparison against baseline target performance</div>
+                <table class="analysis-table portfolio-lab__table">
+                    <thead>
+                        <tr>
+                            <th>Rule</th>
+                            <th>Signals</th>
+                            <th>Trades</th>
+                            <th>Win %</th>
+                            <th>Net %</th>
+                            <th>Exp</th>
+                            <th>PF</th>
+                            <th>Max DD %</th>
+                            <th>Engine</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ensembleBuilderTableBody">
+                        <tr>
+                            <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                Run Ensemble Lab to compare ensemble filtering rules.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="analysis-finder-section portfolio-lab__section" id="ensembleRadarSection" style="display: none;">
+            <div class="analysis-finder-header">
+                <h4 class="analysis-finder-title">Opportunity Radar</h4>
+            </div>
+            <div class="portfolio-lab__insights" id="ensembleRadarContent"></div>
+        </div>
+    </div>
+</div>

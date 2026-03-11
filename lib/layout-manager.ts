@@ -19,6 +19,7 @@ import tabResultsHtml from '../html-partials/tab-results.html?raw';
 import tabTradesHtml from '../html-partials/tab-trades.html?raw';
 import tabAnalysisHtml from '../html-partials/tab-analysis.html?raw';
 import tabPortfolioHtml from '../html-partials/tab-portfolio.html?raw';
+import tabEnsembleHtml from '../html-partials/tab-ensemble.html?raw';
 import tabAlertsHtml from '../html-partials/tab-alerts.html?raw';
 import statusBarHtml from '../html-partials/status-bar.html?raw';
 import debugPanelHtml from '../html-partials/debug-panel.html?raw';
@@ -84,6 +85,7 @@ export function injectLayout() {
         tabTradesHtml +
         tabAnalysisHtml +
         tabPortfolioHtml +
+        tabEnsembleHtml +
         tabAlertsHtml;
 
     // Create the panel shell

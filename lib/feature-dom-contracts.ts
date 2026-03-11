@@ -746,3 +746,86 @@ export function createParameterAuditDom(): ParameterAuditDom {
         parameterAuditTableBody: getRequiredElement("parameterAuditTableBody"),
     };
 }
+
+export const ENSEMBLE_LAB_REQUIRED_IDS = [
+    "ensembleTab",
+    "ensembleEmpty",
+    "ensembleContent",
+    "ensembleTargetSelect",
+    "ensembleMinSamples",
+    "ensembleSymbolBadge",
+    "ensembleIntervalBadge",
+    "ensembleContextList",
+    "ensembleRefreshConfigsBtn",
+    "ensembleRunBtn",
+    "ensembleStatus",
+    "ensembleResults",
+    "ensembleSummary",
+    "ensembleCurrentContextSection",
+    "ensembleCurrentContextSummary",
+    "ensembleCurrentContextDetails",
+    "ensembleHistoricalOddsSection",
+    "ensembleHistoricalOddsSummary",
+    "ensembleHistoricalOddsTableBody",
+    "ensembleBuilderSection",
+    "ensembleBuilderSummary",
+    "ensembleBuilderTableBody",
+    "ensembleRadarSection",
+    "ensembleRadarContent",
+] as const;
+
+export interface EnsembleLabDom {
+    ensembleTab: HTMLElement;
+    ensembleEmpty: HTMLElement;
+    ensembleContent: HTMLElement;
+    ensembleTargetSelect: HTMLSelectElement;
+    ensembleMinSamples: HTMLInputElement;
+    ensembleSymbolBadge: HTMLElement;
+    ensembleIntervalBadge: HTMLElement;
+    ensembleContextList: HTMLElement;
+    ensembleRefreshConfigsBtn: HTMLButtonElement;
+    ensembleRunBtn: HTMLButtonElement;
+    ensembleStatus: HTMLElement;
+    ensembleResults: HTMLElement;
+    ensembleSummary: HTMLElement;
+    ensembleCurrentContextSection: HTMLElement;
+    ensembleCurrentContextSummary: HTMLElement;
+    ensembleCurrentContextDetails: HTMLElement;
+    ensembleHistoricalOddsSection: HTMLElement;
+    ensembleHistoricalOddsSummary: HTMLElement;
+    ensembleHistoricalOddsTableBody: HTMLElement;
+    ensembleBuilderSection: HTMLElement;
+    ensembleBuilderSummary: HTMLElement;
+    ensembleBuilderTableBody: HTMLElement;
+    ensembleRadarSection: HTMLElement;
+    ensembleRadarContent: HTMLElement;
+}
+
+export function createEnsembleLabDom(): EnsembleLabDom {
+    return {
+        ensembleTab: getRequiredElement("ensembleTab"),
+        ensembleEmpty: getRequiredElement("ensembleEmpty"),
+        ensembleContent: getRequiredElement("ensembleContent"),
+        ensembleTargetSelect: getRequiredElement<HTMLSelectElement>("ensembleTargetSelect"),
+        ensembleMinSamples: getRequiredElement<HTMLInputElement>("ensembleMinSamples"),
+        ensembleSymbolBadge: getRequiredElement("ensembleSymbolBadge"),
+        ensembleIntervalBadge: getRequiredElement("ensembleIntervalBadge"),
+        ensembleContextList: getRequiredElement("ensembleContextList"),
+        ensembleRefreshConfigsBtn: getRequiredElement<HTMLButtonElement>("ensembleRefreshConfigsBtn"),
+        ensembleRunBtn: getRequiredElement<HTMLButtonElement>("ensembleRunBtn"),
+        ensembleStatus: getRequiredElement("ensembleStatus"),
+        ensembleResults: getRequiredElement("ensembleResults"),
+        ensembleSummary: getRequiredElement("ensembleSummary"),
+        ensembleCurrentContextSection: getRequiredElement("ensembleCurrentContextSection"),
+        ensembleCurrentContextSummary: getRequiredElement("ensembleCurrentContextSummary"),
+        ensembleCurrentContextDetails: getRequiredElement("ensembleCurrentContextDetails"),
+        ensembleHistoricalOddsSection: getRequiredElement("ensembleHistoricalOddsSection"),
+        ensembleHistoricalOddsSummary: getRequiredElement("ensembleHistoricalOddsSummary"),
+        ensembleHistoricalOddsTableBody: getRequiredElement("ensembleHistoricalOddsTableBody"),
+        ensembleBuilderSection: getRequiredElement("ensembleBuilderSection"),
+        ensembleBuilderSummary: getRequiredElement("ensembleBuilderSummary"),
+        ensembleBuilderTableBody: getRequiredElement("ensembleBuilderTableBody"),
+        ensembleRadarSection: getRequiredElement("ensembleRadarSection"),
+        ensembleRadarContent: getRequiredElement("ensembleRadarContent"),
+    };
+}
