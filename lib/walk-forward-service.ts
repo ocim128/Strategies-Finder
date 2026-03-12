@@ -8,6 +8,14 @@ import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
 import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
 import { applySignalPolarity, runBacktestCompact } from "./strategies/backtest";
+import {
+    formatWalkForwardPermutationMetricValue,
+    formatWalkForwardPermutationPValue,
+    runWalkForwardPermutationTest,
+    type WalkForwardPermutationConfig,
+    type WalkForwardPermutationMetric,
+    type WalkForwardPermutationResult
+} from "./strategies/backtest/permutation-test";
 import { parseInputNumber } from "./dom-input-readers";
 import type { Strategy, StrategyParams, BacktestSettings, OHLCVData } from "./strategies/index";
 import { sliceOhlcvByBlock } from "./block-selector";
@@ -36,6 +44,9 @@ import {
 const DEFAULT_CANDIDATE_VALIDATION_SEEDS = [1337, 7331, 2026, 4242, 9001];
 const DEFAULT_MIN_SEED_PASSES = 3;
 const DEFAULT_MAX_OOS_DD_PERCENT = 30;
+const DEFAULT_WF_PERMUTATIONS = 500;
+const DEFAULT_WF_PERMUTATION_SEED = 1337;
+const DEFAULT_WF_PERMUTATION_METRIC: WalkForwardPermutationMetric = "net_profit";
 
 type CandidateValidationDecisionReason =
     | "pass"
@@ -172,9 +183,10 @@ class WalkForwardService {
             "wf-step-size": dom.wfStepSize,
             "wf-min-trades": dom.wfMinTrades,
             "wf-top-n": dom.wfTopN,
-            "wf-validation-seeds": dom.wfValidationSeeds,
             "wf-validation-min-passes": dom.wfValidationMinPasses,
             "wf-validation-max-dd": dom.wfValidationMaxDd,
+            "wf-permutation-count": dom.wfPermutationCount,
+            "wf-permutation-seed": dom.wfPermutationSeed,
         };
         const el = elementMap[id];
         if (!el) return;
@@ -1048,6 +1060,175 @@ class WalkForwardService {
         return `${Number(value).toFixed(digits)}%`;
     }
 
+    private formatPermutationValue(metric: WalkForwardPermutationMetric, value: number | null): string {
+        return formatWalkForwardPermutationMetricValue(metric, value);
+    }
+
+    private getPermutationMetricFromUI(): WalkForwardPermutationMetric {
+        const value = this.getDom().wfPermutationMetric.value;
+        if (value === "net_profit" || value === "profit_factor" || value === "expectancy" || value === "trade_sharpe") {
+            return value;
+        }
+        return DEFAULT_WF_PERMUTATION_METRIC;
+    }
+
+    private getPermutationConfigFromUI(): WalkForwardPermutationConfig {
+        const permutations = Math.max(50, Math.round(this.readNumberInput("wf-permutation-count", DEFAULT_WF_PERMUTATIONS)));
+        const seed = Math.max(1, Math.trunc(this.readNumberInput("wf-permutation-seed", DEFAULT_WF_PERMUTATION_SEED)));
+
+        return {
+            permutations,
+            seed,
+            metric: this.getPermutationMetricFromUI(),
+        };
+    }
+
+    async runPermutationTest(): Promise<WalkForwardPermutationResult | null> {
+        if (this.isRunning) {
+            this.updateStatus("Analysis already running.");
+            return null;
+        }
+        if (!this.lastResult) {
+            this.renderPermutationSummary(null);
+            this.updateStatus("Run Walk-Forward or Quick Analysis first.");
+            return null;
+        }
+
+        this.isRunning = true;
+        this.setLoading(true, "permutation");
+
+        try {
+            const config = this.getPermutationConfigFromUI();
+            this.updateStatus(`Running ${config.permutations} permutation samples on latest WFA OOS trades...`);
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            const result = runWalkForwardPermutationTest(this.lastResult, config);
+            this.renderPermutationSummary(result);
+
+            if (result.status === "ok") {
+                this.updateStatus(
+                    `Permutation test: p=${formatWalkForwardPermutationPValue(result.pValue)} (${result.interpretation}).`
+                );
+            } else {
+                this.updateStatus(`Permutation test: ${result.interpretation}`);
+            }
+
+            return result;
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            debugLogger.error(`Permutation test failed: ${msg}`);
+            this.updateStatus(`Permutation test error: ${msg}`);
+            return null;
+        } finally {
+            this.isRunning = false;
+            this.setLoading(false, "permutation");
+        }
+    }
+
+    private getPermutationTone(result: WalkForwardPermutationResult): "positive" | "negative" | "neutral" {
+        if (result.status !== "ok") return "neutral";
+        if ((result.pValue ?? 1) <= 0.05 && (result.observedValue ?? 0) > 0) return "positive";
+        if ((result.observedValue ?? 0) <= 0) return "negative";
+        return "neutral";
+    }
+
+    private renderPermutationSummary(result: WalkForwardPermutationResult | null): void {
+        const { wfPermutationPanel: panel } = this.getDom();
+
+        if (!result) {
+            if (!this.lastResult) {
+                panel.innerHTML = `
+                    <div class="empty-state">
+                        <p>Run Walk-Forward or Quick Analysis first. This test uses the latest WFA out-of-sample trades, not the main backtest.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const tradeCount = this.lastResult.combinedOOSTrades.totalTrades;
+            panel.innerHTML = `
+                <div class="empty-state">
+                    <p>Latest WFA sample ready: ${tradeCount} OOS trades. Run the permutation test to estimate how often a no-edge null could score this well by chance.</p>
+                </div>
+            `;
+            return;
+        }
+
+        const tone = this.getPermutationTone(result);
+        if (result.status !== "ok") {
+            panel.innerHTML = `
+                <div class="wf-permutation-header">
+                    <div class="wf-permutation-title ${tone}">Permutation Test Unavailable</div>
+                    <div class="wf-permutation-note">${result.interpretation}</div>
+                </div>
+                <div class="wf-summary">
+                    <div class="wf-stat">
+                        <span class="wf-label">Metric</span>
+                        <span class="wf-value">${result.metricLabel}</span>
+                    </div>
+                    <div class="wf-stat">
+                        <span class="wf-label">OOS Trades</span>
+                        <span class="wf-value">${result.tradeCount}</span>
+                    </div>
+                    <div class="wf-stat">
+                        <span class="wf-label">Min Trades</span>
+                        <span class="wf-value">${result.sampleRequirement}</span>
+                    </div>
+                    <div class="wf-stat">
+                        <span class="wf-label">Permutations</span>
+                        <span class="wf-value">${result.permutations}</span>
+                    </div>
+                </div>
+                <div class="wf-permutation-note">${result.summary}</div>
+                <div class="wf-permutation-note">${result.nullModel}</div>
+            `;
+            return;
+        }
+
+        panel.innerHTML = `
+            <div class="wf-permutation-header">
+                <div class="wf-permutation-title ${tone}">${result.interpretation}</div>
+                <div class="wf-permutation-note">One-sided test on the latest walk-forward OOS sample. Robustness score remains a separate overfitting check.</div>
+            </div>
+            <div class="wf-summary">
+                <div class="wf-stat">
+                    <span class="wf-label">Observed ${result.metricLabel}</span>
+                    <span class="wf-value">${this.formatPermutationValue(result.metric, result.observedValue)}</span>
+                </div>
+                <div class="wf-stat">
+                    <span class="wf-label">Null Mean</span>
+                    <span class="wf-value">${this.formatPermutationValue(result.metric, result.nullMean)}</span>
+                </div>
+                <div class="wf-stat">
+                    <span class="wf-label">Null Median</span>
+                    <span class="wf-value">${this.formatPermutationValue(result.metric, result.nullMedian)}</span>
+                </div>
+                <div class="wf-stat">
+                    <span class="wf-label">P-Value</span>
+                    <span class="wf-value ${tone}">${formatWalkForwardPermutationPValue(result.pValue)}</span>
+                </div>
+                <div class="wf-stat">
+                    <span class="wf-label">OOS Trades</span>
+                    <span class="wf-value">${result.tradeCount}</span>
+                </div>
+                <div class="wf-stat">
+                    <span class="wf-label">Permutations</span>
+                    <span class="wf-value">${result.permutations}</span>
+                </div>
+                <div class="wf-stat">
+                    <span class="wf-label">Seed</span>
+                    <span class="wf-value">${result.seed}</span>
+                </div>
+                <div class="wf-stat">
+                    <span class="wf-label">Null >= Observed</span>
+                    <span class="wf-value">${result.betterOrEqualCount}</span>
+                </div>
+            </div>
+            <div class="wf-permutation-note">${result.summary}</div>
+            <div class="wf-permutation-note">${result.nullModel}</div>
+        `;
+    }
+
     private renderCandidateValidationSummary(summary: CandidateValidationSummary | null): void {
         const { wfValidationPanel: panel } = this.getDom();
 
@@ -1281,6 +1462,8 @@ class WalkForwardService {
             "wf-top-n": dom.wfTopN,
             "wf-validation-min-passes": dom.wfValidationMinPasses,
             "wf-validation-max-dd": dom.wfValidationMaxDd,
+            "wf-permutation-count": dom.wfPermutationCount,
+            "wf-permutation-seed": dom.wfPermutationSeed,
         };
         const el = elementMap[id];
         if (!el) return fallback;
@@ -1301,6 +1484,8 @@ class WalkForwardService {
      * Display results in the UI
      */
     private displayResults(result: WalkForwardResult): void {
+        this.renderPermutationSummary(null);
+
         // Update summary panel
         this.updateSummaryPanel(result);
 
@@ -1442,15 +1627,17 @@ class WalkForwardService {
         state.set('currentBacktestResult', oos);
     }
 
-    private setLoading(loading: boolean, mode: "analysis" | "quick" | "validation" = "analysis"): void {
+    private setLoading(loading: boolean, mode: "analysis" | "quick" | "validation" | "permutation" = "analysis"): void {
         const {
             wfRunBtn: runBtn,
             wfQuickBtn: quickBtn,
             wfValidateBtn: validateBtn,
+            wfPermutationBtn: permutationBtn,
             wfCancelBtn: cancelBtn,
             wfSpinner: runSpinner,
             wfQuickSpinner: quickSpinner,
             wfValidateSpinner: validateSpinner,
+            wfPermutationSpinner: permutationSpinner,
         } = this.getDom();
 
         runBtn.disabled = loading;
@@ -1459,11 +1646,14 @@ class WalkForwardService {
         quickBtn.setAttribute("aria-busy", loading && mode === "quick" ? "true" : "false");
         validateBtn.disabled = loading;
         validateBtn.setAttribute("aria-busy", loading && mode === "validation" ? "true" : "false");
-        cancelBtn.style.display = loading ? "inline-flex" : "none";
+        permutationBtn.disabled = loading || !this.lastResult;
+        permutationBtn.setAttribute("aria-busy", loading && mode === "permutation" ? "true" : "false");
+        cancelBtn.style.display = loading && mode !== "permutation" ? "inline-flex" : "none";
 
         runSpinner.style.display = loading && mode === "analysis" ? "inline-block" : "none";
         quickSpinner.style.display = loading && mode === "quick" ? "inline-block" : "none";
         validateSpinner.style.display = loading && mode === "validation" ? "inline-block" : "none";
+        permutationSpinner.style.display = loading && mode === "permutation" ? "inline-block" : "none";
     }
 
     private updateStatus(message: string, log: boolean = true): void {
@@ -1544,6 +1734,7 @@ class WalkForwardService {
             wfRunBtn: runBtn,
             wfQuickBtn: quickBtn,
             wfValidateBtn: validateBtn,
+            wfPermutationBtn: permutationBtn,
             wfCancelBtn: cancelBtn,
             wfAutoSuggest: autoSuggestToggle,
         } = this.getDom();
@@ -1551,12 +1742,16 @@ class WalkForwardService {
         runBtn.addEventListener('click', () => this.runAnalysis());
         quickBtn.addEventListener('click', () => this.runQuickAnalysis());
         validateBtn.addEventListener('click', () => this.runCandidateValidation());
+        permutationBtn.addEventListener('click', () => this.runPermutationTest());
         cancelBtn.addEventListener('click', () => this.cancelRun());
         autoSuggestToggle.addEventListener('change', () => {
             if (autoSuggestToggle.checked) {
                 this.refreshAutoSuggestionFromCurrentResult();
             }
         });
+
+        this.renderPermutationSummary(null);
+        this.setLoading(false);
 
         state.subscribe('currentBacktestResult', (result) => {
             if (!result) return;

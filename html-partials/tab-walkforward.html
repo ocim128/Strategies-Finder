@@ -110,6 +110,50 @@
         </div>
     </div>
 
+    <div class="section-header">
+        <div class="section-title">Permutation Significance Test</div>
+    </div>
+    <div class="section-body">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Permutations</label>
+                <input type="number" class="param-input" id="wf-permutation-count" value="500" min="50" step="50">
+                <div class="param-hint">Higher counts improve p-value resolution. The default stays browser-friendly.</div>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Seed</label>
+                <input type="number" class="param-input" id="wf-permutation-seed" value="1337" min="1" step="1">
+                <div class="param-hint">Deterministic null sampling. Same seed + same WFA result gives the same p-value.</div>
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Metric</label>
+                <select class="param-input" id="wf-permutation-metric">
+                    <option value="net_profit">Net Profit</option>
+                    <option value="profit_factor">Profit Factor</option>
+                    <option value="expectancy">Expectancy / Trade</option>
+                    <option value="trade_sharpe">Trade Sharpe</option>
+                </select>
+                <div class="param-hint">One-sided luck test on the latest walk-forward OOS trades only. Robustness score stays separate.</div>
+            </div>
+            <div class="param-group wf-permutation-action-group">
+                <label class="param-label">Run Test</label>
+                <button class="btn btn-secondary" id="wf-permutation-btn">
+                    Run Permutation Test
+                    <span class="spinner" id="wf-permutation-spinner" style="display:none;"></span>
+                </button>
+                <div class="param-hint">Tests whether a no-edge null could score at least this well on the latest WFA out-of-sample sample.</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="wf-permutation" id="wf-permutation-panel">
+        <div class="empty-state">
+            <p>Run Walk-Forward or Quick Analysis first. This test uses the latest WFA out-of-sample trades, not the main backtest.</p>
+        </div>
+    </div>
+
     <!-- Robustness Gauge -->
     <div class="wf-robustness">
         <div class="wf-gauge" id="wf-robustness-gauge">

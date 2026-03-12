@@ -624,6 +624,12 @@ export const WALK_FORWARD_SERVICE_REQUIRED_IDS = [
     "wf-validation-min-passes",
     "wf-validation-max-dd",
     "wf-validation-panel",
+    "wf-permutation-count",
+    "wf-permutation-seed",
+    "wf-permutation-metric",
+    "wf-permutation-btn",
+    "wf-permutation-spinner",
+    "wf-permutation-panel",
     "wf-top-n",
     "wf-summary-panel",
     "wf-window-table-body",
@@ -650,6 +656,12 @@ export interface WalkForwardServiceDom {
     wfValidationMinPasses: HTMLInputElement;
     wfValidationMaxDd: HTMLInputElement;
     wfValidationPanel: HTMLElement;
+    wfPermutationCount: HTMLInputElement;
+    wfPermutationSeed: HTMLInputElement;
+    wfPermutationMetric: HTMLSelectElement;
+    wfPermutationBtn: HTMLButtonElement;
+    wfPermutationSpinner: HTMLElement;
+    wfPermutationPanel: HTMLElement;
     wfTopN: HTMLInputElement;
     wfSummaryPanel: HTMLElement;
     wfWindowTableBody: HTMLElement;
@@ -677,6 +689,12 @@ export function createWalkForwardServiceDom(): WalkForwardServiceDom {
         wfValidationMinPasses: getRequiredElement<HTMLInputElement>("wf-validation-min-passes"),
         wfValidationMaxDd: getRequiredElement<HTMLInputElement>("wf-validation-max-dd"),
         wfValidationPanel: getRequiredElement("wf-validation-panel"),
+        wfPermutationCount: getRequiredElement<HTMLInputElement>("wf-permutation-count"),
+        wfPermutationSeed: getRequiredElement<HTMLInputElement>("wf-permutation-seed"),
+        wfPermutationMetric: getRequiredElement<HTMLSelectElement>("wf-permutation-metric"),
+        wfPermutationBtn: getRequiredElement<HTMLButtonElement>("wf-permutation-btn"),
+        wfPermutationSpinner: getRequiredElement("wf-permutation-spinner"),
+        wfPermutationPanel: getRequiredElement("wf-permutation-panel"),
         wfTopN: getRequiredElement<HTMLInputElement>("wf-top-n"),
         wfSummaryPanel: getRequiredElement("wf-summary-panel"),
         wfWindowTableBody: getRequiredElement("wf-window-table-body"),
