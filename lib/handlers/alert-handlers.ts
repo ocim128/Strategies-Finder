@@ -24,7 +24,10 @@ import { getOptionalElement } from '../dom-utils';
 import { parseInputNumber } from '../dom-input-readers';
 import { parseTimeToUnixSeconds } from '../time-normalization';
 import { createAccessibleModal, type AccessibleModalController } from '../modal-accessibility';
-import { isWorkerSupportedStrategyKey } from '../alert-subscription-utils';
+import {
+    getWorkerStrategySupportSnapshot,
+    isWorkerSupportedStrategyKey,
+} from '../alert-subscription-utils';
 import {
     buildAlertWorkerProviderMismatchMessage,
     isAlertWorkerProviderCompatible,
@@ -162,6 +165,7 @@ function resolveSubscriptionConfigName(
 let subscriptionsByStreamId: Map<string, AlertSubscription> = new Map();
 let alertConfigModalController: AccessibleModalController | null = null;
 let lastTradeModalController: AccessibleModalController | null = null;
+const localWorkerStrategySupport = getWorkerStrategySupportSnapshot();
 
 function humanizeKey(input: string): string {
     if (!input) return input;
@@ -574,12 +578,20 @@ async function testConnection() {
     const result = await alertService.healthCheck();
 
     if (result.ok) {
+        const remoteSupportedStrategyKeys = normalizeWorkerSupportedStrategyKeys(result.supportedStrategyKeys);
+        const workerDriftMessage = remoteSupportedStrategyKeys.length > 0
+            ? buildWorkerStrategyDriftMessage(remoteSupportedStrategyKeys)
+            : null;
         if (dot) {
-            dot.className = 'alert-status-dot alert-status-ok';
-            dot.title = 'Connected';
+            dot.className = workerDriftMessage ? 'alert-status-dot alert-status-fail' : 'alert-status-dot alert-status-ok';
+            dot.title = workerDriftMessage ? 'Outdated worker' : 'Connected';
         }
-        if (msg) msg.textContent = 'Connected to worker.';
-        uiManager.showToast('Worker connection OK.', 'success');
+        if (msg) {
+            msg.textContent = workerDriftMessage
+                ? workerDriftMessage
+                : `Connected to worker (${result.supportedStrategyCount ?? localWorkerStrategySupport.supportedStrategyCount} strategies).`;
+        }
+        uiManager.showToast(workerDriftMessage ?? 'Worker connection OK.', workerDriftMessage ? 'error' : 'success');
     } else {
         if (dot) {
             dot.className = 'alert-status-dot alert-status-fail';
@@ -636,6 +648,50 @@ function getAlertWorkerProviderCompatibilityError(symbol: string): string | null
     return isAlertWorkerProviderCompatible(provider)
         ? null
         : buildAlertWorkerProviderMismatchMessage(symbol, provider);
+}
+
+function normalizeWorkerSupportedStrategyKeys(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        .map((item) => item.trim())
+        .sort((a, b) => a.localeCompare(b));
+}
+
+function summarizeStrategyKeys(keys: readonly string[], maxItems = 6): string {
+    if (keys.length === 0) return 'none';
+    if (keys.length <= maxItems) return keys.join(', ');
+    return `${keys.slice(0, maxItems).join(', ')}, +${keys.length - maxItems} more`;
+}
+
+function getMissingWorkerStrategies(remoteSupportedStrategyKeys: readonly string[]): string[] {
+    const remoteSupported = new Set(remoteSupportedStrategyKeys);
+    return localWorkerStrategySupport.supportedStrategyKeys.filter((key) => !remoteSupported.has(key));
+}
+
+function buildWorkerStrategyDriftMessage(remoteSupportedStrategyKeys: readonly string[]): string | null {
+    const missingStrategies = getMissingWorkerStrategies(remoteSupportedStrategyKeys);
+    if (missingStrategies.length === 0) return null;
+    return `Worker is outdated. Missing ${missingStrategies.length} local strategies: ${summarizeStrategyKeys(missingStrategies)}. Deploy the current worker build.`;
+}
+
+function formatAlertActionError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    const unsupportedPrefix = 'worker_strategy_not_supported:';
+    if (!message.startsWith(unsupportedPrefix)) {
+        return message;
+    }
+
+    const strategyKey = message.slice(unsupportedPrefix.length).trim();
+    if (!strategyKey) {
+        return message;
+    }
+
+    if (isWorkerSupportedStrategyKey(strategyKey)) {
+        return `Worker is outdated and does not support "${strategyKey}" yet. Deploy the current worker build.`;
+    }
+
+    return `Worker does not support "${strategyKey}". Register it in the shared strategy manifest and redeploy the worker.`;
 }
 
 async function quickSubscribe() {
@@ -707,7 +763,7 @@ async function quickSubscribe() {
         }
         await refreshSubscriptions();
     } catch (err) {
-        uiManager.showToast('Subscribe failed: ' + (err instanceof Error ? err.message : String(err)), 'error');
+        uiManager.showToast('Subscribe failed: ' + formatAlertActionError(err), 'error');
     }
 }
 
@@ -816,7 +872,7 @@ async function handleTableAction(action: string, streamId: string) {
             await handleLastTradeAction(streamId);
         }
     } catch (err) {
-        uiManager.showToast('Action failed: ' + (err instanceof Error ? err.message : String(err)), 'error');
+        uiManager.showToast('Action failed: ' + formatAlertActionError(err), 'error');
     }
 }
 

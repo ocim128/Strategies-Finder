@@ -13,6 +13,16 @@ const WORKER_URL_KEY = 'alert_worker_url';
 export const ALERT_WORKER_URL_CHANGED_EVENT = 'alert-worker-url-changed';
 export type AlertTwoHourCloseParity = 'odd' | 'even';
 
+export interface AlertWorkerHealth {
+    ok: boolean;
+    error?: string;
+    service?: string;
+    now?: string;
+    supportedStrategyKeys?: string[];
+    supportedStrategyCount?: number;
+    strategyManifestFingerprint?: string;
+}
+
 // Types
 
 export interface AlertSubscription {
@@ -208,7 +218,7 @@ export const alertService = {
     setWorkerUrl,
 
     /** Test worker connectivity */
-    async healthCheck(): Promise<{ ok: boolean; error?: string }> {
+    async healthCheck(): Promise<AlertWorkerHealth> {
         try {
             const base = requireUrl();
             const res = await fetch(`${base}/health`);
@@ -221,7 +231,20 @@ export const alertService = {
                 };
             }
             const json = body.json as Record<string, unknown> | null;
-            return { ok: !!json?.ok };
+            const supportedStrategyKeys = Array.isArray(json?.supportedStrategyKeys)
+                ? json.supportedStrategyKeys.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+                : undefined;
+
+            return {
+                ok: !!json?.ok,
+                service: typeof json?.service === 'string' ? json.service : undefined,
+                now: typeof json?.now === 'string' ? json.now : undefined,
+                supportedStrategyKeys,
+                supportedStrategyCount: typeof json?.supportedStrategyCount === 'number' ? json.supportedStrategyCount : undefined,
+                strategyManifestFingerprint: typeof json?.strategyManifestFingerprint === 'string'
+                    ? json.strategyManifestFingerprint
+                    : undefined,
+            };
         } catch (err) {
             return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }

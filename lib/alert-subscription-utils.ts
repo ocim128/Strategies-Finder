@@ -6,6 +6,12 @@ import {
 import { strategies } from "./strategies/library";
 import type { BacktestSettings, TradeDirection } from "./types/strategies";
 
+export interface WorkerStrategySupportSnapshot {
+    supportedStrategyKeys: string[];
+    supportedStrategyCount: number;
+    strategyManifestFingerprint: string;
+}
+
 function isValidTradeDirection(value: unknown): value is TradeDirection {
     return value === "long"
         || value === "short"
@@ -40,6 +46,23 @@ function toBooleanLike(value: unknown): boolean | null {
         if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false;
     }
     return null;
+}
+
+export function getWorkerSupportedStrategyKeys(): string[] {
+    return Object.keys(strategies).sort((a, b) => a.localeCompare(b));
+}
+
+export function buildWorkerStrategyManifestFingerprint(strategyKeys: readonly string[] = getWorkerSupportedStrategyKeys()): string {
+    return strategyKeys.join("|");
+}
+
+export function getWorkerStrategySupportSnapshot(): WorkerStrategySupportSnapshot {
+    const supportedStrategyKeys = getWorkerSupportedStrategyKeys();
+    return {
+        supportedStrategyKeys,
+        supportedStrategyCount: supportedStrategyKeys.length,
+        strategyManifestFingerprint: buildWorkerStrategyManifestFingerprint(supportedStrategyKeys),
+    };
 }
 
 export function isWorkerSupportedStrategyKey(strategyKey: string): boolean {

@@ -13,6 +13,7 @@ import {
     parseTwoHourParityFromStreamId as parseTwoHourParityFromAlertStreamId,
 } from "../lib/alert-stream-id";
 import {
+    getWorkerStrategySupportSnapshot,
     isWorkerSupportedStrategyKey,
     resolveSubscriptionExecutionBacktestSettings,
 } from "../lib/alert-subscription-utils";
@@ -1976,10 +1977,12 @@ export default {
         const pathname = url.pathname.replace(/\/+$/, "") || "/";
 
         if (request.method === "GET" && pathname === "/health") {
+            const workerStrategySupport = getWorkerStrategySupportSnapshot();
             return toJsonResponse({
                 ok: true,
                 service: "entry-signal-worker",
                 now: new Date().toISOString(),
+                ...workerStrategySupport,
             });
         }
 

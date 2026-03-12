@@ -20,6 +20,7 @@ It deduplicates signals in D1, so the same entry is only produced once.
 - `POST /api/subscriptions/run-now`
   - Runs one subscription immediately for testing
 - `GET /health`
+  - Returns worker metadata plus `supportedStrategyKeys`, `supportedStrategyCount`, and `strategyManifestFingerprint`
 
 ## Request Example
 
@@ -104,6 +105,12 @@ Migration file:
 - `workers/migrations/0001_entry_signals.sql`
 - `workers/migrations/0002_signal_subscriptions.sql`
 - `workers/migrations/0003_exit_alerts.sql`
+
+## Strategy Support Contract
+
+- Worker strategy support is derived from `lib/strategies/manifest.ts` through the shared strategy library.
+- If you add or rename a built-in strategy, redeploy the Worker after the manifest change or subscriptions can fail with `worker_strategy_not_supported:<key>`.
+- `GET /health` exposes the worker's current supported strategy keys so the UI can detect an outdated deployment.
 
 ## Telegram (Optional)
 
