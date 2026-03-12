@@ -262,6 +262,10 @@ class StrategyEnsembleService {
     private initialized = false;
     private runContext: EnsembleRunContext | null = null;
     private contextCheckboxes = new Map<string, HTMLInputElement>();
+    private contextItems = new Map<string, HTMLElement>();
+    private contextConfigs = new Map<string, StrategyConfig>();
+    private contextOrder: string[] = [];
+    private lastContextToggleName: string | null = null;
 
     private getDom(): EnsembleLabDom {
         return this.dom ??= createEnsembleLabDom();
@@ -296,12 +300,48 @@ class StrategyEnsembleService {
         });
 
         dom.ensembleTargetSelect.addEventListener("change", () => {
+            this.syncTargetContextState();
+            this.renderTargetSummary();
+            this.applyContextFilter();
             this.invalidateRunContext("Target config changed. Run Strategy Ensemble Lab again.");
         });
 
         dom.ensembleMinSamples.addEventListener("input", () => {
             this.invalidateRunContext("Minimum sample threshold changed. Run Strategy Ensemble Lab again.");
         });
+
+        dom.ensembleContextSearch.addEventListener("input", () => {
+            this.applyContextFilter();
+        });
+
+        dom.ensembleContextFamilyFilter.addEventListener("change", () => {
+            this.applyContextFilter();
+        });
+
+        dom.ensembleContextSelectAll.addEventListener("click", () => {
+            this.setContextSelection(this.contextOrder, true);
+        });
+
+        dom.ensembleContextSelectNone.addEventListener("click", () => {
+            this.setContextSelection(this.contextOrder, false);
+        });
+
+        dom.ensembleContextInvertVisible.addEventListener("click", () => {
+            this.invertContextSelection(this.getVisibleContextNames());
+        });
+
+        dom.ensembleContextSelectVisible.addEventListener("click", () => {
+            this.setContextSelection(this.getVisibleContextNames(), true);
+        });
+
+        dom.ensembleContextSelectSameFamily.addEventListener("click", () => {
+            this.applyTargetFamilySelection("same");
+        });
+
+        dom.ensembleContextExcludeSameFamily.addEventListener("click", () => {
+            this.applyTargetFamilySelection("exclude");
+        });
+
         dom.ensembleBuilderTableBody.addEventListener("click", (event) => {
             const target = event.target;
             if (!(target instanceof HTMLElement)) {
@@ -343,10 +383,25 @@ class StrategyEnsembleService {
     }
 
     private populateConfigs(dom: EnsembleLabDom): void {
-        const configs = settingsManager.loadAllStrategyConfigs();
-        const previousTarget = dom.ensembleTargetSelect.value;
-
+        const previousTarget = dom.ensembleTargetSelect.value.trim();
+        const previousChecked = new Set(
+            Array.from(this.contextCheckboxes.entries())
+                .filter(([, checkbox]) => checkbox.checked)
+                .map(([name]) => name)
+        );
+        const previousFamilyFilter = dom.ensembleContextFamilyFilter.value;
+        const configs = [...settingsManager.loadAllStrategyConfigs()].sort((left, right) => {
+            const familyCompare = this.getConfigFamilyLabel(left).localeCompare(this.getConfigFamilyLabel(right));
+            if (familyCompare !== 0) {
+                return familyCompare;
+            }
+            return left.name.localeCompare(right.name);
+        });
         this.contextCheckboxes.clear();
+        this.contextItems.clear();
+        this.contextConfigs.clear();
+        this.contextOrder = [];
+        this.lastContextToggleName = null;
         dom.ensembleTargetSelect.innerHTML = '<option value="" disabled>Select target config</option>';
 
         for (const config of configs) {
@@ -354,6 +409,7 @@ class StrategyEnsembleService {
             option.value = config.name;
             option.textContent = this.buildConfigLabel(config);
             dom.ensembleTargetSelect.appendChild(option);
+            this.contextConfigs.set(config.name, config);
         }
 
         if (previousTarget && configs.some((config) => config.name === previousTarget)) {
@@ -362,9 +418,16 @@ class StrategyEnsembleService {
             dom.ensembleTargetSelect.value = configs[0].name;
         }
 
+        this.populateFamilyFilter(configs, previousFamilyFilter);
+
         if (configs.length === 0) {
-            dom.ensembleContextList.innerHTML = '<p style="color:var(--text-secondary);padding:8px;margin:0;">No saved configs. Save a strategy configuration first.</p>';
+            dom.ensembleTargetSummary.textContent = "Save a strategy configuration first to define the target and its confirming context set.";
+            dom.ensembleContextList.innerHTML = "";
+            dom.ensembleContextHelper.style.display = "none";
+            dom.ensembleContextEmptyState.style.display = "none";
+            dom.ensembleContextSummary.textContent = "0 selected";
             this.setConfigAvailability(false);
+            this.resetResultPanels();
             this.updateStatus("Save strategy configurations, then select a target and context strategies to run ensemble analysis.");
             return;
         }
@@ -372,29 +435,68 @@ class StrategyEnsembleService {
         dom.ensembleContextList.innerHTML = "";
         for (const config of configs) {
             const row = document.createElement("label");
-            row.className = "ensemble-lab__context-item";
-            row.style.cssText = "display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border-light, rgba(128,128,128,0.12));border-radius:8px;background:rgba(255,255,255,0.02);cursor:pointer;";
+            row.className = "ensemble-lab__config-item";
+            row.dataset.configName = config.name;
+            row.dataset.configNameLower = config.name.toLowerCase();
+            row.dataset.familyKey = config.strategyKey;
+            row.dataset.familyLabel = this.getConfigFamilyLabel(config).toLowerCase();
+            row.dataset.strategyName = this.getConfigFamilyLabel(config).toLowerCase();
+            row.dataset.tradeDirection = this.describeTradeDirection(config.backtestSettings.tradeDirection).toLowerCase();
 
             const checkbox = document.createElement("input");
             checkbox.type = "checkbox";
-            checkbox.checked = true;
+            checkbox.checked = previousChecked.size === 0 ? true : previousChecked.has(config.name);
             checkbox.dataset.configName = config.name;
+            checkbox.addEventListener("click", (event) => {
+                this.handleContextToggleClick(config.name, event as MouseEvent);
+            });
             checkbox.addEventListener("change", () => {
+                this.syncContextSelectionUi();
                 this.invalidateRunContext("Context configs changed. Run Strategy Ensemble Lab again.");
             });
 
-            const text = document.createElement("span");
-            text.textContent = this.buildConfigLabel(config);
-            text.style.fontSize = "12px";
+            const body = document.createElement("div");
+            body.className = "ensemble-lab__config-body";
+
+            const titleRow = document.createElement("div");
+            titleRow.className = "ensemble-lab__config-title-row";
+
+            const title = document.createElement("span");
+            title.className = "ensemble-lab__config-title";
+            title.textContent = config.name;
+
+            const strategy = document.createElement("span");
+            strategy.className = "ensemble-lab__config-strategy";
+            strategy.textContent = this.getConfigFamilyLabel(config);
+
+            titleRow.appendChild(title);
+            titleRow.appendChild(strategy);
+
+            const metaRow = document.createElement("div");
+            metaRow.className = "ensemble-lab__config-meta";
+            metaRow.innerHTML = [
+                this.buildConfigBadge("Direction", this.describeTradeDirection(config.backtestSettings.tradeDirection)),
+                this.buildConfigBadge("Updated", this.formatConfigTimestamp(config.updatedAt || config.createdAt)),
+                this.buildConfigBadge("Key", config.strategyKey),
+            ].join("");
+
+            body.appendChild(titleRow);
+            body.appendChild(metaRow);
 
             row.appendChild(checkbox);
-            row.appendChild(text);
+            row.appendChild(body);
 
             this.contextCheckboxes.set(config.name, checkbox);
+            this.contextItems.set(config.name, row);
+            this.contextOrder.push(config.name);
             dom.ensembleContextList.appendChild(row);
         }
 
         this.setConfigAvailability(true);
+        dom.ensembleContextHelper.style.display = "";
+        this.syncTargetContextState();
+        this.renderTargetSummary();
+        this.applyContextFilter();
         this.resetResultPanels();
         this.updateStatus("Select a target config, keep one or more context configs, then run Strategy Ensemble Lab.");
     }
@@ -406,8 +508,7 @@ class StrategyEnsembleService {
     }
 
     private buildConfigLabel(config: StrategyConfig): string {
-        const strategy = strategyRegistry.get(config.strategyKey);
-        return `${config.name} (${strategy?.name ?? config.strategyKey})`;
+        return `${config.name} · ${this.getConfigFamilyLabel(config)}`;
     }
 
     private getSelectedTargetName(): string {
@@ -440,6 +541,261 @@ class StrategyEnsembleService {
 
     private updateStatus(message: string): void {
         this.getDom().ensembleStatus.textContent = message;
+    }
+
+    private getConfigFamilyLabel(config: StrategyConfig): string {
+        return strategyRegistry.get(config.strategyKey)?.name ?? config.strategyKey;
+    }
+
+    private populateFamilyFilter(configs: StrategyConfig[], previousValue: string): void {
+        const select = this.getDom().ensembleContextFamilyFilter;
+        const families = new Map<string, string>();
+        for (const config of configs) {
+            if (!families.has(config.strategyKey)) {
+                families.set(config.strategyKey, this.getConfigFamilyLabel(config));
+            }
+        }
+
+        select.innerHTML = '<option value="">All families</option>';
+        Array.from(families.entries())
+            .sort((left, right) => left[1].localeCompare(right[1]))
+            .forEach(([familyKey, familyLabel]) => {
+                const option = document.createElement("option");
+                option.value = familyKey;
+                option.textContent = familyLabel;
+                select.appendChild(option);
+            });
+
+        if (previousValue && families.has(previousValue)) {
+            select.value = previousValue;
+        }
+    }
+
+    private buildConfigBadge(label: string, value: string): string {
+        return `<span class="ensemble-lab__config-badge"><strong>${this.escapeHtml(label)}:</strong> ${this.escapeHtml(value)}</span>`;
+    }
+
+    private formatConfigTimestamp(value: string): string {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return "Unknown";
+        }
+        return new Intl.DateTimeFormat(undefined, {
+            year: "numeric",
+            month: "short",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+        }).format(date);
+    }
+
+    private describeTradeDirection(direction: string | null | undefined): string {
+        if (!direction) {
+            return "Both";
+        }
+        if (direction === "long") {
+            return "Long";
+        }
+        if (direction === "short") {
+            return "Short";
+        }
+        return "Both";
+    }
+
+    private renderTargetSummary(): void {
+        const dom = this.getDom();
+        const targetName = this.getSelectedTargetName();
+        const config = this.contextConfigs.get(targetName);
+        if (!config) {
+            dom.ensembleTargetSummary.textContent = "Select a target config to inspect how the current context set will confirm or oppose it.";
+            return;
+        }
+
+        const familyLabel = this.getConfigFamilyLabel(config);
+        dom.ensembleTargetSummary.innerHTML = `
+            <div class="ensemble-lab__target-title-row">
+                <span class="ensemble-lab__target-name">${this.escapeHtml(config.name)}</span>
+                <span class="ensemble-lab__target-pill">Target</span>
+            </div>
+            <div class="ensemble-lab__target-subtitle">${this.escapeHtml(familyLabel)}</div>
+            <div class="ensemble-lab__target-meta">
+                ${this.buildConfigBadge("Direction", this.describeTradeDirection(config.backtestSettings.tradeDirection))}
+                ${this.buildConfigBadge("Updated", this.formatConfigTimestamp(config.updatedAt || config.createdAt))}
+                ${this.buildConfigBadge("Key", config.strategyKey)}
+            </div>
+            <div class="ensemble-lab__target-note">
+                Context selections automatically exclude the target. Use <strong>Target Family</strong> or <strong>Exclude Family</strong> to tune family overlap fast.
+            </div>
+        `;
+    }
+
+    private handleContextToggleClick(configName: string, event: MouseEvent): void {
+        const checkbox = this.contextCheckboxes.get(configName);
+        if (!checkbox || checkbox.disabled) {
+            return;
+        }
+
+        if (event.shiftKey && this.lastContextToggleName) {
+            const orderedNames = this.getContextNamesForRangeSelection();
+            const startIndex = orderedNames.indexOf(this.lastContextToggleName);
+            const endIndex = orderedNames.indexOf(configName);
+
+            if (startIndex !== -1 && endIndex !== -1) {
+                const [from, to] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+                this.setContextSelection(orderedNames.slice(from, to + 1), checkbox.checked, false);
+            }
+        }
+
+        this.lastContextToggleName = configName;
+        this.syncContextSelectionUi();
+    }
+
+    private getContextNamesForRangeSelection(): string[] {
+        const visibleNames = this.getVisibleContextNames();
+        return visibleNames.length > 0 ? visibleNames : this.contextOrder.filter((name) => !this.isTargetContext(name));
+    }
+
+    private getVisibleContextNames(): string[] {
+        return this.contextOrder.filter((name) => {
+            const item = this.contextItems.get(name);
+            return item ? !item.hidden && !this.isTargetContext(name) : false;
+        });
+    }
+
+    private setContextSelection(configNames: Iterable<string>, checked: boolean, syncUi = true): void {
+        for (const name of configNames) {
+            if (this.isTargetContext(name)) {
+                continue;
+            }
+            const checkbox = this.contextCheckboxes.get(name);
+            if (checkbox && !checkbox.disabled) {
+                checkbox.checked = checked;
+            }
+        }
+
+        if (syncUi) {
+            this.syncContextSelectionUi();
+            this.invalidateRunContext("Context configs changed. Run Strategy Ensemble Lab again.");
+        }
+    }
+
+    private invertContextSelection(configNames: Iterable<string>): void {
+        for (const name of configNames) {
+            if (this.isTargetContext(name)) {
+                continue;
+            }
+            const checkbox = this.contextCheckboxes.get(name);
+            if (checkbox && !checkbox.disabled) {
+                checkbox.checked = !checkbox.checked;
+            }
+        }
+
+        this.syncContextSelectionUi();
+        this.invalidateRunContext("Context configs changed. Run Strategy Ensemble Lab again.");
+    }
+
+    private applyTargetFamilySelection(mode: "same" | "exclude"): void {
+        const target = this.contextConfigs.get(this.getSelectedTargetName());
+        if (!target) {
+            return;
+        }
+
+        for (const name of this.contextOrder) {
+            if (this.isTargetContext(name)) {
+                continue;
+            }
+            const config = this.contextConfigs.get(name);
+            const checkbox = this.contextCheckboxes.get(name);
+            if (!config || !checkbox || checkbox.disabled) {
+                continue;
+            }
+            const sameFamily = config.strategyKey === target.strategyKey;
+            checkbox.checked = mode === "same" ? sameFamily : !sameFamily;
+        }
+
+        this.syncContextSelectionUi();
+        this.invalidateRunContext("Context configs changed. Run Strategy Ensemble Lab again.");
+    }
+
+    private isTargetContext(configName: string): boolean {
+        return configName === this.getSelectedTargetName();
+    }
+
+    private syncTargetContextState(): void {
+        const targetName = this.getSelectedTargetName();
+        for (const [name, item] of this.contextItems.entries()) {
+            const checkbox = this.contextCheckboxes.get(name);
+            if (!checkbox) {
+                continue;
+            }
+
+            const isTarget = name === targetName;
+            item.classList.toggle("is-target", isTarget);
+            checkbox.disabled = isTarget;
+            if (isTarget) {
+                checkbox.checked = false;
+            }
+        }
+    }
+
+    private applyContextFilter(): void {
+        const dom = this.getDom();
+        const query = dom.ensembleContextSearch.value.trim().toLowerCase();
+        const familyFilter = dom.ensembleContextFamilyFilter.value.trim();
+
+        this.contextItems.forEach((item, name) => {
+            const matchesQuery = query.length === 0 || [
+                item.dataset.configNameLower ?? "",
+                item.dataset.strategyName ?? "",
+                item.dataset.familyLabel ?? "",
+                item.dataset.tradeDirection ?? "",
+                name.toLowerCase(),
+            ].some((value) => value.includes(query));
+            const matchesFamily = familyFilter.length === 0 || item.dataset.familyKey === familyFilter;
+            item.hidden = !(matchesQuery && matchesFamily);
+        });
+
+        this.syncContextSelectionUi();
+    }
+
+    private syncContextSelectionUi(): void {
+        const dom = this.getDom();
+        const visibleNames = this.getVisibleContextNames();
+        const hasFilter = dom.ensembleContextSearch.value.trim().length > 0 || dom.ensembleContextFamilyFilter.value.trim().length > 0;
+        let selectedCount = 0;
+        let visibleSelectedCount = 0;
+
+        for (const [name, checkbox] of this.contextCheckboxes.entries()) {
+            if (this.isTargetContext(name) || !checkbox.checked) {
+                continue;
+            }
+            selectedCount += 1;
+            if (visibleNames.includes(name)) {
+                visibleSelectedCount += 1;
+            }
+        }
+
+        dom.ensembleContextSummary.textContent = hasFilter
+            ? `${selectedCount} selected | ${visibleNames.length} visible | ${visibleSelectedCount} visible selected`
+            : `${selectedCount} selected`;
+
+        dom.ensembleContextEmptyState.style.display = this.contextOrder.length > 0 && visibleNames.length === 0 ? "" : "none";
+        dom.ensembleContextSelectVisible.disabled = visibleNames.length === 0;
+        dom.ensembleContextInvertVisible.disabled = visibleNames.length === 0;
+        dom.ensembleContextSelectAll.disabled = this.contextOrder.length <= 1;
+        dom.ensembleContextSelectNone.disabled = this.contextOrder.length === 0;
+
+        const target = this.contextConfigs.get(this.getSelectedTargetName());
+        const hasTargetFamilyPeers = target
+            ? this.contextOrder.some((name) => {
+                if (this.isTargetContext(name)) {
+                    return false;
+                }
+                return this.contextConfigs.get(name)?.strategyKey === target.strategyKey;
+            })
+            : false;
+        dom.ensembleContextSelectSameFamily.disabled = !hasTargetFamilyPeers;
+        dom.ensembleContextExcludeSameFamily.disabled = !target;
     }
 
     private async loadBuilderPreview(ruleId: string): Promise<void> {
@@ -2237,8 +2593,9 @@ class StrategyEnsembleService {
 
         dom.ensembleResults.style.display = hasTrades ? "" : "none";
         dom.ensembleCurrentContextSection.style.display = hasTrades ? "" : "none";
-        dom.ensembleHistoricalOddsSection.style.display = hasTrades ? "" : "none";
         dom.ensembleBuilderSection.style.display = hasTrades ? "" : "none";
+        dom.ensembleHistoricalOddsSection.style.display = hasTrades ? "" : "none";
+        dom.ensembleDiagnosticsSection.style.display = hasTrades ? "" : "none";
         dom.ensembleContributionSection.style.display = hasTrades ? "" : "none";
         dom.ensembleReplacementSection.style.display = hasTrades ? "" : "none";
         dom.ensembleRadarSection.style.display = hasTrades ? "" : "none";
@@ -2252,8 +2609,8 @@ class StrategyEnsembleService {
 
         this.renderSummary(context);
         this.renderCurrentContext(context);
-        this.renderHistoricalOdds(context);
         this.renderBuilder(context);
+        this.renderHistoricalOdds(context);
         this.renderContribution(context);
         this.renderReplacement(context);
         this.renderRadar(context);
@@ -2263,8 +2620,10 @@ class StrategyEnsembleService {
         const dom = this.getDom();
         dom.ensembleResults.style.display = "none";
         dom.ensembleCurrentContextSection.style.display = "none";
-        dom.ensembleHistoricalOddsSection.style.display = "none";
         dom.ensembleBuilderSection.style.display = "none";
+        dom.ensembleHistoricalOddsSection.style.display = "none";
+        dom.ensembleDiagnosticsSection.style.display = "none";
+        dom.ensembleDiagnosticsSection.open = false;
         dom.ensembleContributionSection.style.display = "none";
         dom.ensembleReplacementSection.style.display = "none";
         dom.ensembleRadarSection.style.display = "none";

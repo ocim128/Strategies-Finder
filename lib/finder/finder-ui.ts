@@ -123,6 +123,9 @@ export class FinderUI {
             metrics.appendChild(this.createMetricChip(`${netLabel} ${this.formatCurrency(result.netProfit)}`));
             metrics.appendChild(this.createMetricChip(`${pfLabel} ${this.formatProfitFactor(result.profitFactor)}`));
             metrics.appendChild(this.createMetricChip(`Sharpe ${result.sharpeRatio.toFixed(2)}`));
+            if (Number.isFinite(item.compositeEdgeRatio)) {
+                metrics.appendChild(this.createMetricChip(`ER ${item.compositeEdgeRatio!.toFixed(2)}`));
+            }
             metrics.appendChild(this.createMetricChip(`DD ${result.maxDrawdownPercent.toFixed(2)}%`));
             metrics.appendChild(this.createMetricChip(`Trades ${result.totalTrades}`));
             if (item.robustMetrics) {

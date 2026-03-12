@@ -9,6 +9,7 @@ export type FinderMetric =
     | 'winRate'
     | 'maxDrawdownPercent'
     | 'expectancy'
+    | 'compositeEdgeRatio'
     | 'averageGain'
     | 'totalTrades';
 
@@ -48,6 +49,8 @@ export interface FinderResult {
     result: BacktestResult;
     /** Selection result with endpoint-bias trades removed. */
     selectionResult: BacktestResult;
+    /** Composite edge ratio used for Finder-side quality ranking. */
+    compositeEdgeRatio?: number;
     endpointAdjusted: boolean;
     endpointRemovedTrades: number;
     robustMetrics?: {

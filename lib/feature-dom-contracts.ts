@@ -770,10 +770,22 @@ export const ENSEMBLE_LAB_REQUIRED_IDS = [
     "ensembleEmpty",
     "ensembleContent",
     "ensembleTargetSelect",
+    "ensembleTargetSummary",
     "ensembleMinSamples",
     "ensembleSymbolBadge",
     "ensembleIntervalBadge",
+    "ensembleContextSearch",
+    "ensembleContextFamilyFilter",
+    "ensembleContextSelectAll",
+    "ensembleContextSelectNone",
+    "ensembleContextInvertVisible",
+    "ensembleContextSelectVisible",
+    "ensembleContextSelectSameFamily",
+    "ensembleContextExcludeSameFamily",
+    "ensembleContextSummary",
     "ensembleContextList",
+    "ensembleContextHelper",
+    "ensembleContextEmptyState",
     "ensembleRefreshConfigsBtn",
     "ensembleRunBtn",
     "ensembleStatus",
@@ -788,6 +800,7 @@ export const ENSEMBLE_LAB_REQUIRED_IDS = [
     "ensembleBuilderSection",
     "ensembleBuilderSummary",
     "ensembleBuilderTableBody",
+    "ensembleDiagnosticsSection",
     "ensembleContributionSection",
     "ensembleContributionSummary",
     "ensembleContributionTableBody",
@@ -803,10 +816,22 @@ export interface EnsembleLabDom {
     ensembleEmpty: HTMLElement;
     ensembleContent: HTMLElement;
     ensembleTargetSelect: HTMLSelectElement;
+    ensembleTargetSummary: HTMLElement;
     ensembleMinSamples: HTMLInputElement;
     ensembleSymbolBadge: HTMLElement;
     ensembleIntervalBadge: HTMLElement;
+    ensembleContextSearch: HTMLInputElement;
+    ensembleContextFamilyFilter: HTMLSelectElement;
+    ensembleContextSelectAll: HTMLButtonElement;
+    ensembleContextSelectNone: HTMLButtonElement;
+    ensembleContextInvertVisible: HTMLButtonElement;
+    ensembleContextSelectVisible: HTMLButtonElement;
+    ensembleContextSelectSameFamily: HTMLButtonElement;
+    ensembleContextExcludeSameFamily: HTMLButtonElement;
+    ensembleContextSummary: HTMLElement;
     ensembleContextList: HTMLElement;
+    ensembleContextHelper: HTMLElement;
+    ensembleContextEmptyState: HTMLElement;
     ensembleRefreshConfigsBtn: HTMLButtonElement;
     ensembleRunBtn: HTMLButtonElement;
     ensembleStatus: HTMLElement;
@@ -821,6 +846,7 @@ export interface EnsembleLabDom {
     ensembleBuilderSection: HTMLElement;
     ensembleBuilderSummary: HTMLElement;
     ensembleBuilderTableBody: HTMLElement;
+    ensembleDiagnosticsSection: HTMLDetailsElement;
     ensembleContributionSection: HTMLElement;
     ensembleContributionSummary: HTMLElement;
     ensembleContributionTableBody: HTMLElement;
@@ -837,10 +863,22 @@ export function createEnsembleLabDom(): EnsembleLabDom {
         ensembleEmpty: getRequiredElement("ensembleEmpty"),
         ensembleContent: getRequiredElement("ensembleContent"),
         ensembleTargetSelect: getRequiredElement<HTMLSelectElement>("ensembleTargetSelect"),
+        ensembleTargetSummary: getRequiredElement("ensembleTargetSummary"),
         ensembleMinSamples: getRequiredElement<HTMLInputElement>("ensembleMinSamples"),
         ensembleSymbolBadge: getRequiredElement("ensembleSymbolBadge"),
         ensembleIntervalBadge: getRequiredElement("ensembleIntervalBadge"),
+        ensembleContextSearch: getRequiredElement<HTMLInputElement>("ensembleContextSearch"),
+        ensembleContextFamilyFilter: getRequiredElement<HTMLSelectElement>("ensembleContextFamilyFilter"),
+        ensembleContextSelectAll: getRequiredElement<HTMLButtonElement>("ensembleContextSelectAll"),
+        ensembleContextSelectNone: getRequiredElement<HTMLButtonElement>("ensembleContextSelectNone"),
+        ensembleContextInvertVisible: getRequiredElement<HTMLButtonElement>("ensembleContextInvertVisible"),
+        ensembleContextSelectVisible: getRequiredElement<HTMLButtonElement>("ensembleContextSelectVisible"),
+        ensembleContextSelectSameFamily: getRequiredElement<HTMLButtonElement>("ensembleContextSelectSameFamily"),
+        ensembleContextExcludeSameFamily: getRequiredElement<HTMLButtonElement>("ensembleContextExcludeSameFamily"),
+        ensembleContextSummary: getRequiredElement("ensembleContextSummary"),
         ensembleContextList: getRequiredElement("ensembleContextList"),
+        ensembleContextHelper: getRequiredElement("ensembleContextHelper"),
+        ensembleContextEmptyState: getRequiredElement("ensembleContextEmptyState"),
         ensembleRefreshConfigsBtn: getRequiredElement<HTMLButtonElement>("ensembleRefreshConfigsBtn"),
         ensembleRunBtn: getRequiredElement<HTMLButtonElement>("ensembleRunBtn"),
         ensembleStatus: getRequiredElement("ensembleStatus"),
@@ -855,6 +893,7 @@ export function createEnsembleLabDom(): EnsembleLabDom {
         ensembleBuilderSection: getRequiredElement("ensembleBuilderSection"),
         ensembleBuilderSummary: getRequiredElement("ensembleBuilderSummary"),
         ensembleBuilderTableBody: getRequiredElement("ensembleBuilderTableBody"),
+        ensembleDiagnosticsSection: getRequiredElement<HTMLDetailsElement>("ensembleDiagnosticsSection"),
         ensembleContributionSection: getRequiredElement("ensembleContributionSection"),
         ensembleContributionSummary: getRequiredElement("ensembleContributionSummary"),
         ensembleContributionTableBody: getRequiredElement("ensembleContributionTableBody"),

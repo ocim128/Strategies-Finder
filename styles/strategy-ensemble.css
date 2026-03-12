@@ -1,0 +1,216 @@
+.ensemble-lab__controls {
+    align-items: stretch;
+}
+
+.ensemble-lab__panel {
+    padding: 12px;
+    border: 1px solid var(--border-light, rgba(128, 128, 128, 0.12));
+    border-radius: 12px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015)),
+        rgba(255, 255, 255, 0.01);
+    min-width: 0;
+}
+
+.ensemble-lab__control-grid {
+    margin-bottom: 12px;
+}
+
+.ensemble-lab__target-summary {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border-light, rgba(128, 128, 128, 0.12));
+    background: rgba(255, 255, 255, 0.025);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.ensemble-lab__target-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.ensemble-lab__target-name {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.ensemble-lab__target-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(0, 200, 83, 0.14);
+    color: #00c853;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.ensemble-lab__target-subtitle {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.ensemble-lab__target-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.ensemble-lab__target-note {
+    color: var(--text-secondary);
+}
+
+.ensemble-lab__toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(180px, 0.9fr);
+    gap: 10px;
+    align-items: end;
+}
+
+.ensemble-lab__actions {
+    margin-top: 10px;
+}
+
+.ensemble-lab__selection-summary {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.ensemble-lab__helper {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.ensemble-lab__context-list {
+    margin-top: 10px;
+    padding: 4px;
+    border-radius: 10px;
+    border: 1px solid var(--border-light, rgba(128, 128, 128, 0.12));
+    background: rgba(255, 255, 255, 0.02);
+    max-height: 360px;
+}
+
+.ensemble-lab__empty {
+    margin-top: 10px;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px dashed var(--border);
+    background: rgba(255, 255, 255, 0.01);
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.ensemble-lab__config-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    background: transparent;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.ensemble-lab__config-item:hover {
+    border-color: var(--border-light, rgba(128, 128, 128, 0.18));
+    background: rgba(255, 255, 255, 0.03);
+    transform: translateY(-1px);
+}
+
+.ensemble-lab__config-item.is-target {
+    border-color: rgba(0, 200, 83, 0.2);
+    background: rgba(0, 200, 83, 0.06);
+    cursor: not-allowed;
+}
+
+.ensemble-lab__config-item input[type="checkbox"] {
+    margin: 2px 0 0;
+}
+
+.ensemble-lab__config-item input[type="checkbox"]:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.ensemble-lab__config-body {
+    min-width: 0;
+    display: grid;
+    gap: 8px;
+}
+
+.ensemble-lab__config-title-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.ensemble-lab__config-title {
+    min-width: 0;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ensemble-lab__config-strategy {
+    color: var(--text-secondary);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.ensemble-lab__config-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.ensemble-lab__config-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.2;
+}
+
+.ensemble-lab__config-badge strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.ensemble-lab__diagnostics {
+    margin-top: 0;
+}
+
+@media (max-width: 980px) {
+    .ensemble-lab__toolbar {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 640px) {
+    .ensemble-lab__target-title-row,
+    .ensemble-lab__config-title-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}

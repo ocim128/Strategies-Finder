@@ -23,33 +23,67 @@
                 </div>
             </div>
 
-            <div class="portfolio-lab__controls">
-                <div class="portfolio-lab__control-grid">
-                    <label class="analysis-control" for="ensembleTargetSelect">
-                        Target Config
-                        <select id="ensembleTargetSelect">
-                            <option value="" disabled selected>Select target config</option>
-                        </select>
-                    </label>
-                    <label class="analysis-control" for="ensembleMinSamples">
-                        Min Samples
-                        <input type="number" id="ensembleMinSamples" min="3" max="200" step="1" value="5" />
-                    </label>
-                    <div class="analysis-control portfolio-lab__readout">
-                        Symbol
-                        <div class="portfolio-lab__badge" id="ensembleSymbolBadge">-</div>
+            <div class="portfolio-lab__controls ensemble-lab__controls">
+                <div class="portfolio-lab__control-block ensemble-lab__panel">
+                    <div class="portfolio-lab__control-grid ensemble-lab__control-grid">
+                        <label class="analysis-control" for="ensembleTargetSelect">
+                            Target Config
+                            <select id="ensembleTargetSelect">
+                                <option value="" disabled selected>Select target config</option>
+                            </select>
+                        </label>
+                        <label class="analysis-control" for="ensembleMinSamples">
+                            Min Samples
+                            <input type="number" id="ensembleMinSamples" min="3" max="200" step="1" value="5" />
+                        </label>
+                        <div class="analysis-control portfolio-lab__readout">
+                            Symbol
+                            <div class="portfolio-lab__badge" id="ensembleSymbolBadge">-</div>
+                        </div>
+                        <div class="analysis-control portfolio-lab__readout">
+                            Timeframe
+                            <div class="portfolio-lab__badge" id="ensembleIntervalBadge">-</div>
+                        </div>
                     </div>
-                    <div class="analysis-control portfolio-lab__readout">
-                        Timeframe
-                        <div class="portfolio-lab__badge" id="ensembleIntervalBadge">-</div>
+                    <div class="ensemble-lab__target-summary" id="ensembleTargetSummary">
+                        Select a target config to inspect how the current context set will confirm or oppose it.
                     </div>
                 </div>
-                <label class="analysis-control portfolio-lab__control-block" for="ensembleContextList">
-                    Context Configs
-                    <div class="ensemble-lab__context-list" id="ensembleContextList">
-                        <p style="color:var(--text-secondary);padding:8px;margin:0;">No saved configs loaded yet.</p>
+
+                <div class="portfolio-lab__control-block ensemble-lab__panel">
+                    <div class="ensemble-lab__toolbar">
+                        <label class="analysis-control" for="ensembleContextSearch">
+                            Search Contexts
+                            <input class="param-input" type="search" id="ensembleContextSearch" placeholder="Filter configs by name or strategy">
+                        </label>
+                        <label class="analysis-control" for="ensembleContextFamilyFilter">
+                            Family
+                            <select class="param-input" id="ensembleContextFamilyFilter">
+                                <option value="">All families</option>
+                            </select>
+                        </label>
                     </div>
-                </label>
+
+                    <div class="finder-strategy-actions ensemble-lab__actions" role="group" aria-label="Bulk context selection actions">
+                        <button class="btn btn-secondary btn-compact" id="ensembleContextSelectAll" type="button">All</button>
+                        <button class="btn btn-secondary btn-compact" id="ensembleContextSelectNone" type="button">None</button>
+                        <button class="btn btn-secondary btn-compact" id="ensembleContextInvertVisible" type="button">Invert</button>
+                        <button class="btn btn-secondary btn-compact" id="ensembleContextSelectVisible" type="button">Visible</button>
+                        <button class="btn btn-secondary btn-compact" id="ensembleContextSelectSameFamily" type="button">Target Family</button>
+                        <button class="btn btn-secondary btn-compact" id="ensembleContextExcludeSameFamily" type="button">Exclude Family</button>
+                    </div>
+
+                    <div class="ensemble-lab__selection-summary" id="ensembleContextSummary">0 selected</div>
+                    <div class="ensemble-lab__helper" id="ensembleContextHelper">
+                        Saved configs appear here. The target config is always excluded from the active context set.
+                    </div>
+
+                    <div class="ensemble-lab__context-list strategy-list-container" id="ensembleContextList">
+                    </div>
+                    <div class="ensemble-lab__empty" id="ensembleContextEmptyState" style="display: none;">
+                        No configs match the current search/filter.
+                    </div>
+                </div>
             </div>
 
             <div class="analysis-finder-status" id="ensembleStatus">Save strategy configurations, then select a target and context strategies to run ensemble analysis.</div>
@@ -66,38 +100,6 @@
             </div>
             <div class="simulation-grid" id="ensembleCurrentContextSummary"></div>
             <div class="portfolio-lab__insights" id="ensembleCurrentContextDetails"></div>
-        </div>
-
-        <div class="analysis-finder-section portfolio-lab__section" id="ensembleHistoricalOddsSection" style="display: none;">
-            <div class="analysis-finder-header">
-                <h4 class="analysis-finder-title">Historical Conditional Odds</h4>
-            </div>
-            <div class="simulation-grid" id="ensembleHistoricalOddsSummary"></div>
-            <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
-                <div class="portfolio-lab__table-caption">Target trades bucketed by context agreement at entry bar</div>
-                <table class="analysis-table portfolio-lab__table">
-                    <thead>
-                        <tr>
-                            <th>Agreement Bucket</th>
-                            <th>Samples</th>
-                            <th>Win %</th>
-                            <th>Loss %</th>
-                            <th>Avg Exp</th>
-                            <th>Avg Net %</th>
-                            <th>Avg Oppose</th>
-                            <th>Long Win %</th>
-                            <th>Short Win %</th>
-                        </tr>
-                    </thead>
-                    <tbody id="ensembleHistoricalOddsTableBody">
-                        <tr>
-                            <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                                Run Ensemble Lab to calculate conditional outcome probabilities.
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
         </div>
 
         <div class="analysis-finder-section portfolio-lab__section" id="ensembleBuilderSection" style="display: none;">
@@ -133,66 +135,31 @@
             </div>
         </div>
 
-        <div class="analysis-finder-section portfolio-lab__section" id="ensembleContributionSection" style="display: none;">
+        <div class="analysis-finder-section portfolio-lab__section" id="ensembleHistoricalOddsSection" style="display: none;">
             <div class="analysis-finder-header">
-                <h4 class="analysis-finder-title">Context Contribution</h4>
+                <h4 class="analysis-finder-title">Historical Conditional Odds</h4>
             </div>
-            <div class="simulation-grid" id="ensembleContributionSummary"></div>
+            <div class="simulation-grid" id="ensembleHistoricalOddsSummary"></div>
             <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
-                <div class="portfolio-lab__table-caption">Leave-one-out family impact and vote profile for the selected context set using the current active rule and proxy trade-level metrics</div>
+                <div class="portfolio-lab__table-caption">Target trades bucketed by context agreement at entry bar</div>
                 <table class="analysis-table portfolio-lab__table">
                     <thead>
                         <tr>
-                            <th>Family</th>
-                            <th>Configs</th>
-                            <th>Current Vote</th>
-                            <th>Agree Cov %</th>
-                            <th>Agree Exp</th>
-                            <th>Oppose Exp</th>
-                            <th>Conflict %</th>
-                            <th>Remove Exp Delta</th>
-                            <th>Proxy Win Delta</th>
-                            <th>Trade Retention</th>
-                            <th>Trades Delta</th>
-                            <th>Active Rule</th>
+                            <th>Agreement Bucket</th>
+                            <th>Samples</th>
+                            <th>Win %</th>
+                            <th>Loss %</th>
+                            <th>Avg Exp</th>
+                            <th>Avg Net %</th>
+                            <th>Avg Oppose</th>
+                            <th>Long Win %</th>
+                            <th>Short Win %</th>
                         </tr>
                     </thead>
-                    <tbody id="ensembleContributionTableBody">
-                        <tr>
-                            <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                                Run Strategy Ensemble Lab to identify helpful and harmful context families.
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <div class="analysis-finder-section portfolio-lab__section" id="ensembleReplacementSection" style="display: none;">
-            <div class="analysis-finder-header">
-                <h4 class="analysis-finder-title">Replacement Candidates</h4>
-            </div>
-            <div class="simulation-grid" id="ensembleReplacementSummary"></div>
-            <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
-                <div class="portfolio-lab__table-caption">Candidate families ranked after removing the weakest current family using the current active rule and proxy trade-level metrics</div>
-                <table class="analysis-table portfolio-lab__table">
-                    <thead>
-                        <tr>
-                            <th>Family</th>
-                            <th>Candidate Config</th>
-                            <th>Current Vote</th>
-                            <th>Exp Delta vs Remove</th>
-                            <th>Exp Delta vs Current</th>
-                            <th>Proxy Win Delta</th>
-                            <th>Trade Retention</th>
-                            <th>Trades Delta vs Current</th>
-                            <th>Active Rule</th>
-                        </tr>
-                    </thead>
-                    <tbody id="ensembleReplacementTableBody">
+                    <tbody id="ensembleHistoricalOddsTableBody">
                         <tr>
                             <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                                Run Strategy Ensemble Lab to rank candidate replacements for the weakest context family.
+                                Run Ensemble Lab to calculate conditional outcome probabilities.
                             </td>
                         </tr>
                     </tbody>
@@ -200,11 +167,83 @@
             </div>
         </div>
 
-        <div class="analysis-finder-section portfolio-lab__section" id="ensembleRadarSection" style="display: none;">
-            <div class="analysis-finder-header">
-                <h4 class="analysis-finder-title">Opportunity Radar</h4>
+        <details class="analysis-finder-section portfolio-lab__section portfolio-lab__diagnostics ensemble-lab__diagnostics" id="ensembleDiagnosticsSection" style="display: none;">
+            <summary class="portfolio-lab__diagnostics-summary">Diagnostics</summary>
+            <div class="portfolio-lab__diagnostics-body">
+                <div class="analysis-finder-section portfolio-lab__section" id="ensembleContributionSection" style="display: none;">
+                    <div class="analysis-finder-header">
+                        <h4 class="analysis-finder-title">Context Contribution</h4>
+                    </div>
+                    <div class="simulation-grid" id="ensembleContributionSummary"></div>
+                    <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
+                        <div class="portfolio-lab__table-caption">Leave-one-out family impact and vote profile for the selected context set using the current active rule and proxy trade-level metrics</div>
+                        <table class="analysis-table portfolio-lab__table">
+                            <thead>
+                                <tr>
+                                    <th>Family</th>
+                                    <th>Configs</th>
+                                    <th>Current Vote</th>
+                                    <th>Agree Cov %</th>
+                                    <th>Agree Exp</th>
+                                    <th>Oppose Exp</th>
+                                    <th>Conflict %</th>
+                                    <th>Remove Exp Delta</th>
+                                    <th>Proxy Win Delta</th>
+                                    <th>Trade Retention</th>
+                                    <th>Trades Delta</th>
+                                    <th>Active Rule</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ensembleContributionTableBody">
+                                <tr>
+                                    <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                        Run Strategy Ensemble Lab to identify helpful and harmful context families.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="analysis-finder-section portfolio-lab__section" id="ensembleReplacementSection" style="display: none;">
+                    <div class="analysis-finder-header">
+                        <h4 class="analysis-finder-title">Replacement Candidates</h4>
+                    </div>
+                    <div class="simulation-grid" id="ensembleReplacementSummary"></div>
+                    <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
+                        <div class="portfolio-lab__table-caption">Candidate families ranked after removing the weakest current family using the current active rule and proxy trade-level metrics</div>
+                        <table class="analysis-table portfolio-lab__table">
+                            <thead>
+                                <tr>
+                                    <th>Family</th>
+                                    <th>Candidate Config</th>
+                                    <th>Current Vote</th>
+                                    <th>Exp Delta vs Remove</th>
+                                    <th>Exp Delta vs Current</th>
+                                    <th>Proxy Win Delta</th>
+                                    <th>Trade Retention</th>
+                                    <th>Trades Delta vs Current</th>
+                                    <th>Active Rule</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ensembleReplacementTableBody">
+                                <tr>
+                                    <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                        Run Strategy Ensemble Lab to rank candidate replacements for the weakest context family.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="analysis-finder-section portfolio-lab__section" id="ensembleRadarSection" style="display: none;">
+                    <div class="analysis-finder-header">
+                        <h4 class="analysis-finder-title">Opportunity Radar</h4>
+                    </div>
+                    <div class="portfolio-lab__insights" id="ensembleRadarContent"></div>
+                </div>
             </div>
-            <div class="portfolio-lab__insights" id="ensembleRadarContent"></div>
-        </div>
+        </details>
     </div>
 </div>

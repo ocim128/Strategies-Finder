@@ -85,7 +85,7 @@ export class FinderManager {
 			const index = Number(button.dataset.index);
 			const result = this.displayResults[index];
 			if (result) {
-				this.applyResult(result);
+				void this.applyResult(result);
 			}
 		});
 
@@ -921,7 +921,7 @@ export class FinderManager {
 		}
 	}
 
-	private applyResult(result: FinderResult): void {
+	private async applyResult(result: FinderResult): Promise<void> {
 		if (Array.isArray(result.timeframes) && result.timeframes.length > 1) {
 			uiManager.showToast(
 				'Applied params from a multi-timeframe aggregate result. The backtest run below uses current chart timeframe only.',
@@ -1001,13 +1001,20 @@ export class FinderManager {
 		}
 
 		this.applyFinderBacktestSettings(result);
+		strategyPanelController.switchTab('trades');
 
 		state.set('twoHourParityBacktestResults', null);
-		state.set('currentBacktestResultSource', 'backtest');
-		state.set('currentBacktestResult', result.selectionResult);
 
-		// Switch to trades tab
-		strategyPanelController.switchTab('trades');
+		try {
+			await backtestService.runCurrentBacktest();
+		} catch (error) {
+			debugLogger.error('finder.apply_result_backtest_failed', {
+				strategyKey: result.key,
+				strategyName: result.name,
+				error: error instanceof Error ? error.message : String(error)
+			});
+			uiManager.showToast('Backtest rerun failed after applying Finder result.', 'error');
+		}
 	}
 
 	private applyFinderBacktestSettings(result: FinderResult): void {

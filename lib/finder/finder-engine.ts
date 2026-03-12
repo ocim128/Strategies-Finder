@@ -26,6 +26,11 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
             return result.maxDrawdownPercent;
         case "expectancy":
             return result.expectancy;
+        case "compositeEdgeRatio":
+            return item.compositeEdgeRatio
+                ?? item.result.edgeStatistics?.compositeEdgeRatio
+                ?? result.edgeStatistics?.compositeEdgeRatio
+                ?? 0;
         case "averageGain":
             return result.avgWin;
         case "totalTrades":

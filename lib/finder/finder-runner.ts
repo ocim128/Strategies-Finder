@@ -24,10 +24,11 @@ import { aggregateFinderBacktestResults, compareFinderResults } from "./finder-e
 import { FinderResultRanker } from "./finder-result-ranker";
 import { hasNonZeroSnapshotFilter, sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { FinderDataset } from "./finder-timeframe-loader";
-import type { EndpointSelectionAdjustment, FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
+import type { EndpointSelectionAdjustment, FinderMetric, FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
 import { trimToClosedCandles } from "../closed-candle-utils";
 import { mergeStrategySignals } from "../signal-merge";
 import { runGeneticOptimization } from "./genetic-optimizer";
+import { computeEdgeStatistics } from "../strategies/backtest/edge-statistics";
 
 export interface FinderSelectedStrategy {
     key: string;
@@ -394,6 +395,32 @@ function buildComparableFinderResult(
     };
 }
 
+function finderSortRequiresCompositeEdgeRatio(sortPriority: FinderMetric[]): boolean {
+    return sortPriority.includes("compositeEdgeRatio");
+}
+
+function computeFinderCompositeEdgeRatio(result: BacktestResult, data: OHLCVData[]): number {
+    if (!Array.isArray(result.trades) || result.trades.length === 0 || data.length === 0) {
+        return 0;
+    }
+
+    try {
+        return computeEdgeStatistics(result, data).compositeEdgeRatio;
+    } catch {
+        return 0;
+    }
+}
+
+function computeAverageCompositeEdgeRatio(entries: Array<{ result: BacktestResult; data: OHLCVData[] }>): number {
+    const values = entries
+        .map(({ result, data }) => computeFinderCompositeEdgeRatio(result, data))
+        .filter((value) => Number.isFinite(value) && value > 0);
+
+    if (values.length === 0) return 0;
+    const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+    return Math.round(average * 10000) / 10000;
+}
+
 function getPreparedFinderData(
     cache: FinderPreparedDataCache,
     strategyKey: string,
@@ -671,6 +698,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
 
     const ranker = new FinderResultRanker(Math.max(input.options.topN, 50), input.options.sortPriority);
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
+    const requiresCompositeEdgeRatioSort = finderSortRequiresCompositeEdgeRatio(input.options.sortPriority);
     let processedCount = 0;
     let filteredCount = 0;
     let endpointAdjustedCount = 0;
@@ -681,7 +709,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
         if (batchJobs.length === 0) break;
 
         for (const job of batchJobs) {
-            const timeframeResults: BacktestResult[] = [];
+            const timeframeResults: Array<{ result: BacktestResult; data: OHLCVData[] }> = [];
             for (const dataset of activeDatasets) {
                 try {
                     let signals = generateSignalsForJob(
@@ -697,7 +725,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                     }
                     const evaluation = job.strategy.evaluate?.(dataset.data, job.params, signals);
                     const entryStats = evaluation?.entryStats;
-                    const datasetUseCompact = dataset.data.length >= flags.compactBacktestThreshold;
+                    const datasetUseCompact = !requiresCompositeEdgeRatioSort && dataset.data.length >= flags.compactBacktestThreshold;
                     const timeframeBacktestFn = datasetUseCompact ? runBacktestCompact : runBacktest;
                     const result = job.strategy.metadata?.role === "entry" && entryStats
                         ? buildEntryBacktestResult(entryStats)
@@ -712,7 +740,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                             precomputedByInterval.get(dataset.interval)
                         );
 
-                    timeframeResults.push(result);
+                    timeframeResults.push({ result, data: dataset.data });
                     signals.length = 0;
                 } catch (error) {
                     console.warn(`[Finder] Multi timeframe run failed for ${job.key} @ ${dataset.interval}:`, error);
@@ -720,7 +748,10 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
             }
 
             if (timeframeResults.length > 0) {
-                const aggregatedResult = aggregateFinderBacktestResults(timeframeResults, effectiveInitialCapital);
+                const aggregatedResult = aggregateFinderBacktestResults(
+                    timeframeResults.map((entry) => entry.result),
+                    effectiveInitialCapital
+                );
                 if (input.options.tradeFilterEnabled && aggregatedResult.totalTrades < input.options.minTrades) {
                     processedCount++;
                     await maybeYieldByBudget(processedCount === totalRuns);
@@ -740,6 +771,9 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                     params: job.params,
                     result: aggregatedResult,
                     selectionResult: adjustment.result,
+                    compositeEdgeRatio: requiresCompositeEdgeRatioSort
+                        ? computeAverageCompositeEdgeRatio(timeframeResults)
+                        : undefined,
                     endpointAdjusted: adjustment.adjusted,
                     endpointRemovedTrades: adjustment.removedTrades,
                 };
@@ -894,6 +928,9 @@ async function runGeneticFinder(params: GeneticFinderRunParams): Promise<FinderR
             params: optimization.bestGenome.params,
             result: normalizedResult,
             selectionResult: adjustment.result,
+            compositeEdgeRatio: finderSortRequiresCompositeEdgeRatio(input.options.sortPriority)
+                ? computeFinderCompositeEdgeRatio(normalizedResult, closedData)
+                : undefined,
             endpointAdjusted: adjustment.adjusted,
             endpointRemovedTrades: adjustment.removedTrades,
         };
@@ -1057,16 +1094,20 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     callbacks.setProgress(10, `Running ${totalRuns} backtests (batch mode)...`);
 
     const ranker = new FinderResultRanker(Math.max(input.options.topN, 50), input.options.sortPriority);
+    const requiresCompositeEdgeRatioSort = finderSortRequiresCompositeEdgeRatio(input.options.sortPriority);
+    const usingCompactBacktest = !requiresCompositeEdgeRatioSort && flags.shouldUseCompactBacktest;
     let processedCount = 0;
     let filteredCount = 0;
     let endpointAdjustedCount = 0;
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
 
     const comboActive = !!input.comboPrimarySignals;
-    const rustPreferred = !comboActive && shouldUseRustEngine();
+    const rustPreferred = !comboActive && !requiresCompositeEdgeRatioSort && shouldUseRustEngine();
     const rustHealthy = rustPreferred && await rustEngine.checkHealth();
     const rustUnavailableReason = comboActive
         ? "combo mode requires TypeScript engine"
+        : requiresCompositeEdgeRatioSort
+            ? "Composite Edge Ratio sort requires full TypeScript trade paths"
         : !rustPreferred
             ? "engine preference is TypeScript"
             : "Rust health check failed";
@@ -1153,6 +1194,9 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
             comboPrimaryConfigName: input.options.comboPrimaryConfigName,
             result: normalizedResult,
             selectionResult: adjustment.result,
+            compositeEdgeRatio: requiresCompositeEdgeRatioSort
+                ? computeFinderCompositeEdgeRatio(normalizedResult, closedData)
+                : undefined,
             endpointAdjusted: adjustment.adjusted,
             endpointRemovedTrades: adjustment.removedTrades,
         };
@@ -1178,7 +1222,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     ): Promise<FinderRunOutput> => {
         const fastTop = ranker.toSortedArray(input.options.topN);
         let trimmed = fastTop;
-        const shouldReconcileTopResults = flags.shouldUseCompactBacktest || useRustForFinder;
+        const shouldReconcileTopResults = usingCompactBacktest || useRustForFinder;
         if (shouldReconcileTopResults && fastTop.length > 0) {
             callbacks.setStatus("Reconciling top results with full backtest...");
             callbacks.setProgress(99, "Reconciling top results...");
@@ -1320,6 +1364,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     }
 
     const useRandomFunnel =
+        !requiresCompositeEdgeRatioSort &&
         input.options.mode === "random" &&
         !input.options.multiTimeframeEnabled &&
         (
@@ -1409,7 +1454,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         callbacks.setStatus(`Random funnel stage C: full backtest on ${shortlisted.length}/${allJobs.length} survivors...`);
         callbacks.setProgress(56, `Stage C ${shortlisted.length} survivors`);
 
-        const backtestFn = flags.shouldUseCompactBacktest ? runBacktestCompact : runBacktest;
+        const backtestFn = usingCompactBacktest ? runBacktestCompact : runBacktest;
         if (!useRustForFinder) {
             for (let i = 0; i < shortlisted.length; i++) {
                 const { job } = shortlisted[i];
@@ -1624,7 +1669,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
 
     const totalBatches = Math.ceil(totalRuns / flags.batchSize);
     let batchNum = 0;
-    const backtestFn = flags.shouldUseCompactBacktest ? runBacktestCompact : runBacktest;
+    const backtestFn = usingCompactBacktest ? runBacktestCompact : runBacktest;
 
     while (processedCount < totalRuns) {
         const batchJobs = nextJobBatch(flags.batchSize);
@@ -1861,6 +1906,7 @@ async function reconcileSingleTimeframeTopResults(
     maybeYieldByBudget: (force?: boolean) => Promise<void>
 ): Promise<FinderResult[]> {
     const strategyByKey = new Map(input.selectedStrategies.map((item) => [item.key, item.strategy]));
+    const requiresCompositeEdgeRatioSort = finderSortRequiresCompositeEdgeRatio(input.options.sortPriority);
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
     const rustSettings = sanitizeBacktestSettingsForRust(input.settings);
     const comboActive = Boolean(input.comboPrimarySignals);
@@ -1911,6 +1957,9 @@ async function reconcileSingleTimeframeTopResults(
                 ...candidate,
                 result: normalizedResult,
                 selectionResult: adjustment.result,
+                compositeEdgeRatio: requiresCompositeEdgeRatioSort
+                    ? computeFinderCompositeEdgeRatio(normalizedResult, closedData)
+                    : candidate.compositeEdgeRatio,
                 endpointAdjusted: adjustment.adjusted,
                 endpointRemovedTrades: adjustment.removedTrades,
             });
@@ -2388,6 +2437,7 @@ async function evaluateRobustCell(args: {
     }
 
     const best = stageCCandidates[0];
+    const robustResult = normalizeResultSharpe(best.wfResult.combinedOOSTrades, input.initialCapital);
     const result: FinderResult = {
         key: strategyPlan.key,
         name: `${strategyPlan.name} (${dataset.interval})`,
@@ -2395,8 +2445,11 @@ async function evaluateRobustCell(args: {
         comboPrimaryConfigName: input.options.comboPrimaryConfigName,
         timeframes: [dataset.interval],
         params: best.params,
-        result: normalizeResultSharpe(best.wfResult.combinedOOSTrades, input.initialCapital),
-        selectionResult: normalizeResultSharpe(best.wfResult.combinedOOSTrades, input.initialCapital),
+        result: robustResult,
+        selectionResult: robustResult,
+        compositeEdgeRatio: finderSortRequiresCompositeEdgeRatio(input.options.sortPriority)
+            ? computeFinderCompositeEdgeRatio(robustResult, dataset.data)
+            : undefined,
         endpointAdjusted: false,
         endpointRemovedTrades: 0,
         robustMetrics: {
