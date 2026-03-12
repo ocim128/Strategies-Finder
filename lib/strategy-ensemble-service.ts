@@ -33,7 +33,7 @@ interface EnsembleEntryPresence {
     shortEntry: boolean;
 }
 
-interface ConfigRunArtifact {
+interface ConfigSignalArtifact {
     config: StrategyConfig;
     strategy: Strategy;
     familyKey: string;
@@ -43,12 +43,16 @@ interface ConfigRunArtifact {
     preparedSignals: Signal[];
     entrySignals: Signal[];
     entryPresenceByTime: Map<string, EnsembleEntryPresence>;
-    result: BacktestResult;
-    engineUsed: "rust" | "typescript";
     backtestSettings: BacktestSettings;
 }
 
+interface ConfigRunArtifact extends ConfigSignalArtifact {
+    result: BacktestResult;
+    engineUsed: "rust" | "typescript";
+}
+
 interface EnsembleTradeSample {
+    tradeIndex: number;
     direction: Trade["type"];
     isWin: boolean;
     pnl: number;
@@ -73,6 +77,7 @@ interface EnsembleBucketSummary {
 }
 
 interface EnsembleBuilderRow {
+    ruleId: string;
     rule: string;
     signals: number;
     trades: number;
@@ -83,6 +88,62 @@ interface EnsembleBuilderRow {
     maxDrawdownPercent: number;
     engineUsed: "rust" | "typescript";
     selectionMode: "validated" | "train_only" | null;
+}
+
+interface EnsembleBuilderPreview {
+    row: EnsembleBuilderRow;
+    result: BacktestResult;
+    filteredSignals: Signal[];
+}
+
+interface ScenarioPrimaryRow {
+    row: EnsembleBuilderRow;
+    source: "validated" | "train_only" | "heuristic" | "baseline";
+    rule: EnsembleRuleSpec | null;
+}
+
+interface EnsembleVoteProfileStats {
+    samples: number;
+    winRate: number;
+    expectancy: number;
+}
+
+interface EnsembleVoteProfile {
+    totalTrades: number;
+    agreeCoverage: number;
+    opposeCoverage: number;
+    conflictCoverage: number;
+    neutralCoverage: number;
+    agreeStats: EnsembleVoteProfileStats | null;
+    opposeStats: EnsembleVoteProfileStats | null;
+    conflictStats: EnsembleVoteProfileStats | null;
+    neutralStats: EnsembleVoteProfileStats | null;
+}
+
+interface EnsembleContributionRow {
+    familyKey: string;
+    familyLabel: string;
+    configNames: string[];
+    currentVote: "agree" | "oppose" | "neutral" | "conflict" | "n/a";
+    voteProfile: EnsembleVoteProfile;
+    primaryRow: ScenarioPrimaryRow;
+    deltaExpectancy: number;
+    deltaWinRate: number;
+    tradeRetentionPercent: number;
+    deltaTrades: number;
+}
+
+interface EnsembleReplacementRow {
+    familyKey: string;
+    familyLabel: string;
+    configName: string;
+    currentVote: "agree" | "oppose" | "neutral" | "conflict" | "n/a";
+    primaryRow: ScenarioPrimaryRow;
+    deltaExpectancyVsRemoved: number;
+    deltaExpectancyVsCurrent: number;
+    deltaWinRateVsCurrent: number;
+    tradeRetentionPercent: number;
+    deltaTradesVsCurrent: number;
 }
 
 interface EnsembleLiveContext {
@@ -128,9 +189,12 @@ interface EnsembleRunContext {
     bestLongBucket: EnsembleBucketSummary | null;
     bestShortBucket: EnsembleBucketSummary | null;
     builderRows: EnsembleBuilderRow[];
+    builderPreviewByRuleId: Map<string, EnsembleBuilderPreview>;
     selectedRule: EnsembleRuleSelection | null;
     liveContext: EnsembleLiveContext;
     minSamples: number;
+    contributionRows: EnsembleContributionRow[];
+    replacementRows: EnsembleReplacementRow[];
 }
 
 interface ContextCounts {
@@ -160,7 +224,40 @@ interface RadarFinding {
     quality: "positive" | "negative" | "neutral";
 }
 
+interface EnsembleScenarioEvaluation {
+    contextFamilyCount: number;
+    tradeSamples: EnsembleTradeSample[];
+    buckets: EnsembleBucketSummary[];
+    baselineBucket: EnsembleBucketSummary | null;
+    bestBucket: EnsembleBucketSummary | null;
+    bestLongBucket: EnsembleBucketSummary | null;
+    bestShortBucket: EnsembleBucketSummary | null;
+    builderRows: EnsembleBuilderRow[];
+    builderPreviewByRuleId: Map<string, EnsembleBuilderPreview>;
+    selectedRule: EnsembleRuleSelection | null;
+    analysisRule: ScenarioPrimaryRow | null;
+}
+
+interface CurrentContextReference {
+    basis: "open_trade" | "latest_signal" | "none";
+    direction: Trade["type"] | null;
+    timeKey: string | null;
+    openPosition: OpenPosition | null;
+}
+
+interface ProxyRuleEvaluation {
+    rule: EnsembleRuleSpec;
+    trades: number;
+    expectancy: number;
+    netProfitPercent: number;
+    profitFactor: number;
+    maxDrawdownPercent: number;
+}
+
 class StrategyEnsembleService {
+    private static readonly MAX_REPLACEMENT_ROWS = 12;
+    private static readonly MAX_RULE_VALIDATION_CANDIDATES = 12;
+    private static readonly MAX_RULE_BUILDER_ROWS = 10;
     private dom: EnsembleLabDom | null = null;
     private initialized = false;
     private runContext: EnsembleRunContext | null = null;
@@ -168,6 +265,12 @@ class StrategyEnsembleService {
 
     private getDom(): EnsembleLabDom {
         return this.dom ??= createEnsembleLabDom();
+    }
+
+    private async yieldToUi(): Promise<void> {
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, 0);
+        });
     }
 
     public init(): void {
@@ -198,6 +301,24 @@ class StrategyEnsembleService {
 
         dom.ensembleMinSamples.addEventListener("input", () => {
             this.invalidateRunContext("Minimum sample threshold changed. Run Strategy Ensemble Lab again.");
+        });
+        dom.ensembleBuilderTableBody.addEventListener("click", (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) {
+                return;
+            }
+
+            const button = target.closest<HTMLButtonElement>("[data-ensemble-preview-rule-id]");
+            if (!button) {
+                return;
+            }
+
+            const ruleId = button.dataset.ensemblePreviewRuleId?.trim();
+            if (!ruleId) {
+                return;
+            }
+
+            void this.loadBuilderPreview(ruleId);
         });
 
         state.subscribe("currentSymbol", () => {
@@ -321,6 +442,31 @@ class StrategyEnsembleService {
         this.getDom().ensembleStatus.textContent = message;
     }
 
+    private async loadBuilderPreview(ruleId: string): Promise<void> {
+        const context = this.runContext;
+        if (!context) {
+            uiManager.showToast("Run Strategy Ensemble Lab first.", "error");
+            return;
+        }
+
+        const preview = context.builderPreviewByRuleId.get(ruleId);
+        if (!preview) {
+            uiManager.showToast("Exact ensemble preview is not available for this row.", "error");
+            return;
+        }
+
+        const targetArtifact = context.targetArtifact;
+
+        state.set("currentBacktestResult", null);
+        state.set("twoHourParityBacktestResults", null);
+        await settingsManager.applyStrategyConfig(targetArtifact.config);
+        state.set("currentBacktestResultSource", "ensemble_preview");
+        state.set("currentBacktestResult", preview.result);
+
+        this.updateStatus(`Loaded exact ensemble preview: ${preview.row.rule}.`);
+        uiManager.showToast(`Loaded ensemble preview: ${preview.row.rule}`, "success");
+    }
+
     private prepareCandles(): OHLCVData[] {
         if (state.ohlcvData.length < 2) {
             return [];
@@ -353,21 +499,37 @@ class StrategyEnsembleService {
         }
 
         const minSamples = this.readMinSamples();
-        const configNames = [targetName, ...contextNames];
+        const allConfigs = settingsManager.loadAllStrategyConfigs();
+        const selectedConfigNames = [targetName, ...contextNames];
+        const candidateConfigNames = allConfigs
+            .map((config) => config.name)
+            .filter((name) => !selectedConfigNames.includes(name));
         const artifacts = new Map<string, ConfigRunArtifact>();
+        const candidateArtifacts = new Map<string, ConfigSignalArtifact>();
 
         dom.ensembleRunBtn.disabled = true;
         dom.ensembleRunBtn.setAttribute("aria-busy", "true");
-        this.updateStatus(`Running ${configNames.length} configs on ${state.currentSymbol} (${state.currentInterval})...`);
+        this.updateStatus(`Running ${selectedConfigNames.length} selected configs on ${state.currentSymbol} (${state.currentInterval})...`);
 
         try {
-            for (let index = 0; index < configNames.length; index += 1) {
-                const configName = configNames[index];
-                this.updateStatus(`Running ${configName} (${index + 1}/${configNames.length})...`);
+            for (let index = 0; index < selectedConfigNames.length; index += 1) {
+                const configName = selectedConfigNames[index];
+                this.updateStatus(`Running selected config ${configName} (${index + 1}/${selectedConfigNames.length})...`);
                 const artifact = await this.runConfig(configName, candles);
                 if (artifact) {
                     artifacts.set(configName, artifact);
                 }
+                await this.yieldToUi();
+            }
+
+            for (let index = 0; index < candidateConfigNames.length; index += 1) {
+                const configName = candidateConfigNames[index];
+                this.updateStatus(`Preparing replacement candidate ${configName} (${index + 1}/${candidateConfigNames.length})...`);
+                const artifact = await this.buildSignalArtifact(configName, candles);
+                if (artifact) {
+                    candidateArtifacts.set(configName, artifact);
+                }
+                await this.yieldToUi();
             }
 
             const targetArtifact = artifacts.get(targetName);
@@ -384,44 +546,34 @@ class StrategyEnsembleService {
             }
 
             const contextFamilyCount = this.countDistinctFamilies(contextArtifacts);
-            const tradeSamples = this.buildTradeSamples(targetArtifact, contextArtifacts);
-            const buckets = this.buildBuckets(tradeSamples, minSamples);
-            const baselineBucket = this.buildBaselineBucket(tradeSamples);
-            const bestBucket = this.findBestBucket(buckets, "expectancy");
-            const bestLongBucket = this.findBestBucket(
-                buckets.filter((bucket) => bucket.longSamples >= minSamples),
-                "longWinRate"
-            );
-            const bestShortBucket = this.findBestBucket(
-                buckets.filter((bucket) => bucket.shortSamples >= minSamples),
-                "shortWinRate"
-            );
-            const candidateRules = this.buildRuleCandidates(contextFamilyCount, tradeSamples, minSamples);
-            const selectedRule = await this.selectRuleForValidation(
-                candidateRules,
+            this.updateStatus("Evaluating ensemble rule candidates...");
+            const scenario = await this.evaluateScenario(targetArtifact, contextArtifacts, candles, minSamples);
+            this.updateStatus("Scoring leave-one-out context contribution...");
+            const currentContextReference = this.resolveCurrentContextReference(targetArtifact, candles);
+            const contributionRows = await this.buildContributionRows(
                 targetArtifact,
                 contextArtifacts,
-                candles,
-                contextFamilyCount,
-                minSamples
+                scenario,
+                currentContextReference
             );
-            const builderRows = await this.buildEnsembleRows(
+            this.updateStatus("Ranking replacement candidates...");
+            const replacementRows = await this.buildReplacementRows(
                 targetArtifact,
                 contextArtifacts,
-                candles,
-                contextFamilyCount,
-                candidateRules,
-                selectedRule
+                scenario,
+                contributionRows,
+                currentContextReference,
+                Array.from(candidateArtifacts.values())
             );
             const liveContext = this.buildLiveContext(
                 targetArtifact,
                 contextArtifacts,
                 candles,
-                tradeSamples,
+                scenario.tradeSamples,
                 minSamples
             );
 
-            this.runContext = {
+            const runContext: EnsembleRunContext = {
                 targetConfigName: targetName,
                 contextConfigNames: contextArtifacts.map((artifact) => artifact.config.name),
                 contextFamilyCount,
@@ -430,21 +582,25 @@ class StrategyEnsembleService {
                 candles,
                 artifacts,
                 targetArtifact,
-                tradeSamples,
-                buckets,
-                baselineBucket,
-                bestBucket,
-                bestLongBucket,
-                bestShortBucket,
-                builderRows,
-                selectedRule,
+                tradeSamples: scenario.tradeSamples,
+                buckets: scenario.buckets,
+                baselineBucket: scenario.baselineBucket,
+                bestBucket: scenario.bestBucket,
+                bestLongBucket: scenario.bestLongBucket,
+                bestShortBucket: scenario.bestShortBucket,
+                builderRows: scenario.builderRows,
+                builderPreviewByRuleId: scenario.builderPreviewByRuleId,
+                selectedRule: scenario.selectedRule,
                 liveContext,
                 minSamples,
+                contributionRows,
+                replacementRows,
             };
+            this.runContext = runContext;
 
-            this.renderResults(this.runContext);
+            this.renderResults(runContext);
             this.updateStatus(
-                `Strategy Ensemble Lab ready. ${tradeSamples.length} target trades analyzed across ${contextArtifacts.length} context configs in ${contextFamilyCount} families.`
+                `Strategy Ensemble Lab ready. ${scenario.tradeSamples.length} target trades analyzed across ${contextArtifacts.length} context configs in ${contextFamilyCount} families.`
             );
             uiManager.showToast("Strategy Ensemble Lab complete.", "success");
         } catch (error) {
@@ -462,7 +618,7 @@ class StrategyEnsembleService {
         }
     }
 
-    private async runConfig(configName: string, candles: OHLCVData[]): Promise<ConfigRunArtifact | null> {
+    private async buildSignalArtifact(configName: string, candles: OHLCVData[]): Promise<ConfigSignalArtifact | null> {
         const config = settingsManager.loadStrategyConfig(configName);
         if (!config) {
             return null;
@@ -480,17 +636,8 @@ class StrategyEnsembleService {
             { captureSnapshots: false, coerceWithoutUiToggles: true }
         );
         const tradeDirection = this.normalizeTradeDirection(backtestSettings);
-        const capitalSettings = settingsManager.resolveCapitalFromConfig(config);
 
         try {
-            const runResult = await backtestService.evaluateStrategyOnData(
-                candles,
-                state.currentInterval,
-                strategy,
-                params,
-                backtestSettings,
-                capitalSettings
-            );
             const rawSignals = applySignalPolarity(strategy.execute(candles, params), backtestSettings);
             const preparedSignals = prepareSignalsForScanner(candles, rawSignals, backtestSettings);
             const entrySignals = this.extractEntrySignals(preparedSignals, tradeDirection);
@@ -505,12 +652,39 @@ class StrategyEnsembleService {
                 preparedSignals,
                 entrySignals,
                 entryPresenceByTime: this.buildEntryPresenceLookup(entrySignals),
-                result: runResult.result,
-                engineUsed: runResult.engineUsed,
                 backtestSettings,
             };
         } catch (error) {
             debugLogger.warn(`[StrategyEnsembleLab] Failed to evaluate "${configName}"`, {
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return null;
+        }
+    }
+
+    private async runConfig(configName: string, candles: OHLCVData[]): Promise<ConfigRunArtifact | null> {
+        const artifact = await this.buildSignalArtifact(configName, candles);
+        if (!artifact) {
+            return null;
+        }
+
+        try {
+            const runResult = await backtestService.evaluateStrategyOnData(
+                candles,
+                state.currentInterval,
+                artifact.strategy,
+                artifact.config.strategyParams ?? artifact.strategy.defaultParams,
+                artifact.backtestSettings,
+                settingsManager.resolveCapitalFromConfig(artifact.config)
+            );
+
+            return {
+                ...artifact,
+                result: runResult.result,
+                engineUsed: runResult.engineUsed,
+            };
+        } catch (error) {
+            debugLogger.warn(`[StrategyEnsembleLab] Failed to backtest "${configName}"`, {
                 error: error instanceof Error ? error.message : String(error),
             });
             return null;
@@ -556,19 +730,20 @@ class StrategyEnsembleService {
         return lookup;
     }
 
-    private countDistinctFamilies(artifacts: ConfigRunArtifact[]): number {
+    private countDistinctFamilies(artifacts: ConfigSignalArtifact[]): number {
         return new Set(artifacts.map((artifact) => artifact.familyKey)).size;
     }
 
     private buildTradeSamples(
         targetArtifact: ConfigRunArtifact,
-        contextArtifacts: ConfigRunArtifact[]
+        contextArtifacts: ConfigSignalArtifact[]
     ): EnsembleTradeSample[] {
-        return targetArtifact.result.trades.map((trade) => {
+        return targetArtifact.result.trades.map((trade, tradeIndex) => {
             const entryTimeKey = timeKey(trade.entryTime);
             const counts = this.buildContextCountsForTimeKey(trade.type, entryTimeKey, contextArtifacts);
 
             return {
+                tradeIndex,
                 direction: trade.type,
                 isWin: trade.pnl > 0,
                 pnl: trade.pnl,
@@ -582,7 +757,7 @@ class StrategyEnsembleService {
     private buildContextCountsForTimeKey(
         direction: Trade["type"],
         entryTimeKey: string,
-        contextArtifacts: ConfigRunArtifact[]
+        contextArtifacts: ConfigSignalArtifact[]
     ): ContextCounts {
         let rawAgreeCount = 0;
         let rawOpposeCount = 0;
@@ -616,6 +791,9 @@ class StrategyEnsembleService {
             if (vote === "agree") {
                 family.agreeConfigs.push(artifact.config.name);
             } else if (vote === "oppose") {
+                family.opposeConfigs.push(artifact.config.name);
+            } else if (vote === "conflict") {
+                family.agreeConfigs.push(artifact.config.name);
                 family.opposeConfigs.push(artifact.config.name);
             }
             familyVotes.set(artifact.familyKey, family);
@@ -771,6 +949,225 @@ class StrategyEnsembleService {
         });
     }
 
+    private async evaluateScenario(
+        targetArtifact: ConfigRunArtifact,
+        contextArtifacts: ConfigRunArtifact[],
+        candles: OHLCVData[],
+        minSamples: number
+    ): Promise<EnsembleScenarioEvaluation> {
+        const contextFamilyCount = this.countDistinctFamilies(contextArtifacts);
+        const tradeSamples = this.buildTradeSamples(targetArtifact, contextArtifacts);
+        const buckets = this.buildBuckets(tradeSamples, minSamples);
+        const baselineBucket = this.buildBaselineBucket(tradeSamples);
+        const bestBucket = this.findBestBucket(buckets, "expectancy");
+        const bestLongBucket = this.findBestBucket(
+            buckets.filter((bucket) => bucket.longSamples >= minSamples),
+            "longWinRate"
+        );
+        const bestShortBucket = this.findBestBucket(
+            buckets.filter((bucket) => bucket.shortSamples >= minSamples),
+            "shortWinRate"
+        );
+        const candidateRules = this.buildRuleCandidates(contextFamilyCount, tradeSamples, minSamples);
+        const shortlistedRules = this.selectShortlistedRules(candidateRules, tradeSamples, contextFamilyCount, minSamples);
+        const selectedRule = await this.selectRuleForValidation(
+            shortlistedRules,
+            targetArtifact,
+            contextArtifacts,
+            candles,
+            contextFamilyCount,
+            minSamples
+        );
+        const analysisRule = this.resolveAnalysisRule(
+            selectedRule,
+            shortlistedRules,
+            tradeSamples,
+            contextFamilyCount,
+            minSamples
+        );
+        const builderRows = await this.buildEnsembleRows(
+            targetArtifact,
+            contextArtifacts,
+            candles,
+            contextFamilyCount,
+            this.selectBuilderRules(shortlistedRules, tradeSamples, contextFamilyCount, minSamples, selectedRule),
+            selectedRule
+        );
+
+        return {
+            contextFamilyCount,
+            tradeSamples,
+            buckets,
+            baselineBucket,
+            bestBucket,
+            bestLongBucket,
+            bestShortBucket,
+            builderRows: builderRows.rows,
+            builderPreviewByRuleId: builderRows.previewByRuleId,
+            selectedRule,
+            analysisRule,
+        };
+    }
+
+    private resolveScenarioPrimaryRow(builderRows: EnsembleBuilderRow[]): ScenarioPrimaryRow | null {
+        const selected = builderRows.find((row) => row.selectionMode === "validated");
+        if (selected) {
+            return { row: selected, source: "validated", rule: null };
+        }
+
+        const trainOnly = builderRows.find((row) => row.selectionMode === "train_only");
+        if (trainOnly) {
+            return { row: trainOnly, source: "train_only", rule: null };
+        }
+
+        const baseline = builderRows.find((row) => row.rule === "Baseline (target only)") ?? builderRows[0] ?? null;
+        return baseline
+            ? { row: baseline, source: "baseline", rule: null }
+            : null;
+    }
+
+    private describeScenarioPrimaryRow(primaryRow: ScenarioPrimaryRow): string {
+        if (primaryRow.source === "validated") {
+            return `${primaryRow.row.rule} [Validated]`;
+        }
+        if (primaryRow.source === "train_only") {
+            return `${primaryRow.row.rule} [In-sample only]`;
+        }
+        if (primaryRow.source === "heuristic") {
+            return `${primaryRow.row.rule} [Heuristic]`;
+        }
+        return "Baseline (target only)";
+    }
+
+    private resolveCurrentContextReference(
+        targetArtifact: ConfigRunArtifact,
+        candles: OHLCVData[]
+    ): CurrentContextReference {
+        const openPosition = getOpenPositionForScanner(candles, targetArtifact.rawSignals, targetArtifact.backtestSettings);
+        const latestPreparedSignal = targetArtifact.entrySignals[targetArtifact.entrySignals.length - 1] ?? null;
+
+        if (openPosition) {
+            return {
+                basis: "open_trade",
+                direction: openPosition.direction,
+                timeKey: timeKey(openPosition.entryTime),
+                openPosition,
+            };
+        }
+
+        if (latestPreparedSignal) {
+            return {
+                basis: "latest_signal",
+                direction: latestPreparedSignal.type === "buy" ? "long" : "short",
+                timeKey: timeKey(latestPreparedSignal.time),
+                openPosition,
+            };
+        }
+
+        return {
+            basis: "none",
+            direction: null,
+            timeKey: null,
+            openPosition,
+        };
+    }
+
+    private resolveFamilyVoteForTimeKey(
+        direction: Trade["type"],
+        entryTimeKey: string,
+        artifacts: ConfigSignalArtifact[]
+    ): "agree" | "oppose" | "neutral" | "conflict" {
+        let hasAgree = false;
+        let hasOppose = false;
+
+        for (const artifact of artifacts) {
+            const vote = this.resolveContextVote(direction, artifact.entryPresenceByTime.get(entryTimeKey));
+            if (vote === "agree") {
+                hasAgree = true;
+            } else if (vote === "oppose") {
+                hasOppose = true;
+            } else if (vote === "conflict") {
+                hasAgree = true;
+                hasOppose = true;
+            }
+        }
+
+        if (hasAgree && hasOppose) {
+            return "conflict";
+        }
+        if (hasAgree) {
+            return "agree";
+        }
+        if (hasOppose) {
+            return "oppose";
+        }
+        return "neutral";
+    }
+
+    private summarizeVoteProfileStats(trades: Trade[]): EnsembleVoteProfileStats | null {
+        if (trades.length === 0) {
+            return null;
+        }
+
+        const wins = trades.filter((trade) => trade.pnl > 0).length;
+        return {
+            samples: trades.length,
+            winRate: (wins / trades.length) * 100,
+            expectancy: trades.reduce((sum, trade) => sum + trade.pnl, 0) / trades.length,
+        };
+    }
+
+    private buildVoteProfile(
+        targetArtifact: ConfigRunArtifact,
+        familyArtifacts: ConfigRunArtifact[]
+    ): EnsembleVoteProfile {
+        const agreeTrades: Trade[] = [];
+        const opposeTrades: Trade[] = [];
+        const conflictTrades: Trade[] = [];
+        const neutralTrades: Trade[] = [];
+
+        for (const trade of targetArtifact.result.trades) {
+            const vote = this.resolveFamilyVoteForTimeKey(trade.type, timeKey(trade.entryTime), familyArtifacts);
+            if (vote === "agree") {
+                agreeTrades.push(trade);
+            } else if (vote === "oppose") {
+                opposeTrades.push(trade);
+            } else if (vote === "conflict") {
+                conflictTrades.push(trade);
+            } else {
+                neutralTrades.push(trade);
+            }
+        }
+
+        const totalTrades = Math.max(1, targetArtifact.result.trades.length);
+        return {
+            totalTrades: targetArtifact.result.trades.length,
+            agreeCoverage: (agreeTrades.length / totalTrades) * 100,
+            opposeCoverage: (opposeTrades.length / totalTrades) * 100,
+            conflictCoverage: (conflictTrades.length / totalTrades) * 100,
+            neutralCoverage: (neutralTrades.length / totalTrades) * 100,
+            agreeStats: this.summarizeVoteProfileStats(agreeTrades),
+            opposeStats: this.summarizeVoteProfileStats(opposeTrades),
+            conflictStats: this.summarizeVoteProfileStats(conflictTrades),
+            neutralStats: this.summarizeVoteProfileStats(neutralTrades),
+        };
+    }
+
+    private resolveCurrentVoteLabel(
+        currentContextReference: CurrentContextReference,
+        familyArtifacts: ConfigSignalArtifact[]
+    ): "agree" | "oppose" | "neutral" | "conflict" | "n/a" {
+        if (!currentContextReference.direction || !currentContextReference.timeKey) {
+            return "n/a";
+        }
+
+        return this.resolveFamilyVoteForTimeKey(
+            currentContextReference.direction,
+            currentContextReference.timeKey,
+            familyArtifacts
+        );
+    }
+
     private async buildEnsembleRows(
         targetArtifact: ConfigRunArtifact,
         contextArtifacts: ConfigRunArtifact[],
@@ -778,37 +1175,58 @@ class StrategyEnsembleService {
         contextFamilyCount: number,
         candidateRules: EnsembleRuleSpec[],
         selectedRule: EnsembleRuleSelection | null
-    ): Promise<EnsembleBuilderRow[]> {
+    ): Promise<{ rows: EnsembleBuilderRow[]; previewByRuleId: Map<string, EnsembleBuilderPreview> }> {
         const baselineEvaluated = await this.runFilteredBacktest(targetArtifact, targetArtifact.preparedSignals, candles);
-        const rows: EnsembleBuilderRow[] = [
-            this.buildResultRow(
-                "Baseline (target only)",
-                baselineEvaluated?.result ?? targetArtifact.result,
-                targetArtifact.preparedSignals.length,
-                baselineEvaluated?.engineUsed ?? targetArtifact.engineUsed,
-                null
-            ),
-        ];
+        const previewByRuleId = new Map<string, EnsembleBuilderPreview>();
+        const baselineRuleId = "baseline";
+        const baselineRow = this.buildResultRow(
+            baselineRuleId,
+            "Baseline (target only)",
+            baselineEvaluated?.result ?? targetArtifact.result,
+            targetArtifact.preparedSignals,
+            baselineEvaluated?.engineUsed ?? targetArtifact.engineUsed,
+            null
+        );
+        const rows: EnsembleBuilderRow[] = [baselineRow];
+        previewByRuleId.set(baselineRuleId, {
+            row: baselineRow,
+            result: baselineEvaluated?.result ?? targetArtifact.result,
+            filteredSignals: targetArtifact.preparedSignals,
+        });
 
         if (contextArtifacts.length === 0 || contextFamilyCount === 0) {
-            return rows;
+            return {
+                rows,
+                previewByRuleId,
+            };
         }
 
         for (const rule of candidateRules) {
             const filteredSignals = this.filterSignalsByRule(targetArtifact, contextArtifacts, contextFamilyCount, rule);
             const evaluated = await this.runFilteredBacktest(targetArtifact, filteredSignals, candles);
             if (evaluated) {
-                rows.push(this.buildResultRow(
+                const row = this.buildResultRow(
+                    rule.id,
                     rule.label,
                     evaluated.result,
-                    filteredSignals.length,
+                    filteredSignals,
                     evaluated.engineUsed,
                     selectedRule?.evaluation.rule.id === rule.id ? selectedRule.mode : null
-                ));
+                );
+                rows.push(row);
+                previewByRuleId.set(rule.id, {
+                    row,
+                    result: evaluated.result,
+                    filteredSignals,
+                });
             }
+            await this.yieldToUi();
         }
 
-        return this.dedupeBuilderRows(rows);
+        return {
+            rows: this.dedupeBuilderRows(rows),
+            previewByRuleId,
+        };
     }
 
     private filterSignalsByRule(
@@ -916,6 +1334,185 @@ class StrategyEnsembleService {
         return this.dedupeRuleSpecs(rules);
     }
 
+    private buildProxyRuleEvaluation(
+        rule: EnsembleRuleSpec,
+        tradeSamples: EnsembleTradeSample[],
+        contextFamilyCount: number
+    ): ProxyRuleEvaluation {
+        const filteredSamples = this.filterTradeSamplesByRule(tradeSamples, contextFamilyCount, rule);
+        const proxyRow = this.buildProxyResultRowFromTradeSamples(rule.label, filteredSamples, null);
+
+        return {
+            rule,
+            trades: proxyRow.trades,
+            expectancy: proxyRow.expectancy,
+            netProfitPercent: proxyRow.netProfitPercent,
+            profitFactor: proxyRow.profitFactor,
+            maxDrawdownPercent: proxyRow.maxDrawdownPercent,
+        };
+    }
+
+    private resolveAnalysisRule(
+        selectedRule: EnsembleRuleSelection | null,
+        shortlistedRules: EnsembleRuleSpec[],
+        tradeSamples: EnsembleTradeSample[],
+        contextFamilyCount: number,
+        minSamples: number
+    ): ScenarioPrimaryRow | null {
+        if (selectedRule) {
+            return {
+                row: this.buildProxyResultRowFromTradeSamples(
+                    selectedRule.evaluation.rule.label,
+                    this.filterTradeSamplesByRule(tradeSamples, contextFamilyCount, selectedRule.evaluation.rule),
+                    selectedRule.mode
+                ),
+                source: selectedRule.mode,
+                rule: selectedRule.evaluation.rule,
+            };
+        }
+
+        const baselineProxy = this.buildProxyResultRowFromTradeSamples("Baseline (target only)", tradeSamples, null);
+        const proxyEvaluations = shortlistedRules
+            .map((rule) => this.buildProxyRuleEvaluation(rule, tradeSamples, contextFamilyCount))
+            .filter((evaluation) =>
+                evaluation.trades >= minSamples
+                && Number.isFinite(evaluation.expectancy)
+            );
+
+        const balanceCandidate = proxyEvaluations
+            .filter((evaluation) =>
+                evaluation.trades >= baselineProxy.trades * 0.5
+                && evaluation.expectancy >= baselineProxy.expectancy
+            )
+            .sort((left, right) => {
+                if (left.expectancy !== right.expectancy) {
+                    return right.expectancy - left.expectancy;
+                }
+                return right.trades - left.trades;
+            })[0];
+
+        const fallback = balanceCandidate ?? proxyEvaluations
+            .slice()
+            .sort((left, right) => {
+                if (left.expectancy !== right.expectancy) {
+                    return right.expectancy - left.expectancy;
+                }
+                return right.trades - left.trades;
+            })[0];
+
+        return fallback
+            ? {
+                row: this.buildProxyResultRowFromTradeSamples(
+                    fallback.rule.label,
+                    this.filterTradeSamplesByRule(tradeSamples, contextFamilyCount, fallback.rule),
+                    null
+                ),
+                source: "heuristic",
+                rule: fallback.rule,
+            }
+            : {
+                row: baselineProxy,
+                source: "baseline",
+                rule: null,
+            };
+    }
+
+    private selectShortlistedRules(
+        candidateRules: EnsembleRuleSpec[],
+        tradeSamples: EnsembleTradeSample[],
+        contextFamilyCount: number,
+        minSamples: number
+    ): EnsembleRuleSpec[] {
+        if (candidateRules.length <= StrategyEnsembleService.MAX_RULE_VALIDATION_CANDIDATES) {
+            return candidateRules;
+        }
+
+        const baselineProxy = this.buildProxyResultRowFromTradeSamples("Baseline (target only)", tradeSamples, null);
+        const proxyEvaluations = candidateRules
+            .map((rule) => this.buildProxyRuleEvaluation(rule, tradeSamples, contextFamilyCount))
+            .filter((evaluation) => evaluation.trades >= minSamples);
+
+        const selected = new Map<string, EnsembleRuleSpec>();
+        const takeTop = (
+            evaluations: ProxyRuleEvaluation[],
+            limit: number,
+            compare: (left: ProxyRuleEvaluation, right: ProxyRuleEvaluation) => number
+        ) => {
+            evaluations
+                .slice()
+                .sort(compare)
+                .slice(0, limit)
+                .forEach((evaluation) => {
+                    selected.set(evaluation.rule.id, evaluation.rule);
+                });
+        };
+
+        takeTop(
+            proxyEvaluations,
+            5,
+            (left, right) => {
+                if (left.expectancy !== right.expectancy) {
+                    return right.expectancy - left.expectancy;
+                }
+                return right.trades - left.trades;
+            }
+        );
+        takeTop(
+            proxyEvaluations.filter((evaluation) => Math.abs(evaluation.maxDrawdownPercent) < Math.abs(baselineProxy.maxDrawdownPercent)),
+            3,
+            (left, right) => Math.abs(left.maxDrawdownPercent) - Math.abs(right.maxDrawdownPercent)
+        );
+        takeTop(
+            proxyEvaluations.filter((evaluation) => evaluation.trades >= baselineProxy.trades * 0.5),
+            3,
+            (left, right) => {
+                if (left.expectancy !== right.expectancy) {
+                    return right.expectancy - left.expectancy;
+                }
+                return right.trades - left.trades;
+            }
+        );
+
+        const baselineLikeRules = candidateRules.filter((rule) => rule.id === "veto" || rule.id.startsWith("minAgree:1") || rule.id.startsWith("maxOppose:0"));
+        for (const rule of baselineLikeRules) {
+            selected.set(rule.id, rule);
+        }
+
+        return Array.from(selected.values()).slice(0, StrategyEnsembleService.MAX_RULE_VALIDATION_CANDIDATES);
+    }
+
+    private selectBuilderRules(
+        shortlistedRules: EnsembleRuleSpec[],
+        tradeSamples: EnsembleTradeSample[],
+        contextFamilyCount: number,
+        minSamples: number,
+        selectedRule: EnsembleRuleSelection | null
+    ): EnsembleRuleSpec[] {
+        const proxyEvaluations = shortlistedRules
+            .map((rule) => this.buildProxyRuleEvaluation(rule, tradeSamples, contextFamilyCount))
+            .filter((evaluation) => evaluation.trades >= minSamples);
+        const selected = new Map<string, EnsembleRuleSpec>();
+
+        if (selectedRule) {
+            selected.set(selectedRule.evaluation.rule.id, selectedRule.evaluation.rule);
+        }
+
+        proxyEvaluations
+            .slice()
+            .sort((left, right) => {
+                if (left.expectancy !== right.expectancy) {
+                    return right.expectancy - left.expectancy;
+                }
+                return right.trades - left.trades;
+            })
+            .slice(0, StrategyEnsembleService.MAX_RULE_BUILDER_ROWS)
+            .forEach((evaluation) => {
+                selected.set(evaluation.rule.id, evaluation.rule);
+            });
+
+        return Array.from(selected.values());
+    }
+
     private async runFilteredBacktest(
         targetArtifact: ConfigRunArtifact,
         signals: Signal[],
@@ -943,15 +1540,17 @@ class StrategyEnsembleService {
     }
 
     private buildResultRow(
+        ruleId: string,
         rule: string,
         result: BacktestResult,
-        signals: number,
+        signals: Signal[],
         engineUsed: "rust" | "typescript",
         selectionMode: "validated" | "train_only" | null
     ): EnsembleBuilderRow {
         return {
+            ruleId,
             rule,
-            signals,
+            signals: signals.length,
             trades: result.totalTrades,
             winRate: result.winRate,
             netProfitPercent: result.netProfitPercent,
@@ -979,6 +1578,68 @@ class StrategyEnsembleService {
             }
         }
         return true;
+    }
+
+    private filterTradeSamplesByRule(
+        tradeSamples: EnsembleTradeSample[],
+        contextFamilyCount: number,
+        rule: EnsembleRuleSpec | null
+    ): EnsembleTradeSample[] {
+        if (!rule) {
+            return tradeSamples.slice();
+        }
+
+        return tradeSamples.filter((sample) => this.rulePasses(rule, sample, contextFamilyCount));
+    }
+
+    private computeApproximateMaxDrawdownPercent(samples: EnsembleTradeSample[]): number {
+        if (samples.length === 0) {
+            return 0;
+        }
+
+        let cumulative = 0;
+        let peak = 0;
+        let maxDrawdown = 0;
+
+        for (const sample of samples) {
+            cumulative += sample.pnlPercent;
+            if (cumulative > peak) {
+                peak = cumulative;
+            }
+            const drawdown = peak - cumulative;
+            if (drawdown > maxDrawdown) {
+                maxDrawdown = drawdown;
+            }
+        }
+
+        return -maxDrawdown;
+    }
+
+    private buildProxyResultRowFromTradeSamples(
+        label: string,
+        tradeSamples: EnsembleTradeSample[],
+        selectionMode: "validated" | "train_only" | null
+    ): EnsembleBuilderRow {
+        const wins = tradeSamples.filter((sample) => sample.pnl > 0);
+        const losses = tradeSamples.filter((sample) => sample.pnl < 0);
+        const grossProfit = wins.reduce((sum, sample) => sum + sample.pnl, 0);
+        const grossLoss = Math.abs(losses.reduce((sum, sample) => sum + sample.pnl, 0));
+        const totalPnl = tradeSamples.reduce((sum, sample) => sum + sample.pnl, 0);
+        const totalNetPct = tradeSamples.reduce((sum, sample) => sum + sample.pnlPercent, 0);
+
+        return {
+            ruleId: `proxy:${label}`,
+            rule: label,
+            signals: tradeSamples.length,
+            trades: tradeSamples.length,
+            winRate: tradeSamples.length > 0 ? (wins.length / tradeSamples.length) * 100 : 0,
+            netProfitPercent: totalNetPct,
+            expectancy: tradeSamples.length > 0 ? totalPnl / tradeSamples.length : 0,
+            profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0,
+            maxDrawdownPercent: this.computeApproximateMaxDrawdownPercent(tradeSamples),
+            engineUsed: "typescript",
+            selectionMode,
+        };
     }
 
     private splitCandles(candles: OHLCVData[]): { train: OHLCVData[]; validation: OHLCVData[] } {
@@ -1058,11 +1719,21 @@ class StrategyEnsembleService {
         contextFamilyCount: number,
         minSamples: number
     ): Promise<EnsembleRuleSelection | null> {
-        const evaluations = (
-            await Promise.all(candidateRules.map((rule) =>
-                this.evaluateRuleOnBacktests(rule, targetArtifact, contextArtifacts, candles, contextFamilyCount, minSamples)
-            ))
-        ).filter((evaluation): evaluation is EnsembleRuleEvaluation => evaluation !== null);
+        const evaluations: EnsembleRuleEvaluation[] = [];
+        for (let index = 0; index < candidateRules.length; index += 1) {
+            const evaluation = await this.evaluateRuleOnBacktests(
+                candidateRules[index],
+                targetArtifact,
+                contextArtifacts,
+                candles,
+                contextFamilyCount,
+                minSamples
+            );
+            if (evaluation) {
+                evaluations.push(evaluation);
+            }
+            await this.yieldToUi();
+        }
         return selectEnsembleRuleSelection(evaluations, minSamples);
     }
 
@@ -1109,6 +1780,194 @@ class StrategyEnsembleService {
         return deduped;
     }
 
+    private groupArtifactsByFamily<T extends ConfigSignalArtifact>(artifacts: T[]): Map<string, T[]> {
+        const grouped = new Map<string, T[]>();
+
+        for (const artifact of artifacts) {
+            const existing = grouped.get(artifact.familyKey);
+            if (existing) {
+                existing.push(artifact);
+            } else {
+                grouped.set(artifact.familyKey, [artifact]);
+            }
+        }
+
+        return grouped;
+    }
+
+    private async buildContributionRows(
+        targetArtifact: ConfigRunArtifact,
+        contextArtifacts: ConfigRunArtifact[],
+        baseScenario: EnsembleScenarioEvaluation,
+        currentContextReference: CurrentContextReference
+    ): Promise<EnsembleContributionRow[]> {
+        const basePrimaryRow = baseScenario.analysisRule;
+        if (!basePrimaryRow) {
+            return [];
+        }
+
+        const activeRule = basePrimaryRow.rule;
+        const familyGroups = this.groupArtifactsByFamily(contextArtifacts);
+        const rows: EnsembleContributionRow[] = [];
+        const entries = Array.from(familyGroups.entries());
+
+        for (let index = 0; index < entries.length; index += 1) {
+            const [familyKey, familyArtifacts] = entries[index];
+            this.updateStatus(`Scoring leave-one-out family ${index + 1}/${entries.length}: ${familyArtifacts[0]?.familyLabel ?? familyKey}...`);
+            const reducedArtifacts = contextArtifacts.filter((artifact) => artifact.familyKey !== familyKey);
+            const reducedTradeSamples = this.buildTradeSamples(targetArtifact, reducedArtifacts);
+            const reducedContextFamilyCount = this.countDistinctFamilies(reducedArtifacts);
+            const filteredSamples = this.filterTradeSamplesByRule(reducedTradeSamples, reducedContextFamilyCount, activeRule);
+            const primaryRow: ScenarioPrimaryRow = {
+                row: this.buildProxyResultRowFromTradeSamples(basePrimaryRow.row.rule, filteredSamples, null),
+                source: basePrimaryRow.source,
+                rule: activeRule,
+            };
+
+            rows.push({
+                familyKey,
+                familyLabel: familyArtifacts[0]?.familyLabel ?? familyKey,
+                configNames: familyArtifacts.map((artifact) => artifact.config.name),
+                currentVote: this.resolveCurrentVoteLabel(currentContextReference, familyArtifacts),
+                voteProfile: this.buildVoteProfile(targetArtifact, familyArtifacts),
+                primaryRow,
+                deltaExpectancy: primaryRow.row.expectancy - basePrimaryRow.row.expectancy,
+                deltaWinRate: primaryRow.row.winRate - basePrimaryRow.row.winRate,
+                tradeRetentionPercent: basePrimaryRow.row.trades > 0
+                    ? (primaryRow.row.trades / basePrimaryRow.row.trades) * 100
+                    : 0,
+                deltaTrades: primaryRow.row.trades - basePrimaryRow.row.trades,
+            });
+            await this.yieldToUi();
+        }
+
+        return rows.sort((left, right) => {
+            if (left.deltaExpectancy !== right.deltaExpectancy) {
+                return right.deltaExpectancy - left.deltaExpectancy;
+            }
+            if (left.deltaWinRate !== right.deltaWinRate) {
+                return right.deltaWinRate - left.deltaWinRate;
+            }
+            return left.familyLabel.localeCompare(right.familyLabel);
+        });
+    }
+
+    private async buildReplacementRows(
+        targetArtifact: ConfigRunArtifact,
+        contextArtifacts: ConfigRunArtifact[],
+        baseScenario: EnsembleScenarioEvaluation,
+        contributionRows: EnsembleContributionRow[],
+        currentContextReference: CurrentContextReference,
+        candidateArtifacts: ConfigSignalArtifact[]
+    ): Promise<EnsembleReplacementRow[]> {
+        const basePrimaryRow = this.resolveScenarioPrimaryRow(baseScenario.builderRows);
+        if (!basePrimaryRow) {
+            return [];
+        }
+
+        const activeRule = baseScenario.analysisRule?.rule ?? null;
+        const worstContributor = contributionRows.find((row) => row.deltaExpectancy > 0) ?? null;
+        const replacementBaseArtifacts = worstContributor
+            ? contextArtifacts.filter((artifact) => artifact.familyKey !== worstContributor.familyKey)
+            : contextArtifacts;
+        const replacementBaseTradeSamples = worstContributor
+            ? this.buildTradeSamples(targetArtifact, replacementBaseArtifacts)
+            : baseScenario.tradeSamples;
+        const replacementBaseContextFamilyCount = this.countDistinctFamilies(replacementBaseArtifacts);
+        const replacementBaseFilteredSamples = this.filterTradeSamplesByRule(
+            replacementBaseTradeSamples,
+            replacementBaseContextFamilyCount,
+            activeRule
+        );
+        const replacementBasePrimaryRow: ScenarioPrimaryRow = {
+            row: this.buildProxyResultRowFromTradeSamples(
+                basePrimaryRow.row.rule,
+                replacementBaseFilteredSamples,
+                null
+            ),
+            source: basePrimaryRow.source,
+            rule: activeRule,
+        };
+
+        const replacementBaseFamilyKeys = new Set(contextArtifacts.map((artifact) => artifact.familyKey));
+        const groupedCandidates = this.groupArtifactsByFamily(
+            candidateArtifacts.filter((artifact) => !replacementBaseFamilyKeys.has(artifact.familyKey))
+        );
+        const familyBestRows = new Map<string, EnsembleReplacementRow>();
+        const entries = Array.from(groupedCandidates.entries());
+
+        for (let index = 0; index < entries.length; index += 1) {
+            const [familyKey, artifactsInFamily] = entries[index];
+            const familyLabel = artifactsInFamily[0]?.familyLabel ?? familyKey;
+            this.updateStatus(`Ranking replacement family ${index + 1}/${entries.length}: ${familyLabel}...`);
+
+            for (const candidateArtifact of artifactsInFamily) {
+                const candidateTradeSamples = this.buildTradeSamples(
+                    targetArtifact,
+                    [...replacementBaseArtifacts, candidateArtifact]
+                );
+                const candidateContextFamilyCount = this.countDistinctFamilies([...replacementBaseArtifacts, candidateArtifact]);
+                const candidateFilteredSamples = this.filterTradeSamplesByRule(
+                    candidateTradeSamples,
+                    candidateContextFamilyCount,
+                    activeRule
+                );
+                const primaryRow: ScenarioPrimaryRow = {
+                    row: this.buildProxyResultRowFromTradeSamples(
+                        basePrimaryRow.row.rule,
+                        candidateFilteredSamples,
+                        null
+                    ),
+                    source: basePrimaryRow.source,
+                    rule: activeRule,
+                };
+
+                const row: EnsembleReplacementRow = {
+                    familyKey,
+                    familyLabel,
+                    configName: candidateArtifact.config.name,
+                    currentVote: this.resolveCurrentVoteLabel(currentContextReference, [candidateArtifact]),
+                    primaryRow,
+                    deltaExpectancyVsRemoved: primaryRow.row.expectancy - replacementBasePrimaryRow.row.expectancy,
+                    deltaExpectancyVsCurrent: primaryRow.row.expectancy - basePrimaryRow.row.expectancy,
+                    deltaWinRateVsCurrent: primaryRow.row.winRate - basePrimaryRow.row.winRate,
+                    tradeRetentionPercent: basePrimaryRow.row.trades > 0
+                        ? (primaryRow.row.trades / basePrimaryRow.row.trades) * 100
+                        : 0,
+                    deltaTradesVsCurrent: primaryRow.row.trades - basePrimaryRow.row.trades,
+                };
+
+                const bestExisting = familyBestRows.get(familyKey);
+                if (!bestExisting) {
+                    familyBestRows.set(familyKey, row);
+                    continue;
+                }
+
+                if (row.deltaExpectancyVsRemoved !== bestExisting.deltaExpectancyVsRemoved) {
+                    if (row.deltaExpectancyVsRemoved > bestExisting.deltaExpectancyVsRemoved) {
+                        familyBestRows.set(familyKey, row);
+                    }
+                    continue;
+                }
+
+                if (row.deltaWinRateVsCurrent > bestExisting.deltaWinRateVsCurrent) {
+                    familyBestRows.set(familyKey, row);
+                }
+            }
+            await this.yieldToUi();
+        }
+
+        return Array.from(familyBestRows.values()).sort((left, right) => {
+            if (left.deltaExpectancyVsRemoved !== right.deltaExpectancyVsRemoved) {
+                return right.deltaExpectancyVsRemoved - left.deltaExpectancyVsRemoved;
+            }
+            if (left.deltaWinRateVsCurrent !== right.deltaWinRateVsCurrent) {
+                return right.deltaWinRateVsCurrent - left.deltaWinRateVsCurrent;
+            }
+            return left.familyLabel.localeCompare(right.familyLabel);
+        }).slice(0, StrategyEnsembleService.MAX_REPLACEMENT_ROWS);
+    }
+
     private buildLiveContext(
         targetArtifact: ConfigRunArtifact,
         contextArtifacts: ConfigRunArtifact[],
@@ -1116,25 +1975,10 @@ class StrategyEnsembleService {
         tradeSamples: EnsembleTradeSample[],
         minSamples: number
     ): EnsembleLiveContext {
-        const openPosition = getOpenPositionForScanner(candles, targetArtifact.rawSignals, targetArtifact.backtestSettings);
-        const latestPreparedSignal = targetArtifact.entrySignals[targetArtifact.entrySignals.length - 1] ?? null;
+        const currentContextReference = this.resolveCurrentContextReference(targetArtifact, candles);
         const contextFamilyCount = this.countDistinctFamilies(contextArtifacts);
 
-        let basis: EnsembleLiveContext["basis"] = "none";
-        let direction: Trade["type"] | null = null;
-        let contextTimeKey: string | null = null;
-
-        if (openPosition) {
-            basis = "open_trade";
-            direction = openPosition.direction;
-            contextTimeKey = timeKey(openPosition.entryTime);
-        } else if (latestPreparedSignal) {
-            basis = "latest_signal";
-            direction = latestPreparedSignal.type === "buy" ? "long" : "short";
-            contextTimeKey = timeKey(latestPreparedSignal.time);
-        }
-
-        if (!direction || !contextTimeKey) {
+        if (!currentContextReference.direction || !currentContextReference.timeKey) {
             return {
                 basis: "none",
                 direction: null,
@@ -1152,13 +1996,17 @@ class StrategyEnsembleService {
                 neutralFamilies: [],
                 conflictedFamilies: [],
                 odds: null,
-                openPosition,
+                openPosition: currentContextReference.openPosition,
             };
         }
 
-        const counts = this.buildContextCountsForTimeKey(direction, contextTimeKey, contextArtifacts);
+        const counts = this.buildContextCountsForTimeKey(
+            currentContextReference.direction,
+            currentContextReference.timeKey,
+            contextArtifacts
+        );
         const matchingSamples = tradeSamples.filter(
-            (sample) => sample.direction === direction
+            (sample) => sample.direction === currentContextReference.direction
                 && sample.agreeCount === counts.agreeCount
                 && sample.opposeCount === counts.opposeCount
         );
@@ -1171,13 +2019,13 @@ class StrategyEnsembleService {
                 winRate: (wins / matchingSamples.length) * 100,
                 lossRate: 100 - (wins / matchingSamples.length) * 100,
                 expectancy: matchingSamples.reduce((sum, sample) => sum + sample.pnl, 0) / matchingSamples.length,
-                label: `${direction} | familyAgree=${counts.agreeCount}, familyOppose=${counts.opposeCount}`,
+                label: `${currentContextReference.direction} | familyAgree=${counts.agreeCount}, familyOppose=${counts.opposeCount}`,
                 matchType: "exact",
             };
         } else {
             odds = this.findNearestContextOdds(
                 tradeSamples,
-                direction,
+                currentContextReference.direction,
                 counts.agreeCount,
                 counts.opposeCount,
                 minSamples
@@ -1185,8 +2033,8 @@ class StrategyEnsembleService {
         }
 
         return {
-            basis,
-            direction,
+            basis: currentContextReference.basis,
+            direction: currentContextReference.direction,
             agreeCount: counts.agreeCount,
             opposeCount: counts.opposeCount,
             neutralCount: counts.neutralCount,
@@ -1201,7 +2049,7 @@ class StrategyEnsembleService {
             neutralFamilies: counts.neutralFamilies,
             conflictedFamilies: counts.conflictedFamilies,
             odds,
-            openPosition,
+            openPosition: currentContextReference.openPosition,
         };
     }
 
@@ -1303,6 +2151,24 @@ class StrategyEnsembleService {
             }
         }
 
+        const worstContributor = context.contributionRows.find((row) => row.deltaExpectancy > 0);
+        if (worstContributor && Math.abs(worstContributor.deltaExpectancy) >= 0.1) {
+            findings.push({
+                label: "Weakest context family",
+                detail: `Removing "${worstContributor.familyLabel}" improves active-rule expectancy by ${this.formatSignedCurrency(worstContributor.deltaExpectancy)}.`,
+                quality: "negative",
+            });
+        }
+
+        const bestReplacement = context.replacementRows[0];
+        if (bestReplacement && bestReplacement.deltaExpectancyVsRemoved > 0) {
+            findings.push({
+                label: "Replacement candidate",
+                detail: `"${bestReplacement.familyLabel}" via "${bestReplacement.configName}" adds ${this.formatSignedCurrency(bestReplacement.deltaExpectancyVsRemoved)} expectancy after removing the weakest family.`,
+                quality: "positive",
+            });
+        }
+
         const baselineRow = context.builderRows.find((row) => row.rule === "Baseline (target only)");
         const bestDrawdownRow = context.builderRows
             .filter((row) => row.rule !== "Baseline (target only)" && row.trades >= radarMinSamples)
@@ -1373,6 +2239,8 @@ class StrategyEnsembleService {
         dom.ensembleCurrentContextSection.style.display = hasTrades ? "" : "none";
         dom.ensembleHistoricalOddsSection.style.display = hasTrades ? "" : "none";
         dom.ensembleBuilderSection.style.display = hasTrades ? "" : "none";
+        dom.ensembleContributionSection.style.display = hasTrades ? "" : "none";
+        dom.ensembleReplacementSection.style.display = hasTrades ? "" : "none";
         dom.ensembleRadarSection.style.display = hasTrades ? "" : "none";
 
         if (!hasTrades) {
@@ -1386,6 +2254,8 @@ class StrategyEnsembleService {
         this.renderCurrentContext(context);
         this.renderHistoricalOdds(context);
         this.renderBuilder(context);
+        this.renderContribution(context);
+        this.renderReplacement(context);
         this.renderRadar(context);
     }
 
@@ -1395,6 +2265,8 @@ class StrategyEnsembleService {
         dom.ensembleCurrentContextSection.style.display = "none";
         dom.ensembleHistoricalOddsSection.style.display = "none";
         dom.ensembleBuilderSection.style.display = "none";
+        dom.ensembleContributionSection.style.display = "none";
+        dom.ensembleReplacementSection.style.display = "none";
         dom.ensembleRadarSection.style.display = "none";
 
         dom.ensembleSummary.innerHTML = "";
@@ -1411,8 +2283,24 @@ class StrategyEnsembleService {
         dom.ensembleBuilderSummary.innerHTML = "";
         dom.ensembleBuilderTableBody.innerHTML = `
             <tr>
-                <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                <td colspan="10" style="text-align:center;color:var(--text-secondary);padding:16px;">
                     Run Strategy Ensemble Lab to compare ensemble filtering rules.
+                </td>
+            </tr>
+        `;
+        dom.ensembleContributionSummary.innerHTML = "";
+        dom.ensembleContributionTableBody.innerHTML = `
+            <tr>
+                <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                    Run Strategy Ensemble Lab to identify helpful and harmful context families.
+                </td>
+            </tr>
+        `;
+        dom.ensembleReplacementSummary.innerHTML = "";
+        dom.ensembleReplacementTableBody.innerHTML = `
+            <tr>
+                <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                    Run Strategy Ensemble Lab to rank candidate replacements for the weakest context family.
                 </td>
             </tr>
         `;
@@ -1673,6 +2561,173 @@ class StrategyEnsembleService {
                     <td>${row.profitFactor === Infinity ? "INF" : row.profitFactor.toFixed(2)}</td>
                     <td>${row.maxDrawdownPercent.toFixed(1)}%</td>
                     <td>${row.engineUsed}</td>
+                    <td><button class="btn btn-secondary btn-compact" type="button" data-ensemble-preview-rule-id="${this.escapeHtml(row.ruleId)}">View</button></td>
+                </tr>
+            `;
+        }).join("");
+    }
+
+    private formatSignedCurrency(value: number): string {
+        if (!Number.isFinite(value)) {
+            return "-";
+        }
+        return `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(2)}`;
+    }
+
+    private formatSignedPercent(value: number): string {
+        if (!Number.isFinite(value)) {
+            return "-";
+        }
+        return `${value >= 0 ? "+" : "-"}${Math.abs(value).toFixed(2)}%`;
+    }
+
+    private formatSignedInteger(value: number): string {
+        if (!Number.isFinite(value)) {
+            return "-";
+        }
+        return `${value >= 0 ? "+" : ""}${Math.round(value)}`;
+    }
+
+    private formatOptionalExpectancy(stats: EnsembleVoteProfileStats | null): string {
+        return stats ? `$${stats.expectancy.toFixed(2)} (n=${stats.samples})` : "-";
+    }
+
+    private formatVoteLabel(vote: "agree" | "oppose" | "neutral" | "conflict" | "n/a"): string {
+        if (vote === "n/a") {
+            return "n/a";
+        }
+        return vote.charAt(0).toUpperCase() + vote.slice(1);
+    }
+
+    private renderContribution(context: EnsembleRunContext): void {
+        const dom = this.getDom();
+        const worstContributor = context.contributionRows.find((row) => row.deltaExpectancy > 0) ?? null;
+        const bestContributor = [...context.contributionRows]
+            .sort((left, right) => left.deltaExpectancy - right.deltaExpectancy)
+            .find((row) => row.deltaExpectancy < 0) ?? null;
+
+        const summaryCards: string[] = [];
+        if (worstContributor) {
+            summaryCards.push(this.card(
+                "Worst Contributor",
+                `${worstContributor.familyLabel} (${this.formatSignedCurrency(worstContributor.deltaExpectancy)})`
+            ));
+        } else {
+            summaryCards.push(this.card("Worst Contributor", "No clear harmful family"));
+        }
+        if (bestContributor) {
+            summaryCards.push(this.card(
+                "Best Contributor",
+                `${bestContributor.familyLabel} (${this.formatSignedCurrency(bestContributor.deltaExpectancy)})`
+            ));
+        } else {
+            summaryCards.push(this.card("Best Contributor", "No clear helpful family"));
+        }
+        if (context.contributionRows.length > 0) {
+            const highestCoverage = [...context.contributionRows].sort(
+                (left, right) => right.voteProfile.agreeCoverage - left.voteProfile.agreeCoverage
+            )[0];
+            summaryCards.push(this.card(
+                "Highest Agree Coverage",
+                `${highestCoverage.familyLabel} (${highestCoverage.voteProfile.agreeCoverage.toFixed(1)}%)`
+            ));
+        }
+        dom.ensembleContributionSummary.innerHTML = summaryCards.join("");
+
+        if (context.contributionRows.length === 0) {
+            dom.ensembleContributionTableBody.innerHTML = `
+                <tr>
+                    <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                        No context family contribution data available.
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        dom.ensembleContributionTableBody.innerHTML = context.contributionRows.map((row) => {
+            const positiveRemoval = row.deltaExpectancy > 0;
+            const negativeRemoval = row.deltaExpectancy < 0;
+            const rowStyle = positiveRemoval
+                ? ' style="background:var(--bg-danger-subtle,rgba(220,80,80,0.08));"'
+                : negativeRemoval
+                    ? ' style="background:var(--bg-success-subtle,rgba(0,200,100,0.08));"'
+                    : "";
+
+            return `
+                <tr${rowStyle}>
+                    <td>${this.escapeHtml(row.familyLabel)}</td>
+                    <td>${this.escapeHtml(row.configNames.join(", "))}</td>
+                    <td>${this.escapeHtml(this.formatVoteLabel(row.currentVote))}</td>
+                    <td>${row.voteProfile.agreeCoverage.toFixed(1)}%</td>
+                    <td>${this.escapeHtml(this.formatOptionalExpectancy(row.voteProfile.agreeStats))}</td>
+                    <td>${this.escapeHtml(this.formatOptionalExpectancy(row.voteProfile.opposeStats))}</td>
+                    <td>${row.voteProfile.conflictCoverage.toFixed(1)}%</td>
+                    <td>${this.escapeHtml(this.formatSignedCurrency(row.deltaExpectancy))}</td>
+                    <td>${this.escapeHtml(this.formatSignedPercent(row.deltaWinRate))}</td>
+                    <td>${row.tradeRetentionPercent.toFixed(0)}%</td>
+                    <td>${this.escapeHtml(this.formatSignedInteger(row.deltaTrades))}</td>
+                    <td>${this.escapeHtml(this.describeScenarioPrimaryRow(row.primaryRow))}</td>
+                </tr>
+            `;
+        }).join("");
+    }
+
+    private renderReplacement(context: EnsembleRunContext): void {
+        const dom = this.getDom();
+        const worstContributor = context.contributionRows.find((row) => row.deltaExpectancy > 0) ?? null;
+        const bestReplacement = context.replacementRows[0] ?? null;
+
+        const summaryCards: string[] = [];
+        summaryCards.push(this.card(
+            "Replacement Base",
+            worstContributor
+                ? `Remove ${worstContributor.familyLabel}`
+                : "No clear weak family"
+        ));
+        if (bestReplacement) {
+            summaryCards.push(this.card(
+                "Best Replacement",
+                `${bestReplacement.familyLabel} (${this.formatSignedCurrency(bestReplacement.deltaExpectancyVsRemoved)})`
+            ));
+            summaryCards.push(this.card(
+                "Best Candidate Config",
+                bestReplacement.configName
+            ));
+        } else {
+            summaryCards.push(this.card("Best Replacement", "No qualifying candidate"));
+        }
+        dom.ensembleReplacementSummary.innerHTML = summaryCards.join("");
+
+        if (context.replacementRows.length === 0) {
+            dom.ensembleReplacementTableBody.innerHTML = `
+                <tr>
+                    <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                        No replacement candidates improved on the evaluated context set.
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        dom.ensembleReplacementTableBody.innerHTML = context.replacementRows.map((row, index) => {
+            const rowStyle = index === 0
+                ? ' style="background:var(--bg-success-subtle,rgba(0,200,100,0.08));"'
+                : row.deltaExpectancyVsRemoved > 0
+                    ? ' style="background:var(--bg-info-subtle,rgba(0,120,255,0.08));"'
+                    : "";
+
+            return `
+                <tr${rowStyle}>
+                    <td>${this.escapeHtml(row.familyLabel)}</td>
+                    <td>${this.escapeHtml(row.configName)}</td>
+                    <td>${this.escapeHtml(this.formatVoteLabel(row.currentVote))}</td>
+                    <td>${this.escapeHtml(this.formatSignedCurrency(row.deltaExpectancyVsRemoved))}</td>
+                    <td>${this.escapeHtml(this.formatSignedCurrency(row.deltaExpectancyVsCurrent))}</td>
+                    <td>${this.escapeHtml(this.formatSignedPercent(row.deltaWinRateVsCurrent))}</td>
+                    <td>${row.tradeRetentionPercent.toFixed(0)}%</td>
+                    <td>${this.escapeHtml(this.formatSignedInteger(row.deltaTradesVsCurrent))}</td>
+                    <td>${this.escapeHtml(this.describeScenarioPrimaryRow(row.primaryRow))}</td>
                 </tr>
             `;
         }).join("");

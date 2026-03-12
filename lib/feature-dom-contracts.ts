@@ -788,6 +788,12 @@ export const ENSEMBLE_LAB_REQUIRED_IDS = [
     "ensembleBuilderSection",
     "ensembleBuilderSummary",
     "ensembleBuilderTableBody",
+    "ensembleContributionSection",
+    "ensembleContributionSummary",
+    "ensembleContributionTableBody",
+    "ensembleReplacementSection",
+    "ensembleReplacementSummary",
+    "ensembleReplacementTableBody",
     "ensembleRadarSection",
     "ensembleRadarContent",
 ] as const;
@@ -815,6 +821,12 @@ export interface EnsembleLabDom {
     ensembleBuilderSection: HTMLElement;
     ensembleBuilderSummary: HTMLElement;
     ensembleBuilderTableBody: HTMLElement;
+    ensembleContributionSection: HTMLElement;
+    ensembleContributionSummary: HTMLElement;
+    ensembleContributionTableBody: HTMLElement;
+    ensembleReplacementSection: HTMLElement;
+    ensembleReplacementSummary: HTMLElement;
+    ensembleReplacementTableBody: HTMLElement;
     ensembleRadarSection: HTMLElement;
     ensembleRadarContent: HTMLElement;
 }
@@ -843,6 +855,12 @@ export function createEnsembleLabDom(): EnsembleLabDom {
         ensembleBuilderSection: getRequiredElement("ensembleBuilderSection"),
         ensembleBuilderSummary: getRequiredElement("ensembleBuilderSummary"),
         ensembleBuilderTableBody: getRequiredElement("ensembleBuilderTableBody"),
+        ensembleContributionSection: getRequiredElement("ensembleContributionSection"),
+        ensembleContributionSummary: getRequiredElement("ensembleContributionSummary"),
+        ensembleContributionTableBody: getRequiredElement("ensembleContributionTableBody"),
+        ensembleReplacementSection: getRequiredElement("ensembleReplacementSection"),
+        ensembleReplacementSummary: getRequiredElement("ensembleReplacementSummary"),
+        ensembleReplacementTableBody: getRequiredElement("ensembleReplacementTableBody"),
         ensembleRadarSection: getRequiredElement("ensembleRadarSection"),
         ensembleRadarContent: getRequiredElement("ensembleRadarContent"),
     };
