@@ -14,26 +14,35 @@ import {
     type OHLCVData,
     type Signal,
     type Strategy,
-    type StrategyParams,
     type Trade,
+    type TradeDirection,
 } from "./strategies";
-import {
-    buildPortfolioSignalPresenceLookup,
-    resolvePortfolioSignalType,
-    type PortfolioSignalPresence,
-} from "./portfolio-lab-helpers";
 import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
 import { getOpenPositionForScanner, type OpenPosition } from "./strategies/backtest/signal-preparation";
 import { uiManager } from "./ui-manager";
 import { debugLogger } from "./debug-logger";
+import {
+    selectEnsembleRuleSelection,
+    type EnsembleRuleEvaluation,
+    type EnsembleRuleSelection,
+    type EnsembleRuleSpec,
+} from "./strategy-ensemble-rule-selection";
+
+interface EnsembleEntryPresence {
+    longEntry: boolean;
+    shortEntry: boolean;
+}
 
 interface ConfigRunArtifact {
     config: StrategyConfig;
     strategy: Strategy;
-    params: StrategyParams;
+    familyKey: string;
+    familyLabel: string;
+    tradeDirection: TradeDirection;
     rawSignals: Signal[];
     preparedSignals: Signal[];
-    signalPresenceByTime: Map<string, PortfolioSignalPresence>;
+    entrySignals: Signal[];
+    entryPresenceByTime: Map<string, EnsembleEntryPresence>;
     result: BacktestResult;
     engineUsed: "rust" | "typescript";
     backtestSettings: BacktestSettings;
@@ -46,9 +55,6 @@ interface EnsembleTradeSample {
     pnlPercent: number;
     agreeCount: number;
     opposeCount: number;
-    agreeingConfigs: string[];
-    opposingConfigs: string[];
-    entryTimeKey: string;
 }
 
 interface EnsembleBucketSummary {
@@ -76,6 +82,7 @@ interface EnsembleBuilderRow {
     profitFactor: number;
     maxDrawdownPercent: number;
     engineUsed: "rust" | "typescript";
+    selectionMode: "validated" | "train_only" | null;
 }
 
 interface EnsembleLiveContext {
@@ -84,8 +91,16 @@ interface EnsembleLiveContext {
     agreeCount: number;
     opposeCount: number;
     neutralCount: number;
+    conflictedCount: number;
+    rawAgreeCount: number;
+    rawOpposeCount: number;
+    rawNeutralCount: number;
     agreeingConfigs: string[];
     opposingConfigs: string[];
+    agreeingFamilies: string[];
+    opposingFamilies: string[];
+    neutralFamilies: string[];
+    conflictedFamilies: string[];
     odds: {
         sampleCount: number;
         winRate: number;
@@ -100,6 +115,7 @@ interface EnsembleLiveContext {
 interface EnsembleRunContext {
     targetConfigName: string;
     contextConfigNames: string[];
+    contextFamilyCount: number;
     symbol: string;
     interval: string;
     candles: OHLCVData[];
@@ -112,6 +128,7 @@ interface EnsembleRunContext {
     bestLongBucket: EnsembleBucketSummary | null;
     bestShortBucket: EnsembleBucketSummary | null;
     builderRows: EnsembleBuilderRow[];
+    selectedRule: EnsembleRuleSelection | null;
     liveContext: EnsembleLiveContext;
     minSamples: number;
 }
@@ -120,8 +137,21 @@ interface ContextCounts {
     agreeCount: number;
     opposeCount: number;
     neutralCount: number;
+    conflictedCount: number;
+    rawAgreeCount: number;
+    rawOpposeCount: number;
+    rawNeutralCount: number;
     agreeingConfigs: string[];
     opposingConfigs: string[];
+    agreeingFamilies: string[];
+    opposingFamilies: string[];
+    neutralFamilies: string[];
+    conflictedFamilies: string[];
+}
+
+interface RuleCounts {
+    agreeCount: number;
+    opposeCount: number;
 }
 
 interface RadarFinding {
@@ -353,6 +383,7 @@ class StrategyEnsembleService {
                 throw new Error("No context configs could be evaluated.");
             }
 
+            const contextFamilyCount = this.countDistinctFamilies(contextArtifacts);
             const tradeSamples = this.buildTradeSamples(targetArtifact, contextArtifacts);
             const buckets = this.buildBuckets(tradeSamples, minSamples);
             const baselineBucket = this.buildBaselineBucket(tradeSamples);
@@ -365,12 +396,35 @@ class StrategyEnsembleService {
                 buckets.filter((bucket) => bucket.shortSamples >= minSamples),
                 "shortWinRate"
             );
-            const builderRows = await this.buildEnsembleRows(targetArtifact, contextArtifacts, candles);
-            const liveContext = this.buildLiveContext(targetArtifact, contextArtifacts, candles, tradeSamples, minSamples);
+            const candidateRules = this.buildRuleCandidates(contextFamilyCount, tradeSamples, minSamples);
+            const selectedRule = await this.selectRuleForValidation(
+                candidateRules,
+                targetArtifact,
+                contextArtifacts,
+                candles,
+                contextFamilyCount,
+                minSamples
+            );
+            const builderRows = await this.buildEnsembleRows(
+                targetArtifact,
+                contextArtifacts,
+                candles,
+                contextFamilyCount,
+                candidateRules,
+                selectedRule
+            );
+            const liveContext = this.buildLiveContext(
+                targetArtifact,
+                contextArtifacts,
+                candles,
+                tradeSamples,
+                minSamples
+            );
 
             this.runContext = {
                 targetConfigName: targetName,
                 contextConfigNames: contextArtifacts.map((artifact) => artifact.config.name),
+                contextFamilyCount,
                 symbol: state.currentSymbol,
                 interval: state.currentInterval,
                 candles,
@@ -383,13 +437,14 @@ class StrategyEnsembleService {
                 bestLongBucket,
                 bestShortBucket,
                 builderRows,
+                selectedRule,
                 liveContext,
                 minSamples,
             };
 
             this.renderResults(this.runContext);
             this.updateStatus(
-                `Strategy Ensemble Lab ready. ${tradeSamples.length} target trades analyzed across ${contextArtifacts.length} context configs.`
+                `Strategy Ensemble Lab ready. ${tradeSamples.length} target trades analyzed across ${contextArtifacts.length} context configs in ${contextFamilyCount} families.`
             );
             uiManager.showToast("Strategy Ensemble Lab complete.", "success");
         } catch (error) {
@@ -424,6 +479,7 @@ class StrategyEnsembleService {
             config.backtestSettings as unknown as BacktestSettings,
             { captureSnapshots: false, coerceWithoutUiToggles: true }
         );
+        const tradeDirection = this.normalizeTradeDirection(backtestSettings);
         const capitalSettings = settingsManager.resolveCapitalFromConfig(config);
 
         try {
@@ -437,14 +493,18 @@ class StrategyEnsembleService {
             );
             const rawSignals = applySignalPolarity(strategy.execute(candles, params), backtestSettings);
             const preparedSignals = prepareSignalsForScanner(candles, rawSignals, backtestSettings);
+            const entrySignals = this.extractEntrySignals(preparedSignals, tradeDirection);
 
             return {
                 config,
                 strategy,
-                params,
+                familyKey: config.strategyKey,
+                familyLabel: strategy.name,
+                tradeDirection,
                 rawSignals,
                 preparedSignals,
-                signalPresenceByTime: buildPortfolioSignalPresenceLookup(preparedSignals),
+                entrySignals,
+                entryPresenceByTime: this.buildEntryPresenceLookup(entrySignals),
                 result: runResult.result,
                 engineUsed: runResult.engineUsed,
                 backtestSettings,
@@ -455,6 +515,49 @@ class StrategyEnsembleService {
             });
             return null;
         }
+    }
+
+    private normalizeTradeDirection(settings: BacktestSettings): TradeDirection {
+        return settings.tradeDirection === "short"
+            || settings.tradeDirection === "both"
+            || settings.tradeDirection === "both_flip_loss_2"
+            || settings.tradeDirection === "combined"
+            ? settings.tradeDirection
+            : "long";
+    }
+
+    private isBothLikeTradeDirection(tradeDirection: TradeDirection): boolean {
+        return tradeDirection === "both"
+            || tradeDirection === "both_flip_loss_2"
+            || tradeDirection === "combined";
+    }
+
+    private extractEntrySignals(signals: Signal[], tradeDirection: TradeDirection): Signal[] {
+        if (this.isBothLikeTradeDirection(tradeDirection)) {
+            return signals.filter((signal) => signal.type === "buy" || signal.type === "sell");
+        }
+
+        const entryType: Signal["type"] = tradeDirection === "short" ? "sell" : "buy";
+        return signals.filter((signal) => signal.type === entryType);
+    }
+
+    private buildEntryPresenceLookup(signals: Signal[]): Map<string, EnsembleEntryPresence> {
+        const lookup = new Map<string, EnsembleEntryPresence>();
+        for (const signal of signals) {
+            const key = timeKey(signal.time);
+            const existing = lookup.get(key) ?? { longEntry: false, shortEntry: false };
+            if (signal.type === "buy") {
+                existing.longEntry = true;
+            } else if (signal.type === "sell") {
+                existing.shortEntry = true;
+            }
+            lookup.set(key, existing);
+        }
+        return lookup;
+    }
+
+    private countDistinctFamilies(artifacts: ConfigRunArtifact[]): number {
+        return new Set(artifacts.map((artifact) => artifact.familyKey)).size;
     }
 
     private buildTradeSamples(
@@ -472,9 +575,6 @@ class StrategyEnsembleService {
                 pnlPercent: trade.pnlPercent,
                 agreeCount: counts.agreeCount,
                 opposeCount: counts.opposeCount,
-                agreeingConfigs: counts.agreeingConfigs,
-                opposingConfigs: counts.opposingConfigs,
-                entryTimeKey,
             };
         });
     }
@@ -484,27 +584,67 @@ class StrategyEnsembleService {
         entryTimeKey: string,
         contextArtifacts: ConfigRunArtifact[]
     ): ContextCounts {
-        const isLong = direction === "long";
+        let rawAgreeCount = 0;
+        let rawOpposeCount = 0;
+        let rawNeutralCount = 0;
+        const agreeingConfigs: string[] = [];
+        const opposingConfigs: string[] = [];
+        const familyVotes = new Map<string, {
+            label: string;
+            agreeConfigs: string[];
+            opposeConfigs: string[];
+        }>();
+
+        for (const artifact of contextArtifacts) {
+            const vote = this.resolveContextVote(direction, artifact.entryPresenceByTime.get(entryTimeKey));
+            if (vote === "agree") {
+                rawAgreeCount += 1;
+                agreeingConfigs.push(artifact.config.name);
+            } else if (vote === "oppose") {
+                rawOpposeCount += 1;
+                opposingConfigs.push(artifact.config.name);
+            } else {
+                rawNeutralCount += 1;
+            }
+
+            const family = familyVotes.get(artifact.familyKey) ?? {
+                label: artifact.familyLabel,
+                agreeConfigs: [],
+                opposeConfigs: [],
+            };
+
+            if (vote === "agree") {
+                family.agreeConfigs.push(artifact.config.name);
+            } else if (vote === "oppose") {
+                family.opposeConfigs.push(artifact.config.name);
+            }
+            familyVotes.set(artifact.familyKey, family);
+        }
+
         let agreeCount = 0;
         let opposeCount = 0;
         let neutralCount = 0;
-        const agreeingConfigs: string[] = [];
-        const opposingConfigs: string[] = [];
+        let conflictedCount = 0;
+        const agreeingFamilies: string[] = [];
+        const opposingFamilies: string[] = [];
+        const neutralFamilies: string[] = [];
+        const conflictedFamilies: string[] = [];
 
-        for (const artifact of contextArtifacts) {
-            const signalType = resolvePortfolioSignalType(artifact.signalPresenceByTime.get(entryTimeKey));
-            if (!signalType) {
-                neutralCount += 1;
-                continue;
-            }
-
-            const sameDirection = (signalType === "buy") === isLong;
-            if (sameDirection) {
+        for (const family of familyVotes.values()) {
+            const hasAgree = family.agreeConfigs.length > 0;
+            const hasOppose = family.opposeConfigs.length > 0;
+            if (hasAgree && hasOppose) {
+                conflictedCount += 1;
+                conflictedFamilies.push(family.label);
+            } else if (hasAgree) {
                 agreeCount += 1;
-                agreeingConfigs.push(artifact.config.name);
-            } else {
+                agreeingFamilies.push(family.label);
+            } else if (hasOppose) {
                 opposeCount += 1;
-                opposingConfigs.push(artifact.config.name);
+                opposingFamilies.push(family.label);
+            } else {
+                neutralCount += 1;
+                neutralFamilies.push(family.label);
             }
         }
 
@@ -512,9 +652,40 @@ class StrategyEnsembleService {
             agreeCount,
             opposeCount,
             neutralCount,
+            conflictedCount,
+            rawAgreeCount,
+            rawOpposeCount,
+            rawNeutralCount,
             agreeingConfigs,
             opposingConfigs,
+            agreeingFamilies,
+            opposingFamilies,
+            neutralFamilies,
+            conflictedFamilies,
         };
+    }
+
+    private resolveContextVote(
+        direction: Trade["type"],
+        presence: EnsembleEntryPresence | null | undefined
+    ): "agree" | "oppose" | "neutral" | "conflict" {
+        if (!presence) {
+            return "neutral";
+        }
+
+        const agrees = direction === "long" ? presence.longEntry : presence.shortEntry;
+        const opposes = direction === "long" ? presence.shortEntry : presence.longEntry;
+
+        if (agrees && opposes) {
+            return "conflict";
+        }
+        if (agrees) {
+            return "agree";
+        }
+        if (opposes) {
+            return "oppose";
+        }
+        return "neutral";
     }
 
     private buildBuckets(samples: EnsembleTradeSample[], minSamples: number): EnsembleBucketSummary[] {
@@ -529,21 +700,21 @@ class StrategyEnsembleService {
         for (let agree = 0; agree <= maxAgree; agree += 1) {
             const exact = samples.filter((sample) => sample.agreeCount === agree);
             if (exact.length >= minSamples) {
-                buckets.push(this.summarizeBucket(`agree = ${agree}`, agree, exact));
+                buckets.push(this.summarizeBucket(`family agree = ${agree}`, agree, exact));
             }
         }
 
         for (let agree = 1; agree <= maxAgree; agree += 1) {
             const cumulative = samples.filter((sample) => sample.agreeCount >= agree);
             if (cumulative.length >= minSamples) {
-                buckets.push(this.summarizeBucket(`agree >= ${agree}`, 100 + agree, cumulative));
+                buckets.push(this.summarizeBucket(`family agree >= ${agree}`, 100 + agree, cumulative));
             }
         }
 
         for (let oppose = 0; oppose <= maxOppose; oppose += 1) {
             const exact = samples.filter((sample) => sample.opposeCount === oppose);
             if (exact.length >= minSamples) {
-                buckets.push(this.summarizeBucket(`oppose = ${oppose}`, -1 - oppose, exact));
+                buckets.push(this.summarizeBucket(`family oppose = ${oppose}`, -1 - oppose, exact));
             }
         }
 
@@ -603,147 +774,146 @@ class StrategyEnsembleService {
     private async buildEnsembleRows(
         targetArtifact: ConfigRunArtifact,
         contextArtifacts: ConfigRunArtifact[],
-        candles: OHLCVData[]
+        candles: OHLCVData[],
+        contextFamilyCount: number,
+        candidateRules: EnsembleRuleSpec[],
+        selectedRule: EnsembleRuleSelection | null
     ): Promise<EnsembleBuilderRow[]> {
+        const baselineEvaluated = await this.runFilteredBacktest(targetArtifact, targetArtifact.preparedSignals, candles);
         const rows: EnsembleBuilderRow[] = [
             this.buildResultRow(
                 "Baseline (target only)",
-                targetArtifact.result,
+                baselineEvaluated?.result ?? targetArtifact.result,
                 targetArtifact.preparedSignals.length,
-                targetArtifact.engineUsed
+                baselineEvaluated?.engineUsed ?? targetArtifact.engineUsed,
+                null
             ),
         ];
 
-        if (contextArtifacts.length === 0) {
+        if (contextArtifacts.length === 0 || contextFamilyCount === 0) {
             return rows;
         }
 
-        const maxContext = contextArtifacts.length;
-
-        for (let minAgree = 1; minAgree <= Math.min(maxContext, 5); minAgree += 1) {
-            const filteredSignals = this.filterPreparedSignals(targetArtifact, contextArtifacts, minAgree, null);
+        for (const rule of candidateRules) {
+            const filteredSignals = this.filterSignalsByRule(targetArtifact, contextArtifacts, contextFamilyCount, rule);
             const evaluated = await this.runFilteredBacktest(targetArtifact, filteredSignals, candles);
-            if (evaluated) {
-                rows.push(this.buildResultRow(`minAgree >= ${minAgree}`, evaluated.result, filteredSignals.length, evaluated.engineUsed));
-            }
-        }
-
-        for (let maxOppose = 0; maxOppose <= Math.min(maxContext, 3); maxOppose += 1) {
-            const filteredSignals = this.filterPreparedSignals(targetArtifact, contextArtifacts, 0, maxOppose);
-            const evaluated = await this.runFilteredBacktest(targetArtifact, filteredSignals, candles);
-            if (evaluated) {
-                rows.push(this.buildResultRow(`maxOppose <= ${maxOppose}`, evaluated.result, filteredSignals.length, evaluated.engineUsed));
-            }
-        }
-
-        for (let minAgree = 1; minAgree <= Math.min(maxContext, 3); minAgree += 1) {
-            for (let maxOppose = 0; maxOppose <= Math.min(maxContext, 2); maxOppose += 1) {
-                const filteredSignals = this.filterPreparedSignals(targetArtifact, contextArtifacts, minAgree, maxOppose);
-                const evaluated = await this.runFilteredBacktest(targetArtifact, filteredSignals, candles);
-                if (evaluated) {
-                    rows.push(this.buildResultRow(
-                        `agree >= ${minAgree} + oppose <= ${maxOppose}`,
-                        evaluated.result,
-                        filteredSignals.length,
-                        evaluated.engineUsed
-                    ));
-                }
-            }
-        }
-
-        for (let k = 2; k <= Math.min(maxContext + 1, 4); k += 1) {
-            const consensusSignals = this.buildKofNConsensusSignals(targetArtifact, contextArtifacts, k);
-            const evaluated = await this.runFilteredBacktest(targetArtifact, consensusSignals, candles);
             if (evaluated) {
                 rows.push(this.buildResultRow(
-                    `${k}-of-${maxContext + 1} consensus`,
+                    rule.label,
                     evaluated.result,
-                    consensusSignals.length,
-                    evaluated.engineUsed
+                    filteredSignals.length,
+                    evaluated.engineUsed,
+                    selectedRule?.evaluation.rule.id === rule.id ? selectedRule.mode : null
                 ));
             }
-        }
-
-        const vetoSignals = this.filterPreparedSignals(targetArtifact, contextArtifacts, 0, 0);
-        const vetoResult = await this.runFilteredBacktest(targetArtifact, vetoSignals, candles);
-        if (vetoResult) {
-            rows.push(this.buildResultRow("Veto (no opposition)", vetoResult.result, vetoSignals.length, vetoResult.engineUsed));
         }
 
         return this.dedupeBuilderRows(rows);
     }
 
-    private filterPreparedSignals(
+    private filterSignalsByRule(
         targetArtifact: ConfigRunArtifact,
         contextArtifacts: ConfigRunArtifact[],
-        minAgree: number,
-        maxOppose: number | null
+        contextFamilyCount: number,
+        rule: EnsembleRuleSpec
     ): Signal[] {
         return targetArtifact.preparedSignals.filter((signal) => {
+            if (!this.isTargetEntrySignal(targetArtifact, signal)) {
+                return true;
+            }
+
             const signalDirection = signal.type === "buy" ? "long" : "short";
             const counts = this.buildContextCountsForTimeKey(signalDirection, timeKey(signal.time), contextArtifacts);
-            if (counts.agreeCount < minAgree) {
-                return false;
-            }
-            if (typeof maxOppose === "number" && counts.opposeCount > maxOppose) {
-                return false;
-            }
-            return true;
+            return this.rulePasses(rule, counts, contextFamilyCount);
         });
     }
 
-    private buildKofNConsensusSignals(
-        targetArtifact: ConfigRunArtifact,
-        contextArtifacts: ConfigRunArtifact[],
-        k: number
-    ): Signal[] {
-        const artifacts = [targetArtifact, ...contextArtifacts];
-        const timeKeys = new Set<string>();
-
-        for (const artifact of artifacts) {
-            for (const key of artifact.signalPresenceByTime.keys()) {
-                timeKeys.add(key);
-            }
+    private isTargetEntrySignal(targetArtifact: ConfigRunArtifact, signal: Signal): boolean {
+        if (this.isBothLikeTradeDirection(targetArtifact.tradeDirection)) {
+            return signal.type === "buy" || signal.type === "sell";
         }
 
-        const consensusSignals: Signal[] = [];
-        for (const key of timeKeys) {
-            let buyCount = 0;
-            let sellCount = 0;
-            let buySignal: Signal | null = null;
-            let sellSignal: Signal | null = null;
+        const entryType: Signal["type"] = targetArtifact.tradeDirection === "short" ? "sell" : "buy";
+        return signal.type === entryType;
+    }
 
-            for (const artifact of artifacts) {
-                const signalType = resolvePortfolioSignalType(artifact.signalPresenceByTime.get(key));
-                if (signalType === "buy") {
-                    buyCount += 1;
-                    buySignal ??= artifact.preparedSignals.find((signal) => timeKey(signal.time) === key && signal.type === "buy") ?? null;
-                } else if (signalType === "sell") {
-                    sellCount += 1;
-                    sellSignal ??= artifact.preparedSignals.find((signal) => timeKey(signal.time) === key && signal.type === "sell") ?? null;
-                }
-            }
-
-            if (buyCount >= k && sellCount >= k) {
-                continue;
-            }
-            if (buyCount >= k && buySignal) {
-                consensusSignals.push({ ...buySignal, type: "buy" });
-            } else if (sellCount >= k && sellSignal) {
-                consensusSignals.push({ ...sellSignal, type: "sell" });
-            }
+    private buildRuleCandidates(
+        contextFamilyCount: number,
+        tradeSamples: EnsembleTradeSample[],
+        minSamples: number
+    ): EnsembleRuleSpec[] {
+        if (contextFamilyCount === 0) {
+            return [];
         }
 
-        consensusSignals.sort((left, right) => {
-            const leftBarIndex = Number.isFinite(left.barIndex as number) ? Math.trunc(left.barIndex as number) : Number.MAX_SAFE_INTEGER;
-            const rightBarIndex = Number.isFinite(right.barIndex as number) ? Math.trunc(right.barIndex as number) : Number.MAX_SAFE_INTEGER;
-            if (leftBarIndex !== rightBarIndex) {
-                return leftBarIndex - rightBarIndex;
-            }
-            return timeKey(left.time).localeCompare(timeKey(right.time));
+        const rules: EnsembleRuleSpec[] = [];
+
+        for (let minAgree = 1; minAgree <= contextFamilyCount; minAgree += 1) {
+            rules.push({
+                id: `minAgree:${minAgree}`,
+                label: `minFamilyAgree >= ${minAgree}`,
+                minFamilyAgree: minAgree,
+            });
+        }
+
+        rules.push({
+            id: "veto",
+            label: "Veto (no family opposition)",
+            maxFamilyOppose: 0,
         });
 
-        return consensusSignals;
+        for (let maxOppose = 1; maxOppose <= contextFamilyCount; maxOppose += 1) {
+            rules.push({
+                id: `maxOppose:${maxOppose}`,
+                label: `maxFamilyOppose <= ${maxOppose}`,
+                maxFamilyOppose: maxOppose,
+            });
+        }
+
+        const ratioThresholds = [0.25, 1 / 3, 0.5, 2 / 3, 0.75];
+        for (const ratio of ratioThresholds) {
+            const percent = Math.round(ratio * 100);
+            rules.push({
+                id: `agreePct:${percent}`,
+                label: `familyAgreePct >= ${percent}%`,
+                minFamilyAgreeRatio: ratio,
+            });
+        }
+
+        const comboEvaluations: Array<{ rule: EnsembleRuleSpec; samples: number; expectancy: number }> = [];
+        for (let minAgree = 1; minAgree <= contextFamilyCount; minAgree += 1) {
+            for (let maxOppose = 0; maxOppose <= contextFamilyCount; maxOppose += 1) {
+                const rule: EnsembleRuleSpec = {
+                    id: `combo:${minAgree}:${maxOppose}`,
+                    label: `familyAgree >= ${minAgree} + familyOppose <= ${maxOppose}`,
+                    minFamilyAgree: minAgree,
+                    maxFamilyOppose: maxOppose,
+                };
+                const matchingSamples = tradeSamples.filter((sample) => this.rulePasses(rule, sample, contextFamilyCount));
+                comboEvaluations.push({
+                    rule,
+                    samples: matchingSamples.length,
+                    expectancy: matchingSamples.length > 0
+                        ? matchingSamples.reduce((sum, sample) => sum + sample.pnl, 0) / matchingSamples.length
+                        : Number.NEGATIVE_INFINITY,
+                });
+            }
+        }
+
+        comboEvaluations
+            .filter((evaluation) => evaluation.samples >= minSamples)
+            .sort((left, right) => {
+                if (left.expectancy !== right.expectancy) {
+                    return right.expectancy - left.expectancy;
+                }
+                return right.samples - left.samples;
+            })
+            .slice(0, 12)
+            .forEach((evaluation) => {
+                rules.push(evaluation.rule);
+            });
+
+        return this.dedupeRuleSpecs(rules);
     }
 
     private async runFilteredBacktest(
@@ -776,7 +946,8 @@ class StrategyEnsembleService {
         rule: string,
         result: BacktestResult,
         signals: number,
-        engineUsed: "rust" | "typescript"
+        engineUsed: "rust" | "typescript",
+        selectionMode: "validated" | "train_only" | null
     ): EnsembleBuilderRow {
         return {
             rule,
@@ -788,7 +959,126 @@ class StrategyEnsembleService {
             profitFactor: result.profitFactor,
             maxDrawdownPercent: result.maxDrawdownPercent,
             engineUsed,
+            selectionMode,
         };
+    }
+
+    private rulePasses(rule: EnsembleRuleSpec, counts: RuleCounts, contextFamilyCount: number): boolean {
+        if (typeof rule.minFamilyAgree === "number" && counts.agreeCount < rule.minFamilyAgree) {
+            return false;
+        }
+        if (typeof rule.maxFamilyOppose === "number" && counts.opposeCount > rule.maxFamilyOppose) {
+            return false;
+        }
+        if (typeof rule.minFamilyAgreeRatio === "number") {
+            if (contextFamilyCount <= 0) {
+                return false;
+            }
+            if ((counts.agreeCount / contextFamilyCount) < rule.minFamilyAgreeRatio) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private splitCandles(candles: OHLCVData[]): { train: OHLCVData[]; validation: OHLCVData[] } {
+        if (candles.length < 2) {
+            return { train: candles.slice(), validation: [] };
+        }
+
+        const splitIndex = Math.min(candles.length - 1, Math.max(1, Math.floor(candles.length * 0.7)));
+        return {
+            train: candles.slice(0, splitIndex),
+            validation: candles.slice(splitIndex),
+        };
+    }
+
+    private filterSignalsToCandles(signals: Signal[], candles: OHLCVData[]): Signal[] {
+        if (signals.length === 0 || candles.length === 0) {
+            return [];
+        }
+
+        const keys = new Set(candles.map((candle) => timeKey(candle.time)));
+        return signals.filter((signal) => keys.has(timeKey(signal.time)));
+    }
+
+    private async evaluateRuleOnBacktests(
+        rule: EnsembleRuleSpec,
+        targetArtifact: ConfigRunArtifact,
+        contextArtifacts: ConfigRunArtifact[],
+        candles: OHLCVData[],
+        contextFamilyCount: number,
+        minSamples: number
+    ): Promise<EnsembleRuleEvaluation | null> {
+        const filteredSignals = this.filterSignalsByRule(targetArtifact, contextArtifacts, contextFamilyCount, rule);
+        const fullResult = await this.runFilteredBacktest(targetArtifact, filteredSignals, candles);
+        if (!fullResult) {
+            return null;
+        }
+
+        const { train, validation } = this.splitCandles(candles);
+        const baselineTrainSignals = this.filterSignalsToCandles(targetArtifact.preparedSignals, train);
+        const baselineValidationSignals = this.filterSignalsToCandles(targetArtifact.preparedSignals, validation);
+        const filteredTrainSignals = this.filterSignalsToCandles(filteredSignals, train);
+        const filteredValidationSignals = this.filterSignalsToCandles(filteredSignals, validation);
+
+        const [baselineTrain, baselineValidation, filteredTrain, filteredValidation] = await Promise.all([
+            this.runFilteredBacktest(targetArtifact, baselineTrainSignals, train),
+            this.runFilteredBacktest(targetArtifact, baselineValidationSignals, validation),
+            this.runFilteredBacktest(targetArtifact, filteredTrainSignals, train),
+            this.runFilteredBacktest(targetArtifact, filteredValidationSignals, validation),
+        ]);
+
+        const trainTrades = filteredTrain?.result.totalTrades ?? 0;
+        const validationTrades = filteredValidation?.result.totalTrades ?? 0;
+        const trainExpectancy = filteredTrain?.result.expectancy ?? Number.NEGATIVE_INFINITY;
+        const validationExpectancy = filteredValidation?.result.expectancy ?? Number.NEGATIVE_INFINITY;
+
+        return {
+            rule,
+            trainSamples: trainTrades,
+            trainExpectancy,
+            validationSamples: validationTrades,
+            validationExpectancy,
+            fullTrades: fullResult.result.totalTrades,
+            fullExpectancy: fullResult.result.expectancy,
+            validated: trainTrades >= minSamples
+                && validationTrades >= minSamples
+                && trainExpectancy >= (baselineTrain?.result.expectancy ?? Number.POSITIVE_INFINITY)
+                && validationExpectancy >= (baselineValidation?.result.expectancy ?? Number.POSITIVE_INFINITY)
+                && fullResult.result.totalTrades >= minSamples,
+        };
+    }
+
+    private async selectRuleForValidation(
+        candidateRules: EnsembleRuleSpec[],
+        targetArtifact: ConfigRunArtifact,
+        contextArtifacts: ConfigRunArtifact[],
+        candles: OHLCVData[],
+        contextFamilyCount: number,
+        minSamples: number
+    ): Promise<EnsembleRuleSelection | null> {
+        const evaluations = (
+            await Promise.all(candidateRules.map((rule) =>
+                this.evaluateRuleOnBacktests(rule, targetArtifact, contextArtifacts, candles, contextFamilyCount, minSamples)
+            ))
+        ).filter((evaluation): evaluation is EnsembleRuleEvaluation => evaluation !== null);
+        return selectEnsembleRuleSelection(evaluations, minSamples);
+    }
+
+    private dedupeRuleSpecs(rules: EnsembleRuleSpec[]): EnsembleRuleSpec[] {
+        const seen = new Set<string>();
+        const deduped: EnsembleRuleSpec[] = [];
+
+        for (const rule of rules) {
+            if (seen.has(rule.id)) {
+                continue;
+            }
+            seen.add(rule.id);
+            deduped.push(rule);
+        }
+
+        return deduped;
     }
 
     private dedupeBuilderRows(rows: EnsembleBuilderRow[]): EnsembleBuilderRow[] {
@@ -805,6 +1095,7 @@ class StrategyEnsembleService {
                 row.profitFactor === Infinity ? "INF" : row.profitFactor.toFixed(6),
                 row.maxDrawdownPercent.toFixed(6),
                 row.engineUsed,
+                row.selectionMode ?? "",
             ].join("|");
 
             if (seen.has(signature)) {
@@ -826,7 +1117,8 @@ class StrategyEnsembleService {
         minSamples: number
     ): EnsembleLiveContext {
         const openPosition = getOpenPositionForScanner(candles, targetArtifact.rawSignals, targetArtifact.backtestSettings);
-        const latestPreparedSignal = targetArtifact.preparedSignals[targetArtifact.preparedSignals.length - 1] ?? null;
+        const latestPreparedSignal = targetArtifact.entrySignals[targetArtifact.entrySignals.length - 1] ?? null;
+        const contextFamilyCount = this.countDistinctFamilies(contextArtifacts);
 
         let basis: EnsembleLiveContext["basis"] = "none";
         let direction: Trade["type"] | null = null;
@@ -848,9 +1140,17 @@ class StrategyEnsembleService {
                 direction: null,
                 agreeCount: 0,
                 opposeCount: 0,
-                neutralCount: contextArtifacts.length,
+                neutralCount: contextFamilyCount,
+                conflictedCount: 0,
+                rawAgreeCount: 0,
+                rawOpposeCount: 0,
+                rawNeutralCount: contextArtifacts.length,
                 agreeingConfigs: [],
                 opposingConfigs: [],
+                agreeingFamilies: [],
+                opposingFamilies: [],
+                neutralFamilies: [],
+                conflictedFamilies: [],
                 odds: null,
                 openPosition,
             };
@@ -871,7 +1171,7 @@ class StrategyEnsembleService {
                 winRate: (wins / matchingSamples.length) * 100,
                 lossRate: 100 - (wins / matchingSamples.length) * 100,
                 expectancy: matchingSamples.reduce((sum, sample) => sum + sample.pnl, 0) / matchingSamples.length,
-                label: `${direction} | agree=${counts.agreeCount}, oppose=${counts.opposeCount}`,
+                label: `${direction} | familyAgree=${counts.agreeCount}, familyOppose=${counts.opposeCount}`,
                 matchType: "exact",
             };
         } else {
@@ -890,8 +1190,16 @@ class StrategyEnsembleService {
             agreeCount: counts.agreeCount,
             opposeCount: counts.opposeCount,
             neutralCount: counts.neutralCount,
+            conflictedCount: counts.conflictedCount,
+            rawAgreeCount: counts.rawAgreeCount,
+            rawOpposeCount: counts.rawOpposeCount,
+            rawNeutralCount: counts.rawNeutralCount,
             agreeingConfigs: counts.agreeingConfigs,
             opposingConfigs: counts.opposingConfigs,
+            agreeingFamilies: counts.agreeingFamilies,
+            opposingFamilies: counts.opposingFamilies,
+            neutralFamilies: counts.neutralFamilies,
+            conflictedFamilies: counts.conflictedFamilies,
             odds,
             openPosition,
         };
@@ -964,7 +1272,7 @@ class StrategyEnsembleService {
             winRate: (wins / best.samples.length) * 100,
             lossRate: 100 - (wins / best.samples.length) * 100,
             expectancy: best.samples.reduce((sum, sample) => sum + sample.pnl, 0) / best.samples.length,
-            label: `${direction} | agree=${best.agreeCount}, oppose=${best.opposeCount}`,
+            label: `${direction} | familyAgree=${best.agreeCount}, familyOppose=${best.opposeCount}`,
             matchType: "nearest",
         };
     }
@@ -1008,7 +1316,7 @@ class StrategyEnsembleService {
             });
         }
 
-        const trapBucket = context.buckets.find((bucket) => bucket.label.startsWith("agree >=") && bucket.avgExpectancy < 0 && bucket.samples >= radarMinSamples);
+        const trapBucket = context.buckets.find((bucket) => bucket.label.startsWith("family agree >=") && bucket.avgExpectancy < 0 && bucket.samples >= radarMinSamples);
         if (trapBucket) {
             findings.push({
                 label: "Consensus trap",
@@ -1032,10 +1340,10 @@ class StrategyEnsembleService {
         }
 
         const oppositionBucket = context.buckets.find((bucket) => {
-            if (!bucket.label.startsWith("oppose = ")) {
+            if (!bucket.label.startsWith("family oppose = ")) {
                 return false;
             }
-            const opposeValue = Number.parseInt(bucket.label.replace("oppose = ", ""), 10);
+            const opposeValue = Number.parseInt(bucket.label.replace("family oppose = ", ""), 10);
             return opposeValue >= 2 && bucket.avgExpectancy > 0 && bucket.samples >= radarMinSamples;
         });
         if (oppositionBucket) {
@@ -1117,6 +1425,7 @@ class StrategyEnsembleService {
             this.card("Target Config", context.targetConfigName),
             this.card("Strategy", context.targetArtifact.strategy.name),
             this.card("Context Configs", String(context.contextConfigNames.length)),
+            this.card("Context Families", String(context.contextFamilyCount)),
             this.card("Target Trades", String(targetResult.totalTrades)),
             this.card("Win Rate", `${targetResult.winRate.toFixed(1)}%`),
             this.card("Expectancy", `$${targetResult.expectancy.toFixed(2)}`),
@@ -1138,9 +1447,10 @@ class StrategyEnsembleService {
         const cards = [
             this.card("Basis", liveContext.basis === "open_trade" ? "Open trade" : "Latest signal"),
             this.card("Direction", liveContext.direction === "long" ? "Long" : "Short"),
-            this.card("Agreement", String(liveContext.agreeCount)),
-            this.card("Opposition", String(liveContext.opposeCount)),
-            this.card("Neutral", String(liveContext.neutralCount)),
+            this.card("Family Agree", String(liveContext.agreeCount)),
+            this.card("Family Oppose", String(liveContext.opposeCount)),
+            this.card("Neutral Families", String(liveContext.neutralCount)),
+            this.card("Conflicted Families", String(liveContext.conflictedCount)),
         ];
 
         if (liveContext.openPosition) {
@@ -1159,11 +1469,23 @@ class StrategyEnsembleService {
         dom.ensembleCurrentContextSummary.innerHTML = cards.join("");
 
         const details: string[] = [];
+        details.push(
+            `<div class="portfolio-lab__insight">Raw config votes: agree=${liveContext.rawAgreeCount}, oppose=${liveContext.rawOpposeCount}, neutral=${liveContext.rawNeutralCount}. Family votes: agree=${liveContext.agreeCount}, oppose=${liveContext.opposeCount}, neutral=${liveContext.neutralCount}, conflicted=${liveContext.conflictedCount}.</div>`
+        );
+        if (liveContext.agreeingFamilies.length > 0) {
+            details.push(`<div class="portfolio-lab__insight positive">Agreeing families: <strong>${this.escapeHtml(liveContext.agreeingFamilies.join(", "))}</strong></div>`);
+        }
+        if (liveContext.opposingFamilies.length > 0) {
+            details.push(`<div class="portfolio-lab__insight negative">Opposing families: <strong>${this.escapeHtml(liveContext.opposingFamilies.join(", "))}</strong></div>`);
+        }
+        if (liveContext.conflictedFamilies.length > 0) {
+            details.push(`<div class="portfolio-lab__insight">Conflicted families: <strong>${this.escapeHtml(liveContext.conflictedFamilies.join(", "))}</strong></div>`);
+        }
         if (liveContext.agreeingConfigs.length > 0) {
-            details.push(`<div class="portfolio-lab__insight positive">Agreeing: <strong>${this.escapeHtml(liveContext.agreeingConfigs.join(", "))}</strong></div>`);
+            details.push(`<div class="portfolio-lab__insight positive">Agreeing configs: <strong>${this.escapeHtml(liveContext.agreeingConfigs.join(", "))}</strong></div>`);
         }
         if (liveContext.opposingConfigs.length > 0) {
-            details.push(`<div class="portfolio-lab__insight negative">Opposing: <strong>${this.escapeHtml(liveContext.opposingConfigs.join(", "))}</strong></div>`);
+            details.push(`<div class="portfolio-lab__insight negative">Opposing configs: <strong>${this.escapeHtml(liveContext.opposingConfigs.join(", "))}</strong></div>`);
         }
         if (liveContext.odds) {
             details.push(
@@ -1183,68 +1505,22 @@ class StrategyEnsembleService {
         context: EnsembleRunContext,
         liveContext: EnsembleLiveContext
     ): { summary: string; detail: string; passes: boolean } | null {
-        const baselineRow = context.builderRows.find((row) => row.rule === "Baseline (target only)") ?? null;
-        const candidateRows = context.builderRows.filter((row) => row.rule !== "Baseline (target only)");
-        const bestBalanceRow = baselineRow
-            ? candidateRows
-                .filter((row) => row.trades >= baselineRow.trades * 0.5 && row.expectancy >= baselineRow.expectancy)
-                .reduce<EnsembleBuilderRow | null>((best, row) => {
-                    if (!best) {
-                        return row;
-                    }
-                    if (row.expectancy !== best.expectancy) {
-                        return row.expectancy > best.expectancy ? row : best;
-                    }
-                    return row.trades > best.trades ? row : best;
-                }, null)
-            : null;
-        const row = bestBalanceRow
-            ?? candidateRows.reduce<EnsembleBuilderRow | null>((best, current) => {
-                if (!best) {
-                    return current;
-                }
-                return current.expectancy > best.expectancy ? current : best;
-            }, null);
-
-        if (!row) {
+        const selected = context.selectedRule;
+        if (!selected) {
             return null;
         }
 
-        const evaluation = this.evaluateRuleAgainstContext(row.rule, liveContext.agreeCount, liveContext.opposeCount);
+        const evaluation = this.rulePasses(selected.evaluation.rule, liveContext, context.contextFamilyCount);
+        const validationLabel = selected.mode === "validated" ? "Validated" : "In-sample only";
+        const validationDetail = selected.mode === "validated"
+            ? `Validated on the held-out trade sample with ${selected.evaluation.validationSamples} validation trades.`
+            : `No rule cleared validation. This is the strongest training-only candidate with ${selected.evaluation.trainSamples} training trades.`;
+
         return {
-            summary: `${row.rule} (${evaluation.passes ? "PASS" : "BLOCK"})`,
-            detail: `Recommended live filter is "${row.rule}". Current context ${evaluation.passes ? "passes" : "fails"} because agree=${liveContext.agreeCount}, oppose=${liveContext.opposeCount}.`,
-            passes: evaluation.passes,
+            summary: `${validationLabel}: ${selected.evaluation.rule.label} (${evaluation ? "PASS" : "BLOCK"})`,
+            detail: `${validationDetail} Current context ${evaluation ? "passes" : "fails"} because familyAgree=${liveContext.agreeCount}, familyOppose=${liveContext.opposeCount}.`,
+            passes: evaluation,
         };
-    }
-
-    private evaluateRuleAgainstContext(
-        rule: string,
-        agreeCount: number,
-        opposeCount: number
-    ): { passes: boolean } {
-        const combinedMatch = rule.match(/agree >= (\d+) \+ oppose <= (\d+)/);
-        if (combinedMatch) {
-            const minAgree = Number.parseInt(combinedMatch[1], 10);
-            const maxOppose = Number.parseInt(combinedMatch[2], 10);
-            return { passes: agreeCount >= minAgree && opposeCount <= maxOppose };
-        }
-
-        const minAgreeMatch = rule.match(/minAgree >= (\d+)/);
-        if (minAgreeMatch) {
-            return { passes: agreeCount >= Number.parseInt(minAgreeMatch[1], 10) };
-        }
-
-        const maxOpposeMatch = rule.match(/maxOppose <= (\d+)/);
-        if (maxOpposeMatch) {
-            return { passes: opposeCount <= Number.parseInt(maxOpposeMatch[1], 10) };
-        }
-
-        if (rule === "Veto (no opposition)") {
-            return { passes: opposeCount === 0 };
-        }
-
-        return { passes: true };
     }
 
     private renderHistoricalOdds(context: EnsembleRunContext): void {
@@ -1336,6 +1612,19 @@ class StrategyEnsembleService {
             : null;
 
         const summaryCards: string[] = [];
+        if (context.selectedRule) {
+            const selectionLabel = context.selectedRule.mode === "validated" ? "Validated Filter" : "In-Sample Candidate";
+            const validationTrades = context.selectedRule.mode === "validated"
+                ? context.selectedRule.evaluation.validationSamples
+                : context.selectedRule.evaluation.trainSamples;
+            const validationExp = context.selectedRule.mode === "validated"
+                ? context.selectedRule.evaluation.validationExpectancy
+                : context.selectedRule.evaluation.trainExpectancy;
+            summaryCards.push(this.card(
+                selectionLabel,
+                `${context.selectedRule.evaluation.rule.label} ($${validationExp.toFixed(2)}, n=${validationTrades})`
+            ));
+        }
         if (bestExpectancyRow) {
             summaryCards.push(this.card("Best Expectancy", `${bestExpectancyRow.rule} ($${bestExpectancyRow.expectancy.toFixed(2)})`));
         }
@@ -1359,15 +1648,23 @@ class StrategyEnsembleService {
         dom.ensembleBuilderTableBody.innerHTML = context.builderRows.map((row) => {
             const isBaseline = row.rule === "Baseline (target only)";
             const isBest = bestExpectancyRow?.rule === row.rule;
+            const isSelected = row.selectionMode !== null;
             const rowStyle = isBaseline
                 ? ' style="font-weight:600;background:var(--bg-secondary);"'
-                : isBest
+                : isSelected
+                    ? ' style="background:var(--bg-info-subtle,rgba(0,120,255,0.10));"'
+                    : isBest
                     ? ' style="background:var(--bg-success-subtle,rgba(0,200,100,0.08));"'
                     : "";
+            const label = row.selectionMode === "validated"
+                ? `${row.rule} [Validated]`
+                : row.selectionMode === "train_only"
+                    ? `${row.rule} [In-sample only]`
+                    : row.rule;
 
             return `
                 <tr${rowStyle}>
-                    <td>${this.escapeHtml(row.rule)}</td>
+                    <td>${this.escapeHtml(label)}</td>
                     <td>${row.signals}</td>
                     <td>${row.trades}</td>
                     <td>${row.winRate.toFixed(1)}%</td>

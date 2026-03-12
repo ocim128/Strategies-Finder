@@ -145,6 +145,16 @@ Recommended workflow:
 4. If hard breadth filters reduce net too much, prefer the `Sizing Scenarios` section over removing trades completely.
 5. Use diagnostics only to confirm diversification or redundancy after you already have a trade decision.
 
+### Use Strategy Ensemble Lab carefully
+Ensemble Lab now treats context as entry-side confirmation, not raw signal spam.
+
+Important behavior:
+- context votes are counted from entry-capable signals only; one-sided config exits do not count as opposite-side agreement
+- agreement and opposition are aggregated by strategy family (`strategyKey`), so near-duplicate saved configs do not stack votes as independent evidence
+- target filtering preserves target exits and only gates target entries
+- live recommendations prefer rules that still beat baseline on a 70/30 train-validation split
+- if no rule survives validation, the UI labels the fallback as `In-Sample Candidate`
+
 ### Add a built-in strategy
 1. Pick a stable key and use it consistently for the file name, exported const, and manifest entry.
 2. Create `lib/strategies/lib/<strategy-key>.ts`.
