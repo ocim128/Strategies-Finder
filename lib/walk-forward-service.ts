@@ -40,6 +40,14 @@ import {
     createWalkForwardServiceDom,
     type WalkForwardServiceDom
 } from "./feature-dom-contracts";
+import {
+    renderWalkForwardCandidateValidationSummary,
+    renderWalkForwardPermutationSummary,
+    setWalkForwardLoading,
+    updateWalkForwardRobustnessGauge,
+    updateWalkForwardSummaryPanel,
+    updateWalkForwardWindowTable,
+} from "./walk-forward-ui";
 
 const DEFAULT_CANDIDATE_VALIDATION_SEEDS = [1337, 7331, 2026, 4242, 9001];
 const DEFAULT_MIN_SEED_PASSES = 3;
@@ -104,6 +112,16 @@ class WalkForwardService {
     private previousBacktestSnapshot: { result: any; source: string | null } | null = null;
     private lastRunBaseParams: { strategyKey: string; params: StrategyParams } | null = null;
     private dom: WalkForwardServiceDom | null = null;
+    private readonly uiHost = {
+        formatPermutationValue: (metric: WalkForwardPermutationMetric, value: number | null) => this.formatPermutationValue(metric, value),
+        formatCandidateValidationDecision: (reason: CandidateValidationDecisionReason) => this.formatCandidateValidationDecision(reason),
+        formatSignedPercent: (value: number | null) => this.formatSignedPercent(value),
+        formatNumber: (value: number | null, digits?: number) => this.formatNumber(value, digits),
+        formatPercent: (value: number | null, digits?: number) => this.formatPercent(value, digits),
+        formatBaseParamsSummary: () => this.formatBaseParamsSummary(),
+        formatWindowParams: (params: Record<string, number>) => this.formatWindowParams(params),
+        getPermutationTone: (result: WalkForwardPermutationResult) => this.getPermutationTone(result),
+    };
 
     private getDom(): WalkForwardServiceDom {
         return this.dom ??= createWalkForwardServiceDom();
@@ -1133,182 +1151,11 @@ class WalkForwardService {
     }
 
     private renderPermutationSummary(result: WalkForwardPermutationResult | null): void {
-        const { wfPermutationPanel: panel } = this.getDom();
-
-        if (!result) {
-            if (!this.lastResult) {
-                panel.innerHTML = `
-                    <div class="empty-state">
-                        <p>Run Walk-Forward or Quick Analysis first. This test uses the latest WFA out-of-sample trades, not the main backtest.</p>
-                    </div>
-                `;
-                return;
-            }
-
-            const tradeCount = this.lastResult.combinedOOSTrades.totalTrades;
-            panel.innerHTML = `
-                <div class="empty-state">
-                    <p>Latest WFA sample ready: ${tradeCount} OOS trades. Run the permutation test to estimate how often a no-edge null could score this well by chance.</p>
-                </div>
-            `;
-            return;
-        }
-
-        const tone = this.getPermutationTone(result);
-        if (result.status !== "ok") {
-            panel.innerHTML = `
-                <div class="wf-permutation-header">
-                    <div class="wf-permutation-title ${tone}">Permutation Test Unavailable</div>
-                    <div class="wf-permutation-note">${result.interpretation}</div>
-                </div>
-                <div class="wf-summary">
-                    <div class="wf-stat">
-                        <span class="wf-label">Metric</span>
-                        <span class="wf-value">${result.metricLabel}</span>
-                    </div>
-                    <div class="wf-stat">
-                        <span class="wf-label">OOS Trades</span>
-                        <span class="wf-value">${result.tradeCount}</span>
-                    </div>
-                    <div class="wf-stat">
-                        <span class="wf-label">Min Trades</span>
-                        <span class="wf-value">${result.sampleRequirement}</span>
-                    </div>
-                    <div class="wf-stat">
-                        <span class="wf-label">Permutations</span>
-                        <span class="wf-value">${result.permutations}</span>
-                    </div>
-                </div>
-                <div class="wf-permutation-note">${result.summary}</div>
-                <div class="wf-permutation-note">${result.nullModel}</div>
-            `;
-            return;
-        }
-
-        panel.innerHTML = `
-            <div class="wf-permutation-header">
-                <div class="wf-permutation-title ${tone}">${result.interpretation}</div>
-                <div class="wf-permutation-note">One-sided test on the latest walk-forward OOS sample. Robustness score remains a separate overfitting check.</div>
-            </div>
-            <div class="wf-summary">
-                <div class="wf-stat">
-                    <span class="wf-label">Observed ${result.metricLabel}</span>
-                    <span class="wf-value">${this.formatPermutationValue(result.metric, result.observedValue)}</span>
-                </div>
-                <div class="wf-stat">
-                    <span class="wf-label">Null Mean</span>
-                    <span class="wf-value">${this.formatPermutationValue(result.metric, result.nullMean)}</span>
-                </div>
-                <div class="wf-stat">
-                    <span class="wf-label">Null Median</span>
-                    <span class="wf-value">${this.formatPermutationValue(result.metric, result.nullMedian)}</span>
-                </div>
-                <div class="wf-stat">
-                    <span class="wf-label">P-Value</span>
-                    <span class="wf-value ${tone}">${formatWalkForwardPermutationPValue(result.pValue)}</span>
-                </div>
-                <div class="wf-stat">
-                    <span class="wf-label">OOS Trades</span>
-                    <span class="wf-value">${result.tradeCount}</span>
-                </div>
-                <div class="wf-stat">
-                    <span class="wf-label">Permutations</span>
-                    <span class="wf-value">${result.permutations}</span>
-                </div>
-                <div class="wf-stat">
-                    <span class="wf-label">Seed</span>
-                    <span class="wf-value">${result.seed}</span>
-                </div>
-                <div class="wf-stat">
-                    <span class="wf-label">Null >= Observed</span>
-                    <span class="wf-value">${result.betterOrEqualCount}</span>
-                </div>
-            </div>
-            <div class="wf-permutation-note">${result.summary}</div>
-            <div class="wf-permutation-note">${result.nullModel}</div>
-        `;
+        renderWalkForwardPermutationSummary(this.getDom(), this.uiHost, result, this.lastResult);
     }
 
     private renderCandidateValidationSummary(summary: CandidateValidationSummary | null): void {
-        const { wfValidationPanel: panel } = this.getDom();
-
-        if (!summary) {
-            panel.innerHTML = `
-                <div class="empty-state">
-                    <p>Run Validate Candidate to check 5-seed pass/fail status.</p>
-                </div>
-            `;
-            return;
-        }
-
-        const decisionClass = summary.decision === "PASS" ? "positive" : "negative";
-        const rowsHtml = summary.rows.map(row => `
-            <tr class="${row.pass ? "positive" : "negative"}">
-                <td>${row.seed}</td>
-                <td class="${row.pass ? "positive" : "negative"}">${this.formatCandidateValidationDecision(row.decisionReason)}</td>
-                <td>${this.formatSignedPercent(row.netProfitPercent)}</td>
-                <td>${this.formatNumber(row.profitFactor, 2)}</td>
-                <td>${this.formatPercent(row.maxDrawdownPercent, 2)}</td>
-                <td>${row.totalTrades ?? "-"}</td>
-                <td>${this.formatNumber(row.robustnessScore, 0)}</td>
-                <td>${row.totalWindows ?? "-"}</td>
-                <td>${row.testWindow}/${row.stepSize}</td>
-                <td>${row.commissionPercent.toFixed(4)}%</td>
-                <td>${row.slippageBps}</td>
-            </tr>
-        `).join("");
-
-        panel.innerHTML = `
-            <div class="wf-validation-header">
-                <div class="wf-validation-title ${decisionClass}">
-                    ${summary.decision} ${summary.passCount}/${summary.seeds.length} seeds
-                </div>
-                <div class="wf-validation-note">
-                    Rule: pass if >= ${summary.minPasses}/${summary.seeds.length}. Per-seed checks:
-                    net > 0, PF >= 1, DD <= ${summary.maxDrawdownLimit.toFixed(1)}%, trades >= ${summary.minTrades}.
-                </div>
-            </div>
-            <div class="wf-summary">
-                <div class="wf-stat">
-                    <span class="wf-label">Seed Passes</span>
-                    <span class="wf-value ${decisionClass}">${summary.passCount}/${summary.seeds.length}</span>
-                </div>
-                <div class="wf-stat">
-                    <span class="wf-label">Required Passes</span>
-                    <span class="wf-value">${summary.minPasses}</span>
-                </div>
-                <div class="wf-stat">
-                    <span class="wf-label">Fail Count</span>
-                    <span class="wf-value negative">${summary.failCount}</span>
-                </div>
-                <div class="wf-stat">
-                    <span class="wf-label">DD Limit</span>
-                    <span class="wf-value">${summary.maxDrawdownLimit.toFixed(1)}%</span>
-                </div>
-            </div>
-            <div class="wf-table-wrapper wf-validation-table-wrap">
-                <table class="wf-table wf-validation-table">
-                    <thead>
-                        <tr>
-                            <th>Seed</th>
-                            <th>Decision</th>
-                            <th>OOS Net%</th>
-                            <th>PF</th>
-                            <th>Max DD%</th>
-                            <th>Trades</th>
-                            <th>Robust</th>
-                            <th>Windows</th>
-                            <th>T/S</th>
-                            <th>Fee%</th>
-                            <th>Slip</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${rowsHtml}
-                    </tbody>
-                </table>
-            </div>
-        `;
+        renderWalkForwardCandidateValidationSummary(this.getDom(), this.uiHost, summary);
     }
 
 
@@ -1503,110 +1350,15 @@ class WalkForwardService {
     }
 
     private updateSummaryPanel(result: WalkForwardResult): void {
-        const { wfSummaryPanel: panel } = this.getDom();
-
-        const oos = result.combinedOOSTrades;
-        const wfePercent = (result.walkForwardEfficiency * 100).toFixed(1);
-        const wfeClass = result.walkForwardEfficiency >= 0.7 ? 'positive' :
-            result.walkForwardEfficiency >= 0.4 ? 'neutral' : 'negative';
-        const baseParamsSummary = this.formatBaseParamsSummary();
-
-        panel.innerHTML = `
-            ${baseParamsSummary ? `
-            <div class="wf-stat" style="grid-column: 1 / -1;">
-                <span class="wf-label">Base Params Used</span>
-                <span class="wf-value">${baseParamsSummary}</span>
-            </div>
-            ` : ''}
-            <div class="wf-stat">
-                <span class="wf-label">Windows</span>
-                <span class="wf-value">${result.totalWindows}</span>
-            </div>
-            <div class="wf-stat">
-                <span class="wf-label">IS Sharpe (avg)</span>
-                <span class="wf-value">${result.avgInSampleSharpe.toFixed(3)}</span>
-            </div>
-            <div class="wf-stat">
-                <span class="wf-label">OOS Sharpe (avg)</span>
-                <span class="wf-value">${result.avgOutOfSampleSharpe.toFixed(3)}</span>
-            </div>
-            <div class="wf-stat">
-                <span class="wf-label">WF Efficiency</span>
-                <span class="wf-value ${wfeClass}">${wfePercent}%</span>
-            </div>
-            <div class="wf-stat">
-                <span class="wf-label">OOS Net Profit</span>
-                <span class="wf-value ${oos.netProfit >= 0 ? 'positive' : 'negative'}">
-                    $${oos.netProfit.toFixed(2)} (${oos.netProfitPercent.toFixed(1)}%)
-                </span>
-            </div>
-            <div class="wf-stat">
-                <span class="wf-label">OOS Win Rate</span>
-                <span class="wf-value">${oos.winRate.toFixed(1)}%</span>
-            </div>
-            <div class="wf-stat">
-                <span class="wf-label">OOS Profit Factor</span>
-                <span class="wf-value">${oos.profitFactor.toFixed(2)}</span>
-            </div>
-            <div class="wf-stat">
-                <span class="wf-label">OOS Max DD</span>
-                <span class="wf-value negative">${oos.maxDrawdownPercent.toFixed(1)}%</span>
-            </div>
-            <div class="wf-stat">
-                <span class="wf-label">Param Stability</span>
-                <span class="wf-value">${result.parameterStability.toFixed(0)}%</span>
-            </div>
-            <div class="wf-stat">
-                <span class="wf-label">Time</span>
-                <span class="wf-value">${(result.optimizationTimeMs / 1000).toFixed(2)}s</span>
-            </div>
-        `;
+        updateWalkForwardSummaryPanel(this.getDom(), this.uiHost, result);
     }
 
     private updateWindowTable(result: WalkForwardResult): void {
-        const { wfWindowTableBody: tbody } = this.getDom();
-
-        tbody.innerHTML = result.windows.map(w => {
-            const isProfit = w.outOfSampleResult.netProfit >= 0;
-            const statusIcon = isProfit ? '✓' : '✗';
-            const statusClass = isProfit ? 'positive' : 'negative';
-
-            const paramsStr = this.formatWindowParams(w.optimizedParams);
-
-            return `
-                <tr class="${statusClass}">
-                    <td>${w.windowIndex + 1}</td>
-                    <td>${w.inSampleResult.netProfitPercent.toFixed(1)}%</td>
-                    <td>${w.outOfSampleResult.netProfitPercent.toFixed(1)}%</td>
-                    <td>${w.performanceDegradationPercent.toFixed(0)}%</td>
-                    <td>${w.inSampleResult.sharpeRatio.toFixed(2)}</td>
-                    <td>${w.outOfSampleResult.sharpeRatio.toFixed(2)}</td>
-                    <td title="${JSON.stringify(w.optimizedParams)}">${paramsStr}</td>
-                    <td class="${statusClass}">${statusIcon}</td>
-                </tr>
-            `;
-        }).join('');
+        updateWalkForwardWindowTable(this.getDom(), this.uiHost, result);
     }
 
     private updateRobustnessGauge(score: number): void {
-        const {
-            wfRobustnessGauge: gauge,
-            wfRobustnessScore: scoreEl,
-            wfRobustnessDesc: descEl
-        } = this.getDom();
-
-        scoreEl.textContent = `${score}`;
-        gauge.style.setProperty('--score', `${score}`);
-        if (score >= 80) gauge.className = 'wf-gauge excellent';
-        else if (score >= 60) gauge.className = 'wf-gauge good';
-        else if (score >= 40) gauge.className = 'wf-gauge moderate';
-        else if (score >= 20) gauge.className = 'wf-gauge poor';
-        else gauge.className = 'wf-gauge critical';
-        if (score >= 80) descEl.textContent = 'Strong robustness. Low overfitting risk.';
-        else if (score >= 60) descEl.textContent = 'Reasonably robust. Monitor for degradation.';
-        else if (score >= 40) descEl.textContent = 'Some overfitting. Consider parameter constraints.';
-        else if (score >= 20) descEl.textContent = 'Significant overfitting. May not perform forward.';
-        else descEl.textContent = 'Severe overfitting. Strategy is curve-fitted.';
+        updateWalkForwardRobustnessGauge(this.getDom(), score);
     }
 
     private plotEquityCurve(result: WalkForwardResult): void {
@@ -1628,32 +1380,7 @@ class WalkForwardService {
     }
 
     private setLoading(loading: boolean, mode: "analysis" | "quick" | "validation" | "permutation" = "analysis"): void {
-        const {
-            wfRunBtn: runBtn,
-            wfQuickBtn: quickBtn,
-            wfValidateBtn: validateBtn,
-            wfPermutationBtn: permutationBtn,
-            wfCancelBtn: cancelBtn,
-            wfSpinner: runSpinner,
-            wfQuickSpinner: quickSpinner,
-            wfValidateSpinner: validateSpinner,
-            wfPermutationSpinner: permutationSpinner,
-        } = this.getDom();
-
-        runBtn.disabled = loading;
-        runBtn.setAttribute("aria-busy", loading && mode === "analysis" ? "true" : "false");
-        quickBtn.disabled = loading;
-        quickBtn.setAttribute("aria-busy", loading && mode === "quick" ? "true" : "false");
-        validateBtn.disabled = loading;
-        validateBtn.setAttribute("aria-busy", loading && mode === "validation" ? "true" : "false");
-        permutationBtn.disabled = loading || !this.lastResult;
-        permutationBtn.setAttribute("aria-busy", loading && mode === "permutation" ? "true" : "false");
-        cancelBtn.style.display = loading && mode !== "permutation" ? "inline-flex" : "none";
-
-        runSpinner.style.display = loading && mode === "analysis" ? "inline-block" : "none";
-        quickSpinner.style.display = loading && mode === "quick" ? "inline-block" : "none";
-        validateSpinner.style.display = loading && mode === "validation" ? "inline-block" : "none";
-        permutationSpinner.style.display = loading && mode === "permutation" ? "inline-block" : "none";
+        setWalkForwardLoading(this.getDom(), loading, mode, Boolean(this.lastResult));
     }
 
     private updateStatus(message: string, log: boolean = true): void {
@@ -1763,3 +1490,4 @@ class WalkForwardService {
 }
 
 export const walkForwardService = new WalkForwardService();
+

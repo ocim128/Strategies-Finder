@@ -95,7 +95,6 @@ async function init() {
 	window.addEventListener('scanner:load-symbol', ((e: CustomEvent<{ symbol: string }>) => {
 		const { symbol } = e.detail;
 		state.set('currentSymbol', symbol);
-		dataManager.loadData();
 		scannerPanel.hide();
 	}) as EventListener);
 

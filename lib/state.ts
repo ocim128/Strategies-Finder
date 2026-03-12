@@ -2,6 +2,7 @@ import { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, Time } from "lightweigh
 import { BacktestResult, OHLCVData } from "./strategies/index";
 
 import { Indicator } from './types/index';
+import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 
 export type StateKey = keyof State;
 export type MockChartModel = 'simple' | 'hard' | 'v3' | 'v4' | 'v5' | 'v6';
@@ -33,7 +34,7 @@ export class State {
     public currentBacktestResult: BacktestResult | null = null;
     public currentBacktestResultSource: BacktestResultSource = 'backtest';
     public twoHourParityBacktestResults: TwoHourParityBacktestResults | null = null;
-    public currentStrategyKey = 'sma_crossover';
+    public currentStrategyKey = DEFAULT_BUILT_IN_STRATEGY_KEY;
 
     // Pair Combiner state
 

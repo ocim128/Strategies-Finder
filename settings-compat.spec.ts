@@ -13,6 +13,12 @@ import {
     resolveSubscriptionExecutionBacktestSettings,
 } from './lib/alert-subscription-utils';
 import { parseInputNumber } from './lib/dom-input-readers';
+import {
+    normalizeStoredAppSettings,
+    normalizeStoredStrategyConfig,
+} from './lib/settings-manager';
+import { strategyManifest } from './lib/strategies/manifest';
+import { DEFAULT_BUILT_IN_STRATEGY_KEY } from './lib/strategy-defaults';
 
 describe('Backtest settings compatibility', () => {
     it('uses tradeFilterMode when provided', () => {
@@ -145,5 +151,52 @@ describe('Backtest settings compatibility', () => {
         expect(parseInputNumber('0,78')).to.equal(0.78);
         expect(parseInputNumber('1.234,56')).to.equal(1234.56);
         expect(parseInputNumber('1,234.56')).to.equal(1234.56);
+    });
+
+    it('normalizes malformed stored app settings instead of crashing on partial payloads', () => {
+        const normalized = normalizeStoredAppSettings({
+            currentSymbol: 'BTCUSDT',
+            currentInterval: '4h',
+            isDarkTheme: 'false',
+            currentStrategyKey: '',
+            chartMode: 'invalid',
+            backtestSettings: 'broken',
+        });
+
+        expect(normalized).to.not.equal(null);
+        expect(normalized?.currentSymbol).to.equal('BTCUSDT');
+        expect(normalized?.currentInterval).to.equal('4h');
+        expect(normalized?.isDarkTheme).to.equal(false);
+        expect(normalized?.currentStrategyKey).to.equal(DEFAULT_BUILT_IN_STRATEGY_KEY);
+        expect(normalized?.chartMode).to.equal('candlestick');
+        expect(normalized?.backtestSettings.initialCapital).to.equal(10000);
+    });
+
+    it('normalizes malformed saved strategy configs and filters unusable entries', () => {
+        const normalized = normalizeStoredStrategyConfig({
+            name: 'My Config',
+            strategyKey: '',
+            strategyParams: {
+                foo: '42',
+                bad: 'NaN',
+            },
+            backtestSettings: {
+                initialCapital: '25000',
+                tradeFilterMode: 'rsi',
+                tradeFilterSettingsToggle: true,
+            },
+        });
+
+        expect(normalized).to.not.equal(null);
+        expect(normalized?.strategyKey).to.equal(DEFAULT_BUILT_IN_STRATEGY_KEY);
+        expect(normalized?.strategyParams).to.deep.equal({ foo: 42 });
+        expect(normalized?.backtestSettings.initialCapital).to.equal(25000);
+        expect(normalized?.backtestSettings.tradeFilterMode).to.equal('rsi');
+        expect(normalized?.backtestSettings.tradeFilterSettingsToggle).to.equal(true);
+        expect(normalizeStoredStrategyConfig({ strategyKey: 'missing-name' })).to.equal(null);
+    });
+
+    it('keeps the shared default strategy key aligned with the built-in manifest', () => {
+        expect(strategyManifest.some((entry) => entry.key === DEFAULT_BUILT_IN_STRATEGY_KEY)).to.equal(true);
     });
 });

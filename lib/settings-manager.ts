@@ -8,335 +8,48 @@
  * - Save/Load named strategy configurations
  */
 
-import { state, type ChartMode } from "./state";
+import { state } from "./state";
 import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
-import { parseInputNumber } from "./dom-input-readers";
+import {
+    readSettingsCheckbox,
+    readSettingsNumber,
+    readSettingsSelect,
+    triggerSettingsChangeEvents,
+    writeSettingsCheckbox,
+    writeSettingsNumber,
+    writeSettingsSelect,
+} from "./settings-dom";
+import {
+    DEFAULT_APP_SETTINGS,
+    DEFAULT_BACKTEST_SETTINGS,
+    normalizeStoredAppSettings,
+    normalizeStoredBacktestSettings,
+    normalizeStoredStrategyConfig,
+    resolveExecutionModelValue,
+    resolveMarketMode,
+    resolveRiskModeValue,
+    resolveTradeDirection,
+    resolveTradeFilterMode,
+    resolveTradeFilterModeValue,
+    resolveTradeFilterToggle,
+    resolveTwoHourCloseParity,
+    type AppSettings,
+    type BacktestSettingsData,
+    type StrategyConfig,
+} from "./settings-model";
+
+export {
+    DEFAULT_APP_SETTINGS,
+    DEFAULT_BACKTEST_SETTINGS,
+    normalizeStoredAppSettings,
+    normalizeStoredBacktestSettings,
+    normalizeStoredStrategyConfig,
+};
+export type { AppSettings, BacktestSettingsData, StrategyConfig } from "./settings-model";
 
 import type { BacktestSettings, ExecutionModel, MarketMode, TradeDirection, TradeFilterMode } from './types/strategies';
-import { EFFECTIVE_BACKTEST_DEFAULTS } from "./backtest-settings-resolver";
-
-// ============================================================================
-// Types
-// ============================================================================
-
-export interface BacktestSettingsData {
-    // Capital settings
-    initialCapital: number;
-    positionSize: number;
-    commission: number;
-    fixedTradeToggle: boolean;
-    fixedTradeAmount: number;
-
-    // Engine preference
-    useRustEngine: boolean;
-
-    // Risk management
-    riskSettingsToggle: boolean;
-    riskMode: NonNullable<BacktestSettings['riskMode']>;
-    atrPeriod: number;
-    stopLossAtr: number;
-    takeProfitAtr: number;
-    trailingAtr: number;
-    partialTakeProfitAtR: number;
-    partialTakeProfitPercent: number;
-    breakEvenAtR: number;
-    breakEvenPercent: number;
-    timeStopBars: number;
-    stopLossPercent: number;
-    takeProfitPercent: number;
-    stopLossEnabled: boolean;
-    takeProfitEnabled: boolean;
-    riskMaxHoldBars: number;
-    riskMaxHoldEnabled: boolean;
-    riskWinStreakStopLossEnabled: boolean;
-    riskWinStreakStopLossAfterWins: number;
-    riskWinStreakStopLossPercent: number;
-    marketMode: MarketMode;
-
-    // Trade direction
-    tradeDirection: TradeDirection;
-    invertSignals: boolean;
-    flipAfterConsecutiveLosses: number;
-    flipCooldownTrades: number;
-    minTradesBeforeFirstFlip: number;
-
-    // Trade filter
-    tradeFilterSettingsToggle: boolean;
-    tradeFilterMode: TradeFilterMode;
-    /** @deprecated Legacy key retained for backward compatibility when loading old configs */
-    entrySettingsToggle?: boolean;
-    /** @deprecated Legacy key retained for backward compatibility when loading old configs */
-    entryConfirmation?: string;
-    htfBiasEmaPeriod: number;
-    confirmLookback: number;
-    volumeSmaPeriod: number;
-    volumeMultiplier: number;
-    confirmRsiPeriod: number;
-    confirmRsiBullish: number;
-    confirmRsiBearish: number;
-    snapshotAtrFilterToggle: boolean;
-    snapshotAtrPercentMin: number;
-    snapshotAtrPercentMax: number;
-    snapshotVolumeFilterToggle: boolean;
-    snapshotVolumeRatioMin: number;
-    snapshotVolumeRatioMax: number;
-    snapshotAdxFilterToggle: boolean;
-    snapshotAdxMin: number;
-    snapshotAdxMax: number;
-    snapshotEmaFilterToggle: boolean;
-    snapshotEmaDistanceMin: number;
-    snapshotEmaDistanceMax: number;
-    snapshotRsiFilterToggle: boolean;
-    snapshotRsiMin: number;
-    snapshotRsiMax: number;
-    snapshotPriceRangePosFilterToggle: boolean;
-    snapshotPriceRangePosMin: number;
-    snapshotPriceRangePosMax: number;
-    snapshotBarsFromHighFilterToggle: boolean;
-    snapshotBarsFromHighMax: number;
-    snapshotBarsFromLowFilterToggle: boolean;
-    snapshotBarsFromLowMax: number;
-    snapshotTrendEfficiencyFilterToggle: boolean;
-    snapshotTrendEfficiencyMin: number;
-    snapshotTrendEfficiencyMax: number;
-    snapshotAtrRegimeFilterToggle: boolean;
-    snapshotAtrRegimeRatioMin: number;
-    snapshotAtrRegimeRatioMax: number;
-    snapshotBodyPercentFilterToggle: boolean;
-    snapshotBodyPercentMin: number;
-    snapshotBodyPercentMax: number;
-    snapshotWickSkewFilterToggle: boolean;
-    snapshotWickSkewMin: number;
-    snapshotWickSkewMax: number;
-    snapshotVolumeTrendFilterToggle: boolean;
-    snapshotVolumeTrendMin: number;
-    snapshotVolumeTrendMax: number;
-    snapshotVolumeBurstFilterToggle: boolean;
-    snapshotVolumeBurstMin: number;
-    snapshotVolumeBurstMax: number;
-    snapshotVolumePriceDivergenceFilterToggle: boolean;
-    snapshotVolumePriceDivergenceMin: number;
-    snapshotVolumePriceDivergenceMax: number;
-    snapshotVolumeConsistencyFilterToggle: boolean;
-    snapshotVolumeConsistencyMin: number;
-    snapshotVolumeConsistencyMax: number;
-    snapshotCloseLocationFilterToggle: boolean;
-    snapshotCloseLocationMin: number;
-    snapshotCloseLocationMax: number;
-    snapshotOppositeWickFilterToggle: boolean;
-    snapshotOppositeWickMin: number;
-    snapshotOppositeWickMax: number;
-    snapshotRangeAtrFilterToggle: boolean;
-    snapshotRangeAtrMultipleMin: number;
-    snapshotRangeAtrMultipleMax: number;
-    snapshotMomentumFilterToggle: boolean;
-    snapshotMomentumConsistencyMin: number;
-    snapshotMomentumConsistencyMax: number;
-    snapshotBreakQualityFilterToggle: boolean;
-    snapshotBreakQualityMin: number;
-    snapshotBreakQualityMax: number;
-    snapshotTf60PerfFilterToggle: boolean;
-    snapshotTf60PerfMin: number;
-    snapshotTf60PerfMax: number;
-    snapshotTf90PerfFilterToggle: boolean;
-    snapshotTf90PerfMin: number;
-    snapshotTf90PerfMax: number;
-    snapshotTf120PerfFilterToggle: boolean;
-    snapshotTf120PerfMin: number;
-    snapshotTf120PerfMax: number;
-    snapshotTf480PerfFilterToggle: boolean;
-    snapshotTf480PerfMin: number;
-    snapshotTf480PerfMax: number;
-    snapshotTfConfluencePerfFilterToggle: boolean;
-    snapshotTfConfluencePerfMin: number;
-    snapshotTfConfluencePerfMax: number;
-    snapshotEntryQualityScoreFilterToggle: boolean;
-    snapshotEntryQualityScoreMin: number;
-    snapshotEntryQualityScoreMax: number;
-
-    // Execution realism
-    executionModel: ExecutionModel;
-    allowSameBarExit: boolean;
-    slippageBps: number;
-    maxOpenTrades: number;
-    warmUpEntryEnabled: boolean;
-    strategyTimeframeEnabled: boolean;
-    strategyTimeframeMinutes: number;
-    twoHourCloseParity: 'odd' | 'even' | 'both';
-}
-
-export interface StrategyConfig {
-    name: string;
-    createdAt: string;
-    updatedAt: string;
-    strategyKey: string;
-    strategyParams: Record<string, number>;
-    backtestSettings: BacktestSettingsData;
-}
-
-export interface AppSettings {
-    currentSymbol: string;
-    currentInterval: string;
-    isDarkTheme: boolean;
-    currentStrategyKey: string;
-    chartMode: ChartMode;
-    backtestSettings: BacktestSettingsData;
-}
-
-// ============================================================================
-// Default Values
-// ============================================================================
-
-const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
-    // Capital settings
-    initialCapital: 10000,
-    positionSize: 100,
-    commission: 0.1,
-    fixedTradeToggle: true,
-    fixedTradeAmount: 1000,
-    useRustEngine: true,
-
-    // Risk management
-    riskSettingsToggle: false,
-    riskMode: EFFECTIVE_BACKTEST_DEFAULTS.riskMode,
-    atrPeriod: EFFECTIVE_BACKTEST_DEFAULTS.atrPeriod,
-    stopLossAtr: EFFECTIVE_BACKTEST_DEFAULTS.stopLossAtr,
-    takeProfitAtr: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAtr,
-    trailingAtr: EFFECTIVE_BACKTEST_DEFAULTS.trailingAtr,
-    partialTakeProfitAtR: EFFECTIVE_BACKTEST_DEFAULTS.partialTakeProfitAtR,
-    partialTakeProfitPercent: EFFECTIVE_BACKTEST_DEFAULTS.partialTakeProfitPercent,
-    breakEvenAtR: EFFECTIVE_BACKTEST_DEFAULTS.breakEvenAtR,
-    breakEvenPercent: EFFECTIVE_BACKTEST_DEFAULTS.breakEvenPercent,
-    timeStopBars: EFFECTIVE_BACKTEST_DEFAULTS.timeStopBars,
-    stopLossPercent: EFFECTIVE_BACKTEST_DEFAULTS.stopLossPercent,
-    takeProfitPercent: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitPercent,
-    stopLossEnabled: false,
-    takeProfitEnabled: false,
-    riskMaxHoldBars: EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars,
-    riskMaxHoldEnabled: EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldEnabled,
-    riskWinStreakStopLossEnabled: EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossEnabled,
-    riskWinStreakStopLossAfterWins: EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossAfterWins,
-    riskWinStreakStopLossPercent: EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossPercent,
-    marketMode: EFFECTIVE_BACKTEST_DEFAULTS.marketMode,
-
-    // Trade direction
-    tradeDirection: EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection,
-    invertSignals: EFFECTIVE_BACKTEST_DEFAULTS.invertSignals,
-    flipAfterConsecutiveLosses: EFFECTIVE_BACKTEST_DEFAULTS.flipAfterConsecutiveLosses,
-    flipCooldownTrades: EFFECTIVE_BACKTEST_DEFAULTS.flipCooldownTrades,
-    minTradesBeforeFirstFlip: EFFECTIVE_BACKTEST_DEFAULTS.minTradesBeforeFirstFlip,
-
-    // Trade filter
-    tradeFilterSettingsToggle: false,
-    tradeFilterMode: EFFECTIVE_BACKTEST_DEFAULTS.tradeFilterMode,
-    htfBiasEmaPeriod: EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod,
-    confirmLookback: EFFECTIVE_BACKTEST_DEFAULTS.confirmLookback,
-    volumeSmaPeriod: EFFECTIVE_BACKTEST_DEFAULTS.volumeSmaPeriod,
-    volumeMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.volumeMultiplier,
-    confirmRsiPeriod: EFFECTIVE_BACKTEST_DEFAULTS.rsiPeriod,
-    confirmRsiBullish: EFFECTIVE_BACKTEST_DEFAULTS.rsiBullish,
-    confirmRsiBearish: EFFECTIVE_BACKTEST_DEFAULTS.rsiBearish,
-    snapshotAtrFilterToggle: false,
-    snapshotAtrPercentMin: 0,
-    snapshotAtrPercentMax: 0,
-    snapshotVolumeFilterToggle: false,
-    snapshotVolumeRatioMin: 0,
-    snapshotVolumeRatioMax: 0,
-    snapshotAdxFilterToggle: false,
-    snapshotAdxMin: 0,
-    snapshotAdxMax: 0,
-    snapshotEmaFilterToggle: false,
-    snapshotEmaDistanceMin: 0,
-    snapshotEmaDistanceMax: 0,
-    snapshotRsiFilterToggle: false,
-    snapshotRsiMin: 0,
-    snapshotRsiMax: 0,
-    snapshotPriceRangePosFilterToggle: false,
-    snapshotPriceRangePosMin: 0,
-    snapshotPriceRangePosMax: 0,
-    snapshotBarsFromHighFilterToggle: false,
-    snapshotBarsFromHighMax: 0,
-    snapshotBarsFromLowFilterToggle: false,
-    snapshotBarsFromLowMax: 0,
-    snapshotTrendEfficiencyFilterToggle: false,
-    snapshotTrendEfficiencyMin: 0,
-    snapshotTrendEfficiencyMax: 0,
-    snapshotAtrRegimeFilterToggle: false,
-    snapshotAtrRegimeRatioMin: 0,
-    snapshotAtrRegimeRatioMax: 0,
-    snapshotBodyPercentFilterToggle: false,
-    snapshotBodyPercentMin: 0,
-    snapshotBodyPercentMax: 0,
-    snapshotWickSkewFilterToggle: false,
-    snapshotWickSkewMin: 0,
-    snapshotWickSkewMax: 0,
-    snapshotVolumeTrendFilterToggle: false,
-    snapshotVolumeTrendMin: 0,
-    snapshotVolumeTrendMax: 0,
-    snapshotVolumeBurstFilterToggle: false,
-    snapshotVolumeBurstMin: 0,
-    snapshotVolumeBurstMax: 0,
-    snapshotVolumePriceDivergenceFilterToggle: false,
-    snapshotVolumePriceDivergenceMin: 0,
-    snapshotVolumePriceDivergenceMax: 0,
-    snapshotVolumeConsistencyFilterToggle: false,
-    snapshotVolumeConsistencyMin: 0,
-    snapshotVolumeConsistencyMax: 0,
-    snapshotCloseLocationFilterToggle: false,
-    snapshotCloseLocationMin: 0,
-    snapshotCloseLocationMax: 0,
-    snapshotOppositeWickFilterToggle: false,
-    snapshotOppositeWickMin: 0,
-    snapshotOppositeWickMax: 0,
-    snapshotRangeAtrFilterToggle: false,
-    snapshotRangeAtrMultipleMin: 0,
-    snapshotRangeAtrMultipleMax: 0,
-    snapshotMomentumFilterToggle: false,
-    snapshotMomentumConsistencyMin: 0,
-    snapshotMomentumConsistencyMax: 0,
-    snapshotBreakQualityFilterToggle: false,
-    snapshotBreakQualityMin: 0,
-    snapshotBreakQualityMax: 0,
-    snapshotTf60PerfFilterToggle: false,
-    snapshotTf60PerfMin: 0,
-    snapshotTf60PerfMax: 0,
-    snapshotTf90PerfFilterToggle: false,
-    snapshotTf90PerfMin: 0,
-    snapshotTf90PerfMax: 0,
-    snapshotTf120PerfFilterToggle: false,
-    snapshotTf120PerfMin: 0,
-    snapshotTf120PerfMax: 0,
-    snapshotTf480PerfFilterToggle: false,
-    snapshotTf480PerfMin: 0,
-    snapshotTf480PerfMax: 0,
-    snapshotTfConfluencePerfFilterToggle: false,
-    snapshotTfConfluencePerfMin: 0,
-    snapshotTfConfluencePerfMax: 0,
-    snapshotEntryQualityScoreFilterToggle: false,
-    snapshotEntryQualityScoreMin: 0,
-    snapshotEntryQualityScoreMax: 0,
-
-    // Execution realism
-    executionModel: EFFECTIVE_BACKTEST_DEFAULTS.executionModel,
-    allowSameBarExit: EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit,
-    slippageBps: EFFECTIVE_BACKTEST_DEFAULTS.slippageBps,
-    maxOpenTrades: EFFECTIVE_BACKTEST_DEFAULTS.maxOpenTrades,
-    warmUpEntryEnabled: EFFECTIVE_BACKTEST_DEFAULTS.warmUpEntryEnabled,
-    strategyTimeframeEnabled: EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeEnabled,
-    strategyTimeframeMinutes: EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeMinutes,
-    twoHourCloseParity: EFFECTIVE_BACKTEST_DEFAULTS.twoHourCloseParity,
-};
-
-const DEFAULT_APP_SETTINGS: AppSettings = {
-    currentSymbol: 'ETHUSDT',
-    currentInterval: '1d',
-    isDarkTheme: true,
-    currentStrategyKey: 'sma_crossover',
-    chartMode: 'candlestick',
-    backtestSettings: { ...DEFAULT_BACKTEST_SETTINGS },
-};
 
 // ============================================================================
 // Storage Keys
@@ -542,8 +255,8 @@ class SettingsManager {
         try {
             const data = localStorage.getItem(STORAGE_KEYS.APP_SETTINGS);
             if (data) {
-                const settings = JSON.parse(data) as AppSettings;
-                if (!settings || typeof settings !== 'object') return null;
+                const settings = normalizeStoredAppSettings(JSON.parse(data));
+                if (!settings) return null;
 
                 debugLogger.event('settings.loaded', { strategy: settings.currentStrategyKey });
                 return settings;
@@ -838,7 +551,9 @@ class SettingsManager {
             if (data) {
                 const parsed = JSON.parse(data);
                 if (Array.isArray(parsed)) {
-                    return parsed as StrategyConfig[];
+                    return parsed
+                        .map((config) => normalizeStoredStrategyConfig(config))
+                        .filter((config): config is StrategyConfig => config !== null);
                 }
                 debugLogger.warn('settings.config_invalid_format');
                 return [];
@@ -909,130 +624,62 @@ class SettingsManager {
     // ========================================================================
 
     private readNumber(id: string, fallback: number): number {
-        const input = document.getElementById(id) as HTMLInputElement | null;
-        if (!input) return fallback;
-        const value = parseInputNumber(input.value);
-        return value ?? fallback;
+        return readSettingsNumber(id, fallback);
     }
 
-
-
     private readCheckbox(id: string, fallback: boolean): boolean {
-        const checkbox = document.getElementById(id) as HTMLInputElement | null;
-        return checkbox ? checkbox.checked : fallback;
+        return readSettingsCheckbox(id, fallback);
     }
 
     private readSelect(id: string, fallback: string): string {
-        const select = document.getElementById(id) as HTMLSelectElement | null;
-        return select ? select.value : fallback;
+        return readSettingsSelect(id, fallback);
     }
 
     private writeNumber(id: string, value: number): void {
-        const input = document.getElementById(id) as HTMLInputElement | null;
-        if (input) {
-            input.value = String(value);
-        }
+        writeSettingsNumber(id, value);
     }
 
     private writeCheckbox(id: string, value: boolean): void {
-        const checkbox = document.getElementById(id) as HTMLInputElement | null;
-        if (checkbox) {
-            checkbox.checked = value;
-        }
+        writeSettingsCheckbox(id, value);
     }
 
     private writeSelect(id: string, value: string): void {
-        const select = document.getElementById(id) as HTMLSelectElement | null;
-        if (select) {
-            select.value = value;
-        }
+        writeSettingsSelect(id, value);
     }
 
-
-
     private resolveTradeDirection(settings: Partial<BacktestSettingsData>): TradeDirection {
-        if (
-            settings.tradeDirection === 'long'
-            || settings.tradeDirection === 'short'
-            || settings.tradeDirection === 'both'
-            || settings.tradeDirection === 'both_flip_loss_2'
-            || settings.tradeDirection === 'combined'
-        ) {
-            return settings.tradeDirection;
-        }
-
-        const legacyShortMode = (settings as { shortModeToggle?: boolean }).shortModeToggle;
-        if (legacyShortMode === true) return 'short';
-        if (legacyShortMode === false) return 'long';
-
-        return DEFAULT_BACKTEST_SETTINGS.tradeDirection;
+        return resolveTradeDirection(settings, DEFAULT_BACKTEST_SETTINGS);
     }
 
     private resolveMarketMode(settings: Partial<BacktestSettingsData>): MarketMode {
-        if (settings.marketMode === 'all' || settings.marketMode === 'uptrend' || settings.marketMode === 'downtrend' || settings.marketMode === 'sideway') {
-            return settings.marketMode;
-        }
-        return DEFAULT_BACKTEST_SETTINGS.marketMode;
+        return resolveMarketMode(settings, DEFAULT_BACKTEST_SETTINGS);
     }
 
     private resolveRiskModeValue(value: unknown): NonNullable<BacktestSettings['riskMode']> {
-        if (value === 'simple' || value === 'advanced' || value === 'percentage') {
-            return value;
-        }
-        return DEFAULT_BACKTEST_SETTINGS.riskMode;
+        return resolveRiskModeValue(value, DEFAULT_BACKTEST_SETTINGS);
     }
 
     private resolveTradeFilterModeValue(value: unknown): TradeFilterMode {
-        if (
-            value === 'none'
-            || value === 'close'
-            || value === 'volume'
-            || value === 'rsi'
-            || value === 'trend'
-            || value === 'adx'
-            || value === 'htf_drift'
-            || value === 'trend_htf_bias'
-            || value === 'trend_exec_alignment'
-            || value === 'trend_no_chase'
-            || value === 'trend_hysteresis'
-            || value === 'trend_mtf_stack'
-        ) {
-            return value;
-        }
-        return DEFAULT_BACKTEST_SETTINGS.tradeFilterMode;
+        return resolveTradeFilterModeValue(value, DEFAULT_BACKTEST_SETTINGS);
     }
 
     private resolveExecutionModelValue(value: unknown): ExecutionModel {
-        if (value === 'signal_close' || value === 'next_open' || value === 'next_close') {
-            return value;
-        }
-        return DEFAULT_BACKTEST_SETTINGS.executionModel;
+        return resolveExecutionModelValue(value, DEFAULT_BACKTEST_SETTINGS);
     }
 
     private resolveTradeFilterMode(settings: Partial<BacktestSettingsData>): TradeFilterMode {
-        const mode = settings.tradeFilterMode ?? settings.entryConfirmation;
-        return this.resolveTradeFilterModeValue(mode);
+        return resolveTradeFilterMode(settings, DEFAULT_BACKTEST_SETTINGS);
     }
 
     private resolveTwoHourCloseParity(value: unknown): 'odd' | 'even' | 'both' {
-        if (value === 'even' || value === 'both' || value === 'odd') {
-            return value;
-        }
-        return DEFAULT_BACKTEST_SETTINGS.twoHourCloseParity;
+        return resolveTwoHourCloseParity(value, DEFAULT_BACKTEST_SETTINGS);
     }
 
     private resolveTradeFilterToggle(settings: Partial<BacktestSettingsData>): boolean {
-        if (typeof settings.tradeFilterSettingsToggle === 'boolean') {
-            return settings.tradeFilterSettingsToggle;
-        }
-        if (typeof settings.entrySettingsToggle === 'boolean') {
-            return settings.entrySettingsToggle;
-        }
-        return DEFAULT_BACKTEST_SETTINGS.tradeFilterSettingsToggle;
+        return resolveTradeFilterToggle(settings, DEFAULT_BACKTEST_SETTINGS);
     }
 
     private triggerChangeEvents(): void {
-        // Trigger change events for toggles to update UI state
         const toggleIds = [
             'fixedTradeToggle',
             'riskSettingsToggle',
@@ -1073,12 +720,7 @@ class SettingsManager {
             'riskWinStreakStopLossToggle'
         ];
 
-        toggleIds.forEach(id => {
-            const el = document.getElementById(id);
-            if (el) {
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-        });
+        triggerSettingsChangeEvents(toggleIds);
 
         // Trigger riskMode change
         const riskMode = document.getElementById('riskMode');

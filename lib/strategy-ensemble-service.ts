@@ -27,6 +27,7 @@ import {
     type EnsembleRuleSelection,
     type EnsembleRuleSpec,
 } from "./strategy-ensemble-rule-selection";
+import { renderStrategyEnsembleResults } from "./strategy-ensemble-renderer";
 
 interface EnsembleEntryPresence {
     longEntry: boolean;
@@ -2588,32 +2589,17 @@ class StrategyEnsembleService {
     }
 
     private renderResults(context: EnsembleRunContext): void {
-        const dom = this.getDom();
-        const hasTrades = context.tradeSamples.length > 0;
-
-        dom.ensembleResults.style.display = hasTrades ? "" : "none";
-        dom.ensembleCurrentContextSection.style.display = hasTrades ? "" : "none";
-        dom.ensembleBuilderSection.style.display = hasTrades ? "" : "none";
-        dom.ensembleHistoricalOddsSection.style.display = hasTrades ? "" : "none";
-        dom.ensembleDiagnosticsSection.style.display = hasTrades ? "" : "none";
-        dom.ensembleContributionSection.style.display = hasTrades ? "" : "none";
-        dom.ensembleReplacementSection.style.display = hasTrades ? "" : "none";
-        dom.ensembleRadarSection.style.display = hasTrades ? "" : "none";
-
-        if (!hasTrades) {
-            this.resetResultPanels();
-            dom.ensembleResults.style.display = "";
-            dom.ensembleSummary.innerHTML = this.card("Status", "No target trades found");
-            return;
-        }
-
-        this.renderSummary(context);
-        this.renderCurrentContext(context);
-        this.renderBuilder(context);
-        this.renderHistoricalOdds(context);
-        this.renderContribution(context);
-        this.renderReplacement(context);
-        this.renderRadar(context);
+        renderStrategyEnsembleResults({
+            resetResultPanels: () => this.resetResultPanels(),
+            renderSummary: (nextContext) => this.renderSummary(nextContext),
+            renderCurrentContext: (nextContext) => this.renderCurrentContext(nextContext),
+            renderBuilder: (nextContext) => this.renderBuilder(nextContext),
+            renderHistoricalOdds: (nextContext) => this.renderHistoricalOdds(nextContext),
+            renderContribution: (nextContext) => this.renderContribution(nextContext),
+            renderReplacement: (nextContext) => this.renderReplacement(nextContext),
+            renderRadar: (nextContext) => this.renderRadar(nextContext),
+            card: (label, value) => this.card(label, value),
+        }, this.getDom(), context);
     }
 
     private resetResultPanels(): void {

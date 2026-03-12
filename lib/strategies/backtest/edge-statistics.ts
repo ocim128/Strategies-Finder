@@ -1,5 +1,6 @@
 import type { BacktestResult, OHLCVData, Time, Trade } from '../../types/index';
 import { toTimeKey } from '../../time-key';
+import { getTimeIndex } from './backtest-utils';
 
 // ============================================================================
 // Types
@@ -114,10 +115,7 @@ export function computeEdgeRatios(
     if (trades.length === 0 || ohlcvData.length === 0) return [];
 
     // Build time → index map
-    const timeIndex = new Map<string, number>();
-    for (let i = 0; i < ohlcvData.length; i++) {
-        timeIndex.set(timeKey(ohlcvData[i].time), i);
-    }
+    const timeIndex = getTimeIndex(ohlcvData);
 
     const results: EdgeRatioHorizon[] = [];
 
@@ -200,11 +198,21 @@ export function computeEdgeRatios(
  * statistically significant edge with 95% confidence.
  */
 export function computeTTest(trades: Trade[]): TTestResult {
-    const returns = trades
-        .filter(t => t.exitReason !== 'end_of_data')
-        .map(t => t.pnlPercent);
+    let n = 0;
+    let mean = 0;
+    let sumSquaredDelta = 0;
 
-    const n = returns.length;
+    for (const trade of trades) {
+        if (trade.exitReason === 'end_of_data') continue;
+        const value = trade.pnlPercent;
+        if (!Number.isFinite(value)) continue;
+
+        n += 1;
+        const delta = value - mean;
+        mean += delta / n;
+        const delta2 = value - mean;
+        sumSquaredDelta += delta * delta2;
+    }
 
     if (n < 3) {
         return {
@@ -219,8 +227,7 @@ export function computeTTest(trades: Trade[]): TTestResult {
         };
     }
 
-    const mean = returns.reduce((s, v) => s + v, 0) / n;
-    const variance = returns.reduce((s, v) => s + (v - mean) ** 2, 0) / (n - 1); // Bessel's correction
+    const variance = sumSquaredDelta / (n - 1); // Bessel's correction
     const stdDev = Math.sqrt(variance);
     const standardError = stdDev / Math.sqrt(n);
     const hasZeroVariance = standardError <= 1e-12;
@@ -265,34 +272,46 @@ export function computeTTest(trades: Trade[]): TTestResult {
  *   is capturing genuine market regimes (not just random)
  */
 export function computeStreakAnalysis(trades: Trade[]): StreakAnalysis {
-    const filtered = trades.filter(t => t.exitReason !== 'end_of_data');
-    const n = filtered.length;
+    let n = 0;
+    let winCount = 0;
+    let previousOutcome: boolean | null = null;
+    let currentStreak = 0;
+    const winStreaks: number[] = [];
+    const lossStreaks: number[] = [];
+
+    for (const trade of trades) {
+        if (trade.exitReason === 'end_of_data') continue;
+        const isWin = trade.pnl > 0;
+        n += 1;
+        if (isWin) {
+            winCount += 1;
+        }
+
+        if (previousOutcome === null) {
+            previousOutcome = isWin;
+            currentStreak = 1;
+            continue;
+        }
+
+        if (previousOutcome === isWin) {
+            currentStreak += 1;
+            continue;
+        }
+
+        if (previousOutcome) {
+            winStreaks.push(currentStreak);
+        } else {
+            lossStreaks.push(currentStreak);
+        }
+        previousOutcome = isWin;
+        currentStreak = 1;
+    }
 
     if (n < 3) {
         return emptyStreakAnalysis(n);
     }
 
-    const outcomes: boolean[] = filtered.map(t => t.pnl > 0); // true = win
-
-    // Extract all streak lengths
-    const winStreaks: number[] = [];
-    const lossStreaks: number[] = [];
-    let currentStreak = 1;
-
-    for (let i = 1; i < outcomes.length; i++) {
-        if (outcomes[i] === outcomes[i - 1]) {
-            currentStreak++;
-        } else {
-            if (outcomes[i - 1]) {
-                winStreaks.push(currentStreak);
-            } else {
-                lossStreaks.push(currentStreak);
-            }
-            currentStreak = 1;
-        }
-    }
-    // Push final streak
-    if (outcomes[outcomes.length - 1]) {
+    if (previousOutcome) {
         winStreaks.push(currentStreak);
     } else {
         lossStreaks.push(currentStreak);
@@ -304,7 +323,7 @@ export function computeStreakAnalysis(trades: Trade[]): StreakAnalysis {
     const avgLossStreak = lossStreaks.length > 0 ? lossStreaks.reduce((s, v) => s + v, 0) / lossStreaks.length : 0;
 
     // Random expectations under Bernoulli model
-    const winRate = outcomes.filter(Boolean).length / n;
+    const winRate = winCount / n;
     const lossRate = 1 - winRate;
 
     const expectedMaxWinStreak = expectedMaxRun(n, winRate);

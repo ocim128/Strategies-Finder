@@ -12,6 +12,7 @@ import type {
     TradeSnapshot,
 } from "./strategies/index";
 import { timeKey } from "./strategies/index";
+import { getTimeIndex } from "./strategies/backtest/backtest-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 
 const SNAPSHOT_METRIC_DEFS: Array<{ key: keyof TradeSnapshot; label: string }> = [
@@ -73,10 +74,7 @@ export function buildPostEntryPathStats(
     const loseDurationMinutes: number[] = [];
     const allDurationMinutes: number[] = [];
 
-    const timeIndex = new Map<string, number>();
-    for (let i = 0; i < ohlcvData.length; i++) {
-        timeIndex.set(timeKey(ohlcvData[i].time), i);
-    }
+    const timeIndex = getTimeIndex(ohlcvData);
 
     for (const trade of result.trades) {
         const entryIndex = timeIndex.get(timeKey(trade.entryTime));

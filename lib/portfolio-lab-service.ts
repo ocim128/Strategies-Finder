@@ -18,6 +18,8 @@ import {
     resolvePortfolioSignalType,
     type PortfolioSignalPresence,
 } from "./portfolio-lab-helpers";
+import { getTimeIndex } from "./strategies/backtest/backtest-utils";
+import { renderPortfolioLab } from "./portfolio-lab-renderer";
 
 const MIN_LOOKBACK_BARS = 200;
 const MAX_LOOKBACK_BARS = 20000;
@@ -745,10 +747,7 @@ class PortfolioLabService {
         const fullSignals = applySignalPolarity(strategy.execute(data, params), settings);
         const signalPresenceByTime = buildPortfolioSignalPresenceLookup(fullSignals);
         const timeKeys = data.map((candle) => timeKey(candle.time));
-        const timeIndex = new Map<string, number>();
-        timeKeys.forEach((key, index) => {
-            timeIndex.set(key, index);
-        });
+        const timeIndex = getTimeIndex(data);
 
         const artifacts: PairRunArtifacts = {
             result: runResult.result,
@@ -778,110 +777,45 @@ class PortfolioLabService {
         minAgree: number,
         maxOppose: number
     ): void {
-        const dom = this.getDom();
-        dom.portfolioContent.style.display = "";
-        dom.portfolioEmpty.style.display = rows.length > 0 ? "none" : "";
-        dom.portfolioResults.style.display = rows.length > 0 ? "" : "none";
-        dom.portfolioLiveContextSection.style.display = rows.length > 0 ? "" : "none";
-        dom.portfolioInsightSection.style.display = rows.length > 0 ? "" : "none";
-        dom.portfolioExecutionSection.style.display = rows.length > 0 ? "" : "none";
-        dom.portfolioConsensusSection.style.display = rows.length > 0 ? "" : "none";
-        dom.portfolioRankingSection.style.display = rows.length > 0 ? "" : "none";
-        dom.portfolioSizingSection.style.display = rows.length > 0 ? "" : "none";
-        dom.portfolioMatrixSection.style.display = rows.length > 1 ? "" : "none";
-
-        if (rows.length === 0) {
-            dom.portfolioSummary.innerHTML = "";
-            dom.portfolioLiveContextSummary.innerHTML = "";
-            dom.portfolioLiveContextDetails.innerHTML = "";
-            dom.portfolioInsights.innerHTML = "";
-            dom.portfolioExecutionSummary.innerHTML = "";
-            dom.portfolioConsensusSummary.innerHTML = "";
-            dom.portfolioConsensusTableBody.innerHTML = `
-                <tr>
-                    <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                        No usable pair runs. Check the symbol list and data availability.
-                    </td>
-                </tr>
-            `;
-            dom.portfolioBreadthSweepSection.style.display = "none";
-            dom.portfolioBreadthSweepTableBody.innerHTML = `
-                <tr>
-                    <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                        Run Breadth Sweep to compare agreement thresholds.
-                    </td>
-                </tr>
-            `;
-            dom.portfolioOppositionSweepSection.style.display = "none";
-            dom.portfolioOppositionSweepTableBody.innerHTML = `
-                <tr>
-                    <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                        Run Sweep Opposition to compare conflict thresholds.
-                    </td>
-                </tr>
-            `;
-            dom.portfolioRankingSummary.innerHTML = "";
-            dom.portfolioRankingTableBody.innerHTML = `
-                <tr>
-                    <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                        Run Portfolio Lab to rank pairs by quality, diversification, and context response.
-                    </td>
-                </tr>
-            `;
-            dom.portfolioSizingSummary.innerHTML = "";
-            dom.portfolioSizingTableBody.innerHTML = `
-                <tr>
-                    <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                        Run Portfolio Lab to compare context-weighted sizing scenarios.
-                    </td>
-                </tr>
-            `;
-            dom.portfolioCorrelationMatrix.innerHTML = "";
-            dom.portfolioPairsTableBody.innerHTML = `
-                <tr>
-                    <td colspan="10" style="text-align:center;color:var(--text-secondary);padding:20px;">
-                        No usable pair runs. Check the symbol list and data availability.
-                    </td>
-                </tr>
-            `;
-            if (skipped.length > 0) {
-                this.updateStatus(`No usable results. Skipped: ${skipped.join(", ")}`);
-            } else {
-                this.updateStatus("No usable results.");
-            }
-            return;
-        }
-
-        dom.portfolioSummary.innerHTML = this.renderSummary(rows, benchmarkSymbol);
-        dom.portfolioLiveContextSummary.innerHTML = this.renderLiveContextSummary(liveContext);
-        dom.portfolioLiveContextDetails.innerHTML = this.renderLiveContextDetails(liveContext);
-        dom.portfolioInsights.innerHTML = this.renderInsights(rows, benchmarkSymbol, skipped, windowMode);
-        dom.portfolioExecutionSummary.innerHTML = this.renderExecutionSummary(
+        renderPortfolioLab({
+            renderSummary: (nextRows, nextBenchmark) => this.renderSummary(nextRows, nextBenchmark),
+            renderLiveContextSummary: (nextLiveContext) => this.renderLiveContextSummary(nextLiveContext),
+            renderLiveContextDetails: (nextLiveContext) => this.renderLiveContextDetails(nextLiveContext),
+            renderInsights: (nextRows, nextBenchmark, nextSkipped, nextWindowMode) => this.renderInsights(nextRows, nextBenchmark, nextSkipped, nextWindowMode),
+            renderExecutionSummary: (breadthRows, oppositionRows, currentFilter, targetSymbol, nextMinAgree, nextMaxOppose) =>
+                this.renderExecutionSummary(breadthRows, oppositionRows, currentFilter, targetSymbol, nextMinAgree, nextMaxOppose),
+            renderConsensusSummary: (nextConsensus) => this.renderConsensusSummary(nextConsensus),
+            renderConsensusTable: (nextConsensus) => this.renderConsensusTable(nextConsensus),
+            renderBreadthSweep: (nextRows) => this.renderBreadthSweep(nextRows),
+            renderOppositionSweep: (nextRows) => this.renderOppositionSweep(nextRows),
+            renderRankingSummary: (nextRows) => this.renderRankingSummary(nextRows),
+            renderRankingTable: (nextRows, nextBenchmark) => this.renderRankingTable(nextRows, nextBenchmark),
+            renderSizingSummary: (nextRows) => this.renderSizingSummary(nextRows),
+            renderSizingTable: (nextRows) => this.renderSizingTable(nextRows),
+            renderCorrelationMatrix: (nextRows, nextSelectedSymbols, nextDataCache) => this.renderCorrelationMatrix(nextRows, nextSelectedSymbols, nextDataCache),
+            renderRow: (row, nextBenchmark) => this.renderRow(row, nextBenchmark),
+            bindRowActions: () => this.bindRowActions(),
+            findBestFilterRun: (breadthRows, oppositionRows, nextMinAgree, nextMaxOppose) =>
+                this.findBestFilterRun(breadthRows, oppositionRows, nextMinAgree, nextMaxOppose),
+            updateStatus: (message) => this.updateStatus(message),
+        }, {
+            dom: this.getDom(),
+            rows,
+            selectedSymbols,
+            dataCache,
+            benchmarkSymbol,
+            skipped,
+            consensus,
+            windowMode,
             breadthSweep,
             oppositionSweep,
-            this.findBestFilterRun(breadthSweep, oppositionSweep, minAgree, maxOppose),
-            benchmarkSymbol,
+            rankingRows,
+            sizingRows,
+            liveContext,
             minAgree,
-            maxOppose
-        );
-        dom.portfolioConsensusSummary.innerHTML = this.renderConsensusSummary(consensus);
-        dom.portfolioConsensusTableBody.innerHTML = this.renderConsensusTable(consensus);
-        this.renderBreadthSweep(breadthSweep);
-        this.renderOppositionSweep(oppositionSweep);
-        dom.portfolioRankingSummary.innerHTML = this.renderRankingSummary(rankingRows);
-        dom.portfolioRankingTableBody.innerHTML = this.renderRankingTable(rankingRows, benchmarkSymbol);
-        dom.portfolioSizingSummary.innerHTML = this.renderSizingSummary(sizingRows);
-        dom.portfolioSizingTableBody.innerHTML = this.renderSizingTable(sizingRows);
-        dom.portfolioCorrelationMatrix.innerHTML = this.renderCorrelationMatrix(rows, selectedSymbols, dataCache);
-        dom.portfolioPairsTableBody.innerHTML = rows.map((row) => this.renderRow(row, benchmarkSymbol)).join("");
-        this.bindRowActions();
-
-        const profitablePairs = rows.filter((row) => row.result.netProfitPercent > 0).length;
-        const skippedSuffix = skipped.length > 0 ? ` Skipped ${skipped.length}.` : "";
-        this.updateStatus(
-            `${rows.length} pairs completed on ${state.currentInterval}. ` +
-            `${profitablePairs}/${rows.length} profitable vs ${benchmarkSymbol}.${skippedSuffix}`
-        );
+            maxOppose,
+            currentInterval: state.currentInterval,
+        });
     }
 
     private renderSummary(rows: PairAnalysisRow[], benchmarkSymbol: string): string {
