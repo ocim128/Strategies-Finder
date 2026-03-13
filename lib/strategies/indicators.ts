@@ -286,6 +286,41 @@ export function calculateVWAP(ohlcv: OHLCVData[]): (number | null)[] {
     return vwap;
 }
 
+export function calculateSessionVWAP(ohlcv: OHLCVData[]): (number | null)[] {
+    const vwap: (number | null)[] = [];
+    let cumulativeTPV = 0;
+    let cumulativeVolume = 0;
+    let lastSessionKey: string | null = null;
+
+    const resolveSessionKey = (time: OHLCVData["time"]): string => {
+        if (typeof time === "string") {
+            return time.slice(0, 10);
+        }
+        if (typeof time === "number") {
+            const millis = time > 1e12 ? time : time * 1000;
+            return new Date(millis).toISOString().slice(0, 10);
+        }
+        return `${time.year}-${String(time.month).padStart(2, '0')}-${String(time.day).padStart(2, '0')}`;
+    };
+
+    for (let i = 0; i < ohlcv.length; i++) {
+        const bar = ohlcv[i];
+        const sessionKey = resolveSessionKey(bar.time);
+        if (sessionKey !== lastSessionKey) {
+            cumulativeTPV = 0;
+            cumulativeVolume = 0;
+            lastSessionKey = sessionKey;
+        }
+
+        const typicalPrice = (bar.high + bar.low + bar.close) / 3;
+        cumulativeTPV += typicalPrice * bar.volume;
+        cumulativeVolume += bar.volume;
+        vwap.push(cumulativeVolume === 0 ? null : cumulativeTPV / cumulativeVolume);
+    }
+
+    return vwap;
+}
+
 export function calculateATR(
     high: number[],
     low: number[],
@@ -315,6 +350,34 @@ export function calculateATR(
         }
         return atr;
     });
+}
+
+export function calculateKeltnerChannels(
+    high: number[],
+    low: number[],
+    close: number[],
+    emaPeriod: number,
+    atrPeriod: number,
+    multiplier: number
+): {
+    upper: (number | null)[];
+    middle: (number | null)[];
+    lower: (number | null)[];
+} {
+    const middle = calculateEMA(close, emaPeriod);
+    const atr = calculateATR(high, low, close, atrPeriod);
+    const upper: (number | null)[] = new Array(close.length).fill(null);
+    const lower: (number | null)[] = new Array(close.length).fill(null);
+
+    for (let i = 0; i < close.length; i++) {
+        const mid = middle[i];
+        const atrNow = atr[i];
+        if (mid === null || atrNow === null) continue;
+        upper[i] = mid + multiplier * atrNow;
+        lower[i] = mid - multiplier * atrNow;
+    }
+
+    return { upper, middle, lower };
 }
 
 export function calculateADX(
@@ -371,6 +434,98 @@ export function calculateADX(
         }
         return adx;
     });
+}
+
+export function calculateMFI(
+    high: number[],
+    low: number[],
+    close: number[],
+    volume: number[],
+    period: number
+): (number | null)[] {
+    const length = Math.min(high.length, low.length, close.length, volume.length);
+    const result: (number | null)[] = new Array(length).fill(null);
+    if (length < period + 1 || period < 1) return result;
+
+    const positiveFlow: number[] = new Array(length).fill(0);
+    const negativeFlow: number[] = new Array(length).fill(0);
+    const typicalPrice: number[] = new Array(length).fill(0);
+
+    for (let i = 0; i < length; i++) {
+        typicalPrice[i] = (high[i] + low[i] + close[i]) / 3;
+        if (i === 0) continue;
+        const flow = typicalPrice[i] * volume[i];
+        if (typicalPrice[i] > typicalPrice[i - 1]) {
+            positiveFlow[i] = flow;
+        } else if (typicalPrice[i] < typicalPrice[i - 1]) {
+            negativeFlow[i] = flow;
+        }
+    }
+
+    let positiveSum = 0;
+    let negativeSum = 0;
+
+    for (let i = 1; i < length; i++) {
+        positiveSum += positiveFlow[i];
+        negativeSum += negativeFlow[i];
+
+        if (i > period) {
+            positiveSum -= positiveFlow[i - period];
+            negativeSum -= negativeFlow[i - period];
+        }
+
+        if (i >= period) {
+            if (negativeSum === 0) {
+                result[i] = 100;
+            } else {
+                const moneyRatio = positiveSum / negativeSum;
+                result[i] = 100 - (100 / (1 + moneyRatio));
+            }
+        }
+    }
+
+    return result;
+}
+
+export function calculateCMF(
+    high: number[],
+    low: number[],
+    close: number[],
+    volume: number[],
+    period: number
+): (number | null)[] {
+    const length = Math.min(high.length, low.length, close.length, volume.length);
+    const result: (number | null)[] = new Array(length).fill(null);
+    if (length < period || period < 1) return result;
+
+    const moneyFlowVolume: number[] = new Array(length).fill(0);
+    for (let i = 0; i < length; i++) {
+        const range = high[i] - low[i];
+        if (range <= 0) {
+            moneyFlowVolume[i] = 0;
+            continue;
+        }
+        const multiplier = ((close[i] - low[i]) - (high[i] - close[i])) / range;
+        moneyFlowVolume[i] = multiplier * volume[i];
+    }
+
+    let mfvSum = 0;
+    let volumeSum = 0;
+    for (let i = 0; i < length; i++) {
+        mfvSum += moneyFlowVolume[i];
+        volumeSum += volume[i];
+
+        if (i >= period) {
+            mfvSum -= moneyFlowVolume[i - period];
+            volumeSum -= volume[i - period];
+        }
+
+        if (i >= period - 1) {
+            result[i] = volumeSum === 0 ? 0 : mfvSum / volumeSum;
+        }
+    }
+
+    return result;
 }
 
 export function calculateVolumeProfile(
@@ -484,6 +639,73 @@ export function calculateVolumeProfile(
     }
 
     return { poc, vah, val };
+}
+
+function calculateMidpointChannel(
+    high: number[],
+    low: number[],
+    period: number
+): (number | null)[] {
+    const result: (number | null)[] = new Array(high.length).fill(null);
+    const maxDeque: number[] = [];
+    const minDeque: number[] = [];
+
+    for (let i = 0; i < high.length; i++) {
+        while (maxDeque.length > 0 && high[maxDeque[maxDeque.length - 1]] <= high[i]) maxDeque.pop();
+        maxDeque.push(i);
+        if (maxDeque[0] <= i - period) maxDeque.shift();
+
+        while (minDeque.length > 0 && low[minDeque[minDeque.length - 1]] >= low[i]) minDeque.pop();
+        minDeque.push(i);
+        if (minDeque[0] <= i - period) minDeque.shift();
+
+        if (i >= period - 1) {
+            result[i] = (high[maxDeque[0]] + low[minDeque[0]]) / 2;
+        }
+    }
+
+    return result;
+}
+
+export function calculateIchimoku(
+    high: number[],
+    low: number[],
+    close: number[],
+    conversionPeriod: number = 9,
+    basePeriod: number = 26,
+    spanBPeriod: number = 52,
+    displacement: number = 26
+): {
+    conversion: (number | null)[];
+    base: (number | null)[];
+    spanA: (number | null)[];
+    spanB: (number | null)[];
+    lagging: (number | null)[];
+} {
+    const conversion = calculateMidpointChannel(high, low, conversionPeriod);
+    const base = calculateMidpointChannel(high, low, basePeriod);
+    const spanBBase = calculateMidpointChannel(high, low, spanBPeriod);
+    const spanA: (number | null)[] = new Array(close.length).fill(null);
+    const spanB: (number | null)[] = new Array(close.length).fill(null);
+    const lagging: (number | null)[] = new Array(close.length).fill(null);
+
+    for (let i = 0; i < close.length; i++) {
+        const conversionNow = conversion[i];
+        const baseNow = base[i];
+        const spanBNow = spanBBase[i];
+
+        if (conversionNow !== null && baseNow !== null) {
+            spanA[i] = (conversionNow + baseNow) / 2;
+        }
+        if (spanBNow !== null) {
+            spanB[i] = spanBNow;
+        }
+        if (i >= displacement) {
+            lagging[i - displacement] = close[i];
+        }
+    }
+
+    return { conversion, base, spanA, spanB, lagging };
 }
 
 export function calculateDonchianChannels(

@@ -16,6 +16,7 @@ import { candle_pattern_persistence_score_macd_hist_slope } from "./lib/candle-p
 import { candle_pattern_persistence_score_macd_div_gate } from "./lib/candle-pattern-persistence-score-macd-div-gate";
 import { candle_pattern_persistence_score_macd_dual_tf } from "./lib/candle-pattern-persistence-score-macd-dual-tf";
 import { adx_slope_pivot_entry } from "./lib/adx_slope_pivot_entry";
+import { exhaustion_spike_follow_through } from "./lib/exhaustion-spike-follow-through";
 import { high_low_midpoint_crossover_momentum } from "./lib/high-low-midpoint-crossover-momentum";
 import { volatility_efficiency_breakout } from "./lib/volatility_efficiency_breakout";
 import { efficiency_ratio_pinch_trigger } from "./lib/efficiency_ratio_pinch_trigger";
@@ -42,9 +43,10 @@ export interface StrategyManifestEntry {
 }
 
 export const strategyManifest: readonly StrategyManifestEntry[] = [
+    { key: "exhaustion_spike_follow_through", strategy: exhaustion_spike_follow_through },
+    { key: "exhaustion_spike_pullback", strategy: exhaustion_spike_pullback },
     { key: "volatility_compression_break", strategy: volatility_compression_break },
     { key: "volatility_compression_break_trend", strategy: volatility_compression_break_trend },
-    { key: "exhaustion_spike_pullback", strategy: exhaustion_spike_pullback },
     { key: "candle_pattern_persistence_score", strategy: candle_pattern_persistence_score },
     { key: "candle_pattern_persistence_score_ema_bias", strategy: candle_pattern_persistence_score_ema_bias },
     { key: "candle_pattern_persistence_score_rsi_midline", strategy: candle_pattern_persistence_score_rsi_midline },

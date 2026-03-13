@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateATR, calculateADX, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade, Strategy } from './lib/strategies/index';
+import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateSessionVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateATR, calculateADX, calculateKeltnerChannels, calculateMFI, calculateCMF, calculateIchimoku, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade, Strategy } from './lib/strategies/index';
 import { buildPivotFlags, detectPivots, detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
 
 import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/backtest/trade-analyzer';
@@ -59,6 +59,19 @@ describe('Strategy Calculations', () => {
         const vwap = calculateVWAP(data);
         expect(vwap[0]).to.be.closeTo(11.666, 0.01);
         expect(vwap[1]).to.be.closeTo(13.333, 0.01);
+    });
+
+    it('should reset Session VWAP on a new UTC date', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01T00:00:00Z' as Time, open: 10, high: 20, low: 5, close: 10, volume: 100 },
+            { time: '2023-01-01T01:00:00Z' as Time, open: 10, high: 20, low: 5, close: 20, volume: 100 },
+            { time: '2023-01-02T00:00:00Z' as Time, open: 20, high: 24, low: 18, close: 22, volume: 200 },
+        ];
+
+        const sessionVwap = calculateSessionVWAP(data);
+        expect(sessionVwap[0]).to.be.closeTo(11.666, 0.01);
+        expect(sessionVwap[1]).to.be.closeTo(13.333, 0.01);
+        expect(sessionVwap[2]).to.be.closeTo((24 + 18 + 22) / 3, 0.01);
     });
 
     it('should calculate Stochastic Oscillator correctly', () => {
@@ -150,6 +163,54 @@ describe('Strategy Calculations', () => {
         expect(last).to.be.a('number');
         expect(last).to.be.at.least(0);
         expect(last).to.be.at.most(100);
+    });
+
+    it('should calculate Keltner Channels around the EMA', () => {
+        const high = [11, 12, 13, 14, 15, 16];
+        const low = [9, 10, 11, 12, 13, 14];
+        const close = [10, 11, 12, 13, 14, 15];
+
+        const kc = calculateKeltnerChannels(high, low, close, 3, 3, 1.5);
+        expect(kc.middle[5]).to.be.a('number');
+        expect(kc.upper[5]!).to.be.greaterThan(kc.middle[5]!);
+        expect(kc.lower[5]!).to.be.lessThan(kc.middle[5]!);
+    });
+
+    it('should calculate MFI within expected bounds', () => {
+        const high = [10, 11, 12, 13, 14, 15];
+        const low = [9, 10, 11, 12, 13, 14];
+        const close = [9.5, 10.8, 11.7, 12.6, 13.4, 14.2];
+        const volume = [100, 110, 120, 130, 140, 150];
+
+        const mfi = calculateMFI(high, low, close, volume, 3);
+        expect(mfi[5]).to.be.a('number');
+        expect(mfi[5]!).to.be.at.least(0);
+        expect(mfi[5]!).to.be.at.most(100);
+    });
+
+    it('should calculate CMF around the zero line', () => {
+        const high = [10, 11, 12, 13, 14, 15];
+        const low = [8, 9, 10, 11, 12, 13];
+        const close = [9.8, 10.8, 11.7, 12.2, 12.5, 14.6];
+        const volume = [100, 110, 120, 130, 140, 150];
+
+        const cmf = calculateCMF(high, low, close, volume, 3);
+        expect(cmf[5]).to.be.a('number');
+        expect(cmf[5]!).to.be.at.least(-1);
+        expect(cmf[5]!).to.be.at.most(1);
+    });
+
+    it('should calculate Ichimoku components without future leakage in current spans', () => {
+        const high = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+        const low = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+        const close = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+
+        const ichimoku = calculateIchimoku(high, low, close, 3, 5, 7, 2);
+        expect(ichimoku.conversion[4]).to.be.a('number');
+        expect(ichimoku.base[6]).to.be.a('number');
+        expect(ichimoku.spanA[6]).to.be.a('number');
+        expect(ichimoku.spanB[8]).to.be.a('number');
+        expect(ichimoku.lagging[0]).to.equal(close[2]);
     });
 
     it('should key ATR/ADX caches by OHLC inputs, not close only', () => {
