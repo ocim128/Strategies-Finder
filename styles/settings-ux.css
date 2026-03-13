@@ -38,14 +38,11 @@
     flex-direction: column;
     gap: var(--space-2-5);
     min-width: 0;
-    padding: var(--space-2-5);
+    padding: var(--space-3);
     border-radius: var(--radius-l);
-    border: 1px solid hsl(var(--hsl-border) / 0.45);
-    background:
-        linear-gradient(160deg,
-            hsl(var(--hsl-surface-3) / 0.72),
-            hsl(var(--hsl-surface-2) / 0.52));
-    box-shadow: var(--shadow-sm), var(--shadow-inner-soft);
+    border: 1px solid var(--card-border);
+    background: var(--card-bg);
+    box-shadow: var(--shadow-md);
 }
 
 .strategy-workspace-card-top {
@@ -61,6 +58,7 @@
     letter-spacing: var(--tracking-wide);
     text-transform: uppercase;
     color: var(--text-tertiary);
+    font-weight: var(--font-weight-semibold);
 }
 
 .strategy-workspace-pills {
@@ -90,8 +88,8 @@
 }
 
 .strategy-workspace-title {
-    font-size: calc(var(--font-size-base) + 2px);
-    font-weight: var(--font-weight-semibold);
+    font-size: calc(var(--font-size-base) + 4px);
+    font-weight: var(--font-weight-bold);
     color: var(--text-primary);
 }
 
@@ -146,16 +144,16 @@
     display: flex;
     gap: 2px;
     padding: 2px;
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-s);
-    border: 1px solid var(--border-color);
+    background: var(--card-bg-muted);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--card-border);
 }
 
 .settings-preset-btn {
     flex: 1;
     padding: var(--space-1) var(--space-2);
     border: none;
-    border-radius: var(--radius-xs);
+    border-radius: var(--radius-s);
     background: transparent;
     color: var(--text-tertiary);
     font-size: var(--font-size-xs);
@@ -172,13 +170,14 @@
 
 .settings-preset-btn:hover {
     color: var(--text-secondary);
-    background: hsl(var(--hsl-surface-4) / 0.35);
+    background: var(--field-bg-hover);
 }
 
 .settings-preset-btn.active {
-    background: var(--bg-secondary);
+    background: var(--field-bg);
     color: var(--text-primary);
     font-weight: var(--font-weight-semibold);
+    box-shadow: var(--shadow-xs);
 }
 
 .settings-preset-btn .preset-dot {
@@ -213,18 +212,20 @@
     cursor: pointer;
     user-select: none;
     -webkit-user-select: none;
-    border-radius: var(--radius-xs);
-    padding: var(--space-1-5) var(--space-2);
+    border-radius: var(--radius-m);
+    padding: var(--space-2) var(--space-2-5);
     margin-left: calc(-1 * var(--space-2));
     margin-right: calc(-1 * var(--space-2));
     margin-bottom: var(--space-2);
     margin-top: var(--space-2);
-    transition: background 0.1s ease;
-    border-bottom: 1px solid var(--border-color);
+    transition: background 0.1s ease, border-color 0.1s ease;
+    border: 1px solid transparent;
+    border-bottom: 1px solid hsl(var(--hsl-border) / 0.45);
 }
 
 .section-header.collapsible:hover {
-    background: hsl(var(--hsl-surface-4) / 0.2);
+    background: var(--card-bg-muted);
+    border-color: hsl(var(--hsl-accent) / 0.12);
 }
 
 /* Chevron indicator */
@@ -317,14 +318,14 @@
     bottom: calc(100% + 8px);
     left: 50%;
     transform: translateX(-50%) translateY(4px);
-    background: var(--bg-elevated);
+    background: var(--card-bg);
     color: var(--text-primary);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-normal);
     line-height: var(--line-height-relaxed);
     padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-s);
-    border: 1px solid var(--glass-border);
+    border: 1px solid var(--card-border);
     box-shadow: var(--shadow-floating);
     white-space: normal;
     width: max-content;
@@ -345,7 +346,7 @@
     left: 50%;
     transform: translateX(-50%);
     border: 5px solid transparent;
-    border-top-color: var(--bg-elevated);
+    border-top-color: var(--card-bg);
 }
 
 .info-tip-trigger:hover .info-tip-content,
@@ -463,11 +464,11 @@
         padding: var(--panel-content-padding);
         background:
             linear-gradient(180deg,
-                hsl(var(--hsl-surface-2) / 0.96),
-                hsl(var(--hsl-surface-2) / 0.82));
+                hsl(var(--hsl-surface-1) / 0.96),
+                hsl(var(--hsl-surface-1) / 0.86));
         backdrop-filter: blur(18px) saturate(125%);
         -webkit-backdrop-filter: blur(18px) saturate(125%);
-        border-bottom: 1px solid hsl(var(--hsl-border) / 0.5);
+        border-bottom: 1px solid hsl(var(--hsl-border) / 0.36);
     }
 
     .strategy-workspace-grid {

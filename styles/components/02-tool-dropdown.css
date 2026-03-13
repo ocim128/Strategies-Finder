@@ -2,9 +2,9 @@
 .tool-btn {
     width: 36px;
     height: 36px;
-    border-radius: var(--radius-s);
+    border-radius: var(--radius-m);
     border: 1px solid transparent;
-    background: transparent;
+    background: var(--card-bg-muted);
     color: var(--text-secondary);
     cursor: pointer;
     display: flex;
@@ -16,8 +16,9 @@
 }
 
 .tool-btn:hover {
-    background: var(--bg-tertiary);
+    background: var(--field-bg-hover);
     color: var(--text-primary);
+    border-color: hsl(var(--hsl-accent) / 0.16);
 }
 
 .tool-btn:active {
@@ -25,8 +26,9 @@
 }
 
 .tool-btn.active {
-    background: var(--accent-soft-strong);
+    background: var(--tab-active-bg);
     color: var(--accent-color);
+    border-color: hsl(var(--hsl-accent) / 0.22);
 }
 
 .tool-btn svg {
@@ -37,7 +39,7 @@
 .tool-separator {
     width: 28px;
     height: 1px;
-    background: var(--border-color);
+    background: hsl(var(--hsl-border) / 0.7);
     margin: var(--space-2) 0;
 }
 
@@ -51,10 +53,10 @@
     top: 100%;
     left: 0;
     margin-top: var(--space-1);
-    background: hsl(var(--hsl-surface-2) / 0.95);
+    background: hsl(var(--hsl-surface-1) / 0.98);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    border: 1px solid var(--glass-border);
+    border: 1px solid var(--card-border);
     border-radius: var(--radius-l);
     padding: var(--space-2) 0;
     min-width: 200px;
@@ -97,7 +99,7 @@
 }
 
 .dropdown-item:hover {
-    background: var(--bg-tertiary);
+    background: var(--field-bg-hover);
 }
 
 .dropdown-item:hover::before {
@@ -109,7 +111,7 @@
 }
 
 .dropdown-item.active {
-    background: var(--accent-soft);
+    background: var(--tab-active-bg);
     color: var(--accent-color);
 }
 
@@ -142,8 +144,8 @@
     border-radius: var(--radius-pill);
     font-size: var(--font-size-2xs);
     font-weight: var(--font-weight-bold);
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
+    background: var(--card-bg-muted);
+    border: 1px solid var(--card-border);
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -168,5 +170,4 @@
 .is-hidden {
     display: none !important;
 }
-
 

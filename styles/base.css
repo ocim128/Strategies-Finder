@@ -19,6 +19,15 @@ body {
     text-rendering: optimizeLegibility;
 }
 
+body.light-theme {
+    background:
+        linear-gradient(180deg,
+            hsl(220 33% 91%) 0%,
+            hsl(216 45% 96%) 14%,
+            hsl(0 0% 100%) 40%,
+            hsl(220 33% 98%) 100%);
+}
+
 /* Ambient background layer – sits behind everything */
 body::before {
     content: '';
@@ -27,6 +36,10 @@ body::before {
     background: var(--page-gradient);
     pointer-events: none;
     z-index: 0;
+}
+
+body.light-theme::before {
+    opacity: 0.9;
 }
 
 #root {

@@ -142,3 +142,4 @@ matrix-summary-*.json
 
 # Archive directory
 archive/
+.vercel

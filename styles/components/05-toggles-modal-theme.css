@@ -12,6 +12,7 @@
     letter-spacing: var(--tracking-wide);
     color: var(--text-secondary);
     margin: var(--space-4-5) 0 var(--space-2);
+    font-weight: var(--font-weight-semibold);
 }
 
 .section-header .section-title {
@@ -40,8 +41,8 @@
     width: 36px;
     height: 18px;
     border-radius: var(--radius-pill);
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
+    background: var(--card-bg-muted);
+    border: 1px solid var(--card-border);
     position: relative;
     transition: background 0.15s ease, border-color 0.15s ease;
 }
@@ -92,7 +93,7 @@
 }
 
 .modal {
-    background: var(--bg-secondary);
+    background: var(--card-bg);
     border-radius: var(--radius-xl);
     width: 500px;
     max-height: 600px;
@@ -144,9 +145,9 @@
     width: 40px;
     height: 40px;
     border-radius: var(--radius-m);
-    border: 1px solid var(--border-color);
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
+    border: 1px solid var(--header-control-border);
+    background: var(--header-control-bg);
+    color: var(--header-ink);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -157,7 +158,7 @@
 }
 
 .theme-toggle:hover {
-    background: var(--bg-elevated);
+    background: var(--header-control-hover-bg);
     border-color: hsl(var(--hsl-accent) / 0.4);
 }
 
@@ -169,4 +170,3 @@
 #sunIcon {
     display: none;
 }
-

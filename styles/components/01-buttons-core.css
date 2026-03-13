@@ -1,9 +1,9 @@
 /* Buttons */
 .btn {
     padding: var(--space-2) var(--space-4);
-    border-radius: var(--radius-s);
+    border-radius: var(--radius-m);
     font-size: var(--font-size-sm);
-    font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-semibold);
     cursor: pointer;
     transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
     border: 1px solid transparent;
@@ -24,22 +24,23 @@
 .btn-primary {
     background: var(--gradient-accent);
     color: var(--text-on-accent);
-    box-shadow: var(--shadow-xs);
+    box-shadow: var(--shadow-sm);
 }
 
 .btn-primary:hover {
     background: var(--accent-hover);
-    box-shadow: var(--glow-subtle);
+    box-shadow: var(--shadow-md);
 }
 
 .btn-secondary {
-    background: var(--bg-tertiary);
+    background: var(--card-bg-muted);
     color: var(--text-primary);
-    border-color: var(--border-color);
+    border-color: var(--card-border);
+    box-shadow: var(--shadow-xs);
 }
 
 .btn-secondary:hover {
-    background: var(--bg-elevated);
+    background: var(--field-bg-hover);
     border-color: hsl(var(--hsl-accent) / 0.25);
 }
 
@@ -134,4 +135,3 @@
     border-top-color: transparent;
     animation: spin 0.8s linear infinite;
 }
-

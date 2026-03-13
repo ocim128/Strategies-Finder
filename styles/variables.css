@@ -56,9 +56,11 @@
     --red-light: hsl(var(--hsl-danger-light));
     --warning: hsl(var(--hsl-warning));
     --warning-hover: hsl(var(--hsl-warning-strong));
+    --yellow-light: hsl(var(--hsl-warning) / 0.92);
     --text-on-accent: hsl(0 0% 100%);
     --premium-color: hsl(var(--hsl-premium));
     --premium-hover: hsl(var(--hsl-premium-strong));
+    --text-muted: var(--text-tertiary);
 
     /* Semantic trading colors */
     --buy-strong: hsl(var(--hsl-buy-strong));
@@ -115,6 +117,42 @@
     --gradient-warm: linear-gradient(135deg, hsl(var(--hsl-warning)), hsl(var(--hsl-danger)));
     --gradient-cool: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-success)));
 
+    --header-bg: hsl(var(--hsl-surface-2) / 0.7);
+    --header-border: hsl(var(--hsl-border) / 0.9);
+    --header-ink: var(--text-primary);
+    --header-ink-muted: var(--text-secondary);
+    --header-control-bg: hsl(var(--hsl-surface-3) / 0.8);
+    --header-control-hover-bg: hsl(var(--hsl-surface-4) / 0.9);
+    --header-control-border: hsl(var(--hsl-border) / 0.9);
+    --header-control-active-bg: hsl(var(--hsl-accent) / 0.18);
+
+    --chrome-bg: linear-gradient(180deg,
+            hsl(var(--hsl-surface-3) / 0.6),
+            var(--glass-surface-floating));
+    --chrome-border: var(--glass-border);
+    --card-bg: hsl(var(--hsl-surface-2) / 0.76);
+    --card-bg-muted: hsl(var(--hsl-surface-3) / 0.56);
+    --card-border: hsl(var(--hsl-border) / 0.68);
+    --field-bg: hsl(var(--hsl-surface-3) / 0.92);
+    --field-bg-hover: hsl(var(--hsl-surface-4) / 0.96);
+    --field-bg-focus: hsl(var(--hsl-surface-2) / 0.96);
+    --field-border: hsl(var(--hsl-border) / 0.9);
+    --panel-shell-bg: linear-gradient(160deg,
+            hsl(var(--hsl-surface-3) / 0.72),
+            var(--glass-surface-floating));
+    --panel-header-bg: linear-gradient(180deg,
+            hsl(var(--hsl-surface-3) / 0.4) 0%,
+            transparent 100%);
+    --panel-header-ink: var(--text-primary);
+    --panel-content-bg: linear-gradient(180deg,
+            hsl(var(--hsl-surface-1) / 0.38),
+            hsl(var(--hsl-surface-1) / 0.5));
+    --tab-strip-bg: var(--bg-tertiary);
+    --tab-hover-bg: hsl(var(--hsl-surface-4) / 0.25);
+    --tab-active-bg: hsl(var(--hsl-accent) / 0.14);
+    --tab-active-border: var(--accent-light);
+    --tab-secondary-bg: transparent;
+
     --page-gradient: radial-gradient(1400px 900px at 8% -12%,
             hsl(var(--hsl-accent) / 0.12),
             transparent 55%),
@@ -146,6 +184,7 @@
     /* Radius tokens */
     --radius-xs: 4px;
     --radius-s: 6px;
+    --radius-sm: var(--radius-s);
     --radius-m: 8px;
     --radius-l: 10px;
     --radius-xl: 14px;
@@ -162,6 +201,7 @@
     --font-size-lg: 16px;
     --font-size-xl: 18px;
     --font-size-2xl: 20px;
+    --font-weight-normal: 400;
     --font-weight-regular: 400;
     --font-weight-medium: 500;
     --font-weight-semibold: 600;
@@ -176,34 +216,73 @@
     --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
     --ease-elastic: cubic-bezier(0.34, 1.56, 0.64, 1);
     --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+    --hsl-green: var(--hsl-success);
+    --hsl-red: var(--hsl-danger);
 }
 
 .light-theme {
-    --hsl-surface-1: 220 33% 98%;
-    --hsl-surface-2: 220 30% 95%;
-    --hsl-surface-3: 220 22% 90%;
-    --hsl-surface-4: 220 18% 86%;
-    --hsl-surface-5: 220 15% 82%;
-    --hsl-ink-1: 220 25% 16%;
-    --hsl-ink-2: 220 10% 45%;
-    --hsl-ink-3: 220 8% 60%;
-    --hsl-border: 220 16% 84%;
-    --hsl-border-subtle: 220 14% 88%;
+    --hsl-surface-1: 216 36% 97%;
+    --hsl-surface-2: 220 31% 94%;
+    --hsl-surface-3: 220 26% 90%;
+    --hsl-surface-4: 220 20% 85%;
+    --hsl-surface-5: 220 18% 80%;
+    --hsl-ink-1: 223 37% 15%;
+    --hsl-ink-2: 221 17% 34%;
+    --hsl-ink-3: 220 12% 52%;
+    --hsl-border: 220 22% 84%;
+    --hsl-border-subtle: 220 20% 90%;
     --hsl-chart: 0 0% 100%;
-    --hsl-accent: 224 90% 54%;
-    --hsl-accent-strong: 224 90% 47%;
-    --hsl-accent-light: 224 90% 65%;
-    --hsl-success: 165 58% 35%;
-    --hsl-success-strong: 165 58% 30%;
-    --hsl-success-light: 165 58% 45%;
-    --hsl-danger: 2 72% 52%;
-    --hsl-danger-light: 2 72% 62%;
+    --hsl-accent: 221 88% 55%;
+    --hsl-accent-strong: 221 88% 48%;
+    --hsl-accent-light: 221 88% 62%;
+    --hsl-success: 161 58% 34%;
+    --hsl-success-strong: 161 58% 29%;
+    --hsl-success-light: 161 58% 43%;
+    --hsl-danger: 3 74% 53%;
+    --hsl-danger-light: 3 74% 62%;
     --hsl-warning: 35 92% 50%;
     --hsl-warning-strong: 35 92% 43%;
-    --hsl-shadow: 220 30% 32%;
-    --hsl-glass: 220 33% 96%;
+    --hsl-shadow: 220 26% 36%;
+    --hsl-glass: 220 33% 97%;
     --hsl-premium: 268 75% 52%;
     --hsl-premium-strong: 268 75% 45%;
+
+    --bg-primary: hsl(var(--hsl-surface-1));
+    --bg-secondary: hsl(var(--hsl-surface-2));
+    --bg-tertiary: hsl(var(--hsl-surface-3));
+    --bg-elevated: hsl(var(--hsl-surface-4));
+    --bg-highest: hsl(var(--hsl-surface-5));
+    --text-primary: hsl(var(--hsl-ink-1));
+    --text-secondary: hsl(var(--hsl-ink-2));
+    --text-tertiary: hsl(var(--hsl-ink-3));
+    --border-color: hsl(var(--hsl-border));
+    --border-subtle: hsl(var(--hsl-border-subtle));
+    --chart-bg: hsl(var(--hsl-chart));
+    --accent-color: hsl(var(--hsl-accent));
+    --accent-hover: hsl(var(--hsl-accent-strong));
+    --accent-light: hsl(var(--hsl-accent-light));
+    --green: hsl(var(--hsl-success));
+    --green-hover: hsl(var(--hsl-success-strong));
+    --green-light: hsl(var(--hsl-success-light));
+    --red: hsl(var(--hsl-danger));
+    --red-light: hsl(var(--hsl-danger-light));
+    --warning: hsl(var(--hsl-warning));
+    --warning-hover: hsl(var(--hsl-warning-strong));
+    --premium-color: hsl(var(--hsl-premium));
+    --premium-hover: hsl(var(--hsl-premium-strong));
+    --buy-strong: hsl(var(--hsl-buy-strong));
+    --buy-weak: hsl(var(--hsl-buy-weak));
+    --sell-strong: hsl(var(--hsl-sell-strong));
+    --sell-weak: hsl(var(--hsl-sell-weak));
+    --neutral: hsl(var(--hsl-neutral));
+
+    --profit-bg: hsl(var(--hsl-success) / 0.12);
+    --loss-bg: hsl(var(--hsl-danger) / 0.12);
+    --accent-soft: hsl(var(--hsl-accent) / 0.10);
+    --accent-soft-strong: hsl(var(--hsl-accent) / 0.18);
+    --success-soft: hsl(var(--hsl-success) / 0.14);
+    --danger-soft: hsl(var(--hsl-danger) / 0.14);
+    --premium-soft: hsl(var(--hsl-premium) / 0.12);
 
     --overlay-bg: hsl(220 20% 20% / 0.35);
     --glass-surface-floating: hsl(var(--hsl-surface-1) / 0.84);
@@ -231,6 +310,53 @@
     --glow-danger: 0 0 16px hsl(var(--hsl-danger) / 0.25);
     --glow-premium: 0 0 20px hsl(var(--hsl-premium) / 0.3);
     --glow-subtle: 0 0 10px hsl(var(--hsl-accent) / 0.15);
+    --focus-ring: 0 0 0 2px hsl(var(--hsl-accent) / 0.35);
+    --focus-ring-soft: 0 0 0 4px hsl(var(--hsl-accent) / 0.12);
+
+    --gradient-accent: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-accent-strong)));
+    --gradient-success: linear-gradient(135deg, hsl(var(--hsl-success)), hsl(var(--hsl-success-strong)));
+    --gradient-danger: linear-gradient(135deg, hsl(var(--hsl-danger-light)), hsl(var(--hsl-danger)));
+    --gradient-premium: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-premium)));
+    --gradient-warm: linear-gradient(135deg, hsl(var(--hsl-warning)), hsl(var(--hsl-danger)));
+    --gradient-cool: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-success)));
+
+    --header-bg: linear-gradient(135deg,
+            hsl(223 39% 18% / 0.96),
+            hsl(219 40% 14% / 0.96));
+    --header-border: hsl(220 34% 28% / 0.8);
+    --header-ink: hsl(0 0% 100%);
+    --header-ink-muted: hsl(218 20% 76%);
+    --header-control-bg: hsl(223 24% 21% / 0.92);
+    --header-control-hover-bg: hsl(222 23% 27% / 0.96);
+    --header-control-border: hsl(220 25% 33% / 0.86);
+    --header-control-active-bg: hsl(var(--hsl-accent) / 0.22);
+
+    --chrome-bg: linear-gradient(180deg,
+            hsl(0 0% 100% / 0.88),
+            hsl(220 35% 97% / 0.94));
+    --chrome-border: hsl(220 28% 82% / 0.95);
+    --card-bg: hsl(0 0% 100% / 0.95);
+    --card-bg-muted: hsl(220 32% 97%);
+    --card-border: hsl(220 24% 86%);
+    --field-bg: hsl(0 0% 100%);
+    --field-bg-hover: hsl(220 30% 98%);
+    --field-bg-focus: hsl(0 0% 100%);
+    --field-border: hsl(220 22% 82%);
+    --panel-shell-bg: linear-gradient(180deg,
+            hsl(0 0% 100% / 0.98),
+            hsl(220 35% 97% / 0.98));
+    --panel-header-bg: linear-gradient(135deg,
+            hsl(223 39% 18%) 0%,
+            hsl(219 40% 14%) 100%);
+    --panel-header-ink: hsl(0 0% 100%);
+    --panel-content-bg: linear-gradient(180deg,
+            hsl(220 40% 99%) 0%,
+            hsl(220 29% 97%) 100%);
+    --tab-strip-bg: hsl(220 30% 98%);
+    --tab-hover-bg: hsl(219 63% 95%);
+    --tab-active-bg: hsl(221 82% 95%);
+    --tab-active-border: hsl(var(--hsl-accent));
+    --tab-secondary-bg: hsl(220 24% 97%);
 
     --page-gradient: radial-gradient(900px 600px at 10% -10%,
             hsl(var(--hsl-accent) / 0.10),
@@ -241,4 +367,10 @@
         radial-gradient(500px 350px at 50% 100%,
             hsl(var(--hsl-success) / 0.05),
             transparent 50%);
+
+    --float-gap: 10px;
+    --float-radius: 18px;
+    --radius-s: 8px;
+    --radius-m: 10px;
+    --radius-l: 14px;
 }

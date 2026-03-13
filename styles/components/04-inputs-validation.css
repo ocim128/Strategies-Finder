@@ -16,7 +16,7 @@
 .param-label {
     display: block;
     font-size: var(--font-size-sm);
-    font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-semibold);
     color: var(--text-secondary);
     margin-bottom: 0;
     transition: color 0.2s ease;
@@ -28,26 +28,27 @@
 
 .param-input {
     width: 100%;
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-s);
-    border: 1px solid var(--border-color);
-    background: var(--bg-tertiary);
+    padding: var(--space-2-5) var(--space-3);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--field-border);
+    background: var(--field-bg);
     color: var(--text-primary);
     font-size: var(--font-size-md);
     font-variant-numeric: tabular-nums;
-    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: var(--shadow-xs);
+    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
 .param-input:hover {
     border-color: hsl(var(--hsl-accent) / 0.35);
-    background: var(--bg-elevated);
+    background: var(--field-bg-hover);
 }
 
 .param-input:focus {
     outline: none;
     border-color: var(--accent-color);
     box-shadow: var(--focus-ring-soft), var(--focus-ring);
-    background: var(--bg-secondary);
+    background: var(--field-bg-focus);
 }
 
 /* Validation states */
@@ -81,20 +82,21 @@
 .strategy-select {
     width: 100%;
     padding: var(--space-2-5) var(--space-3);
-    border-radius: var(--radius-s);
-    border: 1px solid var(--border-color);
-    background: var(--bg-tertiary);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--field-border);
+    background: var(--field-bg);
     color: var(--text-primary);
     font-size: var(--font-size-md);
-    font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-semibold);
     cursor: pointer;
     margin-bottom: var(--space-4);
+    box-shadow: var(--shadow-xs);
     transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 
 .strategy-select:hover {
     border-color: hsl(var(--hsl-accent) / 0.4);
-    background: var(--bg-elevated);
+    background: var(--field-bg-hover);
 }
 
 .strategy-select:focus {

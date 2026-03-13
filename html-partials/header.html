@@ -1,182 +1,181 @@
-﻿<header class="header">
+<header class="header">
     <div class="header-left">
-        <div class="logo">
-            <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z" />
-            </svg>
-            Strategy Tester
-        </div>
-
-        <div class="dropdown">
-            <div class="symbol-selector" id="symbolSelector" role="button" tabindex="0">
-                <span class="symbol-name" id="symbolName">ETH/USDT</span>
-                <span class="symbol-price" id="symbolPrice">Loading...</span>
-                <span class="symbol-change" id="symbolChange">+0.00%</span>
-                <span class="symbol-source loading" id="symbolDataSource" title="Loading chart data">
-                    Loading
-                </span>
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-                    <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" stroke-width="1.5" fill="none" />
+        <div class="header-group header-group--market">
+            <div class="logo">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z" />
                 </svg>
+                Strategy Tester
             </div>
-            <div class="dropdown-menu symbol-search-dropdown" id="symbolDropdown">
-                <!-- Search Input Section -->
-                <div class="symbol-search-container">
-                    <div class="symbol-search-input-wrapper">
-                        <svg class="symbol-search-icon" viewBox="0 0 24 24" fill="currentColor">
-                            <path
-                                d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
-                        </svg>
-                        <input type="text" id="symbolSearchInput" class="symbol-search-input"
-                            placeholder="Search stocks, crypto, commodities..." autocomplete="off" spellcheck="false" />
-                        <div class="symbol-search-spinner is-hidden" id="symbolSearchSpinner">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="12" cy="12" r="10" opacity="0.25" />
-                                <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round" />
+
+            <div class="dropdown">
+                <div class="symbol-selector" id="symbolSelector" role="button" tabindex="0">
+                    <span class="symbol-name" id="symbolName">ETH/USDT</span>
+                    <span class="symbol-price" id="symbolPrice">Loading...</span>
+                    <span class="symbol-change" id="symbolChange">+0.00%</span>
+                    <span class="symbol-source loading" id="symbolDataSource" title="Loading chart data">
+                        Loading
+                    </span>
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                        <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" stroke-width="1.5" fill="none" />
+                    </svg>
+                </div>
+                <div class="dropdown-menu symbol-search-dropdown" id="symbolDropdown">
+                    <div class="symbol-search-container">
+                        <div class="symbol-search-input-wrapper">
+                            <svg class="symbol-search-icon" viewBox="0 0 24 24" fill="currentColor">
+                                <path
+                                    d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
                             </svg>
+                            <input type="text" id="symbolSearchInput" class="symbol-search-input"
+                                placeholder="Search stocks, crypto, commodities..." autocomplete="off" spellcheck="false" />
+                            <div class="symbol-search-spinner is-hidden" id="symbolSearchSpinner">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10" opacity="0.25" />
+                                    <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round" />
+                                </svg>
+                            </div>
+                            <button class="symbol-search-clear is-hidden" id="symbolSearchClear" type="button"
+                                title="Clear search">
+                                <svg viewBox="0 0 24 24" fill="currentColor">
+                                    <path
+                                        d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                                </svg>
+                            </button>
                         </div>
-                        <button class="symbol-search-clear is-hidden" id="symbolSearchClear" type="button"
-                            title="Clear search">
+                    </div>
+
+                    <div class="symbol-search-results" id="symbolSearchResults">
+                        <div class="symbol-search-loading is-hidden" id="symbolSearchLoading">
+                            <span class="symbol-search-loading-text">Loading pairs...</span>
+                        </div>
+                        <div class="symbol-search-empty is-hidden" id="symbolSearchEmpty">
                             <svg viewBox="0 0 24 24" fill="currentColor">
                                 <path
-                                    d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                                    d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
                             </svg>
-                        </button>
+                            <span>No pairs found</span>
+                        </div>
+                    </div>
+
+                    <div class="dropdown-divider"></div>
+
+                    <div class="symbol-search-section">
+                        <div class="dropdown-header">Local S&amp;P500 Dataset</div>
+                        <div class="mock-model-row">
+                            <label class="mock-model-label" for="localSp500Select">Local 1D Seed</label>
+                            <select class="mock-model-select local-csv-select" id="localSp500Select">
+                                <option value="">Loading local tickers...</option>
+                            </select>
+                        </div>
+                        <div class="dropdown-header">Mock Data (For Testing)</div>
+                        <div class="mock-model-row">
+                            <label class="mock-model-label" for="mockModelSelect">Mock Model</label>
+                            <select class="mock-model-select" id="mockModelSelect">
+                                <option value="simple">Simple (V1)</option>
+                                <option value="hard">Regime (V2)</option>
+                                <option value="v3">Adversarial (V3)</option>
+                                <option value="v4">Market Realism (V4)</option>
+                                <option value="v5">Market Realism Lite (V5)</option>
+                                <option value="v6">Volatile Crypto (V6)</option>
+                            </select>
+                        </div>
+                        <div class="mock-model-row">
+                            <label class="mock-model-label" for="mockBarsInput">Mock Candles</label>
+                            <input type="number" class="mock-model-input" id="mockBarsInput" min="100" max="500000"
+                                step="100" value="30000" inputmode="numeric" />
+                        </div>
+                        <div class="dropdown-item" data-symbol="MOCK_STOCK" role="button" tabindex="0">
+                            <span class="symbol-item-badge stock">Mock</span>
+                            MOCK_STOCK (Test Stock)
+                        </div>
+                        <div class="dropdown-item" data-symbol="MOCK_CRYPTO" role="button" tabindex="0">
+                            <span class="symbol-item-badge crypto">Mock</span>
+                            MOCK_CRYPTO (Test Crypto)
+                        </div>
+                        <div class="dropdown-item" data-symbol="MOCK_FOREX" role="button" tabindex="0">
+                            <span class="symbol-item-badge forex">Mock</span>
+                            MOCK_FOREX (Test Forex)
+                        </div>
                     </div>
                 </div>
+            </div>
+        </div>
 
-                <!-- Search Results Container -->
-                <div class="symbol-search-results" id="symbolSearchResults">
-                    <!-- Dynamic results will be inserted here -->
-                    <div class="symbol-search-loading is-hidden" id="symbolSearchLoading">
-                        <span class="symbol-search-loading-text">Loading pairs...</span>
-                    </div>
-                    <div class="symbol-search-empty is-hidden" id="symbolSearchEmpty">
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                            <path
-                                d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+        <div class="header-group header-group--controls">
+            <div class="timeframe-tabs" id="timeframeTabs">
+                <button class="timeframe-tab" data-interval="1m">1m</button>
+                <button class="timeframe-tab" data-interval="3m">3m</button>
+                <button class="timeframe-tab" data-interval="5m">5m</button>
+                <button class="timeframe-tab" data-interval="15m">15m</button>
+                <button class="timeframe-tab" data-interval="1h">1H</button>
+                <button class="timeframe-tab" data-interval="4h">4H</button>
+                <button class="timeframe-tab active" data-interval="1d">1D</button>
+                <button class="timeframe-tab" data-interval="1w">1W</button>
+                <div class="timeframe-custom" id="timeframeCustom">
+                    <input type="number" id="timeframeMinutesInput" class="timeframe-custom-input" min="1" max="10080"
+                        step="1" placeholder="min" inputmode="numeric" aria-label="Custom minutes" />
+                    <span class="timeframe-custom-suffix">m</span>
+                    <button class="timeframe-custom-apply" id="timeframeMinutesApply" type="button"
+                        title="Apply custom minutes">Set</button>
+                </div>
+            </div>
+
+            <div class="chart-mode-selector" id="chartModeSelector">
+                <button class="chart-mode-toggle" id="chartModeToggle" type="button" title="Toggle Heikin Ashi mode">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M9 4H7v7H5V4H3v7c0 2.76 2.24 5 5 5v7h2v-7c2.76 0 5-2.24 5-5V4h-2v7h-2V4H9z" />
+                    </svg>
+                    <span id="chartModeLabel">Candle</span>
+                </button>
+            </div>
+
+            <div class="block-selector" id="blockSelector">
+                <div class="block-selector-divider"></div>
+
+                <button class="block-pin-btn" id="blockSelectorIn" type="button" title="Set IN point (I)">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
+                        <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
+                    </svg>
+                    IN
+                </button>
+                <button class="block-pin-btn" id="blockSelectorOut" type="button" title="Set OUT point (O)">
+                    OUT
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
+                        <path d="M6 18l8.5-6L6 6v12zm8.5-6v6H17V6h-2.5v6z" />
+                    </svg>
+                </button>
+
+                <div class="block-presets">
+                    <button class="block-preset-btn" id="blockPresetFull" type="button" title="Use full dataset">Full</button>
+                    <button class="block-preset-btn" id="blockPresetLast2Y" type="button" title="Last 2 years">2Y</button>
+                    <button class="block-preset-btn" id="blockPresetVisible" type="button" title="Current visible range">Visible</button>
+                    <button class="block-preset-btn" id="blockSelectorInvert" type="button" title="Invert: OUT becomes new IN, last candle becomes new OUT" disabled>
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11">
+                            <path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z" />
                         </svg>
-                        <span>No pairs found</span>
-                    </div>
+                        Invert
+                    </button>
+                    <button class="block-invert-reset-btn" id="blockSelectorInvertReset" type="button" title="Restore original range" style="display:none">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="10" height="10">
+                            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                        </svg>
+                    </button>
                 </div>
 
-                <div class="dropdown-divider"></div>
-
-                <!-- Other Markets Section -->
-                <div class="symbol-search-section">
-                    <div class="dropdown-header">Local S&amp;P500 Dataset</div>
-                    <div class="mock-model-row">
-                        <label class="mock-model-label" for="localSp500Select">Local 1D Seed</label>
-                        <select class="mock-model-select local-csv-select" id="localSp500Select">
-                            <option value="">Loading local tickers...</option>
-                        </select>
-                    </div>
-                    <div class="dropdown-header">Mock Data (For Testing)</div>
-                    <div class="mock-model-row">
-                        <label class="mock-model-label" for="mockModelSelect">Mock Model</label>
-                        <select class="mock-model-select" id="mockModelSelect">
-                            <option value="simple">Simple (V1)</option>
-                            <option value="hard">Regime (V2)</option>
-                            <option value="v3">Adversarial (V3)</option>
-                            <option value="v4">Market Realism (V4)</option>
-                            <option value="v5">Market Realism Lite (V5)</option>
-                            <option value="v6">Volatile Crypto (V6)</option>
-                        </select>
-                    </div>
-                    <div class="mock-model-row">
-                        <label class="mock-model-label" for="mockBarsInput">Mock Candles</label>
-                        <input type="number" class="mock-model-input" id="mockBarsInput" min="100" max="500000"
-                            step="100" value="30000" inputmode="numeric" />
-                    </div>
-                    <div class="dropdown-item" data-symbol="MOCK_STOCK" role="button" tabindex="0">
-                        <span class="symbol-item-badge stock">Mock</span>
-                        MOCK_STOCK (Test Stock)
-                    </div>
-                    <div class="dropdown-item" data-symbol="MOCK_CRYPTO" role="button" tabindex="0">
-                        <span class="symbol-item-badge crypto">Mock</span>
-                        MOCK_CRYPTO (Test Crypto)
-                    </div>
-                    <div class="dropdown-item" data-symbol="MOCK_FOREX" role="button" tabindex="0">
-                        <span class="symbol-item-badge forex">Mock</span>
-                        MOCK_FOREX (Test Forex)
-                    </div>
+                <div class="block-selector-badge" id="blockSelectorBadge" style="display:none" title="Active block range">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="10" height="10">
+                        <path d="M17 12h-5v5h5v-5zM16 1v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-1V1h-2zm3 18H5V8h14v11z" />
+                    </svg>
+                    <span id="blockSelectorBadgeText">-</span>
                 </div>
-            </div>
-        </div>
 
-        <div class="timeframe-tabs" id="timeframeTabs">
-            <button class="timeframe-tab" data-interval="1m">1m</button>
-            <button class="timeframe-tab" data-interval="3m">3m</button>
-            <button class="timeframe-tab" data-interval="5m">5m</button>
-            <button class="timeframe-tab" data-interval="15m">15m</button>
-            <button class="timeframe-tab" data-interval="1h">1H</button>
-            <button class="timeframe-tab" data-interval="4h">4H</button>
-            <button class="timeframe-tab active" data-interval="1d">1D</button>
-            <button class="timeframe-tab" data-interval="1w">1W</button>
-            <div class="timeframe-custom" id="timeframeCustom">
-                <input type="number" id="timeframeMinutesInput" class="timeframe-custom-input" min="1" max="10080"
-                    step="1" placeholder="min" inputmode="numeric" aria-label="Custom minutes" />
-                <span class="timeframe-custom-suffix">m</span>
-                <button class="timeframe-custom-apply" id="timeframeMinutesApply" type="button"
-                    title="Apply custom minutes">Set</button>
-            </div>
-        </div>
-
-        <div class="chart-mode-selector" id="chartModeSelector">
-            <button class="chart-mode-toggle" id="chartModeToggle" type="button" title="Toggle Heikin Ashi mode">
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M9 4H7v7H5V4H3v7c0 2.76 2.24 5 5 5v7h2v-7c2.76 0 5-2.24 5-5V4h-2v7h-2V4H9z" />
-                </svg>
-                <span id="chartModeLabel">Candle</span>
-            </button>
-        </div>
-
-        <!-- Block Selector — video-edit style IN/OUT range picker -->
-        <div class="block-selector" id="blockSelector">
-            <div class="block-selector-divider"></div>
-
-            <!-- IN / OUT pin buttons -->
-            <button class="block-pin-btn" id="blockSelectorIn" type="button" title="Set IN point (I)">
-                <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
-                    <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/>
-                </svg>
-                IN
-            </button>
-            <button class="block-pin-btn" id="blockSelectorOut" type="button" title="Set OUT point (O)">
-                OUT
-                <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
-                    <path d="M6 18l8.5-6L6 6v12zm8.5-6v6H17V6h-2.5v6z"/>
-                </svg>
-            </button>
-
-            <!-- Quick preset chips -->
-            <div class="block-presets">
-                <button class="block-preset-btn" id="blockPresetFull" type="button" title="Use full dataset">Full</button>
-                <button class="block-preset-btn" id="blockPresetLast2Y" type="button" title="Last 2 years">2Y</button>
-                <button class="block-preset-btn" id="blockPresetVisible" type="button" title="Current visible range">Visible</button>
-                <button class="block-preset-btn" id="blockSelectorInvert" type="button" title="Invert: OUT becomes new IN, last candle becomes new OUT" disabled>
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="11" height="11"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/></svg>
-                    Invert
-                </button>
-                <button class="block-invert-reset-btn" id="blockSelectorInvertReset" type="button" title="Restore original range" style="display:none">
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="10" height="10"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                <button class="block-clear-btn" id="blockSelectorClear" style="display:none" type="button" title="Clear block (Esc)">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
+                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                    </svg>
                 </button>
             </div>
-
-            <!-- Active range badge -->
-            <div class="block-selector-badge" id="blockSelectorBadge" style="display:none" title="Active block range">
-                <svg viewBox="0 0 24 24" fill="currentColor" width="10" height="10">
-                    <path d="M17 12h-5v5h5v-5zM16 1v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-1V1h-2zm3 18H5V8h14v11z"/>
-                </svg>
-                <span id="blockSelectorBadgeText">-</span>
-            </div>
-
-            <!-- Clear button -->
-            <button class="block-clear-btn" id="blockSelectorClear" style="display:none" type="button" title="Clear block (Esc)">
-                <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
-                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-                </svg>
-            </button>
         </div>
     </div>
 

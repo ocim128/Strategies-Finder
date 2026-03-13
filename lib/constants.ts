@@ -61,33 +61,33 @@ export const darkTheme: DeepPartial<ChartOptions> = {
 
 export const lightTheme: DeepPartial<ChartOptions> = {
     layout: {
-        textColor: '#131722',
-        background: { type: ColorType.Solid, color: '#ffffff' },
+        textColor: '#24324a',
+        background: { type: ColorType.Solid, color: '#fcfdff' },
     },
     grid: {
-        vertLines: { color: '#e0e3eb' },
-        horzLines: { color: '#e0e3eb' },
+        vertLines: { color: '#e7edf5' },
+        horzLines: { color: '#e7edf5' },
     },
     crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
-            color: '#9598a1',
+            color: '#93a3ba',
             width: 1,
             style: LineStyle.Dashed,
             labelBackgroundColor: '#2962ff',
         },
         horzLine: {
-            color: '#9598a1',
+            color: '#93a3ba',
             width: 1,
             style: LineStyle.Dashed,
             labelBackgroundColor: '#2962ff',
         },
     },
     rightPriceScale: {
-        borderColor: '#e0e3eb',
+        borderColor: '#d8e1ec',
     },
     timeScale: {
-        borderColor: '#e0e3eb',
+        borderColor: '#d8e1ec',
         timeVisible: true,
         secondsVisible: false,
         minBarSpacing: 2,

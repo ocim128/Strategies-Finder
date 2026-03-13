@@ -4,10 +4,10 @@
     align-items: center;
     gap: 4px;
     padding: 4px 8px;
-    border-radius: var(--radius-s);
-    border: 1px solid var(--border-color);
-    background: var(--bg-tertiary);
-    color: var(--text-secondary);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--header-control-border);
+    background: var(--header-control-bg);
+    color: var(--header-ink-muted);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
     cursor: pointer;
@@ -23,8 +23,8 @@
 
 .block-pin-btn:hover {
     border-color: hsl(30 95% 55% / 0.5);
-    color: var(--text-primary);
-    background: hsl(30 95% 55% / 0.08);
+    color: var(--header-ink);
+    background: var(--header-control-hover-bg);
 }
 
 .block-pin-btn:active {
@@ -42,14 +42,15 @@
     display: flex;
     gap: 2px;
     margin-left: 2px;
+    flex-wrap: wrap;
 }
 
 .block-preset-btn {
     padding: 3px 7px;
     border-radius: var(--radius-xs);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--header-control-border);
     background: transparent;
-    color: var(--text-secondary);
+    color: var(--header-ink-muted);
     font-size: 10px;
     font-weight: var(--font-weight-medium);
     cursor: pointer;
@@ -58,8 +59,8 @@
 }
 
 .block-preset-btn:hover {
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
+    background: hsl(0 0% 100% / 0.08);
+    color: var(--header-ink);
     border-color: hsl(var(--hsl-accent) / 0.3);
 }
 

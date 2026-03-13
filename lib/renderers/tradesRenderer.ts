@@ -1,7 +1,8 @@
 import { Time } from "lightweight-charts";
-import { Trade } from "../strategies/index";
+import { OHLCVData, Trade } from "../strategies/index";
 import { getRequiredElement, setVisible } from "../dom-utils";
 import { state } from "../state";
+import { resolveOpenTradeDisplayMetrics } from "../open-trade-display";
 
 export class TradesRenderer {
     public render(
@@ -77,20 +78,6 @@ export class TradesRenderer {
         this.bindTradeJumpHandlers(container, jumpToTrade);
     }
 
-    private getTimestamp(time: Time): number {
-        if (typeof time === 'number') {
-            if (time < 1e11) return time * 1000;
-            return time;
-        }
-        if (typeof time === 'string') {
-            return new Date(time).getTime();
-        }
-        if (typeof time === 'object' && 'year' in time) {
-            return Date.UTC(time.year, time.month - 1, time.day);
-        }
-        return 0;
-    }
-
     private formatDuration(ms: number): string {
         if (ms < 0) return '-';
         const seconds = Math.floor(ms / 1000);
@@ -134,11 +121,11 @@ export class TradesRenderer {
         const statusClass = isProfit ? 'win' : 'loss';
         const duration = this.formatDuration(display.durationMs);
         const fees = trade.fees ? `Fees: $${trade.fees.toFixed(2)}` : '';
-        const exitReasonBadge = this.getExitReasonBadge(trade.exitReason);
+        const exitReasonBadge = this.getExitReasonBadge(display.displayExitReason);
         const entryDate = formatDate(trade.entryTime);
 
         let targetRow = '';
-        if (trade.exitReason === 'end_of_data') {
+        if (display.displayExitReason === 'end_of_data') {
             const targets: string[] = [];
             if (trade.takeProfitPrice != null && trade.takeProfitPrice > 0) {
                 const tpPct = Math.abs((trade.takeProfitPrice - trade.entryPrice) / trade.entryPrice * 100);
@@ -194,41 +181,13 @@ export class TradesRenderer {
         pnl: number;
         pnlPercent: number;
         durationMs: number;
+        displayExitReason: Trade['exitReason'];
     } {
-        const entryTs = this.getTimestamp(trade.entryTime);
-        const defaultDurationMs = this.getTimestamp(trade.exitTime) - entryTs;
-        const base = {
-            exitPrice: trade.exitPrice,
-            pnl: trade.pnl,
-            pnlPercent: trade.pnlPercent,
-            durationMs: defaultDurationMs,
-        };
+        const liveCandle: OHLCVData | null = state.ohlcvData.length > 0
+            ? state.ohlcvData[state.ohlcvData.length - 1]
+            : null;
 
-        if (trade.exitReason !== 'end_of_data' || !Number.isFinite(trade.entryPrice) || trade.entryPrice <= 0) {
-            return base;
-        }
-        if (state.ohlcvData.length === 0) {
-            return base;
-        }
-
-        const lastClose = Number(state.ohlcvData[state.ohlcvData.length - 1]?.close);
-        if (!Number.isFinite(lastClose)) {
-            return base;
-        }
-
-        const directionFactor = trade.type === 'long' ? 1 : -1;
-        const rawPnl = (lastClose - trade.entryPrice) * directionFactor * trade.size;
-        const pnl = rawPnl - (trade.fees ?? 0);
-        const entryValue = trade.size * trade.entryPrice;
-        const pnlPercent = entryValue > 0 ? (pnl / entryValue) * 100 : trade.pnlPercent;
-        const durationMs = entryTs > 0 ? Math.max(0, Date.now() - entryTs) : defaultDurationMs;
-
-        return {
-            exitPrice: lastClose,
-            pnl,
-            pnlPercent,
-            durationMs,
-        };
+        return resolveOpenTradeDisplayMetrics(trade, liveCandle);
     }
 
     private bindTradeJumpHandlers(container: HTMLElement, jumpToTrade: (time: Time) => void): void {
