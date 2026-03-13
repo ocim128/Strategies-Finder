@@ -34,7 +34,20 @@ import { median_deviation_streak } from "./lib/median_deviation_streak";
 import { autocorr_deadband_release } from "./lib/autocorr_deadband_release";
 import { entropy_ratio_regime_alignment } from "./lib/entropy_ratio_regime_alignment";
 import { skew_entropy_polarization_entry } from "./lib/skew_entropy_polarization_entry";
+import { vwap_zscore_reversion } from "./lib/vwap_zscore_reversion";
+import { supertrend_churn_resilience } from "./lib/supertrend_churn_resilience";
+import { adx_skewness_drift } from "./lib/adx_skewness_drift";
+import { macd_signal_pinch_explosion } from "./lib/macd_signal_pinch_explosion";
+import { bollinger_skewness_ride } from "./lib/bollinger_skewness_ride";
+import { supertrend_distance_zscore } from "./lib/supertrend_distance_zscore";
+import { rsi_volatility_pinch_pop } from "./lib/rsi_volatility_pinch_pop";
+import { momentum_zscore_exhaustion } from "./lib/momentum_zscore_exhaustion";
+import { donchian_skewness_outlier } from "./lib/donchian_skewness_outlier";
+import { keltner_entropy_polarization } from "./lib/keltner_entropy_polarization";
 
+import { supertrend_friction_pinch } from "./lib/supertrend_friction_pinch";
+
+import { mfi_range_squeeze_breakout } from "./lib/mfi_range_squeeze_breakout";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -76,8 +89,21 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "autocorr_deadband_release", strategy: autocorr_deadband_release },
     { key: "skew_entropy_polarization_entry", strategy: skew_entropy_polarization_entry },
     { key: "entropy_ratio_regime_alignment", strategy: entropy_ratio_regime_alignment },
-];
+    { key: "vwap_zscore_reversion", strategy: vwap_zscore_reversion },
+    { key: "supertrend_churn_resilience", strategy: supertrend_churn_resilience },
+    { key: "adx_skewness_drift", strategy: adx_skewness_drift },
+    { key: "macd_signal_pinch_explosion", strategy: macd_signal_pinch_explosion },
+    { key: "bollinger_skewness_ride", strategy: bollinger_skewness_ride },
+    { key: "supertrend_distance_zscore", strategy: supertrend_distance_zscore },
+    { key: "rsi_volatility_pinch_pop", strategy: rsi_volatility_pinch_pop },
+    { key: "momentum_zscore_exhaustion", strategy: momentum_zscore_exhaustion },
+    { key: "donchian_skewness_outlier", strategy: donchian_skewness_outlier },
+    { key: "keltner_entropy_polarization", strategy: keltner_entropy_polarization },
 
+    { key: "supertrend_friction_pinch", strategy: supertrend_friction_pinch },
+
+    { key: "mfi_range_squeeze_breakout", strategy: mfi_range_squeeze_breakout },
+];
 export function createStrategiesRecordFromManifest(
     manifest: readonly StrategyManifestEntry[] = strategyManifest
 ): Record<string, Strategy> {
