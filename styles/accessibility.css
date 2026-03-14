@@ -181,6 +181,14 @@ textarea:focus-visible {
    Color Scheme Preferences
    ---------------------------------------- */
 
+body {
+    color-scheme: dark;
+}
+
+body.light-theme {
+    color-scheme: light;
+}
+
 @media (prefers-color-scheme: dark) {
 
     /* User prefers dark - our default */

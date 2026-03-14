@@ -769,7 +769,13 @@ export const ENSEMBLE_LAB_REQUIRED_IDS = [
     "ensembleTab",
     "ensembleEmpty",
     "ensembleContent",
+    "ensembleTargetPicker",
     "ensembleTargetSelect",
+    "ensembleTargetButton",
+    "ensembleTargetMenu",
+    "ensembleTargetSearch",
+    "ensembleTargetList",
+    "ensembleTargetPickerEmptyState",
     "ensembleTargetSummary",
     "ensembleMinSamples",
     "ensembleSymbolBadge",
@@ -815,7 +821,13 @@ export interface EnsembleLabDom {
     ensembleTab: HTMLElement;
     ensembleEmpty: HTMLElement;
     ensembleContent: HTMLElement;
+    ensembleTargetPicker: HTMLElement;
     ensembleTargetSelect: HTMLSelectElement;
+    ensembleTargetButton: HTMLButtonElement;
+    ensembleTargetMenu: HTMLElement;
+    ensembleTargetSearch: HTMLInputElement;
+    ensembleTargetList: HTMLElement;
+    ensembleTargetPickerEmptyState: HTMLElement;
     ensembleTargetSummary: HTMLElement;
     ensembleMinSamples: HTMLInputElement;
     ensembleSymbolBadge: HTMLElement;
@@ -862,7 +874,13 @@ export function createEnsembleLabDom(): EnsembleLabDom {
         ensembleTab: getRequiredElement("ensembleTab"),
         ensembleEmpty: getRequiredElement("ensembleEmpty"),
         ensembleContent: getRequiredElement("ensembleContent"),
+        ensembleTargetPicker: getRequiredElement("ensembleTargetPicker"),
         ensembleTargetSelect: getRequiredElement<HTMLSelectElement>("ensembleTargetSelect"),
+        ensembleTargetButton: getRequiredElement<HTMLButtonElement>("ensembleTargetButton"),
+        ensembleTargetMenu: getRequiredElement("ensembleTargetMenu"),
+        ensembleTargetSearch: getRequiredElement<HTMLInputElement>("ensembleTargetSearch"),
+        ensembleTargetList: getRequiredElement("ensembleTargetList"),
+        ensembleTargetPickerEmptyState: getRequiredElement("ensembleTargetPickerEmptyState"),
         ensembleTargetSummary: getRequiredElement("ensembleTargetSummary"),
         ensembleMinSamples: getRequiredElement<HTMLInputElement>("ensembleMinSamples"),
         ensembleSymbolBadge: getRequiredElement("ensembleSymbolBadge"),

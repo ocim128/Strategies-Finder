@@ -265,8 +265,10 @@ class StrategyEnsembleService {
     private contextCheckboxes = new Map<string, HTMLInputElement>();
     private contextItems = new Map<string, HTMLElement>();
     private contextConfigs = new Map<string, StrategyConfig>();
+    private targetOptionButtons = new Map<string, HTMLButtonElement>();
     private contextOrder: string[] = [];
     private lastContextToggleName: string | null = null;
+    private targetMenuOpen = false;
 
     private getDom(): EnsembleLabDom {
         return this.dom ??= createEnsembleLabDom();
@@ -291,6 +293,22 @@ class StrategyEnsembleService {
     }
 
     private bindEvents(dom: EnsembleLabDom): void {
+        dom.ensembleTargetButton.addEventListener("click", () => {
+            this.toggleTargetPicker();
+        });
+
+        dom.ensembleTargetSearch.addEventListener("input", () => {
+            this.applyTargetPickerFilter();
+        });
+
+        dom.ensembleTargetSearch.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                event.preventDefault();
+                this.closeTargetPicker();
+                dom.ensembleTargetButton.focus();
+            }
+        });
+
         dom.ensembleRunBtn.addEventListener("click", () => {
             void this.run();
         });
@@ -301,6 +319,7 @@ class StrategyEnsembleService {
         });
 
         dom.ensembleTargetSelect.addEventListener("change", () => {
+            this.syncTargetPickerUi();
             this.syncTargetContextState();
             this.renderTargetSummary();
             this.applyContextFilter();
@@ -376,6 +395,21 @@ class StrategyEnsembleService {
         state.subscribe("blockRange", () => {
             this.invalidateRunContext("Block selection changed. Run Strategy Ensemble Lab again.");
         });
+
+        document.addEventListener("click", (event) => {
+            if (!this.targetMenuOpen) {
+                return;
+            }
+
+            const target = event.target;
+            if (!(target instanceof Node)) {
+                return;
+            }
+
+            if (!dom.ensembleTargetPicker.contains(target)) {
+                this.closeTargetPicker();
+            }
+        });
     }
 
     private syncReadouts(dom: EnsembleLabDom): void {
@@ -401,9 +435,13 @@ class StrategyEnsembleService {
         this.contextCheckboxes.clear();
         this.contextItems.clear();
         this.contextConfigs.clear();
+        this.targetOptionButtons.clear();
         this.contextOrder = [];
         this.lastContextToggleName = null;
+        this.closeTargetPicker();
+        dom.ensembleTargetSearch.value = "";
         dom.ensembleTargetSelect.innerHTML = '<option value="" disabled>Select target config</option>';
+        dom.ensembleTargetList.innerHTML = "";
 
         for (const config of configs) {
             const option = document.createElement("option");
@@ -411,6 +449,7 @@ class StrategyEnsembleService {
             option.textContent = this.buildConfigLabel(config);
             dom.ensembleTargetSelect.appendChild(option);
             this.contextConfigs.set(config.name, config);
+            dom.ensembleTargetList.appendChild(this.createTargetOption(config));
         }
 
         if (previousTarget && configs.some((config) => config.name === previousTarget)) {
@@ -418,6 +457,9 @@ class StrategyEnsembleService {
         } else if (configs.length > 0) {
             dom.ensembleTargetSelect.value = configs[0].name;
         }
+
+        this.syncTargetPickerUi();
+        this.applyTargetPickerFilter();
 
         this.populateFamilyFilter(configs, previousFamilyFilter);
 
@@ -509,7 +551,111 @@ class StrategyEnsembleService {
     }
 
     private buildConfigLabel(config: StrategyConfig): string {
-        return `${config.name} · ${this.getConfigFamilyLabel(config)}`;
+        return config.name;
+    }
+
+    private createTargetOption(config: StrategyConfig): HTMLButtonElement {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "ensemble-lab__target-option";
+        button.dataset.configName = config.name;
+        button.dataset.configNameLower = config.name.toLowerCase();
+        button.dataset.familyLabel = this.getConfigFamilyLabel(config).toLowerCase();
+        button.setAttribute("role", "option");
+        button.innerHTML = `
+            <span class="ensemble-lab__target-option-title">${this.escapeHtml(config.name)}</span>
+            <span class="ensemble-lab__target-option-subtitle">${this.escapeHtml(this.getConfigFamilyLabel(config))}</span>
+        `;
+        button.addEventListener("click", () => {
+            const dom = this.getDom();
+            dom.ensembleTargetSelect.value = config.name;
+            dom.ensembleTargetSelect.dispatchEvent(new Event("change"));
+            this.closeTargetPicker();
+            dom.ensembleTargetButton.focus();
+        });
+        this.targetOptionButtons.set(config.name, button);
+        return button;
+    }
+
+    private toggleTargetPicker(force?: boolean): void {
+        const dom = this.getDom();
+        const nextState = force ?? !this.targetMenuOpen;
+        if (nextState && this.contextConfigs.size === 0) {
+            return;
+        }
+
+        this.targetMenuOpen = nextState;
+        dom.ensembleTargetButton.setAttribute("aria-expanded", nextState ? "true" : "false");
+        dom.ensembleTargetMenu.classList.toggle("is-hidden", !nextState);
+
+        if (nextState) {
+            this.applyTargetPickerFilter();
+            dom.ensembleTargetSearch.focus();
+            dom.ensembleTargetSearch.select();
+        } else {
+            dom.ensembleTargetSearch.value = "";
+            this.applyTargetPickerFilter();
+        }
+    }
+
+    private closeTargetPicker(): void {
+        if (!this.targetMenuOpen) {
+            return;
+        }
+        this.toggleTargetPicker(false);
+    }
+
+    private applyTargetPickerFilter(): void {
+        const dom = this.getDom();
+        const query = dom.ensembleTargetSearch.value.trim().toLowerCase();
+        let visibleCount = 0;
+
+        for (const [name, button] of this.targetOptionButtons.entries()) {
+            const matches = query.length === 0 || [
+                name.toLowerCase(),
+                button.dataset.configNameLower ?? "",
+                button.dataset.familyLabel ?? "",
+            ].some((value) => value.includes(query));
+            button.hidden = !matches;
+            if (matches) {
+                visibleCount += 1;
+            }
+        }
+
+        dom.ensembleTargetPickerEmptyState.style.display = visibleCount === 0 ? "" : "none";
+    }
+
+    private syncTargetPickerUi(): void {
+        const dom = this.getDom();
+        const selectedName = this.getSelectedTargetName();
+        const selectedConfig = this.contextConfigs.get(selectedName);
+
+        for (const [name, button] of this.targetOptionButtons.entries()) {
+            const isSelected = name === selectedName;
+            button.classList.toggle("is-selected", isSelected);
+            button.setAttribute("aria-selected", isSelected ? "true" : "false");
+        }
+
+        if (!selectedConfig) {
+            dom.ensembleTargetButton.innerHTML = `
+                <span class="ensemble-lab__target-trigger-main">
+                    <span class="ensemble-lab__target-trigger-title">Select target config</span>
+                    <span class="ensemble-lab__target-trigger-subtitle">Choose one saved config to treat as the target.</span>
+                </span>
+                <span class="ensemble-lab__target-trigger-caret" aria-hidden="true">▾</span>
+            `;
+            dom.ensembleTargetButton.disabled = this.contextConfigs.size === 0;
+            return;
+        }
+
+        dom.ensembleTargetButton.innerHTML = `
+            <span class="ensemble-lab__target-trigger-main">
+                <span class="ensemble-lab__target-trigger-title">${this.escapeHtml(selectedConfig.name)}</span>
+                <span class="ensemble-lab__target-trigger-subtitle">${this.escapeHtml(this.getConfigFamilyLabel(selectedConfig))}</span>
+            </span>
+            <span class="ensemble-lab__target-trigger-caret" aria-hidden="true">▾</span>
+        `;
+        dom.ensembleTargetButton.disabled = false;
     }
 
     private getSelectedTargetName(): string {

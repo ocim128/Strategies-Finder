@@ -26,13 +26,41 @@
             <div class="portfolio-lab__controls ensemble-lab__controls">
                 <div class="portfolio-lab__control-block ensemble-lab__panel">
                     <div class="portfolio-lab__control-grid ensemble-lab__control-grid">
-                        <label class="analysis-control" for="ensembleTargetSelect">
+                        <label class="analysis-control ensemble-lab__field ensemble-lab__field--target" for="ensembleTargetSelect">
                             Target Config
-                            <select id="ensembleTargetSelect">
-                                <option value="" disabled selected>Select target config</option>
-                            </select>
+                            <div class="ensemble-lab__target-picker" id="ensembleTargetPicker">
+                                <select id="ensembleTargetSelect" class="sr-only" tabindex="-1" aria-hidden="true">
+                                    <option value="" disabled selected>Select target config</option>
+                                </select>
+                                <button
+                                    class="ensemble-lab__target-trigger"
+                                    id="ensembleTargetButton"
+                                    type="button"
+                                    aria-haspopup="listbox"
+                                    aria-expanded="false"
+                                    aria-controls="ensembleTargetMenu"
+                                >
+                                    <span class="ensemble-lab__target-trigger-main">
+                                        <span class="ensemble-lab__target-trigger-title">Select target config</span>
+                                        <span class="ensemble-lab__target-trigger-subtitle">Choose one saved config to treat as the target.</span>
+                                    </span>
+                                    <span class="ensemble-lab__target-trigger-caret" aria-hidden="true">▾</span>
+                                </button>
+                                <div class="ensemble-lab__target-menu is-hidden" id="ensembleTargetMenu">
+                                    <input
+                                        class="param-input ensemble-lab__target-search"
+                                        type="search"
+                                        id="ensembleTargetSearch"
+                                        placeholder="Search saved configs"
+                                    >
+                                    <div class="ensemble-lab__target-options" id="ensembleTargetList" role="listbox" aria-label="Target config options"></div>
+                                    <div class="ensemble-lab__target-empty" id="ensembleTargetPickerEmptyState" style="display: none;">
+                                        No configs match the current search.
+                                    </div>
+                                </div>
+                            </div>
                         </label>
-                        <label class="analysis-control" for="ensembleMinSamples">
+                        <label class="analysis-control ensemble-lab__field" for="ensembleMinSamples">
                             Min Samples
                             <input type="number" id="ensembleMinSamples" min="3" max="200" step="1" value="5" />
                         </label>
@@ -52,11 +80,11 @@
 
                 <div class="portfolio-lab__control-block ensemble-lab__panel">
                     <div class="ensemble-lab__toolbar">
-                        <label class="analysis-control" for="ensembleContextSearch">
+                        <label class="analysis-control ensemble-lab__field" for="ensembleContextSearch">
                             Search Contexts
                             <input class="param-input" type="search" id="ensembleContextSearch" placeholder="Filter configs by name or strategy">
                         </label>
-                        <label class="analysis-control" for="ensembleContextFamilyFilter">
+                        <label class="analysis-control ensemble-lab__field" for="ensembleContextFamilyFilter">
                             Family
                             <select class="param-input" id="ensembleContextFamilyFilter">
                                 <option value="">All families</option>
