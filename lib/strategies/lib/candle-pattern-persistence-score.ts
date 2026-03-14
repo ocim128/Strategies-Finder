@@ -1,6 +1,15 @@
 import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows } from "../strategy-helpers";
 
+function normalizeCandlePatternPersistenceScoreParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        scoreLookback: Math.max(2, Math.round(params.scoreLookback ?? 5)),
+        scoreThreshold: Math.max(0, Math.min(1, params.scoreThreshold ?? 0.6)),
+        minBodyPct: Math.max(0, Math.min(1, params.minBodyPct ?? 0.4)),
+    };
+}
+
 export const candle_pattern_persistence_score: Strategy = {
     name: "Candle Pattern Persistence Score",
     description: "Builds a rolling directional candle-structure score and triggers entries when persistence crosses threshold.",
@@ -14,6 +23,7 @@ export const candle_pattern_persistence_score: Strategy = {
         scoreThreshold: "Persistence Threshold",
         minBodyPct: "Min Avg Body %",
     },
+    normalizeParams: normalizeCandlePatternPersistenceScoreParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
         if (cleanData.length < 3) return [];

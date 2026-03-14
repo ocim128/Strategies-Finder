@@ -254,6 +254,7 @@ export function updateWalkForwardSummaryPanel(
     const wfePercent = (result.walkForwardEfficiency * 100).toFixed(1);
     const wfeClass = result.walkForwardEfficiency >= 0.7 ? "positive" :
         result.walkForwardEfficiency >= 0.4 ? "neutral" : "negative";
+    const oosNetClass = oos.netProfit > 0 ? "positive" : oos.netProfit < 0 ? "negative" : "neutral";
     const baseParamsSummary = host.formatBaseParamsSummary();
 
     panel.innerHTML = `
@@ -281,7 +282,7 @@ export function updateWalkForwardSummaryPanel(
         </div>
         <div class="wf-stat">
             <span class="wf-label">OOS Net Profit</span>
-            <span class="wf-value ${oos.netProfit >= 0 ? "positive" : "negative"}">
+            <span class="wf-value ${oosNetClass}">
                 $${oos.netProfit.toFixed(2)} (${oos.netProfitPercent.toFixed(1)}%)
             </span>
         </div>
@@ -314,19 +315,24 @@ export function updateWalkForwardWindowTable(
     result: WalkForwardResult
 ): void {
     dom.wfWindowTableBody.innerHTML = result.windows.map((windowResult) => {
-        const isProfit = windowResult.outOfSampleResult.netProfit >= 0;
-        const statusIcon = isProfit ? "OK" : "X";
-        const statusClass = isProfit ? "positive" : "negative";
+        const oos = windowResult.outOfSampleResult;
+        const hasTrades = oos.totalTrades > 0;
+        const displayedOosNetPercent = Number(oos.netProfitPercent.toFixed(1));
+        const isProfit = displayedOosNetPercent > 0;
+        const isLoss = displayedOosNetPercent < 0;
+        const rowClass = isProfit ? "positive" : isLoss ? "negative" : "";
+        const statusIcon = !hasTrades ? "No trades" : isProfit ? "OK" : isLoss ? "X" : "Flat";
+        const statusClass = isProfit ? "positive" : isLoss ? "negative" : "";
         const paramsStr = host.formatWindowParams(windowResult.optimizedParams);
 
         return `
-            <tr class="${statusClass}">
+            <tr class="${rowClass}">
                 <td>${windowResult.windowIndex + 1}</td>
                 <td>${windowResult.inSampleResult.netProfitPercent.toFixed(1)}%</td>
-                <td>${windowResult.outOfSampleResult.netProfitPercent.toFixed(1)}%</td>
+                <td>${displayedOosNetPercent.toFixed(1)}%</td>
                 <td>${windowResult.performanceDegradationPercent.toFixed(0)}%</td>
                 <td>${windowResult.inSampleResult.sharpeRatio.toFixed(2)}</td>
-                <td>${windowResult.outOfSampleResult.sharpeRatio.toFixed(2)}</td>
+                <td>${oos.sharpeRatio.toFixed(2)}</td>
                 <td title="${JSON.stringify(windowResult.optimizedParams)}">${paramsStr}</td>
                 <td class="${statusClass}">${statusIcon}</td>
             </tr>

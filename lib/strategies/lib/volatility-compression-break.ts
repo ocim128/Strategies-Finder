@@ -2,6 +2,15 @@ import { Strategy, OHLCVData, StrategyParams } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows, getCloses } from '../strategy-helpers';
 import { calculateATR, calculateDonchianChannels } from '../indicators';
 
+function normalizeVolatilityCompressionBreakParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        lookback: Math.max(5, Math.round(params.lookback ?? 20)),
+        compressionRatio: Math.max(0.1, params.compressionRatio ?? 0.7),
+        breakoutBufferAtr: Math.max(0, params.breakoutBufferAtr ?? 0.08),
+    };
+}
+
 export const volatility_compression_break: Strategy = {
     name: 'Volatility Compression Break',
     description: 'Looks for breakouts that begin after short-term volatility compresses versus longer-term volatility.',
@@ -15,6 +24,7 @@ export const volatility_compression_break: Strategy = {
         compressionRatio: 'ATR Compression Ratio',
         breakoutBufferAtr: 'Breakout Buffer (ATR)'
     },
+    normalizeParams: normalizeVolatilityCompressionBreakParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
         if (cleanData.length === 0) return [];

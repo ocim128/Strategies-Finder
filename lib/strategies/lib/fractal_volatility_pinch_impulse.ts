@@ -2,6 +2,19 @@ import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildRateOfChange, buildRollingStdDev, extractBarMetricSeries } from "./price-action-statistics-core";
 
+function normalizeFractalVolatilityPinchImpulseParams(params: StrategyParams): StrategyParams {
+	return {
+		...params,
+		fast_std_window: Math.max(2, Math.round(params.fast_std_window ?? 10)),
+		slow_std_window: Math.max(
+			Math.max(2, Math.round(params.fast_std_window ?? 10)) + 1,
+			Math.round(params.slow_std_window ?? 50)
+		),
+		pinch_ratio: Math.max(0, params.pinch_ratio ?? 0.5),
+		roc_trigger: Math.max(0, params.roc_trigger ?? 1.5),
+	};
+}
+
 export const fractal_volatility_pinch_impulse: Strategy = {
 	name: "Fractal Volatility Pinch Impulse",
 	description: "Compares fast and slow return variance and only fires when a compressed fractal ratio snaps with decisive ROC.",
@@ -17,6 +30,7 @@ export const fractal_volatility_pinch_impulse: Strategy = {
 		pinch_ratio: "Pinch Ratio",
 		roc_trigger: "ROC Trigger (%)",
 	},
+	normalizeParams: normalizeFractalVolatilityPinchImpulseParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		if (cleanData.length < 5) return [];

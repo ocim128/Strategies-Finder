@@ -6,6 +6,15 @@ import {
     computeCandlePatternPersistenceState,
 } from "./candle-pattern-persistence-core";
 
+function normalizeCandlePatternPersistenceScoreRsiMidlineParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        scoreLookback: Math.max(2, Math.round(params.scoreLookback ?? 5)),
+        scoreThreshold: Math.max(0, Math.min(1, params.scoreThreshold ?? 0.6)),
+        rsiLen: Math.max(2, Math.round(params.rsiLen ?? 14)),
+    };
+}
+
 export const candle_pattern_persistence_score_rsi_midline: Strategy = {
     name: "Candle Pattern Persistence Score (RSI Midline)",
     description: "CPPS entries filtered by RSI midline regime to keep frequent but directional trades.",
@@ -19,6 +28,7 @@ export const candle_pattern_persistence_score_rsi_midline: Strategy = {
         scoreThreshold: "Persistence Threshold",
         rsiLen: "RSI Period",
     },
+    normalizeParams: normalizeCandlePatternPersistenceScoreRsiMidlineParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const scoreThreshold = Math.max(0, Math.min(1, params.scoreThreshold ?? 0.6));
         const rsiLen = Math.max(2, Math.round(params.rsiLen ?? 14));

@@ -2,6 +2,15 @@ import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildRateOfChange, buildRollingSkewness, extractBarMetricSeries } from "./price-action-statistics-core";
 
+function normalizeSkewnessDeadzoneBreakParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        skewLookback: Math.max(3, Math.round(params.skewLookback ?? 20)),
+        maxSkewAbs: Math.max(0, params.maxSkewAbs ?? 0.3),
+        rocBreakout: Math.max(0, params.rocBreakout ?? 1.5),
+    };
+}
+
 export const skewness_deadzone_break: Strategy = {
     name: "Skewness Deadzone Break",
     description: "Treats collapsed absolute skewness as a symmetry deadzone and triggers only when ROC suddenly breaks that balance.",
@@ -15,6 +24,7 @@ export const skewness_deadzone_break: Strategy = {
         maxSkewAbs: "Max |Skewness|",
         rocBreakout: "ROC Breakout (%)",
     },
+    normalizeParams: normalizeSkewnessDeadzoneBreakParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
         if (cleanData.length < 5) return [];

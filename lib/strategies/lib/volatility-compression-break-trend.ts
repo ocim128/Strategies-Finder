@@ -15,6 +15,14 @@ function clampInt(value: number, min: number, max: number): number {
     return Math.round(clamp(value, min, max));
 }
 
+function normalizeVolatilityCompressionBreakTrendParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        compressionRatio: clamp(params.compressionRatio ?? 0.7, 0.1, 1.5),
+        emaPeriod: clampInt(params.emaPeriod ?? 100, 5, 300),
+    };
+}
+
 export const volatility_compression_break_trend: Strategy = {
     name: 'Volatility Compression Break Trend',
     description: 'Breaks previous bar range after compression, filtered by EMA trend direction. Range lookback is fixed at 1 and ATR buffer is fixed at 0.',
@@ -26,6 +34,7 @@ export const volatility_compression_break_trend: Strategy = {
         compressionRatio: 'ATR Compression Ratio',
         emaPeriod: 'EMA Trend Period',
     },
+    normalizeParams: normalizeVolatilityCompressionBreakTrendParams,
     execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
         const cleanData = ensureCleanData(data);
         if (cleanData.length === 0) return [];
@@ -88,4 +97,3 @@ export const volatility_compression_break_trend: Strategy = {
         walkForwardParams: ['compressionRatio', 'emaPeriod'],
     },
 };
-

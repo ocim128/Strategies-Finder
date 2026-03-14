@@ -6,6 +6,15 @@ import {
     computeCandlePatternPersistenceState,
 } from "./candle-pattern-persistence-core";
 
+function normalizeCandlePatternPersistenceScoreCciZeroParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        scoreLookback: Math.max(2, Math.round(params.scoreLookback ?? 5)),
+        scoreThreshold: Math.max(0, Math.min(1, params.scoreThreshold ?? 0.6)),
+        cciLen: Math.max(2, Math.round(params.cciLen ?? 20)),
+    };
+}
+
 export const candle_pattern_persistence_score_cci_zero: Strategy = {
     name: "Candle Pattern Persistence Score (CCI Zero)",
     description: "CPPS entries filtered by CCI zero-line direction for active momentum phase participation.",
@@ -19,6 +28,7 @@ export const candle_pattern_persistence_score_cci_zero: Strategy = {
         scoreThreshold: "Persistence Threshold",
         cciLen: "CCI Period",
     },
+    normalizeParams: normalizeCandlePatternPersistenceScoreCciZeroParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const scoreThreshold = Math.max(0, Math.min(1, params.scoreThreshold ?? 0.6));
         const cciLen = Math.max(2, Math.round(params.cciLen ?? 20));

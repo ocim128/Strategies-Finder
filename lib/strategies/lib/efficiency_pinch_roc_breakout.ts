@@ -3,6 +3,15 @@ import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, g
 import { clamp } from "./price-action-frequency-core";
 import { buildEfficiencyRatio, buildRateOfChange } from "./price-action-statistics-core";
 
+function normalizeEfficiencyPinchRocBreakoutParams(params: StrategyParams): StrategyParams {
+	return {
+		...params,
+		lookback: Math.max(2, Math.round(params.lookback ?? 14)),
+		compressionMax: clamp(params.compressionMax ?? 0.25, 0, 1),
+		rocExpansionTarget: Math.max(0, params.rocExpansionTarget ?? 1.5),
+	};
+}
+
 export const efficiency_pinch_roc_breakout: Strategy = {
 	name: "Efficiency Pinch ROC Breakout",
 	description: "Waits for a fully compressed low-efficiency state, then triggers when directional ROC breaks out of that dead tape.",
@@ -16,6 +25,7 @@ export const efficiency_pinch_roc_breakout: Strategy = {
 		compressionMax: "Compression Max",
 		rocExpansionTarget: "ROC Expansion Target (%)",
 	},
+	normalizeParams: normalizeEfficiencyPinchRocBreakoutParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		if (cleanData.length < 5) return [];

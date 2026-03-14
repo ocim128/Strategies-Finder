@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateSessionVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateATR, calculateADX, calculateKeltnerChannels, calculateMFI, calculateCMF, calculateIchimoku, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade, Strategy } from './lib/strategies/index';
+import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateSessionVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateATR, calculateADX, calculateKeltnerChannels, calculateMFI, calculateCMF, calculateIchimoku, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade, Strategy, StrategyParams } from './lib/strategies/index';
 import { buildPivotFlags, detectPivots, detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
 
 import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/backtest/trade-analyzer';
@@ -339,6 +339,70 @@ describe('Walk-forward parameter normalization', () => {
         expect(range.step).to.be.greaterThan(0);
     });
 
+    it('keeps signed decimal params centered on their active value in auto WFA ranges', () => {
+        const range = deriveAutoWalkForwardRange('rocTrigger', -0.047);
+        expect(range.min).to.be.lessThan(0);
+        expect(range.max).to.be.lessThan(0);
+        expect(range.min).to.be.lessThan(-0.047);
+        expect(range.max).to.be.greaterThan(-0.047);
+        expect(range.step).to.be.greaterThan(0);
+    });
+
+    it('falls back to the active base params when no WFA candidates clear the trade floor', async () => {
+        const bars: OHLCVData[] = [];
+        for (let i = 0; i < 120; i++) {
+            bars.push({
+                time: (i + 1) as Time,
+                open: 100 + i,
+                high: 101 + i,
+                low: 99 + i,
+                close: 100 + i,
+                volume: 10
+            });
+        }
+
+        const strategy: Strategy = {
+            name: 'No Candidate Fallback',
+            description: 'Produces no trades so WFA should retain the active base params.',
+            defaultParams: {
+                rocTrigger: -0.047
+            },
+            paramLabels: {
+                rocTrigger: 'ROC Trigger'
+            },
+            execute: () => [],
+            metadata: {
+                role: 'entry',
+                direction: 'both',
+                walkForwardParams: ['rocTrigger']
+            }
+        };
+
+        const result = await runWalkForwardAnalysis(
+            bars,
+            strategy,
+            {
+                optimizationWindow: 40,
+                testWindow: 20,
+                stepSize: 20,
+                parameterRanges: [{
+                    name: 'rocTrigger',
+                    ...deriveAutoWalkForwardRange('rocTrigger', strategy.defaultParams.rocTrigger)
+                }],
+                minTrades: 1,
+                topN: 3
+            },
+            10000,
+            100,
+            0.1
+        );
+
+        expect(result.windows.length).to.be.greaterThan(0);
+        for (const window of result.windows) {
+            expect(window.optimizedParams.rocTrigger).to.equal(-0.047);
+        }
+    });
+
     it('keeps integer-like quick WFA params on-grid', async () => {
         const bars: OHLCVData[] = [];
         for (let i = 0; i < 160; i++) {
@@ -486,6 +550,60 @@ describe('Walk-forward parameter normalization', () => {
         expect(normalized.scoreLookback).to.equal(32);
         expect(normalized.scoreThreshold).to.equal(0);
         expect(normalized.stochLen).to.equal(56);
+    });
+
+    it('exposes normalized base params for median deviation streak', () => {
+        const strategy = strategies['median_deviation_streak'];
+        expect(strategy).to.not.equal(undefined);
+        expect(typeof strategy.normalizeParams).to.equal('function');
+
+        const normalized = strategy.normalizeParams!({
+            medianLookback: 84.6,
+            streakThreshold: -2
+        });
+
+        expect(normalized.medianLookback).to.equal(85);
+        expect(normalized.streakThreshold).to.equal(2);
+    });
+
+    it('exposes normalized base params for additional WFA-sensitive strategies', () => {
+        const cases: Array<{
+            key: string;
+            input: StrategyParams;
+            expected: StrategyParams;
+        }> = [
+            {
+                key: 'autocorr_deadband_release',
+                input: { lookback: 18.4, deadbandWidth: -0.25, rocTrigger: -0.047 },
+                expected: { lookback: 18, deadbandWidth: 0, rocTrigger: 0.047 }
+            },
+            {
+                key: 'dead_zone_efficiency_breakout',
+                input: { window: 1.2, max_er_threshold: 1.8, roc_trigger: -3 },
+                expected: { window: 2, max_er_threshold: 1, roc_trigger: 0 }
+            },
+            {
+                key: 'volatility_compression_break_trend',
+                input: { compressionRatio: -4, emaPeriod: 999.2 },
+                expected: { compressionRatio: 0.1, emaPeriod: 300 }
+            },
+            {
+                key: 'candle_pattern_persistence_score_macd_zero',
+                input: { scoreLookback: 1.4, scoreThreshold: -0.8, macdFastLen: 1.2 },
+                expected: { scoreLookback: 2, scoreThreshold: 0, macdFastLen: 2 }
+            }
+        ];
+
+        for (const testCase of cases) {
+            const strategy = strategies[testCase.key];
+            expect(strategy, `missing strategy ${testCase.key}`).to.not.equal(undefined);
+            expect(typeof strategy.normalizeParams, `${testCase.key} should expose normalizeParams`).to.equal('function');
+
+            const normalized = strategy.normalizeParams!(testCase.input);
+            for (const [name, value] of Object.entries(testCase.expected)) {
+                expect(normalized[name], `${testCase.key}.${name}`).to.equal(value);
+            }
+        }
     });
 });
 

@@ -3,6 +3,15 @@ import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, g
 import { buildEfficiencyRatio, buildRateOfChange } from "./price-action-statistics-core";
 import { clamp } from "./price-action-frequency-core";
 
+function normalizeDeadZoneEfficiencyBreakoutParams(params: StrategyParams): StrategyParams {
+	return {
+		...params,
+		window: Math.max(2, Math.round(params.window ?? 14)),
+		max_er_threshold: clamp(params.max_er_threshold ?? 0.2, 0, 1),
+		roc_trigger: Math.max(0, params.roc_trigger ?? 1.5),
+	};
+}
+
 export const dead_zone_efficiency_breakout: Strategy = {
 	name: "Dead-Zone Efficiency Breakout",
 	description: "Waits for a low-efficiency dead zone and only triggers when rate-of-change snaps out directionally.",
@@ -16,6 +25,7 @@ export const dead_zone_efficiency_breakout: Strategy = {
 		max_er_threshold: "Max ER Threshold",
 		roc_trigger: "ROC Trigger (%)",
 	},
+	normalizeParams: normalizeDeadZoneEfficiencyBreakoutParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		if (cleanData.length < 5) return [];

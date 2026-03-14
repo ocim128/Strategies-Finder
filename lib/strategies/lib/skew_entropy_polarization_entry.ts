@@ -2,6 +2,18 @@ import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildRollingEntropy, buildRollingMedian, buildRollingSkewness } from "./price-action-statistics-core";
 
+function normalizeSkewEntropyPolarizationEntryParams(params: StrategyParams): StrategyParams {
+    const rawEntropyCeiling = Number(params.entropyCeiling ?? 1);
+    const rawSkewThreshold = Number(params.skewThreshold ?? 0.35);
+
+    return {
+        ...params,
+        lookback: Math.max(3, Math.round(params.lookback ?? 30)),
+        entropyCeiling: Number.isFinite(rawEntropyCeiling) ? rawEntropyCeiling : 1,
+        skewThreshold: Math.max(0, Math.abs(Number.isFinite(rawSkewThreshold) ? rawSkewThreshold : 0.35)),
+    };
+}
+
 function buildReturns(series: number[]): number[] {
     const res = new Array(series.length).fill(0);
     for (let i = 1; i < series.length; i++) {
@@ -57,6 +69,7 @@ export const skew_entropy_polarization_entry: Strategy = {
         entropyCeiling: "Entropy Ceiling",
         skewThreshold: "Abs Skew Threshold",
     },
+    normalizeParams: normalizeSkewEntropyPolarizationEntryParams,
     prepareFinderData: (data) => prepareSkewEntropyData(data),
     executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
         const prepared = getPreparedSkewEntropyData(preparedData, data);

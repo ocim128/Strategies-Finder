@@ -22,11 +22,20 @@ export function deriveAutoWalkForwardRange(
     const shouldUseDecimalRange = !treatAsWholeNumber && (baseValue === 0 || !Number.isInteger(baseValue) || Math.abs(baseValue) < 2);
 
     if (shouldUseDecimalRange) {
-        const min = baseValue === 0 ? 0 : Math.max(0.1, baseValue * 0.5);
-        const maxCandidate = baseValue === 0 ? 1 : baseValue * 1.5;
-        const max = Math.max(min + 0.1, maxCandidate);
+        if (baseValue === 0) {
+            return {
+                min: 0,
+                max: 0.2,
+                step: 0.05,
+            };
+        }
+
+        const lower = baseValue * 0.5;
+        const upper = baseValue * 1.5;
+        const min = Math.min(lower, upper);
+        const max = Math.max(lower, upper);
         const rawStep = (max - min) / 4;
-        const step = Math.max(0.05, rawStep);
+        const step = Math.max(0.001, rawStep);
 
         return {
             min: Math.round(min * 1000) / 1000,

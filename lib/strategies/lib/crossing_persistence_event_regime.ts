@@ -3,6 +3,15 @@ import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, g
 import { buildRollingAverage } from "./price-action-frequency-core";
 import { buildThresholdCrossingCount } from "./price-action-statistics-core";
 
+function normalizeCrossingPersistenceEventRegimeParams(params: StrategyParams): StrategyParams {
+	return {
+		...params,
+		lookback: Math.max(2, Math.round(params.lookback ?? 30)),
+		maxCrossings: Math.max(0, Math.round(params.maxCrossings ?? 2)),
+		maPeriod: Math.max(2, Math.round(params.maPeriod ?? 20)),
+	};
+}
+
 export const crossing_persistence_event_regime: Strategy = {
 	name: "Crossing Persistence Event Regime",
 	description: "Trades only when close stays on one side of its rolling average and crossover churn stays unusually low.",
@@ -16,6 +25,7 @@ export const crossing_persistence_event_regime: Strategy = {
 		maxCrossings: "Max Crossings",
 		maPeriod: "Rolling Average Period",
 	},
+	normalizeParams: normalizeCrossingPersistenceEventRegimeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		if (cleanData.length < 5) return [];

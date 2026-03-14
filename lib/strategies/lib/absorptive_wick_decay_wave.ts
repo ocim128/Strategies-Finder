@@ -3,6 +3,15 @@ import { createBuySignal, createSellSignal, ensureCleanData } from "../strategy-
 import { buildCumulativeDecaySum, extractBarMetricSeries } from "./price-action-statistics-core";
 import { clamp, getPriceActionBarMetrics } from "./price-action-frequency-core";
 
+function normalizeAbsorptiveWickDecayWaveParams(params: StrategyParams): StrategyParams {
+	return {
+		...params,
+		decay_factor: clamp(params.decay_factor ?? 0.85, 0.01, 0.999),
+		absorption_threshold: Math.max(0, params.absorption_threshold ?? 3),
+		confirmation_location: clamp(params.confirmation_location ?? 0.7, 0.5, 0.99),
+	};
+}
+
 export const absorptive_wick_decay_wave: Strategy = {
 	name: "Absorptive Wick Decay Wave",
 	description: "Tracks a decayed wick-absorption wave and enters only when the confirming close exits the imbalance regime.",
@@ -16,6 +25,7 @@ export const absorptive_wick_decay_wave: Strategy = {
 		absorption_threshold: "Absorption Threshold",
 		confirmation_location: "Confirmation Location",
 	},
+	normalizeParams: normalizeAbsorptiveWickDecayWaveParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		if (cleanData.length < 2) return [];

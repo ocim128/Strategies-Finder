@@ -2,6 +2,7 @@ import { OHLCVData, BacktestResult, StrategyParams, BacktestSettings, Strategy, 
 import { runBacktest, runBacktestCompact, calculateBacktestStats, calculateMaxDrawdown, compareTime, timeToNumber, applySignalPolarity } from './backtest';
 import { ensureCleanData } from './strategy-helpers';
 import { sanitizeSharpeRatio } from './performance-metrics';
+import { deriveAutoWalkForwardRange } from '../walk-forward-range-utils';
 
 // ============================================================================
 // Walk-Forward Analysis (WFA) Module
@@ -603,8 +604,15 @@ async function optimizeWindow(
 // Parameter Averaging (Anchored Selection)
 // ============================================================================
 
-function averageParameters(topResults: OptimizationResult[], ranges: ParameterRange[]): StrategyParams {
+function averageParameters(
+    topResults: OptimizationResult[],
+    ranges: ParameterRange[],
+    fallbackParams?: StrategyParams
+): StrategyParams {
     if (topResults.length === 0) {
+        if (fallbackParams && Object.keys(fallbackParams).length > 0) {
+            return { ...fallbackParams };
+        }
         const params: StrategyParams = {};
         for (const range of ranges) {
             params[range.name] = snapValueToRange(range, (range.min + range.max) / 2);
@@ -829,7 +837,7 @@ export async function runWalkForwardAnalysis(
             signal
         );
 
-        const optimizedParams = averageParameters(topResults, parameterRanges);
+        const optimizedParams = averageParameters(topResults, parameterRanges, strategy.defaultParams);
         const finalParams = normalizeStrategyParams(strategy, { ...strategy.defaultParams, ...optimizedParams });
 
         const inSampleResult = runBacktestFastCompact(
@@ -1015,12 +1023,11 @@ export async function quickWalkForward(
             const rawStep = (max - min) / stepsPerParam;
             step = Math.max(0.0005, rawStep);
         } else if (isDecimal) {
-            // For decimal params between 0-1 (like Fib ratios), use proportional range
-            min = Math.max(0.1, defaultValue * 0.5);
-            max = Math.min(1.0, defaultValue * 1.5);
-            // Ensure at least 2 steps, but keep step reasonable for decimals
+            const autoRange = deriveAutoWalkForwardRange(name, defaultValue);
+            min = autoRange.min;
+            max = autoRange.max;
             const rawStep = (max - min) / stepsPerParam;
-            step = Math.max(0.05, rawStep);
+            step = Math.max(0.001, rawStep);
         } else {
             // For integer-like params
             min = Math.max(1, Math.floor(defaultValue * 0.5));

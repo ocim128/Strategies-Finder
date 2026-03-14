@@ -3,6 +3,15 @@ import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } 
 import { calculateADX } from "../indicators";
 import { buildRollingSkewness, extractBarMetricSeries } from "./price-action-statistics-core";
 
+function normalizeAdxSkewnessDriftParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        adxPeriod: Math.max(2, Math.round(params.adxPeriod ?? 14)),
+        adxThresh: Math.max(0, Number(params.adxThresh ?? 25)),
+        skewThreshold: Math.max(0, Math.abs(Number(params.skewThreshold ?? 0.5))),
+    };
+}
+
 export const adx_skewness_drift: Strategy = {
     name: "ADX Skewness Drift",
     description: "Resolves the primary limitation of ADX—its lack of directionality—by overlaying rolling structural skewness. Defines trading regimes using raw unipolar trend momentum validated by an asymmetrically biased return distribution.",
@@ -16,6 +25,7 @@ export const adx_skewness_drift: Strategy = {
         adxThresh: "Trend Strength Level",
         skewThreshold: "Asymmetry Boundary",
     },
+    normalizeParams: normalizeAdxSkewnessDriftParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
         if (cleanData.length < (params.adxPeriod as number) * 2) return [];

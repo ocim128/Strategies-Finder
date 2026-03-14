@@ -3,6 +3,14 @@ import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } 
 import { calculateSessionVWAP } from "../indicators";
 import { buildRollingZScore } from "./price-action-statistics-core";
 
+function normalizeVwapZscoreReversionParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        zscoreLookback: Math.max(2, Math.round(params.zscoreLookback ?? 50)),
+        zscoreThreshold: Math.max(0, Math.abs(Number(params.zscoreThreshold ?? 2.5))),
+    };
+}
+
 export const vwap_zscore_reversion: Strategy = {
     name: "VWAP Z-Score Reversion",
     description: "Computes the rolling z-score of the distance between price and the Session VWAP. Trades extreme statistical deviations from the volume-weighted mean, banking on intra-session mean reversion.",
@@ -14,6 +22,7 @@ export const vwap_zscore_reversion: Strategy = {
         zscoreLookback: "Z-Score Lookback",
         zscoreThreshold: "Z-Score Threshold",
     },
+    normalizeParams: normalizeVwapZscoreReversionParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
         if (cleanData.length < (params.zscoreLookback as number)) return [];

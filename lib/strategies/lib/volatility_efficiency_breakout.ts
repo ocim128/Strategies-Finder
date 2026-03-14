@@ -2,6 +2,15 @@ import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildEfficiencyRatio, buildRateOfChange } from "./price-action-statistics-core";
 
+function normalizeVolatilityEfficiencyBreakoutParams(params: StrategyParams): StrategyParams {
+	return {
+		...params,
+		erLength: Math.max(2, Math.round(params.erLength ?? 14)),
+		compressionThreshold: Math.max(0, params.compressionThreshold ?? 0.25),
+		rocThreshold: Math.max(0, params.rocThreshold ?? 0.015),
+	};
+}
+
 export const volatility_efficiency_breakout: Strategy = {
 	name: "Volatility Efficiency Breakout",
 	description: "Triggers when a prior low-efficiency compression state hands off to a clean directional rate-of-change breakout.",
@@ -15,6 +24,7 @@ export const volatility_efficiency_breakout: Strategy = {
 		compressionThreshold: "Compression Threshold",
 		rocThreshold: "ROC Threshold",
 	},
+	normalizeParams: normalizeVolatilityEfficiencyBreakoutParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		if (cleanData.length < 5) return [];

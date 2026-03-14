@@ -6,6 +6,15 @@ import {
     computeCandlePatternPersistenceState,
 } from "./candle-pattern-persistence-core";
 
+function normalizeCandlePatternPersistenceScoreMacdDivGateParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        scoreLookback: Math.max(2, Math.round(params.scoreLookback ?? 5)),
+        scoreThreshold: Math.max(0, Math.min(1, params.scoreThreshold ?? 0.6)),
+        macdFastLen: Math.max(2, Math.round(params.macdFastLen ?? 12)),
+    };
+}
+
 export const candle_pattern_persistence_score_macd_div_gate: Strategy = {
     name: "Candle Pattern Persistence Score (MACD Divergence Gate)",
     description: "CPPS entries blocked when price-MACD divergence is detected — early warning of regime reversal.",
@@ -19,6 +28,7 @@ export const candle_pattern_persistence_score_macd_div_gate: Strategy = {
         scoreThreshold: "Persistence Threshold",
         macdFastLen: "MACD Fast Period",
     },
+    normalizeParams: normalizeCandlePatternPersistenceScoreMacdDivGateParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const scoreThreshold = Math.max(0, Math.min(1, params.scoreThreshold ?? 0.6));
         const macdFastLen = Math.max(2, Math.round(params.macdFastLen ?? 12));

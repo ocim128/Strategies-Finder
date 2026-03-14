@@ -6,6 +6,15 @@ import {
     computeCandlePatternPersistenceState,
 } from "./candle-pattern-persistence-core";
 
+function normalizeCandlePatternPersistenceScoreEmaBiasParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        scoreLookback: Math.max(2, Math.round(params.scoreLookback ?? 5)),
+        scoreThreshold: Math.max(0, Math.min(1, params.scoreThreshold ?? 0.6)),
+        emaLen: Math.max(2, Math.round(params.emaLen ?? 100)),
+    };
+}
+
 export const candle_pattern_persistence_score_ema_bias: Strategy = {
     name: "Candle Pattern Persistence Score (EMA Bias)",
     description: "CPPS entries filtered by EMA trend alignment to reduce counter-trend flips.",
@@ -19,6 +28,7 @@ export const candle_pattern_persistence_score_ema_bias: Strategy = {
         scoreThreshold: "Persistence Threshold",
         emaLen: "EMA Period",
     },
+    normalizeParams: normalizeCandlePatternPersistenceScoreEmaBiasParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const scoreThreshold = Math.max(0, Math.min(1, params.scoreThreshold ?? 0.6));
         const emaLen = Math.max(2, Math.round(params.emaLen ?? 100));

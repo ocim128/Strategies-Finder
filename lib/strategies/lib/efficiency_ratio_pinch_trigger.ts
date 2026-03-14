@@ -2,6 +2,15 @@ import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildEfficiencyRatio, buildRateOfChange } from "./price-action-statistics-core";
 
+function normalizeEfficiencyRatioPinchTriggerParams(params: StrategyParams): StrategyParams {
+	return {
+		...params,
+		erLookback: Math.max(2, Math.round(params.erLookback ?? 14)),
+		compressionThreshold: Math.max(0, params.compressionThreshold ?? 0.3),
+		rocTrigger: Math.max(0, params.rocTrigger ?? 1.5),
+	};
+}
+
 export const efficiency_ratio_pinch_trigger: Strategy = {
 	name: "Efficiency Ratio Pinch Trigger",
 	description: "Triggers a directional breakout only after the prior efficiency ratio collapses into a clear chop pinch.",
@@ -15,6 +24,7 @@ export const efficiency_ratio_pinch_trigger: Strategy = {
 		compressionThreshold: "Compression Threshold",
 		rocTrigger: "ROC Trigger (%)",
 	},
+	normalizeParams: normalizeEfficiencyRatioPinchTriggerParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		if (cleanData.length < 5) return [];

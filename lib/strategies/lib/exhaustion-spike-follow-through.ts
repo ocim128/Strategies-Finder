@@ -2,6 +2,18 @@ import { Strategy, OHLCVData, StrategyParams } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows, getCloses, getVolumes } from '../strategy-helpers';
 import { calculateATR, calculateEMA, calculateSMA } from '../indicators';
 
+function normalizeExhaustionSpikeFollowThroughParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        pullbackEma: Math.max(3, Math.round(params.pullbackEma ?? 20)),
+        maxWaitBars: Math.max(1, Math.round(params.maxWaitBars ?? 8)),
+        minSignalBodyPct: Math.max(0, Math.min(100, params.minSignalBodyPct ?? 45)),
+        minCloseLocationPct: Math.max(0, Math.min(100, params.minCloseLocationPct ?? 60)),
+        minSignalVolumeRatio: Math.max(0, params.minSignalVolumeRatio ?? 0.9),
+        continuationBufferAtr: Math.max(0, params.continuationBufferAtr ?? 0.05),
+    };
+}
+
 export const exhaustion_spike_follow_through: Strategy = {
     name: 'Exhaustion Spike Follow Through',
     description: 'Exhaustion spike pullback variant that only enters high-quality continuations with stronger early follow-through characteristics.',
@@ -21,6 +33,7 @@ export const exhaustion_spike_follow_through: Strategy = {
         minSignalVolumeRatio: 'Min Signal Volume Ratio',
         continuationBufferAtr: 'Continuation Buffer (ATR)'
     },
+    normalizeParams: normalizeExhaustionSpikeFollowThroughParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
         if (cleanData.length === 0) return [];

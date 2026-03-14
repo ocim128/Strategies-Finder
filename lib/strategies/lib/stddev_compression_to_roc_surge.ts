@@ -2,6 +2,15 @@ import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildRateOfChange, buildRollingStdDev, extractBarMetricSeries } from "./price-action-statistics-core";
 
+function normalizeStddevCompressionToRocSurgeParams(params: StrategyParams): StrategyParams {
+	return {
+		...params,
+		lookbackPeriod: Math.max(2, Math.round(params.lookbackPeriod ?? 14)),
+		varianceFloor: Math.max(0, params.varianceFloor ?? 0.2),
+		surgeThreshold: Math.max(0, params.surgeThreshold ?? 1.5),
+	};
+}
+
 export const stddev_compression_to_roc_surge: Strategy = {
 	name: "StdDev Compression To ROC Surge",
 	description: "Looks for return-variance collapse and only triggers when rate-of-change explodes out of that statistically flat state.",
@@ -15,6 +24,7 @@ export const stddev_compression_to_roc_surge: Strategy = {
 		varianceFloor: "Variance Floor (%)",
 		surgeThreshold: "Surge Threshold (%)",
 	},
+	normalizeParams: normalizeStddevCompressionToRocSurgeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		if (cleanData.length < 5) return [];

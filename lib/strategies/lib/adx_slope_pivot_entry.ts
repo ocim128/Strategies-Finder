@@ -9,6 +9,15 @@ import {
 } from '../strategy-helpers';
 import { calculateADX } from '../indicators';
 
+function normalizeAdxSlopePivotEntryParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        adxPeriod: Math.max(2, Math.round(params.adxPeriod ?? 14)),
+        pivotBars: Math.max(2, Math.round(params.pivotBars ?? 5)),
+        adxSlopeLen: Math.max(1, Math.round(params.adxSlopeLen ?? 3)),
+    };
+}
+
 export const adx_slope_pivot_entry: Strategy = {
     name: 'ADX Slope Pivot Entry',
     description: 'Uses rising ADX slope to gate momentum and trades closes that break recent pivot ranges.',
@@ -22,6 +31,7 @@ export const adx_slope_pivot_entry: Strategy = {
         pivotBars: 'Pivot Lookback (bars)',
         adxSlopeLen: 'ADX Slope Length',
     },
+    normalizeParams: normalizeAdxSlopePivotEntryParams,
     execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
         const cleanData = ensureCleanData(data);
         if (cleanData.length < 8) return [];
@@ -67,4 +77,3 @@ export const adx_slope_pivot_entry: Strategy = {
         walkForwardParams: ['adxPeriod', 'pivotBars', 'adxSlopeLen'],
     },
 };
-

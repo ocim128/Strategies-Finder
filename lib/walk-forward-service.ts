@@ -151,6 +151,36 @@ class WalkForwardService {
         };
     }
 
+    private snapValueToRange(range: ParameterRange, value: number): number {
+        if (!Number.isFinite(value)) return range.min;
+        if (!Number.isFinite(range.step) || range.step <= 0 || !Number.isFinite(range.min) || !Number.isFinite(range.max)) {
+            return value;
+        }
+
+        const span = range.max - range.min;
+        if (span <= 0) return range.min;
+
+        const maxIndex = Math.max(0, Math.round(span / range.step));
+        const relativeIndex = (value - range.min) / range.step;
+        const snappedIndex = Math.max(0, Math.min(maxIndex, Math.round(relativeIndex)));
+        const snappedValue = range.min + snappedIndex * range.step;
+        const clampedValue = Math.max(range.min, Math.min(range.max, snappedValue));
+        return Math.round(clampedValue * 1000) / 1000;
+    }
+
+    private snapParamsToRanges(params: StrategyParams, ranges: ParameterRange[]): StrategyParams {
+        if (ranges.length === 0) return { ...params };
+
+        const snapped: StrategyParams = { ...params };
+        for (const range of ranges) {
+            const currentValue = params[range.name];
+            if (!Number.isFinite(currentValue)) continue;
+            snapped[range.name] = this.snapValueToRange(range, Number(currentValue));
+        }
+
+        return snapped;
+    }
+
     private formatParamValue(value: number): string {
         if (!Number.isFinite(value)) return String(value);
         if (Number.isInteger(value)) return String(value);
@@ -493,7 +523,6 @@ class WalkForwardService {
 
             // Get current parameters
             const currentParams = this.normalizeStrategyParams(strategy, paramManager.getValues(strategy));
-            this.captureLastRunBaseParams(strategy, currentParams);
             const tradeAwareThresholds = this.autoSuggestWindowSettings(
                 data,
                 strategy,
@@ -508,6 +537,7 @@ class WalkForwardService {
                 currentParams,
                 strategy.metadata?.walkForwardParams
             );
+            this.captureLastRunBaseParams(strategy, this.snapParamsToRanges(currentParams, parameterRanges));
 
             // Determine if we should use fixed-param walk-forward:
             // - No parameters at all, OR  
@@ -671,12 +701,12 @@ class WalkForwardService {
         try {
             // Check if has no tunable parameters
             const currentParams = this.normalizeStrategyParams(strategy, paramManager.getValues(strategy));
-            this.captureLastRunBaseParams(strategy, currentParams);
             const parameterRanges = this.buildParameterRanges(
                 strategy.defaultParams,
                 currentParams,
                 strategy.metadata?.walkForwardParams
             );
+            this.captureLastRunBaseParams(strategy, this.snapParamsToRanges(currentParams, parameterRanges));
             const useFixedParam =
                 Object.keys(strategy.defaultParams).length === 0 ||
                 parameterRanges.length === 0;

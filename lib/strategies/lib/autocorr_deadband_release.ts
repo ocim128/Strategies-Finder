@@ -2,6 +2,18 @@ import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildRateOfChange, buildRollingAutoCorrelation } from "./price-action-statistics-core";
 
+function normalizeAutocorrDeadbandReleaseParams(params: StrategyParams): StrategyParams {
+    const rawDeadbandWidth = Number(params.deadbandWidth ?? 0.18);
+    const rawRocTrigger = Number(params.rocTrigger ?? 0.012);
+
+    return {
+        ...params,
+        lookback: Math.max(2, Math.round(params.lookback ?? 18)),
+        deadbandWidth: Math.max(0, Number.isFinite(rawDeadbandWidth) ? rawDeadbandWidth : 0.18),
+        rocTrigger: Math.max(0, Math.abs(Number.isFinite(rawRocTrigger) ? rawRocTrigger : 0.012)),
+    };
+}
+
 function buildReturns(series: number[]): number[] {
     const res = new Array(series.length).fill(0);
     for (let i = 1; i < series.length; i++) {
@@ -71,14 +83,15 @@ export const autocorr_deadband_release: Strategy = {
         deadbandWidth: "Max Band Width",
         rocTrigger: "ROC Trigger (abs)",
     },
+    normalizeParams: normalizeAutocorrDeadbandReleaseParams,
     prepareFinderData: (data) => prepareAutocorrDeadbandData(data),
     executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
         const prepared = getPreparedAutocorrDeadbandData(preparedData, data);
         const { cleanData, returns, roc1, autoCorrByLookback, bandWidthByLookback } = prepared;
-
-        const lookback = Math.max(2, Math.round(params.lookback ?? 18));
-        const deadbandWidth = Number(params.deadbandWidth ?? 0.18);
-        const rocTrigger = Number(params.rocTrigger ?? 0.012);
+        const normalizedParams = normalizeAutocorrDeadbandReleaseParams(params);
+        const lookback = normalizedParams.lookback;
+        const deadbandWidth = normalizedParams.deadbandWidth;
+        const rocTrigger = normalizedParams.rocTrigger;
 
         if (cleanData.length < lookback + lookback + 1) return [];
 

@@ -6,6 +6,15 @@ import {
     computeCandlePatternPersistenceState,
 } from "./candle-pattern-persistence-core";
 
+function normalizeCandlePatternPersistenceScoreMacdSignalCrossParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        scoreLookback: Math.max(2, Math.round(params.scoreLookback ?? 5)),
+        scoreThreshold: Math.max(0, Math.min(1, params.scoreThreshold ?? 0.6)),
+        macdFastLen: Math.max(2, Math.round(params.macdFastLen ?? 12)),
+    };
+}
+
 export const candle_pattern_persistence_score_macd_signal_cross: Strategy = {
     name: "Candle Pattern Persistence Score (MACD Signal Cross)",
     description: "CPPS entries only on fresh MACD/signal crossovers. Catches momentum starts, blocks exhausted trends.",
@@ -19,6 +28,7 @@ export const candle_pattern_persistence_score_macd_signal_cross: Strategy = {
         scoreThreshold: "Persistence Threshold",
         macdFastLen: "MACD Fast Period",
     },
+    normalizeParams: normalizeCandlePatternPersistenceScoreMacdSignalCrossParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const scoreThreshold = Math.max(0, Math.min(1, params.scoreThreshold ?? 0.6));
         const macdFastLen = Math.max(2, Math.round(params.macdFastLen ?? 12));
