@@ -1040,6 +1040,14 @@ export class FinderManager {
 		params: StrategyParams
 	): T {
 		const merged = this.cloneBacktestSettings(settings);
+		const usesAtrRisk =
+			merged.riskSettingsToggle &&
+			(merged.riskMode === 'simple' || merged.riskMode === 'advanced');
+		const atrPeriod = params['atrPeriod'];
+		if (usesAtrRisk && typeof atrPeriod === 'number' && Number.isFinite(atrPeriod)) {
+			merged.atrPeriod = Math.max(1, Math.round(atrPeriod));
+		}
+
 		const stopLossPercent = params['stopLossPercent'];
 		if (typeof stopLossPercent === 'number' && Number.isFinite(stopLossPercent)) {
 			merged.stopLossPercent = stopLossPercent;

@@ -3,10 +3,15 @@ import { describe, it } from 'node:test';
 import type { BacktestSettings } from './lib/types/strategies';
 import type { FinderResult } from './lib/types/finder';
 import { getFinderMetricValue } from './lib/finder/finder-engine';
+import { FinderParamSpace } from './lib/finder/finder-param-space';
 import {
     resolveFinderCandidateBacktestSettings,
     shouldUseRustCachedMode,
 } from './lib/finder/finder-runner';
+import {
+    buildFinderSearchBaseParams,
+    resolveFinderRiskOverrides,
+} from './lib/finder/finder-runner-core';
 
 describe('Finder adaptive cache mode decision', () => {
     it('enables cache for large dataset (>500k bars)', () => {
@@ -114,6 +119,78 @@ describe('Finder candidate backtest settings resolution', () => {
         expect(resolved).to.equal(primarySettings);
         expect(resolved.executionModel).to.equal('next_close');
         expect(resolved.stopLossPercent).to.equal(9);
+    });
+});
+
+describe('Finder ATR risk randomization support', () => {
+    it('adds atrPeriod to finder search params for ATR-risk runs without adding takeProfitAtr', () => {
+        const strategy = {
+            defaultParams: {
+                lookback: 20,
+            },
+        } as any;
+        const settings: BacktestSettings = {
+            riskMode: 'simple',
+            atrPeriod: 21,
+            stopLossAtr: 1.5,
+            takeProfitAtr: 3,
+            trailingAtr: 0,
+        };
+
+        const baseParams = buildFinderSearchBaseParams(strategy, settings);
+
+        expect(baseParams.lookback).to.equal(20);
+        expect(baseParams.atrPeriod).to.equal(21);
+        expect('takeProfitAtr' in baseParams).to.equal(false);
+    });
+
+    it('random mode can vary atrPeriod once it is part of the finder search params', () => {
+        const paramSpace = new FinderParamSpace();
+        const combos = paramSpace.generateParamSets(
+            {
+                lookback: 20,
+                atrPeriod: 14,
+            },
+            {
+                mode: 'random',
+                sortPriority: ['netProfit'],
+                useAdvancedSort: false,
+                robustSeed: 1337,
+                multiTimeframeEnabled: false,
+                timeframes: [],
+                topN: 10,
+                steps: 3,
+                rangePercent: 35,
+                maxRuns: 12,
+                tradeFilterEnabled: false,
+                minTrades: 0,
+                maxTrades: Number.POSITIVE_INFINITY,
+                comboEnabled: false,
+                randomSeed: 42,
+            }
+        );
+
+        const atrPeriods = new Set(combos.map((combo) => combo.atrPeriod));
+
+        expect(atrPeriods.size).to.be.greaterThan(1);
+        expect(combos.every((combo) => !('takeProfitAtr' in combo))).to.equal(true);
+    });
+
+    it('applies atrPeriod candidate overrides while keeping takeProfitAtr fixed', () => {
+        const settings: BacktestSettings = {
+            riskMode: 'simple',
+            atrPeriod: 14,
+            stopLossAtr: 1.5,
+            takeProfitAtr: 3,
+            trailingAtr: 0,
+        };
+
+        const resolved = resolveFinderRiskOverrides(settings, settings, { atrPeriod: 29 });
+
+        expect(resolved.backtestSettings.atrPeriod).to.equal(29);
+        expect(resolved.rustBacktestSettings.atrPeriod).to.equal(29);
+        expect(resolved.backtestSettings.takeProfitAtr).to.equal(3);
+        expect(resolved.rustBacktestSettings.takeProfitAtr).to.equal(3);
     });
 });
 

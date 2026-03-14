@@ -156,14 +156,33 @@ Do not introduce new ad hoc time conversion paths unless there is no existing se
    - `paramLabels`
    - `execute(data, params)`
    - `metadata` with `role`, `direction`, and `walkForwardParams` when applicable
-5. Register the strategy in `lib/strategies/manifest.ts`
-6. Do not manually wire `strategyRegistry.ts`; built-ins are loaded from the manifest
-7. Verify dropdown + worker compatibility
+5. Add `normalizeParams` if execution rounds, clamps, coerces sign, or otherwise sanitizes params
+6. Register the strategy in `lib/strategies/manifest.ts`
+7. Do not manually wire `strategyRegistry.ts`; built-ins are loaded from the manifest
+8. Verify dropdown + worker compatibility
+
+Strategy-lib contract notes:
+- If `execute(...)` changes parameter meaning, `normalizeParams` must expose the same canonical values to Finder and Walk Forward
+- Keep `defaultParams` already valid after normalization
+- If a param is optimized by WFA/Finder, it must exist in:
+  - `defaultParams`
+  - `paramLabels`
+  - `metadata.walkForwardParams`
+  - the execution logic
+- If you add `prepareFinderData(...)`, keep `executePrepared(...)` behavior identical to `execute(...)`
 
 Recommended strategy-lib skeleton:
 ```ts
 import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
+
+function normalizeMyStrategyParams(params: StrategyParams): StrategyParams {
+	return {
+		...params,
+		lookback: Math.max(2, Math.round(params.lookback ?? 20)),
+		threshold: Math.max(0, Number(params.threshold ?? 1)),
+	};
+}
 
 export const my_strategy_key: Strategy = {
 	name: "My Strategy Name",
@@ -176,11 +195,14 @@ export const my_strategy_key: Strategy = {
 		lookback: "Lookback",
 		threshold: "Threshold",
 	},
+	normalizeParams: normalizeMyStrategyParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
-		if (cleanData.length < 3) return [];
+		const normalizedParams = normalizeMyStrategyParams(params);
+		if (cleanData.length < normalizedParams.lookback) return [];
 
 		return createSignalLoop(cleanData, [], (i) => {
+			if (i < normalizedParams.lookback) return null;
 			if (/* bullish condition */) {
 				return createBuySignal(cleanData, i, "My bullish reason");
 			}
@@ -222,14 +244,33 @@ Useful helper map when adding strategies:
   - `buildCumulativeDecaySum`
   - `buildThresholdCrossingCount`
 
+Useful examples:
+- `lib/strategies/lib/median_deviation_streak.ts`
+  - small strategy with explicit normalization and direct `execute(...)` use
+- `lib/strategies/lib/vwap_zscore_reversion.ts`
+  - WFA/Finder-safe threshold normalization
+- search `prepareFinderData` under `lib/strategies/lib/*`
+  - only for strategies where dataset-derived precompute materially reduces Finder cost
+
 Strategy-lib checklist before you stop:
 - file exists in `lib/strategies/lib/*`
 - exported const name matches manifest import
 - `defaultParams` keys match `paramLabels` keys
+- `defaultParams` are already valid after `normalizeParams`
+- `normalizeParams` exists if execution sanitizes params
 - `metadata.walkForwardParams` only references real params
+- `execute(...)` uses normalized params if bounds or trigger semantics depend on them
 - manifest import + entry added in `lib/strategies/manifest.ts`
 - `npm run typecheck` passes
+- add or update `strategies.spec.ts` if normalization, Finder, or WFA behavior is non-trivial
 - manually confirm the strategy appears in the dropdown if UI behavior changed
+
+Strategy-lib failure modes seen repeatedly:
+- sanitizing params inside `execute(...)` but forgetting `normalizeParams`, causing WFA/Finder/base-param drift
+- letting WFA optimize a param that execution later snaps to a different grid without exposing that grid
+- using negative values as shorthand for absolute thresholds, then showing impossible negative base params in the UI
+- adding expensive per-bar allocations in Finder hot paths when a cheap reusable array precompute would do
+- adding `prepareFinderData(...)` but not keeping `executePrepared(...)` aligned with `execute(...)`
 
 ### Modify Finder
 - Expect performance sensitivity

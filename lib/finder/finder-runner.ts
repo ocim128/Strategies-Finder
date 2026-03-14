@@ -29,9 +29,8 @@ import { trimToClosedCandles } from "../closed-candle-utils";
 import { mergeStrategySignals } from "../signal-merge";
 import { runGeneticOptimization } from "./genetic-optimizer";
 import {
+    buildFinderSearchBaseParams,
     buildComparableFinderResult,
-    buildRustFinderBaseParams,
-    clampMaxHoldBars,
     compactSignalsForRust,
     computeFinderCompositeEdgeRatio,
     computeAverageCompositeEdgeRatio,
@@ -171,18 +170,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     const strategyPlans: StrategyPlan[] = [];
     let totalRuns = 0;
     for (const selection of selectedStrategies) {
-        const extendedDefaults = { ...selection.strategy.defaultParams };
-        if (settings.riskMode === "percentage") {
-            if (settings.stopLossEnabled) {
-                extendedDefaults.stopLossPercent = settings.stopLossPercent ?? 5;
-            }
-            if (settings.takeProfitEnabled) {
-                extendedDefaults.takeProfitPercent = settings.takeProfitPercent ?? 10;
-            }
-            if (settings.riskMaxHoldEnabled) {
-                extendedDefaults.riskMaxHoldBars = clampMaxHoldBars(settings.riskMaxHoldBars ?? 10);
-            }
-        }
+        const extendedDefaults = buildFinderSearchBaseParams(selection.strategy, settings);
 
         const generationOptions = options.mode === "robust_random_wf"
             ? { ...options, robustSeed: deriveStrategySeed(options.robustSeed, selection.key) }
@@ -1000,7 +988,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         callbacks.setStatus("Using Rust native random finder...");
         callbacks.setProgress(12, "Rust native finder running...");
 
-        const baseParams = buildRustFinderBaseParams(selected.strategy, input.settings);
+        const baseParams = buildFinderSearchBaseParams(selected.strategy, input.settings);
         const rustFinderOptions = {
             mode: "random" as const,
             sortPriority: input.options.sortPriority,

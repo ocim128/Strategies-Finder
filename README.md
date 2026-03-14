@@ -159,15 +159,36 @@ Important behavior:
 1. Pick a stable key and use it consistently for the file name, exported const, and manifest entry.
 2. Create `lib/strategies/lib/<strategy-key>.ts`.
 3. Export a `Strategy` with `name`, `description`, `defaultParams`, `paramLabels`, and `execute(...)`.
-4. Add `metadata` when the strategy should participate in walk-forward/finder optimization.
-5. Register it in `lib/strategies/manifest.ts`.
-6. Run `npm run typecheck`.
-7. Verify it appears in the UI dropdown.
+4. Add `normalizeParams(...)` if the strategy rounds, clamps, or coerces parameter values.
+5. Add `metadata` when the strategy should participate in walk-forward/finder optimization.
+6. Register it in `lib/strategies/manifest.ts`.
+7. Run `npm run typecheck`.
+8. Verify it appears in the UI dropdown.
+
+The important contract is that Finder and Walk Forward must see the same parameter semantics that `execute(...)` uses. If the strategy silently converts `-2` to `2`, rounds `11.383` to `11.384`, or clamps a lookback upward, expose that through `normalizeParams(...)` or the UI will show impossible base params and misleading WFA summaries.
+
+Practical build order:
+1. Start from a nearby existing strategy:
+   - `lib/strategies/lib/median_deviation_streak.ts` for simple rolling-stat thresholds
+   - `lib/strategies/lib/vwap_zscore_reversion.ts` for normalized threshold and WFA-safe params
+   - a strategy with `prepareFinderData(...)` only if Finder hot-loop cost is actually high
+2. Write the raw signal idea first with `ensureCleanData(...)` and `createSignalLoop(...)`.
+3. Add a named param normalizer before wiring `metadata.walkForwardParams`.
+4. Register in `lib/strategies/manifest.ts`.
+5. Add Finder precompute only if profiling justifies it.
 
 Minimal template:
 ```ts
 import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
+
+function normalizeMyStrategyParams(params: StrategyParams): StrategyParams {
+  return {
+    ...params,
+    lookback: Math.max(2, Math.round(params.lookback ?? 20)),
+    threshold: Math.max(0, Number(params.threshold ?? 1)),
+  };
+}
 
 export const my_strategy_key: Strategy = {
   name: "My Strategy Name",
@@ -180,11 +201,14 @@ export const my_strategy_key: Strategy = {
     lookback: "Lookback",
     threshold: "Threshold",
   },
+  normalizeParams: normalizeMyStrategyParams,
   execute: (data: OHLCVData[], params: StrategyParams) => {
     const cleanData = ensureCleanData(data);
-    if (cleanData.length < 3) return [];
+    const normalizedParams = normalizeMyStrategyParams(params);
+    if (cleanData.length < normalizedParams.lookback) return [];
 
     return createSignalLoop(cleanData, [], (i) => {
+      if (i < normalizedParams.lookback) return null;
       if (/* bullish condition */) {
         return createBuySignal(cleanData, i, "Bullish reason");
       }
@@ -206,6 +230,19 @@ Helpful helper files:
 - `lib/strategies/strategy-helpers.ts`: signal creation, clean-data guards, base OHLCV series extractors
 - `lib/strategies/lib/price-action-frequency-core.ts`: candle geometry and trailing range/high-low helpers
 - `lib/strategies/lib/price-action-statistics-core.ts`: percentile, z-score, skewness, streak, ROC, ER, and decay helpers
+
+Strategy author checklist:
+- keep `defaultParams` valid after normalization
+- keep `defaultParams`, `paramLabels`, and `metadata.walkForwardParams` on the same exact keys
+- use normalized params inside `execute(...)` when bounds or thresholds depend on them
+- register only in `lib/strategies/manifest.ts`; do not hand-wire `strategyRegistry.ts`
+- add or extend `strategies.spec.ts` when normalization or WFA behavior is non-trivial
+
+Common mistakes:
+- sanitizing params inside `execute(...)` but forgetting `normalizeParams(...)`
+- adding a new strategy file but forgetting the manifest entry
+- exposing a WFA param that the strategy later ignores or renames
+- adding `prepareFinderData(...)` for a cheap strategy and paying complexity for no gain
 
 ### Change backtest behavior
 - Engine logic: `lib/strategies/backtest/*`

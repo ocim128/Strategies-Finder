@@ -91,19 +91,71 @@ export function clampMaxHoldBars(value: number): number {
     return Math.max(1, Math.round(value));
 }
 
+function clampAtrPeriod(value: number): number {
+    if (!Number.isFinite(value)) return 1;
+    return Math.max(1, Math.round(value));
+}
+
+function usesAtrRiskSettings(settings: BacktestSettings): boolean {
+    if (settings.riskMode !== "simple" && settings.riskMode !== "advanced") {
+        return false;
+    }
+
+    return (
+        Number(settings.stopLossAtr) > 0 ||
+        Number(settings.takeProfitAtr) > 0 ||
+        Number(settings.trailingAtr) > 0
+    );
+}
+
+export function buildFinderSearchBaseParams(strategy: Strategy, settings: BacktestSettings): StrategyParams {
+    const baseParams: StrategyParams = { ...strategy.defaultParams };
+
+    if (usesAtrRiskSettings(settings) && Number.isFinite(settings.atrPeriod)) {
+        baseParams.atrPeriod = clampAtrPeriod(Number(settings.atrPeriod));
+    }
+
+    if (settings.riskMode !== "percentage") {
+        return baseParams;
+    }
+
+    if (settings.stopLossEnabled && Number.isFinite(settings.stopLossPercent)) {
+        baseParams.stopLossPercent = clampPercentValue(Number(settings.stopLossPercent), 0, 15);
+    }
+    if (settings.takeProfitEnabled && Number.isFinite(settings.takeProfitPercent)) {
+        baseParams.takeProfitPercent = clampPercentValue(Number(settings.takeProfitPercent), 0, 100);
+    }
+    if (settings.riskMaxHoldEnabled && Number.isFinite(settings.riskMaxHoldBars)) {
+        baseParams.riskMaxHoldBars = clampMaxHoldBars(Number(settings.riskMaxHoldBars));
+    }
+
+    return baseParams;
+}
+
 export function resolveFinderRiskOverrides(
     settings: BacktestSettings,
     rustSettings: BacktestSettings,
     params: StrategyParams
 ): { backtestSettings: BacktestSettings; rustBacktestSettings: BacktestSettings } {
-    if (settings.riskMode !== "percentage") {
-        return { backtestSettings: settings, rustBacktestSettings: rustSettings };
-    }
-
     let hasBacktestOverrides = false;
     let hasRustOverrides = false;
     const backtestOverrides: Partial<BacktestSettings> = {};
     const rustOverrides: Partial<BacktestSettings> = {};
+
+    if (usesAtrRiskSettings(settings) && Number.isFinite(params.atrPeriod)) {
+        const normalized = clampAtrPeriod(Number(params.atrPeriod));
+        backtestOverrides.atrPeriod = normalized;
+        rustOverrides.atrPeriod = normalized;
+        hasBacktestOverrides = true;
+        hasRustOverrides = true;
+    }
+
+    if (settings.riskMode !== "percentage") {
+        return {
+            backtestSettings: hasBacktestOverrides ? { ...settings, ...backtestOverrides } : settings,
+            rustBacktestSettings: hasRustOverrides ? { ...rustSettings, ...rustOverrides } : rustSettings,
+        };
+    }
 
     if (settings.stopLossEnabled && Number.isFinite(params.stopLossPercent)) {
         const normalized = clampPercentValue(Number(params.stopLossPercent), 0, 15);
@@ -219,21 +271,7 @@ export function extractRustFinderCandidates(
 }
 
 export function buildRustFinderBaseParams(strategy: Strategy, settings: BacktestSettings): StrategyParams {
-    const baseParams: StrategyParams = { ...strategy.defaultParams };
-    if (settings.riskMode !== "percentage") {
-        return baseParams;
-    }
-
-    if (settings.stopLossEnabled && Number.isFinite(settings.stopLossPercent)) {
-        baseParams.stopLossPercent = clampPercentValue(Number(settings.stopLossPercent), 0, 15);
-    }
-    if (settings.takeProfitEnabled && Number.isFinite(settings.takeProfitPercent)) {
-        baseParams.takeProfitPercent = clampPercentValue(Number(settings.takeProfitPercent), 0, 100);
-    }
-    if (settings.riskMaxHoldEnabled && Number.isFinite(settings.riskMaxHoldBars)) {
-        baseParams.riskMaxHoldBars = clampMaxHoldBars(Number(settings.riskMaxHoldBars));
-    }
-    return baseParams;
+    return buildFinderSearchBaseParams(strategy, settings);
 }
 
 export function selectPrescreenDataSlice(data: OHLCVData[]): OHLCVData[] {
