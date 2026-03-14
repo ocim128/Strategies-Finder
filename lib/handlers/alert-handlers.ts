@@ -18,7 +18,7 @@ import { state } from '../state';
 import { backtestService } from '../backtest-service';
 import { settingsManager } from '../settings-manager';
 import { dataManager } from '../data-manager';
-import { Trade, BacktestSettings, Time } from '../strategies/index';
+import { Trade, BacktestSettings, OHLCVData, Time } from '../strategies/index';
 import { formatJakartaTime, isBusinessDayTime } from '../timezone-utils';
 import { getOptionalElement } from '../dom-utils';
 import { parseInputNumber } from '../dom-input-readers';
@@ -37,6 +37,7 @@ import {
     getDefaultAlertMinClosedCandles,
     selectClosedCandleWindow,
 } from '../alert-evaluation-window';
+import { resolveEntryRiskTargets } from '../entry-risk-targets';
 import { applySlippage, entrySideForDirection } from '../strategies/backtest/backtest-utils';
 
 function safeJsonParse<T>(raw: string, fallback: T): T {
@@ -992,7 +993,8 @@ function selectLastTradeForDisplay(trades: Trade[]): { trade: Trade | null; trad
 
 function createOpenTradeFromSignalRecord(
     signal: AlertSignalRecord,
-    backtestSettings: BacktestSettings = {}
+    backtestSettings: BacktestSettings = {},
+    candles: OHLCVData[] = []
 ): Trade | null {
     if (!signal || !Number.isFinite(signal.signal_time) || !Number.isFinite(signal.signal_price)) {
         return null;
@@ -1006,22 +1008,15 @@ function createOpenTradeFromSignalRecord(
         : 0;
     const entryPrice = applySlippage(rawSignalPrice, entrySideForDirection(signal.direction), slippageRate);
 
-    let takeProfitPrice: number | null = null;
-    let stopLossPrice: number | null = null;
-    if (backtestSettings.riskMode === 'percentage') {
-        if (backtestSettings.takeProfitEnabled && Number(backtestSettings.takeProfitPercent) > 0) {
-            const tpPct = Number(backtestSettings.takeProfitPercent);
-            takeProfitPrice = signal.direction === 'long'
-                ? entryPrice * (1 + tpPct / 100)
-                : entryPrice * (1 - tpPct / 100);
-        }
-        if (backtestSettings.stopLossEnabled && Number(backtestSettings.stopLossPercent) > 0) {
-            const slPct = Number(backtestSettings.stopLossPercent);
-            stopLossPrice = signal.direction === 'long'
-                ? entryPrice * (1 - slPct / 100)
-                : entryPrice * (1 + slPct / 100);
-        }
-    }
+    const riskTargets = resolveEntryRiskTargets({
+        candles,
+        entryTime: signal.signal_time as Time,
+        entryPrice,
+        direction: signal.direction,
+        settings: backtestSettings,
+    });
+    let takeProfitPrice: number | null = riskTargets.takeProfitPrice;
+    let stopLossPrice: number | null = riskTargets.stopLossPrice;
 
     if (takeProfitPrice === null) {
         const tpValue = Number(payload.takeProfitPrice);
@@ -1238,7 +1233,7 @@ async function handleLastTradeAction(streamId: string): Promise<void> {
         if (!tradeSelection.trade) {
             const history = await alertService.getSignalHistory(streamId, 1);
             const fallbackTrade = history.length > 0
-                ? createOpenTradeFromSignalRecord(history[0], effectiveBacktestSettings)
+                ? createOpenTradeFromSignalRecord(history[0], effectiveBacktestSettings, evaluationCandles)
                 : null;
             if (fallbackTrade) {
                 showLastTradeResult(

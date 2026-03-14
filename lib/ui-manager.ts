@@ -110,8 +110,27 @@ export class UIManager {
         const badge = document.getElementById('lastBacktestResult');
         if (badge) {
             const isPositive = result.netProfit >= 0;
-            badge.textContent = `${isPositive ? '+' : ''}${result.netProfitPercent.toFixed(2)}% ROI`;
+            const source = state.currentBacktestResultSource;
+            const sourcePrefix = source === 'finder_selection'
+                ? 'Finder Adj '
+                : source === 'finder_robust_oos'
+                    ? 'Robust OOS '
+                    : source === 'walk_forward_oos'
+                        ? 'WFO OOS '
+                        : source === 'ensemble_preview'
+                            ? 'Ensemble '
+                            : '';
+            badge.textContent = `${sourcePrefix}${isPositive ? '+' : ''}${result.netProfitPercent.toFixed(2)}% ROI`;
             badge.className = `stat-badge ${isPositive ? 'positive' : 'negative'}`;
+            badge.title = source === 'finder_selection'
+                ? 'Showing Finder selection snapshot with endpoint-bias trade removed. Run Backtest for the raw result.'
+                : source === 'finder_robust_oos'
+                    ? 'Showing Finder robust OOS walk-forward snapshot. Run Backtest for a full-history raw result.'
+                    : source === 'walk_forward_oos'
+                        ? 'Showing walk-forward out-of-sample result snapshot.'
+                        : source === 'ensemble_preview'
+                            ? 'Showing strategy ensemble preview result.'
+                            : 'Showing raw backtest result.';
             badge.classList.remove('is-hidden');
         }
     }

@@ -323,6 +323,7 @@ export function resolveBacktestSettingsFromRaw(
     const useAtrRisk = riskEnabled && (riskMode === "simple" || riskMode === "advanced");
     const usePercentRisk = riskEnabled && riskMode === "percentage";
     const useAdvancedRisk = riskEnabled && riskMode === "advanced";
+    const useRiskMaxHold = riskEnabled;
 
     const tradeFilterEnabled = readBoolean(
         raw,
@@ -374,8 +375,8 @@ export function resolveBacktestSettingsFromRaw(
         takeProfitPercent: usePercentRisk ? readNumber(raw, "takeProfitPercent", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitPercent) : 0,
         stopLossEnabled: usePercentRisk ? readBooleanAny(raw, ["stopLossEnabled", "stopLossToggle"], EFFECTIVE_BACKTEST_DEFAULTS.stopLossEnabled) : false,
         takeProfitEnabled: usePercentRisk ? readBooleanAny(raw, ["takeProfitEnabled", "takeProfitToggle"], EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEnabled) : false,
-        riskMaxHoldBars: usePercentRisk ? readNumber(raw, "riskMaxHoldBars", EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars) : 0,
-        riskMaxHoldEnabled: usePercentRisk ? readBooleanAny(raw, ["riskMaxHoldEnabled", "riskMaxHoldToggle"], EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldEnabled) : false,
+        riskMaxHoldBars: useRiskMaxHold ? readNumber(raw, "riskMaxHoldBars", EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars) : 0,
+        riskMaxHoldEnabled: useRiskMaxHold ? readBooleanAny(raw, ["riskMaxHoldEnabled", "riskMaxHoldToggle"], EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldEnabled) : false,
         riskWinStreakStopLossEnabled: usePercentRisk
             ? readBooleanAny(raw, ["riskWinStreakStopLossEnabled", "riskWinStreakStopLossToggle"], EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossEnabled)
             : false,

@@ -17,6 +17,7 @@ import {
     isWorkerSupportedStrategyKey,
     resolveSubscriptionExecutionBacktestSettings,
 } from "../lib/alert-subscription-utils";
+import { resolveEntryRiskTargets } from "../lib/entry-risk-targets";
 
 type CandleTime = OHLCVData["time"];
 
@@ -932,25 +933,19 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         }
     }
 
-    // Compute TP/SL target prices from backtest settings (percentage mode)
+    // Compute TP/SL target prices from backtest settings.
     const bs = payload.backtestSettings;
     const price = evaluation.latestEntry.signal.price;
-    const isLong = evaluation.latestEntry.direction === "long";
-    let takeProfitPrice: number | undefined;
-    let stopLossPrice: number | undefined;
-    let takeProfitPercent: number | undefined;
-    let stopLossPercent: number | undefined;
-
-    if (bs.riskMode === "percentage") {
-        if (bs.takeProfitEnabled && bs.takeProfitPercent && bs.takeProfitPercent > 0) {
-            takeProfitPercent = bs.takeProfitPercent;
-            takeProfitPrice = isLong ? price * (1 + bs.takeProfitPercent / 100) : price * (1 - bs.takeProfitPercent / 100);
-        }
-        if (bs.stopLossEnabled && bs.stopLossPercent && bs.stopLossPercent > 0) {
-            stopLossPercent = bs.stopLossPercent;
-            stopLossPrice = isLong ? price * (1 - bs.stopLossPercent / 100) : price * (1 + bs.stopLossPercent / 100);
-        }
-    }
+    const riskTargets = resolveEntryRiskTargets({
+        candles: payload.candles,
+        entryTime: evaluation.latestEntry.signal.time,
+        entryPrice: price,
+        direction: evaluation.latestEntry.direction,
+        settings: bs,
+        entryBarIndex: Number.isFinite(evaluation.latestEntry.signal.barIndex)
+            ? Math.trunc(evaluation.latestEntry.signal.barIndex as number)
+            : null,
+    });
 
     const entryPayload: StoredSignalPayload = {
         streamId,
@@ -965,10 +960,10 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         signalPrice: price,
         signalReason: evaluation.latestEntry.signal.reason ?? null,
         fingerprint: evaluation.latestEntry.fingerprint,
-        takeProfitPrice,
-        stopLossPrice,
-        takeProfitPercent,
-        stopLossPercent,
+        takeProfitPrice: riskTargets.takeProfitPrice ?? undefined,
+        stopLossPrice: riskTargets.stopLossPrice ?? undefined,
+        takeProfitPercent: riskTargets.takeProfitPercent ?? undefined,
+        stopLossPercent: riskTargets.stopLossPercent ?? undefined,
     };
 
     const dedupeKey = `${channelKey}:${evaluation.latestEntry.fingerprint}`;

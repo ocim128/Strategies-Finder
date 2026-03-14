@@ -19,7 +19,7 @@ const RUST_UNSUPPORTED_TRADE_FILTER_MODES = new Set([
  * - tradeDirection 'both', 'both_flip_loss_2', or 'combined'
  * - marketMode !== 'all'
  * - Any non-zero snapshot filter
- * - Percentage-based risk extras (max hold, win-streak stop-loss override)
+ * - Risk extras unsupported by Rust (max hold, win-streak stop-loss override)
  */
 export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const executionModel = settings.executionModel ?? 'signal_close';
@@ -45,9 +45,8 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const usesUnsupportedTradeFilterMode = RUST_UNSUPPORTED_TRADE_FILTER_MODES.has(tradeFilterMode);
 
     // Percentage-based risk guards
-    const usesPercentageMaxHold =
-        settings.riskMode === 'percentage'
-        && settings.riskMaxHoldEnabled === true
+    const usesRiskMaxHold =
+        settings.riskMaxHoldEnabled === true
         && (settings.riskMaxHoldBars ?? 0) > 0;
     const usesPercentageWinStreakStopLoss =
         settings.riskMode === 'percentage'
@@ -66,7 +65,7 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         || usesCombinedDirection
         || usesNonAllMarketMode
         || usesUnsupportedTradeFilterMode
-        || usesPercentageMaxHold
+        || usesRiskMaxHold
         || usesPercentageWinStreakStopLoss
         || hasSnapshotFilters
         || usesMultiPosition

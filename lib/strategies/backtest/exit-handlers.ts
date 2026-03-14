@@ -56,9 +56,8 @@ export function processPositionExits(
         }
     }
 
-    // Percentage mode max hold cap (hard exit regardless of PnL)
+    // Global max hold cap (hard exit regardless of PnL)
     if (
-        config.riskMode === 'percentage' &&
         config.riskMaxHoldEnabled &&
         config.riskMaxHoldBars > 0 &&
         position.barsInTrade >= config.riskMaxHoldBars

@@ -507,6 +507,17 @@ export function runBacktestCompact(
         if (positions.indexOf(pos) >= 0) updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
     };
 
+    const finalizeEntryBarState = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
+        if (config.executionModel !== 'next_open') return;
+        if (config.allowSameBarExit) {
+            tryProcessExitsAfterEntry(pos, candle, barIndex);
+            return;
+        }
+        if (positions.indexOf(pos) >= 0) {
+            updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
+        }
+    };
+
     for (let i = 0; i < data.length; i++) {
         const candle = data[i];
 
@@ -549,9 +560,7 @@ export function runBacktestCompact(
                         flipLossDirection.activeDirection = opened.nextPosition.direction;
                     }
                     capital -= opened.entryCommission;
-                    if (config.executionModel === 'next_open') {
-                        tryProcessExitsAfterEntry(opened.nextPosition, candle, i);
-                    }
+                    finalizeEntryBarState(opened.nextPosition, candle, i);
                 }
             }
             pendingEntry = null;
@@ -594,9 +603,7 @@ export function runBacktestCompact(
                             flipLossDirection.activeDirection = opened.nextPosition.direction;
                         }
                         capital -= opened.entryCommission;
-                        if (config.executionModel === 'next_open') {
-                            tryProcessExitsAfterEntry(opened.nextPosition, candle, i);
-                        }
+                        finalizeEntryBarState(opened.nextPosition, candle, i);
                     }
                 } else if (!exitTarget && positions.length >= maxOpenTrades && warmUpEnabled) {
                     // Capacity full and no exit target — queue as pending warm-up entry
@@ -646,9 +653,7 @@ export function runBacktestCompact(
                                 flipLossDirection.activeDirection = opened.nextPosition.direction;
                             }
                             capital -= opened.entryCommission;
-                            if (config.executionModel === 'next_open') {
-                                tryProcessExitsAfterEntry(opened.nextPosition, candle, i);
-                            }
+                            finalizeEntryBarState(opened.nextPosition, candle, i);
                         }
                     }
                 }
@@ -784,6 +789,17 @@ export function runBacktest(
         if (positions.indexOf(pos) >= 0) updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
     };
 
+    const finalizeEntryBarStateFull = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
+        if (config.executionModel !== 'next_open') return;
+        if (config.allowSameBarExit) {
+            tryProcessExitsAfterEntryFull(pos, candle, barIndex);
+            return;
+        }
+        if (positions.indexOf(pos) >= 0) {
+            updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
+        }
+    };
+
     for (let i = 0; i < data.length; i++) {
         const candle = data[i];
 
@@ -828,9 +844,7 @@ export function runBacktest(
                     }
                     capital -= opened.entryCommission;
                     captureSnapshotForPosition(opened.nextPosition, i, warmUpSignal);
-                    if (config.executionModel === 'next_open') {
-                        tryProcessExitsAfterEntryFull(opened.nextPosition, candle, i);
-                    }
+                    finalizeEntryBarStateFull(opened.nextPosition, candle, i);
                 }
             }
             pendingEntry = null;
@@ -873,9 +887,7 @@ export function runBacktest(
                         }
                         capital -= opened.entryCommission;
                         captureSnapshotForPosition(opened.nextPosition, i, signal);
-                        if (config.executionModel === 'next_open') {
-                            tryProcessExitsAfterEntryFull(opened.nextPosition, candle, i);
-                        }
+                        finalizeEntryBarStateFull(opened.nextPosition, candle, i);
                     }
                 } else if (!exitTarget && positions.length >= maxOpenTrades && warmUpEnabled) {
                     pendingEntry = signal;
@@ -932,9 +944,7 @@ export function runBacktest(
                             }
                             capital -= opened.entryCommission;
                             captureSnapshotForPosition(opened.nextPosition, i, signal);
-                            if (config.executionModel === 'next_open') {
-                                tryProcessExitsAfterEntryFull(opened.nextPosition, candle, i);
-                            }
+                            finalizeEntryBarStateFull(opened.nextPosition, candle, i);
                         }
                     }
                 }

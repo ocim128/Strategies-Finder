@@ -26,6 +26,7 @@ import { hasNonZeroSnapshotFilter, sanitizeBacktestSettingsForRust } from "../ru
 import type { FinderDataset } from "./finder-timeframe-loader";
 import type { EndpointSelectionAdjustment, FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
 import { trimToClosedCandles } from "../closed-candle-utils";
+import { buildExecutionAwareCandleWindow, selectClosedCandleWindow } from "../alert-evaluation-window";
 import { mergeStrategySignals } from "../signal-merge";
 import { runGeneticOptimization } from "./genetic-optimizer";
 import {
@@ -49,6 +50,30 @@ import {
 } from "./finder-runner-core";
 
 export { resolveFinderCandidateBacktestSettings, shouldUseRustCachedMode } from "./finder-runner-core";
+
+export function buildFinderEvaluationData(
+    data: OHLCVData[],
+    interval: string,
+    settings: BacktestSettings
+): OHLCVData[] {
+    const closedWindow = selectClosedCandleWindow(
+        data,
+        interval,
+        Math.floor(Date.now() / 1000),
+        1
+    );
+
+    if (closedWindow) {
+        return buildExecutionAwareCandleWindow(
+            closedWindow.candles,
+            closedWindow.nextOpenCandle,
+            settings
+        );
+    }
+
+    const closed = trimToClosedCandles(data, interval);
+    return buildExecutionAwareCandleWindow(closed, null, settings);
+}
 
 export interface FinderSelectedStrategy {
     key: string;
@@ -326,7 +351,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
     const activeDatasets = datasets
         .map((dataset) => ({
             ...dataset,
-            data: trimToClosedCandles(dataset.data, dataset.interval),
+            data: buildFinderEvaluationData(dataset.data, dataset.interval, effectiveBacktestSettings),
         }))
         .filter((dataset) => dataset.data.length > 0);
 
@@ -760,7 +785,7 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     };
     const runStart = performance.now();
 
-    const closedData = trimToClosedCandles(input.ohlcvData, input.interval);
+    const closedData = buildFinderEvaluationData(input.ohlcvData, input.interval, effectiveBacktestSettings);
     if (closedData.length === 0) {
         callbacks.setStatus("No closed candles available for finder run.");
         return { results: [] };

@@ -195,6 +195,20 @@
                         </div>
                     </div>
                 </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Max Hold (bars)</label>
+                            <label class="section-toggle" style="transform: scale(0.8);"
+                                aria-label="Toggle max hold cap">
+                                <input type="checkbox" id="riskMaxHoldToggle">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <input type="number" class="param-input" id="riskMaxHoldBars" value="10" min="1" step="1">
+                        <div class="param-hint">Force-close open trades after N bars regardless of PnL.</div>
+                    </div>
+                </div>
                 <div class="risk-percentage is-hidden" id="riskPercentage">
                     <div class="param-row">
                         <div class="param-group">
@@ -224,18 +238,6 @@
                         </div>
                     </div>
                     <div class="param-row">
-                        <div class="param-group">
-                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                                <label class="param-label" style="margin-bottom: 0;">Max Hold (bars)</label>
-                                <label class="section-toggle" style="transform: scale(0.8);"
-                                    aria-label="Toggle max hold cap">
-                                    <input type="checkbox" id="riskMaxHoldToggle">
-                                    <span class="section-toggle-track"></span>
-                                </label>
-                            </div>
-                            <input type="number" class="param-input" id="riskMaxHoldBars" value="10" min="1" step="1">
-                            <div class="param-hint">Force-close open trades after N bars in Percentage mode.</div>
-                        </div>
                         <div class="param-group">
                             <label class="param-label">Break-Even Trigger (%)</label>
                             <input type="number" class="param-input" id="breakEvenPercent" value="0" min="0" max="50"

@@ -84,6 +84,7 @@ function inferRiskToggle(settings: Record<string, unknown>): boolean {
     return toFiniteNumber(settings.stopLossAtr) > 0
         || toFiniteNumber(settings.takeProfitAtr) > 0
         || toFiniteNumber(settings.trailingAtr) > 0
+        || (toBoolean(settings.riskMaxHoldEnabled) === true && toFiniteNumber(settings.riskMaxHoldBars) > 0)
         || toFiniteNumber(settings.partialTakeProfitAtR) > 0
         || toFiniteNumber(settings.breakEvenAtR) > 0
         || toFiniteNumber(settings.timeStopBars) > 0;

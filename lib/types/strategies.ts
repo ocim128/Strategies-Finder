@@ -217,15 +217,15 @@ export interface BacktestSettings {
     breakEvenPercent?: number;
     timeStopBars?: number;
 
-    // Risk management percentage mode
+    // Risk management
     riskMode?: 'simple' | 'advanced' | 'percentage';
     stopLossPercent?: number;
     takeProfitPercent?: number;
     stopLossEnabled?: boolean;
     takeProfitEnabled?: boolean;
-    /** Hard cap on bars held when percentage risk mode is active */
+    /** Hard cap on bars held when risk management is active */
     riskMaxHoldBars?: number;
-    /** Enable max hold bars cap in percentage risk mode */
+    /** Enable max hold bars cap */
     riskMaxHoldEnabled?: boolean;
     /** Enable the win-streak stop loss override in percentage mode */
     riskWinStreakStopLossEnabled?: boolean;

@@ -5,6 +5,7 @@ import type { FinderResult } from './lib/types/finder';
 import { getFinderMetricValue } from './lib/finder/finder-engine';
 import { FinderParamSpace } from './lib/finder/finder-param-space';
 import {
+    buildFinderEvaluationData,
     resolveFinderCandidateBacktestSettings,
     shouldUseRustCachedMode,
 } from './lib/finder/finder-runner';
@@ -192,6 +193,40 @@ describe('Finder ATR risk randomization support', () => {
         expect(resolved.backtestSettings.takeProfitAtr).to.equal(3);
         expect(resolved.rustBacktestSettings.takeProfitAtr).to.equal(3);
     });
+
+    it('adds riskMaxHoldBars to finder search params for simple risk runs when enabled', () => {
+        const strategy = {
+            defaultParams: {
+                lookback: 20,
+            },
+        } as any;
+        const settings: BacktestSettings = {
+            riskMode: 'simple',
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 6,
+        };
+
+        const baseParams = buildFinderSearchBaseParams(strategy, settings);
+
+        expect(baseParams.lookback).to.equal(20);
+        expect(baseParams.riskMaxHoldBars).to.equal(6);
+    });
+
+    it('applies riskMaxHoldBars finder overrides to simple risk runs without mutating Rust overrides', () => {
+        const settings: BacktestSettings = {
+            riskMode: 'simple',
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 4,
+        };
+        const rustSettings: BacktestSettings = {
+            riskMode: 'simple',
+        };
+
+        const resolved = resolveFinderRiskOverrides(settings, rustSettings, { riskMaxHoldBars: 9 });
+
+        expect(resolved.backtestSettings.riskMaxHoldBars).to.equal(9);
+        expect('riskMaxHoldBars' in resolved.rustBacktestSettings).to.equal(false);
+    });
 });
 
 describe('Finder selection metrics', () => {
@@ -243,5 +278,30 @@ describe('Finder selection metrics', () => {
         expect(getFinderMetricValue(candidate, 'netProfit')).to.equal(4285.25);
         expect(getFinderMetricValue(candidate, 'totalTrades')).to.equal(108);
         expect(getFinderMetricValue(candidate, 'profitFactor')).to.equal(1.66);
+    });
+});
+
+describe('Finder execution-aware data', () => {
+    it('adds the next-open bridge candle for next_open runs so finder matches manual backtests', () => {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const data = [
+            { time: nowSec - 120, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: nowSec - 60, open: 101, high: 102, low: 100, close: 101, volume: 1000 },
+            { time: nowSec, open: 105, high: 110, low: 103, close: 108, volume: 1000 },
+        ];
+
+        const evaluationData = buildFinderEvaluationData(data as any, '1m', {
+            executionModel: 'next_open',
+        });
+
+        expect(evaluationData).to.have.length(3);
+        expect(evaluationData[2]).to.deep.equal({
+            time: nowSec,
+            open: 105,
+            high: 105,
+            low: 105,
+            close: 105,
+            volume: 0,
+        });
     });
 });

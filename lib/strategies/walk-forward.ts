@@ -332,6 +332,8 @@ type WindowBacktestContext = {
     windowEndNumericTime: number | null;
 };
 
+type PreparedStrategyDataCache = WeakMap<OHLCVData[], unknown>;
+
 /**
  * Build immutable per-window context once and reuse it across parameter combinations.
  */
@@ -401,13 +403,41 @@ function filterSignalsForWindow(allSignals: Signal[], context: WindowBacktestCon
     return windowSignals;
 }
 
+function getPreparedStrategyData(
+    strategy: Strategy,
+    bufferedData: OHLCVData[],
+    backtestSettings: BacktestSettings,
+    cache?: PreparedStrategyDataCache
+): unknown {
+    if (!strategy.executePrepared || !strategy.prepareFinderData) {
+        return null;
+    }
+    if (cache?.has(bufferedData)) {
+        return cache.get(bufferedData) ?? null;
+    }
+
+    const prepared = strategy.prepareFinderData(bufferedData, backtestSettings) ?? null;
+    cache?.set(bufferedData, prepared);
+    return prepared;
+}
+
+async function yieldToEventLoop(): Promise<number> {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    return performance.now();
+}
+
 function prepareWindowBacktest(
     context: WindowBacktestContext,
     strategy: Strategy,
     params: StrategyParams,
-    backtestSettings: BacktestSettings
+    backtestSettings: BacktestSettings,
+    preparedDataCache?: PreparedStrategyDataCache
 ): { windowSignals: Signal[] } {
-    const allSignals = applySignalPolarity(strategy.execute(context.bufferedData, params), backtestSettings);
+    const preparedData = getPreparedStrategyData(strategy, context.bufferedData, backtestSettings, preparedDataCache);
+    const rawSignals = strategy.executePrepared
+        ? strategy.executePrepared(preparedData, params, context.bufferedData)
+        : strategy.execute(context.bufferedData, params);
+    const allSignals = applySignalPolarity(rawSignals, backtestSettings);
     const windowSignals = filterSignalsForWindow(allSignals, context);
     return { windowSignals };
 }
@@ -421,10 +451,11 @@ function runBacktestFast(
     strategy: Strategy, params: StrategyParams,
     initialCapital: number, positionSizePercent: number, commissionPercent: number,
     backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250,
-    context?: WindowBacktestContext
+    context?: WindowBacktestContext,
+    preparedDataCache?: PreparedStrategyDataCache
 ): BacktestResult {
     const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback);
-    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings);
+    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache);
 
     const fullResult = runBacktest(
         windowContext.bufferedData,
@@ -449,10 +480,11 @@ function runBacktestFastCompact(
     strategy: Strategy, params: StrategyParams,
     initialCapital: number, positionSizePercent: number, commissionPercent: number,
     backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250,
-    context?: WindowBacktestContext
+    context?: WindowBacktestContext,
+    preparedDataCache?: PreparedStrategyDataCache
 ): BacktestResult {
     const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback);
-    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings);
+    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache);
     return runBacktestCompact(
         windowContext.bufferedData,
         windowSignals,
@@ -514,10 +546,12 @@ async function optimizeWindow(
     signal?: AbortSignal
 ): Promise<OptimizationResult[]> {
     const topResults: OptimizationResult[] = [];
-    const BATCH_SIZE = 240;
-    const YIELD_INTERVAL = 4;
+    const BATCH_SIZE = 64;
+    const YIELD_BUDGET_MS = 32;
+    const YIELD_CHECK_INTERVAL = 16;
     const topCapacity = Math.max(topN, topN * 2);
     const windowContext = createWindowBacktestContext(data, startIndex, endIndex);
+    const preparedDataCache: PreparedStrategyDataCache = new WeakMap();
 
     const tryAddTopResult = (candidate: OptimizationResult) => {
         if (topResults.length < topCapacity) {
@@ -539,20 +573,10 @@ async function optimizeWindow(
         }
     };
 
-    let batchCount = 0;
+    let lastYieldTime = performance.now();
 
     for (let i = 0; i < paramGrid.length; i += BATCH_SIZE) {
         const batchEnd = Math.min(i + BATCH_SIZE, paramGrid.length);
-        batchCount++;
-
-        // PERF: Yield less frequently - every YIELD_INTERVAL batches
-        if (batchCount % YIELD_INTERVAL === 0) {
-            await new Promise(resolve => setTimeout(resolve, 0));
-            if (signal?.aborted) return topResults;
-            if (onProgress) {
-                onProgress(Math.min(batchEnd, paramGrid.length), paramGrid.length);
-            }
-        }
 
         // Process batch without slice (avoid array allocation)
         for (let j = i; j < batchEnd; j++) {
@@ -573,7 +597,8 @@ async function optimizeWindow(
                     backtestSettings,
                     sizing,
                     250,
-                    windowContext
+                    windowContext,
+                    preparedDataCache
                 );
 
                 const score = calculateOptimizationScore(result, minTrades);
@@ -584,7 +609,15 @@ async function optimizeWindow(
             } catch (e) {
                 continue;
             }
+
+            if ((j - i + 1) % YIELD_CHECK_INTERVAL === 0 && performance.now() - lastYieldTime >= YIELD_BUDGET_MS) {
+                lastYieldTime = await yieldToEventLoop();
+                if (signal?.aborted) return topResults;
+                onProgress?.(j + 1, paramGrid.length);
+            }
         }
+
+        onProgress?.(batchEnd, paramGrid.length);
     }
 
     // Final sort and prune
@@ -744,6 +777,7 @@ export async function runWalkForwardAnalysis(
     sizing?: TradeSizing
 ): Promise<WalkForwardResult> {
     const startTime = performance.now();
+    let lastYieldTime = startTime;
 
     // Clean input data to prevent crashes on undefined elements
     data = ensureCleanData(data);
@@ -904,6 +938,10 @@ export async function runWalkForwardAnalysis(
             windowIndex,
             totalWindows
         });
+
+        if (performance.now() - lastYieldTime >= 32) {
+            lastYieldTime = await yieldToEventLoop();
+        }
 
         currentStart += stepSize;
         windowIndex++;
@@ -1115,6 +1153,7 @@ export async function runFixedParamWalkForward(
     sizing?: TradeSizing
 ): Promise<WalkForwardResult> {
     const startTime = performance.now();
+    let lastYieldTime = startTime;
 
     // Clean input data
     data = ensureCleanData(data);
@@ -1222,9 +1261,8 @@ export async function runFixedParamWalkForward(
 
         currentStart += stepSize;
 
-        // PERF: Yield less frequently - every 10 windows instead of every 5
-        if (windowIndex > 0 && windowIndex % 10 === 0) {
-            await new Promise(resolve => setTimeout(resolve, 0));
+        if (performance.now() - lastYieldTime >= 32) {
+            lastYieldTime = await yieldToEventLoop();
         }
     }
 

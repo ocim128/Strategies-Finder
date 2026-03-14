@@ -17,7 +17,6 @@ import { FinderUI } from "./finder/finder-ui";
 import { debugLogger, robustAuditSink } from "./debug-logger";
 import { readNumberInputValue, readToggleValue } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
-import { trimToClosedCandles } from "./closed-candle-utils";
 import { strategyPanelController } from "./strategy-panel-controller";
 import {
 	createFinderManagerDom,
@@ -620,13 +619,11 @@ export class FinderManager {
 			this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settingsManager.getBacktestSettings());
 			const requiresTsEngine = backtestService.requiresTypescriptEngine(settings);
 
-			// Freeze run dataset to closed candles within the selected block for deterministic combo pairing.
-			const ohlcvData = trimToClosedCandles(
-				sliceOhlcvByBlock(state.ohlcvData, state.blockRange),
-				state.currentInterval
-			);
+			// Freeze the selected chart block; execution-aware closed-candle normalization
+			// is applied inside the finder run so it matches manual backtests.
+			const ohlcvData = sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
 			if (ohlcvData.length === 0) {
-				this.setStatus('No closed candles available for finder run.');
+				this.setStatus('No candles available for finder run.');
 				return;
 			}
 

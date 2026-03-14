@@ -55,7 +55,10 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
         config.partialTakeProfitAtR > 0 ||
         config.breakEvenAtR > 0;
 
-    const atrValue = needsAtr ? atrArray[barIndex] : null;
+    // For next_open entries, the execution bar's high/low are not known at the open.
+    // Seed ATR-based risk from the last fully closed bar instead.
+    const atrBarIndex = config.executionModel === 'next_open' ? barIndex - 1 : barIndex;
+    const atrValue = needsAtr && atrBarIndex >= 0 ? atrArray[atrBarIndex] : null;
 
     if (needsAtr && (atrValue === null || atrValue === undefined)) return null;
 

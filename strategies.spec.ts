@@ -7,6 +7,7 @@ import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/
 import { getOpenPositionForScanner } from './lib/strategies/backtest/signal-preparation';
 import { resolveScannerBacktestSettings } from './lib/scanner/scanner-engine';
 import { evaluateLatestEntrySignal } from './lib/signal-entry-evaluator';
+import { resolveEntryRiskTargets } from './lib/entry-risk-targets';
 import { strategies } from './lib/strategies/library';
 import { isTwoHourParityAligned, resolveTwoHourParityFromTime } from './lib/two-hour-parity';
 import { quickWalkForward, runWalkForwardAnalysis } from './lib/strategies/walk-forward';
@@ -520,6 +521,76 @@ describe('Walk-forward parameter normalization', () => {
         }
     });
 
+    it('reuses prepared strategy data during walk-forward optimization for executePrepared strategies', async () => {
+        const bars: OHLCVData[] = [];
+        for (let i = 0; i < 180; i++) {
+            bars.push({
+                time: (i + 1) as Time,
+                open: 100 + i,
+                high: 101 + i,
+                low: 99 + i,
+                close: 100 + i,
+                volume: 10
+            });
+        }
+
+        let prepareCalls = 0;
+        let executePreparedCalls = 0;
+        let executeCalls = 0;
+
+        const strategy: Strategy = {
+            name: 'Prepared WFA Guard',
+            description: 'Ensures walk-forward optimization reuses prepared strategy data.',
+            defaultParams: {
+                lookback: 12
+            },
+            paramLabels: {
+                lookback: 'Lookback'
+            },
+            prepareFinderData: (data) => {
+                prepareCalls++;
+                return { bufferedLength: data.length };
+            },
+            executePrepared: (preparedData, _params, data) => {
+                executePreparedCalls++;
+                expect(preparedData).to.deep.equal({ bufferedLength: data.length });
+                return [];
+            },
+            execute: () => {
+                executeCalls++;
+                throw new Error('walk-forward should not call execute() when executePrepared() is available');
+            },
+            metadata: {
+                role: 'entry',
+                direction: 'both',
+                walkForwardParams: ['lookback']
+            }
+        };
+
+        const result = await runWalkForwardAnalysis(
+            bars,
+            strategy,
+            {
+                optimizationWindow: 60,
+                testWindow: 20,
+                stepSize: 20,
+                parameterRanges: [
+                    { name: 'lookback', min: 10, max: 14, step: 2 }
+                ],
+                minTrades: 0,
+                topN: 2
+            },
+            10_000,
+            100,
+            0.1
+        );
+
+        expect(result.windows.length).to.be.greaterThan(0);
+        expect(executeCalls).to.equal(0);
+        expect(executePreparedCalls).to.be.greaterThan(prepareCalls);
+        expect(prepareCalls).to.be.at.most(result.windows.length * 3);
+    });
+
     it('exposes normalized base params for noise-to-signal efficiency breakout', () => {
         const strategy = strategies['noise_to_signal_efficiency_breakout'];
         expect(strategy).to.not.equal(undefined);
@@ -797,6 +868,30 @@ describe('Backtesting Engine', () => {
         expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
     });
 
+    it('should close by time stop when simple-mode max hold cap is enabled', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 }, // Buy
+            { time: '2023-01-03' as Time, open: 101, high: 103, low: 100, close: 102, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 102, high: 103, low: 100, close: 101.5, volume: 1000 }, // Max hold hit
+            { time: '2023-01-05' as Time, open: 101.5, high: 102, low: 100, close: 101, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'buy', price: 101 },
+        ];
+
+        const result = runBacktest(data, signals, 1000, 100, 0, {
+            riskMode: 'simple',
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 2,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].exitReason).to.equal('time_stop');
+        expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
+    });
+
     it('should override percentage stop loss after the configured win streak', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
@@ -967,6 +1062,21 @@ describe('Backtesting Engine', () => {
         expect(resolved.snapshotAtrPercentMax).to.equal(2.2);
     });
 
+    it('scanner settings resolver should preserve max hold in simple mode when risk is enabled', () => {
+        const resolved = resolveScannerBacktestSettings({
+            riskSettingsToggle: true,
+            riskMode: 'simple',
+            stopLossAtr: 1.5,
+            riskMaxHoldBars: 7,
+            riskMaxHoldEnabled: true,
+            tradeFilterSettingsToggle: false,
+        } as any);
+
+        expect(resolved.stopLossAtr).to.equal(1.5);
+        expect(resolved.riskMaxHoldBars).to.equal(7);
+        expect(resolved.riskMaxHoldEnabled).to.equal(true);
+    });
+
     it('scanner settings resolver should coerce numeric/boolean strings when toggle keys are absent', () => {
         const resolved = resolveScannerBacktestSettings({
             executionModel: 'next_close',
@@ -1017,6 +1127,89 @@ describe('Backtesting Engine', () => {
         expect(openPosition).to.not.equal(null);
         expect(openPosition?.takeProfitPrice).to.equal(lastTrade.takeProfitPrice ?? null);
         expect(openPosition?.stopLossPrice).to.equal(lastTrade.stopLossPrice ?? null);
+    });
+
+    it('should seed next_open ATR take profit from the prior closed bar', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 120, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 104, low: 99, close: 103, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 103, high: 103, low: 103, close: 103, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'buy', price: 100, barIndex: 1 },
+        ];
+
+        const result = runBacktest(data, signals, 10000, 100, 0, {
+            tradeDirection: 'long' as const,
+            executionModel: 'next_open' as const,
+            allowSameBarExit: false,
+            atrPeriod: 1,
+            stopLossAtr: 0,
+            trailingAtr: 0,
+            takeProfitAtr: 0.5,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].entryTime).to.equal('2023-01-03' as Time);
+        expect(result.trades[0].exitReason).to.equal('end_of_data');
+        expect(result.trades[0].takeProfitPrice).to.equal(110);
+    });
+
+    it('should block next_open same-bar ATR take profit when same-bar exits are disabled', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 102, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 111, low: 100, close: 105, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 105, high: 105, low: 105, close: 105, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'buy', price: 100, barIndex: 1 },
+        ];
+
+        const result = runBacktest(data, signals, 10000, 100, 0, {
+            tradeDirection: 'long' as const,
+            executionModel: 'next_open' as const,
+            allowSameBarExit: false,
+            atrPeriod: 1,
+            stopLossAtr: 0,
+            trailingAtr: 0,
+            takeProfitAtr: 0.5,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].entryTime).to.equal('2023-01-03' as Time);
+        expect(result.trades[0].exitReason).to.equal('take_profit');
+        expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
+    });
+
+    it('should resolve next_open ATR targets from the prior closed bar for alert parity', () => {
+        const candles: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 120, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 100, low: 100, close: 100, volume: 0 },
+        ];
+
+        const targets = resolveEntryRiskTargets({
+            candles,
+            entryTime: '2023-01-03' as Time,
+            entryPrice: 100,
+            direction: 'long',
+            settings: {
+                executionModel: 'next_open',
+                atrPeriod: 1,
+                stopLossAtr: 1,
+                takeProfitAtr: 0.5,
+            },
+            entryBarIndex: 2,
+        });
+
+        expect(targets.stopLossPrice).to.equal(80);
+        expect(targets.takeProfitPrice).to.equal(110);
+        expect(targets.stopLossPercent).to.equal(20);
+        expect(targets.takeProfitPercent).to.equal(10);
     });
 
     it('should flip position on opposite signals when trade direction is both', () => {

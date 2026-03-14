@@ -115,6 +115,10 @@ export function buildFinderSearchBaseParams(strategy: Strategy, settings: Backte
         baseParams.atrPeriod = clampAtrPeriod(Number(settings.atrPeriod));
     }
 
+    if (settings.riskMaxHoldEnabled && Number.isFinite(settings.riskMaxHoldBars)) {
+        baseParams.riskMaxHoldBars = clampMaxHoldBars(Number(settings.riskMaxHoldBars));
+    }
+
     if (settings.riskMode !== "percentage") {
         return baseParams;
     }
@@ -125,10 +129,6 @@ export function buildFinderSearchBaseParams(strategy: Strategy, settings: Backte
     if (settings.takeProfitEnabled && Number.isFinite(settings.takeProfitPercent)) {
         baseParams.takeProfitPercent = clampPercentValue(Number(settings.takeProfitPercent), 0, 100);
     }
-    if (settings.riskMaxHoldEnabled && Number.isFinite(settings.riskMaxHoldBars)) {
-        baseParams.riskMaxHoldBars = clampMaxHoldBars(Number(settings.riskMaxHoldBars));
-    }
-
     return baseParams;
 }
 
@@ -148,6 +148,11 @@ export function resolveFinderRiskOverrides(
         rustOverrides.atrPeriod = normalized;
         hasBacktestOverrides = true;
         hasRustOverrides = true;
+    }
+
+    if (settings.riskMaxHoldEnabled && Number.isFinite(params.riskMaxHoldBars)) {
+        backtestOverrides.riskMaxHoldBars = clampMaxHoldBars(Number(params.riskMaxHoldBars));
+        hasBacktestOverrides = true;
     }
 
     if (settings.riskMode !== "percentage") {
@@ -171,11 +176,6 @@ export function resolveFinderRiskOverrides(
         rustOverrides.takeProfitPercent = normalized;
         hasBacktestOverrides = true;
         hasRustOverrides = true;
-    }
-
-    if (settings.riskMaxHoldEnabled && Number.isFinite(params.riskMaxHoldBars)) {
-        backtestOverrides.riskMaxHoldBars = clampMaxHoldBars(Number(params.riskMaxHoldBars));
-        hasBacktestOverrides = true;
     }
 
     return {
