@@ -1,6 +1,6 @@
 import { getRequiredElement, setVisible } from "../dom-utils";
 import type { FinderMode, FinderRandomBenchmark, FinderResult } from "../types/finder";
-import type { StrategyParams } from "../types/strategies";
+import type { BacktestResult, StrategyParams } from "../types/strategies";
 import { getFinderSelectionResult } from "./finder-engine";
 
 export class FinderUI {
@@ -116,7 +116,7 @@ export class FinderUI {
             params.textContent = this.formatParams(item.params);
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
-            const result = getFinderSelectionResult(item);
+            const result = item.result;
             const netLabel = item.robustMetrics ? "OOS Net" : "Net";
             const pfLabel = item.robustMetrics ? "OOS PF" : "PF";
 
@@ -136,6 +136,8 @@ export class FinderUI {
                 metrics.appendChild(this.createMetricChip(`Stages ${robust.sampledParams}>${robust.stageASurvivors}>${robust.stageBSurvivors}>${robust.stageCSurvivors}`));
             }
             if (item.endpointAdjusted) {
+                const selectionResult = getFinderSelectionResult(item);
+                metrics.appendChild(this.createMetricChip(this.formatSelectionSummary(selectionResult)));
                 metrics.appendChild(this.createMetricChip(`Endpoint bias removed (${item.endpointRemovedTrades})`));
             }
 
@@ -230,5 +232,9 @@ export class FinderUI {
 
     private formatProfitFactor(value: number): string {
         return value === Infinity ? "Inf" : value.toFixed(2);
+    }
+
+    private formatSelectionSummary(result: BacktestResult): string {
+        return `Selection ${this.formatCurrency(result.netProfit)} • ${result.totalTrades} trades`;
     }
 }

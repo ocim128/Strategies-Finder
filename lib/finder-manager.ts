@@ -1003,13 +1003,10 @@ export class FinderManager {
 		state.set('twoHourParityBacktestResults', null);
 
 		if (result.endpointAdjusted) {
-			state.set('currentBacktestResultSource', 'finder_selection');
-			state.set('currentBacktestResult', result.selectionResult);
 			uiManager.showToast(
-				'Applied Finder selection snapshot with endpoint-bias trade removed. Click Run for the raw backtest.',
+				'Finder ranked this row on an endpoint-adjusted selection snapshot. Running the raw backtest now.',
 				'info'
 			);
-			return;
 		}
 
 		try {

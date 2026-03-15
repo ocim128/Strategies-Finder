@@ -42,14 +42,9 @@ import { bollinger_skewness_ride } from "./lib/bollinger_skewness_ride";
 import { supertrend_distance_zscore } from "./lib/supertrend_distance_zscore";
 import { rsi_volatility_pinch_pop } from "./lib/rsi_volatility_pinch_pop";
 import { momentum_zscore_exhaustion } from "./lib/momentum_zscore_exhaustion";
-import { donchian_skewness_outlier } from "./lib/donchian_skewness_outlier";
-import { keltner_entropy_polarization } from "./lib/keltner_entropy_polarization";
 
 import { supertrend_friction_pinch } from "./lib/supertrend_friction_pinch";
 
-import { mfi_range_squeeze_breakout } from "./lib/mfi_range_squeeze_breakout";
-import { supertrend_kurtosis_anomaly } from "./lib/supertrend_kurtosis_anomaly";
-import { atr_gap_zscore_fade } from "./lib/atr_gap_zscore_fade";
 import { macd_histogram_volatility_squeeze } from "./lib/macd_histogram_volatility_squeeze";
 import { volume_profile_poc_median_shift } from "./lib/volume_profile_poc_median_shift";
 export interface StrategyManifestEntry {
@@ -100,14 +95,9 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "supertrend_distance_zscore", strategy: supertrend_distance_zscore },
     { key: "rsi_volatility_pinch_pop", strategy: rsi_volatility_pinch_pop },
     { key: "momentum_zscore_exhaustion", strategy: momentum_zscore_exhaustion },
-    { key: "donchian_skewness_outlier", strategy: donchian_skewness_outlier },
-    { key: "keltner_entropy_polarization", strategy: keltner_entropy_polarization },
 
     { key: "supertrend_friction_pinch", strategy: supertrend_friction_pinch },
 
-    { key: "mfi_range_squeeze_breakout", strategy: mfi_range_squeeze_breakout },
-    { key: "supertrend_kurtosis_anomaly", strategy: supertrend_kurtosis_anomaly },
-    { key: "atr_gap_zscore_fade", strategy: atr_gap_zscore_fade },
     { key: "macd_histogram_volatility_squeeze", strategy: macd_histogram_volatility_squeeze },
     { key: "volume_profile_poc_median_shift", strategy: volume_profile_poc_median_shift },
 ];
