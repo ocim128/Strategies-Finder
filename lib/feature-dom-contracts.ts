@@ -329,6 +329,7 @@ export const PORTFOLIO_LAB_REQUIRED_IDS = [
     "portfolioContent",
     "portfolioSymbolList",
     "portfolioBenchmarkSymbol",
+    "portfolioAnchorSymbol",
     "portfolioLookbackBars",
     "portfolioWindowMode",
     "portfolioConsensusLagBars",
@@ -342,6 +343,10 @@ export const PORTFOLIO_LAB_REQUIRED_IDS = [
     "portfolioLiveContextSection",
     "portfolioLiveContextSummary",
     "portfolioLiveContextDetails",
+    "portfolioForecastSection",
+    "portfolioForecastSummary",
+    "portfolioForecastDetails",
+    "portfolioForecastTableBody",
     "portfolioInsightSection",
     "portfolioInsights",
     "portfolioExecutionSection",
@@ -378,6 +383,7 @@ export interface PortfolioLabDom {
     portfolioContent: HTMLElement;
     portfolioSymbolList: HTMLTextAreaElement;
     portfolioBenchmarkSymbol: HTMLInputElement;
+    portfolioAnchorSymbol: HTMLInputElement;
     portfolioLookbackBars: HTMLInputElement;
     portfolioWindowMode: HTMLSelectElement;
     portfolioConsensusLagBars: HTMLInputElement;
@@ -391,6 +397,10 @@ export interface PortfolioLabDom {
     portfolioLiveContextSection: HTMLElement;
     portfolioLiveContextSummary: HTMLElement;
     portfolioLiveContextDetails: HTMLElement;
+    portfolioForecastSection: HTMLElement;
+    portfolioForecastSummary: HTMLElement;
+    portfolioForecastDetails: HTMLElement;
+    portfolioForecastTableBody: HTMLElement;
     portfolioInsightSection: HTMLElement;
     portfolioInsights: HTMLElement;
     portfolioExecutionSection: HTMLElement;
@@ -428,6 +438,7 @@ export function createPortfolioLabDom(): PortfolioLabDom {
         portfolioContent: getRequiredElement("portfolioContent"),
         portfolioSymbolList: getRequiredElement<HTMLTextAreaElement>("portfolioSymbolList"),
         portfolioBenchmarkSymbol: getRequiredElement<HTMLInputElement>("portfolioBenchmarkSymbol"),
+        portfolioAnchorSymbol: getRequiredElement<HTMLInputElement>("portfolioAnchorSymbol"),
         portfolioLookbackBars: getRequiredElement<HTMLInputElement>("portfolioLookbackBars"),
         portfolioWindowMode: getRequiredElement<HTMLSelectElement>("portfolioWindowMode"),
         portfolioConsensusLagBars: getRequiredElement<HTMLInputElement>("portfolioConsensusLagBars"),
@@ -441,6 +452,10 @@ export function createPortfolioLabDom(): PortfolioLabDom {
         portfolioLiveContextSection: getRequiredElement("portfolioLiveContextSection"),
         portfolioLiveContextSummary: getRequiredElement("portfolioLiveContextSummary"),
         portfolioLiveContextDetails: getRequiredElement("portfolioLiveContextDetails"),
+        portfolioForecastSection: getRequiredElement("portfolioForecastSection"),
+        portfolioForecastSummary: getRequiredElement("portfolioForecastSummary"),
+        portfolioForecastDetails: getRequiredElement("portfolioForecastDetails"),
+        portfolioForecastTableBody: getRequiredElement("portfolioForecastTableBody"),
         portfolioInsightSection: getRequiredElement("portfolioInsightSection"),
         portfolioInsights: getRequiredElement("portfolioInsights"),
         portfolioExecutionSection: getRequiredElement("portfolioExecutionSection"),

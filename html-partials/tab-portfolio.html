@@ -38,6 +38,10 @@
                         Benchmark
                         <input type="text" id="portfolioBenchmarkSymbol" placeholder="Current symbol" />
                     </label>
+                    <label class="analysis-control" for="portfolioAnchorSymbol">
+                        ETH Anchor
+                        <input type="text" id="portfolioAnchorSymbol" placeholder="ETHUSDT" value="ETHUSDT" />
+                    </label>
                     <label class="analysis-control" for="portfolioLookbackBars">
                         Lookback Bars
                         <input type="number" id="portfolioLookbackBars" min="200" max="20000" step="50" value="1500" />
@@ -82,6 +86,39 @@
             </div>
             <div class="simulation-grid" id="portfolioLiveContextSummary"></div>
             <div class="portfolio-lab__insights" id="portfolioLiveContextDetails"></div>
+        </div>
+
+        <div class="analysis-finder-section portfolio-lab__section" id="portfolioForecastSection" style="display: none;">
+            <div class="analysis-finder-header">
+                <h4 class="analysis-finder-title">Open Trade Forecast</h4>
+            </div>
+            <div class="simulation-grid" id="portfolioForecastSummary"></div>
+            <div class="portfolio-lab__insights" id="portfolioForecastDetails"></div>
+            <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
+                <div class="portfolio-lab__table-caption">Nearest historical analog states for the target pair</div>
+                <table class="analysis-table portfolio-lab__table">
+                    <thead>
+                        <tr>
+                            <th>Match</th>
+                            <th>Bars Held</th>
+                            <th>Agree / Oppose</th>
+                            <th>vs ETH 3b</th>
+                            <th>vs Univ 3b</th>
+                            <th>Final</th>
+                            <th>Remain %</th>
+                            <th>Fut. MFE</th>
+                            <th>Fut. MAE</th>
+                        </tr>
+                    </thead>
+                    <tbody id="portfolioForecastTableBody">
+                        <tr>
+                            <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                Run Portfolio Lab to estimate open-trade win/loss odds from historical analog states.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
 
         <div class="analysis-finder-section portfolio-lab__section" id="portfolioInsightSection" style="display: none;">

@@ -10,6 +10,7 @@ export interface PortfolioLabRenderHost<
     TRow extends RowWithNetProfit,
     TConsensus,
     TLiveContext,
+    TForecast,
     TBreadthSweepRow,
     TOppositionSweepRow,
     TRankingRow,
@@ -20,6 +21,9 @@ export interface PortfolioLabRenderHost<
     renderSummary(rows: TRow[], benchmarkSymbol: string): string;
     renderLiveContextSummary(liveContext: TLiveContext): string;
     renderLiveContextDetails(liveContext: TLiveContext): string;
+    renderForecastSummary(forecast: TForecast): string;
+    renderForecastDetails(forecast: TForecast): string;
+    renderForecastTable(forecast: TForecast): string;
     renderInsights(rows: TRow[], benchmarkSymbol: string, skipped: string[], windowMode: TWindowMode): string;
     renderExecutionSummary(
         breadthRows: TBreadthSweepRow[],
@@ -53,6 +57,7 @@ export interface PortfolioLabRenderInput<
     TRow extends RowWithNetProfit,
     TConsensus,
     TLiveContext,
+    TForecast,
     TBreadthSweepRow,
     TOppositionSweepRow,
     TRankingRow,
@@ -73,6 +78,7 @@ export interface PortfolioLabRenderInput<
     rankingRows: TRankingRow[];
     sizingRows: TSizingRow[];
     liveContext: TLiveContext;
+    forecast: TForecast;
     minAgree: number;
     maxOppose: number;
     currentInterval: string;
@@ -82,6 +88,7 @@ export function renderPortfolioLab<
     TRow extends RowWithNetProfit,
     TConsensus,
     TLiveContext,
+    TForecast,
     TBreadthSweepRow,
     TOppositionSweepRow,
     TRankingRow,
@@ -89,8 +96,8 @@ export function renderPortfolioLab<
     TDataCache,
     TWindowMode extends string
 >(
-    host: PortfolioLabRenderHost<TRow, TConsensus, TLiveContext, TBreadthSweepRow, TOppositionSweepRow, TRankingRow, TSizingRow, TDataCache, TWindowMode>,
-    input: PortfolioLabRenderInput<TRow, TConsensus, TLiveContext, TBreadthSweepRow, TOppositionSweepRow, TRankingRow, TSizingRow, TDataCache, TWindowMode>
+    host: PortfolioLabRenderHost<TRow, TConsensus, TLiveContext, TForecast, TBreadthSweepRow, TOppositionSweepRow, TRankingRow, TSizingRow, TDataCache, TWindowMode>,
+    input: PortfolioLabRenderInput<TRow, TConsensus, TLiveContext, TForecast, TBreadthSweepRow, TOppositionSweepRow, TRankingRow, TSizingRow, TDataCache, TWindowMode>
 ): void {
     const {
         dom,
@@ -106,6 +113,7 @@ export function renderPortfolioLab<
         rankingRows,
         sizingRows,
         liveContext,
+        forecast,
         minAgree,
         maxOppose,
         currentInterval,
@@ -115,6 +123,7 @@ export function renderPortfolioLab<
     dom.portfolioEmpty.style.display = rows.length > 0 ? "none" : "";
     dom.portfolioResults.style.display = rows.length > 0 ? "" : "none";
     dom.portfolioLiveContextSection.style.display = rows.length > 0 ? "" : "none";
+    dom.portfolioForecastSection.style.display = rows.length > 0 ? "" : "none";
     dom.portfolioInsightSection.style.display = rows.length > 0 ? "" : "none";
     dom.portfolioExecutionSection.style.display = rows.length > 0 ? "" : "none";
     dom.portfolioConsensusSection.style.display = rows.length > 0 ? "" : "none";
@@ -126,6 +135,15 @@ export function renderPortfolioLab<
         dom.portfolioSummary.innerHTML = "";
         dom.portfolioLiveContextSummary.innerHTML = "";
         dom.portfolioLiveContextDetails.innerHTML = "";
+        dom.portfolioForecastSummary.innerHTML = "";
+        dom.portfolioForecastDetails.innerHTML = "";
+        dom.portfolioForecastTableBody.innerHTML = `
+            <tr>
+                <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                    Run Portfolio Lab to estimate open-trade win/loss odds from historical analog states.
+                </td>
+            </tr>
+        `;
         dom.portfolioInsights.innerHTML = "";
         dom.portfolioExecutionSummary.innerHTML = "";
         dom.portfolioConsensusSummary.innerHTML = "";
@@ -183,6 +201,9 @@ export function renderPortfolioLab<
     dom.portfolioSummary.innerHTML = host.renderSummary(rows, benchmarkSymbol);
     dom.portfolioLiveContextSummary.innerHTML = host.renderLiveContextSummary(liveContext);
     dom.portfolioLiveContextDetails.innerHTML = host.renderLiveContextDetails(liveContext);
+    dom.portfolioForecastSummary.innerHTML = host.renderForecastSummary(forecast);
+    dom.portfolioForecastDetails.innerHTML = host.renderForecastDetails(forecast);
+    dom.portfolioForecastTableBody.innerHTML = host.renderForecastTable(forecast);
     dom.portfolioInsights.innerHTML = host.renderInsights(rows, benchmarkSymbol, skipped, windowMode);
     dom.portfolioExecutionSummary.innerHTML = host.renderExecutionSummary(
         breadthSweep,

@@ -16,7 +16,7 @@ It is not just a chart page. The app combines:
 - Search parameter spaces with Finder, including random, genetic, and `robust_random_wf`
 - Validate robustness with walk-forward analysis and test latest OOS WFA results against a no-edge permutation null
 - Audit parameter usefulness, redundancy, and range quality with `Parameter Audit`
-- Run one strategy across multiple pairs with Portfolio Lab to compare dispersion, execution filters, pair ranking, sizing scenarios, and correlations
+- Run one strategy across multiple pairs with Portfolio Lab to compare dispersion, execution filters, open-trade forecast states, pair ranking, sizing scenarios, and correlations
 - Build live or scheduled alert subscriptions through the Worker API
 
 ## Quick Start
@@ -129,6 +129,7 @@ Portfolio Lab is most useful when you separate decision outputs from diagnostics
 
 High-signal outputs:
 - `Current Context`: current target-pair agreement, opposition, matching pairs, and historical odds for the current open trade or latest signal
+- `Open Trade Forecast`: ETH-anchored target-state analog matching for the current open trade or latest signal, with projected win/loss odds, remaining expectancy, confidence, and exposure guidance
 - `Execution Filters`: breadth and opposition sweeps for the target pair, with separate winners for best expectancy, best net, and best drawdown
 - `Pair Ranking`: quick view of likely core pairs, diversifiers, and strong breadth responders
 - `Sizing Scenarios`: estimate whether context-weighted sizing is better than hard filtering
@@ -140,7 +141,7 @@ Lower-signal diagnostics:
 
 Recommended workflow:
 1. Run Portfolio Lab in `Common Overlap` mode when comparing pairs fairly matters.
-2. Start from `Current Context` and `Execution Filters` before reading the diagnostic sections.
+2. Start from `Current Context`, then `Open Trade Forecast`, then `Execution Filters` before reading the diagnostic sections.
 3. Do not treat the highest win-rate threshold as automatically best; compare expectancy, net, and drawdown separately.
 4. If hard breadth filters reduce net too much, prefer the `Sizing Scenarios` section over removing trades completely.
 5. Use diagnostics only to confirm diversification or redundancy after you already have a trade decision.
@@ -266,6 +267,7 @@ Important behavior:
 - `Latest N Bars` keeps each symbol on its own latest history window
 - `Common Overlap` trims all selected symbols to the shared overlapping calendar window
 - `Current Context` is a one-shot calculation, not a live stream
+- `Open Trade Forecast` is target-centric and uses ETH-relative plus universe-relative analog features, not all pair-vs-pair synthetic charts
 - `Execution Filters` are target-symbol decisions; `Pair Context Probability` is basket-level descriptive analysis
 
 If you change Portfolio Lab logic, verify:

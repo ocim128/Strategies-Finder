@@ -6,7 +6,7 @@ import { dataManager } from "./data-manager";
 import { createPortfolioLabDom, type PortfolioLabDom } from "./feature-dom-contracts";
 import { paramManager } from "./param-manager";
 import { state } from "./state";
-import { applySignalPolarity, timeKey, type BacktestResult, type OHLCVData, type Signal, type Strategy, type StrategyParams, type Trade } from "./strategies";
+import { applySignalPolarity, timeKey, type BacktestResult, type OHLCVData, type Signal, type Strategy, type StrategyParams, type Time, type Trade } from "./strategies";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { uiManager } from "./ui-manager";
@@ -25,6 +25,7 @@ const MIN_LOOKBACK_BARS = 200;
 const MAX_LOOKBACK_BARS = 20000;
 const MAX_PORTFOLIO_SYMBOLS = 12;
 const DEFAULT_LOOKBACK_BARS = 1500;
+const DEFAULT_FORECAST_ANCHOR = "ETHUSDT";
 const MAJOR_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"];
 
 type DataSource = "mock" | "local" | "network";
@@ -37,12 +38,19 @@ interface CachedPairData {
 }
 
 interface PairRunArtifacts {
-    result: BacktestResult;
-    engineUsed: "rust" | "typescript";
-    fullSignals: ReturnType<typeof applySignalPolarity>;
-    signalPresenceByTime: Map<string, PortfolioSignalPresence>;
-    timeKeys: string[];
-    timeIndex: Map<string, number>;
+	result: BacktestResult;
+	engineUsed: "rust" | "typescript";
+	fullSignals: ReturnType<typeof applySignalPolarity>;
+	signalPresenceByTime: Map<string, PortfolioSignalPresence>;
+	timeKeys: string[];
+	timeIndex: Map<string, number>;
+	tradeRanges: TradeRange[];
+}
+
+interface TradeRange {
+	trade: Trade;
+	entryIndex: number;
+	exitIndex: number;
 }
 
 interface PairAnalysisRow {
@@ -184,8 +192,8 @@ interface LiveContextOdds {
 }
 
 interface LiveContextSnapshot {
-    basis: "open_trade" | "latest_signal" | "none";
-    targetSymbol: string;
+	basis: "open_trade" | "latest_signal" | "none";
+	targetSymbol: string;
     direction: Trade["type"] | null;
     agreementCount: number;
     oppositionCount: number;
@@ -193,7 +201,103 @@ interface LiveContextSnapshot {
     opposingSymbols: string[];
     bucketLabel: string | null;
     odds: LiveContextOdds | null;
-    openPosition: OpenPosition | null;
+	openPosition: OpenPosition | null;
+}
+
+interface ForecastBreadthSnapshot {
+	sameCount: number;
+	oppositeCount: number;
+	activePeerCount: number;
+	weightedSame: number;
+	weightedOpposite: number;
+	totalPeerWeight: number;
+	agreeingSymbols: string[];
+	opposingSymbols: string[];
+}
+
+interface ForecastSnapshot {
+	basis: "open_trade" | "latest_signal";
+	targetSymbol: string;
+	anchorSymbol: string;
+	direction: Trade["type"];
+	timeKey: string;
+	barIndex: number;
+	entryIndex: number;
+	barsHeld: number;
+	currentPrice: number;
+	entryPrice: number;
+	currentPnlPercent: number;
+	openPnlAtr: number;
+	distanceFromEntryAtr: number;
+	adverseExcursionAtr: number;
+	agreementCount: number;
+	oppositionCount: number;
+	activePeerCount: number;
+	weightedAgreementRatio: number;
+	weightedOppositionRatio: number;
+	breadthRatio: number;
+	breadthPersistence: number;
+	targetVsAnchor1: number | null;
+	targetVsAnchor3: number | null;
+	targetVsAnchor5: number | null;
+	targetVsUniverse1: number | null;
+	targetVsUniverse3: number | null;
+	targetVsUniverse5: number | null;
+	dispersion1: number | null;
+	leaderGap1: number | null;
+	agreeingSymbols: string[];
+	opposingSymbols: string[];
+}
+
+interface ForecastAnalogSample {
+	timeKey: string;
+	direction: Trade["type"];
+	barsHeld: number;
+	distance: number;
+	agreementCount: number;
+	oppositionCount: number;
+	targetVsAnchor3: number | null;
+	targetVsUniverse3: number | null;
+	finalIsWin: boolean;
+	finalPnlPercent: number;
+	remainingPnlPercent: number;
+	futureMfePercent: number | null;
+	futureMaePercent: number | null;
+}
+
+interface ForecastCandidateSample {
+	snapshot: ForecastSnapshot;
+	finalIsWin: boolean;
+	finalPnlPercent: number;
+	remainingPnlPercent: number;
+	futureMfePercent: number | null;
+	futureMaePercent: number | null;
+}
+
+interface OpenTradeForecast {
+	basis: "open_trade" | "latest_signal" | "none";
+	matchType: "nearest" | "fallback" | "none";
+	targetSymbol: string;
+	anchorSymbol: string;
+	direction: Trade["type"] | null;
+	confidenceLabel: "Low" | "Medium" | "High" | null;
+	confidenceScore: number | null;
+	sampleCount: number;
+	candidateCount: number;
+	winProbability: number | null;
+	lossProbability: number | null;
+	expectedFinalPnlPercent: number | null;
+	expectedRemainingPnlPercent: number | null;
+	expectedMaePercent: number | null;
+	expectedMfePercent: number | null;
+	baselineWinProbability: number | null;
+	baselineRemainingPnlPercent: number | null;
+	suggestedExposure: number | null;
+	suggestionLabel: string | null;
+	avgDistance: number | null;
+	currentSnapshot: ForecastSnapshot | null;
+	analogs: ForecastAnalogSample[];
+	rationale: string[];
 }
 
 class PortfolioLabService {
@@ -246,13 +350,16 @@ class PortfolioLabService {
             void this.runOppositionSweep();
         });
 
-        dom.portfolioBenchmarkSymbol.addEventListener("input", () => {
-            this.benchmarkDirty = dom.portfolioBenchmarkSymbol.value.trim().length > 0;
-            this.invalidateRunContext("Benchmark changed. Run Portfolio Lab again.");
-        });
-        dom.portfolioSymbolList.addEventListener("input", () => {
-            this.invalidateRunContext("Universe changed. Run Portfolio Lab again.");
-        });
+		dom.portfolioBenchmarkSymbol.addEventListener("input", () => {
+			this.benchmarkDirty = dom.portfolioBenchmarkSymbol.value.trim().length > 0;
+			this.invalidateRunContext("Benchmark changed. Run Portfolio Lab again.");
+		});
+		dom.portfolioAnchorSymbol.addEventListener("input", () => {
+			this.invalidateRunContext("ETH anchor changed. Run Portfolio Lab again.");
+		});
+		dom.portfolioSymbolList.addEventListener("input", () => {
+			this.invalidateRunContext("Universe changed. Run Portfolio Lab again.");
+		});
         dom.portfolioLookbackBars.addEventListener("input", () => {
             this.invalidateRunContext("Lookback changed. Run Portfolio Lab again.");
         });
@@ -285,14 +392,17 @@ class PortfolioLabService {
         });
     }
 
-    private syncReadouts(dom: PortfolioLabDom): void {
-        dom.portfolioIntervalBadge.textContent = state.currentInterval;
-        const strategy = strategyRegistry.get(state.currentStrategyKey);
-        dom.portfolioStrategyBadge.textContent = strategy?.name ?? state.currentStrategyKey;
-        if (!dom.portfolioBenchmarkSymbol.value.trim()) {
-            dom.portfolioBenchmarkSymbol.value = state.currentSymbol;
-        }
-    }
+	private syncReadouts(dom: PortfolioLabDom): void {
+		dom.portfolioIntervalBadge.textContent = state.currentInterval;
+		const strategy = strategyRegistry.get(state.currentStrategyKey);
+		dom.portfolioStrategyBadge.textContent = strategy?.name ?? state.currentStrategyKey;
+		if (!dom.portfolioBenchmarkSymbol.value.trim()) {
+			dom.portfolioBenchmarkSymbol.value = state.currentSymbol;
+		}
+		if (!dom.portfolioAnchorSymbol.value.trim()) {
+			dom.portfolioAnchorSymbol.value = DEFAULT_FORECAST_ANCHOR;
+		}
+	}
 
     private seedInitialUniverse(dom: PortfolioLabDom): void {
         if (dom.portfolioSymbolList.value.trim()) {
@@ -331,9 +441,10 @@ class PortfolioLabService {
             uiManager.showToast(`Portfolio Lab supports up to ${MAX_PORTFOLIO_SYMBOLS} pairs per run.`, "warning");
         }
 
-        const selectedSymbols = symbols.slice(0, MAX_PORTFOLIO_SYMBOLS);
-        const benchmarkSymbol = this.normalizeSymbol(dom.portfolioBenchmarkSymbol.value) || state.currentSymbol;
-        const lookbackBars = this.readLookbackBars(dom.portfolioLookbackBars.value);
+		const selectedSymbols = symbols.slice(0, MAX_PORTFOLIO_SYMBOLS);
+		const benchmarkSymbol = this.normalizeSymbol(dom.portfolioBenchmarkSymbol.value) || state.currentSymbol;
+		const anchorSymbol = this.normalizeSymbol(dom.portfolioAnchorSymbol.value) || DEFAULT_FORECAST_ANCHOR;
+		const lookbackBars = this.readLookbackBars(dom.portfolioLookbackBars.value);
         const windowMode = this.readWindowMode(dom.portfolioWindowMode.value);
         const lagBars = this.readClampedInt(dom.portfolioConsensusLagBars.value, 1, 0, 5);
         const minSamples = this.readClampedInt(dom.portfolioConsensusMinSamples.value, 8, 3, 200);
@@ -351,14 +462,28 @@ class PortfolioLabService {
             `(${state.currentInterval}, ${windowMode === "common_overlap" ? "common overlap" : "latest bars"})...`
         );
 
-        try {
-            const dataCache = new Map<string, CachedPairData>();
-            const runCache = new Map<string, PairRunArtifacts>();
-            const requiredSymbols = Array.from(new Set<string>([...selectedSymbols, benchmarkSymbol]));
-            for (const symbol of requiredSymbols) {
-                await this.loadPairData(symbol, lookbackBars, dataCache);
-            }
-            this.applyWindowMode(dataCache, requiredSymbols, windowMode);
+		try {
+			const dataCache = new Map<string, CachedPairData>();
+			const runCache = new Map<string, PairRunArtifacts>();
+			const requiredSymbols = Array.from(new Set<string>([...selectedSymbols, benchmarkSymbol]));
+			for (const symbol of requiredSymbols) {
+				await this.loadPairData(symbol, lookbackBars, dataCache);
+			}
+			if (anchorSymbol && !requiredSymbols.includes(anchorSymbol)) {
+				try {
+					await this.loadPairData(anchorSymbol, lookbackBars, dataCache);
+				} catch (error) {
+					console.warn(`[PortfolioLab] Forecast anchor ${anchorSymbol} unavailable:`, error);
+					uiManager.showToast(`Forecast anchor ${anchorSymbol} could not be loaded. Relative-strength forecast features will be reduced.`, "warning");
+				}
+			}
+			this.applyWindowMode(
+				dataCache,
+				anchorSymbol && dataCache.has(anchorSymbol)
+					? Array.from(new Set<string>([...requiredSymbols, anchorSymbol]))
+					: requiredSymbols,
+				windowMode
+			);
 
             const benchmarkData = dataCache.get(benchmarkSymbol)!;
             const benchmarkRun = benchmarkData.data.length >= MIN_LOOKBACK_BARS
@@ -437,8 +562,34 @@ class PortfolioLabService {
                 runCache,
             }, minAgree, maxOppose);
             const rankingRows = this.buildRankingRows(rows, consensus, benchmarkSymbol);
-            const sizingRows = this.buildSizingScenarios({
-                strategy,
+			const sizingRows = this.buildSizingScenarios({
+				strategy,
+				params,
+                settings,
+                capitalSettings,
+                interval: state.currentInterval,
+                selectedSymbols,
+                benchmarkSymbol,
+                lagBars,
+                windowMode,
+				dataCache,
+				runCache,
+			}, rows, minAgree, maxOppose);
+			const forecast = this.buildOpenTradeForecast({
+				strategy,
+				params,
+				settings,
+				capitalSettings,
+				interval: state.currentInterval,
+				selectedSymbols,
+				benchmarkSymbol,
+				lagBars,
+				windowMode,
+				dataCache,
+				runCache,
+			}, rows, anchorSymbol);
+			const liveContext = this.buildLiveContextSnapshot({
+				strategy,
                 params,
                 settings,
                 capitalSettings,
@@ -447,22 +598,9 @@ class PortfolioLabService {
                 benchmarkSymbol,
                 lagBars,
                 windowMode,
-                dataCache,
-                runCache,
-            }, rows, minAgree, maxOppose);
-            const liveContext = this.buildLiveContextSnapshot({
-                strategy,
-                params,
-                settings,
-                capitalSettings,
-                interval: state.currentInterval,
-                selectedSymbols,
-                benchmarkSymbol,
-                lagBars,
-                windowMode,
-                dataCache,
-                runCache,
-            }, consensus);
+				dataCache,
+				runCache,
+			}, consensus);
             this.lastRunContext = {
                 strategy,
                 params,
@@ -487,12 +625,13 @@ class PortfolioLabService {
                 windowMode,
                 breadthSweep,
                 oppositionSweep,
-                rankingRows,
-                sizingRows,
-                liveContext,
-                minAgree,
-                maxOppose
-            );
+				rankingRows,
+				sizingRows,
+				liveContext,
+				forecast,
+				minAgree,
+				maxOppose
+			);
         } catch (error) {
             console.error("[PortfolioLab] Run failed:", error);
             uiManager.showToast(`Portfolio Lab failed: ${error instanceof Error ? error.message : String(error)}`, "error");
@@ -749,41 +888,46 @@ class PortfolioLabService {
         const timeKeys = data.map((candle) => timeKey(candle.time));
         const timeIndex = getTimeIndex(data);
 
-        const artifacts: PairRunArtifacts = {
-            result: runResult.result,
-            engineUsed: runResult.engineUsed,
-            fullSignals,
-            signalPresenceByTime,
-            timeKeys,
-            timeIndex,
-        };
+		const artifacts: PairRunArtifacts = {
+			result: runResult.result,
+			engineUsed: runResult.engineUsed,
+			fullSignals,
+			signalPresenceByTime,
+			timeKeys,
+			timeIndex,
+			tradeRanges: this.buildTradeRanges(runResult.result.trades, data, timeIndex),
+		};
         runCache.set(symbol, artifacts);
         return artifacts;
     }
 
-    private render(
-        rows: PairAnalysisRow[],
-        selectedSymbols: string[],
-        dataCache: Map<string, CachedPairData>,
-        benchmarkSymbol: string,
+	private render(
+		rows: PairAnalysisRow[],
+		selectedSymbols: string[],
+		dataCache: Map<string, CachedPairData>,
+		benchmarkSymbol: string,
         skipped: string[],
         consensus: ConsensusAnalysis,
         windowMode: PortfolioWindowMode,
         breadthSweep: BreadthSweepRow[],
-        oppositionSweep: OppositionSweepRow[],
-        rankingRows: PairRankingRow[],
-        sizingRows: SizingScenarioRow[],
-        liveContext: LiveContextSnapshot,
-        minAgree: number,
-        maxOppose: number
-    ): void {
-        renderPortfolioLab({
-            renderSummary: (nextRows, nextBenchmark) => this.renderSummary(nextRows, nextBenchmark),
-            renderLiveContextSummary: (nextLiveContext) => this.renderLiveContextSummary(nextLiveContext),
-            renderLiveContextDetails: (nextLiveContext) => this.renderLiveContextDetails(nextLiveContext),
-            renderInsights: (nextRows, nextBenchmark, nextSkipped, nextWindowMode) => this.renderInsights(nextRows, nextBenchmark, nextSkipped, nextWindowMode),
-            renderExecutionSummary: (breadthRows, oppositionRows, currentFilter, targetSymbol, nextMinAgree, nextMaxOppose) =>
-                this.renderExecutionSummary(breadthRows, oppositionRows, currentFilter, targetSymbol, nextMinAgree, nextMaxOppose),
+		oppositionSweep: OppositionSweepRow[],
+		rankingRows: PairRankingRow[],
+		sizingRows: SizingScenarioRow[],
+		liveContext: LiveContextSnapshot,
+		forecast: OpenTradeForecast,
+		minAgree: number,
+		maxOppose: number
+	): void {
+		renderPortfolioLab({
+			renderSummary: (nextRows, nextBenchmark) => this.renderSummary(nextRows, nextBenchmark),
+			renderLiveContextSummary: (nextLiveContext) => this.renderLiveContextSummary(nextLiveContext),
+			renderLiveContextDetails: (nextLiveContext) => this.renderLiveContextDetails(nextLiveContext),
+			renderForecastSummary: (nextForecast) => this.renderForecastSummary(nextForecast),
+			renderForecastDetails: (nextForecast) => this.renderForecastDetails(nextForecast),
+			renderForecastTable: (nextForecast) => this.renderForecastTable(nextForecast),
+			renderInsights: (nextRows, nextBenchmark, nextSkipped, nextWindowMode) => this.renderInsights(nextRows, nextBenchmark, nextSkipped, nextWindowMode),
+			renderExecutionSummary: (breadthRows, oppositionRows, currentFilter, targetSymbol, nextMinAgree, nextMaxOppose) =>
+				this.renderExecutionSummary(breadthRows, oppositionRows, currentFilter, targetSymbol, nextMinAgree, nextMaxOppose),
             renderConsensusSummary: (nextConsensus) => this.renderConsensusSummary(nextConsensus),
             renderConsensusTable: (nextConsensus) => this.renderConsensusTable(nextConsensus),
             renderBreadthSweep: (nextRows) => this.renderBreadthSweep(nextRows),
@@ -808,13 +952,14 @@ class PortfolioLabService {
             consensus,
             windowMode,
             breadthSweep,
-            oppositionSweep,
-            rankingRows,
-            sizingRows,
-            liveContext,
-            minAgree,
-            maxOppose,
-            currentInterval: state.currentInterval,
+			oppositionSweep,
+			rankingRows,
+			sizingRows,
+			liveContext,
+			forecast,
+			minAgree,
+			maxOppose,
+			currentInterval: state.currentInterval,
         });
     }
 
@@ -957,10 +1102,10 @@ class PortfolioLabService {
         ].join("");
     }
 
-    private renderLiveContextDetails(liveContext: LiveContextSnapshot): string {
-        if (liveContext.basis === "none" || !liveContext.direction) {
-            return `<div class="portfolio-lab__insight">Run Portfolio Lab after loading enough data on the target symbol to calculate current agreement and historical odds.</div>`;
-        }
+	private renderLiveContextDetails(liveContext: LiveContextSnapshot): string {
+		if (liveContext.basis === "none" || !liveContext.direction) {
+			return `<div class="portfolio-lab__insight">Run Portfolio Lab after loading enough data on the target symbol to calculate current agreement and historical odds.</div>`;
+		}
 
         const details: string[] = [];
         const basisLabel = liveContext.basis === "open_trade" ? "open trade" : "latest signal";
@@ -992,11 +1137,134 @@ class PortfolioLabService {
             );
         }
 
-        return details.map((detail) => `<div class="portfolio-lab__insight">${detail}</div>`).join("");
-    }
+		return details.map((detail) => `<div class="portfolio-lab__insight">${detail}</div>`).join("");
+	}
 
-    private findSweepWinner<T extends BreadthSweepRow | OppositionSweepRow>(
-        rows: T[],
+	private renderForecastSummary(forecast: OpenTradeForecast): string {
+		if (forecast.basis === "none" || !forecast.direction || !forecast.currentSnapshot) {
+			return `
+				<div class="sim-card" style="grid-column: 1 / -1;">
+					<div class="sim-card-label">Open Trade Forecast</div>
+					<div class="sim-card-value">No active forecast</div>
+					<div class="sim-card-delta">No open trade or recent target signal was available for analog matching.</div>
+				</div>
+			`;
+		}
+
+		return [
+			this.renderSummaryCard(
+				"Forecast Basis",
+				forecast.basis === "open_trade" ? "Open Trade" : "Latest Signal",
+				`${this.toDisplaySymbol(forecast.targetSymbol)} vs ${this.toDisplaySymbol(forecast.anchorSymbol)} anchor`
+			),
+			this.renderSummaryCard(
+				"Win / Lose",
+				forecast.winProbability !== null && forecast.lossProbability !== null
+					? `${forecast.winProbability.toFixed(1)}% / ${forecast.lossProbability.toFixed(1)}%`
+					: "Not enough analogs",
+				forecast.sampleCount > 0
+					? `${forecast.sampleCount}/${forecast.candidateCount} nearest analog states`
+					: "Need more historical analog states"
+			),
+			this.renderSummaryCard(
+				"Projected Final",
+				forecast.expectedFinalPnlPercent !== null ? this.formatPercent(forecast.expectedFinalPnlPercent) : "-",
+				forecast.expectedRemainingPnlPercent !== null
+					? `Remaining ${this.formatPercent(forecast.expectedRemainingPnlPercent)}`
+					: "Remaining edge unavailable"
+			),
+			this.renderSummaryCard(
+				"Confidence",
+				forecast.confidenceLabel ?? "-",
+				forecast.confidenceScore !== null
+					? `${forecast.confidenceScore.toFixed(0)}/100 confidence`
+					: "No confidence score"
+			),
+			this.renderSummaryCard(
+				"Suggested Exposure",
+				forecast.suggestionLabel ?? "-",
+				forecast.suggestedExposure !== null
+					? `${forecast.suggestedExposure.toFixed(2)}x target size`
+					: "No sizing suggestion"
+			),
+			this.renderSummaryCard(
+				"Future Path",
+				forecast.expectedMfePercent !== null ? `MFE ${this.formatPercent(forecast.expectedMfePercent)}` : "-",
+				forecast.expectedMaePercent !== null ? `MAE ${this.formatPercent(forecast.expectedMaePercent)}` : "Path stats unavailable"
+			),
+		].join("");
+	}
+
+	private renderForecastDetails(forecast: OpenTradeForecast): string {
+		if (forecast.basis === "none" || !forecast.direction || !forecast.currentSnapshot) {
+			return `<div class="portfolio-lab__insight">Run Portfolio Lab after a target open trade or fresh signal exists to build the analog forecast.</div>`;
+		}
+
+		const snapshot = forecast.currentSnapshot;
+		const details: string[] = [];
+		details.push(
+			`<strong>Current setup:</strong> ${this.toDisplaySymbol(forecast.targetSymbol)} ${forecast.direction.toUpperCase()} ` +
+			`with ${snapshot.agreementCount} agree / ${snapshot.oppositionCount} oppose and ` +
+			`${snapshot.barsHeld} bar${snapshot.barsHeld === 1 ? "" : "s"} held.`
+		);
+		details.push(
+			`<strong>Relative strength:</strong> ` +
+			`vs ${this.toDisplaySymbol(forecast.anchorSymbol)} over 3 bars ${this.formatPercent(snapshot.targetVsAnchor3)}, ` +
+			`vs universe over 3 bars ${this.formatPercent(snapshot.targetVsUniverse3)}.`
+		);
+		details.push(
+			`<strong>Context quality:</strong> weighted breadth ${snapshot.weightedAgreementRatio.toFixed(2)} support / ` +
+			`${snapshot.weightedOppositionRatio.toFixed(2)} conflict, dispersion ${snapshot.dispersion1 !== null ? snapshot.dispersion1.toFixed(2) : "-"}, ` +
+			`leader gap ${this.formatPercent(snapshot.leaderGap1)}.`
+		);
+		if (forecast.winProbability !== null && forecast.baselineWinProbability !== null) {
+			details.push(
+				`<strong>Edge vs baseline:</strong> analog win probability ${forecast.winProbability.toFixed(1)}% ` +
+				`vs ${forecast.baselineWinProbability.toFixed(1)}% directional baseline, remaining expectancy ` +
+				`${this.formatPercent(forecast.expectedRemainingPnlPercent)} vs ${this.formatPercent(forecast.baselineRemainingPnlPercent)} baseline.`
+			);
+		}
+		if (forecast.rationale.length > 0) {
+			details.push(`<strong>Why:</strong> ${forecast.rationale.map((item) => this.escapeHtml(item)).join(" ")}`);
+		}
+		if (snapshot.agreeingSymbols.length > 0) {
+			details.push(`<strong>Agreeing pairs:</strong> ${snapshot.agreeingSymbols.map((symbol) => this.toDisplaySymbol(symbol)).join(", ")}.`);
+		}
+		if (snapshot.opposingSymbols.length > 0) {
+			details.push(`<strong>Opposing pairs:</strong> ${snapshot.opposingSymbols.map((symbol) => this.toDisplaySymbol(symbol)).join(", ")}.`);
+		}
+
+		return details.map((detail) => `<div class="portfolio-lab__insight">${detail}</div>`).join("");
+	}
+
+	private renderForecastTable(forecast: OpenTradeForecast): string {
+		if (forecast.analogs.length === 0) {
+			return `
+				<tr>
+					<td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
+						No historical analog states cleared the current forecast filters yet.
+					</td>
+				</tr>
+			`;
+		}
+
+		return forecast.analogs.map((analog, index) => `
+			<tr>
+				<td>#${index + 1} (${analog.distance.toFixed(2)})</td>
+				<td>${analog.barsHeld}</td>
+				<td>${analog.agreementCount} / ${analog.oppositionCount}</td>
+				<td>${this.formatPercent(analog.targetVsAnchor3)}</td>
+				<td>${this.formatPercent(analog.targetVsUniverse3)}</td>
+				<td class="${analog.finalPnlPercent >= 0 ? "positive" : "negative"}">${this.formatPercent(analog.finalPnlPercent)}</td>
+				<td class="${analog.remainingPnlPercent >= 0 ? "positive" : "negative"}">${this.formatPercent(analog.remainingPnlPercent)}</td>
+				<td class="${(analog.futureMfePercent ?? 0) >= 0 ? "positive" : ""}">${this.formatPercent(analog.futureMfePercent)}</td>
+				<td class="${(analog.futureMaePercent ?? 0) <= 0 ? "negative" : ""}">${this.formatPercent(analog.futureMaePercent)}</td>
+			</tr>
+		`).join("");
+	}
+
+	private findSweepWinner<T extends BreadthSweepRow | OppositionSweepRow>(
+		rows: T[],
         score: (row: T) => number,
         label: (row: T) => string
     ): { label: string; result: BacktestResult } | null {
@@ -1420,14 +1688,77 @@ class PortfolioLabService {
         }
     }
 
-    private getBoundaryTime(candle: OHLCVData | undefined): number | null {
-        if (!candle) {
-            return null;
-        }
-        return parseTimeToUnixSeconds(candle.time);
-    }
+	private getBoundaryTime(candle: OHLCVData | undefined): number | null {
+		if (!candle) {
+			return null;
+		}
+		return parseTimeToUnixSeconds(candle.time);
+	}
 
-    private async buildBreadthSweepRows(context: PortfolioRunContext): Promise<BreadthSweepRow[]> {
+	private buildTradeRanges(
+		trades: Trade[],
+		data: OHLCVData[],
+		timeIndex: Map<string, number>
+	): TradeRange[] {
+		return trades
+			.map((trade) => {
+				const entryIndex = this.resolveDataIndexForTime(data, timeIndex, trade.entryTime);
+				const exitIndex = this.resolveDataIndexForTime(data, timeIndex, trade.exitTime);
+				if (entryIndex === null || exitIndex === null || exitIndex < entryIndex) {
+					return null;
+				}
+				return {
+					trade,
+					entryIndex,
+					exitIndex,
+				};
+			})
+			.filter((range): range is TradeRange => Boolean(range));
+	}
+
+	private resolveDataIndexForTime(
+		data: OHLCVData[],
+		timeIndex: Map<string, number>,
+		rawTime: Time
+	): number | null {
+		const direct = timeIndex.get(timeKey(rawTime));
+		if (typeof direct === "number") {
+			return direct;
+		}
+		const targetTime = parseTimeToUnixSeconds(rawTime);
+		if (targetTime === null) {
+			return null;
+		}
+		for (let index = 0; index < data.length; index += 1) {
+			const candleTime = parseTimeToUnixSeconds(data[index].time);
+			if (candleTime === targetTime) {
+				return index;
+			}
+		}
+		return null;
+	}
+
+	private findTradeRangeByEntryTime(tradeRanges: TradeRange[], rawTime: Time): TradeRange | null {
+		const entryKey = timeKey(rawTime);
+		return tradeRanges.find((range) => timeKey(range.trade.entryTime) === entryKey) ?? null;
+	}
+
+	private findTradeRangeAtIndex(tradeRanges: TradeRange[], barIndex: number): TradeRange | null {
+		for (let index = tradeRanges.length - 1; index >= 0; index -= 1) {
+			const range = tradeRanges[index];
+			const isOpenAtIndex = barIndex >= range.entryIndex
+				&& (
+					barIndex < range.exitIndex
+					|| (barIndex === range.exitIndex && range.trade.exitReason === "end_of_data")
+				);
+			if (isOpenAtIndex) {
+				return range;
+			}
+		}
+		return null;
+	}
+
+	private async buildBreadthSweepRows(context: PortfolioRunContext): Promise<BreadthSweepRow[]> {
         const maxAgree = Math.max(0, context.selectedSymbols.length - (context.selectedSymbols.includes(context.benchmarkSymbol) ? 1 : 0));
         const rows: BreadthSweepRow[] = [];
 
@@ -2063,10 +2394,10 @@ class PortfolioLabService {
         return "Satellite";
     }
 
-    private buildLiveContextSnapshot(
-        context: PortfolioRunContext,
-        consensus: ConsensusAnalysis
-    ): LiveContextSnapshot {
+	private buildLiveContextSnapshot(
+		context: PortfolioRunContext,
+		consensus: ConsensusAnalysis
+	): LiveContextSnapshot {
         const targetArtifacts = context.runCache.get(context.benchmarkSymbol);
         const targetData = context.dataCache.get(context.benchmarkSymbol)?.data ?? [];
         if (!targetArtifacts || targetData.length === 0) {
@@ -2134,12 +2465,1044 @@ class PortfolioLabService {
             opposingSymbols: currentSetup.context.opposingSymbols,
             bucketLabel: this.getConsensusBucket(currentSetup.context.sameCount, currentSetup.context.sameCount).label,
             odds,
-            openPosition,
-        };
-    }
+			openPosition,
+		};
+	}
 
-    private buildCurrentOpenPositionContext(
-        context: PortfolioRunContext,
+	private buildOpenTradeForecast(
+		context: PortfolioRunContext,
+		rows: PairAnalysisRow[],
+		anchorSymbol: string
+	): OpenTradeForecast {
+		const targetArtifacts = context.runCache.get(context.benchmarkSymbol);
+		const targetData = context.dataCache.get(context.benchmarkSymbol)?.data ?? [];
+		if (!targetArtifacts || targetData.length === 0) {
+			return this.createEmptyForecast(context.benchmarkSymbol, anchorSymbol);
+		}
+
+		const peerWeights = this.buildForecastPeerWeights(rows, context.benchmarkSymbol);
+		const openPosition = getOpenPositionForScanner(targetData, targetArtifacts.fullSignals, context.settings);
+		if (openPosition) {
+			const openTradeRange = this.findTradeRangeByEntryTime(targetArtifacts.tradeRanges, openPosition.entryTime)
+				?? this.findTradeRangeAtIndex(targetArtifacts.tradeRanges, targetData.length - 1);
+			if (openTradeRange) {
+				const snapshot = this.buildForecastSnapshotForOpenTrade(
+					context,
+					targetData,
+					targetArtifacts,
+					openTradeRange,
+					targetData.length - 1,
+					anchorSymbol,
+					peerWeights
+				);
+				if (snapshot) {
+					return this.finalizeOpenTradeForecast(
+						context,
+						snapshot,
+						this.buildHistoricalOpenTradeForecastCandidates(context, targetData, targetArtifacts, anchorSymbol, peerWeights),
+						anchorSymbol
+					);
+				}
+			}
+		}
+
+		const latestSignal = this.findLatestSignalReference(targetArtifacts);
+		if (!latestSignal) {
+			return this.createEmptyForecast(context.benchmarkSymbol, anchorSymbol);
+		}
+
+		const latestSignalSnapshot = this.buildForecastSnapshotForLatestSignal(
+			context,
+			targetData,
+			targetArtifacts,
+			latestSignal.barIndex,
+			latestSignal.signal,
+			anchorSymbol,
+			peerWeights
+		);
+		if (!latestSignalSnapshot) {
+			return this.createEmptyForecast(context.benchmarkSymbol, anchorSymbol);
+		}
+
+		return this.finalizeOpenTradeForecast(
+			context,
+			latestSignalSnapshot,
+			this.buildHistoricalSignalForecastCandidates(context, targetData, targetArtifacts, anchorSymbol, peerWeights),
+			anchorSymbol
+		);
+	}
+
+	private createEmptyForecast(targetSymbol: string, anchorSymbol: string): OpenTradeForecast {
+		return {
+			basis: "none",
+			matchType: "none",
+			targetSymbol,
+			anchorSymbol,
+			direction: null,
+			confidenceLabel: null,
+			confidenceScore: null,
+			sampleCount: 0,
+			candidateCount: 0,
+			winProbability: null,
+			lossProbability: null,
+			expectedFinalPnlPercent: null,
+			expectedRemainingPnlPercent: null,
+			expectedMaePercent: null,
+			expectedMfePercent: null,
+			baselineWinProbability: null,
+			baselineRemainingPnlPercent: null,
+			suggestedExposure: null,
+			suggestionLabel: null,
+			avgDistance: null,
+			currentSnapshot: null,
+			analogs: [],
+			rationale: [],
+		};
+	}
+
+	private finalizeOpenTradeForecast(
+		context: PortfolioRunContext,
+		currentSnapshot: ForecastSnapshot,
+		candidates: ForecastCandidateSample[],
+		anchorSymbol: string
+	): OpenTradeForecast {
+		if (candidates.length === 0) {
+			return {
+				...this.createEmptyForecast(context.benchmarkSymbol, anchorSymbol),
+				basis: currentSnapshot.basis,
+				matchType: "fallback",
+				direction: currentSnapshot.direction,
+				currentSnapshot,
+				rationale: this.buildForecastRationale(currentSnapshot, null, null, null),
+			};
+		}
+
+		const ranked = candidates
+			.map((candidate) => ({
+				candidate,
+				distance: this.measureForecastDistance(currentSnapshot, candidate.snapshot),
+			}))
+			.sort((a, b) => a.distance - b.distance);
+		const selectedCount = Math.min(
+			Math.max(8, Math.round(Math.sqrt(ranked.length) * 2)),
+			24,
+			ranked.length
+		);
+		const selected = ranked.slice(0, selectedCount);
+		const totalWeight = selected.reduce((sum, item) => sum + this.getForecastDistanceWeight(item.distance), 0);
+		const baselineWinProbability = this.average(candidates.map((candidate) => candidate.finalIsWin ? 100 : 0));
+		const baselineRemainingPnlPercent = this.average(candidates.map((candidate) => candidate.remainingPnlPercent));
+		const baselineFinalPnlPercent = this.average(candidates.map((candidate) => candidate.finalPnlPercent));
+		const analogWinProbability = totalWeight > 0
+			? selected.reduce((sum, item) => sum + this.getForecastDistanceWeight(item.distance) * (item.candidate.finalIsWin ? 100 : 0), 0) / totalWeight
+			: null;
+		const analogRemainingPnlPercent = totalWeight > 0
+			? selected.reduce((sum, item) => sum + this.getForecastDistanceWeight(item.distance) * item.candidate.remainingPnlPercent, 0) / totalWeight
+			: null;
+		const analogFinalPnlPercent = totalWeight > 0
+			? selected.reduce((sum, item) => sum + this.getForecastDistanceWeight(item.distance) * item.candidate.finalPnlPercent, 0) / totalWeight
+			: null;
+		const analogMfePercent = totalWeight > 0
+			? selected.reduce((sum, item) => sum + this.getForecastDistanceWeight(item.distance) * (item.candidate.futureMfePercent ?? 0), 0) / totalWeight
+			: null;
+		const analogMaePercent = totalWeight > 0
+			? selected.reduce((sum, item) => sum + this.getForecastDistanceWeight(item.distance) * (item.candidate.futureMaePercent ?? 0), 0) / totalWeight
+			: null;
+		const shrink = selected.length / (selected.length + 10);
+		const winProbability = baselineWinProbability !== null && analogWinProbability !== null
+			? baselineWinProbability + ((analogWinProbability - baselineWinProbability) * shrink)
+			: analogWinProbability ?? baselineWinProbability;
+		const expectedRemainingPnlPercent = baselineRemainingPnlPercent !== null && analogRemainingPnlPercent !== null
+			? baselineRemainingPnlPercent + ((analogRemainingPnlPercent - baselineRemainingPnlPercent) * shrink)
+			: analogRemainingPnlPercent ?? baselineRemainingPnlPercent;
+		const expectedFinalPnlPercent = baselineFinalPnlPercent !== null && analogFinalPnlPercent !== null
+			? baselineFinalPnlPercent + ((analogFinalPnlPercent - baselineFinalPnlPercent) * shrink)
+			: analogFinalPnlPercent ?? baselineFinalPnlPercent;
+		const avgDistance = this.average(selected.map((item) => item.distance));
+		const confidenceScore = this.computeForecastConfidenceScore(selected.length, avgDistance);
+		const confidenceLabel = confidenceScore >= 75 ? "High" : confidenceScore >= 50 ? "Medium" : "Low";
+		const suggestedExposure = this.resolveForecastSuggestedExposure(
+			winProbability,
+			expectedRemainingPnlPercent,
+			currentSnapshot,
+			confidenceScore
+		);
+
+		return {
+			basis: currentSnapshot.basis,
+			matchType: selected.length >= 8 ? "nearest" : "fallback",
+			targetSymbol: context.benchmarkSymbol,
+			anchorSymbol,
+			direction: currentSnapshot.direction,
+			confidenceLabel,
+			confidenceScore,
+			sampleCount: selected.length,
+			candidateCount: ranked.length,
+			winProbability,
+			lossProbability: typeof winProbability === "number" ? 100 - winProbability : null,
+			expectedFinalPnlPercent,
+			expectedRemainingPnlPercent,
+			expectedMaePercent: analogMaePercent,
+			expectedMfePercent: analogMfePercent,
+			baselineWinProbability,
+			baselineRemainingPnlPercent,
+			suggestedExposure,
+			suggestionLabel: this.resolveForecastSuggestionLabel(suggestedExposure, currentSnapshot.basis),
+			avgDistance,
+			currentSnapshot,
+			analogs: selected.slice(0, 8).map(({ candidate, distance }) => ({
+				timeKey: candidate.snapshot.timeKey,
+				direction: candidate.snapshot.direction,
+				barsHeld: candidate.snapshot.barsHeld,
+				distance,
+				agreementCount: candidate.snapshot.agreementCount,
+				oppositionCount: candidate.snapshot.oppositionCount,
+				targetVsAnchor3: candidate.snapshot.targetVsAnchor3,
+				targetVsUniverse3: candidate.snapshot.targetVsUniverse3,
+				finalIsWin: candidate.finalIsWin,
+				finalPnlPercent: candidate.finalPnlPercent,
+				remainingPnlPercent: candidate.remainingPnlPercent,
+				futureMfePercent: candidate.futureMfePercent,
+				futureMaePercent: candidate.futureMaePercent,
+			})),
+			rationale: this.buildForecastRationale(
+				currentSnapshot,
+				winProbability,
+				baselineWinProbability,
+				expectedRemainingPnlPercent
+			),
+		};
+	}
+
+	private buildHistoricalOpenTradeForecastCandidates(
+		context: PortfolioRunContext,
+		targetData: OHLCVData[],
+		targetArtifacts: PairRunArtifacts,
+		anchorSymbol: string,
+		peerWeights: Map<string, number>
+	): ForecastCandidateSample[] {
+		const samples: ForecastCandidateSample[] = [];
+		for (const tradeRange of targetArtifacts.tradeRanges) {
+			if (tradeRange.trade.exitReason === "end_of_data") {
+				continue;
+			}
+			const step = this.getForecastSamplingStep(tradeRange.exitIndex - tradeRange.entryIndex);
+			for (let barIndex = tradeRange.entryIndex; barIndex < tradeRange.exitIndex; barIndex += step) {
+				const snapshot = this.buildForecastSnapshotForOpenTrade(
+					context,
+					targetData,
+					targetArtifacts,
+					tradeRange,
+					barIndex,
+					anchorSymbol,
+					peerWeights
+				);
+				if (!snapshot) {
+					continue;
+				}
+				samples.push({
+					snapshot,
+					...this.buildForecastOutcomeFromState(targetData, tradeRange, barIndex),
+				});
+			}
+		}
+		return samples;
+	}
+
+	private buildHistoricalSignalForecastCandidates(
+		context: PortfolioRunContext,
+		targetData: OHLCVData[],
+		targetArtifacts: PairRunArtifacts,
+		anchorSymbol: string,
+		peerWeights: Map<string, number>
+	): ForecastCandidateSample[] {
+		return targetArtifacts.tradeRanges
+			.filter((tradeRange) => tradeRange.trade.exitReason !== "end_of_data")
+			.map((tradeRange) => {
+				const signalType: Signal["type"] = tradeRange.trade.type === "long" ? "buy" : "sell";
+				const snapshot = this.buildForecastSnapshotForLatestSignal(
+					context,
+					targetData,
+					targetArtifacts,
+					tradeRange.entryIndex,
+					{
+						time: targetData[tradeRange.entryIndex]?.time ?? tradeRange.trade.entryTime,
+						type: signalType,
+						price: tradeRange.trade.entryPrice,
+					},
+					anchorSymbol,
+					peerWeights
+				);
+				if (!snapshot) {
+					return null;
+				}
+				return {
+					snapshot,
+					...this.buildForecastOutcomeFromState(targetData, tradeRange, tradeRange.entryIndex),
+				};
+			})
+			.filter((sample): sample is ForecastCandidateSample => Boolean(sample));
+	}
+
+	private buildForecastSnapshotForOpenTrade(
+		context: PortfolioRunContext,
+		targetData: OHLCVData[],
+		targetArtifacts: PairRunArtifacts,
+		tradeRange: TradeRange,
+		barIndex: number,
+		anchorSymbol: string,
+		peerWeights: Map<string, number>
+	): ForecastSnapshot | null {
+		const candle = targetData[barIndex];
+		if (!candle || barIndex < tradeRange.entryIndex || barIndex >= targetData.length) {
+			return null;
+		}
+
+		const breadth = this.buildForecastOpenBreadthContext(
+			context.benchmarkSymbol,
+			tradeRange.trade.type,
+			timeKey(candle.time),
+			context.runCache,
+			peerWeights
+		);
+		const persistence = this.computeOpenBreadthPersistence(
+			context,
+			targetArtifacts,
+			tradeRange.trade.type,
+			barIndex,
+			peerWeights
+		);
+		const strength = this.buildDirectionalStrengthSnapshot(
+			context,
+			targetData,
+			barIndex,
+			tradeRange.trade.type,
+			anchorSymbol
+		);
+		const currentPnlPercent = this.computeDirectionalPercentMove(
+			tradeRange.trade.entryPrice,
+			candle.close,
+			tradeRange.trade.type
+		);
+		const atr = this.computeAtrAt(targetData, barIndex) ?? (tradeRange.trade.entryPrice * 0.01);
+
+		return {
+			basis: "open_trade",
+			targetSymbol: context.benchmarkSymbol,
+			anchorSymbol,
+			direction: tradeRange.trade.type,
+			timeKey: timeKey(candle.time),
+			barIndex,
+			entryIndex: tradeRange.entryIndex,
+			barsHeld: Math.max(0, barIndex - tradeRange.entryIndex),
+			currentPrice: candle.close,
+			entryPrice: tradeRange.trade.entryPrice,
+			currentPnlPercent,
+			openPnlAtr: this.computeDirectionalAtrDistance(tradeRange.trade.entryPrice, candle.close, tradeRange.trade.type, atr),
+			distanceFromEntryAtr: this.computeDirectionalAtrDistance(tradeRange.trade.entryPrice, candle.close, tradeRange.trade.type, atr),
+			adverseExcursionAtr: this.computeAdverseExcursionAtr(targetData, tradeRange.entryIndex, barIndex, tradeRange.trade.type, tradeRange.trade.entryPrice, atr),
+			agreementCount: breadth.sameCount,
+			oppositionCount: breadth.oppositeCount,
+			activePeerCount: breadth.activePeerCount,
+			weightedAgreementRatio: breadth.totalPeerWeight > 0 ? breadth.weightedSame / breadth.totalPeerWeight : 0,
+			weightedOppositionRatio: breadth.totalPeerWeight > 0 ? breadth.weightedOpposite / breadth.totalPeerWeight : 0,
+			breadthRatio: breadth.activePeerCount > 0 ? breadth.sameCount / breadth.activePeerCount : 0,
+			breadthPersistence: persistence,
+			targetVsAnchor1: strength.targetVsAnchor1,
+			targetVsAnchor3: strength.targetVsAnchor3,
+			targetVsAnchor5: strength.targetVsAnchor5,
+			targetVsUniverse1: strength.targetVsUniverse1,
+			targetVsUniverse3: strength.targetVsUniverse3,
+			targetVsUniverse5: strength.targetVsUniverse5,
+			dispersion1: strength.dispersion1,
+			leaderGap1: strength.leaderGap1,
+			agreeingSymbols: breadth.agreeingSymbols,
+			opposingSymbols: breadth.opposingSymbols,
+		};
+	}
+
+	private buildForecastSnapshotForLatestSignal(
+		context: PortfolioRunContext,
+		targetData: OHLCVData[],
+		targetArtifacts: PairRunArtifacts,
+		barIndex: number,
+		signal: Pick<Signal, "time" | "type" | "price">,
+		anchorSymbol: string,
+		peerWeights: Map<string, number>
+	): ForecastSnapshot | null {
+		const candle = targetData[barIndex];
+		if (!candle) {
+			return null;
+		}
+
+		const direction: Trade["type"] = signal.type === "buy" ? "long" : "short";
+		const breadth = this.buildForecastSignalBreadthContext(
+			context.benchmarkSymbol,
+			targetArtifacts,
+			barIndex,
+			signal.type,
+			context.runCache,
+			context.lagBars,
+			peerWeights
+		);
+		const persistence = this.computeSignalBreadthPersistence(
+			context,
+			targetArtifacts,
+			barIndex,
+			signal.type,
+			peerWeights
+		);
+		const strength = this.buildDirectionalStrengthSnapshot(
+			context,
+			targetData,
+			barIndex,
+			direction,
+			anchorSymbol
+		);
+
+		return {
+			basis: "latest_signal",
+			targetSymbol: context.benchmarkSymbol,
+			anchorSymbol,
+			direction,
+			timeKey: timeKey(signal.time),
+			barIndex,
+			entryIndex: barIndex,
+			barsHeld: 0,
+			currentPrice: candle.close,
+			entryPrice: signal.price || candle.close,
+			currentPnlPercent: 0,
+			openPnlAtr: 0,
+			distanceFromEntryAtr: 0,
+			adverseExcursionAtr: 0,
+			agreementCount: breadth.sameCount,
+			oppositionCount: breadth.oppositeCount,
+			activePeerCount: breadth.activePeerCount,
+			weightedAgreementRatio: breadth.totalPeerWeight > 0 ? breadth.weightedSame / breadth.totalPeerWeight : 0,
+			weightedOppositionRatio: breadth.totalPeerWeight > 0 ? breadth.weightedOpposite / breadth.totalPeerWeight : 0,
+			breadthRatio: breadth.activePeerCount > 0 ? breadth.sameCount / breadth.activePeerCount : 0,
+			breadthPersistence: persistence,
+			targetVsAnchor1: strength.targetVsAnchor1,
+			targetVsAnchor3: strength.targetVsAnchor3,
+			targetVsAnchor5: strength.targetVsAnchor5,
+			targetVsUniverse1: strength.targetVsUniverse1,
+			targetVsUniverse3: strength.targetVsUniverse3,
+			targetVsUniverse5: strength.targetVsUniverse5,
+			dispersion1: strength.dispersion1,
+			leaderGap1: strength.leaderGap1,
+			agreeingSymbols: breadth.agreeingSymbols,
+			opposingSymbols: breadth.opposingSymbols,
+		};
+	}
+
+	private buildForecastOutcomeFromState(
+		targetData: OHLCVData[],
+		tradeRange: TradeRange,
+		barIndex: number
+	): Omit<ForecastCandidateSample, "snapshot"> {
+		const basisPrice = targetData[barIndex]?.close ?? tradeRange.trade.entryPrice;
+		const direction = tradeRange.trade.type;
+		const remainingPnlPercent = this.computeDirectionalPercentMove(
+			basisPrice,
+			tradeRange.trade.exitPrice,
+			direction
+		);
+		let futureMfePercent: number | null = null;
+		let futureMaePercent: number | null = null;
+
+		if (barIndex <= tradeRange.exitIndex) {
+			let bestFavorable = -Infinity;
+			let bestAdverse = Infinity;
+			for (let index = barIndex; index <= tradeRange.exitIndex; index += 1) {
+				const candle = targetData[index];
+				if (!candle) {
+					continue;
+				}
+				const favorablePrice = direction === "long" ? candle.high : candle.low;
+				const adversePrice = direction === "long" ? candle.low : candle.high;
+				bestFavorable = Math.max(bestFavorable, this.computeDirectionalPercentMove(basisPrice, favorablePrice, direction));
+				bestAdverse = Math.min(bestAdverse, this.computeDirectionalPercentMove(basisPrice, adversePrice, direction));
+			}
+			futureMfePercent = Number.isFinite(bestFavorable) ? bestFavorable : null;
+			futureMaePercent = Number.isFinite(bestAdverse) ? bestAdverse : null;
+		}
+
+		return {
+			finalIsWin: tradeRange.trade.pnl > 0,
+			finalPnlPercent: tradeRange.trade.pnlPercent,
+			remainingPnlPercent,
+			futureMfePercent,
+			futureMaePercent,
+		};
+	}
+
+	private buildForecastOpenBreadthContext(
+		targetSymbol: string,
+		targetDirection: Trade["type"],
+		timeKeyValue: string,
+		artifactsBySymbol: Map<string, PairRunArtifacts>,
+		peerWeights: Map<string, number>
+	): ForecastBreadthSnapshot {
+		let sameCount = 0;
+		let oppositeCount = 0;
+		let activePeerCount = 0;
+		let weightedSame = 0;
+		let weightedOpposite = 0;
+		let totalPeerWeight = 0;
+		const agreeingSymbols: string[] = [];
+		const opposingSymbols: string[] = [];
+
+		for (const [symbol, artifacts] of artifactsBySymbol.entries()) {
+			if (symbol === targetSymbol) {
+				continue;
+			}
+			const peerBarIndex = artifacts.timeIndex.get(timeKeyValue);
+			if (peerBarIndex === undefined) {
+				continue;
+			}
+			const openTradeRange = this.findTradeRangeAtIndex(artifacts.tradeRanges, peerBarIndex);
+			if (!openTradeRange) {
+				continue;
+			}
+
+			activePeerCount += 1;
+			const weight = peerWeights.get(symbol) ?? 1;
+			totalPeerWeight += weight;
+			if (openTradeRange.trade.type === targetDirection) {
+				sameCount += 1;
+				weightedSame += weight;
+				agreeingSymbols.push(symbol);
+			} else {
+				oppositeCount += 1;
+				weightedOpposite += weight;
+				opposingSymbols.push(symbol);
+			}
+		}
+
+		return {
+			sameCount,
+			oppositeCount,
+			activePeerCount,
+			weightedSame,
+			weightedOpposite,
+			totalPeerWeight,
+			agreeingSymbols,
+			opposingSymbols,
+		};
+	}
+
+	private buildForecastSignalBreadthContext(
+		targetSymbol: string,
+		targetArtifacts: PairRunArtifacts,
+		barIndex: number,
+		signalType: Signal["type"],
+		artifactsBySymbol: Map<string, PairRunArtifacts>,
+		lagBars: number,
+		peerWeights: Map<string, number>
+	): ForecastBreadthSnapshot {
+		const startIndex = Math.max(0, barIndex - lagBars);
+		const windowKeys = targetArtifacts.timeKeys.slice(startIndex, barIndex + 1);
+		let sameCount = 0;
+		let oppositeCount = 0;
+		let activePeerCount = 0;
+		let weightedSame = 0;
+		let weightedOpposite = 0;
+		let totalPeerWeight = 0;
+		const agreeingSymbols: string[] = [];
+		const opposingSymbols: string[] = [];
+
+		for (const [symbol, artifacts] of artifactsBySymbol.entries()) {
+			if (symbol === targetSymbol) {
+				continue;
+			}
+			const latestType = resolveLatestPortfolioSignalType(windowKeys, artifacts.signalPresenceByTime);
+			if (!latestType) {
+				continue;
+			}
+			activePeerCount += 1;
+			const weight = peerWeights.get(symbol) ?? 1;
+			totalPeerWeight += weight;
+			if (latestType === signalType) {
+				sameCount += 1;
+				weightedSame += weight;
+				agreeingSymbols.push(symbol);
+			} else {
+				oppositeCount += 1;
+				weightedOpposite += weight;
+				opposingSymbols.push(symbol);
+			}
+		}
+
+		return {
+			sameCount,
+			oppositeCount,
+			activePeerCount,
+			weightedSame,
+			weightedOpposite,
+			totalPeerWeight,
+			agreeingSymbols,
+			opposingSymbols,
+		};
+	}
+
+	private computeOpenBreadthPersistence(
+		context: PortfolioRunContext,
+		targetArtifacts: PairRunArtifacts,
+		direction: Trade["type"],
+		barIndex: number,
+		peerWeights: Map<string, number>
+	): number {
+		let persistence = 0;
+		for (let offset = 0; offset < 5; offset += 1) {
+			const index = barIndex - offset;
+			if (index < 0) {
+				break;
+			}
+			const timeKeyValue = targetArtifacts.timeKeys[index];
+			const breadth = this.buildForecastOpenBreadthContext(
+				context.benchmarkSymbol,
+				direction,
+				timeKeyValue,
+				context.runCache,
+				peerWeights
+			);
+			if (breadth.sameCount < breadth.oppositeCount) {
+				break;
+			}
+			persistence += 1;
+		}
+		return persistence;
+	}
+
+	private computeSignalBreadthPersistence(
+		context: PortfolioRunContext,
+		targetArtifacts: PairRunArtifacts,
+		barIndex: number,
+		signalType: Signal["type"],
+		peerWeights: Map<string, number>
+	): number {
+		let persistence = 0;
+		for (let offset = 0; offset < 5; offset += 1) {
+			const index = barIndex - offset;
+			if (index < 0) {
+				break;
+			}
+			const breadth = this.buildForecastSignalBreadthContext(
+				context.benchmarkSymbol,
+				targetArtifacts,
+				index,
+				signalType,
+				context.runCache,
+				context.lagBars,
+				peerWeights
+			);
+			if (breadth.sameCount < breadth.oppositeCount) {
+				break;
+			}
+			persistence += 1;
+		}
+		return persistence;
+	}
+
+	private buildDirectionalStrengthSnapshot(
+		context: PortfolioRunContext,
+		targetData: OHLCVData[],
+		barIndex: number,
+		direction: Trade["type"],
+		anchorSymbol: string
+	): {
+		targetVsAnchor1: number | null;
+		targetVsAnchor3: number | null;
+		targetVsAnchor5: number | null;
+		targetVsUniverse1: number | null;
+		targetVsUniverse3: number | null;
+		targetVsUniverse5: number | null;
+		dispersion1: number | null;
+		leaderGap1: number | null;
+	} {
+		const targetCandle = targetData[barIndex];
+		if (!targetCandle) {
+			return {
+				targetVsAnchor1: null,
+				targetVsAnchor3: null,
+				targetVsAnchor5: null,
+				targetVsUniverse1: null,
+				targetVsUniverse3: null,
+				targetVsUniverse5: null,
+				dispersion1: null,
+				leaderGap1: null,
+			};
+		}
+		const timeKeyValue = timeKey(targetCandle.time);
+		const directionFactor = direction === "long" ? 1 : -1;
+		const anchorData = context.dataCache.get(anchorSymbol)?.data ?? [];
+		const targetVsAnchor1 = this.computeRelativeStrength(targetData, anchorData, barIndex, timeKeyValue, 1, directionFactor);
+		const targetVsAnchor3 = this.computeRelativeStrength(targetData, anchorData, barIndex, timeKeyValue, 3, directionFactor);
+		const targetVsAnchor5 = this.computeRelativeStrength(targetData, anchorData, barIndex, timeKeyValue, 5, directionFactor);
+		const targetVsUniverse1 = this.computeUniverseRelativeStrength(context, targetData, barIndex, 1, directionFactor);
+		const targetVsUniverse3 = this.computeUniverseRelativeStrength(context, targetData, barIndex, 3, directionFactor);
+		const targetVsUniverse5 = this.computeUniverseRelativeStrength(context, targetData, barIndex, 5, directionFactor);
+		const peerReturns: number[] = [];
+
+		for (const symbol of context.selectedSymbols) {
+			if (symbol === context.benchmarkSymbol) {
+				continue;
+			}
+			const peerData = context.dataCache.get(symbol)?.data ?? [];
+			const value = this.computeDirectionalReturnAtTime(peerData, timeKeyValue, 1, directionFactor);
+			if (typeof value === "number") {
+				peerReturns.push(value);
+			}
+		}
+
+		const targetReturn1 = this.computeDirectionalReturnAtIndex(targetData, barIndex, 1, directionFactor);
+		const leaderGap1 = typeof targetReturn1 === "number" && peerReturns.length > 0
+			? targetReturn1 - Math.max(...peerReturns)
+			: null;
+
+		return {
+			targetVsAnchor1,
+			targetVsAnchor3,
+			targetVsAnchor5,
+			targetVsUniverse1,
+			targetVsUniverse3,
+			targetVsUniverse5,
+			dispersion1: peerReturns.length > 1 ? this.standardDeviation(peerReturns) : null,
+			leaderGap1,
+		};
+	}
+
+	private computeRelativeStrength(
+		targetData: OHLCVData[],
+		anchorData: OHLCVData[],
+		targetBarIndex: number,
+		timeKeyValue: string,
+		lookbackBars: number,
+		directionFactor: number
+	): number | null {
+		const targetReturn = this.computeDirectionalReturnAtIndex(targetData, targetBarIndex, lookbackBars, directionFactor);
+		const anchorReturn = this.computeDirectionalReturnAtTime(anchorData, timeKeyValue, lookbackBars, directionFactor);
+		if (typeof targetReturn !== "number" || typeof anchorReturn !== "number") {
+			return null;
+		}
+		return targetReturn - anchorReturn;
+	}
+
+	private computeUniverseRelativeStrength(
+		context: PortfolioRunContext,
+		targetData: OHLCVData[],
+		targetBarIndex: number,
+		lookbackBars: number,
+		directionFactor: number
+	): number | null {
+		const targetCandle = targetData[targetBarIndex];
+		if (!targetCandle) {
+			return null;
+		}
+		const targetReturn = this.computeDirectionalReturnAtIndex(targetData, targetBarIndex, lookbackBars, directionFactor);
+		if (typeof targetReturn !== "number") {
+			return null;
+		}
+
+		const peerReturns: number[] = [];
+		const timeKeyValue = timeKey(targetCandle.time);
+		for (const symbol of context.selectedSymbols) {
+			if (symbol === context.benchmarkSymbol) {
+				continue;
+			}
+			const peerData = context.dataCache.get(symbol)?.data ?? [];
+			const peerReturn = this.computeDirectionalReturnAtTime(peerData, timeKeyValue, lookbackBars, directionFactor);
+			if (typeof peerReturn === "number") {
+				peerReturns.push(peerReturn);
+			}
+		}
+
+		if (peerReturns.length === 0) {
+			return null;
+		}
+		return targetReturn - (peerReturns.reduce((sum, value) => sum + value, 0) / peerReturns.length);
+	}
+
+	private measureForecastDistance(current: ForecastSnapshot, candidate: ForecastSnapshot): number {
+		const parts = [
+			this.measureForecastPart(current.breadthRatio, candidate.breadthRatio, 0.2, 1.3),
+			this.measureForecastPart(current.weightedAgreementRatio, candidate.weightedAgreementRatio, 0.18, 1.2),
+			this.measureForecastPart(current.weightedOppositionRatio, candidate.weightedOppositionRatio, 0.18, 1.2),
+			this.measureForecastPart(current.breadthPersistence, candidate.breadthPersistence, 1.5, 0.9),
+			this.measureForecastPart(current.targetVsAnchor1, candidate.targetVsAnchor1, 1, 1),
+			this.measureForecastPart(current.targetVsAnchor3, candidate.targetVsAnchor3, 2, 1.2),
+			this.measureForecastPart(current.targetVsAnchor5, candidate.targetVsAnchor5, 3, 0.8),
+			this.measureForecastPart(current.targetVsUniverse1, candidate.targetVsUniverse1, 1, 1),
+			this.measureForecastPart(current.targetVsUniverse3, candidate.targetVsUniverse3, 2, 1.2),
+			this.measureForecastPart(current.targetVsUniverse5, candidate.targetVsUniverse5, 3, 0.8),
+			this.measureForecastPart(current.dispersion1, candidate.dispersion1, 1.2, 0.7),
+			this.measureForecastPart(current.leaderGap1, candidate.leaderGap1, 1.2, 0.8),
+			this.measureForecastPart(current.barsHeld, candidate.barsHeld, Math.max(2, current.barsHeld + 2), current.basis === "open_trade" ? 1.4 : 0.4),
+			this.measureForecastPart(current.openPnlAtr, candidate.openPnlAtr, 0.9, current.basis === "open_trade" ? 1.5 : 0.2),
+			this.measureForecastPart(current.adverseExcursionAtr, candidate.adverseExcursionAtr, 0.8, current.basis === "open_trade" ? 1.1 : 0.2),
+		].filter((value): value is number => value !== null);
+
+		if (parts.length === 0) {
+			return 999;
+		}
+		return parts.reduce((sum, value) => sum + value, 0) / parts.length;
+	}
+
+	private measureForecastPart(
+		current: number | null,
+		candidate: number | null,
+		scale: number,
+		weight: number
+	): number | null {
+		if (typeof current !== "number" || !Number.isFinite(current) || typeof candidate !== "number" || !Number.isFinite(candidate)) {
+			return null;
+		}
+		return (Math.abs(current - candidate) / Math.max(scale, 0.0001)) * weight;
+	}
+
+	private getForecastDistanceWeight(distance: number): number {
+		return 1 / (0.35 + Math.max(0, distance));
+	}
+
+	private computeForecastConfidenceScore(sampleCount: number, avgDistance: number | null): number {
+		const sampleComponent = Math.min(1, sampleCount / 24) * 60;
+		const distanceComponent = avgDistance === null
+			? 0
+			: Math.max(0, 1 - (avgDistance / 2.5)) * 40;
+		return Math.max(0, Math.min(100, sampleComponent + distanceComponent));
+	}
+
+	private resolveForecastSuggestedExposure(
+		winProbability: number | null,
+		expectedRemainingPnlPercent: number | null,
+		snapshot: ForecastSnapshot,
+		confidenceScore: number
+	): number | null {
+		if (typeof winProbability !== "number" || typeof expectedRemainingPnlPercent !== "number") {
+			return null;
+		}
+		if (expectedRemainingPnlPercent <= -0.2 || winProbability < 45) {
+			return snapshot.basis === "open_trade" ? 0.25 : 0;
+		}
+		if (winProbability >= 58 && expectedRemainingPnlPercent > 0.3 && confidenceScore >= 75) {
+			return 1;
+		}
+		if (winProbability >= 54 && expectedRemainingPnlPercent > 0.15) {
+			return 0.75;
+		}
+		if (winProbability >= 50 && expectedRemainingPnlPercent >= 0) {
+			return 0.5;
+		}
+		return snapshot.basis === "open_trade" ? 0.35 : 0.25;
+	}
+
+	private resolveForecastSuggestionLabel(exposure: number | null, basis: ForecastSnapshot["basis"]): string | null {
+		if (exposure === null) {
+			return null;
+		}
+		if (basis === "open_trade") {
+			if (exposure >= 0.95) return "Hold Full";
+			if (exposure >= 0.7) return "Hold Heavy";
+			if (exposure >= 0.45) return "Trim";
+			return "Defensive Hold";
+		}
+		if (exposure >= 0.95) return "Full Size";
+		if (exposure >= 0.7) return "Half-Heavy";
+		if (exposure >= 0.45) return "Probe";
+		return "Skip";
+	}
+
+	private buildForecastRationale(
+		snapshot: ForecastSnapshot,
+		winProbability: number | null,
+		baselineWinProbability: number | null,
+		expectedRemainingPnlPercent: number | null
+	): string[] {
+		const notes: string[] = [];
+		if (typeof snapshot.targetVsAnchor3 === "number" && snapshot.targetVsAnchor3 > 0.4) {
+			notes.push(`Target is outperforming ${this.toDisplaySymbol(snapshot.anchorSymbol)} on the 3-bar lookback.`);
+		} else if (typeof snapshot.targetVsAnchor3 === "number" && snapshot.targetVsAnchor3 < -0.4) {
+			notes.push(`Target is lagging ${this.toDisplaySymbol(snapshot.anchorSymbol)} on the 3-bar lookback.`);
+		}
+		if (typeof snapshot.targetVsUniverse3 === "number" && snapshot.targetVsUniverse3 > 0.35) {
+			notes.push("Target is leading the selected universe rather than just following the basket.");
+		} else if (typeof snapshot.targetVsUniverse3 === "number" && snapshot.targetVsUniverse3 < -0.35) {
+			notes.push("Target is underperforming the selected universe, which weakens the setup.");
+		}
+		if (snapshot.weightedOppositionRatio <= 0.2) {
+			notes.push("Weighted opposition is muted across peer pairs.");
+		} else if (snapshot.weightedOppositionRatio >= 0.45) {
+			notes.push("Weighted opposition is elevated across peer pairs.");
+		}
+		if (snapshot.breadthPersistence >= 3) {
+			notes.push(`Breadth support has persisted for ${snapshot.breadthPersistence} bars.`);
+		}
+		if (typeof winProbability === "number" && typeof baselineWinProbability === "number") {
+			notes.push(
+				`${winProbability >= baselineWinProbability ? "Analog win rate is above" : "Analog win rate is below"} ` +
+				`the directional baseline by ${(winProbability - baselineWinProbability).toFixed(1)} pts.`
+			);
+		}
+		if (typeof expectedRemainingPnlPercent === "number") {
+			notes.push(`Remaining-path expectancy from this state is ${this.formatPercent(expectedRemainingPnlPercent)}.`);
+		}
+		return notes.slice(0, 4);
+	}
+
+	private findLatestSignalReference(targetArtifacts: PairRunArtifacts): { signal: Signal; barIndex: number } | null {
+		for (let index = targetArtifacts.fullSignals.length - 1; index >= 0; index -= 1) {
+			const signal = targetArtifacts.fullSignals[index];
+			const barIndex = targetArtifacts.timeIndex.get(timeKey(signal.time));
+			if (barIndex === undefined) {
+				continue;
+			}
+			return { signal, barIndex };
+		}
+		return null;
+	}
+
+	private buildForecastPeerWeights(rows: PairAnalysisRow[], benchmarkSymbol: string): Map<string, number> {
+		const result = new Map<string, number>();
+		const maxExpectancy = Math.max(1, ...rows.map((row) => Math.abs(row.result.expectancy)));
+
+		for (const row of rows) {
+			if (row.symbol === benchmarkSymbol) {
+				continue;
+			}
+			const correlationScore = Math.abs(row.strategyCorrelation ?? row.marketCorrelation ?? 0);
+			const expectancyScore = Math.max(-1, Math.min(1, row.result.expectancy / maxExpectancy));
+			const weight = Math.max(
+				0.35,
+				Math.min(1.75, 0.65 + (correlationScore * 0.65) + (Math.max(0, expectancyScore) * 0.45))
+			);
+			result.set(row.symbol, weight);
+		}
+
+		return result;
+	}
+
+	private getForecastSamplingStep(durationBars: number): number {
+		if (durationBars <= 18) {
+			return 1;
+		}
+		if (durationBars <= 45) {
+			return 2;
+		}
+		return 3;
+	}
+
+	private computeDirectionalReturnAtIndex(
+		data: OHLCVData[],
+		barIndex: number,
+		lookbackBars: number,
+		directionFactor: number
+	): number | null {
+		if (barIndex < lookbackBars || !data[barIndex] || !data[barIndex - lookbackBars]) {
+			return null;
+		}
+		const start = data[barIndex - lookbackBars].close;
+		const end = data[barIndex].close;
+		if (!Number.isFinite(start) || !Number.isFinite(end) || start === 0) {
+			return null;
+		}
+		return directionFactor * (((end - start) / start) * 100);
+	}
+
+	private computeDirectionalReturnAtTime(
+		data: OHLCVData[],
+		timeKeyValue: string,
+		lookbackBars: number,
+		directionFactor: number
+	): number | null {
+		if (data.length === 0) {
+			return null;
+		}
+		const index = data.findIndex((candle) => timeKey(candle.time) === timeKeyValue);
+		if (index < 0) {
+			return null;
+		}
+		return this.computeDirectionalReturnAtIndex(data, index, lookbackBars, directionFactor);
+	}
+
+	private computeDirectionalPercentMove(
+		startPrice: number,
+		endPrice: number,
+		direction: Trade["type"]
+	): number {
+		if (!Number.isFinite(startPrice) || !Number.isFinite(endPrice) || startPrice === 0) {
+			return 0;
+		}
+		const raw = ((endPrice - startPrice) / startPrice) * 100;
+		return direction === "long" ? raw : -raw;
+	}
+
+	private computeDirectionalAtrDistance(
+		startPrice: number,
+		endPrice: number,
+		direction: Trade["type"],
+		atr: number
+	): number {
+		if (!Number.isFinite(atr) || atr <= 0) {
+			return 0;
+		}
+		const move = direction === "long" ? endPrice - startPrice : startPrice - endPrice;
+		return move / atr;
+	}
+
+	private computeAdverseExcursionAtr(
+		data: OHLCVData[],
+		entryIndex: number,
+		barIndex: number,
+		direction: Trade["type"],
+		entryPrice: number,
+		atr: number
+	): number {
+		if (!Number.isFinite(atr) || atr <= 0) {
+			return 0;
+		}
+		let adversePrice = entryPrice;
+		for (let index = entryIndex; index <= barIndex; index += 1) {
+			const candle = data[index];
+			if (!candle) {
+				continue;
+			}
+			if (direction === "long") {
+				adversePrice = Math.min(adversePrice, candle.low);
+			} else {
+				adversePrice = Math.max(adversePrice, candle.high);
+			}
+		}
+		return direction === "long"
+			? Math.max(0, (entryPrice - adversePrice) / atr)
+			: Math.max(0, (adversePrice - entryPrice) / atr);
+	}
+
+	private computeAtrAt(data: OHLCVData[], index: number, period = 14): number | null {
+		if (index <= 0 || index >= data.length) {
+			return null;
+		}
+		const start = Math.max(1, index - period + 1);
+		const values: number[] = [];
+		for (let barIndex = start; barIndex <= index; barIndex += 1) {
+			const current = data[barIndex];
+			const previous = data[barIndex - 1];
+			if (!current || !previous) {
+				continue;
+			}
+			const trueRange = Math.max(
+				current.high - current.low,
+				Math.abs(current.high - previous.close),
+				Math.abs(current.low - previous.close)
+			);
+			if (Number.isFinite(trueRange)) {
+				values.push(trueRange);
+			}
+		}
+		return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+	}
+
+	private buildCurrentOpenPositionContext(
+		context: PortfolioRunContext,
         targetDirection: Trade["type"]
     ): SignalContext | null {
         const targetArtifacts = context.runCache.get(context.benchmarkSymbol);
@@ -2520,14 +3883,23 @@ class PortfolioLabService {
         return `${value.toFixed(1)}%`;
     }
 
-    private formatProfitFactor(value: number): string {
-        if (value === Infinity) {
-            return "Inf";
-        }
-        return Number.isFinite(value) ? value.toFixed(2) : "-";
-    }
+	private formatProfitFactor(value: number): string {
+		if (value === Infinity) {
+			return "Inf";
+		}
+		return Number.isFinite(value) ? value.toFixed(2) : "-";
+	}
 
-    private getCorrelationCellColor(value: number | null): string {
+	private escapeHtml(value: string): string {
+		return value
+			.replace(/&/g, "&amp;")
+			.replace(/</g, "&lt;")
+			.replace(/>/g, "&gt;")
+			.replace(/"/g, "&quot;")
+			.replace(/'/g, "&#39;");
+	}
+
+	private getCorrelationCellColor(value: number | null): string {
         if (typeof value !== "number" || !Number.isFinite(value)) {
             return "rgba(255,255,255,0.03)";
         }
