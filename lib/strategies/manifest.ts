@@ -50,6 +50,8 @@ import { supertrend_friction_pinch } from "./lib/supertrend_friction_pinch";
 import { mfi_range_squeeze_breakout } from "./lib/mfi_range_squeeze_breakout";
 import { supertrend_kurtosis_anomaly } from "./lib/supertrend_kurtosis_anomaly";
 import { atr_gap_zscore_fade } from "./lib/atr_gap_zscore_fade";
+import { macd_histogram_volatility_squeeze } from "./lib/macd_histogram_volatility_squeeze";
+import { volume_profile_poc_median_shift } from "./lib/volume_profile_poc_median_shift";
 export interface StrategyManifestEntry {
     key: string;
     strategy: Strategy;
@@ -106,6 +108,8 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "mfi_range_squeeze_breakout", strategy: mfi_range_squeeze_breakout },
     { key: "supertrend_kurtosis_anomaly", strategy: supertrend_kurtosis_anomaly },
     { key: "atr_gap_zscore_fade", strategy: atr_gap_zscore_fade },
+    { key: "macd_histogram_volatility_squeeze", strategy: macd_histogram_volatility_squeeze },
+    { key: "volume_profile_poc_median_shift", strategy: volume_profile_poc_median_shift },
 ];
 export function createStrategiesRecordFromManifest(
     manifest: readonly StrategyManifestEntry[] = strategyManifest
