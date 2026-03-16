@@ -26,7 +26,12 @@ export const UI_EVENT_HANDLER_REQUIRED_IDS = [
     "minTradesBeforeFirstFlip",
     "tradeFilterMode",
     "htfBiasEmaPeriod",
+    "executionTrendEmaPeriod",
     "confirmLookback",
+    "trendPersistenceWindow",
+    "trendPersistenceMinBars",
+    "trendSlopeLookback",
+    "trendSlopeMinPercent",
     "volumeSmaPeriod",
     "volumeMultiplier",
     "confirmRsiPeriod",
@@ -92,7 +97,12 @@ export interface UiEventHandlersDom {
     minTradesBeforeFirstFlip: HTMLInputElement;
     tradeFilterMode: HTMLSelectElement;
     htfBiasEmaPeriod: HTMLInputElement;
+    executionTrendEmaPeriod: HTMLInputElement;
     confirmLookback: HTMLInputElement;
+    trendPersistenceWindow: HTMLInputElement;
+    trendPersistenceMinBars: HTMLInputElement;
+    trendSlopeLookback: HTMLInputElement;
+    trendSlopeMinPercent: HTMLInputElement;
     volumeSmaPeriod: HTMLInputElement;
     volumeMultiplier: HTMLInputElement;
     confirmRsiPeriod: HTMLInputElement;
@@ -161,7 +171,12 @@ export function createUiEventHandlersDom(): UiEventHandlersDom {
         minTradesBeforeFirstFlip: getRequiredElement<HTMLInputElement>("minTradesBeforeFirstFlip"),
         tradeFilterMode: getRequiredElement<HTMLSelectElement>("tradeFilterMode"),
         htfBiasEmaPeriod: getRequiredElement<HTMLInputElement>("htfBiasEmaPeriod"),
+        executionTrendEmaPeriod: getRequiredElement<HTMLInputElement>("executionTrendEmaPeriod"),
         confirmLookback: getRequiredElement<HTMLInputElement>("confirmLookback"),
+        trendPersistenceWindow: getRequiredElement<HTMLInputElement>("trendPersistenceWindow"),
+        trendPersistenceMinBars: getRequiredElement<HTMLInputElement>("trendPersistenceMinBars"),
+        trendSlopeLookback: getRequiredElement<HTMLInputElement>("trendSlopeLookback"),
+        trendSlopeMinPercent: getRequiredElement<HTMLInputElement>("trendSlopeMinPercent"),
         volumeSmaPeriod: getRequiredElement<HTMLInputElement>("volumeSmaPeriod"),
         volumeMultiplier: getRequiredElement<HTMLInputElement>("volumeMultiplier"),
         confirmRsiPeriod: getRequiredElement<HTMLInputElement>("confirmRsiPeriod"),

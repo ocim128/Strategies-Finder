@@ -62,7 +62,12 @@ export interface BacktestSettingsData {
     /** @deprecated Legacy key retained for backward compatibility when loading old configs */
     entryConfirmation?: string;
     htfBiasEmaPeriod: number;
+    executionTrendEmaPeriod: number;
     confirmLookback: number;
+    trendPersistenceWindow: number;
+    trendPersistenceMinBars: number;
+    trendSlopeLookback: number;
+    trendSlopeMinPercent: number;
     volumeSmaPeriod: number;
     volumeMultiplier: number;
     confirmRsiPeriod: number;
@@ -224,7 +229,12 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     tradeFilterSettingsToggle: false,
     tradeFilterMode: EFFECTIVE_BACKTEST_DEFAULTS.tradeFilterMode,
     htfBiasEmaPeriod: EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod,
+    executionTrendEmaPeriod: EFFECTIVE_BACKTEST_DEFAULTS.executionTrendEmaPeriod,
     confirmLookback: EFFECTIVE_BACKTEST_DEFAULTS.confirmLookback,
+    trendPersistenceWindow: EFFECTIVE_BACKTEST_DEFAULTS.trendPersistenceWindow,
+    trendPersistenceMinBars: EFFECTIVE_BACKTEST_DEFAULTS.trendPersistenceMinBars,
+    trendSlopeLookback: EFFECTIVE_BACKTEST_DEFAULTS.trendSlopeLookback,
+    trendSlopeMinPercent: EFFECTIVE_BACKTEST_DEFAULTS.trendSlopeMinPercent,
     volumeSmaPeriod: EFFECTIVE_BACKTEST_DEFAULTS.volumeSmaPeriod,
     volumeMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.volumeMultiplier,
     confirmRsiPeriod: EFFECTIVE_BACKTEST_DEFAULTS.rsiPeriod,
@@ -440,7 +450,12 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
         entrySettingsToggle: source.entrySettingsToggle === undefined ? undefined : readBoolean(source.entrySettingsToggle, false),
         entryConfirmation: typeof source.entryConfirmation === 'string' ? source.entryConfirmation : undefined,
         htfBiasEmaPeriod: resolved.htfBiasEmaPeriod ?? DEFAULT_BACKTEST_SETTINGS.htfBiasEmaPeriod,
+        executionTrendEmaPeriod: resolved.executionTrendEmaPeriod ?? DEFAULT_BACKTEST_SETTINGS.executionTrendEmaPeriod,
         confirmLookback: resolved.confirmLookback ?? DEFAULT_BACKTEST_SETTINGS.confirmLookback,
+        trendPersistenceWindow: resolved.trendPersistenceWindow ?? DEFAULT_BACKTEST_SETTINGS.trendPersistenceWindow,
+        trendPersistenceMinBars: resolved.trendPersistenceMinBars ?? DEFAULT_BACKTEST_SETTINGS.trendPersistenceMinBars,
+        trendSlopeLookback: resolved.trendSlopeLookback ?? DEFAULT_BACKTEST_SETTINGS.trendSlopeLookback,
+        trendSlopeMinPercent: resolved.trendSlopeMinPercent ?? DEFAULT_BACKTEST_SETTINGS.trendSlopeMinPercent,
         volumeSmaPeriod: resolved.volumeSmaPeriod ?? DEFAULT_BACKTEST_SETTINGS.volumeSmaPeriod,
         volumeMultiplier: resolved.volumeMultiplier ?? DEFAULT_BACKTEST_SETTINGS.volumeMultiplier,
         confirmRsiPeriod: resolved.rsiPeriod ?? DEFAULT_BACKTEST_SETTINGS.confirmRsiPeriod,
@@ -627,6 +642,8 @@ export function resolveTradeFilterModeValue(
         || value === "htf_drift"
         || value === "trend_htf_bias"
         || value === "trend_exec_alignment"
+        || value === "trend_persistence"
+        || value === "trend_slope_strength"
         || value === "trend_no_chase"
         || value === "trend_hysteresis"
         || value === "trend_mtf_stack"

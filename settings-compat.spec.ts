@@ -115,6 +115,26 @@ describe('Backtest settings compatibility', () => {
         expect(requiresTypescriptEngine(resolved)).to.equal(true);
     });
 
+    it('preserves configurable trend filter settings for new trend modes', () => {
+        const resolved = resolveBacktestSettingsFromRaw({
+            tradeFilterSettingsToggle: true,
+            tradeFilterMode: 'trend_persistence',
+            executionTrendEmaPeriod: 34,
+            trendPersistenceWindow: 7,
+            trendPersistenceMinBars: 5,
+            trendSlopeLookback: 6,
+            trendSlopeMinPercent: 0.35,
+        } as unknown as BacktestSettings);
+
+        expect(resolved.tradeFilterMode).to.equal('trend_persistence');
+        expect(resolved.executionTrendEmaPeriod).to.equal(34);
+        expect(resolved.trendPersistenceWindow).to.equal(7);
+        expect(resolved.trendPersistenceMinBars).to.equal(5);
+        expect(resolved.trendSlopeLookback).to.equal(6);
+        expect(resolved.trendSlopeMinPercent).to.equal(0.35);
+        expect(requiresTypescriptEngine(resolved)).to.equal(true);
+    });
+
     it('hydrates subscription execution defaults to the UI-compatible semantics', () => {
         const resolved = resolveSubscriptionExecutionBacktestSettings({});
 

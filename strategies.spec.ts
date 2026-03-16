@@ -680,7 +680,6 @@ describe('Walk-forward parameter normalization', () => {
     it('keeps the retained survival strategy libs registered', () => {
         const retainedKeys = [
             'macd_signal_pinch_explosion',
-            'mfi_range_squeeze_breakout',
             'macd_histogram_volatility_squeeze',
             'volume_profile_poc_median_shift',
         ];

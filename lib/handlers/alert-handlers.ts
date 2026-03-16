@@ -397,7 +397,12 @@ function openSubscriptionInfoModal(sub: AlertSubscription, configName: string | 
     const tradeFilterLines = [
         `Filter Enabled: ${settings.tradeFilterSettingsToggle === true ? 'on' : 'off'}`,
         `Filter Mode: ${formatValue(tradeFilterModeRaw)}`,
+        `Execution EMA Period: ${formatValue(settings.executionTrendEmaPeriod)}`,
         `Confirm Lookback: ${formatValue(settings.confirmLookback)}`,
+        `Trend Persistence Window: ${formatValue(settings.trendPersistenceWindow)}`,
+        `Trend Persistence Min Bars: ${formatValue(settings.trendPersistenceMinBars)}`,
+        `Trend Slope Lookback: ${formatValue(settings.trendSlopeLookback)}`,
+        `Trend Slope Min (%): ${formatValue(settings.trendSlopeMinPercent)}`,
         `Volume SMA Period: ${formatValue(settings.volumeSmaPeriod)}`,
         `Volume Multiplier: ${formatValue(settings.volumeMultiplier)}`,
         `RSI Period: ${formatValue(settings.confirmRsiPeriod)}`,

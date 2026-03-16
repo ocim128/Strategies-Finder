@@ -198,6 +198,8 @@ export type TradeFilterMode =
     | 'htf_drift'
     | 'trend_htf_bias'
     | 'trend_exec_alignment'
+    | 'trend_persistence'
+    | 'trend_slope_strength'
     | 'trend_no_chase'
     | 'trend_hysteresis'
     | 'trend_mtf_stack';
@@ -237,6 +239,16 @@ export interface BacktestSettings {
     trendEmaPeriod?: number;
     /** EMA period used by HTF bias filters (trend_htf_bias / trend_mtf_stack). */
     htfBiasEmaPeriod?: number;
+    /** EMA period used by execution-side trend filters (trend_exec_alignment / trend_persistence / trend_slope_strength / trend_no_chase / trend_hysteresis / trend_mtf_stack). */
+    executionTrendEmaPeriod?: number;
+    /** Number of bars checked by trend_persistence. */
+    trendPersistenceWindow?: number;
+    /** Minimum number of EMA-aligned closes required within trend_persistence window. */
+    trendPersistenceMinBars?: number;
+    /** EMA lookback used by trend_slope_strength. */
+    trendSlopeLookback?: number;
+    /** Minimum EMA slope percent over lookback required by trend_slope_strength. */
+    trendSlopeMinPercent?: number;
     trendEmaSlopeBars?: number;
     atrPercentMin?: number;
     atrPercentMax?: number;

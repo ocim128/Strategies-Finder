@@ -28,6 +28,11 @@ export interface NormalizedSettings {
 
     trendEmaPeriod: number;
     htfBiasEmaPeriod: number;
+    executionTrendEmaPeriod: number;
+    trendPersistenceWindow: number;
+    trendPersistenceMinBars: number;
+    trendSlopeLookback: number;
+    trendSlopeMinPercent: number;
     trendEmaSlopeBars: number;
     atrPercentMin: number;
     atrPercentMax: number;

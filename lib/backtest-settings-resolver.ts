@@ -37,6 +37,11 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     marketMode: "all" as MarketMode,
     tradeFilterMode: "none" as TradeFilterMode,
     htfBiasEmaPeriod: 200,
+    executionTrendEmaPeriod: 50,
+    trendPersistenceWindow: 5,
+    trendPersistenceMinBars: 4,
+    trendSlopeLookback: 5,
+    trendSlopeMinPercent: 0.2,
     confirmLookback: 1,
     volumeSmaPeriod: 20,
     volumeMultiplier: 1.5,
@@ -121,7 +126,12 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "marketMode",
     "tradeFilterMode",
     "htfBiasEmaPeriod",
+    "executionTrendEmaPeriod",
     "confirmLookback",
+    "trendPersistenceWindow",
+    "trendPersistenceMinBars",
+    "trendSlopeLookback",
+    "trendSlopeMinPercent",
     "volumeSmaPeriod",
     "volumeMultiplier",
     "confirmRsiPeriod",
@@ -155,6 +165,8 @@ const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>([
     "htf_drift",
     "trend_htf_bias",
     "trend_exec_alignment",
+    "trend_persistence",
+    "trend_slope_strength",
     "trend_no_chase",
     "trend_hysteresis",
     "trend_mtf_stack",
@@ -401,7 +413,22 @@ export function resolveBacktestSettingsFromRaw(
         htfBiasEmaPeriod: tradeFilterEnabled
             ? readNumber(raw, "htfBiasEmaPeriod", EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod)
             : EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod,
+        executionTrendEmaPeriod: tradeFilterEnabled
+            ? readNumber(raw, "executionTrendEmaPeriod", EFFECTIVE_BACKTEST_DEFAULTS.executionTrendEmaPeriod)
+            : EFFECTIVE_BACKTEST_DEFAULTS.executionTrendEmaPeriod,
         confirmLookback: tradeFilterEnabled ? readNumber(raw, "confirmLookback", EFFECTIVE_BACKTEST_DEFAULTS.confirmLookback) : EFFECTIVE_BACKTEST_DEFAULTS.confirmLookback,
+        trendPersistenceWindow: tradeFilterEnabled
+            ? readNumber(raw, "trendPersistenceWindow", EFFECTIVE_BACKTEST_DEFAULTS.trendPersistenceWindow)
+            : EFFECTIVE_BACKTEST_DEFAULTS.trendPersistenceWindow,
+        trendPersistenceMinBars: tradeFilterEnabled
+            ? readNumber(raw, "trendPersistenceMinBars", EFFECTIVE_BACKTEST_DEFAULTS.trendPersistenceMinBars)
+            : EFFECTIVE_BACKTEST_DEFAULTS.trendPersistenceMinBars,
+        trendSlopeLookback: tradeFilterEnabled
+            ? readNumber(raw, "trendSlopeLookback", EFFECTIVE_BACKTEST_DEFAULTS.trendSlopeLookback)
+            : EFFECTIVE_BACKTEST_DEFAULTS.trendSlopeLookback,
+        trendSlopeMinPercent: tradeFilterEnabled
+            ? readNumber(raw, "trendSlopeMinPercent", EFFECTIVE_BACKTEST_DEFAULTS.trendSlopeMinPercent)
+            : EFFECTIVE_BACKTEST_DEFAULTS.trendSlopeMinPercent,
         volumeSmaPeriod: tradeFilterEnabled ? readNumber(raw, "volumeSmaPeriod", EFFECTIVE_BACKTEST_DEFAULTS.volumeSmaPeriod) : EFFECTIVE_BACKTEST_DEFAULTS.volumeSmaPeriod,
         volumeMultiplier: tradeFilterEnabled ? readNumber(raw, "volumeMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.volumeMultiplier) : EFFECTIVE_BACKTEST_DEFAULTS.volumeMultiplier,
         rsiPeriod: tradeFilterEnabled

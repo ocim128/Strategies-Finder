@@ -127,7 +127,12 @@ class SettingsManager {
             tradeFilterSettingsToggle: this.readCheckbox('tradeFilterSettingsToggle', DEFAULT_BACKTEST_SETTINGS.tradeFilterSettingsToggle),
             tradeFilterMode: this.resolveTradeFilterModeValue(this.readSelect('tradeFilterMode', DEFAULT_BACKTEST_SETTINGS.tradeFilterMode)),
             htfBiasEmaPeriod: this.readNumber('htfBiasEmaPeriod', DEFAULT_BACKTEST_SETTINGS.htfBiasEmaPeriod),
+            executionTrendEmaPeriod: this.readNumber('executionTrendEmaPeriod', DEFAULT_BACKTEST_SETTINGS.executionTrendEmaPeriod),
             confirmLookback: this.readNumber('confirmLookback', DEFAULT_BACKTEST_SETTINGS.confirmLookback),
+            trendPersistenceWindow: this.readNumber('trendPersistenceWindow', DEFAULT_BACKTEST_SETTINGS.trendPersistenceWindow),
+            trendPersistenceMinBars: this.readNumber('trendPersistenceMinBars', DEFAULT_BACKTEST_SETTINGS.trendPersistenceMinBars),
+            trendSlopeLookback: this.readNumber('trendSlopeLookback', DEFAULT_BACKTEST_SETTINGS.trendSlopeLookback),
+            trendSlopeMinPercent: this.readNumber('trendSlopeMinPercent', DEFAULT_BACKTEST_SETTINGS.trendSlopeMinPercent),
             volumeSmaPeriod: this.readNumber('volumeSmaPeriod', DEFAULT_BACKTEST_SETTINGS.volumeSmaPeriod),
             volumeMultiplier: this.readNumber('volumeMultiplier', DEFAULT_BACKTEST_SETTINGS.volumeMultiplier),
             confirmRsiPeriod: this.readNumber('confirmRsiPeriod', DEFAULT_BACKTEST_SETTINGS.confirmRsiPeriod),
@@ -334,7 +339,12 @@ class SettingsManager {
         this.writeCheckbox('tradeFilterSettingsToggle', this.resolveTradeFilterToggle(settings));
         this.writeSelect('tradeFilterMode', this.resolveTradeFilterMode(settings));
         this.writeNumber('htfBiasEmaPeriod', settings.htfBiasEmaPeriod ?? DEFAULT_BACKTEST_SETTINGS.htfBiasEmaPeriod);
+        this.writeNumber('executionTrendEmaPeriod', settings.executionTrendEmaPeriod ?? DEFAULT_BACKTEST_SETTINGS.executionTrendEmaPeriod);
         this.writeNumber('confirmLookback', settings.confirmLookback ?? DEFAULT_BACKTEST_SETTINGS.confirmLookback);
+        this.writeNumber('trendPersistenceWindow', settings.trendPersistenceWindow ?? DEFAULT_BACKTEST_SETTINGS.trendPersistenceWindow);
+        this.writeNumber('trendPersistenceMinBars', settings.trendPersistenceMinBars ?? DEFAULT_BACKTEST_SETTINGS.trendPersistenceMinBars);
+        this.writeNumber('trendSlopeLookback', settings.trendSlopeLookback ?? DEFAULT_BACKTEST_SETTINGS.trendSlopeLookback);
+        this.writeNumber('trendSlopeMinPercent', settings.trendSlopeMinPercent ?? DEFAULT_BACKTEST_SETTINGS.trendSlopeMinPercent);
         this.writeNumber('volumeSmaPeriod', settings.volumeSmaPeriod ?? DEFAULT_BACKTEST_SETTINGS.volumeSmaPeriod);
         this.writeNumber('volumeMultiplier', settings.volumeMultiplier ?? DEFAULT_BACKTEST_SETTINGS.volumeMultiplier);
         this.writeNumber('confirmRsiPeriod', settings.confirmRsiPeriod ?? DEFAULT_BACKTEST_SETTINGS.confirmRsiPeriod);

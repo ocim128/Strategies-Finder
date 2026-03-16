@@ -5,9 +5,9 @@ import { getCloses, getHighs, getLows, getVolumes } from '../strategy-helpers';
 import { IndicatorSeries, NormalizedSettings, PrecomputedIndicators } from '../../types/backtest';
 import { normalizeBacktestSettings } from './backtest-utils';
 import {
+    resolveExecutionTrendPeriod,
     resolveHtfBiasPeriod,
     resolveTrendPeriod,
-    TRADE_FILTER_EXEC_ALIGNMENT_EMA_PERIOD,
 } from './trade-filters';
 
 const MAX_SETTINGS_CACHE_PER_DATASET = 24;
@@ -26,6 +26,7 @@ function buildIndicatorCacheKey(config: NormalizedSettings): string {
         config.tradeFilterMode,
         config.trendEmaPeriod,
         config.htfBiasEmaPeriod,
+        config.executionTrendEmaPeriod,
         config.marketMode,
         config.adxPeriod,
         config.adxMin,
@@ -57,13 +58,16 @@ function precomputeIndicatorsFromConfig(
     const trendPeriod = resolveTrendPeriod(config);
     const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
     const useFastTrendFilter = config.tradeFilterMode === 'trend_exec_alignment'
+        || config.tradeFilterMode === 'trend_persistence'
+        || config.tradeFilterMode === 'trend_slope_strength'
         || config.tradeFilterMode === 'trend_no_chase'
         || config.tradeFilterMode === 'trend_hysteresis'
         || config.tradeFilterMode === 'trend_mtf_stack';
     const useSlowTrendFilter = config.tradeFilterMode === 'trend_htf_bias'
         || config.tradeFilterMode === 'trend_mtf_stack';
     const htfBiasPeriod = resolveHtfBiasPeriod(config);
-    const emaFast = useFastTrendFilter ? calculateEMA(closes, TRADE_FILTER_EXEC_ALIGNMENT_EMA_PERIOD) : [];
+    const executionTrendPeriod = resolveExecutionTrendPeriod(config);
+    const emaFast = useFastTrendFilter ? calculateEMA(closes, executionTrendPeriod) : [];
     const emaSlow = useSlowTrendFilter ? calculateEMA(closes, htfBiasPeriod) : [];
 
     const useAdx = config.tradeFilterMode === 'adx'

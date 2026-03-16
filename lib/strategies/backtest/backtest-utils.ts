@@ -45,6 +45,11 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
 
         trendEmaPeriod: Math.max(0, toNumberOr(settings?.trendEmaPeriod, 0)),
         htfBiasEmaPeriod: Math.max(1, Math.round(toNumberOr(settings?.htfBiasEmaPeriod, 200))),
+        executionTrendEmaPeriod: Math.max(1, Math.round(toNumberOr(settings?.executionTrendEmaPeriod, 50))),
+        trendPersistenceWindow: Math.max(1, Math.round(toNumberOr(settings?.trendPersistenceWindow, 5))),
+        trendPersistenceMinBars: Math.max(1, Math.round(toNumberOr(settings?.trendPersistenceMinBars, 4))),
+        trendSlopeLookback: Math.max(1, Math.round(toNumberOr(settings?.trendSlopeLookback, 5))),
+        trendSlopeMinPercent: Math.max(0, toNumberOr(settings?.trendSlopeMinPercent, 0.2)),
         trendEmaSlopeBars: Math.max(0, toNumberOr(settings?.trendEmaSlopeBars, 0)),
         atrPercentMin: Math.max(0, toNumberOr(settings?.atrPercentMin, 0)),
         atrPercentMax: Math.max(0, toNumberOr(settings?.atrPercentMax, 0)),
