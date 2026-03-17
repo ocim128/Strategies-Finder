@@ -48,6 +48,13 @@ function computeParamRange(
     if (key === "stopLossPercent") {
         min = Math.max(0, min);
         max = Math.min(15, max);
+    } else if (key === "takeProfitMfeLookbackTrades") {
+        min = Math.max(5, min);
+    } else if (key === "takeProfitMfePercentile") {
+        min = Math.max(1, min);
+        max = Math.min(99, max);
+    } else if (key === "takeProfitShrinkageStrength") {
+        min = Math.max(1, min);
     } else if (key === "targetPct") {
         min = 0;
         max = 2;
@@ -409,16 +416,22 @@ export class FinderParamSpace {
         const nonNegative = /(std|dev|factor|multiplier|atr|adx)/i.test(key);
 
         let next = value;
-        if (key === "warmupBars") {
-            next = Math.max(0, Math.round(next));
-        } else if (key === "clusterChoice") {
-            next = Math.min(2, Math.max(0, Math.round(next)));
-        } else if (key === "midpointBars") {
-            next = Math.min(6, Math.max(1, Math.round(next)));
-        } else if (key === "crossThreshold" || key === "minRangePct") {
-            next = Math.min(0.05, Math.max(0, Number(next.toFixed(4))));
-        } else if (periodLike) {
-            next = Math.max(1, Math.round(next));
+    if (key === "warmupBars") {
+        next = Math.max(0, Math.round(next));
+    } else if (key === "clusterChoice") {
+        next = Math.min(2, Math.max(0, Math.round(next)));
+    } else if (key === "midpointBars") {
+        next = Math.min(6, Math.max(1, Math.round(next)));
+    } else if (key === "takeProfitMfeLookbackTrades") {
+        next = Math.max(5, Math.round(next));
+    } else if (key === "takeProfitMfePercentile") {
+        next = Math.min(99, Math.max(1, Number(next.toFixed(2))));
+    } else if (key === "takeProfitShrinkageStrength") {
+        next = Math.max(1, Number(next.toFixed(2)));
+    } else if (key === "crossThreshold" || key === "minRangePct") {
+        next = Math.min(0.05, Math.max(0, Number(next.toFixed(4))));
+    } else if (periodLike) {
+        next = Math.max(1, Math.round(next));
         } else if (key === "targetPct") {
             next = Math.min(2, Math.max(0, Number(next.toFixed(2))));
         } else if (key === "stopLossPercent") {
@@ -443,9 +456,22 @@ export class FinderParamSpace {
             next = Math.max(0, next);
         }
 
-        if (!periodLike && Number.isInteger(defaultValue) && !percentLike && key !== "stopLossPercent" && key !== "takeProfitPercent" && key !== "targetPct") {
+        if (
+            !periodLike &&
+            Number.isInteger(defaultValue) &&
+            !percentLike &&
+            key !== "stopLossPercent" &&
+            key !== "takeProfitPercent" &&
+            key !== "targetPct" &&
+            key !== "takeProfitMfePercentile"
+        ) {
             next = Math.round(next);
-        } else if (key === "stopLossPercent" || key === "takeProfitPercent") {
+        } else if (
+            key === "stopLossPercent" ||
+            key === "takeProfitPercent" ||
+            key === "takeProfitMfePercentile" ||
+            key === "takeProfitShrinkageStrength"
+        ) {
             next = Number(next.toFixed(2));
         } else if (key === "targetPct") {
             next = Number(next.toFixed(2));

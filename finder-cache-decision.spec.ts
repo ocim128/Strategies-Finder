@@ -227,6 +227,126 @@ describe('Finder ATR risk randomization support', () => {
         expect(resolved.backtestSettings.riskMaxHoldBars).to.equal(9);
         expect('riskMaxHoldBars' in resolved.rustBacktestSettings).to.equal(false);
     });
+
+    it('adds shrinkage take-profit params to finder search params when shrinkage mode is active', () => {
+        const strategy = {
+            defaultParams: {
+                lookback: 20,
+            },
+        } as any;
+        const settings: BacktestSettings = {
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitMode: 'shrinkage',
+            takeProfitPercent: 6,
+            takeProfitMfeLookbackTrades: 80,
+            takeProfitMfePercentile: 67,
+            takeProfitShrinkageStrength: 14,
+        };
+
+        const baseParams = buildFinderSearchBaseParams(strategy, settings);
+
+        expect(baseParams.lookback).to.equal(20);
+        expect(baseParams.takeProfitPercent).to.equal(6);
+        expect(baseParams.takeProfitMfeLookbackTrades).to.equal(80);
+        expect(baseParams.takeProfitMfePercentile).to.equal(67);
+        expect(baseParams.takeProfitShrinkageStrength).to.equal(14);
+    });
+
+    it('does not add shrinkage take-profit params when take-profit mode is fixed', () => {
+        const strategy = {
+            defaultParams: {
+                lookback: 20,
+            },
+        } as any;
+        const settings: BacktestSettings = {
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitMode: 'fixed',
+            takeProfitPercent: 6,
+            takeProfitMfeLookbackTrades: 80,
+            takeProfitMfePercentile: 67,
+            takeProfitShrinkageStrength: 14,
+        };
+
+        const baseParams = buildFinderSearchBaseParams(strategy, settings);
+
+        expect(baseParams.lookback).to.equal(20);
+        expect(baseParams.takeProfitPercent).to.equal(6);
+        expect('takeProfitMfeLookbackTrades' in baseParams).to.equal(false);
+        expect('takeProfitMfePercentile' in baseParams).to.equal(false);
+        expect('takeProfitShrinkageStrength' in baseParams).to.equal(false);
+    });
+
+    it('random mode can vary shrinkage take-profit params once they are part of the finder search params', () => {
+        const paramSpace = new FinderParamSpace();
+        const combos = paramSpace.generateParamSets(
+            {
+                lookback: 20,
+                takeProfitMfeLookbackTrades: 100,
+                takeProfitMfePercentile: 60,
+                takeProfitShrinkageStrength: 20,
+            },
+            {
+                mode: 'random',
+                sortPriority: ['netProfit'],
+                useAdvancedSort: false,
+                robustSeed: 1337,
+                multiTimeframeEnabled: false,
+                timeframes: [],
+                topN: 10,
+                steps: 3,
+                rangePercent: 35,
+                maxRuns: 12,
+                tradeFilterEnabled: false,
+                minTrades: 0,
+                maxTrades: Number.POSITIVE_INFINITY,
+                comboEnabled: false,
+                randomSeed: 42,
+            }
+        );
+
+        const lookbacks = new Set(combos.map((combo) => combo.takeProfitMfeLookbackTrades));
+        const percentiles = new Set(combos.map((combo) => combo.takeProfitMfePercentile));
+        const strengths = new Set(combos.map((combo) => combo.takeProfitShrinkageStrength));
+
+        expect(lookbacks.size).to.be.greaterThan(1);
+        expect(percentiles.size).to.be.greaterThan(1);
+        expect(strengths.size).to.be.greaterThan(1);
+        expect(combos.every((combo) => Number.isInteger(combo.takeProfitMfeLookbackTrades))).to.equal(true);
+        expect(combos.every((combo) => (combo.takeProfitMfePercentile ?? 0) >= 1 && (combo.takeProfitMfePercentile ?? 100) <= 99)).to.equal(true);
+        expect(combos.every((combo) => (combo.takeProfitShrinkageStrength ?? 0) >= 1)).to.equal(true);
+    });
+
+    it('applies shrinkage finder overrides only to the TS backtest settings', () => {
+        const settings: BacktestSettings = {
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitMode: 'shrinkage',
+            takeProfitPercent: 6,
+            takeProfitMfeLookbackTrades: 80,
+            takeProfitMfePercentile: 67,
+            takeProfitShrinkageStrength: 14,
+        };
+        const rustSettings: BacktestSettings = {
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitPercent: 6,
+        };
+
+        const resolved = resolveFinderRiskOverrides(settings, rustSettings, {
+            takeProfitMfeLookbackTrades: 135,
+            takeProfitMfePercentile: 72.4,
+            takeProfitShrinkageStrength: 9.5,
+        });
+
+        expect(resolved.backtestSettings.takeProfitMfeLookbackTrades).to.equal(135);
+        expect(resolved.backtestSettings.takeProfitMfePercentile).to.equal(72.4);
+        expect(resolved.backtestSettings.takeProfitShrinkageStrength).to.equal(9.5);
+        expect('takeProfitMfeLookbackTrades' in resolved.rustBacktestSettings).to.equal(false);
+        expect('takeProfitMfePercentile' in resolved.rustBacktestSettings).to.equal(false);
+        expect('takeProfitShrinkageStrength' in resolved.rustBacktestSettings).to.equal(false);
+    });
 });
 
 describe('Finder selection metrics', () => {

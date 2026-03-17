@@ -1052,6 +1052,21 @@ export class FinderManager {
 			merged.takeProfitPercent = takeProfitPercent;
 		}
 
+		const takeProfitMfeLookbackTrades = params['takeProfitMfeLookbackTrades'];
+		if (typeof takeProfitMfeLookbackTrades === 'number' && Number.isFinite(takeProfitMfeLookbackTrades)) {
+			merged.takeProfitMfeLookbackTrades = Math.max(5, Math.round(takeProfitMfeLookbackTrades));
+		}
+
+		const takeProfitMfePercentile = params['takeProfitMfePercentile'];
+		if (typeof takeProfitMfePercentile === 'number' && Number.isFinite(takeProfitMfePercentile)) {
+			merged.takeProfitMfePercentile = Math.max(1, Math.min(99, takeProfitMfePercentile));
+		}
+
+		const takeProfitShrinkageStrength = params['takeProfitShrinkageStrength'];
+		if (typeof takeProfitShrinkageStrength === 'number' && Number.isFinite(takeProfitShrinkageStrength)) {
+			merged.takeProfitShrinkageStrength = Math.max(1, takeProfitShrinkageStrength);
+		}
+
 		const riskMaxHoldBars = params['riskMaxHoldBars'];
 		if (typeof riskMaxHoldBars === 'number' && Number.isFinite(riskMaxHoldBars)) {
 			merged.riskMaxHoldBars = riskMaxHoldBars;

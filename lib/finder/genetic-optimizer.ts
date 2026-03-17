@@ -157,6 +157,13 @@ function buildParamSpecs(defaultParams: StrategyParams, rangePercent: number): P
         if (key === "stopLossPercent") {
             min = Math.max(0, min);
             max = Math.min(15, max);
+        } else if (key === "takeProfitMfeLookbackTrades") {
+            min = Math.max(5, min);
+        } else if (key === "takeProfitMfePercentile") {
+            min = Math.max(1, min);
+            max = Math.min(99, max);
+        } else if (key === "takeProfitShrinkageStrength") {
+            min = Math.max(1, min);
         } else if (key === "targetPct") {
             min = 0;
             max = 2;
@@ -194,6 +201,12 @@ function normalizeParamValue(spec: ParamSpec, value: number): number {
         next = Math.max(0, Math.round(next));
     } else if (key === "clusterChoice") {
         next = Math.min(2, Math.max(0, Math.round(next)));
+    } else if (key === "takeProfitMfeLookbackTrades") {
+        next = Math.max(5, Math.round(next));
+    } else if (key === "takeProfitMfePercentile") {
+        next = Math.min(99, Math.max(1, Number(next.toFixed(2))));
+    } else if (key === "takeProfitShrinkageStrength") {
+        next = Math.max(1, Number(next.toFixed(2)));
     } else if (periodLike) {
         next = Math.max(1, Math.round(next));
     } else if (key === "targetPct") {
@@ -215,9 +228,23 @@ function normalizeParamValue(spec: ParamSpec, value: number): number {
         next = Math.max(0, next);
     }
 
-    if (!periodLike && isInteger && !percentLike && key !== "stopLossPercent" && key !== "takeProfitPercent" && key !== "targetPct") {
+    if (
+        !periodLike &&
+        isInteger &&
+        !percentLike &&
+        key !== "stopLossPercent" &&
+        key !== "takeProfitPercent" &&
+        key !== "targetPct" &&
+        key !== "takeProfitMfePercentile"
+    ) {
         next = Math.round(next);
-    } else if (key === "stopLossPercent" || key === "takeProfitPercent" || key === "targetPct") {
+    } else if (
+        key === "stopLossPercent" ||
+        key === "takeProfitPercent" ||
+        key === "targetPct" ||
+        key === "takeProfitMfePercentile" ||
+        key === "takeProfitShrinkageStrength"
+    ) {
         next = Number(next.toFixed(2));
     } else if (!Number.isInteger(baseValue)) {
         next = Number(next.toFixed(4));

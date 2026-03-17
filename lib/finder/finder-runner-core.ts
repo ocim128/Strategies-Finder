@@ -96,6 +96,26 @@ function clampAtrPeriod(value: number): number {
     return Math.max(1, Math.round(value));
 }
 
+function usesShrinkageTakeProfit(settings: BacktestSettings): boolean {
+    return settings.riskMode === "percentage"
+        && settings.takeProfitEnabled === true
+        && settings.takeProfitMode === "shrinkage";
+}
+
+function clampTakeProfitMfeLookbackTrades(value: number): number {
+    if (!Number.isFinite(value)) return 5;
+    return Math.max(5, Math.round(value));
+}
+
+function clampTakeProfitMfePercentile(value: number): number {
+    return clampPercentValue(value, 1, 99);
+}
+
+function clampTakeProfitShrinkageStrength(value: number): number {
+    if (!Number.isFinite(value)) return 1;
+    return Math.max(1, Number(value));
+}
+
 function usesAtrRiskSettings(settings: BacktestSettings): boolean {
     if (settings.riskMode !== "simple" && settings.riskMode !== "advanced") {
         return false;
@@ -128,6 +148,17 @@ export function buildFinderSearchBaseParams(strategy: Strategy, settings: Backte
     }
     if (settings.takeProfitEnabled && Number.isFinite(settings.takeProfitPercent)) {
         baseParams.takeProfitPercent = clampPercentValue(Number(settings.takeProfitPercent), 0, 100);
+    }
+    if (usesShrinkageTakeProfit(settings)) {
+        if (Number.isFinite(settings.takeProfitMfeLookbackTrades)) {
+            baseParams.takeProfitMfeLookbackTrades = clampTakeProfitMfeLookbackTrades(Number(settings.takeProfitMfeLookbackTrades));
+        }
+        if (Number.isFinite(settings.takeProfitMfePercentile)) {
+            baseParams.takeProfitMfePercentile = clampTakeProfitMfePercentile(Number(settings.takeProfitMfePercentile));
+        }
+        if (Number.isFinite(settings.takeProfitShrinkageStrength)) {
+            baseParams.takeProfitShrinkageStrength = clampTakeProfitShrinkageStrength(Number(settings.takeProfitShrinkageStrength));
+        }
     }
     return baseParams;
 }
@@ -176,6 +207,21 @@ export function resolveFinderRiskOverrides(
         rustOverrides.takeProfitPercent = normalized;
         hasBacktestOverrides = true;
         hasRustOverrides = true;
+    }
+
+    if (usesShrinkageTakeProfit(settings)) {
+        if (Number.isFinite(params.takeProfitMfeLookbackTrades)) {
+            backtestOverrides.takeProfitMfeLookbackTrades = clampTakeProfitMfeLookbackTrades(Number(params.takeProfitMfeLookbackTrades));
+            hasBacktestOverrides = true;
+        }
+        if (Number.isFinite(params.takeProfitMfePercentile)) {
+            backtestOverrides.takeProfitMfePercentile = clampTakeProfitMfePercentile(Number(params.takeProfitMfePercentile));
+            hasBacktestOverrides = true;
+        }
+        if (Number.isFinite(params.takeProfitShrinkageStrength)) {
+            backtestOverrides.takeProfitShrinkageStrength = clampTakeProfitShrinkageStrength(Number(params.takeProfitShrinkageStrength));
+            hasBacktestOverrides = true;
+        }
     }
 
     return {
