@@ -27,6 +27,10 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     riskMode: "simple" as NonNullable<BacktestSettings["riskMode"]>,
     stopLossPercent: 5,
     takeProfitPercent: 10,
+    takeProfitMode: "fixed" as NonNullable<BacktestSettings["takeProfitMode"]>,
+    takeProfitMfeLookbackTrades: 100,
+    takeProfitMfePercentile: 60,
+    takeProfitShrinkageStrength: 20,
     stopLossEnabled: true,
     takeProfitEnabled: true,
     riskMaxHoldBars: 10,
@@ -116,6 +120,10 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "timeStopBars",
     "stopLossPercent",
     "takeProfitPercent",
+    "takeProfitMode",
+    "takeProfitMfeLookbackTrades",
+    "takeProfitMfePercentile",
+    "takeProfitShrinkageStrength",
     "stopLossToggle",
     "takeProfitToggle",
     "riskMaxHoldBars",
@@ -172,6 +180,10 @@ const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>([
     "trend_mtf_stack",
 ]);
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_flip_loss_2", "combined"]);
+const VALID_TAKE_PROFIT_MODES = new Set<NonNullable<BacktestSettings["takeProfitMode"]>>([
+    "fixed",
+    "shrinkage",
+]);
 
 function toBooleanLike(rawValue: unknown): boolean | null {
     if (typeof rawValue === "boolean") return rawValue;
@@ -385,6 +397,18 @@ export function resolveBacktestSettingsFromRaw(
         riskMode,
         stopLossPercent: usePercentRisk ? readNumber(raw, "stopLossPercent", EFFECTIVE_BACKTEST_DEFAULTS.stopLossPercent) : 0,
         takeProfitPercent: usePercentRisk ? readNumber(raw, "takeProfitPercent", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitPercent) : 0,
+        takeProfitMode: usePercentRisk && typeof raw["takeProfitMode"] === "string" && VALID_TAKE_PROFIT_MODES.has(raw["takeProfitMode"] as NonNullable<BacktestSettings["takeProfitMode"]>)
+            ? raw["takeProfitMode"] as NonNullable<BacktestSettings["takeProfitMode"]>
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMode,
+        takeProfitMfeLookbackTrades: usePercentRisk
+            ? Math.max(5, Math.round(readNumber(raw, "takeProfitMfeLookbackTrades", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeLookbackTrades)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeLookbackTrades,
+        takeProfitMfePercentile: usePercentRisk
+            ? Math.max(1, Math.min(99, readNumber(raw, "takeProfitMfePercentile", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfePercentile)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfePercentile,
+        takeProfitShrinkageStrength: usePercentRisk
+            ? Math.max(1, readNumber(raw, "takeProfitShrinkageStrength", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitShrinkageStrength))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitShrinkageStrength,
         stopLossEnabled: usePercentRisk ? readBooleanAny(raw, ["stopLossEnabled", "stopLossToggle"], EFFECTIVE_BACKTEST_DEFAULTS.stopLossEnabled) : false,
         takeProfitEnabled: usePercentRisk ? readBooleanAny(raw, ["takeProfitEnabled", "takeProfitToggle"], EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEnabled) : false,
         riskMaxHoldBars: useRiskMaxHold ? readNumber(raw, "riskMaxHoldBars", EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars) : 0,

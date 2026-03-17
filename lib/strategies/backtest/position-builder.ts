@@ -18,6 +18,7 @@ export interface PositionBuilderParams {
     fixedTradeAmount: number;
     effectiveStopLossPercent?: number;
     enablePercentageStopLoss?: boolean;
+    effectiveTakeProfitPrice?: number | null;
 }
 
 export interface BuiltPosition {
@@ -43,7 +44,8 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
         sizingMode,
         fixedTradeAmount,
         effectiveStopLossPercent,
-        enablePercentageStopLoss
+        enablePercentageStopLoss,
+        effectiveTakeProfitPrice,
     } = params;
 
     if (!allowsSignalAsEntry(signal.type, tradeDirection)) return null;
@@ -119,7 +121,9 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
         if (stopLossIsEnabled && activeStopLossPercent > 0) {
             finalStopLossPrice = entryFillPrice * (1 - directionFactor * (activeStopLossPercent / 100));
         }
-        if (config.takeProfitEnabled && config.takeProfitPercent > 0) {
+        if (effectiveTakeProfitPrice !== undefined) {
+            finalTakeProfitPrice = effectiveTakeProfitPrice;
+        } else if (config.takeProfitEnabled && config.takeProfitPercent > 0) {
             finalTakeProfitPrice = entryFillPrice * (1 + directionFactor * (config.takeProfitPercent / 100));
         }
     }
@@ -138,7 +142,8 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
             extremePrice: entryFillPrice,
             partialTargetPrice,
             partialTaken: false,
-            breakEvenApplied: false
+            breakEvenApplied: false,
+            realizedPnl: 0,
         },
         entryCommission
     };

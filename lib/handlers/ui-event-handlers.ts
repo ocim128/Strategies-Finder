@@ -647,6 +647,7 @@ export function setupEventHandlers() {
     });
 
     const riskModeSelect = dom.riskMode;
+    const takeProfitModeSelect = dom.takeProfitMode;
     const riskSimpleAdvanced = dom.riskSimpleAdvanced;
     const riskPercentage = dom.riskPercentage;
     const riskAdvanced = dom.riskAdvanced;
@@ -655,6 +656,23 @@ export function setupEventHandlers() {
 
     const riskPercentageGroups = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLElement>('.param-group')) : [];
     const riskPercentageInputs = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLInputElement>('input')) : [];
+    const takeProfitShrinkageSettingsRow = dom.takeProfitShrinkageSettingsRow;
+    const takeProfitShrinkageInputs = [
+        dom.takeProfitMfeLookbackTrades,
+        dom.takeProfitMfePercentile,
+        dom.takeProfitShrinkageStrength,
+    ];
+
+    const applyTakeProfitMode = () => {
+        const mode = takeProfitModeSelect.value;
+        const showShrinkage = mode === 'shrinkage';
+
+        takeProfitShrinkageSettingsRow.classList.toggle('is-hidden', !showShrinkage);
+        takeProfitShrinkageInputs.forEach((input) => {
+            input.disabled = !showShrinkage;
+            input.closest<HTMLElement>('.param-group')?.classList.toggle('is-disabled', !showShrinkage);
+        });
+    };
 
     const applyRiskMode = () => {
         const mode = riskModeSelect.value;
@@ -679,9 +697,16 @@ export function setupEventHandlers() {
         riskPercentageInputs.forEach(input => {
             input.disabled = !isPercentage;
         });
+
+        if (isPercentage) {
+            applyTakeProfitMode();
+        } else {
+            takeProfitShrinkageSettingsRow.classList.add('is-hidden');
+        }
     };
 
     riskModeSelect.addEventListener('change', applyRiskMode);
+    takeProfitModeSelect.addEventListener('change', applyTakeProfitMode);
     applyRiskMode();
 
     const tradeDirectionSelect = dom.tradeDirection;

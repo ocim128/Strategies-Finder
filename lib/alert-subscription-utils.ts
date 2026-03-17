@@ -92,6 +92,7 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
     merged.executionModel = isValidExecutionModel(merged.executionModel)
         ? merged.executionModel
         : EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
+    merged.takeProfitMode = "fixed";
     merged.allowSameBarExit = toBooleanLike(merged.allowSameBarExit)
         ?? EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit;
     merged.invertSignals = toBooleanLike(merged.invertSignals)

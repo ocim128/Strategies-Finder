@@ -6,7 +6,7 @@ import type { ChartMode } from "./state";
 import { parseInputNumber } from "./dom-input-readers";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 
-import type { BacktestSettings, ExecutionModel, MarketMode, TradeDirection, TradeFilterMode } from "./types/strategies";
+import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, TradeDirection, TradeFilterMode } from "./types/strategies";
 import { EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
 
 // ============================================================================
@@ -38,6 +38,10 @@ export interface BacktestSettingsData {
     timeStopBars: number;
     stopLossPercent: number;
     takeProfitPercent: number;
+    takeProfitMode: PercentageTakeProfitMode;
+    takeProfitMfeLookbackTrades: number;
+    takeProfitMfePercentile: number;
+    takeProfitShrinkageStrength: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
     riskMaxHoldBars: number;
@@ -209,6 +213,10 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     timeStopBars: EFFECTIVE_BACKTEST_DEFAULTS.timeStopBars,
     stopLossPercent: EFFECTIVE_BACKTEST_DEFAULTS.stopLossPercent,
     takeProfitPercent: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitPercent,
+    takeProfitMode: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMode,
+    takeProfitMfeLookbackTrades: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeLookbackTrades,
+    takeProfitMfePercentile: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfePercentile,
+    takeProfitShrinkageStrength: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitShrinkageStrength,
     stopLossEnabled: false,
     takeProfitEnabled: false,
     riskMaxHoldBars: EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars,
@@ -429,6 +437,10 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
         timeStopBars: resolved.timeStopBars ?? DEFAULT_BACKTEST_SETTINGS.timeStopBars,
         stopLossPercent: resolved.stopLossPercent ?? DEFAULT_BACKTEST_SETTINGS.stopLossPercent,
         takeProfitPercent: resolved.takeProfitPercent ?? DEFAULT_BACKTEST_SETTINGS.takeProfitPercent,
+        takeProfitMode: resolveTakeProfitModeValue(resolved.takeProfitMode, DEFAULT_BACKTEST_SETTINGS),
+        takeProfitMfeLookbackTrades: resolved.takeProfitMfeLookbackTrades ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMfeLookbackTrades,
+        takeProfitMfePercentile: resolved.takeProfitMfePercentile ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMfePercentile,
+        takeProfitShrinkageStrength: resolved.takeProfitShrinkageStrength ?? DEFAULT_BACKTEST_SETTINGS.takeProfitShrinkageStrength,
         stopLossEnabled: resolved.stopLossEnabled ?? DEFAULT_BACKTEST_SETTINGS.stopLossEnabled,
         takeProfitEnabled: resolved.takeProfitEnabled ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEnabled,
         riskMaxHoldBars: resolved.riskMaxHoldBars ?? DEFAULT_BACKTEST_SETTINGS.riskMaxHoldBars,
@@ -626,6 +638,19 @@ export function resolveRiskModeValue(
         return value;
     }
     return defaults.riskMode;
+}
+
+export function resolveTakeProfitModeValue(
+    value: unknown,
+    defaults: BacktestSettingsData = DEFAULT_BACKTEST_SETTINGS
+): PercentageTakeProfitMode {
+    if (
+        value === "fixed"
+        || value === "shrinkage"
+    ) {
+        return value;
+    }
+    return defaults.takeProfitMode;
 }
 
 export function resolveTradeFilterModeValue(

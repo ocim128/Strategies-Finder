@@ -206,6 +206,9 @@ export type TradeFilterMode =
 export type TradeDirection = 'long' | 'short' | 'both' | 'both_flip_loss_2' | 'combined';
 export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';
+export type PercentageTakeProfitMode =
+    | 'fixed'
+    | 'shrinkage';
 
 export interface BacktestSettings {
     atrPeriod?: number;
@@ -223,6 +226,10 @@ export interface BacktestSettings {
     riskMode?: 'simple' | 'advanced' | 'percentage';
     stopLossPercent?: number;
     takeProfitPercent?: number;
+    takeProfitMode?: PercentageTakeProfitMode;
+    takeProfitMfeLookbackTrades?: number;
+    takeProfitMfePercentile?: number;
+    takeProfitShrinkageStrength?: number;
     stopLossEnabled?: boolean;
     takeProfitEnabled?: boolean;
     /** Hard cap on bars held when risk management is active */

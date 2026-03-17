@@ -19,6 +19,11 @@ export const UI_EVENT_HANDLER_REQUIRED_IDS = [
     "tradeFilterSettingsToggle",
     "tradeFilterSettings",
     "riskMode",
+    "takeProfitMode",
+    "takeProfitShrinkageSettingsRow",
+    "takeProfitMfeLookbackTrades",
+    "takeProfitMfePercentile",
+    "takeProfitShrinkageStrength",
     "riskAdvanced",
     "tradeDirection",
     "flipAfterConsecutiveLosses",
@@ -87,6 +92,11 @@ export interface UiEventHandlersDom {
     tradeFilterSettingsToggle: HTMLInputElement;
     tradeFilterSettings: HTMLElement;
     riskMode: HTMLSelectElement;
+    takeProfitMode: HTMLSelectElement;
+    takeProfitShrinkageSettingsRow: HTMLElement;
+    takeProfitMfeLookbackTrades: HTMLInputElement;
+    takeProfitMfePercentile: HTMLInputElement;
+    takeProfitShrinkageStrength: HTMLInputElement;
     riskSimpleAdvanced: HTMLElement | null;
     riskPercentage: HTMLElement | null;
     riskAdvanced: HTMLElement;
@@ -161,6 +171,11 @@ export function createUiEventHandlersDom(): UiEventHandlersDom {
         tradeFilterSettingsToggle: getRequiredElement<HTMLInputElement>("tradeFilterSettingsToggle"),
         tradeFilterSettings: getRequiredElement("tradeFilterSettings"),
         riskMode: getRequiredElement<HTMLSelectElement>("riskMode"),
+        takeProfitMode: getRequiredElement<HTMLSelectElement>("takeProfitMode"),
+        takeProfitShrinkageSettingsRow: getRequiredElement("takeProfitShrinkageSettingsRow"),
+        takeProfitMfeLookbackTrades: getRequiredElement<HTMLInputElement>("takeProfitMfeLookbackTrades"),
+        takeProfitMfePercentile: getRequiredElement<HTMLInputElement>("takeProfitMfePercentile"),
+        takeProfitShrinkageStrength: getRequiredElement<HTMLInputElement>("takeProfitShrinkageStrength"),
         riskSimpleAdvanced: getOptionalElement("riskSimpleAdvanced"),
         riskPercentage: getOptionalElement("riskPercentage"),
         riskAdvanced: getRequiredElement("riskAdvanced"),

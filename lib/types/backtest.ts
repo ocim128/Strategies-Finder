@@ -1,4 +1,4 @@
-import { Signal, Time, TradeFilterMode, MarketMode } from './strategies';
+import { Signal, Time, TradeFilterMode, MarketMode, PercentageTakeProfitMode } from './strategies';
 
 export interface NormalizedSettings {
     atrPeriod: number;
@@ -15,6 +15,10 @@ export interface NormalizedSettings {
     riskMode: 'simple' | 'advanced' | 'percentage';
     stopLossPercent: number;
     takeProfitPercent: number;
+    takeProfitMode: PercentageTakeProfitMode;
+    takeProfitMfeLookbackTrades: number;
+    takeProfitMfePercentile: number;
+    takeProfitShrinkageStrength: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
     riskMaxHoldBars: number;
@@ -145,6 +149,7 @@ export interface PositionState {
     partialTargetPrice: number | null;
     partialTaken: boolean;
     breakEvenApplied: boolean;
+    realizedPnl: number;
     /** True when this position was opened from a warm-up pending entry queue */
     warmUpEntry?: boolean;
 }

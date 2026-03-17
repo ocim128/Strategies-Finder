@@ -7,6 +7,7 @@ import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/
 import { getOpenPositionForScanner } from './lib/strategies/backtest/signal-preparation';
 import { resolveScannerBacktestSettings } from './lib/scanner/scanner-engine';
 import { evaluateLatestEntrySignal } from './lib/signal-entry-evaluator';
+import { resolveBacktestSettingsFromRaw } from './lib/backtest-settings-resolver';
 import { resolveEntryRiskTargets } from './lib/entry-risk-targets';
 import { strategies } from './lib/strategies/library';
 import { isTwoHourParityAligned, resolveTwoHourParityFromTime } from './lib/two-hour-parity';
@@ -950,6 +951,124 @@ describe('Backtesting Engine', () => {
         expect(result.trades[1].exitReason).to.equal('signal');
         expect(result.trades[2].exitReason).to.equal('stop_loss');
         expect(result.trades[2].exitTime).to.equal('2023-01-07' as Time);
+    });
+
+    it('should resolve shrinkage take-profit settings from raw UI values', () => {
+        const resolved = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            takeProfitToggle: true,
+            takeProfitPercent: '8',
+            takeProfitMode: 'shrinkage',
+            takeProfitMfeLookbackTrades: '75',
+            takeProfitMfePercentile: '65',
+            takeProfitShrinkageStrength: '12',
+        } as any);
+
+        expect(resolved.takeProfitMode).to.equal('shrinkage');
+        expect(resolved.takeProfitPercent).to.equal(8);
+        expect(resolved.takeProfitMfeLookbackTrades).to.equal(75);
+        expect(resolved.takeProfitMfePercentile).to.equal(65);
+        expect(resolved.takeProfitShrinkageStrength).to.equal(12);
+    });
+
+    it('should shrink pair-specific rolling MFE toward the base take-profit percent', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 105, low: 99, close: 103, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 103, high: 103, low: 102, close: 103, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-05' as Time, open: 100, high: 103.6, low: 99.8, close: 101, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'buy', price: 100 },
+            { time: '2023-01-04' as Time, type: 'buy', price: 100 },
+        ];
+
+        const result = runBacktest(data, signals, 1000, 100, 0, {
+            riskMode: 'percentage',
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 2,
+            takeProfitMode: 'shrinkage',
+            takeProfitMfeLookbackTrades: 10,
+            takeProfitMfePercentile: 60,
+            takeProfitShrinkageStrength: 1,
+        });
+
+        expect(result.totalTrades).to.equal(2);
+        expect(result.trades[0].exitReason).to.equal('take_profit');
+        expect(result.trades[0].exitPrice).to.equal(102);
+        expect(result.trades[1].exitReason).to.equal('take_profit');
+        expect(result.trades[1].exitPrice).to.be.closeTo(102, 1e-9);
+    });
+
+    it('should not use a same-bar closed trade to set shrinkage TP for next_open warm-up entries', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 104, low: 99, close: 104, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 104, high: 108.5, low: 100, close: 101, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'buy', price: 100 },
+            { time: '2023-01-01' as Time, type: 'buy', price: 100 },
+        ];
+
+        const result = runBacktest(data, signals, 1000, 100, 0, {
+            executionModel: 'next_open',
+            warmUpEntryEnabled: true,
+            maxOpenTrades: 1,
+            riskMode: 'percentage',
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+            takeProfitMode: 'shrinkage',
+            takeProfitMfeLookbackTrades: 10,
+            takeProfitMfePercentile: 60,
+            takeProfitShrinkageStrength: 1,
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 1,
+        });
+
+        expect(result.totalTrades).to.equal(2);
+        expect(result.trades[0].exitReason).to.equal('time_stop');
+        expect(result.trades[0].exitPrice).to.equal(104);
+        expect(result.trades[1].entryTime).to.equal('2023-01-03' as Time);
+        expect(result.trades[1].exitReason).to.equal('time_stop');
+        expect(result.trades[1].exitPrice).to.equal(101);
+    });
+
+    it('should keep full exit-bar excursion for signal-close exits that stay open through the close', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 110, low: 99, close: 104, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-05' as Time, open: 100, high: 113, low: 99, close: 101, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'buy', price: 100 },
+            { time: '2023-01-03' as Time, type: 'sell', price: 104 },
+            { time: '2023-01-04' as Time, type: 'buy', price: 100 },
+        ];
+
+        const result = runBacktest(data, signals, 1000, 100, 0, {
+            riskMode: 'percentage',
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 20,
+            takeProfitMode: 'shrinkage',
+            takeProfitMfeLookbackTrades: 10,
+            takeProfitMfePercentile: 60,
+            takeProfitShrinkageStrength: 1,
+        });
+
+        expect(result.totalTrades).to.equal(2);
+        expect(result.trades[0].exitReason).to.equal('signal');
+        expect(result.trades[0].exitPrice).to.equal(104);
+        expect(result.trades[1].exitReason).to.equal('end_of_data');
+        expect(result.trades[1].takeProfitPrice).to.be.closeTo(115, 1e-9);
     });
 
     it('scanner settings resolver should mirror backtest toggle behavior', () => {

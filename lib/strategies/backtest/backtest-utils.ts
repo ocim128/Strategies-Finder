@@ -32,6 +32,12 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         riskMode: settings?.riskMode ?? 'simple',
         stopLossPercent: Math.max(0, toNumberOr(settings?.stopLossPercent, 0)),
         takeProfitPercent: Math.max(0, toNumberOr(settings?.takeProfitPercent, 0)),
+        takeProfitMode: settings?.takeProfitMode === 'shrinkage'
+            ? settings.takeProfitMode
+            : 'fixed',
+        takeProfitMfeLookbackTrades: Math.max(5, Math.round(toNumberOr(settings?.takeProfitMfeLookbackTrades, 100))),
+        takeProfitMfePercentile: clamp(toNumberOr(settings?.takeProfitMfePercentile, 60), 1, 99),
+        takeProfitShrinkageStrength: Math.max(1, toNumberOr(settings?.takeProfitShrinkageStrength, 20)),
         stopLossEnabled: settings?.stopLossEnabled ?? false,
         takeProfitEnabled: settings?.takeProfitEnabled ?? false,
         riskMaxHoldBars: Math.max(0, toNumberOr(settings?.riskMaxHoldBars, 0)),

@@ -55,6 +55,11 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         && settings.riskWinStreakStopLossEnabled === true
         && (settings.riskWinStreakStopLossAfterWins ?? 0) > 0
         && (settings.riskWinStreakStopLossPercent ?? 0) > 0;
+    const usesAdaptivePercentageTakeProfit =
+        settings.riskMode === 'percentage'
+        && settings.takeProfitEnabled === true
+        && settings.takeProfitMode !== undefined
+        && settings.takeProfitMode !== 'fixed';
 
     // Snapshot filters
     const hasSnapshotFilters = hasNonZeroSnapshotFilter(settings);
@@ -69,6 +74,7 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         || usesUnsupportedTradeFilterMode
         || usesRiskMaxHold
         || usesPercentageWinStreakStopLoss
+        || usesAdaptivePercentageTakeProfit
         || hasSnapshotFilters
         || usesMultiPosition
         || usesWarmUpEntry;
@@ -146,6 +152,10 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "riskWinStreakStopLossEnabled",
     "riskWinStreakStopLossAfterWins",
     "riskWinStreakStopLossPercent",
+    "takeProfitMode",
+    "takeProfitMfeLookbackTrades",
+    "takeProfitMfePercentile",
+    "takeProfitShrinkageStrength",
     "invertSignals",
     "flipAfterConsecutiveLosses",
     "flipCooldownTrades",

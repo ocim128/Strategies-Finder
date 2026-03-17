@@ -30,6 +30,7 @@ import {
     resolveExecutionModelValue,
     resolveMarketMode,
     resolveRiskModeValue,
+    resolveTakeProfitModeValue,
     resolveTradeDirection,
     resolveTradeFilterMode,
     resolveTradeFilterModeValue,
@@ -107,6 +108,10 @@ class SettingsManager {
             timeStopBars: this.readNumber('timeStopBars', DEFAULT_BACKTEST_SETTINGS.timeStopBars),
             stopLossPercent: this.readNumber('stopLossPercent', DEFAULT_BACKTEST_SETTINGS.stopLossPercent),
             takeProfitPercent: this.readNumber('takeProfitPercent', DEFAULT_BACKTEST_SETTINGS.takeProfitPercent),
+            takeProfitMode: this.resolveTakeProfitModeValue(this.readSelect('takeProfitMode', DEFAULT_BACKTEST_SETTINGS.takeProfitMode)),
+            takeProfitMfeLookbackTrades: this.readNumber('takeProfitMfeLookbackTrades', DEFAULT_BACKTEST_SETTINGS.takeProfitMfeLookbackTrades),
+            takeProfitMfePercentile: this.readNumber('takeProfitMfePercentile', DEFAULT_BACKTEST_SETTINGS.takeProfitMfePercentile),
+            takeProfitShrinkageStrength: this.readNumber('takeProfitShrinkageStrength', DEFAULT_BACKTEST_SETTINGS.takeProfitShrinkageStrength),
             stopLossEnabled: this.readCheckbox('stopLossToggle', DEFAULT_BACKTEST_SETTINGS.stopLossEnabled),
             takeProfitEnabled: this.readCheckbox('takeProfitToggle', DEFAULT_BACKTEST_SETTINGS.takeProfitEnabled),
             riskMaxHoldBars: this.readNumber('riskMaxHoldBars', DEFAULT_BACKTEST_SETTINGS.riskMaxHoldBars),
@@ -319,6 +324,10 @@ class SettingsManager {
         this.writeNumber('timeStopBars', settings.timeStopBars);
         this.writeNumber('stopLossPercent', settings.stopLossPercent);
         this.writeNumber('takeProfitPercent', settings.takeProfitPercent);
+        this.writeSelect('takeProfitMode', settings.takeProfitMode ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMode);
+        this.writeNumber('takeProfitMfeLookbackTrades', settings.takeProfitMfeLookbackTrades ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMfeLookbackTrades);
+        this.writeNumber('takeProfitMfePercentile', settings.takeProfitMfePercentile ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMfePercentile);
+        this.writeNumber('takeProfitShrinkageStrength', settings.takeProfitShrinkageStrength ?? DEFAULT_BACKTEST_SETTINGS.takeProfitShrinkageStrength);
         this.writeCheckbox('stopLossToggle', settings.stopLossEnabled);
         this.writeCheckbox('takeProfitToggle', settings.takeProfitEnabled);
         this.writeNumber('riskMaxHoldBars', settings.riskMaxHoldBars ?? DEFAULT_BACKTEST_SETTINGS.riskMaxHoldBars);
@@ -669,6 +678,10 @@ class SettingsManager {
         return resolveRiskModeValue(value, DEFAULT_BACKTEST_SETTINGS);
     }
 
+    private resolveTakeProfitModeValue(value: unknown) {
+        return resolveTakeProfitModeValue(value, DEFAULT_BACKTEST_SETTINGS);
+    }
+
     private resolveTradeFilterModeValue(value: unknown): TradeFilterMode {
         return resolveTradeFilterModeValue(value, DEFAULT_BACKTEST_SETTINGS);
     }
@@ -736,6 +749,10 @@ class SettingsManager {
         const riskMode = document.getElementById('riskMode');
         if (riskMode) {
             riskMode.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        const takeProfitMode = document.getElementById('takeProfitMode');
+        if (takeProfitMode) {
+            takeProfitMode.dispatchEvent(new Event('change', { bubbles: true }));
         }
         const tradeFilterMode = document.getElementById('tradeFilterMode');
         if (tradeFilterMode) {
