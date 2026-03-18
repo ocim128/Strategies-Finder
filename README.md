@@ -6,13 +6,13 @@ It is not just a chart page. The app combines:
 - a browser UI assembled from HTML partials at runtime
 - a TypeScript backtest engine with optional Rust acceleration
 - a multi-source data pipeline with local caching
-- strategy research tools such as Finder, Walk-Forward, Scanner, Replay, Pair Combiner, and Analysis
+- strategy research tools such as Finder, Walk-Forward, Scanner, Replay, Pair Combiner, Portfolio Lab, and Strategy Ensemble Lab
 - optional Cloudflare Worker alerting and subscription execution
 
 ## What You Can Do Here
 - Load market data from local SQLite, IndexedDB, bundled price files, or remote providers
 - Run backtests with realistic execution settings, risk controls, and snapshot filters
-- Compare strategies, inspect trades, and analyze entry-quality patterns
+- Compare strategies, inspect trades, and review backtest result diagnostics
 - Search parameter spaces with Finder, including random, genetic, and `robust_random_wf`
 - Validate robustness with walk-forward analysis and test latest OOS WFA results against a no-edge permutation null
 - Audit parameter usefulness, redundancy, and range quality with `Parameter Audit`
@@ -38,7 +38,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 1. Pick a symbol and timeframe.
 2. Select a strategy from the dropdown.
 3. Click `Run Backtest`.
-4. Open `Trades`, `Analysis`, `Finder`, and `Walk Forward` tabs to verify the feature panels loaded.
+4. Open `Trades`, `Results`, `Finder`, and `Walk Forward` tabs to verify the feature panels loaded.
 
 ## Architecture Map
 
@@ -64,7 +64,6 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Finder: `lib/finder-manager.ts`, `lib/finder/*`
 - Parameter Audit: `lib/parameter-audit-service.ts`, `lib/parameter-audit-logic.ts`
 - Walk Forward: `lib/walk-forward-service.ts`
-- Trade analysis: `lib/analysis-panel.ts`
 - Portfolio Lab: `lib/portfolio-lab-service.ts`
 - Scanner: `lib/scanner/*`
 - Replay: `lib/replay/*`

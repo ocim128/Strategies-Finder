@@ -6,7 +6,7 @@ import strategyPanelShellHtml from '../html-partials/strategy-panel-shell.html?r
 import tabSettingsStartHtml from '../html-partials/tab-settings-start.html?raw';
 import tabSettingsSectionCoreHtml from '../html-partials/tab-settings-section-core.html?raw';
 import tabSettingsSectionExecutionHtml from '../html-partials/tab-settings-section-execution.html?raw';
-import tabSettingsSectionEntryQualityHtml from '../html-partials/tab-settings-section-entry-quality.html?raw';
+
 import tabSettingsEndHtml from '../html-partials/tab-settings-end.html?raw';
 import tabDataminingHtml from '../html-partials/tab-datamining.html?raw';
 import tabFinderHtml from '../html-partials/tab-finder.html?raw';
@@ -17,7 +17,7 @@ import tabWalkforwardHtml from '../html-partials/tab-walkforward.html?raw';
 
 import tabResultsHtml from '../html-partials/tab-results.html?raw';
 import tabTradesHtml from '../html-partials/tab-trades.html?raw';
-import tabAnalysisHtml from '../html-partials/tab-analysis.html?raw';
+
 import tabPortfolioHtml from '../html-partials/tab-portfolio.html?raw';
 import tabEnsembleHtml from '../html-partials/tab-ensemble.html?raw';
 import tabAlertsHtml from '../html-partials/tab-alerts.html?raw';
@@ -73,7 +73,6 @@ export function injectLayout() {
         tabSettingsStartHtml +
         tabSettingsSectionCoreHtml +
         tabSettingsSectionExecutionHtml +
-        tabSettingsSectionEntryQualityHtml +
         tabSettingsEndHtml +
         tabDataminingHtml +
         tabFinderHtml +
@@ -83,7 +82,6 @@ export function injectLayout() {
 
         tabResultsHtml +
         tabTradesHtml +
-        tabAnalysisHtml +
         tabPortfolioHtml +
         tabEnsembleHtml +
         tabAlertsHtml;

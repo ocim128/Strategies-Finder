@@ -424,7 +424,7 @@ function openSubscriptionInfoModal(sub: AlertSubscription, configName: string | 
     appendModalSection(bodyEl, 'Execution', executionLines);
 
     const enabledSnapshotFilters = collectEnabledSnapshotFilterLines(settings);
-    appendModalSection(bodyEl, 'Entry Quality Filters (Enabled)', enabledSnapshotFilters);
+    appendModalSection(bodyEl, 'Snapshot Filters (Enabled)', enabledSnapshotFilters);
 
     const paramsLines = Object.keys(strategyParams)
         .sort((a, b) => a.localeCompare(b))

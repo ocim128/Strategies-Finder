@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
-    ANALYSIS_PANEL_REQUIRED_IDS,
+
     ENSEMBLE_LAB_REQUIRED_IDS,
     FINDER_MANAGER_REQUIRED_IDS,
     PARAMETER_AUDIT_REQUIRED_IDS,
@@ -42,7 +42,7 @@ describe("Feature DOM contracts", () => {
     const contractGroups = {
         uiEventHandlers: [...UI_EVENT_HANDLER_REQUIRED_IDS],
         settingsWorkspace: [...SETTINGS_WORKSPACE_REQUIRED_IDS],
-        analysisPanel: [...ANALYSIS_PANEL_REQUIRED_IDS],
+
         portfolioLab: [...PORTFOLIO_LAB_REQUIRED_IDS],
         ensembleLab: [...ENSEMBLE_LAB_REQUIRED_IDS],
         finderManager: [...FINDER_MANAGER_REQUIRED_IDS],
