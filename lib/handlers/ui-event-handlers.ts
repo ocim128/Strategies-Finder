@@ -662,10 +662,24 @@ export function setupEventHandlers() {
         dom.takeProfitMfePercentile,
         dom.takeProfitShrinkageStrength,
     ];
+    const takeProfitModePanels = riskPercentage
+        ? Array.from(riskPercentage.querySelectorAll<HTMLElement>('[data-tp-mode-panel]'))
+        : [];
 
     const applyTakeProfitMode = () => {
         const mode = takeProfitModeSelect.value;
         const showShrinkage = mode === 'shrinkage';
+        takeProfitModePanels.forEach((panel) => {
+            const panelMode = panel.dataset.tpModePanel;
+            const shouldShow = panelMode === mode;
+            panel.classList.toggle('is-hidden', !shouldShow);
+            panel.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea').forEach((input) => {
+                input.disabled = !shouldShow;
+            });
+            panel.querySelectorAll<HTMLElement>('.param-group').forEach((group) => {
+                group.classList.toggle('is-disabled', !shouldShow);
+            });
+        });
 
         takeProfitShrinkageSettingsRow.classList.toggle('is-hidden', !showShrinkage);
         takeProfitShrinkageInputs.forEach((input) => {
@@ -702,6 +716,12 @@ export function setupEventHandlers() {
             applyTakeProfitMode();
         } else {
             takeProfitShrinkageSettingsRow.classList.add('is-hidden');
+            takeProfitModePanels.forEach((panel) => {
+                panel.classList.add('is-hidden');
+                panel.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea').forEach((input) => {
+                    input.disabled = true;
+                });
+            });
         }
     };
 

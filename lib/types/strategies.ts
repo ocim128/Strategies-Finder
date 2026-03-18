@@ -208,7 +208,11 @@ export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';
 export type PercentageTakeProfitMode =
     | 'fixed'
-    | 'shrinkage';
+    | 'shrinkage'
+    | 'momentum_gated'
+    | 'velocity'
+    | 'climax_exit'
+    | 'equity_feedback';
 
 export interface BacktestSettings {
     atrPeriod?: number;
@@ -230,6 +234,21 @@ export interface BacktestSettings {
     takeProfitMfeLookbackTrades?: number;
     takeProfitMfePercentile?: number;
     takeProfitShrinkageStrength?: number;
+    takeProfitMomentumRsiPeriod?: number;
+    takeProfitMomentumRsiPauseLevel?: number;
+    takeProfitMomentumDecayPercentPerBar?: number;
+    takeProfitVelocityFastBars?: number;
+    takeProfitVelocitySlowBars?: number;
+    takeProfitVelocityProgressPercent?: number;
+    takeProfitVelocityExpandMultiplier?: number;
+    takeProfitVelocityShrinkMultiplier?: number;
+    takeProfitClimaxStdDevPeriod?: number;
+    takeProfitClimaxStdDevMultiple?: number;
+    takeProfitClimaxVolumePeriod?: number;
+    takeProfitClimaxVolumeMultiple?: number;
+    takeProfitEquityLossStreak?: number;
+    takeProfitEquityDrawdownPercent?: number;
+    takeProfitEquityDefensiveMultiplier?: number;
     stopLossEnabled?: boolean;
     takeProfitEnabled?: boolean;
     /** Hard cap on bars held when risk management is active */

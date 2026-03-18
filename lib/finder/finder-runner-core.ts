@@ -96,12 +96,6 @@ function clampAtrPeriod(value: number): number {
     return Math.max(1, Math.round(value));
 }
 
-function usesShrinkageTakeProfit(settings: BacktestSettings): boolean {
-    return settings.riskMode === "percentage"
-        && settings.takeProfitEnabled === true
-        && settings.takeProfitMode === "shrinkage";
-}
-
 function clampTakeProfitMfeLookbackTrades(value: number): number {
     if (!Number.isFinite(value)) return 5;
     return Math.max(5, Math.round(value));
@@ -114,6 +108,191 @@ function clampTakeProfitMfePercentile(value: number): number {
 function clampTakeProfitShrinkageStrength(value: number): number {
     if (!Number.isFinite(value)) return 1;
     return Math.max(1, Number(value));
+}
+
+function usesPercentageTakeProfitMode(
+    settings: BacktestSettings,
+    mode: NonNullable<BacktestSettings["takeProfitMode"]>
+): boolean {
+    return settings.riskMode === "percentage"
+        && settings.takeProfitEnabled === true
+        && settings.takeProfitMode === mode;
+}
+
+function clampTakeProfitMomentumRsiPeriod(value: number): number {
+    if (!Number.isFinite(value)) return 2;
+    return Math.max(2, Math.round(value));
+}
+
+function clampTakeProfitMomentumRsiPauseLevel(value: number): number {
+    return clampPercentValue(value, 1, 99);
+}
+
+function clampTakeProfitMomentumDecayPercentPerBar(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Number(value));
+}
+
+function clampTakeProfitVelocityFastBars(value: number): number {
+    if (!Number.isFinite(value)) return 1;
+    return Math.max(1, Math.round(value));
+}
+
+function clampTakeProfitVelocitySlowBars(value: number): number {
+    if (!Number.isFinite(value)) return 1;
+    return Math.max(1, Math.round(value));
+}
+
+function clampTakeProfitVelocityProgressPercent(value: number): number {
+    return clampPercentValue(value, 1, 100);
+}
+
+function clampTakeProfitVelocityMultiplier(value: number): number {
+    if (!Number.isFinite(value)) return 0.1;
+    return Math.max(0.1, Number(value));
+}
+
+function clampTakeProfitClimaxStdDevPeriod(value: number): number {
+    if (!Number.isFinite(value)) return 5;
+    return Math.max(5, Math.round(value));
+}
+
+function clampTakeProfitClimaxStdDevMultiple(value: number): number {
+    if (!Number.isFinite(value)) return 0.1;
+    return Math.max(0.1, Number(value));
+}
+
+function clampTakeProfitClimaxVolumePeriod(value: number): number {
+    if (!Number.isFinite(value)) return 2;
+    return Math.max(2, Math.round(value));
+}
+
+function clampTakeProfitClimaxVolumeMultiple(value: number): number {
+    if (!Number.isFinite(value)) return 0.1;
+    return Math.max(0.1, Number(value));
+}
+
+function clampTakeProfitEquityLossStreak(value: number): number {
+    if (!Number.isFinite(value)) return 1;
+    return Math.max(1, Math.round(value));
+}
+
+function clampTakeProfitEquityDrawdownPercent(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Number(value));
+}
+
+function clampTakeProfitEquityDefensiveMultiplier(value: number): number {
+    if (!Number.isFinite(value)) return 0.1;
+    return Math.max(0.1, Number(value));
+}
+
+function addBaseParamIfFinite(
+    baseParams: StrategyParams,
+    key: keyof BacktestSettings & string,
+    value: unknown,
+    normalize: (value: number) => number
+): void {
+    if (!Number.isFinite(value)) return;
+    baseParams[key] = normalize(Number(value));
+}
+
+function addModeSpecificTakeProfitSearchParams(baseParams: StrategyParams, settings: BacktestSettings): void {
+    if (usesPercentageTakeProfitMode(settings, "shrinkage")) {
+        addBaseParamIfFinite(baseParams, "takeProfitMfeLookbackTrades", settings.takeProfitMfeLookbackTrades, clampTakeProfitMfeLookbackTrades);
+        addBaseParamIfFinite(baseParams, "takeProfitMfePercentile", settings.takeProfitMfePercentile, clampTakeProfitMfePercentile);
+        addBaseParamIfFinite(baseParams, "takeProfitShrinkageStrength", settings.takeProfitShrinkageStrength, clampTakeProfitShrinkageStrength);
+        return;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "momentum_gated")) {
+        addBaseParamIfFinite(baseParams, "takeProfitMomentumRsiPeriod", settings.takeProfitMomentumRsiPeriod, clampTakeProfitMomentumRsiPeriod);
+        addBaseParamIfFinite(baseParams, "takeProfitMomentumRsiPauseLevel", settings.takeProfitMomentumRsiPauseLevel, clampTakeProfitMomentumRsiPauseLevel);
+        addBaseParamIfFinite(baseParams, "takeProfitMomentumDecayPercentPerBar", settings.takeProfitMomentumDecayPercentPerBar, clampTakeProfitMomentumDecayPercentPerBar);
+        return;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "velocity")) {
+        addBaseParamIfFinite(baseParams, "takeProfitVelocityFastBars", settings.takeProfitVelocityFastBars, clampTakeProfitVelocityFastBars);
+        addBaseParamIfFinite(baseParams, "takeProfitVelocitySlowBars", settings.takeProfitVelocitySlowBars, clampTakeProfitVelocitySlowBars);
+        addBaseParamIfFinite(baseParams, "takeProfitVelocityProgressPercent", settings.takeProfitVelocityProgressPercent, clampTakeProfitVelocityProgressPercent);
+        addBaseParamIfFinite(baseParams, "takeProfitVelocityExpandMultiplier", settings.takeProfitVelocityExpandMultiplier, clampTakeProfitVelocityMultiplier);
+        addBaseParamIfFinite(baseParams, "takeProfitVelocityShrinkMultiplier", settings.takeProfitVelocityShrinkMultiplier, clampTakeProfitVelocityMultiplier);
+        return;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "climax_exit")) {
+        addBaseParamIfFinite(baseParams, "takeProfitClimaxStdDevPeriod", settings.takeProfitClimaxStdDevPeriod, clampTakeProfitClimaxStdDevPeriod);
+        addBaseParamIfFinite(baseParams, "takeProfitClimaxStdDevMultiple", settings.takeProfitClimaxStdDevMultiple, clampTakeProfitClimaxStdDevMultiple);
+        addBaseParamIfFinite(baseParams, "takeProfitClimaxVolumePeriod", settings.takeProfitClimaxVolumePeriod, clampTakeProfitClimaxVolumePeriod);
+        addBaseParamIfFinite(baseParams, "takeProfitClimaxVolumeMultiple", settings.takeProfitClimaxVolumeMultiple, clampTakeProfitClimaxVolumeMultiple);
+        return;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "equity_feedback")) {
+        addBaseParamIfFinite(baseParams, "takeProfitEquityLossStreak", settings.takeProfitEquityLossStreak, clampTakeProfitEquityLossStreak);
+        addBaseParamIfFinite(baseParams, "takeProfitEquityDrawdownPercent", settings.takeProfitEquityDrawdownPercent, clampTakeProfitEquityDrawdownPercent);
+        addBaseParamIfFinite(baseParams, "takeProfitEquityDefensiveMultiplier", settings.takeProfitEquityDefensiveMultiplier, clampTakeProfitEquityDefensiveMultiplier);
+    }
+}
+
+function addBacktestOverrideIfFinite(
+    overrides: Partial<BacktestSettings>,
+    params: StrategyParams,
+    key: keyof BacktestSettings & string,
+    normalize: (value: number) => number
+): boolean {
+    const rawValue = params[key];
+    if (!Number.isFinite(rawValue)) return false;
+    (overrides as Record<string, number | undefined>)[key] = normalize(Number(rawValue));
+    return true;
+}
+
+function applyModeSpecificTakeProfitOverrides(
+    settings: BacktestSettings,
+    params: StrategyParams,
+    backtestOverrides: Partial<BacktestSettings>
+): boolean {
+    let hasOverrides = false;
+
+    if (usesPercentageTakeProfitMode(settings, "shrinkage")) {
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMfeLookbackTrades", clampTakeProfitMfeLookbackTrades) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMfePercentile", clampTakeProfitMfePercentile) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitShrinkageStrength", clampTakeProfitShrinkageStrength) || hasOverrides;
+        return hasOverrides;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "momentum_gated")) {
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMomentumRsiPeriod", clampTakeProfitMomentumRsiPeriod) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMomentumRsiPauseLevel", clampTakeProfitMomentumRsiPauseLevel) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMomentumDecayPercentPerBar", clampTakeProfitMomentumDecayPercentPerBar) || hasOverrides;
+        return hasOverrides;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "velocity")) {
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocityFastBars", clampTakeProfitVelocityFastBars) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocitySlowBars", clampTakeProfitVelocitySlowBars) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocityProgressPercent", clampTakeProfitVelocityProgressPercent) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocityExpandMultiplier", clampTakeProfitVelocityMultiplier) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocityShrinkMultiplier", clampTakeProfitVelocityMultiplier) || hasOverrides;
+        return hasOverrides;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "climax_exit")) {
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitClimaxStdDevPeriod", clampTakeProfitClimaxStdDevPeriod) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitClimaxStdDevMultiple", clampTakeProfitClimaxStdDevMultiple) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitClimaxVolumePeriod", clampTakeProfitClimaxVolumePeriod) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitClimaxVolumeMultiple", clampTakeProfitClimaxVolumeMultiple) || hasOverrides;
+        return hasOverrides;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "equity_feedback")) {
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitEquityLossStreak", clampTakeProfitEquityLossStreak) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitEquityDrawdownPercent", clampTakeProfitEquityDrawdownPercent) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitEquityDefensiveMultiplier", clampTakeProfitEquityDefensiveMultiplier) || hasOverrides;
+    }
+
+    return hasOverrides;
 }
 
 function usesAtrRiskSettings(settings: BacktestSettings): boolean {
@@ -149,17 +328,7 @@ export function buildFinderSearchBaseParams(strategy: Strategy, settings: Backte
     if (settings.takeProfitEnabled && Number.isFinite(settings.takeProfitPercent)) {
         baseParams.takeProfitPercent = clampPercentValue(Number(settings.takeProfitPercent), 0, 100);
     }
-    if (usesShrinkageTakeProfit(settings)) {
-        if (Number.isFinite(settings.takeProfitMfeLookbackTrades)) {
-            baseParams.takeProfitMfeLookbackTrades = clampTakeProfitMfeLookbackTrades(Number(settings.takeProfitMfeLookbackTrades));
-        }
-        if (Number.isFinite(settings.takeProfitMfePercentile)) {
-            baseParams.takeProfitMfePercentile = clampTakeProfitMfePercentile(Number(settings.takeProfitMfePercentile));
-        }
-        if (Number.isFinite(settings.takeProfitShrinkageStrength)) {
-            baseParams.takeProfitShrinkageStrength = clampTakeProfitShrinkageStrength(Number(settings.takeProfitShrinkageStrength));
-        }
-    }
+    addModeSpecificTakeProfitSearchParams(baseParams, settings);
     return baseParams;
 }
 
@@ -209,20 +378,7 @@ export function resolveFinderRiskOverrides(
         hasRustOverrides = true;
     }
 
-    if (usesShrinkageTakeProfit(settings)) {
-        if (Number.isFinite(params.takeProfitMfeLookbackTrades)) {
-            backtestOverrides.takeProfitMfeLookbackTrades = clampTakeProfitMfeLookbackTrades(Number(params.takeProfitMfeLookbackTrades));
-            hasBacktestOverrides = true;
-        }
-        if (Number.isFinite(params.takeProfitMfePercentile)) {
-            backtestOverrides.takeProfitMfePercentile = clampTakeProfitMfePercentile(Number(params.takeProfitMfePercentile));
-            hasBacktestOverrides = true;
-        }
-        if (Number.isFinite(params.takeProfitShrinkageStrength)) {
-            backtestOverrides.takeProfitShrinkageStrength = clampTakeProfitShrinkageStrength(Number(params.takeProfitShrinkageStrength));
-            hasBacktestOverrides = true;
-        }
-    }
+    hasBacktestOverrides = applyModeSpecificTakeProfitOverrides(settings, params, backtestOverrides) || hasBacktestOverrides;
 
     return {
         backtestSettings: hasBacktestOverrides ? { ...settings, ...backtestOverrides } : settings,

@@ -112,6 +112,21 @@ class SettingsManager {
             takeProfitMfeLookbackTrades: this.readNumber('takeProfitMfeLookbackTrades', DEFAULT_BACKTEST_SETTINGS.takeProfitMfeLookbackTrades),
             takeProfitMfePercentile: this.readNumber('takeProfitMfePercentile', DEFAULT_BACKTEST_SETTINGS.takeProfitMfePercentile),
             takeProfitShrinkageStrength: this.readNumber('takeProfitShrinkageStrength', DEFAULT_BACKTEST_SETTINGS.takeProfitShrinkageStrength),
+            takeProfitMomentumRsiPeriod: this.readNumber('takeProfitMomentumRsiPeriod', DEFAULT_BACKTEST_SETTINGS.takeProfitMomentumRsiPeriod),
+            takeProfitMomentumRsiPauseLevel: this.readNumber('takeProfitMomentumRsiPauseLevel', DEFAULT_BACKTEST_SETTINGS.takeProfitMomentumRsiPauseLevel),
+            takeProfitMomentumDecayPercentPerBar: this.readNumber('takeProfitMomentumDecayPercentPerBar', DEFAULT_BACKTEST_SETTINGS.takeProfitMomentumDecayPercentPerBar),
+            takeProfitVelocityFastBars: this.readNumber('takeProfitVelocityFastBars', DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityFastBars),
+            takeProfitVelocitySlowBars: this.readNumber('takeProfitVelocitySlowBars', DEFAULT_BACKTEST_SETTINGS.takeProfitVelocitySlowBars),
+            takeProfitVelocityProgressPercent: this.readNumber('takeProfitVelocityProgressPercent', DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityProgressPercent),
+            takeProfitVelocityExpandMultiplier: this.readNumber('takeProfitVelocityExpandMultiplier', DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityExpandMultiplier),
+            takeProfitVelocityShrinkMultiplier: this.readNumber('takeProfitVelocityShrinkMultiplier', DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityShrinkMultiplier),
+            takeProfitClimaxStdDevPeriod: this.readNumber('takeProfitClimaxStdDevPeriod', DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxStdDevPeriod),
+            takeProfitClimaxStdDevMultiple: this.readNumber('takeProfitClimaxStdDevMultiple', DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxStdDevMultiple),
+            takeProfitClimaxVolumePeriod: this.readNumber('takeProfitClimaxVolumePeriod', DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxVolumePeriod),
+            takeProfitClimaxVolumeMultiple: this.readNumber('takeProfitClimaxVolumeMultiple', DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxVolumeMultiple),
+            takeProfitEquityLossStreak: this.readNumber('takeProfitEquityLossStreak', DEFAULT_BACKTEST_SETTINGS.takeProfitEquityLossStreak),
+            takeProfitEquityDrawdownPercent: this.readNumber('takeProfitEquityDrawdownPercent', DEFAULT_BACKTEST_SETTINGS.takeProfitEquityDrawdownPercent),
+            takeProfitEquityDefensiveMultiplier: this.readNumber('takeProfitEquityDefensiveMultiplier', DEFAULT_BACKTEST_SETTINGS.takeProfitEquityDefensiveMultiplier),
             stopLossEnabled: this.readCheckbox('stopLossToggle', DEFAULT_BACKTEST_SETTINGS.stopLossEnabled),
             takeProfitEnabled: this.readCheckbox('takeProfitToggle', DEFAULT_BACKTEST_SETTINGS.takeProfitEnabled),
             riskMaxHoldBars: this.readNumber('riskMaxHoldBars', DEFAULT_BACKTEST_SETTINGS.riskMaxHoldBars),
@@ -328,6 +343,21 @@ class SettingsManager {
         this.writeNumber('takeProfitMfeLookbackTrades', settings.takeProfitMfeLookbackTrades ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMfeLookbackTrades);
         this.writeNumber('takeProfitMfePercentile', settings.takeProfitMfePercentile ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMfePercentile);
         this.writeNumber('takeProfitShrinkageStrength', settings.takeProfitShrinkageStrength ?? DEFAULT_BACKTEST_SETTINGS.takeProfitShrinkageStrength);
+        this.writeNumber('takeProfitMomentumRsiPeriod', settings.takeProfitMomentumRsiPeriod ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMomentumRsiPeriod);
+        this.writeNumber('takeProfitMomentumRsiPauseLevel', settings.takeProfitMomentumRsiPauseLevel ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMomentumRsiPauseLevel);
+        this.writeNumber('takeProfitMomentumDecayPercentPerBar', settings.takeProfitMomentumDecayPercentPerBar ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMomentumDecayPercentPerBar);
+        this.writeNumber('takeProfitVelocityFastBars', settings.takeProfitVelocityFastBars ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityFastBars);
+        this.writeNumber('takeProfitVelocitySlowBars', settings.takeProfitVelocitySlowBars ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocitySlowBars);
+        this.writeNumber('takeProfitVelocityProgressPercent', settings.takeProfitVelocityProgressPercent ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityProgressPercent);
+        this.writeNumber('takeProfitVelocityExpandMultiplier', settings.takeProfitVelocityExpandMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityExpandMultiplier);
+        this.writeNumber('takeProfitVelocityShrinkMultiplier', settings.takeProfitVelocityShrinkMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityShrinkMultiplier);
+        this.writeNumber('takeProfitClimaxStdDevPeriod', settings.takeProfitClimaxStdDevPeriod ?? DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxStdDevPeriod);
+        this.writeNumber('takeProfitClimaxStdDevMultiple', settings.takeProfitClimaxStdDevMultiple ?? DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxStdDevMultiple);
+        this.writeNumber('takeProfitClimaxVolumePeriod', settings.takeProfitClimaxVolumePeriod ?? DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxVolumePeriod);
+        this.writeNumber('takeProfitClimaxVolumeMultiple', settings.takeProfitClimaxVolumeMultiple ?? DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxVolumeMultiple);
+        this.writeNumber('takeProfitEquityLossStreak', settings.takeProfitEquityLossStreak ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEquityLossStreak);
+        this.writeNumber('takeProfitEquityDrawdownPercent', settings.takeProfitEquityDrawdownPercent ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEquityDrawdownPercent);
+        this.writeNumber('takeProfitEquityDefensiveMultiplier', settings.takeProfitEquityDefensiveMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEquityDefensiveMultiplier);
         this.writeCheckbox('stopLossToggle', settings.stopLossEnabled);
         this.writeCheckbox('takeProfitToggle', settings.takeProfitEnabled);
         this.writeNumber('riskMaxHoldBars', settings.riskMaxHoldBars ?? DEFAULT_BACKTEST_SETTINGS.riskMaxHoldBars);

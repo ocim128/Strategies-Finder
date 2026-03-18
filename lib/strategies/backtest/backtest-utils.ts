@@ -33,11 +33,30 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         stopLossPercent: Math.max(0, toNumberOr(settings?.stopLossPercent, 0)),
         takeProfitPercent: Math.max(0, toNumberOr(settings?.takeProfitPercent, 0)),
         takeProfitMode: settings?.takeProfitMode === 'shrinkage'
+            || settings?.takeProfitMode === 'momentum_gated'
+            || settings?.takeProfitMode === 'velocity'
+            || settings?.takeProfitMode === 'climax_exit'
+            || settings?.takeProfitMode === 'equity_feedback'
             ? settings.takeProfitMode
             : 'fixed',
         takeProfitMfeLookbackTrades: Math.max(5, Math.round(toNumberOr(settings?.takeProfitMfeLookbackTrades, 100))),
         takeProfitMfePercentile: clamp(toNumberOr(settings?.takeProfitMfePercentile, 60), 1, 99),
         takeProfitShrinkageStrength: Math.max(1, toNumberOr(settings?.takeProfitShrinkageStrength, 20)),
+        takeProfitMomentumRsiPeriod: Math.max(2, Math.round(toNumberOr(settings?.takeProfitMomentumRsiPeriod, 14))),
+        takeProfitMomentumRsiPauseLevel: clamp(toNumberOr(settings?.takeProfitMomentumRsiPauseLevel, 60), 1, 99),
+        takeProfitMomentumDecayPercentPerBar: Math.max(0, toNumberOr(settings?.takeProfitMomentumDecayPercentPerBar, 0.15)),
+        takeProfitVelocityFastBars: Math.max(1, Math.round(toNumberOr(settings?.takeProfitVelocityFastBars, 2))),
+        takeProfitVelocitySlowBars: Math.max(1, Math.round(toNumberOr(settings?.takeProfitVelocitySlowBars, 20))),
+        takeProfitVelocityProgressPercent: clamp(toNumberOr(settings?.takeProfitVelocityProgressPercent, 50), 1, 100),
+        takeProfitVelocityExpandMultiplier: Math.max(0.1, toNumberOr(settings?.takeProfitVelocityExpandMultiplier, 1.5)),
+        takeProfitVelocityShrinkMultiplier: Math.max(0.1, toNumberOr(settings?.takeProfitVelocityShrinkMultiplier, 0.65)),
+        takeProfitClimaxStdDevPeriod: Math.max(5, Math.round(toNumberOr(settings?.takeProfitClimaxStdDevPeriod, 30))),
+        takeProfitClimaxStdDevMultiple: Math.max(0.1, toNumberOr(settings?.takeProfitClimaxStdDevMultiple, 3.5)),
+        takeProfitClimaxVolumePeriod: Math.max(2, Math.round(toNumberOr(settings?.takeProfitClimaxVolumePeriod, 20))),
+        takeProfitClimaxVolumeMultiple: Math.max(0.1, toNumberOr(settings?.takeProfitClimaxVolumeMultiple, 3)),
+        takeProfitEquityLossStreak: Math.max(1, Math.round(toNumberOr(settings?.takeProfitEquityLossStreak, 3))),
+        takeProfitEquityDrawdownPercent: Math.max(0, toNumberOr(settings?.takeProfitEquityDrawdownPercent, 0)),
+        takeProfitEquityDefensiveMultiplier: Math.max(0.1, toNumberOr(settings?.takeProfitEquityDefensiveMultiplier, 0.65)),
         stopLossEnabled: settings?.stopLossEnabled ?? false,
         takeProfitEnabled: settings?.takeProfitEnabled ?? false,
         riskMaxHoldBars: Math.max(0, toNumberOr(settings?.riskMaxHoldBars, 0)),

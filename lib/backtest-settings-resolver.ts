@@ -31,6 +31,21 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     takeProfitMfeLookbackTrades: 100,
     takeProfitMfePercentile: 60,
     takeProfitShrinkageStrength: 20,
+    takeProfitMomentumRsiPeriod: 14,
+    takeProfitMomentumRsiPauseLevel: 60,
+    takeProfitMomentumDecayPercentPerBar: 0.15,
+    takeProfitVelocityFastBars: 2,
+    takeProfitVelocitySlowBars: 20,
+    takeProfitVelocityProgressPercent: 50,
+    takeProfitVelocityExpandMultiplier: 1.5,
+    takeProfitVelocityShrinkMultiplier: 0.65,
+    takeProfitClimaxStdDevPeriod: 30,
+    takeProfitClimaxStdDevMultiple: 3.5,
+    takeProfitClimaxVolumePeriod: 20,
+    takeProfitClimaxVolumeMultiple: 3,
+    takeProfitEquityLossStreak: 3,
+    takeProfitEquityDrawdownPercent: 0,
+    takeProfitEquityDefensiveMultiplier: 0.65,
     stopLossEnabled: true,
     takeProfitEnabled: true,
     riskMaxHoldBars: 10,
@@ -124,6 +139,21 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "takeProfitMfeLookbackTrades",
     "takeProfitMfePercentile",
     "takeProfitShrinkageStrength",
+    "takeProfitMomentumRsiPeriod",
+    "takeProfitMomentumRsiPauseLevel",
+    "takeProfitMomentumDecayPercentPerBar",
+    "takeProfitVelocityFastBars",
+    "takeProfitVelocitySlowBars",
+    "takeProfitVelocityProgressPercent",
+    "takeProfitVelocityExpandMultiplier",
+    "takeProfitVelocityShrinkMultiplier",
+    "takeProfitClimaxStdDevPeriod",
+    "takeProfitClimaxStdDevMultiple",
+    "takeProfitClimaxVolumePeriod",
+    "takeProfitClimaxVolumeMultiple",
+    "takeProfitEquityLossStreak",
+    "takeProfitEquityDrawdownPercent",
+    "takeProfitEquityDefensiveMultiplier",
     "stopLossToggle",
     "takeProfitToggle",
     "riskMaxHoldBars",
@@ -183,6 +213,10 @@ const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both",
 const VALID_TAKE_PROFIT_MODES = new Set<NonNullable<BacktestSettings["takeProfitMode"]>>([
     "fixed",
     "shrinkage",
+    "momentum_gated",
+    "velocity",
+    "climax_exit",
+    "equity_feedback",
 ]);
 
 function toBooleanLike(rawValue: unknown): boolean | null {
@@ -409,6 +443,51 @@ export function resolveBacktestSettingsFromRaw(
         takeProfitShrinkageStrength: usePercentRisk
             ? Math.max(1, readNumber(raw, "takeProfitShrinkageStrength", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitShrinkageStrength))
             : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitShrinkageStrength,
+        takeProfitMomentumRsiPeriod: usePercentRisk
+            ? Math.max(2, Math.round(readNumber(raw, "takeProfitMomentumRsiPeriod", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumRsiPeriod)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumRsiPeriod,
+        takeProfitMomentumRsiPauseLevel: usePercentRisk
+            ? Math.max(1, Math.min(99, readNumber(raw, "takeProfitMomentumRsiPauseLevel", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumRsiPauseLevel)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumRsiPauseLevel,
+        takeProfitMomentumDecayPercentPerBar: usePercentRisk
+            ? Math.max(0, readNumber(raw, "takeProfitMomentumDecayPercentPerBar", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumDecayPercentPerBar))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumDecayPercentPerBar,
+        takeProfitVelocityFastBars: usePercentRisk
+            ? Math.max(1, Math.round(readNumber(raw, "takeProfitVelocityFastBars", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityFastBars)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityFastBars,
+        takeProfitVelocitySlowBars: usePercentRisk
+            ? Math.max(1, Math.round(readNumber(raw, "takeProfitVelocitySlowBars", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocitySlowBars)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocitySlowBars,
+        takeProfitVelocityProgressPercent: usePercentRisk
+            ? Math.max(1, Math.min(100, readNumber(raw, "takeProfitVelocityProgressPercent", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityProgressPercent)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityProgressPercent,
+        takeProfitVelocityExpandMultiplier: usePercentRisk
+            ? Math.max(0.1, readNumber(raw, "takeProfitVelocityExpandMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityExpandMultiplier))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityExpandMultiplier,
+        takeProfitVelocityShrinkMultiplier: usePercentRisk
+            ? Math.max(0.1, readNumber(raw, "takeProfitVelocityShrinkMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityShrinkMultiplier))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityShrinkMultiplier,
+        takeProfitClimaxStdDevPeriod: usePercentRisk
+            ? Math.max(5, Math.round(readNumber(raw, "takeProfitClimaxStdDevPeriod", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxStdDevPeriod)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxStdDevPeriod,
+        takeProfitClimaxStdDevMultiple: usePercentRisk
+            ? Math.max(0.1, readNumber(raw, "takeProfitClimaxStdDevMultiple", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxStdDevMultiple))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxStdDevMultiple,
+        takeProfitClimaxVolumePeriod: usePercentRisk
+            ? Math.max(2, Math.round(readNumber(raw, "takeProfitClimaxVolumePeriod", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxVolumePeriod)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxVolumePeriod,
+        takeProfitClimaxVolumeMultiple: usePercentRisk
+            ? Math.max(0.1, readNumber(raw, "takeProfitClimaxVolumeMultiple", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxVolumeMultiple))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxVolumeMultiple,
+        takeProfitEquityLossStreak: usePercentRisk
+            ? Math.max(1, Math.round(readNumber(raw, "takeProfitEquityLossStreak", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEquityLossStreak)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEquityLossStreak,
+        takeProfitEquityDrawdownPercent: usePercentRisk
+            ? Math.max(0, readNumber(raw, "takeProfitEquityDrawdownPercent", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEquityDrawdownPercent))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEquityDrawdownPercent,
+        takeProfitEquityDefensiveMultiplier: usePercentRisk
+            ? Math.max(0.1, readNumber(raw, "takeProfitEquityDefensiveMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEquityDefensiveMultiplier))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEquityDefensiveMultiplier,
         stopLossEnabled: usePercentRisk ? readBooleanAny(raw, ["stopLossEnabled", "stopLossToggle"], EFFECTIVE_BACKTEST_DEFAULTS.stopLossEnabled) : false,
         takeProfitEnabled: usePercentRisk ? readBooleanAny(raw, ["takeProfitEnabled", "takeProfitToggle"], EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEnabled) : false,
         riskMaxHoldBars: useRiskMaxHold ? readNumber(raw, "riskMaxHoldBars", EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars) : 0,

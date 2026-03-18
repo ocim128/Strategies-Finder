@@ -42,6 +42,21 @@ export interface BacktestSettingsData {
     takeProfitMfeLookbackTrades: number;
     takeProfitMfePercentile: number;
     takeProfitShrinkageStrength: number;
+    takeProfitMomentumRsiPeriod: number;
+    takeProfitMomentumRsiPauseLevel: number;
+    takeProfitMomentumDecayPercentPerBar: number;
+    takeProfitVelocityFastBars: number;
+    takeProfitVelocitySlowBars: number;
+    takeProfitVelocityProgressPercent: number;
+    takeProfitVelocityExpandMultiplier: number;
+    takeProfitVelocityShrinkMultiplier: number;
+    takeProfitClimaxStdDevPeriod: number;
+    takeProfitClimaxStdDevMultiple: number;
+    takeProfitClimaxVolumePeriod: number;
+    takeProfitClimaxVolumeMultiple: number;
+    takeProfitEquityLossStreak: number;
+    takeProfitEquityDrawdownPercent: number;
+    takeProfitEquityDefensiveMultiplier: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
     riskMaxHoldBars: number;
@@ -217,6 +232,21 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     takeProfitMfeLookbackTrades: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeLookbackTrades,
     takeProfitMfePercentile: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfePercentile,
     takeProfitShrinkageStrength: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitShrinkageStrength,
+    takeProfitMomentumRsiPeriod: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumRsiPeriod,
+    takeProfitMomentumRsiPauseLevel: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumRsiPauseLevel,
+    takeProfitMomentumDecayPercentPerBar: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumDecayPercentPerBar,
+    takeProfitVelocityFastBars: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityFastBars,
+    takeProfitVelocitySlowBars: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocitySlowBars,
+    takeProfitVelocityProgressPercent: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityProgressPercent,
+    takeProfitVelocityExpandMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityExpandMultiplier,
+    takeProfitVelocityShrinkMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityShrinkMultiplier,
+    takeProfitClimaxStdDevPeriod: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxStdDevPeriod,
+    takeProfitClimaxStdDevMultiple: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxStdDevMultiple,
+    takeProfitClimaxVolumePeriod: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxVolumePeriod,
+    takeProfitClimaxVolumeMultiple: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxVolumeMultiple,
+    takeProfitEquityLossStreak: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEquityLossStreak,
+    takeProfitEquityDrawdownPercent: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEquityDrawdownPercent,
+    takeProfitEquityDefensiveMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEquityDefensiveMultiplier,
     stopLossEnabled: false,
     takeProfitEnabled: false,
     riskMaxHoldBars: EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars,
@@ -441,6 +471,21 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
         takeProfitMfeLookbackTrades: resolved.takeProfitMfeLookbackTrades ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMfeLookbackTrades,
         takeProfitMfePercentile: resolved.takeProfitMfePercentile ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMfePercentile,
         takeProfitShrinkageStrength: resolved.takeProfitShrinkageStrength ?? DEFAULT_BACKTEST_SETTINGS.takeProfitShrinkageStrength,
+        takeProfitMomentumRsiPeriod: resolved.takeProfitMomentumRsiPeriod ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMomentumRsiPeriod,
+        takeProfitMomentumRsiPauseLevel: resolved.takeProfitMomentumRsiPauseLevel ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMomentumRsiPauseLevel,
+        takeProfitMomentumDecayPercentPerBar: resolved.takeProfitMomentumDecayPercentPerBar ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMomentumDecayPercentPerBar,
+        takeProfitVelocityFastBars: resolved.takeProfitVelocityFastBars ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityFastBars,
+        takeProfitVelocitySlowBars: resolved.takeProfitVelocitySlowBars ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocitySlowBars,
+        takeProfitVelocityProgressPercent: resolved.takeProfitVelocityProgressPercent ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityProgressPercent,
+        takeProfitVelocityExpandMultiplier: resolved.takeProfitVelocityExpandMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityExpandMultiplier,
+        takeProfitVelocityShrinkMultiplier: resolved.takeProfitVelocityShrinkMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityShrinkMultiplier,
+        takeProfitClimaxStdDevPeriod: resolved.takeProfitClimaxStdDevPeriod ?? DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxStdDevPeriod,
+        takeProfitClimaxStdDevMultiple: resolved.takeProfitClimaxStdDevMultiple ?? DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxStdDevMultiple,
+        takeProfitClimaxVolumePeriod: resolved.takeProfitClimaxVolumePeriod ?? DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxVolumePeriod,
+        takeProfitClimaxVolumeMultiple: resolved.takeProfitClimaxVolumeMultiple ?? DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxVolumeMultiple,
+        takeProfitEquityLossStreak: resolved.takeProfitEquityLossStreak ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEquityLossStreak,
+        takeProfitEquityDrawdownPercent: resolved.takeProfitEquityDrawdownPercent ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEquityDrawdownPercent,
+        takeProfitEquityDefensiveMultiplier: resolved.takeProfitEquityDefensiveMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEquityDefensiveMultiplier,
         stopLossEnabled: resolved.stopLossEnabled ?? DEFAULT_BACKTEST_SETTINGS.stopLossEnabled,
         takeProfitEnabled: resolved.takeProfitEnabled ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEnabled,
         riskMaxHoldBars: resolved.riskMaxHoldBars ?? DEFAULT_BACKTEST_SETTINGS.riskMaxHoldBars,
@@ -647,6 +692,10 @@ export function resolveTakeProfitModeValue(
     if (
         value === "fixed"
         || value === "shrinkage"
+        || value === "momentum_gated"
+        || value === "velocity"
+        || value === "climax_exit"
+        || value === "equity_feedback"
     ) {
         return value;
     }

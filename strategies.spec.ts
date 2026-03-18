@@ -972,6 +972,25 @@ describe('Backtesting Engine', () => {
         expect(resolved.takeProfitShrinkageStrength).to.equal(12);
     });
 
+    it('should resolve momentum-gated take-profit settings from raw UI values', () => {
+        const resolved = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            takeProfitToggle: true,
+            takeProfitPercent: '6',
+            takeProfitMode: 'momentum_gated',
+            takeProfitMomentumRsiPeriod: '9',
+            takeProfitMomentumRsiPauseLevel: '58',
+            takeProfitMomentumDecayPercentPerBar: '0.35',
+        } as any);
+
+        expect(resolved.takeProfitMode).to.equal('momentum_gated');
+        expect(resolved.takeProfitPercent).to.equal(6);
+        expect(resolved.takeProfitMomentumRsiPeriod).to.equal(9);
+        expect(resolved.takeProfitMomentumRsiPauseLevel).to.equal(58);
+        expect(resolved.takeProfitMomentumDecayPercentPerBar).to.equal(0.35);
+    });
+
     it('should shrink pair-specific rolling MFE toward the base take-profit percent', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
@@ -1350,6 +1369,49 @@ describe('Backtesting Engine', () => {
         expect(targets.takeProfitPrice).to.equal(110);
         expect(targets.stopLossPercent).to.equal(20);
         expect(targets.takeProfitPercent).to.equal(10);
+    });
+
+    it('should defer next_open climax exits to the following bar open after close confirmation', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01T00:00:00Z' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 },
+            { time: '2023-01-01T01:00:00Z' as Time, open: 100, high: 101, low: 100, close: 101, volume: 100 },
+            { time: '2023-01-01T02:00:00Z' as Time, open: 101, high: 101, low: 99, close: 100, volume: 100 },
+            { time: '2023-01-01T03:00:00Z' as Time, open: 100, high: 101, low: 100, close: 101, volume: 100 },
+            { time: '2023-01-01T04:00:00Z' as Time, open: 101, high: 101, low: 99, close: 100, volume: 100 },
+            { time: '2023-01-01T05:00:00Z' as Time, open: 100, high: 130, low: 100, close: 130, volume: 500 },
+            { time: '2023-01-01T06:00:00Z' as Time, open: 120, high: 121, low: 119, close: 120, volume: 100 },
+        ];
+
+        const signals: Signal[] = [
+            { time: data[0].time, type: 'buy', price: data[0].close, barIndex: 0 },
+        ];
+
+        const settings = {
+            tradeDirection: 'long' as const,
+            executionModel: 'next_open' as const,
+            allowSameBarExit: false,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 5,
+            takeProfitMode: 'climax_exit' as const,
+            takeProfitClimaxStdDevPeriod: 2,
+            takeProfitClimaxStdDevMultiple: 3,
+            takeProfitClimaxVolumePeriod: 2,
+            takeProfitClimaxVolumeMultiple: 1.5,
+        };
+
+        const full = runBacktest(data, signals, 1000, 100, 0, settings);
+        const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings);
+
+        expect(full.totalTrades).to.equal(1);
+        expect(full.trades[0].entryTime).to.equal(data[1].time);
+        expect(full.trades[0].exitReason).to.equal('take_profit');
+        expect(full.trades[0].exitTime).to.equal(data[6].time);
+        expect(full.trades[0].exitPrice).to.equal(120);
+        expect(full.trades[0].exitPrice).to.not.equal(130);
+        expect(compact.totalTrades).to.equal(full.totalTrades);
+        expect(compact.netProfit).to.equal(full.netProfit);
     });
 
     it('should flip position on opposite signals when trade direction is both', () => {

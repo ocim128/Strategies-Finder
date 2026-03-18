@@ -19,6 +19,21 @@ export interface NormalizedSettings {
     takeProfitMfeLookbackTrades: number;
     takeProfitMfePercentile: number;
     takeProfitShrinkageStrength: number;
+    takeProfitMomentumRsiPeriod: number;
+    takeProfitMomentumRsiPauseLevel: number;
+    takeProfitMomentumDecayPercentPerBar: number;
+    takeProfitVelocityFastBars: number;
+    takeProfitVelocitySlowBars: number;
+    takeProfitVelocityProgressPercent: number;
+    takeProfitVelocityExpandMultiplier: number;
+    takeProfitVelocityShrinkMultiplier: number;
+    takeProfitClimaxStdDevPeriod: number;
+    takeProfitClimaxStdDevMultiple: number;
+    takeProfitClimaxVolumePeriod: number;
+    takeProfitClimaxVolumeMultiple: number;
+    takeProfitEquityLossStreak: number;
+    takeProfitEquityDrawdownPercent: number;
+    takeProfitEquityDefensiveMultiplier: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
     riskMaxHoldBars: number;
@@ -124,6 +139,8 @@ export interface IndicatorSeries {
     adx: (number | null)[];
     volumeSma: (number | null)[];
     rsi: (number | null)[];
+    sessionVwap: (number | null)[];
+    vwapDeviationStd: (number | null)[];
 }
 
 /**

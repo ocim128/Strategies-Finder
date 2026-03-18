@@ -1067,6 +1067,81 @@ export class FinderManager {
 			merged.takeProfitShrinkageStrength = Math.max(1, takeProfitShrinkageStrength);
 		}
 
+		const takeProfitMomentumRsiPeriod = params['takeProfitMomentumRsiPeriod'];
+		if (typeof takeProfitMomentumRsiPeriod === 'number' && Number.isFinite(takeProfitMomentumRsiPeriod)) {
+			merged.takeProfitMomentumRsiPeriod = Math.max(2, Math.round(takeProfitMomentumRsiPeriod));
+		}
+
+		const takeProfitMomentumRsiPauseLevel = params['takeProfitMomentumRsiPauseLevel'];
+		if (typeof takeProfitMomentumRsiPauseLevel === 'number' && Number.isFinite(takeProfitMomentumRsiPauseLevel)) {
+			merged.takeProfitMomentumRsiPauseLevel = Math.max(1, Math.min(99, takeProfitMomentumRsiPauseLevel));
+		}
+
+		const takeProfitMomentumDecayPercentPerBar = params['takeProfitMomentumDecayPercentPerBar'];
+		if (typeof takeProfitMomentumDecayPercentPerBar === 'number' && Number.isFinite(takeProfitMomentumDecayPercentPerBar)) {
+			merged.takeProfitMomentumDecayPercentPerBar = Math.max(0, takeProfitMomentumDecayPercentPerBar);
+		}
+
+		const takeProfitVelocityFastBars = params['takeProfitVelocityFastBars'];
+		if (typeof takeProfitVelocityFastBars === 'number' && Number.isFinite(takeProfitVelocityFastBars)) {
+			merged.takeProfitVelocityFastBars = Math.max(1, Math.round(takeProfitVelocityFastBars));
+		}
+
+		const takeProfitVelocitySlowBars = params['takeProfitVelocitySlowBars'];
+		if (typeof takeProfitVelocitySlowBars === 'number' && Number.isFinite(takeProfitVelocitySlowBars)) {
+			merged.takeProfitVelocitySlowBars = Math.max(1, Math.round(takeProfitVelocitySlowBars));
+		}
+
+		const takeProfitVelocityProgressPercent = params['takeProfitVelocityProgressPercent'];
+		if (typeof takeProfitVelocityProgressPercent === 'number' && Number.isFinite(takeProfitVelocityProgressPercent)) {
+			merged.takeProfitVelocityProgressPercent = Math.max(1, Math.min(100, takeProfitVelocityProgressPercent));
+		}
+
+		const takeProfitVelocityExpandMultiplier = params['takeProfitVelocityExpandMultiplier'];
+		if (typeof takeProfitVelocityExpandMultiplier === 'number' && Number.isFinite(takeProfitVelocityExpandMultiplier)) {
+			merged.takeProfitVelocityExpandMultiplier = Math.max(0.1, takeProfitVelocityExpandMultiplier);
+		}
+
+		const takeProfitVelocityShrinkMultiplier = params['takeProfitVelocityShrinkMultiplier'];
+		if (typeof takeProfitVelocityShrinkMultiplier === 'number' && Number.isFinite(takeProfitVelocityShrinkMultiplier)) {
+			merged.takeProfitVelocityShrinkMultiplier = Math.max(0.1, takeProfitVelocityShrinkMultiplier);
+		}
+
+		const takeProfitClimaxStdDevPeriod = params['takeProfitClimaxStdDevPeriod'];
+		if (typeof takeProfitClimaxStdDevPeriod === 'number' && Number.isFinite(takeProfitClimaxStdDevPeriod)) {
+			merged.takeProfitClimaxStdDevPeriod = Math.max(5, Math.round(takeProfitClimaxStdDevPeriod));
+		}
+
+		const takeProfitClimaxStdDevMultiple = params['takeProfitClimaxStdDevMultiple'];
+		if (typeof takeProfitClimaxStdDevMultiple === 'number' && Number.isFinite(takeProfitClimaxStdDevMultiple)) {
+			merged.takeProfitClimaxStdDevMultiple = Math.max(0.1, takeProfitClimaxStdDevMultiple);
+		}
+
+		const takeProfitClimaxVolumePeriod = params['takeProfitClimaxVolumePeriod'];
+		if (typeof takeProfitClimaxVolumePeriod === 'number' && Number.isFinite(takeProfitClimaxVolumePeriod)) {
+			merged.takeProfitClimaxVolumePeriod = Math.max(2, Math.round(takeProfitClimaxVolumePeriod));
+		}
+
+		const takeProfitClimaxVolumeMultiple = params['takeProfitClimaxVolumeMultiple'];
+		if (typeof takeProfitClimaxVolumeMultiple === 'number' && Number.isFinite(takeProfitClimaxVolumeMultiple)) {
+			merged.takeProfitClimaxVolumeMultiple = Math.max(0.1, takeProfitClimaxVolumeMultiple);
+		}
+
+		const takeProfitEquityLossStreak = params['takeProfitEquityLossStreak'];
+		if (typeof takeProfitEquityLossStreak === 'number' && Number.isFinite(takeProfitEquityLossStreak)) {
+			merged.takeProfitEquityLossStreak = Math.max(1, Math.round(takeProfitEquityLossStreak));
+		}
+
+		const takeProfitEquityDrawdownPercent = params['takeProfitEquityDrawdownPercent'];
+		if (typeof takeProfitEquityDrawdownPercent === 'number' && Number.isFinite(takeProfitEquityDrawdownPercent)) {
+			merged.takeProfitEquityDrawdownPercent = Math.max(0, takeProfitEquityDrawdownPercent);
+		}
+
+		const takeProfitEquityDefensiveMultiplier = params['takeProfitEquityDefensiveMultiplier'];
+		if (typeof takeProfitEquityDefensiveMultiplier === 'number' && Number.isFinite(takeProfitEquityDefensiveMultiplier)) {
+			merged.takeProfitEquityDefensiveMultiplier = Math.max(0.1, takeProfitEquityDefensiveMultiplier);
+		}
+
 		const riskMaxHoldBars = params['riskMaxHoldBars'];
 		if (typeof riskMaxHoldBars === 'number' && Number.isFinite(riskMaxHoldBars)) {
 			merged.riskMaxHoldBars = riskMaxHoldBars;

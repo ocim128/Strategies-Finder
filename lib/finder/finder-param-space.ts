@@ -55,6 +55,32 @@ function computeParamRange(
         max = Math.min(99, max);
     } else if (key === "takeProfitShrinkageStrength") {
         min = Math.max(1, min);
+    } else if (key === "takeProfitMomentumRsiPeriod") {
+        min = Math.max(2, min);
+    } else if (key === "takeProfitMomentumRsiPauseLevel") {
+        min = Math.max(1, min);
+        max = Math.min(99, max);
+    } else if (key === "takeProfitMomentumDecayPercentPerBar") {
+        min = Math.max(0, min);
+    } else if (key === "takeProfitVelocityFastBars" || key === "takeProfitVelocitySlowBars") {
+        min = Math.max(1, min);
+    } else if (key === "takeProfitVelocityProgressPercent") {
+        min = Math.max(1, min);
+        max = Math.min(100, max);
+    } else if (key === "takeProfitVelocityExpandMultiplier" || key === "takeProfitVelocityShrinkMultiplier") {
+        min = Math.max(0.1, min);
+    } else if (key === "takeProfitClimaxStdDevPeriod") {
+        min = Math.max(5, min);
+    } else if (key === "takeProfitClimaxStdDevMultiple" || key === "takeProfitClimaxVolumeMultiple") {
+        min = Math.max(0.1, min);
+    } else if (key === "takeProfitClimaxVolumePeriod") {
+        min = Math.max(2, min);
+    } else if (key === "takeProfitEquityLossStreak") {
+        min = Math.max(1, min);
+    } else if (key === "takeProfitEquityDrawdownPercent") {
+        min = Math.max(0, min);
+    } else if (key === "takeProfitEquityDefensiveMultiplier") {
+        min = Math.max(0.1, min);
     } else if (key === "targetPct") {
         min = 0;
         max = 2;
@@ -416,22 +442,46 @@ export class FinderParamSpace {
         const nonNegative = /(std|dev|factor|multiplier|atr|adx)/i.test(key);
 
         let next = value;
-    if (key === "warmupBars") {
-        next = Math.max(0, Math.round(next));
-    } else if (key === "clusterChoice") {
-        next = Math.min(2, Math.max(0, Math.round(next)));
-    } else if (key === "midpointBars") {
-        next = Math.min(6, Math.max(1, Math.round(next)));
-    } else if (key === "takeProfitMfeLookbackTrades") {
-        next = Math.max(5, Math.round(next));
-    } else if (key === "takeProfitMfePercentile") {
-        next = Math.min(99, Math.max(1, Number(next.toFixed(2))));
-    } else if (key === "takeProfitShrinkageStrength") {
-        next = Math.max(1, Number(next.toFixed(2)));
-    } else if (key === "crossThreshold" || key === "minRangePct") {
-        next = Math.min(0.05, Math.max(0, Number(next.toFixed(4))));
-    } else if (periodLike) {
-        next = Math.max(1, Math.round(next));
+        if (key === "warmupBars") {
+            next = Math.max(0, Math.round(next));
+        } else if (key === "clusterChoice") {
+            next = Math.min(2, Math.max(0, Math.round(next)));
+        } else if (key === "midpointBars") {
+            next = Math.min(6, Math.max(1, Math.round(next)));
+        } else if (key === "takeProfitMfeLookbackTrades") {
+            next = Math.max(5, Math.round(next));
+        } else if (key === "takeProfitMfePercentile") {
+            next = Math.min(99, Math.max(1, Number(next.toFixed(2))));
+        } else if (key === "takeProfitShrinkageStrength") {
+            next = Math.max(1, Number(next.toFixed(2)));
+        } else if (key === "takeProfitMomentumRsiPeriod") {
+            next = Math.max(2, Math.round(next));
+        } else if (key === "takeProfitMomentumRsiPauseLevel") {
+            next = Math.min(99, Math.max(1, Number(next.toFixed(2))));
+        } else if (key === "takeProfitMomentumDecayPercentPerBar") {
+            next = Math.max(0, Number(next.toFixed(4)));
+        } else if (key === "takeProfitVelocityFastBars" || key === "takeProfitVelocitySlowBars") {
+            next = Math.max(1, Math.round(next));
+        } else if (key === "takeProfitVelocityProgressPercent") {
+            next = Math.min(100, Math.max(1, Number(next.toFixed(2))));
+        } else if (key === "takeProfitVelocityExpandMultiplier" || key === "takeProfitVelocityShrinkMultiplier") {
+            next = Math.max(0.1, Number(next.toFixed(4)));
+        } else if (key === "takeProfitClimaxStdDevPeriod") {
+            next = Math.max(5, Math.round(next));
+        } else if (key === "takeProfitClimaxStdDevMultiple" || key === "takeProfitClimaxVolumeMultiple") {
+            next = Math.max(0.1, Number(next.toFixed(4)));
+        } else if (key === "takeProfitClimaxVolumePeriod") {
+            next = Math.max(2, Math.round(next));
+        } else if (key === "takeProfitEquityLossStreak") {
+            next = Math.max(1, Math.round(next));
+        } else if (key === "takeProfitEquityDrawdownPercent") {
+            next = Math.max(0, Number(next.toFixed(4)));
+        } else if (key === "takeProfitEquityDefensiveMultiplier") {
+            next = Math.max(0.1, Number(next.toFixed(4)));
+        } else if (key === "crossThreshold" || key === "minRangePct") {
+            next = Math.min(0.05, Math.max(0, Number(next.toFixed(4))));
+        } else if (periodLike) {
+            next = Math.max(1, Math.round(next));
         } else if (key === "targetPct") {
             next = Math.min(2, Math.max(0, Number(next.toFixed(2))));
         } else if (key === "stopLossPercent") {
@@ -463,14 +513,18 @@ export class FinderParamSpace {
             key !== "stopLossPercent" &&
             key !== "takeProfitPercent" &&
             key !== "targetPct" &&
-            key !== "takeProfitMfePercentile"
+            key !== "takeProfitMfePercentile" &&
+            key !== "takeProfitMomentumRsiPauseLevel" &&
+            key !== "takeProfitVelocityProgressPercent"
         ) {
             next = Math.round(next);
         } else if (
             key === "stopLossPercent" ||
             key === "takeProfitPercent" ||
             key === "takeProfitMfePercentile" ||
-            key === "takeProfitShrinkageStrength"
+            key === "takeProfitShrinkageStrength" ||
+            key === "takeProfitMomentumRsiPauseLevel" ||
+            key === "takeProfitVelocityProgressPercent"
         ) {
             next = Number(next.toFixed(2));
         } else if (key === "targetPct") {
