@@ -1,0 +1,893 @@
+import { OHLCVData } from '../types/strategies';
+
+// ============================================================================
+// Indicator Calculations
+// ============================================================================
+
+export function calculateSMA(data: number[], period: number): (number | null)[] {
+    const result: (number | null)[] = new Array(data.length).fill(null);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+        sum += data[i];
+        if (i >= period) {
+            sum -= data[i - period];
+        }
+        if (i >= period - 1) {
+            result[i] = sum / period;
+        }
+    }
+    return result;
+}
+
+
+// Indicator caches
+const __emaCache: WeakMap<number[], Map<number, (number | null)[]>> = new WeakMap();
+const __rsiCache: WeakMap<number[], Map<number, (number | null)[]>> = new WeakMap();
+const __macDCache: WeakMap<number[], Map<string, { macd: (number | null)[]; signal: (number | null)[]; histogram: (number | null)[]; }>> = new WeakMap();
+const __bbCache: WeakMap<number[], Map<string, { upper: (number | null)[]; middle: (number | null)[]; lower: (number | null)[]; }>> = new WeakMap();
+const __atrCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>> = new WeakMap();
+const __adxCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>> = new WeakMap();
+
+function getOrCompute<D extends object, K, V>(cache: WeakMap<D, Map<K, V>>, data: D, key: K, compute: () => V): V {
+    let m = cache.get(data);
+    if (!m) { m = new Map(); cache.set(data, m); }
+    const cached = m.get(key);
+    if (cached) return cached;
+    const result = compute();
+    m.set(key, result);
+    return result;
+}
+
+function getOrComputeOHLC(
+    cache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>>,
+    high: number[],
+    low: number[],
+    close: number[],
+    period: number,
+    compute: () => (number | null)[]
+): (number | null)[] {
+    let byLow = cache.get(high);
+    if (!byLow) {
+        byLow = new WeakMap();
+        cache.set(high, byLow);
+    }
+
+    let byClose = byLow.get(low);
+    if (!byClose) {
+        byClose = new WeakMap();
+        byLow.set(low, byClose);
+    }
+
+    let byPeriod = byClose.get(close);
+    if (!byPeriod) {
+        byPeriod = new Map();
+        byClose.set(close, byPeriod);
+    }
+
+    const cached = byPeriod.get(period);
+    if (cached) return cached;
+
+    const result = compute();
+    byPeriod.set(period, result);
+    return result;
+}
+
+export function calculateEMA(data: number[], period: number): (number | null)[] {
+    return getOrCompute(__emaCache, data, period, () => {
+        const result: (number | null)[] = new Array(data.length).fill(null);
+        if (data.length < period) return result;
+
+        const multiplier = 2 / (period + 1);
+        let sum = 0;
+        for (let i = 0; i < period; i++) sum += data[i];
+
+        let prevEMA = sum / period;
+        result[period - 1] = prevEMA;
+
+        for (let i = period; i < data.length; i++) {
+            const currentEMA = (data[i] - prevEMA) * multiplier + prevEMA;
+            result[i] = currentEMA;
+            prevEMA = currentEMA;
+        }
+        return result;
+    });
+}
+
+export function calculateRSI(data: number[], period: number): (number | null)[] {
+    return getOrCompute(__rsiCache, data, period, () => {
+        const length = data.length;
+        const result: (number | null)[] = new Array(length).fill(null);
+        if (length < period + 1) return result;
+
+        let avgGain = 0;
+        let avgLoss = 0;
+        for (let i = 1; i <= period; i++) {
+            const change = data[i] - data[i - 1];
+            if (change > 0) avgGain += change;
+            else avgLoss += Math.abs(change);
+        }
+        avgGain /= period;
+        avgLoss /= period;
+
+        result[period] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+
+        for (let i = period + 1; i < length; i++) {
+            const change = data[i] - data[i - 1];
+            avgGain = (avgGain * (period - 1) + (change > 0 ? change : 0)) / period;
+            avgLoss = (avgLoss * (period - 1) + (change < 0 ? -change : 0)) / period;
+            result[i] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+        }
+        return result;
+    });
+}
+
+export function calculateMACD(data: number[], fastPeriod: number, slowPeriod: number, signalPeriod: number): {
+    macd: (number | null)[];
+    signal: (number | null)[];
+    histogram: (number | null)[];
+} {
+    return getOrCompute(__macDCache, data, `${fastPeriod}-${slowPeriod}-${signalPeriod}`, () => {
+        const fastEMA = calculateEMA(data, fastPeriod);
+        const slowEMA = calculateEMA(data, slowPeriod);
+        const length = data.length;
+        const macd: (number | null)[] = new Array(length).fill(null);
+
+        for (let i = 0; i < length; i++) {
+            const f = fastEMA[i], s = slowEMA[i];
+            macd[i] = (f === null || s === null) ? null : (f - s);
+        }
+
+        const signal: (number | null)[] = new Array(length).fill(null);
+        const histogram: (number | null)[] = new Array(length).fill(null);
+        const multiplier = 2 / (signalPeriod + 1);
+        let validMacdCount = 0, initSum = 0, prevSignal: number | null = null;
+
+        for (let i = 0; i < length; i++) {
+            const m = macd[i];
+            if (m === null) continue;
+
+            if (prevSignal === null) {
+                initSum += m;
+                validMacdCount++;
+                if (validMacdCount === signalPeriod) {
+                    prevSignal = initSum / signalPeriod;
+                    signal[i] = prevSignal;
+                    histogram[i] = m - prevSignal;
+                }
+            } else {
+                const currentSignal: number = (m - prevSignal) * multiplier + prevSignal;
+                signal[i] = currentSignal;
+                histogram[i] = m - currentSignal;
+                prevSignal = currentSignal;
+            }
+        }
+        return { macd, signal, histogram };
+    });
+}
+
+export function calculateBollingerBands(data: number[], period: number, stdDev: number = 2): {
+    upper: (number | null)[];
+    middle: (number | null)[];
+    lower: (number | null)[];
+} {
+    return getOrCompute(__bbCache, data, `${period}-${stdDev}`, () => {
+        const length = data.length;
+        const upper: (number | null)[] = new Array(length).fill(null);
+        const middle: (number | null)[] = new Array(length).fill(null);
+        const lower: (number | null)[] = new Array(length).fill(null);
+        let sum = 0, sumSq = 0;
+
+        for (let i = 0; i < length; i++) {
+            const val = data[i];
+            sum += val;
+            sumSq += val * val;
+
+            if (i >= period - 1) {
+                if (i >= period) {
+                    const oldVal = data[i - period];
+                    sum -= oldVal;
+                    sumSq -= oldVal * oldVal;
+                }
+                const avg = sum / period;
+                const std = Math.sqrt(Math.max(0, (sumSq - (sum * sum) / period) / period));
+                middle[i] = avg;
+                upper[i] = avg + stdDev * std;
+                lower[i] = avg - stdDev * std;
+            }
+        }
+        return { upper, middle, lower };
+    });
+}
+
+export function calculateStochastic(
+    high: number[],
+    low: number[],
+    close: number[],
+    kPeriod: number,
+    dPeriod: number
+): {
+    k: (number | null)[];
+    d: (number | null)[];
+} {
+    const k: (number | null)[] = [];
+    const d: (number | null)[] = [];
+
+    // Monotonic queues for sliding window min/max
+    const maxDeque: number[] = [];
+    const minDeque: number[] = [];
+
+    for (let i = 0; i < close.length; i++) {
+        while (maxDeque.length > 0 && high[maxDeque[maxDeque.length - 1]] <= high[i]) maxDeque.pop();
+        maxDeque.push(i);
+        if (maxDeque[0] <= i - kPeriod) maxDeque.shift();
+
+        while (minDeque.length > 0 && low[minDeque[minDeque.length - 1]] >= low[i]) minDeque.pop();
+        minDeque.push(i);
+        if (minDeque[0] <= i - kPeriod) minDeque.shift();
+
+        if (i < kPeriod - 1) {
+            k.push(null);
+        } else {
+            const highestHigh = high[maxDeque[0]];
+            const lowestLow = low[minDeque[0]];
+            const range = highestHigh - lowestLow;
+            if (range === 0) {
+                k.push(50);
+            } else {
+                k.push(((close[i] - lowestLow) / range) * 100);
+            }
+        }
+    }
+
+    // %D (SMA of %K)
+    let dSum = 0;
+    let dCount = 0;
+    for (let i = 0; i < k.length; i++) {
+        const val = k[i];
+        if (val !== null) {
+            dSum += val;
+            dCount++;
+            if (dCount > dPeriod) {
+                const oldVal = k[i - dPeriod];
+                if (oldVal !== null) {
+                    dSum -= oldVal;
+                    dCount--;
+                }
+            }
+        }
+
+        if (val === null || dCount < dPeriod) {
+            d.push(null);
+        } else {
+            d.push(dSum / dPeriod);
+        }
+    }
+
+    return { k, d };
+}
+
+export function calculateVWAP(ohlcv: OHLCVData[]): (number | null)[] {
+    const vwap: (number | null)[] = [];
+    let cumulativeTPV = 0; // Typical Price * Volume
+    let cumulativeVolume = 0;
+
+    for (let i = 0; i < ohlcv.length; i++) {
+        const typicalPrice = (ohlcv[i].high + ohlcv[i].low + ohlcv[i].close) / 3;
+        cumulativeTPV += typicalPrice * ohlcv[i].volume;
+        cumulativeVolume += ohlcv[i].volume;
+
+        if (cumulativeVolume === 0) {
+            vwap.push(null);
+        } else {
+            vwap.push(cumulativeTPV / cumulativeVolume);
+        }
+    }
+
+    return vwap;
+}
+
+export function calculateSessionVWAP(ohlcv: OHLCVData[]): (number | null)[] {
+    const vwap: (number | null)[] = [];
+    let cumulativeTPV = 0;
+    let cumulativeVolume = 0;
+    let lastSessionKey: string | null = null;
+
+    const resolveSessionKey = (time: OHLCVData["time"]): string => {
+        if (typeof time === "string") {
+            return time.slice(0, 10);
+        }
+        if (typeof time === "number") {
+            const millis = time > 1e12 ? time : time * 1000;
+            return new Date(millis).toISOString().slice(0, 10);
+        }
+        return `${time.year}-${String(time.month).padStart(2, '0')}-${String(time.day).padStart(2, '0')}`;
+    };
+
+    for (let i = 0; i < ohlcv.length; i++) {
+        const bar = ohlcv[i];
+        const sessionKey = resolveSessionKey(bar.time);
+        if (sessionKey !== lastSessionKey) {
+            cumulativeTPV = 0;
+            cumulativeVolume = 0;
+            lastSessionKey = sessionKey;
+        }
+
+        const typicalPrice = (bar.high + bar.low + bar.close) / 3;
+        cumulativeTPV += typicalPrice * bar.volume;
+        cumulativeVolume += bar.volume;
+        vwap.push(cumulativeVolume === 0 ? null : cumulativeTPV / cumulativeVolume);
+    }
+
+    return vwap;
+}
+
+export function calculateATR(
+    high: number[],
+    low: number[],
+    close: number[],
+    period: number
+): (number | null)[] {
+    return getOrComputeOHLC(__atrCache, high, low, close, period, () => {
+        const length = close.length;
+        const atr: (number | null)[] = new Array(length).fill(null);
+        let initialTRSum = 0, prevATR = 0;
+
+        for (let i = 0; i < length; i++) {
+            const tr = i === 0
+                ? high[i] - low[i]
+                : Math.max(high[i] - low[i], Math.abs(high[i] - close[i - 1]), Math.abs(low[i] - close[i - 1]));
+
+            if (i < period - 1) {
+                initialTRSum += tr;
+            } else if (i === period - 1) {
+                initialTRSum += tr;
+                prevATR = initialTRSum / period;
+                atr[i] = prevATR;
+            } else {
+                prevATR = (prevATR * (period - 1) + tr) / period;
+                atr[i] = prevATR;
+            }
+        }
+        return atr;
+    });
+}
+
+export function calculateKeltnerChannels(
+    high: number[],
+    low: number[],
+    close: number[],
+    emaPeriod: number,
+    atrPeriod: number,
+    multiplier: number
+): {
+    upper: (number | null)[];
+    middle: (number | null)[];
+    lower: (number | null)[];
+} {
+    const middle = calculateEMA(close, emaPeriod);
+    const atr = calculateATR(high, low, close, atrPeriod);
+    const upper: (number | null)[] = new Array(close.length).fill(null);
+    const lower: (number | null)[] = new Array(close.length).fill(null);
+
+    for (let i = 0; i < close.length; i++) {
+        const mid = middle[i];
+        const atrNow = atr[i];
+        if (mid === null || atrNow === null) continue;
+        upper[i] = mid + multiplier * atrNow;
+        lower[i] = mid - multiplier * atrNow;
+    }
+
+    return { upper, middle, lower };
+}
+
+export function calculateADX(
+    high: number[],
+    low: number[],
+    close: number[],
+    period: number
+): (number | null)[] {
+    return getOrComputeOHLC(__adxCache, high, low, close, period, () => {
+        const length = close.length;
+        const adx: (number | null)[] = new Array(length).fill(null);
+        if (length < period * 2 || period < 1) return adx;
+
+        const tr: number[] = new Array(length).fill(0);
+        const plusDM: number[] = new Array(length).fill(0);
+        const minusDM: number[] = new Array(length).fill(0);
+
+        for (let i = 1; i < length; i++) {
+            const upMove = high[i] - high[i - 1];
+            const downMove = low[i - 1] - low[i];
+            plusDM[i] = upMove > downMove && upMove > 0 ? upMove : 0;
+            minusDM[i] = downMove > upMove && downMove > 0 ? downMove : 0;
+            tr[i] = Math.max(high[i] - low[i], Math.abs(high[i] - close[i - 1]), Math.abs(low[i] - close[i - 1]));
+        }
+
+        let trSmooth = 0, plusSmooth = 0, minusSmooth = 0;
+        for (let i = 1; i <= period; i++) {
+            trSmooth += tr[i];
+            plusSmooth += plusDM[i];
+            minusSmooth += minusDM[i];
+        }
+
+        const dx: number[] = new Array(length).fill(0);
+        for (let i = period; i < length; i++) {
+            if (i > period) {
+                trSmooth = trSmooth - trSmooth / period + tr[i];
+                plusSmooth = plusSmooth - plusSmooth / period + plusDM[i];
+                minusSmooth = minusSmooth - minusSmooth / period + minusDM[i];
+            }
+            const plusDI = trSmooth === 0 ? 0 : (100 * (plusSmooth / trSmooth));
+            const minusDI = trSmooth === 0 ? 0 : (100 * (minusSmooth / trSmooth));
+            const diSum = plusDI + minusDI;
+            dx[i] = diSum === 0 ? 0 : (100 * Math.abs(plusDI - minusDI) / diSum);
+        }
+
+        let dxSum = 0;
+        for (let i = period; i < period * 2; i++) dxSum += dx[i];
+
+        let prevADX = dxSum / period;
+        adx[period * 2 - 1] = prevADX;
+        for (let i = period * 2; i < length; i++) {
+            prevADX = ((prevADX * (period - 1)) + dx[i]) / period;
+            adx[i] = prevADX;
+        }
+        return adx;
+    });
+}
+
+export function calculateMFI(
+    high: number[],
+    low: number[],
+    close: number[],
+    volume: number[],
+    period: number
+): (number | null)[] {
+    const length = Math.min(high.length, low.length, close.length, volume.length);
+    const result: (number | null)[] = new Array(length).fill(null);
+    if (length < period + 1 || period < 1) return result;
+
+    const positiveFlow: number[] = new Array(length).fill(0);
+    const negativeFlow: number[] = new Array(length).fill(0);
+    const typicalPrice: number[] = new Array(length).fill(0);
+
+    for (let i = 0; i < length; i++) {
+        typicalPrice[i] = (high[i] + low[i] + close[i]) / 3;
+        if (i === 0) continue;
+        const flow = typicalPrice[i] * volume[i];
+        if (typicalPrice[i] > typicalPrice[i - 1]) {
+            positiveFlow[i] = flow;
+        } else if (typicalPrice[i] < typicalPrice[i - 1]) {
+            negativeFlow[i] = flow;
+        }
+    }
+
+    let positiveSum = 0;
+    let negativeSum = 0;
+
+    for (let i = 1; i < length; i++) {
+        positiveSum += positiveFlow[i];
+        negativeSum += negativeFlow[i];
+
+        if (i > period) {
+            positiveSum -= positiveFlow[i - period];
+            negativeSum -= negativeFlow[i - period];
+        }
+
+        if (i >= period) {
+            if (negativeSum === 0) {
+                result[i] = 100;
+            } else {
+                const moneyRatio = positiveSum / negativeSum;
+                result[i] = 100 - (100 / (1 + moneyRatio));
+            }
+        }
+    }
+
+    return result;
+}
+
+export function calculateCMF(
+    high: number[],
+    low: number[],
+    close: number[],
+    volume: number[],
+    period: number
+): (number | null)[] {
+    const length = Math.min(high.length, low.length, close.length, volume.length);
+    const result: (number | null)[] = new Array(length).fill(null);
+    if (length < period || period < 1) return result;
+
+    const moneyFlowVolume: number[] = new Array(length).fill(0);
+    for (let i = 0; i < length; i++) {
+        const range = high[i] - low[i];
+        if (range <= 0) {
+            moneyFlowVolume[i] = 0;
+            continue;
+        }
+        const multiplier = ((close[i] - low[i]) - (high[i] - close[i])) / range;
+        moneyFlowVolume[i] = multiplier * volume[i];
+    }
+
+    let mfvSum = 0;
+    let volumeSum = 0;
+    for (let i = 0; i < length; i++) {
+        mfvSum += moneyFlowVolume[i];
+        volumeSum += volume[i];
+
+        if (i >= period) {
+            mfvSum -= moneyFlowVolume[i - period];
+            volumeSum -= volume[i - period];
+        }
+
+        if (i >= period - 1) {
+            result[i] = volumeSum === 0 ? 0 : mfvSum / volumeSum;
+        }
+    }
+
+    return result;
+}
+
+export function calculateVolumeProfile(
+    data: { low: number; high: number; close: number; volume: number }[],
+    period: number,
+    bins: number
+): {
+    poc: (number | null)[];
+    vah: (number | null)[];
+    val: (number | null)[];
+} {
+    const poc: (number | null)[] = [];
+    const vah: (number | null)[] = [];
+    const val: (number | null)[] = [];
+
+    // Monotonic deques for O(1) min/max across the sliding window of [i - period, i - 1]
+    const maxDeque: number[] = [];
+    const minDeque: number[] = [];
+
+    for (let i = 0; i < data.length; i++) {
+        // Build window over previous period bars (exclusive of i)
+        const idxToAdd = i - 1;
+        if (idxToAdd >= 0) {
+            while (maxDeque.length > 0 && data[maxDeque[maxDeque.length - 1]].high <= data[idxToAdd].high) {
+                maxDeque.pop();
+            }
+            maxDeque.push(idxToAdd);
+
+            while (minDeque.length > 0 && data[minDeque[minDeque.length - 1]].low >= data[idxToAdd].low) {
+                minDeque.pop();
+            }
+            minDeque.push(idxToAdd);
+        }
+
+        const windowStart = i - period;
+        while (maxDeque.length > 0 && maxDeque[0] < windowStart) maxDeque.shift();
+        while (minDeque.length > 0 && minDeque[0] < windowStart) minDeque.shift();
+
+        if (i < period) {
+            poc.push(null);
+            vah.push(null);
+            val.push(null);
+            continue;
+        }
+
+        // O(1) min/max from deques
+        const minPrice = data[minDeque[0]].low;
+        const maxPrice = data[maxDeque[0]].high;
+
+        const range = maxPrice - minPrice;
+        if (range <= 0) {
+            const price = data[i].close;
+            poc.push(price);
+            vah.push(price);
+            val.push(price);
+            continue;
+        }
+
+        const binSize = range / bins;
+        const volumeProfile = new Float64Array(bins);
+
+        // Distribute volume into bins for the window [i - period, i - 1]
+        for (let j = windowStart; j < i; j++) {
+            const candle = data[j];
+            const meanPrice = (candle.high + candle.low) / 2;
+            let binIndex = Math.floor((meanPrice - minPrice) / binSize);
+            if (binIndex < 0) binIndex = 0;
+            if (binIndex >= bins) binIndex = bins - 1;
+            volumeProfile[binIndex] += candle.volume;
+        }
+
+        // Find POC and total volume
+        let maxVol = 0;
+        let maxVolIndex = 0;
+        let totalVolume = 0;
+
+        for (let j = 0; j < bins; j++) {
+            const vol = volumeProfile[j];
+            totalVolume += vol;
+            if (vol > maxVol) {
+                maxVol = vol;
+                maxVolIndex = j;
+            }
+        }
+
+        poc.push(minPrice + (maxVolIndex + 0.5) * binSize);
+
+        // Calculate Value Area (70% of volume) around POC
+        const targetVolume = totalVolume * 0.70;
+        let currentVolume = maxVol;
+        let upIdx = maxVolIndex;
+        let downIdx = maxVolIndex;
+
+        while (currentVolume < targetVolume && (upIdx < bins - 1 || downIdx > 0)) {
+            const upVol = (upIdx < bins - 1) ? volumeProfile[upIdx + 1] : -1;
+            const downVol = (downIdx > 0) ? volumeProfile[downIdx - 1] : -1;
+
+            if (upVol >= downVol && upIdx < bins - 1) {
+                upIdx++;
+                currentVolume += upVol;
+            } else if (downIdx > 0) {
+                downIdx--;
+                currentVolume += downVol;
+            } else {
+                break;
+            }
+        }
+
+        vah.push(minPrice + (upIdx + 1) * binSize);
+        val.push(minPrice + downIdx * binSize);
+    }
+
+    return { poc, vah, val };
+}
+
+function calculateMidpointChannel(
+    high: number[],
+    low: number[],
+    period: number
+): (number | null)[] {
+    const result: (number | null)[] = new Array(high.length).fill(null);
+    const maxDeque: number[] = [];
+    const minDeque: number[] = [];
+
+    for (let i = 0; i < high.length; i++) {
+        while (maxDeque.length > 0 && high[maxDeque[maxDeque.length - 1]] <= high[i]) maxDeque.pop();
+        maxDeque.push(i);
+        if (maxDeque[0] <= i - period) maxDeque.shift();
+
+        while (minDeque.length > 0 && low[minDeque[minDeque.length - 1]] >= low[i]) minDeque.pop();
+        minDeque.push(i);
+        if (minDeque[0] <= i - period) minDeque.shift();
+
+        if (i >= period - 1) {
+            result[i] = (high[maxDeque[0]] + low[minDeque[0]]) / 2;
+        }
+    }
+
+    return result;
+}
+
+export function calculateIchimoku(
+    high: number[],
+    low: number[],
+    close: number[],
+    conversionPeriod: number = 9,
+    basePeriod: number = 26,
+    spanBPeriod: number = 52,
+    displacement: number = 26
+): {
+    conversion: (number | null)[];
+    base: (number | null)[];
+    spanA: (number | null)[];
+    spanB: (number | null)[];
+    lagging: (number | null)[];
+} {
+    const conversion = calculateMidpointChannel(high, low, conversionPeriod);
+    const base = calculateMidpointChannel(high, low, basePeriod);
+    const spanBBase = calculateMidpointChannel(high, low, spanBPeriod);
+    const spanA: (number | null)[] = new Array(close.length).fill(null);
+    const spanB: (number | null)[] = new Array(close.length).fill(null);
+    const lagging: (number | null)[] = new Array(close.length).fill(null);
+
+    for (let i = 0; i < close.length; i++) {
+        const conversionNow = conversion[i];
+        const baseNow = base[i];
+        const spanBNow = spanBBase[i];
+
+        if (conversionNow !== null && baseNow !== null) {
+            spanA[i] = (conversionNow + baseNow) / 2;
+        }
+        if (spanBNow !== null) {
+            spanB[i] = spanBNow;
+        }
+        if (i >= displacement) {
+            lagging[i - displacement] = close[i];
+        }
+    }
+
+    return { conversion, base, spanA, spanB, lagging };
+}
+
+export function calculateDonchianChannels(
+    high: number[],
+    low: number[],
+    period: number
+): {
+    upper: (number | null)[];
+    lower: (number | null)[];
+    middle: (number | null)[];
+} {
+    const upper: (number | null)[] = [];
+    const lower: (number | null)[] = [];
+    const middle: (number | null)[] = [];
+
+    const maxDeque: number[] = [];
+    const minDeque: number[] = [];
+
+    for (let i = 0; i < high.length; i++) {
+        while (maxDeque.length > 0 && high[maxDeque[maxDeque.length - 1]] <= high[i]) maxDeque.pop();
+        maxDeque.push(i);
+        if (maxDeque[0] <= i - period) maxDeque.shift();
+
+        while (minDeque.length > 0 && low[minDeque[minDeque.length - 1]] >= low[i]) minDeque.pop();
+        minDeque.push(i);
+        if (minDeque[0] <= i - period) minDeque.shift();
+
+        if (i < period - 1) {
+            upper.push(null);
+            lower.push(null);
+            middle.push(null);
+        } else {
+            const maxHigh = high[maxDeque[0]];
+            const minLow = low[minDeque[0]];
+            upper.push(maxHigh);
+            lower.push(minLow);
+            middle.push((maxHigh + minLow) / 2);
+        }
+    }
+    return { upper, lower, middle };
+}
+
+export function calculateSupertrend(
+    high: number[],
+    low: number[],
+    close: number[],
+    period: number,
+    factor: number
+): {
+    supertrend: (number | null)[];
+    direction: (1 | -1 | null)[]; // 1: Bullish, -1: Bearish
+} {
+    const atr = calculateATR(high, low, close, period);
+    const supertrend: (number | null)[] = [];
+    const direction: (1 | -1 | null)[] = [];
+
+    let prevFinalUpper = 0;
+    let prevFinalLower = 0;
+    let prevTrend: 1 | -1 = 1;
+
+    for (let i = 0; i < close.length; i++) {
+        if (atr[i] === null) {
+            supertrend.push(null);
+            direction.push(null);
+            continue;
+        }
+
+        const hl2 = (high[i] + low[i]) / 2;
+        const basicUpper = hl2 + factor * atr[i]!;
+        const basicLower = hl2 - factor * atr[i]!;
+
+        // Initial values for the first valid bar
+        if (supertrend.length > 0 && supertrend[i - 1] === null) {
+            supertrend.push(basicLower);
+            direction.push(1);
+            prevFinalUpper = basicUpper;
+            prevFinalLower = basicLower;
+            prevTrend = 1;
+            continue;
+        }
+
+        const prevClose = close[i - 1];
+
+        // Calculate Final Bands
+        const finalUpper = (basicUpper < prevFinalUpper || prevClose > prevFinalUpper) ? basicUpper : prevFinalUpper;
+        const finalLower = (basicLower > prevFinalLower || prevClose < prevFinalLower) ? basicLower : prevFinalLower;
+
+        // Determine Trend
+        let currentTrend: 1 | -1 = prevTrend;
+        if (prevTrend === 1) {
+            if (close[i] < finalLower) {
+                currentTrend = -1;
+            }
+        } else {
+            if (close[i] > finalUpper) {
+                currentTrend = 1;
+            }
+        }
+
+        direction.push(currentTrend);
+        if (currentTrend === 1) {
+            supertrend.push(finalLower);
+        } else {
+            supertrend.push(finalUpper);
+        }
+
+        prevFinalUpper = finalUpper;
+        prevFinalLower = finalLower;
+        prevTrend = currentTrend;
+    }
+
+    return { supertrend, direction };
+}
+
+export function calculateParabolicSAR(
+    high: number[],
+    low: number[],
+    start: number,
+    increment: number,
+    max: number
+): (number | null)[] {
+    const length = Math.min(high.length, low.length);
+    const sar: (number | null)[] = new Array(length).fill(null);
+
+    if (length < 2) return sar;
+
+    let isUptrend = high[1] > high[0] || (high[1] === high[0] && low[1] >= low[0]);
+    let af = start;
+    let ep = isUptrend ? Math.max(high[0], high[1]) : Math.min(low[0], low[1]);
+
+    sar[1] = isUptrend ? Math.min(low[0], low[1]) : Math.max(high[0], high[1]);
+
+    for (let i = 2; i < length; i++) {
+        const prevSar = sar[i - 1] as number;
+        let currentSar = prevSar + af * (ep - prevSar);
+
+        if (isUptrend) {
+            const minLow = Math.min(low[i - 1], low[i - 2]);
+            if (currentSar > minLow) currentSar = minLow;
+        } else {
+            const maxHigh = Math.max(high[i - 1], high[i - 2]);
+            if (currentSar < maxHigh) currentSar = maxHigh;
+        }
+
+        if (isUptrend) {
+            if (low[i] < currentSar) {
+                isUptrend = false;
+                currentSar = ep;
+                ep = low[i];
+                af = start;
+            } else if (high[i] > ep) {
+                ep = high[i];
+                af = Math.min(max, af + increment);
+            }
+        } else {
+            if (high[i] > currentSar) {
+                isUptrend = true;
+                currentSar = ep;
+                ep = high[i];
+                af = start;
+            } else if (low[i] < ep) {
+                ep = low[i];
+                af = Math.min(max, af + increment);
+            }
+        }
+
+        sar[i] = currentSar;
+    }
+
+    return sar;
+}
+
+export function calculateMomentum(data: number[], period: number): (number | null)[] {
+    const result: (number | null)[] = [];
+    for (let i = 0; i < data.length; i++) {
+        if (i < period) {
+            result.push(null);
+        } else {
+            result.push(data[i] - data[i - period]);
+        }
+    }
+    return result;
+}
+
+

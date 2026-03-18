@@ -121,7 +121,7 @@ Do not introduce new ad hoc time conversion paths unless there is no existing se
 - Update the relevant partial and manager/handler together
 - Run:
   - `npm run typecheck`
-  - `..\..\..\node_modules\.bin\esno feature-dom-contracts.spec.ts`
+  - `..\\..\\..\\node_modules\\.bin\\esno tests\\feature-dom-contracts.spec.ts`
 
 ### Any backtest behavior change
 - Validate:
@@ -172,77 +172,12 @@ Strategy-lib contract notes:
 - If you add `prepareFinderData(...)`, keep `executePrepared(...)` behavior identical to `execute(...)`
 
 Recommended strategy-lib skeleton:
-```ts
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
-import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
+Read `lib/strategies/lib/median_deviation_streak.ts` for a simple implementation or `lib/strategies/lib/vwap_zscore_reversion.ts` for a slightly more complex robust logic.
 
-function normalizeMyStrategyParams(params: StrategyParams): StrategyParams {
-	return {
-		...params,
-		lookback: Math.max(2, Math.round(params.lookback ?? 20)),
-		threshold: Math.max(0, Number(params.threshold ?? 1)),
-	};
-}
-
-export const my_strategy_key: Strategy = {
-	name: "My Strategy Name",
-	description: "One-line thesis.",
-	defaultParams: {
-		lookback: 20,
-		threshold: 1,
-	},
-	paramLabels: {
-		lookback: "Lookback",
-		threshold: "Threshold",
-	},
-	normalizeParams: normalizeMyStrategyParams,
-	execute: (data: OHLCVData[], params: StrategyParams) => {
-		const cleanData = ensureCleanData(data);
-		const normalizedParams = normalizeMyStrategyParams(params);
-		if (cleanData.length < normalizedParams.lookback) return [];
-
-		return createSignalLoop(cleanData, [], (i) => {
-			if (i < normalizedParams.lookback) return null;
-			if (/* bullish condition */) {
-				return createBuySignal(cleanData, i, "My bullish reason");
-			}
-			if (/* bearish condition */) {
-				return createSellSignal(cleanData, i, "My bearish reason");
-			}
-			return null;
-		});
-	},
-	metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["lookback", "threshold"],
-	},
-};
-```
-
-Useful helper map when adding strategies:
-- `lib/strategies/strategy-helpers.ts`
-  - `ensureCleanData`
-  - `createSignalLoop`
-  - `createBuySignal` / `createSellSignal`
-  - `getCloses` / `getHighs` / `getLows` / `getVolumes`
+Useful helper maps:
+- `lib/strategies/strategy-helpers.ts` (Core signals & base OHLCV access)
 - `lib/strategies/lib/price-action-frequency-core.ts`
-  - `getPriceActionBarMetrics`
-  - `buildRollingAverage`
-  - `buildTrailingAverageRange`
-  - `buildTrailingHighLow`
-  - `buildTrailingWindowSpan`
 - `lib/strategies/lib/price-action-statistics-core.ts`
-  - `extractBarMetricSeries`
-  - `buildRollingZScore`
-  - `buildPercentileRank`
-  - `buildRollingStdDev`
-  - `buildRollingSkewness`
-  - `buildStreakCount`
-  - `buildRateOfChange`
-  - `buildEfficiencyRatio`
-  - `buildCumulativeDecaySum`
-  - `buildThresholdCrossingCount`
 
 Useful examples:
 - `lib/strategies/lib/median_deviation_streak.ts`
@@ -352,8 +287,8 @@ Core:
 - `npm run test:e2e`
 
 Useful extras:
-- `..\..\..\node_modules\.bin\esno feature-dom-contracts.spec.ts`
-- `..\..\..\node_modules\.bin\esno pairCombiner.spec.ts`
+- `..\\..\\..\\node_modules\\.bin\\esno tests\\feature-dom-contracts.spec.ts`
+- `..\\..\\..\\node_modules\\.bin\\esno tests\\pairCombiner.spec.ts`
 - `npm run robust:summary -- run-seed-1337.txt run-seed-7331.txt`
 
 ## Current Baseline

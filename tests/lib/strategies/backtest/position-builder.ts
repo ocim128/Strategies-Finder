@@ -1,0 +1,150 @@
+
+import { Signal, type TradeDirection } from '../../types/index';
+import { NormalizedSettings, PositionState } from '../../types/backtest';
+import { allowsSignalAsEntry, applySlippage, directionFactorFor, entrySideForDirection, signalToPositionDirection } from './backtest-utils';
+
+export interface PositionBuilderParams {
+    signal: Signal;
+    barIndex: number;
+    capital: number;
+    initialCapital: number;
+    positionSizePercent: number;
+    commissionRate: number;
+    slippageRate: number;
+    settings: NormalizedSettings;
+    atrArray: (number | null)[];
+    tradeDirection: TradeDirection;
+    sizingMode: 'percent' | 'fixed';
+    fixedTradeAmount: number;
+    effectiveStopLossPercent?: number;
+    enablePercentageStopLoss?: boolean;
+    effectiveTakeProfitPrice?: number | null;
+}
+
+export interface BuiltPosition {
+    nextPosition: PositionState;
+    entryCommission: number;
+}
+
+/**
+ * Constructs a new position based on a signal and current backtest state.
+ * Handles sizing, risk management setup (SL/TP), and commission calculation.
+ */
+export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPosition | null {
+    const {
+        signal,
+        barIndex,
+        capital,
+        positionSizePercent,
+        commissionRate,
+        slippageRate,
+        settings: config,
+        atrArray,
+        tradeDirection,
+        sizingMode,
+        fixedTradeAmount,
+        effectiveStopLossPercent,
+        enablePercentageStopLoss,
+        effectiveTakeProfitPrice,
+    } = params;
+
+    if (!allowsSignalAsEntry(signal.type, tradeDirection)) return null;
+
+    const needsAtr =
+        config.stopLossAtr > 0 ||
+        config.takeProfitAtr > 0 ||
+        config.trailingAtr > 0 ||
+        config.partialTakeProfitAtR > 0 ||
+        config.breakEvenAtR > 0;
+
+    // For next_open entries, the execution bar's high/low are not known at the open.
+    // Seed ATR-based risk from the last fully closed bar instead.
+    const atrBarIndex = config.executionModel === 'next_open' ? barIndex - 1 : barIndex;
+    const atrValue = needsAtr && atrBarIndex >= 0 ? atrArray[atrBarIndex] : null;
+
+    if (needsAtr && (atrValue === null || atrValue === undefined)) return null;
+
+    const allocatedCapital = (sizingMode === 'fixed' && fixedTradeAmount > 0)
+        ? fixedTradeAmount
+        : capital * (positionSizePercent / 100);
+
+    if (!Number.isFinite(allocatedCapital) || allocatedCapital <= 0) return null;
+
+    const tradeValue = allocatedCapital / (1 + commissionRate);
+    const entryCommission = tradeValue * commissionRate;
+    const direction = signalToPositionDirection(signal.type);
+    const directionFactor = directionFactorFor(direction);
+    const entrySide = entrySideForDirection(direction);
+    const entryFillPrice = applySlippage(signal.price, entrySide, slippageRate);
+
+    if (!Number.isFinite(entryFillPrice) || entryFillPrice <= 0 || !Number.isFinite(tradeValue) || tradeValue <= 0) return null;
+
+    const shares = tradeValue / entryFillPrice;
+    if (!Number.isFinite(shares) || shares <= 0) return null;
+
+    const stopLossPrice = (atrValue !== null && atrValue !== undefined)
+        ? (config.stopLossAtr > 0
+            ? entryFillPrice - directionFactor * config.stopLossAtr * atrValue
+            : config.trailingAtr > 0
+                ? entryFillPrice - directionFactor * config.trailingAtr * atrValue
+                : null)
+        : null;
+
+    const takeProfitPrice = (atrValue !== null && atrValue !== undefined && config.takeProfitAtr > 0)
+        ? entryFillPrice + directionFactor * config.takeProfitAtr * atrValue
+        : null;
+
+    let riskPerShare = 0;
+    if (config.riskMode === 'percentage') {
+        const activeStopLossPercent = Math.max(0, effectiveStopLossPercent ?? config.stopLossPercent);
+        const stopLossIsEnabled = enablePercentageStopLoss ?? config.stopLossEnabled;
+        const percentRiskPerShare = activeStopLossPercent > 0
+            ? entryFillPrice * (activeStopLossPercent / 100)
+            : 0;
+        if (stopLossIsEnabled && percentRiskPerShare > 0) {
+            riskPerShare = percentRiskPerShare;
+        }
+    } else if (atrValue !== null && atrValue !== undefined && config.stopLossAtr > 0) {
+        riskPerShare = config.stopLossAtr * atrValue;
+    }
+
+    const partialTargetPrice = (riskPerShare > 0 && config.partialTakeProfitAtR > 0)
+        ? entryFillPrice + directionFactor * riskPerShare * config.partialTakeProfitAtR
+        : null;
+
+    let finalStopLossPrice = stopLossPrice;
+    let finalTakeProfitPrice = takeProfitPrice;
+
+    if (config.riskMode === 'percentage') {
+        const activeStopLossPercent = Math.max(0, effectiveStopLossPercent ?? config.stopLossPercent);
+        const stopLossIsEnabled = enablePercentageStopLoss ?? config.stopLossEnabled;
+        if (stopLossIsEnabled && activeStopLossPercent > 0) {
+            finalStopLossPrice = entryFillPrice * (1 - directionFactor * (activeStopLossPercent / 100));
+        }
+        if (effectiveTakeProfitPrice !== undefined) {
+            finalTakeProfitPrice = effectiveTakeProfitPrice;
+        } else if (config.takeProfitEnabled && config.takeProfitPercent > 0) {
+            finalTakeProfitPrice = entryFillPrice * (1 + directionFactor * (config.takeProfitPercent / 100));
+        }
+    }
+
+    return {
+        nextPosition: {
+            direction,
+            entryTime: signal.time,
+            entryPrice: entryFillPrice,
+            size: shares,
+            entryCommissionPerShare: shares > 0 ? entryCommission / shares : 0,
+            stopLossPrice: finalStopLossPrice,
+            takeProfitPrice: finalTakeProfitPrice,
+            riskPerShare,
+            barsInTrade: 0,
+            extremePrice: entryFillPrice,
+            partialTargetPrice,
+            partialTaken: false,
+            breakEvenApplied: false,
+            realizedPnl: 0,
+        },
+        entryCommission
+    };
+}

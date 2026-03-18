@@ -1,0 +1,99 @@
+import { Strategy, OHLCVData, StrategyParams, Signal } from '../../types/strategies';
+import { createBuySignal, createSellSignal, ensureCleanData, getCloses, getHighs, getLows } from '../strategy-helpers';
+import { calculateATR, calculateDonchianChannels, calculateEMA } from '../indicators';
+
+const LOOKBACK = 1;
+const SHORT_ATR_PERIOD = 7;
+const LONG_ATR_PERIOD = 28;
+
+function clamp(value: number, min: number, max: number): number {
+    if (!Number.isFinite(value)) return min;
+    return Math.max(min, Math.min(max, value));
+}
+
+function clampInt(value: number, min: number, max: number): number {
+    return Math.round(clamp(value, min, max));
+}
+
+function normalizeVolatilityCompressionBreakTrendParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        compressionRatio: clamp(params.compressionRatio ?? 0.7, 0.1, 1.5),
+        emaPeriod: clampInt(params.emaPeriod ?? 100, 5, 300),
+    };
+}
+
+export const volatility_compression_break_trend: Strategy = {
+    name: 'Volatility Compression Break Trend',
+    description: 'Breaks previous bar range after compression, filtered by EMA trend direction. Range lookback is fixed at 1 and ATR buffer is fixed at 0.',
+    defaultParams: {
+        compressionRatio: 0.7,
+        emaPeriod: 100,
+    },
+    paramLabels: {
+        compressionRatio: 'ATR Compression Ratio',
+        emaPeriod: 'EMA Trend Period',
+    },
+    normalizeParams: normalizeVolatilityCompressionBreakTrendParams,
+    execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
+        const cleanData = ensureCleanData(data);
+        if (cleanData.length === 0) return [];
+
+        const compressionRatio = clamp(params.compressionRatio ?? 0.7, 0.1, 1.5);
+        const emaPeriod = clampInt(params.emaPeriod ?? 100, 5, 300);
+
+        const highs = getHighs(cleanData);
+        const lows = getLows(cleanData);
+        const closes = getCloses(cleanData);
+        const atrShort = calculateATR(highs, lows, closes, SHORT_ATR_PERIOD);
+        const atrLong = calculateATR(highs, lows, closes, LONG_ATR_PERIOD);
+        const trendEma = calculateEMA(closes, emaPeriod);
+        const { upper, lower } = calculateDonchianChannels(highs, lows, LOOKBACK);
+
+        const signals: Signal[] = [];
+
+        for (let i = 1; i < cleanData.length; i++) {
+            const atrSPrev = atrShort[i - 1];
+            const atrLPrev = atrLong[i - 1];
+            const trendRef = trendEma[i - 1];
+            const prevUpper = upper[i - 1];
+            const prevLower = lower[i - 1];
+
+            if (
+                atrSPrev === null ||
+                atrLPrev === null ||
+                trendRef === null ||
+                prevUpper === null ||
+                prevLower === null ||
+                atrSPrev <= 0 ||
+                atrLPrev <= 0
+            ) {
+                continue;
+            }
+
+            const compressed = atrSPrev <= atrLPrev * compressionRatio;
+            if (!compressed) continue;
+
+            const prevClose = closes[i - 1];
+            const close = closes[i];
+            const longTrend = close > trendRef;
+            const shortTrend = close < trendRef;
+
+            if (longTrend && prevClose <= prevUpper && close > prevUpper) {
+                signals.push(createBuySignal(cleanData, i, 'VCB Trend Break Up'));
+                continue;
+            }
+
+            if (shortTrend && prevClose >= prevLower && close < prevLower) {
+                signals.push(createSellSignal(cleanData, i, 'VCB Trend Break Down'));
+            }
+        }
+
+        return signals;
+    },
+    metadata: {
+        role: 'entry',
+        direction: 'both',
+        walkForwardParams: ['compressionRatio', 'emaPeriod'],
+    },
+};

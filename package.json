@@ -1,7 +1,7 @@
 {
   "scripts": {
-    "test": "..\\..\\..\\node_modules\\.bin\\esno strategies.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno worker-strategy-support.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno settings-compat.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno finder-cache-decision.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno edge-statistics.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno walk-forward-thresholds.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno walk-forward-permutation.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno parameter-audit.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno feature-dom-contracts.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno portfolio-lab.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno strategy-ensemble.spec.ts",
-    "test:e2e": "..\\..\\..\\node_modules\\.bin\\esno e2e.spec.ts",
+    "test": "..\\..\\..\\node_modules\\.bin\\esno tests\\strategies.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno tests\\worker-strategy-support.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno tests\\settings-compat.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno tests\\finder-cache-decision.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno tests\\edge-statistics.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno tests\\walk-forward-thresholds.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno tests\\walk-forward-permutation.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno tests\\parameter-audit.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno tests\\feature-dom-contracts.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno tests\\portfolio-lab.spec.ts && ..\\..\\..\\node_modules\\.bin\\esno tests\\strategy-ensemble.spec.ts",
+    "test:e2e": "..\\..\\..\\node_modules\\.bin\\esno tests\\e2e.spec.ts",
     "typecheck": "tsc --noEmit",
     "robust:summary": "node scripts/robust-matrix-summary.mjs",
     "robust:report": "node scripts/robust-go-no-go-report.mjs",

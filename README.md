@@ -84,7 +84,7 @@ The important rule is:
 - markup lives in `html-partials/*`
 - binding happens in `lib/handlers/*` and feature managers
 - required structural ids are now defined in `lib/feature-dom-contracts.ts`
-- the smoke test `feature-dom-contracts.spec.ts` fails if a required id disappears from the partials
+- the smoke test `tests/feature-dom-contracts.spec.ts` fails if a required id disappears from the partials
 
 If you rename a UI id, update the partial, the feature DOM contract, and the consuming handler/manager together.
 
@@ -179,6 +179,7 @@ Practical build order:
 5. Add Finder precompute only if profiling justifies it.
 
 Minimal template:
+Read `lib/strategies/lib/median_deviation_streak.ts` for a simple template or `lib/strategies/lib/vwap_zscore_reversion.ts` for WFA-safe pattern.
 ```ts
 import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
@@ -275,7 +276,7 @@ If you change Portfolio Lab logic, verify:
 - breadth/opposition sweeps still use causal same-bar or trailing-lag context only
 - sizing scenarios still render when the target symbol is benchmark-only
 - repeated sweep rows collapse correctly when thresholds stop changing outcomes
-- structural ids stay aligned with `feature-dom-contracts.spec.ts`
+- structural ids stay aligned with `tests/feature-dom-contracts.spec.ts`
 
 ### Work on alerts / subscriptions
 - Read `workers/README.md`
@@ -294,7 +295,7 @@ npm run test:e2e
 
 Useful extras:
 ```bash
-..\..\..\node_modules\.bin\esno pairCombiner.spec.ts
+..\\..\\..\\node_modules\\.bin\\esno tests\\pairCombiner.spec.ts
 npm run robust:summary -- run-seed-1337.txt run-seed-7331.txt
 ```
 

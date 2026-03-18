@@ -1,0 +1,568 @@
+import { BacktestResult, PostEntryPathStats, SnapshotProfileStats, ExitReasonBreakdown } from "../strategies/index";
+import type { EdgeStatistics } from "../types/strategies";
+import { getRequiredElement, updateTextContent, setVisible } from "../dom-utils";
+import type { TwoHourParityBacktestResults } from "../state";
+
+export class ResultsRenderer {
+    public render(result: BacktestResult) {
+        setVisible('emptyResults', false);
+        setVisible('resultsContent', true);
+
+        const isProfit = result.netProfit >= 0;
+        const profitClass = isProfit ? 'positive' : 'negative';
+
+        updateTextContent('netProfit', `${isProfit ? '+' : ''}$${result.netProfit.toFixed(2)}`, `stat-value ${profitClass}`);
+        getRequiredElement('netProfitCard').className = `stat-card ${profitClass}`;
+
+        updateTextContent('netProfitPct', `${isProfit ? '+' : ''}${result.netProfitPercent.toFixed(2)}%`, `stat-value ${profitClass}`);
+        getRequiredElement('netProfitPctCard').className = `stat-card ${profitClass}`;
+
+        const expectancyClass = result.expectancy >= 0 ? 'positive' : 'negative';
+        updateTextContent('expectancy', `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`, `stat-value ${expectancyClass}`);
+
+        const avgTradeClass = result.avgTrade >= 0 ? 'positive' : 'negative';
+        updateTextContent('avgTrade', `${result.avgTrade >= 0 ? '+' : ''}$${result.avgTrade.toFixed(2)}`, `stat-value ${avgTradeClass}`);
+
+        updateTextContent('winRate', `${result.winRate.toFixed(1)}%`, `stat-value ${result.winRate >= 50 ? 'positive' : 'negative'}`);
+
+        const pfText = result.profitFactor === Infinity ? 'INF' : result.profitFactor.toFixed(2);
+        updateTextContent('profitFactor', pfText, `stat-value ${result.profitFactor >= 1 ? 'positive' : 'negative'}`);
+
+        updateTextContent('totalTrades', result.totalTrades.toString());
+        updateTextContent('maxDrawdown', `${result.maxDrawdownPercent.toFixed(2)}%`);
+        updateTextContent('winningTrades', result.winningTrades.toString());
+        updateTextContent('losingTrades', result.losingTrades.toString());
+        updateTextContent('avgWin', `$${result.avgWin.toFixed(2)}`);
+        updateTextContent('avgLoss', `$${result.avgLoss.toFixed(2)}`);
+
+        const sharpeClass = result.sharpeRatio >= 1 ? 'positive' : result.sharpeRatio < 0 ? 'negative' : '';
+        updateTextContent('sharpeRatio', result.sharpeRatio.toFixed(2), `stat-value ${sharpeClass}`);
+
+        this.renderEdgeAnalysis(result.edgeStatistics);
+        this.renderPostEntryPath(result.postEntryPath);
+        this.renderSnapshotProfile(result.postEntryPath?.snapshotProfile);
+        this.renderExitReasonBreakdown(result.postEntryPath?.exitReasonBreakdown);
+
+        const entryStats = result.entryStats;
+        const hasEntryStats = Boolean(entryStats);
+        setVisible('entryStatsTitle', hasEntryStats);
+        setVisible('entryStatsGrid', hasEntryStats, 'grid');
+        setVisible('entryStatsHint', hasEntryStats);
+        setVisible('entryLevels', Boolean(entryStats?.levels?.length));
+
+        if (entryStats) {
+            const useTarget = entryStats.winDefinition === 'target' && (entryStats.targetPct ?? 0) > 0;
+            updateTextContent('entryAvgRetestBarsLabel', useTarget ? 'Avg Target Bars' : 'Avg Retest Bars');
+            updateTextContent('entryAvgRetestsLabel', useTarget ? 'Target %' : 'Avg Retests');
+            updateTextContent('entryLevelsAvgBarsHeader', useTarget ? 'Avg Target Bars' : 'Avg Retest Bars');
+            updateTextContent('entryLevelsAvgRetestsHeader', useTarget ? 'Target %' : 'Avg Retests');
+
+            updateTextContent('entryWinRate', `${entryStats.winRate.toFixed(1)}%`, `stat-value ${entryStats.winRate >= 50 ? 'positive' : 'negative'}`);
+            const avgBars = useTarget ? (entryStats.avgTargetBars ?? entryStats.avgRetestBars) : entryStats.avgRetestBars;
+            updateTextContent('entryAvgRetestBars', avgBars.toFixed(1));
+            if (useTarget) {
+                updateTextContent('entryAvgRetests', `${(entryStats.targetPct ?? 0).toFixed(2)}%`);
+            } else {
+                updateTextContent('entryAvgRetests', entryStats.avgRetests.toFixed(2));
+            }
+            updateTextContent('entryTotalEntries', entryStats.totalEntries.toString());
+
+            const entryMode = this.formatEntryMode(entryStats.entryMode);
+            const retestMode = this.formatEntryMode(entryStats.retestMode);
+
+            const selectedLevel = entryStats.selectedLevel ?? entryStats.levels?.[entryStats.selectedLevelIndex ?? -1]?.level;
+            const selectedLevelText = selectedLevel !== undefined ? this.formatLevel(selectedLevel) : 'n/a';
+            const selectedIndexText = entryStats.selectedLevelIndex !== undefined ? entryStats.selectedLevelIndex.toString() : 'n/a';
+            const displayTouchMode = entryStats.useWick ? 'wick' : `close +/-${entryStats.touchTolerancePct}%`;
+            const winHint = useTarget
+                ? `Win: +${(entryStats.targetPct ?? 0).toFixed(2)}% within ${entryStats.maxBars} bars`
+                : `Win: >=${entryStats.minRetestsForWin} retest(s) within ${entryStats.maxBars} bars`;
+            const retestHint = useTarget ? '' : ` | Retest: ${retestMode}`;
+            const levelHint = `Selected level: ${selectedLevelText} (index ${selectedIndexText}) | ${winHint} | Entry: ${entryMode}${retestHint} | Touch: ${displayTouchMode}`;
+            updateTextContent('entryStatsHint', levelHint);
+
+            const levelsBody = getRequiredElement('entryLevelsBody');
+            const levels = entryStats.levels ?? [];
+            if (levels.length > 0) {
+                levelsBody.innerHTML = levels
+                    .map((stat, index) => {
+                        const rowClass = index === entryStats.selectedLevelIndex ? 'entry-levels-row is-selected' : 'entry-levels-row';
+                        const winClass = stat.winRate >= 50 ? 'positive' : 'negative';
+                        const avgBarsValue = useTarget
+                            ? (stat.avgTargetBars ?? stat.avgRetestBars)
+                            : stat.avgRetestBars;
+                        const tailValue = useTarget
+                            ? `${(entryStats.targetPct ?? 0).toFixed(2)}%`
+                            : stat.avgRetests.toFixed(2);
+                        return `
+                            <div class="${rowClass}">
+                                <div class="entry-levels-cell">${this.formatLevel(stat.level)}</div>
+                                <div class="entry-levels-cell ${winClass}">${stat.winRate.toFixed(1)}%</div>
+                                <div class="entry-levels-cell">${stat.totalEntries}</div>
+                                <div class="entry-levels-cell">${avgBarsValue.toFixed(1)}</div>
+                                <div class="entry-levels-cell">${tailValue}</div>
+                            </div>
+                        `;
+                    })
+                    .join('');
+            } else {
+                levelsBody.innerHTML = '';
+            }
+        }
+    }
+
+    public renderParityComparison(results: TwoHourParityBacktestResults): void {
+        const panel = document.getElementById('parityComparePanel');
+        const grid = document.getElementById('parityCompareGrid');
+        const hint = document.getElementById('parityCompareHint');
+        if (!panel || !grid || !hint) return;
+
+        const renderCard = (label: 'odd' | 'even', result: BacktestResult): string => {
+            const pnlClass = result.netProfit >= 0 ? 'positive' : 'negative';
+            const pfText = result.profitFactor === Infinity ? 'INF' : result.profitFactor.toFixed(2);
+            return `
+                <div class="parity-compare-card ${pnlClass}">
+                    <div class="parity-compare-card-title">${label.toUpperCase()} Close-Hour Universe</div>
+                    <div class="parity-compare-row">
+                        <span>Net Profit</span>
+                        <span class="parity-compare-row-value ${pnlClass}">${result.netProfit >= 0 ? '+' : ''}$${result.netProfit.toFixed(2)}</span>
+                    </div>
+                    <div class="parity-compare-row">
+                        <span>ROI</span>
+                        <span class="parity-compare-row-value ${pnlClass}">${result.netProfitPercent >= 0 ? '+' : ''}${result.netProfitPercent.toFixed(2)}%</span>
+                    </div>
+                    <div class="parity-compare-row">
+                        <span>Win Rate</span>
+                        <span class="parity-compare-row-value">${result.winRate.toFixed(1)}%</span>
+                    </div>
+                    <div class="parity-compare-row">
+                        <span>Profit Factor</span>
+                        <span class="parity-compare-row-value">${pfText}</span>
+                    </div>
+                    <div class="parity-compare-row">
+                        <span>Total Trades</span>
+                        <span class="parity-compare-row-value">${result.totalTrades}</span>
+                    </div>
+                    <div class="parity-compare-row">
+                        <span>Max Drawdown</span>
+                        <span class="parity-compare-row-value">${result.maxDrawdownPercent.toFixed(2)}%</span>
+                    </div>
+                </div>
+            `;
+        };
+
+        grid.innerHTML = `${renderCard('odd', results.odd)}${renderCard('even', results.even)}`;
+
+        const delta = results.even.netProfitPercent - results.odd.netProfitPercent;
+        const better = delta > 0 ? 'even' : delta < 0 ? 'odd' : 'tie';
+        const baselineLabel = results.baseline.toUpperCase();
+        if (better === 'tie') {
+            hint.textContent = `Baseline: ${baselineLabel}. Odd and even produced the same ROI (${results.odd.netProfitPercent.toFixed(2)}%).`;
+        } else {
+            const betterLabel = better.toUpperCase();
+            hint.textContent = `Baseline: ${baselineLabel}. ${betterLabel} outperformed by ${Math.abs(delta).toFixed(2)}% ROI.`;
+        }
+        panel.style.display = 'block';
+    }
+
+    public clearParityComparison(): void {
+        setVisible('parityComparePanel', false);
+        const grid = document.getElementById('parityCompareGrid');
+        if (grid) grid.innerHTML = '';
+        const hint = document.getElementById('parityCompareHint');
+        if (hint) hint.textContent = '';
+    }
+
+    private formatEntryMode(mode: number): string {
+        if (mode === 0) return 'cross';
+        if (mode === 1) return 'close';
+        return 'touch';
+    }
+
+    private formatLevel(level: number): string {
+        return level.toFixed(3).replace(/\.?0+$/, '');
+    }
+
+    private renderPostEntryPath(postEntryPath: PostEntryPathStats | undefined): void {
+        const hasStats = !!postEntryPath
+            && postEntryPath.horizonBars.length > 0
+            && (
+                postEntryPath.win.sampleSizeByBar.some((value) => value > 0)
+                || postEntryPath.lose.sampleSizeByBar.some((value) => value > 0)
+                || postEntryPath.all.sampleSizeByBar.some((value) => value > 0)
+                || postEntryPath.all.avgClosedTradeTimeBars !== null
+            );
+        setVisible('postEntryPathTitle', hasStats);
+        setVisible('postEntryPathContainer', hasStats);
+        if (!hasStats || !postEntryPath) {
+            setVisible('postEntryPathHint', false);
+            return;
+        }
+
+        const container = getRequiredElement('postEntryPathContainer');
+        const sideOrder: Array<'win' | 'lose' | 'all'> = ['win', 'lose', 'all'];
+        const sideLabels: Record<'win' | 'lose' | 'all', string> = {
+            win: 'Win Trades',
+            lose: 'Lose Trades',
+            all: 'All Trades',
+        };
+
+        const barsHeader = postEntryPath.horizonBars
+            .map((bar) => `<div class="post-entry-cell header">Bar +${bar}</div>`)
+            .join('');
+
+        const renderMetricRow = (label: string, values: string[]) => {
+            const cells = values.map((value) => `<div class="post-entry-cell value">${value}</div>`).join('');
+            return `<div class="post-entry-cell metric">${label}</div>${cells}`;
+        };
+
+        container.innerHTML = sideOrder.map((side) => {
+            const stats = postEntryPath[side];
+            const avgClosedBars = this.formatNumber(stats.avgClosedTradeTimeBars, 1);
+            const avgClosedMinutes = this.formatNumber(stats.avgClosedTradeTimeMinutes, 1);
+            const timeSummary = `Avg Closed: ${avgClosedBars} bars | ${avgClosedMinutes}m`;
+
+            const avgMoves = stats.avgSignedMovePctByBar.map((value) => this.formatPercent(value, 2, true));
+            const medMoves = stats.medianSignedMovePctByBar.map((value) => this.formatPercent(value, 2, true));
+            const highMoves = stats.maxSignedMovePctByBar.map((value) => this.formatPercent(value, 2, true));
+            const lowMoves = stats.minSignedMovePctByBar.map((value) => this.formatPercent(value, 2, true));
+            const winRates = stats.positiveRatePctByBar.map((value) => this.formatPercent(value, 1));
+            const samples = stats.sampleSizeByBar.map((value) => value.toString());
+
+            return `
+                <div class="post-entry-side">
+                    <div class="post-entry-side-header">
+                        <div class="post-entry-side-title">${sideLabels[side]}</div>
+                        <div class="post-entry-side-time">${timeSummary}</div>
+                    </div>
+                    <div class="post-entry-grid-shell">
+                        <div class="post-entry-grid">
+                            <div class="post-entry-cell header">Metric</div>
+                            ${barsHeader}
+                            ${renderMetricRow('Avg Move %', avgMoves)}
+                            ${renderMetricRow('Median %', medMoves)}
+                            ${renderMetricRow('Highest %', highMoves)}
+                            ${renderMetricRow('Lowest %', lowMoves)}
+                            ${renderMetricRow('Positive %', winRates)}
+                            ${renderMetricRow('Samples', samples)}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        const openTrade = postEntryPath.openTradeProbability;
+        const hasOpenTrade = openTrade.hasOpenTrade;
+        setVisible('postEntryPathHint', hasOpenTrade);
+        if (hasOpenTrade) {
+            const hint = getRequiredElement('postEntryPathHint');
+            const tradeType = openTrade.tradeType ? openTrade.tradeType.toUpperCase() : 'N/A';
+            const moveText = this.formatPercent(openTrade.signedMovePct, 2, true);
+            const basisText = openTrade.basisBar === null ? 'n/a' : `+${openTrade.basisBar}`;
+            const barsHeldText = openTrade.barsHeld === null ? 'n/a' : openTrade.barsHeld.toString();
+            const winText = this.formatPercent(openTrade.winProbabilityPct, 1);
+            const loseText = this.formatPercent(openTrade.loseProbabilityPct, 1);
+
+            if (openTrade.winProbabilityPct === null || openTrade.loseProbabilityPct === null) {
+                hint.textContent = `Open trade (${tradeType}, EOD) detected. Not enough historical samples to estimate win/lose probability yet.`;
+            } else {
+                hint.textContent = `Open trade (${tradeType}, EOD): held ${barsHeldText} bars | basis bar ${basisText} move ${moveText} | Estimated Win ${winText} / Lose ${loseText} (matched ${openTrade.matchedSampleSize} of ${openTrade.sampleSize} historical trades).`;
+            }
+        }
+    }
+
+    // ── Snapshot Profile: Win vs Lose indicator averages ──
+
+    private renderSnapshotProfile(profile: SnapshotProfileStats | undefined): void {
+        const hasProfile = !!profile && profile.rows.length > 0;
+        setVisible('snapshotProfileTitle', hasProfile);
+        setVisible('snapshotProfileContainer', hasProfile);
+        if (!hasProfile || !profile) return;
+
+        const container = getRequiredElement('snapshotProfileContainer');
+
+        const headerRow = `
+            <div class="snapshot-profile-cell header">Indicator</div>
+            <div class="snapshot-profile-cell header right">Win Avg</div>
+            <div class="snapshot-profile-cell header right">Lose Avg</div>
+            <div class="snapshot-profile-cell header right">Delta</div>
+            <div class="snapshot-profile-cell header right">Edge</div>
+        `;
+
+        const dataRows = profile.rows.map((row) => {
+            const winText = this.formatNumber(row.winAvg, 2);
+            const loseText = this.formatNumber(row.loseAvg, 2);
+            const deltaText = row.delta !== null
+                ? `${row.delta >= 0 ? '+' : ''}${row.delta.toFixed(2)}`
+                : '--';
+            const deltaClass = row.delta !== null
+                ? (row.delta >= 0 ? 'positive' : 'negative')
+                : '';
+
+            let edgeIcon = '--';
+            let edgeClass = '';
+            if (row.significance !== null) {
+                if (row.significance >= 0.5) {
+                    edgeIcon = '✅';
+                    edgeClass = 'edge-strong';
+                } else if (row.significance >= 0.25) {
+                    edgeIcon = '⚠️';
+                    edgeClass = 'edge-weak';
+                } else {
+                    edgeIcon = '—';
+                    edgeClass = 'edge-none';
+                }
+            }
+
+            return `
+                <div class="snapshot-profile-cell metric">${row.label}</div>
+                <div class="snapshot-profile-cell value right">${winText}</div>
+                <div class="snapshot-profile-cell value right">${loseText}</div>
+                <div class="snapshot-profile-cell value right ${deltaClass}">${deltaText}</div>
+                <div class="snapshot-profile-cell value right ${edgeClass}">${edgeIcon}</div>
+            `;
+        }).join('');
+
+        const sampleHint = `Win: ${profile.winSampleSize} trades | Lose: ${profile.loseSampleSize} trades`;
+
+        container.innerHTML = `
+            <div class="snapshot-profile-hint">${sampleHint}</div>
+            <div class="snapshot-profile-grid-shell">
+                <div class="snapshot-profile-grid">
+                    ${headerRow}
+                    ${dataRows}
+                </div>
+            </div>
+        `;
+    }
+
+    // ── Exit Reason Breakdown ──
+
+    private renderExitReasonBreakdown(breakdown: ExitReasonBreakdown | undefined): void {
+        const hasBreakdown = !!breakdown && breakdown.rows.length > 0;
+        setVisible('exitReasonTitle', hasBreakdown);
+        setVisible('exitReasonContainer', hasBreakdown);
+        if (!hasBreakdown || !breakdown) return;
+
+        const container = getRequiredElement('exitReasonContainer');
+
+        const headerRow = `
+            <div class="exit-reason-cell header">Exit Reason</div>
+            <div class="exit-reason-cell header right">Win #</div>
+            <div class="exit-reason-cell header right">Win %</div>
+            <div class="exit-reason-cell header right">Lose #</div>
+            <div class="exit-reason-cell header right">Lose %</div>
+            <div class="exit-reason-cell header right">Total</div>
+        `;
+
+        const dataRows = breakdown.rows.map((row) => {
+            return `
+                <div class="exit-reason-cell metric">${row.reason}</div>
+                <div class="exit-reason-cell value right positive">${row.winCount}</div>
+                <div class="exit-reason-cell value right">${row.winPct.toFixed(1)}%</div>
+                <div class="exit-reason-cell value right negative">${row.loseCount}</div>
+                <div class="exit-reason-cell value right">${row.losePct.toFixed(1)}%</div>
+                <div class="exit-reason-cell value right">${row.totalCount}</div>
+            `;
+        }).join('');
+
+        container.innerHTML = `
+            <div class="exit-reason-grid-shell">
+                <div class="exit-reason-grid">
+                    ${headerRow}
+                    ${dataRows}
+                </div>
+            </div>
+        `;
+    }
+
+    // ── Edge Analysis ──
+
+    private renderEdgeAnalysis(edge: EdgeStatistics | undefined): void {
+        const hasEdge = !!edge;
+        setVisible('edgeAnalysisTitle', hasEdge);
+        setVisible('edgeAnalysisContainer', hasEdge);
+        if (!hasEdge || !edge) return;
+
+        const container = getRequiredElement('edgeAnalysisContainer');
+
+        // ── Verdict Badge ──
+        const verdictColors: Record<string, string> = {
+            strong: 'edge-verdict-strong',
+            moderate: 'edge-verdict-moderate',
+            weak: 'edge-verdict-weak',
+            none: 'edge-verdict-none',
+        };
+        const verdictLabels: Record<string, string> = {
+            strong: '🟢 Strong Edge',
+            moderate: '🟡 Moderate Edge',
+            weak: '🟠 Weak Edge',
+            none: '🔴 No Edge',
+        };
+        const verdictClass = verdictColors[edge.verdict] ?? 'edge-verdict-none';
+        const verdictLabel = verdictLabels[edge.verdict] ?? 'Unknown';
+
+        // ── Edge Ratio Table ──
+        const edgeRatioRows = edge.edgeRatios.map(er => {
+            const erClass = er.edgeRatio >= 1.5 ? 'positive' : er.edgeRatio >= 1.0 ? '' : 'negative';
+            return `
+                <div class="edge-ratio-cell value">${er.bars} bars</div>
+                <div class="edge-ratio-cell value right">${er.avgMFE.toFixed(3)}%</div>
+                <div class="edge-ratio-cell value right">${er.avgMAE.toFixed(3)}%</div>
+                <div class="edge-ratio-cell value right ${erClass}">${er.edgeRatio.toFixed(2)}</div>
+                <div class="edge-ratio-cell value right">${er.sampleSize}</div>
+            `;
+        }).join('');
+
+        const compositeClass = edge.compositeEdgeRatio >= 1.5 ? 'positive'
+            : edge.compositeEdgeRatio >= 1.0 ? '' : 'negative';
+
+        // ── T-Test Card ──
+        const t = edge.tTest;
+        const pClass = t.isSignificant ? 'positive' : 'negative';
+        const confLabel = {
+            very_high: '★★★ Very High (p < 0.01)',
+            high: '★★ High (p < 0.05)',
+            moderate: '★ Moderate (p < 0.10)',
+            low: '— Low (p ≥ 0.10)',
+        }[t.confidence];
+        const pDisplay = t.pValue < 0.001 ? t.pValue.toExponential(2) : t.pValue.toFixed(4);
+        const tStatisticDisplay = Number.isFinite(t.tStatistic)
+            ? t.tStatistic.toFixed(3)
+            : (t.tStatistic > 0 ? 'INF' : '-INF');
+
+        // ── Streak Card ──
+        const s = edge.streaks;
+        const clusterLabel = s.hasWinRegimeClustering
+            ? '<span class="positive">✅ Win-side clustering detected</span>'
+            : s.hasLossRegimeClustering
+                ? '<span class="negative">⚠ Loss-side clustering detected</span>'
+                : '<span class="edge-none">— Random-like streak patterns</span>';
+
+        container.innerHTML = `
+            <div class="edge-verdict-banner ${verdictClass}">
+                <div class="edge-verdict-label">${verdictLabel}</div>
+                <div class="edge-verdict-summary">${edge.summary}</div>
+            </div>
+
+            <div class="edge-subsection">
+                <div class="edge-subsection-title">Edge Ratio (Entry Quality Proof)</div>
+                <div class="edge-subsection-desc">Measures MFE vs MAE: how far price moves <em>for</em> you vs <em>against</em> you. Exit-independent.</div>
+                <div class="edge-ratio-grid-shell">
+                    <div class="edge-ratio-grid">
+                        <div class="edge-ratio-cell header">Horizon</div>
+                        <div class="edge-ratio-cell header right">Avg MFE %</div>
+                        <div class="edge-ratio-cell header right">Avg MAE %</div>
+                        <div class="edge-ratio-cell header right">Edge Ratio</div>
+                        <div class="edge-ratio-cell header right">Samples</div>
+                        ${edgeRatioRows}
+                    </div>
+                </div>
+                <div class="edge-composite">Composite Edge Ratio: <span class="${compositeClass}">${edge.compositeEdgeRatio.toFixed(2)}</span> <span class="edge-composite-hint">(> 1.0 = edge, > 1.5 = strong)</span></div>
+            </div>
+
+            <div class="edge-subsection">
+                <div class="edge-subsection-title">T-Test on Returns (Statistical Significance)</div>
+                <div class="edge-subsection-desc">Tests H₀: μ=0 (no edge). Low p-value = high confidence the returns are not random luck.</div>
+                <div class="edge-ttest-grid">
+                    <div class="edge-ttest-item">
+                        <div class="edge-ttest-label">Mean Return</div>
+                        <div class="edge-ttest-value ${t.meanReturn >= 0 ? 'positive' : 'negative'}">${t.meanReturn >= 0 ? '+' : ''}${t.meanReturn.toFixed(4)}%</div>
+                    </div>
+                    <div class="edge-ttest-item">
+                        <div class="edge-ttest-label">T-Statistic</div>
+                        <div class="edge-ttest-value">${tStatisticDisplay}</div>
+                    </div>
+                    <div class="edge-ttest-item">
+                        <div class="edge-ttest-label">P-Value</div>
+                        <div class="edge-ttest-value ${pClass}">${pDisplay}</div>
+                    </div>
+                    <div class="edge-ttest-item">
+                        <div class="edge-ttest-label">Confidence</div>
+                        <div class="edge-ttest-value">${confLabel}</div>
+                    </div>
+                    <div class="edge-ttest-item">
+                        <div class="edge-ttest-label">Samples</div>
+                        <div class="edge-ttest-value">${t.sampleSize} (df=${t.degreesOfFreedom})</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="edge-subsection">
+                <div class="edge-subsection-title">Streak Analysis (Regime Detection)</div>
+                <div class="edge-subsection-desc">Compares actual win/loss streak patterns to random Bernoulli expectations.</div>
+                <div class="edge-streak-grid">
+                    <div class="edge-streak-item">
+                        <div class="edge-streak-label">Max Win Streak</div>
+                        <div class="edge-streak-value">${s.maxWinStreak} <span class="edge-streak-expected">(expected: ${s.expectedMaxWinStreak.toFixed(1)})</span></div>
+                    </div>
+                    <div class="edge-streak-item">
+                        <div class="edge-streak-label">Max Loss Streak</div>
+                        <div class="edge-streak-value">${s.maxLossStreak} <span class="edge-streak-expected">(expected: ${s.expectedMaxLossStreak.toFixed(1)})</span></div>
+                    </div>
+                    <div class="edge-streak-item">
+                        <div class="edge-streak-label">Avg Win Streak</div>
+                        <div class="edge-streak-value">${s.avgWinStreak.toFixed(2)}</div>
+                    </div>
+                    <div class="edge-streak-item">
+                        <div class="edge-streak-label">Avg Loss Streak</div>
+                        <div class="edge-streak-value">${s.avgLossStreak.toFixed(2)}</div>
+                    </div>
+                    <div class="edge-streak-item">
+                        <div class="edge-streak-label">Win Streak Z-Score</div>
+                        <div class="edge-streak-value">${s.winStreakZScore.toFixed(2)}</div>
+                    </div>
+                    <div class="edge-streak-item">
+                        <div class="edge-streak-label">Loss Streak Z-Score</div>
+                        <div class="edge-streak-value">${s.lossStreakZScore.toFixed(2)}</div>
+                    </div>
+                    <div class="edge-streak-item full-width">
+                        <div class="edge-streak-label">Regime Clustering</div>
+                        <div class="edge-streak-value">${clusterLabel}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    private formatPercent(value: number | null, decimals: number, signed = false): string {
+        if (value === null || !Number.isFinite(value)) return '--';
+        const prefix = signed && value > 0 ? '+' : '';
+        return `${prefix}${value.toFixed(decimals)}%`;
+    }
+
+    private formatNumber(value: number | null, decimals: number): string {
+        if (value === null || !Number.isFinite(value)) return '--';
+        return value.toFixed(decimals);
+    }
+
+    public clear() {
+        setVisible('emptyResults', true);
+        setVisible('resultsContent', false);
+        this.clearParityComparison();
+        setVisible('postEntryPathTitle', false);
+        setVisible('postEntryPathContainer', false);
+        setVisible('postEntryPathHint', false);
+        const container = document.getElementById('postEntryPathContainer');
+        if (container) container.innerHTML = '';
+        const hint = document.getElementById('postEntryPathHint');
+        if (hint) hint.textContent = '';
+
+        setVisible('snapshotProfileTitle', false);
+        setVisible('snapshotProfileContainer', false);
+        const profileContainer = document.getElementById('snapshotProfileContainer');
+        if (profileContainer) profileContainer.innerHTML = '';
+
+        setVisible('exitReasonTitle', false);
+        setVisible('exitReasonContainer', false);
+        const exitContainer = document.getElementById('exitReasonContainer');
+        if (exitContainer) exitContainer.innerHTML = '';
+
+        setVisible('edgeAnalysisTitle', false);
+        setVisible('edgeAnalysisContainer', false);
+        const edgeContainer = document.getElementById('edgeAnalysisContainer');
+        if (edgeContainer) edgeContainer.innerHTML = '';
+    }
+}
+
+export const resultsRenderer = new ResultsRenderer();
