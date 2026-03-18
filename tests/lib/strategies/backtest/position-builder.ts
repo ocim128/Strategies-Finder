@@ -9,6 +9,8 @@ import {
 import { allowsSignalAsEntry, applySlippage, directionFactorFor, entrySideForDirection, signalToPositionDirection } from './backtest-utils';
 const VELOCITY_MEMORY_MIN_MULTIPLIER = 0.75;
 const VELOCITY_MEMORY_MAX_MULTIPLIER = 1.2;
+const QUALITY_X_VELOCITY_MIN_MULTIPLIER = 0.72;
+const QUALITY_X_VELOCITY_MAX_MULTIPLIER = 1.28;
 
 export interface SmartSizingState {
     recentVelocityScores: number[];
@@ -44,30 +46,135 @@ function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
 }
 
+function average(values: number[]): number {
+    if (values.length === 0) return 0;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
 function resolveVelocityMemoryMultiplier(smartSizingState?: SmartSizingState): number {
     if (!smartSizingState || smartSizingState.recentVelocityScores.length === 0) {
         return 1;
     }
 
-    const recentScores = smartSizingState.recentVelocityScores;
-    const avgScore = recentScores.reduce((sum, value) => sum + value, 0) / recentScores.length;
+    const avgScore = average(smartSizingState.recentVelocityScores);
     const multiplier = 1 + avgScore * 0.2;
     return clamp(multiplier, VELOCITY_MEMORY_MIN_MULTIPLIER, VELOCITY_MEMORY_MAX_MULTIPLIER);
+}
+
+function computeDirectionalCloseLocation(candle: OHLCVData, direction: 'long' | 'short'): number {
+    const range = candle.high - candle.low;
+    if (!Number.isFinite(range) || range <= 0) return 0.5;
+    const location = direction === 'short'
+        ? (candle.high - candle.close) / range
+        : (candle.close - candle.low) / range;
+    return clamp(location, 0, 1);
+}
+
+function computeOppositeWickPenalty(candle: OHLCVData, direction: 'long' | 'short'): number {
+    const range = candle.high - candle.low;
+    if (!Number.isFinite(range) || range <= 0) return 0.5;
+
+    const bodyTop = Math.max(candle.open, candle.close);
+    const bodyBottom = Math.min(candle.open, candle.close);
+    const oppositeWick = direction === 'short'
+        ? Math.max(0, bodyBottom - candle.low)
+        : Math.max(0, candle.high - bodyTop);
+    return clamp(oppositeWick / range, 0, 1);
+}
+
+function computeRelativeVolume(volumeSeries: number[], barIndex: number): number {
+    const start = Math.max(0, barIndex - 19);
+    let sum = 0;
+    let count = 0;
+    for (let i = start; i <= barIndex; i++) {
+        const value = volumeSeries[i];
+        if (!Number.isFinite(value) || value <= 0) continue;
+        sum += value;
+        count += 1;
+    }
+    if (count === 0) return 1;
+    const avgVolume = sum / count;
+    const currentVolume = volumeSeries[barIndex];
+    if (!Number.isFinite(currentVolume) || currentVolume <= 0 || avgVolume <= 0) return 1;
+    return clamp(currentVolume / avgVolume, 0.5, 2);
+}
+
+function computeEntryQualityScore(
+    data: OHLCVData[],
+    volumeSeries: number[],
+    sizingBarIndex: number,
+    direction: 'long' | 'short',
+    atrValue: number | null
+): number {
+    const candle = data[sizingBarIndex];
+    if (!candle) return 0.5;
+
+    const range = Math.max(candle.high - candle.low, 0);
+    const bodyPercent = range > 0 ? Math.abs(candle.close - candle.open) / range : 0;
+    const directionalClose = computeDirectionalCloseLocation(candle, direction);
+    const oppositeWickPenalty = computeOppositeWickPenalty(candle, direction);
+    const relativeVolume = computeRelativeVolume(volumeSeries, sizingBarIndex);
+    const volumeScore = clamp((relativeVolume - 0.75) / 0.85, 0, 1);
+    const atrRangeScore = atrValue && atrValue > 0
+        ? clamp((range / atrValue) / 1.8, 0, 1)
+        : 0.5;
+    const previousClose = sizingBarIndex > 0 ? data[sizingBarIndex - 1]?.close ?? candle.close : candle.close;
+    const momentumScore = direction === 'short'
+        ? (candle.close <= previousClose ? 1 : 0.2)
+        : (candle.close >= previousClose ? 1 : 0.2);
+
+    return clamp(
+        bodyPercent * 0.2
+        + directionalClose * 0.28
+        + (1 - oppositeWickPenalty) * 0.16
+        + volumeScore * 0.16
+        + atrRangeScore * 0.1
+        + momentumScore * 0.1,
+        0,
+        1
+    );
+}
+
+function resolveQualityVelocityMultiplier(
+    smartSizingState: SmartSizingState | undefined,
+    data: OHLCVData[],
+    volumeSeries: number[],
+    sizingBarIndex: number,
+    direction: 'long' | 'short',
+    atrValue: number | null
+): number {
+    const velocityMultiplier = resolveVelocityMemoryMultiplier(smartSizingState);
+    const entryQualityScore = computeEntryQualityScore(data, volumeSeries, sizingBarIndex, direction, atrValue);
+    const qualityMultiplier = 0.88 + entryQualityScore * 0.24;
+    return clamp(
+        velocityMultiplier * qualityMultiplier,
+        QUALITY_X_VELOCITY_MIN_MULTIPLIER,
+        QUALITY_X_VELOCITY_MAX_MULTIPLIER
+    );
 }
 
 function resolveSizingMultiplier(
     sizingMode: TradeSizingMode,
     smartSizingState: SmartSizingState | undefined,
-    _data: OHLCVData[],
-    _volumeSeries: number[],
-    _sizingBarIndex: number,
-    _direction: 'long' | 'short',
+    data: OHLCVData[],
+    volumeSeries: number[],
+    sizingBarIndex: number,
+    direction: 'long' | 'short',
     _triggerPrice: number | null,
-    _atrValue: number | null
+    atrValue: number | null
 ): number {
     switch (sizingMode) {
         case 'smart_fixed_velocity_memory':
             return resolveVelocityMemoryMultiplier(smartSizingState);
+        case 'smart_fixed_quality_x_velocity':
+            return resolveQualityVelocityMultiplier(
+                smartSizingState,
+                data,
+                volumeSeries,
+                sizingBarIndex,
+                direction,
+                atrValue
+            );
         default:
             return 1;
     }

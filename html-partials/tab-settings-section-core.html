@@ -439,8 +439,9 @@
                     <select class="param-input" id="tradeSizingMode">
                         <option value="fixed" selected>Fixed Amount</option>
                         <option value="smart_fixed_velocity_memory">Smart Fixed Velocity Memory</option>
+                        <option value="smart_fixed_quality_x_velocity">Smart Fixed Quality x Velocity</option>
                     </select>
-                    <div class="param-hint">Keeps the $1000 base amount, then adjusts it from how quickly recent winning and losing trades reached profit.</div>
+                    <div class="param-hint">Keeps the $1000 base amount, then adjusts it from recent trade path quality. Entries and exits stay the same; only the deployed dollar size changes.</div>
                 </div>
             </div>
 

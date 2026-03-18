@@ -1739,6 +1739,39 @@ describe('Backtesting Engine', () => {
         expect(velocity!.nextPosition.size).to.be.closeTo(9, 1e-6);
     });
 
+    it('smart_fixed_quality_x_velocity should boost strong entry quality on top of good recent velocity', () => {
+        const config = normalizeBacktestSettings({ riskMode: 'simple', executionModel: 'signal_close' });
+        const signal: Signal = { time: '2023-01-02' as Time, type: 'buy', price: 100 };
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 99, volume: 100 },
+            { time: '2023-01-02' as Time, open: 99, high: 103, low: 98, close: 102.8, volume: 300 },
+        ];
+        const volumeSeries = data.map((candle) => candle.volume);
+
+        const qualityVelocity = buildPositionFromSignal({
+            signal,
+            barIndex: 1,
+            capital: 10000,
+            initialCapital: 10000,
+            positionSizePercent: 100,
+            commissionRate: 0,
+            slippageRate: 0,
+            settings: config,
+            data,
+            volumeSeries,
+            atrArray: [2, 2],
+            tradeDirection: 'long',
+            sizingMode: 'smart_fixed_quality_x_velocity',
+            fixedTradeAmount: 1000,
+            smartSizingState: {
+                recentVelocityScores: [1, 0.8, 0.6],
+            },
+        });
+
+        expect(qualityVelocity).to.not.equal(null);
+        expect(qualityVelocity!.nextPosition.size).to.be.closeTo(12.75695, 1e-4);
+    });
+
     it('should keep trade pnlPercent fee-aware', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },

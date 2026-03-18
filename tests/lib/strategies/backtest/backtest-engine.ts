@@ -137,7 +137,7 @@ type SmartSizingState = {
     recentVelocityScores: number[];
 };
 
-type VelocitySizingPositionState = {
+type SmartSizingPositionState = {
     initialTargetPercent: number | null;
     fastProgressHit: boolean;
 };
@@ -244,18 +244,16 @@ function createSmartSizingState(_initialCapital: number): SmartSizingState {
     };
 }
 
-function updateSmartSizingState(
-    state: SmartSizingState,
-    _tradePnl: number,
-    _closedCapital: number,
-    velocityScore: number | null
-): void {
-    if (velocityScore !== null && Number.isFinite(velocityScore)) {
-        state.recentVelocityScores.push(velocityScore);
-        if (state.recentVelocityScores.length > 12) {
-            state.recentVelocityScores.shift();
-        }
+function pushRollingScore(target: number[], score: number | null, maxLength = 12): void {
+    if (score === null || !Number.isFinite(score)) return;
+    target.push(score);
+    if (target.length > maxLength) {
+        target.shift();
     }
+}
+
+function updateSmartSizingState(state: SmartSizingState, velocityScore: number | null): void {
+    pushRollingScore(state.recentVelocityScores, velocityScore);
 }
 
 function resolveInitialTargetPercent(position: PositionState): number | null {
@@ -264,30 +262,31 @@ function resolveInitialTargetPercent(position: PositionState): number | null {
     return Math.abs(((position.takeProfitPrice - position.entryPrice) / position.entryPrice) * 100);
 }
 
-function createVelocitySizingState(): WeakMap<PositionState, VelocitySizingPositionState> {
-    return new WeakMap<PositionState, VelocitySizingPositionState>();
+function createSmartSizingPositionState(): WeakMap<PositionState, SmartSizingPositionState> {
+    return new WeakMap<PositionState, SmartSizingPositionState>();
 }
 
-function registerVelocitySizingPosition(
-    velocitySizingState: WeakMap<PositionState, VelocitySizingPositionState>,
+function registerSmartSizingPosition(
+    smartSizingPositionState: WeakMap<PositionState, SmartSizingPositionState>,
     position: PositionState
 ): void {
-    velocitySizingState.set(position, {
+    smartSizingPositionState.set(position, {
         initialTargetPercent: resolveInitialTargetPercent(position),
         fastProgressHit: false,
     });
 }
 
-function updateVelocitySizingPosition(
+function updateSmartSizingPosition(
     config: NormalizedSettings,
-    velocitySizingState: WeakMap<PositionState, VelocitySizingPositionState>,
+    smartSizingPositionState: WeakMap<PositionState, SmartSizingPositionState>,
     position: PositionState,
     candle: OHLCVData
 ): void {
-    const state = velocitySizingState.get(position);
-    if (!state || state.fastProgressHit) return;
-    if (state.initialTargetPercent === null || state.initialTargetPercent <= 0) return;
-    if (position.barsInTrade > config.takeProfitVelocityFastBars) return;
+    const state = smartSizingPositionState.get(position);
+    if (!state) return;
+
+    const fastWindow = Math.max(1, config.takeProfitVelocityFastBars);
+    if (state.fastProgressHit || state.initialTargetPercent === null || state.initialTargetPercent <= 0 || position.barsInTrade > fastWindow) return;
 
     const favorablePrice = position.direction === 'short'
         ? Math.min(position.extremePrice, candle.low)
@@ -300,11 +299,11 @@ function updateVelocitySizingPosition(
 }
 
 function resolveVelocitySizingScore(
-    velocitySizingState: WeakMap<PositionState, VelocitySizingPositionState>,
+    smartSizingPositionState: WeakMap<PositionState, SmartSizingPositionState>,
     position: PositionState
 ): number | null {
-    const state = velocitySizingState.get(position);
-    velocitySizingState.delete(position);
+    const state = smartSizingPositionState.get(position);
+    smartSizingPositionState.delete(position);
     if (!state || state.initialTargetPercent === null || state.initialTargetPercent <= 0) {
         return null;
     }
@@ -603,7 +602,7 @@ export function runBacktestCompact(
     const winStreakRisk = createWinStreakRiskState();
     const flipLossDirection = createFlipLossDirectionState();
     const smartSizingState = createSmartSizingState(initialCapital);
-    const velocitySizingState = createVelocitySizingState();
+    const smartSizingPositionState = createSmartSizingPositionState();
     const warmUpEnabled = config.warmUpEntryEnabled;
     let pendingEntry: Signal | null = null;
     const adaptiveTakeProfitState = createAdaptiveTakeProfitState(data, config, indicatorSeries, initialCapital);
@@ -629,12 +628,7 @@ export function runBacktestCompact(
         queueAdaptiveTakeProfitUpdate(position, exitPrice, exitReason, candle, capital);
         updateWinStreakRiskState(winStreakRisk, position.realizedPnl);
         updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, position.direction, position.realizedPnl);
-        updateSmartSizingState(
-            smartSizingState,
-            position.realizedPnl,
-            capital,
-            resolveVelocitySizingScore(velocitySizingState, position)
-        );
+        updateSmartSizingState(smartSizingState, resolveVelocitySizingScore(smartSizingPositionState, position));
     };
 
     const flushAdaptiveTakeProfitUpdates = () => {
@@ -689,7 +683,7 @@ export function runBacktestCompact(
     };
 
     const tryProcessExitsAfterEntry = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
-        updateVelocitySizingPosition(config, velocitySizingState, pos, candle);
+        updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
         processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
             recordExit(pos, exitPrice, exitSize);
             if (positions.indexOf(pos) < 0) {
@@ -734,7 +728,7 @@ export function runBacktestCompact(
         for (let p = positions.length - 1; p >= 0; p--) {
             const pos = positions[p];
             pos.barsInTrade += 1;
-            updateVelocitySizingPosition(config, velocitySizingState, pos, candle);
+            updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
             processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
                 recordExit(pos, exitPrice, exitSize);
                 if (positions.indexOf(pos) < 0) {
@@ -778,7 +772,7 @@ export function runBacktestCompact(
                 });
                 if (opened) {
                     positions.push(opened.nextPosition);
-                    registerVelocitySizingPosition(velocitySizingState, opened.nextPosition);
+                    registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
                     registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
                     if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                         flipLossDirection.activeDirection = opened.nextPosition.direction;
@@ -833,7 +827,7 @@ export function runBacktestCompact(
                     });
                     if (opened) {
                         positions.push(opened.nextPosition);
-                        registerVelocitySizingPosition(velocitySizingState, opened.nextPosition);
+                        registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
                         registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
                         if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                             flipLossDirection.activeDirection = opened.nextPosition.direction;
@@ -894,7 +888,7 @@ export function runBacktestCompact(
                         });
                         if (opened) {
                             positions.push(opened.nextPosition);
-                            registerVelocitySizingPosition(velocitySizingState, opened.nextPosition);
+                            registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
                             registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
                             if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                                 flipLossDirection.activeDirection = opened.nextPosition.direction;
@@ -1002,7 +996,7 @@ export function runBacktest(
     const winStreakRisk = createWinStreakRiskState();
     const flipLossDirection = createFlipLossDirectionState();
     const smartSizingState = createSmartSizingState(initialCapital);
-    const velocitySizingState = createVelocitySizingState();
+    const smartSizingPositionState = createSmartSizingPositionState();
     const warmUpEnabled = config.warmUpEntryEnabled;
     let pendingEntry: Signal | null = null;
     const adaptiveTakeProfitState = createAdaptiveTakeProfitState(data, config, indicatorSeries, initialCapital);
@@ -1028,12 +1022,7 @@ export function runBacktest(
         queueAdaptiveTakeProfitUpdate(position, exitPrice, exitReason, candle, capital);
         updateWinStreakRiskState(winStreakRisk, position.realizedPnl);
         updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, position.direction, position.realizedPnl);
-        updateSmartSizingState(
-            smartSizingState,
-            position.realizedPnl,
-            capital,
-            resolveVelocitySizingScore(velocitySizingState, position)
-        );
+        updateSmartSizingState(smartSizingState, resolveVelocitySizingScore(smartSizingPositionState, position));
     };
 
     const flushAdaptiveTakeProfitUpdates = () => {
@@ -1096,7 +1085,7 @@ export function runBacktest(
     };
 
     const tryProcessExitsAfterEntryFull = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
-        updateVelocitySizingPosition(config, velocitySizingState, pos, candle);
+        updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
         processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
             recordExitFull(pos, candle, exitPrice, exitSize, reason);
             if (positions.indexOf(pos) < 0) {
@@ -1141,7 +1130,7 @@ export function runBacktest(
         for (let p = positions.length - 1; p >= 0; p--) {
             const pos = positions[p];
             pos.barsInTrade += 1;
-            updateVelocitySizingPosition(config, velocitySizingState, pos, candle);
+            updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
             processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
                 recordExitFull(pos, candle, exitPrice, exitSize, reason);
                 if (positions.indexOf(pos) < 0) {
@@ -1185,7 +1174,7 @@ export function runBacktest(
                 });
                 if (opened) {
                     positions.push(opened.nextPosition);
-                    registerVelocitySizingPosition(velocitySizingState, opened.nextPosition);
+                    registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
                     registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
                     opened.nextPosition.warmUpEntry = true;
                     if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
@@ -1241,7 +1230,7 @@ export function runBacktest(
                     });
                     if (opened) {
                         positions.push(opened.nextPosition);
-                        registerVelocitySizingPosition(velocitySizingState, opened.nextPosition);
+                        registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
                         registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
                         if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                             flipLossDirection.activeDirection = opened.nextPosition.direction;
@@ -1300,7 +1289,7 @@ export function runBacktest(
                         });
                         if (opened) {
                             positions.push(opened.nextPosition);
-                            registerVelocitySizingPosition(velocitySizingState, opened.nextPosition);
+                            registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
                             registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
                             if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                                 flipLossDirection.activeDirection = opened.nextPosition.direction;

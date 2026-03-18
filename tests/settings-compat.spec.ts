@@ -165,6 +165,27 @@ describe('Backtest settings compatibility', () => {
         expect(resolved.executionModel).to.equal('next_close');
     });
 
+    it('preserves velocity take-profit mode and parameters for subscription execution settings', () => {
+        const resolved = resolveSubscriptionExecutionBacktestSettings({
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitPercent: 8,
+            takeProfitMode: 'velocity',
+            takeProfitVelocityFastBars: 3,
+            takeProfitVelocitySlowBars: 18,
+            takeProfitVelocityProgressPercent: 55,
+            takeProfitVelocityExpandMultiplier: 1.8,
+            takeProfitVelocityShrinkMultiplier: 0.7,
+        } as unknown as BacktestSettings);
+
+        expect(resolved.takeProfitMode).to.equal('velocity');
+        expect(resolved.takeProfitVelocityFastBars).to.equal(3);
+        expect(resolved.takeProfitVelocitySlowBars).to.equal(18);
+        expect(resolved.takeProfitVelocityProgressPercent).to.equal(55);
+        expect(resolved.takeProfitVelocityExpandMultiplier).to.equal(1.8);
+        expect(resolved.takeProfitVelocityShrinkMultiplier).to.equal(0.7);
+    });
+
     it('keeps legacy fixed toggle compatibility while upgrading legacy smart sizing mode', () => {
         const legacy = normalizeStoredBacktestSettings({
             fixedTradeToggle: true,
@@ -188,6 +209,26 @@ describe('Backtest settings compatibility', () => {
         });
 
         expect(explicit.sizingMode).to.equal('smart_fixed_velocity_memory');
+    });
+
+    it('upgrades deleted smart fixed variants to quality x velocity when normalizing stored settings', () => {
+        const explicit = normalizeStoredBacktestSettings({
+            sizingMode: 'smart_fixed_tp_distance_fit',
+            fixedTradeToggle: true,
+            fixedTradeAmount: 1000,
+        });
+
+        expect(explicit.sizingMode).to.equal('smart_fixed_quality_x_velocity');
+    });
+
+    it('preserves quality x velocity when normalizing stored settings', () => {
+        const explicit = normalizeStoredBacktestSettings({
+            sizingMode: 'smart_fixed_quality_x_velocity',
+            fixedTradeToggle: true,
+            fixedTradeAmount: 1000,
+        });
+
+        expect(explicit.sizingMode).to.equal('smart_fixed_quality_x_velocity');
     });
 
     it('exposes worker strategy compatibility checks for alert subscriptions', () => {

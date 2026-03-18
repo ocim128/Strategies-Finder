@@ -12,6 +12,15 @@ export interface WorkerStrategySupportSnapshot {
     strategyManifestFingerprint: string;
 }
 
+const VALID_TAKE_PROFIT_MODES = new Set<NonNullable<BacktestSettings["takeProfitMode"]>>([
+    "fixed",
+    "shrinkage",
+    "momentum_gated",
+    "velocity",
+    "climax_exit",
+    "equity_feedback",
+]);
+
 function isValidTradeDirection(value: unknown): value is TradeDirection {
     return value === "long"
         || value === "short"
@@ -22,6 +31,10 @@ function isValidTradeDirection(value: unknown): value is TradeDirection {
 
 function isValidExecutionModel(value: unknown): value is NonNullable<BacktestSettings["executionModel"]> {
     return value === "signal_close" || value === "next_open" || value === "next_close";
+}
+
+function isValidTakeProfitMode(value: unknown): value is NonNullable<BacktestSettings["takeProfitMode"]> {
+    return typeof value === "string" && VALID_TAKE_PROFIT_MODES.has(value as NonNullable<BacktestSettings["takeProfitMode"]>);
 }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -92,7 +105,9 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
     merged.executionModel = isValidExecutionModel(merged.executionModel)
         ? merged.executionModel
         : EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
-    merged.takeProfitMode = "fixed";
+    merged.takeProfitMode = isValidTakeProfitMode(merged.takeProfitMode)
+        ? merged.takeProfitMode
+        : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMode;
     merged.allowSameBarExit = toBooleanLike(merged.allowSameBarExit)
         ?? EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit;
     merged.invertSignals = toBooleanLike(merged.invertSignals)
@@ -116,6 +131,26 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
     merged.twoHourCloseParity = merged.twoHourCloseParity === "even" || merged.twoHourCloseParity === "both"
         ? merged.twoHourCloseParity
         : EFFECTIVE_BACKTEST_DEFAULTS.twoHourCloseParity;
+    merged.takeProfitVelocityFastBars = Math.max(
+        1,
+        Math.round(toFiniteNumber(merged.takeProfitVelocityFastBars) ?? EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityFastBars)
+    );
+    merged.takeProfitVelocitySlowBars = Math.max(
+        1,
+        Math.round(toFiniteNumber(merged.takeProfitVelocitySlowBars) ?? EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocitySlowBars)
+    );
+    merged.takeProfitVelocityProgressPercent = Math.max(
+        1,
+        Math.min(100, toFiniteNumber(merged.takeProfitVelocityProgressPercent) ?? EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityProgressPercent)
+    );
+    merged.takeProfitVelocityExpandMultiplier = Math.max(
+        0.1,
+        toFiniteNumber(merged.takeProfitVelocityExpandMultiplier) ?? EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityExpandMultiplier
+    );
+    merged.takeProfitVelocityShrinkMultiplier = Math.max(
+        0.1,
+        toFiniteNumber(merged.takeProfitVelocityShrinkMultiplier) ?? EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityShrinkMultiplier
+    );
 
     const initialCapital = toFiniteNumber(raw.initialCapital);
     if (initialCapital !== null) {
@@ -135,6 +170,13 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
     }
     if (raw.sizingMode === 'smart_fixed') {
         merged.sizingMode = 'smart_fixed_velocity_memory';
+    } else if (
+        raw.sizingMode === 'smart_fixed_early_heat_filter'
+        || raw.sizingMode === 'smart_fixed_adverse_memory'
+        || raw.sizingMode === 'smart_fixed_mfe_ancestor'
+        || raw.sizingMode === 'smart_fixed_tp_distance_fit'
+    ) {
+        merged.sizingMode = 'smart_fixed_quality_x_velocity';
     } else if (isTradeSizingMode(raw.sizingMode)) {
         merged.sizingMode = raw.sizingMode;
     }

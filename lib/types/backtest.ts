@@ -175,6 +175,7 @@ export const TRADE_SIZING_MODES = [
     'percent',
     'fixed',
     'smart_fixed_velocity_memory',
+    'smart_fixed_quality_x_velocity',
 ] as const;
 
 export type TradeSizingMode = (typeof TRADE_SIZING_MODES)[number];
@@ -184,7 +185,7 @@ export function isTradeSizingMode(value: unknown): value is TradeSizingMode {
 }
 
 export function isSmartTradeSizingMode(mode: TradeSizingMode): boolean {
-    return mode === 'smart_fixed_velocity_memory';
+    return mode !== 'percent' && mode !== 'fixed';
 }
 
 export function usesFixedDollarSizing(mode: TradeSizingMode): boolean {

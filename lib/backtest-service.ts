@@ -783,6 +783,14 @@ export class BacktestService {
 
     private readSizingMode(value: unknown): TradeSizingMode | null {
         if (value === 'smart_fixed') return 'smart_fixed_velocity_memory';
+        if (
+            value === 'smart_fixed_early_heat_filter'
+            || value === 'smart_fixed_adverse_memory'
+            || value === 'smart_fixed_mfe_ancestor'
+            || value === 'smart_fixed_tp_distance_fit'
+        ) {
+            return 'smart_fixed_quality_x_velocity';
+        }
         return isTradeSizingMode(value) ? value : null;
     }
 
