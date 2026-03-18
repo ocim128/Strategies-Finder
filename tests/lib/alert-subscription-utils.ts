@@ -133,6 +133,11 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
     if (fixedTradeToggle !== null) {
         merged.fixedTradeToggle = fixedTradeToggle;
     }
+    if (raw.sizingMode === 'smart_fixed') {
+        merged.sizingMode = 'smart_fixed_velocity_memory';
+    } else if (isTradeSizingMode(raw.sizingMode)) {
+        merged.sizingMode = raw.sizingMode;
+    }
     const fixedTradeAmount = toFiniteNumber(raw.fixedTradeAmount);
     if (fixedTradeAmount !== null) {
         merged.fixedTradeAmount = fixedTradeAmount;
@@ -144,3 +149,4 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
 
     return merged as BacktestSettings;
 }
+import { isTradeSizingMode } from "./types/backtest";

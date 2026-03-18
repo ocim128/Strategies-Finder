@@ -133,6 +133,15 @@ function createWinStreakRiskState(): WinStreakRiskState {
     };
 }
 
+type SmartSizingState = {
+    recentVelocityScores: number[];
+};
+
+type VelocitySizingPositionState = {
+    initialTargetPercent: number | null;
+    fastProgressHit: boolean;
+};
+
 function createFlipLossDirectionState(): FlipLossDirectionState {
     return {
         longConsecutiveLosses: 0,
@@ -227,6 +236,82 @@ function buildPositionRiskOverrides(config: NormalizedSettings, state: WinStreak
             ? (config.stopLossEnabled || (overrideStopLossPercent ?? 0) > 0)
             : undefined,
     };
+}
+
+function createSmartSizingState(_initialCapital: number): SmartSizingState {
+    return {
+        recentVelocityScores: [],
+    };
+}
+
+function updateSmartSizingState(
+    state: SmartSizingState,
+    _tradePnl: number,
+    _closedCapital: number,
+    velocityScore: number | null
+): void {
+    if (velocityScore !== null && Number.isFinite(velocityScore)) {
+        state.recentVelocityScores.push(velocityScore);
+        if (state.recentVelocityScores.length > 12) {
+            state.recentVelocityScores.shift();
+        }
+    }
+}
+
+function resolveInitialTargetPercent(position: PositionState): number | null {
+    if (!Number.isFinite(position.entryPrice) || position.entryPrice <= 0) return null;
+    if (!Number.isFinite(position.takeProfitPrice) || position.takeProfitPrice === null) return null;
+    return Math.abs(((position.takeProfitPrice - position.entryPrice) / position.entryPrice) * 100);
+}
+
+function createVelocitySizingState(): WeakMap<PositionState, VelocitySizingPositionState> {
+    return new WeakMap<PositionState, VelocitySizingPositionState>();
+}
+
+function registerVelocitySizingPosition(
+    velocitySizingState: WeakMap<PositionState, VelocitySizingPositionState>,
+    position: PositionState
+): void {
+    velocitySizingState.set(position, {
+        initialTargetPercent: resolveInitialTargetPercent(position),
+        fastProgressHit: false,
+    });
+}
+
+function updateVelocitySizingPosition(
+    config: NormalizedSettings,
+    velocitySizingState: WeakMap<PositionState, VelocitySizingPositionState>,
+    position: PositionState,
+    candle: OHLCVData
+): void {
+    const state = velocitySizingState.get(position);
+    if (!state || state.fastProgressHit) return;
+    if (state.initialTargetPercent === null || state.initialTargetPercent <= 0) return;
+    if (position.barsInTrade > config.takeProfitVelocityFastBars) return;
+
+    const favorablePrice = position.direction === 'short'
+        ? Math.min(position.extremePrice, candle.low)
+        : Math.max(position.extremePrice, candle.high);
+    const favorableMovePercent = directionFactorFor(position.direction) * ((favorablePrice - position.entryPrice) / position.entryPrice) * 100;
+    const progressPercent = (Math.max(0, favorableMovePercent) / state.initialTargetPercent) * 100;
+    if (progressPercent >= config.takeProfitVelocityProgressPercent) {
+        state.fastProgressHit = true;
+    }
+}
+
+function resolveVelocitySizingScore(
+    velocitySizingState: WeakMap<PositionState, VelocitySizingPositionState>,
+    position: PositionState
+): number | null {
+    const state = velocitySizingState.get(position);
+    velocitySizingState.delete(position);
+    if (!state || state.initialTargetPercent === null || state.initialTargetPercent <= 0) {
+        return null;
+    }
+    if (position.realizedPnl > 0) {
+        return state.fastProgressHit ? 1 : 0.35;
+    }
+    return state.fastProgressHit ? -0.15 : -0.75;
 }
 
 function buildPercentageTakeProfitOverrides(
@@ -497,6 +582,7 @@ export function runBacktestCompact(
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const indicatorSeries = resolveIndicators(data, settings, precomputed);
+    const volumeSeries = data.map((candle) => candle.volume);
 
     const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators(config)
         ? computeSnapshotIndicators(data, indicatorSeries)
@@ -516,6 +602,8 @@ export function runBacktestCompact(
     const slippageRate = config.slippageBps / 10000;
     const winStreakRisk = createWinStreakRiskState();
     const flipLossDirection = createFlipLossDirectionState();
+    const smartSizingState = createSmartSizingState(initialCapital);
+    const velocitySizingState = createVelocitySizingState();
     const warmUpEnabled = config.warmUpEntryEnabled;
     let pendingEntry: Signal | null = null;
     const adaptiveTakeProfitState = createAdaptiveTakeProfitState(data, config, indicatorSeries, initialCapital);
@@ -530,6 +618,23 @@ export function runBacktestCompact(
         closedCapital: number
     ) => {
         pendingAdaptiveTakeProfitUpdates.push({ position, exitPrice, exitReason, candle, closedCapital });
+    };
+
+    const finalizeClosedPosition = (
+        position: PositionState,
+        candle: OHLCVData,
+        exitPrice: number,
+        exitReason: NonNullable<Trade['exitReason']>
+    ) => {
+        queueAdaptiveTakeProfitUpdate(position, exitPrice, exitReason, candle, capital);
+        updateWinStreakRiskState(winStreakRisk, position.realizedPnl);
+        updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, position.direction, position.realizedPnl);
+        updateSmartSizingState(
+            smartSizingState,
+            position.realizedPnl,
+            capital,
+            resolveVelocitySizingScore(velocitySizingState, position)
+        );
     };
 
     const flushAdaptiveTakeProfitUpdates = () => {
@@ -559,11 +664,9 @@ export function runBacktestCompact(
         }
 
         const exitPrice = applySlippage(adaptiveExit.exitPrice, exitSideForDirection(pos.direction), slippageRate);
-        const details = recordExit(pos, exitPrice, pos.size);
+        recordExit(pos, exitPrice, pos.size);
         if (positions.indexOf(pos) < 0) {
-            queueAdaptiveTakeProfitUpdate(pos, exitPrice, adaptiveExit.exitReason, candle, capital);
-            updateWinStreakRiskState(winStreakRisk, details.totalPnl);
-            updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, pos.direction, details.totalPnl);
+            finalizeClosedPosition(pos, candle, exitPrice, adaptiveExit.exitReason);
         }
     };
 
@@ -586,12 +689,11 @@ export function runBacktestCompact(
     };
 
     const tryProcessExitsAfterEntry = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
+        updateVelocitySizingPosition(config, velocitySizingState, pos, candle);
         processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
-            const details = recordExit(pos, exitPrice, exitSize);
+            recordExit(pos, exitPrice, exitSize);
             if (positions.indexOf(pos) < 0) {
-                queueAdaptiveTakeProfitUpdate(pos, exitPrice, reason!, candle, capital);
-                updateWinStreakRiskState(winStreakRisk, details.totalPnl);
-                updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, pos.direction, details.totalPnl);
+                finalizeClosedPosition(pos, candle, exitPrice, reason!);
             }
         });
         if (positions.indexOf(pos) >= 0) {
@@ -622,11 +724,9 @@ export function runBacktestCompact(
 
             pendingAdaptiveTakeProfitExits.delete(pos);
             const exitPrice = applySlippage(candle.open, exitSideForDirection(pos.direction), slippageRate);
-            const details = recordExit(pos, exitPrice, pos.size);
+            recordExit(pos, exitPrice, pos.size);
             if (positions.indexOf(pos) < 0) {
-                queueAdaptiveTakeProfitUpdate(pos, exitPrice, pendingReason, candle, capital);
-                updateWinStreakRiskState(winStreakRisk, details.totalPnl);
-                updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, pos.direction, details.totalPnl);
+                finalizeClosedPosition(pos, candle, exitPrice, pendingReason);
             }
         }
 
@@ -634,12 +734,11 @@ export function runBacktestCompact(
         for (let p = positions.length - 1; p >= 0; p--) {
             const pos = positions[p];
             pos.barsInTrade += 1;
+            updateVelocitySizingPosition(config, velocitySizingState, pos, candle);
             processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
-                const details = recordExit(pos, exitPrice, exitSize);
+                recordExit(pos, exitPrice, exitSize);
                 if (positions.indexOf(pos) < 0) {
-                    queueAdaptiveTakeProfitUpdate(pos, exitPrice, reason!, candle, capital);
-                    updateWinStreakRiskState(winStreakRisk, details.totalPnl);
-                    updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, pos.direction, details.totalPnl);
+                    finalizeClosedPosition(pos, candle, exitPrice, reason!);
                 }
             });
             if (positions.indexOf(pos) >= 0) {
@@ -661,10 +760,13 @@ export function runBacktestCompact(
                     commissionRate,
                     slippageRate,
                     settings: config,
+                    data,
+                    volumeSeries,
                     atrArray: indicatorSeries.atr,
                     tradeDirection,
                     sizingMode,
                     fixedTradeAmount,
+                    smartSizingState,
                     ...buildPositionRiskOverrides(config, winStreakRisk),
                     ...buildPercentageTakeProfitOverrides(
                         config,
@@ -676,6 +778,7 @@ export function runBacktestCompact(
                 });
                 if (opened) {
                     positions.push(opened.nextPosition);
+                    registerVelocitySizingPosition(velocitySizingState, opened.nextPosition);
                     registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
                     if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                         flipLossDirection.activeDirection = opened.nextPosition.direction;
@@ -712,10 +815,13 @@ export function runBacktestCompact(
                         commissionRate,
                         slippageRate,
                         settings: config,
+                        data,
+                        volumeSeries,
                         atrArray: indicatorSeries.atr,
                         tradeDirection,
                         sizingMode,
                         fixedTradeAmount,
+                        smartSizingState,
                         ...buildPositionRiskOverrides(config, winStreakRisk),
                         ...buildPercentageTakeProfitOverrides(
                             config,
@@ -727,6 +833,7 @@ export function runBacktestCompact(
                     });
                     if (opened) {
                         positions.push(opened.nextPosition);
+                        registerVelocitySizingPosition(velocitySizingState, opened.nextPosition);
                         registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
                         if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                             flipLossDirection.activeDirection = opened.nextPosition.direction;
@@ -746,11 +853,9 @@ export function runBacktestCompact(
                         continue;
                     }
                     const wasPartial = exitFraction < 1;
-                    const details = recordExit(exitTarget, signal.price, exitSize);
+                    recordExit(exitTarget, signal.price, exitSize);
                     if (positions.indexOf(exitTarget) < 0) {
-                        queueAdaptiveTakeProfitUpdate(exitTarget, signal.price, 'signal', candle, capital);
-                        updateWinStreakRiskState(winStreakRisk, details.totalPnl);
-                        updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitTarget.direction, details.totalPnl);
+                        finalizeClosedPosition(exitTarget, candle, signal.price, 'signal');
                     }
                     const fullyClosed = positions.indexOf(exitTarget) < 0;
                     const immediateReentryAllowed = fullyClosed && !wasPartial && (
@@ -771,10 +876,13 @@ export function runBacktestCompact(
                             commissionRate,
                             slippageRate,
                             settings: config,
+                            data,
+                            volumeSeries,
                             atrArray: indicatorSeries.atr,
                             tradeDirection,
                             sizingMode,
                             fixedTradeAmount,
+                            smartSizingState,
                             ...buildPositionRiskOverrides(config, winStreakRisk),
                             ...buildPercentageTakeProfitOverrides(
                                 config,
@@ -786,6 +894,7 @@ export function runBacktestCompact(
                         });
                         if (opened) {
                             positions.push(opened.nextPosition);
+                            registerVelocitySizingPosition(velocitySizingState, opened.nextPosition);
                             registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
                             if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                                 flipLossDirection.activeDirection = opened.nextPosition.direction;
@@ -870,6 +979,7 @@ export function runBacktest(
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const indicatorSeries = resolveIndicators(data, settings, precomputed);
+    const volumeSeries = data.map((candle) => candle.volume);
 
     const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators(config, !!settings.captureSnapshots)
         ? computeSnapshotIndicators(data, indicatorSeries)
@@ -891,6 +1001,8 @@ export function runBacktest(
     const slippageRate = config.slippageBps / 10000;
     const winStreakRisk = createWinStreakRiskState();
     const flipLossDirection = createFlipLossDirectionState();
+    const smartSizingState = createSmartSizingState(initialCapital);
+    const velocitySizingState = createVelocitySizingState();
     const warmUpEnabled = config.warmUpEntryEnabled;
     let pendingEntry: Signal | null = null;
     const adaptiveTakeProfitState = createAdaptiveTakeProfitState(data, config, indicatorSeries, initialCapital);
@@ -905,6 +1017,23 @@ export function runBacktest(
         closedCapital: number
     ) => {
         pendingAdaptiveTakeProfitUpdates.push({ position, exitPrice, exitReason, candle, closedCapital });
+    };
+
+    const finalizeClosedPositionFull = (
+        position: PositionState,
+        candle: OHLCVData,
+        exitPrice: number,
+        exitReason: NonNullable<Trade['exitReason']>
+    ) => {
+        queueAdaptiveTakeProfitUpdate(position, exitPrice, exitReason, candle, capital);
+        updateWinStreakRiskState(winStreakRisk, position.realizedPnl);
+        updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, position.direction, position.realizedPnl);
+        updateSmartSizingState(
+            smartSizingState,
+            position.realizedPnl,
+            capital,
+            resolveVelocitySizingScore(velocitySizingState, position)
+        );
     };
 
     const flushAdaptiveTakeProfitUpdates = () => {
@@ -934,11 +1063,9 @@ export function runBacktest(
         }
 
         const exitPrice = applySlippage(adaptiveExit.exitPrice, exitSideForDirection(pos.direction), slippageRate);
-        const d = recordExitFull(pos, candle, exitPrice, pos.size, adaptiveExit.exitReason);
+        recordExitFull(pos, candle, exitPrice, pos.size, adaptiveExit.exitReason);
         if (positions.indexOf(pos) < 0) {
-            queueAdaptiveTakeProfitUpdate(pos, exitPrice, adaptiveExit.exitReason, candle, capital);
-            updateWinStreakRiskState(winStreakRisk, d.totalPnl);
-            updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, pos.direction, d.totalPnl);
+            finalizeClosedPositionFull(pos, candle, exitPrice, adaptiveExit.exitReason);
         }
     };
 
@@ -969,12 +1096,11 @@ export function runBacktest(
     };
 
     const tryProcessExitsAfterEntryFull = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
+        updateVelocitySizingPosition(config, velocitySizingState, pos, candle);
         processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
-            const d = recordExitFull(pos, candle, exitPrice, exitSize, reason);
+            recordExitFull(pos, candle, exitPrice, exitSize, reason);
             if (positions.indexOf(pos) < 0) {
-                queueAdaptiveTakeProfitUpdate(pos, exitPrice, reason!, candle, capital);
-                updateWinStreakRiskState(winStreakRisk, d.totalPnl);
-                updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, pos.direction, d.totalPnl);
+                finalizeClosedPositionFull(pos, candle, exitPrice, reason!);
             }
         });
         if (positions.indexOf(pos) >= 0) {
@@ -1005,11 +1131,9 @@ export function runBacktest(
 
             pendingAdaptiveTakeProfitExits.delete(pos);
             const exitPrice = applySlippage(candle.open, exitSideForDirection(pos.direction), slippageRate);
-            const d = recordExitFull(pos, candle, exitPrice, pos.size, pendingReason);
+            recordExitFull(pos, candle, exitPrice, pos.size, pendingReason);
             if (positions.indexOf(pos) < 0) {
-                queueAdaptiveTakeProfitUpdate(pos, exitPrice, pendingReason, candle, capital);
-                updateWinStreakRiskState(winStreakRisk, d.totalPnl);
-                updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, pos.direction, d.totalPnl);
+                finalizeClosedPositionFull(pos, candle, exitPrice, pendingReason);
             }
         }
 
@@ -1017,12 +1141,11 @@ export function runBacktest(
         for (let p = positions.length - 1; p >= 0; p--) {
             const pos = positions[p];
             pos.barsInTrade += 1;
+            updateVelocitySizingPosition(config, velocitySizingState, pos, candle);
             processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
-                const d = recordExitFull(pos, candle, exitPrice, exitSize, reason);
+                recordExitFull(pos, candle, exitPrice, exitSize, reason);
                 if (positions.indexOf(pos) < 0) {
-                    queueAdaptiveTakeProfitUpdate(pos, exitPrice, reason!, candle, capital);
-                    updateWinStreakRiskState(winStreakRisk, d.totalPnl);
-                    updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, pos.direction, d.totalPnl);
+                    finalizeClosedPositionFull(pos, candle, exitPrice, reason!);
                 }
             });
             if (positions.indexOf(pos) >= 0) {
@@ -1044,10 +1167,13 @@ export function runBacktest(
                     commissionRate,
                     slippageRate,
                     settings: config,
+                    data,
+                    volumeSeries,
                     atrArray: indicatorSeries.atr,
                     tradeDirection,
                     sizingMode,
                     fixedTradeAmount,
+                    smartSizingState,
                     ...buildPositionRiskOverrides(config, winStreakRisk),
                     ...buildPercentageTakeProfitOverrides(
                         config,
@@ -1059,6 +1185,7 @@ export function runBacktest(
                 });
                 if (opened) {
                     positions.push(opened.nextPosition);
+                    registerVelocitySizingPosition(velocitySizingState, opened.nextPosition);
                     registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
                     opened.nextPosition.warmUpEntry = true;
                     if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
@@ -1096,10 +1223,13 @@ export function runBacktest(
                         commissionRate,
                         slippageRate,
                         settings: config,
+                        data,
+                        volumeSeries,
                         atrArray: indicatorSeries.atr,
                         tradeDirection,
                         sizingMode,
                         fixedTradeAmount,
+                        smartSizingState,
                         ...buildPositionRiskOverrides(config, winStreakRisk),
                         ...buildPercentageTakeProfitOverrides(
                             config,
@@ -1111,6 +1241,7 @@ export function runBacktest(
                     });
                     if (opened) {
                         positions.push(opened.nextPosition);
+                        registerVelocitySizingPosition(velocitySizingState, opened.nextPosition);
                         registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
                         if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                             flipLossDirection.activeDirection = opened.nextPosition.direction;
@@ -1128,12 +1259,10 @@ export function runBacktest(
                     const exitSize = exitTarget.size * exitFraction;
                     if (exitSize <= 0) continue;
 
-                    const details = recordExitFull(exitTarget, candle, signal.price, exitSize, 'signal');
+                    recordExitFull(exitTarget, candle, signal.price, exitSize, 'signal');
                     const fullyClosed = positions.indexOf(exitTarget) < 0;
                     if (fullyClosed) {
-                        queueAdaptiveTakeProfitUpdate(exitTarget, signal.price, 'signal', candle, capital);
-                        updateWinStreakRiskState(winStreakRisk, details.totalPnl);
-                        updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, exitTarget.direction, details.totalPnl);
+                        finalizeClosedPositionFull(exitTarget, candle, signal.price, 'signal');
                     }
                     const immediateReentryAllowed = fullyClosed && exitFraction >= 1 && (
                         tradeDirection === 'both'
@@ -1153,10 +1282,13 @@ export function runBacktest(
                             commissionRate,
                             slippageRate,
                             settings: config,
+                            data,
+                            volumeSeries,
                             atrArray: indicatorSeries.atr,
                             tradeDirection,
                             sizingMode,
                             fixedTradeAmount,
+                            smartSizingState,
                             ...buildPositionRiskOverrides(config, winStreakRisk),
                             ...buildPercentageTakeProfitOverrides(
                                 config,
@@ -1168,6 +1300,7 @@ export function runBacktest(
                         });
                         if (opened) {
                             positions.push(opened.nextPosition);
+                            registerVelocitySizingPosition(velocitySizingState, opened.nextPosition);
                             registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
                             if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                                 flipLossDirection.activeDirection = opened.nextPosition.direction;

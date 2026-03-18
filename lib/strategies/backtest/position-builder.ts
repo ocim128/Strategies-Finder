@@ -1,7 +1,18 @@
-
-import { Signal, type TradeDirection } from '../../types/index';
-import { NormalizedSettings, PositionState } from '../../types/backtest';
+import { OHLCVData, Signal, type TradeDirection } from '../../types/index';
+import {
+    NormalizedSettings,
+    PositionState,
+    isSmartTradeSizingMode,
+    usesFixedDollarSizing,
+    type TradeSizingMode
+} from '../../types/backtest';
 import { allowsSignalAsEntry, applySlippage, directionFactorFor, entrySideForDirection, signalToPositionDirection } from './backtest-utils';
+const VELOCITY_MEMORY_MIN_MULTIPLIER = 0.75;
+const VELOCITY_MEMORY_MAX_MULTIPLIER = 1.2;
+
+export interface SmartSizingState {
+    recentVelocityScores: number[];
+}
 
 export interface PositionBuilderParams {
     signal: Signal;
@@ -12,10 +23,13 @@ export interface PositionBuilderParams {
     commissionRate: number;
     slippageRate: number;
     settings: NormalizedSettings;
+    data: OHLCVData[];
+    volumeSeries: number[];
     atrArray: (number | null)[];
     tradeDirection: TradeDirection;
-    sizingMode: 'percent' | 'fixed';
+    sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
+    smartSizingState?: SmartSizingState;
     effectiveStopLossPercent?: number;
     enablePercentageStopLoss?: boolean;
     effectiveTakeProfitPrice?: number | null;
@@ -24,6 +38,72 @@ export interface PositionBuilderParams {
 export interface BuiltPosition {
     nextPosition: PositionState;
     entryCommission: number;
+}
+
+function clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
+}
+
+function resolveVelocityMemoryMultiplier(smartSizingState?: SmartSizingState): number {
+    if (!smartSizingState || smartSizingState.recentVelocityScores.length === 0) {
+        return 1;
+    }
+
+    const recentScores = smartSizingState.recentVelocityScores;
+    const avgScore = recentScores.reduce((sum, value) => sum + value, 0) / recentScores.length;
+    const multiplier = 1 + avgScore * 0.2;
+    return clamp(multiplier, VELOCITY_MEMORY_MIN_MULTIPLIER, VELOCITY_MEMORY_MAX_MULTIPLIER);
+}
+
+function resolveSizingMultiplier(
+    sizingMode: TradeSizingMode,
+    smartSizingState: SmartSizingState | undefined,
+    _data: OHLCVData[],
+    _volumeSeries: number[],
+    _sizingBarIndex: number,
+    _direction: 'long' | 'short',
+    _triggerPrice: number | null,
+    _atrValue: number | null
+): number {
+    switch (sizingMode) {
+        case 'smart_fixed_velocity_memory':
+            return resolveVelocityMemoryMultiplier(smartSizingState);
+        default:
+            return 1;
+    }
+}
+
+function resolveAllocatedCapital(
+    sizingMode: TradeSizingMode,
+    capital: number,
+    positionSizePercent: number,
+    fixedTradeAmount: number,
+    data: OHLCVData[],
+    volumeSeries: number[],
+    sizingBarIndex: number,
+    direction: 'long' | 'short',
+    triggerPrice: number | null,
+    atrValue: number | null,
+    smartSizingState?: SmartSizingState
+): number {
+    const baseAllocation = usesFixedDollarSizing(sizingMode) && fixedTradeAmount > 0
+        ? fixedTradeAmount
+        : capital * (positionSizePercent / 100);
+
+    if (!isSmartTradeSizingMode(sizingMode) || baseAllocation <= 0) {
+        return baseAllocation;
+    }
+
+    return baseAllocation * resolveSizingMultiplier(
+        sizingMode,
+        smartSizingState,
+        data,
+        volumeSeries,
+        sizingBarIndex,
+        direction,
+        triggerPrice,
+        atrValue
+    );
 }
 
 /**
@@ -39,10 +119,13 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
         commissionRate,
         slippageRate,
         settings: config,
+        data,
+        volumeSeries,
         atrArray,
         tradeDirection,
         sizingMode,
         fixedTradeAmount,
+        smartSizingState,
         effectiveStopLossPercent,
         enablePercentageStopLoss,
         effectiveTakeProfitPrice,
@@ -59,28 +142,17 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
 
     // For next_open entries, the execution bar's high/low are not known at the open.
     // Seed ATR-based risk from the last fully closed bar instead.
-    const atrBarIndex = config.executionModel === 'next_open' ? barIndex - 1 : barIndex;
-    const atrValue = needsAtr && atrBarIndex >= 0 ? atrArray[atrBarIndex] : null;
+    const sizingBarIndex = config.executionModel === 'next_open' ? barIndex - 1 : barIndex;
+    const atrBarIndex = sizingBarIndex;
+    const atrValue = atrBarIndex >= 0 ? (atrArray[atrBarIndex] ?? null) : null;
 
     if (needsAtr && (atrValue === null || atrValue === undefined)) return null;
 
-    const allocatedCapital = (sizingMode === 'fixed' && fixedTradeAmount > 0)
-        ? fixedTradeAmount
-        : capital * (positionSizePercent / 100);
-
-    if (!Number.isFinite(allocatedCapital) || allocatedCapital <= 0) return null;
-
-    const tradeValue = allocatedCapital / (1 + commissionRate);
-    const entryCommission = tradeValue * commissionRate;
     const direction = signalToPositionDirection(signal.type);
     const directionFactor = directionFactorFor(direction);
     const entrySide = entrySideForDirection(direction);
     const entryFillPrice = applySlippage(signal.price, entrySide, slippageRate);
-
-    if (!Number.isFinite(entryFillPrice) || entryFillPrice <= 0 || !Number.isFinite(tradeValue) || tradeValue <= 0) return null;
-
-    const shares = tradeValue / entryFillPrice;
-    if (!Number.isFinite(shares) || shares <= 0) return null;
+    if (!Number.isFinite(entryFillPrice) || entryFillPrice <= 0) return null;
 
     const stopLossPrice = (atrValue !== null && atrValue !== undefined)
         ? (config.stopLossAtr > 0
@@ -127,6 +199,28 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
             finalTakeProfitPrice = entryFillPrice * (1 + directionFactor * (config.takeProfitPercent / 100));
         }
     }
+
+    const allocatedCapital = resolveAllocatedCapital(
+        sizingMode,
+        capital,
+        positionSizePercent,
+        fixedTradeAmount,
+        data,
+        volumeSeries,
+        sizingBarIndex,
+        direction,
+        (typeof signal.triggerPrice === 'number' && Number.isFinite(signal.triggerPrice) ? signal.triggerPrice : signal.price) ?? null,
+        atrValue,
+        smartSizingState
+    );
+    if (!Number.isFinite(allocatedCapital) || allocatedCapital <= 0) return null;
+
+    const tradeValue = allocatedCapital / (1 + commissionRate);
+    const entryCommission = tradeValue * commissionRate;
+    if (!Number.isFinite(tradeValue) || tradeValue <= 0) return null;
+
+    const shares = tradeValue / entryFillPrice;
+    if (!Number.isFinite(shares) || shares <= 0) return null;
 
     return {
         nextPosition: {

@@ -4,6 +4,8 @@ import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calcula
 import { buildPivotFlags, detectPivots, detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
 
 import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/backtest/trade-analyzer';
+import { normalizeBacktestSettings } from './lib/strategies/backtest/backtest-utils';
+import { buildPositionFromSignal } from './lib/strategies/backtest/position-builder';
 import { getOpenPositionForScanner } from './lib/strategies/backtest/signal-preparation';
 import { resolveScannerBacktestSettings } from './lib/scanner/scanner-engine';
 import { evaluateLatestEntrySignal } from './lib/signal-entry-evaluator';
@@ -1653,6 +1655,88 @@ describe('Backtesting Engine', () => {
         const result = runBacktest(data, signals, 1000, 100, 1);
 
         expect(result.netProfit).to.be.closeTo(225.24, 0.1);
+    });
+
+    it('smart_fixed_velocity_memory should size up after strong recent fast winners', () => {
+        const config = normalizeBacktestSettings({ riskMode: 'simple', executionModel: 'signal_close' });
+        const signal: Signal = { time: '2023-01-01' as Time, type: 'buy', price: 100 };
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+        ];
+        const volumeSeries = data.map((candle) => candle.volume);
+
+        const velocity = buildPositionFromSignal({
+            signal,
+            barIndex: 0,
+            capital: 10000,
+            initialCapital: 10000,
+            positionSizePercent: 100,
+            commissionRate: 0,
+            slippageRate: 0,
+            settings: config,
+            data,
+            volumeSeries,
+            atrArray: [null],
+            tradeDirection: 'long',
+            sizingMode: 'smart_fixed_velocity_memory',
+            fixedTradeAmount: 1000,
+            smartSizingState: {
+                recentVelocityScores: [1, 0.8, 0.6],
+            },
+        });
+
+        expect(velocity).to.not.equal(null);
+        expect(velocity!.nextPosition.size).to.be.closeTo(11.6, 1e-6);
+    });
+
+    it('smart_fixed_velocity_memory should trim size after weak recent trade velocity', () => {
+        const config = normalizeBacktestSettings({ riskMode: 'simple', executionModel: 'signal_close' });
+        const signal: Signal = { time: '2023-01-01' as Time, type: 'buy', price: 100 };
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+        ];
+        const volumeSeries = data.map((candle) => candle.volume);
+
+        const fixed = buildPositionFromSignal({
+            signal,
+            barIndex: 0,
+            capital: 10000,
+            initialCapital: 10000,
+            positionSizePercent: 100,
+            commissionRate: 0,
+            slippageRate: 0,
+            settings: config,
+            data,
+            volumeSeries,
+            atrArray: [null],
+            tradeDirection: 'long',
+            sizingMode: 'fixed',
+            fixedTradeAmount: 1000,
+        });
+        const velocity = buildPositionFromSignal({
+            signal,
+            barIndex: 0,
+            capital: 10000,
+            initialCapital: 10000,
+            positionSizePercent: 100,
+            commissionRate: 0,
+            slippageRate: 0,
+            settings: config,
+            data,
+            volumeSeries,
+            atrArray: [null],
+            tradeDirection: 'long',
+            sizingMode: 'smart_fixed_velocity_memory',
+            fixedTradeAmount: 1000,
+            smartSizingState: {
+                recentVelocityScores: [-0.75, -0.5, -0.25],
+            },
+        });
+
+        expect(fixed).to.not.equal(null);
+        expect(velocity).to.not.equal(null);
+        expect(velocity!.nextPosition.size).to.be.lessThan(fixed!.nextPosition.size);
+        expect(velocity!.nextPosition.size).to.be.closeTo(9, 1e-6);
     });
 
     it('should keep trade pnlPercent fee-aware', () => {

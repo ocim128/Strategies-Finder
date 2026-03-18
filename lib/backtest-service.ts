@@ -40,6 +40,7 @@ import { readNumberInputValue } from "./dom-input-readers";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { mergeStrategySignals } from "./signal-merge";
 import { resolveSubscriptionExecutionBacktestSettings } from "./alert-subscription-utils";
+import { isSmartTradeSizingMode, isTradeSizingMode, type TradeSizingMode } from "./types/backtest";
 
 import { resolveTwoHourParityFromTime } from "./two-hour-parity";
 import { buildPostEntryPathStats as analyzeBacktestResult } from "./backtest-result-analysis";
@@ -94,7 +95,7 @@ export class BacktestService {
             const params = paramManager.getValues(strategy);
             const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = this.getCapitalSettings();
             const settings = this.getBacktestSettings();
-            const requiresTsEngine = this.requiresTypescriptEngine(settings);
+            const requiresTsEngine = this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(sizingMode);
             const parityMode = this.getTwoHourCloseParityMode();
 
             progressFill.style.width = '40%';
@@ -485,7 +486,7 @@ export class BacktestService {
         initialCapital: number,
         positionSize: number,
         commission: number,
-        sizingMode: 'percent' | 'fixed',
+        sizingMode: TradeSizingMode,
         fixedTradeAmount: number,
         requiresTsEngine: boolean
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
@@ -559,7 +560,7 @@ export class BacktestService {
             const tTs = performance.now();
             if (requiresTsEngine && shouldUseRustEngine() && !this.warnedStrictEngine) {
                 this.warnedStrictEngine = true;
-                uiManager.showToast('Realism or snapshot filter settings require TypeScript engine (Rust skipped).', 'info');
+                uiManager.showToast('Current sizing or realism settings require TypeScript engine (Rust skipped).', 'info');
             }
             result = runBacktest(
                 backtestData,
@@ -614,7 +615,7 @@ export class BacktestService {
         initialCapital: number,
         positionSize: number,
         commission: number,
-        sizingMode: 'percent' | 'fixed',
+        sizingMode: TradeSizingMode,
         fixedTradeAmount: number,
         requiresTsEngine: boolean
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
@@ -707,7 +708,7 @@ export class BacktestService {
         initialCapital: number;
         positionSize: number;
         commission: number;
-        sizingMode: 'percent' | 'fixed';
+        sizingMode: TradeSizingMode;
         fixedTradeAmount: number;
     } {
         const initialCapital = Math.max(0, this.readNumberInput('initialCapital', CAPITAL_DEFAULTS.initialCapital));
@@ -715,7 +716,10 @@ export class BacktestService {
         const commission = Math.max(0, this.readNumberInput('commission', CAPITAL_DEFAULTS.commission));
         const fixedTradeAmount = Math.max(0, this.readNumberInput('fixedTradeAmount', CAPITAL_DEFAULTS.fixedTradeAmount));
         const fixedTradeToggle = getOptionalElement<HTMLInputElement>('fixedTradeToggle');
-        const sizingMode: 'percent' | 'fixed' = fixedTradeToggle?.checked ? 'fixed' : 'percent';
+        const tradeSizingMode = getOptionalElement<HTMLSelectElement>('tradeSizingMode');
+        const sizingMode: TradeSizingMode = fixedTradeToggle?.checked
+            ? (this.readSizingMode(tradeSizingMode?.value) ?? 'fixed')
+            : 'percent';
         return { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount };
     }
 
@@ -777,16 +781,20 @@ export class BacktestService {
         return null;
     }
 
-    private readSizingMode(value: unknown): 'percent' | 'fixed' | null {
-        if (value === 'percent' || value === 'fixed') return value;
-        return null;
+    private readSizingMode(value: unknown): TradeSizingMode | null {
+        if (value === 'smart_fixed') return 'smart_fixed_velocity_memory';
+        return isTradeSizingMode(value) ? value : null;
+    }
+
+    private requiresTypescriptSizingMode(sizingMode: TradeSizingMode): boolean {
+        return isSmartTradeSizingMode(sizingMode);
     }
 
     private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): {
         initialCapital: number;
         positionSize: number;
         commission: number;
-        sizingMode: 'percent' | 'fixed';
+        sizingMode: TradeSizingMode;
         fixedTradeAmount: number;
     } {
         const raw = backtestSettings as Record<string, unknown>;
@@ -810,7 +818,7 @@ export class BacktestService {
 
         const explicitSizingMode = this.readSizingMode(raw.sizingMode);
         const fixedTradeToggle = this.readBooleanLike(raw.fixedTradeToggle);
-        const sizingMode: 'percent' | 'fixed' = explicitSizingMode
+        const sizingMode: TradeSizingMode = explicitSizingMode
             ?? (fixedTradeToggle === true ? 'fixed' : SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.sizingMode);
 
         return { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount };
@@ -875,7 +883,7 @@ export class BacktestService {
             initialCapital: number;
             positionSize: number;
             commission: number;
-            sizingMode: 'percent' | 'fixed';
+            sizingMode: TradeSizingMode;
             fixedTradeAmount: number;
         } = this.getCapitalSettings()
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
@@ -898,7 +906,7 @@ export class BacktestService {
             commission,
             sizingMode,
             fixedTradeAmount,
-            this.requiresTypescriptEngine(settings)
+            this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(sizingMode)
         );
     }
 
@@ -911,7 +919,7 @@ export class BacktestService {
             initialCapital: number;
             positionSize: number;
             commission: number;
-            sizingMode: 'percent' | 'fixed';
+            sizingMode: TradeSizingMode;
             fixedTradeAmount: number;
         } = this.getCapitalSettings()
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
@@ -933,7 +941,7 @@ export class BacktestService {
             commission,
             sizingMode,
             fixedTradeAmount,
-            this.requiresTypescriptEngine(settings)
+            this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(sizingMode)
         );
     }
 

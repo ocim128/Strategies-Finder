@@ -11,6 +11,7 @@
 
 import { OHLCVData, Signal, BacktestResult, BacktestSettings } from './types/strategies';
 import { debugLogger } from './debug-logger';
+import { isSmartTradeSizingMode, type TradeSizingMode } from './types/backtest';
 
 const rustLog = {
     info: (message: string, ...data: unknown[]) => debugLogger.info(message, data.length <= 1 ? data[0] : data),
@@ -36,7 +37,7 @@ interface RustBacktestRequest {
     commissionPercent: number;
     settings: BacktestSettings;
     sizing?: {
-        mode: 'percent' | 'fixed';
+        mode: TradeSizingMode;
         fixedTradeAmount: number;
     };
 }
@@ -266,9 +267,13 @@ export class RustEngineClient {
         positionSizePercent: number,
         commissionPercent: number,
         settings: BacktestSettings,
-        sizing?: { mode: 'percent' | 'fixed'; fixedTradeAmount: number }
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number }
     ): Promise<BacktestResult | null> {
         if (!await this.checkHealth()) {
+            return null;
+        }
+        if (sizing && isSmartTradeSizingMode(sizing.mode)) {
+            rustLog.warn(`[RustEngine] ${sizing.mode} sizing is not supported on Rust backend, using TypeScript fallback`);
             return null;
         }
 
@@ -327,10 +332,14 @@ export class RustEngineClient {
         positionSizePercent: number,
         commissionPercent: number,
         baseSettings: BacktestSettings,
-        sizing?: { mode: 'percent' | 'fixed'; fixedTradeAmount: number },
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number },
         compact: boolean = true
     ): Promise<{ results: Array<{ id: string; result: BacktestResult }>; processingTimeMs: number } | null> {
         if (!await this.checkHealth()) {
+            return null;
+        }
+        if (sizing && isSmartTradeSizingMode(sizing.mode)) {
+            rustLog.warn(`[RustEngine] ${sizing.mode} sizing is not supported on Rust batch backtests, using TypeScript fallback`);
             return null;
         }
 
@@ -442,10 +451,14 @@ export class RustEngineClient {
         positionSizePercent: number,
         commissionPercent: number,
         baseSettings: BacktestSettings,
-        sizing?: { mode: 'percent' | 'fixed'; fixedTradeAmount: number },
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number },
         compact: boolean = true
     ): Promise<{ results: Array<{ id: string; result: BacktestResult }>; processingTimeMs: number } | null> {
         if (!await this.checkHealth()) {
+            return null;
+        }
+        if (sizing && isSmartTradeSizingMode(sizing.mode)) {
+            rustLog.warn(`[RustEngine] ${sizing.mode} sizing is not supported on cached Rust batch backtests, using TypeScript fallback`);
             return null;
         }
 

@@ -9,6 +9,7 @@ import type {
 } from "../strategies";
 import type { OpenPosition } from "../strategies/backtest/signal-preparation";
 import type { PortfolioSignalPresence } from "./portfolio-lab-helpers";
+import type { TradeSizingMode } from "../types/backtest";
 
 export const MIN_LOOKBACK_BARS = 200;
 export const MAX_LOOKBACK_BARS = 20000;
@@ -25,7 +26,7 @@ export interface PortfolioCapitalSettings {
     initialCapital: number;
     positionSize: number;
     commission: number;
-    sizingMode: "percent" | "fixed";
+    sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
     fixedTradeToggle?: boolean;
 }

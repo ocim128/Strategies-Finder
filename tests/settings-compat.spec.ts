@@ -15,6 +15,7 @@ import {
 import { parseInputNumber } from './lib/dom-input-readers';
 import {
     normalizeStoredAppSettings,
+    normalizeStoredBacktestSettings,
     normalizeStoredStrategyConfig,
 } from './lib/settings-manager';
 import { strategyManifest } from './lib/strategies/manifest';
@@ -149,6 +150,7 @@ describe('Backtest settings compatibility', () => {
             initialCapital: 25000,
             positionSize: 50,
             commission: 0.2,
+            sizingMode: 'smart_fixed_velocity_memory',
             fixedTradeToggle: true,
             fixedTradeAmount: 1200,
             executionModel: 'next_close',
@@ -157,9 +159,35 @@ describe('Backtest settings compatibility', () => {
         expect((resolved as Record<string, unknown>).initialCapital).to.equal(25000);
         expect((resolved as Record<string, unknown>).positionSize).to.equal(50);
         expect((resolved as Record<string, unknown>).commission).to.equal(0.2);
+        expect((resolved as Record<string, unknown>).sizingMode).to.equal('smart_fixed_velocity_memory');
         expect((resolved as Record<string, unknown>).fixedTradeToggle).to.equal(true);
         expect((resolved as Record<string, unknown>).fixedTradeAmount).to.equal(1200);
         expect(resolved.executionModel).to.equal('next_close');
+    });
+
+    it('keeps legacy fixed toggle compatibility while upgrading legacy smart sizing mode', () => {
+        const legacy = normalizeStoredBacktestSettings({
+            fixedTradeToggle: true,
+            fixedTradeAmount: 1000,
+        });
+        const explicit = normalizeStoredBacktestSettings({
+            sizingMode: 'smart_fixed',
+            fixedTradeToggle: true,
+            fixedTradeAmount: 1000,
+        });
+
+        expect(legacy.sizingMode).to.equal('fixed');
+        expect(explicit.sizingMode).to.equal('smart_fixed_velocity_memory');
+    });
+
+    it('preserves the surviving smart sizing mode when normalizing stored settings', () => {
+        const explicit = normalizeStoredBacktestSettings({
+            sizingMode: 'smart_fixed_velocity_memory',
+            fixedTradeToggle: true,
+            fixedTradeAmount: 1000,
+        });
+
+        expect(explicit.sizingMode).to.equal('smart_fixed_velocity_memory');
     });
 
     it('exposes worker strategy compatibility checks for alert subscriptions', () => {

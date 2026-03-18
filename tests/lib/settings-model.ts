@@ -7,6 +7,7 @@ import { parseInputNumber } from "./dom-input-readers";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 
 import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, TradeDirection, TradeFilterMode } from "./types/strategies";
+import { isTradeSizingMode, type TradeSizingMode } from "./types/backtest";
 import { EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
 
 // ============================================================================
@@ -19,6 +20,7 @@ export interface BacktestSettingsData {
     positionSize: number;
     commission: number;
     fixedTradeToggle: boolean;
+    sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
 
     // Engine preference
@@ -211,6 +213,7 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     positionSize: 100,
     commission: 0.1,
     fixedTradeToggle: true,
+    sizingMode: "fixed",
     fixedTradeAmount: 1000,
     useRustEngine: true,
 
@@ -446,12 +449,19 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
     }
 
     const resolved = resolveBacktestSettingsFromRaw(source as BacktestSettings);
+    const fixedTradeToggle = readBoolean(source.fixedTradeToggle, DEFAULT_BACKTEST_SETTINGS.fixedTradeToggle);
+    const sizingMode = resolveTradeSizingModeValue(
+        source.sizingMode,
+        DEFAULT_BACKTEST_SETTINGS,
+        fixedTradeToggle ? "fixed" : "percent"
+    );
     const normalized: BacktestSettingsData = {
         ...DEFAULT_BACKTEST_SETTINGS,
         initialCapital: readNumber(source.initialCapital, DEFAULT_BACKTEST_SETTINGS.initialCapital),
         positionSize: readNumber(source.positionSize, DEFAULT_BACKTEST_SETTINGS.positionSize),
         commission: readNumber(source.commission, DEFAULT_BACKTEST_SETTINGS.commission),
-        fixedTradeToggle: readBoolean(source.fixedTradeToggle, DEFAULT_BACKTEST_SETTINGS.fixedTradeToggle),
+        fixedTradeToggle,
+        sizingMode,
         fixedTradeAmount: readNumber(source.fixedTradeAmount, DEFAULT_BACKTEST_SETTINGS.fixedTradeAmount),
         useRustEngine: readBoolean(source.useRustEngine, DEFAULT_BACKTEST_SETTINGS.useRustEngine),
         riskSettingsToggle: readBoolean(source.riskSettingsToggle, DEFAULT_BACKTEST_SETTINGS.riskSettingsToggle),
@@ -700,6 +710,26 @@ export function resolveTakeProfitModeValue(
         return value;
     }
     return defaults.takeProfitMode;
+}
+
+export function resolveTradeSizingModeValue(
+    value: unknown,
+    defaults: BacktestSettingsData = DEFAULT_BACKTEST_SETTINGS,
+    fallback?: TradeSizingMode
+): TradeSizingMode {
+    if (isTradeSizingMode(value)) {
+        return value;
+    }
+    if (
+        value === "smart_fixed"
+        || value === "smart_fixed_dd_ladder"
+        || value === "smart_fixed_loss_cooldown"
+        || value === "smart_fixed_entry_quality"
+        || value === "smart_fixed_recovery_ramp"
+    ) {
+        return "smart_fixed_velocity_memory";
+    }
+    return fallback ?? defaults.sizingMode;
 }
 
 export function resolveTradeFilterModeValue(

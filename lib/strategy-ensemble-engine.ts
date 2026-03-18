@@ -17,12 +17,13 @@ import type {
     ConfigSignalArtifact,
     EnsembleEntryPresence,
 } from "./strategy-ensemble-types";
+import type { TradeSizingMode } from "./types/backtest";
 
 export interface StrategyEnsembleCapitalSettings {
     initialCapital: number;
     positionSize: number;
     commission: number;
-    sizingMode: "percent" | "fixed";
+    sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
 }
 

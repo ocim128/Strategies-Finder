@@ -25,6 +25,7 @@ import { FinderResultRanker } from "./finder-result-ranker";
 import { hasNonZeroSnapshotFilter, sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { FinderDataset } from "./finder-timeframe-loader";
 import type { EndpointSelectionAdjustment, FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
+import type { TradeSizingMode } from "../types/backtest";
 import { trimToClosedCandles } from "../closed-candle-utils";
 import { buildExecutionAwareCandleWindow, selectClosedCandleWindow } from "../alert-evaluation-window";
 import { mergeStrategySignals } from "../signal-merge";
@@ -92,7 +93,7 @@ export interface FinderRunInput {
     initialCapital: number;
     positionSize: number;
     commission: number;
-    sizingMode: "percent" | "fixed";
+    sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
     getFinderTimeframesForRun: (options: FinderOptions) => string[];
     loadMultiTimeframeDatasets: (symbol: string, intervals: string[]) => Promise<FinderDataset[]>;
@@ -103,7 +104,7 @@ export interface FinderRunInput {
     /** Combo Finder: primary config's resolved backtest settings for the merged run. */
     comboPrimarySettings?: BacktestSettings;
     /** Combo Finder: primary config's capital settings for the merged run. */
-    comboPrimaryCapital?: { initialCapital: number; positionSize: number; commission: number; sizingMode: "percent" | "fixed"; fixedTradeAmount: number };
+    comboPrimaryCapital?: { initialCapital: number; positionSize: number; commission: number; sizingMode: TradeSizingMode; fixedTradeAmount: number };
 }
 
 export interface FinderRunCallbacks {
@@ -317,7 +318,7 @@ interface MultiTimeframeRunParams {
     initialCapital: number;
     positionSize: number;
     commission: number;
-    sizingMode: "percent" | "fixed";
+    sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
     runTimeframes: string[];
 }
@@ -529,7 +530,7 @@ interface GeneticFinderRunParams {
     initialCapital: number;
     positionSize: number;
     commission: number;
-    sizingMode: "percent" | "fixed";
+    sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
 }
 
@@ -668,7 +669,7 @@ interface SingleTimeframeRunParams {
     initialCapital: number;
     positionSize: number;
     commission: number;
-    sizingMode: "percent" | "fixed";
+    sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
     rustSettings: BacktestSettings;
 }
@@ -718,7 +719,7 @@ function runBacktestAndInsert(
     positionSize: number,
     commission: number,
     backtestSettings: BacktestSettings,
-    sizingMode: "percent" | "fixed",
+    sizingMode: TradeSizingMode,
     fixedTradeAmount: number,
     precomputed: ReturnType<typeof precomputeIndicators>,
     insertResult: (candidate: CandidateResult) => void,
@@ -804,14 +805,14 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
 
     const comboActive = !!input.comboPrimarySignals;
-    const rustPreferred = !comboActive && !requiresCompositeEdgeRatioSort && shouldUseRustEngine();
+    const rustPreferred = !comboActive && !requiresCompositeEdgeRatioSort && !input.requiresTsEngine && shouldUseRustEngine();
     const rustHealthy = rustPreferred && await rustEngine.checkHealth();
     const rustUnavailableReason = comboActive
         ? "combo mode requires TypeScript engine"
         : requiresCompositeEdgeRatioSort
             ? "Composite Edge Ratio sort requires full TypeScript trade paths"
         : !rustPreferred
-            ? "engine preference is TypeScript"
+            ? (input.requiresTsEngine ? "current sizing or realism settings require TypeScript" : "engine preference is TypeScript")
             : "Rust health check failed";
     const canTryRustNativeFinder =
         !comboActive &&
@@ -821,10 +822,8 @@ async function runSingleTimeframe(params: SingleTimeframeRunParams): Promise<Fin
         input.selectedStrategies.length === 1 &&
         Object.prototype.hasOwnProperty.call(builtInStrategies, input.selectedStrategies[0]?.key ?? "");
     if (!comboActive && input.requiresTsEngine && !rustHealthy) {
-        debugLogger.info("[Finder] Realism settings enabled and Rust unavailable - forcing TypeScript engine.");
-        callbacks.setStatus("Realism settings enabled - using TypeScript engine.");
-    } else if (!comboActive && input.requiresTsEngine && rustHealthy) {
-        debugLogger.info("[Finder] Realism settings enabled - using Rust screening with TypeScript reconciliation for top results.");
+        debugLogger.info("[Finder] TypeScript-only sizing or realism settings enabled - forcing TypeScript engine.");
+        callbacks.setStatus("TypeScript-only sizing or realism settings enabled.");
     }
 
     // Adaptive cache mode decision based on dataset size OR batch count
@@ -1603,7 +1602,7 @@ async function reconcileSingleTimeframeTopResults(
     initialCapital: number,
     positionSize: number,
     commission: number,
-    sizingMode: "percent" | "fixed",
+    sizingMode: TradeSizingMode,
     fixedTradeAmount: number,
     maybeYieldByBudget: (force?: boolean) => Promise<void>
 ): Promise<FinderResult[]> {
@@ -2195,7 +2194,7 @@ function runRobustHoldoutEvaluation(
     positionSize: number,
     commission: number,
     settings: BacktestSettings,
-    sizingMode: "percent" | "fixed",
+    sizingMode: TradeSizingMode,
     fixedTradeAmount: number,
     precomputed?: ReturnType<typeof precomputeIndicators>
 ): BacktestResult {
@@ -2233,7 +2232,7 @@ async function runRobustFixedParamWalkForward(
     positionSize: number,
     commission: number,
     settings: BacktestSettings,
-    sizingMode: "percent" | "fixed",
+    sizingMode: TradeSizingMode,
     fixedTradeAmount: number
 ): Promise<Awaited<ReturnType<typeof runFixedParamWalkForward>>> {
     const testWindow = Math.max(20, Math.floor(data.length / Math.max(2, targetWindows)));

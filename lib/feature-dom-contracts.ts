@@ -49,8 +49,10 @@ export const UI_EVENT_HANDLER_REQUIRED_IDS = [
     "fixedTradeToggle",
     "initialCapitalGroup",
     "fixedTradeGroup",
+    "tradeSizingModeGroup",
     "positionSizeGroup",
     "initialCapital",
+    "tradeSizingMode",
     "fixedTradeAmount",
     "positionSize",
     "panelResizeHandle",
@@ -127,8 +129,10 @@ export interface UiEventHandlersDom {
     fixedTradeToggle: HTMLInputElement;
     initialCapitalGroup: HTMLElement;
     fixedTradeGroup: HTMLElement;
+    tradeSizingModeGroup: HTMLElement;
     positionSizeGroup: HTMLElement;
     initialCapital: HTMLInputElement;
+    tradeSizingMode: HTMLSelectElement;
     fixedTradeAmount: HTMLInputElement;
     positionSize: HTMLInputElement;
     panelResizeHandle: HTMLElement;
@@ -206,8 +210,10 @@ export function createUiEventHandlersDom(): UiEventHandlersDom {
         fixedTradeToggle: getRequiredElement<HTMLInputElement>("fixedTradeToggle"),
         initialCapitalGroup: getRequiredElement("initialCapitalGroup"),
         fixedTradeGroup: getRequiredElement("fixedTradeGroup"),
+        tradeSizingModeGroup: getRequiredElement("tradeSizingModeGroup"),
         positionSizeGroup: getRequiredElement("positionSizeGroup"),
         initialCapital: getRequiredElement<HTMLInputElement>("initialCapital"),
+        tradeSizingMode: getRequiredElement<HTMLSelectElement>("tradeSizingMode"),
         fixedTradeAmount: getRequiredElement<HTMLInputElement>("fixedTradeAmount"),
         positionSize: getRequiredElement<HTMLInputElement>("positionSize"),
         panelResizeHandle: getRequiredElement("panelResizeHandle"),

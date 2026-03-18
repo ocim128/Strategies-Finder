@@ -78,16 +78,7 @@ function precomputeIndicatorsFromConfig(
     const closes = getCloses(data);
     const volumes = getVolumes(data);
 
-    const needsAtr =
-        config.stopLossAtr > 0 ||
-        config.takeProfitAtr > 0 ||
-        config.trailingAtr > 0 ||
-        config.atrPercentMin > 0 ||
-        config.atrPercentMax > 0 ||
-        config.partialTakeProfitAtR > 0 ||
-        config.breakEvenAtR > 0;
-
-    const atr = needsAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : [];
+    const atr = calculateATR(highs, lows, closes, config.atrPeriod);
     const trendPeriod = resolveTrendPeriod(config);
     const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
     const useFastTrendFilter = config.tradeFilterMode === 'trend_exec_alignment'

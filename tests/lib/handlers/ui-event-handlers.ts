@@ -912,8 +912,10 @@ export function setupEventHandlers() {
     const fixedTradeToggle = dom.fixedTradeToggle;
     const initialCapitalGroup = dom.initialCapitalGroup;
     const fixedTradeGroup = dom.fixedTradeGroup;
+    const tradeSizingModeGroup = dom.tradeSizingModeGroup;
     const positionSizeGroup = dom.positionSizeGroup;
     const initialCapitalInput = dom.initialCapital;
+    const tradeSizingModeInput = dom.tradeSizingMode;
     const fixedTradeAmountInput = dom.fixedTradeAmount;
     const positionSizeInput = dom.positionSize;
 
@@ -921,9 +923,11 @@ export function setupEventHandlers() {
         const useFixedAmount = fixedTradeToggle.checked;
         initialCapitalGroup.classList.toggle('is-hidden', useFixedAmount);
         fixedTradeGroup.classList.toggle('is-hidden', !useFixedAmount);
+        tradeSizingModeGroup.classList.toggle('is-hidden', !useFixedAmount);
         positionSizeGroup.classList.toggle('is-hidden', useFixedAmount);
 
         initialCapitalInput.disabled = useFixedAmount;
+        tradeSizingModeInput.disabled = !useFixedAmount;
         fixedTradeAmountInput.disabled = !useFixedAmount;
         positionSizeInput.disabled = useFixedAmount;
     };

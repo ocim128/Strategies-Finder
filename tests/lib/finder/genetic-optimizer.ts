@@ -8,6 +8,7 @@ import {
     type Strategy,
     type StrategyParams,
 } from "../strategies/index";
+import type { TradeSizingMode } from "../types/backtest";
 
 interface ParamSpec {
     key: string;
@@ -42,7 +43,7 @@ export interface GeneticBacktestConfig {
     initialCapital: number;
     positionSize: number;
     commission: number;
-    sizingMode: "percent" | "fixed";
+    sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
     minTrades: number;
 }

@@ -30,6 +30,7 @@ import {
     resolveExecutionModelValue,
     resolveMarketMode,
     resolveRiskModeValue,
+    resolveTradeSizingModeValue,
     resolveTakeProfitModeValue,
     resolveTradeDirection,
     resolveTradeFilterMode,
@@ -91,6 +92,9 @@ class SettingsManager {
             positionSize: this.readNumber('positionSize', DEFAULT_BACKTEST_SETTINGS.positionSize),
             commission: this.readNumber('commission', DEFAULT_BACKTEST_SETTINGS.commission),
             fixedTradeToggle: this.readCheckbox('fixedTradeToggle', DEFAULT_BACKTEST_SETTINGS.fixedTradeToggle),
+            sizingMode: this.resolveTradeSizingModeValue(
+                this.readSelect('tradeSizingMode', DEFAULT_BACKTEST_SETTINGS.sizingMode)
+            ),
             fixedTradeAmount: this.readNumber('fixedTradeAmount', DEFAULT_BACKTEST_SETTINGS.fixedTradeAmount),
             useRustEngine: this.readCheckbox('useRustEngineToggle', DEFAULT_BACKTEST_SETTINGS.useRustEngine),
 
@@ -322,6 +326,7 @@ class SettingsManager {
         this.writeNumber('positionSize', settings.positionSize);
         this.writeNumber('commission', settings.commission);
         this.writeCheckbox('fixedTradeToggle', settings.fixedTradeToggle);
+        this.writeSelect('tradeSizingMode', settings.sizingMode ?? DEFAULT_BACKTEST_SETTINGS.sizingMode);
         this.writeNumber('fixedTradeAmount', settings.fixedTradeAmount);
         this.writeCheckbox('useRustEngineToggle', settings.useRustEngine ?? DEFAULT_BACKTEST_SETTINGS.useRustEngine);
 
@@ -638,7 +643,7 @@ class SettingsManager {
         initialCapital: number;
         positionSize: number;
         commission: number;
-        sizingMode: 'percent' | 'fixed';
+        sizingMode: BacktestSettingsData["sizingMode"];
         fixedTradeAmount: number;
     } {
         const s = config.backtestSettings;
@@ -646,7 +651,7 @@ class SettingsManager {
             initialCapital: Math.max(0, s.initialCapital ?? 10000),
             positionSize: Math.max(0, s.positionSize ?? 100),
             commission: Math.max(0, s.commission ?? 0.1),
-            sizingMode: s.fixedTradeToggle ? 'fixed' : 'percent',
+            sizingMode: this.resolveTradeSizingModeValue(s.sizingMode, s.fixedTradeToggle ? 'fixed' : 'percent'),
             fixedTradeAmount: Math.max(0, s.fixedTradeAmount ?? 1000),
         };
     }
@@ -712,6 +717,10 @@ class SettingsManager {
         return resolveTakeProfitModeValue(value, DEFAULT_BACKTEST_SETTINGS);
     }
 
+    private resolveTradeSizingModeValue(value: unknown, fallback?: BacktestSettingsData["sizingMode"]) {
+        return resolveTradeSizingModeValue(value, DEFAULT_BACKTEST_SETTINGS, fallback);
+    }
+
     private resolveTradeFilterModeValue(value: unknown): TradeFilterMode {
         return resolveTradeFilterModeValue(value, DEFAULT_BACKTEST_SETTINGS);
     }
@@ -735,6 +744,7 @@ class SettingsManager {
     private triggerChangeEvents(): void {
         const toggleIds = [
             'fixedTradeToggle',
+            'tradeSizingMode',
             'riskSettingsToggle',
             'tradeFilterSettingsToggle',
             'invertSignalsToggle',

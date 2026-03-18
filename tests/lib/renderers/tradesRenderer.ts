@@ -121,6 +121,10 @@ export class TradesRenderer {
         const statusClass = isProfit ? 'win' : 'loss';
         const duration = this.formatDuration(display.durationMs);
         const fees = trade.fees ? `Fees: $${trade.fees.toFixed(2)}` : '';
+        const entryValue = trade.size * trade.entryPrice;
+        const sizeLabel = Number.isFinite(entryValue) && entryValue > 0
+            ? `Entry Value: $${entryValue.toFixed(2)} | Qty: ${trade.size.toFixed(4)}`
+            : `Qty: ${trade.size.toFixed(4)}`;
         const exitReasonBadge = this.getExitReasonBadge(display.displayExitReason);
         const entryDate = formatDate(trade.entryTime);
 
@@ -159,6 +163,9 @@ export class TradesRenderer {
                                 <span class="trade-duration">${duration}</span>
                                 ${exitReasonBadge}
                                 ${fees ? `<span class="separator">|</span><span class="trade-fees">${fees}</span>` : ''}
+                            </div>
+                            <div class="trade-sub-info">
+                                <span class="trade-size">${sizeLabel}</span>
                             </div>
                         </div>
                     </div>

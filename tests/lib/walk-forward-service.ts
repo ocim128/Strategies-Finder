@@ -552,7 +552,7 @@ class WalkForwardService {
 
             // Try Rust walk-forward first when compatible, then fallback to TypeScript.
             if (!useFixedParam && shouldUseRustEngine()) {
-                const requiresTsEngine = backtestService.requiresTypescriptEngine(backtestSettings);
+                const requiresTsEngine = backtestService.requiresTypescriptEngine(backtestSettings) || isSmartTradeSizingMode(capitalSettings.sizingMode);
                 if (!requiresTsEngine && await rustEngine.checkHealth()) {
                     const rustConfig = this.toRustWalkForwardConfig(baseConfig);
                     const rustSettings = this.toRustBacktestSettings(backtestSettings);
@@ -1521,3 +1521,4 @@ class WalkForwardService {
 
 export const walkForwardService = new WalkForwardService();
 
+import { isSmartTradeSizingMode } from "./types/backtest";

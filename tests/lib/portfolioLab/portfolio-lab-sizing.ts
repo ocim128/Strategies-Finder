@@ -1,3 +1,4 @@
+import { usesFixedDollarSizing } from "../types/backtest";
 import { timeKey, type BacktestResult, type Signal } from "../strategies";
 import { buildSignalContextKey, buildSignalContexts } from "./portfolio-lab-sweep";
 import type {
@@ -106,7 +107,7 @@ export function simulateScenario(
 
         const baseEntryValue = trade.size * trade.entryPrice;
         const tradeReturn = baseEntryValue > 0 ? trade.pnl / baseEntryValue : 0;
-        const baseAllocation = capitalSettings.sizingMode === "fixed" && capitalSettings.fixedTradeAmount > 0
+        const baseAllocation = usesFixedDollarSizing(capitalSettings.sizingMode) && capitalSettings.fixedTradeAmount > 0
             ? capitalSettings.fixedTradeAmount
             : capital * (capitalSettings.positionSize / 100);
         const allocatedCapital = Math.min(capital, Math.max(0, baseAllocation * multiplier));

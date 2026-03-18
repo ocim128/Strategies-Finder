@@ -644,7 +644,8 @@ function collectCurrentSubscriptionBacktestSettings(): Record<string, unknown> {
         initialCapital: capital.initialCapital,
         positionSize: capital.positionSize,
         commission: capital.commission,
-        fixedTradeToggle: capital.sizingMode === 'fixed',
+        sizingMode: capital.sizingMode,
+        fixedTradeToggle: capital.sizingMode !== 'percent',
         fixedTradeAmount: capital.fixedTradeAmount,
     };
 }

@@ -30,6 +30,7 @@ import type {
 	FinderOptions,
 	FinderResult
 } from './types/finder';
+import { isSmartTradeSizingMode, type TradeSizingMode } from "./types/backtest";
 
 export class FinderManager {
 	private static readonly MAX_MULTI_TIMEFRAMES = 10;
@@ -617,7 +618,7 @@ export class FinderManager {
 			const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = backtestService.getCapitalSettings();
 			const settings = backtestService.getBacktestSettings();
 			this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settingsManager.getBacktestSettings());
-			const requiresTsEngine = backtestService.requiresTypescriptEngine(settings);
+			const requiresTsEngine = backtestService.requiresTypescriptEngine(settings) || isSmartTradeSizingMode(sizingMode);
 
 			// Freeze the selected chart block; execution-aware closed-candle normalization
 			// is applied inside the finder run so it matches manual backtests.
@@ -630,7 +631,7 @@ export class FinderManager {
 			// --- Combo Mode: resolve primary config, generate primary signals once ---
 			let comboPrimarySignals: undefined | ReturnType<typeof applySignalPolarity>;
 			let comboPrimarySettings: undefined | typeof settings;
-			let comboPrimaryCapital: undefined | { initialCapital: number; positionSize: number; commission: number; sizingMode: "percent" | "fixed"; fixedTradeAmount: number };
+			let comboPrimaryCapital: undefined | { initialCapital: number; positionSize: number; commission: number; sizingMode: TradeSizingMode; fixedTradeAmount: number };
 
 			if (options.comboEnabled && options.comboPrimaryConfigName) {
 				const primaryConfig = settingsManager.loadStrategyConfig(options.comboPrimaryConfigName);

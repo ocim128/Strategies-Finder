@@ -14,6 +14,7 @@ import { runBacktest } from "./strategies/backtest/backtest-engine";
 import { getResampleBucketStart, resampleOHLCV, type ResampleOptions } from "./strategies/resample-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { mergeStrategySignals } from "./signal-merge";
+import { isTradeSizingMode, type TradeSizingMode } from "./types/backtest";
 
 export interface EntrySignalEvaluationRequest {
     strategyKey: string;
@@ -28,7 +29,7 @@ export interface EntrySignalCapitalSettings {
     initialCapital?: number;
     positionSize?: number;
     commission?: number;
-    sizingMode?: "percent" | "fixed";
+    sizingMode?: TradeSizingMode;
     fixedTradeAmount?: number;
     fixedTradeToggle?: boolean;
 }
@@ -97,15 +98,16 @@ function toBooleanLike(value: unknown): boolean | null {
     return null;
 }
 
-function toSizingMode(value: unknown): "percent" | "fixed" | null {
-    return value === "fixed" || value === "percent" ? value : null;
+function toSizingMode(value: unknown): TradeSizingMode | null {
+    if (value === "smart_fixed") return "smart_fixed_velocity_memory";
+    return isTradeSizingMode(value) ? value : null;
 }
 
 function resolveEvaluationCapitalSettings(request: EntrySignalEvaluationRequest): {
     initialCapital: number;
     positionSize: number;
     commission: number;
-    sizingMode: "percent" | "fixed";
+    sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
 } {
     const rawBacktestSettings = request.backtestSettings as Record<string, unknown> | undefined;

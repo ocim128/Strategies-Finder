@@ -3,6 +3,7 @@ import { runBacktest, runBacktestCompact, calculateBacktestStats, calculateMaxDr
 import { ensureCleanData } from './strategy-helpers';
 import { sanitizeSharpeRatio } from './performance-metrics';
 import { deriveAutoWalkForwardRange } from '../walk-forward-range-utils';
+import type { TradeSizingMode } from '../types/backtest';
 
 // ============================================================================
 // Walk-Forward Analysis (WFA) Module
@@ -117,7 +118,7 @@ export interface OptimizationResult {
 }
 
 type TradeSizing = {
-    mode: 'percent' | 'fixed';
+    mode: TradeSizingMode;
     fixedTradeAmount: number;
 };
 
