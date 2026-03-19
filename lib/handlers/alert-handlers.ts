@@ -25,6 +25,7 @@ import { getOptionalElement } from '../dom-utils';
 import { parseInputNumber } from '../dom-input-readers';
 import { parseTimeToUnixSeconds } from '../time-normalization';
 import { createAccessibleModal, type AccessibleModalController } from '../modal-accessibility';
+import { getLegacyCompatibleTradeFilterModeValue } from '../legacy-settings-compat';
 import {
     getWorkerStrategySupportSnapshot,
     isWorkerSupportedStrategyKey,
@@ -397,7 +398,7 @@ function openSubscriptionInfoModal(sub: AlertSubscription, configName: string | 
     ];
     appendModalSection(bodyEl, 'Risk / Targets', riskLines);
 
-    const tradeFilterModeRaw = settings.tradeFilterMode ?? settings.entryConfirmation;
+    const tradeFilterModeRaw = getLegacyCompatibleTradeFilterModeValue(settings);
     const tradeFilterLines = [
         `Filter Enabled: ${settings.tradeFilterSettingsToggle === true ? 'on' : 'off'}`,
         `Filter Mode: ${formatValue(tradeFilterModeRaw)}`,

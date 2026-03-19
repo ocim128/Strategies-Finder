@@ -29,6 +29,21 @@ describe('Backtest settings compatibility', () => {
         expect(normalized.tradeFilterMode).to.equal('rsi');
     });
 
+    it('reads legacy entryConfirmation but does not retain it in normalized stored settings', () => {
+        const resolved = resolveBacktestSettingsFromRaw({
+            tradeFilterSettingsToggle: true,
+            entryConfirmation: 'trend',
+        } as unknown as BacktestSettings);
+        const normalized = normalizeStoredBacktestSettings({
+            tradeFilterSettingsToggle: true,
+            entryConfirmation: 'trend',
+        });
+
+        expect(resolved.tradeFilterMode).to.equal('trend');
+        expect(normalized.tradeFilterMode).to.equal('trend');
+        expect('entryConfirmation' in (normalized as Record<string, unknown>)).to.equal(false);
+    });
+
     it('sanitizes Rust payloads without dropping compatibility fields', () => {
         const settings: BacktestSettings = {
             atrPeriod: 14,

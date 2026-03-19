@@ -9,8 +9,10 @@ import {
     PARAMETER_AUDIT_REQUIRED_IDS,
     PAIR_COMBINER_BRIDGE_REQUIRED_IDS,
     PORTFOLIO_LAB_REQUIRED_IDS,
+    SETTINGS_MANAGER_REQUIRED_IDS,
     SETTINGS_WORKSPACE_REQUIRED_IDS,
     UI_EVENT_HANDLER_REQUIRED_IDS,
+    UI_MANAGER_REQUIRED_IDS,
     WALK_FORWARD_SERVICE_REQUIRED_IDS,
 } from "./lib/feature-dom-contracts";
 
@@ -41,6 +43,8 @@ describe("Feature DOM contracts", () => {
     const htmlIds = extractIds(markup);
     const contractGroups = {
         uiEventHandlers: [...UI_EVENT_HANDLER_REQUIRED_IDS],
+        uiManager: [...UI_MANAGER_REQUIRED_IDS],
+        settingsManager: [...SETTINGS_MANAGER_REQUIRED_IDS],
         settingsWorkspace: [...SETTINGS_WORKSPACE_REQUIRED_IDS],
 
         portfolioLab: [...PORTFOLIO_LAB_REQUIRED_IDS],

@@ -270,6 +270,100 @@ export function createSettingsWorkspaceDom(): SettingsWorkspaceDom {
     };
 }
 
+export const UI_MANAGER_REQUIRED_IDS = [
+    "symbolDataSource",
+    "symbolPrice",
+    "symbolChange",
+    "ohlcOpen",
+    "ohlcHigh",
+    "ohlcLow",
+    "ohlcClose",
+    "ohlcVolume",
+    "ohlcChange",
+    "ohlcChangeValue",
+    "lastBacktestResult",
+    "tradeBadge",
+    "strategySelect",
+    "timeframeCustom",
+    "timeframeMinutesInput",
+    "indicatorsPanel",
+    "strategyStatus",
+] as const;
+
+export interface UiManagerDom {
+    symbolDataSource: HTMLElement;
+    symbolPrice: HTMLElement;
+    symbolChange: HTMLElement;
+    ohlcOpen: HTMLElement;
+    ohlcHigh: HTMLElement;
+    ohlcLow: HTMLElement;
+    ohlcClose: HTMLElement;
+    ohlcVolume: HTMLElement;
+    ohlcChange: HTMLElement;
+    ohlcChangeValue: HTMLElement;
+    lastBacktestResult: HTMLElement;
+    tradeBadge: HTMLElement;
+    strategySelect: HTMLSelectElement;
+    timeframeCustom: HTMLElement;
+    timeframeMinutesInput: HTMLInputElement;
+    indicatorsPanel: HTMLElement;
+    strategyStatus: HTMLElement;
+}
+
+export function createUiManagerDom(): UiManagerDom {
+    return {
+        symbolDataSource: getRequiredElement("symbolDataSource"),
+        symbolPrice: getRequiredElement("symbolPrice"),
+        symbolChange: getRequiredElement("symbolChange"),
+        ohlcOpen: getRequiredElement("ohlcOpen"),
+        ohlcHigh: getRequiredElement("ohlcHigh"),
+        ohlcLow: getRequiredElement("ohlcLow"),
+        ohlcClose: getRequiredElement("ohlcClose"),
+        ohlcVolume: getRequiredElement("ohlcVolume"),
+        ohlcChange: getRequiredElement("ohlcChange"),
+        ohlcChangeValue: getRequiredElement("ohlcChangeValue"),
+        lastBacktestResult: getRequiredElement("lastBacktestResult"),
+        tradeBadge: getRequiredElement("tradeBadge"),
+        strategySelect: getRequiredElement<HTMLSelectElement>("strategySelect"),
+        timeframeCustom: getRequiredElement("timeframeCustom"),
+        timeframeMinutesInput: getRequiredElement<HTMLInputElement>("timeframeMinutesInput"),
+        indicatorsPanel: getRequiredElement("indicatorsPanel"),
+        strategyStatus: getRequiredElement("strategyStatus"),
+    };
+}
+
+export const SETTINGS_MANAGER_REQUIRED_IDS = [
+    "strategySelect",
+    "settingsTab",
+    "riskMode",
+    "takeProfitMode",
+    "tradeFilterMode",
+    "tradeDirection",
+    "twoHourCloseParity",
+] as const;
+
+export interface SettingsManagerDom {
+    strategySelect: HTMLSelectElement;
+    settingsTab: HTMLElement;
+    riskMode: HTMLElement;
+    takeProfitMode: HTMLElement;
+    tradeFilterMode: HTMLElement;
+    tradeDirection: HTMLElement;
+    twoHourCloseParity: HTMLElement | null;
+}
+
+export function createSettingsManagerDom(): SettingsManagerDom {
+    return {
+        strategySelect: getRequiredElement<HTMLSelectElement>("strategySelect"),
+        settingsTab: getRequiredElement("settingsTab"),
+        riskMode: getRequiredElement("riskMode"),
+        takeProfitMode: getRequiredElement("takeProfitMode"),
+        tradeFilterMode: getRequiredElement("tradeFilterMode"),
+        tradeDirection: getRequiredElement("tradeDirection"),
+        twoHourCloseParity: getOptionalElement("twoHourCloseParity"),
+    };
+}
+
 
 
 export const PORTFOLIO_LAB_REQUIRED_IDS = [

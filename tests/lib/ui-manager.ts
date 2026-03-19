@@ -3,22 +3,27 @@ import { OHLCVData, BacktestResult, Trade, EntryPreview } from "./strategies/ind
 import { state } from "./state";
 import type { TwoHourParityBacktestResults } from "./state";
 import { strategyRegistry, getStrategyList } from "../strategyRegistry";
-import { getOptionalElement, getRequiredElement, updateTextContent } from "./dom-utils";
+import { getOptionalElement, getRequiredElement } from "./dom-utils";
 import { resultsRenderer } from "./renderers/resultsRenderer";
 import { tradesRenderer } from "./renderers/tradesRenderer";
 import { paramManager } from "./param-manager";
 import { formatJakartaTime, isBusinessDayTime } from "./timezone-utils";
 import { formatDisplayPrice } from "./price-format";
-import { createSettingsWorkspaceDom } from "./feature-dom-contracts";
+import { createSettingsWorkspaceDom, createUiManagerDom, type UiManagerDom } from "./feature-dom-contracts";
 
 export class UIManager {
+    private dom: UiManagerDom | null = null;
+
+    private getDom(): UiManagerDom {
+        return this.dom ??= createUiManagerDom();
+    }
+
     public updateSymbolDataSource(
         label: string,
         tone: 'live' | 'seed' | 'warning' | 'loading' = 'seed',
         title?: string
     ): void {
-        const el = document.getElementById('symbolDataSource') as HTMLElement | null;
-        if (!el) return;
+        const { symbolDataSource: el } = this.getDom();
         el.textContent = label;
         el.className = `symbol-source ${tone}`;
         el.title = title ?? label;
@@ -51,32 +56,32 @@ export class UIManager {
         const isPositive = data.close >= data.open;
         const colorClass = isPositive ? 'positive' : 'negative';
         const displayClass = `ohlc-value ${colorClass}`;
+        const dom = this.getDom();
 
-        updateTextContent('ohlcOpen', this.formatPrice(data.open), displayClass);
-        updateTextContent('ohlcHigh', this.formatPrice(data.high), displayClass);
-        updateTextContent('ohlcLow', this.formatPrice(data.low), displayClass);
-        updateTextContent('ohlcClose', this.formatPrice(data.close), displayClass);
+        dom.ohlcOpen.textContent = this.formatPrice(data.open);
+        dom.ohlcOpen.className = displayClass;
+        dom.ohlcHigh.textContent = this.formatPrice(data.high);
+        dom.ohlcHigh.className = displayClass;
+        dom.ohlcLow.textContent = this.formatPrice(data.low);
+        dom.ohlcLow.className = displayClass;
+        dom.ohlcClose.textContent = this.formatPrice(data.close);
+        dom.ohlcClose.className = displayClass;
 
         // Volume display
         if (data.volume !== undefined) {
-            const volumeEl = document.getElementById('ohlcVolume');
-            if (volumeEl) {
-                volumeEl.textContent = this.formatVolume(data.volume);
-            }
+            dom.ohlcVolume.textContent = this.formatVolume(data.volume);
         }
 
         // Change percentage
         const change = ((data.close - data.open) / data.open) * 100;
-        const changeEl = document.getElementById('ohlcChange');
-        const changeValueEl = document.getElementById('ohlcChangeValue');
+        const changeEl = dom.ohlcChange;
+        const changeValueEl = dom.ohlcChangeValue;
         const arrowEl = changeEl?.querySelector('.ohlc-change-arrow');
 
-        if (changeEl && changeValueEl) {
-            changeValueEl.textContent = `${isPositive ? '+' : ''}${change.toFixed(2)}%`;
-            changeEl.className = `ohlc-change ${isPositive ? 'positive' : 'negative'}`;
-            if (arrowEl) {
-                arrowEl.textContent = isPositive ? '^' : 'v';
-            }
+        changeValueEl.textContent = `${isPositive ? '+' : ''}${change.toFixed(2)}%`;
+        changeEl.className = `ohlc-change ${isPositive ? 'positive' : 'negative'}`;
+        if (arrowEl) {
+            arrowEl.textContent = isPositive ? '^' : 'v';
         }
     }
 
@@ -96,9 +101,12 @@ export class UIManager {
         const change = ((latest.close - previous.close) / previous.close) * 100;
         const isPositive = change >= 0;
         const colorClass = isPositive ? '' : 'negative';
+        const dom = this.getDom();
 
-        updateTextContent('symbolPrice', this.formatPrice(latest.close), `symbol-price ${colorClass}`);
-        updateTextContent('symbolChange', `${isPositive ? '+' : ''}${change.toFixed(2)}%`, `symbol-change ${colorClass}`);
+        dom.symbolPrice.textContent = this.formatPrice(latest.close);
+        dom.symbolPrice.className = `symbol-price ${colorClass}`;
+        dom.symbolChange.textContent = `${isPositive ? '+' : ''}${change.toFixed(2)}%`;
+        dom.symbolChange.className = `symbol-change ${colorClass}`;
 
         this.updateOHLCDisplay(latest);
     }
@@ -107,32 +115,30 @@ export class UIManager {
         resultsRenderer.render(result);
 
         // Update status bar badge
-        const badge = document.getElementById('lastBacktestResult');
-        if (badge) {
-            const isPositive = result.netProfit >= 0;
-            const source = state.currentBacktestResultSource;
-            const sourcePrefix = source === 'finder_selection'
-                ? 'Finder Adj '
-                : source === 'finder_robust_oos'
-                    ? 'Robust OOS '
-                    : source === 'walk_forward_oos'
-                        ? 'WFO OOS '
-                        : source === 'ensemble_preview'
-                            ? 'Ensemble '
-                            : '';
-            badge.textContent = `${sourcePrefix}${isPositive ? '+' : ''}${result.netProfitPercent.toFixed(2)}% ROI`;
-            badge.className = `stat-badge ${isPositive ? 'positive' : 'negative'}`;
-            badge.title = source === 'finder_selection'
-                ? 'Showing Finder selection snapshot with endpoint-bias trade removed. Run Backtest for the raw result.'
-                : source === 'finder_robust_oos'
-                    ? 'Showing Finder robust OOS walk-forward snapshot. Run Backtest for a full-history raw result.'
-                    : source === 'walk_forward_oos'
-                        ? 'Showing walk-forward out-of-sample result snapshot.'
-                        : source === 'ensemble_preview'
-                            ? 'Showing strategy ensemble preview result.'
-                            : 'Showing raw backtest result.';
-            badge.classList.remove('is-hidden');
-        }
+        const { lastBacktestResult: badge } = this.getDom();
+        const isPositive = result.netProfit >= 0;
+        const source = state.currentBacktestResultSource;
+        const sourcePrefix = source === 'finder_selection'
+            ? 'Finder Adj '
+            : source === 'finder_robust_oos'
+                ? 'Robust OOS '
+                : source === 'walk_forward_oos'
+                    ? 'WFO OOS '
+                    : source === 'ensemble_preview'
+                        ? 'Ensemble '
+                        : '';
+        badge.textContent = `${sourcePrefix}${isPositive ? '+' : ''}${result.netProfitPercent.toFixed(2)}% ROI`;
+        badge.className = `stat-badge ${isPositive ? 'positive' : 'negative'}`;
+        badge.title = source === 'finder_selection'
+            ? 'Showing Finder selection snapshot with endpoint-bias trade removed. Run Backtest for the raw result.'
+            : source === 'finder_robust_oos'
+                ? 'Showing Finder robust OOS walk-forward snapshot. Run Backtest for a full-history raw result.'
+                : source === 'walk_forward_oos'
+                    ? 'Showing walk-forward out-of-sample result snapshot.'
+                    : source === 'ensemble_preview'
+                        ? 'Showing strategy ensemble preview result.'
+                        : 'Showing raw backtest result.';
+        badge.classList.remove('is-hidden');
     }
 
     public updateParityComparisonUI(results: TwoHourParityBacktestResults): void {
@@ -154,11 +160,9 @@ export class UIManager {
     }
 
     public updateTradeBadge(count: number) {
-        const badge = document.getElementById('tradeBadge');
-        if (badge) {
-            badge.textContent = count.toString();
-            badge.classList.toggle('active', count > 0);
-        }
+        const { tradeBadge: badge } = this.getDom();
+        badge.textContent = count.toString();
+        badge.classList.toggle('active', count > 0);
     }
 
     public addIndicatorBadge(id: string, type: string, period: number, color: string) {
@@ -187,7 +191,7 @@ export class UIManager {
     }
 
     public updateStrategyDropdown(currentStrategyKey: string) {
-        const strategySelect = getRequiredElement<HTMLSelectElement>('strategySelect');
+        const { strategySelect } = this.getDom();
         const strategies = getStrategyList();
         const currentValue = strategyRegistry.has(currentStrategyKey)
             ? currentStrategyKey
@@ -238,33 +242,29 @@ export class UIManager {
             if (isActive) matchedTab = true;
         });
 
-        const customContainer = document.getElementById('timeframeCustom');
-        const customInput = document.getElementById('timeframeMinutesInput') as HTMLInputElement | null;
+        const { timeframeCustom: customContainer, timeframeMinutesInput: customInput } = this.getDom();
         const isCustom = !matchedTab;
 
-        if (customContainer) {
-            customContainer.classList.toggle('active', isCustom);
-        }
+        customContainer.classList.toggle('active', isCustom);
 
-        if (customInput) {
-            if (interval.endsWith('m')) {
-                const minutes = parseInt(interval.slice(0, -1), 10);
-                if (Number.isFinite(minutes)) {
-                    customInput.value = String(minutes);
-                    return;
-                }
+        if (interval.endsWith('m')) {
+            const minutes = parseInt(interval.slice(0, -1), 10);
+            if (Number.isFinite(minutes)) {
+                customInput.value = String(minutes);
+                return;
             }
-            customInput.value = '';
         }
+        customInput.value = '';
     }
 
     public clearUI() {
-        getRequiredElement('indicatorsPanel').innerHTML = '';
+        const dom = this.getDom();
+        dom.indicatorsPanel.innerHTML = '';
         resultsRenderer.clear();
         tradesRenderer.clear();
         this.clearParityComparisonUI();
         this.updateTradeBadge(0);
-        updateTextContent('strategyStatus', 'Ready');
+        dom.strategyStatus.textContent = 'Ready';
         this.updateEntryPreview(null);
     }
 
@@ -354,8 +354,7 @@ export class UIManager {
         let panel = document.getElementById('entryPreviewPanel');
         if (panel) return panel;
 
-        const container = document.getElementById('indicatorsPanel');
-        if (!container) return null;
+        const { indicatorsPanel: container } = this.getDom();
 
         panel = document.createElement('div');
         panel.id = 'entryPreviewPanel';

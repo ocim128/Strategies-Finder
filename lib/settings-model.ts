@@ -9,6 +9,7 @@ import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, TradeDirection, TradeFilterMode } from "./types/strategies";
 import { isTradeSizingMode, type TradeSizingMode } from "./types/backtest";
 import { EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
+import { getLegacyCompatibleTradeFilterModeValue, getLegacyCompatibleTradeFilterToggleValue } from "./legacy-settings-compat";
 
 // ============================================================================
 // Types
@@ -80,8 +81,6 @@ export interface BacktestSettingsData {
     tradeFilterMode: TradeFilterMode;
     /** @deprecated Legacy key retained for backward compatibility when loading old configs */
     entrySettingsToggle?: boolean;
-    /** @deprecated Legacy key retained for backward compatibility when loading old configs */
-    entryConfirmation?: string;
     htfBiasEmaPeriod: number;
     executionTrendEmaPeriod: number;
     confirmLookback: number;
@@ -510,12 +509,11 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
         flipCooldownTrades: resolved.flipCooldownTrades ?? DEFAULT_BACKTEST_SETTINGS.flipCooldownTrades,
         minTradesBeforeFirstFlip: resolved.minTradesBeforeFirstFlip ?? DEFAULT_BACKTEST_SETTINGS.minTradesBeforeFirstFlip,
         tradeFilterSettingsToggle: readBoolean(
-            source.tradeFilterSettingsToggle ?? source.entrySettingsToggle,
+            getLegacyCompatibleTradeFilterToggleValue(source),
             resolved.tradeFilterMode !== 'none'
         ),
         tradeFilterMode: resolved.tradeFilterMode ?? DEFAULT_BACKTEST_SETTINGS.tradeFilterMode,
         entrySettingsToggle: source.entrySettingsToggle === undefined ? undefined : readBoolean(source.entrySettingsToggle, false),
-        entryConfirmation: typeof source.entryConfirmation === 'string' ? source.entryConfirmation : undefined,
         htfBiasEmaPeriod: resolved.htfBiasEmaPeriod ?? DEFAULT_BACKTEST_SETTINGS.htfBiasEmaPeriod,
         executionTrendEmaPeriod: resolved.executionTrendEmaPeriod ?? DEFAULT_BACKTEST_SETTINGS.executionTrendEmaPeriod,
         confirmLookback: resolved.confirmLookback ?? DEFAULT_BACKTEST_SETTINGS.confirmLookback,
@@ -776,10 +774,10 @@ export function resolveExecutionModelValue(
 }
 
 export function resolveTradeFilterMode(
-    settings: Partial<BacktestSettingsData>,
+    settings: Partial<BacktestSettingsData> & { entryConfirmation?: string },
     defaults: BacktestSettingsData = DEFAULT_BACKTEST_SETTINGS
 ): TradeFilterMode {
-    return resolveTradeFilterModeValue(settings.tradeFilterMode ?? settings.entryConfirmation, defaults);
+    return resolveTradeFilterModeValue(getLegacyCompatibleTradeFilterModeValue(settings), defaults);
 }
 
 export function resolveTwoHourCloseParity(

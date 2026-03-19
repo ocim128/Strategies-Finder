@@ -37,6 +37,7 @@ import {
     type StrategyConfig,
 } from "./settings-model";
 import { BACKTEST_DOM_SETTING_IDS } from "./backtest-settings-resolver";
+import { createSettingsManagerDom, type SettingsManagerDom } from "./feature-dom-contracts";
 
 export {
     DEFAULT_APP_SETTINGS,
@@ -93,6 +94,12 @@ const BACKTEST_DOM_ID_TO_SETTING_KEY = Object.freeze<Record<string, keyof Backte
 class SettingsManager {
     private autoSaveEnabled: boolean = true;
     private saveDebounceTimeout: number | null = null;
+
+    private dom: SettingsManagerDom | null = null;
+
+    private getDom(): SettingsManagerDom {
+        return this.dom ??= createSettingsManagerDom();
+    }
 
     // ========================================================================
     // Auto-Save Settings
@@ -290,10 +297,7 @@ class SettingsManager {
             // Switch to the strategy if different
             if (config.strategyKey !== state.currentStrategyKey && strategyRegistry.has(config.strategyKey)) {
                 state.set('currentStrategyKey', config.strategyKey);
-                const strategySelect = document.getElementById('strategySelect') as HTMLSelectElement | null;
-                if (strategySelect) {
-                    strategySelect.value = config.strategyKey;
-                }
+                this.getDom().strategySelect.value = config.strategyKey;
             }
 
             // Apply strategy params with a slight delay to ensure params are rendered
@@ -376,11 +380,9 @@ class SettingsManager {
 
     public setupAutoSave(): void {
         // Listen for input changes on settings panel
-        const settingsPanel = document.getElementById('settingsTab');
-        if (settingsPanel) {
-            settingsPanel.addEventListener('change', () => this.saveSettingsDebounced());
-            settingsPanel.addEventListener('input', () => this.saveSettingsDebounced());
-        }
+        const { settingsTab } = this.getDom();
+        settingsTab.addEventListener('change', () => this.saveSettingsDebounced());
+        settingsTab.addEventListener('input', () => this.saveSettingsDebounced());
 
         // Listen for state changes
         state.subscribe('currentStrategyKey', () => this.saveSettingsDebounced());
@@ -564,6 +566,7 @@ class SettingsManager {
     }
 
     private triggerChangeEvents(): void {
+        const dom = this.getDom();
         const toggleIds = [
             'fixedTradeToggle',
             'tradeSizingMode',
@@ -608,26 +611,11 @@ class SettingsManager {
         triggerSettingsChangeEvents(toggleIds);
 
         // Trigger riskMode change
-        const riskMode = document.getElementById('riskMode');
-        if (riskMode) {
-            riskMode.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-        const takeProfitMode = document.getElementById('takeProfitMode');
-        if (takeProfitMode) {
-            takeProfitMode.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-        const tradeFilterMode = document.getElementById('tradeFilterMode');
-        if (tradeFilterMode) {
-            tradeFilterMode.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-        const tradeDirection = document.getElementById('tradeDirection');
-        if (tradeDirection) {
-            tradeDirection.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-        const twoHourCloseParity = document.getElementById('twoHourCloseParity');
-        if (twoHourCloseParity) {
-            twoHourCloseParity.dispatchEvent(new Event('change', { bubbles: true }));
-        }
+        dom.riskMode.dispatchEvent(new Event('change', { bubbles: true }));
+        dom.takeProfitMode.dispatchEvent(new Event('change', { bubbles: true }));
+        dom.tradeFilterMode.dispatchEvent(new Event('change', { bubbles: true }));
+        dom.tradeDirection.dispatchEvent(new Event('change', { bubbles: true }));
+        dom.twoHourCloseParity?.dispatchEvent(new Event('change', { bubbles: true }));
     }
 }
 

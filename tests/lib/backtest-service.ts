@@ -23,7 +23,7 @@ import { shouldUseRustEngine } from "./engine-preferences";
 import { calculateSharpeRatioFromEquityCurve, calculateSharpeRatioFromReturns } from "./strategies/performance-metrics";
 import { computeEdgeStatistics } from "./strategies/backtest/edge-statistics";
 import { getIntervalSeconds } from "./dataProviders/utils";
-import { getOptionalElement, getRequiredElement } from "./dom-utils";
+import { getOptionalElement } from "./dom-utils";
 import { sanitizeBacktestSettingsForRust, requiresTypescriptEngine as requiresTsEngine } from "./rust-settings-sanitizer";
 import { trimToClosedCandles } from "./closed-candle-utils";
 import { sliceOhlcvByBlock } from "./block-selector";
@@ -42,6 +42,8 @@ import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { mergeStrategySignals } from "./signal-merge";
 import { resolveSubscriptionExecutionBacktestSettings } from "./alert-subscription-utils";
 import { isSmartTradeSizingMode, isTradeSizingMode, type TradeSizingMode } from "./types/backtest";
+import { createDomBacktestRunHandle, type BacktestRunHandle } from "./backtest-run-presenter";
+import { commitBacktestResult, commitParityBacktestResults } from "./state-actions";
 
 import { resolveTwoHourParityFromTime } from "./two-hour-parity";
 import { buildPostEntryPathStats as analyzeBacktestResult } from "./backtest-result-analysis";
@@ -54,11 +56,18 @@ const SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS = Object.freeze({
     fixedTradeAmount: 0,
 });
 
-type BacktestRunUi = {
-    progressContainer: HTMLElement;
-    progressFill: HTMLElement;
-    progressText: HTMLElement;
-    statusEl: HTMLElement;
+type BacktestCapitalSettings = {
+    initialCapital: number;
+    positionSize: number;
+    commission: number;
+    sizingMode: TradeSizingMode;
+    fixedTradeAmount: number;
+};
+
+type CurrentBacktestExecution = {
+    result: BacktestResult;
+    engineUsed: 'rust' | 'typescript';
+    parityComparison: { odd: BacktestResult; even: BacktestResult; baseline: 'odd' | 'even' } | null;
 };
 
 export class BacktestService {
@@ -70,118 +79,50 @@ export class BacktestService {
             strategy: state.currentStrategyKey,
             candles: state.ohlcvData.length,
         });
-        const { progressContainer, progressFill, progressText, statusEl } =
-            this.beginBacktestRun('runBacktest', 'Running backtest...', true);
+        const runUi = this.beginBacktestRun('runBacktest', 'Running backtest...', true);
         let shouldDelayHide = false;
 
         try {
-            await this.updateBacktestProgress(progressFill, progressText, '20%', 'Calculating indicators...', 100);
+            await this.updateBacktestProgress(runUi, '20%', 'Calculating indicators...', 100);
 
             const strategy = strategyRegistry.get(state.currentStrategyKey);
             if (!strategy) {
                 debugLogger.error("backtest.strategy_not_found", { strategyKey: state.currentStrategyKey });
-                statusEl.textContent = 'Strategy not found';
+                runUi.setStatus('Strategy not found');
                 return;
             }
 
             const params = paramManager.getValues(strategy);
-            const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = this.getCapitalSettings();
+            const capitalSettings = this.getCapitalSettings();
             const settings = this.getBacktestSettings();
-            const requiresTsEngine = this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(sizingMode);
+            const requiresTsEngine = this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
             const parityMode = this.getTwoHourCloseParityMode();
 
             await this.updateBacktestProgress(
-                progressFill,
-                progressText,
+                runUi,
                 '40%',
                 parityMode === 'both' ? 'Preparing parity runs...' : 'Generating signals...',
                 100
             );
 
-            state.set('twoHourParityBacktestResults', null);
-            // Data normalization (closed candles + block range) is applied inside runBacktestForData.
-            const baseData = state.ohlcvData;
-            let result: BacktestResult;
-            let engineUsed: 'rust' | 'typescript';
-            let parityComparison: { odd: BacktestResult; even: BacktestResult; baseline: 'odd' | 'even' } | null = null;
+            const { result, engineUsed, parityComparison } = await this.executeBacktestForParityMode(
+                runUi,
+                strategy,
+                params,
+                settings,
+                capitalSettings,
+                requiresTsEngine,
+                parityMode
+            );
 
-            if (parityMode === 'both') {
-                const baselineParity = this.inferBaselineParity(baseData);
-                const oddData = await this.getBacktestDataForParity('odd', baseData);
-                const evenData = await this.getBacktestDataForParity('even', baseData);
+            commitBacktestResult(result, 'backtest', {
+                parityResults: parityComparison,
+                reason: 'manual_backtest',
+            });
 
-                await this.updateBacktestProgress(progressFill, progressText, '65%', 'Running odd + even backtests...', 80);
-
-                const oddRun = await this.withTemporaryTwoHourParity('odd', async () => this.runBacktestForData(
-                    oddData,
-                    state.currentInterval,
-                    strategy,
-                    params,
-                    settings,
-                    initialCapital,
-                    positionSize,
-                    commission,
-                    sizingMode,
-                    fixedTradeAmount,
-                    requiresTsEngine
-                ));
-                const evenRun = await this.withTemporaryTwoHourParity('even', async () => this.runBacktestForData(
-                    evenData,
-                    state.currentInterval,
-                    strategy,
-                    params,
-                    settings,
-                    initialCapital,
-                    positionSize,
-                    commission,
-                    sizingMode,
-                    fixedTradeAmount,
-                    requiresTsEngine
-                ));
-
-                parityComparison = { odd: oddRun.result, even: evenRun.result, baseline: baselineParity };
-                state.set('twoHourParityBacktestResults', parityComparison);
-
-                if (baselineParity === 'even') {
-                    result = evenRun.result;
-                    engineUsed = evenRun.engineUsed;
-                } else {
-                    result = oddRun.result;
-                    engineUsed = oddRun.engineUsed;
-                }
-
-                debugLogger.event('backtest.parity_compare', {
-                    strategy: state.currentStrategyKey,
-                    oddTrades: oddRun.result.totalTrades,
-                    evenTrades: evenRun.result.totalTrades,
-                    baseline: baselineParity,
-                });
-            } else {
-                await this.updateBacktestProgress(progressFill, progressText, '60%', 'Running backtest...', 100);
-
-                const singleRun = await this.withTemporaryTwoHourParity(parityMode, async () => this.runBacktestForData(
-                    baseData,
-                    state.currentInterval,
-                    strategy,
-                    params,
-                    settings,
-                    initialCapital,
-                    positionSize,
-                    commission,
-                    sizingMode,
-                    fixedTradeAmount,
-                    requiresTsEngine
-                ));
-                result = singleRun.result;
-                engineUsed = singleRun.engineUsed;
-            }
-
-            state.set('currentBacktestResultSource', 'backtest');
-            state.set('currentBacktestResult', result);
-
-            await this.updateBacktestProgress(progressFill, progressText, '100%', 'Complete!');
+            await this.updateBacktestProgress(runUi, '100%', 'Complete!');
             if (parityComparison && !result.entryStats) {
-                statusEl.textContent = `2H compare | Odd ${parityComparison.odd.netProfitPercent.toFixed(2)}% | Even ${parityComparison.even.netProfitPercent.toFixed(2)}%`;
+                runUi.setStatus(`2H compare | Odd ${parityComparison.odd.netProfitPercent.toFixed(2)}% | Even ${parityComparison.even.netProfitPercent.toFixed(2)}%`);
             } else if (result.entryStats) {
                 const entryWin = result.entryStats.winRate.toFixed(1);
                 const useTarget = result.entryStats.winDefinition === 'target' && (result.entryStats.targetPct ?? 0) > 0;
@@ -189,12 +130,12 @@ export class BacktestService {
                     ? (result.entryStats.avgTargetBars ?? result.entryStats.avgRetestBars)
                     : result.entryStats.avgRetestBars;
                 const label = useTarget ? 'Avg Target' : 'Avg Retest';
-                statusEl.textContent = `${result.entryStats.totalEntries} entries | Win ${entryWin}% | ${label} ${avgBars.toFixed(1)} bars`;
+                runUi.setStatus(`${result.entryStats.totalEntries} entries | Win ${entryWin}% | ${label} ${avgBars.toFixed(1)} bars`);
             } else {
                 const expectancyText = `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`;
                 const pfText = result.profitFactor === Infinity ? 'Inf' : result.profitFactor.toFixed(2);
                 const engineBadge = engineUsed === 'rust' ? ' [rust]' : '';
-                statusEl.textContent = `${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}${engineBadge}`;
+                runUi.setStatus(`${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}${engineBadge}`);
             }
             shouldDelayHide = true;
             debugLogger.event('backtest.success', {
@@ -226,7 +167,7 @@ export class BacktestService {
             if (shouldDelayHide) {
                 await this.sleep(500);
             }
-            this.finishBacktestRun({ progressContainer, progressFill }, 'runBacktest', true);
+            runUi.finish();
         }
     }
 
@@ -261,6 +202,111 @@ export class BacktestService {
         } finally {
             select.value = previous;
         }
+    }
+
+    private async executeBacktestForParityMode(
+        runUi: BacktestRunHandle,
+        strategy: Strategy,
+        params: StrategyParams,
+        settings: BacktestSettings,
+        capitalSettings: BacktestCapitalSettings,
+        requiresTsEngine: boolean,
+        parityMode: 'odd' | 'even' | 'both'
+    ): Promise<CurrentBacktestExecution> {
+        commitParityBacktestResults(null, 'backtest_run_start');
+        const baseData = state.ohlcvData;
+
+        if (parityMode === 'both') {
+            return this.executeParityComparison(
+                runUi,
+                baseData,
+                strategy,
+                params,
+                settings,
+                capitalSettings,
+                requiresTsEngine
+            );
+        }
+
+        await this.updateBacktestProgress(runUi, '60%', 'Running backtest...', 100);
+        const singleRun = await this.withTemporaryTwoHourParity(parityMode, async () => this.runBacktestForData(
+            baseData,
+            state.currentInterval,
+            strategy,
+            params,
+            settings,
+            capitalSettings.initialCapital,
+            capitalSettings.positionSize,
+            capitalSettings.commission,
+            capitalSettings.sizingMode,
+            capitalSettings.fixedTradeAmount,
+            requiresTsEngine
+        ));
+
+        return {
+            result: singleRun.result,
+            engineUsed: singleRun.engineUsed,
+            parityComparison: null,
+        };
+    }
+
+    private async executeParityComparison(
+        runUi: BacktestRunHandle,
+        baseData: OHLCVData[],
+        strategy: Strategy,
+        params: StrategyParams,
+        settings: BacktestSettings,
+        capitalSettings: BacktestCapitalSettings,
+        requiresTsEngine: boolean
+    ): Promise<CurrentBacktestExecution> {
+        const baselineParity = this.inferBaselineParity(baseData);
+        const oddData = await this.getBacktestDataForParity('odd', baseData);
+        const evenData = await this.getBacktestDataForParity('even', baseData);
+
+        await this.updateBacktestProgress(runUi, '65%', 'Running odd + even backtests...', 80);
+
+        const oddRun = await this.withTemporaryTwoHourParity('odd', async () => this.runBacktestForData(
+            oddData,
+            state.currentInterval,
+            strategy,
+            params,
+            settings,
+            capitalSettings.initialCapital,
+            capitalSettings.positionSize,
+            capitalSettings.commission,
+            capitalSettings.sizingMode,
+            capitalSettings.fixedTradeAmount,
+            requiresTsEngine
+        ));
+        const evenRun = await this.withTemporaryTwoHourParity('even', async () => this.runBacktestForData(
+            evenData,
+            state.currentInterval,
+            strategy,
+            params,
+            settings,
+            capitalSettings.initialCapital,
+            capitalSettings.positionSize,
+            capitalSettings.commission,
+            capitalSettings.sizingMode,
+            capitalSettings.fixedTradeAmount,
+            requiresTsEngine
+        ));
+
+        const parityComparison = { odd: oddRun.result, even: evenRun.result, baseline: baselineParity };
+
+        debugLogger.event('backtest.parity_compare', {
+            strategy: state.currentStrategyKey,
+            oddTrades: oddRun.result.totalTrades,
+            evenTrades: evenRun.result.totalTrades,
+            baseline: baselineParity,
+        });
+
+        const baselineRun = baselineParity === 'even' ? evenRun : oddRun;
+        return {
+            result: baselineRun.result,
+            engineUsed: baselineRun.engineUsed,
+            parityComparison,
+        };
     }
 
     private async getBacktestDataForParity(parity: 'odd' | 'even', baseData?: OHLCVData[]): Promise<OHLCVData[]> {
@@ -310,27 +356,26 @@ export class BacktestService {
             mode,
         });
 
-        const { statusEl, progressContainer, progressFill, progressText } =
-            this.beginBacktestRun('runCombinedStrategyBtn', 'Running combined backtest...');
+        const runUi = this.beginBacktestRun('runCombinedStrategyBtn', 'Running combined backtest...');
 
         try {
             // --- 1. Resolve both strategies from registry ---
-            await this.updateBacktestProgress(progressFill, progressText, '10%', 'Resolving strategies...', 50);
+            await this.updateBacktestProgress(runUi, '10%', 'Resolving strategies...', 50);
 
             const primaryStrategy = strategyRegistry.get(primaryConfig.strategyKey);
             const secondaryStrategy = strategyRegistry.get(secondaryConfig.strategyKey);
 
             if (!primaryStrategy) {
-                statusEl.textContent = `Primary strategy "${primaryConfig.strategyKey}" not found`;
+                runUi.setStatus(`Primary strategy "${primaryConfig.strategyKey}" not found`);
                 return;
             }
             if (!secondaryStrategy) {
-                statusEl.textContent = `Secondary strategy "${secondaryConfig.strategyKey}" not found`;
+                runUi.setStatus(`Secondary strategy "${secondaryConfig.strategyKey}" not found`);
                 return;
             }
 
             // --- 2. Prepare data ---
-            await this.updateBacktestProgress(progressFill, progressText, '20%', 'Preparing data...', 50);
+            await this.updateBacktestProgress(runUi, '20%', 'Preparing data...', 50);
 
             const primarySettings = resolveBacktestSettingsFromRaw(
                 primaryConfig.backtestSettings as unknown as BacktestSettings,
@@ -347,7 +392,7 @@ export class BacktestService {
             );
 
             // --- 3. Execute both strategies ---
-            await this.updateBacktestProgress(progressFill, progressText, '40%', 'Generating signals from both strategies...', 50);
+            await this.updateBacktestProgress(runUi, '40%', 'Generating signals from both strategies...', 50);
 
             const primarySignals = applySignalPolarity(
                 primaryStrategy.execute(backtestData, primaryConfig.strategyParams),
@@ -359,12 +404,12 @@ export class BacktestService {
             );
 
             // --- 4. Merge signals ---
-            await this.updateBacktestProgress(progressFill, progressText, '60%', `Merging signals (${mode.toUpperCase()})...`, 50);
+            await this.updateBacktestProgress(runUi, '60%', `Merging signals (${mode.toUpperCase()})...`, 50);
 
             const mergedSignals = this.mergeSignals(primarySignals, secondarySignals, mode);
 
             // --- 5. Run backtest using primary config's settings + capital ---
-            await this.updateBacktestProgress(progressFill, progressText, '80%', 'Running backtest on merged signals...', 50);
+            await this.updateBacktestProgress(runUi, '80%', 'Running backtest on merged signals...', 50);
 
             const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } =
                 settingsManager.resolveCapitalFromConfig(primaryConfig);
@@ -383,13 +428,15 @@ export class BacktestService {
             );
 
             // --- 6. Update state and UI ---
-            state.set('currentBacktestResultSource', 'backtest');
-            state.set('currentBacktestResult', result);
+            commitBacktestResult(result, 'backtest', {
+                parityResults: null,
+                reason: 'combined_strategy_backtest',
+            });
 
-            await this.updateBacktestProgress(progressFill, progressText, '100%', 'Complete!');
+            await this.updateBacktestProgress(runUi, '100%', 'Complete!');
             const expectancyText = `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`;
             const pfText = result.profitFactor === Infinity ? 'Inf' : result.profitFactor.toFixed(2);
-            statusEl.textContent = `Combined (${mode.toUpperCase()}) | ${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}`;
+            runUi.setStatus(`Combined (${mode.toUpperCase()}) | ${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}`);
 
             debugLogger.event('backtest.combined.success', {
                 primary: primaryConfig.strategyKey,
@@ -409,10 +456,10 @@ export class BacktestService {
                 secondary: secondaryConfig.strategyKey,
                 error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
             });
-            statusEl.textContent = 'Combined backtest failed';
+            runUi.setStatus('Combined backtest failed');
             throw error;
         } finally {
-            this.finishBacktestRun({ progressContainer, progressFill }, 'runCombinedStrategyBtn');
+            runUi.finish();
         }
     }
 
@@ -425,48 +472,17 @@ export class BacktestService {
         return mergeStrategySignals(primarySignals, secondarySignals, mode);
     }
 
-    private beginBacktestRun(buttonId: string, initialStatus: string, manageAriaBusy = false): BacktestRunUi {
-        const ui = {
-            progressContainer: getRequiredElement('progressContainer'),
-            progressFill: getRequiredElement('progressFill'),
-            progressText: getRequiredElement('progressText'),
-            statusEl: getRequiredElement('strategyStatus'),
-        };
-        this.setBacktestButtonLoading(buttonId, true, manageAriaBusy);
-        ui.progressContainer.classList.add('active');
-        ui.statusEl.textContent = initialStatus;
-        return ui;
-    }
-
-    private finishBacktestRun(
-        ui: Pick<BacktestRunUi, 'progressContainer' | 'progressFill'>,
-        buttonId: string,
-        manageAriaBusy = false
-    ): void {
-        ui.progressContainer.classList.remove('active');
-        ui.progressFill.style.width = '0%';
-        this.setBacktestButtonLoading(buttonId, false, manageAriaBusy);
-    }
-
-    private setBacktestButtonLoading(buttonId: string, loading: boolean, manageAriaBusy = false): void {
-        const button = getOptionalElement<HTMLButtonElement>(buttonId);
-        if (!button) return;
-        button.disabled = loading;
-        button.classList.toggle('is-loading', loading);
-        if (manageAriaBusy) {
-            button.setAttribute('aria-busy', loading ? 'true' : 'false');
-        }
+    private beginBacktestRun(buttonId: string, initialStatus: string, manageAriaBusy = false): BacktestRunHandle {
+        return createDomBacktestRunHandle(buttonId, initialStatus, manageAriaBusy);
     }
 
     private async updateBacktestProgress(
-        progressFill: HTMLElement,
-        progressText: HTMLElement,
+        runUi: BacktestRunHandle,
         width: string,
         text: string,
         delayMs = 0
     ): Promise<void> {
-        progressFill.style.width = width;
-        progressText.textContent = text;
+        runUi.setProgress(width, text);
         if (delayMs > 0) {
             await this.sleep(delayMs);
         }
@@ -722,16 +738,7 @@ export class BacktestService {
     private buildRustCompatibleSettings(settings: BacktestSettings): BacktestSettings {
         return sanitizeBacktestSettingsForRust(settings);
     }
-
-
-
-    public getCapitalSettings(): {
-        initialCapital: number;
-        positionSize: number;
-        commission: number;
-        sizingMode: TradeSizingMode;
-        fixedTradeAmount: number;
-    } {
+    public getCapitalSettings(): BacktestCapitalSettings {
         const initialCapital = Math.max(0, this.readNumberInput('initialCapital', CAPITAL_DEFAULTS.initialCapital));
         const positionSize = Math.max(0, this.readNumberInput('positionSize', CAPITAL_DEFAULTS.positionSize));
         const commission = Math.max(0, this.readNumberInput('commission', CAPITAL_DEFAULTS.commission));

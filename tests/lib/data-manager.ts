@@ -46,9 +46,18 @@ import {
     DATA_CHART_TOTAL_LIMIT,
     DATA_MAX_RECONNECT_ATTEMPTS,
 } from "./data/constants";
+import { commitOhlcvData } from "./state-actions";
 
 type DataProvider = 'binance' | 'bybit-tradfi' | 'polymarket';
 type NonBinanceLocalSource = 'imported' | 'sqlite' | 'cache' | 'seed';
+type NonBinanceLocalData = { candles: OHLCVData[]; source: NonBinanceLocalSource };
+type ProviderFallbackChain = {
+    provider: DataProvider | 'mock';
+    lookbackBars: number | null;
+    maxBars: number;
+    resampleOptions?: ResampleOptions;
+    localNonBinance: NonBinanceLocalData | null;
+};
 
 export class DataManager {
     private static readonly PRICE_JUMP_GUARD_RATIO = 8;
@@ -167,27 +176,115 @@ export class DataManager {
     }
 
     public async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
+        const chain = await this.resolveProviderFallbackChain(symbol, interval, signal);
+        return this.fetchDataFromProviderChain(chain, symbol, interval, signal);
+    }
+
+    private async resolveProviderFallbackChain(
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal
+    ): Promise<ProviderFallbackChain> {
         const lookbackBars = this.chartLookbackBars;
+        const maxBars = lookbackBars ?? DATA_CHART_TOTAL_LIMIT;
         const resampleOptions = this.getResampleOptions(interval);
-        const provider = this.getProvider(symbol);
 
         if (this.isMockSymbol(symbol)) {
-            // Artificial latency only in dev mode (enabled via Vite's import.meta.env.DEV)
-            if (import.meta.env?.DEV) {
-                await new Promise(resolve => setTimeout(resolve, 100)); // Minimal dev latency
-            }
-            if (signal?.aborted) return [];
-            const mockData = generateMockData(symbol, interval);
-            uiManager.updateSymbolDataSource('Mock data', 'seed', 'Chart is using generated mock candles.');
-            return this.sliceToLookback(mockData, lookbackBars);
+            return {
+                provider: 'mock',
+                lookbackBars,
+                maxBars,
+                resampleOptions,
+                localNonBinance: null,
+            };
         }
 
-        const maxBars = lookbackBars ?? DATA_CHART_TOTAL_LIMIT;
+        const provider = this.getProvider(symbol);
         const localNonBinance = provider !== 'binance'
             ? await this.loadNonBinanceLocalData(symbol, interval, maxBars, signal)
             : null;
 
-        if (provider === 'bybit-tradfi' && localNonBinance && interval.trim().toLowerCase() === '1d') {
+        return {
+            provider,
+            lookbackBars,
+            maxBars,
+            resampleOptions,
+            localNonBinance,
+        };
+    }
+
+    private async fetchDataFromProviderChain(
+        chain: ProviderFallbackChain,
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal
+    ): Promise<OHLCVData[]> {
+        if (chain.provider === 'mock') {
+            return this.fetchMockChartData(symbol, interval, signal, chain.lookbackBars);
+        }
+
+        if (chain.provider === 'binance') {
+            return this.fetchBinanceChartData(symbol, interval, signal, chain.lookbackBars);
+        }
+
+        if (chain.provider === 'bybit-tradfi') {
+            return this.fetchBybitTradFiChartData(chain, symbol, interval, signal);
+        }
+
+        if (chain.provider === 'polymarket') {
+            return this.fetchPolymarketChartData(chain, symbol, interval, signal);
+        }
+
+        const fallback = await this.fetchNonBinanceData(symbol, interval, signal);
+        uiManager.updateSymbolDataSource(
+            'Fallback',
+            'warning',
+            'Primary data source was unavailable, so fallback data is being used.'
+        );
+        return this.sliceToLookback(fallback, chain.lookbackBars);
+    }
+
+    private async fetchMockChartData(
+        symbol: string,
+        interval: string,
+        signal: AbortSignal | undefined,
+        lookbackBars: number | null
+    ): Promise<OHLCVData[]> {
+        if (import.meta.env?.DEV) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (signal?.aborted) return [];
+        const mockData = generateMockData(symbol, interval);
+        uiManager.updateSymbolDataSource('Mock data', 'seed', 'Chart is using generated mock candles.');
+        return this.sliceToLookback(mockData, lookbackBars);
+    }
+
+    private async fetchBinanceChartData(
+        symbol: string,
+        interval: string,
+        signal: AbortSignal | undefined,
+        lookbackBars: number | null
+    ): Promise<OHLCVData[]> {
+        const result = await this.fetchBinanceDataHybridWithMeta(symbol, interval, signal, {
+            maxBars: lookbackBars ?? undefined,
+        });
+        uiManager.updateSymbolDataSource(
+            'Live: Binance',
+            'live',
+            'Chart data is loaded from Binance.'
+        );
+        return result.data;
+    }
+
+    private async fetchBybitTradFiChartData(
+        chain: ProviderFallbackChain,
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal
+    ): Promise<OHLCVData[]> {
+        const { lookbackBars, localNonBinance, resampleOptions } = chain;
+
+        if (localNonBinance && interval.trim().toLowerCase() === '1d') {
             const seededWithLatest = await this.mergeBybitRecentIntoSeed(
                 symbol,
                 interval,
@@ -199,7 +296,7 @@ export class DataManager {
                 void this.persistNonBinanceData(
                     symbol,
                     interval,
-                    provider,
+                    'bybit-tradfi',
                     seededWithLatest.candles,
                     `local-${localNonBinance.source}-overlay`
                 );
@@ -222,91 +319,75 @@ export class DataManager {
             return this.sliceToLookback(seededWithLatest.candles, lookbackBars);
         }
 
-        if (provider !== 'binance' && localNonBinance && provider !== 'bybit-tradfi') {
+        const data = typeof lookbackBars === 'number'
+            ? await fetchBybitTradFiDataWithLimit(symbol, interval, lookbackBars, {
+                signal,
+                ...(resampleOptions ?? {}),
+            })
+            : await fetchBybitTradFiData(symbol, interval, signal, resampleOptions);
+        if (data.length > 0) {
+            const merged = localNonBinance
+                ? mergeCandles(localNonBinance.candles, data)
+                : data;
+            void this.persistNonBinanceData(symbol, interval, 'bybit-tradfi', merged, 'network');
+            uiManager.updateSymbolDataSource(
+                'Live: Bybit',
+                'live',
+                'Chart data is loaded directly from Bybit TradFi.'
+            );
+            return this.sliceToLookback(merged, lookbackBars);
+        }
+        if (localNonBinance && localNonBinance.candles.length > 0) {
+            const localSourceMeta = this.describeLocalSource(localNonBinance.source);
+            uiManager.updateSymbolDataSource(
+                localSourceMeta.label,
+                'warning',
+                `${localSourceMeta.title} Bybit TradFi did not return fresh intraday chart data, so local data is being used.`
+            );
+            return this.sliceToLookback(localNonBinance.candles, lookbackBars);
+        }
+        uiManager.showToast('Bybit TradFi returned no data.', 'error');
+        uiManager.updateSymbolDataSource(
+            'Bybit unavailable',
+            'warning',
+            'Bybit TradFi did not return chart data for this symbol and timeframe.'
+        );
+        return [];
+    }
+
+    private async fetchPolymarketChartData(
+        chain: ProviderFallbackChain,
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal
+    ): Promise<OHLCVData[]> {
+        const { lookbackBars, localNonBinance } = chain;
+
+        if (localNonBinance) {
             const localSourceMeta = this.describeLocalSource(localNonBinance.source);
             uiManager.updateSymbolDataSource(localSourceMeta.label, 'seed', localSourceMeta.title);
             return this.sliceToLookback(localNonBinance.candles, lookbackBars);
         }
 
-        if (provider === 'binance') {
-            const result = await this.fetchBinanceDataHybridWithMeta(symbol, interval, signal, {
-                maxBars: lookbackBars ?? undefined,
-            });
-            const data = result.data;
+        const data = typeof lookbackBars === 'number'
+            ? await fetchPolymarketDataWithLimit(symbol, interval, lookbackBars, { signal })
+            : await fetchPolymarketData(symbol, interval, signal);
+        if (data.length > 0) {
+            void this.persistNonBinanceData(symbol, interval, 'polymarket', data, 'network');
             uiManager.updateSymbolDataSource(
-                'Live: Binance',
+                'Live: Polymarket',
                 'live',
-                'Chart data is loaded from Binance.'
+                'Chart data is loaded from Polymarket.'
             );
             return data;
         }
-
-        if (provider === 'bybit-tradfi') {
-            const data = typeof lookbackBars === 'number'
-                ? await fetchBybitTradFiDataWithLimit(symbol, interval, lookbackBars, {
-                    signal,
-                    ...(resampleOptions ?? {}),
-                })
-                : await fetchBybitTradFiData(symbol, interval, signal, resampleOptions);
-            if (data.length > 0) {
-                const merged = localNonBinance
-                    ? mergeCandles(localNonBinance.candles, data)
-                    : data;
-                void this.persistNonBinanceData(symbol, interval, provider, merged, 'network');
-                uiManager.updateSymbolDataSource(
-                    'Live: Bybit',
-                    'live',
-                    'Chart data is loaded directly from Bybit TradFi.'
-                );
-                return this.sliceToLookback(merged, lookbackBars);
-            }
-            if (localNonBinance && localNonBinance.candles.length > 0) {
-                const localSourceMeta = this.describeLocalSource(localNonBinance.source);
-                uiManager.updateSymbolDataSource(
-                    localSourceMeta.label,
-                    'warning',
-                    `${localSourceMeta.title} Bybit TradFi did not return fresh intraday chart data, so local data is being used.`
-                );
-                return this.sliceToLookback(localNonBinance.candles, lookbackBars);
-            }
-            uiManager.showToast('Bybit TradFi returned no data.', 'error');
-            uiManager.updateSymbolDataSource(
-                'Bybit unavailable',
-                'warning',
-                'Bybit TradFi did not return chart data for this symbol and timeframe.'
-            );
-            return [];
-        }
-        if (provider === 'polymarket') {
-            const data = typeof lookbackBars === 'number'
-                ? await fetchPolymarketDataWithLimit(symbol, interval, lookbackBars, { signal })
-                : await fetchPolymarketData(symbol, interval, signal);
-            if (data.length > 0) {
-                void this.persistNonBinanceData(symbol, interval, provider, data, 'network');
-                uiManager.updateSymbolDataSource(
-                    'Live: Polymarket',
-                    'live',
-                    'Chart data is loaded from Polymarket.'
-                );
-                return data;
-            }
-            uiManager.showToast('Polymarket returned no data for this market.', 'error');
-            uiManager.updateSymbolDataSource(
-                'Polymarket unavailable',
-                'warning',
-                'Polymarket did not return chart data for this market.'
-            );
-            return [];
-        }
-
-        // Fallback or explicit provider logic for others
-        const fallback = await this.fetchNonBinanceData(symbol, interval, signal);
+        uiManager.showToast('Polymarket returned no data for this market.', 'error');
         uiManager.updateSymbolDataSource(
-            'Fallback',
+            'Polymarket unavailable',
             'warning',
-            'Primary data source was unavailable, so fallback data is being used.'
+            'Polymarket did not return chart data for this market.'
         );
-        return this.sliceToLookback(fallback, lookbackBars);
+        return [];
     }
 
     public async fetchDataForScan(
@@ -458,7 +539,7 @@ export class DataManager {
         uiManager.updateTimeframeUI(interval);
 
         const data = await this.fetchData(symbol, interval);
-        state.set('ohlcvData', data);
+        commitOhlcvData(data, 'set_symbol_load');
         this.loadedSymbol = symbol;
         this.loadedInterval = interval;
 

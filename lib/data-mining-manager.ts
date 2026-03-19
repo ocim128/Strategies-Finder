@@ -6,6 +6,7 @@ import { dataManager } from "./data-manager";
 import { SYMBOL_MAP } from "./constants";
 import { debugLogger } from "./debug-logger";
 import { clearAll } from "./app-actions";
+import { commitOhlcvData } from "./state-actions";
 import { OHLCVData, HistoricalFetchProgress } from "./types/index";
 
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -602,7 +603,7 @@ export class DataMiningManager {
             if (intervalChanged && interval) {
                 state.set('currentInterval', interval);
             }
-            state.set('ohlcvData', bars);
+            commitOhlcvData(bars, 'data_mining_import');
             dataManager.registerImportedData(state.currentSymbol, state.currentInterval, bars);
 
             const metaNote = meta ? ` (${meta})` : '';

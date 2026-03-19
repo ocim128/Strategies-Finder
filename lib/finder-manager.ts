@@ -18,6 +18,7 @@ import { debugLogger, robustAuditSink } from "./debug-logger";
 import { readNumberInputValue, readToggleValue } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { strategyPanelController } from "./strategy-panel-controller";
+import { commitBacktestResult, commitParityBacktestResults } from "./state-actions";
 import {
 	createFinderManagerDom,
 	createPairCombinerBridgeDom,
@@ -939,9 +940,10 @@ export class FinderManager {
 		// Robust finder rows represent combined OOS walk-forward outcomes, not a single full-history backtest.
 		// Show the exact robust OOS snapshot to avoid mismatch with an auto-rerun full backtest.
 		if (result.robustMetrics?.mode === 'robust_random_wf') {
-			state.set('twoHourParityBacktestResults', null);
-			state.set('currentBacktestResultSource', 'finder_robust_oos');
-			state.set('currentBacktestResult', result.result);
+			commitBacktestResult(result.result, 'finder_robust_oos', {
+				parityResults: null,
+				reason: 'finder_robust_snapshot',
+			});
 			strategyPanelController.switchTab('trades');
 			uiManager.showToast(
 				'Applied robust OOS walk-forward snapshot. Full backtest runs can differ from Finder robust metrics.',
@@ -1003,7 +1005,7 @@ export class FinderManager {
 		this.applyFinderBacktestSettings(result);
 		strategyPanelController.switchTab('trades');
 
-		state.set('twoHourParityBacktestResults', null);
+		commitParityBacktestResults(null, 'finder_row_apply');
 
 		if (result.endpointAdjusted) {
 			uiManager.showToast(

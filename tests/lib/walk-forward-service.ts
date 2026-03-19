@@ -48,6 +48,7 @@ import {
     updateWalkForwardSummaryPanel,
     updateWalkForwardWindowTable,
 } from "./walk-forward-ui";
+import { commitBacktestResult } from "./state-actions";
 
 const DEFAULT_CANDIDATE_VALIDATION_SEEDS = [1337, 7331, 2026, 4242, 9001];
 const DEFAULT_MIN_SEED_PASSES = 3;
@@ -1404,9 +1405,10 @@ class WalkForwardService {
         }
 
         // Route OOS output through shared backtest state so Results and Trades stay in sync.
-        state.set('twoHourParityBacktestResults', null);
-        state.set('currentBacktestResultSource', 'walk_forward_oos');
-        state.set('currentBacktestResult', oos);
+        commitBacktestResult(oos, 'walk_forward_oos', {
+            parityResults: null,
+            reason: 'walk_forward_oos_plot',
+        });
     }
 
     private setLoading(loading: boolean, mode: "analysis" | "quick" | "validation" | "permutation" = "analysis"): void {

@@ -6,6 +6,7 @@ import type {
     TradeDirection,
     TradeFilterMode,
 } from "./types/strategies";
+import { getLegacyCompatibleTradeFilterModeValue } from "./legacy-settings-compat";
 
 export const CAPITAL_DEFAULTS = Object.freeze({
     initialCapital: 10000,
@@ -390,7 +391,7 @@ export function resolveBacktestSettingsFromRaw(
     );
     const tradeFilterMode = tradeFilterEnabled
         ? readTradeFilterMode(
-            raw["tradeFilterMode"] ?? raw["entryConfirmation"],
+            getLegacyCompatibleTradeFilterModeValue(raw),
             EFFECTIVE_BACKTEST_DEFAULTS.tradeFilterMode
         )
         : "none";
