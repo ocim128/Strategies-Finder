@@ -681,14 +681,11 @@ export function passesSnapshotFilters(
     }
 
     // Pre-extract volumes once if any volume-derived filter is active
-    let volumes: number[] | null = null;
     const needsVolumes =
         (config.snapshotVolumeTrendMin > 0 || config.snapshotVolumeTrendMax > 0) ||
         (config.snapshotVolumeBurstMin !== 0 || config.snapshotVolumeBurstMax !== 0) ||
         (config.snapshotVolumeConsistencyMin > 0 || config.snapshotVolumeConsistencyMax > 0);
-    if (needsVolumes) {
-        volumes = data.map(d => d.volume);
-    }
+    const volumes = needsVolumes ? snapshotIndicators.volumes : null;
 
     // Volume trend filter (short/long EMA ratio, min and/or max)
     if (config.snapshotVolumeTrendMin > 0 || config.snapshotVolumeTrendMax > 0) {

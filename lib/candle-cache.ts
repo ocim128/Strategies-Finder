@@ -102,6 +102,18 @@ function buildCandle(
     };
 }
 
+function isParsedCandle(row: unknown): row is OHLCVData {
+    if (!row || typeof row !== 'object') return false;
+
+    const value = row as OHLCVData;
+    return Number.isFinite(Number(value.time))
+        && Number.isFinite(value.open)
+        && Number.isFinite(value.high)
+        && Number.isFinite(value.low)
+        && Number.isFinite(value.close)
+        && Number.isFinite(value.volume);
+}
+
 function parseRawCandle(row: unknown): OHLCVData | null {
     if (!row) return null;
 
@@ -211,7 +223,7 @@ function extractCandlesFromCsvPayload(payload: string): OHLCVData[] {
         }
     }
 
-    return sanitizeCandles(candles);
+    return sortAndDedupeCandles(candles);
 }
 
 function buildSp500SymbolCandidates(symbol: string): string[] {
@@ -292,10 +304,10 @@ async function loadSp500IndividualAnalysisCandles(
     return null;
 }
 
-function sanitizeCandles(candles: OHLCVData[]): OHLCVData[] {
+function sortAndDedupeCandles(candles: OHLCVData[]): OHLCVData[] {
     const normalized = candles
-        .map((row) => parseRawCandle(row))
-        .filter((bar): bar is OHLCVData => !!bar)
+        .filter((bar): bar is OHLCVData => isParsedCandle(bar))
+        .slice()
         .sort((a, b) => Number(a.time) - Number(b.time));
 
     const deduped: OHLCVData[] = [];
@@ -310,14 +322,22 @@ function sanitizeCandles(candles: OHLCVData[]): OHLCVData[] {
     return deduped.slice(-MAX_CANDLES_PER_SERIES);
 }
 
+function sanitizeCandles(candles: unknown[]): OHLCVData[] {
+    const normalized = candles
+        .map((row) => parseRawCandle(row))
+        .filter((bar): bar is OHLCVData => !!bar);
+
+    return sortAndDedupeCandles(normalized);
+}
+
 export function mergeCandles(
     existingCandles: OHLCVData[],
     incomingCandles: OHLCVData[]
 ): OHLCVData[] {
-    if (existingCandles.length === 0) return sanitizeCandles(incomingCandles);
+    if (existingCandles.length === 0) return sortAndDedupeCandles(incomingCandles);
     if (incomingCandles.length === 0) return existingCandles.slice(-MAX_CANDLES_PER_SERIES);
 
-    const incoming = sanitizeCandles(incomingCandles);
+    const incoming = sortAndDedupeCandles(incomingCandles);
     if (incoming.length === 0) return existingCandles.slice(-MAX_CANDLES_PER_SERIES);
 
     // Fast path for incremental append/replace of the latest candle(s).
@@ -332,10 +352,10 @@ export function mergeCandles(
         for (const bar of incoming) {
             const barTime = Number(bar.time);
             if (!Number.isFinite(barTime)) {
-                return sanitizeCandles([...existingCandles, ...incoming]);
+                return sortAndDedupeCandles([...existingCandles, ...incoming]);
             }
             if (barTime < tailTime) {
-                return sanitizeCandles([...existingCandles, ...incoming]);
+                return sortAndDedupeCandles([...existingCandles, ...incoming]);
             }
             if (barTime === tailTime) {
                 merged[merged.length - 1] = bar;
@@ -351,7 +371,7 @@ export function mergeCandles(
         return merged;
     }
 
-    return sanitizeCandles([...existingCandles, ...incoming]);
+    return sortAndDedupeCandles([...existingCandles, ...incoming]);
 }
 
 function extractCandlesFromPayload(payload: unknown): OHLCVData[] {
@@ -389,7 +409,7 @@ export async function loadCachedCandles(symbol: string, interval: string): Promi
                 return;
             }
             resolve({
-                candles: sanitizeCandles(raw.candles),
+                candles: raw.candles,
                 updatedAt: Number(raw.updatedAt) || 0,
                 source: raw.source ?? 'manual',
             });

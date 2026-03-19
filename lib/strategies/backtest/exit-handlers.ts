@@ -25,6 +25,26 @@ function lessThanOrNearlyEqual(left: number, right: number): boolean {
     return left < right || Math.abs(left - right) <= comparisonTolerance(left, right);
 }
 
+function resolveStopLossExitPrice(
+    candle: OHLCVData,
+    stopLoss: number,
+    isShortPosition: boolean
+): number {
+    if (!Number.isFinite(candle.open)) {
+        return stopLoss;
+    }
+
+    // If the bar opens beyond the stop, the best available fill is the open.
+    if (isShortPosition && greaterThanOrNearlyEqual(candle.open, stopLoss)) {
+        return candle.open;
+    }
+    if (!isShortPosition && lessThanOrNearlyEqual(candle.open, stopLoss)) {
+        return candle.open;
+    }
+
+    return stopLoss;
+}
+
 /**
  * Checks and processes various exit conditions for a position.
  * Returns the first exit trigger for this bar, if any.
@@ -46,8 +66,9 @@ export function processPositionExits(
             ? greaterThanOrNearlyEqual(candle.high, stopLoss)
             : lessThanOrNearlyEqual(candle.low, stopLoss);
         if (stopHit) {
+            const stopExitPrice = resolveStopLossExitPrice(candle, stopLoss, isShortPosition);
             return {
-                exitPrice: applySlippage(stopLoss, exitSide, slippageRate),
+                exitPrice: applySlippage(stopExitPrice, exitSide, slippageRate),
                 exitSize: position.size,
                 exitReason: 'stop_loss',
             };

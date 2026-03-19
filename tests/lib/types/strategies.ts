@@ -86,9 +86,9 @@ export interface Trade {
     exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'probation_fail' | 'end_of_data';
     /** Entry mode: 'normal' for standard entries, 'warm_up' for queued pending entries */
     entryMode?: 'normal' | 'warm_up';
-    /** Stop-loss price level (populated for open/EOD trades) */
+    /** Stop-loss price level for the active position targets when available */
     stopLossPrice?: number | null;
-    /** Take-profit price level (populated for open/EOD trades) */
+    /** Take-profit price level for the active position targets when available */
     takeProfitPrice?: number | null;
     /** Indicator snapshot at entry for pattern analysis */
     entrySnapshot?: TradeSnapshot;

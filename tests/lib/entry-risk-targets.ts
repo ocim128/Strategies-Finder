@@ -1,4 +1,5 @@
 import { calculateATR } from "./strategies/indicators";
+import { hasUiToggleSettings, resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
 import {
     directionFactorFor,
     normalizeBacktestSettings,
@@ -59,7 +60,10 @@ function toTargetPercent(entryPrice: number, targetPrice: number | null): number
 
 export function resolveEntryRiskTargets(params: ResolveEntryRiskTargetsParams): EntryRiskTargets {
     const { candles, entryTime, entryPrice, direction, settings, entryBarIndex } = params;
-    const config = normalizeBacktestSettings(settings);
+    const normalizedSource = hasUiToggleSettings(settings as Record<string, unknown>)
+        ? resolveBacktestSettingsFromRaw(settings)
+        : settings;
+    const config = normalizeBacktestSettings(normalizedSource);
     const directionFactor = directionFactorFor(direction);
 
     let stopLossPrice: number | null = null;

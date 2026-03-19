@@ -1420,6 +1420,58 @@ describe('Backtesting Engine', () => {
         expect(result.trades[0].exitPrice).to.be.closeTo(95, 1e-9);
     });
 
+    it('should fill a long percentage stop loss at the bar open when price gaps through the stop', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 80, high: 85, low: 79, close: 82, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'buy', price: 100, barIndex: 0 },
+        ];
+
+        const result = runBacktest(data, signals, 10000, 100, 0, {
+            tradeDirection: 'long' as const,
+            executionModel: 'signal_close' as const,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: true,
+            stopLossPercent: 5,
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].exitReason).to.equal('stop_loss');
+        expect(result.trades[0].exitPrice).to.be.closeTo(80, 1e-9);
+        expect(result.trades[0].stopLossPrice).to.be.closeTo(95, 1e-9);
+        expect(result.trades[0].takeProfitPrice).to.be.closeTo(110, 1e-9);
+    });
+
+    it('should fill a short percentage stop loss at the bar open when price gaps through the stop', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 120, high: 122, low: 118, close: 121, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'sell', price: 100, barIndex: 0 },
+        ];
+
+        const result = runBacktest(data, signals, 10000, 100, 0, {
+            tradeDirection: 'short' as const,
+            executionModel: 'signal_close' as const,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: true,
+            stopLossPercent: 5,
+            takeProfitEnabled: false,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].exitReason).to.equal('stop_loss');
+        expect(result.trades[0].exitPrice).to.be.closeTo(120, 1e-9);
+        expect(result.trades[0].stopLossPrice).to.be.closeTo(105, 1e-9);
+    });
+
     it('compact backtest should match next_open same-bar stop loss enforcement', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
@@ -1563,6 +1615,23 @@ describe('Backtesting Engine', () => {
         expect(targets.takeProfitPrice).to.equal(110);
         expect(targets.stopLossPercent).to.equal(20);
         expect(targets.takeProfitPercent).to.equal(10);
+    });
+
+    it('should resolve percentage stop loss targets from raw UI settings when the stop toggle is omitted', () => {
+        const targets = resolveEntryRiskTargets({
+            candles: [],
+            entryTime: '2023-01-03' as Time,
+            entryPrice: 100,
+            direction: 'long',
+            settings: {
+                riskSettingsToggle: true,
+                riskMode: 'percentage',
+                stopLossPercent: 5,
+            },
+        });
+
+        expect(targets.stopLossPrice).to.equal(95);
+        expect(targets.stopLossPercent).to.equal(5);
     });
 
     it('should defer next_open climax exits to the following bar open after close confirmation', () => {

@@ -50,6 +50,7 @@ export interface SnapshotIndicators {
     adx: (number | null)[];
     atr: (number | null)[];
     emaTrend: (number | null)[];
+    volumes: number[];
 }
 
 /**
@@ -89,7 +90,7 @@ export function computeSnapshotIndicators(
         ? existingIndicators.emaTrend
         : calculateEMA(closes, SNAPSHOT_EMA_PERIOD);
 
-    return { rsi, volumeSma, adx, atr, emaTrend };
+    return { rsi, volumeSma, adx, atr, emaTrend, volumes };
 }
 
 /**
@@ -178,11 +179,10 @@ export function captureTradeSnapshot(
     });
 
     // Volume-derived metrics
-    const volumes = getVolumes(data);
-    const volumeTrend = computeVolumeTrend(volumes, barIndex);
-    const volumeBurst = computeRelativeVolumeBurst(volumes, barIndex);
+    const volumeTrend = computeVolumeTrend(snapshotIndicators.volumes, barIndex);
+    const volumeBurst = computeRelativeVolumeBurst(snapshotIndicators.volumes, barIndex);
     const volumePriceDivergence = computeVolumePriceDivergence(data, barIndex);
-    const volumeConsistency = computeVolumeConsistency(volumes, barIndex);
+    const volumeConsistency = computeVolumeConsistency(snapshotIndicators.volumes, barIndex);
 
     return {
         rsi,

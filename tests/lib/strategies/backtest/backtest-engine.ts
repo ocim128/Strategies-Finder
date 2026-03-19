@@ -1037,7 +1037,21 @@ export function runBacktest(
         const d = calculateTradeExitDetails(pos, exitPrice, exitSize, commissionRate);
         capital += d.rawPnl - d.commission;
         const snap = snapshots.get(pos) ?? null;
-        const trade: Trade = { id: ++tradeId, type: pos.direction, entryTime: pos.entryTime, entryPrice: pos.entryPrice, exitTime: candle.time, exitPrice, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: reason };
+        const trade: Trade = {
+            id: ++tradeId,
+            type: pos.direction,
+            entryTime: pos.entryTime,
+            entryPrice: pos.entryPrice,
+            exitTime: candle.time,
+            exitPrice,
+            pnl: d.totalPnl,
+            pnlPercent: d.pnlPercent,
+            size: d.size,
+            fees: d.fees,
+            exitReason: reason,
+            stopLossPrice: pos.stopLossPrice,
+            takeProfitPrice: pos.takeProfitPrice,
+        };
         if (pos.warmUpEntry) trade.entryMode = 'warm_up';
         if (snap) trade.entrySnapshot = snap;
         trades.push(trade);
