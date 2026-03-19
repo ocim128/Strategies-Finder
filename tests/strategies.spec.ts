@@ -21,6 +21,7 @@ import { supertrend_friction_pinch } from './lib/strategies/lib/supertrend_frict
 import { supertrend_distance_zscore } from './lib/strategies/lib/supertrend_distance_zscore';
 import { supertrend_churn_resilience } from './lib/strategies/lib/supertrend_churn_resilience';
 import { volume_profile_poc_median_shift } from './lib/strategies/lib/volume_profile_poc_median_shift';
+import { candle_pattern_persistence_score_median_deviation_streak } from './lib/strategies/lib/candle-pattern-persistence-score-median-deviation-streak';
 import { isTwoHourParityAligned, resolveTwoHourParityFromTime } from './lib/two-hour-parity';
 import { quickWalkForward, runWalkForwardAnalysis } from './lib/strategies/walk-forward';
 import { deriveAutoWalkForwardRange, resolveFiniteRangeReferenceValue } from './lib/walk-forward-range-utils';
@@ -691,6 +692,11 @@ describe('Walk-forward parameter normalization', () => {
                 key: 'supertrend_churn_resilience',
                 strategy: supertrend_churn_resilience,
                 params: { stPeriod: 10, stMultiplier: 3, maxCrossings: 2 },
+            },
+            {
+                key: 'candle_pattern_persistence_score_median_deviation_streak',
+                strategy: candle_pattern_persistence_score_median_deviation_streak,
+                params: { scoreLookback: 6, scoreThreshold: 0.55, medianLookback: 18, streakThreshold: 4 },
             },
         ] as const;
 
