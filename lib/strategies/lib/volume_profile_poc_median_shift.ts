@@ -12,6 +12,37 @@ function normalizeVolumeProfilePocMedianShiftParams(params: StrategyParams): Str
 	};
 }
 
+type VolumeProfilePocMedianShiftPrepared = {
+	cleanData: OHLCVData[];
+	closes: number[];
+	atr: (number | null)[];
+	pocSeriesByPeriod: Map<number, number[]>;
+	pocMedianByKey: Map<string, (number | null)[]>;
+};
+
+function prepareVolumeProfilePocMedianShiftData(data: OHLCVData[]): VolumeProfilePocMedianShiftPrepared {
+	const cleanData = ensureCleanData(data);
+	const closes = getCloses(cleanData);
+
+	return {
+		cleanData,
+		closes,
+		atr: calculateATR(getHighs(cleanData), getLows(cleanData), closes, 14),
+		pocSeriesByPeriod: new Map<number, number[]>(),
+		pocMedianByKey: new Map<string, (number | null)[]>(),
+	};
+}
+
+function getPreparedVolumeProfilePocMedianShiftData(
+	preparedData: unknown,
+	data: OHLCVData[]
+): VolumeProfilePocMedianShiftPrepared {
+	if (preparedData && typeof preparedData === "object" && "pocSeriesByPeriod" in preparedData) {
+		return preparedData as VolumeProfilePocMedianShiftPrepared;
+	}
+	return prepareVolumeProfilePocMedianShiftData(data);
+}
+
 export const volume_profile_poc_median_shift: Strategy = {
 	name: "Volume Profile POC Median Shift",
 	description: "Builds a median baseline from the rolling POC itself and enters only when price escapes that value anchor by a large ATR-normalized amount.",
@@ -26,8 +57,10 @@ export const volume_profile_poc_median_shift: Strategy = {
 		shiftThreshold: "Shift Threshold",
 	},
 	normalizeParams: normalizeVolumeProfilePocMedianShiftParams,
-	execute: (data: OHLCVData[], params: StrategyParams) => {
-		const cleanData = ensureCleanData(data);
+	prepareFinderData: (data) => prepareVolumeProfilePocMedianShiftData(data),
+	executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
+		const prepared = getPreparedVolumeProfilePocMedianShiftData(preparedData, data);
+		const { cleanData, closes, atr, pocSeriesByPeriod, pocMedianByKey } = prepared;
 		const normalizedParams = normalizeVolumeProfilePocMedianShiftParams(params);
 		const vpPeriod = normalizedParams.vpPeriod as number;
 		const medianLookback = normalizedParams.medianLookback as number;
@@ -35,9 +68,19 @@ export const volume_profile_poc_median_shift: Strategy = {
 
 		if (cleanData.length < Math.max(vpPeriod, medianLookback, 14)) return [];
 
-		const { poc } = calculateVolumeProfile(cleanData, vpPeriod, 24);
-		const pocMedian = buildRollingMedian(poc.map((value, i) => value ?? cleanData[i].close), medianLookback);
-		const atr = calculateATR(getHighs(cleanData), getLows(cleanData), getCloses(cleanData), 14);
+		let pocSeries = pocSeriesByPeriod.get(vpPeriod);
+		if (!pocSeries) {
+			const { poc } = calculateVolumeProfile(cleanData, vpPeriod, 24);
+			pocSeries = poc.map((value, i) => value ?? closes[i]);
+			pocSeriesByPeriod.set(vpPeriod, pocSeries);
+		}
+
+		const pocMedianKey = `${vpPeriod}:${medianLookback}`;
+		let pocMedian = pocMedianByKey.get(pocMedianKey);
+		if (!pocMedian) {
+			pocMedian = buildRollingMedian(pocSeries, medianLookback);
+			pocMedianByKey.set(pocMedianKey, pocMedian);
+		}
 
 		return createSignalLoop(cleanData, [], (i) => {
 			if (pocMedian[i] === null || atr[i] === null) return null;
@@ -52,6 +95,8 @@ export const volume_profile_poc_median_shift: Strategy = {
 			return null;
 		});
 	},
+	execute: (data: OHLCVData[], params: StrategyParams) =>
+		volume_profile_poc_median_shift.executePrepared?.(prepareVolumeProfilePocMedianShiftData(data), params, data) ?? [],
 	metadata: {
 		role: "entry",
 		direction: "both",

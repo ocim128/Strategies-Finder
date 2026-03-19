@@ -9,6 +9,10 @@ export interface PositionExitTrigger {
     exitReason: NonNullable<Trade['exitReason']>;
 }
 
+export interface PositionExitOptions {
+    stopLossOnly?: boolean;
+}
+
 function comparisonTolerance(left: number, right: number): number {
     return Math.max(1e-9, Math.max(Math.abs(left), Math.abs(right), 1) * 1e-12);
 }
@@ -29,7 +33,8 @@ export function processPositionExits(
     candle: OHLCVData,
     position: PositionState,
     config: NormalizedSettings,
-    slippageRate: number
+    slippageRate: number,
+    options: PositionExitOptions = {}
 ): PositionExitTrigger | null {
     const isShortPosition = position.direction === 'short';
     const exitSide = exitSideForDirection(position.direction);
@@ -47,6 +52,10 @@ export function processPositionExits(
                 exitReason: 'stop_loss',
             };
         }
+    }
+
+    if (options.stopLossOnly) {
+        return null;
     }
 
     // Check take profit (independent of stop loss)

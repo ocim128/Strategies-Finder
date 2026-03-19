@@ -221,9 +221,9 @@ class PortfolioLabService {
             const runCache = new Map<string, PairRunArtifacts>();
             const requiredSymbols = Array.from(new Set<string>([...selectedSymbols, benchmarkSymbol]));
 
-            for (const symbol of requiredSymbols) {
-                await this.loadPairData(symbol, lookbackBars, dataCache);
-            }
+            await Promise.all(
+                requiredSymbols.map((symbol) => this.loadPairData(symbol, lookbackBars, dataCache))
+            );
             if (anchorSymbol && !requiredSymbols.includes(anchorSymbol)) {
                 try {
                     await this.loadPairData(anchorSymbol, lookbackBars, dataCache);
@@ -247,31 +247,51 @@ class PortfolioLabService {
 
             const rows: PairAnalysisRow[] = [];
             const skipped: string[] = [];
+            type PairOutcome =
+                | { row: PairAnalysisRow; skipped?: never }
+                | { row?: never; skipped: string };
 
-            for (let index = 0; index < selectedSymbols.length; index += 1) {
-                const symbol = selectedSymbols[index];
-                this.updateStatus(`Running ${strategy.name} on ${symbol} (${index + 1}/${selectedSymbols.length})...`);
+            let completedPairs = 0;
+            const pairOutcomes: PairOutcome[] = await Promise.all(
+                selectedSymbols.map(async (symbol): Promise<PairOutcome> => {
+                    try {
+                        const pairData = await this.loadPairData(symbol, lookbackBars, dataCache);
+                        if (pairData.data.length < MIN_LOOKBACK_BARS) {
+                            return { skipped: `${symbol} (only ${pairData.data.length} bars)` };
+                        }
 
-                try {
-                    const pairData = await this.loadPairData(symbol, lookbackBars, dataCache);
-                    if (pairData.data.length < MIN_LOOKBACK_BARS) {
-                        skipped.push(`${symbol} (only ${pairData.data.length} bars)`);
-                        continue;
+                        const runResult = await this.runPair(strategy, params, symbol, pairData.data, runCache, settings, capitalSettings);
+                        return {
+                            row: {
+                                symbol,
+                                displayName: symbol.endsWith("USDT") ? `${symbol.slice(0, -4)}/USDT` : symbol,
+                                bars: pairData.data.length,
+                                source: pairData.source,
+                                result: runResult.result,
+                                engineUsed: runResult.engineUsed,
+                                marketCorrelation: benchmarkData.data.length >= MIN_LOOKBACK_BARS ? computeCloseReturnCorrelation(pairData.data, benchmarkData.data) : null,
+                                strategyCorrelation: benchmarkRun ? computeEquityReturnCorrelation(runResult.result, benchmarkRun.result) : null,
+                            },
+                        };
+                    } catch (error) {
+                        return {
+                            skipped: `${symbol} (${error instanceof Error ? error.message : String(error)})`,
+                        };
+                    } finally {
+                        completedPairs += 1;
+                        this.updateStatus(
+                            `Running ${strategy.name} on ${selectedSymbols.length} pairs ` +
+                            `(${completedPairs}/${selectedSymbols.length} complete)...`
+                        );
                     }
+                })
+            );
 
-                    const runResult = await this.runPair(strategy, params, symbol, pairData.data, runCache, settings, capitalSettings);
-                    rows.push({
-                        symbol,
-                        displayName: symbol.endsWith("USDT") ? `${symbol.slice(0, -4)}/USDT` : symbol,
-                        bars: pairData.data.length,
-                        source: pairData.source,
-                        result: runResult.result,
-                        engineUsed: runResult.engineUsed,
-                        marketCorrelation: benchmarkData.data.length >= MIN_LOOKBACK_BARS ? computeCloseReturnCorrelation(pairData.data, benchmarkData.data) : null,
-                        strategyCorrelation: benchmarkRun ? computeEquityReturnCorrelation(runResult.result, benchmarkRun.result) : null,
-                    });
-                } catch (error) {
-                    skipped.push(`${symbol} (${error instanceof Error ? error.message : String(error)})`);
+            for (const outcome of pairOutcomes) {
+                if (outcome.row !== undefined) {
+                    rows.push(outcome.row);
+                } else {
+                    skipped.push(outcome.skipped);
                 }
             }
 

@@ -681,6 +681,14 @@ export function runBacktestCompact(
             tryProcessExitsAfterEntry(pos, candle, barIndex);
             return;
         }
+
+        const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, { stopLossOnly: true });
+        if (stopLossTrigger) {
+            recordExit(pos, stopLossTrigger.exitPrice, stopLossTrigger.exitSize);
+            if (positions.indexOf(pos) < 0) {
+                finalizeClosedPosition(pos, candle, stopLossTrigger.exitPrice, stopLossTrigger.exitReason);
+            }
+        }
     };
 
     for (let i = 0; i < data.length; i++) {
@@ -1071,6 +1079,14 @@ export function runBacktest(
         if (config.allowSameBarExit) {
             tryProcessExitsAfterEntryFull(pos, candle, barIndex);
             return;
+        }
+
+        const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, { stopLossOnly: true });
+        if (stopLossTrigger) {
+            recordExitFull(pos, candle, stopLossTrigger.exitPrice, stopLossTrigger.exitSize, stopLossTrigger.exitReason);
+            if (positions.indexOf(pos) < 0) {
+                finalizeClosedPositionFull(pos, candle, stopLossTrigger.exitPrice, stopLossTrigger.exitReason);
+            }
         }
     };
 

@@ -12,6 +12,7 @@ import {
 const WORKER_URL_KEY = 'alert_worker_url';
 export const ALERT_WORKER_URL_CHANGED_EVENT = 'alert-worker-url-changed';
 export type AlertTwoHourCloseParity = 'odd' | 'even';
+const API_FETCH_TIMEOUT_MS = 10_000;
 
 export interface AlertWorkerHealth {
     ok: boolean;
@@ -197,9 +198,57 @@ async function readApiBody(res: Response): Promise<{ json: unknown | null; text:
     }
 }
 
+function createTimedRequestSignal(sourceSignal?: AbortSignal): {
+    signal: AbortSignal;
+    cleanup: () => void;
+    didTimeout: () => boolean;
+} {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+    }, API_FETCH_TIMEOUT_MS);
+
+    const abortFromSource = () => {
+        controller.abort();
+    };
+
+    if (sourceSignal) {
+        if (sourceSignal.aborted) {
+            abortFromSource();
+        } else {
+            sourceSignal.addEventListener('abort', abortFromSource, { once: true });
+        }
+    }
+
+    return {
+        signal: controller.signal,
+        cleanup: () => {
+            clearTimeout(timeoutId);
+            sourceSignal?.removeEventListener('abort', abortFromSource);
+        },
+        didTimeout: () => timedOut,
+    };
+}
+
+async function fetchWithTimeout(input: string, options?: RequestInit): Promise<Response> {
+    const timeout = createTimedRequestSignal(options?.signal ?? undefined);
+    try {
+        return await fetch(input, { ...options, signal: timeout.signal });
+    } catch (error) {
+        if (timeout.didTimeout() && !(options?.signal?.aborted)) {
+            throw new Error(`Request timed out after ${API_FETCH_TIMEOUT_MS}ms.`);
+        }
+        throw error;
+    } finally {
+        timeout.cleanup();
+    }
+}
+
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     const base = requireUrl();
-    const res = await fetch(`${base}${path}`, {
+    const res = await fetchWithTimeout(`${base}${path}`, {
         ...options,
         headers: { 'content-type': 'application/json', ...(options?.headers ?? {}) },
     });
@@ -226,7 +275,7 @@ export const alertService = {
     async healthCheck(): Promise<AlertWorkerHealth> {
         try {
             const base = requireUrl();
-            const res = await fetch(`${base}/health`);
+            const res = await fetchWithTimeout(`${base}/health`);
             const body = await readApiBody(res);
             if (!res.ok) {
                 return {

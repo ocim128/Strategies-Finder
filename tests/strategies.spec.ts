@@ -13,6 +13,8 @@ import { evaluateLatestEntrySignal } from './lib/signal-entry-evaluator';
 import { resolveBacktestSettingsFromRaw } from './lib/backtest-settings-resolver';
 import { resolveEntryRiskTargets } from './lib/entry-risk-targets';
 import { strategies } from './lib/strategies/library';
+import { supertrend_kurtosis_anomaly } from './lib/strategies/lib/supertrend_kurtosis_anomaly';
+import { volume_profile_poc_median_shift } from './lib/strategies/lib/volume_profile_poc_median_shift';
 import { isTwoHourParityAligned, resolveTwoHourParityFromTime } from './lib/two-hour-parity';
 import { quickWalkForward, runWalkForwardAnalysis } from './lib/strategies/walk-forward';
 import { deriveAutoWalkForwardRange, resolveFiniteRangeReferenceValue } from './lib/walk-forward-range-utils';
@@ -593,6 +595,47 @@ describe('Walk-forward parameter normalization', () => {
         expect(executeCalls).to.equal(0);
         expect(executePreparedCalls).to.be.greaterThan(prepareCalls);
         expect(prepareCalls).to.be.at.most(result.windows.length * 3);
+    });
+
+    it('keeps prepared heavy-indicator strategies aligned with execute()', () => {
+        const bars: OHLCVData[] = [];
+        for (let i = 0; i < 180; i++) {
+            const base = 100 + i * 0.25 + Math.sin(i / 6) * 4;
+            bars.push({
+                time: (i + 1) as Time,
+                open: base - 0.5,
+                high: base + 1.25,
+                low: base - 1.25,
+                close: base + Math.cos(i / 5) * 0.75,
+                volume: 100 + (i % 12) * 8,
+            });
+        }
+
+        const cases = [
+            {
+                key: 'volume_profile_poc_median_shift',
+                strategy: volume_profile_poc_median_shift,
+                params: { vpPeriod: 30, medianLookback: 12, shiftThreshold: 1.2 },
+            },
+            {
+                key: 'supertrend_kurtosis_anomaly',
+                strategy: supertrend_kurtosis_anomaly,
+                params: { stPeriod: 10, kurtosisLookback: 30, kurtosisThreshold: 2.5 },
+            },
+        ] as const;
+
+        for (const testCase of cases) {
+            const strategy = testCase.strategy;
+            expect(strategy, `missing strategy ${testCase.key}`).to.not.equal(undefined);
+            expect(typeof strategy.prepareFinderData, `${testCase.key} should expose prepareFinderData`).to.equal('function');
+            expect(typeof strategy.executePrepared, `${testCase.key} should expose executePrepared`).to.equal('function');
+
+            const prepared = strategy.prepareFinderData!(bars);
+            const preparedSignals = strategy.executePrepared!(prepared, testCase.params, bars);
+            const directSignals = strategy.execute(bars, testCase.params);
+
+            expect(preparedSignals, `${testCase.key} prepared-path drift`).to.deep.equal(directSignals);
+        }
     });
 
     it('exposes normalized base params for noise-to-signal efficiency breakout', () => {
@@ -1345,6 +1388,63 @@ describe('Backtesting Engine', () => {
         expect(result.trades[0].entryTime).to.equal('2023-01-03' as Time);
         expect(result.trades[0].exitReason).to.equal('take_profit');
         expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
+    });
+
+    it('should still trigger next_open same-bar stop loss when same-bar exits are disabled', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 102, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 101, low: 94, close: 99, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 99, high: 110, low: 99, close: 108, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'buy', price: 100, barIndex: 1 },
+        ];
+
+        const result = runBacktest(data, signals, 10000, 100, 0, {
+            tradeDirection: 'long' as const,
+            executionModel: 'next_open' as const,
+            allowSameBarExit: false,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: true,
+            stopLossPercent: 5,
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].entryTime).to.equal('2023-01-03' as Time);
+        expect(result.trades[0].exitTime).to.equal('2023-01-03' as Time);
+        expect(result.trades[0].exitReason).to.equal('stop_loss');
+        expect(result.trades[0].exitPrice).to.be.closeTo(95, 1e-9);
+    });
+
+    it('compact backtest should match next_open same-bar stop loss enforcement', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 102, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 106, low: 98, close: 99, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 99, high: 99, low: 90, close: 92, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'sell', price: 100, barIndex: 1 },
+        ];
+
+        const result = runBacktestCompact(data, signals, 10000, 100, 0, {
+            tradeDirection: 'short' as const,
+            executionModel: 'next_open' as const,
+            allowSameBarExit: false,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: true,
+            stopLossPercent: 5,
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.netProfit).to.be.closeTo(-500, 1e-9);
     });
 
     it('should not let next_open entry-bar range expand velocity TP when same-bar exits are disabled', () => {
