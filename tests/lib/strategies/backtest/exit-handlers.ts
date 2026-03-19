@@ -9,6 +9,18 @@ export interface PositionExitTrigger {
     exitReason: NonNullable<Trade['exitReason']>;
 }
 
+function comparisonTolerance(left: number, right: number): number {
+    return Math.max(1e-9, Math.max(Math.abs(left), Math.abs(right), 1) * 1e-12);
+}
+
+function greaterThanOrNearlyEqual(left: number, right: number): boolean {
+    return left > right || Math.abs(left - right) <= comparisonTolerance(left, right);
+}
+
+function lessThanOrNearlyEqual(left: number, right: number): boolean {
+    return left < right || Math.abs(left - right) <= comparisonTolerance(left, right);
+}
+
 /**
  * Checks and processes various exit conditions for a position.
  * Returns the first exit trigger for this bar, if any.
@@ -25,7 +37,9 @@ export function processPositionExits(
     // Check stop loss
     const stopLoss = position.stopLossPrice;
     if (stopLoss !== null) {
-        const stopHit = isShortPosition ? candle.high >= stopLoss : candle.low <= stopLoss;
+        const stopHit = isShortPosition
+            ? greaterThanOrNearlyEqual(candle.high, stopLoss)
+            : lessThanOrNearlyEqual(candle.low, stopLoss);
         if (stopHit) {
             return {
                 exitPrice: applySlippage(stopLoss, exitSide, slippageRate),
@@ -37,7 +51,9 @@ export function processPositionExits(
 
     // Check take profit (independent of stop loss)
     if (position.takeProfitPrice !== null) {
-        const takeHit = isShortPosition ? candle.low <= position.takeProfitPrice : candle.high >= position.takeProfitPrice;
+        const takeHit = isShortPosition
+            ? lessThanOrNearlyEqual(candle.low, position.takeProfitPrice)
+            : greaterThanOrNearlyEqual(candle.high, position.takeProfitPrice);
         if (takeHit) {
             return {
                 exitPrice: applySlippage(position.takeProfitPrice, exitSide, slippageRate),
@@ -49,7 +65,9 @@ export function processPositionExits(
 
     // Check partial take profit
     if (!position.partialTaken && position.partialTargetPrice !== null) {
-        const partialHit = isShortPosition ? candle.low <= position.partialTargetPrice : candle.high >= position.partialTargetPrice;
+        const partialHit = isShortPosition
+            ? lessThanOrNearlyEqual(candle.low, position.partialTargetPrice)
+            : greaterThanOrNearlyEqual(candle.high, position.partialTargetPrice);
         if (partialHit) {
             const partialSize = position.size * (config.partialTakeProfitPercent / 100);
             if (partialSize > 0) {
@@ -109,7 +127,9 @@ export function updatePositionState(
         // Break-even
         if (config.breakEvenAtR > 0 && position.riskPerShare > 0 && !position.breakEvenApplied) {
             const breakEvenTarget = position.entryPrice + directionFactor * position.riskPerShare * config.breakEvenAtR;
-            const breakEvenHit = isShortPosition ? candle.low <= breakEvenTarget : candle.high >= breakEvenTarget;
+            const breakEvenHit = isShortPosition
+                ? lessThanOrNearlyEqual(candle.low, breakEvenTarget)
+                : greaterThanOrNearlyEqual(candle.high, breakEvenTarget);
             if (breakEvenHit) {
                 position.stopLossPrice = position.stopLossPrice === null
                     ? position.entryPrice
@@ -135,7 +155,9 @@ export function updatePositionState(
     if (config.breakEvenPercent > 0 && !position.breakEvenApplied) {
         const targetMove = position.entryPrice * (config.breakEvenPercent / 100);
         const breakEvenTarget = position.entryPrice + directionFactor * targetMove;
-        const breakEvenHit = isShortPosition ? candle.low <= breakEvenTarget : candle.high >= breakEvenTarget;
+        const breakEvenHit = isShortPosition
+            ? lessThanOrNearlyEqual(candle.low, breakEvenTarget)
+            : greaterThanOrNearlyEqual(candle.high, breakEvenTarget);
         if (breakEvenHit) {
             position.stopLossPrice = position.entryPrice;
             position.breakEvenApplied = true;

@@ -150,4 +150,26 @@ describe("Walk-forward permutation test", () => {
         expect(permutation.status).to.equal("all_zero");
         expect(permutation.pValue).to.equal(null);
     });
+
+    it("uses realized trade returns for trade_sharpe instead of the stored result sharpe field", () => {
+        const result = makeWalkForwardResult([
+            makeTrade(1, 80, 1.2),
+            makeTrade(2, 60, 0.9),
+            makeTrade(3, -30, -0.4),
+            makeTrade(4, 70, 1.1),
+            makeTrade(5, 55, 0.8),
+            makeTrade(6, -20, -0.3),
+        ]);
+
+        result.combinedOOSTrades.sharpeRatio = -7;
+
+        const permutation = runWalkForwardPermutationTest(result, {
+            permutations: 100,
+            seed: 1337,
+            metric: "trade_sharpe",
+        });
+
+        expect(permutation.status).to.equal("ok");
+        expect((permutation.observedValue ?? 0) > 0).to.equal(true);
+    });
 });

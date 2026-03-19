@@ -3,7 +3,7 @@ import { BacktestResult, BacktestSettings, OHLCVData, Signal, Time, Trade } from
 import { ensureCleanData } from '../strategy-helpers';
 import { NormalizedSettings, PositionState, PrecomputedIndicators, TradeSizingConfig } from '../../types/backtest';
 import { applySlippage, compareTime, directionFactorFor, exitSideForDirection, getExecutionShift, getTimeIndex, isLossStreakFlipTradeDirection, needsSnapshotIndicators, normalizeBacktestSettings, normalizeTradeDirection, signalToPositionDirection, timeKey } from './backtest-utils';
-import { calculateSharpeRatioFromMoments } from '../performance-metrics';
+import { calculateSharpeRatioFromEquitySamples } from '../performance-metrics';
 
 import { prepareSignals } from './signal-preparation';
 import { calculateTradeExitDetails, createEmptyBacktestResult, finalizeBacktestMetrics, calculateBacktestStats, calculateMaxDrawdown } from './position-stats';
@@ -19,12 +19,6 @@ import {
     updateAdaptiveTakeProfitHistory,
 } from './adaptive-take-profit';
 import { TradeSnapshot } from '../../types/index';
-
-export type CompactMoments = {
-    avgReturn: number;
-    returnM2: number;
-    tradeCount: number;
-};
 
 type AdaptiveTakeProfitHistoryUpdate = {
     position: PositionState;
@@ -256,6 +250,11 @@ function updateSmartSizingState(state: SmartSizingState, velocityScore: number |
     pushRollingScore(state.recentVelocityScores, velocityScore);
 }
 
+function greaterThanOrNearlyEqual(left: number, right: number): boolean {
+    const tolerance = Math.max(1e-9, Math.max(Math.abs(left), Math.abs(right), 1) * 1e-12);
+    return left > right || Math.abs(left - right) <= tolerance;
+}
+
 function resolveInitialTargetPercent(position: PositionState): number | null {
     if (!Number.isFinite(position.entryPrice) || position.entryPrice <= 0) return null;
     if (!Number.isFinite(position.takeProfitPrice) || position.takeProfitPrice === null) return null;
@@ -293,7 +292,7 @@ function updateSmartSizingPosition(
         : Math.max(position.extremePrice, candle.high);
     const favorableMovePercent = directionFactorFor(position.direction) * ((favorablePrice - position.entryPrice) / position.entryPrice) * 100;
     const progressPercent = (Math.max(0, favorableMovePercent) / state.initialTargetPercent) * 100;
-    if (progressPercent >= config.takeProfitVelocityProgressPercent) {
+    if (greaterThanOrNearlyEqual(progressPercent, config.takeProfitVelocityProgressPercent)) {
         state.fastProgressHit = true;
     }
 }
@@ -338,13 +337,12 @@ function buildPercentageTakeProfitOverrides(
 }
 
 function combineCompactResults(
+    data: OHLCVData[],
     initialCapital: number,
     longResult: BacktestResult,
     shortResult: BacktestResult,
     longEquity: Float64Array,
     shortEquity: Float64Array,
-    longMoments: CompactMoments,
-    shortMoments: CompactMoments,
 ): BacktestResult {
     const totalTrades = longResult.totalTrades + shortResult.totalTrades;
     const winningTrades = longResult.winningTrades + shortResult.winningTrades;
@@ -388,18 +386,7 @@ function combineCompactResults(
         }
     }
 
-    // Combine per-trade Welford moments (parallel combine formula)
-    const nA = longMoments.tradeCount;
-    const nB = shortMoments.tradeCount;
-    const nTotal = nA + nB;
-    let sharpeRatio = 0;
-    if (nTotal > 0) {
-        const combinedAvg = (nA * longMoments.avgReturn + nB * shortMoments.avgReturn) / nTotal;
-        const delta = shortMoments.avgReturn - longMoments.avgReturn;
-        const combinedM2 = longMoments.returnM2 + shortMoments.returnM2 + delta * delta * nA * nB / nTotal;
-        const combinedStd = nTotal > 1 ? Math.sqrt(combinedM2 / (nTotal - 1)) : 0;
-        sharpeRatio = calculateSharpeRatioFromMoments(combinedAvg, combinedStd, nTotal);
-    }
+    const sharpeRatio = calculateSharpeRatioFromEquitySamples(data, combinedEquity, len);
 
     return {
         trades: [],
@@ -447,9 +434,6 @@ function runCombinedBacktestCompact(
     // Allocate per-bar equity buffers for proper combined drawdown calculation
     const longEquity = new Float64Array(data.length);
     const shortEquity = new Float64Array(data.length);
-    const longMoments: CompactMoments = { avgReturn: 0, returnM2: 0, tradeCount: 0 };
-    const shortMoments: CompactMoments = { avgReturn: 0, returnM2: 0, tradeCount: 0 };
-
     const longResult = runBacktestCompact(
         data,
         longSignals,
@@ -459,8 +443,7 @@ function runCombinedBacktestCompact(
         { ...settings, tradeDirection: 'long' },
         splitSizing,
         precomputed,
-        longEquity,
-        longMoments
+        longEquity
     );
     const shortResult = runBacktestCompact(
         data,
@@ -471,11 +454,10 @@ function runCombinedBacktestCompact(
         { ...settings, tradeDirection: 'short' },
         splitSizing,
         precomputed,
-        shortEquity,
-        shortMoments
+        shortEquity
     );
 
-    return combineCompactResults(initialCapital, longResult, shortResult, longEquity, shortEquity, longMoments, shortMoments);
+    return combineCompactResults(data, initialCapital, longResult, shortResult, longEquity, shortEquity);
 }
 
 function runCombinedBacktest(
@@ -559,7 +541,6 @@ export function runBacktestCompact(
     sizing?: Partial<TradeSizingConfig>,
     precomputed?: PrecomputedIndicators,
     equityOut?: Float64Array,
-    momentsOut?: CompactMoments
 ): BacktestResult {
     if (signals.length === 0) return createEmptyBacktestResult();
 
@@ -593,8 +574,9 @@ export function runBacktestCompact(
     const positions: PositionState[] = [];
     const maxOpenTrades = config.maxOpenTrades;
     let totalTrades = 0, winningTrades = 0, totalProfit = 0, totalLoss = 0;
-    let avgReturn = 0, returnM2 = 0, peakEquity = initialCapital, maxDrawdown = 0, maxDrawdownPercent = 0;
+    let peakEquity = initialCapital, maxDrawdown = 0, maxDrawdownPercent = 0;
     let signalIdx = 0;
+    const compactEquity = equityOut ?? new Float64Array(data.length);
 
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
@@ -668,9 +650,6 @@ export function runBacktestCompact(
         capital += details.rawPnl - details.commission;
         totalTrades++;
         if (details.totalPnl > 0) { winningTrades++; totalProfit += details.totalPnl; } else { totalLoss += Math.abs(details.totalPnl); }
-        const delta = details.pnlPercent - avgReturn;
-        avgReturn += delta / totalTrades;
-        returnM2 += delta * (details.pnlPercent - avgReturn);
         pos.realizedPnl += details.totalPnl;
         pos.size -= details.size;
         if (pos.size <= 0) {
@@ -701,10 +680,6 @@ export function runBacktestCompact(
         if (config.allowSameBarExit) {
             tryProcessExitsAfterEntry(pos, candle, barIndex);
             return;
-        }
-        if (positions.indexOf(pos) >= 0) {
-            updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
-            applyAdaptiveTakeProfitAfterBar(pos, candle, barIndex);
         }
     };
 
@@ -907,7 +882,7 @@ export function runBacktestCompact(
             unrealizedPnl += (candle.close - positions[p].entryPrice) * positions[p].size * directionFactorFor(positions[p].direction);
         }
         const equity = capital + unrealizedPnl;
-        if (equityOut) equityOut[i] = equity;
+        compactEquity[i] = equity;
         if (equity > peakEquity) peakEquity = equity; else {
             const dd = peakEquity - equity;
             if (dd > maxDrawdown) { maxDrawdown = dd; maxDrawdownPercent = (dd / peakEquity) * 100; }
@@ -921,20 +896,15 @@ export function runBacktestCompact(
             recordExit(positions[0], finalCandle.close, positions[0].size);
         }
         const finalEquity = capital;
-        if (equityOut) equityOut[data.length - 1] = finalEquity;
+        compactEquity[data.length - 1] = finalEquity;
         if (finalEquity > peakEquity) peakEquity = finalEquity; else {
             const dd = peakEquity - finalEquity;
             if (dd > maxDrawdown) { maxDrawdown = dd; maxDrawdownPercent = (dd / peakEquity) * 100; }
         }
     }
 
-    if (momentsOut) {
-        momentsOut.avgReturn = avgReturn;
-        momentsOut.returnM2 = returnM2;
-        momentsOut.tradeCount = totalTrades;
-    }
-
-    return finalizeBacktestMetrics(initialCapital, capital, totalTrades, winningTrades, totalProfit, totalLoss, avgReturn, returnM2, maxDrawdown, maxDrawdownPercent) as BacktestResult;
+    const sharpeRatio = calculateSharpeRatioFromEquitySamples(data, compactEquity, data.length);
+    return finalizeBacktestMetrics(initialCapital, capital, totalTrades, winningTrades, totalProfit, totalLoss, sharpeRatio, maxDrawdown, maxDrawdownPercent) as BacktestResult;
 }
 
 /**
@@ -1101,10 +1071,6 @@ export function runBacktest(
         if (config.allowSameBarExit) {
             tryProcessExitsAfterEntryFull(pos, candle, barIndex);
             return;
-        }
-        if (positions.indexOf(pos) >= 0) {
-            updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
-            applyAdaptiveTakeProfitAfterBarFull(pos, candle, barIndex);
         }
     };
 

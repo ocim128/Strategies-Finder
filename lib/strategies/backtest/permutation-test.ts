@@ -232,7 +232,7 @@ function computeObservedMetric(metric: WalkForwardPermutationMetric, result: Wal
     if (metric === "net_profit") return result.combinedOOSTrades.netProfit;
     if (metric === "profit_factor") return result.combinedOOSTrades.profitFactor;
     if (metric === "expectancy") return result.combinedOOSTrades.expectancy;
-    return result.combinedOOSTrades.sharpeRatio;
+    return calculateSharpeRatioFromReturns(result.combinedOOSTrades.trades.map(trade => trade.pnlPercent));
 }
 
 function computePermutedMetric(

@@ -1,6 +1,6 @@
 
 import { BacktestResult, Time, Trade } from '../../types/index';
-import { calculateSharpeRatioFromMoments, calculateSharpeRatioFromReturns } from '../performance-metrics';
+import { calculateSharpeRatioFromEquityCurve, calculateSharpeRatioFromReturns } from '../performance-metrics';
 import { directionFactorFor } from './backtest-utils';
 import { PositionState } from '../../types/backtest';
 
@@ -51,8 +51,9 @@ export function calculateBacktestStats(
     const avgTrade = trades.length > 0 ? netProfit / trades.length : 0;
     const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
 
-    const returns = trades.map(t => t.pnlPercent);
-    const sharpeRatio = calculateSharpeRatioFromReturns(returns);
+    const sharpeRatio = equityCurve.length > 1
+        ? calculateSharpeRatioFromEquityCurve(equityCurve)
+        : calculateSharpeRatioFromReturns(trades.map(t => t.pnlPercent));
 
     return {
         trades,
@@ -84,8 +85,7 @@ export function finalizeBacktestMetrics(
     winningTrades: number,
     totalProfit: number,
     totalLoss: number,
-    avgReturn: number,
-    returnM2: number,
+    sharpeRatio: number,
     maxDrawdown: number,
     maxDrawdownPercent: number
 ): Partial<BacktestResult> {
@@ -98,9 +98,6 @@ export function finalizeBacktestMetrics(
     const expectancy = (winRate * avgWin) - (lossRate * avgLoss);
     const avgTrade = totalTrades > 0 ? netProfit / totalTrades : 0;
     const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
-
-    const stdReturn = totalTrades > 1 ? Math.sqrt(returnM2 / (totalTrades - 1)) : 0;
-    const sharpeRatio = calculateSharpeRatioFromMoments(avgReturn, stdReturn, totalTrades);
 
     return {
         trades: [],

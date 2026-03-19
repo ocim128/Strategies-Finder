@@ -60,6 +60,11 @@ function clampNonNegative(value: number): number {
     return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
+function greaterThanOrNearlyEqual(left: number, right: number): boolean {
+    const tolerance = Math.max(1e-9, Math.max(Math.abs(left), Math.abs(right), 1) * 1e-12);
+    return left > right || Math.abs(left - right) <= tolerance;
+}
+
 function toTargetPrice(entryPrice: number, direction: "long" | "short", percent: number): number | null {
     if (!Number.isFinite(entryPrice) || entryPrice <= 0 || !Number.isFinite(percent) || percent <= 0) {
         return null;
@@ -271,14 +276,14 @@ export function updateAdaptiveTakeProfitPosition(
 
         if (
             position.barsInTrade <= config.takeProfitVelocityFastBars
-            && progressPercent >= config.takeProfitVelocityProgressPercent
+            && greaterThanOrNearlyEqual(progressPercent, config.takeProfitVelocityProgressPercent)
         ) {
             positionState.currentTargetPercent *= config.takeProfitVelocityExpandMultiplier;
             positionState.velocityResolved = true;
             position.takeProfitPrice = toTargetPrice(position.entryPrice, position.direction, positionState.currentTargetPercent);
         } else if (
             position.barsInTrade >= config.takeProfitVelocitySlowBars
-            && progressPercent < config.takeProfitVelocityProgressPercent
+            && !greaterThanOrNearlyEqual(progressPercent, config.takeProfitVelocityProgressPercent)
         ) {
             positionState.currentTargetPercent *= config.takeProfitVelocityShrinkMultiplier;
             positionState.velocityResolved = true;

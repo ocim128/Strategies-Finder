@@ -18,7 +18,7 @@ import { shouldUseRustEngine } from "../engine-preferences";
 import { debugLogger, robustAuditSink } from "../debug-logger";
 import { strategies as builtInStrategies } from "../strategies/library";
 
-import { calculateSharpeRatioFromReturns } from "../strategies/performance-metrics";
+import { calculateSharpeRatioFromEquityCurve, calculateSharpeRatioFromReturns } from "../strategies/performance-metrics";
 import { buildSelectionResult } from "./endpoint";
 import { aggregateFinderBacktestResults, compareFinderResults } from "./finder-engine";
 import { FinderResultRanker } from "./finder-result-ranker";
@@ -2478,31 +2478,18 @@ function computeDatasetFlags(
     };
 }
 
-function normalizeResultSharpe(result: BacktestResult, initialCapital: number): BacktestResult {
-    // Fast path: if sharpe is already finite and reasonable, skip recomputation
-    if (Number.isFinite(result.sharpeRatio) && Math.abs(result.sharpeRatio) <= 8) {
-        return result;
+function normalizeResultSharpe(result: BacktestResult, _initialCapital: number): BacktestResult {
+    if (Array.isArray(result.equityCurve) && result.equityCurve.length > 1) {
+        return {
+            ...result,
+            sharpeRatio: calculateSharpeRatioFromEquityCurve(result.equityCurve),
+        };
     }
 
     if (Array.isArray(result.trades) && result.trades.length > 0) {
         return {
             ...result,
             sharpeRatio: calculateSharpeRatioFromReturns(result.trades.map((trade) => trade.pnlPercent)),
-        };
-    }
-
-    if (Array.isArray(result.equityCurve) && result.equityCurve.length > 1) {
-        const returns: number[] = [];
-        let prevEquity = initialCapital;
-        for (const point of result.equityCurve) {
-            if (prevEquity > 0) {
-                returns.push((point.value - prevEquity) / prevEquity);
-            }
-            prevEquity = point.value;
-        }
-        return {
-            ...result,
-            sharpeRatio: calculateSharpeRatioFromReturns(returns),
         };
     }
 

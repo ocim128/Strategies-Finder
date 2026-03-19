@@ -20,7 +20,7 @@ import { debugLogger } from "./debug-logger";
 import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
 
-import { calculateSharpeRatioFromReturns } from "./strategies/performance-metrics";
+import { calculateSharpeRatioFromEquityCurve, calculateSharpeRatioFromReturns } from "./strategies/performance-metrics";
 import { computeEdgeStatistics } from "./strategies/backtest/edge-statistics";
 import { getIntervalSeconds } from "./dataProviders/utils";
 import { getOptionalElement, getRequiredElement } from "./dom-utils";
@@ -872,21 +872,13 @@ export class BacktestService {
         return true;
     }
 
-    private recomputeSharpeRatio(result: BacktestResult, initialCapital: number): number {
-        if (Array.isArray(result.trades) && result.trades.length > 0) {
-            return calculateSharpeRatioFromReturns(result.trades.map(trade => trade.pnlPercent));
+    private recomputeSharpeRatio(result: BacktestResult, _initialCapital: number): number {
+        if (Array.isArray(result.equityCurve) && result.equityCurve.length > 1) {
+            return calculateSharpeRatioFromEquityCurve(result.equityCurve);
         }
 
-        if (Array.isArray(result.equityCurve) && result.equityCurve.length > 1) {
-            const returns: number[] = [];
-            let prevEquity = initialCapital;
-            for (const point of result.equityCurve) {
-                if (prevEquity > 0) {
-                    returns.push((point.value - prevEquity) / prevEquity);
-                }
-                prevEquity = point.value;
-            }
-            return calculateSharpeRatioFromReturns(returns);
+        if (Array.isArray(result.trades) && result.trades.length > 0) {
+            return calculateSharpeRatioFromReturns(result.trades.map(trade => trade.pnlPercent));
         }
 
         return Number.isFinite(result.sharpeRatio) ? result.sharpeRatio : 0;

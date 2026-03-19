@@ -1,7 +1,8 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateSessionVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateATR, calculateADX, calculateKeltnerChannels, calculateMFI, calculateCMF, calculateIchimoku, runBacktest, runBacktestCompact, OHLCVData, Signal, Time, Trade, Strategy, StrategyParams } from './lib/strategies/index';
+import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateSessionVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateATR, calculateADX, calculateKeltnerChannels, calculateMFI, calculateCMF, calculateIchimoku, runBacktest, runBacktestCompact, calculateBacktestStats, OHLCVData, Signal, Time, Trade, Strategy, StrategyParams } from './lib/strategies/index';
 import { buildPivotFlags, detectPivots, detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
+import { calculateSharpeRatioFromEquityCurve } from './lib/strategies/performance-metrics';
 
 import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/backtest/trade-analyzer';
 import { normalizeBacktestSettings } from './lib/strategies/backtest/backtest-utils';
@@ -1346,6 +1347,97 @@ describe('Backtesting Engine', () => {
         expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
     });
 
+    it('should not let next_open entry-bar range expand velocity TP when same-bar exits are disabled', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 110, low: 100, close: 105, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 105, high: 110, low: 104, close: 108, volume: 1000 },
+            { time: '2023-01-05' as Time, open: 108, high: 108, low: 108, close: 108, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'buy', price: 100, barIndex: 1 },
+        ];
+
+        const result = runBacktest(data, signals, 10000, 100, 0, {
+            tradeDirection: 'long' as const,
+            executionModel: 'next_open' as const,
+            allowSameBarExit: false,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+            takeProfitMode: 'velocity' as const,
+            takeProfitVelocityFastBars: 1,
+            takeProfitVelocitySlowBars: 5,
+            takeProfitVelocityProgressPercent: 100,
+            takeProfitVelocityExpandMultiplier: 2,
+            takeProfitVelocityShrinkMultiplier: 0.5,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].entryTime).to.equal('2023-01-03' as Time);
+        expect(result.trades[0].exitReason).to.equal('take_profit');
+        expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
+        expect(result.trades[0].exitPrice).to.be.closeTo(110, 1e-9);
+    });
+
+    it('should still shrink velocity TP after slow bars when progress stays below 100 percent', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 107, low: 100, close: 106, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 106, high: 108, low: 104, close: 107, volume: 1000 },
+            { time: '2023-01-05' as Time, open: 107, high: 105, low: 104, close: 105, volume: 1000 },
+            { time: '2023-01-06' as Time, open: 105, high: 105, low: 105, close: 105, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'buy', price: 100, barIndex: 1 },
+        ];
+
+        const shrunk = runBacktest(data, signals, 10000, 100, 0, {
+            tradeDirection: 'long' as const,
+            executionModel: 'next_open' as const,
+            allowSameBarExit: false,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+            takeProfitMode: 'velocity' as const,
+            takeProfitVelocityFastBars: 1,
+            takeProfitVelocitySlowBars: 2,
+            takeProfitVelocityProgressPercent: 100,
+            takeProfitVelocityExpandMultiplier: 2,
+            takeProfitVelocityShrinkMultiplier: 0.5,
+        });
+
+        const unshrunk = runBacktest(data, signals, 10000, 100, 0, {
+            tradeDirection: 'long' as const,
+            executionModel: 'next_open' as const,
+            allowSameBarExit: false,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+            takeProfitMode: 'velocity' as const,
+            takeProfitVelocityFastBars: 1,
+            takeProfitVelocitySlowBars: 2,
+            takeProfitVelocityProgressPercent: 100,
+            takeProfitVelocityExpandMultiplier: 2,
+            takeProfitVelocityShrinkMultiplier: 1,
+        });
+
+        expect(shrunk.totalTrades).to.equal(1);
+        expect(shrunk.trades[0].exitReason).to.equal('take_profit');
+        expect(shrunk.trades[0].exitTime).to.equal('2023-01-06' as Time);
+        expect(shrunk.trades[0].exitPrice).to.be.closeTo(105, 1e-9);
+
+        expect(unshrunk.totalTrades).to.equal(1);
+        expect(unshrunk.trades[0].exitReason).to.equal('end_of_data');
+    });
+
     it('should resolve next_open ATR targets from the prior closed bar for alert parity', () => {
         const candles: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
@@ -1626,6 +1718,72 @@ describe('Backtesting Engine', () => {
 
         expect(full.totalTrades).to.equal(compact.totalTrades);
         expect(full.sharpeRatio).to.be.closeTo(compact.sharpeRatio, 1e-9);
+    });
+
+    it('should base sharpe on annualized equity-period returns instead of trade pnlPercent', () => {
+        const returns = [0.001, 0, -0.001, 0.001, 0, 0.001];
+        let equity = 10000;
+        const equityCurve = [{ time: '2023-01-01' as Time, value: equity }];
+
+        for (let i = 0; i < returns.length; i++) {
+            equity *= (1 + returns[i]);
+            equityCurve.push({
+                time: `2023-01-0${i + 2}` as Time,
+                value: equity
+            });
+        }
+
+        const trades: Trade[] = [
+            { id: 1, type: 'long', entryTime: 1 as Time, entryPrice: 100, exitTime: 2 as Time, exitPrice: 108, pnl: 5, pnlPercent: 8, size: 1 },
+            { id: 2, type: 'long', entryTime: 2 as Time, entryPrice: 100, exitTime: 3 as Time, exitPrice: 91, pnl: -3, pnlPercent: -9, size: 1 },
+            { id: 3, type: 'long', entryTime: 3 as Time, entryPrice: 100, exitTime: 4 as Time, exitPrice: 112, pnl: 4, pnlPercent: 12, size: 1 },
+            { id: 4, type: 'long', entryTime: 4 as Time, entryPrice: 100, exitTime: 5 as Time, exitPrice: 89, pnl: 2, pnlPercent: -11, size: 1 },
+            { id: 5, type: 'long', entryTime: 5 as Time, entryPrice: 100, exitTime: 6 as Time, exitPrice: 110, pnl: 6, pnlPercent: 10, size: 1 },
+            { id: 6, type: 'long', entryTime: 6 as Time, entryPrice: 100, exitTime: 7 as Time, exitPrice: 90, pnl: 6, pnlPercent: -10, size: 1 },
+        ];
+
+        const result = calculateBacktestStats(
+            trades,
+            equityCurve,
+            10000,
+            equityCurve[equityCurve.length - 1].value,
+            0,
+            0
+        );
+        const expectedSharpe = calculateSharpeRatioFromEquityCurve(equityCurve);
+
+        expect(result.sharpeRatio).to.be.closeTo(expectedSharpe, 1e-12);
+        expect(result.sharpeRatio).to.be.greaterThan(5);
+    });
+
+    it('should collapse intraday equity to day-end returns before annualizing sharpe', () => {
+        const dailyCurve = [
+            { time: '2023-01-01T23:55:00Z' as Time, value: 10000 },
+            { time: '2023-01-02T23:55:00Z' as Time, value: 10100 },
+            { time: '2023-01-03T23:55:00Z' as Time, value: 10050 },
+            { time: '2023-01-04T23:55:00Z' as Time, value: 10200 },
+            { time: '2023-01-05T23:55:00Z' as Time, value: 10180 },
+            { time: '2023-01-06T23:55:00Z' as Time, value: 10320 },
+        ];
+        const intradayCurve = [
+            { time: '2023-01-01T00:05:00Z' as Time, value: 10000 },
+            { time: '2023-01-01T23:55:00Z' as Time, value: 10000 },
+            { time: '2023-01-02T00:05:00Z' as Time, value: 10000 },
+            { time: '2023-01-02T23:55:00Z' as Time, value: 10100 },
+            { time: '2023-01-03T00:05:00Z' as Time, value: 10100 },
+            { time: '2023-01-03T23:55:00Z' as Time, value: 10050 },
+            { time: '2023-01-04T00:05:00Z' as Time, value: 10050 },
+            { time: '2023-01-04T23:55:00Z' as Time, value: 10200 },
+            { time: '2023-01-05T00:05:00Z' as Time, value: 10200 },
+            { time: '2023-01-05T23:55:00Z' as Time, value: 10180 },
+            { time: '2023-01-06T00:05:00Z' as Time, value: 10180 },
+            { time: '2023-01-06T23:55:00Z' as Time, value: 10320 },
+        ];
+
+        const dailySharpe = calculateSharpeRatioFromEquityCurve(dailyCurve);
+        const intradaySharpe = calculateSharpeRatioFromEquityCurve(intradayCurve);
+
+        expect(intradaySharpe).to.be.closeTo(dailySharpe, 1e-12);
     });
 
     it('should handle commission correctly', () => {
