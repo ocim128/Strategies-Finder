@@ -26,7 +26,6 @@ export interface PositionBuilderParams {
     slippageRate: number;
     settings: NormalizedSettings;
     data: OHLCVData[];
-    volumeSeries: number[];
     atrArray: (number | null)[];
     tradeDirection: TradeDirection;
     sizingMode: TradeSizingMode;
@@ -82,26 +81,25 @@ function computeOppositeWickPenalty(candle: OHLCVData, direction: 'long' | 'shor
     return clamp(oppositeWick / range, 0, 1);
 }
 
-function computeRelativeVolume(volumeSeries: number[], barIndex: number): number {
+function computeRelativeVolume(data: OHLCVData[], barIndex: number): number {
     const start = Math.max(0, barIndex - 19);
     let sum = 0;
     let count = 0;
     for (let i = start; i <= barIndex; i++) {
-        const value = volumeSeries[i];
+        const value = data[i]?.volume;
         if (!Number.isFinite(value) || value <= 0) continue;
         sum += value;
         count += 1;
     }
     if (count === 0) return 1;
     const avgVolume = sum / count;
-    const currentVolume = volumeSeries[barIndex];
+    const currentVolume = data[barIndex]?.volume;
     if (!Number.isFinite(currentVolume) || currentVolume <= 0 || avgVolume <= 0) return 1;
     return clamp(currentVolume / avgVolume, 0.5, 2);
 }
 
 function computeEntryQualityScore(
     data: OHLCVData[],
-    volumeSeries: number[],
     sizingBarIndex: number,
     direction: 'long' | 'short',
     atrValue: number | null
@@ -113,7 +111,7 @@ function computeEntryQualityScore(
     const bodyPercent = range > 0 ? Math.abs(candle.close - candle.open) / range : 0;
     const directionalClose = computeDirectionalCloseLocation(candle, direction);
     const oppositeWickPenalty = computeOppositeWickPenalty(candle, direction);
-    const relativeVolume = computeRelativeVolume(volumeSeries, sizingBarIndex);
+    const relativeVolume = computeRelativeVolume(data, sizingBarIndex);
     const volumeScore = clamp((relativeVolume - 0.75) / 0.85, 0, 1);
     const atrRangeScore = atrValue && atrValue > 0
         ? clamp((range / atrValue) / 1.8, 0, 1)
@@ -138,13 +136,12 @@ function computeEntryQualityScore(
 function resolveQualityVelocityMultiplier(
     smartSizingState: SmartSizingState | undefined,
     data: OHLCVData[],
-    volumeSeries: number[],
     sizingBarIndex: number,
     direction: 'long' | 'short',
     atrValue: number | null
 ): number {
     const velocityMultiplier = resolveVelocityMemoryMultiplier(smartSizingState);
-    const entryQualityScore = computeEntryQualityScore(data, volumeSeries, sizingBarIndex, direction, atrValue);
+    const entryQualityScore = computeEntryQualityScore(data, sizingBarIndex, direction, atrValue);
     const qualityMultiplier = 0.88 + entryQualityScore * 0.24;
     return clamp(
         velocityMultiplier * qualityMultiplier,
@@ -157,7 +154,6 @@ function resolveSizingMultiplier(
     sizingMode: TradeSizingMode,
     smartSizingState: SmartSizingState | undefined,
     data: OHLCVData[],
-    volumeSeries: number[],
     sizingBarIndex: number,
     direction: 'long' | 'short',
     _triggerPrice: number | null,
@@ -170,7 +166,6 @@ function resolveSizingMultiplier(
             return resolveQualityVelocityMultiplier(
                 smartSizingState,
                 data,
-                volumeSeries,
                 sizingBarIndex,
                 direction,
                 atrValue
@@ -186,7 +181,6 @@ function resolveAllocatedCapital(
     positionSizePercent: number,
     fixedTradeAmount: number,
     data: OHLCVData[],
-    volumeSeries: number[],
     sizingBarIndex: number,
     direction: 'long' | 'short',
     triggerPrice: number | null,
@@ -205,7 +199,6 @@ function resolveAllocatedCapital(
         sizingMode,
         smartSizingState,
         data,
-        volumeSeries,
         sizingBarIndex,
         direction,
         triggerPrice,
@@ -227,7 +220,6 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
         slippageRate,
         settings: config,
         data,
-        volumeSeries,
         atrArray,
         tradeDirection,
         sizingMode,
@@ -313,7 +305,6 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
         positionSizePercent,
         fixedTradeAmount,
         data,
-        volumeSeries,
         sizingBarIndex,
         direction,
         (typeof signal.triggerPrice === 'number' && Number.isFinite(signal.triggerPrice) ? signal.triggerPrice : signal.price) ?? null,

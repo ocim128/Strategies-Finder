@@ -1663,7 +1663,6 @@ describe('Backtesting Engine', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
         ];
-        const volumeSeries = data.map((candle) => candle.volume);
 
         const velocity = buildPositionFromSignal({
             signal,
@@ -1675,7 +1674,6 @@ describe('Backtesting Engine', () => {
             slippageRate: 0,
             settings: config,
             data,
-            volumeSeries,
             atrArray: [null],
             tradeDirection: 'long',
             sizingMode: 'smart_fixed_velocity_memory',
@@ -1695,7 +1693,6 @@ describe('Backtesting Engine', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
         ];
-        const volumeSeries = data.map((candle) => candle.volume);
 
         const fixed = buildPositionFromSignal({
             signal,
@@ -1707,7 +1704,6 @@ describe('Backtesting Engine', () => {
             slippageRate: 0,
             settings: config,
             data,
-            volumeSeries,
             atrArray: [null],
             tradeDirection: 'long',
             sizingMode: 'fixed',
@@ -1723,7 +1719,6 @@ describe('Backtesting Engine', () => {
             slippageRate: 0,
             settings: config,
             data,
-            volumeSeries,
             atrArray: [null],
             tradeDirection: 'long',
             sizingMode: 'smart_fixed_velocity_memory',
@@ -1746,7 +1741,6 @@ describe('Backtesting Engine', () => {
             { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 99, volume: 100 },
             { time: '2023-01-02' as Time, open: 99, high: 103, low: 98, close: 102.8, volume: 300 },
         ];
-        const volumeSeries = data.map((candle) => candle.volume);
 
         const qualityVelocity = buildPositionFromSignal({
             signal,
@@ -1758,7 +1752,6 @@ describe('Backtesting Engine', () => {
             slippageRate: 0,
             settings: config,
             data,
-            volumeSeries,
             atrArray: [2, 2],
             tradeDirection: 'long',
             sizingMode: 'smart_fixed_quality_x_velocity',

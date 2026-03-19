@@ -581,7 +581,6 @@ export function runBacktestCompact(
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const indicatorSeries = resolveIndicators(data, settings, precomputed);
-    const volumeSeries = data.map((candle) => candle.volume);
 
     const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators(config)
         ? computeSnapshotIndicators(data, indicatorSeries)
@@ -684,12 +683,13 @@ export function runBacktestCompact(
 
     const tryProcessExitsAfterEntry = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
         updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
-        processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
-            recordExit(pos, exitPrice, exitSize);
+        const exitTrigger = processPositionExits(candle, pos, config, slippageRate);
+        if (exitTrigger) {
+            recordExit(pos, exitTrigger.exitPrice, exitTrigger.exitSize);
             if (positions.indexOf(pos) < 0) {
-                finalizeClosedPosition(pos, candle, exitPrice, reason!);
+                finalizeClosedPosition(pos, candle, exitTrigger.exitPrice, exitTrigger.exitReason);
             }
-        });
+        }
         if (positions.indexOf(pos) >= 0) {
             updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
             applyAdaptiveTakeProfitAfterBar(pos, candle, barIndex);
@@ -729,12 +729,13 @@ export function runBacktestCompact(
             const pos = positions[p];
             pos.barsInTrade += 1;
             updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
-            processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
-                recordExit(pos, exitPrice, exitSize);
+            const exitTrigger = processPositionExits(candle, pos, config, slippageRate);
+            if (exitTrigger) {
+                recordExit(pos, exitTrigger.exitPrice, exitTrigger.exitSize);
                 if (positions.indexOf(pos) < 0) {
-                    finalizeClosedPosition(pos, candle, exitPrice, reason!);
+                    finalizeClosedPosition(pos, candle, exitTrigger.exitPrice, exitTrigger.exitReason);
                 }
-            });
+            }
             if (positions.indexOf(pos) >= 0) {
                 updatePositionState(candle, pos, config, indicatorSeries.atr[i]);
                 applyAdaptiveTakeProfitAfterBar(pos, candle, i);
@@ -755,7 +756,6 @@ export function runBacktestCompact(
                     slippageRate,
                     settings: config,
                     data,
-                    volumeSeries,
                     atrArray: indicatorSeries.atr,
                     tradeDirection,
                     sizingMode,
@@ -810,7 +810,6 @@ export function runBacktestCompact(
                         slippageRate,
                         settings: config,
                         data,
-                        volumeSeries,
                         atrArray: indicatorSeries.atr,
                         tradeDirection,
                         sizingMode,
@@ -871,7 +870,6 @@ export function runBacktestCompact(
                             slippageRate,
                             settings: config,
                             data,
-                            volumeSeries,
                             atrArray: indicatorSeries.atr,
                             tradeDirection,
                             sizingMode,
@@ -973,7 +971,6 @@ export function runBacktest(
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const indicatorSeries = resolveIndicators(data, settings, precomputed);
-    const volumeSeries = data.map((candle) => candle.volume);
 
     const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators(config, !!settings.captureSnapshots)
         ? computeSnapshotIndicators(data, indicatorSeries)
@@ -1086,12 +1083,13 @@ export function runBacktest(
 
     const tryProcessExitsAfterEntryFull = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
         updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
-        processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
-            recordExitFull(pos, candle, exitPrice, exitSize, reason);
+        const exitTrigger = processPositionExits(candle, pos, config, slippageRate);
+        if (exitTrigger) {
+            recordExitFull(pos, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason);
             if (positions.indexOf(pos) < 0) {
-                finalizeClosedPositionFull(pos, candle, exitPrice, reason!);
+                finalizeClosedPositionFull(pos, candle, exitTrigger.exitPrice, exitTrigger.exitReason);
             }
-        });
+        }
         if (positions.indexOf(pos) >= 0) {
             updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
             applyAdaptiveTakeProfitAfterBarFull(pos, candle, barIndex);
@@ -1131,12 +1129,13 @@ export function runBacktest(
             const pos = positions[p];
             pos.barsInTrade += 1;
             updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
-            processPositionExits(candle, pos, config, slippageRate, (exitPrice, exitSize, reason) => {
-                recordExitFull(pos, candle, exitPrice, exitSize, reason);
+            const exitTrigger = processPositionExits(candle, pos, config, slippageRate);
+            if (exitTrigger) {
+                recordExitFull(pos, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason);
                 if (positions.indexOf(pos) < 0) {
-                    finalizeClosedPositionFull(pos, candle, exitPrice, reason!);
+                    finalizeClosedPositionFull(pos, candle, exitTrigger.exitPrice, exitTrigger.exitReason);
                 }
-            });
+            }
             if (positions.indexOf(pos) >= 0) {
                 updatePositionState(candle, pos, config, indicatorSeries.atr[i]);
                 applyAdaptiveTakeProfitAfterBarFull(pos, candle, i);
@@ -1157,7 +1156,6 @@ export function runBacktest(
                     slippageRate,
                     settings: config,
                     data,
-                    volumeSeries,
                     atrArray: indicatorSeries.atr,
                     tradeDirection,
                     sizingMode,
@@ -1213,7 +1211,6 @@ export function runBacktest(
                         slippageRate,
                         settings: config,
                         data,
-                        volumeSeries,
                         atrArray: indicatorSeries.atr,
                         tradeDirection,
                         sizingMode,
@@ -1272,7 +1269,6 @@ export function runBacktest(
                             slippageRate,
                             settings: config,
                             data,
-                            volumeSeries,
                             atrArray: indicatorSeries.atr,
                             tradeDirection,
                             sizingMode,

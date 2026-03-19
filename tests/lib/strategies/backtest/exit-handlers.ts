@@ -3,19 +3,22 @@ import { OHLCVData, Trade } from '../../types/index';
 import { NormalizedSettings, PositionState } from '../../types/backtest';
 import { applySlippage, directionFactorFor, exitSideForDirection } from './backtest-utils';
 
-export type ExitCallback = (exitPrice: number, exitSize: number, exitReason: Trade['exitReason']) => void;
+export interface PositionExitTrigger {
+    exitPrice: number;
+    exitSize: number;
+    exitReason: NonNullable<Trade['exitReason']>;
+}
 
 /**
  * Checks and processes various exit conditions for a position.
- * Returns true if the position was fully closed.
+ * Returns the first exit trigger for this bar, if any.
  */
 export function processPositionExits(
     candle: OHLCVData,
     position: PositionState,
     config: NormalizedSettings,
-    slippageRate: number,
-    onExit: ExitCallback
-): boolean {
+    slippageRate: number
+): PositionExitTrigger | null {
     const isShortPosition = position.direction === 'short';
     const exitSide = exitSideForDirection(position.direction);
 
@@ -24,9 +27,11 @@ export function processPositionExits(
     if (stopLoss !== null) {
         const stopHit = isShortPosition ? candle.high >= stopLoss : candle.low <= stopLoss;
         if (stopHit) {
-            const exitPrice = applySlippage(stopLoss, exitSide, slippageRate);
-            onExit(exitPrice, position.size, 'stop_loss');
-            return true; // Exit fully
+            return {
+                exitPrice: applySlippage(stopLoss, exitSide, slippageRate),
+                exitSize: position.size,
+                exitReason: 'stop_loss',
+            };
         }
     }
 
@@ -34,9 +39,11 @@ export function processPositionExits(
     if (position.takeProfitPrice !== null) {
         const takeHit = isShortPosition ? candle.low <= position.takeProfitPrice : candle.high >= position.takeProfitPrice;
         if (takeHit) {
-            const exitPrice = applySlippage(position.takeProfitPrice, exitSide, slippageRate);
-            onExit(exitPrice, position.size, 'take_profit');
-            return true; // Exit fully
+            return {
+                exitPrice: applySlippage(position.takeProfitPrice, exitSide, slippageRate),
+                exitSize: position.size,
+                exitReason: 'take_profit',
+            };
         }
     }
 
@@ -46,12 +53,12 @@ export function processPositionExits(
         if (partialHit) {
             const partialSize = position.size * (config.partialTakeProfitPercent / 100);
             if (partialSize > 0) {
-                const exitPrice = applySlippage(position.partialTargetPrice, exitSide, slippageRate);
-                onExit(exitPrice, partialSize, 'partial');
-                // Position size is updated by the engine callback.
-                if (position.size > 0) position.partialTaken = true;
-
-                if (position.size <= 0) return true;
+                position.partialTaken = partialSize < position.size;
+                return {
+                    exitPrice: applySlippage(position.partialTargetPrice, exitSide, slippageRate),
+                    exitSize: partialSize,
+                    exitReason: 'partial',
+                };
             }
         }
     }
@@ -62,22 +69,26 @@ export function processPositionExits(
         config.riskMaxHoldBars > 0 &&
         position.barsInTrade >= config.riskMaxHoldBars
     ) {
-        const exitPrice = applySlippage(candle.close, exitSide, slippageRate);
-        onExit(exitPrice, position.size, 'time_stop');
-        return true;
+        return {
+            exitPrice: applySlippage(candle.close, exitSide, slippageRate),
+            exitSize: position.size,
+            exitReason: 'time_stop',
+        };
     }
 
     // Time stop
     if (config.timeStopBars > 0 && position.barsInTrade >= config.timeStopBars) {
         const isLosing = isShortPosition ? candle.close >= position.entryPrice : candle.close <= position.entryPrice;
         if (!position.partialTaken && isLosing) {
-            const exitPrice = applySlippage(candle.close, exitSide, slippageRate);
-            onExit(exitPrice, position.size, 'time_stop');
-            return true;
+            return {
+                exitPrice: applySlippage(candle.close, exitSide, slippageRate),
+                exitSize: position.size,
+                exitReason: 'time_stop',
+            };
         }
     }
 
-    return false;
+    return null;
 }
 
 
