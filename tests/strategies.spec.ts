@@ -3247,4 +3247,50 @@ describe('Alert Entry Evaluator', () => {
             }
         }
     });
+
+    it('should keep the executed entry fill price available for worker consumers when slippage is enabled', () => {
+        const strategyKey = '__test_eval_entry_fill_price__';
+        const registry = strategies as Record<string, Strategy>;
+        const previous = registry[strategyKey];
+
+        const testStrategy: Strategy = {
+            name: 'Evaluator Entry Fill Price Test',
+            description: 'Separates execution price from slippage-adjusted fill price.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => {
+                if (data.length < 4) return [];
+                return [
+                    { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                ];
+            }
+        };
+
+        registry[strategyKey] = testStrategy;
+        try {
+            const candles = buildCandles(5);
+            const result = evaluateLatestEntrySignal({
+                strategyKey,
+                candles,
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'next_open',
+                    slippageBps: 100,
+                },
+                freshnessBars: 20
+            });
+
+            expect(result.ok).to.equal(true);
+            expect(result.latestEntry).to.not.equal(null);
+            expect(result.latestTrade).to.not.equal(null);
+            expect(result.latestEntry?.signal.price).to.equal(candles[2].open);
+            expect(result.latestTrade?.entryPrice).to.be.closeTo(candles[2].open * 1.01, 1e-9);
+        } finally {
+            if (previous) {
+                registry[strategyKey] = previous;
+            } else {
+                delete registry[strategyKey];
+            }
+        }
+    });
 });

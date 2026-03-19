@@ -13,7 +13,10 @@ import {
     parseAlertConfigNameFromStreamId,
     parseAlertTwoHourParityFromStreamId,
 } from './alert-service';
-import { getLatestActionableAlertSignal } from './alert-signal-utils';
+import {
+    getLatestActionableAlertSignal,
+    getPersistedAlertSignalEntryPrice,
+} from './alert-signal-utils';
 import { backtestService } from './backtest-service';
 import { dataManager } from './data-manager';
 import { assetSearchService } from './asset-search-service';
@@ -85,6 +88,7 @@ interface WorkerEntrySnapshot {
     direction: 'long' | 'short';
     signalTimeSec: number;
     signalPrice: number;
+    entryPrice: number | null;
 }
 
 interface WorkerSnapshot {
@@ -509,6 +513,7 @@ class LivePositionsService {
                         direction: workerState.latestEntry.direction,
                         signalTimeSec: workerState.latestEntry.signalTimeSec,
                         signalPrice: workerState.latestEntry.signalPrice,
+                        entryPrice: workerState.latestEntry.entryPrice ?? workerState.latestTrade?.entryPrice ?? null,
                     }
                     : this.signalToEntrySnapshot(latestWorkerSignal),
             };
@@ -587,6 +592,7 @@ class LivePositionsService {
             direction: signal.direction,
             signalTimeSec: signal.signal_time,
             signalPrice: signal.signal_price,
+            entryPrice: getPersistedAlertSignalEntryPrice(signal),
         };
     }
 
@@ -594,6 +600,10 @@ class LivePositionsService {
         entry: WorkerEntrySnapshot,
         backtestSettings: BacktestSettings
     ): number {
+        if (Number.isFinite(entry.entryPrice) && (entry.entryPrice as number) > 0) {
+            return entry.entryPrice as number;
+        }
+
         const basePrice = Number(entry.signalPrice);
         if (!Number.isFinite(basePrice) || basePrice <= 0) {
             return basePrice;

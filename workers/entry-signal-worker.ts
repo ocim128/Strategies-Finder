@@ -116,6 +116,7 @@ interface StoredSignalPayload {
     signalTimeSec: number;
     signalAgeBars: number;
     signalPrice: number;
+    entryPrice?: number;
     signalReason: string | null;
     fingerprint: string;
     takeProfitPrice?: number;
@@ -176,6 +177,7 @@ interface ProcessSignalResult {
         direction: "long" | "short";
         signalTimeSec: number;
         signalPrice: number;
+        entryPrice: number;
         fingerprint: string;
         signal: { price: number };
     } | null;
@@ -212,6 +214,7 @@ interface SubscriptionStateResult {
         direction: "long" | "short";
         signalTimeSec: number;
         signalPrice: number;
+        entryPrice?: number | null;
         signalAgeBars: number;
         isFresh: boolean;
         fingerprint: string;
@@ -732,6 +735,7 @@ function formatPercent(value: number): string {
 function buildTelegramMessage(signal: StoredSignalPayload): string {
     const icon = signal.direction === "long" ? "\u{1F7E2}" : "\u{1F534}";
     const configLabel = signal.configName ?? signal.strategyKey;
+    const entryPrice = signal.entryPrice ?? signal.signalPrice;
     const lines = [
         `${icon} New Entry Signal`,
         `Symbol: ${signal.symbol}`,
@@ -739,8 +743,11 @@ function buildTelegramMessage(signal: StoredSignalPayload): string {
         `Configuration: ${configLabel}`,
         `Strategy: ${signal.strategyKey}`,
         `Direction: ${signal.direction.toUpperCase()}`,
-        `Price: ${signal.signalPrice}`,
+        `Entry Price: ${entryPrice}`,
     ];
+    if (signal.entryPrice != null && Math.abs(signal.signalPrice - signal.entryPrice) > Math.max(1e-8, Math.abs(signal.entryPrice) * 1e-8)) {
+        lines.push(`Signal Price: ${signal.signalPrice}`);
+    }
     if (signal.takeProfitPrice != null && signal.takeProfitPercent != null) {
         lines.push(`\u{1F3AF} Take Profit: ${signal.takeProfitPrice.toFixed(4)} (${formatPercent(signal.takeProfitPercent)})`);
     }
@@ -876,6 +883,8 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         };
     }
 
+    const evaluatedEntryPrice = evaluation.latestTrade?.entryPrice ?? evaluation.latestEntry.signal.price;
+
     if (!evaluation.latestEntry.isFresh) {
         const staleOpenTrade = evaluation.latestTrade?.isOpen === true;
         if (!staleOpenTrade) {
@@ -891,6 +900,7 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                     direction: evaluation.latestEntry.direction,
                     signalTimeSec: evaluation.latestEntry.signalTimeSec,
                     signalPrice: evaluation.latestEntry.signal.price,
+                    entryPrice: evaluatedEntryPrice,
                     fingerprint: evaluation.latestEntry.fingerprint,
                     signal: { price: evaluation.latestEntry.signal.price },
                 },
@@ -926,6 +936,7 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                     direction: evaluation.latestEntry.direction,
                     signalTimeSec: evaluation.latestEntry.signalTimeSec,
                     signalPrice: evaluation.latestEntry.signal.price,
+                    entryPrice: evaluatedEntryPrice,
                     fingerprint: evaluation.latestEntry.fingerprint,
                     signal: { price: evaluation.latestEntry.signal.price },
                 },
@@ -945,11 +956,10 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
 
     // Compute TP/SL target prices from backtest settings.
     const bs = payload.backtestSettings;
-    const price = evaluation.latestEntry.signal.price;
     const riskTargets = resolveEntryRiskTargets({
         candles: payload.candles,
         entryTime: evaluation.latestEntry.signal.time,
-        entryPrice: price,
+        entryPrice: evaluatedEntryPrice,
         direction: evaluation.latestEntry.direction,
         settings: bs,
         entryBarIndex: Number.isFinite(evaluation.latestEntry.signal.barIndex)
@@ -968,7 +978,8 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         direction: evaluation.latestEntry.direction,
         signalTimeSec: evaluation.latestEntry.signalTimeSec,
         signalAgeBars: evaluation.latestEntry.signalAgeBars,
-        signalPrice: price,
+        signalPrice: evaluation.latestEntry.signal.price,
+        entryPrice: evaluatedEntryPrice,
         signalReason: evaluation.latestEntry.signal.reason ?? null,
         fingerprint: evaluation.latestEntry.fingerprint,
         takeProfitPrice: evaluatedTrade?.takeProfitPrice ?? riskTargets.takeProfitPrice ?? undefined,
@@ -1067,6 +1078,7 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                 direction: evaluation.latestEntry.direction,
                 signalTimeSec: evaluation.latestEntry.signalTimeSec,
                 signalPrice: evaluation.latestEntry.signal.price,
+                entryPrice: evaluatedEntryPrice,
                 fingerprint: evaluation.latestEntry.fingerprint,
                 signal: { price: evaluation.latestEntry.signal.price },
             }
@@ -1801,6 +1813,7 @@ async function evaluateSubscriptionState(
             direction: evaluation.latestEntry.direction,
             signalTimeSec: evaluation.latestEntry.signalTimeSec,
             signalPrice: evaluation.latestEntry.signal.price,
+            entryPrice: evaluation.latestTrade?.entryPrice ?? evaluation.latestEntry.signal.price,
             signalAgeBars: evaluation.latestEntry.signalAgeBars,
             isFresh: evaluation.latestEntry.isFresh,
             fingerprint: evaluation.latestEntry.fingerprint,

@@ -19,6 +19,7 @@ import { backtestService } from '../backtest-service';
 import { strategyRegistry } from '../../strategyRegistry';
 import { createAccessibleModal, type AccessibleModalController } from '../modal-accessibility';
 import { formatDisplayPrice } from '../price-format';
+import { resolveAlertSignalEntryPrice } from '../alert-signal-utils';
 
 
 
@@ -512,12 +513,15 @@ async function openDetailModal(streamId: string): Promise<void> {
             <div class="lp-detail-section">
                 <h4>Signal History (${details.workerSignals.length})</h4>
                 <div class="lp-detail-grid">
-                    ${details.workerSignals.slice(0, 5).map((sig, i) => `
+                    ${details.workerSignals.slice(0, 5).map((sig, i) => {
+                        const displayPrice = resolveAlertSignalEntryPrice(sig);
+                        return `
                         <div class="lp-detail-row" style="grid-column: 1 / -1;">
                             <span class="label">#${i + 1} ${sig.direction.toUpperCase()}</span>
-                            <span class="value">${formatPrice(sig.signal_price)} @ ${formatTime(sig.signal_time)}</span>
+                            <span class="value">${formatPrice(displayPrice ?? sig.signal_price)} @ ${formatTime(sig.signal_time)}</span>
                         </div>
-                    `).join('') || '<span class="label">No signals found</span>'}
+                    `;
+                    }).join('') || '<span class="label">No signals found</span>'}
                 </div>
             </div>
         `;

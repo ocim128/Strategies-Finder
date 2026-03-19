@@ -2,7 +2,9 @@ import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import {
     getLatestActionableAlertSignal,
+    getPersistedAlertSignalEntryPrice,
     PENDING_ENTRY_SIGNAL_REASON,
+    resolveAlertSignalEntryPrice,
 } from '../lib/alert-signal-utils';
 
 describe('Alert signal utilities', () => {
@@ -23,5 +25,27 @@ describe('Alert signal utilities', () => {
         ]);
 
         expect(latest).to.equal(null);
+    });
+
+    it('prefers a persisted entryPrice from payload_json when resolving alert entry price', () => {
+        const signal = {
+            direction: 'long' as const,
+            signal_price: 100,
+            payload_json: JSON.stringify({ entryPrice: 101.25 }),
+        };
+
+        expect(getPersistedAlertSignalEntryPrice(signal)).to.equal(101.25);
+        expect(resolveAlertSignalEntryPrice(signal, { slippageBps: 100 })).to.equal(101.25);
+    });
+
+    it('falls back to slippage-adjusted signal_price when payload_json has no persisted entryPrice', () => {
+        const signal = {
+            direction: 'short' as const,
+            signal_price: 100,
+            payload_json: JSON.stringify({}),
+        };
+
+        expect(getPersistedAlertSignalEntryPrice(signal)).to.equal(null);
+        expect(resolveAlertSignalEntryPrice(signal, { slippageBps: 100 })).to.equal(99);
     });
 });

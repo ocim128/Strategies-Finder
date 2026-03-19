@@ -39,7 +39,10 @@ import {
     selectClosedCandleWindow,
 } from '../alert-evaluation-window';
 import { resolveEntryRiskTargets } from '../entry-risk-targets';
-import { applySlippage, entrySideForDirection } from '../strategies/backtest/backtest-utils';
+import {
+    parseAlertSignalPayload,
+    resolveAlertSignalEntryPrice,
+} from '../alert-signal-utils';
 
 function safeJsonParse<T>(raw: string, fallback: T): T {
     try {
@@ -555,7 +558,8 @@ function renderSignalHistory(signals: AlertSignalRecord[]) {
 
     tbody.innerHTML = '';
     signals.forEach((sig) => {
-        const payload = safeJsonParse<Record<string, unknown>>(sig.payload_json, {});
+        const payload = parseAlertSignalPayload(sig);
+        const displayPrice = resolveAlertSignalEntryPrice(sig);
         const tpValue = Number(payload.takeProfitPrice);
         const slValue = Number(payload.stopLossPrice);
         const tp = Number.isFinite(tpValue) ? tpValue.toFixed(2) : '-';
@@ -565,7 +569,7 @@ function renderSignalHistory(signals: AlertSignalRecord[]) {
         const tr = document.createElement('tr');
         appendTextCell(tr, new Date(sig.signal_time * 1000).toISOString().replace('T', ' ').slice(0, 19));
         appendTextCell(tr, sig.direction.toUpperCase(), { className: dirClass });
-        appendTextCell(tr, String(sig.signal_price));
+        appendTextCell(tr, displayPrice !== null ? String(displayPrice) : String(sig.signal_price));
         appendTextCell(tr, tp);
         appendTextCell(tr, sl);
         tbody.appendChild(tr);
@@ -1003,17 +1007,15 @@ function createOpenTradeFromSignalRecord(
     backtestSettings: BacktestSettings = {},
     candles: OHLCVData[] = []
 ): Trade | null {
-    if (!signal || !Number.isFinite(signal.signal_time) || !Number.isFinite(signal.signal_price)) {
+    if (!signal || !Number.isFinite(signal.signal_time)) {
         return null;
     }
 
-    const payload = safeJsonParse<Record<string, unknown>>(signal.payload_json, {});
-    const rawSignalPrice = Number(signal.signal_price);
-    const slippageBps = Number(backtestSettings.slippageBps ?? 0);
-    const slippageRate = Number.isFinite(slippageBps) && slippageBps > 0
-        ? slippageBps / 10000
-        : 0;
-    const entryPrice = applySlippage(rawSignalPrice, entrySideForDirection(signal.direction), slippageRate);
+    const payload = parseAlertSignalPayload(signal);
+    const entryPrice = resolveAlertSignalEntryPrice(signal, backtestSettings);
+    if (entryPrice === null) {
+        return null;
+    }
 
     const riskTargets = resolveEntryRiskTargets({
         candles,
@@ -1238,9 +1240,9 @@ async function handleLastTradeAction(streamId: string): Promise<void> {
         
         const tradeSelection = selectLastTradeForDisplay(result.trades);
         if (!tradeSelection.trade) {
-            const history = await alertService.getSignalHistory(streamId, 10);
-            const latestActionableSignal = getLatestActionableAlertSignal(history);
-            const fallbackTrade = latestActionableSignal
+        const history = await alertService.getSignalHistory(streamId, 10);
+        const latestActionableSignal = getLatestActionableAlertSignal(history);
+        const fallbackTrade = latestActionableSignal
                 ? createOpenTradeFromSignalRecord(latestActionableSignal, effectiveBacktestSettings, evaluationCandles)
                 : null;
             if (fallbackTrade) {

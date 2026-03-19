@@ -97,6 +97,7 @@ export interface AlertEvaluatedEntrySignal {
     direction: 'long' | 'short';
     signalTimeSec: number;
     signalPrice: number;
+    entryPrice?: number | null;
     signalAgeBars: number;
     isFresh: boolean;
     fingerprint: string;
