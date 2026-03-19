@@ -61,34 +61,18 @@ export interface SnapshotIndicators {
  */
 export function computeSnapshotIndicators(
     data: OHLCVData[],
-    existingIndicators: IndicatorSeries
+    _existingIndicators: IndicatorSeries
 ): SnapshotIndicators {
-    const len = data.length;
     const highs = getHighs(data);
     const lows = getLows(data);
     const closes = getCloses(data);
     const volumes = getVolumes(data);
 
-    // Reuse existing if available (correct length), otherwise compute fresh
-    const rsi = existingIndicators.rsi.length === len
-        ? existingIndicators.rsi
-        : calculateRSI(closes, SNAPSHOT_RSI_PERIOD);
-
-    const volumeSma = existingIndicators.volumeSma.length === len
-        ? existingIndicators.volumeSma
-        : calculateSMA(volumes, SNAPSHOT_VOL_SMA_PERIOD);
-
-    const adx = existingIndicators.adx.length === len
-        ? existingIndicators.adx
-        : calculateADX(highs, lows, closes, SNAPSHOT_ADX_PERIOD);
-
-    const atr = existingIndicators.atr.length === len
-        ? existingIndicators.atr
-        : calculateATR(highs, lows, closes, SNAPSHOT_ATR_PERIOD);
-
-    const emaTrend = existingIndicators.emaTrend.length === len
-        ? existingIndicators.emaTrend
-        : calculateEMA(closes, SNAPSHOT_EMA_PERIOD);
+    const rsi = calculateRSI(closes, SNAPSHOT_RSI_PERIOD);
+    const volumeSma = calculateSMA(volumes, SNAPSHOT_VOL_SMA_PERIOD);
+    const adx = calculateADX(highs, lows, closes, SNAPSHOT_ADX_PERIOD);
+    const atr = calculateATR(highs, lows, closes, SNAPSHOT_ATR_PERIOD);
+    const emaTrend = calculateEMA(closes, SNAPSHOT_EMA_PERIOD);
 
     return { rsi, volumeSma, adx, atr, emaTrend, volumes };
 }

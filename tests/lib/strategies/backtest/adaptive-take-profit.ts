@@ -3,7 +3,7 @@ import { IndicatorSeries, NormalizedSettings, PositionState } from "../../types/
 import { directionFactorFor } from "./backtest-utils";
 
 export interface AdaptiveTakeProfitOverrides {
-    takeProfitPrice: number | null;
+    takeProfitPercent: number | null;
 }
 
 export interface AdaptiveTakeProfitExitSignal {
@@ -179,7 +179,7 @@ export function resolveAdaptiveTakeProfitOverrides(
     config: NormalizedSettings,
     state: AdaptiveTakeProfitState,
     direction: "long" | "short",
-    entryPrice: number,
+    _entryPrice: number,
     _entryBarIndex: number
 ): AdaptiveTakeProfitOverrides | null {
     if (config.riskMode !== "percentage" || config.takeProfitEnabled !== true) {
@@ -187,16 +187,15 @@ export function resolveAdaptiveTakeProfitOverrides(
     }
 
     const adaptivePercent = resolveEntryAdaptiveTargetPercent(config, state, direction);
-    const fallbackTargetPrice = toTargetPrice(entryPrice, direction, adaptivePercent);
 
     if (config.takeProfitMode === "climax_exit") {
         return {
-            takeProfitPrice: null,
+            takeProfitPercent: null,
         };
     }
 
     return {
-        takeProfitPrice: fallbackTargetPrice,
+        takeProfitPercent: adaptivePercent,
     };
 }
 

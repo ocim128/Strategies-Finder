@@ -3,17 +3,23 @@ import { describe, it } from 'node:test';
 import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateSessionVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateATR, calculateADX, calculateKeltnerChannels, calculateMFI, calculateCMF, calculateIchimoku, runBacktest, runBacktestCompact, calculateBacktestStats, OHLCVData, Signal, Time, Trade, Strategy, StrategyParams } from './lib/strategies/index';
 import { buildPivotFlags, detectPivots, detectPivotsWithDeviation } from './lib/strategies/strategy-helpers';
 import { calculateSharpeRatioFromEquityCurve } from './lib/strategies/performance-metrics';
+import { calculateEMA } from './lib/strategies/indicators';
 
 import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/backtest/trade-analyzer';
 import { normalizeBacktestSettings } from './lib/strategies/backtest/backtest-utils';
+import { precomputeIndicators, resolveIndicators } from './lib/strategies/backtest';
 import { buildPositionFromSignal } from './lib/strategies/backtest/position-builder';
 import { getOpenPositionForScanner } from './lib/strategies/backtest/signal-preparation';
+import { computeSnapshotIndicators } from './lib/strategies/backtest/snapshot-capture';
 import { resolveScannerBacktestSettings } from './lib/scanner/scanner-engine';
 import { evaluateLatestEntrySignal } from './lib/signal-entry-evaluator';
 import { resolveBacktestSettingsFromRaw } from './lib/backtest-settings-resolver';
 import { resolveEntryRiskTargets } from './lib/entry-risk-targets';
 import { strategies } from './lib/strategies/library';
 import { supertrend_kurtosis_anomaly } from './lib/strategies/lib/supertrend_kurtosis_anomaly';
+import { supertrend_friction_pinch } from './lib/strategies/lib/supertrend_friction_pinch';
+import { supertrend_distance_zscore } from './lib/strategies/lib/supertrend_distance_zscore';
+import { supertrend_churn_resilience } from './lib/strategies/lib/supertrend_churn_resilience';
 import { volume_profile_poc_median_shift } from './lib/strategies/lib/volume_profile_poc_median_shift';
 import { isTwoHourParityAligned, resolveTwoHourParityFromTime } from './lib/two-hour-parity';
 import { quickWalkForward, runWalkForwardAnalysis } from './lib/strategies/walk-forward';
@@ -238,6 +244,56 @@ describe('Strategy Calculations', () => {
         const adxChopFreshClose = calculateADX(highChop, lowChop, [...close], 3);
         expect(adxChop).to.deep.equal(adxChopFreshClose);
         expect(adxTrend).to.not.deep.equal(adxChop);
+    });
+
+    it('should reuse indicator precompute cache when ATR exit settings change without changing indicator inputs', () => {
+        const data: OHLCVData[] = [];
+        for (let i = 0; i < 80; i++) {
+            const close = 100 + i * 0.4 + Math.sin(i / 5) * 3;
+            data.push({
+                time: new Date(Date.UTC(2023, 0, 1, i, 0, 0)).toISOString() as Time,
+                open: close - 0.5,
+                high: close + 1.2,
+                low: close - 1.1,
+                close,
+                volume: 100 + (i % 10) * 15,
+            });
+        }
+
+        const baseSettings = {
+            riskMode: 'percentage' as const,
+            takeProfitEnabled: true,
+            takeProfitMode: 'climax_exit' as const,
+            takeProfitClimaxStdDevPeriod: 6,
+            takeProfitClimaxVolumePeriod: 4,
+            tradeFilterMode: 'rsi' as const,
+            rsiPeriod: 14,
+            trendEmaPeriod: 50,
+            adxPeriod: 14,
+            adxMin: 20,
+        };
+
+        const first = resolveIndicators(data, {
+            ...baseSettings,
+            stopLossAtr: 1,
+            takeProfitAtr: 2,
+            trailingAtr: 0,
+        });
+
+        const second = resolveIndicators(data, {
+            ...baseSettings,
+            stopLossAtr: 3,
+            takeProfitAtr: 5,
+            trailingAtr: 2,
+        });
+
+        expect(first.atr).to.equal(second.atr);
+        expect(first.emaTrend).to.equal(second.emaTrend);
+        expect(first.adx).to.equal(second.adx);
+        expect(first.rsi).to.equal(second.rsi);
+        expect(first.volumeSma).to.equal(second.volumeSma);
+        expect(first.sessionVwap).to.equal(second.sessionVwap);
+        expect(first.vwapDeviationStd).to.equal(second.vwapDeviationStd);
     });
 });
 
@@ -621,6 +677,21 @@ describe('Walk-forward parameter normalization', () => {
                 key: 'supertrend_kurtosis_anomaly',
                 strategy: supertrend_kurtosis_anomaly,
                 params: { stPeriod: 10, kurtosisLookback: 30, kurtosisThreshold: 2.5 },
+            },
+            {
+                key: 'supertrend_friction_pinch',
+                strategy: supertrend_friction_pinch,
+                params: { stPeriod: 10, pinchLookback: 20, rocTarget: 1.5 },
+            },
+            {
+                key: 'supertrend_distance_zscore',
+                strategy: supertrend_distance_zscore,
+                params: { stPeriod: 10, zscoreLookback: 30, zscoreTrigger: 2.2 },
+            },
+            {
+                key: 'supertrend_churn_resilience',
+                strategy: supertrend_churn_resilience,
+                params: { stPeriod: 10, stMultiplier: 3, maxCrossings: 2 },
             },
         ] as const;
 
@@ -1472,6 +1543,114 @@ describe('Backtesting Engine', () => {
         expect(result.trades[0].stopLossPrice).to.be.closeTo(105, 1e-9);
     });
 
+    it('should anchor long percentage take profit to the slippage-adjusted fill price', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 110.5, low: 100, close: 110, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 110, high: 111.5, low: 109, close: 111, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'buy', price: 100, barIndex: 0 },
+        ];
+
+        const result = runBacktest(data, signals, 10000, 100, 0, {
+            tradeDirection: 'long' as const,
+            executionModel: 'signal_close' as const,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+            slippageBps: 100,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].entryPrice).to.be.closeTo(101, 1e-9);
+        expect(result.trades[0].takeProfitPrice).to.be.closeTo(111.1, 1e-9);
+        expect(result.trades[0].exitReason).to.equal('take_profit');
+        expect(result.trades[0].exitTime).to.equal('2023-01-03' as Time);
+        expect(result.trades[0].exitPrice).to.be.closeTo(109.989, 1e-9);
+    });
+
+    it('should anchor short percentage take profit to the slippage-adjusted fill price', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 100, low: 89.5, close: 90, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 90, high: 91, low: 88.5, close: 89, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'sell', price: 100, barIndex: 0 },
+        ];
+
+        const result = runBacktest(data, signals, 10000, 100, 0, {
+            tradeDirection: 'short' as const,
+            executionModel: 'signal_close' as const,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+            slippageBps: 100,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].entryPrice).to.be.closeTo(99, 1e-9);
+        expect(result.trades[0].takeProfitPrice).to.be.closeTo(89.1, 1e-9);
+        expect(result.trades[0].exitReason).to.equal('take_profit');
+        expect(result.trades[0].exitTime).to.equal('2023-01-03' as Time);
+        expect(result.trades[0].exitPrice).to.be.closeTo(89.991, 1e-9);
+    });
+
+    it('should fill a long percentage take profit at the bar open when price gaps beyond the target', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 120, high: 121, low: 119, close: 120, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'buy', price: 100, barIndex: 0 },
+        ];
+
+        const result = runBacktest(data, signals, 10000, 100, 0, {
+            tradeDirection: 'long' as const,
+            executionModel: 'signal_close' as const,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].exitReason).to.equal('take_profit');
+        expect(result.trades[0].exitPrice).to.be.closeTo(120, 1e-9);
+        expect(result.trades[0].takeProfitPrice).to.be.closeTo(110, 1e-9);
+    });
+
+    it('should fill a short percentage take profit at the bar open when price gaps beyond the target', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 80, high: 81, low: 79, close: 80, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'sell', price: 100, barIndex: 0 },
+        ];
+
+        const result = runBacktest(data, signals, 10000, 100, 0, {
+            tradeDirection: 'short' as const,
+            executionModel: 'signal_close' as const,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].exitReason).to.equal('take_profit');
+        expect(result.trades[0].exitPrice).to.be.closeTo(80, 1e-9);
+        expect(result.trades[0].takeProfitPrice).to.be.closeTo(90, 1e-9);
+    });
+
     it('compact backtest should match next_open same-bar stop loss enforcement', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
@@ -1634,6 +1813,23 @@ describe('Backtesting Engine', () => {
         expect(targets.stopLossPercent).to.equal(5);
     });
 
+    it('should resolve percentage take profit targets from raw UI settings when the take-profit toggle is omitted', () => {
+        const targets = resolveEntryRiskTargets({
+            candles: [],
+            entryTime: '2023-01-03' as Time,
+            entryPrice: 100,
+            direction: 'long',
+            settings: {
+                riskSettingsToggle: true,
+                riskMode: 'percentage',
+                takeProfitPercent: 5,
+            },
+        });
+
+        expect(targets.takeProfitPrice).to.equal(105);
+        expect(targets.takeProfitPercent).to.equal(5);
+    });
+
     it('should defer next_open climax exits to the following bar open after close confirmation', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01T00:00:00Z' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 },
@@ -1675,6 +1871,73 @@ describe('Backtesting Engine', () => {
         expect(full.trades[0].exitPrice).to.not.equal(130);
         expect(compact.totalTrades).to.equal(full.totalTrades);
         expect(compact.netProfit).to.equal(full.netProfit);
+    });
+
+    it('should preserve climax-exit trailing stddev semantics with the sliding window precompute', () => {
+        const data: OHLCVData[] = [];
+        const startMs = Date.UTC(2023, 0, 1, 0, 0, 0);
+
+        for (let i = 0; i < 36; i++) {
+            const close = 100 + i * 0.9 + (i % 6) * 1.1 - (i % 4) * 0.45;
+            const isSessionResetBar = i === 0 || i === 24;
+            data.push({
+                time: new Date(startMs + i * 60 * 60 * 1000).toISOString() as Time,
+                open: close - 0.6,
+                high: close + 1.4,
+                low: close - 1.2,
+                close,
+                volume: isSessionResetBar ? 0 : 900 + (i % 7) * 80,
+            });
+        }
+
+        const indicators = precomputeIndicators(data, {
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitMode: 'climax_exit',
+            takeProfitClimaxStdDevPeriod: 6,
+            takeProfitClimaxVolumePeriod: 4,
+        });
+
+        const deviations = data.map((candle, index) => {
+            const vwap = indicators.sessionVwap[index];
+            return vwap === null || !Number.isFinite(vwap) ? null : Math.abs(candle.close - vwap);
+        });
+
+        const referenceTrailingStdDev = (values: (number | null)[], period: number): (number | null)[] => {
+            const result: (number | null)[] = new Array(values.length).fill(null);
+            for (let i = period; i < values.length; i++) {
+                let sum = 0;
+                let count = 0;
+                for (let j = i - period; j < i; j++) {
+                    const value = values[j];
+                    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+                    sum += value;
+                    count += 1;
+                }
+                if (count < 2) continue;
+
+                const mean = sum / count;
+                let sumSq = 0;
+                for (let j = i - period; j < i; j++) {
+                    const value = values[j];
+                    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+                    const diff = value - mean;
+                    sumSq += diff * diff;
+                }
+                result[i] = Math.sqrt(sumSq / count);
+            }
+            return result;
+        };
+
+        const expected = referenceTrailingStdDev(deviations, 6);
+        expect(indicators.vwapDeviationStd.length).to.equal(expected.length);
+        for (let i = 0; i < expected.length; i++) {
+            if (expected[i] === null) {
+                expect(indicators.vwapDeviationStd[i]).to.equal(null);
+            } else {
+                expect(indicators.vwapDeviationStd[i]).to.be.closeTo(expected[i]!, 1e-9);
+            }
+        }
     });
 
     it('should flip position on opposite signals when trade direction is both', () => {
@@ -2527,6 +2790,53 @@ describe('Backtesting Engine', () => {
         // 60m lookback on 30m data resolves to two bars back from the signal bar (14 -> 12).
         const expectedTf60Perf = ((data[14].close - data[12].close) / data[12].close) * 100;
         expect(result.trades[0].entrySnapshot?.tf60Perf ?? null).to.be.closeTo(expectedTf60Perf, 1e-9);
+    });
+
+    it('should keep standardized snapshot indicators independent from strategy indicator periods', () => {
+        const data: OHLCVData[] = [];
+        for (let i = 0; i < 80; i++) {
+            const close = 100 + i * 0.65 + (i % 7) * 1.4 - (i % 5) * 0.55;
+            data.push({
+                time: `2023-03-${String(i + 1).padStart(2, '0')}` as Time,
+                open: close - 0.7,
+                high: close + 1.6 + (i % 3) * 0.2,
+                low: close - 1.4 - (i % 4) * 0.15,
+                close,
+                volume: 900 + (i % 9) * 75 + (i % 4) * 20,
+            });
+        }
+
+        const highs = data.map((candle) => candle.high);
+        const lows = data.map((candle) => candle.low);
+        const closes = data.map((candle) => candle.close);
+        const volumes = data.map((candle) => candle.volume);
+        const probeIndex = 70;
+
+        const contaminatedIndicators = {
+            atr: calculateATR(highs, lows, closes, 5),
+            emaTrend: calculateEMA(closes, 21),
+            emaFast: [],
+            emaSlow: [],
+            adx: calculateADX(highs, lows, closes, 5),
+            volumeSma: calculateSMA(volumes, 7),
+            rsi: calculateRSI(closes, 5),
+            sessionVwap: [],
+            vwapDeviationStd: [],
+        };
+
+        const snapshotIndicators = computeSnapshotIndicators(data, contaminatedIndicators);
+
+        expect(snapshotIndicators.rsi[probeIndex]).to.be.closeTo(calculateRSI(closes, 14)[probeIndex]!, 1e-9);
+        expect(snapshotIndicators.volumeSma[probeIndex]).to.be.closeTo(calculateSMA(volumes, 20)[probeIndex]!, 1e-9);
+        expect(snapshotIndicators.adx[probeIndex]).to.be.closeTo(calculateADX(highs, lows, closes, 14)[probeIndex]!, 1e-9);
+        expect(snapshotIndicators.atr[probeIndex]).to.be.closeTo(calculateATR(highs, lows, closes, 14)[probeIndex]!, 1e-9);
+        expect(snapshotIndicators.emaTrend[probeIndex]).to.be.closeTo(calculateEMA(closes, 50)[probeIndex]!, 1e-9);
+
+        expect(snapshotIndicators.rsi[probeIndex]).to.not.equal(contaminatedIndicators.rsi[probeIndex]);
+        expect(snapshotIndicators.volumeSma[probeIndex]).to.not.equal(contaminatedIndicators.volumeSma[probeIndex]);
+        expect(snapshotIndicators.adx[probeIndex]).to.not.equal(contaminatedIndicators.adx[probeIndex]);
+        expect(snapshotIndicators.atr[probeIndex]).to.not.equal(contaminatedIndicators.atr[probeIndex]);
+        expect(snapshotIndicators.emaTrend[probeIndex]).to.not.equal(contaminatedIndicators.emaTrend[probeIndex]);
     });
 });
 

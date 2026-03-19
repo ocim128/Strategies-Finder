@@ -1,8 +1,43 @@
 import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
-import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
+import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses, getHighs, getLows } from "../strategy-helpers";
 import { calculateSupertrend } from "../indicators";
 import { buildThresholdCrossingCount } from "./price-action-statistics-core";
 import { getPriceActionBarMetrics } from "./price-action-frequency-core";
+
+type SupertrendChurnResiliencePrepared = {
+    cleanData: OHLCVData[];
+    highs: number[];
+    lows: number[];
+    closes: number[];
+    midpoints: number[];
+    supertrendByKey: Map<string, ReturnType<typeof calculateSupertrend>>;
+    midpointByKey: Map<string, number[]>;
+    crossingsByKey: Map<string, (number | null)[]>;
+};
+
+function prepareSupertrendChurnResilienceData(data: OHLCVData[]): SupertrendChurnResiliencePrepared {
+    const cleanData = ensureCleanData(data);
+    return {
+        cleanData,
+        highs: getHighs(cleanData),
+        lows: getLows(cleanData),
+        closes: getCloses(cleanData),
+        midpoints: cleanData.map((candle) => getPriceActionBarMetrics(candle).midpoint),
+        supertrendByKey: new Map<string, ReturnType<typeof calculateSupertrend>>(),
+        midpointByKey: new Map<string, number[]>(),
+        crossingsByKey: new Map<string, (number | null)[]>(),
+    };
+}
+
+function getPreparedSupertrendChurnResilienceData(
+    preparedData: unknown,
+    data: OHLCVData[]
+): SupertrendChurnResiliencePrepared {
+    if (preparedData && typeof preparedData === "object" && "supertrendByKey" in preparedData) {
+        return preparedData as SupertrendChurnResiliencePrepared;
+    }
+    return prepareSupertrendChurnResilienceData(data);
+}
 
 export const supertrend_churn_resilience: Strategy = {
     name: "Supertrend Churn Resilience",
@@ -17,33 +52,45 @@ export const supertrend_churn_resilience: Strategy = {
         stMultiplier: "Supertrend Multiplier",
         maxCrossings: "Max Allowed Crossings (20b)",
     },
-    execute: (data: OHLCVData[], params: StrategyParams) => {
-        const cleanData = ensureCleanData(data);
-        if (cleanData.length < (params.stPeriod as number)) return [];
+    prepareFinderData: (data) => prepareSupertrendChurnResilienceData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
+        const prepared = getPreparedSupertrendChurnResilienceData(preparedData, data);
+        const { cleanData, highs, lows, closes, midpoints, supertrendByKey, midpointByKey, crossingsByKey } = prepared;
+        const stPeriod = Number(params.stPeriod ?? 10);
+        const stMultiplier = Number(params.stMultiplier ?? 3);
+        const maxCrossings = Number(params.maxCrossings ?? 1);
 
-        const st = calculateSupertrend(
-            cleanData.map(d => d.high),
-            cleanData.map(d => d.low),
-            cleanData.map(d => d.close),
-            params.stPeriod as number,
-            params.stMultiplier as number
-        );
+        if (cleanData.length < stPeriod) return [];
 
-        const midpointDistance = new Array(cleanData.length).fill(0);
-        for (let i = 0; i < cleanData.length; i++) {
-            if (st.supertrend[i] === null) continue;
-            const mid = getPriceActionBarMetrics(cleanData[i]).midpoint;
-            midpointDistance[i] = mid - st.supertrend[i]!;
+        const key = `${stPeriod}:${stMultiplier}`;
+        let st = supertrendByKey.get(key);
+        if (!st) {
+            st = calculateSupertrend(highs, lows, closes, stPeriod, stMultiplier);
+            supertrendByKey.set(key, st);
         }
 
-        const crossings = buildThresholdCrossingCount(midpointDistance, 20, 0); // 20-bar crossing of distance 0
+        let midpointDistance = midpointByKey.get(key);
+        if (!midpointDistance) {
+            midpointDistance = new Array(cleanData.length).fill(0);
+            for (let i = 0; i < cleanData.length; i++) {
+                if (st.supertrend[i] === null) continue;
+                midpointDistance[i] = midpoints[i] - st.supertrend[i]!;
+            }
+            midpointByKey.set(key, midpointDistance);
+        }
+
+        let crossings = crossingsByKey.get(key);
+        if (!crossings) {
+            crossings = buildThresholdCrossingCount(midpointDistance, 20, 0);
+            crossingsByKey.set(key, crossings);
+        }
 
         return createSignalLoop(cleanData, [], (i) => {
             if (i < 20 || st.direction[i] === null || crossings[i] === null) return null;
 
             const isBullishSupertrend = st.direction[i] === 1;
             const isBearishSupertrend = st.direction[i] === -1;
-            const isLowChurn = crossings[i]! <= (params.maxCrossings as number);
+            const isLowChurn = crossings[i]! <= maxCrossings;
             
             const isUpCandle = cleanData[i].close > cleanData[i].open;
             const isDownCandle = cleanData[i].close < cleanData[i].open;
@@ -57,6 +104,8 @@ export const supertrend_churn_resilience: Strategy = {
             return null;
         });
     },
+    execute: (data: OHLCVData[], params: StrategyParams) =>
+        supertrend_churn_resilience.executePrepared?.(prepareSupertrendChurnResilienceData(data), params, data) ?? [],
     metadata: {
         role: "entry",
         direction: "both",

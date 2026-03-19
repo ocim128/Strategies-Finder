@@ -6,6 +6,7 @@ import { passesTradeFilter, passesRegimeFilters, passesSnapshotFilters } from '.
 import { SnapshotIndicators, computeSnapshotIndicators } from './snapshot-capture';
 import { resolveIndicators } from './indicator-precompute';
 import { runBacktest } from './backtest-engine';
+import { resolveEntryRiskTargets } from '../../entry-risk-targets';
 
 export function prepareSignals(
     data: OHLCVData[],
@@ -245,8 +246,15 @@ export function getOpenPositionForScanner(
         : null;
 
     // Fallback for legacy trades where TP wasn't populated on the EOD trade.
-    if (takeProfitPrice === null && settings.takeProfitEnabled && settings.takeProfitPercent && settings.takeProfitPercent > 0) {
-        takeProfitPrice = lastTrade.entryPrice * (1 + directionFactor * (settings.takeProfitPercent / 100));
+    if (takeProfitPrice === null) {
+        takeProfitPrice = resolveEntryRiskTargets({
+            candles: data,
+            entryTime: lastTrade.entryTime,
+            entryPrice: lastTrade.entryPrice,
+            direction: lastTrade.type,
+            settings,
+            entryBarIndex,
+        }).takeProfitPrice;
     }
 
     return {

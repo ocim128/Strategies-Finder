@@ -1,7 +1,43 @@
 import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
-import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
+import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses, getHighs, getLows } from "../strategy-helpers";
 import { calculateSupertrend } from "../indicators";
 import { buildRollingMinMax, buildRateOfChange } from "./price-action-statistics-core";
+
+type SupertrendFrictionPinchPrepared = {
+    cleanData: OHLCVData[];
+    highs: number[];
+    lows: number[];
+    closes: number[];
+    supertrendByPeriod: Map<number, ReturnType<typeof calculateSupertrend>>;
+    safeDistancesByPeriod: Map<number, number[]>;
+    distanceLimitsByKey: Map<string, ReturnType<typeof buildRollingMinMax>>;
+    rocSeries: (number | null)[];
+};
+
+function prepareSupertrendFrictionPinchData(data: OHLCVData[]): SupertrendFrictionPinchPrepared {
+    const cleanData = ensureCleanData(data);
+    const closes = getCloses(cleanData);
+    return {
+        cleanData,
+        highs: getHighs(cleanData),
+        lows: getLows(cleanData),
+        closes,
+        supertrendByPeriod: new Map<number, ReturnType<typeof calculateSupertrend>>(),
+        safeDistancesByPeriod: new Map<number, number[]>(),
+        distanceLimitsByKey: new Map<string, ReturnType<typeof buildRollingMinMax>>(),
+        rocSeries: buildRateOfChange(closes, 1),
+    };
+}
+
+function getPreparedSupertrendFrictionPinchData(
+    preparedData: unknown,
+    data: OHLCVData[]
+): SupertrendFrictionPinchPrepared {
+    if (preparedData && typeof preparedData === "object" && "supertrendByPeriod" in preparedData) {
+        return preparedData as SupertrendFrictionPinchPrepared;
+    }
+    return prepareSupertrendFrictionPinchData(data);
+}
 
 export const supertrend_friction_pinch: Strategy = {
     name: "Supertrend Friction Pinch",
@@ -16,31 +52,38 @@ export const supertrend_friction_pinch: Strategy = {
         pinchLookback: "Friction Floor Matrix",
         rocTarget: "Minimum Breakaway Threshold",
     },
-    execute: (data: OHLCVData[], params: StrategyParams) => {
-        const cleanData = ensureCleanData(data);
-        const sPeriod = params.stPeriod as number;
-        const pLookback = params.pinchLookback as number;
+    prepareFinderData: (data) => prepareSupertrendFrictionPinchData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
+        const prepared = getPreparedSupertrendFrictionPinchData(preparedData, data);
+        const { cleanData, highs, lows, closes, supertrendByPeriod, safeDistancesByPeriod, distanceLimitsByKey, rocSeries } = prepared;
+        const sPeriod = Number(params.stPeriod ?? 10);
+        const pLookback = Number(params.pinchLookback ?? 20);
+        const rocTrigger = Number(params.rocTarget ?? 1.5);
 
         if (cleanData.length < sPeriod + pLookback + 5) return [];
 
-        const st = calculateSupertrend(
-            cleanData.map(d => d.high),
-            cleanData.map(d => d.low),
-            cleanData.map(d => d.close),
-            sPeriod,
-            3 // Default factor 3 for core structure
-        );
+        let st = supertrendByPeriod.get(sPeriod);
+        if (!st) {
+            st = calculateSupertrend(highs, lows, closes, sPeriod, 3);
+            supertrendByPeriod.set(sPeriod, st);
+        }
 
-        const distances = cleanData.map((d, i) => {
-            if (st.supertrend[i] === null) return 0;
-            return Math.abs(d.close - st.supertrend[i]!);
-        });
+        let safeDistances = safeDistancesByPeriod.get(sPeriod);
+        if (!safeDistances) {
+            safeDistances = closes.map((close, i) => {
+                if (st.supertrend[i] === null) return i === 0 ? 0.000001 : 0;
+                const distance = Math.abs(close - st.supertrend[i]!);
+                return i === 0 ? 0.000001 : distance;
+            });
+            safeDistancesByPeriod.set(sPeriod, safeDistances);
+        }
 
-        const safeDistances = distances.map((v, i) => i === 0 ? 0.000001 : v);
-        // Track the minimum distance floor natively
-        const distanceLimits = buildRollingMinMax(safeDistances, pLookback);
-
-        const rocSeries = buildRateOfChange(cleanData.map(d => d.close), 1);
+        const distanceLimitsKey = `${sPeriod}:${pLookback}`;
+        let distanceLimits = distanceLimitsByKey.get(distanceLimitsKey);
+        if (!distanceLimits) {
+            distanceLimits = buildRollingMinMax(safeDistances, pLookback);
+            distanceLimitsByKey.set(distanceLimitsKey, distanceLimits);
+        }
 
         return createSignalLoop(cleanData, [], (i) => {
             if (i < Math.max(sPeriod, pLookback) || distanceLimits.min[i - 1] === null || rocSeries[i] === null || st.direction[i - 1] === null) return null;
@@ -53,7 +96,6 @@ export const supertrend_friction_pinch: Strategy = {
 
             const priorDirection = st.direction[i - 1];
             const currentRoc = rocSeries[i]! * 100;
-            const rocTrigger = params.rocTarget as number;
 
             // Buy: Pinched near bullish Supertrend, snapped up
             if (isPinched && priorDirection === 1 && currentRoc > rocTrigger) {
@@ -68,6 +110,8 @@ export const supertrend_friction_pinch: Strategy = {
             return null;
         });
     },
+    execute: (data: OHLCVData[], params: StrategyParams) =>
+        supertrend_friction_pinch.executePrepared?.(prepareSupertrendFrictionPinchData(data), params, data) ?? [],
     metadata: {
         role: "entry",
         direction: "both",

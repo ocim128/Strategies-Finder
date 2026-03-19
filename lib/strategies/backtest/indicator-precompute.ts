@@ -13,30 +13,45 @@ import {
 const MAX_SETTINGS_CACHE_PER_DATASET = 24;
 const indicatorCache = new WeakMap<OHLCVData[], Map<string, PrecomputedIndicators>>();
 
+function isFiniteNumber(value: number | null | undefined): value is number {
+    return typeof value === 'number' && Number.isFinite(value);
+}
+
 function calculateTrailingStdDev(values: (number | null)[], periodInput: number): (number | null)[] {
     const period = Math.max(2, Math.round(periodInput));
     const result: (number | null)[] = new Array(values.length).fill(null);
 
+    let sum = 0;
+    let sumSq = 0;
+    let count = 0;
+
+    for (let i = 0; i < Math.min(period, values.length); i++) {
+        const value = values[i];
+        if (!isFiniteNumber(value)) continue;
+        sum += value;
+        sumSq += value * value;
+        count += 1;
+    }
+
     for (let i = period; i < values.length; i++) {
-        let sum = 0;
-        let count = 0;
-        for (let j = i - period; j < i; j++) {
-            const value = values[j];
-            if (!Number.isFinite(value)) continue;
-            sum += value!;
+        if (count >= 2) {
+            const variance = Math.max(0, (sumSq - (sum * sum) / count) / count);
+            result[i] = Math.sqrt(variance);
+        }
+
+        const outgoing = values[i - period];
+        if (isFiniteNumber(outgoing)) {
+            sum -= outgoing;
+            sumSq -= outgoing * outgoing;
+            count -= 1;
+        }
+
+        const incoming = values[i];
+        if (isFiniteNumber(incoming)) {
+            sum += incoming;
+            sumSq += incoming * incoming;
             count += 1;
         }
-        if (count < 2) continue;
-
-        const mean = sum / count;
-        let sumSq = 0;
-        for (let j = i - period; j < i; j++) {
-            const value = values[j];
-            if (!Number.isFinite(value)) continue;
-            const diff = value! - mean;
-            sumSq += diff * diff;
-        }
-        result[i] = Math.sqrt(sumSq / count);
     }
 
     return result;
@@ -45,9 +60,6 @@ function calculateTrailingStdDev(values: (number | null)[], periodInput: number)
 function buildIndicatorCacheKey(config: NormalizedSettings): string {
     return [
         config.atrPeriod,
-        config.stopLossAtr,
-        config.takeProfitAtr,
-        config.trailingAtr,
         config.atrPercentMin,
         config.atrPercentMax,
         config.partialTakeProfitAtR,

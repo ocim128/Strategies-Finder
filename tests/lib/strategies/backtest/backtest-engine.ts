@@ -332,7 +332,7 @@ function buildPercentageTakeProfitOverrides(
     }
 
     return {
-        effectiveTakeProfitPrice: resolved.takeProfitPrice,
+        effectiveTakeProfitPercent: resolved.takeProfitPercent,
     };
 }
 
