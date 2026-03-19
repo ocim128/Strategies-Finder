@@ -2564,4 +2564,57 @@ describe('Alert Entry Evaluator', () => {
             }
         }
     });
+
+    it('should expose evaluated trade targets for worker and telegram payloads', () => {
+        const strategyKey = '__test_eval_trade_targets__';
+        const registry = strategies as Record<string, Strategy>;
+        const previous = registry[strategyKey];
+
+        const testStrategy: Strategy = {
+            name: 'Evaluator Trade Targets Test',
+            description: 'Exposes the actual backtest trade targets to worker consumers.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => {
+                if (data.length < 4) return [];
+                return [
+                    { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                ];
+            }
+        };
+
+        registry[strategyKey] = testStrategy;
+        try {
+            const candles = buildCandles(5);
+            const result = evaluateLatestEntrySignal({
+                strategyKey,
+                candles,
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'signal_close',
+                    riskMode: 'percentage',
+                    stopLossEnabled: true,
+                    stopLossPercent: 5,
+                    takeProfitEnabled: true,
+                    takeProfitMode: 'velocity',
+                    takeProfitPercent: 10,
+                },
+                freshnessBars: 20
+            });
+
+            expect(result.ok).to.equal(true);
+            expect(result.latestTrade).to.not.equal(null);
+            expect(result.latestTrade?.entryPrice).to.equal(candles[1].close);
+            expect(result.latestTrade?.takeProfitPrice).to.be.closeTo(candles[1].close * 1.1, 1e-9);
+            expect(result.latestTrade?.takeProfitPercent).to.be.closeTo(10, 1e-9);
+            expect(result.latestTrade?.stopLossPrice).to.be.closeTo(candles[1].close * 0.95, 1e-9);
+            expect(result.latestTrade?.stopLossPercent).to.be.closeTo(5, 1e-9);
+        } finally {
+            if (previous) {
+                registry[strategyKey] = previous;
+            } else {
+                delete registry[strategyKey];
+            }
+        }
+    });
 });

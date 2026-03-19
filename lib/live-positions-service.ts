@@ -13,6 +13,7 @@ import {
     parseAlertConfigNameFromStreamId,
     parseAlertTwoHourParityFromStreamId,
 } from './alert-service';
+import { getLatestActionableAlertSignal } from './alert-signal-utils';
 import { backtestService } from './backtest-service';
 import { dataManager } from './data-manager';
 import { assetSearchService } from './asset-search-service';
@@ -577,11 +578,7 @@ class LivePositionsService {
     }
 
     private getLatestActionableSignal(signals: AlertSignalRecord[]): AlertSignalRecord | null {
-        for (const signal of signals) {
-            if (signal.signal_reason === 'pending_entry') continue;
-            return signal;
-        }
-        return null;
+        return getLatestActionableAlertSignal(signals);
     }
 
     private signalToEntrySnapshot(signal: AlertSignalRecord | null): WorkerEntrySnapshot | null {

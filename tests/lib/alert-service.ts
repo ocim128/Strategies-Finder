@@ -83,8 +83,13 @@ export interface RunNowResult {
 
 export interface AlertEvaluatedTradeContext {
     entryTimeSec: number;
+    entryPrice: number;
     exitReason: string | null;
     isOpen: boolean;
+    takeProfitPrice: number | null;
+    stopLossPrice: number | null;
+    takeProfitPercent: number | null;
+    stopLossPercent: number | null;
 }
 
 export interface AlertEvaluatedEntrySignal {

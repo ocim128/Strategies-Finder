@@ -11,6 +11,7 @@ import {
     parseAlertConfigNameFromStreamId,
     parseAlertTwoHourParityFromStreamId,
 } from '../alert-service';
+import { getLatestActionableAlertSignal } from '../alert-signal-utils';
 import { isTwoHourInterval } from '../interval-utils';
 import { replaceTwoHourParityInStreamId, stripTwoHourParityFromStreamId } from '../alert-stream-id';
 import { uiManager } from '../ui-manager';
@@ -1237,9 +1238,10 @@ async function handleLastTradeAction(streamId: string): Promise<void> {
         
         const tradeSelection = selectLastTradeForDisplay(result.trades);
         if (!tradeSelection.trade) {
-            const history = await alertService.getSignalHistory(streamId, 1);
-            const fallbackTrade = history.length > 0
-                ? createOpenTradeFromSignalRecord(history[0], effectiveBacktestSettings, evaluationCandles)
+            const history = await alertService.getSignalHistory(streamId, 10);
+            const latestActionableSignal = getLatestActionableAlertSignal(history);
+            const fallbackTrade = latestActionableSignal
+                ? createOpenTradeFromSignalRecord(latestActionableSignal, effectiveBacktestSettings, evaluationCandles)
                 : null;
             if (fallbackTrade) {
                 showLastTradeResult(

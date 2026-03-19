@@ -47,8 +47,13 @@ export interface EvaluatedEntrySignal {
 
 export interface EvaluatedLatestTradeContext {
     entryTimeSec: number;
+    entryPrice: number;
     exitReason: string | null;
     isOpen: boolean;
+    takeProfitPrice: number | null;
+    stopLossPrice: number | null;
+    takeProfitPercent: number | null;
+    stopLossPercent: number | null;
 }
 
 export interface EntrySignalEvaluationResult {
@@ -73,6 +78,19 @@ const EVALUATION_CAPITAL_DEFAULTS = Object.freeze({
     sizingMode: "percent" as const,
     fixedTradeAmount: 0,
 });
+
+function toTargetPercent(entryPrice: number, targetPrice: number | null | undefined): number | null {
+    if (
+        !Number.isFinite(entryPrice)
+        || entryPrice <= 0
+        || targetPrice === null
+        || targetPrice === undefined
+        || !Number.isFinite(targetPrice)
+    ) {
+        return null;
+    }
+    return Math.abs(((targetPrice - entryPrice) / entryPrice) * 100);
+}
 
 function toUnixSeconds(value: Time): number | null {
     return parseTimeToUnixSeconds(value);
@@ -549,8 +567,13 @@ export function evaluateLatestEntrySignal(
         latestEntry,
         latestTrade: {
             entryTimeSec: signalTimeSec,
+            entryPrice: latestTrade.entryPrice,
             exitReason: latestTrade.exitReason ?? null,
             isOpen: latestTrade.exitReason === "end_of_data",
+            takeProfitPrice: latestTrade.takeProfitPrice ?? null,
+            stopLossPrice: latestTrade.stopLossPrice ?? null,
+            takeProfitPercent: toTargetPercent(latestTrade.entryPrice, latestTrade.takeProfitPrice),
+            stopLossPercent: toTargetPercent(latestTrade.entryPrice, latestTrade.stopLossPrice),
         },
         pendingEntry,
     };

@@ -17,6 +17,7 @@ import {
     isWorkerSupportedStrategyKey,
     resolveSubscriptionExecutionBacktestSettings,
 } from "../lib/alert-subscription-utils";
+import { PENDING_ENTRY_SIGNAL_REASON } from "../lib/alert-signal-utils";
 import { resolveEntryRiskTargets } from "../lib/entry-risk-targets";
 
 type CandleTime = OHLCVData["time"];
@@ -199,8 +200,13 @@ interface SubscriptionStateResult {
     reason: string | null;
     latestTrade: {
         entryTimeSec: number;
+        entryPrice: number;
         exitReason: string | null;
         isOpen: boolean;
+        takeProfitPrice: number | null;
+        stopLossPrice: number | null;
+        takeProfitPercent: number | null;
+        stopLossPercent: number | null;
     } | null;
     latestEntry: {
         direction: "long" | "short";
@@ -377,6 +383,10 @@ function safeJsonParse<T>(value: string, fallback: T): T {
     } catch {
         return fallback;
     }
+}
+
+export function buildLatestActionableEntrySignalQuery(selectClause: string): string {
+    return `SELECT ${selectClause} FROM entry_signals WHERE channel_key = ? AND COALESCE(signal_reason, '') != ? ORDER BY signal_time DESC, id DESC LIMIT 1`;
 }
 
 function normalizeStatusText(value: string, maxLen = STATUS_TEXT_MAX): string {
@@ -899,9 +909,9 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         // One-time catch-up: if stream has an active open trade but no prior entry
         // record, allow the stale entry to be inserted/sent once.
         const existingEntry = await env.SIGNALS_DB.prepare(
-            `SELECT id FROM entry_signals WHERE channel_key = ? ORDER BY signal_time DESC, id DESC LIMIT 1`
+            buildLatestActionableEntrySignalQuery("id")
         )
-            .bind(channelKey)
+            .bind(channelKey, PENDING_ENTRY_SIGNAL_REASON)
             .first<{ id: number }>();
 
         if (existingEntry) {
@@ -946,6 +956,7 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
             ? Math.trunc(evaluation.latestEntry.signal.barIndex as number)
             : null,
     });
+    const evaluatedTrade = evaluation.latestTrade;
 
     const entryPayload: StoredSignalPayload = {
         streamId,
@@ -960,10 +971,10 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         signalPrice: price,
         signalReason: evaluation.latestEntry.signal.reason ?? null,
         fingerprint: evaluation.latestEntry.fingerprint,
-        takeProfitPrice: riskTargets.takeProfitPrice ?? undefined,
-        stopLossPrice: riskTargets.stopLossPrice ?? undefined,
-        takeProfitPercent: riskTargets.takeProfitPercent ?? undefined,
-        stopLossPercent: riskTargets.stopLossPercent ?? undefined,
+        takeProfitPrice: evaluatedTrade?.takeProfitPrice ?? riskTargets.takeProfitPrice ?? undefined,
+        stopLossPrice: evaluatedTrade?.stopLossPrice ?? riskTargets.stopLossPrice ?? undefined,
+        takeProfitPercent: evaluatedTrade?.takeProfitPercent ?? riskTargets.takeProfitPercent ?? undefined,
+        stopLossPercent: evaluatedTrade?.stopLossPercent ?? riskTargets.stopLossPercent ?? undefined,
     };
 
     const dedupeKey = `${channelKey}:${evaluation.latestEntry.fingerprint}`;
@@ -1581,8 +1592,8 @@ async function runSubscription(
         if (result.ok && !result.newEntry && subscription.notify_exit === 1 && subscription.notify_telegram === 1) {
             try {
                 const lastEntry = await env.SIGNALS_DB.prepare(
-                    `SELECT payload_json FROM entry_signals WHERE channel_key = ? ORDER BY signal_time DESC, id DESC LIMIT 1`
-                ).bind(streamId.toLowerCase()).first<{ payload_json: string }>();
+                    buildLatestActionableEntrySignalQuery("payload_json")
+                ).bind(streamId.toLowerCase(), PENDING_ENTRY_SIGNAL_REASON).first<{ payload_json: string }>();
                 if (lastEntry) {
                     const lastPayload = safeJsonParse(lastEntry.payload_json, null as StoredSignalPayload | null);
                     // Use cached latestEvaluatedEntry from result instead of re-evaluating (Issue #1 fix)
