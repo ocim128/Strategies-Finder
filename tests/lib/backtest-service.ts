@@ -10,6 +10,7 @@ import {
     buildEntryBacktestResult,
     BacktestResult,
     PostEntryPathStats,
+    Signal,
     applySignalPolarity,
 } from "./strategies/index";
 import type { OHLCVData, Strategy } from "./strategies/index";
@@ -53,6 +54,13 @@ const SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS = Object.freeze({
     fixedTradeAmount: 0,
 });
 
+type BacktestRunUi = {
+    progressContainer: HTMLElement;
+    progressFill: HTMLElement;
+    progressText: HTMLElement;
+    statusEl: HTMLElement;
+};
+
 export class BacktestService {
     private warnedStrictEngine = false;
 
@@ -62,28 +70,12 @@ export class BacktestService {
             strategy: state.currentStrategyKey,
             candles: state.ohlcvData.length,
         });
-        const progressContainer = getRequiredElement('progressContainer');
-        const progressFill = getRequiredElement('progressFill');
-        const progressText = getRequiredElement('progressText');
-        const statusEl = getRequiredElement('strategyStatus');
-        const runButton = getOptionalElement<HTMLButtonElement>('runBacktest');
-
-        const setLoading = (loading: boolean) => {
-            if (!runButton) return;
-            runButton.disabled = loading;
-            runButton.classList.toggle('is-loading', loading);
-            runButton.setAttribute('aria-busy', loading ? 'true' : 'false');
-        };
-
-        setLoading(true);
-        progressContainer.classList.add('active');
-        statusEl.textContent = 'Running backtest...';
+        const { progressContainer, progressFill, progressText, statusEl } =
+            this.beginBacktestRun('runBacktest', 'Running backtest...', true);
         let shouldDelayHide = false;
 
         try {
-            progressFill.style.width = '20%';
-            progressText.textContent = 'Calculating indicators...';
-            await this.sleep(100);
+            await this.updateBacktestProgress(progressFill, progressText, '20%', 'Calculating indicators...', 100);
 
             const strategy = strategyRegistry.get(state.currentStrategyKey);
             if (!strategy) {
@@ -98,9 +90,13 @@ export class BacktestService {
             const requiresTsEngine = this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(sizingMode);
             const parityMode = this.getTwoHourCloseParityMode();
 
-            progressFill.style.width = '40%';
-            progressText.textContent = parityMode === 'both' ? 'Preparing parity runs...' : 'Generating signals...';
-            await this.sleep(100);
+            await this.updateBacktestProgress(
+                progressFill,
+                progressText,
+                '40%',
+                parityMode === 'both' ? 'Preparing parity runs...' : 'Generating signals...',
+                100
+            );
 
             state.set('twoHourParityBacktestResults', null);
             // Data normalization (closed candles + block range) is applied inside runBacktestForData.
@@ -114,9 +110,7 @@ export class BacktestService {
                 const oddData = await this.getBacktestDataForParity('odd', baseData);
                 const evenData = await this.getBacktestDataForParity('even', baseData);
 
-                progressFill.style.width = '65%';
-                progressText.textContent = 'Running odd + even backtests...';
-                await this.sleep(80);
+                await this.updateBacktestProgress(progressFill, progressText, '65%', 'Running odd + even backtests...', 80);
 
                 const oddRun = await this.withTemporaryTwoHourParity('odd', async () => this.runBacktestForData(
                     oddData,
@@ -163,9 +157,7 @@ export class BacktestService {
                     baseline: baselineParity,
                 });
             } else {
-                progressFill.style.width = '60%';
-                progressText.textContent = 'Running backtest...';
-                await this.sleep(100);
+                await this.updateBacktestProgress(progressFill, progressText, '60%', 'Running backtest...', 100);
 
                 const singleRun = await this.withTemporaryTwoHourParity(parityMode, async () => this.runBacktestForData(
                     baseData,
@@ -187,8 +179,7 @@ export class BacktestService {
             state.set('currentBacktestResultSource', 'backtest');
             state.set('currentBacktestResult', result);
 
-            progressFill.style.width = '100%';
-            progressText.textContent = 'Complete!';
+            await this.updateBacktestProgress(progressFill, progressText, '100%', 'Complete!');
             if (parityComparison && !result.entryStats) {
                 statusEl.textContent = `2H compare | Odd ${parityComparison.odd.netProfitPercent.toFixed(2)}% | Even ${parityComparison.even.netProfitPercent.toFixed(2)}%`;
             } else if (result.entryStats) {
@@ -202,7 +193,7 @@ export class BacktestService {
             } else {
                 const expectancyText = `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`;
                 const pfText = result.profitFactor === Infinity ? 'Inf' : result.profitFactor.toFixed(2);
-                const engineBadge = engineUsed === 'rust' ? ' ⚡' : '';
+                const engineBadge = engineUsed === 'rust' ? ' [rust]' : '';
                 statusEl.textContent = `${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}${engineBadge}`;
             }
             shouldDelayHide = true;
@@ -235,9 +226,7 @@ export class BacktestService {
             if (shouldDelayHide) {
                 await this.sleep(500);
             }
-            progressContainer.classList.remove('active');
-            progressFill.style.width = '0%';
-            setLoading(false);
+            this.finishBacktestRun({ progressContainer, progressFill }, 'runBacktest', true);
         }
     }
 
@@ -321,28 +310,12 @@ export class BacktestService {
             mode,
         });
 
-        const statusEl = getRequiredElement('strategyStatus');
-        const progressContainer = getRequiredElement('progressContainer');
-        const progressFill = getRequiredElement('progressFill');
-        const progressText = getRequiredElement('progressText');
-        const runButton = getOptionalElement<HTMLButtonElement>('runCombinedStrategyBtn');
-
-        const setLoading = (loading: boolean) => {
-            if (runButton) {
-                runButton.disabled = loading;
-                runButton.classList.toggle('is-loading', loading);
-            }
-        };
-
-        setLoading(true);
-        progressContainer.classList.add('active');
-        statusEl.textContent = 'Running combined backtest...';
+        const { statusEl, progressContainer, progressFill, progressText } =
+            this.beginBacktestRun('runCombinedStrategyBtn', 'Running combined backtest...');
 
         try {
             // --- 1. Resolve both strategies from registry ---
-            progressFill.style.width = '10%';
-            progressText.textContent = 'Resolving strategies...';
-            await this.sleep(50);
+            await this.updateBacktestProgress(progressFill, progressText, '10%', 'Resolving strategies...', 50);
 
             const primaryStrategy = strategyRegistry.get(primaryConfig.strategyKey);
             const secondaryStrategy = strategyRegistry.get(secondaryConfig.strategyKey);
@@ -357,9 +330,7 @@ export class BacktestService {
             }
 
             // --- 2. Prepare data ---
-            progressFill.style.width = '20%';
-            progressText.textContent = 'Preparing data...';
-            await this.sleep(50);
+            await this.updateBacktestProgress(progressFill, progressText, '20%', 'Preparing data...', 50);
 
             const primarySettings = resolveBacktestSettingsFromRaw(
                 primaryConfig.backtestSettings as unknown as BacktestSettings,
@@ -376,9 +347,7 @@ export class BacktestService {
             );
 
             // --- 3. Execute both strategies ---
-            progressFill.style.width = '40%';
-            progressText.textContent = 'Generating signals from both strategies...';
-            await this.sleep(50);
+            await this.updateBacktestProgress(progressFill, progressText, '40%', 'Generating signals from both strategies...', 50);
 
             const primarySignals = applySignalPolarity(
                 primaryStrategy.execute(backtestData, primaryConfig.strategyParams),
@@ -390,52 +359,34 @@ export class BacktestService {
             );
 
             // --- 4. Merge signals ---
-            progressFill.style.width = '60%';
-            progressText.textContent = `Merging signals (${mode.toUpperCase()})...`;
-            await this.sleep(50);
+            await this.updateBacktestProgress(progressFill, progressText, '60%', `Merging signals (${mode.toUpperCase()})...`, 50);
 
             const mergedSignals = this.mergeSignals(primarySignals, secondarySignals, mode);
 
-            // --- 5. Apply block-range filter ---
-            const block = state.blockRange;
-            const blockFilteredSignals = (block && block.from !== block.to)
-                ? mergedSignals.filter(s => {
-                    const t = typeof s.time === 'number' ? s.time : Number(s.time);
-                    return t >= block.from && t <= block.to;
-                })
-                : mergedSignals;
-
-            // --- 6. Run backtest using primary config's settings + capital ---
-            progressFill.style.width = '80%';
-            progressText.textContent = 'Running backtest on merged signals...';
-            await this.sleep(50);
+            // --- 5. Run backtest using primary config's settings + capital ---
+            await this.updateBacktestProgress(progressFill, progressText, '80%', 'Running backtest on merged signals...', 50);
 
             const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } =
                 settingsManager.resolveCapitalFromConfig(primaryConfig);
-
-            let result: BacktestResult = runBacktest(
+            const requiresTsEngine =
+                this.requiresTypescriptEngine(primarySettings) || this.requiresTypescriptSizingMode(sizingMode);
+            const { result, filteredSignalsCount } = await this.runBacktestForPreparedData(
                 backtestData,
-                blockFilteredSignals,
+                mergedSignals,
+                primarySettings,
                 initialCapital,
                 positionSize,
                 commission,
-                primarySettings,
-                { mode: sizingMode, fixedTradeAmount }
+                sizingMode,
+                fixedTradeAmount,
+                requiresTsEngine
             );
 
-            // --- 7. Post-process ---
-            result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
-            result.postEntryPath = this.buildPostEntryPathStats(result, 5, backtestData);
-            if (result.trades.length >= 3) {
-                result.edgeStatistics = computeEdgeStatistics(result, backtestData);
-            }
-
-            // --- 8. Update state and UI ---
+            // --- 6. Update state and UI ---
             state.set('currentBacktestResultSource', 'backtest');
             state.set('currentBacktestResult', result);
 
-            progressFill.style.width = '100%';
-            progressText.textContent = 'Complete!';
+            await this.updateBacktestProgress(progressFill, progressText, '100%', 'Complete!');
             const expectancyText = `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`;
             const pfText = result.profitFactor === Infinity ? 'Inf' : result.profitFactor.toFixed(2);
             statusEl.textContent = `Combined (${mode.toUpperCase()}) | ${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}`;
@@ -446,7 +397,7 @@ export class BacktestService {
                 mode,
                 primarySignals: primarySignals.length,
                 secondarySignals: secondarySignals.length,
-                mergedSignals: blockFilteredSignals.length,
+                mergedSignals: filteredSignalsCount,
                 trades: result.totalTrades,
                 durationMs: Date.now() - startedAt,
             });
@@ -461,19 +412,64 @@ export class BacktestService {
             statusEl.textContent = 'Combined backtest failed';
             throw error;
         } finally {
-            progressContainer.classList.remove('active');
-            progressFill.style.width = '0%';
-            setLoading(false);
+            this.finishBacktestRun({ progressContainer, progressFill }, 'runCombinedStrategyBtn');
         }
     }
 
     /** Delegates to the standalone mergeStrategySignals utility. */
     private mergeSignals(
-        primarySignals: { time: any; type: 'buy' | 'sell'; price: number; triggerPrice?: number; reason?: string; barIndex?: number; sizeFraction?: number }[],
-        secondarySignals: { time: any; type: 'buy' | 'sell'; price: number; triggerPrice?: number; reason?: string; barIndex?: number; sizeFraction?: number }[],
+        primarySignals: Signal[],
+        secondarySignals: Signal[],
         mode: 'and' | 'or'
-    ): { time: any; type: 'buy' | 'sell'; price: number; triggerPrice?: number; reason?: string; barIndex?: number; sizeFraction?: number }[] {
+    ): Signal[] {
         return mergeStrategySignals(primarySignals, secondarySignals, mode);
+    }
+
+    private beginBacktestRun(buttonId: string, initialStatus: string, manageAriaBusy = false): BacktestRunUi {
+        const ui = {
+            progressContainer: getRequiredElement('progressContainer'),
+            progressFill: getRequiredElement('progressFill'),
+            progressText: getRequiredElement('progressText'),
+            statusEl: getRequiredElement('strategyStatus'),
+        };
+        this.setBacktestButtonLoading(buttonId, true, manageAriaBusy);
+        ui.progressContainer.classList.add('active');
+        ui.statusEl.textContent = initialStatus;
+        return ui;
+    }
+
+    private finishBacktestRun(
+        ui: Pick<BacktestRunUi, 'progressContainer' | 'progressFill'>,
+        buttonId: string,
+        manageAriaBusy = false
+    ): void {
+        ui.progressContainer.classList.remove('active');
+        ui.progressFill.style.width = '0%';
+        this.setBacktestButtonLoading(buttonId, false, manageAriaBusy);
+    }
+
+    private setBacktestButtonLoading(buttonId: string, loading: boolean, manageAriaBusy = false): void {
+        const button = getOptionalElement<HTMLButtonElement>(buttonId);
+        if (!button) return;
+        button.disabled = loading;
+        button.classList.toggle('is-loading', loading);
+        if (manageAriaBusy) {
+            button.setAttribute('aria-busy', loading ? 'true' : 'false');
+        }
+    }
+
+    private async updateBacktestProgress(
+        progressFill: HTMLElement,
+        progressText: HTMLElement,
+        width: string,
+        text: string,
+        delayMs = 0
+    ): Promise<void> {
+        progressFill.style.width = width;
+        progressText.textContent = text;
+        if (delayMs > 0) {
+            await this.sleep(delayMs);
+        }
     }
 
 
@@ -512,13 +508,7 @@ export class BacktestService {
 
         // Block range signal filter (defensive): selectClosedCandleData already slices data.
         // Keep this to guard against any non-sliced signals when data sources change.
-        const block = state.blockRange;
-        const blockFilteredSignals = (block && block.from !== block.to)
-            ? filteredSignals.filter(s => {
-                const t = typeof s.time === 'number' ? s.time : Number(s.time);
-                return t >= block.from && t <= block.to;
-            })
-            : filteredSignals;
+        const blockFilteredSignals = this.filterSignalsByBlockRange(filteredSignals);
 
         let result: BacktestResult | undefined;
         let engineUsed: 'rust' | 'typescript' = 'typescript';
@@ -576,13 +566,7 @@ export class BacktestService {
         }
 
         const tPost = performance.now();
-        if (!result.entryStats) {
-            result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
-        }
-        result.postEntryPath = this.buildPostEntryPathStats(result, 5, backtestData);
-        if (result.trades.length >= 3) {
-            result.edgeStatistics = computeEdgeStatistics(result, backtestData);
-        }
+        this.finalizeBacktestResult(result, initialCapital, backtestData);
         timing.postProcessing = performance.now() - tPost;
 
         timing.total = performance.now() - runStart;
@@ -610,7 +594,7 @@ export class BacktestService {
     private async runBacktestForPreparedSignals(
         ohlcvData: OHLCVData[],
         interval: string,
-        signals: ReturnType<typeof applySignalPolarity>,
+        signals: Signal[],
         settings: BacktestSettings,
         initialCapital: number,
         positionSize: number,
@@ -620,13 +604,32 @@ export class BacktestService {
         requiresTsEngine: boolean
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
         const backtestData = this.selectClosedCandleData(ohlcvData, interval, settings);
-        const block = state.blockRange;
-        const blockFilteredSignals = (block && block.from !== block.to)
-            ? signals.filter(s => {
-                const t = typeof s.time === 'number' ? s.time : Number(s.time);
-                return t >= block.from && t <= block.to;
-            })
-            : signals;
+        const { result, engineUsed } = await this.runBacktestForPreparedData(
+            backtestData,
+            signals,
+            settings,
+            initialCapital,
+            positionSize,
+            commission,
+            sizingMode,
+            fixedTradeAmount,
+            requiresTsEngine
+        );
+        return { result, engineUsed };
+    }
+
+    private async runBacktestForPreparedData(
+        backtestData: OHLCVData[],
+        signals: Signal[],
+        settings: BacktestSettings,
+        initialCapital: number,
+        positionSize: number,
+        commission: number,
+        sizingMode: TradeSizingMode,
+        fixedTradeAmount: number,
+        requiresTsEngine: boolean
+    ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript'; filteredSignalsCount: number }> {
+        const blockFilteredSignals = this.filterSignalsByBlockRange(signals);
 
         let result: BacktestResult | undefined;
         let engineUsed: 'rust' | 'typescript' = 'typescript';
@@ -661,6 +664,26 @@ export class BacktestService {
             engineUsed = 'typescript';
         }
 
+        this.finalizeBacktestResult(result, initialCapital, backtestData);
+        return { result, engineUsed, filteredSignalsCount: blockFilteredSignals.length };
+    }
+
+    private filterSignalsByBlockRange<T extends { time: Signal['time'] }>(signals: T[]): T[] {
+        const block = state.blockRange;
+        if (!block || block.from === block.to) {
+            return signals;
+        }
+        return signals.filter(signal => {
+            const t = typeof signal.time === 'number' ? signal.time : Number(signal.time);
+            return t >= block.from && t <= block.to;
+        });
+    }
+
+    private finalizeBacktestResult(
+        result: BacktestResult,
+        initialCapital: number,
+        backtestData: OHLCVData[]
+    ): void {
         if (!result.entryStats) {
             result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
         }
@@ -668,8 +691,6 @@ export class BacktestService {
         if (result.trades.length >= 3) {
             result.edgeStatistics = computeEdgeStatistics(result, backtestData);
         }
-
-        return { result, engineUsed };
     }
 
     private selectClosedCandleData(
@@ -921,7 +942,7 @@ export class BacktestService {
     public async evaluateSignalsOnData(
         ohlcvData: OHLCVData[],
         interval: string,
-        signals: ReturnType<typeof applySignalPolarity>,
+        signals: Signal[],
         settings: BacktestSettings = this.getBacktestSettings(),
         capitalSettings: {
             initialCapital: number;
@@ -979,10 +1000,16 @@ export class BacktestService {
         uiManager.updateEntryPreview(preview);
     }
 
-    private addIndicatorToChart(name: string, values: (number | null)[], times: any[], color: string, type: 'line' | 'band' | 'histogram') {
+    private addIndicatorToChart(
+        name: string,
+        values: (number | null)[],
+        times: OHLCVData['time'][],
+        color: string,
+        type: 'line' | 'band' | 'histogram'
+    ) {
         const lineData = values
             .map((v, i) => v !== null ? { time: times[i], value: v } : null)
-            .filter(d => d !== null) as { time: any; value: number }[];
+            .filter(d => d !== null) as { time: OHLCVData['time']; value: number }[];
 
         if (type === 'histogram') {
             const id = chartManager.addIndicatorHistogram(name, 0, lineData, color);

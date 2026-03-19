@@ -430,6 +430,7 @@ export class FinderManager {
 		this.strategyItems.clear();
 		this.strategyOrder = [];
 		this.lastStrategyToggleKey = null;
+		const fragment = document.createDocumentFragment();
 
 		const strategies = strategyRegistry.getAll();
 		Object.entries(strategies).forEach(([key, strategy]) => {
@@ -455,12 +456,13 @@ export class FinderManager {
 
 			item.appendChild(checkbox);
 			item.appendChild(label);
-			container.appendChild(item);
+			fragment.appendChild(item);
 
 			this.strategyToggles.set(key, checkbox);
 			this.strategyItems.set(key, item);
 			this.strategyOrder.push(key);
 		});
+		container.appendChild(fragment);
 
 		this.applyStrategyFilter();
 	}

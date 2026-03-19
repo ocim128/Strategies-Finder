@@ -179,7 +179,7 @@ export class DataManager {
             if (signal?.aborted) return [];
             const mockData = generateMockData(symbol, interval);
             uiManager.updateSymbolDataSource('Mock data', 'seed', 'Chart is using generated mock candles.');
-            return typeof lookbackBars === 'number' ? mockData.slice(-lookbackBars) : mockData;
+            return this.sliceToLookback(mockData, lookbackBars);
         }
 
         const maxBars = lookbackBars ?? DATA_CHART_TOTAL_LIMIT;
@@ -306,8 +306,7 @@ export class DataManager {
             'warning',
             'Primary data source was unavailable, so fallback data is being used.'
         );
-        const sliced = typeof lookbackBars === 'number' ? fallback.slice(-lookbackBars) : fallback;
-        return sliced;
+        return this.sliceToLookback(fallback, lookbackBars);
     }
 
     public async fetchDataForScan(
@@ -336,7 +335,7 @@ export class DataManager {
             const maxBars = Number.isFinite(lookbackBars)
                 ? Math.max(200, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(lookbackBars!)))
                 : 1000;
-            return { data: mockData.slice(-maxBars), source: 'mock' };
+            return { data: this.takeLastCandles(mockData, maxBars), source: 'mock' };
         }
 
         const provider = this.getProvider(symbol);
@@ -349,7 +348,7 @@ export class DataManager {
             const localData = await this.loadNonBinanceLocalData(symbol, interval, maxBars, signal);
             if (localData) {
                 return {
-                    data: localData.candles.slice(-maxBars),
+                    data: this.takeLastCandles(localData.candles, maxBars),
                     source: 'local',
                 };
             }
@@ -384,7 +383,7 @@ export class DataManager {
         }
         
         const fallbackData = await this.fetchNonBinanceData(symbol, interval, signal);
-        return { data: fallbackData.slice(-maxBars), source: 'network' };
+        return { data: this.takeLastCandles(fallbackData, maxBars), source: 'network' };
     }
 
     public async fetchDataWithLimit(
@@ -395,7 +394,7 @@ export class DataManager {
     ): Promise<OHLCVData[]> {
         if (this.isMockSymbol(symbol)) {
             const data = generateMockData(symbol, interval);
-            return data.slice(-limit);
+            return this.takeLastCandles(data, limit);
         }
 
         const provider = this.getProvider(symbol);
@@ -413,7 +412,7 @@ export class DataManager {
 
         if (provider === 'bybit-tradfi') {
             if (localNonBinance && localNonBinance.candles.length >= limit) {
-                return localNonBinance.candles.slice(-limit);
+                return this.takeLastCandles(localNonBinance.candles, limit);
             }
             const data = await fetchBybitTradFiDataWithLimit(symbol, interval, limit, {
                 ...options,
@@ -423,25 +422,25 @@ export class DataManager {
                 void this.persistNonBinanceData(symbol, interval, provider, data, 'network');
                 return data;
             }
-            return localNonBinance?.candles.slice(-limit) ?? [];
+            return localNonBinance ? this.takeLastCandles(localNonBinance.candles, limit) : [];
         }
         if (provider === 'polymarket') {
             if (localNonBinance && localNonBinance.candles.length >= limit) {
-                return localNonBinance.candles.slice(-limit);
+                return this.takeLastCandles(localNonBinance.candles, limit);
             }
             const data = await fetchPolymarketDataWithLimit(symbol, interval, limit, options);
             if (data.length > 0) {
                 void this.persistNonBinanceData(symbol, interval, provider, data, 'network');
                 return data;
             }
-            return localNonBinance?.candles.slice(-limit) ?? [];
+            return localNonBinance ? this.takeLastCandles(localNonBinance.candles, limit) : [];
         }
 
         // For others, fall back to standard fetch (no specific limit optimization yet implemented for 12data/yahoo historical)
         // But we can implement wrapper logic if needed. For now just fetch standard.
         // Actually fetchTwelveData usually fetches 5000 bars.
         const data = await this.fetchNonBinanceData(symbol, interval, options?.signal);
-        return data.slice(-limit);
+        return this.takeLastCandles(data, limit);
     }
 
     public async loadData(symbol: string = state.currentSymbol, interval: string = state.currentInterval): Promise<void> {
@@ -620,7 +619,7 @@ export class DataManager {
         const imported = this.importedDataByKey.get(cacheKey);
         if (imported && imported.length > 0) {
             candidates.push({
-                candles: this.normalizeExternalCandles(imported).slice(-normalizedLimit),
+                candles: this.takeLastCandles(this.normalizeExternalCandles(imported), normalizedLimit),
                 source: 'imported',
             });
         }
@@ -628,7 +627,7 @@ export class DataManager {
         const sqliteRaw = await loadSqliteCandles(symbol, storageInterval, normalizedLimit);
         if (sqliteRaw && sqliteRaw.length > 0) {
             candidates.push({
-                candles: this.normalizeExternalCandles(sqliteRaw).slice(-normalizedLimit),
+                candles: this.takeLastCandles(this.normalizeExternalCandles(sqliteRaw), normalizedLimit),
                 source: 'sqlite',
             });
         }
@@ -636,7 +635,7 @@ export class DataManager {
         const cached = await loadCachedCandles(symbol, storageInterval);
         if (cached && cached.candles.length > 0) {
             candidates.push({
-                candles: this.normalizeExternalCandles(cached.candles).slice(-normalizedLimit),
+                candles: this.takeLastCandles(this.normalizeExternalCandles(cached.candles), normalizedLimit),
                 source: 'cache',
             });
         }
@@ -644,7 +643,7 @@ export class DataManager {
         const seedData = await loadSeedCandlesFromPriceData(symbol, interval, signal);
         if (seedData && seedData.length > 0) {
             candidates.push({
-                candles: this.normalizeExternalCandles(seedData).slice(-normalizedLimit),
+                candles: this.takeLastCandles(this.normalizeExternalCandles(seedData), normalizedLimit),
                 source: 'seed',
             });
         }
@@ -725,8 +724,16 @@ export class DataManager {
         return normalized;
     }
 
+    private takeLastCandles(candles: OHLCVData[], limit: number): OHLCVData[] {
+        const normalizedLimit = Math.max(0, Math.floor(limit));
+        if (normalizedLimit <= 0) {
+            return [];
+        }
+        return candles.length > normalizedLimit ? candles.slice(-normalizedLimit) : candles;
+    }
+
     private sliceToLookback(candles: OHLCVData[], lookbackBars: number | null): OHLCVData[] {
-        return typeof lookbackBars === 'number' ? candles.slice(-lookbackBars) : candles;
+        return typeof lookbackBars === 'number' ? this.takeLastCandles(candles, lookbackBars) : candles;
     }
 
     private getBybitSeedOverlayBars(interval: string, seedData: OHLCVData[]): number {
@@ -957,7 +964,10 @@ export class DataManager {
         // Load local cache
         const imported = this.importedDataByKey.get(cacheKey);
         if (imported && imported.length > 0) {
-            const data = this.sanitizeBinanceCandles(symbol, storageInterval, imported, 'imported').slice(-effectiveMaxBars);
+            const data = this.takeLastCandles(
+                this.sanitizeBinanceCandles(symbol, storageInterval, imported, 'imported'),
+                effectiveMaxBars
+            );
             return { data, source: 'local', cached: null, hasSqliteBase: false, cacheKey, storageInterval, effectiveMaxBars };
         }
 
@@ -1022,7 +1032,15 @@ export class DataManager {
                 await saveCachedCandles(symbol, storageInterval, cached!.candles, 'sanitized');
                 await storeSqliteCandles(symbol, storageInterval, cached!.candles, 'Binance', 'sanitized');
             }
-            return { data: cached!.candles.slice(-effectiveMaxBars), source: 'local', cached, hasSqliteBase, cacheKey, storageInterval, effectiveMaxBars };
+            return {
+                data: this.takeLastCandles(cached!.candles, effectiveMaxBars),
+                source: 'local',
+                cached,
+                hasSqliteBase,
+                cacheKey,
+                storageInterval,
+                effectiveMaxBars
+            };
         }
 
         // Need network fetch
@@ -1058,7 +1076,7 @@ export class DataManager {
 
         // No cached data case: always network
         if (!hasCachedData) {
-            const fresh = remoteData.slice(-effectiveMaxBars);
+            const fresh = this.takeLastCandles(remoteData, effectiveMaxBars);
             if (fresh.length > 0) {
                 await saveCachedCandles(symbol, storageInterval, fresh, 'binance-full');
                 await storeSqliteCandles(symbol, storageInterval, fresh, 'Binance', 'binance-full');
@@ -1070,14 +1088,22 @@ export class DataManager {
         // Have cached data, network returned nothing new
         if (remoteData.length === 0) {
             this.cacheSyncAtByKey.set(cacheKey, Date.now());
-            return { data: cached!.candles.slice(-effectiveMaxBars), source: 'network', cached, hasSqliteBase, cacheKey, storageInterval, effectiveMaxBars };
+            return {
+                data: this.takeLastCandles(cached!.candles, effectiveMaxBars),
+                source: 'network',
+                cached,
+                hasSqliteBase,
+                cacheKey,
+                storageInterval,
+                effectiveMaxBars
+            };
         }
 
         // Have cached data, merge with network
         const merged = this.sanitizeBinanceCandles(
             symbol,
             storageInterval,
-            mergeCandles(cached!.candles, remoteData).slice(-effectiveMaxBars),
+            this.takeLastCandles(mergeCandles(cached!.candles, remoteData), effectiveMaxBars),
             'merged'
         );
         if (merged.length > 0) {
@@ -1089,7 +1115,15 @@ export class DataManager {
             }
             this.cacheSyncAtByKey.set(cacheKey, Date.now());
         }
-        return { data: merged.length > 0 ? merged : cached!.candles.slice(-effectiveMaxBars), source: 'network', cached, hasSqliteBase, cacheKey, storageInterval, effectiveMaxBars };
+        return {
+            data: merged.length > 0 ? merged : this.takeLastCandles(cached!.candles, effectiveMaxBars),
+            source: 'network',
+            cached,
+            hasSqliteBase,
+            cacheKey,
+            storageInterval,
+            effectiveMaxBars
+        };
     }
 
     private queuePersistCandles(
