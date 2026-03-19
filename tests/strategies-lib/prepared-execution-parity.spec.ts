@@ -1,0 +1,72 @@
+import { expect } from 'chai';
+import { describe, it } from 'node:test';
+import { OHLCVData, Time } from '../lib/strategies/index';
+import { supertrend_kurtosis_anomaly } from '../lib/strategies/lib/supertrend_kurtosis_anomaly';
+import { supertrend_friction_pinch } from '../lib/strategies/lib/supertrend_friction_pinch';
+import { supertrend_distance_zscore } from '../lib/strategies/lib/supertrend_distance_zscore';
+import { supertrend_churn_resilience } from '../lib/strategies/lib/supertrend_churn_resilience';
+import { volume_profile_poc_median_shift } from '../lib/strategies/lib/volume_profile_poc_median_shift';
+import { candle_pattern_persistence_score_median_deviation_streak } from '../lib/strategies/lib/candle-pattern-persistence-score-median-deviation-streak';
+
+describe('strategy lib prepared execution parity', () => {
+    it('keeps prepared heavy-indicator strategies aligned with execute()', () => {
+        const bars: OHLCVData[] = [];
+        for (let i = 0; i < 180; i++) {
+            const base = 100 + i * 0.25 + Math.sin(i / 6) * 4;
+            bars.push({
+                time: (i + 1) as Time,
+                open: base - 0.5,
+                high: base + 1.25,
+                low: base - 1.25,
+                close: base + Math.cos(i / 5) * 0.75,
+                volume: 100 + (i % 12) * 8,
+            });
+        }
+
+        const cases = [
+            {
+                key: 'volume_profile_poc_median_shift',
+                strategy: volume_profile_poc_median_shift,
+                params: { vpPeriod: 30, medianLookback: 12, shiftThreshold: 1.2 },
+            },
+            {
+                key: 'supertrend_kurtosis_anomaly',
+                strategy: supertrend_kurtosis_anomaly,
+                params: { stPeriod: 10, kurtosisLookback: 30, kurtosisThreshold: 2.5 },
+            },
+            {
+                key: 'supertrend_friction_pinch',
+                strategy: supertrend_friction_pinch,
+                params: { stPeriod: 10, pinchLookback: 20, rocTarget: 1.5 },
+            },
+            {
+                key: 'supertrend_distance_zscore',
+                strategy: supertrend_distance_zscore,
+                params: { stPeriod: 10, zscoreLookback: 30, zscoreTrigger: 2.2 },
+            },
+            {
+                key: 'supertrend_churn_resilience',
+                strategy: supertrend_churn_resilience,
+                params: { stPeriod: 10, stMultiplier: 3, maxCrossings: 2 },
+            },
+            {
+                key: 'candle_pattern_persistence_score_median_deviation_streak',
+                strategy: candle_pattern_persistence_score_median_deviation_streak,
+                params: { scoreLookback: 6, scoreThreshold: 0.55, medianLookback: 18, streakThreshold: 4 },
+            },
+        ] as const;
+
+        for (const testCase of cases) {
+            const strategy = testCase.strategy;
+            expect(strategy, `missing strategy ${testCase.key}`).to.not.equal(undefined);
+            expect(typeof strategy.prepareFinderData, `${testCase.key} should expose prepareFinderData`).to.equal('function');
+            expect(typeof strategy.executePrepared, `${testCase.key} should expose executePrepared`).to.equal('function');
+
+            const prepared = strategy.prepareFinderData!(bars);
+            const preparedSignals = strategy.executePrepared!(prepared, testCase.params, bars);
+            const directSignals = strategy.execute(bars, testCase.params);
+
+            expect(preparedSignals, `${testCase.key} prepared-path drift`).to.deep.equal(directSignals);
+        }
+    });
+});
