@@ -45,23 +45,9 @@ function resolveStopLossExitPrice(
     return stopLoss;
 }
 
-function resolveTakeProfitExitPrice(
-    candle: OHLCVData,
-    takeProfit: number,
-    isShortPosition: boolean
-): number {
-    if (!Number.isFinite(candle.open)) {
-        return takeProfit;
-    }
-
-    // If the bar opens beyond the target, the best available fill is the open.
-    if (isShortPosition && lessThanOrNearlyEqual(candle.open, takeProfit)) {
-        return candle.open;
-    }
-    if (!isShortPosition && greaterThanOrNearlyEqual(candle.open, takeProfit)) {
-        return candle.open;
-    }
-
+function resolveTakeProfitExitPrice(takeProfit: number): number {
+    // Conservative fill model: once the target is touched, take-profit exits are
+    // capped at the configured target instead of assuming favorable overshoot.
     return takeProfit;
 }
 
@@ -105,7 +91,7 @@ export function processPositionExits(
             ? lessThanOrNearlyEqual(candle.low, position.takeProfitPrice)
             : greaterThanOrNearlyEqual(candle.high, position.takeProfitPrice);
         if (takeHit) {
-            const takeProfitExitPrice = resolveTakeProfitExitPrice(candle, position.takeProfitPrice, isShortPosition);
+            const takeProfitExitPrice = resolveTakeProfitExitPrice(position.takeProfitPrice);
             return {
                 exitPrice: applySlippage(takeProfitExitPrice, exitSide, slippageRate),
                 exitSize: position.size,

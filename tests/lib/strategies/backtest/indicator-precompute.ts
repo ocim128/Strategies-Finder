@@ -1,6 +1,6 @@
 
 import { BacktestSettings, OHLCVData } from '../../types/index';
-import { calculateADX, calculateATR, calculateEMA, calculateRSI, calculateSessionVWAP, calculateSMA } from '../indicators';
+import { calculateADX, calculateATR, calculateEMA, calculateRSI, calculateSMA } from '../indicators';
 import { getCloses, getHighs, getLows, getVolumes } from '../strategy-helpers';
 import { IndicatorSeries, NormalizedSettings, PrecomputedIndicators } from '../../types/backtest';
 import { normalizeBacktestSettings } from './backtest-utils';
@@ -12,50 +12,6 @@ import {
 
 const MAX_SETTINGS_CACHE_PER_DATASET = 24;
 const indicatorCache = new WeakMap<OHLCVData[], Map<string, PrecomputedIndicators>>();
-
-function isFiniteNumber(value: number | null | undefined): value is number {
-    return typeof value === 'number' && Number.isFinite(value);
-}
-
-function calculateTrailingStdDev(values: (number | null)[], periodInput: number): (number | null)[] {
-    const period = Math.max(2, Math.round(periodInput));
-    const result: (number | null)[] = new Array(values.length).fill(null);
-
-    let sum = 0;
-    let sumSq = 0;
-    let count = 0;
-
-    for (let i = 0; i < Math.min(period, values.length); i++) {
-        const value = values[i];
-        if (!isFiniteNumber(value)) continue;
-        sum += value;
-        sumSq += value * value;
-        count += 1;
-    }
-
-    for (let i = period; i < values.length; i++) {
-        if (count >= 2) {
-            const variance = Math.max(0, (sumSq - (sum * sum) / count) / count);
-            result[i] = Math.sqrt(variance);
-        }
-
-        const outgoing = values[i - period];
-        if (isFiniteNumber(outgoing)) {
-            sum -= outgoing;
-            sumSq -= outgoing * outgoing;
-            count -= 1;
-        }
-
-        const incoming = values[i];
-        if (isFiniteNumber(incoming)) {
-            sum += incoming;
-            sumSq += incoming * incoming;
-            count += 1;
-        }
-    }
-
-    return result;
-}
 
 function buildIndicatorCacheKey(config: NormalizedSettings): string {
     return [
@@ -75,9 +31,7 @@ function buildIndicatorCacheKey(config: NormalizedSettings): string {
         config.volumeSmaPeriod,
         config.rsiPeriod,
         config.takeProfitMode,
-        config.takeProfitMomentumRsiPeriod,
-        config.takeProfitClimaxStdDevPeriod,
-        config.takeProfitClimaxVolumePeriod
+        config.takeProfitMomentumRsiPeriod
     ].join('|');
 }
 
@@ -115,25 +69,16 @@ function precomputeIndicatorsFromConfig(
 
     const usesAdaptivePercentageTakeProfit = config.riskMode === 'percentage' && config.takeProfitEnabled;
     const useMomentumRsi = usesAdaptivePercentageTakeProfit && config.takeProfitMode === 'momentum_gated';
-    const useClimaxExit = usesAdaptivePercentageTakeProfit && config.takeProfitMode === 'climax_exit';
 
-    const volumeSma = (config.tradeFilterMode === 'volume' || useClimaxExit)
-        ? calculateSMA(volumes, useClimaxExit ? config.takeProfitClimaxVolumePeriod : config.volumeSmaPeriod)
+    const volumeSma = config.tradeFilterMode === 'volume'
+        ? calculateSMA(volumes, config.volumeSmaPeriod)
         : [];
     const rsi = (config.tradeFilterMode === 'rsi' || useMomentumRsi)
         ? calculateRSI(closes, useMomentumRsi ? config.takeProfitMomentumRsiPeriod : config.rsiPeriod)
         : [];
 
-    const sessionVwap = useClimaxExit ? calculateSessionVWAP(data) : [];
-    const vwapDeviationStd = useClimaxExit
-        ? calculateTrailingStdDev(
-            closes.map((close, index) => {
-                const vwap = sessionVwap[index];
-                return vwap === null || !Number.isFinite(vwap) ? null : Math.abs(close - vwap);
-            }),
-            config.takeProfitClimaxStdDevPeriod
-        )
-        : [];
+    const sessionVwap: (number | null)[] = [];
+    const vwapDeviationStd: (number | null)[] = [];
 
     return {
         atr,

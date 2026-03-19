@@ -69,18 +69,6 @@ function computeParamRange(
         max = Math.min(100, max);
     } else if (key === "takeProfitVelocityExpandMultiplier" || key === "takeProfitVelocityShrinkMultiplier") {
         min = Math.max(0.1, min);
-    } else if (key === "takeProfitClimaxStdDevPeriod") {
-        min = Math.max(5, min);
-    } else if (key === "takeProfitClimaxStdDevMultiple" || key === "takeProfitClimaxVolumeMultiple") {
-        min = Math.max(0.1, min);
-    } else if (key === "takeProfitClimaxVolumePeriod") {
-        min = Math.max(2, min);
-    } else if (key === "takeProfitEquityLossStreak") {
-        min = Math.max(1, min);
-    } else if (key === "takeProfitEquityDrawdownPercent") {
-        min = Math.max(0, min);
-    } else if (key === "takeProfitEquityDefensiveMultiplier") {
-        min = Math.max(0.1, min);
     } else if (key === "targetPct") {
         min = 0;
         max = 2;
@@ -465,18 +453,6 @@ export class FinderParamSpace {
         } else if (key === "takeProfitVelocityProgressPercent") {
             next = Math.min(100, Math.max(1, Number(next.toFixed(2))));
         } else if (key === "takeProfitVelocityExpandMultiplier" || key === "takeProfitVelocityShrinkMultiplier") {
-            next = Math.max(0.1, Number(next.toFixed(4)));
-        } else if (key === "takeProfitClimaxStdDevPeriod") {
-            next = Math.max(5, Math.round(next));
-        } else if (key === "takeProfitClimaxStdDevMultiple" || key === "takeProfitClimaxVolumeMultiple") {
-            next = Math.max(0.1, Number(next.toFixed(4)));
-        } else if (key === "takeProfitClimaxVolumePeriod") {
-            next = Math.max(2, Math.round(next));
-        } else if (key === "takeProfitEquityLossStreak") {
-            next = Math.max(1, Math.round(next));
-        } else if (key === "takeProfitEquityDrawdownPercent") {
-            next = Math.max(0, Number(next.toFixed(4)));
-        } else if (key === "takeProfitEquityDefensiveMultiplier") {
             next = Math.max(0.1, Number(next.toFixed(4)));
         } else if (key === "crossThreshold" || key === "minRangePct") {
             next = Math.min(0.05, Math.max(0, Number(next.toFixed(4))));

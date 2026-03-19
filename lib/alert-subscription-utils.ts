@@ -17,8 +17,6 @@ const VALID_TAKE_PROFIT_MODES = new Set<NonNullable<BacktestSettings["takeProfit
     "shrinkage",
     "momentum_gated",
     "velocity",
-    "climax_exit",
-    "equity_feedback",
 ]);
 
 function isValidTradeDirection(value: unknown): value is TradeDirection {

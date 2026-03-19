@@ -263,9 +263,8 @@ describe('Strategy Calculations', () => {
         const baseSettings = {
             riskMode: 'percentage' as const,
             takeProfitEnabled: true,
-            takeProfitMode: 'climax_exit' as const,
-            takeProfitClimaxStdDevPeriod: 6,
-            takeProfitClimaxVolumePeriod: 4,
+            takeProfitMode: 'momentum_gated' as const,
+            takeProfitMomentumRsiPeriod: 9,
             tradeFilterMode: 'rsi' as const,
             rsiPeriod: 14,
             trendEmaPeriod: 50,
@@ -751,6 +750,24 @@ describe('Walk-forward parameter normalization', () => {
             streakThreshold: -2
         });
 
+        expect(normalized.medianLookback).to.equal(85);
+        expect(normalized.streakThreshold).to.equal(2);
+    });
+
+    it('exposes normalized base params for candle pattern persistence score median deviation streak', () => {
+        const strategy = strategies['candle_pattern_persistence_score_median_deviation_streak'];
+        expect(strategy).to.not.equal(undefined);
+        expect(typeof strategy.normalizeParams).to.equal('function');
+
+        const normalized = strategy.normalizeParams!({
+            scoreLookback: 1.4,
+            scoreThreshold: -0.419,
+            medianLookback: 84.6,
+            streakThreshold: -2
+        });
+
+        expect(normalized.scoreLookback).to.equal(2);
+        expect(normalized.scoreThreshold).to.equal(0);
         expect(normalized.medianLookback).to.equal(85);
         expect(normalized.streakThreshold).to.equal(2);
     });
@@ -1601,7 +1618,7 @@ describe('Backtesting Engine', () => {
         expect(result.trades[0].exitPrice).to.be.closeTo(89.991, 1e-9);
     });
 
-    it('should fill a long percentage take profit at the bar open when price gaps beyond the target', () => {
+    it('should cap a long percentage take profit at the target when price gaps beyond it', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
             { time: '2023-01-02' as Time, open: 120, high: 121, low: 119, close: 120, volume: 1000 },
@@ -1622,11 +1639,11 @@ describe('Backtesting Engine', () => {
 
         expect(result.totalTrades).to.equal(1);
         expect(result.trades[0].exitReason).to.equal('take_profit');
-        expect(result.trades[0].exitPrice).to.be.closeTo(120, 1e-9);
+        expect(result.trades[0].exitPrice).to.be.closeTo(110, 1e-9);
         expect(result.trades[0].takeProfitPrice).to.be.closeTo(110, 1e-9);
     });
 
-    it('should fill a short percentage take profit at the bar open when price gaps beyond the target', () => {
+    it('should cap a short percentage take profit at the target when price gaps beyond it', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
             { time: '2023-01-02' as Time, open: 80, high: 81, low: 79, close: 80, volume: 1000 },
@@ -1647,7 +1664,7 @@ describe('Backtesting Engine', () => {
 
         expect(result.totalTrades).to.equal(1);
         expect(result.trades[0].exitReason).to.equal('take_profit');
-        expect(result.trades[0].exitPrice).to.be.closeTo(80, 1e-9);
+        expect(result.trades[0].exitPrice).to.be.closeTo(90, 1e-9);
         expect(result.trades[0].takeProfitPrice).to.be.closeTo(90, 1e-9);
     });
 
@@ -1828,116 +1845,6 @@ describe('Backtesting Engine', () => {
 
         expect(targets.takeProfitPrice).to.equal(105);
         expect(targets.takeProfitPercent).to.equal(5);
-    });
-
-    it('should defer next_open climax exits to the following bar open after close confirmation', () => {
-        const data: OHLCVData[] = [
-            { time: '2023-01-01T00:00:00Z' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 },
-            { time: '2023-01-01T01:00:00Z' as Time, open: 100, high: 101, low: 100, close: 101, volume: 100 },
-            { time: '2023-01-01T02:00:00Z' as Time, open: 101, high: 101, low: 99, close: 100, volume: 100 },
-            { time: '2023-01-01T03:00:00Z' as Time, open: 100, high: 101, low: 100, close: 101, volume: 100 },
-            { time: '2023-01-01T04:00:00Z' as Time, open: 101, high: 101, low: 99, close: 100, volume: 100 },
-            { time: '2023-01-01T05:00:00Z' as Time, open: 100, high: 130, low: 100, close: 130, volume: 500 },
-            { time: '2023-01-01T06:00:00Z' as Time, open: 120, high: 121, low: 119, close: 120, volume: 100 },
-        ];
-
-        const signals: Signal[] = [
-            { time: data[0].time, type: 'buy', price: data[0].close, barIndex: 0 },
-        ];
-
-        const settings = {
-            tradeDirection: 'long' as const,
-            executionModel: 'next_open' as const,
-            allowSameBarExit: false,
-            riskMode: 'percentage' as const,
-            stopLossEnabled: false,
-            takeProfitEnabled: true,
-            takeProfitPercent: 5,
-            takeProfitMode: 'climax_exit' as const,
-            takeProfitClimaxStdDevPeriod: 2,
-            takeProfitClimaxStdDevMultiple: 3,
-            takeProfitClimaxVolumePeriod: 2,
-            takeProfitClimaxVolumeMultiple: 1.5,
-        };
-
-        const full = runBacktest(data, signals, 1000, 100, 0, settings);
-        const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings);
-
-        expect(full.totalTrades).to.equal(1);
-        expect(full.trades[0].entryTime).to.equal(data[1].time);
-        expect(full.trades[0].exitReason).to.equal('take_profit');
-        expect(full.trades[0].exitTime).to.equal(data[6].time);
-        expect(full.trades[0].exitPrice).to.equal(120);
-        expect(full.trades[0].exitPrice).to.not.equal(130);
-        expect(compact.totalTrades).to.equal(full.totalTrades);
-        expect(compact.netProfit).to.equal(full.netProfit);
-    });
-
-    it('should preserve climax-exit trailing stddev semantics with the sliding window precompute', () => {
-        const data: OHLCVData[] = [];
-        const startMs = Date.UTC(2023, 0, 1, 0, 0, 0);
-
-        for (let i = 0; i < 36; i++) {
-            const close = 100 + i * 0.9 + (i % 6) * 1.1 - (i % 4) * 0.45;
-            const isSessionResetBar = i === 0 || i === 24;
-            data.push({
-                time: new Date(startMs + i * 60 * 60 * 1000).toISOString() as Time,
-                open: close - 0.6,
-                high: close + 1.4,
-                low: close - 1.2,
-                close,
-                volume: isSessionResetBar ? 0 : 900 + (i % 7) * 80,
-            });
-        }
-
-        const indicators = precomputeIndicators(data, {
-            riskMode: 'percentage',
-            takeProfitEnabled: true,
-            takeProfitMode: 'climax_exit',
-            takeProfitClimaxStdDevPeriod: 6,
-            takeProfitClimaxVolumePeriod: 4,
-        });
-
-        const deviations = data.map((candle, index) => {
-            const vwap = indicators.sessionVwap[index];
-            return vwap === null || !Number.isFinite(vwap) ? null : Math.abs(candle.close - vwap);
-        });
-
-        const referenceTrailingStdDev = (values: (number | null)[], period: number): (number | null)[] => {
-            const result: (number | null)[] = new Array(values.length).fill(null);
-            for (let i = period; i < values.length; i++) {
-                let sum = 0;
-                let count = 0;
-                for (let j = i - period; j < i; j++) {
-                    const value = values[j];
-                    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
-                    sum += value;
-                    count += 1;
-                }
-                if (count < 2) continue;
-
-                const mean = sum / count;
-                let sumSq = 0;
-                for (let j = i - period; j < i; j++) {
-                    const value = values[j];
-                    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
-                    const diff = value - mean;
-                    sumSq += diff * diff;
-                }
-                result[i] = Math.sqrt(sumSq / count);
-            }
-            return result;
-        };
-
-        const expected = referenceTrailingStdDev(deviations, 6);
-        expect(indicators.vwapDeviationStd.length).to.equal(expected.length);
-        for (let i = 0; i < expected.length; i++) {
-            if (expected[i] === null) {
-                expect(indicators.vwapDeviationStd[i]).to.equal(null);
-            } else {
-                expect(indicators.vwapDeviationStd[i]).to.be.closeTo(expected[i]!, 1e-9);
-            }
-        }
     });
 
     it('should flip position on opposite signals when trade direction is both', () => {

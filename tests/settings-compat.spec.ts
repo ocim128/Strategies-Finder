@@ -201,6 +201,25 @@ describe('Backtest settings compatibility', () => {
         expect(resolved.takeProfitVelocityShrinkMultiplier).to.equal(0.7);
     });
 
+    it('normalizes deleted percentage TP modes back to fixed mode', () => {
+        const rawResolved = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            takeProfitToggle: true,
+            takeProfitPercent: 8,
+            takeProfitMode: 'climax_exit',
+        } as unknown as BacktestSettings);
+        const subscriptionResolved = resolveSubscriptionExecutionBacktestSettings({
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitPercent: 8,
+            takeProfitMode: 'equity_feedback',
+        } as unknown as BacktestSettings);
+
+        expect(rawResolved.takeProfitMode).to.equal('fixed');
+        expect(subscriptionResolved.takeProfitMode).to.equal('fixed');
+    });
+
     it('keeps legacy fixed toggle compatibility while upgrading legacy smart sizing mode', () => {
         const legacy = normalizeStoredBacktestSettings({
             fixedTradeToggle: true,

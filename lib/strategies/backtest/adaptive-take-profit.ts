@@ -124,20 +124,6 @@ function resolveEntryAdaptiveTargetPercent(
         );
     }
 
-    if (config.takeProfitMode === "equity_feedback") {
-        const drawdownPercent = state.performance.peakClosedCapital > 0
-            ? ((state.performance.peakClosedCapital - state.performance.currentClosedCapital) / state.performance.peakClosedCapital) * 100
-            : 0;
-        const defensiveDrawdownEnabled = config.takeProfitEquityDrawdownPercent > 0;
-        const defensiveMode =
-            state.performance.consecutiveLosses >= config.takeProfitEquityLossStreak
-            || (defensiveDrawdownEnabled && drawdownPercent >= config.takeProfitEquityDrawdownPercent);
-
-        return defensiveMode
-            ? clampNonNegative(config.takeProfitPercent * config.takeProfitEquityDefensiveMultiplier)
-            : clampNonNegative(config.takeProfitPercent);
-    }
-
     return clampNonNegative(config.takeProfitPercent);
 }
 
@@ -187,12 +173,6 @@ export function resolveAdaptiveTakeProfitOverrides(
     }
 
     const adaptivePercent = resolveEntryAdaptiveTargetPercent(config, state, direction);
-
-    if (config.takeProfitMode === "climax_exit") {
-        return {
-            takeProfitPercent: null,
-        };
-    }
 
     return {
         takeProfitPercent: adaptivePercent,
@@ -287,32 +267,6 @@ export function updateAdaptiveTakeProfitPosition(
             positionState.currentTargetPercent *= config.takeProfitVelocityShrinkMultiplier;
             positionState.velocityResolved = true;
             position.takeProfitPrice = toTargetPrice(position.entryPrice, position.direction, positionState.currentTargetPercent);
-        }
-    }
-
-    if (positionState.mode === "climax_exit" && position.barsInTrade > 0) {
-        const sessionVwap = state.indicators.sessionVwap[barIndex];
-        const deviationStd = state.indicators.vwapDeviationStd[barIndex];
-        const volumeSma = state.indicators.volumeSma[barIndex];
-
-        if (
-            Number.isFinite(sessionVwap)
-            && Number.isFinite(deviationStd)
-            && deviationStd! > 0
-            && Number.isFinite(volumeSma)
-            && volumeSma! > 0
-        ) {
-            const directionalStretch = directionFactorFor(position.direction) * (candle.close - sessionVwap!);
-            const stretchSigma = directionalStretch > 0 ? directionalStretch / deviationStd! : 0;
-            const volumeConfirmed = candle.volume >= volumeSma! * config.takeProfitClimaxVolumeMultiple;
-
-            if (stretchSigma >= config.takeProfitClimaxStdDevMultiple && volumeConfirmed) {
-                return {
-                    exitPrice: candle.close,
-                    exitReason: "take_profit",
-                    deferExecutionToNextBarOpen: config.executionModel === "next_open",
-                };
-            }
         }
     }
 

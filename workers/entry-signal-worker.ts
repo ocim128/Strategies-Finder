@@ -788,11 +788,7 @@ function buildPendingEntryTelegramMessage(
     configName: string | null,
     direction: "long" | "short",
     price: number,
-    timeSec: number,
-    takeProfitPrice?: number,
-    takeProfitPercent?: number,
-    stopLossPrice?: number,
-    stopLossPercent?: number
+    timeSec: number
 ): string {
     const icon = direction === "long" ? "\u{1F7E2}" : "\u{1F534}";
     const configLabel = configName ?? strategyKey;
@@ -804,14 +800,8 @@ function buildPendingEntryTelegramMessage(
         `Strategy: ${strategyKey}`,
         `Direction: ${direction.toUpperCase()}`,
         `Price: ${price}`,
-        `Note: Current position still open. Watch for entry when it closes.`,
+        `Note: Current position is still open. Pending entries do not include TP/SL because the eventual fill price is not known yet.`,
     ];
-    if (takeProfitPrice != null && takeProfitPercent != null) {
-        lines.push(`\u{1F3AF} Take Profit: ${takeProfitPrice.toFixed(4)} (${formatPercent(takeProfitPercent)})`);
-    }
-    if (stopLossPrice != null && stopLossPercent != null) {
-        lines.push(`\u{1F6D1} Stop Loss: ${stopLossPrice.toFixed(4)} (${formatPercent(-Math.abs(stopLossPercent))})`);
-    }
     lines.push(`Time (UTC): ${new Date(timeSec * 1000).toISOString()}`);
     return lines.join("\n");
 }
@@ -1671,22 +1661,6 @@ async function runSubscription(
                 ).run();
 
                 if ((pendingInsert.meta?.changes ?? 0) > 0) {
-                    // Compute TP/SL for the pending entry using backtest settings
-                    const bs = parsedBacktestSettings;
-                    const isLong = pe.direction === 'long';
-                    let peTp: number | undefined, peTpPct: number | undefined;
-                    let peSl: number | undefined, peSlPct: number | undefined;
-                    if (bs.riskMode === 'percentage') {
-                        if (bs.takeProfitEnabled && bs.takeProfitPercent && bs.takeProfitPercent > 0) {
-                            peTpPct = bs.takeProfitPercent;
-                            peTp = isLong ? pe.signalPrice * (1 + bs.takeProfitPercent / 100) : pe.signalPrice * (1 - bs.takeProfitPercent / 100);
-                        }
-                        if (bs.stopLossEnabled && bs.stopLossPercent && bs.stopLossPercent > 0) {
-                            peSlPct = bs.stopLossPercent;
-                            peSl = isLong ? pe.signalPrice * (1 - bs.stopLossPercent / 100) : pe.signalPrice * (1 + bs.stopLossPercent / 100);
-                        }
-                    }
-
                     const pendingMsg = buildPendingEntryTelegramMessage(
                         subscription.symbol,
                         subscription.interval,
@@ -1694,8 +1668,7 @@ async function runSubscription(
                         parseConfigNameFromStreamId(streamId),
                         pe.direction,
                         pe.signalPrice,
-                        pe.signalTimeSec,
-                        peTp, peTpPct, peSl, peSlPct
+                        pe.signalTimeSec
                     );
                     try {
                         await sendTelegramText(env, pendingMsg);

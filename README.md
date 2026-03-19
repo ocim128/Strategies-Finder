@@ -121,6 +121,11 @@ Reuse existing helpers instead of inventing new conversions:
 - `timeToNumber`
 - existing parse/normalize helpers in backtest and data utilities
 
+### Execution realism matters
+- percentage and ATR take-profit exits are capped at the configured target price once touched
+- stop-loss exits can still fill worse at the bar open when price gaps through the stop
+- if you need tighter execution realism than OHLC can provide, validate with lower-timeframe or tick data
+
 ## Common Workflows
 
 ### Use Portfolio Lab effectively

@@ -210,9 +210,7 @@ export type PercentageTakeProfitMode =
     | 'fixed'
     | 'shrinkage'
     | 'momentum_gated'
-    | 'velocity'
-    | 'climax_exit'
-    | 'equity_feedback';
+    | 'velocity';
 
 export interface BacktestSettings {
     atrPeriod?: number;
@@ -242,13 +240,6 @@ export interface BacktestSettings {
     takeProfitVelocityProgressPercent?: number;
     takeProfitVelocityExpandMultiplier?: number;
     takeProfitVelocityShrinkMultiplier?: number;
-    takeProfitClimaxStdDevPeriod?: number;
-    takeProfitClimaxStdDevMultiple?: number;
-    takeProfitClimaxVolumePeriod?: number;
-    takeProfitClimaxVolumeMultiple?: number;
-    takeProfitEquityLossStreak?: number;
-    takeProfitEquityDrawdownPercent?: number;
-    takeProfitEquityDefensiveMultiplier?: number;
     stopLossEnabled?: boolean;
     takeProfitEnabled?: boolean;
     /** Hard cap on bars held when risk management is active */

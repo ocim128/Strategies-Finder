@@ -398,42 +398,6 @@ describe('Finder ATR risk randomization support', () => {
                     takeProfitVelocityShrinkMultiplier: 0.7,
                 },
             },
-            {
-                mode: 'climax_exit',
-                settings: {
-                    riskMode: 'percentage',
-                    takeProfitEnabled: true,
-                    takeProfitMode: 'climax_exit',
-                    takeProfitPercent: 6,
-                    takeProfitClimaxStdDevPeriod: 24,
-                    takeProfitClimaxStdDevMultiple: 3.8,
-                    takeProfitClimaxVolumePeriod: 12,
-                    takeProfitClimaxVolumeMultiple: 2.5,
-                },
-                expected: {
-                    takeProfitClimaxStdDevPeriod: 24,
-                    takeProfitClimaxStdDevMultiple: 3.8,
-                    takeProfitClimaxVolumePeriod: 12,
-                    takeProfitClimaxVolumeMultiple: 2.5,
-                },
-            },
-            {
-                mode: 'equity_feedback',
-                settings: {
-                    riskMode: 'percentage',
-                    takeProfitEnabled: true,
-                    takeProfitMode: 'equity_feedback',
-                    takeProfitPercent: 6,
-                    takeProfitEquityLossStreak: 4,
-                    takeProfitEquityDrawdownPercent: 7,
-                    takeProfitEquityDefensiveMultiplier: 0.6,
-                },
-                expected: {
-                    takeProfitEquityLossStreak: 4,
-                    takeProfitEquityDrawdownPercent: 7,
-                    takeProfitEquityDefensiveMultiplier: 0.6,
-                },
-            },
         ];
 
         for (const testCase of cases) {
@@ -460,13 +424,6 @@ describe('Finder ATR risk randomization support', () => {
                 takeProfitVelocityProgressPercent: 50,
                 takeProfitVelocityExpandMultiplier: 1.5,
                 takeProfitVelocityShrinkMultiplier: 0.65,
-                takeProfitClimaxStdDevPeriod: 30,
-                takeProfitClimaxStdDevMultiple: 3.5,
-                takeProfitClimaxVolumePeriod: 20,
-                takeProfitClimaxVolumeMultiple: 3,
-                takeProfitEquityLossStreak: 3,
-                takeProfitEquityDrawdownPercent: 6,
-                takeProfitEquityDefensiveMultiplier: 0.65,
             },
             {
                 mode: 'random',
@@ -489,8 +446,6 @@ describe('Finder ATR risk randomization support', () => {
 
         expect(new Set(combos.map((combo) => combo.takeProfitMomentumRsiPeriod)).size).to.be.greaterThan(1);
         expect(new Set(combos.map((combo) => combo.takeProfitVelocityExpandMultiplier)).size).to.be.greaterThan(1);
-        expect(new Set(combos.map((combo) => combo.takeProfitClimaxStdDevMultiple)).size).to.be.greaterThan(1);
-        expect(new Set(combos.map((combo) => combo.takeProfitEquityLossStreak)).size).to.be.greaterThan(1);
 
         expect(combos.every((combo) => (combo.takeProfitMomentumRsiPeriod ?? 0) >= 2)).to.equal(true);
         expect(combos.every((combo) => (combo.takeProfitMomentumRsiPauseLevel ?? 0) >= 1 && (combo.takeProfitMomentumRsiPauseLevel ?? 100) <= 99)).to.equal(true);
@@ -500,13 +455,6 @@ describe('Finder ATR risk randomization support', () => {
         expect(combos.every((combo) => (combo.takeProfitVelocityProgressPercent ?? 0) >= 1 && (combo.takeProfitVelocityProgressPercent ?? 101) <= 100)).to.equal(true);
         expect(combos.every((combo) => (combo.takeProfitVelocityExpandMultiplier ?? 0) >= 0.1)).to.equal(true);
         expect(combos.every((combo) => (combo.takeProfitVelocityShrinkMultiplier ?? 0) >= 0.1)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitClimaxStdDevPeriod ?? 0) >= 5)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitClimaxStdDevMultiple ?? 0) >= 0.1)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitClimaxVolumePeriod ?? 0) >= 2)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitClimaxVolumeMultiple ?? 0) >= 0.1)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitEquityLossStreak ?? 0) >= 1)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitEquityDrawdownPercent ?? -1) >= 0)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitEquityDefensiveMultiplier ?? 0) >= 0.1)).to.equal(true);
     });
 
     it('applies the new TP-mode finder overrides only to the TS backtest settings', () => {
@@ -556,46 +504,6 @@ describe('Finder ATR risk randomization support', () => {
                     takeProfitVelocityProgressPercent: 57.5,
                     takeProfitVelocityExpandMultiplier: 1.9,
                     takeProfitVelocityShrinkMultiplier: 0.72,
-                },
-            },
-            {
-                mode: 'climax_exit',
-                settings: {
-                    riskMode: 'percentage',
-                    takeProfitEnabled: true,
-                    takeProfitMode: 'climax_exit',
-                    takeProfitPercent: 6,
-                },
-                params: {
-                    takeProfitClimaxStdDevPeriod: 21.2,
-                    takeProfitClimaxStdDevMultiple: 4.1,
-                    takeProfitClimaxVolumePeriod: 12.4,
-                    takeProfitClimaxVolumeMultiple: 2.3,
-                },
-                expected: {
-                    takeProfitClimaxStdDevPeriod: 21,
-                    takeProfitClimaxStdDevMultiple: 4.1,
-                    takeProfitClimaxVolumePeriod: 12,
-                    takeProfitClimaxVolumeMultiple: 2.3,
-                },
-            },
-            {
-                mode: 'equity_feedback',
-                settings: {
-                    riskMode: 'percentage',
-                    takeProfitEnabled: true,
-                    takeProfitMode: 'equity_feedback',
-                    takeProfitPercent: 6,
-                },
-                params: {
-                    takeProfitEquityLossStreak: 4.2,
-                    takeProfitEquityDrawdownPercent: 8.5,
-                    takeProfitEquityDefensiveMultiplier: 0.58,
-                },
-                expected: {
-                    takeProfitEquityLossStreak: 4,
-                    takeProfitEquityDrawdownPercent: 8.5,
-                    takeProfitEquityDefensiveMultiplier: 0.58,
                 },
             },
         ];

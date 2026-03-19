@@ -152,41 +152,6 @@ function clampTakeProfitVelocityMultiplier(value: number): number {
     return Math.max(0.1, Number(value));
 }
 
-function clampTakeProfitClimaxStdDevPeriod(value: number): number {
-    if (!Number.isFinite(value)) return 5;
-    return Math.max(5, Math.round(value));
-}
-
-function clampTakeProfitClimaxStdDevMultiple(value: number): number {
-    if (!Number.isFinite(value)) return 0.1;
-    return Math.max(0.1, Number(value));
-}
-
-function clampTakeProfitClimaxVolumePeriod(value: number): number {
-    if (!Number.isFinite(value)) return 2;
-    return Math.max(2, Math.round(value));
-}
-
-function clampTakeProfitClimaxVolumeMultiple(value: number): number {
-    if (!Number.isFinite(value)) return 0.1;
-    return Math.max(0.1, Number(value));
-}
-
-function clampTakeProfitEquityLossStreak(value: number): number {
-    if (!Number.isFinite(value)) return 1;
-    return Math.max(1, Math.round(value));
-}
-
-function clampTakeProfitEquityDrawdownPercent(value: number): number {
-    if (!Number.isFinite(value)) return 0;
-    return Math.max(0, Number(value));
-}
-
-function clampTakeProfitEquityDefensiveMultiplier(value: number): number {
-    if (!Number.isFinite(value)) return 0.1;
-    return Math.max(0.1, Number(value));
-}
-
 function addBaseParamIfFinite(
     baseParams: StrategyParams,
     key: keyof BacktestSettings & string,
@@ -221,19 +186,6 @@ function addModeSpecificTakeProfitSearchParams(baseParams: StrategyParams, setti
         return;
     }
 
-    if (usesPercentageTakeProfitMode(settings, "climax_exit")) {
-        addBaseParamIfFinite(baseParams, "takeProfitClimaxStdDevPeriod", settings.takeProfitClimaxStdDevPeriod, clampTakeProfitClimaxStdDevPeriod);
-        addBaseParamIfFinite(baseParams, "takeProfitClimaxStdDevMultiple", settings.takeProfitClimaxStdDevMultiple, clampTakeProfitClimaxStdDevMultiple);
-        addBaseParamIfFinite(baseParams, "takeProfitClimaxVolumePeriod", settings.takeProfitClimaxVolumePeriod, clampTakeProfitClimaxVolumePeriod);
-        addBaseParamIfFinite(baseParams, "takeProfitClimaxVolumeMultiple", settings.takeProfitClimaxVolumeMultiple, clampTakeProfitClimaxVolumeMultiple);
-        return;
-    }
-
-    if (usesPercentageTakeProfitMode(settings, "equity_feedback")) {
-        addBaseParamIfFinite(baseParams, "takeProfitEquityLossStreak", settings.takeProfitEquityLossStreak, clampTakeProfitEquityLossStreak);
-        addBaseParamIfFinite(baseParams, "takeProfitEquityDrawdownPercent", settings.takeProfitEquityDrawdownPercent, clampTakeProfitEquityDrawdownPercent);
-        addBaseParamIfFinite(baseParams, "takeProfitEquityDefensiveMultiplier", settings.takeProfitEquityDefensiveMultiplier, clampTakeProfitEquityDefensiveMultiplier);
-    }
 }
 
 function addBacktestOverrideIfFinite(
@@ -276,20 +228,6 @@ function applyModeSpecificTakeProfitOverrides(
         hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocityExpandMultiplier", clampTakeProfitVelocityMultiplier) || hasOverrides;
         hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocityShrinkMultiplier", clampTakeProfitVelocityMultiplier) || hasOverrides;
         return hasOverrides;
-    }
-
-    if (usesPercentageTakeProfitMode(settings, "climax_exit")) {
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitClimaxStdDevPeriod", clampTakeProfitClimaxStdDevPeriod) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitClimaxStdDevMultiple", clampTakeProfitClimaxStdDevMultiple) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitClimaxVolumePeriod", clampTakeProfitClimaxVolumePeriod) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitClimaxVolumeMultiple", clampTakeProfitClimaxVolumeMultiple) || hasOverrides;
-        return hasOverrides;
-    }
-
-    if (usesPercentageTakeProfitMode(settings, "equity_feedback")) {
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitEquityLossStreak", clampTakeProfitEquityLossStreak) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitEquityDrawdownPercent", clampTakeProfitEquityDrawdownPercent) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitEquityDefensiveMultiplier", clampTakeProfitEquityDefensiveMultiplier) || hasOverrides;
     }
 
     return hasOverrides;

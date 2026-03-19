@@ -53,13 +53,6 @@ export interface BacktestSettingsData {
     takeProfitVelocityProgressPercent: number;
     takeProfitVelocityExpandMultiplier: number;
     takeProfitVelocityShrinkMultiplier: number;
-    takeProfitClimaxStdDevPeriod: number;
-    takeProfitClimaxStdDevMultiple: number;
-    takeProfitClimaxVolumePeriod: number;
-    takeProfitClimaxVolumeMultiple: number;
-    takeProfitEquityLossStreak: number;
-    takeProfitEquityDrawdownPercent: number;
-    takeProfitEquityDefensiveMultiplier: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
     riskMaxHoldBars: number;
@@ -242,13 +235,6 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     takeProfitVelocityProgressPercent: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityProgressPercent,
     takeProfitVelocityExpandMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityExpandMultiplier,
     takeProfitVelocityShrinkMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityShrinkMultiplier,
-    takeProfitClimaxStdDevPeriod: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxStdDevPeriod,
-    takeProfitClimaxStdDevMultiple: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxStdDevMultiple,
-    takeProfitClimaxVolumePeriod: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxVolumePeriod,
-    takeProfitClimaxVolumeMultiple: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitClimaxVolumeMultiple,
-    takeProfitEquityLossStreak: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEquityLossStreak,
-    takeProfitEquityDrawdownPercent: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEquityDrawdownPercent,
-    takeProfitEquityDefensiveMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEquityDefensiveMultiplier,
     stopLossEnabled: false,
     takeProfitEnabled: false,
     riskMaxHoldBars: EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars,
@@ -488,13 +474,6 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
         takeProfitVelocityProgressPercent: resolved.takeProfitVelocityProgressPercent ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityProgressPercent,
         takeProfitVelocityExpandMultiplier: resolved.takeProfitVelocityExpandMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityExpandMultiplier,
         takeProfitVelocityShrinkMultiplier: resolved.takeProfitVelocityShrinkMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityShrinkMultiplier,
-        takeProfitClimaxStdDevPeriod: resolved.takeProfitClimaxStdDevPeriod ?? DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxStdDevPeriod,
-        takeProfitClimaxStdDevMultiple: resolved.takeProfitClimaxStdDevMultiple ?? DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxStdDevMultiple,
-        takeProfitClimaxVolumePeriod: resolved.takeProfitClimaxVolumePeriod ?? DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxVolumePeriod,
-        takeProfitClimaxVolumeMultiple: resolved.takeProfitClimaxVolumeMultiple ?? DEFAULT_BACKTEST_SETTINGS.takeProfitClimaxVolumeMultiple,
-        takeProfitEquityLossStreak: resolved.takeProfitEquityLossStreak ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEquityLossStreak,
-        takeProfitEquityDrawdownPercent: resolved.takeProfitEquityDrawdownPercent ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEquityDrawdownPercent,
-        takeProfitEquityDefensiveMultiplier: resolved.takeProfitEquityDefensiveMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEquityDefensiveMultiplier,
         stopLossEnabled: resolved.stopLossEnabled ?? DEFAULT_BACKTEST_SETTINGS.stopLossEnabled,
         takeProfitEnabled: resolved.takeProfitEnabled ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEnabled,
         riskMaxHoldBars: resolved.riskMaxHoldBars ?? DEFAULT_BACKTEST_SETTINGS.riskMaxHoldBars,
@@ -702,8 +681,6 @@ export function resolveTakeProfitModeValue(
         || value === "shrinkage"
         || value === "momentum_gated"
         || value === "velocity"
-        || value === "climax_exit"
-        || value === "equity_feedback"
     ) {
         return value;
     }

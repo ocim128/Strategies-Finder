@@ -1112,41 +1112,6 @@ export class FinderManager {
 			merged.takeProfitVelocityShrinkMultiplier = Math.max(0.1, takeProfitVelocityShrinkMultiplier);
 		}
 
-		const takeProfitClimaxStdDevPeriod = params['takeProfitClimaxStdDevPeriod'];
-		if (typeof takeProfitClimaxStdDevPeriod === 'number' && Number.isFinite(takeProfitClimaxStdDevPeriod)) {
-			merged.takeProfitClimaxStdDevPeriod = Math.max(5, Math.round(takeProfitClimaxStdDevPeriod));
-		}
-
-		const takeProfitClimaxStdDevMultiple = params['takeProfitClimaxStdDevMultiple'];
-		if (typeof takeProfitClimaxStdDevMultiple === 'number' && Number.isFinite(takeProfitClimaxStdDevMultiple)) {
-			merged.takeProfitClimaxStdDevMultiple = Math.max(0.1, takeProfitClimaxStdDevMultiple);
-		}
-
-		const takeProfitClimaxVolumePeriod = params['takeProfitClimaxVolumePeriod'];
-		if (typeof takeProfitClimaxVolumePeriod === 'number' && Number.isFinite(takeProfitClimaxVolumePeriod)) {
-			merged.takeProfitClimaxVolumePeriod = Math.max(2, Math.round(takeProfitClimaxVolumePeriod));
-		}
-
-		const takeProfitClimaxVolumeMultiple = params['takeProfitClimaxVolumeMultiple'];
-		if (typeof takeProfitClimaxVolumeMultiple === 'number' && Number.isFinite(takeProfitClimaxVolumeMultiple)) {
-			merged.takeProfitClimaxVolumeMultiple = Math.max(0.1, takeProfitClimaxVolumeMultiple);
-		}
-
-		const takeProfitEquityLossStreak = params['takeProfitEquityLossStreak'];
-		if (typeof takeProfitEquityLossStreak === 'number' && Number.isFinite(takeProfitEquityLossStreak)) {
-			merged.takeProfitEquityLossStreak = Math.max(1, Math.round(takeProfitEquityLossStreak));
-		}
-
-		const takeProfitEquityDrawdownPercent = params['takeProfitEquityDrawdownPercent'];
-		if (typeof takeProfitEquityDrawdownPercent === 'number' && Number.isFinite(takeProfitEquityDrawdownPercent)) {
-			merged.takeProfitEquityDrawdownPercent = Math.max(0, takeProfitEquityDrawdownPercent);
-		}
-
-		const takeProfitEquityDefensiveMultiplier = params['takeProfitEquityDefensiveMultiplier'];
-		if (typeof takeProfitEquityDefensiveMultiplier === 'number' && Number.isFinite(takeProfitEquityDefensiveMultiplier)) {
-			merged.takeProfitEquityDefensiveMultiplier = Math.max(0.1, takeProfitEquityDefensiveMultiplier);
-		}
-
 		const riskMaxHoldBars = params['riskMaxHoldBars'];
 		if (typeof riskMaxHoldBars === 'number' && Number.isFinite(riskMaxHoldBars)) {
 			merged.riskMaxHoldBars = riskMaxHoldBars;
