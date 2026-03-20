@@ -21,6 +21,11 @@ import { formatDisplayPrice } from "./price-format";
 
 import { Trade, OHLCVData } from "./strategies/index";
 
+type IndicatorTooltipPoint = {
+    time: Time;
+    value?: number | null;
+};
+
 // ============================================================================
 // Chart Manager - Enhanced Trade Charting
 // ============================================================================
@@ -297,11 +302,11 @@ export class ChartManager {
             if (!series) return '';
 
             // Try to get data at this time point
-            const data = series.data();
-            const point = data.find((d: any) => d.time === time);
-            if (!point || (point as any).value === undefined) return '';
+            const data = series.data() as IndicatorTooltipPoint[];
+            const point = data.find((d: IndicatorTooltipPoint) => d.time === time);
+            if (!point || point.value === undefined || point.value === null) return '';
 
-            const value = (point as any).value;
+            const value = point.value;
             return `
                 <div class="tooltip-indicator">
                     <span class="tooltip-indicator-name">

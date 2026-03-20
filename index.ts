@@ -43,6 +43,7 @@ import { blockSelectorManager } from "./lib/block-selector-manager";
 import { quickViewManager } from "./lib/quick-view";
 import { bindFormAccessibility } from "./lib/form-accessibility";
 import { strategyPanelController } from "./lib/strategy-panel-controller";
+import { getOptionalElement } from "./lib/dom-utils";
 
 async function init() {
 	injectLayout();
@@ -114,7 +115,7 @@ async function init() {
 		// Apply saved strategy key first
 		if (savedSettings.currentStrategyKey && strategyRegistry.has(savedSettings.currentStrategyKey)) {
 			state.set('currentStrategyKey', savedSettings.currentStrategyKey);
-			const strategySelect = document.getElementById('strategySelect') as HTMLSelectElement | null;
+			const strategySelect = getOptionalElement<HTMLSelectElement>('strategySelect');
 			if (strategySelect) {
 				strategySelect.value = savedSettings.currentStrategyKey;
 			}

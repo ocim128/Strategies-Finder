@@ -49,8 +49,11 @@ import { supertrend_friction_pinch } from "./lib/supertrend_friction_pinch";
 import { macd_histogram_volatility_squeeze } from "./lib/macd_histogram_volatility_squeeze";
 import { volume_profile_poc_median_shift } from "./lib/volume_profile_poc_median_shift";
 
+import { value_area_median_shift } from "./lib/value_area_median_shift";
 
 export interface StrategyManifestEntry {
+
+
     key: string;
     strategy: Strategy;
     assets?: string[];
@@ -105,7 +108,11 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "macd_histogram_volatility_squeeze", strategy: macd_histogram_volatility_squeeze },
     { key: "volume_profile_poc_median_shift", strategy: volume_profile_poc_median_shift },
 
+    { key: "value_area_median_shift", strategy: value_area_median_shift },
+
 ];
+
+
 export function createStrategiesRecordFromManifest(
     manifest: readonly StrategyManifestEntry[] = strategyManifest
 ): Record<string, Strategy> {

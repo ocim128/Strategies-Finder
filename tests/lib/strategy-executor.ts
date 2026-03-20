@@ -1,4 +1,8 @@
 
+import type { OHLCVData, Signal, StrategyParams } from "./types/strategies";
+
+type IndicatorHelpers = typeof import("./strategies/indicators");
+
 // Helper for safely executing dynamic strategy code
 export class StrategyExecutor {
     private static readonly validateFnString = `
@@ -22,9 +26,18 @@ export class StrategyExecutor {
     /**
      * Executes the strategy code.
      */
-    public static execute(code: string, data: any[], params: any, indicators: any): any[] {
+    public static execute(
+        code: string,
+        data: OHLCVData[],
+        params: StrategyParams,
+        indicators: IndicatorHelpers
+    ): Signal[] {
         const fullBody = this.validateFnString.replace('CODE_PLACEHOLDER', code);
-        const fn = new Function(fullBody)();
+        const fn = new Function(fullBody)() as (
+            data: OHLCVData[],
+            params: StrategyParams,
+            indicators: IndicatorHelpers
+        ) => Signal[];
         return fn(data, params, indicators);
     }
 }

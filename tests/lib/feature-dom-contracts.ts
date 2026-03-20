@@ -672,6 +672,48 @@ export function createPairCombinerBridgeDom(): PairCombinerBridgeDom {
     };
 }
 
+export interface SettingsHandlersDom {
+    resetSettingsBtn: HTMLButtonElement | null;
+    saveConfigBtn: HTMLButtonElement | null;
+    configNameInput: HTMLInputElement | null;
+    loadConfigBtn: HTMLButtonElement | null;
+    configSelect: HTMLSelectElement | null;
+    deleteConfigBtn: HTMLButtonElement | null;
+    generateShareLinkBtn: HTMLButtonElement | null;
+    copyShareLinkBtn: HTMLButtonElement | null;
+    shareConfigLinkInput: HTMLInputElement | null;
+    loadShareLinkBtn: HTMLButtonElement | null;
+    shareConfigImportInput: HTMLInputElement | null;
+    runCombinedStrategyBtn: HTMLButtonElement | null;
+    combinerPrimarySelect: HTMLSelectElement | null;
+    combinerSecondarySelect: HTMLSelectElement | null;
+    combinerMode: HTMLSelectElement | null;
+    useRustEngineToggle: HTMLInputElement | null;
+    runBacktest: HTMLButtonElement | null;
+}
+
+export function createSettingsHandlersDom(): SettingsHandlersDom {
+    return {
+        resetSettingsBtn: getOptionalElement<HTMLButtonElement>("resetSettingsBtn"),
+        saveConfigBtn: getOptionalElement<HTMLButtonElement>("saveConfigBtn"),
+        configNameInput: getOptionalElement<HTMLInputElement>("configNameInput"),
+        loadConfigBtn: getOptionalElement<HTMLButtonElement>("loadConfigBtn"),
+        configSelect: getOptionalElement<HTMLSelectElement>("configSelect"),
+        deleteConfigBtn: getOptionalElement<HTMLButtonElement>("deleteConfigBtn"),
+        generateShareLinkBtn: getOptionalElement<HTMLButtonElement>("generateShareLinkBtn"),
+        copyShareLinkBtn: getOptionalElement<HTMLButtonElement>("copyShareLinkBtn"),
+        shareConfigLinkInput: getOptionalElement<HTMLInputElement>("shareConfigLinkInput"),
+        loadShareLinkBtn: getOptionalElement<HTMLButtonElement>("loadShareLinkBtn"),
+        shareConfigImportInput: getOptionalElement<HTMLInputElement>("shareConfigImportInput"),
+        runCombinedStrategyBtn: getOptionalElement<HTMLButtonElement>("runCombinedStrategyBtn"),
+        combinerPrimarySelect: getOptionalElement<HTMLSelectElement>("combinerPrimarySelect"),
+        combinerSecondarySelect: getOptionalElement<HTMLSelectElement>("combinerSecondarySelect"),
+        combinerMode: getOptionalElement<HTMLSelectElement>("combinerMode"),
+        useRustEngineToggle: getOptionalElement<HTMLInputElement>("useRustEngineToggle"),
+        runBacktest: getOptionalElement<HTMLButtonElement>("runBacktest"),
+    };
+}
+
 export const WALK_FORWARD_SERVICE_REQUIRED_IDS = [
     "wf-opt-window",
     "wf-test-window",

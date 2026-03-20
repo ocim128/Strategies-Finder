@@ -12,13 +12,15 @@ import {
 } from "../strategy-share-service";
 import { strategyPanelController } from "../strategy-panel-controller";
 import { parseInputNumber } from "../dom-input-readers";
+import { createSettingsHandlersDom } from "../feature-dom-contracts";
 
 const SHARED_DEFAULT_SYMBOL = 'ETHUSDT';
 const SHARED_DEFAULT_INTERVAL = '120m';
 
 export function setupSettingsHandlers() {
+    const dom = createSettingsHandlersDom();
     // Reset to Default button
-    const resetBtn = document.getElementById('resetSettingsBtn');
+    const resetBtn = dom.resetSettingsBtn;
     if (resetBtn) {
         resetBtn.addEventListener('click', () => {
             if (confirm('Reset all settings to default values?')) {
@@ -30,8 +32,8 @@ export function setupSettingsHandlers() {
     }
 
     // Save Configuration logic
-    const saveConfigBtn = document.getElementById('saveConfigBtn');
-    const configNameInput = document.getElementById('configNameInput') as HTMLInputElement | null;
+    const saveConfigBtn = dom.saveConfigBtn;
+    const configNameInput = dom.configNameInput;
 
     const performSave = () => {
         if (!configNameInput) return;
@@ -77,8 +79,8 @@ export function setupSettingsHandlers() {
     }
 
     // Load Configuration button
-    const loadConfigBtn = document.getElementById('loadConfigBtn');
-    const configSelect = document.getElementById('configSelect') as HTMLSelectElement | null;
+    const loadConfigBtn = dom.loadConfigBtn;
+    const configSelect = dom.configSelect;
     if (loadConfigBtn && configSelect) {
         loadConfigBtn.addEventListener('click', () => {
             const name = configSelect.value;
@@ -96,7 +98,7 @@ export function setupSettingsHandlers() {
     }
 
     // Delete Configuration button
-    const deleteConfigBtn = document.getElementById('deleteConfigBtn');
+    const deleteConfigBtn = dom.deleteConfigBtn;
     if (deleteConfigBtn && configSelect) {
         deleteConfigBtn.addEventListener('click', () => {
             const name = configSelect.value;
@@ -114,11 +116,11 @@ export function setupSettingsHandlers() {
     }
 
     // Share Configuration Link controls
-    const generateShareLinkBtn = document.getElementById('generateShareLinkBtn') as HTMLButtonElement | null;
-    const copyShareLinkBtn = document.getElementById('copyShareLinkBtn') as HTMLButtonElement | null;
-    const shareConfigLinkInput = document.getElementById('shareConfigLinkInput') as HTMLInputElement | null;
-    const loadShareLinkBtn = document.getElementById('loadShareLinkBtn') as HTMLButtonElement | null;
-    const shareConfigImportInput = document.getElementById('shareConfigImportInput') as HTMLInputElement | null;
+    const generateShareLinkBtn = dom.generateShareLinkBtn;
+    const copyShareLinkBtn = dom.copyShareLinkBtn;
+    const shareConfigLinkInput = dom.shareConfigLinkInput;
+    const loadShareLinkBtn = dom.loadShareLinkBtn;
+    const shareConfigImportInput = dom.shareConfigImportInput;
     let currentShareLink = '';
 
     const setShareLinkOutput = (link: string) => {
@@ -240,12 +242,12 @@ export function setupSettingsHandlers() {
 
 
     //  Strategy Combiner handler 
-    const runCombinedBtn = document.getElementById('runCombinedStrategyBtn') as HTMLButtonElement | null;
+    const runCombinedBtn = dom.runCombinedStrategyBtn;
     if (runCombinedBtn) {
         runCombinedBtn.addEventListener('click', async () => {
-            const primarySelect = document.getElementById('combinerPrimarySelect') as HTMLSelectElement | null;
-            const secondarySelect = document.getElementById('combinerSecondarySelect') as HTMLSelectElement | null;
-            const modeSelect = document.getElementById('combinerMode') as HTMLSelectElement | null;
+            const primarySelect = dom.combinerPrimarySelect;
+            const secondarySelect = dom.combinerSecondarySelect;
+            const modeSelect = dom.combinerMode;
 
             const primaryName = primarySelect?.value;
             const secondaryName = secondarySelect?.value;
@@ -286,7 +288,7 @@ export function setupSettingsHandlers() {
 }
 
 function setupEnginePreferenceHandlers() {
-    const rustToggle = document.getElementById('useRustEngineToggle') as HTMLInputElement | null;
+    const rustToggle = createSettingsHandlersDom().useRustEngineToggle;
     if (!rustToggle) return;
 
     const updateStatus = () => {
@@ -422,7 +424,7 @@ function scheduleSharedAutoBacktest(options: SharedBacktestWaitOptions): void {
         const dataFingerprint = getDataFingerprint(state.ohlcvData);
         const dataReloaded = !options.requiresDataReload || dataFingerprint !== options.previousDataFingerprint;
         const configReady = isSharedConfigApplied(options.expectedConfig);
-        const runButton = document.getElementById('runBacktest') as HTMLButtonElement | null;
+        const runButton = createSettingsHandlersDom().runBacktest;
         const isBusy = runButton?.disabled ?? false;
 
         if (symbolReady && intervalReady && hasData && dataReloaded && configReady && !isBusy) {
@@ -449,7 +451,7 @@ function scheduleSharedAutoBacktest(options: SharedBacktestWaitOptions): void {
  * @param selectName Optional name of the configuration to select after updating.
  */
 export function updateConfigDropdown(selectName?: string) {
-    const configSelect = document.getElementById('configSelect') as HTMLSelectElement | null;
+    const configSelect = createSettingsHandlersDom().configSelect;
     if (!configSelect) return;
 
     const configs = settingsManager.loadAllStrategyConfigs();
@@ -481,8 +483,7 @@ export function updateConfigDropdown(selectName?: string) {
  * Populates the Strategy Combiner primary/secondary dropdowns from saved configs.
  */
 function updateCombinerDropdowns() {
-    const primarySelect = document.getElementById('combinerPrimarySelect') as HTMLSelectElement | null;
-    const secondarySelect = document.getElementById('combinerSecondarySelect') as HTMLSelectElement | null;
+    const { combinerPrimarySelect: primarySelect, combinerSecondarySelect: secondarySelect } = createSettingsHandlersDom();
     if (!primarySelect && !secondarySelect) return;
 
     const configs = settingsManager.loadAllStrategyConfigs();
