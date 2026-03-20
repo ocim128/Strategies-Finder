@@ -771,9 +771,7 @@ export class DataManager {
     }
 
     private getTwoHourCloseParity(): TwoHourCloseParity {
-        if (typeof document === 'undefined') return 'odd';
-        const select = document.getElementById('twoHourCloseParity') as HTMLSelectElement | null;
-        return select?.value === 'even' ? 'even' : 'odd';
+        return state.twoHourCloseParity === 'even' ? 'even' : 'odd';
     }
 
     private getResampleOptions(interval: string): ResampleOptions | undefined {

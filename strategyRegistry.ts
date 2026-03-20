@@ -12,6 +12,7 @@
 
 import type { Strategy, OHLCVData, Signal, StrategyParams, Time } from "./lib/strategies/index";
 import type { StrategyManifestEntry } from "./lib/strategies/manifest";
+import { state } from "./lib/state";
 import {
     getResampleBucketStart,
     resampleOHLCV,
@@ -95,18 +96,10 @@ class StrategyRegistryImpl implements StrategyRegistry {
     }
 
     private readGlobalStrategyTfSettings(): { enabled: boolean; minutes: number; twoHourCloseParity: TwoHourCloseParity } {
-        if (typeof document === 'undefined') {
-            return { enabled: false, minutes: 120, twoHourCloseParity: 'odd' };
-        }
-
-        const toggle = document.getElementById('strategyTimeframeToggle') as HTMLInputElement | null;
-        const minutesInput = document.getElementById('strategyTimeframeMinutes') as HTMLInputElement | null;
-        const parityInput = document.getElementById('twoHourCloseParity') as HTMLSelectElement | null;
-
-        const enabled = toggle?.checked ?? false;
-        const parsedMinutes = parseInt(minutesInput?.value ?? '120', 10);
+        const enabled = state.strategyTimeframeEnabled === true;
+        const parsedMinutes = Number(state.strategyTimeframeMinutes);
         const minutes = Number.isFinite(parsedMinutes) ? Math.max(1, Math.floor(parsedMinutes)) : 120;
-        const twoHourCloseParity: TwoHourCloseParity = parityInput?.value === 'even' ? 'even' : 'odd';
+        const twoHourCloseParity: TwoHourCloseParity = state.twoHourCloseParity === 'even' ? 'even' : 'odd';
         return { enabled, minutes, twoHourCloseParity };
     }
 

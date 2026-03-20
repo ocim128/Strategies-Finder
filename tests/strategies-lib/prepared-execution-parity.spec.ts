@@ -1,12 +1,12 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { OHLCVData, Time } from '../lib/strategies/index';
-import { supertrend_kurtosis_anomaly } from '../lib/strategies/lib/supertrend_kurtosis_anomaly';
 import { supertrend_friction_pinch } from '../lib/strategies/lib/supertrend_friction_pinch';
 import { supertrend_distance_zscore } from '../lib/strategies/lib/supertrend_distance_zscore';
 import { supertrend_churn_resilience } from '../lib/strategies/lib/supertrend_churn_resilience';
 import { volume_profile_poc_median_shift } from '../lib/strategies/lib/volume_profile_poc_median_shift';
 import { candle_pattern_persistence_score_median_deviation_streak } from '../lib/strategies/lib/candle-pattern-persistence-score-median-deviation-streak';
+import { vwap_zscore_reversion } from '../lib/strategies/lib/vwap_zscore_reversion';
 
 describe('strategy lib prepared execution parity', () => {
     it('keeps prepared heavy-indicator strategies aligned with execute()', () => {
@@ -30,11 +30,6 @@ describe('strategy lib prepared execution parity', () => {
                 params: { vpPeriod: 30, medianLookback: 12, shiftThreshold: 1.2 },
             },
             {
-                key: 'supertrend_kurtosis_anomaly',
-                strategy: supertrend_kurtosis_anomaly,
-                params: { stPeriod: 10, kurtosisLookback: 30, kurtosisThreshold: 2.5 },
-            },
-            {
                 key: 'supertrend_friction_pinch',
                 strategy: supertrend_friction_pinch,
                 params: { stPeriod: 10, pinchLookback: 20, rocTarget: 1.5 },
@@ -53,6 +48,11 @@ describe('strategy lib prepared execution parity', () => {
                 key: 'candle_pattern_persistence_score_median_deviation_streak',
                 strategy: candle_pattern_persistence_score_median_deviation_streak,
                 params: { scoreLookback: 6, scoreThreshold: 0.55, medianLookback: 18, streakThreshold: 4 },
+            },
+            {
+                key: 'vwap_zscore_reversion',
+                strategy: vwap_zscore_reversion,
+                params: { zscoreLookback: 24, zscoreThreshold: 2.1 },
             },
         ] as const;
 

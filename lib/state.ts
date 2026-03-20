@@ -8,6 +8,7 @@ export type StateKey = keyof State;
 export type MockChartModel = 'simple' | 'hard' | 'v3' | 'v4' | 'v5' | 'v6';
 export type ChartMode = 'candlestick' | 'heikin-ashi';
 export type TwoHourCloseParity = 'odd' | 'even';
+export type TwoHourCloseParityMode = TwoHourCloseParity | 'both';
 export type BacktestResultSource = 'backtest' | 'ensemble_preview' | 'finder_selection' | 'finder_robust_oos' | 'walk_forward_oos';
 
 export interface TwoHourParityBacktestResults {
@@ -35,6 +36,9 @@ export class State {
     public currentBacktestResultSource: BacktestResultSource = 'backtest';
     public twoHourParityBacktestResults: TwoHourParityBacktestResults | null = null;
     public currentStrategyKey = DEFAULT_BUILT_IN_STRATEGY_KEY;
+    public strategyTimeframeEnabled = false;
+    public strategyTimeframeMinutes = 120;
+    public twoHourCloseParity: TwoHourCloseParityMode = 'odd';
 
     // Pair Combiner state
 

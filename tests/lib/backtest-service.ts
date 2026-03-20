@@ -175,9 +175,8 @@ export class BacktestService {
         if (getIntervalSeconds(state.currentInterval) !== 7200) {
             return 'odd';
         }
-        const select = getOptionalElement<HTMLSelectElement>('twoHourCloseParity');
-        if (select?.value === 'even' || select?.value === 'both') {
-            return select.value;
+        if (state.twoHourCloseParity === 'even' || state.twoHourCloseParity === 'both') {
+            return state.twoHourCloseParity;
         }
         return 'odd';
     }
@@ -190,17 +189,14 @@ export class BacktestService {
     }
 
     private async withTemporaryTwoHourParity<T>(parity: 'odd' | 'even', run: () => Promise<T>): Promise<T> {
-        const select = getOptionalElement<HTMLSelectElement>('twoHourCloseParity');
-        if (!select) return run();
-
-        const previous = select.value;
+        const previous = state.twoHourCloseParity;
         if (previous === parity) return run();
 
-        select.value = parity;
+        state.set('twoHourCloseParity', parity);
         try {
             return await run();
         } finally {
-            select.value = previous;
+            state.set('twoHourCloseParity', previous);
         }
     }
 

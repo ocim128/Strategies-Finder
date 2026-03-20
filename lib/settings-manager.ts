@@ -574,6 +574,8 @@ class SettingsManager {
             'tradeFilterSettingsToggle',
             'invertSignalsToggle',
             'useRustEngineToggle',
+            'strategyTimeframeToggle',
+            'strategyTimeframeMinutes',
             'snapshotAtrFilterToggle',
             'snapshotVolumeFilterToggle',
             'snapshotAdxFilterToggle',

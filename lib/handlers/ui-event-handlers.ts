@@ -16,6 +16,7 @@ import { scannerManager } from "../scanner/scanner-manager";
 import { isTwoHourInterval } from "../interval-utils";
 import { strategyPanelController } from "../strategy-panel-controller";
 import { STRATEGY_PANEL_SETTINGS_SECTIONS } from "../strategy-panel-settings-registry";
+import { parseInputNumber } from "../dom-input-readers";
 
 export function setupEventHandlers() {
     const dom = createUiEventHandlersDom();
@@ -819,6 +820,16 @@ export function setupEventHandlers() {
     const strategyTimeframeToggle = dom.strategyTimeframeToggle;
     const strategyTimeframeMinutes = dom.strategyTimeframeMinutes;
     const strategyTimeframeMinutesGroup = dom.strategyTimeframeMinutesGroup;
+    const syncStrategyTimeframeState = () => {
+        state.set('strategyTimeframeEnabled', strategyTimeframeToggle.checked);
+        const parsedMinutes = parseInputNumber(strategyTimeframeMinutes.value);
+        state.set(
+            'strategyTimeframeMinutes',
+            typeof parsedMinutes === 'number' && Number.isFinite(parsedMinutes)
+                ? Math.max(1, Math.floor(parsedMinutes))
+                : 120
+        );
+    };
 
     const applyStrategyTimeframeMode = () => {
         const enabled = strategyTimeframeToggle.checked;
@@ -826,9 +837,12 @@ export function setupEventHandlers() {
         if (strategyTimeframeMinutesGroup) {
             strategyTimeframeMinutesGroup.classList.toggle('is-disabled', !enabled);
         }
+        syncStrategyTimeframeState();
     };
 
     strategyTimeframeToggle.addEventListener('change', applyStrategyTimeframeMode);
+    strategyTimeframeMinutes.addEventListener('input', syncStrategyTimeframeState);
+    strategyTimeframeMinutes.addEventListener('change', syncStrategyTimeframeState);
     applyStrategyTimeframeMode();
 
     const twoHourCloseParity = dom.twoHourCloseParity;
@@ -850,15 +864,18 @@ export function setupEventHandlers() {
             if (value === 'even' || value === 'both') return value;
             return 'odd';
         };
+        const syncParityState = () => {
+            state.set('twoHourCloseParity', resolveParityMode(twoHourCloseParity.value));
+        };
 
         let lastAppliedParity: 'odd' | 'even' | 'both' = resolveParityMode(twoHourCloseParity.value);
         twoHourCloseParity.addEventListener('change', () => {
+            const nextParity: 'odd' | 'even' | 'both' = resolveParityMode(twoHourCloseParity.value);
+            syncParityState();
             if (!isTwoHourInterval(state.currentInterval)) {
-                twoHourCloseParity.value = 'odd';
-                lastAppliedParity = 'odd';
+                lastAppliedParity = nextParity;
                 return;
             }
-            const nextParity: 'odd' | 'even' | 'both' = resolveParityMode(twoHourCloseParity.value);
             if (nextParity === lastAppliedParity) {
                 return;
             }
@@ -890,6 +907,7 @@ export function setupEventHandlers() {
             applyParityAvailability();
         });
         applyParityAvailability();
+        syncParityState();
     }
 
     if (localSp500Select) {
