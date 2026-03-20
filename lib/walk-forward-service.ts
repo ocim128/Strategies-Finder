@@ -1376,8 +1376,7 @@ class WalkForwardService {
         // Plot combined OOS equity curve
         this.plotEquityCurve(result);
 
-        // Log formatted summary to console
-        console.log(formatWalkForwardSummary(result));
+        debugLogger.info(`[WalkForward] Summary\n${formatWalkForwardSummary(result)}`);
     }
 
     private updateSummaryPanel(result: WalkForwardResult): void {

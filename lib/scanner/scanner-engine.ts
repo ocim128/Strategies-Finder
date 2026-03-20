@@ -5,6 +5,7 @@
 
 import { binanceSearchService, type BinanceSymbol } from '../binance-search-service';
 import { strategyRegistry } from '../../strategyRegistry';
+import { debugLogger } from '../debug-logger';
 
 import type { BacktestSettings, Signal, StrategyParams } from '../types/strategies';
 import { applySignalPolarity, getOpenPositionForScanner } from '../strategies/backtest';
@@ -273,7 +274,10 @@ export class ScannerEngine {
             } catch (err) {
                 // Network fetch attempted but failed — flag it
                 hadNetworkFetch = true;
-                console.warn(`Failed to fetch data for ${pair.symbol}:`, err);
+                debugLogger.warn('scanner.data_fetch_failed', {
+                    symbol: pair.symbol,
+                    error: err instanceof Error ? err.message : String(err),
+                });
             }
         });
 
@@ -304,7 +308,9 @@ export class ScannerEngine {
         for (const stratConfig of config.strategyConfigs) {
             const strategy = strategyRegistry.get(stratConfig.strategyKey);
             if (!strategy) {
-                console.warn(`Strategy not found: ${stratConfig.strategyKey}`);
+                debugLogger.warn('scanner.strategy_not_found', {
+                    strategyKey: stratConfig.strategyKey,
+                });
                 continue;
             }
 
@@ -382,7 +388,11 @@ export class ScannerEngine {
                     });
                 }
             } catch (err) {
-                console.warn(`Error running ${stratConfig.strategyKey} on ${symbol}:`, err);
+                debugLogger.warn('scanner.strategy_run_failed', {
+                    strategyKey: stratConfig.strategyKey,
+                    symbol,
+                    error: err instanceof Error ? err.message : String(err),
+                });
             }
         }
 

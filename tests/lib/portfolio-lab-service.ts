@@ -4,6 +4,7 @@ import { sliceOhlcvByBlock } from "./block-selector";
 import { trimToClosedCandles } from "./closed-candle-utils";
 import { dataManager } from "./data-manager";
 import { createPortfolioLabDom, type PortfolioLabDom } from "./feature-dom-contracts";
+import { debugLogger } from "./debug-logger";
 import { paramManager } from "./param-manager";
 import {
     buildFilterRun,
@@ -228,7 +229,10 @@ class PortfolioLabService {
                 try {
                     await this.loadPairData(anchorSymbol, lookbackBars, dataCache);
                 } catch (error) {
-                    console.warn(`[PortfolioLab] Forecast anchor ${anchorSymbol} unavailable:`, error);
+                    debugLogger.warn("portfolio_lab.forecast_anchor_unavailable", {
+                        anchorSymbol,
+                        error: error instanceof Error ? error.message : String(error),
+                    });
                     uiManager.showToast(`Forecast anchor ${anchorSymbol} could not be loaded. Relative-strength forecast features will be reduced.`, "warning");
                 }
             }
@@ -322,7 +326,9 @@ class PortfolioLabService {
             this.setDerivedActionsEnabled(true);
             this.render(rows, selectedSymbols, dataCache, benchmarkSymbol, skipped, consensus, windowMode, breadthSweep, oppositionSweep, rankingRows, sizingRows, liveContext, forecast, minAgree, maxOppose);
         } catch (error) {
-            console.error("[PortfolioLab] Run failed:", error);
+            debugLogger.error("portfolio_lab.run_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
             uiManager.showToast(`Portfolio Lab failed: ${error instanceof Error ? error.message : String(error)}`, "error");
             this.updateStatus("Portfolio Lab failed. Check console for details.");
             this.lastRunContext = null;
@@ -349,7 +355,11 @@ class PortfolioLabService {
         try {
             await this.runExecutionBacktest(context, { minAgree, maxOppose: null }, `breadth >= ${minAgree}`);
         } catch (error) {
-            console.error("[PortfolioLab] Breadth backtest failed:", error);
+            debugLogger.error("portfolio_lab.breadth_backtest_failed", {
+                benchmarkSymbol: context.benchmarkSymbol,
+                minAgree,
+                error: error instanceof Error ? error.message : String(error),
+            });
             uiManager.showToast(`Breadth backtest failed: ${error instanceof Error ? error.message : String(error)}`, "error");
             this.updateStatus("Breadth backtest failed. Check console for details.");
         } finally {
@@ -375,7 +385,12 @@ class PortfolioLabService {
         try {
             await this.runExecutionBacktest(context, { minAgree, maxOppose }, `agree >= ${minAgree}, oppose <= ${maxOppose}`);
         } catch (error) {
-            console.error("[PortfolioLab] Filter backtest failed:", error);
+            debugLogger.error("portfolio_lab.filter_backtest_failed", {
+                benchmarkSymbol: context.benchmarkSymbol,
+                minAgree,
+                maxOppose,
+                error: error instanceof Error ? error.message : String(error),
+            });
             uiManager.showToast(`Filter backtest failed: ${error instanceof Error ? error.message : String(error)}`, "error");
             this.updateStatus("Filter backtest failed. Check console for details.");
         } finally {
@@ -429,7 +444,10 @@ class PortfolioLabService {
                 `Best DD ${bestDd?.label ?? "-"} ${bestDd ? formatDrawdownPercent(bestDd.result.maxDrawdownPercent) : "-"}.`
             );
         } catch (error) {
-            console.error("[PortfolioLab] Breadth sweep failed:", error);
+            debugLogger.error("portfolio_lab.breadth_sweep_failed", {
+                benchmarkSymbol: context.benchmarkSymbol,
+                error: error instanceof Error ? error.message : String(error),
+            });
             uiManager.showToast(`Breadth sweep failed: ${error instanceof Error ? error.message : String(error)}`, "error");
             this.updateStatus("Breadth sweep failed. Check console for details.");
         } finally {
@@ -482,7 +500,12 @@ class PortfolioLabService {
                 `Best DD ${bestDd?.label ?? "-"} ${bestDd ? formatDrawdownPercent(bestDd.result.maxDrawdownPercent) : "-"}.`
             );
         } catch (error) {
-            console.error("[PortfolioLab] Opposition sweep failed:", error);
+            debugLogger.error("portfolio_lab.opposition_sweep_failed", {
+                benchmarkSymbol: context.benchmarkSymbol,
+                minAgree,
+                maxOppose,
+                error: error instanceof Error ? error.message : String(error),
+            });
             uiManager.showToast(`Opposition sweep failed: ${error instanceof Error ? error.message : String(error)}`, "error");
             this.updateStatus("Opposition sweep failed. Check console for details.");
         } finally {

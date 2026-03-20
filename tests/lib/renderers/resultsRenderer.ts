@@ -2,20 +2,28 @@ import { BacktestResult, PostEntryPathStats, SnapshotProfileStats, ExitReasonBre
 import type { EdgeStatistics } from "../types/strategies";
 import { getRequiredElement, updateTextContent, setVisible } from "../dom-utils";
 import type { TwoHourParityBacktestResults } from "../state";
+import { createResultsRendererDom, type ResultsRendererDom } from "../feature-dom-contracts";
 
 export class ResultsRenderer {
+    private dom: ResultsRendererDom | null = null;
+
+    private getDom(): ResultsRendererDom {
+        return this.dom ??= createResultsRendererDom();
+    }
+
     public render(result: BacktestResult) {
         setVisible('emptyResults', false);
         setVisible('resultsContent', true);
 
         const isProfit = result.netProfit >= 0;
         const profitClass = isProfit ? 'positive' : 'negative';
+        const dom = this.getDom();
 
         updateTextContent('netProfit', `${isProfit ? '+' : ''}$${result.netProfit.toFixed(2)}`, `stat-value ${profitClass}`);
-        getRequiredElement('netProfitCard').className = `stat-card ${profitClass}`;
+        dom.netProfitCard.className = `stat-card ${profitClass}`;
 
         updateTextContent('netProfitPct', `${isProfit ? '+' : ''}${result.netProfitPercent.toFixed(2)}%`, `stat-value ${profitClass}`);
-        getRequiredElement('netProfitPctCard').className = `stat-card ${profitClass}`;
+        dom.netProfitPctCard.className = `stat-card ${profitClass}`;
 
         const expectancyClass = result.expectancy >= 0 ? 'positive' : 'negative';
         updateTextContent('expectancy', `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`, `stat-value ${expectancyClass}`);
@@ -81,7 +89,7 @@ export class ResultsRenderer {
             const levelHint = `Selected level: ${selectedLevelText} (index ${selectedIndexText}) | ${winHint} | Entry: ${entryMode}${retestHint} | Touch: ${displayTouchMode}`;
             updateTextContent('entryStatsHint', levelHint);
 
-            const levelsBody = getRequiredElement('entryLevelsBody');
+            const levelsBody = dom.entryLevelsBody;
             const levels = entryStats.levels ?? [];
             if (levels.length > 0) {
                 levelsBody.innerHTML = levels
@@ -112,10 +120,7 @@ export class ResultsRenderer {
     }
 
     public renderParityComparison(results: TwoHourParityBacktestResults): void {
-        const panel = document.getElementById('parityComparePanel');
-        const grid = document.getElementById('parityCompareGrid');
-        const hint = document.getElementById('parityCompareHint');
-        if (!panel || !grid || !hint) return;
+        const dom = this.getDom();
 
         const renderCard = (label: 'odd' | 'even', result: BacktestResult): string => {
             const pnlClass = result.netProfit >= 0 ? 'positive' : 'negative';
@@ -151,26 +156,25 @@ export class ResultsRenderer {
             `;
         };
 
-        grid.innerHTML = `${renderCard('odd', results.odd)}${renderCard('even', results.even)}`;
+        dom.parityCompareGrid.innerHTML = `${renderCard('odd', results.odd)}${renderCard('even', results.even)}`;
 
         const delta = results.even.netProfitPercent - results.odd.netProfitPercent;
         const better = delta > 0 ? 'even' : delta < 0 ? 'odd' : 'tie';
         const baselineLabel = results.baseline.toUpperCase();
         if (better === 'tie') {
-            hint.textContent = `Baseline: ${baselineLabel}. Odd and even produced the same ROI (${results.odd.netProfitPercent.toFixed(2)}%).`;
+            dom.parityCompareHint.textContent = `Baseline: ${baselineLabel}. Odd and even produced the same ROI (${results.odd.netProfitPercent.toFixed(2)}%).`;
         } else {
             const betterLabel = better.toUpperCase();
-            hint.textContent = `Baseline: ${baselineLabel}. ${betterLabel} outperformed by ${Math.abs(delta).toFixed(2)}% ROI.`;
+            dom.parityCompareHint.textContent = `Baseline: ${baselineLabel}. ${betterLabel} outperformed by ${Math.abs(delta).toFixed(2)}% ROI.`;
         }
-        panel.style.display = 'block';
+        dom.parityComparePanel.style.display = 'block';
     }
 
     public clearParityComparison(): void {
         setVisible('parityComparePanel', false);
-        const grid = document.getElementById('parityCompareGrid');
-        if (grid) grid.innerHTML = '';
-        const hint = document.getElementById('parityCompareHint');
-        if (hint) hint.textContent = '';
+        const dom = this.getDom();
+        dom.parityCompareGrid.innerHTML = '';
+        dom.parityCompareHint.textContent = '';
     }
 
     private formatEntryMode(mode: number): string {

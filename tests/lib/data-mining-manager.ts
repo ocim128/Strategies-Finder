@@ -49,6 +49,10 @@ export class DataMiningManager {
     private lastSymbolValue: string | null = null;
     private lastIntervalValue: string | null = null;
 
+    private isRecord(value: unknown): value is Record<string, unknown> {
+        return typeof value === 'object' && value !== null && !Array.isArray(value);
+    }
+
     public init(): void {
         const tab = document.getElementById('dataminingTab');
         if (!tab) return;
@@ -261,7 +265,9 @@ export class DataMiningManager {
                 this.setStatus('Historical JSON download prepared.', 'success');
             }
         } catch (error) {
-            console.error('Historical download failed:', error);
+            debugLogger.error('data_mining.historical_download_failed', {
+                error: error instanceof Error ? error.message : String(error),
+            });
             uiManager.showToast('Historical download failed. See console for details.', 'error');
             this.setStatus('Historical download failed.', 'error');
         } finally {
@@ -322,7 +328,9 @@ export class DataMiningManager {
             );
             uiManager.showToast(`Stored to SQLite: ${payload.dbPath}`, 'success');
         } catch (error) {
-            console.error('Historical SQLite sync failed:', error);
+            debugLogger.error('data_mining.sqlite_sync_failed', {
+                error: error instanceof Error ? error.message : String(error),
+            });
             uiManager.showToast('Historical SQLite sync failed. See console for details.', 'error');
             this.setStatus('Historical SQLite sync failed.', 'error');
         } finally {
@@ -580,7 +588,7 @@ export class DataMiningManager {
 
         try {
             const text = await file.text();
-            const parsed = JSON.parse(text);
+            const parsed: unknown = JSON.parse(text);
             const { bars, meta, symbol, interval } = this.extractBarsFromJson(parsed);
 
             if (bars.length === 0) {
@@ -610,7 +618,9 @@ export class DataMiningManager {
             this.setStatus(`Loaded ${bars.length.toLocaleString()} bars from JSON${metaNote}.`, 'success');
             debugLogger.event('data.import', { bars: bars.length });
         } catch (error) {
-            console.error('JSON import failed:', error);
+            debugLogger.error('data_mining.import_failed', {
+                error: error instanceof Error ? error.message : String(error),
+            });
             uiManager.showToast('Failed to import JSON data.', 'error');
             this.setStatus('Failed to import JSON data.', 'error');
         } finally {
@@ -619,36 +629,36 @@ export class DataMiningManager {
         }
     }
 
-    private extractBarsFromJson(payload: any): {
+    private extractBarsFromJson(payload: unknown): {
         bars: OHLCVData[];
         meta: string | null;
         symbol: string | null;
         interval: string | null;
     } {
-        let rawData: any[] = [];
+        let rawData: unknown[] = [];
         let meta: string | null = null;
         let symbol: string | null = null;
         let interval: string | null = null;
 
-        if (payload && typeof payload.symbol === 'string') {
+        if (this.isRecord(payload) && typeof payload.symbol === 'string') {
             const value = payload.symbol.trim();
             symbol = value.length > 0 ? value : null;
         }
-        if (payload && typeof payload.interval === 'string') {
+        if (this.isRecord(payload) && typeof payload.interval === 'string') {
             const value = payload.interval.trim();
             interval = value.length > 0 ? value : null;
         }
 
         if (Array.isArray(payload)) {
             rawData = payload;
-        } else if (payload && Array.isArray(payload.data)) {
+        } else if (this.isRecord(payload) && Array.isArray(payload.data)) {
             rawData = payload.data;
             if (symbol || interval) {
                 meta = `${symbol ?? 'unknown'} ${interval ?? ''}`.trim();
             }
-        } else if (payload && Array.isArray(payload.ohlcv)) {
+        } else if (this.isRecord(payload) && Array.isArray(payload.ohlcv)) {
             rawData = payload.ohlcv;
-        } else if (payload && Array.isArray(payload.candles)) {
+        } else if (this.isRecord(payload) && Array.isArray(payload.candles)) {
             rawData = payload.candles;
         }
 
@@ -674,7 +684,7 @@ export class DataMiningManager {
         return { bars: deduped, meta, symbol, interval };
     }
 
-    private parseBar(row: any): OHLCVData | null {
+    private parseBar(row: unknown): OHLCVData | null {
         if (!row) return null;
 
         if (Array.isArray(row)) {
@@ -688,7 +698,7 @@ export class DataMiningManager {
             return this.buildBar(time, open, high, low, close, volume);
         }
 
-        if (typeof row === 'object') {
+        if (this.isRecord(row)) {
             const timeRaw =
                 row.time ??
                 row.t ??
@@ -709,7 +719,7 @@ export class DataMiningManager {
         return null;
     }
 
-    private normalizeTime(value: any): number | null {
+    private normalizeTime(value: unknown): number | null {
         return parseTimeToUnixSeconds(value);
     }
 

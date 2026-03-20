@@ -332,6 +332,55 @@ export function createUiManagerDom(): UiManagerDom {
     };
 }
 
+export const RESULTS_RENDERER_REQUIRED_IDS = [
+    "netProfitCard",
+    "netProfitPctCard",
+    "entryLevelsBody",
+    "parityComparePanel",
+    "parityCompareGrid",
+    "parityCompareHint",
+] as const;
+
+export interface ResultsRendererDom {
+    netProfitCard: HTMLElement;
+    netProfitPctCard: HTMLElement;
+    entryLevelsBody: HTMLElement;
+    parityComparePanel: HTMLElement;
+    parityCompareGrid: HTMLElement;
+    parityCompareHint: HTMLElement;
+}
+
+export function createResultsRendererDom(): ResultsRendererDom {
+    return {
+        netProfitCard: getRequiredElement("netProfitCard"),
+        netProfitPctCard: getRequiredElement("netProfitPctCard"),
+        entryLevelsBody: getRequiredElement("entryLevelsBody"),
+        parityComparePanel: getRequiredElement("parityComparePanel"),
+        parityCompareGrid: getRequiredElement("parityCompareGrid"),
+        parityCompareHint: getRequiredElement("parityCompareHint"),
+    };
+}
+
+export const TRADES_RENDERER_REQUIRED_IDS = [
+    "tradesList",
+    "tradesTotalPnL",
+    "tradesWinRate",
+] as const;
+
+export interface TradesRendererDom {
+    tradesList: HTMLElement;
+    tradesTotalPnL: HTMLElement;
+    tradesWinRate: HTMLElement;
+}
+
+export function createTradesRendererDom(): TradesRendererDom {
+    return {
+        tradesList: getRequiredElement("tradesList"),
+        tradesTotalPnL: getRequiredElement("tradesTotalPnL"),
+        tradesWinRate: getRequiredElement("tradesWinRate"),
+    };
+}
+
 export const SETTINGS_MANAGER_REQUIRED_IDS = [
     "strategySelect",
     "settingsTab",

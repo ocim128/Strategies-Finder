@@ -1,17 +1,24 @@
 import { Time } from "lightweight-charts";
 import { OHLCVData, Trade } from "../strategies/index";
-import { getRequiredElement, setVisible } from "../dom-utils";
+import { setVisible } from "../dom-utils";
 import { state } from "../state";
 import { resolveOpenTradeDisplayMetrics } from "../open-trade-display";
+import { createTradesRendererDom, type TradesRendererDom } from "../feature-dom-contracts";
 
 export class TradesRenderer {
+    private dom: TradesRendererDom | null = null;
+
+    private getDom(): TradesRendererDom {
+        return this.dom ??= createTradesRendererDom();
+    }
+
     public render(
         trades: Trade[],
         jumpToTrade: (time: Time) => void,
         formatPrice: (p: number) => string,
         formatDate: (t: Time) => string
     ) {
-        const container = getRequiredElement('tradesList');
+        const container = this.getDom().tradesList;
         container.classList.remove('trades-list-parity');
 
         if (trades.length === 0) {
@@ -36,7 +43,7 @@ export class TradesRenderer {
         formatPrice: (p: number) => string,
         formatDate: (t: Time) => string
     ): void {
-        const container = getRequiredElement('tradesList');
+        const container = this.getDom().tradesList;
         container.classList.add('trades-list-parity');
 
         const combined = [...oddTrades, ...evenTrades];
@@ -218,28 +225,20 @@ export class TradesRenderer {
         const totalPnL = trades.reduce((sum, t) => sum + t.pnl, 0);
         const winners = trades.filter(t => t.pnl > 0).length;
         const winRate = (winners / trades.length) * 100;
+        const dom = this.getDom();
 
-        const pnlEl = document.getElementById('tradesTotalPnL');
-        const wrEl = document.getElementById('tradesWinRate');
-
-        if (pnlEl) {
-            pnlEl.textContent = `${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)}`;
-            pnlEl.className = `summary-value ${totalPnL >= 0 ? 'positive' : 'negative'}`;
-        }
-        if (wrEl) {
-            wrEl.textContent = `${winRate.toFixed(1)}%`;
-            wrEl.className = `summary-value ${winRate >= 50 ? 'positive' : 'negative'}`;
-        }
+        dom.tradesTotalPnL.textContent = `${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)}`;
+        dom.tradesTotalPnL.className = `summary-value ${totalPnL >= 0 ? 'positive' : 'negative'}`;
+        dom.tradesWinRate.textContent = `${winRate.toFixed(1)}%`;
+        dom.tradesWinRate.className = `summary-value ${winRate >= 50 ? 'positive' : 'negative'}`;
     }
 
     public clear() {
         setVisible('emptyTrades', true);
         setVisible('tradesSummary', false);
-        const container = document.getElementById('tradesList');
-        if (container) {
-            container.classList.remove('trades-list-parity');
-            container.innerHTML = '';
-        }
+        const container = this.getDom().tradesList;
+        container.classList.remove('trades-list-parity');
+        container.innerHTML = '';
     }
 }
 
