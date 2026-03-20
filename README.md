@@ -233,9 +233,15 @@ export const my_strategy_key: Strategy = {
 ```
 
 Helpful helper files:
-- `lib/strategies/strategy-helpers.ts`: signal creation, clean-data guards, base OHLCV series extractors
-- `lib/strategies/lib/price-action-frequency-core.ts`: candle geometry and trailing range/high-low helpers
-- `lib/strategies/lib/price-action-statistics-core.ts`: percentile, z-score, skewness, streak, ROC, ER, and decay helpers
+- `lib/strategies/strategy-helpers.ts`: signal creation (`createBuySignal`, `createSignalLoop`), clean-data guards, base OHLCV series extractors (`getCloses`, `getHighs`).
+- `lib/strategies/lib/price-action-frequency-core.ts`: candle geometry (`getPriceActionBarMetrics`) and trailing range/high-low helpers.
+- `lib/strategies/lib/price-action-statistics-core.ts`: percentile, z-score, skewness, streak, ROC, ER, and decay helpers (`buildRollingEntropy`, `buildEfficiencyRatio`).
+
+Important Data Type Rules:
+- **Array matching**: Make sure you match index shapes natively using closures `cleanData.map((d, i) => ...)`.
+- **Parameter arrays**: Methods expecting raw `number[]` (like `buildRollingZScore(closes)`) will crash the compiler if handed `OHLCVData[]`. Some specialized tools like `buildEfficiencyRatio(cleanData)` expect the entire `OHLCVData[]` series. Check the tooltip or signature carefully.
+- **Null safety**: `createSignalLoop` maps safely, but always prepend `if (i < lookback || indicator[i] === null) return null;` at the top of your execution loop.
+- **Complex indicators**: Some return absolute arrays `calculateATR() -> (number | null)[]` while others return mapped sub-arrays `calculateMACD() -> { macd, signal, histogram }`. Call the property precisely.
 
 Strategy author checklist:
 - keep `defaultParams` valid after normalization
@@ -249,6 +255,8 @@ Common mistakes:
 - adding a new strategy file but forgetting the manifest entry
 - exposing a WFA param that the strategy later ignores or renames
 - adding `prepareFinderData(...)` for a cheap strategy and paying complexity for no gain
+- supplying `number[]` to tools like `buildEfficiencyRatio` heavily integrated to read `OHLCVData[]` directly causing type check failures.
+- improperly destructuring compound arrays from things like `atrMinMax[i]!.min` instead of pulling the nested array property directly `atrMinMax.min[i]!`.
 
 ### Change backtest behavior
 - Engine logic: `lib/strategies/backtest/*`

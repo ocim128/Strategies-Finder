@@ -175,9 +175,14 @@ Recommended strategy-lib skeleton:
 Read `lib/strategies/lib/median_deviation_streak.ts` for a simple implementation or `lib/strategies/lib/vwap_zscore_reversion.ts` for a slightly more complex robust logic.
 
 Useful helper maps:
-- `lib/strategies/strategy-helpers.ts` (Core signals & base OHLCV access)
-- `lib/strategies/lib/price-action-frequency-core.ts`
-- `lib/strategies/lib/price-action-statistics-core.ts`
+- `lib/strategies/strategy-helpers.ts`: Core signals (`createSignalLoop`, `createBuySignal`, `createSellSignal`) & base OHLCV array extractors (`getCloses`, `getHighs`, `getVolumes`, `ensureCleanData`).
+- `lib/strategies/lib/price-action-frequency-core.ts`: For individual bar geometry (`getPriceActionBarMetrics`) extracting wicks, body, and range metrics seamlessly.
+- `lib/strategies/lib/price-action-statistics-core.ts`: Essential for robustness constraints (`buildRollingEntropy`, `buildEfficiencyRatio`, `buildRollingMedian`, `buildRollingZScore`, `buildRollingKurtosis`, `buildRollingMinMax`, `buildStreakCount`).
+
+Important Type and Dependency Gotchas:
+- Keep track of indicator outputs: some like `calculateADX` and `calculateATR` return pure generic arrays `(number | null)[]`, while `calculateMACD` and `calculateKeltnerChannels` return objects nested with arrays (`macd.histogram`, `kc.lower`).
+- Type coercion matters: pass `cleanData` (which is `OHLCVData[]`) to `buildEfficiencyRatio`, but pass `closes` (which is `number[]`) to standard mapping and extraction routines.
+- Array indexing: ensure you loop against generic padding `if (i < lookback || indicator[i] === null) return null;` securely within closures.
 
 Useful examples:
 - `lib/strategies/lib/median_deviation_streak.ts`
@@ -206,6 +211,8 @@ Strategy-lib failure modes seen repeatedly:
 - using negative values as shorthand for absolute thresholds, then showing impossible negative base params in the UI
 - adding expensive per-bar allocations in Finder hot paths when a cheap reusable array precompute would do
 - adding `prepareFinderData(...)` but not keeping `executePrepared(...)` aligned with `execute(...)`
+- typing array outputs incorrectly resulting in `Type 'number' is not assignable to type 'OHLCVData'` compiler errors
+- assigning undefined accessors to objects mapping structural output boundaries (e.g., calling `atrMinMax[i]!.min` instead of `atrMinMax.min[i]!`)
 
 ### Modify Finder
 - Expect performance sensitivity
