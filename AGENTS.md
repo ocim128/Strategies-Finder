@@ -284,6 +284,13 @@ Core:
 - `npm run test`
 - `npm run test:e2e`
 
+`npm run test` is intentionally compact for agent use. It prints one status line per spec plus a short summary, while full logs are written to `artifacts/test-logs/latest` and the structured summary to `artifacts/test-logs/latest/summary.json`.
+
+Useful test runner variants:
+- `npm run test:verbose`
+- `npm run test:json`
+- `npm run test -- backtesting-engine`
+
 Useful extras:
 - `..\\..\\..\\node_modules\\.bin\\esno tests\\feature-dom-contracts.spec.ts`
 - `..\\..\\..\\node_modules\\.bin\\esno tests\\pairCombiner.spec.ts`

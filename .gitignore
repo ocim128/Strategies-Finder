@@ -129,6 +129,7 @@ price-data/
 
 # Generated run artifacts (batch runs, seed logs, hunt outputs)
 batch-runs/
+artifacts/test-logs/
 run-seed-*.txt
 quality_hunt*.json
 walk_forward_hunt*.json

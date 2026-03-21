@@ -257,6 +257,15 @@ npm run test
 npm run test:e2e
 ```
 
+`npm run test` now uses a compact wrapper that prints one status line per spec and a short summary. Full per-spec logs are written to `artifacts/test-logs/latest`, and `artifacts/test-logs/latest/summary.json` contains the machine-readable summary for agent or tooling use.
+
+Useful variants:
+```bash
+npm run test:verbose
+npm run test:json
+npm run test -- backtesting-engine
+```
+
 Useful extras:
 ```bash
 ..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts
