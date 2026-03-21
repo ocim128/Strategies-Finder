@@ -9,6 +9,15 @@ import {
 } from '../strategy-helpers';
 import { calculateADX } from '../indicators';
 
+type AdxSlopePivotEntryPrepared = {
+    cleanData: OHLCVData[];
+    closes: number[];
+    highs: number[];
+    lows: number[];
+    adxByPeriod: Map<number, (number | null)[]>;
+    pivotRangesByBars: Map<number, { recentHighs: number[]; recentLows: number[] }>;
+};
+
 function normalizeAdxSlopePivotEntryParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
@@ -16,6 +25,50 @@ function normalizeAdxSlopePivotEntryParams(params: StrategyParams): StrategyPara
         pivotBars: Math.max(2, Math.round(params.pivotBars ?? 5)),
         adxSlopeLen: Math.max(1, Math.round(params.adxSlopeLen ?? 3)),
     };
+}
+
+function prepareAdxSlopePivotEntryData(data: OHLCVData[]): AdxSlopePivotEntryPrepared {
+    const cleanData = ensureCleanData(data);
+    return {
+        cleanData,
+        closes: getCloses(cleanData),
+        highs: getHighs(cleanData),
+        lows: getLows(cleanData),
+        adxByPeriod: new Map<number, (number | null)[]>(),
+        pivotRangesByBars: new Map<number, { recentHighs: number[]; recentLows: number[] }>(),
+    };
+}
+
+function getPreparedAdxSlopePivotEntryData(
+    preparedData: unknown,
+    data: OHLCVData[]
+): AdxSlopePivotEntryPrepared {
+    if (preparedData && typeof preparedData === 'object' && 'adxByPeriod' in preparedData) {
+        return preparedData as AdxSlopePivotEntryPrepared;
+    }
+    return prepareAdxSlopePivotEntryData(data);
+}
+
+function buildPivotRanges(
+    highs: number[],
+    lows: number[],
+    pivotBars: number
+): { recentHighs: number[]; recentLows: number[] } {
+    const recentHighs = new Array<number>(highs.length).fill(Number.NaN);
+    const recentLows = new Array<number>(lows.length).fill(Number.NaN);
+
+    for (let i = pivotBars; i < highs.length; i++) {
+        let recentHigh = highs[i - 1];
+        let recentLow = lows[i - 1];
+        for (let j = i - pivotBars; j < i; j++) {
+            recentHigh = Math.max(recentHigh, highs[j]);
+            recentLow = Math.min(recentLow, lows[j]);
+        }
+        recentHighs[i] = recentHigh;
+        recentLows[i] = recentLow;
+    }
+
+    return { recentHighs, recentLows };
 }
 
 export const adx_slope_pivot_entry: Strategy = {
@@ -32,18 +85,28 @@ export const adx_slope_pivot_entry: Strategy = {
         adxSlopeLen: 'ADX Slope Length',
     },
     normalizeParams: normalizeAdxSlopePivotEntryParams,
-    execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
-        const cleanData = ensureCleanData(data);
+    prepareFinderData: (data) => prepareAdxSlopePivotEntryData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]): Signal[] => {
+        const prepared = getPreparedAdxSlopePivotEntryData(preparedData, data);
+        const { cleanData, closes, highs, lows, adxByPeriod, pivotRangesByBars } = prepared;
         if (cleanData.length < 8) return [];
 
-        const adxPeriod = Math.max(2, Math.round(params.adxPeriod ?? 14));
-        const pivotBars = Math.max(2, Math.round(params.pivotBars ?? 5));
-        const adxSlopeLen = Math.max(1, Math.round(params.adxSlopeLen ?? 3));
+        const normalizedParams = normalizeAdxSlopePivotEntryParams(params);
+        const adxPeriod = normalizedParams.adxPeriod as number;
+        const pivotBars = normalizedParams.pivotBars as number;
+        const adxSlopeLen = normalizedParams.adxSlopeLen as number;
 
-        const closes = getCloses(cleanData);
-        const highs = getHighs(cleanData);
-        const lows = getLows(cleanData);
-        const adx = calculateADX(highs, lows, closes, adxPeriod);
+        let adx = adxByPeriod.get(adxPeriod);
+        if (!adx) {
+            adx = calculateADX(highs, lows, closes, adxPeriod);
+            adxByPeriod.set(adxPeriod, adx);
+        }
+
+        let pivotRanges = pivotRangesByBars.get(pivotBars);
+        if (!pivotRanges) {
+            pivotRanges = buildPivotRanges(highs, lows, pivotBars);
+            pivotRangesByBars.set(pivotBars, pivotRanges);
+        }
 
         const signals: Signal[] = [];
 
@@ -54,12 +117,9 @@ export const adx_slope_pivot_entry: Strategy = {
 
             if (adxNow <= adxPast) continue;
 
-            let recentHigh = highs[i - 1];
-            let recentLow = lows[i - 1];
-            for (let j = i - pivotBars; j < i; j++) {
-                recentHigh = Math.max(recentHigh, highs[j]);
-                recentLow = Math.min(recentLow, lows[j]);
-            }
+            const recentHigh = pivotRanges.recentHighs[i];
+            const recentLow = pivotRanges.recentLows[i];
+            if (!Number.isFinite(recentHigh) || !Number.isFinite(recentLow)) continue;
 
             const close = closes[i];
             if (close > recentHigh) {
@@ -71,6 +131,8 @@ export const adx_slope_pivot_entry: Strategy = {
 
         return signals;
     },
+    execute: (data: OHLCVData[], params: StrategyParams): Signal[] =>
+        adx_slope_pivot_entry.executePrepared?.(prepareAdxSlopePivotEntryData(data), params, data) ?? [],
     metadata: {
         role: 'entry',
         direction: 'both',

@@ -2026,6 +2026,9 @@ export default {
         }
 
         const summary = await runScheduledSubscriptions(env);
-        console.log(JSON.stringify(summary));
+        console.info(JSON.stringify({
+            event: "scheduled_run_summary",
+            ...summary,
+        }));
     },
 };

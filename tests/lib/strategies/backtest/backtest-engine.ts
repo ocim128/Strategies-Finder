@@ -1,7 +1,7 @@
 
 import { BacktestResult, BacktestSettings, OHLCVData, Signal, Time, Trade } from '../../types/index';
 import { ensureCleanData } from '../strategy-helpers';
-import { NormalizedSettings, PositionState, PrecomputedIndicators, TradeSizingConfig } from '../../types/backtest';
+import { NormalizedSettings, PositionState, PrecomputedIndicators, TradeSizingConfig, TradeSizingMode } from '../../types/backtest';
 import { applySlippage, compareTime, directionFactorFor, exitSideForDirection, getExecutionShift, getTimeIndex, isLossStreakFlipTradeDirection, needsSnapshotIndicators, normalizeBacktestSettings, normalizeTradeDirection, signalToPositionDirection, timeKey } from './backtest-utils';
 import { calculateSharpeRatioFromEquitySamples } from '../performance-metrics';
 
@@ -29,6 +29,54 @@ type AdaptiveTakeProfitHistoryUpdate = {
 };
 
 export { precomputeIndicators };
+
+type EntryBuildContext = {
+    initialCapital: number;
+    positionSizePercent: number;
+    commissionRate: number;
+    slippageRate: number;
+    settings: NormalizedSettings;
+    data: OHLCVData[];
+    atrArray: (number | null)[];
+    tradeDirection: ReturnType<typeof normalizeTradeDirection>;
+    sizingMode: TradeSizingMode;
+    fixedTradeAmount: number;
+    smartSizingState: SmartSizingState;
+    winStreakRisk: WinStreakRiskState;
+    adaptiveTakeProfitState: ReturnType<typeof createAdaptiveTakeProfitState>;
+};
+
+function buildEntryPosition(
+    context: EntryBuildContext,
+    signal: Signal,
+    barIndex: number,
+    capital: number
+) {
+    return buildPositionFromSignal({
+        signal,
+        barIndex,
+        capital,
+        initialCapital: context.initialCapital,
+        positionSizePercent: context.positionSizePercent,
+        commissionRate: context.commissionRate,
+        slippageRate: context.slippageRate,
+        settings: context.settings,
+        data: context.data,
+        atrArray: context.atrArray,
+        tradeDirection: context.tradeDirection,
+        sizingMode: context.sizingMode,
+        fixedTradeAmount: context.fixedTradeAmount,
+        smartSizingState: context.smartSizingState,
+        ...buildPositionRiskOverrides(context.settings, context.winStreakRisk),
+        ...buildPercentageTakeProfitOverrides(
+            context.settings,
+            signalToPositionDirection(signal.type),
+            signal.price,
+            barIndex,
+            context.adaptiveTakeProfitState
+        ),
+    });
+}
 
 function getConflictingEntryTimes(signals: Signal[]): Set<string> {
     const buyTimes = new Set<string>();
@@ -587,6 +635,21 @@ export function runBacktestCompact(
     const warmUpEnabled = config.warmUpEntryEnabled;
     let pendingEntry: Signal | null = null;
     const adaptiveTakeProfitState = createAdaptiveTakeProfitState(data, config, indicatorSeries, initialCapital);
+    const entryBuildContext: EntryBuildContext = {
+        initialCapital,
+        positionSizePercent,
+        commissionRate,
+        slippageRate,
+        settings: config,
+        data,
+        atrArray: indicatorSeries.atr,
+        tradeDirection,
+        sizingMode,
+        fixedTradeAmount,
+        smartSizingState,
+        winStreakRisk,
+        adaptiveTakeProfitState,
+    };
     const pendingAdaptiveTakeProfitUpdates: AdaptiveTakeProfitHistoryUpdate[] = [];
     const pendingAdaptiveTakeProfitExits = new Map<PositionState, NonNullable<Trade['exitReason']>>();
 
@@ -629,7 +692,7 @@ export function runBacktestCompact(
 
     const applyAdaptiveTakeProfitAfterBar = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
         const adaptiveExit = updateAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, pos, candle, barIndex);
-        if (!adaptiveExit || positions.indexOf(pos) < 0) {
+        if (!adaptiveExit) {
             return;
         }
 
@@ -639,8 +702,8 @@ export function runBacktestCompact(
         }
 
         const exitPrice = applySlippage(adaptiveExit.exitPrice, exitSideForDirection(pos.direction), slippageRate);
-        recordExit(pos, exitPrice, pos.size);
-        if (positions.indexOf(pos) < 0) {
+        const { fullyClosed } = recordExit(pos, exitPrice, pos.size);
+        if (fullyClosed) {
             finalizeClosedPosition(pos, candle, exitPrice, adaptiveExit.exitReason);
         }
     };
@@ -652,24 +715,27 @@ export function runBacktestCompact(
         if (details.totalPnl > 0) { winningTrades++; totalProfit += details.totalPnl; } else { totalLoss += Math.abs(details.totalPnl); }
         pos.realizedPnl += details.totalPnl;
         pos.size -= details.size;
+        let fullyClosed = false;
         if (pos.size <= 0) {
             const idx = positions.indexOf(pos);
             if (idx >= 0) positions.splice(idx, 1);
             pendingAdaptiveTakeProfitExits.delete(pos);
+            fullyClosed = true;
         }
-        return details;
+        return { details, fullyClosed };
     };
 
     const tryProcessExitsAfterEntry = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
         updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
         const exitTrigger = processPositionExits(candle, pos, config, slippageRate);
+        let fullyClosed = false;
         if (exitTrigger) {
-            recordExit(pos, exitTrigger.exitPrice, exitTrigger.exitSize);
-            if (positions.indexOf(pos) < 0) {
+            ({ fullyClosed } = recordExit(pos, exitTrigger.exitPrice, exitTrigger.exitSize));
+            if (fullyClosed) {
                 finalizeClosedPosition(pos, candle, exitTrigger.exitPrice, exitTrigger.exitReason);
             }
         }
-        if (positions.indexOf(pos) >= 0) {
+        if (!fullyClosed) {
             updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
             applyAdaptiveTakeProfitAfterBar(pos, candle, barIndex);
         }
@@ -684,8 +750,8 @@ export function runBacktestCompact(
 
         const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, { stopLossOnly: true });
         if (stopLossTrigger) {
-            recordExit(pos, stopLossTrigger.exitPrice, stopLossTrigger.exitSize);
-            if (positions.indexOf(pos) < 0) {
+            const { fullyClosed } = recordExit(pos, stopLossTrigger.exitPrice, stopLossTrigger.exitSize);
+            if (fullyClosed) {
                 finalizeClosedPosition(pos, candle, stopLossTrigger.exitPrice, stopLossTrigger.exitReason);
             }
         }
@@ -701,8 +767,8 @@ export function runBacktestCompact(
 
             pendingAdaptiveTakeProfitExits.delete(pos);
             const exitPrice = applySlippage(candle.open, exitSideForDirection(pos.direction), slippageRate);
-            recordExit(pos, exitPrice, pos.size);
-            if (positions.indexOf(pos) < 0) {
+            const { fullyClosed } = recordExit(pos, exitPrice, pos.size);
+            if (fullyClosed) {
                 finalizeClosedPosition(pos, candle, exitPrice, pendingReason);
             }
         }
@@ -713,13 +779,14 @@ export function runBacktestCompact(
             pos.barsInTrade += 1;
             updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
             const exitTrigger = processPositionExits(candle, pos, config, slippageRate);
+            let fullyClosed = false;
             if (exitTrigger) {
-                recordExit(pos, exitTrigger.exitPrice, exitTrigger.exitSize);
-                if (positions.indexOf(pos) < 0) {
+                ({ fullyClosed } = recordExit(pos, exitTrigger.exitPrice, exitTrigger.exitSize));
+                if (fullyClosed) {
                     finalizeClosedPosition(pos, candle, exitTrigger.exitPrice, exitTrigger.exitReason);
                 }
             }
-            if (positions.indexOf(pos) >= 0) {
+            if (!fullyClosed) {
                 updatePositionState(candle, pos, config, indicatorSeries.atr[i]);
                 applyAdaptiveTakeProfitAfterBar(pos, candle, i);
             }
@@ -729,30 +796,7 @@ export function runBacktestCompact(
         if (warmUpEnabled && pendingEntry && positions.length < maxOpenTrades) {
             const warmUpSignal: Signal = Object.assign({}, pendingEntry, { price: candle.open, time: candle.time });
             if (canEnterLossFlipDirection(tradeDirection, flipLossDirection, warmUpSignal)) {
-                const opened = buildPositionFromSignal({
-                    signal: warmUpSignal,
-                    barIndex: i,
-                    capital,
-                    initialCapital,
-                    positionSizePercent,
-                    commissionRate,
-                    slippageRate,
-                    settings: config,
-                    data,
-                    atrArray: indicatorSeries.atr,
-                    tradeDirection,
-                    sizingMode,
-                    fixedTradeAmount,
-                    smartSizingState,
-                    ...buildPositionRiskOverrides(config, winStreakRisk),
-                    ...buildPercentageTakeProfitOverrides(
-                        config,
-                        signalToPositionDirection(warmUpSignal.type),
-                        warmUpSignal.price,
-                        i,
-                        adaptiveTakeProfitState
-                    ),
-                });
+                const opened = buildEntryPosition(entryBuildContext, warmUpSignal, i, capital);
                 if (opened) {
                     positions.push(opened.nextPosition);
                     registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
@@ -783,30 +827,7 @@ export function runBacktestCompact(
                     if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
                         continue;
                     }
-                    const opened = buildPositionFromSignal({
-                        signal,
-                        barIndex: i,
-                        capital,
-                        initialCapital,
-                        positionSizePercent,
-                        commissionRate,
-                        slippageRate,
-                        settings: config,
-                        data,
-                        atrArray: indicatorSeries.atr,
-                        tradeDirection,
-                        sizingMode,
-                        fixedTradeAmount,
-                        smartSizingState,
-                        ...buildPositionRiskOverrides(config, winStreakRisk),
-                        ...buildPercentageTakeProfitOverrides(
-                            config,
-                            signalToPositionDirection(signal.type),
-                            signal.price,
-                            i,
-                            adaptiveTakeProfitState
-                        ),
-                    });
+                    const opened = buildEntryPosition(entryBuildContext, signal, i, capital);
                     if (opened) {
                         positions.push(opened.nextPosition);
                         registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
@@ -829,11 +850,10 @@ export function runBacktestCompact(
                         continue;
                     }
                     const wasPartial = exitFraction < 1;
-                    recordExit(exitTarget, signal.price, exitSize);
-                    if (positions.indexOf(exitTarget) < 0) {
+                    const { fullyClosed } = recordExit(exitTarget, signal.price, exitSize);
+                    if (fullyClosed) {
                         finalizeClosedPosition(exitTarget, candle, signal.price, 'signal');
                     }
-                    const fullyClosed = positions.indexOf(exitTarget) < 0;
                     const immediateReentryAllowed = fullyClosed && !wasPartial && (
                         tradeDirection === 'both'
                         || (
@@ -843,30 +863,7 @@ export function runBacktestCompact(
                         )
                     );
                     if (immediateReentryAllowed && positions.length < maxOpenTrades) {
-                        const opened = buildPositionFromSignal({
-                            signal,
-                            barIndex: i,
-                            capital,
-                            initialCapital,
-                            positionSizePercent,
-                            commissionRate,
-                            slippageRate,
-                            settings: config,
-                            data,
-                            atrArray: indicatorSeries.atr,
-                            tradeDirection,
-                            sizingMode,
-                            fixedTradeAmount,
-                            smartSizingState,
-                            ...buildPositionRiskOverrides(config, winStreakRisk),
-                            ...buildPercentageTakeProfitOverrides(
-                                config,
-                                signalToPositionDirection(signal.type),
-                                signal.price,
-                                i,
-                                adaptiveTakeProfitState
-                            ),
-                        });
+                        const opened = buildEntryPosition(entryBuildContext, signal, i, capital);
                         if (opened) {
                             positions.push(opened.nextPosition);
                             registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
@@ -975,6 +972,21 @@ export function runBacktest(
     const warmUpEnabled = config.warmUpEntryEnabled;
     let pendingEntry: Signal | null = null;
     const adaptiveTakeProfitState = createAdaptiveTakeProfitState(data, config, indicatorSeries, initialCapital);
+    const entryBuildContext: EntryBuildContext = {
+        initialCapital,
+        positionSizePercent,
+        commissionRate,
+        slippageRate,
+        settings: config,
+        data,
+        atrArray: indicatorSeries.atr,
+        tradeDirection,
+        sizingMode,
+        fixedTradeAmount,
+        smartSizingState,
+        winStreakRisk,
+        adaptiveTakeProfitState,
+    };
     const pendingAdaptiveTakeProfitUpdates: AdaptiveTakeProfitHistoryUpdate[] = [];
     const pendingAdaptiveTakeProfitExits = new Map<PositionState, NonNullable<Trade['exitReason']>>();
 
@@ -1017,7 +1029,7 @@ export function runBacktest(
 
     const applyAdaptiveTakeProfitAfterBarFull = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
         const adaptiveExit = updateAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, pos, candle, barIndex);
-        if (!adaptiveExit || positions.indexOf(pos) < 0) {
+        if (!adaptiveExit) {
             return;
         }
 
@@ -1027,8 +1039,8 @@ export function runBacktest(
         }
 
         const exitPrice = applySlippage(adaptiveExit.exitPrice, exitSideForDirection(pos.direction), slippageRate);
-        recordExitFull(pos, candle, exitPrice, pos.size, adaptiveExit.exitReason);
-        if (positions.indexOf(pos) < 0) {
+        const { fullyClosed } = recordExitFull(pos, candle, exitPrice, pos.size, adaptiveExit.exitReason);
+        if (fullyClosed) {
             finalizeClosedPositionFull(pos, candle, exitPrice, adaptiveExit.exitReason);
         }
     };
@@ -1057,13 +1069,15 @@ export function runBacktest(
         trades.push(trade);
         pos.realizedPnl += d.totalPnl;
         pos.size -= d.size;
+        let fullyClosed = false;
         if (pos.size <= 0) {
             const idx = positions.indexOf(pos);
             if (idx >= 0) positions.splice(idx, 1);
             snapshots.delete(pos);
             pendingAdaptiveTakeProfitExits.delete(pos);
+            fullyClosed = true;
         }
-        return d;
+        return { details: d, fullyClosed };
     };
 
     const captureSnapshotForPosition = (pos: PositionState, barIndex: number, signal: Signal) => {
@@ -1076,13 +1090,14 @@ export function runBacktest(
     const tryProcessExitsAfterEntryFull = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
         updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
         const exitTrigger = processPositionExits(candle, pos, config, slippageRate);
+        let fullyClosed = false;
         if (exitTrigger) {
-            recordExitFull(pos, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason);
-            if (positions.indexOf(pos) < 0) {
+            ({ fullyClosed } = recordExitFull(pos, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason));
+            if (fullyClosed) {
                 finalizeClosedPositionFull(pos, candle, exitTrigger.exitPrice, exitTrigger.exitReason);
             }
         }
-        if (positions.indexOf(pos) >= 0) {
+        if (!fullyClosed) {
             updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
             applyAdaptiveTakeProfitAfterBarFull(pos, candle, barIndex);
         }
@@ -1097,8 +1112,8 @@ export function runBacktest(
 
         const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, { stopLossOnly: true });
         if (stopLossTrigger) {
-            recordExitFull(pos, candle, stopLossTrigger.exitPrice, stopLossTrigger.exitSize, stopLossTrigger.exitReason);
-            if (positions.indexOf(pos) < 0) {
+            const { fullyClosed } = recordExitFull(pos, candle, stopLossTrigger.exitPrice, stopLossTrigger.exitSize, stopLossTrigger.exitReason);
+            if (fullyClosed) {
                 finalizeClosedPositionFull(pos, candle, stopLossTrigger.exitPrice, stopLossTrigger.exitReason);
             }
         }
@@ -1114,8 +1129,8 @@ export function runBacktest(
 
             pendingAdaptiveTakeProfitExits.delete(pos);
             const exitPrice = applySlippage(candle.open, exitSideForDirection(pos.direction), slippageRate);
-            recordExitFull(pos, candle, exitPrice, pos.size, pendingReason);
-            if (positions.indexOf(pos) < 0) {
+            const { fullyClosed } = recordExitFull(pos, candle, exitPrice, pos.size, pendingReason);
+            if (fullyClosed) {
                 finalizeClosedPositionFull(pos, candle, exitPrice, pendingReason);
             }
         }
@@ -1126,13 +1141,14 @@ export function runBacktest(
             pos.barsInTrade += 1;
             updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
             const exitTrigger = processPositionExits(candle, pos, config, slippageRate);
+            let fullyClosed = false;
             if (exitTrigger) {
-                recordExitFull(pos, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason);
-                if (positions.indexOf(pos) < 0) {
+                ({ fullyClosed } = recordExitFull(pos, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason));
+                if (fullyClosed) {
                     finalizeClosedPositionFull(pos, candle, exitTrigger.exitPrice, exitTrigger.exitReason);
                 }
             }
-            if (positions.indexOf(pos) >= 0) {
+            if (!fullyClosed) {
                 updatePositionState(candle, pos, config, indicatorSeries.atr[i]);
                 applyAdaptiveTakeProfitAfterBarFull(pos, candle, i);
             }
@@ -1142,30 +1158,7 @@ export function runBacktest(
         if (warmUpEnabled && pendingEntry && positions.length < maxOpenTrades) {
             const warmUpSignal: Signal = Object.assign({}, pendingEntry, { price: candle.open, time: candle.time });
             if (canEnterLossFlipDirection(tradeDirection, flipLossDirection, warmUpSignal)) {
-                const opened = buildPositionFromSignal({
-                    signal: warmUpSignal,
-                    barIndex: i,
-                    capital,
-                    initialCapital,
-                    positionSizePercent,
-                    commissionRate,
-                    slippageRate,
-                    settings: config,
-                    data,
-                    atrArray: indicatorSeries.atr,
-                    tradeDirection,
-                    sizingMode,
-                    fixedTradeAmount,
-                    smartSizingState,
-                    ...buildPositionRiskOverrides(config, winStreakRisk),
-                    ...buildPercentageTakeProfitOverrides(
-                        config,
-                        signalToPositionDirection(warmUpSignal.type),
-                        warmUpSignal.price,
-                        i,
-                        adaptiveTakeProfitState
-                    ),
-                });
+                const opened = buildEntryPosition(entryBuildContext, warmUpSignal, i, capital);
                 if (opened) {
                     positions.push(opened.nextPosition);
                     registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
@@ -1197,30 +1190,7 @@ export function runBacktest(
                     if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
                         continue;
                     }
-                    const opened = buildPositionFromSignal({
-                        signal,
-                        barIndex: i,
-                        capital,
-                        initialCapital,
-                        positionSizePercent,
-                        commissionRate,
-                        slippageRate,
-                        settings: config,
-                        data,
-                        atrArray: indicatorSeries.atr,
-                        tradeDirection,
-                        sizingMode,
-                        fixedTradeAmount,
-                        smartSizingState,
-                        ...buildPositionRiskOverrides(config, winStreakRisk),
-                        ...buildPercentageTakeProfitOverrides(
-                            config,
-                            signalToPositionDirection(signal.type),
-                            signal.price,
-                            i,
-                            adaptiveTakeProfitState
-                        ),
-                    });
+                    const opened = buildEntryPosition(entryBuildContext, signal, i, capital);
                     if (opened) {
                         positions.push(opened.nextPosition);
                         registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
@@ -1241,8 +1211,7 @@ export function runBacktest(
                     const exitSize = exitTarget.size * exitFraction;
                     if (exitSize <= 0) continue;
 
-                    recordExitFull(exitTarget, candle, signal.price, exitSize, 'signal');
-                    const fullyClosed = positions.indexOf(exitTarget) < 0;
+                    const { fullyClosed } = recordExitFull(exitTarget, candle, signal.price, exitSize, 'signal');
                     if (fullyClosed) {
                         finalizeClosedPositionFull(exitTarget, candle, signal.price, 'signal');
                     }
@@ -1255,30 +1224,7 @@ export function runBacktest(
                         )
                     );
                     if (immediateReentryAllowed && positions.length < maxOpenTrades) {
-                        const opened = buildPositionFromSignal({
-                            signal,
-                            barIndex: i,
-                            capital,
-                            initialCapital,
-                            positionSizePercent,
-                            commissionRate,
-                            slippageRate,
-                            settings: config,
-                            data,
-                            atrArray: indicatorSeries.atr,
-                            tradeDirection,
-                            sizingMode,
-                            fixedTradeAmount,
-                            smartSizingState,
-                            ...buildPositionRiskOverrides(config, winStreakRisk),
-                            ...buildPercentageTakeProfitOverrides(
-                                config,
-                                signalToPositionDirection(signal.type),
-                                signal.price,
-                                i,
-                                adaptiveTakeProfitState
-                            ),
-                        });
+                        const opened = buildEntryPosition(entryBuildContext, signal, i, capital);
                         if (opened) {
                             positions.push(opened.nextPosition);
                             registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);

@@ -15,7 +15,7 @@ import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderTimeframeLoader, type FinderDataset } from "./finder/finder-timeframe-loader";
 import { FinderUI } from "./finder/finder-ui";
 import { debugLogger, robustAuditSink } from "./debug-logger";
-import { readNumberInputValue, readToggleValue } from "./dom-input-readers";
+import { parseInputNumber } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { commitBacktestResult, commitParityBacktestResults } from "./state-actions";
@@ -124,8 +124,8 @@ export class FinderManager {
 
 		// Advanced Toggle Logic
 		toggle.addEventListener('change', () => {
-			setVisible(simpleSection.id, !toggle.checked);
-			setVisible(advancedSection.id, toggle.checked);
+			setVisible(simpleSection, !toggle.checked);
+			setVisible(advancedSection, toggle.checked);
 		});
 
 		// Initialize Advanced List
@@ -426,6 +426,12 @@ export class FinderManager {
 
 	private renderStrategySelection(): void {
 		const container = this.getDom().finderStrategyList;
+		const previouslySelected = new Set<string>();
+		this.strategyToggles.forEach((toggle, key) => {
+			if (toggle.checked) {
+				previouslySelected.add(key);
+			}
+		});
 		container.innerHTML = '';
 		this.strategyToggles.clear();
 		this.strategyItems.clear();
@@ -443,7 +449,7 @@ export class FinderManager {
 			const checkbox = document.createElement('input');
 			checkbox.type = 'checkbox';
 			checkbox.id = `finder-strategy-${key}`;
-			checkbox.checked = false;
+			checkbox.checked = previouslySelected.has(key);
 			checkbox.addEventListener('click', (event) => {
 				this.handleStrategyToggleClick(key, event as MouseEvent);
 			});
@@ -466,6 +472,13 @@ export class FinderManager {
 		container.appendChild(fragment);
 
 		this.applyStrategyFilter();
+		this.syncStrategySelectionUi();
+	}
+
+	private readFinderNumberInput(input: HTMLInputElement, fallback: number, min?: number): number {
+		const value = parseInputNumber(input.value);
+		if (value === null) return fallback;
+		return min === undefined ? value : Math.max(min, value);
 	}
 
 	private handleStrategyToggleClick(strategyKey: string, event: MouseEvent): void {
@@ -709,12 +722,13 @@ export class FinderManager {
 	}
 
 	private readOptions(): FinderOptions {
-		const useAdvancedSort = readToggleValue('finderAdvancedToggle', false);
+		const dom = this.getDom();
+		const useAdvancedSort = dom.finderAdvancedToggle.checked;
 		let sortPriority: FinderMetric[] = [];
 
 		if (useAdvancedSort) {
 			// Scrape sort priority from the list
-			const sortItems = document.querySelectorAll('#finderSortList .finder-sort-item');
+			const sortItems = dom.finderSortList.querySelectorAll('.finder-sort-item');
 			sortPriority = Array.from(sortItems)
 				.map(el => (el as HTMLElement).dataset.value as FinderMetric | undefined)
 				.filter((val): val is FinderMetric => !!val);
@@ -737,25 +751,24 @@ export class FinderManager {
 			}
 		}
 
-		const dom = this.getDom();
 		const mode = dom.finderMode.value as FinderMode;
-		const multiTimeframeRequested = readToggleValue('finderMultiTimeframeToggle', false);
+		const multiTimeframeRequested = dom.finderMultiTimeframeToggle.checked;
 		const multiTimeframeEnabled = multiTimeframeRequested && !dataManager.isMockSymbol(state.currentSymbol);
 		const timeframes = multiTimeframeEnabled
 			? this.selectedFinderTimeframes.slice(0, FinderManager.MAX_MULTI_TIMEFRAMES)
 			: [];
-		const topN = Math.round(readNumberInputValue('finderTopN', 10, 1));
-		const steps = Math.round(readNumberInputValue('finderSteps', 3, 2));
-		const robustSeed = Math.round(readNumberInputValue('finderRobustSeed', 1337, -2147483648));
-		const rangePercent = readNumberInputValue('finderRange', 35, 0);
-		const maxRuns = Math.round(readNumberInputValue('finderMaxRuns', 120, 1));
-		const tradeFilterEnabled = readToggleValue('finderTradesToggle', true);
-		const minTrades = tradeFilterEnabled ? Math.round(readNumberInputValue('finderTradesMin', 40, 0)) : 0;
+		const topN = Math.round(this.readFinderNumberInput(dom.finderTopN, 10, 1));
+		const steps = Math.round(this.readFinderNumberInput(dom.finderSteps, 3, 2));
+		const robustSeed = Math.round(this.readFinderNumberInput(dom.finderRobustSeed, 1337, -2147483648));
+		const rangePercent = this.readFinderNumberInput(dom.finderRange, 35, 0);
+		const maxRuns = Math.round(this.readFinderNumberInput(dom.finderMaxRuns, 120, 1));
+		const tradeFilterEnabled = dom.finderTradesToggle.checked;
+		const minTrades = tradeFilterEnabled ? Math.round(this.readFinderNumberInput(dom.finderTradesMin, 40, 0)) : 0;
 		const maxTradesRaw = tradeFilterEnabled
-			? Math.round(readNumberInputValue('finderTradesMax', Number.POSITIVE_INFINITY, 0))
+			? Math.round(this.readFinderNumberInput(dom.finderTradesMax, Number.POSITIVE_INFINITY, 0))
 			: Number.POSITIVE_INFINITY;
 		const maxTrades = Math.max(minTrades, maxTradesRaw);
-		const comboEnabled = readToggleValue('finderComboToggle', false);
+		const comboEnabled = dom.finderComboToggle.checked;
 		const comboPrimaryConfigName = comboEnabled ? (dom.finderComboPrimarySelect.value || undefined) : undefined;
 		return {
 			mode,
@@ -867,13 +880,14 @@ export class FinderManager {
 	}
 
 	private async saveCurrentSeedAuditFile(): Promise<void> {
-		const mode = this.getDom().finderMode.value as FinderMode;
+		const dom = this.getDom();
+		const mode = dom.finderMode.value as FinderMode;
 		if (mode !== 'robust_random_wf') {
 			uiManager.showToast('Seed audit export is available only in Robust Random WF mode.', 'info');
 			return;
 		}
 
-		const seed = Math.round(readNumberInputValue('finderRobustSeed', 1337, -2147483648));
+		const seed = Math.round(this.readFinderNumberInput(dom.finderRobustSeed, 1337, -2147483648));
 		if (!Number.isFinite(seed)) {
 			uiManager.showToast('Invalid robust seed value.', 'error');
 			return;

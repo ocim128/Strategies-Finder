@@ -19,6 +19,7 @@ class QuickViewManager {
     private jumpToTrade: ((time: Time) => void) | null = null;
     private sortNewestFirst = true;  // default: most recent trade on top
     private currentTrades: Trade[] = [];  // cached for re-sorting
+    private keyboardHandler: ((e: KeyboardEvent) => void) | null = null;
 
     // ── Initialisation ─────────────────────────────────────
 
@@ -126,13 +127,15 @@ class QuickViewManager {
     // ── Keyboard ───────────────────────────────────────────
 
     private bindKeyboard() {
-        window.addEventListener('keydown', (e) => {
+        this.keyboardHandler = (e: KeyboardEvent) => {
             if (e.key === 'Escape' && this.visible) {
                 e.preventDefault();
                 e.stopPropagation();
                 this.hide();
             }
-        });
+        };
+
+        window.addEventListener('keydown', this.keyboardHandler);
     }
 
     // ── Show / Hide ────────────────────────────────────────
@@ -184,6 +187,18 @@ class QuickViewManager {
 
     get isVisible() {
         return this.visible;
+    }
+
+    destroy() {
+        if (this.keyboardHandler) {
+            window.removeEventListener('keydown', this.keyboardHandler);
+            this.keyboardHandler = null;
+        }
+        if (this.overlay?.parentNode) {
+            this.overlay.parentNode.removeChild(this.overlay);
+        }
+        this.overlay = null;
+        this.visible = false;
     }
 
     // ── Rendering ──────────────────────────────────────────

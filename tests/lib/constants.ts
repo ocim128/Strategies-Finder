@@ -113,3 +113,25 @@ export const ENHANCED_CANDLE_COLORS = {
     wickDown: '#ff4976',
 };
 
+export const LIGHT_CANDLE_COLORS = {
+    up: '#089981',
+    down: '#f23645',
+    upBorder: '#089981',
+    downBorder: '#f23645',
+    wickUp: '#089981',
+    wickDown: '#f23645',
+};
+
+export const EQUITY_CURVE_COLORS = {
+    positive: {
+        lineColor: '#00c087',
+        topColor: 'rgba(0, 192, 135, 0.45)',
+        bottomColor: 'rgba(0, 192, 135, 0.02)',
+    },
+    negative: {
+        lineColor: '#ff4976',
+        topColor: 'rgba(255, 73, 118, 0.45)',
+        bottomColor: 'rgba(255, 73, 118, 0.02)',
+    },
+};
+

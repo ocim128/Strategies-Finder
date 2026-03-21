@@ -18,6 +18,8 @@ export class ScannerPanel {
     private container: HTMLElement;
     private isVisible = false;
     private unsubscribe: (() => void) | null = null;
+    private readonly handleDocumentMouseMove: (e: MouseEvent) => void;
+    private readonly handleDocumentMouseUp: () => void;
 
     // Drag state
     private isDragging = false;
@@ -25,6 +27,28 @@ export class ScannerPanel {
     private dragOffsetY = 0;
 
     constructor() {
+        this.handleDocumentMouseMove = (e: MouseEvent) => {
+            if (!this.isDragging) return;
+
+            const newLeft = e.clientX - this.dragOffsetX;
+            const newTop = e.clientY - this.dragOffsetY;
+
+            const maxLeft = window.innerWidth - this.container.offsetWidth;
+            const maxTop = window.innerHeight - this.container.offsetHeight;
+
+            this.container.style.left = `${Math.max(0, Math.min(newLeft, maxLeft))}px`;
+            this.container.style.top = `${Math.max(0, Math.min(newTop, maxTop))}px`;
+            this.container.style.right = 'auto';
+        };
+        this.handleDocumentMouseUp = () => {
+            if (this.isDragging) {
+                this.isDragging = false;
+                const header = this.container.querySelector('.scanner-panel__header') as HTMLElement | null;
+                if (header) {
+                    header.style.cursor = 'grab';
+                }
+            }
+        };
         this.container = this.createContainer();
         this.setupEventListeners();
         this.setupDragListeners();
@@ -71,6 +95,8 @@ export class ScannerPanel {
      */
     destroy(): void {
         this.unsubscribe?.();
+        document.removeEventListener('mousemove', this.handleDocumentMouseMove);
+        document.removeEventListener('mouseup', this.handleDocumentMouseUp);
         this.hide();
     }
 
@@ -209,27 +235,8 @@ export class ScannerPanel {
             e.preventDefault();
         });
 
-        document.addEventListener('mousemove', (e: MouseEvent) => {
-            if (!this.isDragging) return;
-
-            const newLeft = e.clientX - this.dragOffsetX;
-            const newTop = e.clientY - this.dragOffsetY;
-
-            // Clamp within viewport
-            const maxLeft = window.innerWidth - this.container.offsetWidth;
-            const maxTop = window.innerHeight - this.container.offsetHeight;
-
-            this.container.style.left = `${Math.max(0, Math.min(newLeft, maxLeft))}px`;
-            this.container.style.top = `${Math.max(0, Math.min(newTop, maxTop))}px`;
-            this.container.style.right = 'auto'; // Override default right positioning
-        });
-
-        document.addEventListener('mouseup', () => {
-            if (this.isDragging) {
-                this.isDragging = false;
-                header.style.cursor = 'grab';
-            }
-        });
+        document.addEventListener('mousemove', this.handleDocumentMouseMove);
+        document.addEventListener('mouseup', this.handleDocumentMouseUp);
     }
 
     private populateStrategySelect(): void {

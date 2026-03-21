@@ -674,6 +674,86 @@
 
 
 
+.exit-reason-badge--signal {
+
+    color: var(--accent-color);
+
+    background: hsl(var(--hsl-accent) / 0.16);
+
+    border: 1px solid hsl(var(--hsl-accent) / 0.32);
+
+}
+
+.exit-reason-badge--stop-loss {
+
+    color: var(--red);
+
+    background: hsl(var(--hsl-danger) / 0.16);
+
+    border: 1px solid hsl(var(--hsl-danger) / 0.32);
+
+}
+
+.exit-reason-badge--take-profit {
+
+    color: var(--green);
+
+    background: hsl(var(--hsl-success) / 0.16);
+
+    border: 1px solid hsl(var(--hsl-success) / 0.32);
+
+}
+
+.exit-reason-badge--trailing-stop {
+
+    color: var(--warning);
+
+    background: hsl(var(--hsl-warning) / 0.16);
+
+    border: 1px solid hsl(var(--hsl-warning) / 0.32);
+
+}
+
+.exit-reason-badge--time-stop {
+
+    color: var(--premium-color);
+
+    background: hsl(var(--hsl-premium) / 0.16);
+
+    border: 1px solid hsl(var(--hsl-premium) / 0.32);
+
+}
+
+.exit-reason-badge--partial {
+
+    color: hsl(191 91% 42%);
+
+    background: hsl(191 91% 42% / 0.16);
+
+    border: 1px solid hsl(191 91% 42% / 0.32);
+
+}
+
+.exit-reason-badge--probation-fail {
+
+    color: hsl(330 81% 60%);
+
+    background: hsl(330 81% 60% / 0.16);
+
+    border: 1px solid hsl(330 81% 60% / 0.32);
+
+}
+
+.exit-reason-badge--end-of-data {
+
+    color: hsl(24 95% 53%);
+
+    background: hsl(24 95% 53% / 0.16);
+
+    border: 1px solid hsl(24 95% 53% / 0.32);
+
+}
+
 .exit-reason-badge:hover {
 
     transform: scale(1.1);
@@ -737,5 +817,4 @@
     font-size: 10px;
 
 }
-
 

@@ -7,6 +7,8 @@ import { createTradesRendererDom, type TradesRendererDom } from "../feature-dom-
 
 export class TradesRenderer {
     private dom: TradesRendererDom | null = null;
+    private jumpToTrade: ((time: Time) => void) | null = null;
+    private jumpHandlersBound = false;
 
     private getDom(): TradesRendererDom {
         return this.dom ??= createTradesRendererDom();
@@ -19,6 +21,8 @@ export class TradesRenderer {
         formatDate: (t: Time) => string
     ) {
         const container = this.getDom().tradesList;
+        this.jumpToTrade = jumpToTrade;
+        this.ensureTradeJumpHandlersBound();
         container.classList.remove('trades-list-parity');
 
         if (trades.length === 0) {
@@ -33,7 +37,6 @@ export class TradesRenderer {
         this.updateSummary(trades);
 
         container.innerHTML = this.renderTradeItems(trades, formatPrice, formatDate);
-        this.bindTradeJumpHandlers(container, jumpToTrade);
     }
 
     public renderParity(
@@ -44,6 +47,8 @@ export class TradesRenderer {
         formatDate: (t: Time) => string
     ): void {
         const container = this.getDom().tradesList;
+        this.jumpToTrade = jumpToTrade;
+        this.ensureTradeJumpHandlersBound();
         container.classList.add('trades-list-parity');
 
         const combined = [...oddTrades, ...evenTrades];
@@ -81,8 +86,6 @@ export class TradesRenderer {
                 ${renderParitySection('even', evenTrades)}
             </div>
         `;
-
-        this.bindTradeJumpHandlers(container, jumpToTrade);
     }
 
     private formatDuration(ms: number): string {
@@ -101,21 +104,25 @@ export class TradesRenderer {
     private getExitReasonBadge(exitReason: Trade['exitReason']): string {
         if (!exitReason) return '';
 
-        const reasonMap: Record<NonNullable<Trade['exitReason']>, { label: string; color: string; icon: string }> = {
-            signal: { label: 'Signal', color: '#3b82f6', icon: 'SIG' },
-            stop_loss: { label: 'SL', color: '#ef4444', icon: 'SL' },
-            take_profit: { label: 'TP', color: '#22c55e', icon: 'TP' },
-            trailing_stop: { label: 'Trail', color: '#f59e0b', icon: 'TRL' },
-            time_stop: { label: 'Time', color: '#8b5cf6', icon: 'T' },
-            partial: { label: 'Partial', color: '#06b6d4', icon: '1/2' },
-            probation_fail: { label: 'Guard', color: '#ec4899', icon: 'GRD' },
-            end_of_data: { label: 'EOD', color: '#f97316', icon: 'EOD' },
+        const reasonMap: Record<NonNullable<Trade['exitReason']>, { label: string; className: string; icon: string }> = {
+            signal: { label: 'Signal', className: 'exit-reason-badge--signal', icon: 'SIG' },
+            stop_loss: { label: 'SL', className: 'exit-reason-badge--stop-loss', icon: 'SL' },
+            take_profit: { label: 'TP', className: 'exit-reason-badge--take-profit', icon: 'TP' },
+            trailing_stop: { label: 'Trail', className: 'exit-reason-badge--trailing-stop', icon: 'TRL' },
+            time_stop: { label: 'Time', className: 'exit-reason-badge--time-stop', icon: 'T' },
+            partial: { label: 'Partial', className: 'exit-reason-badge--partial', icon: '1/2' },
+            probation_fail: { label: 'Guard', className: 'exit-reason-badge--probation-fail', icon: 'GRD' },
+            end_of_data: { label: 'EOD', className: 'exit-reason-badge--end-of-data', icon: 'EOD' },
         };
 
         const info = reasonMap[exitReason];
         if (!info) return '';
 
-        return `<span class="exit-reason-badge" style="background: ${info.color}20; color: ${info.color}; border: 1px solid ${info.color}40;" title="Exit: ${info.label}">${info.icon}</span>`;
+        return `<span class="exit-reason-badge ${info.className}" title="Exit: ${info.label}">${info.icon}</span>`;
+    }
+
+    private encodeTradeEntryTime(time: Time): string {
+        return encodeURIComponent(JSON.stringify(time));
     }
 
     private renderTradeItems(trades: Trade[], formatPrice: (p: number) => string, formatDate: (t: Time) => string): string {
@@ -152,7 +159,7 @@ export class TradesRenderer {
         }
 
         return `
-            <div class="trade-item ${statusClass}" data-entry-time="${trade.entryTime}" role="button" tabindex="0">
+            <div class="trade-item ${statusClass}" data-entry-time="${this.encodeTradeEntryTime(trade.entryTime)}" role="button" tabindex="0">
                 <div class="trade-main-row">
                     <div class="trade-left-group">
                         <div class="trade-icon ${trade.type === 'long' ? 'buy' : 'sell'}">
@@ -204,21 +211,60 @@ export class TradesRenderer {
         return resolveOpenTradeDisplayMetrics(trade, liveCandle);
     }
 
-    private bindTradeJumpHandlers(container: HTMLElement, jumpToTrade: (time: Time) => void): void {
-        container.querySelectorAll('.trade-item').forEach(item => {
-            const activate = () => {
-                const entryTime = parseInt(item.getAttribute('data-entry-time')!) as Time;
-                jumpToTrade(entryTime);
-            };
+    private ensureTradeJumpHandlersBound(): void {
+        if (this.jumpHandlersBound) {
+            return;
+        }
 
-            item.addEventListener('click', activate);
-            item.addEventListener('keydown', (event) => {
-                if ((event as KeyboardEvent).key === 'Enter' || (event as KeyboardEvent).key === ' ') {
-                    event.preventDefault();
-                    activate();
-                }
-            });
+        const container = this.getDom().tradesList;
+        container.addEventListener('click', (event) => {
+            const item = this.resolveTradeItemTarget(event.target, container);
+            if (!item) {
+                return;
+            }
+            this.activateTradeItem(item);
         });
+        container.addEventListener('keydown', (event) => {
+            if (!(event instanceof KeyboardEvent) || (event.key !== 'Enter' && event.key !== ' ')) {
+                return;
+            }
+
+            const item = this.resolveTradeItemTarget(event.target, container);
+            if (!item) {
+                return;
+            }
+
+            event.preventDefault();
+            this.activateTradeItem(item);
+        });
+        this.jumpHandlersBound = true;
+    }
+
+    private resolveTradeItemTarget(target: EventTarget | null, container: HTMLElement): HTMLElement | null {
+        if (!(target instanceof Element)) {
+            return null;
+        }
+
+        const item = target.closest('.trade-item');
+        if (!(item instanceof HTMLElement) || !container.contains(item)) {
+            return null;
+        }
+
+        return item;
+    }
+
+    private activateTradeItem(item: HTMLElement): void {
+        const encodedEntryTime = item.dataset.entryTime;
+        if (!encodedEntryTime || !this.jumpToTrade) {
+            return;
+        }
+
+        try {
+            const entryTime = JSON.parse(decodeURIComponent(encodedEntryTime)) as Time;
+            this.jumpToTrade(entryTime);
+        } catch {
+            // Ignore malformed attributes rather than breaking the trade list.
+        }
     }
 
     private updateSummary(trades: Trade[]) {

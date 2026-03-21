@@ -7,6 +7,8 @@ import { supertrend_churn_resilience } from '../lib/strategies/lib/supertrend_ch
 import { volume_profile_poc_median_shift } from '../lib/strategies/lib/volume_profile_poc_median_shift';
 import { candle_pattern_persistence_score_median_deviation_streak } from '../lib/strategies/lib/candle-pattern-persistence-score-median-deviation-streak';
 import { vwap_zscore_reversion } from '../lib/strategies/lib/vwap_zscore_reversion';
+import { adx_slope_pivot_entry } from '../lib/strategies/lib/adx_slope_pivot_entry';
+import { macd_histogram_volatility_squeeze } from '../lib/strategies/lib/macd_histogram_volatility_squeeze';
 
 describe('strategy lib prepared execution parity', () => {
     it('keeps prepared heavy-indicator strategies aligned with execute()', () => {
@@ -53,6 +55,16 @@ describe('strategy lib prepared execution parity', () => {
                 key: 'vwap_zscore_reversion',
                 strategy: vwap_zscore_reversion,
                 params: { zscoreLookback: 24, zscoreThreshold: 2.1 },
+            },
+            {
+                key: 'adx_slope_pivot_entry',
+                strategy: adx_slope_pivot_entry,
+                params: { adxPeriod: 14, pivotBars: 8, adxSlopeLen: 3 },
+            },
+            {
+                key: 'macd_histogram_volatility_squeeze',
+                strategy: macd_histogram_volatility_squeeze,
+                params: { macdFast: 12, stdDevLookback: 30, squeezeThreshold: 0.05 },
             },
         ] as const;
 

@@ -37,7 +37,7 @@ Most breakages come from contract drift, not algorithm bugs.
 - HTML source of truth is `html-partials/*`
 - Consumers live in handlers and managers such as:
   - `lib/handlers/ui-event-handlers.ts`
-  - `lib/analysis-panel.ts`
+  - `lib/renderers/resultsRenderer.ts`
   - `lib/finder-manager.ts`
   - `lib/walk-forward-service.ts`
 
@@ -77,41 +77,9 @@ Prefer existing helpers:
 
 Do not introduce new ad hoc time conversion paths unless there is no existing seam.
 
-## First-Tier File Map
+## Repo Map
 
-### Bootstrap and app wiring
-- `index.ts`
-- `lib/layout-manager.ts`
-- `lib/handlers/*`
-
-### Trading engine
-- `lib/strategies/backtest/*`
-- `lib/backtest-service.ts`
-- `lib/rust-engine-client.ts`
-- `lib/rust-settings-sanitizer.ts`
-
-### Data layer
-- `lib/data-manager.ts`
-- `lib/dataProviders/*`
-- `lib/candle-cache.ts`
-- `lib/local-sqlite-api.ts`
-- `vite.config.ts`
-
-### Research tools
-- Finder: `lib/finder-manager.ts`, `lib/finder/*`
-- Walk Forward: `lib/walk-forward-service.ts`
-- Analysis: `lib/analysis-panel.ts`
-- Portfolio Lab: `lib/portfolio-lab-service.ts`
-- Scanner: `lib/scanner/*`
-- Replay: `lib/replay/*`
-- Pair Combiner: `lib/pair-combiner-manager.ts`, `lib/pairCombiner/*`
-- Data Mining: `lib/data-mining-manager.ts`, `lib/featureLab/*`
-
-### Alerts / Worker
-- `workers/entry-signal-worker.ts`
-- `workers/migrations/*`
-- `lib/alert-service.ts`
-- `workers/README.md`
+See `README.md` under `Architecture Map` for the canonical subsystem and file map.
 
 ## Safe Change Checklist
 
@@ -225,9 +193,32 @@ Strategy-lib failure modes seen repeatedly:
 - `walk_forward_oos` snapshots intentionally route through shared result state
 - Keep robustness summary / candidate validation panels aligned with actual run data
 
+### Modify Chart
+- Main containers are `#main-chart` and `#equity-chart`
+- Keep tooltip and equity-overlay element references cached; do not re-query structural children in crosshair hot paths
+- Treat indicator series lifecycle as explicit:
+  - create/add through `chart-manager.ts`
+  - clear associated cached lookup state when indicators are cleared
+- Keep trade markers and block markers separated:
+  - trade markers use `state.markersPlugin`
+  - block selection uses its own markers plugin
+- Theme changes should flow through `lib/constants.ts` and `chart-manager.updateTheme()`, not inline color objects
+
 ### Modify trade analysis
-- `lib/analysis-panel.ts` is part UI controller, part feature orchestration
-- Keep heavy computation in backtest analysis modules, not in DOM rendering code
+- Heavy analysis lives in `lib/backtest-result-analysis.ts`
+- Keep computation in analysis/backtest modules and keep DOM rendering in renderers/services
+
+### Renderer conventions
+- Use typed DOM contracts or cached structural element references; do not scatter raw structural lookups
+- Prefer event delegation on list/grid containers over per-item listeners
+- Keep renderer logic presentation-focused; push heavy computation into services or analysis modules
+- Use CSS classes for styling states; do not hardcode theme colors in TypeScript-generated inline styles
+
+### Styling conventions
+- Use design tokens from `styles/variables.css`
+- Do not hardcode UI colors in TypeScript
+- Prefer semantic CSS classes and theme-aware variables over inline styles
+- If a styling change introduces or depends on a structural id, update the DOM contract and partial together
 
 ### Modify Portfolio Lab
 - Treat `Portfolio Lab` as two features in one:

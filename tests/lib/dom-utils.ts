@@ -53,8 +53,10 @@ function getElementByIdCached(id: string): HTMLElement | null {
 /**
  * Toggle display of an element.
  */
-export function setVisible(id: string, visible: boolean, displayMode: string = 'block') {
-    const el = getElementByIdCached(id);
+export function setVisible(target: string, visible: boolean, displayMode?: string): void;
+export function setVisible(target: HTMLElement | null | undefined, visible: boolean, displayMode?: string): void;
+export function setVisible(target: string | HTMLElement | null | undefined, visible: boolean, displayMode: string = 'block') {
+    const el = typeof target === 'string' ? getElementByIdCached(target) : target;
     if (el) {
         el.style.display = visible ? displayMode : 'none';
     }

@@ -1,6 +1,10 @@
 import type { Strategy } from "../types/strategies";
 
 
+import { median_deviation_streak } from "./lib/median_deviation_streak";
+import { entropy_ratio_regime_alignment } from "./lib/entropy_ratio_regime_alignment";
+import { skew_entropy_polarization_entry } from "./lib/skew_entropy_polarization_entry";
+import { supertrend_friction_pinch } from "./lib/supertrend_friction_pinch";
 import { volatility_compression_break } from "./lib/volatility-compression-break";
 import { volatility_compression_break_trend } from "./lib/volatility-compression-break-trend";
 import { exhaustion_spike_pullback } from "./lib/exhaustion-spike-pullback";
@@ -31,10 +35,7 @@ import { efficiency_pinch_roc_breakout } from "./lib/efficiency_pinch_roc_breako
 import { cumulative_decay_regime_filter } from "./lib/cumulative_decay_regime_filter";
 import { skewness_deadzone_break } from "./lib/skewness_deadzone_break";
 import { crossing_churn_suppression } from "./lib/crossing_churn_suppression";
-import { median_deviation_streak } from "./lib/median_deviation_streak";
 import { autocorr_deadband_release } from "./lib/autocorr_deadband_release";
-import { entropy_ratio_regime_alignment } from "./lib/entropy_ratio_regime_alignment";
-import { skew_entropy_polarization_entry } from "./lib/skew_entropy_polarization_entry";
 import { vwap_zscore_reversion } from "./lib/vwap_zscore_reversion";
 import { supertrend_churn_resilience } from "./lib/supertrend_churn_resilience";
 import { adx_skewness_drift } from "./lib/adx_skewness_drift";
@@ -44,7 +45,6 @@ import { supertrend_distance_zscore } from "./lib/supertrend_distance_zscore";
 import { rsi_volatility_pinch_pop } from "./lib/rsi_volatility_pinch_pop";
 import { momentum_zscore_exhaustion } from "./lib/momentum_zscore_exhaustion";
 
-import { supertrend_friction_pinch } from "./lib/supertrend_friction_pinch";
 
 import { macd_histogram_volatility_squeeze } from "./lib/macd_histogram_volatility_squeeze";
 import { volume_profile_poc_median_shift } from "./lib/volume_profile_poc_median_shift";
@@ -60,6 +60,12 @@ export interface StrategyManifestEntry {
 }
 
 export const strategyManifest: readonly StrategyManifestEntry[] = [
+    
+    { key: "median_deviation_streak", strategy: median_deviation_streak },
+    { key: "skew_entropy_polarization_entry", strategy: skew_entropy_polarization_entry },
+    { key: "entropy_ratio_regime_alignment", strategy: entropy_ratio_regime_alignment },
+    { key: "value_area_median_shift", strategy: value_area_median_shift },
+    { key: "supertrend_friction_pinch", strategy: supertrend_friction_pinch },
     { key: "exhaustion_spike_follow_through", strategy: exhaustion_spike_follow_through },
     { key: "exhaustion_spike_pullback", strategy: exhaustion_spike_pullback },
     { key: "volatility_compression_break", strategy: volatility_compression_break },
@@ -89,11 +95,8 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "efficiency_pinch_roc_breakout", strategy: efficiency_pinch_roc_breakout },
     { key: "cumulative_decay_regime_filter", strategy: cumulative_decay_regime_filter },
     { key: "skewness_deadzone_break", strategy: skewness_deadzone_break },
-    { key: "median_deviation_streak", strategy: median_deviation_streak },
     { key: "crossing_churn_suppression", strategy: crossing_churn_suppression },
     { key: "autocorr_deadband_release", strategy: autocorr_deadband_release },
-    { key: "skew_entropy_polarization_entry", strategy: skew_entropy_polarization_entry },
-    { key: "entropy_ratio_regime_alignment", strategy: entropy_ratio_regime_alignment },
     { key: "vwap_zscore_reversion", strategy: vwap_zscore_reversion },
     { key: "supertrend_churn_resilience", strategy: supertrend_churn_resilience },
     { key: "adx_skewness_drift", strategy: adx_skewness_drift },
@@ -103,12 +106,10 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "rsi_volatility_pinch_pop", strategy: rsi_volatility_pinch_pop },
     { key: "momentum_zscore_exhaustion", strategy: momentum_zscore_exhaustion },
 
-    { key: "supertrend_friction_pinch", strategy: supertrend_friction_pinch },
 
     { key: "macd_histogram_volatility_squeeze", strategy: macd_histogram_volatility_squeeze },
     { key: "volume_profile_poc_median_shift", strategy: volume_profile_poc_median_shift },
 
-    { key: "value_area_median_shift", strategy: value_area_median_shift },
 
 ];
 

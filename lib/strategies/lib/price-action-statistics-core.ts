@@ -386,49 +386,6 @@ export function buildRollingAutoCorrelation(
 }
 
 /**
- * Rolling Pearson correlation between two numeric series.
- * Measures co-movement over a lookback window.
- * Returns null when variance of either series is zero or lookback not filled.
- */
-export function buildRollingCorrelation(
-	seriesA: number[],
-	seriesB: number[],
-	lookbackInput: number
-): (number | null)[] {
-	const len = Math.min(seriesA.length, seriesB.length);
-	const lookback = Math.max(2, Math.round(lookbackInput));
-	const result: (number | null)[] = new Array(len).fill(null);
-
-	for (let i = lookback - 1; i < len; i++) {
-		let sumA = 0;
-		let sumB = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			sumA += seriesA[j];
-			sumB += seriesB[j];
-		}
-		const meanA = sumA / lookback;
-		const meanB = sumB / lookback;
-
-		let cov = 0;
-		let varA = 0;
-		let varB = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			const da = seriesA[j] - meanA;
-			const db = seriesB[j] - meanB;
-			cov += da * db;
-			varA += da * da;
-			varB += db * db;
-		}
-
-		const denom = Math.sqrt(varA * varB);
-		if (denom <= 0) continue;
-		result[i] = cov / denom;
-	}
-
-	return result;
-}
-
-/**
  * Rolling Shannon entropy of a discretized numeric series.
  * Bins values into `numBins` equal-width buckets over the rolling window.
  * Low entropy = concentrated/predictable, high entropy = disordered/random.

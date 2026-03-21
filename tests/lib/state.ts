@@ -4,7 +4,11 @@ import { BacktestResult, OHLCVData } from "./strategies/index";
 import { Indicator } from './types/index';
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 
-export type StateKey = keyof State;
+type NonFunctionPropertyKeys<T> = {
+    [K in keyof T]: T[K] extends (...args: never[]) => unknown ? never : K;
+}[keyof T];
+
+export type StateKey = NonFunctionPropertyKeys<State>;
 export type MockChartModel = 'simple' | 'hard' | 'v3' | 'v4' | 'v5' | 'v6';
 export type ChartMode = 'candlestick' | 'heikin-ashi';
 export type TwoHourCloseParity = 'odd' | 'even';
@@ -41,13 +45,11 @@ export class State {
     public twoHourCloseParity: TwoHourCloseParityMode = 'odd';
 
     // Pair Combiner state
-
-
-    private listeners: Map<string, Set<(value: any) => void>> = new Map();
+    private listeners = new Map<StateKey, Set<(value: unknown) => void>>();
 
     public set<K extends StateKey>(key: K, value: this[K]): void {
         if (this[key] === value) return;
-        (this as any)[key] = value;
+        this[key] = value;
         this.emit(key, value);
     }
 
@@ -55,14 +57,15 @@ export class State {
         if (!this.listeners.has(key)) {
             this.listeners.set(key, new Set());
         }
-        this.listeners.get(key)!.add(callback);
-        return () => this.listeners.get(key)!.delete(callback);
+        const listeners = this.listeners.get(key)!;
+        const wrapped = (value: unknown) => callback(value as this[K]);
+        listeners.add(wrapped);
+        return () => listeners.delete(wrapped);
     }
 
-    public emit(key: string, value: any): void {
-        if (this.listeners.has(key)) {
-            this.listeners.get(key)!.forEach(cb => cb(value));
-        }
+    public emit<K extends StateKey>(key: K, value: this[K]): void {
+        const listeners = this.listeners.get(key);
+        listeners?.forEach(cb => cb(value));
     }
 
     // Helper to reset trade-related state

@@ -104,7 +104,7 @@ export async function loadSqliteCandles(
             if (!Number.isFinite(parsedTime) || parsedTime === null) continue;
             if (!Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) continue;
             candles.push({
-                time: parsedTime as any,
+                time: parsedTime as OHLCVData['time'],
                 open,
                 high,
                 low,

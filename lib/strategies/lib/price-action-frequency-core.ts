@@ -77,38 +77,6 @@ export function buildRollingAverage(
 	return result;
 }
 
-export function buildTrailingAverageRange(
-	data: OHLCVData[],
-	lookbackInput: number,
-	includeCurrent = false
-): (number | null)[] {
-	const lookback = Math.max(1, Math.round(lookbackInput));
-	const result: (number | null)[] = new Array(data.length).fill(null);
-	let sum = 0;
-
-	for (let i = 0; i < data.length; i++) {
-		const range = Math.max(0, data[i].high - data[i].low);
-		sum += range;
-
-		if (includeCurrent) {
-			if (i >= lookback) {
-				sum -= Math.max(0, data[i - lookback].high - data[i - lookback].low);
-			}
-			if (i >= lookback - 1) {
-				result[i] = sum / lookback;
-			}
-			continue;
-		}
-
-		if (i >= lookback) {
-			result[i] = (sum - range) / lookback;
-			sum -= Math.max(0, data[i - lookback].high - data[i - lookback].low);
-		}
-	}
-
-	return result;
-}
-
 export function buildTrailingHighLow(
 	data: OHLCVData[],
 	lookbackInput: number,

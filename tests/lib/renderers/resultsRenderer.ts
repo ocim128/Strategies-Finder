@@ -541,31 +541,27 @@ export class ResultsRenderer {
     }
 
     public clear() {
+        const dom = this.getDom();
         setVisible('emptyResults', true);
         setVisible('resultsContent', false);
         this.clearParityComparison();
         setVisible('postEntryPathTitle', false);
         setVisible('postEntryPathContainer', false);
         setVisible('postEntryPathHint', false);
-        const container = document.getElementById('postEntryPathContainer');
-        if (container) container.innerHTML = '';
-        const hint = document.getElementById('postEntryPathHint');
-        if (hint) hint.textContent = '';
+        dom.postEntryPathContainer.innerHTML = '';
+        dom.postEntryPathHint.textContent = '';
 
         setVisible('snapshotProfileTitle', false);
         setVisible('snapshotProfileContainer', false);
-        const profileContainer = document.getElementById('snapshotProfileContainer');
-        if (profileContainer) profileContainer.innerHTML = '';
+        dom.snapshotProfileContainer.innerHTML = '';
 
         setVisible('exitReasonTitle', false);
         setVisible('exitReasonContainer', false);
-        const exitContainer = document.getElementById('exitReasonContainer');
-        if (exitContainer) exitContainer.innerHTML = '';
+        dom.exitReasonContainer.innerHTML = '';
 
         setVisible('edgeAnalysisTitle', false);
         setVisible('edgeAnalysisContainer', false);
-        const edgeContainer = document.getElementById('edgeAnalysisContainer');
-        if (edgeContainer) edgeContainer.innerHTML = '';
+        dom.edgeAnalysisContainer.innerHTML = '';
     }
 }
 

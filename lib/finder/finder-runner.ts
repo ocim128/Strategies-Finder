@@ -383,7 +383,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                 const primaryStrategy = strategyRegistry.get(primaryConfig.strategyKey);
                 if (primaryStrategy) {
                     const primarySettings = resolveBacktestSettingsFromRaw(
-                        primaryConfig.backtestSettings as any,
+                        primaryConfig.backtestSettings,
                         { captureSnapshots: false, coerceWithoutUiToggles: true }
                     );
                     for (const dataset of activeDatasets) {

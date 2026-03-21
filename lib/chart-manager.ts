@@ -14,12 +14,13 @@ import {
     TimeChartOptions,
 } from "lightweight-charts";
 import { state } from "./state";
-import { darkTheme, lightTheme, ENHANCED_CANDLE_COLORS } from "./constants";
+import { darkTheme, lightTheme, ENHANCED_CANDLE_COLORS, LIGHT_CANDLE_COLORS, EQUITY_CURVE_COLORS } from "./constants";
 import { toHeikinAshi } from "./heikin-ashi-utils";
 import { formatJakartaTickMark, formatJakartaTime } from "./timezone-utils";
 import { formatDisplayPrice } from "./price-format";
 
 import { Trade, OHLCVData } from "./strategies/index";
+import { compareTime, timeKey } from "./strategies/backtest/backtest-utils";
 
 type IndicatorTooltipPoint = {
     time: Time;
@@ -31,9 +32,23 @@ type IndicatorTooltipPoint = {
 // ============================================================================
 
 export class ChartManager {
+    private mainChartContainer: HTMLElement | null = null;
+    private equityChartContainer: HTMLElement | null = null;
     private tooltip: HTMLElement | null = null;
+    private tooltipDateEl: HTMLElement | null = null;
+    private tooltipChangeEl: HTMLElement | null = null;
+    private tooltipOpenEl: HTMLElement | null = null;
+    private tooltipHighEl: HTMLElement | null = null;
+    private tooltipLowEl: HTMLElement | null = null;
+    private tooltipCloseEl: HTMLElement | null = null;
+    private tooltipVolumeEl: HTMLElement | null = null;
+    private tooltipIndicatorsEl: HTMLElement | null = null;
     private zoomIndicator: HTMLElement | null = null;
     private equityOverlay: HTMLElement | null = null;
+    private equityPnlEl: HTMLElement | null = null;
+    private equityDrawdownEl: HTMLElement | null = null;
+    private equityPeakEl: HTMLElement | null = null;
+    private indicatorTooltipValues = new Map<string, Map<string, number>>();
     private zoomTimeout: ReturnType<typeof setTimeout> | null = null;
     private lastZoomLevel: number = 0;
     private secondarySeries: ISeriesApi<"Line"> | null = null;
@@ -52,8 +67,13 @@ export class ChartManager {
     );
 
     public initCharts() {
-        const container = document.getElementById('main-chart')!;
-        const equityContainer = document.getElementById('equity-chart')!;
+        this.mainChartContainer = document.getElementById('main-chart');
+        this.equityChartContainer = document.getElementById('equity-chart');
+        const container = this.mainChartContainer;
+        const equityContainer = this.equityChartContainer;
+        if (!container || !equityContainer) {
+            throw new Error('Chart containers not found');
+        }
 
         state.chart = createChart(container, {
             ...darkTheme,
@@ -169,7 +189,7 @@ export class ChartManager {
     // ========================================================================
 
     private initTooltip() {
-        const container = document.getElementById('main-chart');
+        const container = this.mainChartContainer;
         if (!container) return;
 
         this.tooltip = document.createElement('div');
@@ -205,12 +225,20 @@ export class ChartManager {
             </div>
         `;
         container.appendChild(this.tooltip);
+        this.tooltipDateEl = this.tooltip.querySelector<HTMLElement>('#tooltipDate');
+        this.tooltipChangeEl = this.tooltip.querySelector<HTMLElement>('#tooltipChange');
+        this.tooltipOpenEl = this.tooltip.querySelector<HTMLElement>('#tooltipOpen');
+        this.tooltipHighEl = this.tooltip.querySelector<HTMLElement>('#tooltipHigh');
+        this.tooltipLowEl = this.tooltip.querySelector<HTMLElement>('#tooltipLow');
+        this.tooltipCloseEl = this.tooltip.querySelector<HTMLElement>('#tooltipClose');
+        this.tooltipVolumeEl = this.tooltip.querySelector<HTMLElement>('#tooltipVolume');
+        this.tooltipIndicatorsEl = this.tooltip.querySelector<HTMLElement>('#tooltipIndicators');
     }
 
     public updateTooltip(param: MouseEventParams<Time>, data: OHLCVData) {
         if (!this.tooltip) return;
 
-        const container = document.getElementById('main-chart');
+        const container = this.mainChartContainer;
         if (!container) return;
 
         // Calculate position
@@ -261,25 +289,17 @@ export class ChartManager {
         const change = ((data.close - data.open) / data.open) * 100;
         const isPositive = change >= 0;
 
-        const dateEl = this.tooltip.querySelector('#tooltipDate');
-        const changeEl = this.tooltip.querySelector('#tooltipChange');
-        const openEl = this.tooltip.querySelector('#tooltipOpen');
-        const highEl = this.tooltip.querySelector('#tooltipHigh');
-        const lowEl = this.tooltip.querySelector('#tooltipLow');
-        const closeEl = this.tooltip.querySelector('#tooltipClose');
-        const volumeEl = this.tooltip.querySelector('#tooltipVolume');
-
-        if (dateEl) dateEl.textContent = formatDate(data.time);
-        if (changeEl) {
-            changeEl.textContent = `${isPositive ? '+' : ''}${change.toFixed(2)}%`;
-            changeEl.className = `tooltip-change ${isPositive ? 'positive' : 'negative'}`;
+        if (this.tooltipDateEl) this.tooltipDateEl.textContent = formatDate(data.time);
+        if (this.tooltipChangeEl) {
+            this.tooltipChangeEl.textContent = `${isPositive ? '+' : ''}${change.toFixed(2)}%`;
+            this.tooltipChangeEl.className = `tooltip-change ${isPositive ? 'positive' : 'negative'}`;
         }
-        if (openEl) openEl.textContent = formatPrice(data.open);
-        if (highEl) highEl.textContent = formatPrice(data.high);
-        if (lowEl) lowEl.textContent = formatPrice(data.low);
-        if (closeEl) closeEl.textContent = formatPrice(data.close);
-        if (volumeEl && data.volume !== undefined) {
-            volumeEl.textContent = formatVolume(data.volume);
+        if (this.tooltipOpenEl) this.tooltipOpenEl.textContent = formatPrice(data.open);
+        if (this.tooltipHighEl) this.tooltipHighEl.textContent = formatPrice(data.high);
+        if (this.tooltipLowEl) this.tooltipLowEl.textContent = formatPrice(data.low);
+        if (this.tooltipCloseEl) this.tooltipCloseEl.textContent = formatPrice(data.close);
+        if (this.tooltipVolumeEl && data.volume !== undefined) {
+            this.tooltipVolumeEl.textContent = formatVolume(data.volume);
         }
 
         // Update indicator values
@@ -287,7 +307,7 @@ export class ChartManager {
     }
 
     private updateTooltipIndicators(time: Time) {
-        const indicatorsEl = this.tooltip?.querySelector('#tooltipIndicators');
+        const indicatorsEl = this.tooltipIndicatorsEl;
         if (!indicatorsEl) return;
 
         const indicators = state.indicators;
@@ -296,17 +316,12 @@ export class ChartManager {
             return;
         }
 
+        const tooltipTimeKey = timeKey(time);
+
         const indicatorHtml = indicators.map(ind => {
-            // Get the value at this time from the series
-            const series = ind.series[0];
-            if (!series) return '';
+            const value = this.indicatorTooltipValues.get(ind.id)?.get(tooltipTimeKey);
+            if (value === undefined || value === null) return '';
 
-            // Try to get data at this time point
-            const data = series.data() as IndicatorTooltipPoint[];
-            const point = data.find((d: IndicatorTooltipPoint) => d.time === time);
-            if (!point || point.value === undefined || point.value === null) return '';
-
-            const value = point.value;
             return `
                 <div class="tooltip-indicator">
                     <span class="tooltip-indicator-name">
@@ -427,7 +442,7 @@ export class ChartManager {
     // ========================================================================
 
     private initEquityOverlay() {
-        const container = document.getElementById('equity-chart');
+        const container = this.equityChartContainer;
         if (!container) return;
 
         this.equityOverlay = document.createElement('div');
@@ -448,6 +463,9 @@ export class ChartManager {
         `;
         container.style.position = 'relative';
         container.appendChild(this.equityOverlay);
+        this.equityPnlEl = this.equityOverlay.querySelector<HTMLElement>('#equityPnl');
+        this.equityDrawdownEl = this.equityOverlay.querySelector<HTMLElement>('#equityDrawdown');
+        this.equityPeakEl = this.equityOverlay.querySelector<HTMLElement>('#equityPeak');
     }
 
     private updateEquityOverlay(equityCurve: { time: Time; value: number }[], initialCapital: number) {
@@ -467,19 +485,15 @@ export class ChartManager {
             if (drawdown > maxDrawdown) maxDrawdown = drawdown;
         }
 
-        const pnlEl = this.equityOverlay.querySelector('#equityPnl');
-        const ddEl = this.equityOverlay.querySelector('#equityDrawdown');
-        const peakEl = this.equityOverlay.querySelector('#equityPeak');
-
-        if (pnlEl) {
-            pnlEl.textContent = `${isPositive ? '+' : ''}${pnlPercent.toFixed(2)}%`;
-            pnlEl.className = `equity-stat-value ${isPositive ? 'positive' : 'negative'}`;
+        if (this.equityPnlEl) {
+            this.equityPnlEl.textContent = `${isPositive ? '+' : ''}${pnlPercent.toFixed(2)}%`;
+            this.equityPnlEl.className = `equity-stat-value ${isPositive ? 'positive' : 'negative'}`;
         }
-        if (ddEl) {
-            ddEl.textContent = `-${maxDrawdown.toFixed(2)}%`;
+        if (this.equityDrawdownEl) {
+            this.equityDrawdownEl.textContent = `-${maxDrawdown.toFixed(2)}%`;
         }
-        if (peakEl) {
-            peakEl.textContent = `$${peak.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+        if (this.equityPeakEl) {
+            this.equityPeakEl.textContent = `$${peak.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
         }
     }
 
@@ -546,14 +560,7 @@ export class ChartManager {
         this.applyJakartaTimeFormatting();
 
         // Update candlestick colors based on theme
-        const colors = state.isDarkTheme ? ENHANCED_CANDLE_COLORS : {
-            up: '#089981',
-            down: '#f23645',
-            upBorder: '#089981',
-            downBorder: '#f23645',
-            wickUp: '#089981',
-            wickDown: '#f23645',
-        };
+        const colors = state.isDarkTheme ? ENHANCED_CANDLE_COLORS : LIGHT_CANDLE_COLORS;
 
         state.candlestickSeries.applyOptions({
             upColor: colors.up,
@@ -733,6 +740,7 @@ export class ChartManager {
     public clearIndicators() {
         state.indicators.forEach(ind => ind.series.forEach(s => state.chart.removeSeries(s)));
         state.indicators = [];
+        this.indicatorTooltipValues.clear();
     }
 
     public addIndicatorLine(type: string, period: number, data: { time: Time; value: number }[], color: string) {
@@ -747,6 +755,7 @@ export class ChartManager {
 
         series.setData(data);
         const id = `${type}_${period}_${Math.random().toString(36).substr(2, 9)}`;
+        this.indexIndicatorTooltipData(id, data);
         state.indicators.push({ id, type, series: [series], color });
         return id;
     }
@@ -760,8 +769,20 @@ export class ChartManager {
 
         series.setData(data);
         const id = `${type}_${period}_${Math.random().toString(36).substr(2, 9)}`;
+        this.indexIndicatorTooltipData(id, data);
         state.indicators.push({ id, type, series: [series], color });
         return id;
+    }
+
+    private indexIndicatorTooltipData(id: string, data: IndicatorTooltipPoint[]): void {
+        const valuesByTime = new Map<string, number>();
+        for (const point of data) {
+            if (point.value === undefined || point.value === null) {
+                continue;
+            }
+            valuesByTime.set(timeKey(point.time), point.value);
+        }
+        this.indicatorTooltipValues.set(id, valuesByTime);
     }
 
     // ========================================================================
@@ -836,16 +857,13 @@ export class ChartManager {
         const startValue = equityCurve[0].value;
         const endValue = equityCurve[equityCurve.length - 1].value;
         const isPositive = endValue >= startValue;
+        const colors = isPositive ? EQUITY_CURVE_COLORS.positive : EQUITY_CURVE_COLORS.negative;
 
         // Enhanced gradient colors
         state.equitySeries.applyOptions({
-            lineColor: isPositive ? '#00c087' : '#ff4976',
-            topColor: isPositive
-                ? 'rgba(0, 192, 135, 0.45)'
-                : 'rgba(255, 73, 118, 0.45)',
-            bottomColor: isPositive
-                ? 'rgba(0, 192, 135, 0.02)'
-                : 'rgba(255, 73, 118, 0.02)',
+            lineColor: colors.lineColor,
+            topColor: colors.topColor,
+            bottomColor: colors.bottomColor,
             lineWidth: 2,
         });
 
@@ -861,8 +879,7 @@ export class ChartManager {
     // ========================================================================
 
     public jumpToTime(time: Time) {
-        // Find the index of this time in the data
-        const index = state.ohlcvData.findIndex(d => d.time === time);
+        const index = this.findTimeIndex(time);
         if (index === -1) return;
 
         // Center the view around this point
@@ -875,6 +892,28 @@ export class ChartManager {
                 to: index + halfVisible
             });
         }
+    }
+
+    private findTimeIndex(time: Time): number {
+        let low = 0;
+        let high = state.ohlcvData.length - 1;
+
+        while (low <= high) {
+            const mid = Math.floor((low + high) / 2);
+            const comparison = compareTime(state.ohlcvData[mid].time, time);
+
+            if (comparison === 0) {
+                return mid;
+            }
+
+            if (comparison < 0) {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        return -1;
     }
 }
 

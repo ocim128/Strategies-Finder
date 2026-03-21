@@ -339,6 +339,11 @@ export const RESULTS_RENDERER_REQUIRED_IDS = [
     "parityComparePanel",
     "parityCompareGrid",
     "parityCompareHint",
+    "postEntryPathContainer",
+    "postEntryPathHint",
+    "snapshotProfileContainer",
+    "exitReasonContainer",
+    "edgeAnalysisContainer",
 ] as const;
 
 export interface ResultsRendererDom {
@@ -348,6 +353,11 @@ export interface ResultsRendererDom {
     parityComparePanel: HTMLElement;
     parityCompareGrid: HTMLElement;
     parityCompareHint: HTMLElement;
+    postEntryPathContainer: HTMLElement;
+    postEntryPathHint: HTMLElement;
+    snapshotProfileContainer: HTMLElement;
+    exitReasonContainer: HTMLElement;
+    edgeAnalysisContainer: HTMLElement;
 }
 
 export function createResultsRendererDom(): ResultsRendererDom {
@@ -358,6 +368,11 @@ export function createResultsRendererDom(): ResultsRendererDom {
         parityComparePanel: getRequiredElement("parityComparePanel"),
         parityCompareGrid: getRequiredElement("parityCompareGrid"),
         parityCompareHint: getRequiredElement("parityCompareHint"),
+        postEntryPathContainer: getRequiredElement("postEntryPathContainer"),
+        postEntryPathHint: getRequiredElement("postEntryPathHint"),
+        snapshotProfileContainer: getRequiredElement("snapshotProfileContainer"),
+        exitReasonContainer: getRequiredElement("exitReasonContainer"),
+        edgeAnalysisContainer: getRequiredElement("edgeAnalysisContainer"),
     };
 }
 

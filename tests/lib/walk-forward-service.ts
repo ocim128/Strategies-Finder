@@ -17,7 +17,7 @@ import {
     type WalkForwardPermutationResult
 } from "./strategies/backtest/permutation-test";
 import { parseInputNumber } from "./dom-input-readers";
-import type { Strategy, StrategyParams, BacktestSettings, OHLCVData } from "./strategies/index";
+import type { Strategy, StrategyParams, BacktestSettings, OHLCVData, BacktestResult } from "./strategies/index";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { deriveWalkForwardTradeThresholds } from "./walk-forward-thresholds";
 import {
@@ -102,6 +102,33 @@ type CandidateSeedValidationProfile = {
     dataOffset: number;
 };
 
+type WalkForwardRunMode = "analysis" | "quick" | "validation";
+
+type WalkForwardRunContext = {
+    signal: AbortSignal;
+    data: OHLCVData[];
+    strategyKey: string;
+    strategy: Strategy;
+};
+
+type WalkForwardNumberInputId =
+    | "wf-opt-window"
+    | "wf-test-window"
+    | "wf-step-size"
+    | "wf-min-trades"
+    | "wf-top-n"
+    | "wf-validation-min-passes"
+    | "wf-validation-max-dd"
+    | "wf-permutation-count"
+    | "wf-permutation-seed";
+
+type WalkForwardStringInputId = "wf-validation-seeds";
+
+type PreviousBacktestSnapshot = {
+    result: BacktestResult | null;
+    source: string | null;
+};
+
 // ============================================================================
 // Walk-Forward Service
 // ============================================================================
@@ -110,9 +137,11 @@ class WalkForwardService {
     private lastResult: WalkForwardResult | null = null;
     private isRunning = false;
     private abortController: AbortController | null = null;
-    private previousBacktestSnapshot: { result: any; source: string | null } | null = null;
+    private previousBacktestSnapshot: PreviousBacktestSnapshot | null = null;
     private lastRunBaseParams: { strategyKey: string; params: StrategyParams } | null = null;
     private dom: WalkForwardServiceDom | null = null;
+    private numberInputs: Record<WalkForwardNumberInputId, HTMLInputElement> | null = null;
+    private stringInputs: Record<WalkForwardStringInputId, HTMLInputElement> | null = null;
     private readonly uiHost = {
         formatPermutationValue: (metric: WalkForwardPermutationMetric, value: number | null) => this.formatPermutationValue(metric, value),
         formatCandidateValidationDecision: (reason: CandidateValidationDecisionReason) => this.formatCandidateValidationDecision(reason),
@@ -126,6 +155,74 @@ class WalkForwardService {
 
     private getDom(): WalkForwardServiceDom {
         return this.dom ??= createWalkForwardServiceDom();
+    }
+
+    private getNumberInputs(): Record<WalkForwardNumberInputId, HTMLInputElement> {
+        if (this.numberInputs) {
+            return this.numberInputs;
+        }
+
+        const dom = this.getDom();
+        this.numberInputs = {
+            "wf-opt-window": dom.wfOptWindow,
+            "wf-test-window": dom.wfTestWindow,
+            "wf-step-size": dom.wfStepSize,
+            "wf-min-trades": dom.wfMinTrades,
+            "wf-top-n": dom.wfTopN,
+            "wf-validation-min-passes": dom.wfValidationMinPasses,
+            "wf-validation-max-dd": dom.wfValidationMaxDd,
+            "wf-permutation-count": dom.wfPermutationCount,
+            "wf-permutation-seed": dom.wfPermutationSeed,
+        };
+        return this.numberInputs;
+    }
+
+    private getStringInputs(): Record<WalkForwardStringInputId, HTMLInputElement> {
+        if (this.stringInputs) {
+            return this.stringInputs;
+        }
+
+        const dom = this.getDom();
+        this.stringInputs = {
+            "wf-validation-seeds": dom.wfValidationSeeds,
+        };
+        return this.stringInputs;
+    }
+
+    private async withRunGuard<T>(
+        mode: WalkForwardRunMode,
+        noDataMessage: string,
+        fn: (ctx: WalkForwardRunContext) => Promise<T | null>
+    ): Promise<T | null> {
+        if (this.isRunning) {
+            this.updateStatus("Analysis already running.");
+            return null;
+        }
+
+        this.isRunning = true;
+        this.abortController = new AbortController();
+        const signal = this.abortController.signal;
+
+        try {
+            const data = await this.ensureDataReadyForCurrentContext();
+            if (!data || data.length === 0) {
+                debugLogger.error(noDataMessage);
+                return null;
+            }
+
+            const strategyKey = state.currentStrategyKey;
+            const strategy = strategyRegistry.get(strategyKey);
+            if (!strategy) {
+                debugLogger.error(`Strategy not found: ${strategyKey}`);
+                return null;
+            }
+
+            return await fn({ signal, data, strategyKey, strategy });
+        } finally {
+            this.isRunning = false;
+            this.abortController = null;
+            this.setLoading(false, mode);
+        }
     }
 
     private normalizeStrategyParams(strategy: Strategy, params: StrategyParams): StrategyParams {
@@ -225,19 +322,7 @@ class WalkForwardService {
     }
 
     private setNumberInput(id: string, value: number): void {
-        const dom = this.getDom();
-        const elementMap: Record<string, HTMLInputElement> = {
-            "wf-opt-window": dom.wfOptWindow,
-            "wf-test-window": dom.wfTestWindow,
-            "wf-step-size": dom.wfStepSize,
-            "wf-min-trades": dom.wfMinTrades,
-            "wf-top-n": dom.wfTopN,
-            "wf-validation-min-passes": dom.wfValidationMinPasses,
-            "wf-validation-max-dd": dom.wfValidationMaxDd,
-            "wf-permutation-count": dom.wfPermutationCount,
-            "wf-permutation-seed": dom.wfPermutationSeed,
-        };
-        const el = elementMap[id];
+        const el = this.getNumberInputs()[id as WalkForwardNumberInputId];
         if (!el) return;
         el.value = String(Math.max(1, Math.round(value)));
     }
@@ -487,40 +572,15 @@ class WalkForwardService {
      * Run walk-forward analysis with current strategy and data
      */
     async runAnalysis(): Promise<WalkForwardResult | null> {
-        if (this.isRunning) {
-            this.updateStatus('Analysis already running.');
-            return null;
-        }
-        this.isRunning = true;
-        this.abortController = new AbortController();
-        const signal = this.abortController.signal;
+        return this.withRunGuard("analysis", "No data loaded for walk-forward analysis", async ({ signal, data, strategyKey, strategy }) => {
+            const capitalSettings = backtestService.getCapitalSettings();
+            const backtestSettings = backtestService.getBacktestSettings();
+            const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
 
-        const data = await this.ensureDataReadyForCurrentContext();
-        if (!data || data.length === 0) {
-            this.isRunning = false;
-            this.abortController = null;
-            debugLogger.error('No data loaded for walk-forward analysis');
-            return null;
-        }
+            this.setLoading(true);
 
-        const strategyKey = state.currentStrategyKey;
-        const strategy = strategyRegistry.get(strategyKey);
-        if (!strategy) {
-            this.isRunning = false;
-            this.abortController = null;
-            debugLogger.error(`Strategy not found: ${strategyKey}`);
-            return null;
-        }
-
-        // Get capital settings from backtest service
-        const capitalSettings = backtestService.getCapitalSettings();
-        const backtestSettings = backtestService.getBacktestSettings();
-        const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
-
-        this.setLoading(true);
-
-        try {
-            const startTime = performance.now();
+            try {
+                const startTime = performance.now();
 
             // Get current parameters
             const currentParams = this.normalizeStrategyParams(strategy, paramManager.getValues(strategy));
@@ -649,17 +709,14 @@ class WalkForwardService {
             this.displayResults(result);
             this.updateStatus(`Completed: ${result.totalWindows} windows, Robustness: ${result.robustnessScore}/100`);
 
-            return result;
-        } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            debugLogger.error(`Walk-forward analysis failed: ${msg}`);
-            this.updateStatus(`Error: ${msg}`);
-            return null;
-        } finally {
-            this.isRunning = false;
-            this.abortController = null;
-            this.setLoading(false);
-        }
+                return result;
+            } catch (error) {
+                const msg = error instanceof Error ? error.message : String(error);
+                debugLogger.error(`Walk-forward analysis failed: ${msg}`);
+                this.updateStatus(`Error: ${msg}`);
+                return null;
+            }
+        });
     }
 
 
@@ -668,40 +725,15 @@ class WalkForwardService {
      * Quick analysis with auto-detected settings
      */
     async runQuickAnalysis(): Promise<WalkForwardResult | null> {
-        if (this.isRunning) {
-            this.updateStatus('Analysis already running.');
-            return null;
-        }
-        this.isRunning = true;
-        this.abortController = new AbortController();
-        const signal = this.abortController.signal;
+        return this.withRunGuard("quick", "No data loaded for walk-forward analysis", async ({ signal, data, strategyKey, strategy }) => {
+            const capitalSettings = backtestService.getCapitalSettings();
+            const backtestSettings = backtestService.getBacktestSettings();
+            const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
 
-        const data = await this.ensureDataReadyForCurrentContext();
-        if (!data || data.length === 0) {
-            this.isRunning = false;
-            this.abortController = null;
-            debugLogger.error('No data loaded for walk-forward analysis');
-            return null;
-        }
+            this.setLoading(true, "quick");
 
-        const strategyKey = state.currentStrategyKey;
-        const strategy = strategyRegistry.get(strategyKey);
-        if (!strategy) {
-            this.isRunning = false;
-            this.abortController = null;
-            debugLogger.error(`Strategy not found: ${strategyKey}`);
-            return null;
-        }
-
-        const capitalSettings = backtestService.getCapitalSettings();
-        const backtestSettings = backtestService.getBacktestSettings();
-        const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
-
-        this.setLoading(true, "quick");
-
-        try {
-            // Check if has no tunable parameters
-            const currentParams = this.normalizeStrategyParams(strategy, paramManager.getValues(strategy));
+            try {
+                const currentParams = this.normalizeStrategyParams(strategy, paramManager.getValues(strategy));
             const parameterRanges = this.buildParameterRanges(
                 strategy.defaultParams,
                 currentParams,
@@ -770,76 +802,47 @@ class WalkForwardService {
             this.displayResults(result);
             this.updateStatus(`Quick analysis: Robustness ${result.robustnessScore}/100`);
 
-            return result;
-        } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            debugLogger.error(`Quick walk-forward failed: ${msg}`);
-            this.updateStatus(`Error: ${msg}`);
-            return null;
-        } finally {
-            this.isRunning = false;
-            this.abortController = null;
-            this.setLoading(false);
-        }
+                return result;
+            } catch (error) {
+                const msg = error instanceof Error ? error.message : String(error);
+                debugLogger.error(`Quick walk-forward failed: ${msg}`);
+                this.updateStatus(`Error: ${msg}`);
+                return null;
+            }
+        });
     }
 
     async runCandidateValidation(): Promise<CandidateValidationSummary | null> {
-        if (this.isRunning) {
-            this.updateStatus('Analysis already running.');
-            return null;
-        }
-        this.isRunning = true;
-        this.abortController = new AbortController();
-        const signal = this.abortController.signal;
+        return this.withRunGuard("validation", "No data loaded for candidate validation", async ({ signal, data, strategyKey, strategy }) => {
+            const capitalSettings = backtestService.getCapitalSettings();
+            const backtestSettings = backtestService.getBacktestSettings();
+            const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
 
-        const data = await this.ensureDataReadyForCurrentContext();
-        if (!data || data.length === 0) {
-            this.isRunning = false;
-            this.abortController = null;
-            debugLogger.error("No data loaded for candidate validation");
-            return null;
-        }
+            const fixedParams = this.normalizeStrategyParams(strategy, paramManager.getValues(strategy));
+            const seedInput = this.readStringInput("wf-validation-seeds", DEFAULT_CANDIDATE_VALIDATION_SEEDS.join(","));
+            const seeds = this.parseSeedList(seedInput);
+            if (seeds.length === 0) {
+                this.updateStatus("Candidate validation needs at least one valid seed.");
+                return null;
+            }
 
-        const strategyKey = state.currentStrategyKey;
-        const strategy = strategyRegistry.get(strategyKey);
-        if (!strategy) {
-            this.isRunning = false;
-            this.abortController = null;
-            debugLogger.error(`Strategy not found: ${strategyKey}`);
-            return null;
-        }
+            const minPassesRaw = Math.round(this.readNumberInput("wf-validation-min-passes", DEFAULT_MIN_SEED_PASSES));
+            const minPasses = Math.max(1, Math.min(seeds.length, minPassesRaw));
+            const maxDrawdownLimit = Math.max(
+                1,
+                this.readNumberInput("wf-validation-max-dd", DEFAULT_MAX_OOS_DD_PERCENT)
+            );
+            const baseMinTrades = Math.max(1, this.readNumberInput("wf-min-trades", 5));
+            const baseTestWindow = Math.max(10, this.readNumberInput("wf-test-window", Math.floor(data.length * 0.2)));
+            const baseStepSize = Math.max(10, this.readNumberInput("wf-step-size", baseTestWindow));
+            const baseCommission = Math.max(0, capitalSettings.commission);
+            const baseSlippageBps = Math.max(0, backtestSettings.slippageBps ?? 0);
 
-        const capitalSettings = backtestService.getCapitalSettings();
-        const backtestSettings = backtestService.getBacktestSettings();
-        const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
+            this.setLoading(true, "validation");
+            this.updateStatus(`Validating candidate across ${seeds.length} seed(s)...`);
 
-        const fixedParams = this.normalizeStrategyParams(strategy, paramManager.getValues(strategy));
-        const seedInput = this.readStringInput("wf-validation-seeds", DEFAULT_CANDIDATE_VALIDATION_SEEDS.join(","));
-        const seeds = this.parseSeedList(seedInput);
-        if (seeds.length === 0) {
-            this.isRunning = false;
-            this.abortController = null;
-            this.updateStatus("Candidate validation needs at least one valid seed.");
-            return null;
-        }
-
-        const minPassesRaw = Math.round(this.readNumberInput("wf-validation-min-passes", DEFAULT_MIN_SEED_PASSES));
-        const minPasses = Math.max(1, Math.min(seeds.length, minPassesRaw));
-        const maxDrawdownLimit = Math.max(
-            1,
-            this.readNumberInput("wf-validation-max-dd", DEFAULT_MAX_OOS_DD_PERCENT)
-        );
-        const baseMinTrades = Math.max(1, this.readNumberInput("wf-min-trades", 5));
-        const baseTestWindow = Math.max(10, this.readNumberInput("wf-test-window", Math.floor(data.length * 0.2)));
-        const baseStepSize = Math.max(10, this.readNumberInput("wf-step-size", baseTestWindow));
-        const baseCommission = Math.max(0, capitalSettings.commission);
-        const baseSlippageBps = Math.max(0, backtestSettings.slippageBps ?? 0);
-
-        this.setLoading(true, "validation");
-        this.updateStatus(`Validating candidate across ${seeds.length} seed(s)...`);
-
-        try {
-            const rows: CandidateSeedValidationRow[] = [];
+            try {
+                const rows: CandidateSeedValidationRow[] = [];
 
             for (let i = 0; i < seeds.length; i++) {
                 if (signal.aborted) break;
@@ -976,17 +979,14 @@ class WalkForwardService {
                 minPasses: summary.minPasses,
                 maxDrawdownLimit: summary.maxDrawdownLimit
             });
-            return summary;
-        } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            debugLogger.error(`Candidate validation failed: ${msg}`);
-            this.updateStatus(`Candidate validation error: ${msg}`);
-            return null;
-        } finally {
-            this.isRunning = false;
-            this.abortController = null;
-            this.setLoading(false, "validation");
-        }
+                return summary;
+            } catch (error) {
+                const msg = error instanceof Error ? error.message : String(error);
+                debugLogger.error(`Candidate validation failed: ${msg}`);
+                this.updateStatus(`Candidate validation error: ${msg}`);
+                return null;
+            }
+        });
     }
 
     private resolveCandidateValidationDecisionReason(
@@ -1072,11 +1072,7 @@ class WalkForwardService {
     }
 
     private readStringInput(id: string, fallback: string): string {
-        const dom = this.getDom();
-        const elementMap: Record<string, HTMLInputElement> = {
-            "wf-validation-seeds": dom.wfValidationSeeds,
-        };
-        const el = elementMap[id];
+        const el = this.getStringInputs()[id as WalkForwardStringInputId];
         if (!el) return fallback;
         const value = el.value.trim();
         return value.length > 0 ? value : fallback;
@@ -1331,19 +1327,7 @@ class WalkForwardService {
     }
 
     private readNumberInput(id: string, fallback: number): number {
-        const dom = this.getDom();
-        const elementMap: Record<string, HTMLInputElement> = {
-            "wf-opt-window": dom.wfOptWindow,
-            "wf-test-window": dom.wfTestWindow,
-            "wf-step-size": dom.wfStepSize,
-            "wf-min-trades": dom.wfMinTrades,
-            "wf-top-n": dom.wfTopN,
-            "wf-validation-min-passes": dom.wfValidationMinPasses,
-            "wf-validation-max-dd": dom.wfValidationMaxDd,
-            "wf-permutation-count": dom.wfPermutationCount,
-            "wf-permutation-seed": dom.wfPermutationSeed,
-        };
-        const el = elementMap[id];
+        const el = this.getNumberInputs()[id as WalkForwardNumberInputId];
         if (!el) return fallback;
         const val = parseInputNumber(el.value);
         return val ?? fallback;
@@ -1455,7 +1439,7 @@ class WalkForwardService {
     /**
      * Get the backtest state that was active before WFA overwrote it.
      */
-    getPreviousBacktestSnapshot(): { result: any; source: string | null } | null {
+    getPreviousBacktestSnapshot(): PreviousBacktestSnapshot | null {
         return this.previousBacktestSnapshot;
     }
 

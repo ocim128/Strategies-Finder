@@ -28,6 +28,8 @@ class StrategyPanelController {
     private isResizing = false;
     private pendingWidthPx: number | null = null;
     private initialized = false;
+    private handlePointerMove: ((event: PointerEvent) => void) | null = null;
+    private handleStopResizing: (() => void) | null = null;
 
     public init(): void {
         if (this.initialized) {
@@ -39,6 +41,23 @@ class StrategyPanelController {
         this.bindEvents();
         this.restoreLayoutState();
         this.initialized = true;
+    }
+
+    public destroy(): void {
+        if (this.handlePointerMove) {
+            window.removeEventListener("pointermove", this.handlePointerMove);
+            this.handlePointerMove = null;
+        }
+        if (this.handleStopResizing) {
+            window.removeEventListener("pointerup", this.handleStopResizing);
+            window.removeEventListener("pointercancel", this.handleStopResizing);
+            this.handleStopResizing = null;
+        }
+
+        this.isResizing = false;
+        this.pendingWidthPx = null;
+        this.initialized = false;
+        this.dom = null;
     }
 
     public switchTab(tabId: string, options: SwitchTabOptions = {}): boolean {
@@ -261,7 +280,7 @@ class StrategyPanelController {
             event.preventDefault();
         });
 
-        window.addEventListener("pointermove", (event) => {
+        this.handlePointerMove = (event: PointerEvent) => {
             if (!this.isResizing || !this.dom) {
                 return;
             }
@@ -270,9 +289,9 @@ class StrategyPanelController {
             this.pendingWidthPx = nextWidthPx;
             this.dom.strategyPanel.style.setProperty("--strategy-panel-width", `${nextWidthPx}px`);
             this.syncCharts(false);
-        });
+        };
 
-        const stopResizing = () => {
+        this.handleStopResizing = () => {
             if (!this.isResizing || !this.dom) {
                 return;
             }
@@ -289,8 +308,9 @@ class StrategyPanelController {
             this.syncCharts(true);
         };
 
-        window.addEventListener("pointerup", stopResizing);
-        window.addEventListener("pointercancel", stopResizing);
+        window.addEventListener("pointermove", this.handlePointerMove);
+        window.addEventListener("pointerup", this.handleStopResizing);
+        window.addEventListener("pointercancel", this.handleStopResizing);
     }
 
     private restoreLayoutState(): void {
