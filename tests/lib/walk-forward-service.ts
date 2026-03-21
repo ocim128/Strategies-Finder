@@ -25,6 +25,7 @@ import {
     resolveFiniteRangeReferenceValue,
     shouldTreatParamAsWholeNumber
 } from "./walk-forward-range-utils";
+import { createSeededRandom, snapValueToStepRange } from "./param-math-utils";
 import {
     runWalkForwardAnalysis,
     runFixedParamWalkForward,
@@ -258,12 +259,7 @@ class WalkForwardService {
         const span = range.max - range.min;
         if (span <= 0) return range.min;
 
-        const maxIndex = Math.max(0, Math.round(span / range.step));
-        const relativeIndex = (value - range.min) / range.step;
-        const snappedIndex = Math.max(0, Math.min(maxIndex, Math.round(relativeIndex)));
-        const snappedValue = range.min + snappedIndex * range.step;
-        const clampedValue = Math.max(range.min, Math.min(range.max, snappedValue));
-        return Math.round(clampedValue * 1000) / 1000;
+        return snapValueToStepRange(range, value);
     }
 
     private snapParamsToRanges(params: StrategyParams, ranges: ParameterRange[]): StrategyParams {
@@ -1012,7 +1008,7 @@ class WalkForwardService {
             baseSlippageBps: number;
         }
     ): CandidateSeedValidationProfile {
-        const rand = this.createSeededRandom(seed);
+        const rand = createSeededRandom(seed);
         const maxTestWindow = Math.max(20, Math.floor(base.dataLength * 0.45));
         const testScale = 0.85 + rand() * 0.35; // 85%-120%
         const stepScale = 0.85 + rand() * 0.25; // 85%-110%
@@ -1038,17 +1034,6 @@ class WalkForwardService {
             commissionPercent,
             slippageBps,
             dataOffset
-        };
-    }
-
-    private createSeededRandom(seed: number): () => number {
-        let state = (Math.floor(seed) >>> 0) || 1;
-        return () => {
-            state += 0x6D2B79F5;
-            let t = state;
-            t = Math.imul(t ^ (t >>> 15), t | 1);
-            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
         };
     }
 

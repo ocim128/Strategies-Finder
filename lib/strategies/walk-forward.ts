@@ -2,7 +2,8 @@ import { OHLCVData, BacktestResult, StrategyParams, BacktestSettings, Strategy, 
 import { runBacktest, runBacktestCompact, calculateBacktestStats, calculateMaxDrawdown, compareTime, timeToNumber, applySignalPolarity } from './backtest';
 import { ensureCleanData } from './strategy-helpers';
 import { sanitizeSharpeRatio } from './performance-metrics';
-import { deriveAutoWalkForwardRange } from '../walk-forward-range-utils';
+import { deriveAutoWalkForwardRange, shouldTreatParamAsWholeNumber } from '../walk-forward-range-utils';
+import { createSeededRandom, roundRangeValue, snapValueToStepRange } from '../param-math-utils';
 import type { TradeSizingMode } from '../types/backtest';
 
 // ============================================================================
@@ -138,29 +139,9 @@ function validateRange(range: ParameterRange): void {
         throw new Error(`Invalid parameter range for ${range.name}: ${range.min} to ${range.max}`);
 }
 
-function roundRangeValue(value: number): number {
-    return Math.round(value * 1000) / 1000;
-}
-
 function snapValueToRange(range: ParameterRange, value: number): number {
     validateRange(range);
-    if (!Number.isFinite(value)) {
-        return roundRangeValue(range.min);
-    }
-
-    const span = range.max - range.min;
-    const maxIndex = Math.max(0, Math.round(span / range.step));
-    const relativeIndex = (value - range.min) / range.step;
-    const snappedIndex = Math.max(0, Math.min(maxIndex, Math.round(relativeIndex)));
-    const snappedValue = range.min + snappedIndex * range.step;
-    const clampedValue = Math.max(range.min, Math.min(range.max, snappedValue));
-    return roundRangeValue(clampedValue);
-}
-
-function isLikelyIntegerOptimizationParam(name: string, value: number): boolean {
-    if (!Number.isFinite(value)) return false;
-    if (!Number.isInteger(Math.round(value))) return false;
-    return /(lookback|window|period|bars|bins|length|len|lag|count|crossings|hour|hours)/i.test(name);
+    return snapValueToStepRange(range, value);
 }
 
 function normalizeRangeForParameter(
@@ -170,7 +151,7 @@ function normalizeRangeForParameter(
     step: number,
     referenceValue: number
 ): ParameterRange {
-    if (isLikelyIntegerOptimizationParam(name, referenceValue)) {
+    if (shouldTreatParamAsWholeNumber(name, referenceValue)) {
         const normalizedMin = Math.max(1, Math.round(min));
         const normalizedMax = Math.max(normalizedMin + 1, Math.round(max));
         const normalizedStep = Math.max(1, Math.round(step));
@@ -238,22 +219,11 @@ function getRangeStepCount(range: ParameterRange): number {
     return Math.max(1, Math.floor((range.max - range.min) / range.step) + 1);
 }
 
-function createDeterministicRandom(seed: number = 42): () => number {
-    let s = (seed >>> 0) || 1;
-    return () => {
-        s += 0x6D2B79F5;
-        let t = s;
-        t = Math.imul(t ^ (t >>> 15), t | 1);
-        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-}
-
 function generateSampledParameterGrid(ranges: ParameterRange[], maxCombinations: number): StrategyParams[] {
     if (ranges.length === 0) return [{}];
 
     const target = Math.max(1, Math.floor(maxCombinations));
-    const random = createDeterministicRandom(12345);
+    const random = createSeededRandom(12345);
     const grid: StrategyParams[] = [];
     const seen = new Set<string>();
     const stepCounts = ranges.map(getRangeStepCount);
@@ -1327,16 +1297,16 @@ export async function runFixedParamWalkForward(
 
 export function formatWalkForwardSummary(result: WalkForwardResult): string {
     const lines: string[] = [
-        '═══════════════════════════════════════════════════════════════',
+        'â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•',
         '                    WALK-FORWARD ANALYSIS RESULTS              ',
-        '═══════════════════════════════════════════════════════════════',
+        'â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•',
         '',
         `Total Windows:            ${result.totalWindows}`,
         `Optimization Time:        ${(result.optimizationTimeMs / 1000).toFixed(2)}s`,
         '',
-        '─────────────────────────────────────────────────────────────────',
+        'â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€',
         '                         PERFORMANCE METRICS                    ',
-        '─────────────────────────────────────────────────────────────────',
+        'â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€',
         '',
         `Avg In-Sample Sharpe:     ${result.avgInSampleSharpe.toFixed(3)}`,
         `Avg Out-of-Sample Sharpe: ${result.avgOutOfSampleSharpe.toFixed(3)}`,
@@ -1348,39 +1318,39 @@ export function formatWalkForwardSummary(result: WalkForwardResult): string {
         `Combined OOS Max Drawdown: ${result.combinedOOSTrades.maxDrawdownPercent.toFixed(1)}%`,
         `Combined OOS Total Trades: ${result.combinedOOSTrades.totalTrades}`,
         '',
-        '─────────────────────────────────────────────────────────────────',
+        'â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€',
         '                         ROBUSTNESS ANALYSIS                    ',
-        '─────────────────────────────────────────────────────────────────',
+        'â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€',
         '',
         `Robustness Score:         ${result.robustnessScore}/100`,
         `Parameter Stability:      ${result.parameterStability.toFixed(1)}%`,
         '',
         getScoreInterpretation(result.robustnessScore),
         '',
-        '─────────────────────────────────────────────────────────────────',
+        'â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€',
         '                         WINDOW BREAKDOWN                       ',
-        '─────────────────────────────────────────────────────────────────',
+        'â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€',
         ''
     ];
 
     for (const window of result.windows) {
-        const isProfit = window.outOfSampleResult.netProfit >= 0 ? '✓' : '✗';
+        const isProfit = window.outOfSampleResult.netProfit >= 0 ? 'âœ“' : 'âœ—';
         lines.push(
-            `Window ${window.windowIndex + 1}: IS: ${window.inSampleResult.netProfitPercent.toFixed(1)}% → OOS: ${window.outOfSampleResult.netProfitPercent.toFixed(1)}% ${isProfit}  (Degradation: ${window.performanceDegradationPercent.toFixed(0)}%)`
+            `Window ${window.windowIndex + 1}: IS: ${window.inSampleResult.netProfitPercent.toFixed(1)}% â†’ OOS: ${window.outOfSampleResult.netProfitPercent.toFixed(1)}% ${isProfit}  (Degradation: ${window.performanceDegradationPercent.toFixed(0)}%)`
         );
     }
 
     lines.push('');
-    lines.push('═══════════════════════════════════════════════════════════════');
+    lines.push('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
     return lines.join('\n');
 }
 
 function getScoreInterpretation(score: number): string {
-    if (score >= 80) return '🟢 EXCELLENT: Strategy shows strong robustness. Low overfitting risk.';
-    if (score >= 60) return '🟡 GOOD: Strategy is reasonably robust. Monitor for degradation.';
-    if (score >= 40) return '🟠 MODERATE: Some overfitting detected. Consider parameter constraints.';
-    if (score >= 20) return '🔴 POOR: Significant overfitting. Strategy may not perform forward.';
-    return '⛔ CRITICAL: Severe overfitting. Strategy is curve-fitted and unreliable.';
+    if (score >= 80) return 'ðŸŸ¢ EXCELLENT: Strategy shows strong robustness. Low overfitting risk.';
+    if (score >= 60) return 'ðŸŸ¡ GOOD: Strategy is reasonably robust. Monitor for degradation.';
+    if (score >= 40) return 'ðŸŸ  MODERATE: Some overfitting detected. Consider parameter constraints.';
+    if (score >= 20) return 'ðŸ”´ POOR: Significant overfitting. Strategy may not perform forward.';
+    return 'â›” CRITICAL: Severe overfitting. Strategy is curve-fitted and unreliable.';
 }
 
 

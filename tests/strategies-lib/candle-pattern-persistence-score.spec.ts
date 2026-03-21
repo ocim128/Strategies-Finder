@@ -4,25 +4,22 @@ import { candle_pattern_persistence_score } from '../lib/strategies/lib/candle-p
 import type { OHLCVData } from '../lib/strategies';
 
 describe('candle_pattern_persistence_score', () => {
-    it('removes Min Avg Body % from the live param contract', () => {
+    it('removes Persistence Threshold and Min Avg Body % from the live param contract', () => {
         expect(Object.keys(candle_pattern_persistence_score.defaultParams)).to.deep.equal([
             'scoreLookback',
-            'scoreThreshold',
         ]);
         expect(Object.keys(candle_pattern_persistence_score.paramLabels)).to.deep.equal([
             'scoreLookback',
-            'scoreThreshold',
         ]);
         expect(candle_pattern_persistence_score.metadata?.walkForwardParams).to.deep.equal([
             'scoreLookback',
-            'scoreThreshold',
         ]);
     });
 
-    it('forces legacy minBodyPct inputs to zero', () => {
+    it('forces legacy scoreThreshold and minBodyPct inputs to zero', () => {
         const normalized = candle_pattern_persistence_score.normalizeParams!({
             scoreLookback: 1.4,
-            scoreThreshold: -0.25,
+            scoreThreshold: 0.75,
             minBodyPct: 0.9,
         });
 
@@ -31,7 +28,7 @@ describe('candle_pattern_persistence_score', () => {
         expect(normalized.minBodyPct).to.equal(0);
     });
 
-    it('ignores legacy minBodyPct values during execution', () => {
+    it('ignores legacy scoreThreshold and minBodyPct values during execution', () => {
         const data: OHLCVData[] = [
             { time: 1, open: 100, high: 110, low: 90, close: 102, volume: 1_000 },
             { time: 2, open: 102, high: 112, low: 92, close: 104, volume: 1_000 },
@@ -40,11 +37,10 @@ describe('candle_pattern_persistence_score', () => {
 
         const baseSignals = candle_pattern_persistence_score.execute(data, {
             scoreLookback: 2,
-            scoreThreshold: 0.05,
         });
         const legacySignals = candle_pattern_persistence_score.execute(data, {
             scoreLookback: 2,
-            scoreThreshold: 0.05,
+            scoreThreshold: 0.95,
             minBodyPct: 0.95,
         });
 

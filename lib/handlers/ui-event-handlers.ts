@@ -647,6 +647,48 @@ export function setupEventHandlers() {
         applyState();
     });
 
+    const setDisabledState = (
+        inputs: ArrayLike<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>,
+        enabled: boolean
+    ) => {
+        for (let i = 0; i < inputs.length; i++) {
+            inputs[i].disabled = !enabled;
+        }
+    };
+
+    const setGroupDisabledState = (groups: ArrayLike<HTMLElement>, enabled: boolean) => {
+        for (let i = 0; i < groups.length; i++) {
+            groups[i].classList.toggle('is-disabled', !enabled);
+        }
+    };
+
+    const setSectionVisibility = (section: HTMLElement | null, visible: boolean) => {
+        if (!section) {
+            return;
+        }
+        section.classList.toggle('is-hidden', !visible);
+    };
+
+    const setInteractiveSectionState = (section: HTMLElement | null, enabled: boolean) => {
+        if (!section) {
+            return;
+        }
+        setSectionVisibility(section, enabled);
+        setDisabledState(section.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea'), enabled);
+        setGroupDisabledState(section.querySelectorAll<HTMLElement>('.param-group'), enabled);
+    };
+
+    const setInputGroupState = (
+        inputs: ArrayLike<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>,
+        enabled: boolean
+    ) => {
+        for (let i = 0; i < inputs.length; i++) {
+            const input = inputs[i];
+            input.disabled = !enabled;
+            input.closest<HTMLElement>('.param-group')?.classList.toggle('is-disabled', !enabled);
+        }
+    };
+
     const riskModeSelect = dom.riskMode;
     const takeProfitModeSelect = dom.takeProfitMode;
     const riskSimpleAdvanced = dom.riskSimpleAdvanced;
@@ -673,20 +715,11 @@ export function setupEventHandlers() {
         takeProfitModePanels.forEach((panel) => {
             const panelMode = panel.dataset.tpModePanel;
             const shouldShow = panelMode === mode;
-            panel.classList.toggle('is-hidden', !shouldShow);
-            panel.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea').forEach((input) => {
-                input.disabled = !shouldShow;
-            });
-            panel.querySelectorAll<HTMLElement>('.param-group').forEach((group) => {
-                group.classList.toggle('is-disabled', !shouldShow);
-            });
+            setInteractiveSectionState(panel, shouldShow);
         });
 
-        takeProfitShrinkageSettingsRow.classList.toggle('is-hidden', !showShrinkage);
-        takeProfitShrinkageInputs.forEach((input) => {
-            input.disabled = !showShrinkage;
-            input.closest<HTMLElement>('.param-group')?.classList.toggle('is-disabled', !showShrinkage);
-        });
+        setSectionVisibility(takeProfitShrinkageSettingsRow, showShrinkage);
+        setInputGroupState(takeProfitShrinkageInputs, showShrinkage);
     };
 
     const applyRiskMode = () => {
@@ -696,32 +729,25 @@ export function setupEventHandlers() {
         const isSimpleOrAdvanced = mode === 'simple' || mode === 'advanced';
 
         if (riskSimpleAdvanced) {
-            riskSimpleAdvanced.classList.toggle('is-hidden', !isSimpleOrAdvanced);
+            setSectionVisibility(riskSimpleAdvanced, isSimpleOrAdvanced);
         }
         if (riskPercentage) {
-            riskPercentage.classList.toggle('is-hidden', !isPercentage);
+            setSectionVisibility(riskPercentage, isPercentage);
         }
 
-        riskAdvanced.classList.toggle('is-hidden', !isAdvanced);
-        riskAdvancedGroups.forEach(group => group.classList.toggle('is-disabled', !isAdvanced));
-        riskAdvancedInputs.forEach(input => {
-            input.disabled = !isAdvanced;
-        });
+        setSectionVisibility(riskAdvanced, isAdvanced);
+        setGroupDisabledState(riskAdvancedGroups, isAdvanced);
+        setDisabledState(riskAdvancedInputs, isAdvanced);
 
-        riskPercentageGroups.forEach(group => group.classList.toggle('is-disabled', !isPercentage));
-        riskPercentageInputs.forEach(input => {
-            input.disabled = !isPercentage;
-        });
+        setGroupDisabledState(riskPercentageGroups, isPercentage);
+        setDisabledState(riskPercentageInputs, isPercentage);
 
         if (isPercentage) {
             applyTakeProfitMode();
         } else {
-            takeProfitShrinkageSettingsRow.classList.add('is-hidden');
+            setSectionVisibility(takeProfitShrinkageSettingsRow, false);
             takeProfitModePanels.forEach((panel) => {
-                panel.classList.add('is-hidden');
-                panel.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea').forEach((input) => {
-                    input.disabled = true;
-                });
+                setInteractiveSectionState(panel, false);
             });
         }
     };
@@ -740,13 +766,8 @@ export function setupEventHandlers() {
 
     const applyTradeDirectionMode = () => {
         const isFlipLossMode = tradeDirectionSelect.value === 'both_flip_loss_2';
-        if (flipLossStreakSettingsRow) {
-            flipLossStreakSettingsRow.classList.toggle('is-hidden', !isFlipLossMode);
-        }
-        flipLossStreakInputs.forEach((input) => {
-            input.disabled = !isFlipLossMode;
-            input.closest<HTMLElement>('.param-group')?.classList.toggle('is-disabled', !isFlipLossMode);
-        });
+        setSectionVisibility(flipLossStreakSettingsRow, isFlipLossMode);
+        setInputGroupState(flipLossStreakInputs, isFlipLossMode);
     };
 
     tradeDirectionSelect.addEventListener('change', applyTradeDirectionMode);
@@ -803,8 +824,8 @@ export function setupEventHandlers() {
         tradeFilterFields.forEach(({ input, group, modes }) => {
             const isRelevant = modes.includes(mode);
             group.classList.toggle('is-hidden', !isRelevant);
-            group.classList.toggle('is-disabled', !isRelevant);
-            input.disabled = !isRelevant;
+            setGroupDisabledState([group], isRelevant);
+            setDisabledState([input], isRelevant);
         });
 
         tradeFilterRows.forEach((row) => {

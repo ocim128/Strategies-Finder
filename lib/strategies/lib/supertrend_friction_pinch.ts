@@ -14,6 +14,17 @@ type SupertrendFrictionPinchPrepared = {
     rocSeries: (number | null)[];
 };
 
+function normalizeSupertrendFrictionPinchParams(params: StrategyParams): StrategyParams {
+    const rawRocTarget = Number(params.rocTarget ?? 1.5);
+
+    return {
+        ...params,
+        stPeriod: 1,
+        pinchLookback: 1,
+        rocTarget: Number.isFinite(rawRocTarget) ? rawRocTarget : 1.5,
+    };
+}
+
 function prepareSupertrendFrictionPinchData(data: OHLCVData[]): SupertrendFrictionPinchPrepared {
     const cleanData = ensureCleanData(data);
     const closes = getCloses(cleanData);
@@ -43,22 +54,20 @@ export const supertrend_friction_pinch: Strategy = {
     name: "Supertrend Friction Pinch",
     description: "Quantifies localized stall-points precisely at major trend structure lines. Computes the absolute distance between Close and Supertrend, seeking instances where this distance collapses to a rolling minimum deadzone prior to breaking away.",
     defaultParams: {
-        stPeriod: 10,
-        pinchLookback: 20,
         rocTarget: 1.5,
     },
     paramLabels: {
-        stPeriod: "Supertrend Sensitity Layer",
-        pinchLookback: "Friction Floor Matrix",
         rocTarget: "Minimum Breakaway Threshold",
     },
+    normalizeParams: normalizeSupertrendFrictionPinchParams,
     prepareFinderData: (data) => prepareSupertrendFrictionPinchData(data),
     executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
         const prepared = getPreparedSupertrendFrictionPinchData(preparedData, data);
         const { cleanData, highs, lows, closes, supertrendByPeriod, safeDistancesByPeriod, distanceLimitsByKey, rocSeries } = prepared;
-        const sPeriod = Number(params.stPeriod ?? 10);
-        const pLookback = Number(params.pinchLookback ?? 20);
-        const rocTrigger = Number(params.rocTarget ?? 1.5);
+        const normalized = normalizeSupertrendFrictionPinchParams(params);
+        const sPeriod = normalized.stPeriod;
+        const pLookback = normalized.pinchLookback;
+        const rocTrigger = normalized.rocTarget;
 
         if (cleanData.length < sPeriod + pLookback + 5) return [];
 
@@ -115,6 +124,6 @@ export const supertrend_friction_pinch: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["stPeriod", "pinchLookback", "rocTarget"],
+        walkForwardParams: ["rocTarget"],
     },
 };

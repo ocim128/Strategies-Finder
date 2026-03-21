@@ -32,6 +32,26 @@ import type {
     SizingScenarioRow,
 } from "./portfolio-lab-types";
 
+type SharedBacktestMetrics = {
+    totalTrades: number;
+    winRate: number;
+    netProfitPercent: number;
+    expectancy: number;
+    profitFactor: number;
+    maxDrawdownPercent: number;
+};
+
+function renderSharedBacktestMetricCells(result: SharedBacktestMetrics): string {
+    return `
+        <td>${result.totalTrades}</td>
+        <td>${result.winRate.toFixed(1)}%</td>
+        <td class="${result.netProfitPercent >= 0 ? "positive" : "negative"}">${formatPercent(result.netProfitPercent)}</td>
+        <td class="${result.expectancy >= 0 ? "positive" : "negative"}">${formatCurrency(result.expectancy)}</td>
+        <td>${formatProfitFactor(result.profitFactor)}</td>
+        <td class="negative">${formatDrawdownPercent(result.maxDrawdownPercent)}</td>
+    `;
+}
+
 export function renderSummary(rows: PairAnalysisRow[], benchmarkSymbol: string): string {
     const profitablePairs = rows.filter((row) => row.result.netProfitPercent > 0).length;
     const avgNetPct = average(rows.map((row) => row.result.netProfitPercent));
@@ -469,12 +489,7 @@ export function renderBreadthSweep(dom: PortfolioLabDom, rows: BreadthSweepRow[]
         <tr>
             <td>${row.minAgree}</td>
             <td>${row.signals}</td>
-            <td>${row.result.totalTrades}</td>
-            <td>${row.result.winRate.toFixed(1)}%</td>
-            <td class="${row.result.netProfitPercent >= 0 ? "positive" : "negative"}">${formatPercent(row.result.netProfitPercent)}</td>
-            <td class="${row.result.expectancy >= 0 ? "positive" : "negative"}">${formatCurrency(row.result.expectancy)}</td>
-            <td>${formatProfitFactor(row.result.profitFactor)}</td>
-            <td class="negative">${formatDrawdownPercent(row.result.maxDrawdownPercent)}</td>
+            ${renderSharedBacktestMetricCells(row.result)}
         </tr>
     `).join("");
 }
@@ -497,12 +512,7 @@ export function renderOppositionSweep(dom: PortfolioLabDom, rows: OppositionSwee
         <tr>
             <td>${label}</td>
             <td>${row.signals}</td>
-            <td>${row.result.totalTrades}</td>
-            <td>${row.result.winRate.toFixed(1)}%</td>
-            <td class="${row.result.netProfitPercent >= 0 ? "positive" : "negative"}">${formatPercent(row.result.netProfitPercent)}</td>
-            <td class="${row.result.expectancy >= 0 ? "positive" : "negative"}">${formatCurrency(row.result.expectancy)}</td>
-            <td>${formatProfitFactor(row.result.profitFactor)}</td>
-            <td class="negative">${formatDrawdownPercent(row.result.maxDrawdownPercent)}</td>
+            ${renderSharedBacktestMetricCells(row.result)}
         </tr>
     `).join("");
 }
@@ -600,12 +610,7 @@ export function renderSizingTable(rows: SizingScenarioRow[]): string {
                 <div class="portfolio-lab__table-caption">${row.description}</div>
             </td>
             <td>${row.result.avgMultiplier.toFixed(2)}x</td>
-            <td>${row.result.totalTrades}</td>
-            <td>${row.result.winRate.toFixed(1)}%</td>
-            <td class="${row.result.netProfitPercent >= 0 ? "positive" : "negative"}">${formatPercent(row.result.netProfitPercent)}</td>
-            <td class="${row.result.expectancy >= 0 ? "positive" : "negative"}">${formatCurrency(row.result.expectancy)}</td>
-            <td>${formatProfitFactor(row.result.profitFactor)}</td>
-            <td class="negative">${formatDrawdownPercent(row.result.maxDrawdownPercent)}</td>
+            ${renderSharedBacktestMetricCells(row.result)}
         </tr>
     `).join("");
 }
