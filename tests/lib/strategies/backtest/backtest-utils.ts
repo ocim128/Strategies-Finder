@@ -35,6 +35,10 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         takeProfitMode: settings?.takeProfitMode === 'shrinkage'
             || settings?.takeProfitMode === 'momentum_gated'
             || settings?.takeProfitMode === 'velocity'
+            || settings?.takeProfitMode === 'atr_scaled'
+            || settings?.takeProfitMode === 'range_scaled'
+            || settings?.takeProfitMode === 'median_bar'
+            || settings?.takeProfitMode === 'mfe_bootstrap'
             ? settings.takeProfitMode
             : 'fixed',
         takeProfitMfeLookbackTrades: Math.max(5, Math.round(toNumberOr(settings?.takeProfitMfeLookbackTrades, 100))),
@@ -48,6 +52,12 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         takeProfitVelocityProgressPercent: clamp(toNumberOr(settings?.takeProfitVelocityProgressPercent, 50), 1, 100),
         takeProfitVelocityExpandMultiplier: Math.max(0.1, toNumberOr(settings?.takeProfitVelocityExpandMultiplier, 1.5)),
         takeProfitVelocityShrinkMultiplier: Math.max(0.1, toNumberOr(settings?.takeProfitVelocityShrinkMultiplier, 0.65)),
+        takeProfitAtrScaledMultiplier: Math.max(0.1, toNumberOr(settings?.takeProfitAtrScaledMultiplier, 1.5)),
+        takeProfitRangeScaledLookback: Math.max(5, Math.round(toNumberOr(settings?.takeProfitRangeScaledLookback, 20))),
+        takeProfitRangeScaledFraction: clamp(toNumberOr(settings?.takeProfitRangeScaledFraction, 0.3), 0.01, 1),
+        takeProfitMedianBarLookback: Math.max(5, Math.round(toNumberOr(settings?.takeProfitMedianBarLookback, 20))),
+        takeProfitMedianBarMultiplier: Math.max(0.1, toNumberOr(settings?.takeProfitMedianBarMultiplier, 2)),
+        takeProfitMfeBootstrapPercentile: clamp(toNumberOr(settings?.takeProfitMfeBootstrapPercentile, 60), 1, 99),
         stopLossEnabled: settings?.stopLossEnabled ?? false,
         takeProfitEnabled: settings?.takeProfitEnabled ?? false,
         riskMaxHoldBars: Math.max(0, toNumberOr(settings?.riskMaxHoldBars, 0)),

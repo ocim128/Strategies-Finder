@@ -40,6 +40,12 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     takeProfitVelocityProgressPercent: 50,
     takeProfitVelocityExpandMultiplier: 1.5,
     takeProfitVelocityShrinkMultiplier: 0.65,
+    takeProfitAtrScaledMultiplier: 1.5,
+    takeProfitRangeScaledLookback: 20,
+    takeProfitRangeScaledFraction: 0.3,
+    takeProfitMedianBarLookback: 20,
+    takeProfitMedianBarMultiplier: 2,
+    takeProfitMfeBootstrapPercentile: 60,
     stopLossEnabled: true,
     takeProfitEnabled: true,
     riskMaxHoldBars: 10,
@@ -141,6 +147,12 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "takeProfitVelocityProgressPercent",
     "takeProfitVelocityExpandMultiplier",
     "takeProfitVelocityShrinkMultiplier",
+    "takeProfitAtrScaledMultiplier",
+    "takeProfitRangeScaledLookback",
+    "takeProfitRangeScaledFraction",
+    "takeProfitMedianBarLookback",
+    "takeProfitMedianBarMultiplier",
+    "takeProfitMfeBootstrapPercentile",
     "stopLossToggle",
     "takeProfitToggle",
     "riskMaxHoldBars",
@@ -202,6 +214,10 @@ const VALID_TAKE_PROFIT_MODES = new Set<NonNullable<BacktestSettings["takeProfit
     "shrinkage",
     "momentum_gated",
     "velocity",
+    "atr_scaled",
+    "range_scaled",
+    "median_bar",
+    "mfe_bootstrap",
 ]);
 
 function toBooleanLike(rawValue: unknown): boolean | null {
@@ -452,6 +468,24 @@ export function resolveBacktestSettingsFromRaw(
         takeProfitVelocityShrinkMultiplier: usePercentRisk
             ? Math.max(0.1, readNumber(raw, "takeProfitVelocityShrinkMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityShrinkMultiplier))
             : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityShrinkMultiplier,
+        takeProfitAtrScaledMultiplier: usePercentRisk
+            ? Math.max(0.1, readNumber(raw, "takeProfitAtrScaledMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAtrScaledMultiplier))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAtrScaledMultiplier,
+        takeProfitRangeScaledLookback: usePercentRisk
+            ? Math.max(5, Math.round(readNumber(raw, "takeProfitRangeScaledLookback", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitRangeScaledLookback)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitRangeScaledLookback,
+        takeProfitRangeScaledFraction: usePercentRisk
+            ? Math.max(0.01, Math.min(1, readNumber(raw, "takeProfitRangeScaledFraction", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitRangeScaledFraction)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitRangeScaledFraction,
+        takeProfitMedianBarLookback: usePercentRisk
+            ? Math.max(5, Math.round(readNumber(raw, "takeProfitMedianBarLookback", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMedianBarLookback)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMedianBarLookback,
+        takeProfitMedianBarMultiplier: usePercentRisk
+            ? Math.max(0.1, readNumber(raw, "takeProfitMedianBarMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMedianBarMultiplier))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMedianBarMultiplier,
+        takeProfitMfeBootstrapPercentile: usePercentRisk
+            ? Math.max(1, Math.min(99, readNumber(raw, "takeProfitMfeBootstrapPercentile", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeBootstrapPercentile)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeBootstrapPercentile,
         stopLossEnabled: usePercentRisk ? readBooleanAny(raw, ["stopLossEnabled", "stopLossToggle"], EFFECTIVE_BACKTEST_DEFAULTS.stopLossEnabled) : false,
         takeProfitEnabled: usePercentRisk ? readBooleanAny(raw, ["takeProfitEnabled", "takeProfitToggle"], EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEnabled) : false,
         riskMaxHoldBars: useRiskMaxHold ? readNumber(raw, "riskMaxHoldBars", EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars) : 0,

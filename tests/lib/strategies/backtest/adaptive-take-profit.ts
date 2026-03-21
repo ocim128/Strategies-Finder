@@ -39,6 +39,9 @@ export interface AdaptiveTakeProfitState {
         | "vwapDeviationStd"
     >;
     performance: AdaptivePerformanceState;
+    data: OHLCVData[];
+    atr: (number | null)[];
+    mfeBootstrapPercent: number | null;
 }
 
 function calculatePercentile(values: readonly number[], percentile: number): number | null {
@@ -113,7 +116,9 @@ function resolveRollingMfePercent(
 function resolveEntryAdaptiveTargetPercent(
     config: NormalizedSettings,
     state: AdaptiveTakeProfitState,
-    direction: "long" | "short"
+    direction: "long" | "short",
+    entryPrice: number,
+    entryBarIndex: number
 ): number {
     if (config.takeProfitMode === "shrinkage") {
         const pairEstimate = resolveRollingMfePercent(config, state, direction);
@@ -122,6 +127,66 @@ function resolveEntryAdaptiveTargetPercent(
         return clampNonNegative(
             sampleWeight * pairEstimate + (1 - sampleWeight) * config.takeProfitPercent
         );
+    }
+
+    if (config.takeProfitMode === "atr_scaled") {
+        const atrValue = entryBarIndex >= 0 ? (state.atr[entryBarIndex] ?? null) : null;
+        if (atrValue !== null && Number.isFinite(atrValue) && atrValue > 0 && entryPrice > 0) {
+            const atrPercent = (atrValue / entryPrice) * 100;
+            return clampNonNegative(config.takeProfitAtrScaledMultiplier * atrPercent);
+        }
+        return clampNonNegative(config.takeProfitPercent);
+    }
+
+    if (config.takeProfitMode === "range_scaled") {
+        const lookback = config.takeProfitRangeScaledLookback;
+        const data = state.data;
+        if (data.length > 0 && entryBarIndex >= 0) {
+            const start = Math.max(0, entryBarIndex - lookback + 1);
+            let highest = -Infinity;
+            let lowest = Infinity;
+            for (let i = start; i <= entryBarIndex; i++) {
+                if (data[i].high > highest) highest = data[i].high;
+                if (data[i].low < lowest) lowest = data[i].low;
+            }
+            if (Number.isFinite(highest) && Number.isFinite(lowest) && entryPrice > 0) {
+                const rangePercent = ((highest - lowest) / entryPrice) * 100;
+                return clampNonNegative(config.takeProfitRangeScaledFraction * rangePercent);
+            }
+        }
+        return clampNonNegative(config.takeProfitPercent);
+    }
+
+    if (config.takeProfitMode === "median_bar") {
+        const lookback = config.takeProfitMedianBarLookback;
+        const data = state.data;
+        if (data.length > 0 && entryBarIndex >= 0) {
+            const start = Math.max(0, entryBarIndex - lookback + 1);
+            const barRanges: number[] = [];
+            for (let i = start; i <= entryBarIndex; i++) {
+                const range = data[i].high - data[i].low;
+                if (Number.isFinite(range) && range > 0) {
+                    barRanges.push(range);
+                }
+            }
+            if (barRanges.length > 0 && entryPrice > 0) {
+                barRanges.sort((a, b) => a - b);
+                const mid = Math.floor(barRanges.length / 2);
+                const medianRange = barRanges.length % 2 === 1
+                    ? barRanges[mid]
+                    : (barRanges[mid - 1] + barRanges[mid]) / 2;
+                const medianBarPercent = (medianRange / entryPrice) * 100;
+                return clampNonNegative(config.takeProfitMedianBarMultiplier * medianBarPercent);
+            }
+        }
+        return clampNonNegative(config.takeProfitPercent);
+    }
+
+    if (config.takeProfitMode === "mfe_bootstrap") {
+        if (state.mfeBootstrapPercent !== null && state.mfeBootstrapPercent > 0) {
+            return state.mfeBootstrapPercent;
+        }
+        return clampNonNegative(config.takeProfitPercent);
     }
 
     return clampNonNegative(config.takeProfitPercent);
@@ -137,12 +202,50 @@ function resolveDirectionalMovePercent(entryPrice: number, price: number, direct
     return directionFactorFor(direction) * ((price - entryPrice) / entryPrice) * 100;
 }
 
+/**
+ * Pre-computes the MFE-bootstrap TP% from the full dataset by simulating a
+ * naive forward pass to identify bars where buy/sell MFE is measurable.
+ * This is intentionally NON-CAUSAL and uses the full dataset.
+ */
+function computeMfeBootstrapPercent(
+    data: OHLCVData[],
+    config: NormalizedSettings
+): number | null {
+    if (data.length < 20) return null;
+
+    const mfePercents: number[] = [];
+    const lookforward = Math.max(5, Math.min(50, Math.round(data.length * 0.02)));
+
+    for (let i = 1; i < data.length - lookforward; i++) {
+        const entryPrice = data[i].close;
+        if (!Number.isFinite(entryPrice) || entryPrice <= 0) continue;
+
+        // Look forward to find the most favorable excursion
+        let bestLongMfe = 0;
+        let bestShortMfe = 0;
+        for (let j = i + 1; j <= i + lookforward && j < data.length; j++) {
+            const longMfe = ((data[j].high - entryPrice) / entryPrice) * 100;
+            const shortMfe = ((entryPrice - data[j].low) / entryPrice) * 100;
+            if (longMfe > bestLongMfe) bestLongMfe = longMfe;
+            if (shortMfe > bestShortMfe) bestShortMfe = shortMfe;
+        }
+        if (bestLongMfe > 0) mfePercents.push(bestLongMfe);
+        if (bestShortMfe > 0) mfePercents.push(bestShortMfe);
+    }
+
+    return calculatePercentile(mfePercents, config.takeProfitMfeBootstrapPercentile);
+}
+
 export function createAdaptiveTakeProfitState(
-    _data: OHLCVData[],
-    _config: NormalizedSettings,
+    data: OHLCVData[],
+    config: NormalizedSettings,
     indicators: IndicatorSeries,
     initialCapital: number
 ): AdaptiveTakeProfitState {
+    let mfeBootstrapPercent: number | null = null;
+    if (config.takeProfitMode === "mfe_bootstrap" && config.riskMode === "percentage" && config.takeProfitEnabled) {
+        mfeBootstrapPercent = computeMfeBootstrapPercent(data, config);
+    }
     return {
         longWinningMfePercents: [],
         shortWinningMfePercents: [],
@@ -158,6 +261,9 @@ export function createAdaptiveTakeProfitState(
             currentClosedCapital: initialCapital,
             peakClosedCapital: initialCapital,
         },
+        data,
+        atr: indicators.atr,
+        mfeBootstrapPercent,
     };
 }
 
@@ -165,14 +271,14 @@ export function resolveAdaptiveTakeProfitOverrides(
     config: NormalizedSettings,
     state: AdaptiveTakeProfitState,
     direction: "long" | "short",
-    _entryPrice: number,
-    _entryBarIndex: number
+    entryPrice: number,
+    entryBarIndex: number
 ): AdaptiveTakeProfitOverrides | null {
     if (config.riskMode !== "percentage" || config.takeProfitEnabled !== true) {
         return null;
     }
 
-    const adaptivePercent = resolveEntryAdaptiveTargetPercent(config, state, direction);
+    const adaptivePercent = resolveEntryAdaptiveTargetPercent(config, state, direction, entryPrice, entryBarIndex);
 
     return {
         takeProfitPercent: adaptivePercent,

@@ -218,6 +218,10 @@
                                 <option value="shrinkage">Shrinkage to Base %</option>
                                 <option value="momentum_gated">Volatility-Gated Shrinkage</option>
                                 <option value="velocity">Time-in-Profit Velocity</option>
+                                <option value="atr_scaled">ATR-Scaled %</option>
+                                <option value="range_scaled">Range-Scaled %</option>
+                                <option value="median_bar">Median Bar Range %</option>
+                                <option value="mfe_bootstrap">MFE Bootstrap %</option>
                             </select>
                             <div class="param-hint">Adaptive modes only use prior closed trades and current or prior closed candles to avoid repainting and look-ahead bias.</div>
                         </div>
@@ -321,6 +325,50 @@
                             <input type="number" class="param-input" id="takeProfitVelocityShrinkMultiplier" value="0.65" min="0.1"
                                 step="0.05">
                             <div class="param-hint">Applied when early progress is too slow.</div>
+                        </div>
+                    </div>
+                    <div class="param-row is-hidden" data-tp-mode-panel="atr_scaled">
+                        <div class="param-group">
+                            <label class="param-label">ATR Scaled Multiplier</label>
+                            <input type="number" class="param-input" id="takeProfitAtrScaledMultiplier" value="1.5" min="0.1"
+                                step="0.1">
+                            <div class="param-hint">TP% = ATR% × multiplier. Adapts to each pair's volatility at entry.</div>
+                        </div>
+                    </div>
+                    <div class="param-row is-hidden" data-tp-mode-panel="range_scaled">
+                        <div class="param-group">
+                            <label class="param-label">Range Lookback (bars)</label>
+                            <input type="number" class="param-input" id="takeProfitRangeScaledLookback" value="20" min="5"
+                                step="1">
+                            <div class="param-hint">Number of bars to measure recent high-low range.</div>
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Range Fraction</label>
+                            <input type="number" class="param-input" id="takeProfitRangeScaledFraction" value="0.3" min="0.01"
+                                max="1" step="0.01">
+                            <div class="param-hint">TP distance = fraction × recent range. 0.3 = 30% of recent swing.</div>
+                        </div>
+                    </div>
+                    <div class="param-row is-hidden" data-tp-mode-panel="median_bar">
+                        <div class="param-group">
+                            <label class="param-label">Median Bar Lookback</label>
+                            <input type="number" class="param-input" id="takeProfitMedianBarLookback" value="20" min="5"
+                                step="1">
+                            <div class="param-hint">Number of bars to compute median bar range.</div>
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Bar Range Multiplier</label>
+                            <input type="number" class="param-input" id="takeProfitMedianBarMultiplier" value="2" min="0.1"
+                                step="0.1">
+                            <div class="param-hint">TP% = median bar range% × multiplier. 2× median = expect ~2 bars of favorable movement.</div>
+                        </div>
+                    </div>
+                    <div class="param-row is-hidden" data-tp-mode-panel="mfe_bootstrap">
+                        <div class="param-group">
+                            <label class="param-label">MFE Percentile</label>
+                            <input type="number" class="param-input" id="takeProfitMfeBootstrapPercentile" value="60" min="1"
+                                max="99" step="1">
+                            <div class="param-hint">Uses percentile of the full dataset's MFE distribution as TP%. Higher = more aggressive. NON-CAUSAL: uses future data for target estimation.</div>
                         </div>
                     </div>
                     <div class="param-row">

@@ -72,7 +72,9 @@ function buildEntryPosition(
             context.settings,
             signalToPositionDirection(signal.type),
             signal.price,
-            barIndex,
+            // For next_open, the execution bar's full candle is not yet known at entry.
+            // Use the last closed bar (barIndex - 1) to match position-builder's ATR source.
+            context.settings.executionModel === 'next_open' ? barIndex - 1 : barIndex,
             context.adaptiveTakeProfitState
         ),
     });

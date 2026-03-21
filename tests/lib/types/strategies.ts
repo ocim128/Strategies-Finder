@@ -210,7 +210,11 @@ export type PercentageTakeProfitMode =
     | 'fixed'
     | 'shrinkage'
     | 'momentum_gated'
-    | 'velocity';
+    | 'velocity'
+    | 'atr_scaled'
+    | 'range_scaled'
+    | 'median_bar'
+    | 'mfe_bootstrap';
 
 export interface BacktestSettings {
     atrPeriod?: number;
@@ -240,6 +244,18 @@ export interface BacktestSettings {
     takeProfitVelocityProgressPercent?: number;
     takeProfitVelocityExpandMultiplier?: number;
     takeProfitVelocityShrinkMultiplier?: number;
+    /** ATR-scaled TP: multiplier applied to ATR% at entry to derive TP% */
+    takeProfitAtrScaledMultiplier?: number;
+    /** Range-scaled TP: lookback bars for recent high-low range */
+    takeProfitRangeScaledLookback?: number;
+    /** Range-scaled TP: fraction of recent range used as TP distance */
+    takeProfitRangeScaledFraction?: number;
+    /** Median-bar TP: lookback bars for computing median bar range */
+    takeProfitMedianBarLookback?: number;
+    /** Median-bar TP: multiplier applied to median bar range% */
+    takeProfitMedianBarMultiplier?: number;
+    /** MFE-bootstrap TP: percentile of historical winning MFE distribution used as TP% (non-causal) */
+    takeProfitMfeBootstrapPercentile?: number;
     stopLossEnabled?: boolean;
     takeProfitEnabled?: boolean;
     /** Hard cap on bars held when risk management is active */

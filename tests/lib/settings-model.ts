@@ -53,6 +53,12 @@ export interface BacktestSettingsData {
     takeProfitVelocityProgressPercent: number;
     takeProfitVelocityExpandMultiplier: number;
     takeProfitVelocityShrinkMultiplier: number;
+    takeProfitAtrScaledMultiplier: number;
+    takeProfitRangeScaledLookback: number;
+    takeProfitRangeScaledFraction: number;
+    takeProfitMedianBarLookback: number;
+    takeProfitMedianBarMultiplier: number;
+    takeProfitMfeBootstrapPercentile: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
     riskMaxHoldBars: number;
@@ -235,6 +241,12 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     takeProfitVelocityProgressPercent: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityProgressPercent,
     takeProfitVelocityExpandMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityExpandMultiplier,
     takeProfitVelocityShrinkMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityShrinkMultiplier,
+    takeProfitAtrScaledMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAtrScaledMultiplier,
+    takeProfitRangeScaledLookback: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitRangeScaledLookback,
+    takeProfitRangeScaledFraction: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitRangeScaledFraction,
+    takeProfitMedianBarLookback: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMedianBarLookback,
+    takeProfitMedianBarMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMedianBarMultiplier,
+    takeProfitMfeBootstrapPercentile: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeBootstrapPercentile,
     stopLossEnabled: false,
     takeProfitEnabled: false,
     riskMaxHoldBars: EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars,
@@ -474,6 +486,12 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
         takeProfitVelocityProgressPercent: resolved.takeProfitVelocityProgressPercent ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityProgressPercent,
         takeProfitVelocityExpandMultiplier: resolved.takeProfitVelocityExpandMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityExpandMultiplier,
         takeProfitVelocityShrinkMultiplier: resolved.takeProfitVelocityShrinkMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityShrinkMultiplier,
+        takeProfitAtrScaledMultiplier: resolved.takeProfitAtrScaledMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitAtrScaledMultiplier,
+        takeProfitRangeScaledLookback: resolved.takeProfitRangeScaledLookback ?? DEFAULT_BACKTEST_SETTINGS.takeProfitRangeScaledLookback,
+        takeProfitRangeScaledFraction: resolved.takeProfitRangeScaledFraction ?? DEFAULT_BACKTEST_SETTINGS.takeProfitRangeScaledFraction,
+        takeProfitMedianBarLookback: resolved.takeProfitMedianBarLookback ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMedianBarLookback,
+        takeProfitMedianBarMultiplier: resolved.takeProfitMedianBarMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMedianBarMultiplier,
+        takeProfitMfeBootstrapPercentile: resolved.takeProfitMfeBootstrapPercentile ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMfeBootstrapPercentile,
         stopLossEnabled: resolved.stopLossEnabled ?? DEFAULT_BACKTEST_SETTINGS.stopLossEnabled,
         takeProfitEnabled: resolved.takeProfitEnabled ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEnabled,
         riskMaxHoldBars: resolved.riskMaxHoldBars ?? DEFAULT_BACKTEST_SETTINGS.riskMaxHoldBars,
@@ -681,6 +699,10 @@ export function resolveTakeProfitModeValue(
         || value === "shrinkage"
         || value === "momentum_gated"
         || value === "velocity"
+        || value === "atr_scaled"
+        || value === "range_scaled"
+        || value === "median_bar"
+        || value === "mfe_bootstrap"
     ) {
         return value;
     }

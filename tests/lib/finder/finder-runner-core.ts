@@ -186,6 +186,28 @@ function addModeSpecificTakeProfitSearchParams(baseParams: StrategyParams, setti
         return;
     }
 
+    if (usesPercentageTakeProfitMode(settings, "atr_scaled")) {
+        addBaseParamIfFinite(baseParams, "takeProfitAtrScaledMultiplier", settings.takeProfitAtrScaledMultiplier, (v) => Math.max(0.1, Number(v)));
+        return;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "range_scaled")) {
+        addBaseParamIfFinite(baseParams, "takeProfitRangeScaledLookback", settings.takeProfitRangeScaledLookback, (v) => Math.max(5, Math.round(v)));
+        addBaseParamIfFinite(baseParams, "takeProfitRangeScaledFraction", settings.takeProfitRangeScaledFraction, (v) => Math.max(0.01, Math.min(1, Number(v))));
+        return;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "median_bar")) {
+        addBaseParamIfFinite(baseParams, "takeProfitMedianBarLookback", settings.takeProfitMedianBarLookback, (v) => Math.max(5, Math.round(v)));
+        addBaseParamIfFinite(baseParams, "takeProfitMedianBarMultiplier", settings.takeProfitMedianBarMultiplier, (v) => Math.max(0.1, Number(v)));
+        return;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "mfe_bootstrap")) {
+        addBaseParamIfFinite(baseParams, "takeProfitMfeBootstrapPercentile", settings.takeProfitMfeBootstrapPercentile, (v) => clampPercentValue(v, 1, 99));
+        return;
+    }
+
 }
 
 function addBacktestOverrideIfFinite(
@@ -227,6 +249,28 @@ function applyModeSpecificTakeProfitOverrides(
         hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocityProgressPercent", clampTakeProfitVelocityProgressPercent) || hasOverrides;
         hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocityExpandMultiplier", clampTakeProfitVelocityMultiplier) || hasOverrides;
         hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocityShrinkMultiplier", clampTakeProfitVelocityMultiplier) || hasOverrides;
+        return hasOverrides;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "atr_scaled")) {
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitAtrScaledMultiplier", (v) => Math.max(0.1, Number(v))) || hasOverrides;
+        return hasOverrides;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "range_scaled")) {
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitRangeScaledLookback", (v) => Math.max(5, Math.round(v))) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitRangeScaledFraction", (v) => Math.max(0.01, Math.min(1, Number(v)))) || hasOverrides;
+        return hasOverrides;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "median_bar")) {
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMedianBarLookback", (v) => Math.max(5, Math.round(v))) || hasOverrides;
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMedianBarMultiplier", (v) => Math.max(0.1, Number(v))) || hasOverrides;
+        return hasOverrides;
+    }
+
+    if (usesPercentageTakeProfitMode(settings, "mfe_bootstrap")) {
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMfeBootstrapPercentile", (v) => clampPercentValue(v, 1, 99)) || hasOverrides;
         return hasOverrides;
     }
 
@@ -322,6 +366,112 @@ export function resolveFinderRiskOverrides(
         backtestSettings: hasBacktestOverrides ? { ...settings, ...backtestOverrides } : settings,
         rustBacktestSettings: hasRustOverrides ? { ...rustSettings, ...rustOverrides } : rustSettings,
     };
+}
+
+export function mergeFinderRiskParamsIntoBacktestSettings<
+    T extends BacktestSettings & { riskSettingsToggle?: boolean }
+>(
+    settings: T,
+    params: StrategyParams
+): T {
+    const merged = { ...settings };
+    const usesAtrRisk =
+        settings.riskSettingsToggle === true
+        && (settings.riskMode === "simple" || settings.riskMode === "advanced");
+
+    if (usesAtrRisk && Number.isFinite(params.atrPeriod)) {
+        merged.atrPeriod = clampAtrPeriod(Number(params.atrPeriod));
+    }
+
+    if (Number.isFinite(params.stopLossPercent)) {
+        merged.stopLossPercent = Number(params.stopLossPercent);
+    }
+
+    if (Number.isFinite(params.takeProfitPercent)) {
+        merged.takeProfitPercent = Number(params.takeProfitPercent);
+    }
+
+    if (Number.isFinite(params.takeProfitMfeLookbackTrades)) {
+        merged.takeProfitMfeLookbackTrades = clampTakeProfitMfeLookbackTrades(Number(params.takeProfitMfeLookbackTrades));
+    }
+
+    if (Number.isFinite(params.takeProfitMfePercentile)) {
+        merged.takeProfitMfePercentile = clampTakeProfitMfePercentile(Number(params.takeProfitMfePercentile));
+    }
+
+    if (Number.isFinite(params.takeProfitShrinkageStrength)) {
+        merged.takeProfitShrinkageStrength = clampTakeProfitShrinkageStrength(Number(params.takeProfitShrinkageStrength));
+    }
+
+    if (Number.isFinite(params.takeProfitMomentumRsiPeriod)) {
+        merged.takeProfitMomentumRsiPeriod = clampTakeProfitMomentumRsiPeriod(Number(params.takeProfitMomentumRsiPeriod));
+    }
+
+    if (Number.isFinite(params.takeProfitMomentumRsiPauseLevel)) {
+        merged.takeProfitMomentumRsiPauseLevel = clampTakeProfitMomentumRsiPauseLevel(Number(params.takeProfitMomentumRsiPauseLevel));
+    }
+
+    if (Number.isFinite(params.takeProfitMomentumDecayPercentPerBar)) {
+        merged.takeProfitMomentumDecayPercentPerBar = clampTakeProfitMomentumDecayPercentPerBar(Number(params.takeProfitMomentumDecayPercentPerBar));
+    }
+
+    if (Number.isFinite(params.takeProfitVelocityFastBars)) {
+        merged.takeProfitVelocityFastBars = clampTakeProfitVelocityFastBars(Number(params.takeProfitVelocityFastBars));
+    }
+
+    if (Number.isFinite(params.takeProfitVelocitySlowBars)) {
+        merged.takeProfitVelocitySlowBars = clampTakeProfitVelocitySlowBars(Number(params.takeProfitVelocitySlowBars));
+    }
+
+    if (Number.isFinite(params.takeProfitVelocityProgressPercent)) {
+        merged.takeProfitVelocityProgressPercent = clampTakeProfitVelocityProgressPercent(Number(params.takeProfitVelocityProgressPercent));
+    }
+
+    if (Number.isFinite(params.takeProfitVelocityExpandMultiplier)) {
+        merged.takeProfitVelocityExpandMultiplier = clampTakeProfitVelocityMultiplier(Number(params.takeProfitVelocityExpandMultiplier));
+    }
+
+    if (Number.isFinite(params.takeProfitVelocityShrinkMultiplier)) {
+        merged.takeProfitVelocityShrinkMultiplier = clampTakeProfitVelocityMultiplier(Number(params.takeProfitVelocityShrinkMultiplier));
+    }
+
+    if (Number.isFinite(params.takeProfitAtrScaledMultiplier)) {
+        merged.takeProfitAtrScaledMultiplier = Math.max(0.1, Number(params.takeProfitAtrScaledMultiplier));
+    }
+
+    if (Number.isFinite(params.takeProfitRangeScaledLookback)) {
+        merged.takeProfitRangeScaledLookback = Math.max(5, Math.round(Number(params.takeProfitRangeScaledLookback)));
+    }
+
+    if (Number.isFinite(params.takeProfitRangeScaledFraction)) {
+        merged.takeProfitRangeScaledFraction = Math.max(0.01, Math.min(1, Number(params.takeProfitRangeScaledFraction)));
+    }
+
+    if (Number.isFinite(params.takeProfitMedianBarLookback)) {
+        merged.takeProfitMedianBarLookback = Math.max(5, Math.round(Number(params.takeProfitMedianBarLookback)));
+    }
+
+    if (Number.isFinite(params.takeProfitMedianBarMultiplier)) {
+        merged.takeProfitMedianBarMultiplier = Math.max(0.1, Number(params.takeProfitMedianBarMultiplier));
+    }
+
+    if (Number.isFinite(params.takeProfitMfeBootstrapPercentile)) {
+        merged.takeProfitMfeBootstrapPercentile = clampPercentValue(Number(params.takeProfitMfeBootstrapPercentile), 1, 99);
+    }
+
+    if (Number.isFinite(params.riskMaxHoldBars)) {
+        merged.riskMaxHoldBars = Number(params.riskMaxHoldBars);
+    }
+
+    if (Number.isFinite(params.riskWinStreakStopLossAfterWins)) {
+        merged.riskWinStreakStopLossAfterWins = Number(params.riskWinStreakStopLossAfterWins);
+    }
+
+    if (Number.isFinite(params.riskWinStreakStopLossPercent)) {
+        merged.riskWinStreakStopLossPercent = Number(params.riskWinStreakStopLossPercent);
+    }
+
+    return merged;
 }
 
 export function resolveFinderCandidateBacktestSettings(

@@ -27,6 +27,12 @@ export interface NormalizedSettings {
     takeProfitVelocityProgressPercent: number;
     takeProfitVelocityExpandMultiplier: number;
     takeProfitVelocityShrinkMultiplier: number;
+    takeProfitAtrScaledMultiplier: number;
+    takeProfitRangeScaledLookback: number;
+    takeProfitRangeScaledFraction: number;
+    takeProfitMedianBarLookback: number;
+    takeProfitMedianBarMultiplier: number;
+    takeProfitMfeBootstrapPercentile: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
     riskMaxHoldBars: number;

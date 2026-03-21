@@ -11,6 +11,7 @@ import {
 } from './lib/finder/finder-runner';
 import {
     buildFinderSearchBaseParams,
+    mergeFinderRiskParamsIntoBacktestSettings,
     resolveFinderRiskOverrides,
 } from './lib/finder/finder-runner-core';
 
@@ -518,6 +519,72 @@ describe('Finder ATR risk randomization support', () => {
             Object.entries(testCase.expected).forEach(([key, value]) => {
                 expect((resolved.backtestSettings as Record<string, number | undefined>)[key]).to.equal(value, `${testCase.mode}:${key}`);
                 expect(key in resolved.rustBacktestSettings).to.equal(false, `${testCase.mode}:${key}:rust`);
+            });
+        }
+    });
+
+    it('reapplies mode-specific TP params back into backtest settings when a finder row is applied', () => {
+        const baseSettings: BacktestSettings = {
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitPercent: 6,
+            takeProfitMode: 'fixed',
+            takeProfitAtrScaledMultiplier: 1.5,
+            takeProfitRangeScaledLookback: 20,
+            takeProfitRangeScaledFraction: 0.3,
+            takeProfitMedianBarLookback: 20,
+            takeProfitMedianBarMultiplier: 2,
+            takeProfitMfeBootstrapPercentile: 60,
+        };
+
+        const cases: Array<{
+            mode: NonNullable<BacktestSettings['takeProfitMode']>;
+            params: Record<string, number>;
+            expected: Partial<BacktestSettings>;
+        }> = [
+            {
+                mode: 'atr_scaled',
+                params: { takeProfitAtrScaledMultiplier: 2.4 },
+                expected: { takeProfitAtrScaledMultiplier: 2.4 },
+            },
+            {
+                mode: 'range_scaled',
+                params: {
+                    takeProfitRangeScaledLookback: 37.8,
+                    takeProfitRangeScaledFraction: 0.42,
+                },
+                expected: {
+                    takeProfitRangeScaledLookback: 38,
+                    takeProfitRangeScaledFraction: 0.42,
+                },
+            },
+            {
+                mode: 'median_bar',
+                params: {
+                    takeProfitMedianBarLookback: 18.2,
+                    takeProfitMedianBarMultiplier: 3.1,
+                },
+                expected: {
+                    takeProfitMedianBarLookback: 18,
+                    takeProfitMedianBarMultiplier: 3.1,
+                },
+            },
+            {
+                mode: 'mfe_bootstrap',
+                params: { takeProfitMfeBootstrapPercentile: 73.6 },
+                expected: { takeProfitMfeBootstrapPercentile: 73.6 },
+            },
+        ];
+
+        for (const testCase of cases) {
+            const merged = mergeFinderRiskParamsIntoBacktestSettings(
+                { ...baseSettings, takeProfitMode: testCase.mode },
+                testCase.params
+            );
+
+            Object.entries(testCase.expected).forEach(([key, value]) => {
+                expect((merged as Record<string, unknown>)[key]).to.equal(value, `${testCase.mode}:${key}`);
             });
         }
     });

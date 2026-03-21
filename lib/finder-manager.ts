@@ -14,6 +14,7 @@ import { runFinderExecution, type FinderSelectedStrategy } from "./finder/finder
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderTimeframeLoader, type FinderDataset } from "./finder/finder-timeframe-loader";
 import { FinderUI } from "./finder/finder-ui";
+import { mergeFinderRiskParamsIntoBacktestSettings } from "./finder/finder-runner-core";
 import { debugLogger, robustAuditSink } from "./debug-logger";
 import { parseInputNumber } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
@@ -1044,104 +1045,8 @@ export class FinderManager {
 		const baseSettings = this.lastFinderRunBacktestSettings
 			? this.cloneBacktestSettings(this.lastFinderRunBacktestSettings)
 			: settingsManager.getBacktestSettings();
-		const mergedSettings = this.mergeFinderRiskParamsIntoBacktestSettings(baseSettings, result.params);
+		const mergedSettings = mergeFinderRiskParamsIntoBacktestSettings(baseSettings, result.params);
 		settingsManager.applyBacktestSettings(mergedSettings);
-	}
-
-	private mergeFinderRiskParamsIntoBacktestSettings<T extends ReturnType<typeof settingsManager.getBacktestSettings>>(
-		settings: T,
-		params: StrategyParams
-	): T {
-		const merged = this.cloneBacktestSettings(settings);
-		const usesAtrRisk =
-			merged.riskSettingsToggle &&
-			(merged.riskMode === 'simple' || merged.riskMode === 'advanced');
-		const atrPeriod = params['atrPeriod'];
-		if (usesAtrRisk && typeof atrPeriod === 'number' && Number.isFinite(atrPeriod)) {
-			merged.atrPeriod = Math.max(1, Math.round(atrPeriod));
-		}
-
-		const stopLossPercent = params['stopLossPercent'];
-		if (typeof stopLossPercent === 'number' && Number.isFinite(stopLossPercent)) {
-			merged.stopLossPercent = stopLossPercent;
-		}
-
-		const takeProfitPercent = params['takeProfitPercent'];
-		if (typeof takeProfitPercent === 'number' && Number.isFinite(takeProfitPercent)) {
-			merged.takeProfitPercent = takeProfitPercent;
-		}
-
-		const takeProfitMfeLookbackTrades = params['takeProfitMfeLookbackTrades'];
-		if (typeof takeProfitMfeLookbackTrades === 'number' && Number.isFinite(takeProfitMfeLookbackTrades)) {
-			merged.takeProfitMfeLookbackTrades = Math.max(5, Math.round(takeProfitMfeLookbackTrades));
-		}
-
-		const takeProfitMfePercentile = params['takeProfitMfePercentile'];
-		if (typeof takeProfitMfePercentile === 'number' && Number.isFinite(takeProfitMfePercentile)) {
-			merged.takeProfitMfePercentile = Math.max(1, Math.min(99, takeProfitMfePercentile));
-		}
-
-		const takeProfitShrinkageStrength = params['takeProfitShrinkageStrength'];
-		if (typeof takeProfitShrinkageStrength === 'number' && Number.isFinite(takeProfitShrinkageStrength)) {
-			merged.takeProfitShrinkageStrength = Math.max(1, takeProfitShrinkageStrength);
-		}
-
-		const takeProfitMomentumRsiPeriod = params['takeProfitMomentumRsiPeriod'];
-		if (typeof takeProfitMomentumRsiPeriod === 'number' && Number.isFinite(takeProfitMomentumRsiPeriod)) {
-			merged.takeProfitMomentumRsiPeriod = Math.max(2, Math.round(takeProfitMomentumRsiPeriod));
-		}
-
-		const takeProfitMomentumRsiPauseLevel = params['takeProfitMomentumRsiPauseLevel'];
-		if (typeof takeProfitMomentumRsiPauseLevel === 'number' && Number.isFinite(takeProfitMomentumRsiPauseLevel)) {
-			merged.takeProfitMomentumRsiPauseLevel = Math.max(1, Math.min(99, takeProfitMomentumRsiPauseLevel));
-		}
-
-		const takeProfitMomentumDecayPercentPerBar = params['takeProfitMomentumDecayPercentPerBar'];
-		if (typeof takeProfitMomentumDecayPercentPerBar === 'number' && Number.isFinite(takeProfitMomentumDecayPercentPerBar)) {
-			merged.takeProfitMomentumDecayPercentPerBar = Math.max(0, takeProfitMomentumDecayPercentPerBar);
-		}
-
-		const takeProfitVelocityFastBars = params['takeProfitVelocityFastBars'];
-		if (typeof takeProfitVelocityFastBars === 'number' && Number.isFinite(takeProfitVelocityFastBars)) {
-			merged.takeProfitVelocityFastBars = Math.max(1, Math.round(takeProfitVelocityFastBars));
-		}
-
-		const takeProfitVelocitySlowBars = params['takeProfitVelocitySlowBars'];
-		if (typeof takeProfitVelocitySlowBars === 'number' && Number.isFinite(takeProfitVelocitySlowBars)) {
-			merged.takeProfitVelocitySlowBars = Math.max(1, Math.round(takeProfitVelocitySlowBars));
-		}
-
-		const takeProfitVelocityProgressPercent = params['takeProfitVelocityProgressPercent'];
-		if (typeof takeProfitVelocityProgressPercent === 'number' && Number.isFinite(takeProfitVelocityProgressPercent)) {
-			merged.takeProfitVelocityProgressPercent = Math.max(1, Math.min(100, takeProfitVelocityProgressPercent));
-		}
-
-		const takeProfitVelocityExpandMultiplier = params['takeProfitVelocityExpandMultiplier'];
-		if (typeof takeProfitVelocityExpandMultiplier === 'number' && Number.isFinite(takeProfitVelocityExpandMultiplier)) {
-			merged.takeProfitVelocityExpandMultiplier = Math.max(0.1, takeProfitVelocityExpandMultiplier);
-		}
-
-		const takeProfitVelocityShrinkMultiplier = params['takeProfitVelocityShrinkMultiplier'];
-		if (typeof takeProfitVelocityShrinkMultiplier === 'number' && Number.isFinite(takeProfitVelocityShrinkMultiplier)) {
-			merged.takeProfitVelocityShrinkMultiplier = Math.max(0.1, takeProfitVelocityShrinkMultiplier);
-		}
-
-		const riskMaxHoldBars = params['riskMaxHoldBars'];
-		if (typeof riskMaxHoldBars === 'number' && Number.isFinite(riskMaxHoldBars)) {
-			merged.riskMaxHoldBars = riskMaxHoldBars;
-		}
-
-		const riskWinStreakStopLossAfterWins = params['riskWinStreakStopLossAfterWins'];
-		if (typeof riskWinStreakStopLossAfterWins === 'number' && Number.isFinite(riskWinStreakStopLossAfterWins)) {
-			merged.riskWinStreakStopLossAfterWins = riskWinStreakStopLossAfterWins;
-		}
-
-		const riskWinStreakStopLossPercent = params['riskWinStreakStopLossPercent'];
-		if (typeof riskWinStreakStopLossPercent === 'number' && Number.isFinite(riskWinStreakStopLossPercent)) {
-			merged.riskWinStreakStopLossPercent = riskWinStreakStopLossPercent;
-		}
-
-		return merged;
 	}
 
 	private setProgress(active: boolean, percent: number, text: string): void {
