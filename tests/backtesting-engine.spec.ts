@@ -4,6 +4,7 @@ import { calculateSMA, calculateRSI, calculateATR, calculateADX, calculateBackte
 import { calculateSharpeRatioFromEquityCurve } from './lib/strategies/performance-metrics';
 import { calculateEMA } from './lib/strategies/indicators';
 import { runBacktest, runBacktestCompact } from './lib/strategies/index';
+import { precomputeIndicators } from './lib/strategies/backtest';
 import { normalizeBacktestSettings } from './lib/strategies/backtest/backtest-utils';
 import { buildPositionFromSignal } from './lib/strategies/backtest/position-builder';
 import { getOpenPositionForScanner } from './lib/strategies/backtest/signal-preparation';
@@ -1414,6 +1415,40 @@ describe('Backtesting Engine', () => {
         expect(compact.expectancy).to.be.closeTo(full.expectancy, 1e-8);
         expect(compact.profitFactor).to.be.closeTo(full.profitFactor, 1e-8);
         expect(compact.maxDrawdownPercent).to.be.closeTo(full.maxDrawdownPercent, 1e-8);
+    });
+
+    it('should reject stale ATR precomputes so compact finder-style runs match full backtests', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 120, low: 100, close: 110, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 110, high: 112, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 103, low: 97, close: 100, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 100, high: 104, low: 99, close: 101, volume: 1000 },
+            { time: '2023-01-05' as Time, open: 101, high: 101, low: 100, close: 100, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-03' as Time, type: 'buy', price: 100, barIndex: 2 },
+        ];
+
+        const settings = {
+            tradeDirection: 'long' as const,
+            executionModel: 'signal_close' as const,
+            riskMode: 'simple' as const,
+            atrPeriod: 2,
+            stopLossAtr: 0,
+            trailingAtr: 0,
+            takeProfitAtr: 0.5,
+        };
+
+        const stalePrecomputed = precomputeIndicators(data, { ...settings, atrPeriod: 1 });
+        const full = runBacktest(data, signals, 10000, 100, 0, settings);
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings, undefined, stalePrecomputed);
+
+        expect(full.totalTrades).to.equal(1);
+        expect(full.trades[0].exitReason).to.equal('end_of_data');
+        expect(full.trades[0].takeProfitPrice).to.be.closeTo(105.5, 1e-9);
+        expect(compact.totalTrades).to.equal(full.totalTrades);
+        expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-9);
     });
 
     it('should skip invalid entries with non-positive fill prices', () => {

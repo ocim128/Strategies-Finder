@@ -143,6 +143,8 @@ export interface IndicatorSeries {
 export interface PrecomputedIndicators extends IndicatorSeries {
     /** Source data reference for cache validation */
     readonly dataLength: number;
+    /** Settings signature used to reject stale indicator bundles across candidate runs */
+    readonly settingsKey: string;
 }
 
 export interface PositionState {

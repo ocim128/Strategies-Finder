@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { calculateSMA, calculateRSI, calculateStochastic, calculateVWAP, calculateSessionVWAP, calculateVolumeProfile, calculateDonchianChannels, calculateSupertrend, calculateMomentum, calculateATR, calculateADX, calculateKeltnerChannels, calculateMFI, calculateCMF, calculateIchimoku, OHLCVData, Time } from './lib/strategies/index';
-import { resolveIndicators } from './lib/strategies/backtest';
+import { precomputeIndicators, resolveIndicators } from './lib/strategies/backtest';
 describe('Strategy Calculations', () => {
     it('should calculate SMA correctly', () => {
         const data = [10, 20, 30, 40, 50];
@@ -270,5 +270,41 @@ describe('Strategy Calculations', () => {
         expect(first.sessionVwap).to.equal(second.sessionVwap);
         expect(first.vwapDeviationStd).to.equal(second.vwapDeviationStd);
     });
-});
 
+    it('should ignore stale precomputed indicators when atrPeriod changes', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 120, low: 100, close: 110, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 110, high: 112, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 103, low: 97, close: 100, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 100, high: 104, low: 99, close: 101, volume: 1000 },
+            { time: '2023-01-05' as Time, open: 101, high: 101, low: 100, close: 100, volume: 1000 },
+        ];
+
+        const stalePrecomputed = precomputeIndicators(data, {
+            riskMode: 'simple',
+            atrPeriod: 1,
+            stopLossAtr: 0,
+            takeProfitAtr: 0.5,
+            trailingAtr: 0,
+        });
+
+        const resolved = resolveIndicators(data, {
+            riskMode: 'simple',
+            atrPeriod: 2,
+            stopLossAtr: 0,
+            takeProfitAtr: 0.5,
+            trailingAtr: 0,
+        }, stalePrecomputed);
+
+        const expected = resolveIndicators(data, {
+            riskMode: 'simple',
+            atrPeriod: 2,
+            stopLossAtr: 0,
+            takeProfitAtr: 0.5,
+            trailingAtr: 0,
+        });
+
+        expect(resolved.atr).to.not.equal(stalePrecomputed.atr);
+        expect(resolved.atr).to.deep.equal(expected.atr);
+    });
+});

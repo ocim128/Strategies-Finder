@@ -90,7 +90,8 @@ function precomputeIndicatorsFromConfig(
         rsi,
         sessionVwap,
         vwapDeviationStd,
-        dataLength: data.length
+        dataLength: data.length,
+        settingsKey: buildIndicatorCacheKey(config)
     };
 }
 
@@ -120,12 +121,16 @@ export function resolveIndicators(
     settings: BacktestSettings,
     precomputed?: PrecomputedIndicators
 ): IndicatorSeries {
+    const config = normalizeBacktestSettings(settings);
+    const cacheKey = buildIndicatorCacheKey(config);
     let computed: PrecomputedIndicators | undefined;
-    if (precomputed && precomputed.dataLength === data.length) {
+    if (
+        precomputed &&
+        precomputed.dataLength === data.length &&
+        precomputed.settingsKey === cacheKey
+    ) {
         computed = precomputed;
     } else {
-        const config = normalizeBacktestSettings(settings);
-        const cacheKey = buildIndicatorCacheKey(config);
         let datasetCache = indicatorCache.get(data);
         if (!datasetCache) {
             datasetCache = new Map<string, PrecomputedIndicators>();
