@@ -82,13 +82,13 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     twoHourCloseParity: "odd" as const,
 });
 
-type SnapshotConfig = {
+export type SnapshotConfig = {
     toggleKey: string;
-    minKey?: string;
-    maxKey: string;
+    minKey?: keyof BacktestSettings;
+    maxKey: keyof BacktestSettings;
 };
 
-const SNAPSHOT_CONFIGS: readonly SnapshotConfig[] = [
+export const SNAPSHOT_CONFIGS: readonly SnapshotConfig[] = [
     { toggleKey: "snapshotAtrFilterToggle", minKey: "snapshotAtrPercentMin", maxKey: "snapshotAtrPercentMax" },
     { toggleKey: "snapshotVolumeFilterToggle", minKey: "snapshotVolumeRatioMin", maxKey: "snapshotVolumeRatioMax" },
     { toggleKey: "snapshotAdxFilterToggle", minKey: "snapshotAdxMin", maxKey: "snapshotAdxMax" },

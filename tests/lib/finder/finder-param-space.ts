@@ -1,84 +1,16 @@
 import { strategyRegistry } from "../../strategyRegistry";
 import type { StrategyParams } from "../types/strategies";
 import type { FinderOptions } from "../types/finder";
+import {
+    computeParamRange,
+    createSeededRandom,
+    isToggleParam,
+    normalizeParamValue,
+    serializeParams,
+    validateParams,
+} from "./finder-param-math";
 
-/**
- * Detects if a parameter is a toggle (on/off) parameter.
- * Toggle params: start with 'use' prefix and have value 0 or 1.
- */
-export function isToggleParam(key: string, value: number): boolean {
-    return /^use[A-Z]/.test(key) && (value === 0 || value === 1);
-}
-
-/**
- * Compute parameter range bounds with key-aware clamping.
- * Centralized to prevent divergence across random/grid generation paths.
- */
-function computeParamRange(
-    key: string,
-    baseValue: number,
-    rangePercent: number
-): { min: number; max: number } {
-    const rangeRatio = Math.max(0, rangePercent) / 100;
-    const rawRange = Math.abs(baseValue) * rangeRatio;
-    const range = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
-    let min = baseValue - range;
-    let max = baseValue + range;
-
-    // Key-specific bounds
-    if (key === "clusterChoice") {
-        min = 0;
-        max = 2;
-    } else if (key === "midpointBars") {
-        min = Math.max(1, min);
-        max = Math.min(6, max);
-    } else if (key === "crossThreshold") {
-        min = Math.max(0, min);
-        max = Math.min(0.05, max);
-    } else if (key === "minRangePct") {
-        min = Math.max(0, min);
-        max = Math.min(0.05, max);
-    } else if (/(iteration|iterations|interval|alpha)/i.test(key)) {
-        min = Math.max(1, min);
-    } else if (key === "warmupBars") {
-        min = Math.max(0, min);
-    }
-
-    // Percent-param clamping
-    if (key === "stopLossPercent") {
-        min = Math.max(0, min);
-        max = Math.min(15, max);
-    } else if (key === "takeProfitMfeLookbackTrades") {
-        min = Math.max(5, min);
-    } else if (key === "takeProfitMfePercentile") {
-        min = Math.max(1, min);
-        max = Math.min(99, max);
-    } else if (key === "takeProfitShrinkageStrength") {
-        min = Math.max(1, min);
-    } else if (key === "takeProfitMomentumRsiPeriod") {
-        min = Math.max(2, min);
-    } else if (key === "takeProfitMomentumRsiPauseLevel") {
-        min = Math.max(1, min);
-        max = Math.min(99, max);
-    } else if (key === "takeProfitMomentumDecayPercentPerBar") {
-        min = Math.max(0, min);
-    } else if (key === "takeProfitVelocityFastBars" || key === "takeProfitVelocitySlowBars") {
-        min = Math.max(1, min);
-    } else if (key === "takeProfitVelocityProgressPercent") {
-        min = Math.max(1, min);
-        max = Math.min(100, max);
-    } else if (key === "takeProfitVelocityExpandMultiplier" || key === "takeProfitVelocityShrinkMultiplier") {
-        min = Math.max(0.1, min);
-    } else if (key === "targetPct") {
-        min = 0;
-        max = 2;
-    } else if (key === "takeProfitPercent") {
-        min = Math.max(0, min);
-        max = Math.min(100, max);
-    }
-
-    return { min, max };
-}
+const FINDER_PARAM_MATH_OPTIONS = Object.freeze({ includeFinderExtraBounds: true });
 
 export class FinderParamSpace {
     public generateParamSets(defaultParams: StrategyParams, options: FinderOptions): StrategyParams[] {
@@ -124,17 +56,17 @@ export class FinderParamSpace {
             return [0, 1];
         }
 
-        const { min, max } = computeParamRange(key, baseValue, options.rangePercent);
+        const { min, max } = computeParamRange(key, baseValue, options.rangePercent, FINDER_PARAM_MATH_OPTIONS);
         const steps = Math.max(2, options.steps);
         const stepSize = steps > 1 ? (max - min) / (steps - 1) : 0;
 
         const values = new Set<number>();
         for (let i = 0; i < steps; i++) {
             const rawValue = min + stepSize * i;
-            values.add(this.normalizeParamValue(key, rawValue, baseValue));
+            values.add(normalizeParamValue(key, rawValue, baseValue, FINDER_PARAM_MATH_OPTIONS));
         }
 
-        values.add(this.normalizeParamValue(key, baseValue, baseValue));
+        values.add(normalizeParamValue(key, baseValue, baseValue, FINDER_PARAM_MATH_OPTIONS));
         return Array.from(values).sort((a, b) => a - b);
     }
 
@@ -148,7 +80,7 @@ export class FinderParamSpace {
     ): void {
         if (combos.length >= maxRuns) return;
         if (index >= keys.length) {
-            if (this.validateParams(current)) {
+            if (validateParams(current)) {
                 combos.push({ ...current });
             }
             return;
@@ -219,7 +151,7 @@ export class FinderParamSpace {
             if (isToggleParam(key, baseValue)) {
                 toggleKeys.push(key);
             } else {
-                const { min, max } = computeParamRange(key, baseValue, options.rangePercent);
+                const { min, max } = computeParamRange(key, baseValue, options.rangePercent, FINDER_PARAM_MATH_OPTIONS);
                 numericRanges.push({ key, baseValue, min, max });
             }
         }
@@ -248,11 +180,11 @@ export class FinderParamSpace {
             // Randomize numeric params within range
             for (const range of numericRanges) {
                 const raw = range.min + rand() * (range.max - range.min);
-                params[range.key] = this.normalizeParamValue(range.key, raw, range.baseValue);
+                params[range.key] = normalizeParamValue(range.key, raw, range.baseValue, FINDER_PARAM_MATH_OPTIONS);
             }
 
             if (skipDedup) {
-                if (this.validateParams(params)) {
+                if (validateParams(params)) {
                     combos.push(params);
                 }
             } else {
@@ -291,7 +223,7 @@ export class FinderParamSpace {
                 const stratum = numericStrata[n][i];
                 const fraction = (stratum + rand()) / sampleCount;
                 const raw = range.min + fraction * (range.max - range.min);
-                params[range.key] = this.normalizeParamValue(range.key, raw, range.baseValue);
+                params[range.key] = normalizeParamValue(range.key, raw, range.baseValue, FINDER_PARAM_MATH_OPTIONS);
             }
 
             this.tryAddCombo(params, combos, seen, targetRuns);
@@ -309,10 +241,10 @@ export class FinderParamSpace {
             if (isToggleParam(key, baseValue)) {
                 total *= 2;
             } else {
-                const { min, max } = computeParamRange(key, baseValue, options.rangePercent);
-                const minNorm = this.normalizeParamValue(key, min, baseValue);
-                const maxNorm = this.normalizeParamValue(key, max, baseValue);
-                const baseNorm = this.normalizeParamValue(key, baseValue, baseValue);
+                const { min, max } = computeParamRange(key, baseValue, options.rangePercent, FINDER_PARAM_MATH_OPTIONS);
+                const minNorm = normalizeParamValue(key, min, baseValue, FINDER_PARAM_MATH_OPTIONS);
+                const maxNorm = normalizeParamValue(key, max, baseValue, FINDER_PARAM_MATH_OPTIONS);
+                const baseNorm = normalizeParamValue(key, baseValue, baseValue, FINDER_PARAM_MATH_OPTIONS);
                 if (!Number.isInteger(minNorm) || !Number.isInteger(maxNorm) || !Number.isInteger(baseNorm)) {
                     return null;
                 }
@@ -345,7 +277,7 @@ export class FinderParamSpace {
                 continue;
             }
 
-            const { min, max } = computeParamRange(key, baseValue, options.rangePercent);
+            const { min, max } = computeParamRange(key, baseValue, options.rangePercent, FINDER_PARAM_MATH_OPTIONS);
             numericRanges.push({ key, baseValue, min, max });
         }
 
@@ -359,10 +291,10 @@ export class FinderParamSpace {
 
             for (const range of numericRanges) {
                 const raw = range.min + rand() * (range.max - range.min);
-                params[range.key] = this.normalizeParamValue(range.key, raw, range.baseValue);
+                params[range.key] = normalizeParamValue(range.key, raw, range.baseValue, FINDER_PARAM_MATH_OPTIONS);
             }
 
-            if (this.validateParams(params)) {
+            if (validateParams(params)) {
                 return params;
             }
         }
@@ -373,23 +305,12 @@ export class FinderParamSpace {
     private resolveRandom(options: FinderOptions): () => number {
         if (options.mode === "robust_random_wf") {
             const seedValue = Number.isFinite(options.robustSeed) ? Number(options.robustSeed) : 1337;
-            return this.createSeededRandom(seedValue);
+            return createSeededRandom(seedValue);
         }
         if (options.mode === "random" && Number.isFinite(options.randomSeed)) {
-            return this.createSeededRandom(Number(options.randomSeed));
+            return createSeededRandom(Number(options.randomSeed));
         }
         return Math.random;
-    }
-
-    private createSeededRandom(seed: number): () => number {
-        let state = (Math.floor(seed) >>> 0) || 1;
-        return () => {
-            state += 0x6D2B79F5;
-            let t = state;
-            t = Math.imul(t ^ (t >>> 15), t | 1);
-            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-        };
     }
 
     private createPermutation(size: number, rand: () => number): number[] {
@@ -405,8 +326,8 @@ export class FinderParamSpace {
 
     private tryAddCombo(params: StrategyParams, combos: StrategyParams[], seen: Set<string>, maxRuns: number): void {
         if (combos.length >= maxRuns) return;
-        if (!this.validateParams(params)) return;
-        const key = this.serializeParams(params);
+        if (!validateParams(params)) return;
+        const key = serializeParams(params);
         if (seen.has(key)) return;
         seen.add(key);
         combos.push({ ...params });
@@ -415,152 +336,8 @@ export class FinderParamSpace {
     private normalizeParams(params: StrategyParams): StrategyParams {
         const normalized: StrategyParams = {};
         Object.entries(params).forEach(([key, value]) => {
-            normalized[key] = this.normalizeParamValue(key, value, value);
+            normalized[key] = normalizeParamValue(key, value, value, FINDER_PARAM_MATH_OPTIONS);
         });
         return normalized;
-    }
-
-    private normalizeParamValue(key: string, value: number, defaultValue: number): number {
-        const isRsiThreshold = /(rsi(bullish|bearish|overbought|oversold)|overbought|oversold)/i.test(key);
-        const isRsiPeriod = /rsi/i.test(key) && !isRsiThreshold;
-        const iterationLike = /(iteration|iterations|interval)/i.test(key);
-        const alphaLike = /alpha/i.test(key);
-        const periodLike = /(period|lookback|bars|bins|length)/i.test(key) || isRsiPeriod || iterationLike || alphaLike;
-        const percentLike = /(percent|pct)/i.test(key) || isRsiThreshold;
-        const nonNegative = /(std|dev|factor|multiplier|atr|adx)/i.test(key);
-
-        let next = value;
-        if (key === "warmupBars") {
-            next = Math.max(0, Math.round(next));
-        } else if (key === "clusterChoice") {
-            next = Math.min(2, Math.max(0, Math.round(next)));
-        } else if (key === "midpointBars") {
-            next = Math.min(6, Math.max(1, Math.round(next)));
-        } else if (key === "takeProfitMfeLookbackTrades") {
-            next = Math.max(5, Math.round(next));
-        } else if (key === "takeProfitMfePercentile") {
-            next = Math.min(99, Math.max(1, Number(next.toFixed(2))));
-        } else if (key === "takeProfitShrinkageStrength") {
-            next = Math.max(1, Number(next.toFixed(2)));
-        } else if (key === "takeProfitMomentumRsiPeriod") {
-            next = Math.max(2, Math.round(next));
-        } else if (key === "takeProfitMomentumRsiPauseLevel") {
-            next = Math.min(99, Math.max(1, Number(next.toFixed(2))));
-        } else if (key === "takeProfitMomentumDecayPercentPerBar") {
-            next = Math.max(0, Number(next.toFixed(4)));
-        } else if (key === "takeProfitVelocityFastBars" || key === "takeProfitVelocitySlowBars") {
-            next = Math.max(1, Math.round(next));
-        } else if (key === "takeProfitVelocityProgressPercent") {
-            next = Math.min(100, Math.max(1, Number(next.toFixed(2))));
-        } else if (key === "takeProfitVelocityExpandMultiplier" || key === "takeProfitVelocityShrinkMultiplier") {
-            next = Math.max(0.1, Number(next.toFixed(4)));
-        } else if (key === "crossThreshold" || key === "minRangePct") {
-            next = Math.min(0.05, Math.max(0, Number(next.toFixed(4))));
-        } else if (periodLike) {
-            next = Math.max(1, Math.round(next));
-        } else if (key === "targetPct") {
-            next = Math.min(2, Math.max(0, Number(next.toFixed(2))));
-        } else if (key === "stopLossPercent") {
-            next = Math.min(15, Math.max(0, Number(next.toFixed(2))));
-        } else if (key === "takeProfitPercent") {
-            next = Math.min(100, Math.max(0, Number(next.toFixed(2))));
-        } else if (percentLike) {
-            next = Math.min(100, Math.max(0, next));
-        } else if (nonNegative) {
-            next = Math.max(0, next);
-        }
-
-        if (/(multiplier|factor)/i.test(key) && defaultValue > 0) {
-            next = Math.max(0.1, next);
-        }
-
-        if (/z(entry|exit)/i.test(key)) {
-            next = Math.max(0, next);
-        }
-
-        if (key === "bufferAtr") {
-            next = Math.max(0, next);
-        }
-
-        if (
-            !periodLike &&
-            Number.isInteger(defaultValue) &&
-            !percentLike &&
-            key !== "stopLossPercent" &&
-            key !== "takeProfitPercent" &&
-            key !== "targetPct" &&
-            key !== "takeProfitMfePercentile" &&
-            key !== "takeProfitMomentumRsiPauseLevel" &&
-            key !== "takeProfitVelocityProgressPercent"
-        ) {
-            next = Math.round(next);
-        } else if (
-            key === "stopLossPercent" ||
-            key === "takeProfitPercent" ||
-            key === "takeProfitMfePercentile" ||
-            key === "takeProfitShrinkageStrength" ||
-            key === "takeProfitMomentumRsiPauseLevel" ||
-            key === "takeProfitVelocityProgressPercent"
-        ) {
-            next = Number(next.toFixed(2));
-        } else if (key === "targetPct") {
-            next = Number(next.toFixed(2));
-        } else if (!Number.isInteger(defaultValue)) {
-            next = Number(next.toFixed(4));
-        }
-
-        return next;
-    }
-
-    private validateParams(params: StrategyParams): boolean {
-        const fast = params.fastPeriod;
-        const slow = params.slowPeriod;
-        const medium = params.mediumPeriod;
-        if (fast !== undefined && slow !== undefined && fast >= slow) return false;
-        if (fast !== undefined && medium !== undefined && fast >= medium) return false;
-        if (medium !== undefined && slow !== undefined && medium >= slow) return false;
-
-        const oversold = params.oversold;
-        const overbought = params.overbought;
-        if (oversold !== undefined && overbought !== undefined && oversold >= overbought) return false;
-
-        const rsiOversold = params.rsiOversold;
-        const rsiOverbought = params.rsiOverbought;
-        if (rsiOversold !== undefined && rsiOverbought !== undefined && rsiOversold >= rsiOverbought) return false;
-
-        const kPeriod = params.kPeriod;
-        const dPeriod = params.dPeriod;
-        if (kPeriod !== undefined && dPeriod !== undefined && kPeriod < dPeriod) return false;
-
-        const macdFast = params.macdFast;
-        const macdSlow = params.macdSlow;
-        if (macdFast !== undefined && macdSlow !== undefined && macdFast >= macdSlow) return false;
-
-        const minFactor = params.minFactor;
-        const maxFactor = params.maxFactor;
-        if (minFactor !== undefined && maxFactor !== undefined && minFactor > maxFactor) return false;
-        if (params.factorStep !== undefined && params.factorStep <= 0) return false;
-
-        if (params.kMeansIterations !== undefined && params.kMeansIterations <= 0) return false;
-        if (params.kMeansInterval !== undefined && params.kMeansInterval <= 0) return false;
-        if (params.perfAlpha !== undefined && params.perfAlpha <= 0) return false;
-        if (params.clusterChoice !== undefined && (params.clusterChoice < 0 || params.clusterChoice > 2)) return false;
-
-        const zEntry = params.zEntry;
-        const zExit = params.zExit;
-        if (zEntry !== undefined && zExit !== undefined && zExit >= zEntry) return false;
-
-        const entryExposurePct = params.entryExposurePct;
-        const exitExposurePct = params.exitExposurePct;
-        if (entryExposurePct !== undefined && exitExposurePct !== undefined && exitExposurePct >= entryExposurePct) return false;
-
-        return true;
-    }
-
-    private serializeParams(params: StrategyParams): string {
-        return Object.keys(params)
-            .sort()
-            .map((key) => `${key}:${params[key]}`)
-            .join("|");
     }
 }

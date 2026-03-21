@@ -35,8 +35,6 @@ export class ParamManager {
         }
         container.innerHTML = html;
         bindFormAccessibility(container);
-
-        this.bindParamDependencies(strategy);
     }
 
     public getValues(strategy: Strategy): StrategyParams {
@@ -82,107 +80,10 @@ export class ParamManager {
 
             input.value = String(params[key]);
         }
-        this.bindParamDependencies(strategy);
     }
 
     private renderParamInput(key: string, value: number): string {
-        if (key === 'entryMode' || key === 'retestMode') {
-            const options = [
-                { value: 0, label: 'Cross' },
-                { value: 1, label: 'Close' },
-                { value: 2, label: 'Touch' }
-            ];
-            const optionsHtml = options
-                .map(option => `<option value="${option.value}" ${option.value === value ? 'selected' : ''}>${option.label}</option>`)
-                .join('');
-            return `<select class="param-input" id="param_${key}" data-param="${key}">${optionsHtml}</select>`;
-        }
-
         return `<input type="number" class="param-input" id="param_${key}" value="${value}" data-param="${key}">`;
-    }
-
-    private bindParamDependencies(strategy: Strategy): void {
-        if (!('entryMode' in strategy.defaultParams) && !('retestMode' in strategy.defaultParams)) {
-            return;
-        }
-
-        const updateDependencies = () => {
-            const entryMode = this.readParamValue('entryMode', strategy.defaultParams);
-            const retestMode = this.readParamValue('retestMode', strategy.defaultParams);
-            const targetPct = 'targetPct' in strategy.defaultParams
-                ? this.readParamValue('targetPct', strategy.defaultParams)
-                : 0;
-            const usesWick = 'touchUsesWick' in strategy.defaultParams
-                ? this.readParamValue('touchUsesWick', strategy.defaultParams) !== 0
-                : false;
-
-            const entryUsesTouch = entryMode === 2;
-            const retestUsesTouch = retestMode === 2;
-            const retestUsesClose = retestMode === 1;
-            const useTarget = targetPct > 0;
-
-            this.setGroupEnabled('touchUsesWick', entryUsesTouch || retestUsesTouch);
-
-            const toleranceRelevant = retestUsesClose || entryUsesTouch || (retestUsesTouch && !usesWick);
-            this.setGroupEnabled('touchTolerancePct', toleranceRelevant);
-
-            if ('retestMode' in strategy.defaultParams) {
-                this.setGroupEnabled('retestMode', !useTarget);
-            }
-            if ('maxRetests' in strategy.defaultParams) {
-                this.setGroupEnabled('maxRetests', !useTarget);
-            }
-            if ('minRetestsForWin' in strategy.defaultParams) {
-                this.setGroupEnabled('minRetestsForWin', !useTarget);
-            }
-        };
-
-        const entryModeEl = this.getParamInput('entryMode') as HTMLElement | null;
-        const retestModeEl = this.getParamInput('retestMode') as HTMLElement | null;
-        const touchUsesWickEl = this.getParamInput('touchUsesWick') as HTMLElement | null;
-        const targetPctEl = this.getParamInput('targetPct') as HTMLElement | null;
-
-        if (entryModeEl && entryModeEl.dataset.bound !== '1') {
-            entryModeEl.addEventListener('change', updateDependencies);
-            entryModeEl.dataset.bound = '1';
-        }
-        if (retestModeEl && retestModeEl.dataset.bound !== '1') {
-            retestModeEl.addEventListener('change', updateDependencies);
-            retestModeEl.dataset.bound = '1';
-        }
-        if (touchUsesWickEl && touchUsesWickEl.dataset.bound !== '1') {
-            touchUsesWickEl.addEventListener('change', updateDependencies);
-            touchUsesWickEl.dataset.bound = '1';
-        }
-        if (targetPctEl && targetPctEl.dataset.bound !== '1') {
-            targetPctEl.addEventListener('change', updateDependencies);
-            targetPctEl.dataset.bound = '1';
-        }
-
-        updateDependencies();
-    }
-
-    private readParamValue(key: string, defaults: StrategyParams): number {
-        const input = this.getParamInput(key);
-        if (!input) return defaults[key];
-        if (input instanceof HTMLSelectElement) {
-            const parsed = parseInputNumber(input.value);
-            return parsed === null ? defaults[key] : parsed;
-        }
-        if (input.type === 'checkbox') {
-            return input.checked ? 1 : 0;
-        }
-        const parsed = parseInputNumber(input.value);
-        return parsed === null ? defaults[key] : parsed;
-    }
-
-    private setGroupEnabled(key: string, enabled: boolean): void {
-        const container = this.getParamContainer();
-        const group = container.querySelector(`#param_group_${key}`);
-        const input = this.getParamInput(key);
-        if (!group || !input) return;
-        group.classList.toggle('is-disabled', !enabled);
-        input.disabled = !enabled;
     }
 }
 

@@ -50,6 +50,14 @@ export type RandomBenchmarkMeta = {
     rustCandidateCount: number;
 };
 
+type TakeProfitMode = NonNullable<BacktestSettings["takeProfitMode"]>;
+
+type TpParamSpec = {
+    key: keyof BacktestSettings & string;
+    mode?: TakeProfitMode;
+    clamp: (value: number) => number;
+};
+
 export function shouldUseRustCachedMode(
     dataSize: number,
     totalRuns: number,
@@ -112,7 +120,7 @@ function clampTakeProfitShrinkageStrength(value: number): number {
 
 function usesPercentageTakeProfitMode(
     settings: BacktestSettings,
-    mode: NonNullable<BacktestSettings["takeProfitMode"]>
+    mode: TakeProfitMode
 ): boolean {
     return settings.riskMode === "percentage"
         && settings.takeProfitEnabled === true
@@ -152,6 +160,55 @@ function clampTakeProfitVelocityMultiplier(value: number): number {
     return Math.max(0.1, Number(value));
 }
 
+function clampTakeProfitAtrScaledMultiplier(value: number): number {
+    if (!Number.isFinite(value)) return 0.1;
+    return Math.max(0.1, Number(value));
+}
+
+function clampTakeProfitRangeScaledLookback(value: number): number {
+    if (!Number.isFinite(value)) return 5;
+    return Math.max(5, Math.round(value));
+}
+
+function clampTakeProfitRangeScaledFraction(value: number): number {
+    if (!Number.isFinite(value)) return 0.01;
+    return Math.max(0.01, Math.min(1, Number(value)));
+}
+
+function clampTakeProfitMedianBarLookback(value: number): number {
+    if (!Number.isFinite(value)) return 5;
+    return Math.max(5, Math.round(value));
+}
+
+function clampTakeProfitMedianBarMultiplier(value: number): number {
+    if (!Number.isFinite(value)) return 0.1;
+    return Math.max(0.1, Number(value));
+}
+
+function clampTakeProfitMfeBootstrapPercentile(value: number): number {
+    return clampPercentValue(value, 1, 99);
+}
+
+const TP_PARAM_SPECS: readonly TpParamSpec[] = [
+    { key: "takeProfitMfeLookbackTrades", mode: "shrinkage", clamp: clampTakeProfitMfeLookbackTrades },
+    { key: "takeProfitMfePercentile", mode: "shrinkage", clamp: clampTakeProfitMfePercentile },
+    { key: "takeProfitShrinkageStrength", mode: "shrinkage", clamp: clampTakeProfitShrinkageStrength },
+    { key: "takeProfitMomentumRsiPeriod", mode: "momentum_gated", clamp: clampTakeProfitMomentumRsiPeriod },
+    { key: "takeProfitMomentumRsiPauseLevel", mode: "momentum_gated", clamp: clampTakeProfitMomentumRsiPauseLevel },
+    { key: "takeProfitMomentumDecayPercentPerBar", mode: "momentum_gated", clamp: clampTakeProfitMomentumDecayPercentPerBar },
+    { key: "takeProfitVelocityFastBars", mode: "velocity", clamp: clampTakeProfitVelocityFastBars },
+    { key: "takeProfitVelocitySlowBars", mode: "velocity", clamp: clampTakeProfitVelocitySlowBars },
+    { key: "takeProfitVelocityProgressPercent", mode: "velocity", clamp: clampTakeProfitVelocityProgressPercent },
+    { key: "takeProfitVelocityExpandMultiplier", mode: "velocity", clamp: clampTakeProfitVelocityMultiplier },
+    { key: "takeProfitVelocityShrinkMultiplier", mode: "velocity", clamp: clampTakeProfitVelocityMultiplier },
+    { key: "takeProfitAtrScaledMultiplier", mode: "atr_scaled", clamp: clampTakeProfitAtrScaledMultiplier },
+    { key: "takeProfitRangeScaledLookback", mode: "range_scaled", clamp: clampTakeProfitRangeScaledLookback },
+    { key: "takeProfitRangeScaledFraction", mode: "range_scaled", clamp: clampTakeProfitRangeScaledFraction },
+    { key: "takeProfitMedianBarLookback", mode: "median_bar", clamp: clampTakeProfitMedianBarLookback },
+    { key: "takeProfitMedianBarMultiplier", mode: "median_bar", clamp: clampTakeProfitMedianBarMultiplier },
+    { key: "takeProfitMfeBootstrapPercentile", mode: "mfe_bootstrap", clamp: clampTakeProfitMfeBootstrapPercentile },
+];
+
 function addBaseParamIfFinite(
     baseParams: StrategyParams,
     key: keyof BacktestSettings & string,
@@ -163,51 +220,12 @@ function addBaseParamIfFinite(
 }
 
 function addModeSpecificTakeProfitSearchParams(baseParams: StrategyParams, settings: BacktestSettings): void {
-    if (usesPercentageTakeProfitMode(settings, "shrinkage")) {
-        addBaseParamIfFinite(baseParams, "takeProfitMfeLookbackTrades", settings.takeProfitMfeLookbackTrades, clampTakeProfitMfeLookbackTrades);
-        addBaseParamIfFinite(baseParams, "takeProfitMfePercentile", settings.takeProfitMfePercentile, clampTakeProfitMfePercentile);
-        addBaseParamIfFinite(baseParams, "takeProfitShrinkageStrength", settings.takeProfitShrinkageStrength, clampTakeProfitShrinkageStrength);
-        return;
+    for (const spec of TP_PARAM_SPECS) {
+        if (!spec.mode || !usesPercentageTakeProfitMode(settings, spec.mode)) {
+            continue;
+        }
+        addBaseParamIfFinite(baseParams, spec.key, settings[spec.key], spec.clamp);
     }
-
-    if (usesPercentageTakeProfitMode(settings, "momentum_gated")) {
-        addBaseParamIfFinite(baseParams, "takeProfitMomentumRsiPeriod", settings.takeProfitMomentumRsiPeriod, clampTakeProfitMomentumRsiPeriod);
-        addBaseParamIfFinite(baseParams, "takeProfitMomentumRsiPauseLevel", settings.takeProfitMomentumRsiPauseLevel, clampTakeProfitMomentumRsiPauseLevel);
-        addBaseParamIfFinite(baseParams, "takeProfitMomentumDecayPercentPerBar", settings.takeProfitMomentumDecayPercentPerBar, clampTakeProfitMomentumDecayPercentPerBar);
-        return;
-    }
-
-    if (usesPercentageTakeProfitMode(settings, "velocity")) {
-        addBaseParamIfFinite(baseParams, "takeProfitVelocityFastBars", settings.takeProfitVelocityFastBars, clampTakeProfitVelocityFastBars);
-        addBaseParamIfFinite(baseParams, "takeProfitVelocitySlowBars", settings.takeProfitVelocitySlowBars, clampTakeProfitVelocitySlowBars);
-        addBaseParamIfFinite(baseParams, "takeProfitVelocityProgressPercent", settings.takeProfitVelocityProgressPercent, clampTakeProfitVelocityProgressPercent);
-        addBaseParamIfFinite(baseParams, "takeProfitVelocityExpandMultiplier", settings.takeProfitVelocityExpandMultiplier, clampTakeProfitVelocityMultiplier);
-        addBaseParamIfFinite(baseParams, "takeProfitVelocityShrinkMultiplier", settings.takeProfitVelocityShrinkMultiplier, clampTakeProfitVelocityMultiplier);
-        return;
-    }
-
-    if (usesPercentageTakeProfitMode(settings, "atr_scaled")) {
-        addBaseParamIfFinite(baseParams, "takeProfitAtrScaledMultiplier", settings.takeProfitAtrScaledMultiplier, (v) => Math.max(0.1, Number(v)));
-        return;
-    }
-
-    if (usesPercentageTakeProfitMode(settings, "range_scaled")) {
-        addBaseParamIfFinite(baseParams, "takeProfitRangeScaledLookback", settings.takeProfitRangeScaledLookback, (v) => Math.max(5, Math.round(v)));
-        addBaseParamIfFinite(baseParams, "takeProfitRangeScaledFraction", settings.takeProfitRangeScaledFraction, (v) => Math.max(0.01, Math.min(1, Number(v))));
-        return;
-    }
-
-    if (usesPercentageTakeProfitMode(settings, "median_bar")) {
-        addBaseParamIfFinite(baseParams, "takeProfitMedianBarLookback", settings.takeProfitMedianBarLookback, (v) => Math.max(5, Math.round(v)));
-        addBaseParamIfFinite(baseParams, "takeProfitMedianBarMultiplier", settings.takeProfitMedianBarMultiplier, (v) => Math.max(0.1, Number(v)));
-        return;
-    }
-
-    if (usesPercentageTakeProfitMode(settings, "mfe_bootstrap")) {
-        addBaseParamIfFinite(baseParams, "takeProfitMfeBootstrapPercentile", settings.takeProfitMfeBootstrapPercentile, (v) => clampPercentValue(v, 1, 99));
-        return;
-    }
-
 }
 
 function addBacktestOverrideIfFinite(
@@ -228,52 +246,12 @@ function applyModeSpecificTakeProfitOverrides(
     backtestOverrides: Partial<BacktestSettings>
 ): boolean {
     let hasOverrides = false;
-
-    if (usesPercentageTakeProfitMode(settings, "shrinkage")) {
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMfeLookbackTrades", clampTakeProfitMfeLookbackTrades) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMfePercentile", clampTakeProfitMfePercentile) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitShrinkageStrength", clampTakeProfitShrinkageStrength) || hasOverrides;
-        return hasOverrides;
+    for (const spec of TP_PARAM_SPECS) {
+        if (!spec.mode || !usesPercentageTakeProfitMode(settings, spec.mode)) {
+            continue;
+        }
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, spec.key, spec.clamp) || hasOverrides;
     }
-
-    if (usesPercentageTakeProfitMode(settings, "momentum_gated")) {
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMomentumRsiPeriod", clampTakeProfitMomentumRsiPeriod) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMomentumRsiPauseLevel", clampTakeProfitMomentumRsiPauseLevel) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMomentumDecayPercentPerBar", clampTakeProfitMomentumDecayPercentPerBar) || hasOverrides;
-        return hasOverrides;
-    }
-
-    if (usesPercentageTakeProfitMode(settings, "velocity")) {
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocityFastBars", clampTakeProfitVelocityFastBars) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocitySlowBars", clampTakeProfitVelocitySlowBars) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocityProgressPercent", clampTakeProfitVelocityProgressPercent) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocityExpandMultiplier", clampTakeProfitVelocityMultiplier) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitVelocityShrinkMultiplier", clampTakeProfitVelocityMultiplier) || hasOverrides;
-        return hasOverrides;
-    }
-
-    if (usesPercentageTakeProfitMode(settings, "atr_scaled")) {
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitAtrScaledMultiplier", (v) => Math.max(0.1, Number(v))) || hasOverrides;
-        return hasOverrides;
-    }
-
-    if (usesPercentageTakeProfitMode(settings, "range_scaled")) {
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitRangeScaledLookback", (v) => Math.max(5, Math.round(v))) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitRangeScaledFraction", (v) => Math.max(0.01, Math.min(1, Number(v)))) || hasOverrides;
-        return hasOverrides;
-    }
-
-    if (usesPercentageTakeProfitMode(settings, "median_bar")) {
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMedianBarLookback", (v) => Math.max(5, Math.round(v))) || hasOverrides;
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMedianBarMultiplier", (v) => Math.max(0.1, Number(v))) || hasOverrides;
-        return hasOverrides;
-    }
-
-    if (usesPercentageTakeProfitMode(settings, "mfe_bootstrap")) {
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, "takeProfitMfeBootstrapPercentile", (v) => clampPercentValue(v, 1, 99)) || hasOverrides;
-        return hasOverrides;
-    }
-
     return hasOverrides;
 }
 
@@ -375,6 +353,7 @@ export function mergeFinderRiskParamsIntoBacktestSettings<
     params: StrategyParams
 ): T {
     const merged = { ...settings };
+    const mergedRecord = merged as unknown as Record<string, number | undefined>;
     const usesAtrRisk =
         settings.riskSettingsToggle === true
         && (settings.riskMode === "simple" || settings.riskMode === "advanced");
@@ -391,72 +370,12 @@ export function mergeFinderRiskParamsIntoBacktestSettings<
         merged.takeProfitPercent = Number(params.takeProfitPercent);
     }
 
-    if (Number.isFinite(params.takeProfitMfeLookbackTrades)) {
-        merged.takeProfitMfeLookbackTrades = clampTakeProfitMfeLookbackTrades(Number(params.takeProfitMfeLookbackTrades));
-    }
-
-    if (Number.isFinite(params.takeProfitMfePercentile)) {
-        merged.takeProfitMfePercentile = clampTakeProfitMfePercentile(Number(params.takeProfitMfePercentile));
-    }
-
-    if (Number.isFinite(params.takeProfitShrinkageStrength)) {
-        merged.takeProfitShrinkageStrength = clampTakeProfitShrinkageStrength(Number(params.takeProfitShrinkageStrength));
-    }
-
-    if (Number.isFinite(params.takeProfitMomentumRsiPeriod)) {
-        merged.takeProfitMomentumRsiPeriod = clampTakeProfitMomentumRsiPeriod(Number(params.takeProfitMomentumRsiPeriod));
-    }
-
-    if (Number.isFinite(params.takeProfitMomentumRsiPauseLevel)) {
-        merged.takeProfitMomentumRsiPauseLevel = clampTakeProfitMomentumRsiPauseLevel(Number(params.takeProfitMomentumRsiPauseLevel));
-    }
-
-    if (Number.isFinite(params.takeProfitMomentumDecayPercentPerBar)) {
-        merged.takeProfitMomentumDecayPercentPerBar = clampTakeProfitMomentumDecayPercentPerBar(Number(params.takeProfitMomentumDecayPercentPerBar));
-    }
-
-    if (Number.isFinite(params.takeProfitVelocityFastBars)) {
-        merged.takeProfitVelocityFastBars = clampTakeProfitVelocityFastBars(Number(params.takeProfitVelocityFastBars));
-    }
-
-    if (Number.isFinite(params.takeProfitVelocitySlowBars)) {
-        merged.takeProfitVelocitySlowBars = clampTakeProfitVelocitySlowBars(Number(params.takeProfitVelocitySlowBars));
-    }
-
-    if (Number.isFinite(params.takeProfitVelocityProgressPercent)) {
-        merged.takeProfitVelocityProgressPercent = clampTakeProfitVelocityProgressPercent(Number(params.takeProfitVelocityProgressPercent));
-    }
-
-    if (Number.isFinite(params.takeProfitVelocityExpandMultiplier)) {
-        merged.takeProfitVelocityExpandMultiplier = clampTakeProfitVelocityMultiplier(Number(params.takeProfitVelocityExpandMultiplier));
-    }
-
-    if (Number.isFinite(params.takeProfitVelocityShrinkMultiplier)) {
-        merged.takeProfitVelocityShrinkMultiplier = clampTakeProfitVelocityMultiplier(Number(params.takeProfitVelocityShrinkMultiplier));
-    }
-
-    if (Number.isFinite(params.takeProfitAtrScaledMultiplier)) {
-        merged.takeProfitAtrScaledMultiplier = Math.max(0.1, Number(params.takeProfitAtrScaledMultiplier));
-    }
-
-    if (Number.isFinite(params.takeProfitRangeScaledLookback)) {
-        merged.takeProfitRangeScaledLookback = Math.max(5, Math.round(Number(params.takeProfitRangeScaledLookback)));
-    }
-
-    if (Number.isFinite(params.takeProfitRangeScaledFraction)) {
-        merged.takeProfitRangeScaledFraction = Math.max(0.01, Math.min(1, Number(params.takeProfitRangeScaledFraction)));
-    }
-
-    if (Number.isFinite(params.takeProfitMedianBarLookback)) {
-        merged.takeProfitMedianBarLookback = Math.max(5, Math.round(Number(params.takeProfitMedianBarLookback)));
-    }
-
-    if (Number.isFinite(params.takeProfitMedianBarMultiplier)) {
-        merged.takeProfitMedianBarMultiplier = Math.max(0.1, Number(params.takeProfitMedianBarMultiplier));
-    }
-
-    if (Number.isFinite(params.takeProfitMfeBootstrapPercentile)) {
-        merged.takeProfitMfeBootstrapPercentile = clampPercentValue(Number(params.takeProfitMfeBootstrapPercentile), 1, 99);
+    for (const spec of TP_PARAM_SPECS) {
+        const rawValue = params[spec.key];
+        if (!Number.isFinite(rawValue)) {
+            continue;
+        }
+        mergedRecord[spec.key] = spec.clamp(Number(rawValue));
     }
 
     if (Number.isFinite(params.riskMaxHoldBars)) {

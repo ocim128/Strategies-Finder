@@ -58,87 +58,7 @@ export const UI_EVENT_HANDLER_REQUIRED_IDS = [
     "panelResizeHandle",
 ] as const;
 
-export interface UiEventHandlersDom {
-    symbolSelector: HTMLElement;
-    symbolDropdown: HTMLElement;
-    symbolSearchInput: HTMLInputElement | null;
-    symbolSearchResults: HTMLElement | null;
-    symbolSearchSpinner: HTMLElement | null;
-    symbolSearchClear: HTMLElement | null;
-    symbolSearchLoading: HTMLElement | null;
-    symbolSearchEmpty: HTMLElement | null;
-    localSp500Select: HTMLSelectElement | null;
-    mockModelSelect: HTMLSelectElement | null;
-    mockBarsInput: HTMLInputElement | null;
-    chartModeToggle: HTMLButtonElement | null;
-    chartModeLabel: HTMLElement | null;
-    timeframeMinutesInput: HTMLInputElement | null;
-    timeframeMinutesApply: HTMLElement | null;
-    visibleCandlesInput: HTMLInputElement | null;
-    visibleCandlesApply: HTMLElement | null;
-    themeToggle: HTMLElement;
-    strategySelect: HTMLSelectElement;
-    strategyTabs: HTMLElement;
-    panelContent: HTMLElement;
-    runBacktest: HTMLElement;
-    clearTradesBtn: HTMLElement;
-    togglePanel: HTMLElement;
-    strategyPanel: HTMLElement;
-    zoomInTool: HTMLElement;
-    zoomOutTool: HTMLElement;
-    fitTool: HTMLElement;
-    screenshotTool: HTMLElement | null;
-    copyChartBtn: HTMLElement | null;
-    riskSettingsToggle: HTMLInputElement;
-    riskSettings: HTMLElement;
-    tradeFilterSettingsToggle: HTMLInputElement;
-    tradeFilterSettings: HTMLElement;
-    riskMode: HTMLSelectElement;
-    takeProfitMode: HTMLSelectElement;
-    takeProfitShrinkageSettingsRow: HTMLElement;
-    takeProfitMfeLookbackTrades: HTMLInputElement;
-    takeProfitMfePercentile: HTMLInputElement;
-    takeProfitShrinkageStrength: HTMLInputElement;
-    riskSimpleAdvanced: HTMLElement | null;
-    riskPercentage: HTMLElement | null;
-    riskAdvanced: HTMLElement;
-    tradeDirection: HTMLSelectElement;
-    flipLossStreakSettingsRow: HTMLElement | null;
-    flipAfterConsecutiveLosses: HTMLInputElement;
-    flipCooldownTrades: HTMLInputElement;
-    minTradesBeforeFirstFlip: HTMLInputElement;
-    tradeFilterMode: HTMLSelectElement;
-    htfBiasEmaPeriod: HTMLInputElement;
-    executionTrendEmaPeriod: HTMLInputElement;
-    confirmLookback: HTMLInputElement;
-    trendPersistenceWindow: HTMLInputElement;
-    trendPersistenceMinBars: HTMLInputElement;
-    trendSlopeLookback: HTMLInputElement;
-    trendSlopeMinPercent: HTMLInputElement;
-    volumeSmaPeriod: HTMLInputElement;
-    volumeMultiplier: HTMLInputElement;
-    confirmRsiPeriod: HTMLInputElement;
-    confirmRsiBullish: HTMLInputElement;
-    confirmRsiBearish: HTMLInputElement;
-    strategyTimeframeToggle: HTMLInputElement;
-    strategyTimeframeMinutes: HTMLInputElement;
-    strategyTimeframeMinutesGroup: HTMLElement | null;
-    twoHourCloseParity: HTMLSelectElement | null;
-    finderTradesToggle: HTMLInputElement;
-    finderTradeFilters: HTMLElement;
-    fixedTradeToggle: HTMLInputElement;
-    initialCapitalGroup: HTMLElement;
-    fixedTradeGroup: HTMLElement;
-    tradeSizingModeGroup: HTMLElement;
-    positionSizeGroup: HTMLElement;
-    initialCapital: HTMLInputElement;
-    tradeSizingMode: HTMLSelectElement;
-    fixedTradeAmount: HTMLInputElement;
-    positionSize: HTMLInputElement;
-    panelResizeHandle: HTMLElement;
-}
-
-export function createUiEventHandlersDom(): UiEventHandlersDom {
+export function createUiEventHandlersDom() {
     return {
         symbolSelector: getRequiredElement("symbolSelector"),
         symbolDropdown: getRequiredElement("symbolDropdown"),
@@ -220,15 +140,9 @@ export function createUiEventHandlersDom(): UiEventHandlersDom {
     };
 }
 
-export interface StrategyPanelDom {
-    togglePanel: HTMLElement;
-    strategyPanel: HTMLElement;
-    strategyTabs: HTMLElement;
-    panelContent: HTMLElement;
-    panelResizeHandle: HTMLElement;
-}
+export type UiEventHandlersDom = ReturnType<typeof createUiEventHandlersDom>;
 
-export function createStrategyPanelDom(): StrategyPanelDom {
+export function createStrategyPanelDom() {
     return {
         togglePanel: getRequiredElement("togglePanel"),
         strategyPanel: getRequiredElement("strategyPanel"),
@@ -237,6 +151,8 @@ export function createStrategyPanelDom(): StrategyPanelDom {
         panelResizeHandle: getRequiredElement("panelResizeHandle"),
     };
 }
+
+export type StrategyPanelDom = ReturnType<typeof createStrategyPanelDom>;
 
 export const SETTINGS_WORKSPACE_REQUIRED_IDS = [
     "settingsTab",
@@ -248,17 +164,7 @@ export const SETTINGS_WORKSPACE_REQUIRED_IDS = [
     "strategyParamCount",
 ] as const;
 
-export interface SettingsWorkspaceDom {
-    settingsTab: HTMLElement;
-    strategyWorkspaceHeader: HTMLElement;
-    strategyWorkspaceSections: HTMLElement;
-    strategyMetaName: HTMLElement;
-    strategyMetaDescription: HTMLElement;
-    strategyMetaKey: HTMLElement;
-    strategyParamCount: HTMLElement;
-}
-
-export function createSettingsWorkspaceDom(): SettingsWorkspaceDom {
+export function createSettingsWorkspaceDom() {
     return {
         settingsTab: getRequiredElement("settingsTab"),
         strategyWorkspaceHeader: getRequiredElement("strategyWorkspaceHeader"),
@@ -269,6 +175,8 @@ export function createSettingsWorkspaceDom(): SettingsWorkspaceDom {
         strategyParamCount: getRequiredElement("strategyParamCount"),
     };
 }
+
+export type SettingsWorkspaceDom = ReturnType<typeof createSettingsWorkspaceDom>;
 
 export const UI_MANAGER_REQUIRED_IDS = [
     "symbolDataSource",
@@ -290,27 +198,7 @@ export const UI_MANAGER_REQUIRED_IDS = [
     "strategyStatus",
 ] as const;
 
-export interface UiManagerDom {
-    symbolDataSource: HTMLElement;
-    symbolPrice: HTMLElement;
-    symbolChange: HTMLElement;
-    ohlcOpen: HTMLElement;
-    ohlcHigh: HTMLElement;
-    ohlcLow: HTMLElement;
-    ohlcClose: HTMLElement;
-    ohlcVolume: HTMLElement;
-    ohlcChange: HTMLElement;
-    ohlcChangeValue: HTMLElement;
-    lastBacktestResult: HTMLElement;
-    tradeBadge: HTMLElement;
-    strategySelect: HTMLSelectElement;
-    timeframeCustom: HTMLElement;
-    timeframeMinutesInput: HTMLInputElement;
-    indicatorsPanel: HTMLElement;
-    strategyStatus: HTMLElement;
-}
-
-export function createUiManagerDom(): UiManagerDom {
+export function createUiManagerDom() {
     return {
         symbolDataSource: getRequiredElement("symbolDataSource"),
         symbolPrice: getRequiredElement("symbolPrice"),
@@ -332,6 +220,8 @@ export function createUiManagerDom(): UiManagerDom {
     };
 }
 
+export type UiManagerDom = ReturnType<typeof createUiManagerDom>;
+
 export const RESULTS_RENDERER_REQUIRED_IDS = [
     "netProfitCard",
     "netProfitPctCard",
@@ -346,21 +236,7 @@ export const RESULTS_RENDERER_REQUIRED_IDS = [
     "edgeAnalysisContainer",
 ] as const;
 
-export interface ResultsRendererDom {
-    netProfitCard: HTMLElement;
-    netProfitPctCard: HTMLElement;
-    entryLevelsBody: HTMLElement;
-    parityComparePanel: HTMLElement;
-    parityCompareGrid: HTMLElement;
-    parityCompareHint: HTMLElement;
-    postEntryPathContainer: HTMLElement;
-    postEntryPathHint: HTMLElement;
-    snapshotProfileContainer: HTMLElement;
-    exitReasonContainer: HTMLElement;
-    edgeAnalysisContainer: HTMLElement;
-}
-
-export function createResultsRendererDom(): ResultsRendererDom {
+export function createResultsRendererDom() {
     return {
         netProfitCard: getRequiredElement("netProfitCard"),
         netProfitPctCard: getRequiredElement("netProfitPctCard"),
@@ -376,25 +252,23 @@ export function createResultsRendererDom(): ResultsRendererDom {
     };
 }
 
+export type ResultsRendererDom = ReturnType<typeof createResultsRendererDom>;
+
 export const TRADES_RENDERER_REQUIRED_IDS = [
     "tradesList",
     "tradesTotalPnL",
     "tradesWinRate",
 ] as const;
 
-export interface TradesRendererDom {
-    tradesList: HTMLElement;
-    tradesTotalPnL: HTMLElement;
-    tradesWinRate: HTMLElement;
-}
-
-export function createTradesRendererDom(): TradesRendererDom {
+export function createTradesRendererDom() {
     return {
         tradesList: getRequiredElement("tradesList"),
         tradesTotalPnL: getRequiredElement("tradesTotalPnL"),
         tradesWinRate: getRequiredElement("tradesWinRate"),
     };
 }
+
+export type TradesRendererDom = ReturnType<typeof createTradesRendererDom>;
 
 export const SETTINGS_MANAGER_REQUIRED_IDS = [
     "strategySelect",
@@ -406,17 +280,7 @@ export const SETTINGS_MANAGER_REQUIRED_IDS = [
     "twoHourCloseParity",
 ] as const;
 
-export interface SettingsManagerDom {
-    strategySelect: HTMLSelectElement;
-    settingsTab: HTMLElement;
-    riskMode: HTMLElement;
-    takeProfitMode: HTMLElement;
-    tradeFilterMode: HTMLElement;
-    tradeDirection: HTMLElement;
-    twoHourCloseParity: HTMLElement | null;
-}
-
-export function createSettingsManagerDom(): SettingsManagerDom {
+export function createSettingsManagerDom() {
     return {
         strategySelect: getRequiredElement<HTMLSelectElement>("strategySelect"),
         settingsTab: getRequiredElement("settingsTab"),
@@ -427,6 +291,8 @@ export function createSettingsManagerDom(): SettingsManagerDom {
         twoHourCloseParity: getOptionalElement("twoHourCloseParity"),
     };
 }
+
+export type SettingsManagerDom = ReturnType<typeof createSettingsManagerDom>;
 
 
 
@@ -484,61 +350,7 @@ export const PORTFOLIO_LAB_REQUIRED_IDS = [
     "portfolioStrategyBadge",
 ] as const;
 
-export interface PortfolioLabDom {
-    portfolioTab: HTMLElement;
-    portfolioEmpty: HTMLElement;
-    portfolioContent: HTMLElement;
-    portfolioSymbolList: HTMLTextAreaElement;
-    portfolioBenchmarkSymbol: HTMLInputElement;
-    portfolioAnchorSymbol: HTMLInputElement;
-    portfolioLookbackBars: HTMLInputElement;
-    portfolioWindowMode: HTMLSelectElement;
-    portfolioConsensusLagBars: HTMLInputElement;
-    portfolioConsensusMinSamples: HTMLInputElement;
-    portfolioUseCurrentBtn: HTMLButtonElement;
-    portfolioFillMajorsBtn: HTMLButtonElement;
-    portfolioRunBtn: HTMLButtonElement;
-    portfolioStatus: HTMLElement;
-    portfolioResults: HTMLElement;
-    portfolioSummary: HTMLElement;
-    portfolioLiveContextSection: HTMLElement;
-    portfolioLiveContextSummary: HTMLElement;
-    portfolioLiveContextDetails: HTMLElement;
-    portfolioForecastSection: HTMLElement;
-    portfolioForecastSummary: HTMLElement;
-    portfolioForecastDetails: HTMLElement;
-    portfolioForecastTableBody: HTMLElement;
-    portfolioInsightSection: HTMLElement;
-    portfolioInsights: HTMLElement;
-    portfolioExecutionSection: HTMLElement;
-    portfolioExecutionSummary: HTMLElement;
-    portfolioConsensusSection: HTMLElement;
-    portfolioConsensusSummary: HTMLElement;
-    portfolioConsensusTableBody: HTMLElement;
-    portfolioBreadthMinAgree: HTMLInputElement;
-    portfolioMaxOppose: HTMLInputElement;
-    portfolioRunBreadthBacktestBtn: HTMLButtonElement;
-    portfolioRunFilterBacktestBtn: HTMLButtonElement;
-    portfolioRunBreadthSweepBtn: HTMLButtonElement;
-    portfolioRunOppositionSweepBtn: HTMLButtonElement;
-    portfolioBreadthSweepSection: HTMLElement;
-    portfolioBreadthSweepTableBody: HTMLElement;
-    portfolioOppositionSweepSection: HTMLElement;
-    portfolioOppositionSweepTableBody: HTMLElement;
-    portfolioRankingSection: HTMLElement;
-    portfolioRankingSummary: HTMLElement;
-    portfolioRankingTableBody: HTMLElement;
-    portfolioSizingSection: HTMLElement;
-    portfolioSizingSummary: HTMLElement;
-    portfolioSizingTableBody: HTMLElement;
-    portfolioMatrixSection: HTMLElement;
-    portfolioCorrelationMatrix: HTMLElement;
-    portfolioPairsTableBody: HTMLElement;
-    portfolioIntervalBadge: HTMLElement;
-    portfolioStrategyBadge: HTMLElement;
-}
-
-export function createPortfolioLabDom(): PortfolioLabDom {
+export function createPortfolioLabDom() {
     return {
         portfolioTab: getRequiredElement("portfolioTab"),
         portfolioEmpty: getRequiredElement("portfolioEmpty"),
@@ -594,6 +406,8 @@ export function createPortfolioLabDom(): PortfolioLabDom {
     };
 }
 
+export type PortfolioLabDom = ReturnType<typeof createPortfolioLabDom>;
+
 export const FINDER_MANAGER_REQUIRED_IDS = [
     "runFinder",
     "finderCopyTopResults",
@@ -634,47 +448,7 @@ export const FINDER_MANAGER_REQUIRED_IDS = [
     "finderTradesMax",
 ] as const;
 
-export interface FinderManagerDom {
-    runFinder: HTMLButtonElement;
-    finderCopyTopResults: HTMLButtonElement;
-    finderSaveSeedAudit: HTMLButtonElement;
-    finderList: HTMLElement;
-    finderStrategiesToggleAll: HTMLInputElement;
-    finderStrategySearch: HTMLInputElement;
-    finderStrategySelectAll: HTMLButtonElement;
-    finderStrategySelectNone: HTMLButtonElement;
-    finderStrategyInvertVisible: HTMLButtonElement;
-    finderStrategySelectVisible: HTMLButtonElement;
-    finderStrategySummary: HTMLElement;
-    finderSort: HTMLSelectElement;
-    finderSortSecondary: HTMLSelectElement;
-    finderAdvancedToggle: HTMLInputElement;
-    finderSimpleSort: HTMLElement;
-    finderSortList: HTMLElement;
-    finderMultiTimeframeToggle: HTMLInputElement;
-    finderMultiTimeframeAdd: HTMLButtonElement;
-    finderMultiTimeframeCustomAdd: HTMLButtonElement;
-    finderMultiTimeframeCustom: HTMLInputElement;
-    finderMultiTimeframeSelected: HTMLElement;
-    finderComboToggle: HTMLInputElement;
-    finderComboPrimarySelect: HTMLSelectElement;
-    finderComboSettings: HTMLElement;
-    finderMultiTimeframeSelect: HTMLSelectElement;
-    finderMultiTimeframeNote: HTMLElement;
-    finderMultiTimeframeSettings: HTMLElement;
-    finderStrategyList: HTMLElement;
-    finderMode: HTMLSelectElement;
-    finderTopN: HTMLInputElement;
-    finderSteps: HTMLInputElement;
-    finderRobustSeed: HTMLInputElement;
-    finderRange: HTMLInputElement;
-    finderMaxRuns: HTMLInputElement;
-    finderTradesToggle: HTMLInputElement;
-    finderTradesMin: HTMLInputElement;
-    finderTradesMax: HTMLInputElement;
-}
-
-export function createFinderManagerDom(): FinderManagerDom {
+export function createFinderManagerDom() {
     return {
         runFinder: getRequiredElement<HTMLButtonElement>("runFinder"),
         finderCopyTopResults: getRequiredElement<HTMLButtonElement>("finderCopyTopResults"),
@@ -716,19 +490,15 @@ export function createFinderManagerDom(): FinderManagerDom {
     };
 }
 
+export type FinderManagerDom = ReturnType<typeof createFinderManagerDom>;
+
 export const PAIR_COMBINER_BRIDGE_REQUIRED_IDS = [
     "combinerPrimarySelect",
     "combinerSecondarySelect",
     "combinerMode",
 ] as const;
 
-export interface PairCombinerBridgeDom {
-    combinerPrimarySelect: HTMLSelectElement;
-    combinerSecondarySelect: HTMLSelectElement;
-    combinerMode: HTMLSelectElement;
-}
-
-export function createPairCombinerBridgeDom(): PairCombinerBridgeDom {
+export function createPairCombinerBridgeDom() {
     return {
         combinerPrimarySelect: getRequiredElement<HTMLSelectElement>("combinerPrimarySelect"),
         combinerSecondarySelect: getRequiredElement<HTMLSelectElement>("combinerSecondarySelect"),
@@ -736,27 +506,9 @@ export function createPairCombinerBridgeDom(): PairCombinerBridgeDom {
     };
 }
 
-export interface SettingsHandlersDom {
-    resetSettingsBtn: HTMLButtonElement | null;
-    saveConfigBtn: HTMLButtonElement | null;
-    configNameInput: HTMLInputElement | null;
-    loadConfigBtn: HTMLButtonElement | null;
-    configSelect: HTMLSelectElement | null;
-    deleteConfigBtn: HTMLButtonElement | null;
-    generateShareLinkBtn: HTMLButtonElement | null;
-    copyShareLinkBtn: HTMLButtonElement | null;
-    shareConfigLinkInput: HTMLInputElement | null;
-    loadShareLinkBtn: HTMLButtonElement | null;
-    shareConfigImportInput: HTMLInputElement | null;
-    runCombinedStrategyBtn: HTMLButtonElement | null;
-    combinerPrimarySelect: HTMLSelectElement | null;
-    combinerSecondarySelect: HTMLSelectElement | null;
-    combinerMode: HTMLSelectElement | null;
-    useRustEngineToggle: HTMLInputElement | null;
-    runBacktest: HTMLButtonElement | null;
-}
+export type PairCombinerBridgeDom = ReturnType<typeof createPairCombinerBridgeDom>;
 
-export function createSettingsHandlersDom(): SettingsHandlersDom {
+export function createSettingsHandlersDom() {
     return {
         resetSettingsBtn: getOptionalElement<HTMLButtonElement>("resetSettingsBtn"),
         saveConfigBtn: getOptionalElement<HTMLButtonElement>("saveConfigBtn"),
@@ -777,6 +529,8 @@ export function createSettingsHandlersDom(): SettingsHandlersDom {
         runBacktest: getOptionalElement<HTMLButtonElement>("runBacktest"),
     };
 }
+
+export type SettingsHandlersDom = ReturnType<typeof createSettingsHandlersDom>;
 
 export const WALK_FORWARD_SERVICE_REQUIRED_IDS = [
     "wf-opt-window",
@@ -810,39 +564,7 @@ export const WALK_FORWARD_SERVICE_REQUIRED_IDS = [
     "wf-status",
 ] as const;
 
-export interface WalkForwardServiceDom {
-    wfOptWindow: HTMLInputElement;
-    wfTestWindow: HTMLInputElement;
-    wfStepSize: HTMLInputElement;
-    wfMinTrades: HTMLInputElement;
-    wfAutoSuggest: HTMLInputElement;
-    wfValidationSeeds: HTMLInputElement;
-    wfValidationMinPasses: HTMLInputElement;
-    wfValidationMaxDd: HTMLInputElement;
-    wfValidationPanel: HTMLElement;
-    wfPermutationCount: HTMLInputElement;
-    wfPermutationSeed: HTMLInputElement;
-    wfPermutationMetric: HTMLSelectElement;
-    wfPermutationBtn: HTMLButtonElement;
-    wfPermutationSpinner: HTMLElement;
-    wfPermutationPanel: HTMLElement;
-    wfTopN: HTMLInputElement;
-    wfSummaryPanel: HTMLElement;
-    wfWindowTableBody: HTMLElement;
-    wfRobustnessGauge: HTMLElement;
-    wfRobustnessScore: HTMLElement;
-    wfRobustnessDesc: HTMLElement;
-    wfRunBtn: HTMLButtonElement;
-    wfQuickBtn: HTMLButtonElement;
-    wfValidateBtn: HTMLButtonElement;
-    wfCancelBtn: HTMLButtonElement;
-    wfSpinner: HTMLElement;
-    wfQuickSpinner: HTMLElement;
-    wfValidateSpinner: HTMLElement;
-    wfStatus: HTMLElement;
-}
-
-export function createWalkForwardServiceDom(): WalkForwardServiceDom {
+export function createWalkForwardServiceDom() {
     return {
         wfOptWindow: getRequiredElement<HTMLInputElement>("wf-opt-window"),
         wfTestWindow: getRequiredElement<HTMLInputElement>("wf-test-window"),
@@ -876,6 +598,8 @@ export function createWalkForwardServiceDom(): WalkForwardServiceDom {
     };
 }
 
+export type WalkForwardServiceDom = ReturnType<typeof createWalkForwardServiceDom>;
+
 export const PARAMETER_AUDIT_REQUIRED_IDS = [
     "parameterAuditSource",
     "parameterAuditSavedConfigGroup",
@@ -893,24 +617,7 @@ export const PARAMETER_AUDIT_REQUIRED_IDS = [
     "parameterAuditTableBody",
 ] as const;
 
-export interface ParameterAuditDom {
-    parameterAuditSource: HTMLSelectElement;
-    parameterAuditSavedConfigGroup: HTMLElement;
-    parameterAuditSavedConfig: HTMLSelectElement;
-    parameterAuditRun: HTMLButtonElement;
-    parameterAuditProgress: HTMLElement;
-    parameterAuditProgressFill: HTMLElement;
-    parameterAuditProgressText: HTMLElement;
-    parameterAuditStatus: HTMLElement;
-    parameterAuditSourceSummary: HTMLElement;
-    parameterAuditIncludedParams: HTMLElement;
-    parameterAuditEvidence: HTMLElement;
-    parameterAuditSummary: HTMLElement;
-    parameterAuditEmpty: HTMLElement;
-    parameterAuditTableBody: HTMLElement;
-}
-
-export function createParameterAuditDom(): ParameterAuditDom {
+export function createParameterAuditDom() {
     return {
         parameterAuditSource: getRequiredElement<HTMLSelectElement>("parameterAuditSource"),
         parameterAuditSavedConfigGroup: getRequiredElement("parameterAuditSavedConfigGroup"),
@@ -928,6 +635,8 @@ export function createParameterAuditDom(): ParameterAuditDom {
         parameterAuditTableBody: getRequiredElement("parameterAuditTableBody"),
     };
 }
+
+export type ParameterAuditDom = ReturnType<typeof createParameterAuditDom>;
 
 export const ENSEMBLE_LAB_REQUIRED_IDS = [
     "ensembleTab",
@@ -981,59 +690,7 @@ export const ENSEMBLE_LAB_REQUIRED_IDS = [
     "ensembleRadarContent",
 ] as const;
 
-export interface EnsembleLabDom {
-    ensembleTab: HTMLElement;
-    ensembleEmpty: HTMLElement;
-    ensembleContent: HTMLElement;
-    ensembleTargetPicker: HTMLElement;
-    ensembleTargetSelect: HTMLSelectElement;
-    ensembleTargetButton: HTMLButtonElement;
-    ensembleTargetMenu: HTMLElement;
-    ensembleTargetSearch: HTMLInputElement;
-    ensembleTargetList: HTMLElement;
-    ensembleTargetPickerEmptyState: HTMLElement;
-    ensembleTargetSummary: HTMLElement;
-    ensembleMinSamples: HTMLInputElement;
-    ensembleSymbolBadge: HTMLElement;
-    ensembleIntervalBadge: HTMLElement;
-    ensembleContextSearch: HTMLInputElement;
-    ensembleContextFamilyFilter: HTMLSelectElement;
-    ensembleContextSelectAll: HTMLButtonElement;
-    ensembleContextSelectNone: HTMLButtonElement;
-    ensembleContextInvertVisible: HTMLButtonElement;
-    ensembleContextSelectVisible: HTMLButtonElement;
-    ensembleContextSelectSameFamily: HTMLButtonElement;
-    ensembleContextExcludeSameFamily: HTMLButtonElement;
-    ensembleContextSummary: HTMLElement;
-    ensembleContextList: HTMLElement;
-    ensembleContextHelper: HTMLElement;
-    ensembleContextEmptyState: HTMLElement;
-    ensembleRefreshConfigsBtn: HTMLButtonElement;
-    ensembleRunBtn: HTMLButtonElement;
-    ensembleStatus: HTMLElement;
-    ensembleResults: HTMLElement;
-    ensembleSummary: HTMLElement;
-    ensembleCurrentContextSection: HTMLElement;
-    ensembleCurrentContextSummary: HTMLElement;
-    ensembleCurrentContextDetails: HTMLElement;
-    ensembleHistoricalOddsSection: HTMLElement;
-    ensembleHistoricalOddsSummary: HTMLElement;
-    ensembleHistoricalOddsTableBody: HTMLElement;
-    ensembleBuilderSection: HTMLElement;
-    ensembleBuilderSummary: HTMLElement;
-    ensembleBuilderTableBody: HTMLElement;
-    ensembleDiagnosticsSection: HTMLDetailsElement;
-    ensembleContributionSection: HTMLElement;
-    ensembleContributionSummary: HTMLElement;
-    ensembleContributionTableBody: HTMLElement;
-    ensembleReplacementSection: HTMLElement;
-    ensembleReplacementSummary: HTMLElement;
-    ensembleReplacementTableBody: HTMLElement;
-    ensembleRadarSection: HTMLElement;
-    ensembleRadarContent: HTMLElement;
-}
-
-export function createEnsembleLabDom(): EnsembleLabDom {
+export function createEnsembleLabDom() {
     return {
         ensembleTab: getRequiredElement("ensembleTab"),
         ensembleEmpty: getRequiredElement("ensembleEmpty"),
@@ -1086,3 +743,5 @@ export function createEnsembleLabDom(): EnsembleLabDom {
         ensembleRadarContent: getRequiredElement("ensembleRadarContent"),
     };
 }
+
+export type EnsembleLabDom = ReturnType<typeof createEnsembleLabDom>;

@@ -9,13 +9,20 @@ import {
     type StrategyParams,
 } from "../strategies/index";
 import type { TradeSizingMode } from "../types/backtest";
+import {
+    computeParamRange,
+    createSeededRandom,
+    isToggleParam,
+    normalizeParamValue,
+    serializeParams,
+    validateParams,
+} from "./finder-param-math";
 
 interface ParamSpec {
     key: string;
     baseValue: number;
     min: number;
     max: number;
-    isInteger: boolean;
     isToggle: boolean;
 }
 
@@ -98,17 +105,6 @@ export interface GeneticOptimizerInput {
     onGeneration?: (stats: GeneticGenerationStats) => void;
 }
 
-function createSeededRandom(seed: number): () => number {
-    let state = (Math.floor(seed) >>> 0) || 1;
-    return () => {
-        state += 0x6d2b79f5;
-        let t = state;
-        t = Math.imul(t ^ (t >>> 15), t | 1);
-        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-}
-
 function gaussian(rand: () => number): number {
     let u = 0;
     let v = 0;
@@ -121,12 +117,7 @@ function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
 }
 
-function isToggleParam(key: string, value: number): boolean {
-    return /^use[A-Z]/.test(key) && (value === 0 || value === 1);
-}
-
 function buildParamSpecs(defaultParams: StrategyParams, rangePercent: number): ParamSpec[] {
-    const rangeRatio = Math.max(0, rangePercent) / 100;
     return Object.keys(defaultParams).map((key) => {
         const baseValue = defaultParams[key];
         const toggle = isToggleParam(key, baseValue);
@@ -136,204 +127,27 @@ function buildParamSpecs(defaultParams: StrategyParams, rangePercent: number): P
                 baseValue,
                 min: 0,
                 max: 1,
-                isInteger: true,
                 isToggle: true,
             };
         }
 
-        const rawRange = Math.abs(baseValue) * rangeRatio;
-        const span = rawRange > 0 ? rawRange : rangeRatio > 0 ? 1 : 0;
-        let min = baseValue - span;
-        let max = baseValue + span;
-
-        if (key === "clusterChoice") {
-            min = 0;
-            max = 2;
-        } else if (/(iteration|iterations|interval|alpha)/i.test(key)) {
-            min = Math.max(1, min);
-        } else if (key === "warmupBars") {
-            min = Math.max(0, min);
-        }
-
-        if (key === "stopLossPercent") {
-            min = Math.max(0, min);
-            max = Math.min(15, max);
-        } else if (key === "takeProfitMfeLookbackTrades") {
-            min = Math.max(5, min);
-        } else if (key === "takeProfitMfePercentile") {
-            min = Math.max(1, min);
-            max = Math.min(99, max);
-        } else if (key === "takeProfitShrinkageStrength") {
-            min = Math.max(1, min);
-        } else if (key === "takeProfitMomentumRsiPeriod") {
-            min = Math.max(2, min);
-        } else if (key === "takeProfitMomentumRsiPauseLevel") {
-            min = Math.max(1, min);
-            max = Math.min(99, max);
-        } else if (key === "takeProfitMomentumDecayPercentPerBar") {
-            min = Math.max(0, min);
-        } else if (key === "takeProfitVelocityFastBars" || key === "takeProfitVelocitySlowBars") {
-            min = Math.max(1, min);
-        } else if (key === "takeProfitVelocityProgressPercent") {
-            min = Math.max(1, min);
-            max = Math.min(100, max);
-        } else if (key === "takeProfitVelocityExpandMultiplier" || key === "takeProfitVelocityShrinkMultiplier") {
-            min = Math.max(0.1, min);
-        } else if (key === "targetPct") {
-            min = 0;
-            max = 2;
-        } else if (key === "takeProfitPercent") {
-            min = Math.max(0, min);
-            max = Math.min(100, max);
-        }
+        const { min, max } = computeParamRange(key, baseValue, rangePercent);
 
         return {
             key,
             baseValue,
             min,
             max,
-            isInteger: Number.isInteger(baseValue),
             isToggle: false,
         };
     });
 }
 
-function normalizeParamValue(spec: ParamSpec, value: number): number {
-    const { key, baseValue, min, max, isInteger, isToggle } = spec;
-
-    if (isToggle) {
+function normalizeSpecParamValue(spec: ParamSpec, value: number): number {
+    if (spec.isToggle) {
         return value >= 0.5 ? 1 : 0;
     }
-
-    let next = clamp(value, min, max);
-    const isRsiThreshold = /(rsi(bullish|bearish|overbought|oversold)|overbought|oversold)/i.test(key);
-    const isRsiPeriod = /rsi/i.test(key) && !isRsiThreshold;
-    const periodLike = /(period|lookback|bars|bins|length|iteration|iterations|interval|alpha)/i.test(key) || isRsiPeriod;
-    const percentLike = /(percent|pct)/i.test(key) || isRsiThreshold;
-    const nonNegative = /(std|dev|factor|multiplier|atr|adx)/i.test(key);
-
-    if (key === "warmupBars") {
-        next = Math.max(0, Math.round(next));
-    } else if (key === "clusterChoice") {
-        next = Math.min(2, Math.max(0, Math.round(next)));
-    } else if (key === "takeProfitMfeLookbackTrades") {
-        next = Math.max(5, Math.round(next));
-    } else if (key === "takeProfitMfePercentile") {
-        next = Math.min(99, Math.max(1, Number(next.toFixed(2))));
-    } else if (key === "takeProfitShrinkageStrength") {
-        next = Math.max(1, Number(next.toFixed(2)));
-    } else if (key === "takeProfitMomentumRsiPeriod") {
-        next = Math.max(2, Math.round(next));
-    } else if (key === "takeProfitMomentumRsiPauseLevel") {
-        next = Math.min(99, Math.max(1, Number(next.toFixed(2))));
-    } else if (key === "takeProfitMomentumDecayPercentPerBar") {
-        next = Math.max(0, Number(next.toFixed(4)));
-    } else if (key === "takeProfitVelocityFastBars" || key === "takeProfitVelocitySlowBars") {
-        next = Math.max(1, Math.round(next));
-    } else if (key === "takeProfitVelocityProgressPercent") {
-        next = Math.min(100, Math.max(1, Number(next.toFixed(2))));
-    } else if (key === "takeProfitVelocityExpandMultiplier" || key === "takeProfitVelocityShrinkMultiplier") {
-        next = Math.max(0.1, Number(next.toFixed(4)));
-    } else if (periodLike) {
-        next = Math.max(1, Math.round(next));
-    } else if (key === "targetPct") {
-        next = Math.min(2, Math.max(0, Number(next.toFixed(2))));
-    } else if (key === "stopLossPercent") {
-        next = Math.min(15, Math.max(0, Number(next.toFixed(2))));
-    } else if (key === "takeProfitPercent") {
-        next = Math.min(100, Math.max(0, Number(next.toFixed(2))));
-    } else if (percentLike) {
-        next = Math.min(100, Math.max(0, next));
-    } else if (nonNegative) {
-        next = Math.max(0, next);
-    }
-
-    if (/(multiplier|factor)/i.test(key) && baseValue > 0) {
-        next = Math.max(0.1, next);
-    }
-    if (/z(entry|exit)/i.test(key) || key === "bufferAtr") {
-        next = Math.max(0, next);
-    }
-
-    if (
-        !periodLike &&
-        isInteger &&
-        !percentLike &&
-        key !== "stopLossPercent" &&
-        key !== "takeProfitPercent" &&
-        key !== "targetPct" &&
-        key !== "takeProfitMfePercentile" &&
-        key !== "takeProfitMomentumRsiPauseLevel" &&
-        key !== "takeProfitVelocityProgressPercent"
-    ) {
-        next = Math.round(next);
-    } else if (
-        key === "stopLossPercent" ||
-        key === "takeProfitPercent" ||
-        key === "targetPct" ||
-        key === "takeProfitMfePercentile" ||
-        key === "takeProfitShrinkageStrength" ||
-        key === "takeProfitMomentumRsiPauseLevel" ||
-        key === "takeProfitVelocityProgressPercent"
-    ) {
-        next = Number(next.toFixed(2));
-    } else if (!Number.isInteger(baseValue)) {
-        next = Number(next.toFixed(4));
-    }
-
-    return clamp(next, min, max);
-}
-
-function validateParams(params: StrategyParams): boolean {
-    const fast = params.fastPeriod;
-    const slow = params.slowPeriod;
-    const medium = params.mediumPeriod;
-    if (fast !== undefined && slow !== undefined && fast >= slow) return false;
-    if (fast !== undefined && medium !== undefined && fast >= medium) return false;
-    if (medium !== undefined && slow !== undefined && medium >= slow) return false;
-
-    const oversold = params.oversold;
-    const overbought = params.overbought;
-    if (oversold !== undefined && overbought !== undefined && oversold >= overbought) return false;
-
-    const rsiOversold = params.rsiOversold;
-    const rsiOverbought = params.rsiOverbought;
-    if (rsiOversold !== undefined && rsiOverbought !== undefined && rsiOversold >= rsiOverbought) return false;
-
-    const kPeriod = params.kPeriod;
-    const dPeriod = params.dPeriod;
-    if (kPeriod !== undefined && dPeriod !== undefined && kPeriod < dPeriod) return false;
-
-    const macdFast = params.macdFast;
-    const macdSlow = params.macdSlow;
-    if (macdFast !== undefined && macdSlow !== undefined && macdFast >= macdSlow) return false;
-
-    const minFactor = params.minFactor;
-    const maxFactor = params.maxFactor;
-    if (minFactor !== undefined && maxFactor !== undefined && minFactor > maxFactor) return false;
-    if (params.factorStep !== undefined && params.factorStep <= 0) return false;
-
-    if (params.kMeansIterations !== undefined && params.kMeansIterations <= 0) return false;
-    if (params.kMeansInterval !== undefined && params.kMeansInterval <= 0) return false;
-    if (params.perfAlpha !== undefined && params.perfAlpha <= 0) return false;
-    if (params.clusterChoice !== undefined && (params.clusterChoice < 0 || params.clusterChoice > 2)) return false;
-
-    const zEntry = params.zEntry;
-    const zExit = params.zExit;
-    if (zEntry !== undefined && zExit !== undefined && zExit >= zEntry) return false;
-
-    const entryExposurePct = params.entryExposurePct;
-    const exitExposurePct = params.exitExposurePct;
-    if (entryExposurePct !== undefined && exitExposurePct !== undefined && exitExposurePct >= entryExposurePct) return false;
-
-    return true;
-}
-
-function serializeParams(params: StrategyParams): string {
-    return Object.keys(params)
-        .sort()
-        .map((key) => `${key}:${params[key]}`)
-        .join("|");
+    return normalizeParamValue(spec.key, value, spec.baseValue, { min: spec.min, max: spec.max });
 }
 
 function randomParams(specs: ParamSpec[], rand: () => number): StrategyParams {
@@ -344,7 +158,7 @@ function randomParams(specs: ParamSpec[], rand: () => number): StrategyParams {
             continue;
         }
         const value = spec.min + rand() * (spec.max - spec.min);
-        params[spec.key] = normalizeParamValue(spec, value);
+        params[spec.key] = normalizeSpecParamValue(spec, value);
     }
     return params;
 }
@@ -394,10 +208,10 @@ function mutateGaussian(
             } else {
                 const span = Math.max(0.0001, spec.max - spec.min);
                 const delta = gaussian(rand) * span * sigma;
-                value = normalizeParamValue(spec, value + delta);
+                value = normalizeSpecParamValue(spec, value + delta);
             }
         } else {
-            value = normalizeParamValue(spec, value);
+            value = normalizeSpecParamValue(spec, value);
         }
         mutated[spec.key] = value;
     }
@@ -501,7 +315,7 @@ export async function runGeneticOptimization(input: GeneticOptimizerInput): Prom
     const initialSeen = new Set<string>();
     const defaultNormalized: StrategyParams = {};
     for (const spec of specs) {
-        defaultNormalized[spec.key] = normalizeParamValue(spec, defaultParams[spec.key]);
+        defaultNormalized[spec.key] = normalizeSpecParamValue(spec, defaultParams[spec.key]);
     }
     initialPopulation.push(makeGenome(0, defaultNormalized));
     initialSeen.add(serializeParams(defaultNormalized));

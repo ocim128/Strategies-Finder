@@ -8,7 +8,7 @@ import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 
 import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, TradeDirection, TradeFilterMode } from "./types/strategies";
 import { isTradeSizingMode, type TradeSizingMode } from "./types/backtest";
-import { EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
+import { EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw, SNAPSHOT_CONFIGS } from "./backtest-settings-resolver";
 import { getLegacyCompatibleTradeFilterModeValue, getLegacyCompatibleTradeFilterToggleValue } from "./legacy-settings-compat";
 
 // ============================================================================
@@ -439,6 +439,25 @@ function resolveSnapshotToggle(
     return minValue !== 0 || maxValue !== 0;
 }
 
+const UI_ONLY_BACKTEST_SETTING_KEYS = new Set<keyof BacktestSettingsData>([
+    'initialCapital',
+    'positionSize',
+    'commission',
+    'fixedTradeToggle',
+    'sizingMode',
+    'fixedTradeAmount',
+    'useRustEngine',
+    'riskSettingsToggle',
+    'tradeFilterSettingsToggle',
+    'entrySettingsToggle',
+]);
+
+const RESOLVED_TO_STORED_SETTING_KEY_MAP: Partial<Record<keyof BacktestSettingsData, keyof BacktestSettings>> = {
+    confirmRsiPeriod: 'rsiPeriod',
+    confirmRsiBullish: 'rsiBullish',
+    confirmRsiBearish: 'rsiBearish',
+};
+
 export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsData {
     const source = toRecord(raw);
     if (!source) {
@@ -452,165 +471,52 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
         DEFAULT_BACKTEST_SETTINGS,
         fixedTradeToggle ? "fixed" : "percent"
     );
+
     const normalized: BacktestSettingsData = {
         ...DEFAULT_BACKTEST_SETTINGS,
-        initialCapital: readNumber(source.initialCapital, DEFAULT_BACKTEST_SETTINGS.initialCapital),
-        positionSize: readNumber(source.positionSize, DEFAULT_BACKTEST_SETTINGS.positionSize),
-        commission: readNumber(source.commission, DEFAULT_BACKTEST_SETTINGS.commission),
-        fixedTradeToggle,
-        sizingMode,
-        fixedTradeAmount: readNumber(source.fixedTradeAmount, DEFAULT_BACKTEST_SETTINGS.fixedTradeAmount),
-        useRustEngine: readBoolean(source.useRustEngine, DEFAULT_BACKTEST_SETTINGS.useRustEngine),
-        riskSettingsToggle: readBoolean(source.riskSettingsToggle, DEFAULT_BACKTEST_SETTINGS.riskSettingsToggle),
-        riskMode: resolved.riskMode ?? DEFAULT_BACKTEST_SETTINGS.riskMode,
-        atrPeriod: resolved.atrPeriod ?? DEFAULT_BACKTEST_SETTINGS.atrPeriod,
-        stopLossAtr: resolved.stopLossAtr ?? DEFAULT_BACKTEST_SETTINGS.stopLossAtr,
-        takeProfitAtr: resolved.takeProfitAtr ?? DEFAULT_BACKTEST_SETTINGS.takeProfitAtr,
-        trailingAtr: resolved.trailingAtr ?? DEFAULT_BACKTEST_SETTINGS.trailingAtr,
-        partialTakeProfitAtR: resolved.partialTakeProfitAtR ?? DEFAULT_BACKTEST_SETTINGS.partialTakeProfitAtR,
-        partialTakeProfitPercent: resolved.partialTakeProfitPercent ?? DEFAULT_BACKTEST_SETTINGS.partialTakeProfitPercent,
-        breakEvenAtR: resolved.breakEvenAtR ?? DEFAULT_BACKTEST_SETTINGS.breakEvenAtR,
-        breakEvenPercent: resolved.breakEvenPercent ?? DEFAULT_BACKTEST_SETTINGS.breakEvenPercent,
-        timeStopBars: resolved.timeStopBars ?? DEFAULT_BACKTEST_SETTINGS.timeStopBars,
-        stopLossPercent: resolved.stopLossPercent ?? DEFAULT_BACKTEST_SETTINGS.stopLossPercent,
-        takeProfitPercent: resolved.takeProfitPercent ?? DEFAULT_BACKTEST_SETTINGS.takeProfitPercent,
-        takeProfitMode: resolveTakeProfitModeValue(resolved.takeProfitMode, DEFAULT_BACKTEST_SETTINGS),
-        takeProfitMfeLookbackTrades: resolved.takeProfitMfeLookbackTrades ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMfeLookbackTrades,
-        takeProfitMfePercentile: resolved.takeProfitMfePercentile ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMfePercentile,
-        takeProfitShrinkageStrength: resolved.takeProfitShrinkageStrength ?? DEFAULT_BACKTEST_SETTINGS.takeProfitShrinkageStrength,
-        takeProfitMomentumRsiPeriod: resolved.takeProfitMomentumRsiPeriod ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMomentumRsiPeriod,
-        takeProfitMomentumRsiPauseLevel: resolved.takeProfitMomentumRsiPauseLevel ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMomentumRsiPauseLevel,
-        takeProfitMomentumDecayPercentPerBar: resolved.takeProfitMomentumDecayPercentPerBar ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMomentumDecayPercentPerBar,
-        takeProfitVelocityFastBars: resolved.takeProfitVelocityFastBars ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityFastBars,
-        takeProfitVelocitySlowBars: resolved.takeProfitVelocitySlowBars ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocitySlowBars,
-        takeProfitVelocityProgressPercent: resolved.takeProfitVelocityProgressPercent ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityProgressPercent,
-        takeProfitVelocityExpandMultiplier: resolved.takeProfitVelocityExpandMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityExpandMultiplier,
-        takeProfitVelocityShrinkMultiplier: resolved.takeProfitVelocityShrinkMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitVelocityShrinkMultiplier,
-        takeProfitAtrScaledMultiplier: resolved.takeProfitAtrScaledMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitAtrScaledMultiplier,
-        takeProfitRangeScaledLookback: resolved.takeProfitRangeScaledLookback ?? DEFAULT_BACKTEST_SETTINGS.takeProfitRangeScaledLookback,
-        takeProfitRangeScaledFraction: resolved.takeProfitRangeScaledFraction ?? DEFAULT_BACKTEST_SETTINGS.takeProfitRangeScaledFraction,
-        takeProfitMedianBarLookback: resolved.takeProfitMedianBarLookback ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMedianBarLookback,
-        takeProfitMedianBarMultiplier: resolved.takeProfitMedianBarMultiplier ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMedianBarMultiplier,
-        takeProfitMfeBootstrapPercentile: resolved.takeProfitMfeBootstrapPercentile ?? DEFAULT_BACKTEST_SETTINGS.takeProfitMfeBootstrapPercentile,
-        stopLossEnabled: resolved.stopLossEnabled ?? DEFAULT_BACKTEST_SETTINGS.stopLossEnabled,
-        takeProfitEnabled: resolved.takeProfitEnabled ?? DEFAULT_BACKTEST_SETTINGS.takeProfitEnabled,
-        riskMaxHoldBars: resolved.riskMaxHoldBars ?? DEFAULT_BACKTEST_SETTINGS.riskMaxHoldBars,
-        riskMaxHoldEnabled: resolved.riskMaxHoldEnabled ?? DEFAULT_BACKTEST_SETTINGS.riskMaxHoldEnabled,
-        riskWinStreakStopLossEnabled: resolved.riskWinStreakStopLossEnabled ?? DEFAULT_BACKTEST_SETTINGS.riskWinStreakStopLossEnabled,
-        riskWinStreakStopLossAfterWins: resolved.riskWinStreakStopLossAfterWins ?? DEFAULT_BACKTEST_SETTINGS.riskWinStreakStopLossAfterWins,
-        riskWinStreakStopLossPercent: resolved.riskWinStreakStopLossPercent ?? DEFAULT_BACKTEST_SETTINGS.riskWinStreakStopLossPercent,
-        marketMode: resolved.marketMode ?? DEFAULT_BACKTEST_SETTINGS.marketMode,
-        tradeDirection: resolved.tradeDirection ?? DEFAULT_BACKTEST_SETTINGS.tradeDirection,
-        invertSignals: resolved.invertSignals ?? DEFAULT_BACKTEST_SETTINGS.invertSignals,
-        flipAfterConsecutiveLosses: resolved.flipAfterConsecutiveLosses ?? DEFAULT_BACKTEST_SETTINGS.flipAfterConsecutiveLosses,
-        flipCooldownTrades: resolved.flipCooldownTrades ?? DEFAULT_BACKTEST_SETTINGS.flipCooldownTrades,
-        minTradesBeforeFirstFlip: resolved.minTradesBeforeFirstFlip ?? DEFAULT_BACKTEST_SETTINGS.minTradesBeforeFirstFlip,
-        tradeFilterSettingsToggle: readBoolean(
-            getLegacyCompatibleTradeFilterToggleValue(source),
-            resolved.tradeFilterMode !== 'none'
-        ),
-        tradeFilterMode: resolved.tradeFilterMode ?? DEFAULT_BACKTEST_SETTINGS.tradeFilterMode,
-        entrySettingsToggle: source.entrySettingsToggle === undefined ? undefined : readBoolean(source.entrySettingsToggle, false),
-        htfBiasEmaPeriod: resolved.htfBiasEmaPeriod ?? DEFAULT_BACKTEST_SETTINGS.htfBiasEmaPeriod,
-        executionTrendEmaPeriod: resolved.executionTrendEmaPeriod ?? DEFAULT_BACKTEST_SETTINGS.executionTrendEmaPeriod,
-        confirmLookback: resolved.confirmLookback ?? DEFAULT_BACKTEST_SETTINGS.confirmLookback,
-        trendPersistenceWindow: resolved.trendPersistenceWindow ?? DEFAULT_BACKTEST_SETTINGS.trendPersistenceWindow,
-        trendPersistenceMinBars: resolved.trendPersistenceMinBars ?? DEFAULT_BACKTEST_SETTINGS.trendPersistenceMinBars,
-        trendSlopeLookback: resolved.trendSlopeLookback ?? DEFAULT_BACKTEST_SETTINGS.trendSlopeLookback,
-        trendSlopeMinPercent: resolved.trendSlopeMinPercent ?? DEFAULT_BACKTEST_SETTINGS.trendSlopeMinPercent,
-        volumeSmaPeriod: resolved.volumeSmaPeriod ?? DEFAULT_BACKTEST_SETTINGS.volumeSmaPeriod,
-        volumeMultiplier: resolved.volumeMultiplier ?? DEFAULT_BACKTEST_SETTINGS.volumeMultiplier,
-        confirmRsiPeriod: resolved.rsiPeriod ?? DEFAULT_BACKTEST_SETTINGS.confirmRsiPeriod,
-        confirmRsiBullish: resolved.rsiBullish ?? DEFAULT_BACKTEST_SETTINGS.confirmRsiBullish,
-        confirmRsiBearish: resolved.rsiBearish ?? DEFAULT_BACKTEST_SETTINGS.confirmRsiBearish,
-        snapshotAtrFilterToggle: resolveSnapshotToggle(source, 'snapshotAtrFilterToggle', 'snapshotAtrPercentMin', 'snapshotAtrPercentMax'),
-        snapshotAtrPercentMin: resolved.snapshotAtrPercentMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotAtrPercentMin,
-        snapshotAtrPercentMax: resolved.snapshotAtrPercentMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotAtrPercentMax,
-        snapshotVolumeFilterToggle: resolveSnapshotToggle(source, 'snapshotVolumeFilterToggle', 'snapshotVolumeRatioMin', 'snapshotVolumeRatioMax'),
-        snapshotVolumeRatioMin: resolved.snapshotVolumeRatioMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeRatioMin,
-        snapshotVolumeRatioMax: resolved.snapshotVolumeRatioMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeRatioMax,
-        snapshotAdxFilterToggle: resolveSnapshotToggle(source, 'snapshotAdxFilterToggle', 'snapshotAdxMin', 'snapshotAdxMax'),
-        snapshotAdxMin: resolved.snapshotAdxMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotAdxMin,
-        snapshotAdxMax: resolved.snapshotAdxMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotAdxMax,
-        snapshotEmaFilterToggle: resolveSnapshotToggle(source, 'snapshotEmaFilterToggle', 'snapshotEmaDistanceMin', 'snapshotEmaDistanceMax'),
-        snapshotEmaDistanceMin: resolved.snapshotEmaDistanceMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotEmaDistanceMin,
-        snapshotEmaDistanceMax: resolved.snapshotEmaDistanceMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotEmaDistanceMax,
-        snapshotRsiFilterToggle: resolveSnapshotToggle(source, 'snapshotRsiFilterToggle', 'snapshotRsiMin', 'snapshotRsiMax'),
-        snapshotRsiMin: resolved.snapshotRsiMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotRsiMin,
-        snapshotRsiMax: resolved.snapshotRsiMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotRsiMax,
-        snapshotPriceRangePosFilterToggle: resolveSnapshotToggle(source, 'snapshotPriceRangePosFilterToggle', 'snapshotPriceRangePosMin', 'snapshotPriceRangePosMax'),
-        snapshotPriceRangePosMin: resolved.snapshotPriceRangePosMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotPriceRangePosMin,
-        snapshotPriceRangePosMax: resolved.snapshotPriceRangePosMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotPriceRangePosMax,
-        snapshotBarsFromHighFilterToggle: resolveSnapshotToggle(source, 'snapshotBarsFromHighFilterToggle', null, 'snapshotBarsFromHighMax'),
-        snapshotBarsFromHighMax: resolved.snapshotBarsFromHighMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotBarsFromHighMax,
-        snapshotBarsFromLowFilterToggle: resolveSnapshotToggle(source, 'snapshotBarsFromLowFilterToggle', null, 'snapshotBarsFromLowMax'),
-        snapshotBarsFromLowMax: resolved.snapshotBarsFromLowMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotBarsFromLowMax,
-        snapshotTrendEfficiencyFilterToggle: resolveSnapshotToggle(source, 'snapshotTrendEfficiencyFilterToggle', 'snapshotTrendEfficiencyMin', 'snapshotTrendEfficiencyMax'),
-        snapshotTrendEfficiencyMin: resolved.snapshotTrendEfficiencyMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotTrendEfficiencyMin,
-        snapshotTrendEfficiencyMax: resolved.snapshotTrendEfficiencyMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotTrendEfficiencyMax,
-        snapshotAtrRegimeFilterToggle: resolveSnapshotToggle(source, 'snapshotAtrRegimeFilterToggle', 'snapshotAtrRegimeRatioMin', 'snapshotAtrRegimeRatioMax'),
-        snapshotAtrRegimeRatioMin: resolved.snapshotAtrRegimeRatioMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotAtrRegimeRatioMin,
-        snapshotAtrRegimeRatioMax: resolved.snapshotAtrRegimeRatioMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotAtrRegimeRatioMax,
-        snapshotBodyPercentFilterToggle: resolveSnapshotToggle(source, 'snapshotBodyPercentFilterToggle', 'snapshotBodyPercentMin', 'snapshotBodyPercentMax'),
-        snapshotBodyPercentMin: resolved.snapshotBodyPercentMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotBodyPercentMin,
-        snapshotBodyPercentMax: resolved.snapshotBodyPercentMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotBodyPercentMax,
-        snapshotWickSkewFilterToggle: resolveSnapshotToggle(source, 'snapshotWickSkewFilterToggle', 'snapshotWickSkewMin', 'snapshotWickSkewMax'),
-        snapshotWickSkewMin: resolved.snapshotWickSkewMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotWickSkewMin,
-        snapshotWickSkewMax: resolved.snapshotWickSkewMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotWickSkewMax,
-        snapshotVolumeTrendFilterToggle: resolveSnapshotToggle(source, 'snapshotVolumeTrendFilterToggle', 'snapshotVolumeTrendMin', 'snapshotVolumeTrendMax'),
-        snapshotVolumeTrendMin: resolved.snapshotVolumeTrendMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeTrendMin,
-        snapshotVolumeTrendMax: resolved.snapshotVolumeTrendMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeTrendMax,
-        snapshotVolumeBurstFilterToggle: resolveSnapshotToggle(source, 'snapshotVolumeBurstFilterToggle', 'snapshotVolumeBurstMin', 'snapshotVolumeBurstMax'),
-        snapshotVolumeBurstMin: resolved.snapshotVolumeBurstMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeBurstMin,
-        snapshotVolumeBurstMax: resolved.snapshotVolumeBurstMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeBurstMax,
-        snapshotVolumePriceDivergenceFilterToggle: resolveSnapshotToggle(source, 'snapshotVolumePriceDivergenceFilterToggle', 'snapshotVolumePriceDivergenceMin', 'snapshotVolumePriceDivergenceMax'),
-        snapshotVolumePriceDivergenceMin: resolved.snapshotVolumePriceDivergenceMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumePriceDivergenceMin,
-        snapshotVolumePriceDivergenceMax: resolved.snapshotVolumePriceDivergenceMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumePriceDivergenceMax,
-        snapshotVolumeConsistencyFilterToggle: resolveSnapshotToggle(source, 'snapshotVolumeConsistencyFilterToggle', 'snapshotVolumeConsistencyMin', 'snapshotVolumeConsistencyMax'),
-        snapshotVolumeConsistencyMin: resolved.snapshotVolumeConsistencyMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyMin,
-        snapshotVolumeConsistencyMax: resolved.snapshotVolumeConsistencyMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotVolumeConsistencyMax,
-        snapshotCloseLocationFilterToggle: resolveSnapshotToggle(source, 'snapshotCloseLocationFilterToggle', 'snapshotCloseLocationMin', 'snapshotCloseLocationMax'),
-        snapshotCloseLocationMin: resolved.snapshotCloseLocationMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotCloseLocationMin,
-        snapshotCloseLocationMax: resolved.snapshotCloseLocationMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotCloseLocationMax,
-        snapshotOppositeWickFilterToggle: resolveSnapshotToggle(source, 'snapshotOppositeWickFilterToggle', 'snapshotOppositeWickMin', 'snapshotOppositeWickMax'),
-        snapshotOppositeWickMin: resolved.snapshotOppositeWickMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotOppositeWickMin,
-        snapshotOppositeWickMax: resolved.snapshotOppositeWickMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotOppositeWickMax,
-        snapshotRangeAtrFilterToggle: resolveSnapshotToggle(source, 'snapshotRangeAtrFilterToggle', 'snapshotRangeAtrMultipleMin', 'snapshotRangeAtrMultipleMax'),
-        snapshotRangeAtrMultipleMin: resolved.snapshotRangeAtrMultipleMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotRangeAtrMultipleMin,
-        snapshotRangeAtrMultipleMax: resolved.snapshotRangeAtrMultipleMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotRangeAtrMultipleMax,
-        snapshotMomentumFilterToggle: resolveSnapshotToggle(source, 'snapshotMomentumFilterToggle', 'snapshotMomentumConsistencyMin', 'snapshotMomentumConsistencyMax'),
-        snapshotMomentumConsistencyMin: resolved.snapshotMomentumConsistencyMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotMomentumConsistencyMin,
-        snapshotMomentumConsistencyMax: resolved.snapshotMomentumConsistencyMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotMomentumConsistencyMax,
-        snapshotBreakQualityFilterToggle: resolveSnapshotToggle(source, 'snapshotBreakQualityFilterToggle', 'snapshotBreakQualityMin', 'snapshotBreakQualityMax'),
-        snapshotBreakQualityMin: resolved.snapshotBreakQualityMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityMin,
-        snapshotBreakQualityMax: resolved.snapshotBreakQualityMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotBreakQualityMax,
-        snapshotTf60PerfFilterToggle: resolveSnapshotToggle(source, 'snapshotTf60PerfFilterToggle', 'snapshotTf60PerfMin', 'snapshotTf60PerfMax'),
-        snapshotTf60PerfMin: resolved.snapshotTf60PerfMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf60PerfMin,
-        snapshotTf60PerfMax: resolved.snapshotTf60PerfMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf60PerfMax,
-        snapshotTf90PerfFilterToggle: resolveSnapshotToggle(source, 'snapshotTf90PerfFilterToggle', 'snapshotTf90PerfMin', 'snapshotTf90PerfMax'),
-        snapshotTf90PerfMin: resolved.snapshotTf90PerfMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf90PerfMin,
-        snapshotTf90PerfMax: resolved.snapshotTf90PerfMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf90PerfMax,
-        snapshotTf120PerfFilterToggle: resolveSnapshotToggle(source, 'snapshotTf120PerfFilterToggle', 'snapshotTf120PerfMin', 'snapshotTf120PerfMax'),
-        snapshotTf120PerfMin: resolved.snapshotTf120PerfMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf120PerfMin,
-        snapshotTf120PerfMax: resolved.snapshotTf120PerfMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf120PerfMax,
-        snapshotTf480PerfFilterToggle: resolveSnapshotToggle(source, 'snapshotTf480PerfFilterToggle', 'snapshotTf480PerfMin', 'snapshotTf480PerfMax'),
-        snapshotTf480PerfMin: resolved.snapshotTf480PerfMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf480PerfMin,
-        snapshotTf480PerfMax: resolved.snapshotTf480PerfMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotTf480PerfMax,
-        snapshotTfConfluencePerfFilterToggle: resolveSnapshotToggle(source, 'snapshotTfConfluencePerfFilterToggle', 'snapshotTfConfluencePerfMin', 'snapshotTfConfluencePerfMax'),
-        snapshotTfConfluencePerfMin: resolved.snapshotTfConfluencePerfMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotTfConfluencePerfMin,
-        snapshotTfConfluencePerfMax: resolved.snapshotTfConfluencePerfMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotTfConfluencePerfMax,
-        snapshotEntryQualityScoreFilterToggle: resolveSnapshotToggle(source, 'snapshotEntryQualityScoreFilterToggle', 'snapshotEntryQualityScoreMin', 'snapshotEntryQualityScoreMax'),
-        snapshotEntryQualityScoreMin: resolved.snapshotEntryQualityScoreMin ?? DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMin,
-        snapshotEntryQualityScoreMax: resolved.snapshotEntryQualityScoreMax ?? DEFAULT_BACKTEST_SETTINGS.snapshotEntryQualityScoreMax,
-        executionModel: resolved.executionModel ?? DEFAULT_BACKTEST_SETTINGS.executionModel,
-        allowSameBarExit: resolved.allowSameBarExit ?? DEFAULT_BACKTEST_SETTINGS.allowSameBarExit,
-        slippageBps: resolved.slippageBps ?? DEFAULT_BACKTEST_SETTINGS.slippageBps,
-        maxOpenTrades: resolved.maxOpenTrades ?? DEFAULT_BACKTEST_SETTINGS.maxOpenTrades,
-        warmUpEntryEnabled: resolved.warmUpEntryEnabled ?? DEFAULT_BACKTEST_SETTINGS.warmUpEntryEnabled,
-        strategyTimeframeEnabled: resolved.strategyTimeframeEnabled ?? DEFAULT_BACKTEST_SETTINGS.strategyTimeframeEnabled,
-        strategyTimeframeMinutes: resolved.strategyTimeframeMinutes ?? DEFAULT_BACKTEST_SETTINGS.strategyTimeframeMinutes,
-        twoHourCloseParity: resolved.twoHourCloseParity ?? DEFAULT_BACKTEST_SETTINGS.twoHourCloseParity,
     };
+    const normalizedRecord = normalized as unknown as Record<string, unknown>;
+
+    for (const key of Object.keys(DEFAULT_BACKTEST_SETTINGS) as (keyof BacktestSettingsData)[]) {
+        if (UI_ONLY_BACKTEST_SETTING_KEYS.has(key)) {
+            continue;
+        }
+
+        const resolvedKey = RESOLVED_TO_STORED_SETTING_KEY_MAP[key] ?? key;
+        const resolvedValue = (resolved as Record<string, unknown>)[resolvedKey as string];
+        if (resolvedValue === undefined) {
+            continue;
+        }
+
+        normalizedRecord[key as string] = key === 'takeProfitMode'
+            ? resolveTakeProfitModeValue(resolvedValue, DEFAULT_BACKTEST_SETTINGS)
+            : resolvedValue;
+    }
+
+    normalized.initialCapital = readNumber(source.initialCapital, DEFAULT_BACKTEST_SETTINGS.initialCapital);
+    normalized.positionSize = readNumber(source.positionSize, DEFAULT_BACKTEST_SETTINGS.positionSize);
+    normalized.commission = readNumber(source.commission, DEFAULT_BACKTEST_SETTINGS.commission);
+    normalized.fixedTradeToggle = fixedTradeToggle;
+    normalized.sizingMode = sizingMode;
+    normalized.fixedTradeAmount = readNumber(source.fixedTradeAmount, DEFAULT_BACKTEST_SETTINGS.fixedTradeAmount);
+    normalized.useRustEngine = readBoolean(source.useRustEngine, DEFAULT_BACKTEST_SETTINGS.useRustEngine);
+    normalized.riskSettingsToggle = readBoolean(source.riskSettingsToggle, DEFAULT_BACKTEST_SETTINGS.riskSettingsToggle);
+    normalized.tradeFilterSettingsToggle = readBoolean(
+        getLegacyCompatibleTradeFilterToggleValue(source),
+        resolved.tradeFilterMode !== 'none'
+    );
+    normalized.entrySettingsToggle = source.entrySettingsToggle === undefined
+        ? undefined
+        : readBoolean(source.entrySettingsToggle, false);
+
+    for (const { toggleKey, minKey, maxKey } of SNAPSHOT_CONFIGS) {
+        normalizedRecord[toggleKey] = resolveSnapshotToggle(
+            source,
+            toggleKey as keyof BacktestSettingsData,
+            (minKey ?? null) as keyof BacktestSettingsData | null,
+            maxKey as keyof BacktestSettingsData
+        );
+    }
 
     return normalized;
 }

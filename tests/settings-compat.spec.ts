@@ -265,6 +265,25 @@ describe('Backtest settings compatibility', () => {
         expect(explicit.sizingMode).to.equal('smart_fixed_quality_x_velocity');
     });
 
+    it('infers snapshot toggles from stored values while honoring explicit disabled toggles', () => {
+        const inferred = normalizeStoredBacktestSettings({
+            snapshotAtrPercentMin: '1.1',
+            snapshotAtrPercentMax: '2.2',
+        });
+        const explicitOff = normalizeStoredBacktestSettings({
+            snapshotAtrFilterToggle: false,
+            snapshotAtrPercentMin: 1.1,
+            snapshotAtrPercentMax: 2.2,
+        });
+
+        expect(inferred.snapshotAtrFilterToggle).to.equal(true);
+        expect(inferred.snapshotAtrPercentMin).to.equal(1.1);
+        expect(inferred.snapshotAtrPercentMax).to.equal(2.2);
+        expect(explicitOff.snapshotAtrFilterToggle).to.equal(false);
+        expect(explicitOff.snapshotAtrPercentMin).to.equal(0);
+        expect(explicitOff.snapshotAtrPercentMax).to.equal(0);
+    });
+
     it('exposes worker strategy compatibility checks for alert subscriptions', () => {
         expect(isWorkerSupportedStrategyKey('volatility_compression_break')).to.equal(true);
         expect(isWorkerSupportedStrategyKey('definitely_not_a_worker_strategy')).to.equal(false);
