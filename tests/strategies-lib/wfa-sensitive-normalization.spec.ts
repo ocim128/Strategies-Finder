@@ -5,6 +5,8 @@ import { autocorr_deadband_release } from '../lib/strategies/lib/autocorr_deadba
 import { dead_zone_efficiency_breakout } from '../lib/strategies/lib/dead_zone_efficiency_breakout';
 import { volatility_compression_break_trend } from '../lib/strategies/lib/volatility-compression-break-trend';
 import { candle_pattern_persistence_score_macd_zero } from '../lib/strategies/lib/candle-pattern-persistence-score-macd-zero';
+import { entropy_ratio_regime_alignment } from '../lib/strategies/lib/entropy_ratio_regime_alignment';
+import { pattern_regime_alignment } from '../lib/strategies/lib/pattern_regime_alignment';
 
 describe('strategy lib WFA-sensitive normalization', () => {
     it('exposes normalized base params for additional WFA-sensitive strategies', () => {
@@ -37,6 +39,18 @@ describe('strategy lib WFA-sensitive normalization', () => {
                 strategy: candle_pattern_persistence_score_macd_zero,
                 input: { scoreLookback: 1.4, scoreThreshold: -0.8, macdFastLen: 1.2 },
                 expected: { scoreLookback: 2, scoreThreshold: 0, macdFastLen: 2 }
+            },
+            {
+                key: 'entropy_ratio_regime_alignment',
+                strategy: entropy_ratio_regime_alignment,
+                input: { slowWindow: 1.2, fastWindow: 999, ratioThreshold: -5 },
+                expected: { slowWindow: 2 }
+            },
+            {
+                key: 'pattern_regime_alignment',
+                strategy: pattern_regime_alignment,
+                input: { scoreLookback: 1.4, medianLookback: 6.8, slowWindow: 4.2 },
+                expected: { scoreLookback: 2, medianLookback: 7, slowWindow: 8 }
             }
         ];
 

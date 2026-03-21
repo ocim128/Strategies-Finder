@@ -9,6 +9,8 @@ import { candle_pattern_persistence_score_median_deviation_streak } from '../lib
 import { vwap_zscore_reversion } from '../lib/strategies/lib/vwap_zscore_reversion';
 import { adx_slope_pivot_entry } from '../lib/strategies/lib/adx_slope_pivot_entry';
 import { macd_histogram_volatility_squeeze } from '../lib/strategies/lib/macd_histogram_volatility_squeeze';
+import { entropy_ratio_regime_alignment } from '../lib/strategies/lib/entropy_ratio_regime_alignment';
+import { pattern_regime_alignment } from '../lib/strategies/lib/pattern_regime_alignment';
 
 describe('strategy lib prepared execution parity', () => {
     it('keeps prepared heavy-indicator strategies aligned with execute()', () => {
@@ -49,7 +51,7 @@ describe('strategy lib prepared execution parity', () => {
             {
                 key: 'candle_pattern_persistence_score_median_deviation_streak',
                 strategy: candle_pattern_persistence_score_median_deviation_streak,
-                params: { scoreLookback: 6, scoreThreshold: 0.55, medianLookback: 18, streakThreshold: 4 },
+                params: { scoreLookback: 6, medianLookback: 18 },
             },
             {
                 key: 'vwap_zscore_reversion',
@@ -65,6 +67,16 @@ describe('strategy lib prepared execution parity', () => {
                 key: 'macd_histogram_volatility_squeeze',
                 strategy: macd_histogram_volatility_squeeze,
                 params: { macdFast: 12, stdDevLookback: 30, squeezeThreshold: 0.05 },
+            },
+            {
+                key: 'entropy_ratio_regime_alignment',
+                strategy: entropy_ratio_regime_alignment,
+                params: { slowWindow: 28, fastWindow: 999, ratioThreshold: -99 },
+            },
+            {
+                key: 'pattern_regime_alignment',
+                strategy: pattern_regime_alignment,
+                params: { scoreLookback: 6, medianLookback: 18, slowWindow: 32 },
             },
         ] as const;
 

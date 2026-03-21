@@ -1,22 +1,9 @@
 import { Strategy, StrategyParams, OHLCVData } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
-import {
-    CPPS_MIN_BODY_PCT_HARDCODED,
-} from "./candle-pattern-persistence-core";
+import { CPPS_MIN_BODY_PCT_HARDCODED } from "./candle-pattern-persistence-core";
 import { buildRollingMedian, buildStreakCount } from "./price-action-statistics-core";
 
-function normalizeCandlePatternPersistenceScoreMedianDeviationStreakParams(params: StrategyParams): StrategyParams {
-    const scoreLookback = Math.max(2, Math.round(params.scoreLookback ?? 5));
-    const medianLookback = Math.max(2, Math.round(params.medianLookback ?? 20));
-
-    return {
-        ...params,
-        scoreLookback,
-        medianLookback,
-    };
-}
-
-type CandlePatternPersistenceMedianDeviationPrepared = {
+type PatternRegimeAlignmentPrepared = {
     cleanData: OHLCVData[];
     closes: number[];
     scorePrefix: number[];
@@ -28,9 +15,21 @@ type CandlePatternPersistenceMedianDeviationPrepared = {
     streakByLookback: Map<number, number[]>;
 };
 
-function prepareCandlePatternPersistenceMedianDeviationData(
-    data: OHLCVData[]
-): CandlePatternPersistenceMedianDeviationPrepared {
+function normalizePatternRegimeAlignmentParams(params: StrategyParams): StrategyParams {
+    const scoreLookback = Math.max(2, Math.round(params.scoreLookback ?? 5));
+    const medianLookback = Math.max(2, Math.round(params.medianLookback ?? 20));
+    const rawSlowWindow = Number(params.slowWindow ?? 30);
+    const roundedSlowWindow = Math.round(Number.isFinite(rawSlowWindow) ? rawSlowWindow : 30);
+    const slowWindow = Math.max(medianLookback + 1, roundedSlowWindow);
+
+    return {
+        scoreLookback,
+        medianLookback,
+        slowWindow,
+    };
+}
+
+function preparePatternRegimeAlignmentData(data: OHLCVData[]): PatternRegimeAlignmentPrepared {
     const cleanData = ensureCleanData(data);
     const closes = getCloses(cleanData);
     const scorePrefix = new Array(cleanData.length + 1).fill(0);
@@ -70,18 +69,18 @@ function prepareCandlePatternPersistenceMedianDeviationData(
     };
 }
 
-function getPreparedCandlePatternPersistenceMedianDeviationData(
+function getPreparedPatternRegimeAlignmentData(
     preparedData: unknown,
     data: OHLCVData[]
-): CandlePatternPersistenceMedianDeviationPrepared {
+): PatternRegimeAlignmentPrepared {
     if (preparedData && typeof preparedData === "object" && "avgScoreByLookback" in preparedData && "streakByLookback" in preparedData) {
-        return preparedData as CandlePatternPersistenceMedianDeviationPrepared;
+        return preparedData as PatternRegimeAlignmentPrepared;
     }
-    return prepareCandlePatternPersistenceMedianDeviationData(data);
+    return preparePatternRegimeAlignmentData(data);
 }
 
 function getPreparedScoreSeries(
-    prepared: CandlePatternPersistenceMedianDeviationPrepared,
+    prepared: PatternRegimeAlignmentPrepared,
     scoreLookback: number
 ): { avgScore: (number | null)[]; avgBodyPct: (number | null)[] } {
     let avgScore = prepared.avgScoreByLookback.get(scoreLookback);
@@ -110,15 +109,23 @@ function getPreparedScoreSeries(
     return { avgScore, avgBodyPct };
 }
 
+function getPreparedMedianSeries(
+    prepared: PatternRegimeAlignmentPrepared,
+    lookback: number
+): (number | null)[] {
+    let medians = prepared.medianByLookback.get(lookback);
+    if (!medians) {
+        medians = buildRollingMedian(prepared.closes, lookback);
+        prepared.medianByLookback.set(lookback, medians);
+    }
+    return medians;
+}
+
 function getPreparedMedianStreakSeries(
-    prepared: CandlePatternPersistenceMedianDeviationPrepared,
+    prepared: PatternRegimeAlignmentPrepared,
     medianLookback: number
 ): { medians: (number | null)[]; streaks: number[] } {
-    let medians = prepared.medianByLookback.get(medianLookback);
-    if (!medians) {
-        medians = buildRollingMedian(prepared.closes, medianLookback);
-        prepared.medianByLookback.set(medianLookback, medians);
-    }
+    const medians = getPreparedMedianSeries(prepared, medianLookback);
 
     let streaks = prepared.streakByLookback.get(medianLookback);
     if (!streaks) {
@@ -138,63 +145,69 @@ function getPreparedMedianStreakSeries(
     return { medians, streaks };
 }
 
-export const candle_pattern_persistence_score_median_deviation_streak: Strategy = {
-    name: "Candle Pattern Persistence Score (Median Deviation Streak)",
-    description: "CPPS entries filtered by same-direction rolling median streak persistence, with Min Avg Body % disabled.",
+export const pattern_regime_alignment: Strategy = {
+    name: "Pattern Regime Alignment",
+    description: "Combines rolling candle-body persistence, a faster median-deviation streak, and a slower median regime filter. Enters only when short-term candle pressure and price both agree with the broader directional regime.",
     defaultParams: {
         scoreLookback: 5,
         medianLookback: 20,
+        slowWindow: 30,
     },
     paramLabels: {
         scoreLookback: "Score Window (bars)",
-        medianLookback: "Median Lookback",
+        medianLookback: "Median Streak Window",
+        slowWindow: "Slow Regime Window",
     },
-    normalizeParams: normalizeCandlePatternPersistenceScoreMedianDeviationStreakParams,
-    prepareFinderData: (data) => prepareCandlePatternPersistenceMedianDeviationData(data),
+    normalizeParams: normalizePatternRegimeAlignmentParams,
+    prepareFinderData: (data) => preparePatternRegimeAlignmentData(data),
     executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
-        const prepared = getPreparedCandlePatternPersistenceMedianDeviationData(preparedData, data);
-        const normalizedParams = normalizeCandlePatternPersistenceScoreMedianDeviationStreakParams(params);
+        const prepared = getPreparedPatternRegimeAlignmentData(preparedData, data);
+        const normalizedParams = normalizePatternRegimeAlignmentParams(params);
         const scoreLookback = normalizedParams.scoreLookback as number;
         const medianLookback = normalizedParams.medianLookback as number;
+        const slowWindow = normalizedParams.slowWindow as number;
 
-        if (prepared.cleanData.length < 3) return [];
+        if (prepared.cleanData.length < slowWindow + 2) return [];
 
         const { avgScore, avgBodyPct } = getPreparedScoreSeries(prepared, scoreLookback);
-        const { medians, streaks } = getPreparedMedianStreakSeries(prepared, medianLookback);
+        const { streaks } = getPreparedMedianStreakSeries(prepared, medianLookback);
+        const slowMedians = getPreparedMedianSeries(prepared, slowWindow);
 
-        return createSignalLoop(prepared.cleanData, [avgScore, avgBodyPct, medians], (i) => {
-            const score = avgScore[i] as number;
-            const avgBody = avgBodyPct[i] as number;
+        return createSignalLoop(prepared.cleanData, [avgScore, avgBodyPct, slowMedians], (i) => {
+            const score = avgScore[i];
+            const avgBody = avgBodyPct[i];
+            const slowMedian = slowMedians[i];
             const streak = streaks[i];
 
+            if (score === null || avgBody === null || slowMedian === null) return null;
             if (avgBody < CPPS_MIN_BODY_PCT_HARDCODED) return null;
 
-            if (score > 0 && streak > 0) {
+            if (score > 0 && streak > 0 && prepared.closes[i] > slowMedian) {
                 return createBuySignal(
                     prepared.cleanData,
                     i,
-                    `CPPS bullish > 0 + Median Streak > 0`
+                    "Pattern bullish + median streak + slow regime align"
                 );
             }
-            if (score < 0 && streak < 0) {
+            if (score < 0 && streak < 0 && prepared.closes[i] < slowMedian) {
                 return createSellSignal(
                     prepared.cleanData,
                     i,
-                    `CPPS bearish < 0 + Median Streak < 0`
+                    "Pattern bearish + median streak + slow regime align"
                 );
             }
             return null;
         });
     },
     execute: (data: OHLCVData[], params: StrategyParams) =>
-        candle_pattern_persistence_score_median_deviation_streak.executePrepared?.(
-            prepareCandlePatternPersistenceMedianDeviationData(data),
+        pattern_regime_alignment.executePrepared?.(
+            preparePatternRegimeAlignmentData(data),
             params,
             data
         ) ?? [],
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["scoreLookback", "medianLookback"],
+        walkForwardParams: ["scoreLookback", "medianLookback", "slowWindow"],
     },
 };

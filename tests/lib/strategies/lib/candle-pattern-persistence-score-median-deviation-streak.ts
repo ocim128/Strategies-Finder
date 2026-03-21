@@ -7,18 +7,12 @@ import { buildRollingMedian, buildStreakCount } from "./price-action-statistics-
 
 function normalizeCandlePatternPersistenceScoreMedianDeviationStreakParams(params: StrategyParams): StrategyParams {
     const scoreLookback = Math.max(2, Math.round(params.scoreLookback ?? 5));
-    const rawScoreThreshold = Number(params.scoreThreshold ?? 0.6);
-    const scoreThreshold = Math.max(0, Math.min(1, Number.isFinite(rawScoreThreshold) ? rawScoreThreshold : 0.6));
     const medianLookback = Math.max(2, Math.round(params.medianLookback ?? 20));
-    const rawStreakThreshold = Number(params.streakThreshold ?? 5);
-    const streakThreshold = Math.max(1, Math.abs(Math.round(Number.isFinite(rawStreakThreshold) ? rawStreakThreshold : 5)));
 
     return {
         ...params,
         scoreLookback,
-        scoreThreshold,
         medianLookback,
-        streakThreshold,
     };
 }
 
@@ -149,15 +143,11 @@ export const candle_pattern_persistence_score_median_deviation_streak: Strategy 
     description: "CPPS entries filtered by same-direction rolling median streak persistence, with Min Avg Body % disabled.",
     defaultParams: {
         scoreLookback: 5,
-        scoreThreshold: 0.6,
         medianLookback: 20,
-        streakThreshold: 5,
     },
     paramLabels: {
         scoreLookback: "Score Window (bars)",
-        scoreThreshold: "Persistence Threshold",
         medianLookback: "Median Lookback",
-        streakThreshold: "Streak Threshold",
     },
     normalizeParams: normalizeCandlePatternPersistenceScoreMedianDeviationStreakParams,
     prepareFinderData: (data) => prepareCandlePatternPersistenceMedianDeviationData(data),
@@ -179,18 +169,18 @@ export const candle_pattern_persistence_score_median_deviation_streak: Strategy 
 
             if (avgBody < CPPS_MIN_BODY_PCT_HARDCODED) return null;
 
-            if (score > normalizedParams.scoreThreshold && streak >= normalizedParams.streakThreshold) {
+            if (score > 0 && streak > 0) {
                 return createBuySignal(
                     prepared.cleanData,
                     i,
-                    `CPPS bullish + Median Streak >= ${normalizedParams.streakThreshold}`
+                    `CPPS bullish > 0 + Median Streak > 0`
                 );
             }
-            if (score < -normalizedParams.scoreThreshold && streak <= -normalizedParams.streakThreshold) {
+            if (score < 0 && streak < 0) {
                 return createSellSignal(
                     prepared.cleanData,
                     i,
-                    `CPPS bearish + Median Streak <= -${normalizedParams.streakThreshold}`
+                    `CPPS bearish < 0 + Median Streak < 0`
                 );
             }
             return null;
@@ -205,6 +195,6 @@ export const candle_pattern_persistence_score_median_deviation_streak: Strategy 
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["scoreLookback", "scoreThreshold", "medianLookback", "streakThreshold"],
+        walkForwardParams: ["scoreLookback", "medianLookback"],
     },
 };
