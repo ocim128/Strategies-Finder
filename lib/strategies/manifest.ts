@@ -2,6 +2,7 @@ import type { Strategy } from "../types/strategies";
 
 
 import { median_deviation_streak } from "./lib/median_deviation_streak";
+import { median_deviation_streak_v7 } from "./lib/median_deviation_streak_v7";
 import { entropy_ratio_regime_alignment } from "./lib/entropy_ratio_regime_alignment";
 import { skew_entropy_polarization_entry } from "./lib/skew_entropy_polarization_entry";
 import { supertrend_friction_pinch } from "./lib/supertrend_friction_pinch";
@@ -62,6 +63,7 @@ export interface StrategyManifestEntry {
 export const strategyManifest: readonly StrategyManifestEntry[] = [
     
     { key: "median_deviation_streak", strategy: median_deviation_streak },
+    { key: "median_deviation_streak_v7", strategy: median_deviation_streak_v7 },
     { key: "skew_entropy_polarization_entry", strategy: skew_entropy_polarization_entry },
     { key: "entropy_ratio_regime_alignment", strategy: entropy_ratio_regime_alignment },
     { key: "value_area_median_shift", strategy: value_area_median_shift },
