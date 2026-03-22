@@ -3,6 +3,7 @@ import {
     hasUiToggleSettings,
     resolveBacktestSettingsFromRaw,
 } from "./backtest-settings-resolver";
+import { toBooleanLike, toFiniteNumber } from "./settings-parse-utils";
 import { strategies } from "./strategies/library";
 import type { BacktestSettings, TradeDirection } from "./types/strategies";
 
@@ -33,30 +34,6 @@ function isValidExecutionModel(value: unknown): value is NonNullable<BacktestSet
 
 function isValidTakeProfitMode(value: unknown): value is NonNullable<BacktestSettings["takeProfitMode"]> {
     return typeof value === "string" && VALID_TAKE_PROFIT_MODES.has(value as NonNullable<BacktestSettings["takeProfitMode"]>);
-}
-
-function toFiniteNumber(value: unknown): number | null {
-    if (typeof value === "number") {
-        return Number.isFinite(value) ? value : null;
-    }
-    if (typeof value === "string" && value.trim() !== "") {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
-}
-
-function toBooleanLike(value: unknown): boolean | null {
-    if (typeof value === "boolean") return value;
-    if (typeof value === "number") {
-        return Number.isFinite(value) ? value !== 0 : null;
-    }
-    if (typeof value === "string") {
-        const normalized = value.trim().toLowerCase();
-        if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") return true;
-        if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false;
-    }
-    return null;
 }
 
 export function getWorkerSupportedStrategyKeys(): string[] {

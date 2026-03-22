@@ -4,18 +4,28 @@
 
 import type { ChartMode } from "./state";
 import { parseInputNumber } from "./dom-input-readers";
+import { readBoolean as readBooleanValue, readNumber as readNumberValue } from "./settings-parse-utils";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 
 import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, TradeDirection, TradeFilterMode } from "./types/strategies";
 import { isTradeSizingMode, type TradeSizingMode } from "./types/backtest";
-import { EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw, SNAPSHOT_CONFIGS } from "./backtest-settings-resolver";
+import { CAPITAL_DEFAULTS, EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw, SNAPSHOT_CONFIGS } from "./backtest-settings-resolver";
 import { getLegacyCompatibleTradeFilterModeValue, getLegacyCompatibleTradeFilterToggleValue } from "./legacy-settings-compat";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export interface BacktestSettingsData {
+type SnapshotConfigEntry = typeof SNAPSHOT_CONFIGS[number];
+type SnapshotConfigProp<T, K extends PropertyKey> = T extends Record<K, infer V> ? V : never;
+type SnapshotToggleKey = Extract<SnapshotConfigProp<SnapshotConfigEntry, "toggleKey">, string>;
+type SnapshotMinKey = Extract<SnapshotConfigProp<SnapshotConfigEntry, "minKey">, string>;
+type SnapshotMaxKey = Extract<SnapshotConfigProp<SnapshotConfigEntry, "maxKey">, string>;
+type SnapshotFilterFields = Record<SnapshotToggleKey, boolean>
+    & Record<SnapshotMinKey, number>
+    & Record<SnapshotMaxKey, number>;
+
+export interface BacktestSettingsData extends SnapshotFilterFields {
     // Capital settings
     initialCapital: number;
     positionSize: number;
@@ -92,85 +102,6 @@ export interface BacktestSettingsData {
     confirmRsiPeriod: number;
     confirmRsiBullish: number;
     confirmRsiBearish: number;
-    snapshotAtrFilterToggle: boolean;
-    snapshotAtrPercentMin: number;
-    snapshotAtrPercentMax: number;
-    snapshotVolumeFilterToggle: boolean;
-    snapshotVolumeRatioMin: number;
-    snapshotVolumeRatioMax: number;
-    snapshotAdxFilterToggle: boolean;
-    snapshotAdxMin: number;
-    snapshotAdxMax: number;
-    snapshotEmaFilterToggle: boolean;
-    snapshotEmaDistanceMin: number;
-    snapshotEmaDistanceMax: number;
-    snapshotRsiFilterToggle: boolean;
-    snapshotRsiMin: number;
-    snapshotRsiMax: number;
-    snapshotPriceRangePosFilterToggle: boolean;
-    snapshotPriceRangePosMin: number;
-    snapshotPriceRangePosMax: number;
-    snapshotBarsFromHighFilterToggle: boolean;
-    snapshotBarsFromHighMax: number;
-    snapshotBarsFromLowFilterToggle: boolean;
-    snapshotBarsFromLowMax: number;
-    snapshotTrendEfficiencyFilterToggle: boolean;
-    snapshotTrendEfficiencyMin: number;
-    snapshotTrendEfficiencyMax: number;
-    snapshotAtrRegimeFilterToggle: boolean;
-    snapshotAtrRegimeRatioMin: number;
-    snapshotAtrRegimeRatioMax: number;
-    snapshotBodyPercentFilterToggle: boolean;
-    snapshotBodyPercentMin: number;
-    snapshotBodyPercentMax: number;
-    snapshotWickSkewFilterToggle: boolean;
-    snapshotWickSkewMin: number;
-    snapshotWickSkewMax: number;
-    snapshotVolumeTrendFilterToggle: boolean;
-    snapshotVolumeTrendMin: number;
-    snapshotVolumeTrendMax: number;
-    snapshotVolumeBurstFilterToggle: boolean;
-    snapshotVolumeBurstMin: number;
-    snapshotVolumeBurstMax: number;
-    snapshotVolumePriceDivergenceFilterToggle: boolean;
-    snapshotVolumePriceDivergenceMin: number;
-    snapshotVolumePriceDivergenceMax: number;
-    snapshotVolumeConsistencyFilterToggle: boolean;
-    snapshotVolumeConsistencyMin: number;
-    snapshotVolumeConsistencyMax: number;
-    snapshotCloseLocationFilterToggle: boolean;
-    snapshotCloseLocationMin: number;
-    snapshotCloseLocationMax: number;
-    snapshotOppositeWickFilterToggle: boolean;
-    snapshotOppositeWickMin: number;
-    snapshotOppositeWickMax: number;
-    snapshotRangeAtrFilterToggle: boolean;
-    snapshotRangeAtrMultipleMin: number;
-    snapshotRangeAtrMultipleMax: number;
-    snapshotMomentumFilterToggle: boolean;
-    snapshotMomentumConsistencyMin: number;
-    snapshotMomentumConsistencyMax: number;
-    snapshotBreakQualityFilterToggle: boolean;
-    snapshotBreakQualityMin: number;
-    snapshotBreakQualityMax: number;
-    snapshotTf60PerfFilterToggle: boolean;
-    snapshotTf60PerfMin: number;
-    snapshotTf60PerfMax: number;
-    snapshotTf90PerfFilterToggle: boolean;
-    snapshotTf90PerfMin: number;
-    snapshotTf90PerfMax: number;
-    snapshotTf120PerfFilterToggle: boolean;
-    snapshotTf120PerfMin: number;
-    snapshotTf120PerfMax: number;
-    snapshotTf480PerfFilterToggle: boolean;
-    snapshotTf480PerfMin: number;
-    snapshotTf480PerfMax: number;
-    snapshotTfConfluencePerfFilterToggle: boolean;
-    snapshotTfConfluencePerfMin: number;
-    snapshotTfConfluencePerfMax: number;
-    snapshotEntryQualityScoreFilterToggle: boolean;
-    snapshotEntryQualityScoreMin: number;
-    snapshotEntryQualityScoreMax: number;
 
     // Execution realism
     executionModel: ExecutionModel;
@@ -205,168 +136,47 @@ export interface AppSettings {
 // Default Values
 // ============================================================================
 
+const SNAPSHOT_DEFAULTS = Object.fromEntries(
+    SNAPSHOT_CONFIGS.flatMap((snapshot) => {
+        const minKey = "minKey" in snapshot ? snapshot.minKey : undefined;
+        return [
+            [snapshot.toggleKey, false] as const,
+            ...(minKey ? [[minKey, 0] as const] : []),
+            [snapshot.maxKey, 0] as const,
+        ];
+    })
+) as SnapshotFilterFields;
+
+const {
+    rsiPeriod: DEFAULT_CONFIRM_RSI_PERIOD,
+    rsiBullish: DEFAULT_CONFIRM_RSI_BULLISH,
+    rsiBearish: DEFAULT_CONFIRM_RSI_BEARISH,
+    ...DEFAULT_SHARED_BACKTEST_SETTINGS
+} = EFFECTIVE_BACKTEST_DEFAULTS;
+
 export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
+    ...DEFAULT_SHARED_BACKTEST_SETTINGS,
+    ...SNAPSHOT_DEFAULTS,
+
     // Capital settings
-    initialCapital: 10000,
-    positionSize: 100,
-    commission: 0.1,
+    initialCapital: CAPITAL_DEFAULTS.initialCapital,
+    positionSize: CAPITAL_DEFAULTS.positionSize,
+    commission: CAPITAL_DEFAULTS.commission,
     fixedTradeToggle: true,
     sizingMode: "fixed",
-    fixedTradeAmount: 1000,
+    fixedTradeAmount: CAPITAL_DEFAULTS.fixedTradeAmount,
     useRustEngine: true,
 
     // Risk management
     riskSettingsToggle: false,
-    riskMode: EFFECTIVE_BACKTEST_DEFAULTS.riskMode,
-    atrPeriod: EFFECTIVE_BACKTEST_DEFAULTS.atrPeriod,
-    stopLossAtr: EFFECTIVE_BACKTEST_DEFAULTS.stopLossAtr,
-    takeProfitAtr: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAtr,
-    trailingAtr: EFFECTIVE_BACKTEST_DEFAULTS.trailingAtr,
-    partialTakeProfitAtR: EFFECTIVE_BACKTEST_DEFAULTS.partialTakeProfitAtR,
-    partialTakeProfitPercent: EFFECTIVE_BACKTEST_DEFAULTS.partialTakeProfitPercent,
-    breakEvenAtR: EFFECTIVE_BACKTEST_DEFAULTS.breakEvenAtR,
-    breakEvenPercent: EFFECTIVE_BACKTEST_DEFAULTS.breakEvenPercent,
-    timeStopBars: EFFECTIVE_BACKTEST_DEFAULTS.timeStopBars,
-    stopLossPercent: EFFECTIVE_BACKTEST_DEFAULTS.stopLossPercent,
-    takeProfitPercent: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitPercent,
-    takeProfitMode: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMode,
-    takeProfitMfeLookbackTrades: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeLookbackTrades,
-    takeProfitMfePercentile: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfePercentile,
-    takeProfitShrinkageStrength: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitShrinkageStrength,
-    takeProfitMomentumRsiPeriod: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumRsiPeriod,
-    takeProfitMomentumRsiPauseLevel: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumRsiPauseLevel,
-    takeProfitMomentumDecayPercentPerBar: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumDecayPercentPerBar,
-    takeProfitVelocityFastBars: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityFastBars,
-    takeProfitVelocitySlowBars: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocitySlowBars,
-    takeProfitVelocityProgressPercent: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityProgressPercent,
-    takeProfitVelocityExpandMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityExpandMultiplier,
-    takeProfitVelocityShrinkMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityShrinkMultiplier,
-    takeProfitAtrScaledMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAtrScaledMultiplier,
-    takeProfitRangeScaledLookback: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitRangeScaledLookback,
-    takeProfitRangeScaledFraction: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitRangeScaledFraction,
-    takeProfitMedianBarLookback: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMedianBarLookback,
-    takeProfitMedianBarMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMedianBarMultiplier,
-    takeProfitMfeBootstrapPercentile: EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeBootstrapPercentile,
     stopLossEnabled: false,
     takeProfitEnabled: false,
-    riskMaxHoldBars: EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars,
-    riskMaxHoldEnabled: EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldEnabled,
-    riskWinStreakStopLossEnabled: EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossEnabled,
-    riskWinStreakStopLossAfterWins: EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossAfterWins,
-    riskWinStreakStopLossPercent: EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossPercent,
-    marketMode: EFFECTIVE_BACKTEST_DEFAULTS.marketMode,
-
-    // Trade direction
-    tradeDirection: EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection,
-    invertSignals: EFFECTIVE_BACKTEST_DEFAULTS.invertSignals,
-    flipAfterConsecutiveLosses: EFFECTIVE_BACKTEST_DEFAULTS.flipAfterConsecutiveLosses,
-    flipCooldownTrades: EFFECTIVE_BACKTEST_DEFAULTS.flipCooldownTrades,
-    minTradesBeforeFirstFlip: EFFECTIVE_BACKTEST_DEFAULTS.minTradesBeforeFirstFlip,
 
     // Trade filter
     tradeFilterSettingsToggle: false,
-    tradeFilterMode: EFFECTIVE_BACKTEST_DEFAULTS.tradeFilterMode,
-    htfBiasEmaPeriod: EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod,
-    executionTrendEmaPeriod: EFFECTIVE_BACKTEST_DEFAULTS.executionTrendEmaPeriod,
-    confirmLookback: EFFECTIVE_BACKTEST_DEFAULTS.confirmLookback,
-    trendPersistenceWindow: EFFECTIVE_BACKTEST_DEFAULTS.trendPersistenceWindow,
-    trendPersistenceMinBars: EFFECTIVE_BACKTEST_DEFAULTS.trendPersistenceMinBars,
-    trendSlopeLookback: EFFECTIVE_BACKTEST_DEFAULTS.trendSlopeLookback,
-    trendSlopeMinPercent: EFFECTIVE_BACKTEST_DEFAULTS.trendSlopeMinPercent,
-    volumeSmaPeriod: EFFECTIVE_BACKTEST_DEFAULTS.volumeSmaPeriod,
-    volumeMultiplier: EFFECTIVE_BACKTEST_DEFAULTS.volumeMultiplier,
-    confirmRsiPeriod: EFFECTIVE_BACKTEST_DEFAULTS.rsiPeriod,
-    confirmRsiBullish: EFFECTIVE_BACKTEST_DEFAULTS.rsiBullish,
-    confirmRsiBearish: EFFECTIVE_BACKTEST_DEFAULTS.rsiBearish,
-    snapshotAtrFilterToggle: false,
-    snapshotAtrPercentMin: 0,
-    snapshotAtrPercentMax: 0,
-    snapshotVolumeFilterToggle: false,
-    snapshotVolumeRatioMin: 0,
-    snapshotVolumeRatioMax: 0,
-    snapshotAdxFilterToggle: false,
-    snapshotAdxMin: 0,
-    snapshotAdxMax: 0,
-    snapshotEmaFilterToggle: false,
-    snapshotEmaDistanceMin: 0,
-    snapshotEmaDistanceMax: 0,
-    snapshotRsiFilterToggle: false,
-    snapshotRsiMin: 0,
-    snapshotRsiMax: 0,
-    snapshotPriceRangePosFilterToggle: false,
-    snapshotPriceRangePosMin: 0,
-    snapshotPriceRangePosMax: 0,
-    snapshotBarsFromHighFilterToggle: false,
-    snapshotBarsFromHighMax: 0,
-    snapshotBarsFromLowFilterToggle: false,
-    snapshotBarsFromLowMax: 0,
-    snapshotTrendEfficiencyFilterToggle: false,
-    snapshotTrendEfficiencyMin: 0,
-    snapshotTrendEfficiencyMax: 0,
-    snapshotAtrRegimeFilterToggle: false,
-    snapshotAtrRegimeRatioMin: 0,
-    snapshotAtrRegimeRatioMax: 0,
-    snapshotBodyPercentFilterToggle: false,
-    snapshotBodyPercentMin: 0,
-    snapshotBodyPercentMax: 0,
-    snapshotWickSkewFilterToggle: false,
-    snapshotWickSkewMin: 0,
-    snapshotWickSkewMax: 0,
-    snapshotVolumeTrendFilterToggle: false,
-    snapshotVolumeTrendMin: 0,
-    snapshotVolumeTrendMax: 0,
-    snapshotVolumeBurstFilterToggle: false,
-    snapshotVolumeBurstMin: 0,
-    snapshotVolumeBurstMax: 0,
-    snapshotVolumePriceDivergenceFilterToggle: false,
-    snapshotVolumePriceDivergenceMin: 0,
-    snapshotVolumePriceDivergenceMax: 0,
-    snapshotVolumeConsistencyFilterToggle: false,
-    snapshotVolumeConsistencyMin: 0,
-    snapshotVolumeConsistencyMax: 0,
-    snapshotCloseLocationFilterToggle: false,
-    snapshotCloseLocationMin: 0,
-    snapshotCloseLocationMax: 0,
-    snapshotOppositeWickFilterToggle: false,
-    snapshotOppositeWickMin: 0,
-    snapshotOppositeWickMax: 0,
-    snapshotRangeAtrFilterToggle: false,
-    snapshotRangeAtrMultipleMin: 0,
-    snapshotRangeAtrMultipleMax: 0,
-    snapshotMomentumFilterToggle: false,
-    snapshotMomentumConsistencyMin: 0,
-    snapshotMomentumConsistencyMax: 0,
-    snapshotBreakQualityFilterToggle: false,
-    snapshotBreakQualityMin: 0,
-    snapshotBreakQualityMax: 0,
-    snapshotTf60PerfFilterToggle: false,
-    snapshotTf60PerfMin: 0,
-    snapshotTf60PerfMax: 0,
-    snapshotTf90PerfFilterToggle: false,
-    snapshotTf90PerfMin: 0,
-    snapshotTf90PerfMax: 0,
-    snapshotTf120PerfFilterToggle: false,
-    snapshotTf120PerfMin: 0,
-    snapshotTf120PerfMax: 0,
-    snapshotTf480PerfFilterToggle: false,
-    snapshotTf480PerfMin: 0,
-    snapshotTf480PerfMax: 0,
-    snapshotTfConfluencePerfFilterToggle: false,
-    snapshotTfConfluencePerfMin: 0,
-    snapshotTfConfluencePerfMax: 0,
-    snapshotEntryQualityScoreFilterToggle: false,
-    snapshotEntryQualityScoreMin: 0,
-    snapshotEntryQualityScoreMax: 0,
-
-    // Execution realism
-    executionModel: EFFECTIVE_BACKTEST_DEFAULTS.executionModel,
-    allowSameBarExit: EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit,
-    slippageBps: EFFECTIVE_BACKTEST_DEFAULTS.slippageBps,
-    maxOpenTrades: EFFECTIVE_BACKTEST_DEFAULTS.maxOpenTrades,
-    warmUpEntryEnabled: EFFECTIVE_BACKTEST_DEFAULTS.warmUpEntryEnabled,
-    strategyTimeframeEnabled: EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeEnabled,
-    strategyTimeframeMinutes: EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeMinutes,
-    twoHourCloseParity: EFFECTIVE_BACKTEST_DEFAULTS.twoHourCloseParity,
+    confirmRsiPeriod: DEFAULT_CONFIRM_RSI_PERIOD,
+    confirmRsiBullish: DEFAULT_CONFIRM_RSI_BULLISH,
+    confirmRsiBearish: DEFAULT_CONFIRM_RSI_BEARISH,
 };
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -390,23 +200,11 @@ function readString(value: unknown, fallback: string): string {
 }
 
 function readBoolean(value: unknown, fallback: boolean): boolean {
-    if (typeof value === 'boolean') return value;
-    if (typeof value === 'number' && Number.isFinite(value)) return value !== 0;
-    if (typeof value !== 'string') return fallback;
-
-    const normalized = value.trim().toLowerCase();
-    if (["true", "1", "yes", "on"].includes(normalized)) return true;
-    if (["false", "0", "no", "off"].includes(normalized)) return false;
-    return fallback;
+    return readBooleanValue(value, fallback);
 }
 
 function readNumber(value: unknown, fallback: number): number {
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    if (typeof value === 'string') {
-        const parsed = parseInputNumber(value);
-        if (typeof parsed === 'number' && Number.isFinite(parsed)) return parsed;
-    }
-    return fallback;
+    return readNumberValue(value, fallback, { parseString: parseInputNumber });
 }
 
 function normalizeStrategyParams(raw: unknown): Record<string, number> {
@@ -425,9 +223,9 @@ function normalizeStrategyParams(raw: unknown): Record<string, number> {
 
 function resolveSnapshotToggle(
     raw: Record<string, unknown>,
-    toggleKey: keyof BacktestSettingsData,
-    minKey: keyof BacktestSettingsData | null,
-    maxKey: keyof BacktestSettingsData
+    toggleKey: SnapshotToggleKey,
+    minKey: SnapshotMinKey | null,
+    maxKey: SnapshotMaxKey
 ): boolean {
     const explicit = raw[toggleKey as string];
     if (explicit !== undefined) {
@@ -509,12 +307,13 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
         ? undefined
         : readBoolean(source.entrySettingsToggle, false);
 
-    for (const { toggleKey, minKey, maxKey } of SNAPSHOT_CONFIGS) {
-        normalizedRecord[toggleKey] = resolveSnapshotToggle(
+    for (const snapshot of SNAPSHOT_CONFIGS) {
+        const minKey: SnapshotMinKey | null = "minKey" in snapshot ? snapshot.minKey : null;
+        normalizedRecord[snapshot.toggleKey] = resolveSnapshotToggle(
             source,
-            toggleKey as keyof BacktestSettingsData,
-            (minKey ?? null) as keyof BacktestSettingsData | null,
-            maxKey as keyof BacktestSettingsData
+            snapshot.toggleKey,
+            minKey,
+            snapshot.maxKey
         );
     }
 

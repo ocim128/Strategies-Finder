@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { normalizeBacktestSettings } from './lib/strategies/backtest/backtest-utils';
-import { resolveBacktestSettingsFromRaw } from './lib/backtest-settings-resolver';
+import { EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from './lib/backtest-settings-resolver';
 import {
     hasNonZeroSnapshotFilter,
     sanitizeBacktestSettingsForRust,
@@ -18,6 +18,9 @@ import {
     normalizeStoredBacktestSettings,
     normalizeStoredStrategyConfig,
 } from './lib/settings-manager';
+import { DEFAULT_BACKTEST_SETTINGS } from './lib/settings-model';
+import { readBoolean, readNumber, toBooleanLike, toFiniteNumber } from './lib/settings-parse-utils';
+import { SNAPSHOT_CONFIGS } from './lib/backtest-settings-resolver';
 import { strategyManifest } from './lib/strategies/manifest';
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from './lib/strategy-defaults';
 
@@ -149,6 +152,47 @@ describe('Backtest settings compatibility', () => {
         expect(resolved.trendSlopeLookback).to.equal(6);
         expect(resolved.trendSlopeMinPercent).to.equal(0.35);
         expect(requiresTypescriptEngine(resolved)).to.equal(true);
+    });
+
+    it('preserves guarded resolver semantics across schema-driven numeric and boolean fields', () => {
+        const resolved = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            stopLossToggle: true,
+            takeProfitToggle: 1,
+            takeProfitVelocityFastBars: 0.4,
+            riskWinStreakStopLossToggle: true,
+            riskWinStreakStopLossAfterWins: 0.2,
+            riskWinStreakStopLossPercent: -5,
+            tradeFilterSettingsToggle: true,
+            confirmRsiPeriod: 23,
+            confirmRsiBullish: 61,
+            confirmRsiBearish: 39,
+            warmUpEntryToggle: 'true',
+            maxOpenTrades: 7,
+        } as unknown as BacktestSettings);
+
+        expect(resolved.stopLossEnabled).to.equal(true);
+        expect(resolved.takeProfitEnabled).to.equal(true);
+        expect(resolved.takeProfitVelocityFastBars).to.equal(1);
+        expect(resolved.riskWinStreakStopLossEnabled).to.equal(true);
+        expect(resolved.riskWinStreakStopLossAfterWins).to.equal(1);
+        expect(resolved.riskWinStreakStopLossPercent).to.equal(0);
+        expect(resolved.rsiPeriod).to.equal(23);
+        expect(resolved.rsiBullish).to.equal(61);
+        expect(resolved.rsiBearish).to.equal(39);
+        expect(resolved.warmUpEntryEnabled).to.equal(true);
+        expect(resolved.maxOpenTrades).to.equal(2);
+
+        const disabled = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: false,
+            stopLossAtr: 9,
+            tradeFilterSettingsToggle: false,
+            htfBiasEmaPeriod: 10,
+        } as unknown as BacktestSettings);
+
+        expect(disabled.stopLossAtr).to.equal(0);
+        expect(disabled.htfBiasEmaPeriod).to.equal(EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod);
     });
 
     it('hydrates subscription execution defaults to the UI-compatible semantics', () => {
@@ -293,6 +337,54 @@ describe('Backtest settings compatibility', () => {
         expect(parseInputNumber('0,78')).to.equal(0.78);
         expect(parseInputNumber('1.234,56')).to.equal(1234.56);
         expect(parseInputNumber('1,234.56')).to.equal(1234.56);
+    });
+
+    it('keeps shared boolean and numeric coercion semantics aligned across storage paths', () => {
+        expect(toBooleanLike('yes')).to.equal(true);
+        expect(toBooleanLike('off')).to.equal(false);
+        expect(readBoolean('invalid', true)).to.equal(true);
+
+        expect(toFiniteNumber('12.5')).to.equal(12.5);
+        expect(toFiniteNumber('0,78')).to.equal(null);
+        expect(readNumber('0,78', 99, { parseString: parseInputNumber })).to.equal(0.78);
+    });
+
+    it('keeps snapshot defaults aligned with the shared snapshot config list', () => {
+        for (const snapshot of SNAPSHOT_CONFIGS) {
+            const minKey = 'minKey' in snapshot ? snapshot.minKey : undefined;
+            expect((DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)[snapshot.toggleKey]).to.equal(false);
+            if (minKey) {
+                expect((DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)[minKey]).to.equal(0);
+            }
+            expect((DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)[snapshot.maxKey]).to.equal(0);
+        }
+    });
+
+    it('keeps shared UI defaults aligned with engine defaults except for explicit UI overrides', () => {
+        for (const [key, value] of Object.entries(EFFECTIVE_BACKTEST_DEFAULTS)) {
+            if (key === 'rsiPeriod') {
+                expect(DEFAULT_BACKTEST_SETTINGS.confirmRsiPeriod).to.equal(value);
+                continue;
+            }
+            if (key === 'rsiBullish') {
+                expect(DEFAULT_BACKTEST_SETTINGS.confirmRsiBullish).to.equal(value);
+                continue;
+            }
+            if (key === 'rsiBearish') {
+                expect(DEFAULT_BACKTEST_SETTINGS.confirmRsiBearish).to.equal(value);
+                continue;
+            }
+            if (key === 'stopLossEnabled') {
+                expect(DEFAULT_BACKTEST_SETTINGS.stopLossEnabled).to.equal(false);
+                continue;
+            }
+            if (key === 'takeProfitEnabled') {
+                expect(DEFAULT_BACKTEST_SETTINGS.takeProfitEnabled).to.equal(false);
+                continue;
+            }
+
+            expect((DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)[key]).to.equal(value);
+        }
     });
 
     it('normalizes malformed stored app settings instead of crashing on partial payloads', () => {

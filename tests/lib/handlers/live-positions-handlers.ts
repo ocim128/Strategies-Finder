@@ -20,6 +20,7 @@ import { strategyRegistry } from '../../strategyRegistry';
 import { createAccessibleModal, type AccessibleModalController } from '../modal-accessibility';
 import { formatDisplayPrice } from '../price-format';
 import { resolveAlertSignalEntryPrice } from '../alert-signal-utils';
+import { toBooleanLike, toFiniteNumber as readFiniteNumber } from '../settings-parse-utils';
 
 
 
@@ -44,23 +45,11 @@ let workerUrlListener: ((event: Event) => void) | null = null;
 
 // Format helpers
 function toFiniteNumber(value: unknown): number {
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    if (typeof value === 'string' && value.trim()) {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : 0;
-    }
-    return 0;
+    return readFiniteNumber(value) ?? 0;
 }
 
 function toBoolean(value: unknown): boolean | null {
-    if (typeof value === 'boolean') return value;
-    if (typeof value === 'number' && Number.isFinite(value)) return value !== 0;
-    if (typeof value === 'string') {
-        const normalized = value.trim().toLowerCase();
-        if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') return true;
-        if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') return false;
-    }
-    return null;
+    return toBooleanLike(value);
 }
 
 function inferRiskToggle(settings: Record<string, unknown>): boolean {

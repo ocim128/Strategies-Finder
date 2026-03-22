@@ -27,9 +27,8 @@ import { state } from './state';
 import type { BacktestSettings, Trade } from './strategies/index';
 import { resolveSubscriptionExecutionBacktestSettings } from './alert-subscription-utils';
 import {
-    buildExecutionAwareCandleWindow,
     getDefaultAlertMinClosedCandles,
-    selectClosedCandleWindow,
+    selectExecutionAwareClosedCandles,
 } from './alert-evaluation-window';
 import {
     buildAlertWorkerProviderMismatchMessage,
@@ -697,13 +696,16 @@ class LivePositionsService {
                 return [];
             }
 
-            const closedWindow = selectClosedCandleWindow(
+            const evaluationCandles = selectExecutionAwareClosedCandles(
                 ohlcvData,
                 sub.interval,
-                Math.floor(Date.now() / 1000),
-                getDefaultAlertMinClosedCandles()
+                resolvedSettings,
+                {
+                    nowSec: Math.floor(Date.now() / 1000),
+                    minClosedCandles: getDefaultAlertMinClosedCandles(),
+                }
             );
-            if (!closedWindow) {
+            if (!evaluationCandles) {
                 this.localBacktestCache.set(cacheKey, {
                     signature: cacheSignature,
                     trades: [],
@@ -712,11 +714,6 @@ class LivePositionsService {
                 return [];
             }
 
-            const evaluationCandles = buildExecutionAwareCandleWindow(
-                closedWindow.candles,
-                closedWindow.nextOpenCandle,
-                resolvedSettings
-            );
             const result = await backtestService.runBacktestForSubscription(
                 evaluationCandles,
                 sub.interval,

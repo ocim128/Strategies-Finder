@@ -16,6 +16,7 @@ import {
     triggerSettingsChangeEvents,
 } from "./settings-dom";
 import { parseInputNumber } from "./dom-input-readers";
+import { readBoolean, readNumber } from "./settings-parse-utils";
 import {
     DEFAULT_APP_SETTINGS,
     DEFAULT_BACKTEST_SETTINGS,
@@ -411,27 +412,11 @@ class SettingsManager {
     }
 
     private readNumericValue(value: unknown, fallback: number): number {
-        if (typeof value === 'number' && Number.isFinite(value)) {
-            return value;
-        }
-        if (typeof value === 'string') {
-            const parsed = parseInputNumber(value);
-            if (typeof parsed === 'number' && Number.isFinite(parsed)) {
-                return parsed;
-            }
-        }
-        return fallback;
+        return readNumber(value, fallback, { parseString: parseInputNumber });
     }
 
     private readBooleanValue(value: unknown, fallback: boolean): boolean {
-        if (typeof value === 'boolean') return value;
-        if (typeof value === 'number' && Number.isFinite(value)) return value !== 0;
-        if (typeof value !== 'string') return fallback;
-
-        const normalized = value.trim().toLowerCase();
-        if (["true", "1", "yes", "on"].includes(normalized)) return true;
-        if (["false", "0", "no", "off"].includes(normalized)) return false;
-        return fallback;
+        return readBoolean(value, fallback);
     }
 
     private coerceBacktestSettingValue(

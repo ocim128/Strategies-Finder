@@ -7,6 +7,12 @@ import type {
     TradeFilterMode,
 } from "./types/strategies";
 import { getLegacyCompatibleTradeFilterModeValue } from "./legacy-settings-compat";
+import {
+    readBoolean as readBooleanValue,
+    readNumber as readNumberValue,
+    toBooleanLike,
+    toFiniteNumber,
+} from "./settings-parse-utils";
 
 export const CAPITAL_DEFAULTS = Object.freeze({
     initialCapital: 10000,
@@ -88,7 +94,7 @@ export type SnapshotConfig = {
     maxKey: keyof BacktestSettings;
 };
 
-export const SNAPSHOT_CONFIGS: readonly SnapshotConfig[] = [
+export const SNAPSHOT_CONFIGS = [
     { toggleKey: "snapshotAtrFilterToggle", minKey: "snapshotAtrPercentMin", maxKey: "snapshotAtrPercentMax" },
     { toggleKey: "snapshotVolumeFilterToggle", minKey: "snapshotVolumeRatioMin", maxKey: "snapshotVolumeRatioMax" },
     { toggleKey: "snapshotAdxFilterToggle", minKey: "snapshotAdxMin", maxKey: "snapshotAdxMax" },
@@ -116,7 +122,291 @@ export const SNAPSHOT_CONFIGS: readonly SnapshotConfig[] = [
     { toggleKey: "snapshotTf480PerfFilterToggle", minKey: "snapshotTf480PerfMin", maxKey: "snapshotTf480PerfMax" },
     { toggleKey: "snapshotTfConfluencePerfFilterToggle", minKey: "snapshotTfConfluencePerfMin", maxKey: "snapshotTfConfluencePerfMax" },
     { toggleKey: "snapshotEntryQualityScoreFilterToggle", minKey: "snapshotEntryQualityScoreMin", maxKey: "snapshotEntryQualityScoreMax" },
-];
+] as const satisfies readonly SnapshotConfig[];
+
+type ResolverGuardName =
+    | "useAtrRisk"
+    | "usePercentRisk"
+    | "useAdvancedRisk"
+    | "useRiskMaxHold"
+    | "tradeFilterEnabled";
+
+type ResolverGuardState = Record<ResolverGuardName, boolean>;
+
+type NumericResolverKey =
+    | "atrPeriod"
+    | "stopLossAtr"
+    | "takeProfitAtr"
+    | "trailingAtr"
+    | "partialTakeProfitAtR"
+    | "partialTakeProfitPercent"
+    | "breakEvenAtR"
+    | "breakEvenPercent"
+    | "timeStopBars"
+    | "stopLossPercent"
+    | "takeProfitPercent"
+    | "takeProfitMfeLookbackTrades"
+    | "takeProfitMfePercentile"
+    | "takeProfitShrinkageStrength"
+    | "takeProfitMomentumRsiPeriod"
+    | "takeProfitMomentumRsiPauseLevel"
+    | "takeProfitMomentumDecayPercentPerBar"
+    | "takeProfitVelocityFastBars"
+    | "takeProfitVelocitySlowBars"
+    | "takeProfitVelocityProgressPercent"
+    | "takeProfitVelocityExpandMultiplier"
+    | "takeProfitVelocityShrinkMultiplier"
+    | "takeProfitAtrScaledMultiplier"
+    | "takeProfitRangeScaledLookback"
+    | "takeProfitRangeScaledFraction"
+    | "takeProfitMedianBarLookback"
+    | "takeProfitMedianBarMultiplier"
+    | "takeProfitMfeBootstrapPercentile"
+    | "riskMaxHoldBars"
+    | "riskWinStreakStopLossAfterWins"
+    | "riskWinStreakStopLossPercent"
+    | "htfBiasEmaPeriod"
+    | "executionTrendEmaPeriod"
+    | "confirmLookback"
+    | "trendPersistenceWindow"
+    | "trendPersistenceMinBars"
+    | "trendSlopeLookback"
+    | "trendSlopeMinPercent"
+    | "volumeSmaPeriod"
+    | "volumeMultiplier"
+    | "rsiPeriod"
+    | "rsiBullish"
+    | "rsiBearish"
+    | "flipAfterConsecutiveLosses"
+    | "flipCooldownTrades"
+    | "minTradesBeforeFirstFlip"
+    | "slippageBps"
+    | "maxOpenTrades"
+    | "strategyTimeframeMinutes";
+
+type BooleanResolverKey =
+    | "stopLossEnabled"
+    | "takeProfitEnabled"
+    | "riskMaxHoldEnabled"
+    | "riskWinStreakStopLossEnabled"
+    | "invertSignals"
+    | "allowSameBarExit"
+    | "warmUpEntryEnabled"
+    | "strategyTimeframeEnabled";
+
+type NumericResolverRule = {
+    key: NumericResolverKey;
+    guard?: ResolverGuardName;
+    disabledValue?: number;
+    resolve?: (raw: Record<string, unknown>) => number;
+};
+
+type BooleanResolverRule = {
+    key: BooleanResolverKey;
+    keys?: readonly string[];
+    guard?: ResolverGuardName;
+    disabledValue?: boolean;
+};
+
+function readDefaultedNumber(raw: Record<string, unknown>, key: NumericResolverKey): number {
+    return readNumber(raw, key, EFFECTIVE_BACKTEST_DEFAULTS[key] as number);
+}
+
+const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
+    { key: "atrPeriod" },
+    { key: "stopLossAtr", guard: "useAtrRisk", disabledValue: 0 },
+    { key: "takeProfitAtr", guard: "useAtrRisk", disabledValue: 0 },
+    { key: "trailingAtr", guard: "useAtrRisk", disabledValue: 0 },
+    { key: "partialTakeProfitAtR", guard: "useAdvancedRisk", disabledValue: 0 },
+    { key: "partialTakeProfitPercent", guard: "useAdvancedRisk", disabledValue: 0 },
+    { key: "breakEvenAtR", guard: "useAdvancedRisk", disabledValue: 0 },
+    { key: "breakEvenPercent", guard: "usePercentRisk", disabledValue: 0 },
+    { key: "timeStopBars", guard: "useAdvancedRisk", disabledValue: 0 },
+    { key: "stopLossPercent", guard: "usePercentRisk", disabledValue: 0 },
+    { key: "takeProfitPercent", guard: "usePercentRisk", disabledValue: 0 },
+    {
+        key: "takeProfitMfeLookbackTrades",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(5, Math.round(readDefaultedNumber(raw, "takeProfitMfeLookbackTrades"))),
+    },
+    {
+        key: "takeProfitMfePercentile",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(1, Math.min(99, readDefaultedNumber(raw, "takeProfitMfePercentile"))),
+    },
+    {
+        key: "takeProfitShrinkageStrength",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(1, readDefaultedNumber(raw, "takeProfitShrinkageStrength")),
+    },
+    {
+        key: "takeProfitMomentumRsiPeriod",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(2, Math.round(readDefaultedNumber(raw, "takeProfitMomentumRsiPeriod"))),
+    },
+    {
+        key: "takeProfitMomentumRsiPauseLevel",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(1, Math.min(99, readDefaultedNumber(raw, "takeProfitMomentumRsiPauseLevel"))),
+    },
+    {
+        key: "takeProfitMomentumDecayPercentPerBar",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(0, readDefaultedNumber(raw, "takeProfitMomentumDecayPercentPerBar")),
+    },
+    {
+        key: "takeProfitVelocityFastBars",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(1, Math.round(readDefaultedNumber(raw, "takeProfitVelocityFastBars"))),
+    },
+    {
+        key: "takeProfitVelocitySlowBars",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(1, Math.round(readDefaultedNumber(raw, "takeProfitVelocitySlowBars"))),
+    },
+    {
+        key: "takeProfitVelocityProgressPercent",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(1, Math.min(100, readDefaultedNumber(raw, "takeProfitVelocityProgressPercent"))),
+    },
+    {
+        key: "takeProfitVelocityExpandMultiplier",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(0.1, readDefaultedNumber(raw, "takeProfitVelocityExpandMultiplier")),
+    },
+    {
+        key: "takeProfitVelocityShrinkMultiplier",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(0.1, readDefaultedNumber(raw, "takeProfitVelocityShrinkMultiplier")),
+    },
+    {
+        key: "takeProfitAtrScaledMultiplier",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(0.1, readDefaultedNumber(raw, "takeProfitAtrScaledMultiplier")),
+    },
+    {
+        key: "takeProfitRangeScaledLookback",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(5, Math.round(readDefaultedNumber(raw, "takeProfitRangeScaledLookback"))),
+    },
+    {
+        key: "takeProfitRangeScaledFraction",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(0.01, Math.min(1, readDefaultedNumber(raw, "takeProfitRangeScaledFraction"))),
+    },
+    {
+        key: "takeProfitMedianBarLookback",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(5, Math.round(readDefaultedNumber(raw, "takeProfitMedianBarLookback"))),
+    },
+    {
+        key: "takeProfitMedianBarMultiplier",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(0.1, readDefaultedNumber(raw, "takeProfitMedianBarMultiplier")),
+    },
+    {
+        key: "takeProfitMfeBootstrapPercentile",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(1, Math.min(99, readDefaultedNumber(raw, "takeProfitMfeBootstrapPercentile"))),
+    },
+    { key: "riskMaxHoldBars", guard: "useRiskMaxHold", disabledValue: 0 },
+    {
+        key: "riskWinStreakStopLossAfterWins",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(1, Math.round(readDefaultedNumber(raw, "riskWinStreakStopLossAfterWins"))),
+    },
+    {
+        key: "riskWinStreakStopLossPercent",
+        guard: "usePercentRisk",
+        disabledValue: 0,
+        resolve: (raw) => Math.max(0, readDefaultedNumber(raw, "riskWinStreakStopLossPercent")),
+    },
+    { key: "htfBiasEmaPeriod", guard: "tradeFilterEnabled" },
+    { key: "executionTrendEmaPeriod", guard: "tradeFilterEnabled" },
+    { key: "confirmLookback", guard: "tradeFilterEnabled" },
+    { key: "trendPersistenceWindow", guard: "tradeFilterEnabled" },
+    { key: "trendPersistenceMinBars", guard: "tradeFilterEnabled" },
+    { key: "trendSlopeLookback", guard: "tradeFilterEnabled" },
+    { key: "trendSlopeMinPercent", guard: "tradeFilterEnabled" },
+    { key: "volumeSmaPeriod", guard: "tradeFilterEnabled" },
+    { key: "volumeMultiplier", guard: "tradeFilterEnabled" },
+    {
+        key: "rsiPeriod",
+        guard: "tradeFilterEnabled",
+        resolve: (raw) => readNumber(raw, "rsiPeriod", readNumber(raw, "confirmRsiPeriod", EFFECTIVE_BACKTEST_DEFAULTS.rsiPeriod)),
+    },
+    {
+        key: "rsiBullish",
+        guard: "tradeFilterEnabled",
+        resolve: (raw) => readNumber(raw, "rsiBullish", readNumber(raw, "confirmRsiBullish", EFFECTIVE_BACKTEST_DEFAULTS.rsiBullish)),
+    },
+    {
+        key: "rsiBearish",
+        guard: "tradeFilterEnabled",
+        resolve: (raw) => readNumber(raw, "rsiBearish", readNumber(raw, "confirmRsiBearish", EFFECTIVE_BACKTEST_DEFAULTS.rsiBearish)),
+    },
+    { key: "flipAfterConsecutiveLosses" },
+    { key: "flipCooldownTrades" },
+    { key: "minTradesBeforeFirstFlip" },
+    { key: "slippageBps" },
+    {
+        key: "maxOpenTrades",
+        resolve: (raw) => Math.max(1, Math.min(2, Math.round(readDefaultedNumber(raw, "maxOpenTrades")))),
+    },
+    { key: "strategyTimeframeMinutes" },
+] as const;
+
+const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
+    { key: "stopLossEnabled", keys: ["stopLossEnabled", "stopLossToggle"], guard: "usePercentRisk", disabledValue: false },
+    { key: "takeProfitEnabled", keys: ["takeProfitEnabled", "takeProfitToggle"], guard: "usePercentRisk", disabledValue: false },
+    { key: "riskMaxHoldEnabled", keys: ["riskMaxHoldEnabled", "riskMaxHoldToggle"], guard: "useRiskMaxHold", disabledValue: false },
+    {
+        key: "riskWinStreakStopLossEnabled",
+        keys: ["riskWinStreakStopLossEnabled", "riskWinStreakStopLossToggle"],
+        guard: "usePercentRisk",
+        disabledValue: false,
+    },
+    { key: "invertSignals", keys: ["invertSignals", "invertSignalsToggle"] },
+    { key: "allowSameBarExit", keys: ["allowSameBarExit", "allowSameBarExitToggle"] },
+    { key: "warmUpEntryEnabled", keys: ["warmUpEntryEnabled", "warmUpEntryToggle"] },
+    { key: "strategyTimeframeEnabled", keys: ["strategyTimeframeEnabled", "strategyTimeframeToggle"] },
+] as const;
+
+function resolveNumericSettingRules(
+    raw: Record<string, unknown>,
+    guards: ResolverGuardState
+): Record<NumericResolverKey, number> {
+    const resolved = {} as Record<NumericResolverKey, number>;
+    for (const rule of NUMERIC_RESOLVER_RULES) {
+        if (rule.guard && !guards[rule.guard]) {
+            resolved[rule.key] = rule.disabledValue ?? (EFFECTIVE_BACKTEST_DEFAULTS[rule.key] as number);
+            continue;
+        }
+        resolved[rule.key] = rule.resolve
+            ? rule.resolve(raw)
+            : readDefaultedNumber(raw, rule.key);
+    }
+    return resolved;
+}
+
+function resolveBooleanSettingRules(
+    raw: Record<string, unknown>,
+    guards: ResolverGuardState
+): Record<BooleanResolverKey, boolean> {
+    const resolved = {} as Record<BooleanResolverKey, boolean>;
+    for (const rule of BOOLEAN_RESOLVER_RULES) {
+        if (rule.guard && !guards[rule.guard]) {
+            resolved[rule.key] = rule.disabledValue ?? (EFFECTIVE_BACKTEST_DEFAULTS[rule.key] as boolean);
+            continue;
+        }
+        const fallback = EFFECTIVE_BACKTEST_DEFAULTS[rule.key] as boolean;
+        const keys = rule.keys ?? [rule.key];
+        resolved[rule.key] = keys.length === 1
+            ? readBoolean(raw, keys[0], fallback)
+            : readBooleanAny(raw, [...keys], fallback);
+    }
+    return resolved;
+}
 
 export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "riskSettingsToggle",
@@ -187,9 +477,14 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "strategyTimeframeToggle",
     "strategyTimeframeMinutes",
     "twoHourCloseParity",
-    ...SNAPSHOT_CONFIGS.flatMap(({ toggleKey, minKey, maxKey }) =>
-        [toggleKey, minKey, maxKey].filter((key): key is string => Boolean(key))
-    ),
+    ...SNAPSHOT_CONFIGS.flatMap((snapshot) => {
+        const keys: string[] = [snapshot.toggleKey];
+        if ("minKey" in snapshot) {
+            keys.push(snapshot.minKey);
+        }
+        keys.push(snapshot.maxKey);
+        return keys;
+    }),
 ]);
 
 const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>([
@@ -220,27 +515,6 @@ const VALID_TAKE_PROFIT_MODES = new Set<NonNullable<BacktestSettings["takeProfit
     "mfe_bootstrap",
 ]);
 
-function toBooleanLike(rawValue: unknown): boolean | null {
-    if (typeof rawValue === "boolean") return rawValue;
-    if (typeof rawValue === "number" && Number.isFinite(rawValue)) return rawValue !== 0;
-    if (typeof rawValue !== "string") return null;
-
-    const normalized = rawValue.trim().toLowerCase();
-    if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") return true;
-    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false;
-    return null;
-}
-
-function toFiniteNumber(rawValue: unknown): number | null {
-    if (typeof rawValue === "number" && Number.isFinite(rawValue)) return rawValue;
-    if (typeof rawValue !== "string") return null;
-
-    const trimmed = rawValue.trim();
-    if (!trimmed) return null;
-    const parsed = Number(trimmed);
-    return Number.isFinite(parsed) ? parsed : null;
-}
-
 function coerceScalar(rawValue: unknown): unknown {
     const asBoolean = toBooleanLike(rawValue);
     if (asBoolean !== null) return asBoolean;
@@ -265,13 +539,11 @@ function coerceDeepValue(rawValue: unknown): unknown {
 }
 
 function readNumber(raw: Record<string, unknown>, key: string, fallback: number): number {
-    const parsed = toFiniteNumber(raw[key]);
-    return parsed !== null ? parsed : fallback;
+    return readNumberValue(raw[key], fallback);
 }
 
 function readBoolean(raw: Record<string, unknown>, key: string, fallback: boolean): boolean {
-    const parsed = toBooleanLike(raw[key]);
-    return parsed !== null ? parsed : fallback;
+    return readBooleanValue(raw[key], fallback);
 }
 
 function readBooleanAny(raw: Record<string, unknown>, keys: string[], fallback: boolean): boolean {
@@ -418,87 +690,23 @@ export function resolveBacktestSettingsFromRaw(
             : EFFECTIVE_BACKTEST_DEFAULTS.marketMode;
     const parityRaw = raw["twoHourCloseParity"];
     const twoHourCloseParity = parityRaw === "even" || parityRaw === "both" ? parityRaw : "odd";
+    const guards: ResolverGuardState = {
+        useAtrRisk,
+        usePercentRisk,
+        useAdvancedRisk,
+        useRiskMaxHold,
+        tradeFilterEnabled,
+    };
+    const numericSettings = resolveNumericSettingRules(raw, guards);
+    const booleanSettings = resolveBooleanSettingRules(raw, guards);
 
     const resolved: BacktestSettings = {
-        atrPeriod: readNumber(raw, "atrPeriod", EFFECTIVE_BACKTEST_DEFAULTS.atrPeriod),
-        stopLossAtr: useAtrRisk ? readNumber(raw, "stopLossAtr", EFFECTIVE_BACKTEST_DEFAULTS.stopLossAtr) : 0,
-        takeProfitAtr: useAtrRisk ? readNumber(raw, "takeProfitAtr", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAtr) : 0,
-        trailingAtr: useAtrRisk ? readNumber(raw, "trailingAtr", EFFECTIVE_BACKTEST_DEFAULTS.trailingAtr) : 0,
-        partialTakeProfitAtR: useAdvancedRisk ? readNumber(raw, "partialTakeProfitAtR", EFFECTIVE_BACKTEST_DEFAULTS.partialTakeProfitAtR) : 0,
-        partialTakeProfitPercent: useAdvancedRisk ? readNumber(raw, "partialTakeProfitPercent", EFFECTIVE_BACKTEST_DEFAULTS.partialTakeProfitPercent) : 0,
-        breakEvenAtR: useAdvancedRisk ? readNumber(raw, "breakEvenAtR", EFFECTIVE_BACKTEST_DEFAULTS.breakEvenAtR) : 0,
-        breakEvenPercent: usePercentRisk ? readNumber(raw, "breakEvenPercent", EFFECTIVE_BACKTEST_DEFAULTS.breakEvenPercent) : 0,
-        timeStopBars: useAdvancedRisk ? readNumber(raw, "timeStopBars", EFFECTIVE_BACKTEST_DEFAULTS.timeStopBars) : 0,
+        ...numericSettings,
         riskMode,
-        stopLossPercent: usePercentRisk ? readNumber(raw, "stopLossPercent", EFFECTIVE_BACKTEST_DEFAULTS.stopLossPercent) : 0,
-        takeProfitPercent: usePercentRisk ? readNumber(raw, "takeProfitPercent", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitPercent) : 0,
         takeProfitMode: usePercentRisk && typeof raw["takeProfitMode"] === "string" && VALID_TAKE_PROFIT_MODES.has(raw["takeProfitMode"] as NonNullable<BacktestSettings["takeProfitMode"]>)
             ? raw["takeProfitMode"] as NonNullable<BacktestSettings["takeProfitMode"]>
             : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMode,
-        takeProfitMfeLookbackTrades: usePercentRisk
-            ? Math.max(5, Math.round(readNumber(raw, "takeProfitMfeLookbackTrades", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeLookbackTrades)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeLookbackTrades,
-        takeProfitMfePercentile: usePercentRisk
-            ? Math.max(1, Math.min(99, readNumber(raw, "takeProfitMfePercentile", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfePercentile)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfePercentile,
-        takeProfitShrinkageStrength: usePercentRisk
-            ? Math.max(1, readNumber(raw, "takeProfitShrinkageStrength", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitShrinkageStrength))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitShrinkageStrength,
-        takeProfitMomentumRsiPeriod: usePercentRisk
-            ? Math.max(2, Math.round(readNumber(raw, "takeProfitMomentumRsiPeriod", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumRsiPeriod)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumRsiPeriod,
-        takeProfitMomentumRsiPauseLevel: usePercentRisk
-            ? Math.max(1, Math.min(99, readNumber(raw, "takeProfitMomentumRsiPauseLevel", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumRsiPauseLevel)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumRsiPauseLevel,
-        takeProfitMomentumDecayPercentPerBar: usePercentRisk
-            ? Math.max(0, readNumber(raw, "takeProfitMomentumDecayPercentPerBar", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumDecayPercentPerBar))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMomentumDecayPercentPerBar,
-        takeProfitVelocityFastBars: usePercentRisk
-            ? Math.max(1, Math.round(readNumber(raw, "takeProfitVelocityFastBars", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityFastBars)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityFastBars,
-        takeProfitVelocitySlowBars: usePercentRisk
-            ? Math.max(1, Math.round(readNumber(raw, "takeProfitVelocitySlowBars", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocitySlowBars)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocitySlowBars,
-        takeProfitVelocityProgressPercent: usePercentRisk
-            ? Math.max(1, Math.min(100, readNumber(raw, "takeProfitVelocityProgressPercent", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityProgressPercent)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityProgressPercent,
-        takeProfitVelocityExpandMultiplier: usePercentRisk
-            ? Math.max(0.1, readNumber(raw, "takeProfitVelocityExpandMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityExpandMultiplier))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityExpandMultiplier,
-        takeProfitVelocityShrinkMultiplier: usePercentRisk
-            ? Math.max(0.1, readNumber(raw, "takeProfitVelocityShrinkMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityShrinkMultiplier))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityShrinkMultiplier,
-        takeProfitAtrScaledMultiplier: usePercentRisk
-            ? Math.max(0.1, readNumber(raw, "takeProfitAtrScaledMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAtrScaledMultiplier))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAtrScaledMultiplier,
-        takeProfitRangeScaledLookback: usePercentRisk
-            ? Math.max(5, Math.round(readNumber(raw, "takeProfitRangeScaledLookback", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitRangeScaledLookback)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitRangeScaledLookback,
-        takeProfitRangeScaledFraction: usePercentRisk
-            ? Math.max(0.01, Math.min(1, readNumber(raw, "takeProfitRangeScaledFraction", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitRangeScaledFraction)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitRangeScaledFraction,
-        takeProfitMedianBarLookback: usePercentRisk
-            ? Math.max(5, Math.round(readNumber(raw, "takeProfitMedianBarLookback", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMedianBarLookback)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMedianBarLookback,
-        takeProfitMedianBarMultiplier: usePercentRisk
-            ? Math.max(0.1, readNumber(raw, "takeProfitMedianBarMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMedianBarMultiplier))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMedianBarMultiplier,
-        takeProfitMfeBootstrapPercentile: usePercentRisk
-            ? Math.max(1, Math.min(99, readNumber(raw, "takeProfitMfeBootstrapPercentile", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeBootstrapPercentile)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeBootstrapPercentile,
-        stopLossEnabled: usePercentRisk ? readBooleanAny(raw, ["stopLossEnabled", "stopLossToggle"], EFFECTIVE_BACKTEST_DEFAULTS.stopLossEnabled) : false,
-        takeProfitEnabled: usePercentRisk ? readBooleanAny(raw, ["takeProfitEnabled", "takeProfitToggle"], EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEnabled) : false,
-        riskMaxHoldBars: useRiskMaxHold ? readNumber(raw, "riskMaxHoldBars", EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars) : 0,
-        riskMaxHoldEnabled: useRiskMaxHold ? readBooleanAny(raw, ["riskMaxHoldEnabled", "riskMaxHoldToggle"], EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldEnabled) : false,
-        riskWinStreakStopLossEnabled: usePercentRisk
-            ? readBooleanAny(raw, ["riskWinStreakStopLossEnabled", "riskWinStreakStopLossToggle"], EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossEnabled)
-            : false,
-        riskWinStreakStopLossAfterWins: usePercentRisk
-            ? Math.max(1, Math.round(readNumber(raw, "riskWinStreakStopLossAfterWins", EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossAfterWins)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossAfterWins,
-        riskWinStreakStopLossPercent: usePercentRisk
-            ? Math.max(0, readNumber(raw, "riskWinStreakStopLossPercent", EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossPercent))
-            : 0,
+        ...booleanSettings,
         marketMode,
         trendEmaPeriod: 0,
         trendEmaSlopeBars: 0,
@@ -510,57 +718,16 @@ export function resolveBacktestSettingsFromRaw(
         tradeFilterMode,
         confirmationStrategies,
         confirmationStrategyParams,
-
-        htfBiasEmaPeriod: tradeFilterEnabled
-            ? readNumber(raw, "htfBiasEmaPeriod", EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod)
-            : EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod,
-        executionTrendEmaPeriod: tradeFilterEnabled
-            ? readNumber(raw, "executionTrendEmaPeriod", EFFECTIVE_BACKTEST_DEFAULTS.executionTrendEmaPeriod)
-            : EFFECTIVE_BACKTEST_DEFAULTS.executionTrendEmaPeriod,
-        confirmLookback: tradeFilterEnabled ? readNumber(raw, "confirmLookback", EFFECTIVE_BACKTEST_DEFAULTS.confirmLookback) : EFFECTIVE_BACKTEST_DEFAULTS.confirmLookback,
-        trendPersistenceWindow: tradeFilterEnabled
-            ? readNumber(raw, "trendPersistenceWindow", EFFECTIVE_BACKTEST_DEFAULTS.trendPersistenceWindow)
-            : EFFECTIVE_BACKTEST_DEFAULTS.trendPersistenceWindow,
-        trendPersistenceMinBars: tradeFilterEnabled
-            ? readNumber(raw, "trendPersistenceMinBars", EFFECTIVE_BACKTEST_DEFAULTS.trendPersistenceMinBars)
-            : EFFECTIVE_BACKTEST_DEFAULTS.trendPersistenceMinBars,
-        trendSlopeLookback: tradeFilterEnabled
-            ? readNumber(raw, "trendSlopeLookback", EFFECTIVE_BACKTEST_DEFAULTS.trendSlopeLookback)
-            : EFFECTIVE_BACKTEST_DEFAULTS.trendSlopeLookback,
-        trendSlopeMinPercent: tradeFilterEnabled
-            ? readNumber(raw, "trendSlopeMinPercent", EFFECTIVE_BACKTEST_DEFAULTS.trendSlopeMinPercent)
-            : EFFECTIVE_BACKTEST_DEFAULTS.trendSlopeMinPercent,
-        volumeSmaPeriod: tradeFilterEnabled ? readNumber(raw, "volumeSmaPeriod", EFFECTIVE_BACKTEST_DEFAULTS.volumeSmaPeriod) : EFFECTIVE_BACKTEST_DEFAULTS.volumeSmaPeriod,
-        volumeMultiplier: tradeFilterEnabled ? readNumber(raw, "volumeMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.volumeMultiplier) : EFFECTIVE_BACKTEST_DEFAULTS.volumeMultiplier,
-        rsiPeriod: tradeFilterEnabled
-            ? readNumber(raw, "rsiPeriod", readNumber(raw, "confirmRsiPeriod", EFFECTIVE_BACKTEST_DEFAULTS.rsiPeriod))
-            : EFFECTIVE_BACKTEST_DEFAULTS.rsiPeriod,
-        rsiBullish: tradeFilterEnabled
-            ? readNumber(raw, "rsiBullish", readNumber(raw, "confirmRsiBullish", EFFECTIVE_BACKTEST_DEFAULTS.rsiBullish))
-            : EFFECTIVE_BACKTEST_DEFAULTS.rsiBullish,
-        rsiBearish: tradeFilterEnabled
-            ? readNumber(raw, "rsiBearish", readNumber(raw, "confirmRsiBearish", EFFECTIVE_BACKTEST_DEFAULTS.rsiBearish))
-            : EFFECTIVE_BACKTEST_DEFAULTS.rsiBearish,
-
         tradeDirection,
-        invertSignals: readBooleanAny(raw, ["invertSignals", "invertSignalsToggle"], EFFECTIVE_BACKTEST_DEFAULTS.invertSignals),
-        flipAfterConsecutiveLosses: readNumber(raw, "flipAfterConsecutiveLosses", EFFECTIVE_BACKTEST_DEFAULTS.flipAfterConsecutiveLosses),
-        flipCooldownTrades: readNumber(raw, "flipCooldownTrades", EFFECTIVE_BACKTEST_DEFAULTS.flipCooldownTrades),
-        minTradesBeforeFirstFlip: readNumber(raw, "minTradesBeforeFirstFlip", EFFECTIVE_BACKTEST_DEFAULTS.minTradesBeforeFirstFlip),
         executionModel,
-        allowSameBarExit: readBooleanAny(raw, ["allowSameBarExit", "allowSameBarExitToggle"], EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit),
-        slippageBps: readNumber(raw, "slippageBps", EFFECTIVE_BACKTEST_DEFAULTS.slippageBps),
-        maxOpenTrades: Math.max(1, Math.min(2, Math.round(readNumber(raw, "maxOpenTrades", EFFECTIVE_BACKTEST_DEFAULTS.maxOpenTrades)))),
-        warmUpEntryEnabled: readBooleanAny(raw, ["warmUpEntryEnabled", "warmUpEntryToggle"], EFFECTIVE_BACKTEST_DEFAULTS.warmUpEntryEnabled),
-        strategyTimeframeEnabled: readBooleanAny(raw, ["strategyTimeframeEnabled", "strategyTimeframeToggle"], EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeEnabled),
-        strategyTimeframeMinutes: readNumber(raw, "strategyTimeframeMinutes", EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeMinutes),
         captureSnapshots: options?.captureSnapshots ?? false,
         twoHourCloseParity,
     };
 
     for (const snapshot of SNAPSHOT_CONFIGS) {
-        if (snapshot.minKey) {
-            (resolved as Record<string, number>)[snapshot.minKey] = resolveSnapshotValue(raw, snapshot.toggleKey, snapshot.minKey);
+        const minKey = "minKey" in snapshot ? snapshot.minKey : undefined;
+        if (minKey) {
+            (resolved as Record<string, number>)[minKey] = resolveSnapshotValue(raw, snapshot.toggleKey, minKey);
         }
         if (snapshot.maxKey) {
             (resolved as Record<string, number>)[snapshot.maxKey] = resolveSnapshotValue(raw, snapshot.toggleKey, snapshot.maxKey);

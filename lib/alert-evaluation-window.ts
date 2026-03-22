@@ -1,4 +1,5 @@
 import { parseIntervalSeconds } from "./interval-utils";
+import { trimToClosedCandles } from "./closed-candle-utils";
 import type { BacktestSettings, OHLCVData } from "./types/strategies";
 
 const DEFAULT_MIN_CLOSED_CANDLES = 200;
@@ -75,6 +76,36 @@ export function buildExecutionAwareCandleWindow(
     };
 
     return [...closedCandles, bridgeCandle];
+}
+
+export interface ExecutionAwareClosedCandleOptions {
+    nowSec?: number;
+    minClosedCandles?: number;
+    fallbackToTrimmedClosed?: boolean;
+}
+
+export function selectExecutionAwareClosedCandles(
+    candles: OHLCVData[],
+    interval: string,
+    settings: BacktestSettings,
+    options?: ExecutionAwareClosedCandleOptions
+): OHLCVData[] | null {
+    const nowSec = options?.nowSec ?? Math.floor(Date.now() / 1000);
+    const minClosedCandles = options?.minClosedCandles ?? DEFAULT_MIN_CLOSED_CANDLES;
+    const closedWindow = selectClosedCandleWindow(candles, interval, nowSec, minClosedCandles);
+    if (closedWindow) {
+        return buildExecutionAwareCandleWindow(
+            closedWindow.candles,
+            closedWindow.nextOpenCandle,
+            settings
+        );
+    }
+    if (options?.fallbackToTrimmedClosed !== true) {
+        return null;
+    }
+
+    const closedCandles = trimToClosedCandles(candles, interval, nowSec);
+    return buildExecutionAwareCandleWindow(closedCandles, null, settings);
 }
 
 export function countClosedCandles(

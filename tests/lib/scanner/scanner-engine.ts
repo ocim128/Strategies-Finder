@@ -11,6 +11,7 @@ import type { BacktestSettings, Signal, StrategyParams } from '../types/strategi
 import { applySignalPolarity, getOpenPositionForScanner } from '../strategies/backtest';
 import { resolveBacktestSettingsFromRaw } from '../backtest-settings-resolver';
 import { trimToClosedCandles } from '../closed-candle-utils';
+import { toFiniteNumber } from '../settings-parse-utils';
 import type {
     ScannerConfig,
     ScanResult,
@@ -37,16 +38,6 @@ interface CachedPairScan {
     lastCandleTime: number;
     /** When this cache entry was created */
     cachedAt: number;
-}
-
-function toFiniteNumber(rawValue: unknown): number | null {
-    if (typeof rawValue === 'number' && Number.isFinite(rawValue)) return rawValue;
-    if (typeof rawValue !== 'string') return null;
-
-    const trimmed = rawValue.trim();
-    if (!trimmed) return null;
-    const parsed = Number(trimmed);
-    return Number.isFinite(parsed) ? parsed : null;
 }
 
 function normalizeStrategyParams(defaultParams: StrategyParams, rawParams: unknown): StrategyParams {

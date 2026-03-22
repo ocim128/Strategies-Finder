@@ -27,7 +27,7 @@ import type { FinderDataset } from "./finder-timeframe-loader";
 import type { EndpointSelectionAdjustment, FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
 import type { CapitalSettings } from "../types/backtest";
 import { trimToClosedCandles } from "../closed-candle-utils";
-import { buildExecutionAwareCandleWindow, selectClosedCandleWindow } from "../alert-evaluation-window";
+import { selectExecutionAwareClosedCandles } from "../alert-evaluation-window";
 import { mergeStrategySignals } from "../signal-merge";
 import { runGeneticOptimization } from "./genetic-optimizer";
 import {
@@ -57,23 +57,16 @@ export function buildFinderEvaluationData(
     interval: string,
     settings: BacktestSettings
 ): OHLCVData[] {
-    const closedWindow = selectClosedCandleWindow(
+    return selectExecutionAwareClosedCandles(
         data,
         interval,
-        Math.floor(Date.now() / 1000),
-        1
-    );
-
-    if (closedWindow) {
-        return buildExecutionAwareCandleWindow(
-            closedWindow.candles,
-            closedWindow.nextOpenCandle,
-            settings
-        );
-    }
-
-    const closed = trimToClosedCandles(data, interval);
-    return buildExecutionAwareCandleWindow(closed, null, settings);
+        settings,
+        {
+            nowSec: Math.floor(Date.now() / 1000),
+            minClosedCandles: 1,
+            fallbackToTrimmedClosed: true,
+        }
+    ) ?? data;
 }
 
 export interface FinderSelectedStrategy {

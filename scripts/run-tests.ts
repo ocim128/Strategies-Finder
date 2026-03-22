@@ -56,6 +56,7 @@ const TEST_FILES = [
     "tests/backtesting-engine.spec.ts",
     "tests/trade-analyzer.spec.ts",
     "tests/alert-entry-evaluator.spec.ts",
+    "tests/alert-evaluation-window.spec.ts",
     "tests/candle-cache.spec.ts",
     "tests/worker-strategy-support.spec.ts",
     "tests/alert-signal-utils.spec.ts",

@@ -25,11 +25,9 @@ import { computeEdgeStatistics } from "./strategies/backtest/edge-statistics";
 import { getIntervalSeconds } from "./dataProviders/utils";
 import { getOptionalElement } from "./dom-utils";
 import { sanitizeBacktestSettingsForRust, requiresTypescriptEngine as requiresTsEngine } from "./rust-settings-sanitizer";
-import { trimToClosedCandles } from "./closed-candle-utils";
 import { sliceOhlcvByBlock } from "./block-selector";
 import {
-    buildExecutionAwareCandleWindow,
-    selectClosedCandleWindow,
+    selectExecutionAwareClosedCandles,
 } from "./alert-evaluation-window";
 import {
     BACKTEST_DOM_SETTING_IDS,
@@ -38,6 +36,7 @@ import {
     resolveBacktestSettingsFromRaw
 } from "./backtest-settings-resolver";
 import { readNumberInputValue } from "./dom-input-readers";
+import { toBooleanLike, toFiniteNumber } from "./settings-parse-utils";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { mergeStrategySignals } from "./signal-merge";
 import { resolveSubscriptionExecutionBacktestSettings } from "./alert-subscription-utils";
@@ -382,7 +381,7 @@ export class BacktestService {
             // --- 4. Merge signals ---
             await this.updateBacktestProgress(runUi, '60%', `Merging signals (${mode.toUpperCase()})...`, 50);
 
-            const mergedSignals = this.mergeSignals(primarySignals, secondarySignals, mode);
+            const mergedSignals = mergeStrategySignals(primarySignals, secondarySignals, mode);
 
             // --- 5. Run backtest using primary config's settings + capital ---
             await this.updateBacktestProgress(runUi, '80%', 'Running backtest on merged signals...', 50);
@@ -432,15 +431,6 @@ export class BacktestService {
         } finally {
             runUi.finish();
         }
-    }
-
-    /** Delegates to the standalone mergeStrategySignals utility. */
-    private mergeSignals(
-        primarySignals: Signal[],
-        secondarySignals: Signal[],
-        mode: 'and' | 'or'
-    ): Signal[] {
-        return mergeStrategySignals(primarySignals, secondarySignals, mode);
     }
 
     private beginBacktestRun(buttonId: string, initialStatus: string, manageAriaBusy = false): BacktestRunHandle {
@@ -513,7 +503,7 @@ export class BacktestService {
                 initialCapital,
                 positionSize,
                 commission,
-                this.buildRustCompatibleSettings(settings),
+                sanitizeBacktestSettingsForRust(settings),
                 { mode: sizingMode, fixedTradeAmount }
             );
             timing.rustRequest = performance.now() - tRust;
@@ -614,7 +604,7 @@ export class BacktestService {
                 initialCapital,
                 positionSize,
                 commission,
-                this.buildRustCompatibleSettings(settings),
+                sanitizeBacktestSettingsForRust(settings),
                 { mode: sizingMode, fixedTradeAmount }
             );
 
@@ -671,35 +661,27 @@ export class BacktestService {
         interval: string,
         settings: BacktestSettings
     ): OHLCVData[] {
-        const closedWindow = selectClosedCandleWindow(
+        const executionAware = selectExecutionAwareClosedCandles(
             ohlcvData,
             interval,
-            Math.floor(Date.now() / 1000),
-            1
+            settings,
+            {
+                nowSec: Math.floor(Date.now() / 1000),
+                minClosedCandles: 1,
+                fallbackToTrimmedClosed: true,
+            }
         );
-
-        if (closedWindow) {
-            const executionAware = buildExecutionAwareCandleWindow(
-                closedWindow.candles,
-                closedWindow.nextOpenCandle,
-                settings
-            );
+        if (executionAware) {
             return sliceOhlcvByBlock(executionAware, state.blockRange);
         }
-
-        const closed = trimToClosedCandles(ohlcvData, interval);
-        const executionAware = buildExecutionAwareCandleWindow(closed, null, settings);
-        return sliceOhlcvByBlock(executionAware, state.blockRange);
+        return sliceOhlcvByBlock(ohlcvData, state.blockRange);
     }
 
-    private buildRustCompatibleSettings(settings: BacktestSettings): BacktestSettings {
-        return sanitizeBacktestSettingsForRust(settings);
-    }
     public getCapitalSettings(): CapitalSettings {
-        const initialCapital = Math.max(0, this.readNumberInput('initialCapital', CAPITAL_DEFAULTS.initialCapital));
-        const positionSize = Math.max(0, this.readNumberInput('positionSize', CAPITAL_DEFAULTS.positionSize));
-        const commission = Math.max(0, this.readNumberInput('commission', CAPITAL_DEFAULTS.commission));
-        const fixedTradeAmount = Math.max(0, this.readNumberInput('fixedTradeAmount', CAPITAL_DEFAULTS.fixedTradeAmount));
+        const initialCapital = Math.max(0, readNumberInputValue('initialCapital', CAPITAL_DEFAULTS.initialCapital));
+        const positionSize = Math.max(0, readNumberInputValue('positionSize', CAPITAL_DEFAULTS.positionSize));
+        const commission = Math.max(0, readNumberInputValue('commission', CAPITAL_DEFAULTS.commission));
+        const fixedTradeAmount = Math.max(0, readNumberInputValue('fixedTradeAmount', CAPITAL_DEFAULTS.fixedTradeAmount));
         const fixedTradeToggle = getOptionalElement<HTMLInputElement>('fixedTradeToggle');
         const tradeSizingMode = getOptionalElement<HTMLSelectElement>('tradeSizingMode');
         const sizingMode: TradeSizingMode = fixedTradeToggle?.checked
@@ -742,30 +724,6 @@ export class BacktestService {
         return undefined;
     }
 
-    private readNumberInput(id: string, fallback: number): number {
-        return readNumberInputValue(id, fallback);
-    }
-
-    private readFiniteNumber(value: unknown): number | null {
-        if (typeof value === 'number' && Number.isFinite(value)) return value;
-        if (typeof value === 'string' && value.trim() !== '') {
-            const parsed = Number(value);
-            return Number.isFinite(parsed) ? parsed : null;
-        }
-        return null;
-    }
-
-    private readBooleanLike(value: unknown): boolean | null {
-        if (typeof value === 'boolean') return value;
-        if (typeof value === 'number' && Number.isFinite(value)) return value !== 0;
-        if (typeof value === 'string') {
-            const normalized = value.trim().toLowerCase();
-            if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') return true;
-            if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') return false;
-        }
-        return null;
-    }
-
     private readSizingMode(value: unknown): TradeSizingMode | null {
         if (value === 'smart_fixed') return 'smart_fixed_velocity_memory';
         if (
@@ -788,23 +746,23 @@ export class BacktestService {
 
         const initialCapital = Math.max(
             0,
-            this.readFiniteNumber(raw.initialCapital) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.initialCapital
+            toFiniteNumber(raw.initialCapital) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.initialCapital
         );
         const positionSize = Math.max(
             0,
-            this.readFiniteNumber(raw.positionSize) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.positionSize
+            toFiniteNumber(raw.positionSize) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.positionSize
         );
         const commission = Math.max(
             0,
-            this.readFiniteNumber(raw.commission) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.commission
+            toFiniteNumber(raw.commission) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.commission
         );
         const fixedTradeAmount = Math.max(
             0,
-            this.readFiniteNumber(raw.fixedTradeAmount) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.fixedTradeAmount
+            toFiniteNumber(raw.fixedTradeAmount) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.fixedTradeAmount
         );
 
         const explicitSizingMode = this.readSizingMode(raw.sizingMode);
-        const fixedTradeToggle = this.readBooleanLike(raw.fixedTradeToggle);
+        const fixedTradeToggle = toBooleanLike(raw.fixedTradeToggle);
         const sizingMode: TradeSizingMode = explicitSizingMode
             ?? (fixedTradeToggle === true ? 'fixed' : SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.sizingMode);
 

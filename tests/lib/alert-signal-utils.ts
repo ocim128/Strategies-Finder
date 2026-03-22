@@ -1,5 +1,6 @@
 import type { BacktestSettings } from "./types/strategies";
 import { applySlippage, entrySideForDirection } from "./strategies/backtest/backtest-utils";
+import { toFiniteNumber } from "./settings-parse-utils";
 
 export const PENDING_ENTRY_SIGNAL_REASON = "pending_entry";
 
@@ -14,15 +15,6 @@ interface AlertSignalPayloadLike {
 interface AlertSignalPriceLike extends AlertSignalPayloadLike {
     direction: "long" | "short";
     signal_price: number;
-}
-
-function toFiniteNumber(value: unknown): number | null {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value.trim()) {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
 }
 
 function toSlippageRate(backtestSettings?: Pick<BacktestSettings, "slippageBps">): number {

@@ -14,6 +14,7 @@ import { runBacktest } from "./strategies/backtest/backtest-engine";
 import { getResampleBucketStart, resampleOHLCV, type ResampleOptions } from "./strategies/resample-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { mergeStrategySignals } from "./signal-merge";
+import { toBooleanLike, toFiniteNumber } from "./settings-parse-utils";
 import { isTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
 
 export interface EntrySignalEvaluationRequest {
@@ -89,26 +90,6 @@ function toTargetPercent(entryPrice: number, targetPrice: number | null | undefi
 
 function toUnixSeconds(value: Time): number | null {
     return parseTimeToUnixSeconds(value);
-}
-
-function toFiniteNumber(value: unknown): number | null {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value.trim()) {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
-}
-
-function toBooleanLike(value: unknown): boolean | null {
-    if (typeof value === "boolean") return value;
-    if (typeof value === "number" && Number.isFinite(value)) return value !== 0;
-    if (typeof value === "string") {
-        const normalized = value.trim().toLowerCase();
-        if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") return true;
-        if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false;
-    }
-    return null;
 }
 
 function toSizingMode(value: unknown): TradeSizingMode | null {

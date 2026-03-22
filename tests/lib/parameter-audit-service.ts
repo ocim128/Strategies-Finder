@@ -1,9 +1,8 @@
 import { strategyRegistry } from "../strategyRegistry";
 import { backtestService } from "./backtest-service";
-import { buildExecutionAwareCandleWindow, selectClosedCandleWindow } from "./alert-evaluation-window";
+import { selectExecutionAwareClosedCandles } from "./alert-evaluation-window";
 import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
 import { sliceOhlcvByBlock } from "./block-selector";
-import { trimToClosedCandles } from "./closed-candle-utils";
 import { dataManager } from "./data-manager";
 import { debugLogger } from "./debug-logger";
 import { createParameterAuditDom, type ParameterAuditDom } from "./feature-dom-contracts";
@@ -505,25 +504,20 @@ class ParameterAuditService {
         interval: string,
         settings: BacktestSettings
     ): OHLCVData[] {
-        const closedWindow = selectClosedCandleWindow(
+        const executionAware = selectExecutionAwareClosedCandles(
             data,
             interval,
-            Math.floor(Date.now() / 1000),
-            1
+            settings,
+            {
+                nowSec: Math.floor(Date.now() / 1000),
+                minClosedCandles: 1,
+                fallbackToTrimmedClosed: true,
+            }
         );
-
-        if (closedWindow) {
-            const executionAware = buildExecutionAwareCandleWindow(
-                closedWindow.candles,
-                closedWindow.nextOpenCandle,
-                settings
-            );
+        if (executionAware) {
             return sliceOhlcvByBlock(executionAware, state.blockRange);
         }
-
-        const closed = trimToClosedCandles(data, interval);
-        const executionAware = buildExecutionAwareCandleWindow(closed, null, settings);
-        return sliceOhlcvByBlock(executionAware, state.blockRange);
+        return sliceOhlcvByBlock(data, state.blockRange);
     }
 
     private getRelevantParamNames(strategy: Strategy, baseParams: StrategyParams): string[] {
