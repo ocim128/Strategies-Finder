@@ -390,6 +390,28 @@ export class DataManager {
         return [];
     }
 
+    private async fetchLimitedNonBinanceNetworkData(
+        provider: Exclude<DataProvider, 'binance'>,
+        symbol: string,
+        interval: string,
+        limit: number,
+        signal?: AbortSignal,
+        resampleOptions?: ResampleOptions
+    ): Promise<OHLCVData[]> {
+        const data = provider === 'bybit-tradfi'
+            ? await fetchBybitTradFiDataWithLimit(symbol, interval, limit, {
+                signal,
+                ...(resampleOptions ?? {}),
+            })
+            : await fetchPolymarketDataWithLimit(symbol, interval, limit, { signal });
+
+        if (data.length > 0) {
+            void this.persistNonBinanceData(symbol, interval, provider, data, 'network');
+        }
+
+        return data;
+    }
+
     public async fetchDataForScan(
         symbol: string,
         interval: string,
@@ -443,23 +465,15 @@ export class DataManager {
         }
         
         // Non-Binance providers always hit network
-        if (provider === 'bybit-tradfi') {
-            const data = await fetchBybitTradFiDataWithLimit(symbol, interval, maxBars, {
+        if (provider === 'bybit-tradfi' || provider === 'polymarket') {
+            const data = await this.fetchLimitedNonBinanceNetworkData(
+                provider,
+                symbol,
+                interval,
+                maxBars,
                 signal,
-                ...(resampleOptions ?? {}),
-            });
-            if (data.length > 0) {
-                void this.persistNonBinanceData(symbol, interval, provider, data, 'network');
-            }
-            return { data, source: 'network' };
-        }
-        if (provider === 'polymarket') {
-            const data = await fetchPolymarketDataWithLimit(symbol, interval, maxBars, {
-                signal,
-            });
-            if (data.length > 0) {
-                void this.persistNonBinanceData(symbol, interval, provider, data, 'network');
-            }
+                resampleOptions
+            );
             return { data, source: 'network' };
         }
         
@@ -491,27 +505,19 @@ export class DataManager {
             });
         }
 
-        if (provider === 'bybit-tradfi') {
+        if (provider === 'bybit-tradfi' || provider === 'polymarket') {
             if (localNonBinance && localNonBinance.candles.length >= limit) {
                 return this.takeLastCandles(localNonBinance.candles, limit);
             }
-            const data = await fetchBybitTradFiDataWithLimit(symbol, interval, limit, {
-                ...options,
-                ...(resampleOptions ?? {}),
-            });
+            const data = await this.fetchLimitedNonBinanceNetworkData(
+                provider,
+                symbol,
+                interval,
+                limit,
+                options?.signal,
+                resampleOptions
+            );
             if (data.length > 0) {
-                void this.persistNonBinanceData(symbol, interval, provider, data, 'network');
-                return data;
-            }
-            return localNonBinance ? this.takeLastCandles(localNonBinance.candles, limit) : [];
-        }
-        if (provider === 'polymarket') {
-            if (localNonBinance && localNonBinance.candles.length >= limit) {
-                return this.takeLastCandles(localNonBinance.candles, limit);
-            }
-            const data = await fetchPolymarketDataWithLimit(symbol, interval, limit, options);
-            if (data.length > 0) {
-                void this.persistNonBinanceData(symbol, interval, provider, data, 'network');
                 return data;
             }
             return localNonBinance ? this.takeLastCandles(localNonBinance.candles, limit) : [];
@@ -760,14 +766,54 @@ export class DataManager {
         if (candles.length === 0) return;
         const storageInterval = this.getStorageInterval(interval);
         const normalized = this.normalizeExternalCandles(candles);
-        await saveCachedCandles(symbol, storageInterval, normalized, source);
-        await storeSqliteCandles(
+        await this.persistLocalCandles({
             symbol,
             storageInterval,
-            normalized,
-            this.getProviderStorageLabel(provider),
-            source
-        );
+            cacheCandles: normalized,
+            sqliteCandles: normalized,
+            providerLabel: this.getProviderStorageLabel(provider),
+            sourceTrait: source,
+        });
+    }
+
+    private async persistLocalCandles(args: {
+        symbol: string;
+        storageInterval: string;
+        cacheCandles?: OHLCVData[];
+        sqliteCandles?: OHLCVData[];
+        providerLabel: string;
+        sourceTrait: string;
+        cacheKey?: string;
+        updateSyncTime?: boolean;
+    }): Promise<void> {
+        const {
+            symbol,
+            storageInterval,
+            cacheCandles,
+            sqliteCandles,
+            providerLabel,
+            sourceTrait,
+            cacheKey,
+            updateSyncTime = false,
+        } = args;
+
+        if (cacheCandles && cacheCandles.length > 0) {
+            await saveCachedCandles(symbol, storageInterval, cacheCandles, sourceTrait);
+        }
+
+        if (sqliteCandles && sqliteCandles.length > 0) {
+            await storeSqliteCandles(
+                symbol,
+                storageInterval,
+                sqliteCandles,
+                providerLabel,
+                sourceTrait
+            );
+        }
+
+        if (updateSyncTime && cacheKey) {
+            this.cacheSyncAtByKey.set(cacheKey, Date.now());
+        }
     }
 
     private getTwoHourCloseParity(): TwoHourCloseParity {
@@ -1091,8 +1137,14 @@ export class DataManager {
                     updatedAt: Date.now(),
                     source: 'seed-file',
                 };
-                await saveCachedCandles(symbol, storageInterval, sanitizedSeedCandles, 'seed-file');
-                await storeSqliteCandles(symbol, storageInterval, sanitizedSeedCandles, 'Binance', 'seed-file');
+                await this.persistLocalCandles({
+                    symbol,
+                    storageInterval,
+                    cacheCandles: sanitizedSeedCandles,
+                    sqliteCandles: sanitizedSeedCandles,
+                    providerLabel: 'Binance',
+                    sourceTrait: 'seed-file',
+                });
                 debugLogger.event('data.cache.seed_loaded', {
                     symbol,
                     interval,
@@ -1108,8 +1160,14 @@ export class DataManager {
         // Return cache immediately when recently synced.
         if (hasCachedData && recentlySynced) {
             if (cachedSanitized) {
-                await saveCachedCandles(symbol, storageInterval, cached!.candles, 'sanitized');
-                await storeSqliteCandles(symbol, storageInterval, cached!.candles, 'Binance', 'sanitized');
+                await this.persistLocalCandles({
+                    symbol,
+                    storageInterval,
+                    cacheCandles: cached!.candles,
+                    sqliteCandles: cached!.candles,
+                    providerLabel: 'Binance',
+                    sourceTrait: 'sanitized',
+                });
             }
             return {
                 data: this.takeLastCandles(cached!.candles, effectiveMaxBars),
@@ -1157,9 +1215,16 @@ export class DataManager {
         if (!hasCachedData) {
             const fresh = this.takeLastCandles(remoteData, effectiveMaxBars);
             if (fresh.length > 0) {
-                await saveCachedCandles(symbol, storageInterval, fresh, 'binance-full');
-                await storeSqliteCandles(symbol, storageInterval, fresh, 'Binance', 'binance-full');
-                this.cacheSyncAtByKey.set(cacheKey, Date.now());
+                await this.persistLocalCandles({
+                    symbol,
+                    storageInterval,
+                    cacheCandles: fresh,
+                    sqliteCandles: fresh,
+                    providerLabel: 'Binance',
+                    sourceTrait: 'binance-full',
+                    cacheKey,
+                    updateSyncTime: true,
+                });
             }
             return { data: fresh, source: 'network', cached, hasSqliteBase, cacheKey, storageInterval, effectiveMaxBars };
         }
@@ -1186,13 +1251,16 @@ export class DataManager {
             'merged'
         );
         if (merged.length > 0) {
-            await saveCachedCandles(symbol, storageInterval, merged, 'binance-gap');
-            if (hasSqliteBase) {
-                await storeSqliteCandles(symbol, storageInterval, remoteData, 'Binance', 'binance-gap');
-            } else {
-                await storeSqliteCandles(symbol, storageInterval, merged, 'Binance', 'binance-gap');
-            }
-            this.cacheSyncAtByKey.set(cacheKey, Date.now());
+            await this.persistLocalCandles({
+                symbol,
+                storageInterval,
+                cacheCandles: merged,
+                sqliteCandles: hasSqliteBase ? remoteData : merged,
+                providerLabel: 'Binance',
+                sourceTrait: 'binance-gap',
+                cacheKey,
+                updateSyncTime: true,
+            });
         }
         return {
             data: merged.length > 0 ? merged : this.takeLastCandles(cached!.candles, effectiveMaxBars),
@@ -1243,10 +1311,15 @@ export class DataManager {
                 );
                 const lastSync = this.cacheSyncAtByKey.get(cacheKey) ?? 0;
                 const shouldPersistSnapshot = !sqliteResult || (Date.now() - lastSync >= DATA_CACHE_SYNC_MIN_MS);
-                if (shouldPersistSnapshot) {
-                    await saveCachedCandles(pending.symbol, pending.storageInterval, snapshot, 'stream');
-                }
-                this.cacheSyncAtByKey.set(cacheKey, Date.now());
+                await this.persistLocalCandles({
+                    symbol: pending.symbol,
+                    storageInterval: pending.storageInterval,
+                    cacheCandles: shouldPersistSnapshot ? snapshot : undefined,
+                    providerLabel: provider ? this.getProviderStorageLabel(provider) : 'Binance',
+                    sourceTrait: 'stream',
+                    cacheKey,
+                    updateSyncTime: true,
+                });
             })();
         }, this.STREAM_PERSIST_DELAY_MS);
         this.cachePersistTimers.set(cacheKey, timer);

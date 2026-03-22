@@ -3,6 +3,7 @@ import { debugLogger } from "../debug-logger";
 import { FinderResultRanker } from "./finder-result-ranker";
 import { runGeneticOptimization } from "./genetic-optimizer";
 import {
+    buildFinderResult,
     buildSelection,
     deriveStrategySeed,
     normalizeResultSharpe,
@@ -98,7 +99,7 @@ export async function runGeneticFinder(params: GeneticFinderRunParams): Promise<
 
         const normalizedResult = normalizeResultSharpe(optimization.bestGenome.result, initialCapital);
         const adjustment = buildSelection(normalizedResult, lastDataTime, initialCapital);
-        const candidate: FinderResult = {
+        const candidate: FinderResult = buildFinderResult({
             key: selection.key,
             name: selection.name,
             params: optimization.bestGenome.params,
@@ -109,7 +110,7 @@ export async function runGeneticFinder(params: GeneticFinderRunParams): Promise<
                 : undefined,
             endpointAdjusted: adjustment.adjusted,
             endpointRemovedTrades: adjustment.removedTrades,
-        };
+        });
 
         if (input.options.tradeFilterEnabled) {
             if (candidate.result.totalTrades < input.options.minTrades || candidate.result.totalTrades > input.options.maxTrades) {

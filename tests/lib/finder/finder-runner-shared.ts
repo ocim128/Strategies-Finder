@@ -22,7 +22,7 @@ import {
     type FinderPreparedDataCache,
 } from "./finder-runner-core";
 import type { CapitalSettings } from "../types/backtest";
-import type { EndpointSelectionAdjustment, FinderOptions } from "../types/finder";
+import type { EndpointSelectionAdjustment, FinderOptions, FinderResult } from "../types/finder";
 import type { FinderRunInput } from "./finder-runner";
 
 export function buildFinderEvaluationData(
@@ -104,6 +104,87 @@ export function applyComboMerge(
     return mergeStrategySignals(input.comboPrimarySignals, signals, "and") as Signal[];
 }
 
+export function runStrategyBacktest(args: {
+    strategy: Strategy;
+    data: OHLCVData[];
+    signals: Signal[];
+    params: StrategyParams;
+    capitalSettings: CapitalSettings;
+    backtestSettings: BacktestSettings;
+    backtestFn: typeof runBacktest;
+    precomputed?: ReturnType<typeof precomputeIndicators>;
+}): BacktestResult {
+    const {
+        strategy,
+        data,
+        signals,
+        params,
+        capitalSettings,
+        backtestSettings,
+        backtestFn,
+        precomputed,
+    } = args;
+    const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = capitalSettings;
+    const evaluation = strategy.evaluate?.(data, params, signals);
+    const entryStats = evaluation?.entryStats;
+    return strategy.metadata?.role === "entry" && entryStats
+        ? buildEntryBacktestResult(entryStats)
+        : backtestFn(
+            data,
+            signals,
+            initialCapital,
+            positionSize,
+            commission,
+            backtestSettings,
+            { mode: sizingMode, fixedTradeAmount },
+            precomputed
+        );
+}
+
+export function buildFinderResult(args: {
+    key: string;
+    name: string;
+    params: StrategyParams;
+    result: BacktestResult;
+    comboMode?: boolean;
+    comboPrimaryConfigName?: string;
+    timeframes?: string[];
+    selectionResult?: BacktestResult;
+    compositeEdgeRatio?: number;
+    endpointAdjusted?: boolean;
+    endpointRemovedTrades?: number;
+    robustMetrics?: FinderResult["robustMetrics"];
+}): FinderResult {
+    const {
+        key,
+        name,
+        params,
+        result,
+        comboMode,
+        comboPrimaryConfigName,
+        timeframes,
+        selectionResult,
+        compositeEdgeRatio,
+        endpointAdjusted,
+        endpointRemovedTrades,
+        robustMetrics,
+    } = args;
+    return {
+        key,
+        name,
+        comboMode,
+        comboPrimaryConfigName,
+        timeframes,
+        params,
+        result,
+        selectionResult: selectionResult ?? result,
+        compositeEdgeRatio,
+        endpointAdjusted: endpointAdjusted ?? false,
+        endpointRemovedTrades: endpointRemovedTrades ?? 0,
+        robustMetrics,
+    };
+}
+
 export function runBacktestAndInsert(
     data: OHLCVData[],
     signals: Signal[],
@@ -116,21 +197,16 @@ export function runBacktestAndInsert(
     onInsertTiming?: (durationMs: number) => void
 ): void {
     try {
-        const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = capitalSettings;
-        const evaluation = job.strategy.evaluate?.(data, job.params, signals);
-        const entryStats = evaluation?.entryStats;
-        const result = job.strategy.metadata?.role === "entry" && entryStats
-            ? buildEntryBacktestResult(entryStats)
-            : backtestFn(
-                data,
-                signals,
-                initialCapital,
-                positionSize,
-                commission,
-                backtestSettings,
-                { mode: sizingMode, fixedTradeAmount },
-                precomputed
-            );
+        const result = runStrategyBacktest({
+            strategy: job.strategy,
+            data,
+            signals,
+            params: job.params,
+            capitalSettings,
+            backtestSettings,
+            backtestFn,
+            precomputed,
+        });
         const insertStartedAt = performance.now();
         insertResult({
             key: job.key,

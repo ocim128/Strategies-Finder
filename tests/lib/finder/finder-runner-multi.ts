@@ -2,11 +2,10 @@ import {
     BacktestResult,
     OHLCVData,
     Signal,
-    buildEntryBacktestResult,
+    applySignalPolarity,
     precomputeIndicators,
     runBacktest,
     runBacktestCompact,
-    applySignalPolarity,
 } from "../strategies/index";
 import { mergeStrategySignals } from "../signal-merge";
 import { buildSelectionResult } from "./endpoint";
@@ -18,9 +17,11 @@ import {
     type FinderPreparedDataCache,
 } from "./finder-runner-core";
 import {
+    buildFinderResult,
     buildFinderEvaluationData,
     generateSignalsForJob,
     resolveEffectiveCapitalSettings,
+    runStrategyBacktest,
     type FinderDatasetFlags,
     type ParamJob,
 } from "./finder-runner-shared";
@@ -52,10 +53,6 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
     const effectiveCapitalSettings = resolveEffectiveCapitalSettings(input);
     const {
         initialCapital: effectiveInitialCapital,
-        positionSize: effectivePositionSize,
-        commission: effectiveCommission,
-        sizingMode: effectiveSizingMode,
-        fixedTradeAmount: effectiveFixedTradeAmount,
     } = effectiveCapitalSettings;
     const effectiveBacktestSettings = input.comboPrimarySettings ?? input.settings;
 
@@ -134,22 +131,18 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
                     if (tfPrimarySignals) {
                         signals = mergeStrategySignals(tfPrimarySignals, signals, "and") as Signal[];
                     }
-                    const evaluation = job.strategy.evaluate?.(dataset.data, job.params, signals);
-                    const entryStats = evaluation?.entryStats;
                     const datasetUseCompact = !requiresCompositeEdgeRatioSort && dataset.data.length >= flags.compactBacktestThreshold;
                     const timeframeBacktestFn = datasetUseCompact ? runBacktestCompact : runBacktest;
-                    const result = job.strategy.metadata?.role === "entry" && entryStats
-                        ? buildEntryBacktestResult(entryStats)
-                        : timeframeBacktestFn(
-                            dataset.data,
-                            signals,
-                            effectiveInitialCapital,
-                            effectivePositionSize,
-                            effectiveCommission,
-                            job.backtestSettings,
-                            { mode: effectiveSizingMode, fixedTradeAmount: effectiveFixedTradeAmount },
-                            precomputedByInterval.get(dataset.interval)
-                        );
+                    const result = runStrategyBacktest({
+                        strategy: job.strategy,
+                        data: dataset.data,
+                        signals,
+                        params: job.params,
+                        capitalSettings: effectiveCapitalSettings,
+                        backtestSettings: job.backtestSettings,
+                        backtestFn: timeframeBacktestFn,
+                        precomputed: precomputedByInterval.get(dataset.interval),
+                    });
 
                     timeframeResults.push({ result, data: dataset.data });
                     signals.length = 0;
@@ -173,7 +166,7 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
                     ? activeDatasets[0].data[activeDatasets[0].data.length - 1]?.time ?? null
                     : null;
                 const adjustment = buildSelectionResult(aggregatedResult, lastDataTime, effectiveInitialCapital);
-                const enriched: FinderResult = {
+                const enriched: FinderResult = buildFinderResult({
                     key: job.key,
                     name: job.name,
                     comboMode: Boolean(input.comboPrimarySignals),
@@ -187,7 +180,7 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
                         : undefined,
                     endpointAdjusted: adjustment.adjusted,
                     endpointRemovedTrades: adjustment.removedTrades,
-                };
+                });
 
                 if (!input.options.tradeFilterEnabled ||
                     (enriched.result.totalTrades >= input.options.minTrades &&

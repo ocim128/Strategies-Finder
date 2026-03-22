@@ -44,6 +44,25 @@ const byExpectancyThenSamples = (
     right: { expectancy: number; samples: number }
 ): number => (right.expectancy - left.expectancy) || (right.samples - left.samples);
 
+const compareFamilyDeltaRows = <T extends { familyLabel: string }>(
+    left: T,
+    right: T,
+    primaryMetric: (row: T) => number,
+    secondaryMetric: (row: T) => number
+): number => {
+    const primaryDelta = primaryMetric(right) - primaryMetric(left);
+    if (primaryDelta !== 0) {
+        return primaryDelta;
+    }
+
+    const secondaryDelta = secondaryMetric(right) - secondaryMetric(left);
+    if (secondaryDelta !== 0) {
+        return secondaryDelta;
+    }
+
+    return left.familyLabel.localeCompare(right.familyLabel);
+};
+
 export interface StrategyEnsembleRulesRuntime {
     runFilteredBacktest(
         targetArtifact: ConfigRunArtifact,
@@ -993,6 +1012,23 @@ export function groupArtifactsByFamily<T extends ConfigSignalArtifact>(artifacts
     return grouped;
 }
 
+function buildFamilySweepPrimaryRow(
+    targetArtifact: ConfigRunArtifact,
+    contextArtifacts: ConfigSignalArtifact[],
+    ruleLabel: string,
+    source: ScenarioPrimaryRow["source"],
+    activeRule: EnsembleRuleSpec | null
+): ScenarioPrimaryRow {
+    const tradeSamples = buildTradeSamples(targetArtifact, contextArtifacts);
+    const contextFamilyCount = countDistinctFamilies(contextArtifacts);
+    const filteredSamples = filterTradeSamplesByRule(tradeSamples, contextFamilyCount, activeRule);
+    return {
+        row: buildProxyResultRowFromTradeSamples(ruleLabel, filteredSamples, null),
+        source,
+        rule: activeRule,
+    };
+}
+
 export async function buildContributionRows(
     targetArtifact: ConfigRunArtifact,
     contextArtifacts: ConfigRunArtifact[],
@@ -1016,14 +1052,13 @@ export async function buildContributionRows(
             `Scoring leave-one-out family ${index + 1}/${entries.length}: ${familyArtifacts[0]?.familyLabel ?? familyKey}...`
         );
         const reducedArtifacts = contextArtifacts.filter((artifact) => artifact.familyKey !== familyKey);
-        const reducedTradeSamples = buildTradeSamples(targetArtifact, reducedArtifacts);
-        const reducedContextFamilyCount = countDistinctFamilies(reducedArtifacts);
-        const filteredSamples = filterTradeSamplesByRule(reducedTradeSamples, reducedContextFamilyCount, activeRule);
-        const primaryRow: ScenarioPrimaryRow = {
-            row: buildProxyResultRowFromTradeSamples(basePrimaryRow.row.rule, filteredSamples, null),
-            source: basePrimaryRow.source,
-            rule: activeRule,
-        };
+        const primaryRow = buildFamilySweepPrimaryRow(
+            targetArtifact,
+            reducedArtifacts,
+            basePrimaryRow.row.rule,
+            basePrimaryRow.source,
+            activeRule
+        );
 
         rows.push({
             familyKey,
@@ -1042,15 +1077,9 @@ export async function buildContributionRows(
         await runtime.yieldToUi();
     }
 
-    return rows.sort((left, right) => {
-        if (left.deltaExpectancy !== right.deltaExpectancy) {
-            return right.deltaExpectancy - left.deltaExpectancy;
-        }
-        if (left.deltaWinRate !== right.deltaWinRate) {
-            return right.deltaWinRate - left.deltaWinRate;
-        }
-        return left.familyLabel.localeCompare(right.familyLabel);
-    });
+    return rows.sort((left, right) =>
+        compareFamilyDeltaRows(left, right, (row) => row.deltaExpectancy, (row) => row.deltaWinRate)
+    );
 }
 
 export async function buildReplacementRows(
@@ -1072,24 +1101,13 @@ export async function buildReplacementRows(
     const replacementBaseArtifacts = worstContributor
         ? contextArtifacts.filter((artifact) => artifact.familyKey !== worstContributor.familyKey)
         : contextArtifacts;
-    const replacementBaseTradeSamples = worstContributor
-        ? buildTradeSamples(targetArtifact, replacementBaseArtifacts)
-        : baseScenario.tradeSamples;
-    const replacementBaseContextFamilyCount = countDistinctFamilies(replacementBaseArtifacts);
-    const replacementBaseFilteredSamples = filterTradeSamplesByRule(
-        replacementBaseTradeSamples,
-        replacementBaseContextFamilyCount,
+    const replacementBasePrimaryRow = buildFamilySweepPrimaryRow(
+        targetArtifact,
+        replacementBaseArtifacts,
+        basePrimaryRow.row.rule,
+        basePrimaryRow.source,
         activeRule
     );
-    const replacementBasePrimaryRow: ScenarioPrimaryRow = {
-        row: buildProxyResultRowFromTradeSamples(
-            basePrimaryRow.row.rule,
-            replacementBaseFilteredSamples,
-            null
-        ),
-        source: basePrimaryRow.source,
-        rule: activeRule,
-    };
 
     const replacementBaseFamilyKeys = new Set(contextArtifacts.map((artifact) => artifact.familyKey));
     const groupedCandidates = groupArtifactsByFamily(
@@ -1104,25 +1122,14 @@ export async function buildReplacementRows(
         runtime.updateStatus?.(`Ranking replacement family ${index + 1}/${entries.length}: ${familyLabel}...`);
 
         for (const candidateArtifact of artifactsInFamily) {
-            const candidateTradeSamples = buildTradeSamples(
+            const candidateContextArtifacts = [...replacementBaseArtifacts, candidateArtifact];
+            const primaryRow = buildFamilySweepPrimaryRow(
                 targetArtifact,
-                [...replacementBaseArtifacts, candidateArtifact]
-            );
-            const candidateContextFamilyCount = countDistinctFamilies([...replacementBaseArtifacts, candidateArtifact]);
-            const candidateFilteredSamples = filterTradeSamplesByRule(
-                candidateTradeSamples,
-                candidateContextFamilyCount,
+                candidateContextArtifacts,
+                basePrimaryRow.row.rule,
+                basePrimaryRow.source,
                 activeRule
             );
-            const primaryRow: ScenarioPrimaryRow = {
-                row: buildProxyResultRowFromTradeSamples(
-                    basePrimaryRow.row.rule,
-                    candidateFilteredSamples,
-                    null
-                ),
-                source: basePrimaryRow.source,
-                rule: activeRule,
-            };
 
             const row: EnsembleReplacementRow = {
                 familyKey,
@@ -1160,15 +1167,9 @@ export async function buildReplacementRows(
     }
 
     return Array.from(familyBestRows.values())
-        .sort((left, right) => {
-            if (left.deltaExpectancyVsRemoved !== right.deltaExpectancyVsRemoved) {
-                return right.deltaExpectancyVsRemoved - left.deltaExpectancyVsRemoved;
-            }
-            if (left.deltaWinRateVsCurrent !== right.deltaWinRateVsCurrent) {
-                return right.deltaWinRateVsCurrent - left.deltaWinRateVsCurrent;
-            }
-            return left.familyLabel.localeCompare(right.familyLabel);
-        })
+        .sort((left, right) =>
+            compareFamilyDeltaRows(left, right, (row) => row.deltaExpectancyVsRemoved, (row) => row.deltaWinRateVsCurrent)
+        )
         .slice(0, runtime.maxReplacementRows ?? DEFAULT_MAX_REPLACEMENT_ROWS);
 }
 
