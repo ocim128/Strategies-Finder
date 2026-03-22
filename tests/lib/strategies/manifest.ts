@@ -1,6 +1,8 @@
 import type { Strategy } from "../types/strategies";
 
 
+import { keltner_channel_streak_squeeze } from "./lib/keltner_channel_streak_squeeze";
+import { fractal_wick_barrier_engulfing } from "./lib/fractal_wick_barrier_engulfing";
 import { median_deviation_streak } from "./lib/median_deviation_streak";
 import { median_deviation_streak_v7 } from "./lib/median_deviation_streak_v7";
 import { entropy_ratio_regime_alignment } from "./lib/entropy_ratio_regime_alignment";
@@ -52,6 +54,7 @@ import { macd_histogram_volatility_squeeze } from "./lib/macd_histogram_volatili
 import { volume_profile_poc_median_shift } from "./lib/volume_profile_poc_median_shift";
 import { value_area_median_shift } from "./lib/value_area_median_shift";
 
+
 export interface StrategyManifestEntry {
 
 
@@ -62,6 +65,8 @@ export interface StrategyManifestEntry {
 
 export const strategyManifest: readonly StrategyManifestEntry[] = [
 
+    { key: "keltner_channel_streak_squeeze", strategy: keltner_channel_streak_squeeze },
+    { key: "fractal_wick_barrier_engulfing", strategy: fractal_wick_barrier_engulfing },
     { key: "median_deviation_streak", strategy: median_deviation_streak },
     { key: "median_deviation_streak_v7", strategy: median_deviation_streak_v7 },
     { key: "skew_entropy_polarization_entry", strategy: skew_entropy_polarization_entry },
