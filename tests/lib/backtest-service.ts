@@ -41,7 +41,7 @@ import { readNumberInputValue } from "./dom-input-readers";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { mergeStrategySignals } from "./signal-merge";
 import { resolveSubscriptionExecutionBacktestSettings } from "./alert-subscription-utils";
-import { isSmartTradeSizingMode, isTradeSizingMode, type TradeSizingMode } from "./types/backtest";
+import { isSmartTradeSizingMode, isTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
 import { createDomBacktestRunHandle, type BacktestRunHandle } from "./backtest-run-presenter";
 import { commitBacktestResult, commitParityBacktestResults } from "./state-actions";
 
@@ -55,14 +55,6 @@ const SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS = Object.freeze({
     sizingMode: 'percent' as const,
     fixedTradeAmount: 0,
 });
-
-type BacktestCapitalSettings = {
-    initialCapital: number;
-    positionSize: number;
-    commission: number;
-    sizingMode: TradeSizingMode;
-    fixedTradeAmount: number;
-};
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
@@ -205,7 +197,7 @@ export class BacktestService {
         strategy: Strategy,
         params: StrategyParams,
         settings: BacktestSettings,
-        capitalSettings: BacktestCapitalSettings,
+        capitalSettings: CapitalSettings,
         requiresTsEngine: boolean,
         parityMode: 'odd' | 'even' | 'both'
     ): Promise<CurrentBacktestExecution> {
@@ -231,11 +223,7 @@ export class BacktestService {
             strategy,
             params,
             settings,
-            capitalSettings.initialCapital,
-            capitalSettings.positionSize,
-            capitalSettings.commission,
-            capitalSettings.sizingMode,
-            capitalSettings.fixedTradeAmount,
+            capitalSettings,
             requiresTsEngine
         ));
 
@@ -252,7 +240,7 @@ export class BacktestService {
         strategy: Strategy,
         params: StrategyParams,
         settings: BacktestSettings,
-        capitalSettings: BacktestCapitalSettings,
+        capitalSettings: CapitalSettings,
         requiresTsEngine: boolean
     ): Promise<CurrentBacktestExecution> {
         const baselineParity = this.inferBaselineParity(baseData);
@@ -267,11 +255,7 @@ export class BacktestService {
             strategy,
             params,
             settings,
-            capitalSettings.initialCapital,
-            capitalSettings.positionSize,
-            capitalSettings.commission,
-            capitalSettings.sizingMode,
-            capitalSettings.fixedTradeAmount,
+            capitalSettings,
             requiresTsEngine
         ));
         const evenRun = await this.withTemporaryTwoHourParity('even', async () => this.runBacktestForData(
@@ -280,11 +264,7 @@ export class BacktestService {
             strategy,
             params,
             settings,
-            capitalSettings.initialCapital,
-            capitalSettings.positionSize,
-            capitalSettings.commission,
-            capitalSettings.sizingMode,
-            capitalSettings.fixedTradeAmount,
+            capitalSettings,
             requiresTsEngine
         ));
 
@@ -407,19 +387,14 @@ export class BacktestService {
             // --- 5. Run backtest using primary config's settings + capital ---
             await this.updateBacktestProgress(runUi, '80%', 'Running backtest on merged signals...', 50);
 
-            const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } =
-                settingsManager.resolveCapitalFromConfig(primaryConfig);
+            const capitalSettings = settingsManager.resolveCapitalFromConfig(primaryConfig);
             const requiresTsEngine =
-                this.requiresTypescriptEngine(primarySettings) || this.requiresTypescriptSizingMode(sizingMode);
+                this.requiresTypescriptEngine(primarySettings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
             const { result, filteredSignalsCount } = await this.runBacktestForPreparedData(
                 backtestData,
                 mergedSignals,
                 primarySettings,
-                initialCapital,
-                positionSize,
-                commission,
-                sizingMode,
-                fixedTradeAmount,
+                capitalSettings,
                 requiresTsEngine
             );
 
@@ -491,13 +466,10 @@ export class BacktestService {
         strategy: Strategy,
         params: StrategyParams,
         settings: BacktestSettings,
-        initialCapital: number,
-        positionSize: number,
-        commission: number,
-        sizingMode: TradeSizingMode,
-        fixedTradeAmount: number,
+        capitalSettings: CapitalSettings,
         requiresTsEngine: boolean
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
+        const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = capitalSettings;
         // Stage-level timing instrumentation
         const timing = {
             selectClosedCandleData: 0,
@@ -608,11 +580,7 @@ export class BacktestService {
         interval: string,
         signals: Signal[],
         settings: BacktestSettings,
-        initialCapital: number,
-        positionSize: number,
-        commission: number,
-        sizingMode: TradeSizingMode,
-        fixedTradeAmount: number,
+        capitalSettings: CapitalSettings,
         requiresTsEngine: boolean
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
         const backtestData = this.selectClosedCandleData(ohlcvData, interval, settings);
@@ -620,11 +588,7 @@ export class BacktestService {
             backtestData,
             signals,
             settings,
-            initialCapital,
-            positionSize,
-            commission,
-            sizingMode,
-            fixedTradeAmount,
+            capitalSettings,
             requiresTsEngine
         );
         return { result, engineUsed };
@@ -634,13 +598,10 @@ export class BacktestService {
         backtestData: OHLCVData[],
         signals: Signal[],
         settings: BacktestSettings,
-        initialCapital: number,
-        positionSize: number,
-        commission: number,
-        sizingMode: TradeSizingMode,
-        fixedTradeAmount: number,
+        capitalSettings: CapitalSettings,
         requiresTsEngine: boolean
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript'; filteredSignalsCount: number }> {
+        const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = capitalSettings;
         const blockFilteredSignals = this.filterSignalsByBlockRange(signals);
 
         let result: BacktestResult | undefined;
@@ -734,7 +695,7 @@ export class BacktestService {
     private buildRustCompatibleSettings(settings: BacktestSettings): BacktestSettings {
         return sanitizeBacktestSettingsForRust(settings);
     }
-    public getCapitalSettings(): BacktestCapitalSettings {
+    public getCapitalSettings(): CapitalSettings {
         const initialCapital = Math.max(0, this.readNumberInput('initialCapital', CAPITAL_DEFAULTS.initialCapital));
         const positionSize = Math.max(0, this.readNumberInput('positionSize', CAPITAL_DEFAULTS.positionSize));
         const commission = Math.max(0, this.readNumberInput('commission', CAPITAL_DEFAULTS.commission));
@@ -822,13 +783,7 @@ export class BacktestService {
         return isSmartTradeSizingMode(sizingMode);
     }
 
-    private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): {
-        initialCapital: number;
-        positionSize: number;
-        commission: number;
-        sizingMode: TradeSizingMode;
-        fixedTradeAmount: number;
-    } {
+    private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): CapitalSettings {
         const raw = backtestSettings as Record<string, unknown>;
 
         const initialCapital = Math.max(
@@ -903,34 +858,16 @@ export class BacktestService {
         strategy: Strategy,
         params: StrategyParams,
         settings: BacktestSettings = this.getBacktestSettings(),
-        capitalSettings: {
-            initialCapital: number;
-            positionSize: number;
-            commission: number;
-            sizingMode: TradeSizingMode;
-            fixedTradeAmount: number;
-        } = this.getCapitalSettings()
+        capitalSettings: CapitalSettings = this.getCapitalSettings()
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
-        const {
-            initialCapital,
-            positionSize,
-            commission,
-            sizingMode,
-            fixedTradeAmount,
-        } = capitalSettings;
-
         return this.runBacktestForData(
             ohlcvData,
             interval,
             strategy,
             params,
             settings,
-            initialCapital,
-            positionSize,
-            commission,
-            sizingMode,
-            fixedTradeAmount,
-            this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(sizingMode)
+            capitalSettings,
+            this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode)
         );
     }
 
@@ -939,33 +876,15 @@ export class BacktestService {
         interval: string,
         signals: Signal[],
         settings: BacktestSettings = this.getBacktestSettings(),
-        capitalSettings: {
-            initialCapital: number;
-            positionSize: number;
-            commission: number;
-            sizingMode: TradeSizingMode;
-            fixedTradeAmount: number;
-        } = this.getCapitalSettings()
+        capitalSettings: CapitalSettings = this.getCapitalSettings()
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
-        const {
-            initialCapital,
-            positionSize,
-            commission,
-            sizingMode,
-            fixedTradeAmount,
-        } = capitalSettings;
-
         return this.runBacktestForPreparedSignals(
             ohlcvData,
             interval,
             signals,
             settings,
-            initialCapital,
-            positionSize,
-            commission,
-            sizingMode,
-            fixedTradeAmount,
-            this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(sizingMode)
+            capitalSettings,
+            this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode)
         );
     }
 
@@ -1032,8 +951,7 @@ export class BacktestService {
             throw new Error(`Strategy not found: ${strategyKey}`);
         }
 
-        const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } =
-            this.resolveSubscriptionCapitalSettings(effectiveBacktestSettings);
+        const capitalSettings = this.resolveSubscriptionCapitalSettings(effectiveBacktestSettings);
         // Keep Alerts "Last Trade" aligned with Worker evaluation (TypeScript engine path).
         const requiresTsEngine = true;
 
@@ -1044,11 +962,7 @@ export class BacktestService {
             strategy,
             strategyParams,
             effectiveBacktestSettings,
-            initialCapital,
-            positionSize,
-            commission,
-            sizingMode,
-            fixedTradeAmount,
+            capitalSettings,
             requiresTsEngine
         );
 

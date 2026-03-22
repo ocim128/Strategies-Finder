@@ -502,11 +502,7 @@ async function runSeed(seed: number, cfg: EffectiveConfig, bars: OHLCVData[], se
             settings: cfg.backtestSettings,
             requiresTsEngine: true,
             selectedStrategies,
-            initialCapital: cfg.capital.initialCapital,
-            positionSize: cfg.capital.positionSize,
-            commission: cfg.capital.commission,
-            sizingMode: cfg.capital.sizingMode,
-            fixedTradeAmount: cfg.capital.fixedTradeAmount,
+            capitalSettings: cfg.capital,
             getFinderTimeframesForRun: () => [cfg.interval],
             loadMultiTimeframeDatasets: async () => [],
             generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) =>

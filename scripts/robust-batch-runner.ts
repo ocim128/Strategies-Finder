@@ -598,11 +598,7 @@ async function runSeed(
             settings,
             requiresTsEngine: true,
             selectedStrategies,
-            initialCapital: cfg.capital.initialCapital,
-            positionSize: cfg.capital.positionSize,
-            commission: cfg.capital.commission,
-            sizingMode: cfg.capital.sizingMode,
-            fixedTradeAmount: cfg.capital.fixedTradeAmount,
+            capitalSettings: cfg.capital,
             getFinderTimeframesForRun: () => [task.interval],
             loadMultiTimeframeDatasets: async () => [],
             generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) =>

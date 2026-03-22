@@ -48,6 +48,7 @@ export {
 };
 export type { AppSettings, BacktestSettingsData, StrategyConfig } from "./settings-model";
 
+import type { CapitalSettings } from "./types/backtest";
 import type { BacktestSettings, ExecutionModel, MarketMode, TradeDirection, TradeFilterMode } from './types/strategies';
 
 // ============================================================================
@@ -357,13 +358,7 @@ class SettingsManager {
      * Resolve capital/sizing settings directly from a StrategyConfig
      * without touching the DOM. Used by combined-strategy flow.
      */
-    public resolveCapitalFromConfig(config: StrategyConfig): {
-        initialCapital: number;
-        positionSize: number;
-        commission: number;
-        sizingMode: BacktestSettingsData["sizingMode"];
-        fixedTradeAmount: number;
-    } {
+    public resolveCapitalFromConfig(config: StrategyConfig): CapitalSettings {
         const s = config.backtestSettings;
         return {
             initialCapital: Math.max(0, s.initialCapital ?? 10000),

@@ -32,7 +32,7 @@ import type {
 	FinderOptions,
 	FinderResult
 } from './types/finder';
-import { isSmartTradeSizingMode, type TradeSizingMode } from "./types/backtest";
+import { isSmartTradeSizingMode, type CapitalSettings } from "./types/backtest";
 
 export class FinderManager {
 	private static readonly MAX_MULTI_TIMEFRAMES = 10;
@@ -632,10 +632,10 @@ export class FinderManager {
 				return;
 			}
 
-			const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = backtestService.getCapitalSettings();
+			const capitalSettings = backtestService.getCapitalSettings();
 			const settings = backtestService.getBacktestSettings();
 			this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settingsManager.getBacktestSettings());
-			const requiresTsEngine = backtestService.requiresTypescriptEngine(settings) || isSmartTradeSizingMode(sizingMode);
+			const requiresTsEngine = backtestService.requiresTypescriptEngine(settings) || isSmartTradeSizingMode(capitalSettings.sizingMode);
 
 			// Freeze the selected chart block; execution-aware closed-candle normalization
 			// is applied inside the finder run so it matches manual backtests.
@@ -648,7 +648,7 @@ export class FinderManager {
 			// --- Combo Mode: resolve primary config, generate primary signals once ---
 			let comboPrimarySignals: undefined | ReturnType<typeof applySignalPolarity>;
 			let comboPrimarySettings: undefined | typeof settings;
-			let comboPrimaryCapital: undefined | { initialCapital: number; positionSize: number; commission: number; sizingMode: TradeSizingMode; fixedTradeAmount: number };
+			let comboPrimaryCapital: undefined | CapitalSettings;
 
 			if (options.comboEnabled && options.comboPrimaryConfigName) {
 				const primaryConfig = settingsManager.loadStrategyConfig(options.comboPrimaryConfigName);
@@ -693,11 +693,7 @@ export class FinderManager {
 					settings,
 					requiresTsEngine,
 					selectedStrategies,
-					initialCapital,
-					positionSize,
-					commission,
-					sizingMode,
-					fixedTradeAmount,
+					capitalSettings,
 					getFinderTimeframesForRun: (finderOptions) => this.getFinderTimeframesForRun(finderOptions),
 					loadMultiTimeframeDatasets: (symbol, intervals) => this.loadMultiTimeframeDatasets(symbol, intervals),
 					generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),

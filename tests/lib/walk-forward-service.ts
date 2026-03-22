@@ -19,7 +19,15 @@ import {
 import { parseInputNumber } from "./dom-input-readers";
 import type { Strategy, StrategyParams, BacktestSettings, OHLCVData, BacktestResult } from "./strategies/index";
 import { sliceOhlcvByBlock } from "./block-selector";
-import { deriveWalkForwardTradeThresholds } from "./walk-forward-thresholds";
+import {
+    resolveWalkForwardAutoSuggestedThresholds,
+    suggestWalkForwardWindowsFromTradeFrequency,
+} from "./walk-forward-auto-suggest";
+import {
+    formatWalkForwardBaseParamsSummary,
+    formatWalkForwardSignedPercent,
+    formatWalkForwardWindowParams,
+} from "./walk-forward-formatters";
 import {
     deriveAutoWalkForwardRange,
     resolveFiniteRangeReferenceValue,
@@ -146,11 +154,11 @@ class WalkForwardService {
     private readonly uiHost = {
         formatPermutationValue: (metric: WalkForwardPermutationMetric, value: number | null) => this.formatPermutationValue(metric, value),
         formatCandidateValidationDecision: (reason: CandidateValidationDecisionReason) => this.formatCandidateValidationDecision(reason),
-        formatSignedPercent: (value: number | null) => this.formatSignedPercent(value),
+        formatSignedPercent: formatWalkForwardSignedPercent,
         formatNumber: (value: number | null, digits?: number) => this.formatNumber(value, digits),
         formatPercent: (value: number | null, digits?: number) => this.formatPercent(value, digits),
-        formatBaseParamsSummary: () => this.formatBaseParamsSummary(),
-        formatWindowParams: (params: Record<string, number>) => this.formatWindowParams(params),
+        formatBaseParamsSummary: () => formatWalkForwardBaseParamsSummary(this.lastRunBaseParams),
+        formatWindowParams: formatWalkForwardWindowParams,
         getPermutationTone: (result: WalkForwardPermutationResult) => this.getPermutationTone(result),
     };
 
@@ -275,27 +283,6 @@ class WalkForwardService {
         return snapped;
     }
 
-    private formatParamValue(value: number): string {
-        if (!Number.isFinite(value)) return String(value);
-        if (Number.isInteger(value)) return String(value);
-        return value.toFixed(3).replace(/\.?0+$/, '');
-    }
-
-    private formatBaseParamsSummary(): string | null {
-        if (!this.lastRunBaseParams) return null;
-        const entries = Object.entries(this.lastRunBaseParams.params);
-        if (entries.length === 0) return null;
-        return entries
-            .map(([key, value]) => `${key}:${this.formatParamValue(value)}`)
-            .join(', ');
-    }
-
-    private formatWindowParams(params: StrategyParams): string {
-        return Object.entries(params)
-            .map(([key, value]) => `${key}:${this.formatParamValue(value)}`)
-            .join(', ');
-    }
-
     private async ensureDataReadyForCurrentContext(): Promise<OHLCVData[]> {
         const contextKey = `${state.currentSymbol}|${state.currentInterval}`;
         const loadedContextKey = dataManager.getLoadedContextKey();
@@ -308,13 +295,6 @@ class WalkForwardService {
         this.updateStatus('Syncing data for selected symbol/interval...');
         await dataManager.loadData(state.currentSymbol, state.currentInterval);
         return sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
-    }
-
-    private estimateWindowCount(totalBars: number, optimizationWindow: number, testWindow: number, stepSize: number): number {
-        if (totalBars <= 0 || optimizationWindow <= 0 || testWindow <= 0 || stepSize <= 0) return 0;
-        const windowSize = optimizationWindow + testWindow;
-        if (windowSize > totalBars) return 0;
-        return Math.floor((totalBars - windowSize) / stepSize) + 1;
     }
 
     private setNumberInput(id: string, value: number): void {
@@ -406,7 +386,7 @@ class WalkForwardService {
 
         const totalTrades = Math.max(0, state.currentBacktestResult.totalTrades);
         const tradesPerBar = totalTrades / Math.max(1, data.length);
-        const suggestion = this.suggestWindowsFromTradeFrequency(data.length, totalTrades, tradesPerBar);
+        const suggestion = suggestWalkForwardWindowsFromTradeFrequency(data.length, totalTrades, tradesPerBar);
         const applied = this.applyWindowSuggestion(suggestion, 'Auto window suggestion updated');
         if (!applied) {
             return;
@@ -446,65 +426,6 @@ class WalkForwardService {
         }
     }
 
-    private suggestWindowsFromTradeFrequency(
-        totalBars: number,
-        totalTrades: number,
-        tradesPerBar: number
-    ): {
-        optimizationWindow: number;
-        testWindow: number;
-        stepSize: number;
-        estimatedWindows: number;
-        expectedOOSTradesPerWindow: number;
-        minTrades: number;
-        minOOSTradesPerWindow: number;
-        minTotalOOSTrades: number;
-    } {
-        const minWindows = 8;
-        const maxWindows = 60;
-        const minTestByWindows = Math.max(20, Math.floor(totalBars / maxWindows));
-        const maxTestByWindows = Math.max(minTestByWindows, Math.floor(totalBars / minWindows));
-        const desiredOOSTradesPerWindow = 8;
-
-        let testWindow = tradesPerBar > 0
-            ? Math.ceil(desiredOOSTradesPerWindow / tradesPerBar)
-            : maxTestByWindows;
-        testWindow = Math.max(minTestByWindows, Math.min(maxTestByWindows, testWindow));
-
-        let optimizationWindow = Math.max(testWindow * 2, Math.floor(testWindow * 3));
-        optimizationWindow = Math.min(totalBars - testWindow, optimizationWindow);
-        if (optimizationWindow < testWindow) {
-            optimizationWindow = testWindow;
-        }
-
-        let stepSize = testWindow;
-        let estimatedWindows = this.estimateWindowCount(totalBars, optimizationWindow, testWindow, stepSize);
-
-        if (estimatedWindows > maxWindows) {
-            const scale = Math.ceil(estimatedWindows / maxWindows);
-            testWindow = Math.min(maxTestByWindows, testWindow * scale);
-            stepSize = testWindow;
-            optimizationWindow = Math.min(totalBars - testWindow, Math.max(testWindow * 2, optimizationWindow * scale));
-            estimatedWindows = this.estimateWindowCount(totalBars, optimizationWindow, testWindow, stepSize);
-        }
-
-        if (estimatedWindows < 3 && totalBars >= 3) {
-            testWindow = Math.max(minTestByWindows, Math.floor(totalBars / 5));
-            stepSize = testWindow;
-            optimizationWindow = Math.min(totalBars - testWindow, Math.max(testWindow * 2, Math.floor(totalBars / 2)));
-            estimatedWindows = this.estimateWindowCount(totalBars, optimizationWindow, testWindow, stepSize);
-        }
-        const thresholds = deriveWalkForwardTradeThresholds(totalTrades, tradesPerBar, testWindow, estimatedWindows);
-
-        return {
-            optimizationWindow,
-            testWindow,
-            stepSize,
-            estimatedWindows,
-            ...thresholds
-        };
-    }
-
     private autoSuggestWindowSettings(
         data: OHLCVData[],
         strategy: Strategy,
@@ -522,46 +443,27 @@ class WalkForwardService {
         const currentTestWindow = this.readNumberInput('wf-test-window', Math.max(20, Math.floor(data.length * 0.1)));
         const currentStep = this.readNumberInput('wf-step-size', currentTestWindow);
 
-        const currentWindows = this.estimateWindowCount(data.length, currentOptWindow, currentTestWindow, currentStep);
-        const currentExpectedOOSTrades = tradeStats.tradesPerBar * currentTestWindow;
-        const currentThresholds = deriveWalkForwardTradeThresholds(
-            tradeStats.totalTrades,
-            tradeStats.tradesPerBar,
-            currentTestWindow,
-            currentWindows
-        );
-
-        const suggestion = this.suggestWindowsFromTradeFrequency(data.length, tradeStats.totalTrades, tradeStats.tradesPerBar);
-        const shouldAdjust = currentWindows > 120 || currentExpectedOOSTrades < 2 || currentWindows < 3;
-
         const autoApply = this.isToggleEnabled('wf-auto-suggest', false);
-        if (shouldAdjust && autoApply) {
-            const applied = this.applyWindowSuggestion(suggestion, 'Auto window suggestion applied');
-            if (applied) {
+        return resolveWalkForwardAutoSuggestedThresholds({
+            totalBars: data.length,
+            totalTrades: tradeStats.totalTrades,
+            tradesPerBar: tradeStats.tradesPerBar,
+            currentOptimizationWindow: currentOptWindow,
+            currentTestWindow,
+            currentStepSize: currentStep,
+            autoApply,
+            applySuggestion: (suggestion, statusPrefix) => this.applyWindowSuggestion(suggestion, statusPrefix),
+            onAutoApplied: (suggestion) => {
                 debugLogger.info(
                     `[WalkForward] Auto-suggested windows | trades=${tradeStats.totalTrades} | opt=${suggestion.optimizationWindow} | test=${suggestion.testWindow} | step=${suggestion.stepSize} | windows=${suggestion.estimatedWindows}`
                 );
-            }
-        } else if (shouldAdjust && !autoApply) {
-            debugLogger.info(
-                `[WalkForward] Auto-suggest available (disabled) | trades=${tradeStats.totalTrades} | suggested opt=${suggestion.optimizationWindow} | test=${suggestion.testWindow} | step=${suggestion.stepSize} | windows=${suggestion.estimatedWindows}`
-            );
-        }
-
-        const activeThresholds = shouldAdjust && autoApply
-            ? {
-                minOOSTradesPerWindow: suggestion.minOOSTradesPerWindow,
-                minTotalOOSTrades: suggestion.minTotalOOSTrades
-            }
-            : {
-                minOOSTradesPerWindow: currentThresholds.minOOSTradesPerWindow,
-                minTotalOOSTrades: currentThresholds.minTotalOOSTrades
-            };
-
-        return {
-            minOOSTradesPerWindow: activeThresholds.minOOSTradesPerWindow,
-            minTotalOOSTrades: activeThresholds.minTotalOOSTrades
-        };
+            },
+            onSuggestionAvailable: (suggestion) => {
+                debugLogger.info(
+                    `[WalkForward] Auto-suggest available (disabled) | trades=${tradeStats.totalTrades} | suggested opt=${suggestion.optimizationWindow} | test=${suggestion.testWindow} | step=${suggestion.stepSize} | windows=${suggestion.estimatedWindows}`
+                );
+            },
+        });
     }
 
     /**
@@ -1070,13 +972,6 @@ class WalkForwardService {
         if (reason === "drawdown_breach") return "FAIL(dd)";
         if (reason === "low_trades") return "FAIL(trades)";
         return "FAIL(error)";
-    }
-
-    private formatSignedPercent(value: number | null): string {
-        if (!Number.isFinite(value)) return "-";
-        const n = Number(value);
-        const sign = n >= 0 ? "+" : "";
-        return `${sign}${n.toFixed(2)}%`;
     }
 
     private formatNumber(value: number | null, digits: number = 2): string {

@@ -36,6 +36,14 @@ const DEFAULT_MAX_RULE_VALIDATION_CANDIDATES = 12;
 const DEFAULT_MAX_RULE_BUILDER_ROWS = 10;
 const DEFAULT_MAX_REPLACEMENT_ROWS = 12;
 
+const byExpectancyThenTrades = (left: ProxyRuleEvaluation, right: ProxyRuleEvaluation): number =>
+    (right.expectancy - left.expectancy) || (right.trades - left.trades);
+
+const byExpectancyThenSamples = (
+    left: { expectancy: number; samples: number },
+    right: { expectancy: number; samples: number }
+): number => (right.expectancy - left.expectancy) || (right.samples - left.samples);
+
 export interface StrategyEnsembleRulesRuntime {
     runFilteredBacktest(
         targetArtifact: ConfigRunArtifact,
@@ -485,21 +493,11 @@ export function resolveAnalysisRule(
             evaluation.trades >= baselineProxy.trades * 0.5
             && evaluation.expectancy >= baselineProxy.expectancy
         )
-        .sort((left, right) => {
-            if (left.expectancy !== right.expectancy) {
-                return right.expectancy - left.expectancy;
-            }
-            return right.trades - left.trades;
-        })[0];
+        .sort(byExpectancyThenTrades)[0];
 
     const fallback = balanceCandidate ?? proxyEvaluations
         .slice()
-        .sort((left, right) => {
-            if (left.expectancy !== right.expectancy) {
-                return right.expectancy - left.expectancy;
-            }
-            return right.trades - left.trades;
-        })[0];
+        .sort(byExpectancyThenTrades)[0];
 
     return fallback
         ? {
@@ -666,12 +664,7 @@ export function buildRuleCandidates(
 
     comboEvaluations
         .filter((evaluation) => evaluation.samples >= minSamples)
-        .sort((left, right) => {
-            if (left.expectancy !== right.expectancy) {
-                return right.expectancy - left.expectancy;
-            }
-            return right.samples - left.samples;
-        })
+        .sort(byExpectancyThenSamples)
         .slice(0, 12)
         .forEach((evaluation) => {
             rules.push(evaluation.rule);
@@ -733,12 +726,7 @@ export function selectShortlistedRules(
     takeTop(
         proxyEvaluations,
         5,
-        (left, right) => {
-            if (left.expectancy !== right.expectancy) {
-                return right.expectancy - left.expectancy;
-            }
-            return right.trades - left.trades;
-        }
+        byExpectancyThenTrades
     );
     takeTop(
         proxyEvaluations.filter((evaluation) => Math.abs(evaluation.maxDrawdownPercent) < Math.abs(baselineProxy.maxDrawdownPercent)),
@@ -748,12 +736,7 @@ export function selectShortlistedRules(
     takeTop(
         proxyEvaluations.filter((evaluation) => evaluation.trades >= baselineProxy.trades * 0.5),
         3,
-        (left, right) => {
-            if (left.expectancy !== right.expectancy) {
-                return right.expectancy - left.expectancy;
-            }
-            return right.trades - left.trades;
-        }
+        byExpectancyThenTrades
     );
 
     const baselineLikeRules = candidateRules.filter((rule) =>
@@ -786,12 +769,7 @@ export function selectBuilderRules(
 
     proxyEvaluations
         .slice()
-        .sort((left, right) => {
-            if (left.expectancy !== right.expectancy) {
-                return right.expectancy - left.expectancy;
-            }
-            return right.trades - left.trades;
-        })
+        .sort(byExpectancyThenTrades)
         .slice(0, maxRuleBuilderRows)
         .forEach((evaluation) => {
             selected.set(evaluation.rule.id, evaluation.rule);

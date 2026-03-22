@@ -9,7 +9,7 @@ import type {
 } from "../strategies";
 import type { OpenPosition } from "../strategies/backtest/signal-preparation";
 import type { PortfolioSignalPresence } from "./portfolio-lab-helpers";
-import type { TradeSizingMode } from "../types/backtest";
+import type { CapitalSettings } from "../types/backtest";
 
 export const MIN_LOOKBACK_BARS = 200;
 export const MAX_LOOKBACK_BARS = 20000;
@@ -22,12 +22,7 @@ export type DataSource = "mock" | "local" | "network";
 export type PortfolioWindowMode = "latest_bars" | "common_overlap";
 export type PortfolioEngineUsed = "rust" | "typescript";
 
-export interface PortfolioCapitalSettings {
-    initialCapital: number;
-    positionSize: number;
-    commission: number;
-    sizingMode: TradeSizingMode;
-    fixedTradeAmount: number;
+export interface PortfolioCapitalSettings extends CapitalSettings {
     fixedTradeToggle?: boolean;
 }
 

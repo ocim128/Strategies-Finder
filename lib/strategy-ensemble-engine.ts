@@ -17,15 +17,9 @@ import type {
     ConfigSignalArtifact,
     EnsembleEntryPresence,
 } from "./strategy-ensemble-types";
-import type { TradeSizingMode } from "./types/backtest";
+import type { CapitalSettings } from "./types/backtest";
 
-export interface StrategyEnsembleCapitalSettings {
-    initialCapital: number;
-    positionSize: number;
-    commission: number;
-    sizingMode: TradeSizingMode;
-    fixedTradeAmount: number;
-}
+export type StrategyEnsembleCapitalSettings = CapitalSettings;
 
 export interface StrategyEnsembleEngineDeps {
     interval: string;

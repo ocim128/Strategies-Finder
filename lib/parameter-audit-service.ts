@@ -17,7 +17,7 @@ import { deriveAutoWalkForwardRange, resolveFiniteRangeReferenceValue, shouldTre
 import { applySignalPolarity, type BacktestSettings, type OHLCVData, type Strategy, type StrategyParams } from "./strategies";
 import { runBacktestCompact } from "./strategies/backtest";
 import type { ParameterRange, WalkForwardResult } from "./strategies/walk-forward";
-import type { TradeSizingMode } from "./types/backtest";
+import type { CapitalSettings } from "./types/backtest";
 import type { FinderResult } from "./types/finder";
 import type {
     ParameterAuditParameterInput,
@@ -26,13 +26,7 @@ import type {
     ParameterAuditSourceType,
 } from "./types/parameter-audit";
 
-type AuditBacktestContext = {
-    initialCapital: number;
-    positionSize: number;
-    commission: number;
-    sizingMode: TradeSizingMode;
-    fixedTradeAmount: number;
-};
+type AuditBacktestContext = CapitalSettings;
 
 type SourceContext = {
     sourceType: ParameterAuditSourceType;

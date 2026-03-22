@@ -193,6 +193,14 @@ export function usesFixedDollarSizing(mode: TradeSizingMode): boolean {
     return mode !== 'percent';
 }
 
+export interface CapitalSettings {
+    initialCapital: number;
+    positionSize: number;
+    commission: number;
+    sizingMode: TradeSizingMode;
+    fixedTradeAmount: number;
+}
+
 export interface TradeSizingConfig {
     mode: TradeSizingMode;
     fixedTradeAmount: number;

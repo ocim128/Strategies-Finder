@@ -14,7 +14,7 @@ import { runBacktest } from "./strategies/backtest/backtest-engine";
 import { getResampleBucketStart, resampleOHLCV, type ResampleOptions } from "./strategies/resample-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { mergeStrategySignals } from "./signal-merge";
-import { isTradeSizingMode, type TradeSizingMode } from "./types/backtest";
+import { isTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
 
 export interface EntrySignalEvaluationRequest {
     strategyKey: string;
@@ -25,12 +25,7 @@ export interface EntrySignalEvaluationRequest {
     freshnessBars?: number;
 }
 
-export interface EntrySignalCapitalSettings {
-    initialCapital?: number;
-    positionSize?: number;
-    commission?: number;
-    sizingMode?: TradeSizingMode;
-    fixedTradeAmount?: number;
+export interface EntrySignalCapitalSettings extends Partial<CapitalSettings> {
     fixedTradeToggle?: boolean;
 }
 
@@ -129,13 +124,7 @@ function toSizingMode(value: unknown): TradeSizingMode | null {
     return isTradeSizingMode(value) ? value : null;
 }
 
-function resolveEvaluationCapitalSettings(request: EntrySignalEvaluationRequest): {
-    initialCapital: number;
-    positionSize: number;
-    commission: number;
-    sizingMode: TradeSizingMode;
-    fixedTradeAmount: number;
-} {
+function resolveEvaluationCapitalSettings(request: EntrySignalEvaluationRequest): CapitalSettings {
     const rawBacktestSettings = request.backtestSettings as Record<string, unknown> | undefined;
     const rawCapitalSettings = request.capitalSettings as Record<string, unknown> | undefined;
 
