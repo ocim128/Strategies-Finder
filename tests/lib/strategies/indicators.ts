@@ -891,3 +891,34 @@ export function calculateMomentum(data: number[], period: number): (number | nul
 }
 
 
+
+export function calculateCCI(
+    high: number[],
+    low: number[],
+    close: number[],
+    period: number
+): (number | null)[] {
+    const minLen = Math.min(high.length, low.length, close.length);
+    const result: (number | null)[] = new Array(minLen).fill(null);
+    for (let i = 0; i < minLen; i++) {
+        if (i < period - 1) {
+            result[i] = null;
+            continue;
+        }
+        let sumTP = 0;
+        for (let j = 0; j < period; j++) {
+            sumTP += (high[i - j] + low[i - j] + close[i - j]) / 3;
+        }
+        const smaTP = sumTP / period;
+        let sumMD = 0;
+        for (let j = 0; j < period; j++) {
+            const tp = (high[i - j] + low[i - j] + close[i - j]) / 3;
+            sumMD += Math.abs(tp - smaTP);
+        }
+        const meanDev = sumMD / period;
+        const currentTP = (high[i] + low[i] + close[i]) / 3;
+        result[i] = meanDev === 0 ? 0 : (currentTP - smaTP) / (0.015 * meanDev);
+    }
+    return result;
+}
+

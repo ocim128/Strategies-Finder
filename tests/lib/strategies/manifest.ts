@@ -50,7 +50,6 @@ import { momentum_zscore_exhaustion } from "./lib/momentum_zscore_exhaustion";
 
 import { macd_histogram_volatility_squeeze } from "./lib/macd_histogram_volatility_squeeze";
 import { volume_profile_poc_median_shift } from "./lib/volume_profile_poc_median_shift";
-
 import { value_area_median_shift } from "./lib/value_area_median_shift";
 
 export interface StrategyManifestEntry {
@@ -62,7 +61,7 @@ export interface StrategyManifestEntry {
 }
 
 export const strategyManifest: readonly StrategyManifestEntry[] = [
-    
+
     { key: "median_deviation_streak", strategy: median_deviation_streak },
     { key: "median_deviation_streak_v7", strategy: median_deviation_streak_v7 },
     { key: "skew_entropy_polarization_entry", strategy: skew_entropy_polarization_entry },
@@ -113,7 +112,6 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
 
     { key: "macd_histogram_volatility_squeeze", strategy: macd_histogram_volatility_squeeze },
     { key: "volume_profile_poc_median_shift", strategy: volume_profile_poc_median_shift },
-
 
 ];
 
