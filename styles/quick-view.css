@@ -136,6 +136,11 @@
     grid-column: 1 / -1;
 }
 
+.qv-poly-meta-card {
+    background: hsl(var(--hsl-accent) / 0.08);
+    border-color: hsl(var(--hsl-accent) / 0.2);
+}
+
 .qv-stat-label {
     font-size: 10px;
     font-weight: var(--font-weight-medium);

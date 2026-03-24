@@ -14,7 +14,7 @@
  *   --series-id <id>       Polymarket series id (default: 10684, BTC up/down 5m)
  *   --start-date <iso>     Inclusive lower bound for event end date
  *   --end-date <iso>       Inclusive upper bound for event end date
- *   --max-events <n>       Max closed events to fetch (default: 2000)
+ *   --max-events <n>       Max closed events to store after pagination (default: 10000)
  *   --page-size <n>        Pagination page size (default: 500)
  *   --concurrency <n>      Parallel history fetch workers (default: 8)
  *   --vite-origin <url>    Base URL of local Vite dev server (default: http://localhost:5173)
@@ -113,7 +113,7 @@ function printUsage(): void {
         "  --series-id <id>       Polymarket series id (default: 10684, BTC up/down 5m)",
         "  --start-date <iso>     Lower bound for event end date (default: now-30d)",
         "  --end-date <iso>       Upper bound for event end date",
-        "  --max-events <n>       Max closed events to fetch (default: 2000)",
+        "  --max-events <n>       Max closed events to store after pagination (default: 10000)",
         "  --page-size <n>        Pagination page size (default: 500)",
         "  --concurrency <n>      Parallel history fetch workers (default: 8)",
         "  --vite-origin <url>    Vite dev server base (default: http://localhost:5173)",
@@ -137,7 +137,7 @@ function parseArgs(argv: string[]): CliConfig | null {
     let seriesId = DEFAULT_SERIES_ID;
     let startDateMin = defaultStartDateIso(30);
     let endDateMax: string | undefined;
-    let maxEvents = 2000;
+    let maxEvents = 10000;
     let pageSize = 500;
     let concurrency = 8;
     let viteOrigin = "http://localhost:5173";
@@ -267,7 +267,7 @@ async function fetchSeriesEvents(cfg: CliConfig): Promise<SeriesEvent[]> {
     const out: SeriesEvent[] = [];
     let offset = 0;
 
-    while (out.length < cfg.maxEvents) {
+    while (true) {
         const params = new URLSearchParams({
             series_id: cfg.seriesId,
             closed: "true",
@@ -290,7 +290,7 @@ async function fetchSeriesEvents(cfg: CliConfig): Promise<SeriesEvent[]> {
         offset += payload.length;
     }
 
-    // Deduplicate by slug; sort chronologically.
+    // Deduplicate by slug, sort chronologically, then keep the most recent rows.
     const dedup = new Map<string, SeriesEvent>();
     for (const ev of out) dedup.set(ev.slug, ev);
     return Array.from(dedup.values()).sort((a, b) => a.endTs - b.endTs).slice(-cfg.maxEvents);

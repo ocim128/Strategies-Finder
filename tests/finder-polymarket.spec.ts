@@ -8,6 +8,7 @@ import type { PolymarketOutcomeRow } from '../lib/types/polymarket-outcomes';
 import type { OHLCVData, Signal, Strategy, StrategyParams } from '../lib/types/strategies';
 
 const ORIGINAL_FETCH = globalThis.fetch;
+let prepareFinderCalls = 0;
 
 function makeBars(count: number, startTs = 1_700_000_000): OHLCVData[] {
     return Array.from({ length: count }, (_, index) => ({
@@ -41,27 +42,38 @@ function makeOutcomeRow(eventStartTs: number, resolvedUp: 0 | 1, seriesId = '106
     };
 }
 
+function buildFixtureSignals(data: OHLCVData[], params: StrategyParams): Signal[] {
+    const first = data[0];
+    const second = data[1];
+    switch (params.variant) {
+        case 1:
+            return [{ time: first.time, type: 'buy', price: first.close, barIndex: 0 }];
+        case 2:
+            return [
+                { time: first.time, type: 'buy', price: first.close, barIndex: 0 },
+                { time: second.time, type: 'buy', price: second.close, barIndex: 1 },
+            ];
+        case 3:
+            return [{ time: first.time, type: 'sell', price: first.close, barIndex: 0 }];
+        default:
+            return [];
+    }
+}
+
 const fixtureStrategy: Strategy = {
     name: 'Fixture Strategy',
     description: 'Polymarket finder fixture',
     defaultParams: { variant: 1 },
     paramLabels: { variant: 'Variant' },
     execute(data: OHLCVData[], params: StrategyParams): Signal[] {
-        const first = data[0];
-        const second = data[1];
-        switch (params.variant) {
-            case 1:
-                return [{ time: first.time, type: 'buy', price: first.close, barIndex: 0 }];
-            case 2:
-                return [
-                    { time: first.time, type: 'buy', price: first.close, barIndex: 0 },
-                    { time: second.time, type: 'buy', price: second.close, barIndex: 1 },
-                ];
-            case 3:
-                return [{ time: first.time, type: 'sell', price: first.close, barIndex: 0 }];
-            default:
-                return [];
-        }
+        return buildFixtureSignals(data, params);
+    },
+    prepareFinderData(data: OHLCVData[]): number[] {
+        prepareFinderCalls++;
+        return data.map((bar) => bar.close);
+    },
+    executePrepared(_prepared: unknown, params: StrategyParams, data: OHLCVData[]): Signal[] {
+        return buildFixtureSignals(data, params);
     },
 };
 
@@ -99,11 +111,12 @@ function makeInput(
     bars: OHLCVData[],
     paramSets: StrategyParams[],
     optionOverrides: Partial<FinderOptions> = {},
-    interval = '5m'
+    interval = '5m',
+    symbol = 'BTCUSDT'
 ): FinderRunInput {
     return {
         ohlcvData: bars,
-        symbol: 'BTCUSDT',
+        symbol,
         interval,
         options: makeOptions(optionOverrides),
         settings: {
@@ -163,6 +176,9 @@ function installOutcomeFetch(
 ): void {
     globalThis.fetch = (async (input) => {
         const url = toUrl(input);
+        if (url.pathname === '/api/sqlite/status') {
+            return jsonResponse({ ok: true });
+        }
         onRequest?.(url);
         expect(url.pathname).to.equal('/api/sqlite/load-polymarket-outcomes');
         return jsonResponse({ ok: true, rows });
@@ -171,10 +187,11 @@ function installOutcomeFetch(
 
 afterEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;
+    prepareFinderCalls = 0;
 });
 
 describe('Finder Polymarket runner', () => {
-    it('loads the BTC 5m outcome series and ranks by Polymarket metrics', async () => {
+    it('loads the BTC 5m outcome series and scores executed trades against Polymarket outcomes', async () => {
         const bars = makeBars(4);
         const requestedSeriesIds: string[] = [];
         installOutcomeFetch(
@@ -194,13 +211,15 @@ describe('Finder Polymarket runner', () => {
         );
 
         expect(requestedSeriesIds).to.deep.equal(['10684']);
-        expect(output.results.map((item) => item.params.variant)).to.deep.equal([2, 1, 3]);
+        expect(output.results).to.have.length(3);
         expect(output.results[0]?.polymarketEval?.winRate).to.equal(1);
-        expect(output.results[0]?.polymarketEval?.predictionsTaken).to.equal(2);
+        expect(output.results[0]?.polymarketEval?.predictionsTaken).to.equal(output.results[0]?.result.totalTrades);
+        expect(output.results[0]?.polymarketEval?.wins).to.be.at.most(output.results[0]?.result.totalTrades ?? 0);
+        expect(prepareFinderCalls).to.equal(1);
         expect(statuses.some((status) => status.includes('Loaded 2 outcome rows'))).to.equal(true);
     });
 
-    it('uses predictionsTaken for the Finder min/max filter in Polymarket mode', async () => {
+    it('uses executed trade count for the Finder min/max filter in Polymarket mode', async () => {
         const bars = makeBars(4);
         installOutcomeFetch([
             makeOutcomeRow(Number(bars[1].time), 1),
@@ -221,9 +240,7 @@ describe('Finder Polymarket runner', () => {
             callbacks
         );
 
-        expect(output.results).to.have.length(1);
-        expect(output.results[0]?.params.variant).to.equal(2);
-        expect(output.results[0]?.polymarketEval?.predictionsTaken).to.equal(2);
+        expect(output.results).to.have.length(0);
     });
 
     it('rejects non-5m intervals before touching the outcome loader', async () => {
@@ -239,6 +256,40 @@ describe('Finder Polymarket runner', () => {
 
         expect(output.results).to.have.length(0);
         expect(statuses.at(-1)).to.equal('Polymarket scoring requires 5m interval.');
+    });
+
+    it('rejects non-BTC symbols before touching the outcome loader', async () => {
+        globalThis.fetch = (async () => {
+            throw new Error('fetch should not be called for non-BTC symbol');
+        }) as typeof fetch;
+
+        const { callbacks, statuses } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(makeBars(4), [{ variant: 1 }], {}, '5m', 'ETHUSDT'),
+            callbacks
+        );
+
+        expect(output.results).to.have.length(0);
+        expect(statuses.at(-1)).to.equal('Polymarket scoring currently supports BTC 5m only.');
+    });
+
+    it('surfaces SQLite outcome load failures without hanging the run', async () => {
+        globalThis.fetch = (async (input) => {
+            const url = toUrl(input);
+            if (url.pathname === '/api/sqlite/status') {
+                return jsonResponse({ ok: true });
+            }
+            throw new Error('socket stalled');
+        }) as typeof fetch;
+
+        const { callbacks, statuses } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(makeBars(4), [{ variant: 1 }]),
+            callbacks
+        );
+
+        expect(output.results).to.have.length(0);
+        expect(statuses.at(-1)).to.equal('Failed to load Polymarket outcomes from SQLite. Failed to reach /api/sqlite/load-polymarket-outcomes: socket stalled');
     });
 
     it('rejects unsupported Finder modes before loading outcomes', async () => {

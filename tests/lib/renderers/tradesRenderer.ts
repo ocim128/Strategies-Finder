@@ -121,6 +121,21 @@ export class TradesRenderer {
         return `<span class="exit-reason-badge ${info.className}" title="Exit: ${info.label}">${info.icon}</span>`;
     }
 
+    private getPolymarketOutcomeBadge(trade: Trade): string {
+        const outcome = trade.polymarketOutcome;
+        if (!outcome) return '';
+
+        const label = outcome.isWin ? 'Poly Win' : 'Poly Lose';
+        const className = outcome.isWin
+            ? 'exit-reason-badge--polymarket-win'
+            : 'exit-reason-badge--polymarket-lose';
+        const actual = outcome.actualOutcomeUp === 1 ? 'UP' : 'DOWN';
+        const prediction = outcome.prediction.toUpperCase();
+        const marketSlug = this.escapeHtml(outcome.marketSlug);
+        const marketUrl = this.escapeHtml(this.buildPolymarketMarketUrl(outcome.marketSlug));
+        return `<span class="exit-reason-badge trade-polymarket-link ${className}" role="button" tabindex="0" data-polymarket-url="${marketUrl}" title="Polymarket ${label}. Predicted ${prediction}, resolved ${actual}. Click to copy ${marketSlug}.">${label}</span>`;
+    }
+
     private encodeTradeEntryTime(time: Time): string {
         return encodeURIComponent(JSON.stringify(time));
     }
@@ -140,6 +155,7 @@ export class TradesRenderer {
             ? `Entry Value: $${entryValue.toFixed(2)} | Qty: ${trade.size.toFixed(4)}`
             : `Qty: ${trade.size.toFixed(4)}`;
         const exitReasonBadge = this.getExitReasonBadge(display.displayExitReason);
+        const polymarketOutcomeBadge = this.getPolymarketOutcomeBadge(trade);
         const entryDate = formatDate(trade.entryTime);
 
         let targetRow = '';
@@ -172,12 +188,13 @@ export class TradesRenderer {
                                 <span class="price-val">${formatPrice(display.exitPrice)}</span>
                             </div>
                             <div class="trade-sub-info">
-                                <span class="trade-time">${entryDate}</span>
-                                <span class="separator">|</span>
-                                <span class="trade-duration">${duration}</span>
-                                ${exitReasonBadge}
-                                ${fees ? `<span class="separator">|</span><span class="trade-fees">${fees}</span>` : ''}
-                            </div>
+                                 <span class="trade-time">${entryDate}</span>
+                                 <span class="separator">|</span>
+                                 <span class="trade-duration">${duration}</span>
+                                 ${exitReasonBadge}
+                                 ${polymarketOutcomeBadge}
+                                 ${fees ? `<span class="separator">|</span><span class="trade-fees">${fees}</span>` : ''}
+                             </div>
                             <div class="trade-sub-info">
                                 <span class="trade-size">${sizeLabel}</span>
                             </div>
@@ -218,6 +235,13 @@ export class TradesRenderer {
 
         const container = this.getDom().tradesList;
         container.addEventListener('click', (event) => {
+            const copyTarget = this.resolvePolymarketCopyTarget(event.target, container);
+            if (copyTarget) {
+                event.preventDefault();
+                void this.copyPolymarketUrl(copyTarget.dataset.polymarketUrl ?? '');
+                return;
+            }
+
             const item = this.resolveTradeItemTarget(event.target, container);
             if (!item) {
                 return;
@@ -225,6 +249,13 @@ export class TradesRenderer {
             this.activateTradeItem(item);
         });
         container.addEventListener('keydown', (event) => {
+            const copyTarget = this.resolvePolymarketCopyTarget(event.target, container);
+            if (copyTarget && (event.key === 'Enter' || event.key === ' ')) {
+                event.preventDefault();
+                void this.copyPolymarketUrl(copyTarget.dataset.polymarketUrl ?? '');
+                return;
+            }
+
             if (!(event instanceof KeyboardEvent) || (event.key !== 'Enter' && event.key !== ' ')) {
                 return;
             }
@@ -238,6 +269,31 @@ export class TradesRenderer {
             this.activateTradeItem(item);
         });
         this.jumpHandlersBound = true;
+    }
+
+    private resolvePolymarketCopyTarget(target: EventTarget | null, container: HTMLElement): HTMLElement | null {
+        if (!(target instanceof Element)) {
+            return null;
+        }
+
+        const badge = target.closest('[data-polymarket-url]');
+        if (!(badge instanceof HTMLElement) || !container.contains(badge)) {
+            return null;
+        }
+
+        return badge;
+    }
+
+    private async copyPolymarketUrl(url: string): Promise<void> {
+        if (!url || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+            return;
+        }
+
+        try {
+            await navigator.clipboard.writeText(url);
+        } catch {
+            // Ignore clipboard failures to avoid breaking trade navigation.
+        }
     }
 
     private resolveTradeItemTarget(target: EventTarget | null, container: HTMLElement): HTMLElement | null {
@@ -265,6 +321,19 @@ export class TradesRenderer {
         } catch {
             // Ignore malformed attributes rather than breaking the trade list.
         }
+    }
+
+    private buildPolymarketMarketUrl(marketSlug: string): string {
+        return `https://polymarket.com/event/${marketSlug}`;
+    }
+
+    private escapeHtml(value: string): string {
+        return value
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     private updateSummary(trades: Trade[]) {

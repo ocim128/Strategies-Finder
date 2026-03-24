@@ -72,6 +72,7 @@ const TEST_FILES = [
     "tests/strategy-ensemble.spec.ts",
     "tests/polymarket-outcome-evaluator.spec.ts",
     "tests/finder-polymarket.spec.ts",
+    "tests/polymarket-trade-annotations.spec.ts",
 ] as const;
 
 const MAX_CAPTURE_BUFFER_BYTES = 64 * 1024 * 1024;

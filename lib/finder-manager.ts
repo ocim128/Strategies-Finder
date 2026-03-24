@@ -691,34 +691,47 @@ export class FinderManager {
 				return;
 			}
 
-			const output = await runFinderExecution(
-				{
-					ohlcvData,
+			try {
+				const output = await runFinderExecution(
+					{
+						ohlcvData,
+						symbol: state.currentSymbol,
+						interval: state.currentInterval,
+						options,
+						settings,
+						requiresTsEngine,
+						selectedStrategies,
+						capitalSettings,
+						getFinderTimeframesForRun: (finderOptions) => this.getFinderTimeframesForRun(finderOptions),
+						loadMultiTimeframeDatasets: (symbol, intervals) => this.loadMultiTimeframeDatasets(symbol, intervals),
+						generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
+						buildRandomConfirmationParams: (strategyKeys, finderOptions) => this.buildRandomConfirmationParams(strategyKeys, finderOptions),
+						comboPrimarySignals,
+						comboPrimarySettings,
+						comboPrimaryCapital,
+					},
+					{
+						setProgress: (percent, text) => this.setProgress(true, percent, text),
+						setStatus: (text) => this.setStatus(text),
+						yieldControl: () => this.yieldControl()
+					}
+				);
+
+				this.displayResults = output.results;
+				this.renderResults(output.results, options.sortPriority[0]);
+				this.ui.renderRandomBenchmark(options.mode, output.randomBenchmark);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				debugLogger.error('finder.run_failed', {
 					symbol: state.currentSymbol,
 					interval: state.currentInterval,
-					options,
-					settings,
-					requiresTsEngine,
-					selectedStrategies,
-					capitalSettings,
-					getFinderTimeframesForRun: (finderOptions) => this.getFinderTimeframesForRun(finderOptions),
-					loadMultiTimeframeDatasets: (symbol, intervals) => this.loadMultiTimeframeDatasets(symbol, intervals),
-					generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
-					buildRandomConfirmationParams: (strategyKeys, finderOptions) => this.buildRandomConfirmationParams(strategyKeys, finderOptions),
-					comboPrimarySignals,
-					comboPrimarySettings,
-					comboPrimaryCapital,
-				},
-				{
-					setProgress: (percent, text) => this.setProgress(true, percent, text),
-					setStatus: (text) => this.setStatus(text),
-					yieldControl: () => this.yieldControl()
-				}
-			);
-
-			this.displayResults = output.results;
-			this.renderResults(output.results, options.sortPriority[0]);
-			this.ui.renderRandomBenchmark(options.mode, output.randomBenchmark);
+					mode: options.mode,
+					polymarketScoringEnabled: options.polymarketScoringEnabled,
+					error: message,
+				});
+				this.setStatus(`Finder failed. ${message}`);
+				uiManager.showToast('Finder run failed. Check the status panel for details.', 'error');
+			}
 		} finally {
 			setLoading(false);
 			this.isRunning = false;
@@ -952,20 +965,7 @@ export class FinderManager {
 	}
 
 	private async applyResult(result: FinderResult): Promise<void> {
-		// Polymarket results: apply strategy params only, no backtest rerun
-		if (result.polymarketEval) {
-			state.set('currentStrategyKey', result.key);
-			uiManager.updateStrategyDropdown(result.key);
-			const strategy = strategyRegistry.get(result.key);
-			if (!strategy) return;
-			paramManager.render(strategy);
-			paramManager.setValues(strategy, result.params);
-			uiManager.showToast(
-				`Applied Polymarket params: ${(result.polymarketEval.winRate * 100).toFixed(1)}% win rate, ${result.polymarketEval.predictionsTaken} predictions. No backtest rerun triggered.`,
-				'success'
-			);
-			return;
-		}
+		const isPolymarketResult = Boolean(result.polymarketEval);
 
 		if (Array.isArray(result.timeframes) && result.timeframes.length > 1) {
 			uiManager.showToast(
@@ -1060,6 +1060,12 @@ export class FinderManager {
 
 		try {
 			await backtestService.runCurrentBacktest();
+			if (isPolymarketResult && result.polymarketEval) {
+				uiManager.showToast(
+					`Applied Polymarket params: ${(result.polymarketEval.winRate * 100).toFixed(1)}% Finder win rate, ${result.polymarketEval.scoredPredictions} scored predictions. Backtest trades refreshed below.`,
+					'success'
+				);
+			}
 		} catch (error) {
 			debugLogger.error('finder.apply_result_backtest_failed', {
 				strategyKey: result.key,

@@ -43,6 +43,7 @@ import { resolveSubscriptionExecutionBacktestSettings } from "./alert-subscripti
 import { isSmartTradeSizingMode, isTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
 import { createDomBacktestRunHandle, type BacktestRunHandle } from "./backtest-run-presenter";
 import { commitBacktestResult, commitParityBacktestResults } from "./state-actions";
+import { annotateBacktestResultWithPolymarketOutcomes } from "./polymarket-trade-annotations";
 
 import { resolveTwoHourParityFromTime } from "./two-hour-parity";
 import { buildPostEntryPathStats as analyzeBacktestResult } from "./backtest-result-analysis";
@@ -96,7 +97,7 @@ export class BacktestService {
                 100
             );
 
-            const { result, engineUsed, parityComparison } = await this.executeBacktestForParityMode(
+            let { result, engineUsed, parityComparison } = await this.executeBacktestForParityMode(
                 runUi,
                 strategy,
                 params,
@@ -105,6 +106,15 @@ export class BacktestService {
                 requiresTsEngine,
                 parityMode
             );
+
+            result = await this.annotatePolymarketResult(result, settings, state.ohlcvData);
+            if (parityComparison) {
+                parityComparison = {
+                    ...parityComparison,
+                    odd: await this.annotatePolymarketResult(parityComparison.odd, settings, state.ohlcvData),
+                    even: await this.annotatePolymarketResult(parityComparison.even, settings, state.ohlcvData),
+                };
+            }
 
             commitBacktestResult(result, 'backtest', {
                 parityResults: parityComparison,
@@ -653,6 +663,28 @@ export class BacktestService {
         result.postEntryPath = this.buildPostEntryPathStats(result, 5, backtestData);
         if (result.trades.length >= 3) {
             result.edgeStatistics = computeEdgeStatistics(result, backtestData);
+        }
+    }
+
+    private async annotatePolymarketResult(
+        result: BacktestResult,
+        settings: BacktestSettings,
+        chartData: OHLCVData[]
+    ): Promise<BacktestResult> {
+        try {
+            return await annotateBacktestResultWithPolymarketOutcomes(result, {
+                symbol: state.currentSymbol,
+                interval: state.currentInterval,
+                executionModel: settings.executionModel,
+                chartData,
+            });
+        } catch (error) {
+            debugLogger.error("backtest.polymarket_annotation_failed", {
+                symbol: state.currentSymbol,
+                interval: state.currentInterval,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return result;
         }
     }
 

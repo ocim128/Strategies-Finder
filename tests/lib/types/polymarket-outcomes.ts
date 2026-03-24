@@ -30,9 +30,27 @@ export interface PolymarketEvalRow {
     strategyKey: string | undefined;
 }
 
+export interface TradePolymarketOutcome {
+    eventStartTs: number;
+    eventEndTs: number;
+    eventSlug: string;
+    marketSlug: string;
+    prediction: 'yes' | 'no';
+    actualOutcomeUp: 0 | 1;
+    isWin: boolean;
+}
+
+export interface BacktestPolymarketTradeSummary {
+    seriesId: string;
+    outcomeRowsLoaded: number;
+    scoredTrades: number;
+    missingOutcomeTrades: number;
+}
+
 export interface PolymarketEvalResult {
     evaluatedEvents: number;
     predictionsTaken: number;
+    scoredPredictions: number;
     wins: number;
     losses: number;
     skips: number;

@@ -672,6 +672,20 @@
 
 }
 
+.trade-polymarket-link {
+
+    cursor: pointer;
+
+}
+
+.trade-polymarket-link:focus-visible {
+
+    outline: 2px solid hsl(var(--hsl-accent) / 0.8);
+
+    outline-offset: 1px;
+
+}
+
 
 
 .exit-reason-badge--signal {
@@ -751,6 +765,26 @@
     background: hsl(24 95% 53% / 0.16);
 
     border: 1px solid hsl(24 95% 53% / 0.32);
+
+}
+
+.exit-reason-badge--polymarket-win {
+
+    color: hsl(var(--hsl-success));
+
+    background: hsl(var(--hsl-success) / 0.16);
+
+    border: 1px solid hsl(var(--hsl-success) / 0.32);
+
+}
+
+.exit-reason-badge--polymarket-lose {
+
+    color: hsl(var(--hsl-danger));
+
+    background: hsl(var(--hsl-danger) / 0.16);
+
+    border: 1px solid hsl(var(--hsl-danger) / 0.32);
 
 }
 

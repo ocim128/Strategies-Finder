@@ -1,4 +1,5 @@
 import type { Time } from "lightweight-charts";
+import type { BacktestPolymarketTradeSummary, TradePolymarketOutcome } from "./polymarket-outcomes";
 export type { Time };
 export type { EdgeStatistics, EdgeRatioHorizon, TTestResult, StreakAnalysis } from '../strategies/backtest/edge-statistics';
 
@@ -92,6 +93,8 @@ export interface Trade {
     takeProfitPrice?: number | null;
     /** Indicator snapshot at entry for pattern analysis */
     entrySnapshot?: TradeSnapshot;
+    /** Polymarket outcome scored against this trade's entry timestamp when available */
+    polymarketOutcome?: TradePolymarketOutcome | null;
 }
 
 export interface BacktestResult {
@@ -114,6 +117,7 @@ export interface BacktestResult {
     entryStats?: EntryStats;
     postEntryPath?: PostEntryPathStats;
     edgeStatistics?: import('../strategies/backtest/edge-statistics').EdgeStatistics;
+    polymarketTradeSummary?: BacktestPolymarketTradeSummary;
 }
 
 export interface PostEntryPathBucketStats {

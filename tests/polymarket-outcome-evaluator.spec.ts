@@ -182,6 +182,7 @@ console.log("\n[5] Missing outcome row is counted");
     const r = evaluatePolymarketOutcomes(bars, makeFixedStrategy([sig]), {}, []);
 
     eq(r.predictionsTaken, 1, "prediction still taken");
+    eq(r.scoredPredictions, 0, "missing row: scoredPredictions=0");
     eq(r.missingOutcomeRows, 1, "missing outcome row counted");
     eq(r.wins, 0, "wins=0 (no row to score against)");
     eq(r.losses, 0, "losses=0 (no row to score against)");
@@ -273,6 +274,7 @@ console.log("\n[8] Metrics: winRate, coverage, baseline rates");
 
     eq(r.evaluatedEvents, 4, "4 events in outcomes");
     eq(r.predictionsTaken, 3, "3 predictions taken");
+    eq(r.scoredPredictions, 3, "3 predictions scored");
     eq(r.skips, 1, "1 skip (event with no signal)");
     eq(r.wins, 2, "2 wins");
     eq(r.losses, 1, "1 loss");
@@ -281,6 +283,28 @@ console.log("\n[8] Metrics: winRate, coverage, baseline rates");
     // 2 UP out of 4 events → alwaysYes baseline = 0.5
     ok(Math.abs(r.alwaysYesBaselineWinRate - 0.5) < 1e-9, `alwaysYes=0.5 (got ${r.alwaysYesBaselineWinRate})`);
     ok(Math.abs(r.alwaysNoBaselineWinRate - 0.5) < 1e-9, `alwaysNo=0.5 (got ${r.alwaysNoBaselineWinRate})`);
+}
+
+// â”€â”€â”€ 9. Missing rows do not inflate coverage above 100% â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+console.log("\n[9] Missing rows do not inflate coverage");
+{
+    const T0 = 1_700_070_000;
+    const bars = makeBars(4, T0);
+    const sigs: Signal[] = [
+        { time: bars[0].time, type: 'buy', price: 30000, barIndex: 0 },
+        { time: bars[1].time, type: 'buy', price: 30000, barIndex: 1 },
+    ];
+    const outcomes = [
+        makeOutcomeRow(T0 + 300, 1),
+    ];
+
+    const r = evaluatePolymarketOutcomes(bars, makeFixedStrategy(sigs), {}, outcomes);
+
+    eq(r.predictionsTaken, 2, "2 predictions taken");
+    eq(r.scoredPredictions, 1, "only 1 prediction scored");
+    eq(r.missingOutcomeRows, 1, "1 prediction missing outcome");
+    ok(Math.abs(r.coverage - 1) < 1e-9, `coverage capped by scored predictions (got ${r.coverage})`);
 }
 
 // ─── Summary ─────────────────────────────────────────────────────────────

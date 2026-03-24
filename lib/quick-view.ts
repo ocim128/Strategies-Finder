@@ -12,6 +12,16 @@ import type { BacktestResult, Trade } from "./strategies/index";
 import { Time } from "lightweight-charts";
 import { formatDisplayPrice } from "./price-format";
 
+type QuickViewPolymarketSummary = {
+    wins: number;
+    losses: number;
+    scoredTrades: number;
+    missingTrades: number;
+    coverage: number;
+    winRate: number;
+    outcomeRowsLoaded: number;
+};
+
 class QuickViewManager {
     private overlay: HTMLElement | null = null;
     private enabled = true;          // auto-show after backtest
@@ -214,6 +224,7 @@ class QuickViewManager {
         const isPositive = result.netProfit >= 0;
         const pfText = result.profitFactor === Infinity ? '∞' : result.profitFactor.toFixed(2);
         const expectancySign = result.expectancy >= 0 ? '+' : '';
+        const polymarketSection = this.buildPolymarketSection(result);
 
         content.innerHTML = `
             <div class="qv-section-title">Performance</div>
@@ -283,6 +294,7 @@ class QuickViewManager {
                     <div class="qv-stat-value">${result.sharpeRatio.toFixed(2)}</div>
                 </div>
             </div>
+            ${polymarketSection}
         `;
     }
 
@@ -354,6 +366,73 @@ class QuickViewManager {
     }
 
     // ── Helpers ─────────────────────────────────────────────
+
+    private buildPolymarketSection(result: BacktestResult): string {
+        const summary = this.getPolymarketSummary(result);
+        if (!summary) return '';
+
+        return `
+            <div class="qv-section-title">Polymarket</div>
+            <div class="qv-stats-grid">
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Poly Win Rate</div>
+                    <div class="qv-stat-value ${summary.winRate >= 0.5 ? 'positive' : 'negative'}">
+                        ${(summary.winRate * 100).toFixed(1)}%
+                    </div>
+                </div>
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Trade Coverage</div>
+                    <div class="qv-stat-value">${(summary.coverage * 100).toFixed(1)}%</div>
+                </div>
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Poly Wins</div>
+                    <div class="qv-stat-value positive">${summary.wins}</div>
+                </div>
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Poly Losses</div>
+                    <div class="qv-stat-value negative">${summary.losses}</div>
+                </div>
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Scored Trades</div>
+                    <div class="qv-stat-value">${summary.scoredTrades}</div>
+                </div>
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Missing Rows</div>
+                    <div class="qv-stat-value">${summary.missingTrades}</div>
+                </div>
+                <div class="qv-stat-card full-width qv-poly-meta-card">
+                    <div class="qv-stat-label">Outcome Rows Loaded</div>
+                    <div class="qv-stat-value">${summary.outcomeRowsLoaded}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    private getPolymarketSummary(result: BacktestResult): QuickViewPolymarketSummary | null {
+        const wins = result.trades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
+        const losses = result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
+        const scoredTrades = wins + losses;
+        const summary = result.polymarketTradeSummary;
+
+        if (!summary && scoredTrades === 0) {
+            return null;
+        }
+
+        const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
+        const missingTrades = summary?.missingOutcomeTrades ?? Math.max(0, totalTrades - scoredTrades);
+        const coverageBase = Math.max(0, scoredTrades + missingTrades);
+        const coverage = coverageBase > 0 ? scoredTrades / coverageBase : 0;
+
+        return {
+            wins,
+            losses,
+            scoredTrades,
+            missingTrades,
+            coverage,
+            winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
+            outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? 0,
+        };
+    }
 
     private fmtPrice(price: number): string {
         return formatDisplayPrice(price);
