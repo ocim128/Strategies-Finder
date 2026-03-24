@@ -178,7 +178,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     const strategyPlans: StrategyPlan[] = [];
     let totalRuns = 0;
     for (const selection of selectedStrategies) {
-        const extendedDefaults = buildFinderSearchBaseParams(selection.strategy, settings);
+        const extendedDefaults = buildFinderSearchBaseParams(selection.strategy, settings, options);
 
         const generationOptions = options.mode === "robust_random_wf"
             ? { ...options, robustSeed: deriveStrategySeed(options.robustSeed, selection.key) }
@@ -222,7 +222,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
             }
 
             const params = plan.paramSets[paramIndex++];
-            const { backtestSettings, rustBacktestSettings } = resolveFinderRiskOverrides(settings, rustSettings, params);
+            const { backtestSettings, rustBacktestSettings } = resolveFinderRiskOverrides(settings, rustSettings, params, options);
 
             batch.push({
                 id: nextJobId++,
@@ -1098,7 +1098,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         callbacks.setStatus("Using Rust native random finder...");
         callbacks.setProgress(12, "Rust native finder running...");
 
-        const baseParams = buildFinderSearchBaseParams(selected.strategy, input.settings);
+        const baseParams = buildFinderSearchBaseParams(selected.strategy, input.settings, input.options);
         const rustFinderOptions = {
             mode: "random" as const,
             sortPriority: input.options.sortPriority,
@@ -1555,7 +1555,7 @@ async function reconcileSingleTimeframeTopResults(
         }
 
         try {
-            const { backtestSettings } = resolveFinderRiskOverrides(input.settings, rustSettings, candidate.params);
+            const { backtestSettings } = resolveFinderRiskOverrides(input.settings, rustSettings, candidate.params, input.options);
             const preparedFinderData = getPreparedFinderData(
                 preparedDataCache,
                 candidate.key,

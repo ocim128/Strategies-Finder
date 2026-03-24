@@ -85,7 +85,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     const strategyPlans: StrategyPlan[] = [];
     let totalRuns = 0;
     for (const selection of selectedStrategies) {
-        const extendedDefaults = buildFinderSearchBaseParams(selection.strategy, settings);
+        const extendedDefaults = buildFinderSearchBaseParams(selection.strategy, settings, options);
 
         const generationOptions = options.mode === "robust_random_wf"
             ? { ...options, robustSeed: deriveStrategySeed(options.robustSeed, selection.key) }
@@ -129,7 +129,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
             }
 
             const params = plan.paramSets[paramIndex++];
-            const { backtestSettings, rustBacktestSettings } = resolveFinderRiskOverrides(settings, rustSettings, params);
+            const { backtestSettings, rustBacktestSettings } = resolveFinderRiskOverrides(settings, rustSettings, params, options);
 
             batch.push({
                 id: nextJobId++,

@@ -28,6 +28,7 @@ export interface FinderOptions {
     tradeFilterEnabled: boolean;
     minTrades: number;
     maxTrades: number;
+    freezeRiskManagement?: boolean;
     comboEnabled?: boolean;
     comboPrimaryConfigName?: string;
 }

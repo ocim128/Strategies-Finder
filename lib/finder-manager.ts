@@ -44,6 +44,7 @@ export class FinderManager {
 	private isRunning = false;
 	private displayResults: FinderResult[] = [];
 	private lastFinderRunBacktestSettings: ReturnType<typeof settingsManager.getBacktestSettings> | null = null;
+	private lastFinderOptions: FinderOptions | null = null;
 	private strategyToggles: Map<string, HTMLInputElement> = new Map();
 	private strategyItems: Map<string, HTMLDivElement> = new Map();
 	private strategyOrder: string[] = [];
@@ -604,7 +605,13 @@ export class FinderManager {
 
 		this.isRunning = true;
 		this.lastFinderRunBacktestSettings = null;
+		this.lastFinderOptions = null;
 		const options = this.readOptions();
+		this.lastFinderOptions = {
+			...options,
+			sortPriority: [...options.sortPriority],
+			timeframes: [...(options.timeframes ?? [])],
+		};
 		const runButton = this.getDom().runFinder;
 		const setLoading = (loading: boolean) => {
 			runButton.disabled = loading;
@@ -765,6 +772,7 @@ export class FinderManager {
 			? Math.round(this.readFinderNumberInput(dom.finderTradesMax, Number.POSITIVE_INFINITY, 0))
 			: Number.POSITIVE_INFINITY;
 		const maxTrades = Math.max(minTrades, maxTradesRaw);
+		const freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
 		const comboEnabled = dom.finderComboToggle.checked;
 		const comboPrimaryConfigName = comboEnabled ? (dom.finderComboPrimarySelect.value || undefined) : undefined;
 		return {
@@ -781,6 +789,7 @@ export class FinderManager {
 			tradeFilterEnabled,
 			minTrades,
 			maxTrades,
+			freezeRiskManagement,
 			comboEnabled,
 			comboPrimaryConfigName,
 		};
@@ -1041,7 +1050,7 @@ export class FinderManager {
 		const baseSettings = this.lastFinderRunBacktestSettings
 			? this.cloneBacktestSettings(this.lastFinderRunBacktestSettings)
 			: settingsManager.getBacktestSettings();
-		const mergedSettings = mergeFinderRiskParamsIntoBacktestSettings(baseSettings, result.params);
+		const mergedSettings = mergeFinderRiskParamsIntoBacktestSettings(baseSettings, result.params, this.lastFinderOptions ?? undefined);
 		settingsManager.applyBacktestSettings(mergedSettings);
 	}
 

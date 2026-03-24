@@ -7,7 +7,7 @@ import type {
     StrategyParams,
 } from "../strategies";
 import { computeEdgeStatistics } from "../strategies/backtest/edge-statistics";
-import type { FinderMetric, FinderResult } from "../types/finder";
+import type { FinderMetric, FinderOptions, FinderResult } from "../types/finder";
 
 export type FinderPreparedDataCache = WeakMap<OHLCVData[], Map<string, unknown>>;
 
@@ -267,8 +267,19 @@ function usesAtrRiskSettings(settings: BacktestSettings): boolean {
     );
 }
 
-export function buildFinderSearchBaseParams(strategy: Strategy, settings: BacktestSettings): StrategyParams {
+function isRiskManagementFrozen(options?: Pick<FinderOptions, "freezeRiskManagement">): boolean {
+    return options?.freezeRiskManagement === true;
+}
+
+export function buildFinderSearchBaseParams(
+    strategy: Strategy,
+    settings: BacktestSettings,
+    options?: Pick<FinderOptions, "freezeRiskManagement">
+): StrategyParams {
     const baseParams: StrategyParams = { ...strategy.defaultParams };
+    if (isRiskManagementFrozen(options)) {
+        return baseParams;
+    }
 
     if (usesAtrRiskSettings(settings) && Number.isFinite(settings.atrPeriod)) {
         baseParams.atrPeriod = clampAtrPeriod(Number(settings.atrPeriod));
@@ -295,8 +306,16 @@ export function buildFinderSearchBaseParams(strategy: Strategy, settings: Backte
 export function resolveFinderRiskOverrides(
     settings: BacktestSettings,
     rustSettings: BacktestSettings,
-    params: StrategyParams
+    params: StrategyParams,
+    options?: Pick<FinderOptions, "freezeRiskManagement">
 ): { backtestSettings: BacktestSettings; rustBacktestSettings: BacktestSettings } {
+    if (isRiskManagementFrozen(options)) {
+        return {
+            backtestSettings: settings,
+            rustBacktestSettings: rustSettings,
+        };
+    }
+
     let hasBacktestOverrides = false;
     let hasRustOverrides = false;
     const backtestOverrides: Partial<BacktestSettings> = {};
@@ -350,9 +369,14 @@ export function mergeFinderRiskParamsIntoBacktestSettings<
     T extends BacktestSettings & { riskSettingsToggle?: boolean }
 >(
     settings: T,
-    params: StrategyParams
+    params: StrategyParams,
+    options?: Pick<FinderOptions, "freezeRiskManagement">
 ): T {
     const merged = { ...settings };
+    if (isRiskManagementFrozen(options)) {
+        return merged;
+    }
+
     const mergedRecord = merged as unknown as Record<string, number | undefined>;
     const usesAtrRisk =
         settings.riskSettingsToggle === true
@@ -479,8 +503,12 @@ export function extractRustFinderCandidates(
     return candidates;
 }
 
-export function buildRustFinderBaseParams(strategy: Strategy, settings: BacktestSettings): StrategyParams {
-    return buildFinderSearchBaseParams(strategy, settings);
+export function buildRustFinderBaseParams(
+    strategy: Strategy,
+    settings: BacktestSettings,
+    options?: Pick<FinderOptions, "freezeRiskManagement">
+): StrategyParams {
+    return buildFinderSearchBaseParams(strategy, settings, options);
 }
 
 export function selectPrescreenDataSlice(data: OHLCVData[]): OHLCVData[] {

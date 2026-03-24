@@ -288,7 +288,7 @@ async function evaluateRobustCell(args: {
     const stageACandidates: RobustCellCandidate[] = [];
     for (let i = 0; i < paramSets.length; i++) {
         const params = paramSets[i];
-        const backtestSettings = resolveFinderRiskOverrides(robustSettings, robustSettings, params).backtestSettings;
+        const backtestSettings = resolveFinderRiskOverrides(robustSettings, robustSettings, params, input.options).backtestSettings;
         try {
             const holdoutResult = runRobustHoldoutEvaluation(
                 holdoutData,
@@ -323,7 +323,7 @@ async function evaluateRobustCell(args: {
     const stageBCandidates: RobustWfCandidate[] = [];
     for (let i = 0; i < stageASurvivors.length; i++) {
         const candidate = stageASurvivors[i];
-        const backtestSettings = resolveFinderRiskOverrides(robustSettings, robustSettings, candidate.params).backtestSettings;
+        const backtestSettings = resolveFinderRiskOverrides(robustSettings, robustSettings, candidate.params, input.options).backtestSettings;
         try {
             const wfResult = await runRobustFixedParamWalkForward(
                 dataset.data,
@@ -360,7 +360,7 @@ async function evaluateRobustCell(args: {
     const stageCCandidates: RobustWfCandidate[] = [];
     for (let i = 0; i < stageBSurvivors.length; i++) {
         const candidate = stageBSurvivors[i];
-        const backtestSettings = resolveFinderRiskOverrides(robustSettings, robustSettings, candidate.params).backtestSettings;
+        const backtestSettings = resolveFinderRiskOverrides(robustSettings, robustSettings, candidate.params, input.options).backtestSettings;
         try {
             const wfResult = await runRobustFixedParamWalkForward(
                 dataset.data,

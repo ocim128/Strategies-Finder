@@ -195,6 +195,28 @@ describe('Finder ATR risk randomization support', () => {
         expect(resolved.rustBacktestSettings.takeProfitAtr).to.equal(3);
     });
 
+    it('omits Finder risk search params when risk management is frozen', () => {
+        const strategy = {
+            defaultParams: {
+                lookback: 20,
+            },
+        } as any;
+        const settings: BacktestSettings = {
+            riskMode: 'percentage',
+            atrPeriod: 21,
+            stopLossEnabled: true,
+            stopLossPercent: 2,
+            takeProfitEnabled: true,
+            takeProfitPercent: 6,
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 5,
+        };
+
+        const baseParams = buildFinderSearchBaseParams(strategy, settings, { freezeRiskManagement: true });
+
+        expect(baseParams).to.deep.equal({ lookback: 20 });
+    });
+
     it('adds riskMaxHoldBars to finder search params for simple risk runs when enabled', () => {
         const strategy = {
             defaultParams: {
@@ -227,6 +249,35 @@ describe('Finder ATR risk randomization support', () => {
 
         expect(resolved.backtestSettings.riskMaxHoldBars).to.equal(9);
         expect('riskMaxHoldBars' in resolved.rustBacktestSettings).to.equal(false);
+    });
+
+    it('ignores Finder risk overrides when risk management is frozen', () => {
+        const settings: BacktestSettings = {
+            riskMode: 'percentage',
+            stopLossEnabled: true,
+            stopLossPercent: 2,
+            takeProfitEnabled: true,
+            takeProfitPercent: 6,
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 4,
+        };
+        const rustSettings: BacktestSettings = {
+            riskMode: 'percentage',
+            stopLossEnabled: true,
+            stopLossPercent: 2,
+            takeProfitEnabled: true,
+            takeProfitPercent: 6,
+        };
+
+        const resolved = resolveFinderRiskOverrides(
+            settings,
+            rustSettings,
+            { stopLossPercent: 9, takeProfitPercent: 12, riskMaxHoldBars: 11 },
+            { freezeRiskManagement: true }
+        );
+
+        expect(resolved.backtestSettings).to.equal(settings);
+        expect(resolved.rustBacktestSettings).to.equal(rustSettings);
     });
 
     it('adds shrinkage take-profit params to finder search params when shrinkage mode is active', () => {
@@ -587,6 +638,30 @@ describe('Finder ATR risk randomization support', () => {
                 expect((merged as Record<string, unknown>)[key]).to.equal(value, `${testCase.mode}:${key}`);
             });
         }
+    });
+
+    it('does not merge Finder risk params back into settings when risk management is frozen', () => {
+        const settings: BacktestSettings & { riskSettingsToggle?: boolean } = {
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            stopLossEnabled: true,
+            stopLossPercent: 2,
+            takeProfitEnabled: true,
+            takeProfitPercent: 6,
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 4,
+        };
+
+        const merged = mergeFinderRiskParamsIntoBacktestSettings(
+            settings,
+            { stopLossPercent: 9, takeProfitPercent: 12, riskMaxHoldBars: 11 },
+            { freezeRiskManagement: true }
+        );
+
+        expect(merged).to.not.equal(settings);
+        expect(merged.stopLossPercent).to.equal(2);
+        expect(merged.takeProfitPercent).to.equal(6);
+        expect(merged.riskMaxHoldBars).to.equal(4);
     });
 });
 
