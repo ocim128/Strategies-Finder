@@ -1,4 +1,5 @@
 import type { BacktestResult, StrategyParams, TradeDirection, TradeFilterMode } from "../types/strategies";
+import type { PolymarketEvalResult } from "../types/polymarket-outcomes";
 
 export type FinderMode = 'default' | 'grid' | 'random' | 'genetic' | 'robust_random_wf';
 export type FinderMetric =
@@ -11,7 +12,10 @@ export type FinderMetric =
     | 'expectancy'
     | 'compositeEdgeRatio'
     | 'averageGain'
-    | 'totalTrades';
+    | 'totalTrades'
+    | 'polyWinRate'
+    | 'polyCoverage'
+    | 'polyPredictions';
 
 export interface FinderOptions {
     mode: FinderMode;
@@ -31,6 +35,7 @@ export interface FinderOptions {
     freezeRiskManagement?: boolean;
     comboEnabled?: boolean;
     comboPrimaryConfigName?: string;
+    polymarketScoringEnabled?: boolean;
 }
 
 export interface EndpointSelectionAdjustment {
@@ -76,6 +81,7 @@ export interface FinderResult {
         robustScore: number;
         rejectionReasons: Record<string, number>;
     };
+    polymarketEval?: PolymarketEvalResult;
 }
 
 export interface FinderRandomBenchmark {

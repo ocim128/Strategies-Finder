@@ -447,6 +447,7 @@ export const FINDER_MANAGER_REQUIRED_IDS = [
     "finderTradesToggle",
     "finderTradesMin",
     "finderTradesMax",
+    "finderPolymarketToggle",
 ] as const;
 
 export function createFinderManagerDom() {
@@ -489,6 +490,7 @@ export function createFinderManagerDom() {
         finderTradesToggle: getRequiredElement<HTMLInputElement>("finderTradesToggle"),
         finderTradesMin: getRequiredElement<HTMLInputElement>("finderTradesMin"),
         finderTradesMax: getRequiredElement<HTMLInputElement>("finderTradesMax"),
+        finderPolymarketToggle: getRequiredElement<HTMLInputElement>("finderPolymarketToggle"),
     };
 }
 

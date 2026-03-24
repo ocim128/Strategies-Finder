@@ -21,6 +21,7 @@
     "poly:integrity": "..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-universe-integrity.ts",
     "poly:edge": "..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-btc5m-edge.ts",
     "poly:behavior": "..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-btc5m-behavior.ts",
+    "poly:sync-outcomes": "..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-sync-outcomes.ts",
     "alpha:evolve": "..\\..\\..\\node_modules\\.bin\\esno scripts\\strategy-evolution-sweep.ts",
     "alpha:surgical": "..\\..\\..\\node_modules\\.bin\\esno scripts\\surgical-optimization.ts",
     "build:types": "tsc -p tsconfig.types.json",

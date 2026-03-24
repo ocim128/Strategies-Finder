@@ -1,4 +1,4 @@
-﻿<!-- Finder Tab -->
+<!-- Finder Tab -->
 <div id="finderTab">
     <div class="section-title">Strategy Finder</div>
 
@@ -124,6 +124,17 @@
         <div class="finder-combo-note" id="finderComboNote">
             Lock a primary config. Finder searches secondary strategy params ranked by combined (AND) backtest.
         </div>
+    </div>
+
+    <div class="section-header">
+        <div class="section-title">Polymarket Scoring</div>
+        <label class="section-toggle" aria-label="Toggle Polymarket outcome scoring">
+            <input type="checkbox" id="finderPolymarketToggle">
+            <span class="section-toggle-track"></span>
+        </label>
+    </div>
+    <div class="section-body">
+        <div class="param-hint">Classification-only · 5m BTC · next-open alignment. Ranks by Polymarket outcome prediction accuracy instead of PnL.</div>
     </div>
 
     <div class="section-header">

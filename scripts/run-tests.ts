@@ -70,6 +70,8 @@ const TEST_FILES = [
     "tests/feature-dom-contracts.spec.ts",
     "tests/portfolio-lab.spec.ts",
     "tests/strategy-ensemble.spec.ts",
+    "tests/polymarket-outcome-evaluator.spec.ts",
+    "tests/finder-polymarket.spec.ts",
 ] as const;
 
 const MAX_CAPTURE_BUFFER_BYTES = 64 * 1024 * 1024;

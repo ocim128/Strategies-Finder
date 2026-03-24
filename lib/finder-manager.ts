@@ -9,7 +9,7 @@ import { dataManager } from "./data-manager";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
 
-import { DEFAULT_SORT_PRIORITY, METRIC_FULL_LABELS } from "./finder/constants";
+import { DEFAULT_SORT_PRIORITY, METRIC_FULL_LABELS, POLYMARKET_SORT_PRIORITY } from "./finder/constants";
 import { runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderTimeframeLoader, type FinderDataset } from "./finder/finder-timeframe-loader";
@@ -775,6 +775,13 @@ export class FinderManager {
 		const freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
 		const comboEnabled = dom.finderComboToggle.checked;
 		const comboPrimaryConfigName = comboEnabled ? (dom.finderComboPrimarySelect.value || undefined) : undefined;
+		const polymarketScoringEnabled = dom.finderPolymarketToggle.checked;
+
+		// In polymarket mode, force polymarket sort priority
+		if (polymarketScoringEnabled) {
+			sortPriority = [...POLYMARKET_SORT_PRIORITY];
+		}
+
 		return {
 			mode,
 			sortPriority,
@@ -789,9 +796,10 @@ export class FinderManager {
 			tradeFilterEnabled,
 			minTrades,
 			maxTrades,
-			freezeRiskManagement,
+			freezeRiskManagement: freezeRiskManagement || polymarketScoringEnabled,
 			comboEnabled,
 			comboPrimaryConfigName,
+			polymarketScoringEnabled,
 		};
 	}
 
@@ -864,7 +872,8 @@ export class FinderManager {
 			},
 			endpointAdjusted: result.endpointAdjusted,
 			endpointRemovedTrades: result.endpointRemovedTrades,
-			robustMetrics: result.robustMetrics ?? null
+			robustMetrics: result.robustMetrics ?? null,
+			polymarketEval: result.polymarketEval ?? null,
 		};
 	}
 
@@ -943,6 +952,21 @@ export class FinderManager {
 	}
 
 	private async applyResult(result: FinderResult): Promise<void> {
+		// Polymarket results: apply strategy params only, no backtest rerun
+		if (result.polymarketEval) {
+			state.set('currentStrategyKey', result.key);
+			uiManager.updateStrategyDropdown(result.key);
+			const strategy = strategyRegistry.get(result.key);
+			if (!strategy) return;
+			paramManager.render(strategy);
+			paramManager.setValues(strategy, result.params);
+			uiManager.showToast(
+				`Applied Polymarket params: ${(result.polymarketEval.winRate * 100).toFixed(1)}% win rate, ${result.polymarketEval.predictionsTaken} predictions. No backtest rerun triggered.`,
+				'success'
+			);
+			return;
+		}
+
 		if (Array.isArray(result.timeframes) && result.timeframes.length > 1) {
 			uiManager.showToast(
 				'Applied params from a multi-timeframe aggregate result. The backtest run below uses current chart timeframe only.',

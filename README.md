@@ -78,6 +78,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Pair Combiner: `lib/pair-combiner-manager.ts`, `lib/pairCombiner/*`
 - Data Mining / feature export: `lib/data-mining-manager.ts`, `lib/featureLab/*`
 - Strategy Ensemble Lab: `lib/strategy-ensemble-service.ts`
+- Polymarket Evaluator: `lib/polymarket-outcome-evaluator.ts`, `scripts/polymarket-sync-outcomes.ts`
 
 ### Alerts / Worker
 - Worker: `workers/entry-signal-worker.ts`
@@ -217,6 +218,12 @@ Recommended workflow:
 - agreement and opposition are aggregated by strategy family, not by every near-duplicate saved config
 - target filtering preserves target exits and only gates target entries
 - if no validation survivor exists, the UI explicitly labels the fallback as `In-Sample Candidate`
+
+### Evaluate Polymarket Outcomes
+Automate the inspection of 5m strategy signals as correct/incorrect outcome predictions against historical Polymarket event resolution.
+1. Sync closed Polymarket matching events to your local SQLite database using `npm run poly:sync-outcomes` (requires the Vite server running via `npm run dev`).
+2. Run standard scripts or pass UI strategies through `evaluatePolymarketOutcomes` in `lib/polymarket-outcome-evaluator.ts`.
+3. The Evaluator enforces a strict `next_open` alignment matching signal to the event window seamlessly without lookahead.
 
 ### Change UI safely
 1. Add or update markup in `html-partials/*`.

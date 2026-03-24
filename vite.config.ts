@@ -71,6 +71,25 @@ function normalizeSqliteCandle(raw: unknown): SqliteCandleRow | null {
     };
 }
 
+type PolymarketOutcomeDbRow = {
+    series_id: string;
+    event_slug: string;
+    market_slug: string;
+    interval: string;
+    event_start_ts: number;
+    event_end_ts: number;
+    yes_token_id: string;
+    no_token_id: string;
+    yes_open_price: number | null;
+    yes_entry_minute_1_price: number | null;
+    yes_entry_minute_2_price: number | null;
+    yes_entry_minute_3_price: number | null;
+    yes_entry_minute_4_price: number | null;
+    resolved_outcome_up: number;
+    resolution_source: string;
+    updated_at: number;
+};
+
 function getSqliteDb(): DatabaseSync {
     if (sqliteDb) return sqliteDb;
 
@@ -103,6 +122,29 @@ function getSqliteDb(): DatabaseSync {
             updated_at INTEGER NOT NULL,
             PRIMARY KEY(symbol, interval)
         );
+        CREATE TABLE IF NOT EXISTS polymarket_outcomes (
+            series_id TEXT NOT NULL,
+            event_slug TEXT NOT NULL,
+            market_slug TEXT NOT NULL DEFAULT '',
+            interval TEXT NOT NULL DEFAULT '5m',
+            event_start_ts INTEGER NOT NULL,
+            event_end_ts INTEGER NOT NULL,
+            yes_token_id TEXT NOT NULL,
+            no_token_id TEXT NOT NULL DEFAULT '',
+            yes_open_price REAL,
+            yes_entry_minute_1_price REAL,
+            yes_entry_minute_2_price REAL,
+            yes_entry_minute_3_price REAL,
+            yes_entry_minute_4_price REAL,
+            resolved_outcome_up INTEGER NOT NULL,
+            resolution_source TEXT NOT NULL DEFAULT '',
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY(series_id, event_slug)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pm_outcomes_series_start
+            ON polymarket_outcomes(series_id, event_start_ts);
+        CREATE INDEX IF NOT EXISTS idx_pm_outcomes_interval_start
+            ON polymarket_outcomes(interval, event_start_ts);
     `);
     sqliteDb = db;
     return db;
@@ -410,6 +452,123 @@ function localSqlitePlugin(): Plugin {
                         lastTime: Number(summary.lastTime) || null,
                         dbPath: SQLITE_DB_PATH,
                     });
+                    return;
+                }
+
+                if (method === 'GET' && path === '/load-polymarket-outcomes') {
+                    const seriesId = (requestUrl.searchParams.get('seriesId') || '').trim();
+                    const startTsRaw = requestUrl.searchParams.get('startTs');
+                    const endTsRaw = requestUrl.searchParams.get('endTs');
+                    const limitRaw = requestUrl.searchParams.get('limit');
+
+                    const startTs = startTsRaw !== null ? Number(startTsRaw) : null;
+                    const endTs = endTsRaw !== null ? Number(endTsRaw) : null;
+                    const limit = limitRaw !== null ? Math.max(1, Math.min(100000, Math.floor(Number(limitRaw) || 10000))) : 10000;
+
+                    if (startTs !== null && !Number.isFinite(startTs)) {
+                        sendJson(res, 400, { ok: false, error: 'startTs must be a finite number' });
+                        return;
+                    }
+                    if (endTs !== null && !Number.isFinite(endTs)) {
+                        sendJson(res, 400, { ok: false, error: 'endTs must be a finite number' });
+                        return;
+                    }
+
+                    const db = getSqliteDb();
+                    const conditions: string[] = [];
+                    const bindings: (string | number)[] = [];
+
+                    if (seriesId) { conditions.push('series_id = ?'); bindings.push(seriesId); }
+                    if (startTs !== null) { conditions.push('event_start_ts >= ?'); bindings.push(Math.floor(startTs)); }
+                    if (endTs !== null) { conditions.push('event_start_ts <= ?'); bindings.push(Math.floor(endTs)); }
+
+                    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+                    bindings.push(limit);
+
+                    const rows = db.prepare(`
+                        SELECT series_id, event_slug, market_slug, interval,
+                               event_start_ts, event_end_ts, yes_token_id, no_token_id,
+                               yes_open_price, yes_entry_minute_1_price, yes_entry_minute_2_price,
+                               yes_entry_minute_3_price, yes_entry_minute_4_price,
+                               resolved_outcome_up, resolution_source, updated_at
+                        FROM polymarket_outcomes
+                        ${where}
+                        ORDER BY event_start_ts ASC
+                        LIMIT ?
+                    `).all(...bindings) as PolymarketOutcomeDbRow[];
+
+                    sendJson(res, 200, { ok: true, rows, count: rows.length });
+                    return;
+                }
+
+                if (method === 'POST' && path === '/store-polymarket-outcomes') {
+                    const payload = await readJsonBody(req as IncomingMessage);
+                    const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
+                    if (rawRows.length === 0) {
+                        sendJson(res, 400, { ok: false, error: 'rows array is required and must not be empty' });
+                        return;
+                    }
+
+                    const db = getSqliteDb();
+                    const nowSec = Math.floor(Date.now() / 1000);
+
+                    const upsert = db.prepare(`
+                        INSERT INTO polymarket_outcomes (
+                            series_id, event_slug, market_slug, interval,
+                            event_start_ts, event_end_ts, yes_token_id, no_token_id,
+                            yes_open_price, yes_entry_minute_1_price, yes_entry_minute_2_price,
+                            yes_entry_minute_3_price, yes_entry_minute_4_price,
+                            resolved_outcome_up, resolution_source, updated_at
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        ON CONFLICT(series_id, event_slug) DO UPDATE SET
+                            market_slug = excluded.market_slug,
+                            interval = excluded.interval,
+                            event_start_ts = excluded.event_start_ts,
+                            event_end_ts = excluded.event_end_ts,
+                            yes_token_id = excluded.yes_token_id,
+                            no_token_id = excluded.no_token_id,
+                            yes_open_price = excluded.yes_open_price,
+                            yes_entry_minute_1_price = excluded.yes_entry_minute_1_price,
+                            yes_entry_minute_2_price = excluded.yes_entry_minute_2_price,
+                            yes_entry_minute_3_price = excluded.yes_entry_minute_3_price,
+                            yes_entry_minute_4_price = excluded.yes_entry_minute_4_price,
+                            resolved_outcome_up = excluded.resolved_outcome_up,
+                            resolution_source = excluded.resolution_source,
+                            updated_at = excluded.updated_at
+                    `);
+
+                    let upserted = 0;
+                    db.exec('BEGIN');
+                    try {
+                        for (const r of rawRows as PolymarketOutcomeDbRow[]) {
+                            if (!r.series_id || !r.event_slug) continue;
+                            upsert.run(
+                                String(r.series_id),
+                                String(r.event_slug),
+                                String(r.market_slug ?? ''),
+                                String(r.interval ?? '5m'),
+                                Number(r.event_start_ts),
+                                Number(r.event_end_ts),
+                                String(r.yes_token_id ?? ''),
+                                String(r.no_token_id ?? ''),
+                                r.yes_open_price != null ? Number(r.yes_open_price) : null,
+                                r.yes_entry_minute_1_price != null ? Number(r.yes_entry_minute_1_price) : null,
+                                r.yes_entry_minute_2_price != null ? Number(r.yes_entry_minute_2_price) : null,
+                                r.yes_entry_minute_3_price != null ? Number(r.yes_entry_minute_3_price) : null,
+                                r.yes_entry_minute_4_price != null ? Number(r.yes_entry_minute_4_price) : null,
+                                Number(r.resolved_outcome_up),
+                                String(r.resolution_source ?? ''),
+                                nowSec,
+                            );
+                            upserted++;
+                        }
+                        db.exec('COMMIT');
+                    } catch (error) {
+                        db.exec('ROLLBACK');
+                        throw error;
+                    }
+
+                    sendJson(res, 200, { ok: true, upserted });
                     return;
                 }
 

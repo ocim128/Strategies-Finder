@@ -120,25 +120,37 @@ export class FinderUI {
             const netLabel = item.robustMetrics ? "OOS Net" : "Net";
             const pfLabel = item.robustMetrics ? "OOS PF" : "PF";
 
-            metrics.appendChild(this.createMetricChip(`${netLabel} ${this.formatCurrency(result.netProfit)}`));
-            metrics.appendChild(this.createMetricChip(`${pfLabel} ${this.formatProfitFactor(result.profitFactor)}`));
-            metrics.appendChild(this.createMetricChip(`Sharpe ${result.sharpeRatio.toFixed(2)}`));
-            if (Number.isFinite(item.compositeEdgeRatio)) {
-                metrics.appendChild(this.createMetricChip(`ER ${item.compositeEdgeRatio!.toFixed(2)}`));
-            }
-            metrics.appendChild(this.createMetricChip(`DD ${result.maxDrawdownPercent.toFixed(2)}%`));
-            metrics.appendChild(this.createMetricChip(`Trades ${result.totalTrades}`));
-            if (item.robustMetrics) {
-                const robust = item.robustMetrics;
-                metrics.appendChild(this.createMetricChip(`Robust ${robust.robustScore.toFixed(1)}`));
-                metrics.appendChild(this.createMetricChip(`Pass ${(robust.passRate * 100).toFixed(1)}%`));
-                metrics.appendChild(this.createMetricChip(`Top10 Exp ${robust.topDecileMedianOOSExpectancy.toFixed(3)}`));
-                metrics.appendChild(this.createMetricChip(`Stages ${robust.sampledParams}>${robust.stageASurvivors}>${robust.stageBSurvivors}>${robust.stageCSurvivors}`));
-            }
-            if (item.endpointAdjusted) {
-                const selectionResult = getFinderSelectionResult(item);
-                metrics.appendChild(this.createMetricChip(this.formatSelectionSummary(selectionResult)));
-                metrics.appendChild(this.createMetricChip(`Endpoint bias removed (${item.endpointRemovedTrades})`));
+            // Polymarket mode: show classification metrics instead of PnL
+            if (item.polymarketEval) {
+                const poly = item.polymarketEval;
+                metrics.appendChild(this.createMetricChip(`Poly Win ${(poly.winRate * 100).toFixed(1)}%`));
+                metrics.appendChild(this.createMetricChip(`Coverage ${(poly.coverage * 100).toFixed(1)}%`));
+                metrics.appendChild(this.createMetricChip(`Pred ${poly.predictionsTaken}`));
+                metrics.appendChild(this.createMetricChip(`Wins ${poly.wins}`));
+                if (poly.alwaysYesBaselineWinRate !== undefined) {
+                    metrics.appendChild(this.createMetricChip(`BaseY ${(poly.alwaysYesBaselineWinRate * 100).toFixed(1)}%`));
+                }
+            } else {
+                metrics.appendChild(this.createMetricChip(`${netLabel} ${this.formatCurrency(result.netProfit)}`));
+                metrics.appendChild(this.createMetricChip(`${pfLabel} ${this.formatProfitFactor(result.profitFactor)}`));
+                metrics.appendChild(this.createMetricChip(`Sharpe ${result.sharpeRatio.toFixed(2)}`));
+                if (Number.isFinite(item.compositeEdgeRatio)) {
+                    metrics.appendChild(this.createMetricChip(`ER ${item.compositeEdgeRatio!.toFixed(2)}`));
+                }
+                metrics.appendChild(this.createMetricChip(`DD ${result.maxDrawdownPercent.toFixed(2)}%`));
+                metrics.appendChild(this.createMetricChip(`Trades ${result.totalTrades}`));
+                if (item.robustMetrics) {
+                    const robust = item.robustMetrics;
+                    metrics.appendChild(this.createMetricChip(`Robust ${robust.robustScore.toFixed(1)}`));
+                    metrics.appendChild(this.createMetricChip(`Pass ${(robust.passRate * 100).toFixed(1)}%`));
+                    metrics.appendChild(this.createMetricChip(`Top10 Exp ${robust.topDecileMedianOOSExpectancy.toFixed(3)}`));
+                    metrics.appendChild(this.createMetricChip(`Stages ${robust.sampledParams}>${robust.stageASurvivors}>${robust.stageBSurvivors}>${robust.stageCSurvivors}`));
+                }
+                if (item.endpointAdjusted) {
+                    const selectionResult = getFinderSelectionResult(item);
+                    metrics.appendChild(this.createMetricChip(this.formatSelectionSummary(selectionResult)));
+                    metrics.appendChild(this.createMetricChip(`Endpoint bias removed (${item.endpointRemovedTrades})`));
+                }
             }
 
             main.appendChild(title);

@@ -10,6 +10,17 @@ export function getFinderSelectionResult(item: FinderResult): BacktestResult {
 }
 
 export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): number {
+    // Polymarket metrics take priority when available
+    if (item.polymarketEval) {
+        switch (metric) {
+            case "polyWinRate":
+                return item.polymarketEval.winRate;
+            case "polyCoverage":
+                return item.polymarketEval.coverage;
+            case "polyPredictions":
+                return item.polymarketEval.predictionsTaken;
+        }
+    }
     const result = getFinderSelectionResult(item);
     switch (metric) {
         case "netProfit":
@@ -35,6 +46,10 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
             return result.avgWin;
         case "totalTrades":
             return result.totalTrades;
+        case "polyWinRate":
+        case "polyCoverage":
+        case "polyPredictions":
+            return 0; // No polymarketEval present
         default:
             return 0;
     }

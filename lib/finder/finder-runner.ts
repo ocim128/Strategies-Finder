@@ -17,6 +17,7 @@ import { runSingleTimeframe } from "./finder-runner-single";
 import { runMultiTimeframe } from "./finder-runner-multi";
 import { runGeneticFinder } from "./finder-runner-genetic";
 import { runRobustRandomWalkForward } from "./finder-runner-robust-wf";
+import { runPolymarketFinder } from "./finder-runner-polymarket";
 import {
     buildFinderSearchBaseParams,
     resolveFinderCandidateBacktestSettings,
@@ -71,6 +72,11 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     const usingMultiTimeframe = options.multiTimeframeEnabled === true;
 
     const flags = computeDatasetFlags(input.ohlcvData.length, settings, options, false);
+
+    // Polymarket classification mode intercepts before any backtest logic
+    if (options.polymarketScoringEnabled) {
+        return runPolymarketFinder(input, callbacks);
+    }
 
     if (options.mode === "genetic") {
         return runGeneticFinder({
