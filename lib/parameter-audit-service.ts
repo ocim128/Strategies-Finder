@@ -5,7 +5,7 @@ import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { dataManager } from "./data-manager";
 import { debugLogger } from "./debug-logger";
-import { createParameterAuditDom, type ParameterAuditDom } from "./feature-dom-contracts";
+import { createParameterAuditDom, type ParameterAuditDom } from "./parameter-audit-dom";
 import { finderManager } from "./finder-manager";
 import { buildParameterAuditReport, computeParameterAuditPerformanceScore } from "./parameter-audit-logic";
 import { paramManager } from "./param-manager";

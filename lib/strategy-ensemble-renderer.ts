@@ -1,4 +1,4 @@
-import type { EnsembleLabDom } from "./feature-dom-contracts";
+import type { EnsembleLabDom } from "./strategy-ensemble-dom";
 import { resolveLiveRecommendation } from "./strategy-ensemble-live-context";
 import { buildRadarFindings } from "./strategy-ensemble-radar";
 import { describeScenarioPrimaryRow } from "./strategy-ensemble-rules";

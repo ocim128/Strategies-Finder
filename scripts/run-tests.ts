@@ -39,8 +39,11 @@ type TestRunSummary = {
 };
 
 const TEST_FILES = [
+    "tests/app-bootstrap.spec.ts",
+    "tests/backtest-capital-settings.spec.ts",
     "tests/strategy-calculations.spec.ts",
     "tests/time-parity.spec.ts",
+    "tests/data-interval-utils.spec.ts",
     "tests/signal-stability.spec.ts",
     "tests/walk-forward-engine.spec.ts",
     "tests/strategies-lib/noise_to_signal_efficiency_breakout.spec.ts",
@@ -52,6 +55,7 @@ const TEST_FILES = [
     "tests/strategies-lib/supertrend-friction-pinch.spec.ts",
     "tests/strategies-lib/wfa-sensitive-normalization.spec.ts",
     "tests/strategies-lib/retained-strategy-registration.spec.ts",
+    "tests/strategy-manifest-sync.spec.ts",
     "tests/pivot-detection.spec.ts",
     "tests/backtesting-engine.spec.ts",
     "tests/trade-analyzer.spec.ts",
@@ -63,6 +67,8 @@ const TEST_FILES = [
     "tests/entry-signal-worker.spec.ts",
     "tests/settings-compat.spec.ts",
     "tests/finder-cache-decision.spec.ts",
+    "tests/finder-manager-logic.spec.ts",
+    "tests/state-domains.spec.ts",
     "tests/edge-statistics.spec.ts",
     "tests/walk-forward-thresholds.spec.ts",
     "tests/walk-forward-permutation.spec.ts",

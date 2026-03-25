@@ -21,6 +21,11 @@ import {
 import { DEFAULT_BACKTEST_SETTINGS } from './lib/settings-model';
 import { readBoolean, readNumber, toBooleanLike, toFiniteNumber } from './lib/settings-parse-utils';
 import { SNAPSHOT_CONFIGS } from './lib/backtest-settings-resolver';
+import {
+    BACKTEST_SETTINGS_DOM_CONTRACTS,
+    getBacktestDomSettingContract,
+    resolveBacktestDomSettingWriteValue,
+} from './lib/backtest-settings-dom-contract';
 import { strategyManifest } from './lib/strategies/manifest';
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from './lib/strategy-defaults';
 
@@ -385,6 +390,39 @@ describe('Backtest settings compatibility', () => {
 
             expect((DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)[key]).to.equal(value);
         }
+    });
+
+    it('keeps the shared settings DOM contract unique and aligned with legacy aliases', () => {
+        expect(new Set(BACKTEST_SETTINGS_DOM_CONTRACTS.map((contract) => contract.domId)).size)
+            .to.equal(BACKTEST_SETTINGS_DOM_CONTRACTS.length);
+
+        expect(getBacktestDomSettingContract('warmUpEntryToggle')?.legacyAliases).to.deep.equal(['warmUpEntryEnabled']);
+        expect(getBacktestDomSettingContract('confirmRsiPeriod')?.legacyAliases).to.deep.equal(['rsiPeriod']);
+        expect(getBacktestDomSettingContract('tradeFilterMode')?.legacyAliases).to.deep.equal(['entryConfirmation']);
+        expect(getBacktestDomSettingContract('tradeFilterSettingsToggle')?.legacyAliases).to.deep.equal(['entrySettingsToggle']);
+    });
+
+    it('derives shared write-back values for trade filter toggles from the same DOM contract', () => {
+        const tradeFilterToggle = getBacktestDomSettingContract('tradeFilterSettingsToggle');
+        const entryToggle = getBacktestDomSettingContract('entrySettingsToggle');
+
+        expect(tradeFilterToggle).to.not.equal(undefined);
+        expect(entryToggle).to.not.equal(undefined);
+
+        const inferred = {
+            ...DEFAULT_BACKTEST_SETTINGS,
+            tradeFilterSettingsToggle: false,
+            tradeFilterMode: 'rsi' as const,
+        };
+        const explicitLegacy = {
+            ...DEFAULT_BACKTEST_SETTINGS,
+            tradeFilterSettingsToggle: false,
+            entrySettingsToggle: true,
+        };
+
+        expect(resolveBacktestDomSettingWriteValue(tradeFilterToggle!, inferred)).to.equal(false);
+        expect(resolveBacktestDomSettingWriteValue(entryToggle!, inferred)).to.equal(false);
+        expect(resolveBacktestDomSettingWriteValue(entryToggle!, explicitLegacy)).to.equal(true);
     });
 
     it('normalizes malformed stored app settings instead of crashing on partial payloads', () => {

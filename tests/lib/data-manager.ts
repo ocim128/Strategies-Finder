@@ -47,7 +47,15 @@ import {
     DATA_CHART_TOTAL_LIMIT,
     DATA_MAX_RECONNECT_ATTEMPTS,
 } from "./data/constants";
-import { commitOhlcvData } from "./state-actions";
+import {
+    estimateBybitSeedOverlayBars as estimateBybitSeedOverlayBarsValue,
+    getImportStorageIntervals as resolveImportStorageIntervals,
+    getStorageInterval as resolveStorageInterval,
+    isIntervalAlignedTime as checkIntervalAlignedTime,
+    sliceCandlesToLookback,
+    takeLastCandles as trimToLastCandles,
+} from "./data/data-interval-utils";
+import { commitOhlcvData, setMarketSelection } from "./state-actions";
 
 type DataProvider = 'binance' | 'bybit-tradfi' | 'polymarket';
 type NonBinanceLocalSource = 'imported' | 'sqlite' | 'cache' | 'seed';
@@ -126,7 +134,7 @@ export class DataManager {
         const normalizedInterval = interval.trim().toLowerCase();
         if (!normalizedSymbol || !normalizedInterval || candles.length === 0) return;
 
-        const storageIntervals = this.getImportStorageIntervals(normalizedInterval);
+        const storageIntervals = resolveImportStorageIntervals(normalizedInterval);
         const now = Date.now();
         for (const storageInterval of storageIntervals) {
             const cacheKey = this.buildCacheKey(normalizedSymbol, storageInterval);
@@ -243,7 +251,7 @@ export class DataManager {
             'warning',
             'Primary data source was unavailable, so fallback data is being used.'
         );
-        return this.sliceToLookback(fallback, chain.lookbackBars);
+        return sliceCandlesToLookback(fallback, chain.lookbackBars);
     }
 
     private async fetchMockChartData(
@@ -258,7 +266,7 @@ export class DataManager {
         if (signal?.aborted) return [];
         const mockData = generateMockData(symbol, interval);
         uiManager.updateSymbolDataSource('Mock data', 'seed', 'Chart is using generated mock candles.');
-        return this.sliceToLookback(mockData, lookbackBars);
+        return sliceCandlesToLookback(mockData, lookbackBars);
     }
 
     private async fetchBinanceChartData(
@@ -309,7 +317,7 @@ export class DataManager {
                         ? 'Historical candles came from the local CSV seed and the latest candle was refreshed from Bybit.'
                         : 'Historical candles came from local cache/SQLite and the latest candle was refreshed from Bybit.'
                 );
-                return this.sliceToLookback(seededWithLatest.candles, lookbackBars);
+                return sliceCandlesToLookback(seededWithLatest.candles, lookbackBars);
             }
 
             const localSourceMeta = this.describeLocalSource(localNonBinance.source);
@@ -318,7 +326,7 @@ export class DataManager {
                 localNonBinance.source === 'seed' ? 'warning' : 'seed',
                 `${localSourceMeta.title} Latest refresh from Bybit did not return a candle.`
             );
-            return this.sliceToLookback(seededWithLatest.candles, lookbackBars);
+            return sliceCandlesToLookback(seededWithLatest.candles, lookbackBars);
         }
 
         const data = typeof lookbackBars === 'number'
@@ -337,7 +345,7 @@ export class DataManager {
                 'live',
                 'Chart data is loaded directly from Bybit TradFi.'
             );
-            return this.sliceToLookback(merged, lookbackBars);
+            return sliceCandlesToLookback(merged, lookbackBars);
         }
         if (localNonBinance && localNonBinance.candles.length > 0) {
             const localSourceMeta = this.describeLocalSource(localNonBinance.source);
@@ -346,7 +354,7 @@ export class DataManager {
                 'warning',
                 `${localSourceMeta.title} Bybit TradFi did not return fresh intraday chart data, so local data is being used.`
             );
-            return this.sliceToLookback(localNonBinance.candles, lookbackBars);
+            return sliceCandlesToLookback(localNonBinance.candles, lookbackBars);
         }
         uiManager.showToast('Bybit TradFi returned no data.', 'error');
         uiManager.updateSymbolDataSource(
@@ -368,7 +376,7 @@ export class DataManager {
         if (localNonBinance) {
             const localSourceMeta = this.describeLocalSource(localNonBinance.source);
             uiManager.updateSymbolDataSource(localSourceMeta.label, 'seed', localSourceMeta.title);
-            return this.sliceToLookback(localNonBinance.candles, lookbackBars);
+            return sliceCandlesToLookback(localNonBinance.candles, lookbackBars);
         }
 
         const data = typeof lookbackBars === 'number'
@@ -540,8 +548,7 @@ export class DataManager {
     public async setSymbol(symbol: string, interval: string): Promise<OHLCVData[]> {
         this.clearImportedData();
         this.stopStreaming();
-        state.set('currentSymbol', symbol);
-        state.set('currentInterval', interval);
+        setMarketSelection({ symbol, interval });
 
         uiManager.clearUI();
         uiManager.updateTimeframeUI(interval);
@@ -830,56 +837,16 @@ export class DataManager {
             : undefined;
     }
 
-    private getImportStorageIntervals(interval: string): string[] {
-        if (interval.includes('@close-')) {
-            return [interval];
-        }
-        if (getIntervalSeconds(interval) === 7200) {
-            return [`${interval}@close-odd`, `${interval}@close-even`];
-        }
-        return [interval];
-    }
-
     private getStorageInterval(interval: string): string {
-        const normalized = interval.trim().toLowerCase();
-        if (normalized.includes('@close-')) {
-            return normalized;
-        }
-        if (getIntervalSeconds(normalized) === 7200) {
-            return `${normalized}@close-${this.getTwoHourCloseParity()}`;
-        }
-        return normalized;
+        return resolveStorageInterval(interval, this.getTwoHourCloseParity());
     }
 
     private takeLastCandles(candles: OHLCVData[], limit: number): OHLCVData[] {
-        const normalizedLimit = Math.max(0, Math.floor(limit));
-        if (normalizedLimit <= 0) {
-            return [];
-        }
-        return candles.length > normalizedLimit ? candles.slice(-normalizedLimit) : candles;
-    }
-
-    private sliceToLookback(candles: OHLCVData[], lookbackBars: number | null): OHLCVData[] {
-        return typeof lookbackBars === 'number' ? this.takeLastCandles(candles, lookbackBars) : candles;
+        return trimToLastCandles(candles, limit);
     }
 
     private getBybitSeedOverlayBars(interval: string, seedData: OHLCVData[]): number {
-        const intervalSeconds = getIntervalSeconds(interval);
-        if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
-            return 30;
-        }
-
-        const lastSeedTime = seedData.length > 0
-            ? parseTimeToUnixSeconds(seedData[seedData.length - 1].time)
-            : null;
-        if (lastSeedTime === null) {
-            return 30;
-        }
-
-        const nowSec = Math.floor(Date.now() / 1000);
-        const gapSec = Math.max(0, nowSec - lastSeedTime);
-        const estimatedGapBars = Math.ceil(gapSec / intervalSeconds);
-        return Math.max(12, Math.min(240, estimatedGapBars + 10));
+        return estimateBybitSeedOverlayBarsValue(interval, seedData);
     }
 
     private async mergeBybitRecentIntoSeed(
@@ -921,33 +888,8 @@ export class DataManager {
         return isTwoHourParityAlignedFromTime(candles, parity);
     }
 
-    private getIntervalAlignment(interval: string): { intervalSeconds: number; phaseOffsetSeconds: number } | null {
-        const normalized = interval.trim().toLowerCase();
-        const baseInterval = normalized.split('@')[0];
-        const intervalSeconds = getIntervalSeconds(baseInterval);
-        if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
-            return null;
-        }
-
-        // Keep weekly/monthly anchors untouched to avoid provider-dependent boundary assumptions.
-        if (intervalSeconds > 86400) {
-            return null;
-        }
-
-        const phaseOffsetSeconds = intervalSeconds === 7200 && normalized.includes('@close-even')
-            ? 3600
-            : 0;
-        return { intervalSeconds, phaseOffsetSeconds };
-    }
-
     private isIntervalAlignedTime(timeSec: number, interval: string): boolean {
-        if (!Number.isFinite(timeSec)) return false;
-        const alignment = this.getIntervalAlignment(interval);
-        if (!alignment) return true;
-
-        const { intervalSeconds, phaseOffsetSeconds } = alignment;
-        const remainder = ((timeSec - phaseOffsetSeconds) % intervalSeconds + intervalSeconds) % intervalSeconds;
-        return remainder === 0;
+        return checkIntervalAlignedTime(timeSec, interval);
     }
 
     private sanitizeBinanceCandles(
@@ -1611,7 +1553,7 @@ export class DataManager {
         let changed = false;
         let gapBars = 0;
         if (currentData.length === 0) {
-            state.set('ohlcvData', [updatedCandle]);
+            commitOhlcvData([updatedCandle], 'realtime_replace_empty');
             changed = true;
         } else {
             const lastCandle = currentData[currentData.length - 1];

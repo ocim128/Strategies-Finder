@@ -12,7 +12,7 @@ import {
 import { alertService, ALERT_WORKER_URL_CHANGED_EVENT } from '../alert-service';
 import { getOptionalElement } from '../dom-utils';
 import { uiManager } from '../ui-manager';
-import { state } from '../state';
+import { setMarketSelection } from '../state-actions';
 import { dataManager } from '../data-manager';
 import { settingsManager } from '../settings-manager';
 import { backtestService } from '../backtest-service';
@@ -267,8 +267,7 @@ function renderPositions(positions: LivePosition[], closedTrades: ClosedTrade[])
 // Event handlers
 async function handlePositionClick(position: LivePosition | ClosedTrade): Promise<void> {
     try {
-        state.set('currentSymbol', position.symbol);
-        state.set('currentInterval', position.interval);
+        setMarketSelection({ symbol: position.symbol, interval: position.interval });
 
         const symbolInput = getOptionalElement<HTMLInputElement>('symbolInput');
         const intervalSelect = getOptionalElement<HTMLSelectElement>('intervalSelect');

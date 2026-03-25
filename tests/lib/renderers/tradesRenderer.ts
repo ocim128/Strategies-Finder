@@ -3,7 +3,7 @@ import { OHLCVData, Trade } from "../strategies/index";
 import { setVisible } from "../dom-utils";
 import { state } from "../state";
 import { resolveOpenTradeDisplayMetrics } from "../open-trade-display";
-import { createTradesRendererDom, type TradesRendererDom } from "../feature-dom-contracts";
+import { createTradesRendererDom, type TradesRendererDom } from "./trades-renderer-dom";
 
 export class TradesRenderer {
     private dom: TradesRendererDom | null = null;

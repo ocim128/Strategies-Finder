@@ -3,7 +3,7 @@ import { backtestService } from "./backtest-service";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { trimToClosedCandles } from "./closed-candle-utils";
 import { dataManager } from "./data-manager";
-import { createPortfolioLabDom, type PortfolioLabDom } from "./feature-dom-contracts";
+import { createPortfolioLabDom, type PortfolioLabDom } from "./portfolio-lab-dom";
 import { debugLogger } from "./debug-logger";
 import { paramManager } from "./param-manager";
 import {
@@ -66,6 +66,7 @@ import {
     renderSummary,
 } from "./portfolioLab/portfolio-lab-html";
 import { state } from "./state";
+import { commitBacktestResult } from "./state-actions";
 import { applySignalPolarity, timeKey, type OHLCVData, type Strategy, type StrategyParams } from "./strategies";
 import { getTimeIndex } from "./strategies/backtest/backtest-utils";
 import { strategyPanelController } from "./strategy-panel-controller";
@@ -526,8 +527,10 @@ class PortfolioLabService {
             return;
         }
 
-        state.set("currentBacktestResultSource", "backtest");
-        state.set("currentBacktestResult", filterRun.result);
+        commitBacktestResult(filterRun.result, "backtest", {
+            parityResults: null,
+            reason: "portfolio_execution_filter",
+        });
         strategyPanelController.switchTab("results");
         uiManager.showToast(`Execution backtest complete: ${context.benchmarkSymbol} with ${label} (${filterRun.signals} signals).`, "success");
         this.updateStatus(

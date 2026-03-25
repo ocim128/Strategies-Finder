@@ -1,4 +1,4 @@
-import type { PortfolioLabDom } from "../feature-dom-contracts";
+import type { PortfolioLabDom } from "../portfolio-lab-dom";
 import {
     escapeHtml,
     formatCorrelation,

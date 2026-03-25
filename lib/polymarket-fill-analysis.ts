@@ -1,4 +1,5 @@
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import type { PolymarketFillHistorySummary } from "./polymarket-fill-history";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import type { Trade } from "./types/strategies";
 
@@ -33,8 +34,6 @@ const WINDOW_DEFS = [
     { key: "minute_4", label: "By +4m", maxIndex: 4 },
 ] as const;
 
-type WindowDef = typeof WINDOW_DEFS[number];
-
 function clamp01(value: number): number {
     if (!Number.isFinite(value)) return 0;
     if (value <= 0) return 0;
@@ -65,58 +64,34 @@ function getTradeCheckpointPrices(trade: Trade, row: PolymarketOutcomeRow): Arra
     return yesPrices.map((price) => price === null ? null : clamp01(1 - price));
 }
 
+function getTradeWindowReferencePrices(
+    trade: Trade,
+    row: PolymarketOutcomeRow,
+    historySummary: PolymarketFillHistorySummary | undefined
+): Array<number | null> {
+    if (!historySummary || historySummary.windows.length === 0) {
+        return getTradeCheckpointPrices(trade, row);
+    }
+
+    if (trade.type === "long") {
+        return historySummary.windows.map((window) => window.yesMinPrice);
+    }
+
+    return historySummary.windows.map((window) => (
+        window.yesMaxPrice === null ? null : clamp01(1 - window.yesMaxPrice)
+    ));
+}
+
 function isPolymarketPredictionWin(trade: Trade, row: PolymarketOutcomeRow): boolean {
     return trade.type === "long"
         ? row.resolved_outcome_up === 1
         : row.resolved_outcome_up === 0;
 }
 
-function buildWindowStat(
-    def: WindowDef,
-    targetPrice: number,
-    eligibleTrades: Array<{ trade: Trade; row: PolymarketOutcomeRow }>
-): PolymarketFillWindowStat {
-    let filledTrades = 0;
-    let filledWins = 0;
-    let missingPriceTrades = 0;
-
-    for (const item of eligibleTrades) {
-        const prices = getTradeCheckpointPrices(item.trade, item.row).slice(0, def.maxIndex + 1);
-        const seenPrices = prices.filter((price): price is number => price !== null);
-        if (seenPrices.length === 0) {
-            missingPriceTrades++;
-            continue;
-        }
-
-        const filled = seenPrices.some((price) => price <= targetPrice);
-        if (!filled) {
-            continue;
-        }
-
-        filledTrades++;
-        if (isPolymarketPredictionWin(item.trade, item.row)) {
-            filledWins++;
-        }
-    }
-
-    const filledLosses = Math.max(0, filledTrades - filledWins);
-    const eligibleCount = eligibleTrades.length;
-
-    return {
-        key: def.key,
-        label: def.label,
-        filledTrades,
-        fillRate: eligibleCount > 0 ? filledTrades / eligibleCount : 0,
-        filledWins,
-        filledLosses,
-        filledWinRate: filledTrades > 0 ? filledWins / filledTrades : 0,
-        missingPriceTrades,
-    };
-}
-
 export function analyzePolymarketFillability(args: {
     trades: Trade[];
     outcomeByStartTs: Map<number, PolymarketOutcomeRow>;
+    historySummaryByStartTs?: Map<number, PolymarketFillHistorySummary>;
     targetPriceCents: number;
     scope?: PolymarketFillScope;
 }): PolymarketFillAnalysis {
@@ -125,7 +100,7 @@ export function analyzePolymarketFillability(args: {
     const targetPrice = targetPriceCents / 100;
     const filteredTrades = args.trades.filter((trade) => shouldIncludeTrade(trade, scope));
 
-    const eligibleTrades: Array<{ trade: Trade; row: PolymarketOutcomeRow }> = [];
+    const eligibleTrades: Array<{ trade: Trade; row: PolymarketOutcomeRow; historySummary?: PolymarketFillHistorySummary }> = [];
     let missingOutcomeTrades = 0;
 
     for (const trade of filteredTrades) {
@@ -141,7 +116,11 @@ export function analyzePolymarketFillability(args: {
             continue;
         }
 
-        eligibleTrades.push({ trade, row });
+        eligibleTrades.push({
+            trade,
+            row,
+            historySummary: args.historySummaryByStartTs?.get(entryTs),
+        });
     }
 
     return {
@@ -151,6 +130,41 @@ export function analyzePolymarketFillability(args: {
         selectedTrades: filteredTrades.length,
         eligibleTrades: eligibleTrades.length,
         missingOutcomeTrades,
-        windows: WINDOW_DEFS.map((def) => buildWindowStat(def, targetPrice, eligibleTrades)),
+        windows: WINDOW_DEFS.map((def) => {
+            let filledTrades = 0;
+            let filledWins = 0;
+            let missingPriceTrades = 0;
+
+            for (const item of eligibleTrades) {
+                const prices = getTradeWindowReferencePrices(item.trade, item.row, item.historySummary)
+                    .slice(0, def.maxIndex + 1);
+                const seenPrices = prices.filter((price): price is number => price !== null);
+                if (seenPrices.length === 0) {
+                    missingPriceTrades++;
+                    continue;
+                }
+
+                if (!seenPrices.some((price) => price <= targetPrice)) {
+                    continue;
+                }
+
+                filledTrades++;
+                if (isPolymarketPredictionWin(item.trade, item.row)) {
+                    filledWins++;
+                }
+            }
+
+            const filledLosses = Math.max(0, filledTrades - filledWins);
+            return {
+                key: def.key,
+                label: def.label,
+                filledTrades,
+                fillRate: eligibleTrades.length > 0 ? filledTrades / eligibleTrades.length : 0,
+                filledWins,
+                filledLosses,
+                filledWinRate: filledTrades > 0 ? filledWins / filledTrades : 0,
+                missingPriceTrades,
+            };
+        }),
     };
 }

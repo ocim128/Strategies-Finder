@@ -44,6 +44,8 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 
 ### Bootstrap and layout
 - Entry: `index.ts`
+- Bootstrap registry: `lib/app-bootstrap.ts`
+- Dependency/stage runner: `lib/bootstrap-feature-registry.ts`
 - Runtime layout injection: `lib/layout-manager.ts`
 - Runtime HTML source: `html-partials/*`
 - Feature wiring: `lib/handlers/*`
@@ -54,10 +56,12 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Browser caches: `lib/candle-cache.ts`, IndexedDB paths
 - Local SQLite API client: `lib/local-sqlite-api.ts`
 - Shared runtime state: `lib/state.ts`
+- State write surface: `lib/state-actions.ts`
+- Domain selectors: `lib/state-domains.ts`
 
 ### Strategy and backtest engine
 - Strategy registry and loading: `strategyRegistry.ts`
-- Built-in source of truth: `lib/strategies/manifest.ts`
+- Built-in source of truth: `lib/strategies/lib/*`, with `lib/strategies/manifest.ts` generated from those files
 - Worker-facing built-in library: `lib/strategies/library.ts`
 - Backtest orchestration/UI: `lib/backtest-service.ts`
 - TS engine: `lib/strategies/backtest/*`
@@ -119,9 +123,9 @@ flowchart LR
 ```
 
 ## How It Boots
-1. `index.ts` injects the runtime HTML layout from `html-partials/*`.
-2. Built-in and saved custom strategies are loaded, then the chart layer is initialized.
-3. State subscriptions and feature managers are wired, including Finder, Walk Forward, Scanner, Data Mining, Portfolio Lab, and Ensemble.
+1. `index.ts` delegates startup to `lib/app-bootstrap.ts`.
+2. The bootstrap registry injects the runtime HTML layout from `html-partials/*`.
+3. Built-in and saved custom strategies are loaded, then the chart layer and feature managers are initialized in dependency order.
 4. Saved settings are restored and applied back into UI state and feature state.
 5. Initial market data is loaded, after which reactive state updates drive chart, backtest, and renderer refreshes.
 
@@ -132,7 +136,8 @@ This app is heavily id-driven.
 The important rule is:
 - markup lives in `html-partials/*`
 - binding happens in `lib/handlers/*`, feature managers, and renderers
-- required structural ids are defined in `lib/feature-dom-contracts.ts`
+- required structural ids are defined in feature-local `*-dom.ts` modules next to their handlers, renderers, or services
+- `lib/feature-dom-contracts.ts` is a compatibility barrel that re-exports those feature-local contracts
 - the smoke test `tests/feature-dom-contracts.spec.ts` fails if a required id disappears from the partials
 
 If you rename a UI id, update the partial, the feature DOM contract, and the consuming code together.
@@ -151,10 +156,10 @@ This ordering matters because Finder, Scanner, and repeated backtests depend on 
 
 ### Strategy registration is split
 - UI and runtime loading use `strategyRegistry`
-- Built-in source of truth is `lib/strategies/manifest.ts`
+- Built-in source of truth is `lib/strategies/lib/*`, with `lib/strategies/manifest.ts` generated from those files
 - `lib/strategies/library.ts` is derived from that manifest and is what worker-side evaluation imports
 
-If you add or rename a built-in strategy, update `lib/strategies/manifest.ts` or the strategy will not load consistently.
+If you add or rename a built-in strategy, run `npm run strategies:sync-manifest` or the strategy will not load consistently.
 
 ### Settings compatibility is real
 - `tradeFilterMode` is canonical
@@ -188,7 +193,7 @@ Use:
 The short version:
 1. Create `lib/strategies/lib/<strategy-key>.ts`.
 2. Export a valid `Strategy`.
-3. Register it in `lib/strategies/manifest.ts`.
+3. Run `npm run strategies:sync-manifest`.
 4. Keep `normalizeParams(...)` aligned with `execute(...)`.
 5. Run `npm run typecheck` and confirm the strategy appears in the UI.
 
@@ -229,7 +234,7 @@ Automate the inspection of executed BTCUSDT 5m `next_open` trades against histor
 
 ### Change UI safely
 1. Add or update markup in `html-partials/*`.
-2. Add the required id to `lib/feature-dom-contracts.ts` if it is structural.
+2. Add the required id to the matching feature-local `*-dom.ts` contract if it is structural.
 3. Wire the feature through its typed DOM contract.
 4. Run typecheck and the DOM-contract smoke test.
 

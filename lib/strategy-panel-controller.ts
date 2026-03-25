@@ -1,5 +1,5 @@
 import { state } from "./state";
-import { createStrategyPanelDom } from "./feature-dom-contracts";
+import { createStrategyPanelDom } from "./strategy-panel-dom";
 import { debugLogger } from "./debug-logger";
 
 const STORAGE_KEY = "strategyPanelLayout";

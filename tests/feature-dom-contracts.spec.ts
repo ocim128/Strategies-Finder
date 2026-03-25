@@ -2,22 +2,18 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import {
-
-    ENSEMBLE_LAB_REQUIRED_IDS,
-    FINDER_MANAGER_REQUIRED_IDS,
-    PARAMETER_AUDIT_REQUIRED_IDS,
-    PAIR_COMBINER_BRIDGE_REQUIRED_IDS,
-    POLYMARKET_PANEL_REQUIRED_IDS,
-    PORTFOLIO_LAB_REQUIRED_IDS,
-    RESULTS_RENDERER_REQUIRED_IDS,
-    SETTINGS_MANAGER_REQUIRED_IDS,
-    SETTINGS_WORKSPACE_REQUIRED_IDS,
-    TRADES_RENDERER_REQUIRED_IDS,
-    UI_EVENT_HANDLER_REQUIRED_IDS,
-    UI_MANAGER_REQUIRED_IDS,
-    WALK_FORWARD_SERVICE_REQUIRED_IDS,
-} from "./lib/feature-dom-contracts";
+import { UI_EVENT_HANDLER_REQUIRED_IDS } from "./lib/handlers/ui-event-handlers-dom";
+import { SETTINGS_WORKSPACE_REQUIRED_IDS, UI_MANAGER_REQUIRED_IDS } from "./lib/ui-manager-dom";
+import { RESULTS_RENDERER_REQUIRED_IDS } from "./lib/renderers/results-renderer-dom";
+import { TRADES_RENDERER_REQUIRED_IDS } from "./lib/renderers/trades-renderer-dom";
+import { SETTINGS_MANAGER_REQUIRED_IDS } from "./lib/settings-manager-dom";
+import { POLYMARKET_PANEL_REQUIRED_IDS } from "./lib/polymarket-panel-dom";
+import { PORTFOLIO_LAB_REQUIRED_IDS } from "./lib/portfolio-lab-dom";
+import { FINDER_MANAGER_REQUIRED_IDS } from "./lib/finder/finder-manager-dom";
+import { PAIR_COMBINER_BRIDGE_REQUIRED_IDS } from "./lib/pairCombiner/pair-combiner-bridge-dom";
+import { WALK_FORWARD_SERVICE_REQUIRED_IDS } from "./lib/walk-forward-dom";
+import { PARAMETER_AUDIT_REQUIRED_IDS } from "./lib/parameter-audit-dom";
+import { ENSEMBLE_LAB_REQUIRED_IDS } from "./lib/strategy-ensemble-dom";
 
 const PARTIALS_DIR = path.join(process.cwd(), "html-partials");
 

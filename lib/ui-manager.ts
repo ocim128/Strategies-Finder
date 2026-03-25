@@ -1,6 +1,7 @@
 ﻿import { Time } from "lightweight-charts";
 import { OHLCVData, BacktestResult, Trade, EntryPreview } from "./strategies/index";
 import { state } from "./state";
+import { setCurrentStrategyKey } from "./state-actions";
 import type { TwoHourParityBacktestResults } from "./state";
 import { strategyRegistry, getStrategyList } from "../strategyRegistry";
 import { getOptionalElement, getRequiredElement } from "./dom-utils";
@@ -9,7 +10,7 @@ import { tradesRenderer } from "./renderers/tradesRenderer";
 import { paramManager } from "./param-manager";
 import { formatJakartaTime, isBusinessDayTime } from "./timezone-utils";
 import { formatDisplayPrice } from "./price-format";
-import { createSettingsWorkspaceDom, createUiManagerDom, type UiManagerDom } from "./feature-dom-contracts";
+import { createSettingsWorkspaceDom, createUiManagerDom, type UiManagerDom } from "./ui-manager-dom";
 
 export class UIManager {
     private dom: UiManagerDom | null = null;
@@ -211,7 +212,7 @@ export class UIManager {
         } else if (strategies.length > 0) {
             const fallbackKey = strategies[0].key;
             strategySelect.value = fallbackKey;
-            state.set('currentStrategyKey', fallbackKey);
+            setCurrentStrategyKey(fallbackKey);
         }
     }
 

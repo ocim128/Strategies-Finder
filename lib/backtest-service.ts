@@ -36,25 +36,20 @@ import {
     resolveBacktestSettingsFromRaw
 } from "./backtest-settings-resolver";
 import { readNumberInputValue } from "./dom-input-readers";
-import { toBooleanLike, toFiniteNumber } from "./settings-parse-utils";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { mergeStrategySignals } from "./signal-merge";
 import { resolveSubscriptionExecutionBacktestSettings } from "./alert-subscription-utils";
-import { isSmartTradeSizingMode, isTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
+import { isSmartTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
+import {
+    resolveCapitalSettingsFromRaw,
+    SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS,
+} from "./backtest-capital-settings";
 import { createDomBacktestRunHandle, type BacktestRunHandle } from "./backtest-run-presenter";
-import { commitBacktestResult, commitParityBacktestResults } from "./state-actions";
+import { commitBacktestResult, commitParityBacktestResults, setTwoHourCloseParity } from "./state-actions";
 import { annotateBacktestResultWithPolymarketOutcomes } from "./polymarket-trade-annotations";
 
 import { resolveTwoHourParityFromTime } from "./two-hour-parity";
 import { buildPostEntryPathStats as analyzeBacktestResult } from "./backtest-result-analysis";
-
-const SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS = Object.freeze({
-    initialCapital: 10000,
-    positionSize: 100,
-    commission: 0,
-    sizingMode: 'percent' as const,
-    fixedTradeAmount: 0,
-});
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
@@ -193,11 +188,11 @@ export class BacktestService {
         const previous = state.twoHourCloseParity;
         if (previous === parity) return run();
 
-        state.set('twoHourCloseParity', parity);
+        setTwoHourCloseParity(parity);
         try {
             return await run();
         } finally {
-            state.set('twoHourCloseParity', previous);
+            setTwoHourCloseParity(previous);
         }
     }
 
@@ -710,16 +705,16 @@ export class BacktestService {
     }
 
     public getCapitalSettings(): CapitalSettings {
-        const initialCapital = Math.max(0, readNumberInputValue('initialCapital', CAPITAL_DEFAULTS.initialCapital));
-        const positionSize = Math.max(0, readNumberInputValue('positionSize', CAPITAL_DEFAULTS.positionSize));
-        const commission = Math.max(0, readNumberInputValue('commission', CAPITAL_DEFAULTS.commission));
-        const fixedTradeAmount = Math.max(0, readNumberInputValue('fixedTradeAmount', CAPITAL_DEFAULTS.fixedTradeAmount));
         const fixedTradeToggle = getOptionalElement<HTMLInputElement>('fixedTradeToggle');
         const tradeSizingMode = getOptionalElement<HTMLSelectElement>('tradeSizingMode');
-        const sizingMode: TradeSizingMode = fixedTradeToggle?.checked
-            ? (this.readSizingMode(tradeSizingMode?.value) ?? 'fixed')
-            : 'percent';
-        return { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount };
+        return resolveCapitalSettingsFromRaw({
+            initialCapital: readNumberInputValue('initialCapital', CAPITAL_DEFAULTS.initialCapital),
+            positionSize: readNumberInputValue('positionSize', CAPITAL_DEFAULTS.positionSize),
+            commission: readNumberInputValue('commission', CAPITAL_DEFAULTS.commission),
+            fixedTradeAmount: readNumberInputValue('fixedTradeAmount', CAPITAL_DEFAULTS.fixedTradeAmount),
+            fixedTradeToggle: fixedTradeToggle?.checked,
+            sizingMode: tradeSizingMode?.value,
+        });
     }
 
     public getBacktestSettings(): BacktestSettings {
@@ -756,49 +751,13 @@ export class BacktestService {
         return undefined;
     }
 
-    private readSizingMode(value: unknown): TradeSizingMode | null {
-        if (value === 'smart_fixed') return 'smart_fixed_velocity_memory';
-        if (
-            value === 'smart_fixed_early_heat_filter'
-            || value === 'smart_fixed_adverse_memory'
-            || value === 'smart_fixed_mfe_ancestor'
-            || value === 'smart_fixed_tp_distance_fit'
-        ) {
-            return 'smart_fixed_quality_x_velocity';
-        }
-        return isTradeSizingMode(value) ? value : null;
-    }
-
     private requiresTypescriptSizingMode(sizingMode: TradeSizingMode): boolean {
         return isSmartTradeSizingMode(sizingMode);
     }
 
     private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): CapitalSettings {
         const raw = backtestSettings as Record<string, unknown>;
-
-        const initialCapital = Math.max(
-            0,
-            toFiniteNumber(raw.initialCapital) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.initialCapital
-        );
-        const positionSize = Math.max(
-            0,
-            toFiniteNumber(raw.positionSize) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.positionSize
-        );
-        const commission = Math.max(
-            0,
-            toFiniteNumber(raw.commission) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.commission
-        );
-        const fixedTradeAmount = Math.max(
-            0,
-            toFiniteNumber(raw.fixedTradeAmount) ?? SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.fixedTradeAmount
-        );
-
-        const explicitSizingMode = this.readSizingMode(raw.sizingMode);
-        const fixedTradeToggle = toBooleanLike(raw.fixedTradeToggle);
-        const sizingMode: TradeSizingMode = explicitSizingMode
-            ?? (fixedTradeToggle === true ? 'fixed' : SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS.sizingMode);
-
-        return { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount };
+        return resolveCapitalSettingsFromRaw(raw, SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS);
     }
 
     private sleep(ms: number): Promise<void> {

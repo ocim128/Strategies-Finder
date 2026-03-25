@@ -18,6 +18,7 @@ import { darkTheme, lightTheme, ENHANCED_CANDLE_COLORS, LIGHT_CANDLE_COLORS, EQU
 import { toHeikinAshi } from "./heikin-ashi-utils";
 import { formatJakartaTickMark, formatJakartaTime } from "./timezone-utils";
 import { formatDisplayPrice } from "./price-format";
+import { bindChartRuntime, setIndicators, setMarkersPlugin } from "./state-actions";
 
 import { Trade, OHLCVData } from "./strategies/index";
 import { compareTime, timeKey } from "./strategies/backtest/backtest-utils";
@@ -75,7 +76,7 @@ export class ChartManager {
             throw new Error('Chart containers not found');
         }
 
-        state.chart = createChart(container, {
+        const chart = createChart(container, {
             ...darkTheme,
             autoSize: true,
             localization: {
@@ -110,7 +111,7 @@ export class ChartManager {
         } as DeepPartial<TimeChartOptions>);
 
         // Enhanced candlestick styling with better colors
-        state.candlestickSeries = state.chart.addSeries(CandlestickSeries, {
+        const candlestickSeries = chart.addSeries(CandlestickSeries, {
             upColor: ENHANCED_CANDLE_COLORS.up,
             downColor: ENHANCED_CANDLE_COLORS.down,
             borderVisible: true,
@@ -120,7 +121,7 @@ export class ChartManager {
             wickDownColor: ENHANCED_CANDLE_COLORS.wickDown,
         });
 
-        state.equityChart = createChart(equityContainer, {
+        const equityChart = createChart(equityContainer, {
             ...darkTheme,
             autoSize: true,
             localization: {
@@ -148,7 +149,7 @@ export class ChartManager {
         } as DeepPartial<TimeChartOptions>);
 
         // Enhanced equity curve with better gradient
-        state.equitySeries = state.equityChart.addSeries(AreaSeries, {
+        const equitySeries = equityChart.addSeries(AreaSeries, {
             lineColor: '#2962ff',
             topColor: 'rgba(41, 98, 255, 0.5)',
             bottomColor: 'rgba(41, 98, 255, 0.05)',
@@ -156,6 +157,13 @@ export class ChartManager {
             priceLineVisible: false,
             crosshairMarkerVisible: true,
             crosshairMarkerRadius: 4,
+        });
+
+        bindChartRuntime({
+            chart,
+            equityChart,
+            candlestickSeries,
+            equitySeries,
         });
 
         this.syncTimeScales();
@@ -739,7 +747,7 @@ export class ChartManager {
 
     public clearIndicators() {
         state.indicators.forEach(ind => ind.series.forEach(s => state.chart.removeSeries(s)));
-        state.indicators = [];
+        setIndicators([]);
         this.indicatorTooltipValues.clear();
     }
 
@@ -756,7 +764,7 @@ export class ChartManager {
         series.setData(data);
         const id = `${type}_${period}_${Math.random().toString(36).substr(2, 9)}`;
         this.indexIndicatorTooltipData(id, data);
-        state.indicators.push({ id, type, series: [series], color });
+        setIndicators([...state.indicators, { id, type, series: [series], color }]);
         return id;
     }
 
@@ -770,7 +778,7 @@ export class ChartManager {
         series.setData(data);
         const id = `${type}_${period}_${Math.random().toString(36).substr(2, 9)}`;
         this.indexIndicatorTooltipData(id, data);
-        state.indicators.push({ id, type, series: [series], color });
+        setIndicators([...state.indicators, { id, type, series: [series], color }]);
         return id;
     }
 
@@ -831,16 +839,13 @@ export class ChartManager {
         if (state.markersPlugin) {
             state.markersPlugin.detach();
         }
-
-
-
-        state.markersPlugin = createSeriesMarkers(state.candlestickSeries, markers);
+        setMarkersPlugin(createSeriesMarkers(state.candlestickSeries, markers));
     }
 
     public clearTradeMarkers() {
         if (state.markersPlugin) {
             state.markersPlugin.detach();
-            state.markersPlugin = null;
+            setMarkersPlugin(null);
         }
     }
 

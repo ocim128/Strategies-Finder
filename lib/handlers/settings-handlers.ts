@@ -3,6 +3,7 @@ import { uiManager } from "../ui-manager";
 import { debugLogger } from "../debug-logger";
 import { refreshEngineStatus } from "../engine-status-indicator";
 import { state } from "../state";
+import { setCurrentInterval, setCurrentSymbol } from "../state-actions";
 import { backtestService } from "../backtest-service";
 import { finderManager } from "../finder-manager";
 import {
@@ -12,7 +13,7 @@ import {
 } from "../strategy-share-service";
 import { strategyPanelController } from "../strategy-panel-controller";
 import { parseInputNumber } from "../dom-input-readers";
-import { createSettingsHandlersDom } from "../feature-dom-contracts";
+import { createSettingsHandlersDom } from "./settings-handlers-dom";
 
 const SHARED_DEFAULT_SYMBOL = 'ETHUSDT';
 const SHARED_DEFAULT_INTERVAL = '120m';
@@ -222,10 +223,10 @@ export function setupSettingsHandlers() {
         const imported = settingsManager.upsertStrategyConfig(sharedConfig);
         settingsManager.applyStrategyConfig(imported);
         if (state.currentSymbol !== sharedChartContext.symbol) {
-            state.set('currentSymbol', sharedChartContext.symbol);
+            setCurrentSymbol(sharedChartContext.symbol);
         }
         if (state.currentInterval !== sharedChartContext.interval) {
-            state.set('currentInterval', sharedChartContext.interval);
+            setCurrentInterval(sharedChartContext.interval);
         }
         updateConfigDropdown(imported.name);
         activateSharedLinkViewMode();

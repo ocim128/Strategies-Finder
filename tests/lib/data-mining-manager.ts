@@ -1,5 +1,6 @@
 import { Time } from "lightweight-charts";
 import { state } from "./state";
+import { setCurrentInterval, setCurrentSymbol } from "./state-actions";
 import { uiManager } from "./ui-manager";
 import { assetSearchService } from "./asset-search-service";
 import { dataManager } from "./data-manager";
@@ -606,10 +607,10 @@ export class DataMiningManager {
             }
 
             if (symbolChanged && symbol) {
-                state.set('currentSymbol', symbol);
+                setCurrentSymbol(symbol);
             }
             if (intervalChanged && interval) {
-                state.set('currentInterval', interval);
+                setCurrentInterval(interval);
             }
             commitOhlcvData(bars, 'data_mining_import');
             dataManager.registerImportedData(state.currentSymbol, state.currentInterval, bars);

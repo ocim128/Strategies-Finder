@@ -48,7 +48,7 @@ import {
 import {
     createWalkForwardServiceDom,
     type WalkForwardServiceDom
-} from "./feature-dom-contracts";
+} from "./walk-forward-dom";
 import {
     renderWalkForwardCandidateValidationSummary,
     renderWalkForwardPermutationSummary,

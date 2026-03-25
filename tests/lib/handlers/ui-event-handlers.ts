@@ -2,7 +2,7 @@ import { state, type ChartMode, type MockChartModel } from "../state";
 import { debugLogger } from "../debug-logger";
 import { debounce } from "../debounce";
 import { MAX_MOCK_BARS, MIN_MOCK_BARS } from "../dataProviders/mock";
-import { createUiEventHandlersDom } from "../feature-dom-contracts";
+import { createUiEventHandlersDom } from "./ui-event-handlers-dom";
 
 import { backtestService } from "../backtest-service";
 import { clearAll } from "../app-actions";
@@ -17,6 +17,17 @@ import { isTwoHourInterval } from "../interval-utils";
 import { strategyPanelController } from "../strategy-panel-controller";
 import { STRATEGY_PANEL_SETTINGS_SECTIONS } from "../strategy-panel-settings-registry";
 import { parseInputNumber } from "../dom-input-readers";
+import {
+    setChartMode,
+    setCurrentInterval,
+    setCurrentStrategyKey,
+    setCurrentSymbol,
+    setDarkTheme,
+    setMockChartBars,
+    setMockChartModel,
+    setStrategyTimeframeSettings,
+    setTwoHourCloseParity,
+} from "../state-actions";
 
 export function setupEventHandlers() {
     const dom = createUiEventHandlersDom();
@@ -61,10 +72,10 @@ export function setupEventHandlers() {
         const intervalChanged = state.currentInterval !== '1d';
 
         if (intervalChanged) {
-            state.set('currentInterval', '1d');
+            setCurrentInterval('1d');
         }
         if (symbolChanged) {
-            state.set('currentSymbol', normalizedSymbol);
+            setCurrentSymbol(normalizedSymbol);
         }
         if (!symbolChanged && !intervalChanged) {
             uiManager.updateSymbolDataSource(
@@ -132,7 +143,7 @@ export function setupEventHandlers() {
         mockModelSelect.addEventListener('change', () => {
             const value = mockModelSelect.value;
             if (allowedMockModels.has(value as MockChartModel)) {
-                state.set('mockChartModel', value as MockChartModel);
+                setMockChartModel(value as MockChartModel);
             }
         });
     }
@@ -151,7 +162,7 @@ export function setupEventHandlers() {
         chartModeToggle.addEventListener('click', () => {
             const newMode: ChartMode = state.chartMode === 'candlestick' ? 'heikin-ashi' : 'candlestick';
             debugLogger.event('ui.chartMode.toggle', { mode: newMode });
-            state.set('chartMode', newMode);
+            setChartMode(newMode);
             syncChartModeToggle();
         });
     }
@@ -177,7 +188,7 @@ export function setupEventHandlers() {
             mockBarsInput.value = String(clamped);
             if (clamped !== state.mockChartBars) {
                 debugLogger.event('ui.mock.bars', { bars: clamped });
-                state.set('mockChartBars', clamped);
+                setMockChartBars(clamped);
             }
         };
 
@@ -304,7 +315,7 @@ export function setupEventHandlers() {
 
         if (symbol !== state.currentSymbol) {
             debugLogger.event('ui.symbol.select', { symbol, displayName, provider });
-            state.set('currentSymbol', symbol);
+            setCurrentSymbol(symbol);
         } else if (provider === 'bybit-tradfi' && state.currentInterval === '1d') {
             syncLocalSp500Picker();
         }
@@ -464,7 +475,7 @@ export function setupEventHandlers() {
             const interval = (e.currentTarget as HTMLElement).dataset.interval;
             if (!interval) return;
             debugLogger.event('ui.interval.select', { interval });
-            state.set('currentInterval', interval);
+            setCurrentInterval(interval);
         });
     });
 
@@ -494,7 +505,7 @@ export function setupEventHandlers() {
 
         const interval = `${clamped}m`;
         debugLogger.event('ui.interval.custom', { interval, minutes: clamped });
-        state.set('currentInterval', interval);
+        setCurrentInterval(interval);
     };
 
     if (timeframeMinutesInput) {
@@ -551,13 +562,13 @@ export function setupEventHandlers() {
 
     // Theme toggle
     dom.themeToggle.addEventListener('click', () => {
-        state.set('isDarkTheme', !state.isDarkTheme);
+        setDarkTheme(!state.isDarkTheme);
     });
 
     // Strategy selector
     const strategySelect = dom.strategySelect;
     strategySelect.addEventListener('change', () => {
-        state.set('currentStrategyKey', strategySelect.value);
+        setCurrentStrategyKey(strategySelect.value);
     });
 
     // Run backtest button
@@ -842,14 +853,13 @@ export function setupEventHandlers() {
     const strategyTimeframeMinutes = dom.strategyTimeframeMinutes;
     const strategyTimeframeMinutesGroup = dom.strategyTimeframeMinutesGroup;
     const syncStrategyTimeframeState = () => {
-        state.set('strategyTimeframeEnabled', strategyTimeframeToggle.checked);
         const parsedMinutes = parseInputNumber(strategyTimeframeMinutes.value);
-        state.set(
-            'strategyTimeframeMinutes',
-            typeof parsedMinutes === 'number' && Number.isFinite(parsedMinutes)
+        setStrategyTimeframeSettings({
+            enabled: strategyTimeframeToggle.checked,
+            minutes: typeof parsedMinutes === 'number' && Number.isFinite(parsedMinutes)
                 ? Math.max(1, Math.floor(parsedMinutes))
-                : 120
-        );
+                : 120,
+        });
     };
 
     const applyStrategyTimeframeMode = () => {
@@ -886,7 +896,7 @@ export function setupEventHandlers() {
             return 'odd';
         };
         const syncParityState = () => {
-            state.set('twoHourCloseParity', resolveParityMode(twoHourCloseParity.value));
+            setTwoHourCloseParity(resolveParityMode(twoHourCloseParity.value));
         };
 
         let lastAppliedParity: 'odd' | 'even' | 'both' = resolveParityMode(twoHourCloseParity.value);

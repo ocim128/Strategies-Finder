@@ -2,7 +2,9 @@
     <div class="section-title">Polymarket Entry Fillability</div>
     <div class="section-desc polymarket-panel__desc">
         Estimate how many current BTCUSDT 5m executed trades would have filled on Polymarket at a custom entry price.
-        Long trades use YES prices. Short trades use implied NO prices = <code>1 - YES</code>.
+        Long trades use YES prices. Short trades use implied NO prices = <code>1 - YES</code>. The panel prefers raw
+        Polymarket <code>prices-history</code> extrema and falls back to synced checkpoints only when raw history is
+        unavailable.
     </div>
 
     <div class="param-row">

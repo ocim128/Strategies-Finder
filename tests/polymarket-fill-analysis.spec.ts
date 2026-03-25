@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { analyzePolymarketFillability } from "../lib/polymarket-fill-analysis";
+import type { PolymarketFillHistorySummary } from "../lib/polymarket-fill-history";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
 import type { Trade } from "../lib/types/strategies";
 
@@ -37,6 +38,18 @@ function makeOutcomeRow(entryTs: number, yesPrices: Array<number | null>, resolv
         resolved_outcome_up: resolvedUp,
         resolution_source: "test",
         updated_at: 1,
+    };
+}
+
+function makeHistorySummary(entryTs: number, yesMins: Array<number | null>, yesMaxes: Array<number | null>): PolymarketFillHistorySummary {
+    return {
+        eventStartTs: entryTs,
+        yesTokenId: `yes-${entryTs}`,
+        windows: yesMins.map((yesMinPrice, index) => ({
+            yesMinPrice,
+            yesMaxPrice: yesMaxes[index] ?? null,
+            sampleCount: yesMinPrice === null && yesMaxes[index] === null ? 0 : 1,
+        })),
     };
 }
 
@@ -109,5 +122,32 @@ describe("Polymarket fill analysis", () => {
         expect(analysis.missingOutcomeTrades).to.equal(1);
         expect(analysis.windows[0]?.missingPriceTrades).to.equal(1);
         expect(analysis.windows[4]?.filledTrades).to.equal(0);
+    });
+
+    it("uses raw prices-history extrema when available instead of coarse synced checkpoints", () => {
+        const t1 = 1_700_003_000;
+        const trades = [makeTrade(1, "long", t1)];
+        const outcomeByStartTs = new Map<number, PolymarketOutcomeRow>([
+            [t1, makeOutcomeRow(t1, [0.50, 0.50, 0.50, 0.50, 0.50], 1)],
+        ]);
+        const historySummaryByStartTs = new Map<number, PolymarketFillHistorySummary>([
+            [t1, makeHistorySummary(t1, [0.50, 0.495, 0.49, 0.49, 0.49], [0.50, 0.51, 0.52, 0.52, 0.52])],
+        ]);
+
+        const coarse = analyzePolymarketFillability({
+            trades,
+            outcomeByStartTs,
+            targetPriceCents: 49,
+        });
+        const enriched = analyzePolymarketFillability({
+            trades,
+            outcomeByStartTs,
+            historySummaryByStartTs,
+            targetPriceCents: 49,
+        });
+
+        expect(coarse.windows[4]?.filledTrades).to.equal(0);
+        expect(enriched.windows[2]?.filledTrades).to.equal(1);
+        expect(enriched.windows[4]?.filledTrades).to.equal(1);
     });
 });

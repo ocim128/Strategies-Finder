@@ -24,6 +24,7 @@
     "poly:sync-outcomes": "..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-sync-outcomes.ts",
     "alpha:evolve": "..\\..\\..\\node_modules\\.bin\\esno scripts\\strategy-evolution-sweep.ts",
     "alpha:surgical": "..\\..\\..\\node_modules\\.bin\\esno scripts\\surgical-optimization.ts",
+    "strategies:sync-manifest": "..\\..\\..\\node_modules\\.bin\\esno scripts\\sync-strategy-manifest.ts",
     "build:types": "tsc -p tsconfig.types.json",
     "dev": "vite",
     "build": "vite build"

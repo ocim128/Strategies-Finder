@@ -5,7 +5,7 @@ import {
     loadCustomStrategiesFromStorage,
     CustomStrategyConfig
 } from "../strategyRegistry";
-import { state } from "./state";
+import { setCurrentStrategyKey } from "./state-actions";
 import { backtestService } from "./backtest-service";
 import { StrategyExecutor } from "./strategy-executor";
 
@@ -295,7 +295,7 @@ return signals;`;
     private applyAndRun() {
         this.savePreset();
         const key = (document.getElementById('strategyKey') as HTMLInputElement).value.trim();
-        state.set('currentStrategyKey', key);
+        setCurrentStrategyKey(key);
         document.getElementById('codeEditorModal')!.classList.remove('active');
         setTimeout(() => backtestService.runCurrentBacktest(), 100);
     }

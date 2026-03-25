@@ -2,7 +2,7 @@ import { strategyRegistry } from "../strategyRegistry";
 import { backtestService } from "./backtest-service";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { trimToClosedCandles } from "./closed-candle-utils";
-import { createEnsembleLabDom, type EnsembleLabDom } from "./feature-dom-contracts";
+import { createEnsembleLabDom, type EnsembleLabDom } from "./strategy-ensemble-dom";
 import {
     buildSignalArtifact,
     countDistinctFamilies,
@@ -24,6 +24,7 @@ import {
 } from "./strategy-ensemble-renderer";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { state } from "./state";
+import { clearBacktestResults, commitBacktestResult } from "./state-actions";
 import type { OHLCVData } from "./strategies";
 import type {
     ConfigRunArtifact,
@@ -738,11 +739,12 @@ class StrategyEnsembleService {
         }
 
         const targetArtifact = context.targetArtifact;
-        state.set("currentBacktestResult", null);
-        state.set("twoHourParityBacktestResults", null);
+        clearBacktestResults("ensemble_preview_reset");
         await settingsManager.applyStrategyConfig(targetArtifact.config);
-        state.set("currentBacktestResultSource", "ensemble_preview");
-        state.set("currentBacktestResult", preview.result);
+        commitBacktestResult(preview.result, "ensemble_preview", {
+            parityResults: null,
+            reason: "ensemble_preview",
+        });
 
         this.updateStatus(`Loaded exact ensemble preview: ${preview.row.rule}.`);
         uiManager.showToast(`Loaded ensemble preview: ${preview.row.rule}`, "success");

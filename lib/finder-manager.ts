@@ -9,23 +9,30 @@ import { dataManager } from "./data-manager";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
 
-import { DEFAULT_SORT_PRIORITY, METRIC_FULL_LABELS, POLYMARKET_SORT_PRIORITY } from "./finder/constants";
+import { DEFAULT_SORT_PRIORITY, METRIC_FULL_LABELS } from "./finder/constants";
 import { runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderTimeframeLoader, type FinderDataset } from "./finder/finder-timeframe-loader";
 import { FinderUI } from "./finder/finder-ui";
+import {
+	buildFinderOptions,
+	addFinderTimeframeSelection,
+	removeFinderTimeframeSelection,
+} from "./finder/finder-manager-logic";
 import { mergeFinderRiskParamsIntoBacktestSettings } from "./finder/finder-runner-core";
 import { debugLogger, robustAuditSink } from "./debug-logger";
 import { parseInputNumber } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { strategyPanelController } from "./strategy-panel-controller";
-import { commitBacktestResult, commitParityBacktestResults } from "./state-actions";
+import { commitBacktestResult, commitParityBacktestResults, setCurrentStrategyKey } from "./state-actions";
 import {
 	createFinderManagerDom,
-	createPairCombinerBridgeDom,
 	type FinderManagerDom,
+} from "./finder/finder-manager-dom";
+import {
+	createPairCombinerBridgeDom,
 	type PairCombinerBridgeDom
-} from "./feature-dom-contracts";
+} from "./pairCombiner/pair-combiner-bridge-dom";
 import type {
 	FinderMetric,
 	FinderMode,
@@ -366,30 +373,35 @@ export class FinderManager {
 	}
 
 	private addFinderTimeframe(interval: string, silent: boolean): void {
-		const normalized = this.normalizeFinderInterval(interval);
-		if (!normalized) {
+		const result = addFinderTimeframeSelection(
+			this.selectedFinderTimeframes,
+			interval,
+			FinderManager.MAX_MULTI_TIMEFRAMES,
+			(rawInterval) => this.normalizeFinderInterval(rawInterval)
+		);
+		if (result.status === 'invalid') {
 			if (!silent) {
 				uiManager.showToast('Invalid timeframe. Use format like 2m, 4m, 7m, 1h, 1d.', 'error');
 			}
 			return;
 		}
-		if (this.selectedFinderTimeframes.includes(normalized)) {
+		if (result.status === 'duplicate') {
 			if (!silent) {
-				uiManager.showToast(`${normalized} is already selected.`, 'info');
+				uiManager.showToast(`${result.normalized} is already selected.`, 'info');
 			}
 			return;
 		}
-		if (this.selectedFinderTimeframes.length >= FinderManager.MAX_MULTI_TIMEFRAMES) {
+		if (result.status === 'limit_reached') {
 			uiManager.showToast(`Max ${FinderManager.MAX_MULTI_TIMEFRAMES} timeframes allowed.`, 'error');
 			return;
 		}
 
-		this.selectedFinderTimeframes.push(normalized);
+		this.selectedFinderTimeframes = result.selected;
 		this.renderSelectedFinderTimeframes();
 	}
 
 	private removeFinderTimeframe(interval: string): void {
-		this.selectedFinderTimeframes = this.selectedFinderTimeframes.filter(value => value !== interval);
+		this.selectedFinderTimeframes = removeFinderTimeframeSelection(this.selectedFinderTimeframes, interval).selected;
 		this.renderSelectedFinderTimeframes();
 	}
 
@@ -741,39 +753,10 @@ export class FinderManager {
 	private readOptions(): FinderOptions {
 		const dom = this.getDom();
 		const useAdvancedSort = dom.finderAdvancedToggle.checked;
-		let sortPriority: FinderMetric[] = [];
-
-		if (useAdvancedSort) {
-			// Scrape sort priority from the list
-			const sortItems = dom.finderSortList.querySelectorAll('.finder-sort-item');
-			sortPriority = Array.from(sortItems)
-				.map(el => (el as HTMLElement).dataset.value as FinderMetric | undefined)
-				.filter((val): val is FinderMetric => !!val);
-
-			// Fallback
-			if (sortPriority.length === 0) {
-				sortPriority.push(...DEFAULT_SORT_PRIORITY);
-			}
-		} else {
-			// Simple Sort Mode
-			const p1 = this.getDom().finderSort.value as FinderMetric;
-			const p2 = this.getDom().finderSortSecondary.value as FinderMetric;
-			sortPriority.push(p1);
-			if (p1 !== p2) {
-				sortPriority.push(p2);
-			}
-			// Append 'netProfit' as fallback if not present, to ensure stable sort for rest (tie breaking)
-			if (!sortPriority.includes('netProfit')) {
-				sortPriority.push('netProfit');
-			}
-		}
-
+		const sortItems = dom.finderSortList.querySelectorAll('.finder-sort-item');
+		const advancedSortValues = Array.from(sortItems)
+			.map(el => (el as HTMLElement).dataset.value as FinderMetric | undefined);
 		const mode = dom.finderMode.value as FinderMode;
-		const multiTimeframeRequested = dom.finderMultiTimeframeToggle.checked;
-		const multiTimeframeEnabled = multiTimeframeRequested && !dataManager.isMockSymbol(state.currentSymbol);
-		const timeframes = multiTimeframeEnabled
-			? this.selectedFinderTimeframes.slice(0, FinderManager.MAX_MULTI_TIMEFRAMES)
-			: [];
 		const topN = Math.round(this.readFinderNumberInput(dom.finderTopN, 10, 1));
 		const steps = Math.round(this.readFinderNumberInput(dom.finderSteps, 3, 2));
 		const robustSeed = Math.round(this.readFinderNumberInput(dom.finderRobustSeed, 1337, -2147483648));
@@ -781,27 +764,25 @@ export class FinderManager {
 		const maxRuns = Math.round(this.readFinderNumberInput(dom.finderMaxRuns, 120, 1));
 		const tradeFilterEnabled = dom.finderTradesToggle.checked;
 		const minTrades = tradeFilterEnabled ? Math.round(this.readFinderNumberInput(dom.finderTradesMin, 40, 0)) : 0;
-		const maxTradesRaw = tradeFilterEnabled
+		const maxTrades = tradeFilterEnabled
 			? Math.round(this.readFinderNumberInput(dom.finderTradesMax, Number.POSITIVE_INFINITY, 0))
 			: Number.POSITIVE_INFINITY;
-		const maxTrades = Math.max(minTrades, maxTradesRaw);
 		const freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
 		const comboEnabled = dom.finderComboToggle.checked;
 		const comboPrimaryConfigName = comboEnabled ? (dom.finderComboPrimarySelect.value || undefined) : undefined;
 		const polymarketScoringEnabled = dom.finderPolymarketToggle.checked;
 
-		// In polymarket mode, force polymarket sort priority
-		if (polymarketScoringEnabled) {
-			sortPriority = [...POLYMARKET_SORT_PRIORITY];
-		}
-
-		return {
+		return buildFinderOptions({
 			mode,
-			sortPriority,
 			useAdvancedSort,
+			advancedSortValues,
+			primarySort: dom.finderSort.value as FinderMetric,
+			secondarySort: dom.finderSortSecondary.value as FinderMetric,
 			robustSeed,
-			multiTimeframeEnabled,
-			timeframes,
+			multiTimeframeRequested: dom.finderMultiTimeframeToggle.checked,
+			isMockSymbol: dataManager.isMockSymbol(state.currentSymbol),
+			selectedTimeframes: this.selectedFinderTimeframes,
+			maxMultiTimeframes: FinderManager.MAX_MULTI_TIMEFRAMES,
 			topN,
 			steps,
 			rangePercent,
@@ -809,11 +790,11 @@ export class FinderManager {
 			tradeFilterEnabled,
 			minTrades,
 			maxTrades,
-			freezeRiskManagement: freezeRiskManagement || polymarketScoringEnabled,
+			freezeRiskManagement,
 			comboEnabled,
 			comboPrimaryConfigName,
 			polymarketScoringEnabled,
-		};
+		});
 	}
 
 	private generateParamSets(defaultParams: StrategyParams, options: FinderOptions): StrategyParams[] {
@@ -974,7 +955,7 @@ export class FinderManager {
 			);
 		}
 
-		state.set('currentStrategyKey', result.key);
+		setCurrentStrategyKey(result.key);
 		uiManager.updateStrategyDropdown(result.key);
 		const strategy = strategyRegistry.get(result.key);
 		if (!strategy) return;

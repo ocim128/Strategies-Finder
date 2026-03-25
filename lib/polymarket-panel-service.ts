@@ -1,4 +1,6 @@
-import { createPolymarketPanelDom, type PolymarketPanelDom } from "./feature-dom-contracts";
+import { createPolymarketPanelDom, type PolymarketPanelDom } from "./polymarket-panel-dom";
+import type { PolymarketFillHistorySummary } from "./polymarket-fill-history";
+import { loadPolymarketFillHistorySummary } from "./polymarket-fill-history";
 import { isSupportedPolymarketBtc5mRun, loadBtc5mPolymarketOutcomesForTimeRange } from "./polymarket-btc5m";
 import { analyzePolymarketFillability, type PolymarketFillScope } from "./polymarket-fill-analysis";
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -11,8 +13,10 @@ class PolymarketPanelService {
     private dom: PolymarketPanelDom | null = null;
     private initialized = false;
     private outcomeByStartTs = new Map<number, PolymarketOutcomeRow>();
+    private historySummaryByStartTs = new Map<number, PolymarketFillHistorySummary>();
     private lastResult: BacktestResult | null = null;
     private isLoading = false;
+    private isEnrichingHistory = false;
     private loadError: string | null = null;
     private loadNonce = 0;
 
@@ -83,19 +87,69 @@ class PolymarketPanelService {
                 return;
             }
 
-            this.outcomeByStartTs = new Map(rows.map((row) => [row.event_start_ts, row] as const));
+            const targetSet = new Set(targetTimes);
+            const matchedRows = rows.filter((row) => targetSet.has(row.event_start_ts));
+
+            this.outcomeByStartTs = new Map(matchedRows.map((row) => [row.event_start_ts, row] as const));
+            this.historySummaryByStartTs.clear();
             this.isLoading = false;
             this.render();
+            void this.enrichHistoryInBackground(requestId, matchedRows);
         } catch (error) {
             if (requestId !== this.loadNonce) {
                 return;
             }
 
             this.outcomeByStartTs.clear();
+            this.historySummaryByStartTs.clear();
             this.isLoading = false;
+            this.isEnrichingHistory = false;
             this.loadError = error instanceof Error ? error.message : String(error);
             this.render();
         }
+    }
+
+    private async enrichHistoryInBackground(requestId: number, rows: PolymarketOutcomeRow[]): Promise<void> {
+        if (rows.length === 0) {
+            this.isEnrichingHistory = false;
+            this.render();
+            return;
+        }
+
+        this.isEnrichingHistory = true;
+        this.render();
+
+        const pendingRows = [...rows];
+        const concurrency = 6;
+        const workers = Array.from({ length: Math.min(concurrency, pendingRows.length) }, async () => {
+            while (pendingRows.length > 0) {
+                const row = pendingRows.shift();
+                if (!row) {
+                    return;
+                }
+
+                try {
+                    const summary = await loadPolymarketFillHistorySummary(row);
+                    if (requestId !== this.loadNonce) {
+                        return;
+                    }
+                    this.historySummaryByStartTs.set(row.event_start_ts, summary);
+                    this.render();
+                } catch {
+                    if (requestId !== this.loadNonce) {
+                        return;
+                    }
+                }
+            }
+        });
+
+        await Promise.allSettled(workers);
+        if (requestId !== this.loadNonce) {
+            return;
+        }
+
+        this.isEnrichingHistory = false;
+        this.render();
     }
 
     private render(): void {
@@ -133,6 +187,7 @@ class PolymarketPanelService {
         const analysis = analyzePolymarketFillability({
             trades: result.trades,
             outcomeByStartTs: this.outcomeByStartTs,
+            historySummaryByStartTs: this.historySummaryByStartTs,
             targetPriceCents,
             scope,
         });
@@ -150,8 +205,12 @@ class PolymarketPanelService {
         dom.polymarketStatus.textContent = [
             `${this.formatScopeLabel(scope)} at ${analysis.targetPriceCents.toFixed(1).replace(/\.0$/, "")}c.`,
             `${analysis.selectedTrades} selected trade${analysis.selectedTrades === 1 ? "" : "s"}, ${analysis.eligibleTrades} matched Polymarket row${analysis.eligibleTrades === 1 ? "" : "s"}.`,
+            this.historySummaryByStartTs.size > 0
+                ? `${this.historySummaryByStartTs.size} row${this.historySummaryByStartTs.size === 1 ? "" : "s"} enriched with raw prices-history extrema.`
+                : "Using synced checkpoint fallback only.",
+            this.isEnrichingHistory ? "Raw history enrichment is still running in the background." : "",
             analysis.missingOutcomeTrades > 0 ? `${analysis.missingOutcomeTrades} trade${analysis.missingOutcomeTrades === 1 ? "" : "s"} missing outcome rows.` : "",
-            missingPriceByLastWindow > 0 ? `${missingPriceByLastWindow} trade${missingPriceByLastWindow === 1 ? "" : "s"} missing sampled prices through +4m.` : "",
+            missingPriceByLastWindow > 0 ? `${missingPriceByLastWindow} trade${missingPriceByLastWindow === 1 ? "" : "s"} missing fill history through +4m.` : "",
         ].filter(Boolean).join(" ");
 
         dom.polymarketTableBody.innerHTML = analysis.windows.map((window) => `
@@ -184,7 +243,9 @@ class PolymarketPanelService {
     private resetLoadedRows(clearResult = true): void {
         this.loadNonce++;
         this.outcomeByStartTs.clear();
+        this.historySummaryByStartTs.clear();
         this.isLoading = false;
+        this.isEnrichingHistory = false;
         this.loadError = null;
         if (clearResult) {
             this.lastResult = null;

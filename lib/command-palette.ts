@@ -4,6 +4,7 @@ import { backtestService } from "./backtest-service";
 import { clearAll } from "./app-actions";
 import { debugLogger } from "./debug-logger";
 import { strategyPanelController } from "./strategy-panel-controller";
+import { setCurrentSymbol, setDarkTheme } from "./state-actions";
 
 interface CommandItem {
     id: string;
@@ -156,7 +157,7 @@ export class CommandPaletteManager {
                 subtitle: 'Switch between dark and light mode',
                 icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z" /></svg>',
                 category: 'Action',
-                action: () => state.set('isDarkTheme', !state.isDarkTheme)
+                action: () => setDarkTheme(!state.isDarkTheme)
             },
 
             // Navigation
@@ -195,7 +196,7 @@ export class CommandPaletteManager {
                 icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z" /></svg>',
                 category: 'Symbol' as const,
                 action: () => {
-                    state.set('currentSymbol', sym.id);
+                    setCurrentSymbol(sym.id);
                 }
             }))
         ];

@@ -2,7 +2,7 @@ import { BacktestResult, PostEntryPathStats, SnapshotProfileStats, ExitReasonBre
 import type { EdgeStatistics } from "../types/strategies";
 import { getRequiredElement, updateTextContent, setVisible } from "../dom-utils";
 import type { TwoHourParityBacktestResults } from "../state";
-import { createResultsRendererDom, type ResultsRendererDom } from "../feature-dom-contracts";
+import { createResultsRendererDom, type ResultsRendererDom } from "./results-renderer-dom";
 
 export class ResultsRenderer {
     private dom: ResultsRendererDom | null = null;

@@ -1,6 +1,7 @@
 import { createSeriesMarkers, ISeriesMarkersPluginApi, SeriesMarker, Time } from "lightweight-charts";
 import { state } from "./state";
 import { getRequiredElement, setVisible } from "./dom-utils";
+import { clearBlockRange, setBlockRange } from "./state-actions";
 
 type BlockSelectorDom = {
     inButton: HTMLButtonElement;
@@ -102,9 +103,9 @@ export class BlockSelectorManager {
         const current = state.blockRange;
         if (current) {
             const newTo = current.to > ts ? current.to : this.getDataTo() ?? ts;
-            state.set('blockRange', { from: ts, to: newTo });
+            setBlockRange({ from: ts, to: newTo });
         } else {
-            state.set('blockRange', { from: ts, to: ts });
+            setBlockRange({ from: ts, to: ts });
         }
 
         this.getDom().inButton.classList.add('is-set');
@@ -119,7 +120,7 @@ export class BlockSelectorManager {
         const safeFrom = Math.min(from, ts);
         const safeTo = Math.max(from, ts);
 
-        state.set('blockRange', { from: safeFrom, to: safeTo });
+        setBlockRange({ from: safeFrom, to: safeTo });
         this.pendingFrom = null;
 
         this.getDom().outButton.classList.add('is-set');
@@ -129,7 +130,7 @@ export class BlockSelectorManager {
         const dom = this.getDom();
         this.pendingFrom = null;
         this.preInvertRange = null;
-        state.set('blockRange', null);
+        clearBlockRange();
         dom.inButton.classList.remove('is-set');
         dom.outButton.classList.remove('is-set');
     }
@@ -150,7 +151,7 @@ export class BlockSelectorManager {
 
         this.preInvertRange = { from: current.from, to: current.to };
         this.pendingFrom = null;
-        state.set('blockRange', { from: newFrom, to: newTo });
+        setBlockRange({ from: newFrom, to: newTo });
     }
 
     private restorePreInvert(): void {
@@ -158,7 +159,7 @@ export class BlockSelectorManager {
         const restore = this.preInvertRange;
         this.preInvertRange = null;
         this.pendingFrom = null;
-        state.set('blockRange', restore);
+        setBlockRange(restore);
     }
 
     private presetFull(): void {
@@ -171,14 +172,14 @@ export class BlockSelectorManager {
         const twoYearsSeconds = 2 * 365 * 24 * 3600;
         const from = to - twoYearsSeconds;
         const dataFrom = this.getDataFrom() ?? from;
-        state.set('blockRange', { from: Math.max(from, dataFrom), to });
+        setBlockRange({ from: Math.max(from, dataFrom), to });
     }
 
     private presetVisible(): void {
         const from = this.getChartVisibleFrom();
         const to = this.getChartVisibleTo();
         if (from === null || to === null || from >= to) return;
-        state.set('blockRange', { from, to });
+        setBlockRange({ from, to });
     }
 
     private drawBlockMarkers(block: { from: number; to: number } | null): void {

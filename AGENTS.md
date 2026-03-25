@@ -9,7 +9,7 @@ Use this file as the short operational handbook for making safe changes quickly.
 
 Before editing anything important:
 1. Read `README.md` for the repo-level map.
-2. Read `index.ts` to understand initialization order.
+2. Read `lib/app-bootstrap.ts` for initialization order and `index.ts` for the thin entrypoint.
 3. Check `git status --short` so you do not trample unrelated work.
 4. Identify which contracts your change touches:
    - UI ids / partials
@@ -30,10 +30,16 @@ This codebase is a collection of tightly-coupled subsystems:
 
 Most breakages come from contract drift, not algorithm bugs.
 
+Recent refactor seams worth preserving:
+- app startup sequencing lives in `lib/app-bootstrap.ts` and `lib/bootstrap-feature-registry.ts`
+- shared state still lives in `lib/state.ts`, but app writes should go through `lib/state-actions.ts`
+- read-only state slices live in `lib/state-domains.ts`
+
 ## The Contracts Most Likely To Break
 
 ### 1. UI DOM contracts
-- Structural ids are defined in `lib/feature-dom-contracts.ts`
+- Structural ids are defined in feature-local `*-dom.ts` modules next to the consuming handler, renderer, or service
+- `lib/feature-dom-contracts.ts` is only a compatibility barrel that re-exports those contracts
 - HTML source of truth is `html-partials/*`
 - Consumers live in handlers and managers such as:
   - `lib/handlers/ui-event-handlers.ts`
@@ -43,16 +49,16 @@ Most breakages come from contract drift, not algorithm bugs.
 
 If you rename or remove a structural id:
 1. update the partial
-2. update `lib/feature-dom-contracts.ts`
+2. update the matching feature-local `*-dom.ts` contract
 3. update the feature code
 4. run `feature-dom-contracts.spec.ts`
 
 ### 2. Strategy registration split
 - Main UI/runtime registers built-ins through `strategyRegistry.ts`
-- Built-in source of truth is `lib/strategies/manifest.ts`
+- Built-in source of truth is `lib/strategies/lib/*`, with `lib/strategies/manifest.ts` generated from those files
 - `lib/strategies/library.ts` is derived from that manifest and is what worker-side evaluation imports
 
-If a built-in strategy is added or renamed and `manifest.ts` is not updated, the strategy will not load consistently in the UI/worker path.
+If a built-in strategy is added or renamed and the manifest is not re-synced, the strategy will not load consistently in the UI/worker path.
 
 ### 3. Settings compatibility
 - Preserve localStorage/backward compatibility unless you add migration logic
@@ -85,7 +91,7 @@ See `README.md` under `Architecture Map` for the canonical subsystem and file ma
 
 ### Any UI change
 - Confirm whether the element is structural or optional
-- If structural, add it to `lib/feature-dom-contracts.ts`
+- If structural, add it to the matching feature-local `*-dom.ts` contract
 - Update the relevant partial and manager/handler together
 - Run:
   - `npm run typecheck`
@@ -125,7 +131,7 @@ See `README.md` under `Architecture Map` for the canonical subsystem and file ma
    - `execute(data, params)`
    - `metadata` with `role`, `direction`, and `walkForwardParams` when applicable
 5. Add `normalizeParams` if execution rounds, clamps, coerces sign, or otherwise sanitizes params
-6. Register the strategy in `lib/strategies/manifest.ts`
+6. Run `npm run strategies:sync-manifest`
 7. Do not manually wire `strategyRegistry.ts`; built-ins are loaded from the manifest
 8. Verify dropdown + worker compatibility
 
@@ -162,13 +168,13 @@ Useful examples:
 
 Strategy-lib checklist before you stop:
 - file exists in `lib/strategies/lib/*`
-- exported const name matches manifest import
+- exported const name is the strategy key
 - `defaultParams` keys match `paramLabels` keys
 - `defaultParams` are already valid after `normalizeParams`
 - `normalizeParams` exists if execution sanitizes params
 - `metadata.walkForwardParams` only references real params
 - `execute(...)` uses normalized params if bounds or trigger semantics depend on them
-- manifest import + entry added in `lib/strategies/manifest.ts`
+- `npm run strategies:sync-manifest` run so `lib/strategies/manifest.ts` is up to date
 - `npm run typecheck` passes
 - add or update `strategies.spec.ts` if normalization, Finder, or WFA behavior is non-trivial
 - manually confirm the strategy appears in the dropdown if UI behavior changed
@@ -236,7 +242,7 @@ Strategy-lib failure modes seen repeatedly:
 
 When touching Portfolio Lab, check these contracts:
 - `html-partials/tab-portfolio.html`
-- `lib/feature-dom-contracts.ts`
+- `lib/portfolio-lab-dom.ts`
 - `lib/portfolio-lab-service.ts`
 - `lib/backtest-service.ts` if custom-signal or custom-data backtests change
 
@@ -307,7 +313,7 @@ Treat unrelated pre-existing failures carefully. Do not assume your change cause
 
 ## Common Failure Modes
 - Renamed UI id in `html-partials/*` but forgot handler or contract update
-- Added a strategy file but forgot `lib/strategies/manifest.ts`
+- Added a strategy file but forgot to run `npm run strategies:sync-manifest`
 - Added params in `defaultParams` but forgot matching `paramLabels` or `metadata.walkForwardParams`
 - Added a new setting but forgot Rust sanitization or finder parity
 - Used raw `document.getElementById(...)` for structural UI instead of a typed contract

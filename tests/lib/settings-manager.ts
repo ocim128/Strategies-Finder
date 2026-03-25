@@ -15,30 +15,24 @@ import { debugLogger } from "./debug-logger";
 import {
     triggerSettingsChangeEvents,
 } from "./settings-dom";
-import { parseInputNumber } from "./dom-input-readers";
-import { readBoolean, readNumber } from "./settings-parse-utils";
+import {
+    BACKTEST_SETTINGS_DOM_CONTRACTS,
+    coerceBacktestDomSettingValue,
+    resolveBacktestDomSettingWriteValue,
+} from "./backtest-settings-dom-contract";
+import { setChartMode, setCurrentStrategyKey, setDarkTheme } from "./state-actions";
 import {
     DEFAULT_APP_SETTINGS,
     DEFAULT_BACKTEST_SETTINGS,
     normalizeStoredAppSettings,
     normalizeStoredBacktestSettings,
     normalizeStoredStrategyConfig,
-    resolveExecutionModelValue,
-    resolveMarketMode,
-    resolveRiskModeValue,
     resolveTradeSizingModeValue,
-    resolveTakeProfitModeValue,
-    resolveTradeDirection,
-    resolveTradeFilterMode,
-    resolveTradeFilterModeValue,
-    resolveTradeFilterToggle,
-    resolveTwoHourCloseParity,
     type AppSettings,
     type BacktestSettingsData,
     type StrategyConfig,
 } from "./settings-model";
-import { BACKTEST_DOM_SETTING_IDS } from "./backtest-settings-resolver";
-import { createSettingsManagerDom, type SettingsManagerDom } from "./feature-dom-contracts";
+import { createSettingsManagerDom, type SettingsManagerDom } from "./settings-manager-dom";
 
 export {
     DEFAULT_APP_SETTINGS,
@@ -50,7 +44,6 @@ export {
 export type { AppSettings, BacktestSettingsData, StrategyConfig } from "./settings-model";
 
 import type { CapitalSettings } from "./types/backtest";
-import type { BacktestSettings, ExecutionModel, MarketMode, TradeDirection, TradeFilterMode } from './types/strategies';
 
 // ============================================================================
 // Storage Keys
@@ -60,34 +53,6 @@ const STORAGE_KEYS = {
     APP_SETTINGS: 'playground_app_settings',
     STRATEGY_CONFIGS: 'playground_strategy_configs',
 };
-
-const BACKTEST_SETTINGS_EXTRA_DOM_IDS = Object.freeze([
-    'initialCapital',
-    'positionSize',
-    'commission',
-    'fixedTradeToggle',
-    'tradeSizingMode',
-    'fixedTradeAmount',
-    'useRustEngineToggle',
-    'warmUpEntryToggle',
-]);
-
-const BACKTEST_SETTINGS_DOM_IDS = Object.freeze(
-    Array.from(new Set([...BACKTEST_SETTINGS_EXTRA_DOM_IDS, ...BACKTEST_DOM_SETTING_IDS]))
-);
-
-const BACKTEST_DOM_ID_TO_SETTING_KEY = Object.freeze<Record<string, keyof BacktestSettingsData | 'entrySettingsToggle'>>({
-    tradeSizingMode: 'sizingMode',
-    useRustEngineToggle: 'useRustEngine',
-    stopLossToggle: 'stopLossEnabled',
-    takeProfitToggle: 'takeProfitEnabled',
-    riskMaxHoldToggle: 'riskMaxHoldEnabled',
-    riskWinStreakStopLossToggle: 'riskWinStreakStopLossEnabled',
-    invertSignalsToggle: 'invertSignals',
-    allowSameBarExitToggle: 'allowSameBarExit',
-    warmUpEntryToggle: 'warmUpEntryEnabled',
-    strategyTimeframeToggle: 'strategyTimeframeEnabled',
-});
 
 // ============================================================================
 // Settings Manager
@@ -121,14 +86,13 @@ class SettingsManager {
     public getBacktestSettings(): BacktestSettingsData {
         const settings: BacktestSettingsData = { ...DEFAULT_BACKTEST_SETTINGS };
 
-        for (const id of BACKTEST_SETTINGS_DOM_IDS) {
-            const rawValue = this.readBacktestDomValue(id);
+        for (const contract of BACKTEST_SETTINGS_DOM_CONTRACTS) {
+            const rawValue = this.readBacktestDomValue(contract.domId);
             if (rawValue === undefined) continue;
 
-            const settingKey = this.getBacktestSettingKey(id);
-            const value = this.coerceBacktestSettingValue(settingKey, rawValue);
+            const value = coerceBacktestDomSettingValue(contract, rawValue);
             if (value !== undefined) {
-                (settings as unknown as Record<string, unknown>)[settingKey] = value;
+                (settings as unknown as Record<string, unknown>)[contract.settingKey] = value;
             }
         }
 
@@ -185,12 +149,12 @@ class SettingsManager {
 
             // Set state values (these trigger reactive updates)
             if (settings.isDarkTheme !== state.isDarkTheme) {
-                state.set('isDarkTheme', settings.isDarkTheme);
+                setDarkTheme(settings.isDarkTheme);
             }
 
             // Apply chart mode
             if (settings.chartMode && settings.chartMode !== state.chartMode) {
-                state.set('chartMode', settings.chartMode);
+                setChartMode(settings.chartMode);
             }
 
             debugLogger.event('settings.applied', { strategy: settings.currentStrategyKey });
@@ -200,10 +164,10 @@ class SettingsManager {
     }
 
     public applyBacktestSettings(settings: BacktestSettingsData): void {
-        for (const id of BACKTEST_SETTINGS_DOM_IDS) {
-            const value = this.resolveBacktestWriteValue(id, settings);
+        for (const contract of BACKTEST_SETTINGS_DOM_CONTRACTS) {
+            const value = resolveBacktestDomSettingWriteValue(contract, settings);
             if (value !== undefined) {
-                this.writeBacktestDomValue(id, value);
+                this.writeBacktestDomValue(contract.domId, value);
             }
         }
 
@@ -298,7 +262,7 @@ class SettingsManager {
 
             // Switch to the strategy if different
             if (config.strategyKey !== state.currentStrategyKey && strategyRegistry.has(config.strategyKey)) {
-                state.set('currentStrategyKey', config.strategyKey);
+                setCurrentStrategyKey(config.strategyKey);
                 this.getDom().strategySelect.value = config.strategyKey;
             }
 
@@ -389,10 +353,6 @@ class SettingsManager {
     // Private Helpers
     // ========================================================================
 
-    private getBacktestSettingKey(id: string): keyof BacktestSettingsData | 'entrySettingsToggle' {
-        return BACKTEST_DOM_ID_TO_SETTING_KEY[id] ?? (id as keyof BacktestSettingsData | 'entrySettingsToggle');
-    }
-
     private readBacktestDomValue(id: string): unknown {
         const element = document.getElementById(id);
         if (!element) return undefined;
@@ -411,89 +371,13 @@ class SettingsManager {
         return undefined;
     }
 
-    private readNumericValue(value: unknown, fallback: number): number {
-        return readNumber(value, fallback, { parseString: parseInputNumber });
-    }
-
-    private readBooleanValue(value: unknown, fallback: boolean): boolean {
-        return readBoolean(value, fallback);
-    }
-
-    private coerceBacktestSettingValue(
-        settingKey: keyof BacktestSettingsData | 'entrySettingsToggle',
-        value: unknown
-    ): unknown {
-        switch (settingKey) {
-            case 'sizingMode':
-                return this.resolveTradeSizingModeValue(value, DEFAULT_BACKTEST_SETTINGS.sizingMode);
-            case 'riskMode':
-                return this.resolveRiskModeValue(value);
-            case 'takeProfitMode':
-                return this.resolveTakeProfitModeValue(value);
-            case 'tradeFilterMode':
-                return this.resolveTradeFilterModeValue(value);
-            case 'executionModel':
-                return this.resolveExecutionModelValue(value);
-            case 'twoHourCloseParity':
-                return this.resolveTwoHourCloseParity(value);
-            case 'entrySettingsToggle':
-                return this.readBooleanValue(value, false);
-            default: {
-                const fallback = (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[settingKey];
-                if (typeof fallback === 'number') {
-                    return this.readNumericValue(value, fallback);
-                }
-                if (typeof fallback === 'boolean') {
-                    return this.readBooleanValue(value, fallback);
-                }
-                if (typeof fallback === 'string') {
-                    return typeof value === 'string' ? value : fallback;
-                }
-                return value;
-            }
-        }
-    }
-
-    private resolveBacktestWriteValue(id: string, settings: BacktestSettingsData): unknown {
-        switch (id) {
-            case 'tradeSizingMode':
-                return this.resolveTradeSizingModeValue(settings.sizingMode, DEFAULT_BACKTEST_SETTINGS.sizingMode);
-            case 'tradeFilterSettingsToggle':
-                return this.resolveTradeFilterToggle(settings);
-            case 'entrySettingsToggle':
-                return settings.entrySettingsToggle ?? this.resolveTradeFilterToggle(settings);
-            case 'tradeFilterMode':
-                return this.resolveTradeFilterMode(settings);
-            case 'tradeDirection':
-                return this.resolveTradeDirection(settings);
-            case 'marketMode':
-                return this.resolveMarketMode(settings);
-            case 'riskMode':
-                return this.resolveRiskModeValue(settings.riskMode);
-            case 'takeProfitMode':
-                return this.resolveTakeProfitModeValue(settings.takeProfitMode);
-            case 'executionModel':
-                return this.resolveExecutionModelValue(settings.executionModel);
-            case 'twoHourCloseParity':
-                return this.resolveTwoHourCloseParity(settings.twoHourCloseParity);
-            default: {
-                const settingKey = this.getBacktestSettingKey(id);
-                if (settingKey === 'entrySettingsToggle') {
-                    return settings.entrySettingsToggle;
-                }
-                return (settings as unknown as Record<string, unknown>)[settingKey]
-                    ?? (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[settingKey];
-            }
-        }
-    }
-
     private writeBacktestDomValue(id: string, value: unknown): void {
         const element = document.getElementById(id);
         if (!element) return;
 
         if (element instanceof HTMLInputElement) {
             if (element.type === 'checkbox' || element.type === 'radio') {
-                element.checked = this.readBooleanValue(value, false);
+                element.checked = Boolean(value);
                 return;
             }
             element.value = String(value);
@@ -505,44 +389,8 @@ class SettingsManager {
         }
     }
 
-    private resolveTradeDirection(settings: Partial<BacktestSettingsData>): TradeDirection {
-        return resolveTradeDirection(settings, DEFAULT_BACKTEST_SETTINGS);
-    }
-
-    private resolveMarketMode(settings: Partial<BacktestSettingsData>): MarketMode {
-        return resolveMarketMode(settings, DEFAULT_BACKTEST_SETTINGS);
-    }
-
-    private resolveRiskModeValue(value: unknown): NonNullable<BacktestSettings['riskMode']> {
-        return resolveRiskModeValue(value, DEFAULT_BACKTEST_SETTINGS);
-    }
-
-    private resolveTakeProfitModeValue(value: unknown) {
-        return resolveTakeProfitModeValue(value, DEFAULT_BACKTEST_SETTINGS);
-    }
-
     private resolveTradeSizingModeValue(value: unknown, fallback?: BacktestSettingsData["sizingMode"]) {
         return resolveTradeSizingModeValue(value, DEFAULT_BACKTEST_SETTINGS, fallback);
-    }
-
-    private resolveTradeFilterModeValue(value: unknown): TradeFilterMode {
-        return resolveTradeFilterModeValue(value, DEFAULT_BACKTEST_SETTINGS);
-    }
-
-    private resolveExecutionModelValue(value: unknown): ExecutionModel {
-        return resolveExecutionModelValue(value, DEFAULT_BACKTEST_SETTINGS);
-    }
-
-    private resolveTradeFilterMode(settings: Partial<BacktestSettingsData>): TradeFilterMode {
-        return resolveTradeFilterMode(settings, DEFAULT_BACKTEST_SETTINGS);
-    }
-
-    private resolveTwoHourCloseParity(value: unknown): 'odd' | 'even' | 'both' {
-        return resolveTwoHourCloseParity(value, DEFAULT_BACKTEST_SETTINGS);
-    }
-
-    private resolveTradeFilterToggle(settings: Partial<BacktestSettingsData>): boolean {
-        return resolveTradeFilterToggle(settings, DEFAULT_BACKTEST_SETTINGS);
     }
 
     private triggerChangeEvents(): void {

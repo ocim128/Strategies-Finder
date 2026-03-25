@@ -4,7 +4,7 @@ import {
     type WalkForwardPermutationResult,
 } from "./strategies/backtest/permutation-test";
 import type { WalkForwardResult } from "./strategies/walk-forward";
-import type { WalkForwardServiceDom } from "./feature-dom-contracts";
+import type { WalkForwardServiceDom } from "./walk-forward-dom";
 
 type CandidateValidationDecisionReason =
     | "pass"

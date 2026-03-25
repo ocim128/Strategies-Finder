@@ -3,6 +3,7 @@ import { state } from "./state";
 import { uiManager } from "./ui-manager";
 import { debugLogger } from "./debug-logger";
 import { chartManager } from "./chart-manager";
+import { clearBacktestResults, setIndicators, setMarkersPlugin } from "./state-actions";
 
 export function handleCrosshairMove(param: MouseEventParams<Time>) {
     if (!param.time || !param.seriesData) {
@@ -34,10 +35,11 @@ export function clearAll() {
     chartManager.clearIndicators();
     if (state.markersPlugin) {
         state.markersPlugin.detach();
-        state.set('markersPlugin', null);
+        setMarkersPlugin(null);
     }
     state.equitySeries.setData([]);
-    state.clearTradeResults();
+    clearBacktestResults('clear_all');
+    setIndicators([]);
     uiManager.clearUI();
 }
 
