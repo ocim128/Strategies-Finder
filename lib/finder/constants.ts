@@ -1,4 +1,4 @@
-import type { FinderMetric } from '../types/index';
+import type { FinderMetric, PolymarketFinderRankMode } from '../types/index';
 
 export const DEFAULT_SORT_PRIORITY: FinderMetric[] = [
 	'expectancy',
@@ -24,9 +24,11 @@ export const METRIC_LABELS: Record<FinderMetric, string> = {
 	compositeEdgeRatio: 'Comp ER',
 	averageGain: 'Avg Gain',
 	totalTrades: 'Trades',
+	polyScore: 'Poly Score',
+	polyWins: 'Poly Wins',
 	polyWinRate: 'Poly Win %',
 	polyCoverage: 'Poly Cov %',
-	polyPredictions: 'Poly Pred',
+	polyPredictions: 'Poly Scored',
 };
 
 export const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
@@ -40,15 +42,29 @@ export const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
 	compositeEdgeRatio: 'Composite Edge Ratio',
 	averageGain: 'Average Gain',
 	totalTrades: 'Total Trades',
+	polyScore: 'Polymarket Balanced Score',
+	polyWins: 'Polymarket Wins',
 	polyWinRate: 'Poly Win Rate',
 	polyCoverage: 'Poly Coverage',
-	polyPredictions: 'Poly Predictions',
+	polyPredictions: 'Polymarket Scored Predictions',
 };
 
-export const POLYMARKET_SORT_PRIORITY: FinderMetric[] = [
-	'polyWinRate',
-	'polyPredictions',
-	'polyCoverage',
-];
+export const POLYMARKET_RANK_MODE_LABELS: Record<PolymarketFinderRankMode, string> = {
+	balanced: 'Balanced',
+	accuracy: 'Accuracy',
+	volume: 'Volume',
+};
+
+export function getPolymarketSortPriority(mode: PolymarketFinderRankMode = 'balanced'): FinderMetric[] {
+	switch (mode) {
+		case 'accuracy':
+			return ['polyWinRate', 'polyPredictions', 'polyCoverage'];
+		case 'volume':
+			return ['polyWins', 'polyPredictions', 'polyWinRate'];
+		case 'balanced':
+		default:
+			return ['polyScore', 'polyWinRate', 'polyPredictions'];
+	}
+}
 
 

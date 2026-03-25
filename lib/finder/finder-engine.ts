@@ -9,16 +9,34 @@ export function getFinderSelectionResult(item: FinderResult): BacktestResult {
     return item.selectionResult;
 }
 
+function computeWilsonLowerBound(successes: number, trials: number, z = 1.96): number {
+    if (!Number.isFinite(successes) || !Number.isFinite(trials) || trials <= 0) {
+        return 0;
+    }
+
+    const n = Math.max(0, trials);
+    const p = Math.min(1, Math.max(0, successes / n));
+    const z2 = z * z;
+    const denominator = 1 + z2 / n;
+    const center = p + z2 / (2 * n);
+    const margin = z * Math.sqrt((p * (1 - p) + z2 / (4 * n)) / n);
+    return Math.max(0, (center - margin) / denominator);
+}
+
 export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): number {
     // Polymarket metrics take priority when available
     if (item.polymarketEval) {
         switch (metric) {
+            case "polyScore":
+                return computeWilsonLowerBound(item.polymarketEval.wins, item.polymarketEval.scoredPredictions);
+            case "polyWins":
+                return item.polymarketEval.wins;
             case "polyWinRate":
                 return item.polymarketEval.winRate;
             case "polyCoverage":
                 return item.polymarketEval.coverage;
             case "polyPredictions":
-                return item.polymarketEval.predictionsTaken;
+                return item.polymarketEval.scoredPredictions;
         }
     }
     const result = getFinderSelectionResult(item);
@@ -46,6 +64,8 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
             return result.avgWin;
         case "totalTrades":
             return result.totalTrades;
+        case "polyScore":
+        case "polyWins":
         case "polyWinRate":
         case "polyCoverage":
         case "polyPredictions":

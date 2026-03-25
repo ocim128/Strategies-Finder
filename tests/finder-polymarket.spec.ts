@@ -45,6 +45,7 @@ function makeOutcomeRow(eventStartTs: number, resolvedUp: 0 | 1, seriesId = '106
 function buildFixtureSignals(data: OHLCVData[], params: StrategyParams): Signal[] {
     const first = data[0];
     const second = data[1];
+    const third = data[2];
     switch (params.variant) {
         case 1:
             return [{ time: first.time, type: 'buy', price: first.close, barIndex: 0 }];
@@ -55,6 +56,17 @@ function buildFixtureSignals(data: OHLCVData[], params: StrategyParams): Signal[
             ];
         case 3:
             return [{ time: first.time, type: 'sell', price: first.close, barIndex: 0 }];
+        case 4:
+            return [
+                { time: first.time, type: 'buy', price: first.close, barIndex: 0 },
+                { time: second.time, type: 'sell', price: second.close, barIndex: 1 },
+            ];
+        case 5:
+            return [
+                { time: first.time, type: 'buy', price: first.close, barIndex: 0 },
+                { time: second.time, type: 'sell', price: second.close, barIndex: 1 },
+                { time: third.time, type: 'buy', price: third.close, barIndex: 2 },
+            ];
         default:
             return [];
     }
@@ -88,7 +100,7 @@ const capitalSettings: CapitalSettings = {
 function makeOptions(overrides: Partial<FinderOptions> = {}): FinderOptions {
     return {
         mode: 'grid',
-        sortPriority: ['polyWinRate', 'polyPredictions', 'polyCoverage'],
+        sortPriority: ['polyScore', 'polyWinRate', 'polyPredictions'],
         useAdvancedSort: false,
         robustSeed: 1337,
         multiTimeframeEnabled: false,
@@ -103,6 +115,8 @@ function makeOptions(overrides: Partial<FinderOptions> = {}): FinderOptions {
         freezeRiskManagement: true,
         comboEnabled: false,
         polymarketScoringEnabled: true,
+        polymarketRankMode: 'balanced',
+        polymarketMinScoredPredictions: 0,
         ...overrides,
     };
 }
@@ -265,6 +279,57 @@ describe('Finder Polymarket runner', () => {
         );
 
         expect(output.results).to.have.length(0);
+    });
+
+    it('filters out candidates below the polymarket minimum scored threshold', async () => {
+        const bars = makeBars(5);
+        installOutcomeFetch([
+            makeOutcomeRow(Number(bars[1].time), 1),
+            makeOutcomeRow(Number(bars[2].time), 1),
+            makeOutcomeRow(Number(bars[3].time), 1),
+        ]);
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(
+                bars,
+                [{ variant: 1 }, { variant: 5 }],
+                {
+                    polymarketMinScoredPredictions: 2,
+                }
+            ),
+            callbacks
+        );
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]?.params.variant).to.equal(5);
+        expect(output.results[0]?.polymarketEval?.scoredPredictions).to.equal(3);
+    });
+
+    it('uses the provided polymarket sort priority instead of a hard-coded ranking', async () => {
+        const bars = makeBars(5);
+        installOutcomeFetch([
+            makeOutcomeRow(Number(bars[1].time), 1),
+            makeOutcomeRow(Number(bars[2].time), 1),
+            makeOutcomeRow(Number(bars[3].time), 1),
+        ]);
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(
+                bars,
+                [{ variant: 1 }, { variant: 5 }],
+                {
+                    sortPriority: ['polyWins', 'polyPredictions', 'polyWinRate'],
+                    polymarketRankMode: 'volume',
+                }
+            ),
+            callbacks
+        );
+
+        expect(output.results).to.have.length(2);
+        expect(output.results[0]?.params.variant).to.equal(5);
+        expect(output.results[0]?.polymarketEval?.wins).to.equal(2);
     });
 
     it('rejects non-5m intervals before touching the outcome loader', async () => {

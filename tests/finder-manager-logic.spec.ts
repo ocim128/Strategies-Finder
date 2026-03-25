@@ -14,6 +14,7 @@ describe("Finder manager logic", () => {
             primarySort: "expectancy",
             secondarySort: "profitFactor",
             polymarketScoringEnabled: false,
+            polymarketRankMode: "balanced",
         });
 
         expect(sortPriority).to.deep.equal(["expectancy", "profitFactor", "netProfit"]);
@@ -42,13 +43,36 @@ describe("Finder manager logic", () => {
             comboEnabled: true,
             comboPrimaryConfigName: "primary",
             polymarketScoringEnabled: true,
+            polymarketRankMode: "balanced",
+            polymarketMinScoredPredictions: -5,
         });
 
-        expect(options.sortPriority).to.deep.equal(["polyWinRate", "polyPredictions", "polyCoverage"]);
+        expect(options.sortPriority).to.deep.equal(["polyScore", "polyWinRate", "polyPredictions"]);
         expect(options.multiTimeframeEnabled).to.equal(false);
         expect(options.timeframes).to.deep.equal([]);
         expect(options.maxTrades).to.equal(30);
         expect(options.freezeRiskManagement).to.equal(true);
+        expect(options.polymarketMinScoredPredictions).to.equal(0);
+    });
+
+    it("switches polymarket sort priority by selected rank mode", () => {
+        expect(resolveFinderSortPriority({
+            useAdvancedSort: false,
+            advancedSortValues: [],
+            primarySort: "expectancy",
+            secondarySort: "profitFactor",
+            polymarketScoringEnabled: true,
+            polymarketRankMode: "accuracy",
+        })).to.deep.equal(["polyWinRate", "polyPredictions", "polyCoverage"]);
+
+        expect(resolveFinderSortPriority({
+            useAdvancedSort: false,
+            advancedSortValues: [],
+            primarySort: "expectancy",
+            secondarySort: "profitFactor",
+            polymarketScoringEnabled: true,
+            polymarketRankMode: "volume",
+        })).to.deep.equal(["polyWins", "polyPredictions", "polyWinRate"]);
     });
 
     it("returns structured outcomes for timeframe selection", () => {

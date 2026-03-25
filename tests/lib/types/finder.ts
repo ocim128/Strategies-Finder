@@ -2,6 +2,7 @@ import type { BacktestResult, StrategyParams, TradeDirection, TradeFilterMode } 
 import type { PolymarketEvalResult } from "../types/polymarket-outcomes";
 
 export type FinderMode = 'default' | 'grid' | 'random' | 'genetic' | 'robust_random_wf';
+export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'volume';
 export type FinderMetric =
     | 'netProfit'
     | 'profitFactor'
@@ -13,6 +14,8 @@ export type FinderMetric =
     | 'compositeEdgeRatio'
     | 'averageGain'
     | 'totalTrades'
+    | 'polyScore'
+    | 'polyWins'
     | 'polyWinRate'
     | 'polyCoverage'
     | 'polyPredictions';
@@ -36,6 +39,8 @@ export interface FinderOptions {
     comboEnabled?: boolean;
     comboPrimaryConfigName?: string;
     polymarketScoringEnabled?: boolean;
+    polymarketRankMode?: PolymarketFinderRankMode;
+    polymarketMinScoredPredictions?: number;
 }
 
 export interface EndpointSelectionAdjustment {

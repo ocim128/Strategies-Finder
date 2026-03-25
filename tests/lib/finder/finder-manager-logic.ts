@@ -1,5 +1,5 @@
-import { DEFAULT_SORT_PRIORITY, POLYMARKET_SORT_PRIORITY } from "./constants";
-import type { FinderMetric, FinderMode, FinderOptions } from "../types/finder";
+import { DEFAULT_SORT_PRIORITY, getPolymarketSortPriority } from "./constants";
+import type { FinderMetric, FinderMode, FinderOptions, PolymarketFinderRankMode } from "../types/finder";
 
 export interface FinderOptionsInput {
     useAdvancedSort: boolean;
@@ -23,6 +23,8 @@ export interface FinderOptionsInput {
     comboEnabled: boolean;
     comboPrimaryConfigName?: string;
     polymarketScoringEnabled: boolean;
+    polymarketRankMode: PolymarketFinderRankMode;
+    polymarketMinScoredPredictions: number;
 }
 
 export type FinderTimeframeSelectionResult =
@@ -38,9 +40,10 @@ export function resolveFinderSortPriority(input: {
     primarySort: FinderMetric;
     secondarySort: FinderMetric;
     polymarketScoringEnabled: boolean;
+    polymarketRankMode: PolymarketFinderRankMode;
 }): FinderMetric[] {
     if (input.polymarketScoringEnabled) {
-        return [...POLYMARKET_SORT_PRIORITY];
+        return [...getPolymarketSortPriority(input.polymarketRankMode)];
     }
 
     if (input.useAdvancedSort) {
@@ -83,6 +86,8 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         comboEnabled: input.comboEnabled,
         comboPrimaryConfigName: input.comboEnabled ? input.comboPrimaryConfigName : undefined,
         polymarketScoringEnabled: input.polymarketScoringEnabled,
+        polymarketRankMode: input.polymarketRankMode,
+        polymarketMinScoredPredictions: Math.max(0, input.polymarketMinScoredPredictions),
     };
 }
 

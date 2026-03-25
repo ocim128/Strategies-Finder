@@ -125,10 +125,10 @@ export class FinderUI {
                 const poly = item.polymarketEval;
                 metrics.appendChild(this.createMetricChip(`Poly Win ${(poly.winRate * 100).toFixed(1)}%`));
                 metrics.appendChild(this.createMetricChip(`Coverage ${(poly.coverage * 100).toFixed(1)}%`));
-                metrics.appendChild(this.createMetricChip(`Pred ${poly.predictionsTaken}`));
                 metrics.appendChild(this.createMetricChip(`Wins ${poly.wins}`));
-                if (poly.scoredPredictions !== poly.predictionsTaken) {
-                    metrics.appendChild(this.createMetricChip(`Scored ${poly.scoredPredictions}`));
+                metrics.appendChild(this.createMetricChip(`Scored ${poly.scoredPredictions}`));
+                if (poly.predictionsTaken !== poly.scoredPredictions) {
+                    metrics.appendChild(this.createMetricChip(`Taken ${poly.predictionsTaken}`));
                 }
                 if (poly.missingOutcomeRows > 0) {
                     metrics.appendChild(this.createMetricChip(`Miss ${poly.missingOutcomeRows}`));

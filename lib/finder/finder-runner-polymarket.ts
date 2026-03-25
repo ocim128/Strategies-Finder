@@ -16,7 +16,6 @@ import {
     createPolymarketTradeEvaluationContext,
     evaluatePolymarketBacktestTrades,
 } from "../polymarket-trade-annotations";
-import { POLYMARKET_SORT_PRIORITY } from "./constants";
 import { FinderResultRanker } from "./finder-result-ranker";
 import {
     buildFinderEvaluationData,
@@ -117,7 +116,7 @@ export async function runPolymarketFinder(
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
     const precomputed = precomputeIndicators(closedData, settings);
     const polymarketContext = createPolymarketTradeEvaluationContext(closedData, outcomes);
-    const ranker = new FinderResultRanker(Math.max(options.topN, 50), POLYMARKET_SORT_PRIORITY);
+    const ranker = new FinderResultRanker(Math.max(options.topN, 50), options.sortPriority);
     let processedCount = 0;
     let filteredCount = 0;
     let lastUiUpdateAt = 0;
@@ -184,6 +183,20 @@ export async function runPolymarketFinder(
                 context: polymarketContext,
                 includeRows: false,
             });
+            if (evalResult.scoredPredictions < (options.polymarketMinScoredPredictions ?? 0)) {
+                const now = performance.now();
+                if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
+                    lastUiUpdateAt = now;
+                    const progress = 10 + (processedCount / totalRuns) * 85;
+                    callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
+                    callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
+                }
+
+                if (processedCount % 64 === 0 || processedCount === totalRuns) {
+                    await callbacks.yieldControl();
+                }
+                continue;
+            }
             const finderResult: FinderResult = buildFinderResult({
                 key: plan.key,
                 name: plan.name,

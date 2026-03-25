@@ -37,6 +37,7 @@ import type {
 	FinderMetric,
 	FinderMode,
 	FinderOptions,
+	PolymarketFinderRankMode,
 	FinderResult
 } from './types/finder';
 import { isSmartTradeSizingMode, type CapitalSettings } from "./types/backtest";
@@ -105,6 +106,7 @@ export class FinderManager {
 		this.initSortingUI();
 		this.initMultiTimeframeUI();
 		this.initComboUI();
+		this.initPolymarketUI();
 
 
 		state.subscribe('currentInterval', () => {
@@ -274,6 +276,15 @@ export class FinderManager {
 		});
 	}
 
+	private initPolymarketUI(): void {
+		const { finderPolymarketToggle: toggle } = this.getDom();
+
+		this.setPolymarketControlsEnabled(toggle.checked);
+		toggle.addEventListener('change', () => {
+			this.setPolymarketControlsEnabled(toggle.checked);
+		});
+	}
+
 	public populateComboDropdown(): void {
 		const select = this.getDom().finderComboPrimarySelect;
 
@@ -297,6 +308,13 @@ export class FinderManager {
 		const { finderComboSettings: settings, finderComboPrimarySelect: select } = this.getDom();
 		settings.classList.toggle('is-disabled', !enabled);
 		select.disabled = !enabled;
+	}
+
+	private setPolymarketControlsEnabled(enabled: boolean): void {
+		const dom = this.getDom();
+		dom.finderPolymarketSettings.classList.toggle('is-disabled', !enabled);
+		dom.finderPolymarketRankMode.disabled = !enabled;
+		dom.finderPolymarketMinScored.disabled = !enabled;
 	}
 
 	public clearTimeframeCache(): void {
@@ -771,6 +789,10 @@ export class FinderManager {
 		const comboEnabled = dom.finderComboToggle.checked;
 		const comboPrimaryConfigName = comboEnabled ? (dom.finderComboPrimarySelect.value || undefined) : undefined;
 		const polymarketScoringEnabled = dom.finderPolymarketToggle.checked;
+		const polymarketRankMode = (dom.finderPolymarketRankMode.value as PolymarketFinderRankMode) || 'balanced';
+		const polymarketMinScoredPredictions = polymarketScoringEnabled
+			? Math.round(this.readFinderNumberInput(dom.finderPolymarketMinScored, 0, 0))
+			: 0;
 
 		return buildFinderOptions({
 			mode,
@@ -794,6 +816,8 @@ export class FinderManager {
 			comboEnabled,
 			comboPrimaryConfigName,
 			polymarketScoringEnabled,
+			polymarketRankMode,
+			polymarketMinScoredPredictions,
 		});
 	}
 
