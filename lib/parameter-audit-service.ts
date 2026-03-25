@@ -12,6 +12,7 @@ import { paramManager } from "./param-manager";
 import { settingsManager } from "./settings-manager";
 import { state } from "./state";
 import { walkForwardService } from "./walk-forward-service";
+import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import { deriveAutoWalkForwardRange, resolveFiniteRangeReferenceValue, shouldTreatParamAsWholeNumber } from "./walk-forward-range-utils";
 import { applySignalPolarity, type BacktestSettings, type OHLCVData, type Strategy, type StrategyParams } from "./strategies";
 import { runBacktestCompact } from "./strategies/backtest";
@@ -47,6 +48,11 @@ type PersistedAuditState = {
 };
 
 const STORAGE_KEY = "parameterAuditSettings";
+const PARAMETER_AUDIT_STORAGE = {
+    key: STORAGE_KEY,
+    schema: "parameter-audit.ui-state",
+    version: 1,
+} as const;
 
 class ParameterAuditService {
     private dom: ParameterAuditDom | null = null;
@@ -87,20 +93,37 @@ class ParameterAuditService {
     }
 
     private restoreUiState(): void {
-        try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            if (!raw) return;
-            const parsed = JSON.parse(raw) as Partial<PersistedAuditState>;
-            const dom = this.getDom();
+        const restored = readPersistedJson<PersistedAuditState | null>({
+            ...PARAMETER_AUDIT_STORAGE,
+            fallback: null,
+            migrate: ({ data }) => {
+                if (!data || typeof data !== "object" || Array.isArray(data)) {
+                    return null;
+                }
+                const parsed = data as Partial<PersistedAuditState>;
+                return {
+                    sourceType: parsed.sourceType === "saved_configuration"
+                        || parsed.sourceType === "latest_finder_candidate"
+                        || parsed.sourceType === "latest_wfa_result"
+                        ? parsed.sourceType
+                        : "current_strategy",
+                    savedConfigName: typeof parsed.savedConfigName === "string" ? parsed.savedConfigName : "",
+                };
+            },
+            onError: (error) => {
+                debugLogger.warn(`[ParameterAudit] Failed to restore UI state: ${error}`);
+            },
+        });
+        if (!restored) {
+            return;
+        }
 
-            if (parsed.sourceType) {
-                dom.parameterAuditSource.value = parsed.sourceType;
-            }
-            if (parsed.savedConfigName) {
-                dom.parameterAuditSavedConfig.value = parsed.savedConfigName;
-            }
-        } catch (error) {
-            debugLogger.warn(`[ParameterAudit] Failed to restore UI state: ${error}`);
+        const dom = this.getDom();
+        if (restored.sourceType) {
+            dom.parameterAuditSource.value = restored.sourceType;
+        }
+        if (restored.savedConfigName) {
+            dom.parameterAuditSavedConfig.value = restored.savedConfigName;
         }
     }
 
@@ -111,11 +134,13 @@ class ParameterAuditService {
             savedConfigName: dom.parameterAuditSavedConfig.value,
         };
 
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToPersist));
-        } catch (error) {
-            debugLogger.warn(`[ParameterAudit] Failed to persist UI state: ${error}`);
-        }
+        writePersistedJson({
+            ...PARAMETER_AUDIT_STORAGE,
+            data: stateToPersist,
+            onError: (error) => {
+                debugLogger.warn(`[ParameterAudit] Failed to persist UI state: ${error}`);
+            },
+        });
     }
 
     private readSourceType(): ParameterAuditSourceType {

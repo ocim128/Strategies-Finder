@@ -34,6 +34,8 @@ Recent refactor seams worth preserving:
 - app startup sequencing lives in `lib/app-bootstrap.ts` and `lib/bootstrap-feature-registry.ts`
 - shared state still lives in `lib/state.ts`, but app writes should go through `lib/state-actions.ts`
 - read-only state slices live in `lib/state-domains.ts`
+- blob-style localStorage persistence now routes through `lib/persisted-json.ts`
+- backtest progress/status presentation now lives in `lib/backtest-run-presenter.ts`
 
 ## The Contracts Most Likely To Break
 
@@ -62,6 +64,7 @@ If a built-in strategy is added or renamed and the manifest is not re-synced, th
 
 ### 3. Settings compatibility
 - Preserve localStorage/backward compatibility unless you add migration logic
+- For JSON blob persistence, prefer `lib/persisted-json.ts` over open-coded `localStorage` + `JSON.parse/stringify`
 - `tradeFilterMode` is canonical
 - `entryConfirmation` is legacy compatibility still consumed in some paths
 
@@ -110,6 +113,7 @@ See `README.md` under `Architecture Map` for the canonical subsystem and file ma
 ### Any settings change
 - Keep key names stable when possible
 - Check UI load/save path in `lib/settings-manager.ts`
+- If persisted JSON shape changes, add a migration in the relevant `readPersistedJson(...)` callsite instead of silently breaking old payloads
 - Check any resolver/sanitizer path that mirrors those settings
 
 ### Any worker-facing change

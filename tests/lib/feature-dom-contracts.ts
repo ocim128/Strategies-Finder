@@ -1,6 +1,7 @@
 export * from "./handlers/ui-event-handlers-dom";
 export * from "./handlers/settings-handlers-dom";
 export * from "./strategy-panel-dom";
+export * from "./editor-manager-dom";
 export * from "./ui-manager-dom";
 export * from "./renderers/results-renderer-dom";
 export * from "./renderers/trades-renderer-dom";

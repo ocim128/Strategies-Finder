@@ -1,6 +1,7 @@
 import { state } from "./state";
 import { createStrategyPanelDom } from "./strategy-panel-dom";
 import { debugLogger } from "./debug-logger";
+import { readPersistedJson, writePersistedJson } from "./persisted-json";
 
 const STORAGE_KEY = "strategyPanelLayout";
 const MOBILE_BREAKPOINT_PX = 960;
@@ -11,6 +12,18 @@ interface StrategyPanelLayoutState {
     collapsed: boolean;
     widthPx: number | null;
 }
+
+const DEFAULT_LAYOUT_STATE: StrategyPanelLayoutState = {
+    activeTabId: null,
+    collapsed: false,
+    widthPx: null,
+};
+
+const STRATEGY_PANEL_LAYOUT_STORAGE = {
+    key: STORAGE_KEY,
+    schema: "strategy-panel.layout",
+    version: 1,
+} as const;
 
 interface SwitchTabOptions {
     focus?: boolean;
@@ -376,29 +389,21 @@ class StrategyPanelController {
     }
 
     private readLayoutState(): StrategyPanelLayoutState {
-        try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            if (!raw) {
+        return readPersistedJson<StrategyPanelLayoutState>({
+            ...STRATEGY_PANEL_LAYOUT_STORAGE,
+            fallback: DEFAULT_LAYOUT_STATE,
+            migrate: ({ data }) => {
+                const parsed = data as Partial<StrategyPanelLayoutState>;
+                if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                    return DEFAULT_LAYOUT_STATE;
+                }
                 return {
-                    activeTabId: null,
-                    collapsed: false,
-                    widthPx: null,
+                    activeTabId: typeof parsed.activeTabId === "string" ? parsed.activeTabId : null,
+                    collapsed: parsed.collapsed === true,
+                    widthPx: typeof parsed.widthPx === "number" ? parsed.widthPx : null,
                 };
-            }
-
-            const parsed = JSON.parse(raw) as Partial<StrategyPanelLayoutState>;
-            return {
-                activeTabId: typeof parsed.activeTabId === "string" ? parsed.activeTabId : null,
-                collapsed: parsed.collapsed === true,
-                widthPx: typeof parsed.widthPx === "number" ? parsed.widthPx : null,
-            };
-        } catch {
-            return {
-                activeTabId: null,
-                collapsed: false,
-                widthPx: null,
-            };
-        }
+            },
+        });
     }
 
     private saveLayoutState(): void {
@@ -414,11 +419,10 @@ class StrategyPanelController {
             widthPx: Number.isFinite(widthPx) ? widthPx : null,
         };
 
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
-        } catch {
-            // Ignore storage failures; panel state is non-critical UI state.
-        }
+        writePersistedJson({
+            ...STRATEGY_PANEL_LAYOUT_STORAGE,
+            data: nextState,
+        });
     }
 }
 

@@ -105,6 +105,26 @@ export class CommandPaletteManager {
         });
     }
 
+    private getNavigationTabs() {
+        if (typeof document === 'undefined') {
+            return [];
+        }
+
+        return Array.from(document.querySelectorAll<HTMLButtonElement>('#strategyTabs .panel-tab'))
+            .filter(tab => !tab.hidden && !tab.disabled && tab.style.display !== 'none')
+            .map(tab => {
+                const clone = tab.cloneNode(true) as HTMLButtonElement;
+                clone.querySelectorAll('.badge').forEach((badge) => badge.remove());
+
+                const label = clone.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+                return {
+                    id: tab.dataset.tab?.trim() ?? '',
+                    name: label,
+                };
+            })
+            .filter((tab): tab is { id: string; name: string } => Boolean(tab.id && tab.name));
+    }
+
     private refreshItems() {
         const strategies = getStrategyList();
         const symbols = [
@@ -118,17 +138,7 @@ export class CommandPaletteManager {
             { id: 'XAGUSD', name: 'Silver' },
             { id: 'WTIUSD', name: 'WTI Oil' }
         ];
-
-        const tabs = [
-            { id: 'settings', name: 'Settings', icon: 'settings' },
-            { id: 'finder', name: 'Strategy Finder', icon: 'search' },
-            { id: 'paircombiner', name: 'Pair Combiner', icon: 'compare_arrows' },
-            { id: 'walkforward', name: 'Walk-Forward Analysis', icon: 'fast_forward' },
-            { id: 'portfolio', name: 'Portfolio Lab', icon: 'hub' },
-            { id: 'ensemble', name: 'Strategy Ensemble Lab', icon: 'layers' },
-            { id: 'results', name: 'Backtest Results', icon: 'bar_chart' },
-            { id: 'trades', name: 'Trade History', icon: 'history' }
-        ];
+        const tabs = this.getNavigationTabs();
 
         this.items = [
             // Actions
@@ -164,7 +174,7 @@ export class CommandPaletteManager {
             ...tabs.map(tab => ({
                 id: `nav-${tab.id}`,
                 title: `Go to ${tab.name}`,
-                subtitle: `Switch to ${tab.name} tab`,
+                subtitle: `Switch to the ${tab.name} tab`,
                 icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z" /></svg>',
                 category: 'Navigation' as const,
                 action: () => {

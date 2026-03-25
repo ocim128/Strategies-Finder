@@ -19,6 +19,7 @@ import {
     type ResampleOptions,
     type TwoHourCloseParity,
 } from "./lib/strategies/resample-utils";
+import { readPersistedJson, writePersistedJson } from "./lib/persisted-json";
 export type { Strategy, OHLCVData, Signal, StrategyParams };
 
 
@@ -378,28 +379,38 @@ export const indicatorHelpers = indicators;
 // ============================================================================
 
 const CUSTOM_STRATEGIES_KEY = 'playground_custom_strategies';
+const CUSTOM_STRATEGIES_STORAGE = {
+    key: CUSTOM_STRATEGIES_KEY,
+    schema: "strategy-registry.custom-strategies",
+    version: 1,
+} as const;
 
 export function saveCustomStrategiesToStorage(configs: CustomStrategyConfig[]): void {
-    try {
-        localStorage.setItem(CUSTOM_STRATEGIES_KEY, JSON.stringify(configs));
+    const saved = writePersistedJson({
+        ...CUSTOM_STRATEGIES_STORAGE,
+        data: configs,
+        onError: (error) => {
+            console.error('[StrategyRegistry] Failed to save custom strategies:', error);
+        },
+    });
+    if (saved) {
         console.log(`[StrategyRegistry] Saved ${configs.length} custom strategies to localStorage`);
-    } catch (e) {
-        console.error('[StrategyRegistry] Failed to save custom strategies:', e);
     }
 }
 
 export function loadCustomStrategiesFromStorage(): CustomStrategyConfig[] {
-    try {
-        const data = localStorage.getItem(CUSTOM_STRATEGIES_KEY);
-        if (data) {
-            const configs = JSON.parse(data) as CustomStrategyConfig[];
-            console.log(`[StrategyRegistry] Loaded ${configs.length} custom strategies from localStorage`);
-            return configs;
-        }
-    } catch (e) {
-        console.error('[StrategyRegistry] Failed to load custom strategies:', e);
+    const configs = readPersistedJson<CustomStrategyConfig[]>({
+        ...CUSTOM_STRATEGIES_STORAGE,
+        fallback: [],
+        migrate: ({ data }) => Array.isArray(data) ? data as CustomStrategyConfig[] : [],
+        onError: (error) => {
+            console.error('[StrategyRegistry] Failed to load custom strategies:', error);
+        },
+    });
+    if (configs.length > 0) {
+        console.log(`[StrategyRegistry] Loaded ${configs.length} custom strategies from localStorage`);
     }
-    return [];
+    return configs;
 }
 
 /**

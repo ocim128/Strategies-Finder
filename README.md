@@ -55,6 +55,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Data providers: `lib/dataProviders/*`
 - Browser caches: `lib/candle-cache.ts`, IndexedDB paths
 - Local SQLite API client: `lib/local-sqlite-api.ts`
+- Versioned localStorage helper: `lib/persisted-json.ts`
 - Shared runtime state: `lib/state.ts`
 - State write surface: `lib/state-actions.ts`
 - Domain selectors: `lib/state-domains.ts`
@@ -64,6 +65,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Built-in source of truth: `lib/strategies/lib/*`, with `lib/strategies/manifest.ts` generated from those files
 - Worker-facing built-in library: `lib/strategies/library.ts`
 - Backtest orchestration/UI: `lib/backtest-service.ts`
+- Backtest run feedback presenter: `lib/backtest-run-presenter.ts`
 - TS engine: `lib/strategies/backtest/*`
 - Rust engine client: `lib/rust-engine-client.ts`
 
@@ -164,6 +166,7 @@ If you add or rename a built-in strategy, run `npm run strategies:sync-manifest`
 ### Settings compatibility is real
 - `tradeFilterMode` is canonical
 - `entryConfirmation` still exists as compatibility baggage in some paths
+- persisted JSON blobs now route through `lib/persisted-json.ts`, which supports schema/version envelopes while still reading legacy raw JSON payloads
 - any new setting unsupported by Rust must be stripped in both:
   - `lib/backtest-service.ts`
   - `lib/finder-manager.ts`

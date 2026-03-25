@@ -26,6 +26,42 @@ import statusBarHtml from '../html-partials/status-bar.html?raw';
 import debugPanelHtml from '../html-partials/debug-panel.html?raw';
 import codeEditorHtml from '../html-partials/code-editor.html?raw';
 
+const MAIN_CONTENT_PARTIALS = [
+    toolbarHtml,
+    livePositionsHtml,
+] as const;
+
+const SETTINGS_TAB_HTML = [
+    tabSettingsStartHtml,
+    tabSettingsSectionCoreHtml,
+    tabSettingsSectionExecutionHtml,
+    tabSettingsEndHtml,
+].join('');
+
+const STRATEGY_PANEL_TAB_PARTIALS = [
+    SETTINGS_TAB_HTML,
+    tabDataminingHtml,
+    tabFinderHtml,
+    tabParameterAuditHtml,
+    tabPolymarketHtml,
+    tabWalkforwardHtml,
+    tabResultsHtml,
+    tabTradesHtml,
+    tabPortfolioHtml,
+    tabEnsembleHtml,
+    tabAlertsHtml,
+] as const;
+
+const ROOT_OVERLAY_PARTIALS = [
+    debugPanelHtml,
+    codeEditorHtml,
+] as const;
+
+function appendMarkup(target: Element, partials: readonly string[]): void {
+    for (const partial of partials) {
+        target.insertAdjacentHTML('beforeend', partial);
+    }
+}
 
 /**
  * Injects the extracted HTML layout into the DOM.
@@ -50,17 +86,14 @@ export function injectLayout() {
     appContainer.className = 'app-container';
 
     // 2. Header
-    appContainer.insertAdjacentHTML('beforeend', headerHtml);
+    appendMarkup(appContainer, [headerHtml]);
 
     // 3. Main Content (Toolbar + Chart Area)
     const mainContent = document.createElement('main');
     mainContent.className = 'main-content';
     mainContent.id = 'mainContent';
 
-    // Toolbar
-    mainContent.insertAdjacentHTML('beforeend', toolbarHtml);
-    // Live Positions Panel (left-side column next to toolbar)
-    mainContent.insertAdjacentHTML('beforeend', livePositionsHtml);
+    appendMarkup(mainContent, MAIN_CONTENT_PARTIALS);
 
     // Chart Area
     const chartArea = document.createElement('div');
@@ -70,24 +103,6 @@ export function injectLayout() {
     chartArea.insertAdjacentHTML('beforeend', chartWrapperHtml);
 
     // Strategy Panel
-    const tabsContent =
-        tabSettingsStartHtml +
-        tabSettingsSectionCoreHtml +
-        tabSettingsSectionExecutionHtml +
-        tabSettingsEndHtml +
-        tabDataminingHtml +
-        tabFinderHtml +
-        tabParameterAuditHtml +
-        tabPolymarketHtml +
-
-        tabWalkforwardHtml +
-
-        tabResultsHtml +
-        tabTradesHtml +
-        tabPortfolioHtml +
-        tabEnsembleHtml +
-        tabAlertsHtml;
-
     // Create the panel shell
     const strategyPanelContainer = document.createElement('div');
     strategyPanelContainer.innerHTML = strategyPanelShellHtml;
@@ -98,7 +113,7 @@ export function injectLayout() {
         // Find the #panelContent container to inject tabs
         const panelContentElement = strategyPanelElement.querySelector('#panelContent');
         if (panelContentElement) {
-            panelContentElement.innerHTML = tabsContent;
+            appendMarkup(panelContentElement, STRATEGY_PANEL_TAB_PARTIALS);
         }
         chartArea.appendChild(strategyPanelElement);
     }
@@ -107,15 +122,14 @@ export function injectLayout() {
     appContainer.appendChild(mainContent);
 
     // 4. Status Bar
-    appContainer.insertAdjacentHTML('beforeend', statusBarHtml);
+    appendMarkup(appContainer, [statusBarHtml]);
 
     // Append App Container to Root
     root.appendChild(appContainer);
 
     // 5. Debug Panel and Code Editor (Siblings to app-container)
     // We append them to root as well, assuming root acts like the body context
-    root.insertAdjacentHTML('beforeend', debugPanelHtml);
-    root.insertAdjacentHTML('beforeend', codeEditorHtml);
+    appendMarkup(root, ROOT_OVERLAY_PARTIALS);
 
     // Move modal-overlay to body direct child if needed for z-index, 
     // but usually root is fine if z-index is high enough.

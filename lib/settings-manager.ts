@@ -33,6 +33,7 @@ import {
     type StrategyConfig,
 } from "./settings-model";
 import { createSettingsManagerDom, type SettingsManagerDom } from "./settings-manager-dom";
+import { readPersistedJson, writePersistedJson } from "./persisted-json";
 
 export {
     DEFAULT_APP_SETTINGS,
@@ -53,6 +54,18 @@ const STORAGE_KEYS = {
     APP_SETTINGS: 'playground_app_settings',
     STRATEGY_CONFIGS: 'playground_strategy_configs',
 };
+
+const APP_SETTINGS_STORAGE = {
+    key: STORAGE_KEYS.APP_SETTINGS,
+    schema: "settings.app",
+    version: 1,
+} as const;
+
+const STRATEGY_CONFIGS_STORAGE = {
+    key: STORAGE_KEYS.STRATEGY_CONFIGS,
+    schema: "settings.strategy-configs",
+    version: 1,
+} as const;
 
 // ============================================================================
 // Settings Manager
@@ -105,11 +118,15 @@ class SettingsManager {
         if (!this.autoSaveEnabled) return;
 
         const settings = this.getCurrentSettings();
-        try {
-            localStorage.setItem(STORAGE_KEYS.APP_SETTINGS, JSON.stringify(settings));
+        const saved = writePersistedJson({
+            ...APP_SETTINGS_STORAGE,
+            data: settings,
+            onError: (error) => {
+                debugLogger.error('settings.save_failed', { error: error instanceof Error ? error.message : String(error) });
+            },
+        });
+        if (saved) {
             debugLogger.event('settings.saved', { strategy: settings.currentStrategyKey });
-        } catch (e) {
-            debugLogger.error('settings.save_failed', { error: e instanceof Error ? e.message : String(e) });
         }
     }
 
@@ -124,19 +141,18 @@ class SettingsManager {
     }
 
     public loadSettings(): AppSettings | null {
-        try {
-            const data = localStorage.getItem(STORAGE_KEYS.APP_SETTINGS);
-            if (data) {
-                const settings = normalizeStoredAppSettings(JSON.parse(data));
-                if (!settings) return null;
-
-                debugLogger.event('settings.loaded', { strategy: settings.currentStrategyKey });
-                return settings;
-            }
-        } catch (e) {
-            debugLogger.error('settings.load_failed', { error: e instanceof Error ? e.message : String(e) });
+        const settings = readPersistedJson<AppSettings | null>({
+            ...APP_SETTINGS_STORAGE,
+            fallback: null,
+            migrate: ({ data }) => normalizeStoredAppSettings(data),
+            onError: (error) => {
+                debugLogger.error('settings.load_failed', { error: error instanceof Error ? error.message : String(error) });
+            },
+        });
+        if (settings) {
+            debugLogger.event('settings.loaded', { strategy: settings.currentStrategyKey });
         }
-        return null;
+        return settings;
     }
 
     public applySettings(settings: AppSettings): void {
@@ -240,11 +256,13 @@ class SettingsManager {
             configs.push(normalized);
         }
 
-        try {
-            localStorage.setItem(STORAGE_KEYS.STRATEGY_CONFIGS, JSON.stringify(configs));
-        } catch (e) {
-            debugLogger.error('settings.config_save_failed', { error: e instanceof Error ? e.message : String(e), name: config.name });
-        }
+        writePersistedJson({
+            ...STRATEGY_CONFIGS_STORAGE,
+            data: configs,
+            onError: (error) => {
+                debugLogger.error('settings.config_save_failed', { error: error instanceof Error ? error.message : String(error), name: config.name });
+            },
+        });
 
         return normalized;
     }
@@ -284,22 +302,22 @@ class SettingsManager {
     }
 
     public loadAllStrategyConfigs(): StrategyConfig[] {
-        try {
-            const data = localStorage.getItem(STORAGE_KEYS.STRATEGY_CONFIGS);
-            if (data) {
-                const parsed = JSON.parse(data);
-                if (Array.isArray(parsed)) {
-                    return parsed
+        return readPersistedJson<StrategyConfig[]>({
+            ...STRATEGY_CONFIGS_STORAGE,
+            fallback: [],
+            migrate: ({ data }) => {
+                if (Array.isArray(data)) {
+                    return data
                         .map((config) => normalizeStoredStrategyConfig(config))
                         .filter((config): config is StrategyConfig => config !== null);
                 }
                 debugLogger.warn('settings.config_invalid_format');
                 return [];
-            }
-        } catch (e) {
-            debugLogger.error('settings.config_load_failed', { error: e instanceof Error ? e.message : String(e) });
-        }
-        return [];
+            },
+            onError: (error) => {
+                debugLogger.error('settings.config_load_failed', { error: error instanceof Error ? error.message : String(error) });
+            },
+        });
     }
 
     public deleteStrategyConfig(name: string): boolean {
@@ -308,12 +326,16 @@ class SettingsManager {
 
         if (index >= 0) {
             configs.splice(index, 1);
-            try {
-                localStorage.setItem(STORAGE_KEYS.STRATEGY_CONFIGS, JSON.stringify(configs));
+            const saved = writePersistedJson({
+                ...STRATEGY_CONFIGS_STORAGE,
+                data: configs,
+                onError: (error) => {
+                    debugLogger.error('settings.config_delete_failed', { error: error instanceof Error ? error.message : String(error), name });
+                },
+            });
+            if (saved) {
                 debugLogger.event('settings.config.deleted', { name });
                 return true;
-            } catch (e) {
-                debugLogger.error('settings.config_delete_failed', { error: e instanceof Error ? e.message : String(e), name });
             }
         }
         return false;

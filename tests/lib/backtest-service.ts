@@ -44,7 +44,16 @@ import {
     resolveCapitalSettingsFromRaw,
     SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS,
 } from "./backtest-capital-settings";
-import { createDomBacktestRunHandle, type BacktestRunHandle } from "./backtest-run-presenter";
+import {
+    createDomBacktestRunHandle,
+    delayBacktestUi,
+    formatCompletedBacktestStatus,
+    formatCompletedCombinedBacktestStatus,
+    setReplayStartButtonDisabled,
+    updateDomBacktestRunProgress,
+    type BacktestRunHandle,
+    type BacktestParityComparison,
+} from "./backtest-run-presenter";
 import { commitBacktestResult, commitParityBacktestResults, setTwoHourCloseParity } from "./state-actions";
 import { annotateBacktestResultWithPolymarketOutcomes } from "./polymarket-trade-annotations";
 
@@ -54,7 +63,7 @@ import { buildPostEntryPathStats as analyzeBacktestResult } from "./backtest-res
 type CurrentBacktestExecution = {
     result: BacktestResult;
     engineUsed: 'rust' | 'typescript';
-    parityComparison: { odd: BacktestResult; even: BacktestResult; baseline: 'odd' | 'even' } | null;
+    parityComparison: BacktestParityComparison | null;
 };
 
 export class BacktestService {
@@ -66,11 +75,11 @@ export class BacktestService {
             strategy: state.currentStrategyKey,
             candles: state.ohlcvData.length,
         });
-        const runUi = this.beginBacktestRun('runBacktest', 'Running backtest...', true);
+        const runUi = createDomBacktestRunHandle('runBacktest', 'Running backtest...', true);
         let shouldDelayHide = false;
 
         try {
-            await this.updateBacktestProgress(runUi, '20%', 'Calculating indicators...', 100);
+            await updateDomBacktestRunProgress(runUi, '20%', 'Calculating indicators...', 100);
 
             const strategy = strategyRegistry.get(state.currentStrategyKey);
             if (!strategy) {
@@ -85,7 +94,7 @@ export class BacktestService {
             const requiresTsEngine = this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
             const parityMode = this.getTwoHourCloseParityMode();
 
-            await this.updateBacktestProgress(
+            await updateDomBacktestRunProgress(
                 runUi,
                 '40%',
                 parityMode === 'both' ? 'Preparing parity runs...' : 'Generating signals...',
@@ -116,23 +125,8 @@ export class BacktestService {
                 reason: 'manual_backtest',
             });
 
-            await this.updateBacktestProgress(runUi, '100%', 'Complete!');
-            if (parityComparison && !result.entryStats) {
-                runUi.setStatus(`2H compare | Odd ${parityComparison.odd.netProfitPercent.toFixed(2)}% | Even ${parityComparison.even.netProfitPercent.toFixed(2)}%`);
-            } else if (result.entryStats) {
-                const entryWin = result.entryStats.winRate.toFixed(1);
-                const useTarget = result.entryStats.winDefinition === 'target' && (result.entryStats.targetPct ?? 0) > 0;
-                const avgBars = useTarget
-                    ? (result.entryStats.avgTargetBars ?? result.entryStats.avgRetestBars)
-                    : result.entryStats.avgRetestBars;
-                const label = useTarget ? 'Avg Target' : 'Avg Retest';
-                runUi.setStatus(`${result.entryStats.totalEntries} entries | Win ${entryWin}% | ${label} ${avgBars.toFixed(1)} bars`);
-            } else {
-                const expectancyText = `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`;
-                const pfText = result.profitFactor === Infinity ? 'Inf' : result.profitFactor.toFixed(2);
-                const engineBadge = engineUsed === 'rust' ? ' [rust]' : '';
-                runUi.setStatus(`${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}${engineBadge}`);
-            }
+            await updateDomBacktestRunProgress(runUi, '100%', 'Complete!');
+            runUi.setStatus(formatCompletedBacktestStatus(result, engineUsed, parityComparison));
             shouldDelayHide = true;
             debugLogger.event('backtest.success', {
                 strategy: state.currentStrategyKey,
@@ -142,10 +136,7 @@ export class BacktestService {
                 parityMode,
             });
             // Enable replay button if there are results
-            const replayStartBtn = getOptionalElement<HTMLButtonElement>('replayStartBtn');
-            if (replayStartBtn) {
-                replayStartBtn.disabled = result.totalTrades === 0;
-            }
+            setReplayStartButtonDisabled(result.totalTrades === 0);
         } catch (error) {
             debugLogger.error('backtest.error', {
                 strategy: state.currentStrategyKey,
@@ -153,15 +144,12 @@ export class BacktestService {
                 durationMs: Date.now() - startedAt,
             });
             // Disable replay button on error
-            const replayStartBtn = getOptionalElement<HTMLButtonElement>('replayStartBtn');
-            if (replayStartBtn) {
-                replayStartBtn.disabled = true;
-            }
+            setReplayStartButtonDisabled(true);
 
             throw error;
         } finally {
             if (shouldDelayHide) {
-                await this.sleep(500);
+                await delayBacktestUi(500);
             }
             runUi.finish();
         }
@@ -220,7 +208,7 @@ export class BacktestService {
             );
         }
 
-        await this.updateBacktestProgress(runUi, '60%', 'Running backtest...', 100);
+        await updateDomBacktestRunProgress(runUi, '60%', 'Running backtest...', 100);
         const singleRun = await this.withTemporaryTwoHourParity(parityMode, async () => this.runBacktestForData(
             baseData,
             state.currentInterval,
@@ -251,7 +239,7 @@ export class BacktestService {
         const oddData = await this.getBacktestDataForParity('odd', baseData);
         const evenData = await this.getBacktestDataForParity('even', baseData);
 
-        await this.updateBacktestProgress(runUi, '65%', 'Running odd + even backtests...', 80);
+        await updateDomBacktestRunProgress(runUi, '65%', 'Running odd + even backtests...', 80);
 
         const oddRun = await this.withTemporaryTwoHourParity('odd', async () => this.runBacktestForData(
             oddData,
@@ -336,11 +324,11 @@ export class BacktestService {
             mode,
         });
 
-        const runUi = this.beginBacktestRun('runCombinedStrategyBtn', 'Running combined backtest...');
+        const runUi = createDomBacktestRunHandle('runCombinedStrategyBtn', 'Running combined backtest...');
 
         try {
             // --- 1. Resolve both strategies from registry ---
-            await this.updateBacktestProgress(runUi, '10%', 'Resolving strategies...', 50);
+            await updateDomBacktestRunProgress(runUi, '10%', 'Resolving strategies...', 50);
 
             const primaryStrategy = strategyRegistry.get(primaryConfig.strategyKey);
             const secondaryStrategy = strategyRegistry.get(secondaryConfig.strategyKey);
@@ -355,7 +343,7 @@ export class BacktestService {
             }
 
             // --- 2. Prepare data ---
-            await this.updateBacktestProgress(runUi, '20%', 'Preparing data...', 50);
+            await updateDomBacktestRunProgress(runUi, '20%', 'Preparing data...', 50);
 
             const primarySettings = resolveBacktestSettingsFromRaw(
                 primaryConfig.backtestSettings as unknown as BacktestSettings,
@@ -372,7 +360,7 @@ export class BacktestService {
             );
 
             // --- 3. Execute both strategies ---
-            await this.updateBacktestProgress(runUi, '40%', 'Generating signals from both strategies...', 50);
+            await updateDomBacktestRunProgress(runUi, '40%', 'Generating signals from both strategies...', 50);
 
             const primarySignals = applySignalPolarity(
                 primaryStrategy.execute(backtestData, primaryConfig.strategyParams),
@@ -384,12 +372,12 @@ export class BacktestService {
             );
 
             // --- 4. Merge signals ---
-            await this.updateBacktestProgress(runUi, '60%', `Merging signals (${mode.toUpperCase()})...`, 50);
+            await updateDomBacktestRunProgress(runUi, '60%', `Merging signals (${mode.toUpperCase()})...`, 50);
 
             const mergedSignals = mergeStrategySignals(primarySignals, secondarySignals, mode);
 
             // --- 5. Run backtest using primary config's settings + capital ---
-            await this.updateBacktestProgress(runUi, '80%', 'Running backtest on merged signals...', 50);
+            await updateDomBacktestRunProgress(runUi, '80%', 'Running backtest on merged signals...', 50);
 
             const capitalSettings = settingsManager.resolveCapitalFromConfig(primaryConfig);
             const requiresTsEngine =
@@ -408,10 +396,8 @@ export class BacktestService {
                 reason: 'combined_strategy_backtest',
             });
 
-            await this.updateBacktestProgress(runUi, '100%', 'Complete!');
-            const expectancyText = `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`;
-            const pfText = result.profitFactor === Infinity ? 'Inf' : result.profitFactor.toFixed(2);
-            runUi.setStatus(`Combined (${mode.toUpperCase()}) | ${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}`);
+            await updateDomBacktestRunProgress(runUi, '100%', 'Complete!');
+            runUi.setStatus(formatCompletedCombinedBacktestStatus(mode, result));
 
             debugLogger.event('backtest.combined.success', {
                 primary: primaryConfig.strategyKey,
@@ -424,7 +410,7 @@ export class BacktestService {
                 durationMs: Date.now() - startedAt,
             });
 
-            await this.sleep(500);
+            await delayBacktestUi(500);
         } catch (error) {
             debugLogger.error('backtest.combined.error', {
                 primary: primaryConfig.strategyKey,
@@ -437,23 +423,6 @@ export class BacktestService {
             runUi.finish();
         }
     }
-
-    private beginBacktestRun(buttonId: string, initialStatus: string, manageAriaBusy = false): BacktestRunHandle {
-        return createDomBacktestRunHandle(buttonId, initialStatus, manageAriaBusy);
-    }
-
-    private async updateBacktestProgress(
-        runUi: BacktestRunHandle,
-        width: string,
-        text: string,
-        delayMs = 0
-    ): Promise<void> {
-        runUi.setProgress(width, text);
-        if (delayMs > 0) {
-            await this.sleep(delayMs);
-        }
-    }
-
 
     private async runBacktestForData(
         ohlcvData: OHLCVData[],
@@ -758,10 +727,6 @@ export class BacktestService {
     private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): CapitalSettings {
         const raw = backtestSettings as Record<string, unknown>;
         return resolveCapitalSettingsFromRaw(raw, SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS);
-    }
-
-    private sleep(ms: number): Promise<void> {
-        return new Promise(resolve => setTimeout(resolve, ms));
     }
 
     private isResultConsistent(result: BacktestResult): boolean {
