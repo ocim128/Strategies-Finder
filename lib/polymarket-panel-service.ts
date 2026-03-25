@@ -1,7 +1,11 @@
 import { createPolymarketPanelDom, type PolymarketPanelDom } from "./polymarket-panel-dom";
 import type { PolymarketFillHistorySummary } from "./polymarket-fill-history";
 import { loadPolymarketFillHistorySummary } from "./polymarket-fill-history";
-import { isSupportedPolymarketBtc5mRun, loadBtc5mPolymarketOutcomesForTimeRange } from "./polymarket-btc5m";
+import {
+    getSupportedPolymarket5mSymbolsLabel,
+    isSupportedPolymarket5mRun,
+    loadPolymarket5mOutcomesForTimeRange,
+} from "./polymarket-btc5m";
 import { analyzePolymarketFillability, type PolymarketFillScope } from "./polymarket-fill-analysis";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { state } from "./state";
@@ -58,7 +62,7 @@ class PolymarketPanelService {
         this.lastResult = result;
         this.loadError = null;
 
-        if (!result || !isSupportedPolymarketBtc5mRun(state.currentSymbol, state.currentInterval) || result.trades.length === 0) {
+        if (!result || !isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval) || result.trades.length === 0) {
             this.resetLoadedRows(false);
             this.render();
             return;
@@ -79,7 +83,8 @@ class PolymarketPanelService {
         this.render();
 
         try {
-            const rows = await loadBtc5mPolymarketOutcomesForTimeRange(
+            const rows = await loadPolymarket5mOutcomesForTimeRange(
+                state.currentSymbol,
                 Math.min(...targetTimes),
                 Math.max(...targetTimes)
             );
@@ -155,7 +160,7 @@ class PolymarketPanelService {
     private render(): void {
         const dom = this.getDom();
         const result = this.lastResult;
-        const supportedRun = isSupportedPolymarketBtc5mRun(state.currentSymbol, state.currentInterval);
+        const supportedRun = isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval);
 
         if (!result) {
             this.showEmpty("Run a backtest first, then this tab will estimate Polymarket fills for the executed trades.");
@@ -163,7 +168,7 @@ class PolymarketPanelService {
         }
 
         if (!supportedRun) {
-            this.showEmpty("This tab currently supports BTCUSDT on the 5m chart only.");
+            this.showEmpty(`This tab currently supports ${getSupportedPolymarket5mSymbolsLabel()} on the 5m chart.`);
             return;
         }
 

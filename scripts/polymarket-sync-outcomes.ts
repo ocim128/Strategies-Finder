@@ -1,17 +1,19 @@
 /**
  * polymarket-sync-outcomes.ts
  *
- * Fetches closed BTC 5m Polymarket events and upserts resolved outcome rows
+ * Fetches closed supported 5m Polymarket events and upserts resolved outcome rows
  * into the local SQLite DB via the Vite /api/sqlite/store-polymarket-outcomes
  * endpoint.
  *
  * Usage (run while `npm run dev` is active so the Vite server is up):
  *
  *   npx esno scripts/polymarket-sync-outcomes.ts [options]
- *   npm run poly:sync-outcomes -- [options]
+ *   ..\..\..\node_modules\.bin\esno scripts/polymarket-sync-outcomes.ts [options]
+ *   npm run poly:sync-outcomes   (default BTC sync only)
  *
  * Options:
- *   --series-id <id>       Polymarket series id (default: 10684, BTC up/down 5m)
+ *   --symbol <symbol>      Resolve series id from symbol (BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT)
+ *   --series-id <id>       Polymarket series id override (default: 10684, BTC up/down 5m)
  *   --start-date <iso>     Inclusive lower bound for event end date
  *   --end-date <iso>       Inclusive upper bound for event end date
  *   --max-events <n>       Max closed events to store after pagination (default: 10000)
@@ -25,11 +27,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { planPolymarketEventSync } from "../lib/polymarket-sync-utils";
+import {
+    BTC_5M_POLYMARKET_SERIES_ID,
+    getPolymarket5mSeriesIdForSymbol,
+    getSupportedPolymarket5mSymbolsLabel,
+} from "../lib/polymarket-btc5m";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
 type CliConfig = {
     seriesId: string;
+    symbol?: string;
     startDateMin: string;
     endDateMax?: string;
     maxEvents: number;
@@ -91,7 +99,7 @@ type ExistingOutcomeSlugRow = {
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
-const DEFAULT_SERIES_ID = "10684";
+const DEFAULT_SERIES_ID: string = BTC_5M_POLYMARKET_SERIES_ID;
 const GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events";
 const CLOB_HISTORY_URL = "https://clob.polymarket.com/prices-history";
 const INTERVAL = "5m";
@@ -113,10 +121,12 @@ function parseNumber(raw: string | undefined, fallback: number): number {
 function printUsage(): void {
     console.log([
         "Usage:",
-        "  npm run poly:sync-outcomes -- [options]",
+        "  npm run poly:sync-outcomes",
+        "  ..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-sync-outcomes.ts [options]",
         "",
         "Options:",
-        "  --series-id <id>       Polymarket series id (default: 10684, BTC up/down 5m)",
+        `  --symbol <symbol>      Resolve the 5m series id from symbol (${getSupportedPolymarket5mSymbolsLabel()})`,
+        "  --series-id <id>       Polymarket series id override (default: 10684, BTC up/down 5m)",
         "  --start-date <iso>     Lower bound for event end date (default: now-30d)",
         "  --end-date <iso>       Upper bound for event end date",
         "  --max-events <n>       Max closed events to store after pagination (default: 10000)",
@@ -129,6 +139,7 @@ function printUsage(): void {
         "",
         "Notes:",
         "  Requires the Vite dev server to be running (`npm run dev`) unless --dry-run is used.",
+        "  Use the direct `esno` command above when you need named flags like --symbol.",
         "  event_start_ts = event_end_ts - 300 (5 minutes).",
         "  YES prices are sampled at: open, +1m, +2m, +3m, +4m.",
         "  resolved_outcome_up = 1 if outcomePrices[YES] >= 0.5 (hard settlement).",
@@ -141,7 +152,8 @@ function parseArgs(argv: string[]): CliConfig | null {
         return null;
     }
 
-    let seriesId = DEFAULT_SERIES_ID;
+    let seriesId: string = DEFAULT_SERIES_ID;
+    let symbol: string | undefined;
     let startDateMin = defaultStartDateIso(30);
     let endDateMax: string | undefined;
     let maxEvents = 10000;
@@ -155,6 +167,17 @@ function parseArgs(argv: string[]): CliConfig | null {
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
         const next = argv[i + 1];
+        if (arg === "--symbol") {
+            const resolvedSymbol = String(next ?? "").trim().toUpperCase();
+            const resolvedSeriesId = getPolymarket5mSeriesIdForSymbol(resolvedSymbol);
+            if (!resolvedSeriesId) {
+                throw new Error(`Unsupported Polymarket 5m symbol "${resolvedSymbol}". Use ${getSupportedPolymarket5mSymbolsLabel()}.`);
+            }
+            symbol = resolvedSymbol;
+            seriesId = resolvedSeriesId;
+            i++;
+            continue;
+        }
         if (arg === "--series-id") { seriesId = String(next ?? "").trim() || seriesId; i++; continue; }
         if (arg === "--start-date") { startDateMin = String(next ?? "").trim() || startDateMin; i++; continue; }
         if (arg === "--end-date") { endDateMax = String(next ?? "").trim() || undefined; i++; continue; }
@@ -167,7 +190,7 @@ function parseArgs(argv: string[]): CliConfig | null {
         if (arg === "--dry-run") { dryRun = true; continue; }
     }
 
-    return { seriesId, startDateMin, endDateMax, maxEvents, pageSize, concurrency, refreshRecent, viteOrigin, outPath, dryRun };
+    return { seriesId, symbol, startDateMin, endDateMax, maxEvents, pageSize, concurrency, refreshRecent, viteOrigin, outPath, dryRun };
 }
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────
@@ -461,12 +484,12 @@ async function main(): Promise<void> {
     if (!cfg) return;
 
     console.log("[poly:sync-outcomes] Fetching closed events...");
-    console.log(`  series_id=${cfg.seriesId}  start=${cfg.startDateMin}  max_events=${cfg.maxEvents}`);
+    console.log(`  series_id=${cfg.seriesId}${cfg.symbol ? ` (${cfg.symbol})` : ""}  start=${cfg.startDateMin}  max_events=${cfg.maxEvents}`);
 
     const events = await fetchSeriesEvents(cfg);
     console.log(`[poly:sync-outcomes] Got ${events.length} unique events`);
     if (events.length === 0) {
-        console.error("[poly:sync-outcomes] No events found. Adjust --start-date or --series-id.");
+        console.error("[poly:sync-outcomes] No events found. Adjust --start-date, --symbol, or --series-id.");
         process.exitCode = 1;
         return;
     }

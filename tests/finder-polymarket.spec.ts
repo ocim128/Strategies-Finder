@@ -219,6 +219,30 @@ describe('Finder Polymarket runner', () => {
         expect(statuses.some((status) => status.includes('Loaded 2 outcome rows'))).to.equal(true);
     });
 
+    it('loads the ETH 5m outcome series for supported alt symbols', async () => {
+        const bars = makeBars(4);
+        const requestedSeriesIds: string[] = [];
+        installOutcomeFetch(
+            [
+                makeOutcomeRow(Number(bars[1].time), 1, '10683'),
+                makeOutcomeRow(Number(bars[2].time), 0, '10683'),
+            ],
+            (url) => {
+                requestedSeriesIds.push(url.searchParams.get('seriesId') ?? '');
+            }
+        );
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(bars, [{ variant: 1 }], {}, '5m', 'ETHUSDT'),
+            callbacks
+        );
+
+        expect(requestedSeriesIds).to.deep.equal(['10683']);
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]?.polymarketEval?.scoredPredictions).to.equal(1);
+    });
+
     it('uses executed trade count for the Finder min/max filter in Polymarket mode', async () => {
         const bars = makeBars(4);
         installOutcomeFetch([
@@ -258,19 +282,19 @@ describe('Finder Polymarket runner', () => {
         expect(statuses.at(-1)).to.equal('Polymarket scoring requires 5m interval.');
     });
 
-    it('rejects non-BTC symbols before touching the outcome loader', async () => {
+    it('rejects unsupported symbols before touching the outcome loader', async () => {
         globalThis.fetch = (async () => {
-            throw new Error('fetch should not be called for non-BTC symbol');
+            throw new Error('fetch should not be called for unsupported symbol');
         }) as typeof fetch;
 
         const { callbacks, statuses } = makeCallbacks();
         const output = await runPolymarketFinder(
-            makeInput(makeBars(4), [{ variant: 1 }], {}, '5m', 'ETHUSDT'),
+            makeInput(makeBars(4), [{ variant: 1 }], {}, '5m', 'ADAUSDT'),
             callbacks
         );
 
         expect(output.results).to.have.length(0);
-        expect(statuses.at(-1)).to.equal('Polymarket scoring currently supports BTC 5m only.');
+        expect(statuses.at(-1)).to.equal('Polymarket scoring currently supports BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT on 5m.');
     });
 
     it('surfaces SQLite outcome load failures without hanging the run', async () => {

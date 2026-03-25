@@ -7,9 +7,10 @@
 import { applySignalPolarity, precomputeIndicators, runBacktest } from "../strategies/index";
 import type { FinderResult } from "../types/finder";
 import {
-    BTC_5M_POLYMARKET_SERIES_ID,
-    isSupportedPolymarketBtc5mRun,
-    loadBtc5mPolymarketOutcomesForChart,
+    getPolymarket5mSeriesIdForSymbol,
+    getSupportedPolymarket5mSymbolsLabel,
+    isSupportedPolymarket5mRun,
+    loadPolymarket5mOutcomesForChart,
 } from "../polymarket-btc5m";
 import {
     createPolymarketTradeEvaluationContext,
@@ -41,8 +42,8 @@ export async function runPolymarketFinder(
         return { results: [] };
     }
 
-    if (!isSupportedPolymarketBtc5mRun(input.symbol, input.interval)) {
-        callbacks.setStatus("Polymarket scoring currently supports BTC 5m only.");
+    if (!isSupportedPolymarket5mRun(input.symbol, input.interval)) {
+        callbacks.setStatus(`Polymarket scoring currently supports ${getSupportedPolymarket5mSymbolsLabel()} on 5m.`);
         return { results: [] };
     }
 
@@ -70,9 +71,15 @@ export async function runPolymarketFinder(
         return { results: [] };
     }
 
-    let outcomes: Awaited<ReturnType<typeof loadBtc5mPolymarketOutcomesForChart>>;
+    const seriesId = getPolymarket5mSeriesIdForSymbol(input.symbol);
+    if (!seriesId) {
+        callbacks.setStatus(`Polymarket scoring currently supports ${getSupportedPolymarket5mSymbolsLabel()} on 5m.`);
+        return { results: [] };
+    }
+
+    let outcomes: Awaited<ReturnType<typeof loadPolymarket5mOutcomesForChart>>;
     try {
-        outcomes = await loadBtc5mPolymarketOutcomesForChart(closedData);
+        outcomes = await loadPolymarket5mOutcomesForChart(input.symbol, closedData);
     } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         callbacks.setStatus(`Failed to load Polymarket outcomes from SQLite. ${detail}`);
@@ -80,7 +87,7 @@ export async function runPolymarketFinder(
     }
 
     if (outcomes.length === 0) {
-        callbacks.setStatus(`No Polymarket outcome rows available for series ${BTC_5M_POLYMARKET_SERIES_ID}. Run poly:sync-outcomes first.`);
+        callbacks.setStatus(`No Polymarket outcome rows available for series ${seriesId}. Run poly:sync-outcomes first.`);
         return { results: [] };
     }
 

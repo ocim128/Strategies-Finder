@@ -1,4 +1,8 @@
-import { loadBtc5mPolymarketOutcomesForTimeRange, BTC_5M_POLYMARKET_SERIES_ID, isSupportedPolymarketBtc5mRun } from "./polymarket-btc5m";
+import {
+    getPolymarket5mSeriesIdForSymbol,
+    isSupportedPolymarket5mRun,
+    loadPolymarket5mOutcomesForTimeRange,
+} from "./polymarket-btc5m";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import type { BacktestResult, OHLCVData, Trade } from "./types/strategies";
 import type { PolymarketEvalResult, PolymarketEvalRow, PolymarketOutcomeRow } from "./types/polymarket-outcomes";
@@ -199,8 +203,13 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         result.trades.length === 0 ||
         context.executionModel !== "next_open" ||
         context.chartData.length < 2 ||
-        !isSupportedPolymarketBtc5mRun(context.symbol, context.interval)
+        !isSupportedPolymarket5mRun(context.symbol, context.interval)
     ) {
+        return result;
+    }
+
+    const seriesId = getPolymarket5mSeriesIdForSymbol(context.symbol);
+    if (!seriesId) {
         return result;
     }
 
@@ -213,7 +222,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
 
     const startTs = Math.min(...targetTimes);
     const endTs = Math.max(...targetTimes);
-    const outcomes = await loadBtc5mPolymarketOutcomesForTimeRange(startTs, endTs);
+    const outcomes = await loadPolymarket5mOutcomesForTimeRange(context.symbol, startTs, endTs);
     const evaluationContext = createPolymarketTradeEvaluationContext(context.chartData, outcomes);
 
     const trades = result.trades.map((trade) => buildAnnotatedTrade(
@@ -226,7 +235,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         ...result,
         trades,
         polymarketTradeSummary: {
-            seriesId: BTC_5M_POLYMARKET_SERIES_ID,
+            seriesId,
             outcomeRowsLoaded: outcomes.length,
             scoredTrades,
             missingOutcomeTrades: trades.length - scoredTrades,

@@ -53,8 +53,25 @@ function makeBars(count: number, startTs = 1_700_000_000): OHLCVData[] {
     }));
 }
 
-function installOutcomeFetch(rows: unknown[]): void {
-    globalThis.fetch = (async () => {
+function installOutcomeFetch(rows: unknown[], onRequest?: (url: URL) => void): void {
+    globalThis.fetch = (async (input) => {
+        const url = new URL(
+            typeof input === "string"
+                ? input
+                : input instanceof URL
+                    ? input.toString()
+                    : input.url,
+            "http://localhost"
+        );
+
+        if (url.pathname === "/api/sqlite/status") {
+            return new Response(JSON.stringify({ ok: true }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }
+
+        onRequest?.(url);
         return new Response(JSON.stringify({ ok: true, rows }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
@@ -140,6 +157,50 @@ describe("Polymarket backtest trade annotations", () => {
         expect(html).to.include('data-polymarket-url="https://polymarket.com/event/btc-1"');
     });
 
+    it("annotates supported ETH 5m runs with the ETH Polymarket series", async () => {
+        const bars = makeBars(4);
+        const firstEventTs = Number(bars[1]!.time);
+        const requestedSeriesIds: string[] = [];
+        installOutcomeFetch([
+            {
+                series_id: "10683",
+                event_slug: "eth-1",
+                market_slug: "eth-1",
+                interval: "5m",
+                event_start_ts: firstEventTs,
+                event_end_ts: firstEventTs + 300,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.5,
+                yes_entry_minute_2_price: 0.5,
+                yes_entry_minute_3_price: 0.5,
+                yes_entry_minute_4_price: 0.5,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ], (url) => {
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                requestedSeriesIds.push(url.searchParams.get("seriesId") ?? "");
+            }
+        });
+
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([makeTrade(1, "long", firstEventTs, 10)]),
+            {
+                symbol: "ETHUSDT",
+                interval: "5m",
+                executionModel: "next_open",
+                chartData: bars,
+            }
+        );
+
+        expect(requestedSeriesIds).to.deep.equal(["10683"]);
+        expect(result.polymarketTradeSummary?.seriesId).to.equal("10683");
+        expect(result.trades[0]?.polymarketOutcome?.marketSlug).to.equal("eth-1");
+    });
+
     it("skips annotation for unsupported runs", async () => {
         globalThis.fetch = (async () => {
             throw new Error("fetch should not run for unsupported symbol");
@@ -147,7 +208,7 @@ describe("Polymarket backtest trade annotations", () => {
 
         const original = makeBacktestResult([makeTrade(1, "long", 1_700_000_300, 10)]);
         const result = await annotateBacktestResultWithPolymarketOutcomes(original, {
-            symbol: "ETHUSDT",
+            symbol: "ADAUSDT",
             interval: "5m",
             executionModel: "next_open",
             chartData: makeBars(3),
