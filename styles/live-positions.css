@@ -166,6 +166,26 @@
     display: flex;
     align-items: center;
     gap: 4px;
+    padding: 3px 8px;
+    border: 1px solid hsl(var(--hsl-border) / 0.18);
+    border-radius: var(--radius-pill);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.lp-polling-status:hover {
+    border-color: hsl(var(--hsl-accent) / 0.28);
+    background: hsl(var(--hsl-accent) / 0.08);
+}
+
+.lp-polling-status[aria-pressed="true"] {
+    color: var(--text-secondary);
+}
+
+.lp-polling-status[aria-pressed="true"] .lp-dot:not(.paused) {
+    box-shadow: 0 0 0 3px hsl(var(--hsl-green) / 0.14);
 }
 
 .lp-dot {

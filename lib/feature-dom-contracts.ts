@@ -8,6 +8,7 @@ export * from "./renderers/trades-renderer-dom";
 export * from "./settings-manager-dom";
 export * from "./polymarket-panel-dom";
 export * from "./portfolio-lab-dom";
+export * from "./live-positions-dom";
 export * from "./finder/finder-manager-dom";
 export * from "./pairCombiner/pair-combiner-bridge-dom";
 export * from "./walk-forward-dom";

@@ -30,10 +30,10 @@
     <div class="lp-body" id="lpBody">
         <div class="lp-status-bar">
             <span class="lp-last-updated" id="lpLastUpdated">Never</span>
-            <span class="lp-polling-status" id="lpPollingStatus">
-                <span class="lp-dot"></span>
-                Auto
-            </span>
+            <button class="lp-polling-status" id="lpPollingStatus" type="button" aria-pressed="false" title="Enable live position auto-refresh">
+                <span class="lp-dot paused" id="lpPollingDot"></span>
+                <span id="lpPollingText">Off</span>
+            </button>
         </div>
         
         <div class="lp-list" id="lpList">

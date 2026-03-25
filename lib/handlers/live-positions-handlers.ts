@@ -21,8 +21,11 @@ import { createAccessibleModal, type AccessibleModalController } from '../modal-
 import { formatDisplayPrice } from '../price-format';
 import { resolveAlertSignalEntryPrice } from '../alert-signal-utils';
 import { toBooleanLike, toFiniteNumber as readFiniteNumber } from '../settings-parse-utils';
+import { createLivePositionsDom } from '../live-positions-dom';
 
 
+const LIVE_POSITIONS_COLLAPSED_STORAGE_KEY = 'livePositionsCollapsed';
+const LIVE_POSITIONS_ENABLED_STORAGE_KEY = 'livePositionsEnabled';
 
 // DOM element references
 let panel: HTMLElement | null = null;
@@ -36,10 +39,19 @@ let collapseBtn: HTMLElement | null = null;
 let collapseIcon: HTMLElement | null = null;
 let mismatchBanner: HTMLElement | null = null;
 let mismatchText: HTMLElement | null = null;
+let pollingStatusBtn: HTMLButtonElement | null = null;
+let pollingDot: HTMLElement | null = null;
+let pollingText: HTMLElement | null = null;
+let detailModal: HTMLElement | null = null;
+let detailTitle: HTMLElement | null = null;
+let detailLoading: HTMLElement | null = null;
+let detailContent: HTMLElement | null = null;
+let detailCloseBtn: HTMLButtonElement | null = null;
 let detailModalController: AccessibleModalController | null = null;
 
 // State
 let isCollapsed = false;
+let isLiveUpdatesEnabled = false;
 let unsubscribeService: (() => void) | null = null;
 let workerUrlListener: ((event: Event) => void) | null = null;
 
@@ -136,6 +148,50 @@ function formatDuration(seconds: number): string {
     const mins = Math.floor((seconds % 3600) / 60);
     if (hours > 0) return `${hours}h ${mins}m`;
     return `${mins}m`;
+}
+
+function hasWorkerUrl(url = alertService.getWorkerUrl()): boolean {
+    return url.trim().length > 0;
+}
+
+function updatePollingStatusUi(url = alertService.getWorkerUrl()): void {
+    if (!pollingStatusBtn || !pollingDot || !pollingText) return;
+
+    const workerConfigured = hasWorkerUrl(url);
+    const isActive = isLiveUpdatesEnabled && workerConfigured;
+
+    pollingStatusBtn.setAttribute('aria-pressed', String(isLiveUpdatesEnabled));
+    pollingDot.classList.toggle('paused', !isActive);
+
+    if (isActive) {
+        pollingText.textContent = 'On';
+        pollingStatusBtn.title = 'Disable live position auto-refresh';
+        return;
+    }
+
+    if (isLiveUpdatesEnabled) {
+        pollingText.textContent = 'No Worker';
+        pollingStatusBtn.title = 'Worker URL is required for live position auto-refresh';
+        return;
+    }
+
+    pollingText.textContent = 'Off';
+    pollingStatusBtn.title = 'Enable live position auto-refresh';
+}
+
+function syncPollingWithWorkerUrl(url: string): void {
+    if (isLiveUpdatesEnabled && hasWorkerUrl(url)) {
+        livePositionsService.startPolling();
+    } else {
+        livePositionsService.stopPolling();
+    }
+    updatePollingStatusUi(url);
+}
+
+function setLiveUpdatesEnabled(enabled: boolean): void {
+    isLiveUpdatesEnabled = enabled;
+    localStorage.setItem(LIVE_POSITIONS_ENABLED_STORAGE_KEY, String(enabled));
+    syncPollingWithWorkerUrl(alertService.getWorkerUrl());
 }
 
 // UI update functions
@@ -251,8 +307,10 @@ function renderPositions(positions: LivePosition[], closedTrades: ClosedTrade[])
                 <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 2h2v2h-2V5zm0 4h2v2h-2V9zm0 4h2v2h-2v-2zm-4-8h2v2H8V5zm0 4h2v2H8V9zm0 4h2v2H8v-2zM5 17h14v2H5v-2zm2-12h12v10H7V5z"/>
             </svg>
             <p>No ${viewMode} positions</p>
-            <span class="lp-hint">${viewMode === 'open' 
-                ? 'Subscribe to alerts to track positions' 
+            <span class="lp-hint">${viewMode === 'open'
+                ? (isLiveUpdatesEnabled
+                    ? 'Subscribe to alerts to track positions'
+                    : 'Turn Live On to start polling alert subscriptions')
                 : 'Closed trades appear here for verification'}
             </span>
         `;
@@ -328,14 +386,15 @@ function handleCollapse(): void {
     }
     
     // Save preference
-    localStorage.setItem('livePositionsCollapsed', String(isCollapsed));
+    localStorage.setItem(LIVE_POSITIONS_COLLAPSED_STORAGE_KEY, String(isCollapsed));
 }
 
-function syncPollingWithWorkerUrl(url: string): void {
-    if (url.trim()) {
-        livePositionsService.startPolling();
-    } else {
-        livePositionsService.stopPolling();
+function handlePollingToggle(): void {
+    const nextEnabled = !isLiveUpdatesEnabled;
+    setLiveUpdatesEnabled(nextEnabled);
+
+    if (nextEnabled && !hasWorkerUrl()) {
+        uiManager.showToast('Configure a Worker URL to enable live positions.', 'info');
     }
 }
 
@@ -343,6 +402,7 @@ function syncPollingWithWorkerUrl(url: string): void {
 function onServiceStateUpdate(state: ReturnType<typeof livePositionsService.getState>): void {
     renderPositions(state.positions, state.closedTrades);
     updateLastUpdated(state.lastPollTime);
+    updatePollingStatusUi();
     
     if (state.error) {
         uiManager.showToast('Live positions error: ' + state.error, 'error');
@@ -351,28 +411,23 @@ function onServiceStateUpdate(state: ReturnType<typeof livePositionsService.getS
 
 // Detail modal handlers
 async function openDetailModal(streamId: string): Promise<void> {
-    const modal = getOptionalElement('lpDetailModal');
-    const title = getOptionalElement('lpDetailTitle');
-    const loading = getOptionalElement('lpDetailLoading');
-    const content = getOptionalElement('lpDetailContent');
-    
-    if (!modal || !title || !loading || !content) return;
+    if (!detailModal || !detailTitle || !detailLoading || !detailContent) return;
     
     detailModalController?.open();
-    loading.style.display = '';
-    content.style.display = 'none';
+    detailLoading.style.display = '';
+    detailContent.style.display = 'none';
     
     try {
         const details = await livePositionsService.getPositionDetails(streamId);
         
         if (!details.position) {
-            content.innerHTML = '<p class="lp-empty">Position not found</p>';
-            loading.style.display = 'none';
-            content.style.display = '';
+            detailContent.innerHTML = '<p class="lp-empty">Position not found</p>';
+            detailLoading.style.display = 'none';
+            detailContent.style.display = '';
             return;
         }
         
-        title.textContent = `${details.position.symbol} ${details.position.interval} - Position Details`;
+        detailTitle.textContent = `${details.position.symbol} ${details.position.interval} - Position Details`;
         
         const pos = details.position;
         const isClosed = !pos.isOpen;
@@ -382,7 +437,7 @@ async function openDetailModal(streamId: string): Promise<void> {
             ? (closedPos?.realizedPnl || 0) >= 0 ? 'positive' : 'negative'
             : (pos.unrealizedPnl || 0) >= 0 ? 'positive' : 'negative';
         
-        content.innerHTML = `
+        detailContent.innerHTML = `
             <div class="lp-detail-section">
                 <h4>Position Info</h4>
                 <div class="lp-detail-grid">
@@ -514,12 +569,12 @@ async function openDetailModal(streamId: string): Promise<void> {
             </div>
         `;
         
-        loading.style.display = 'none';
-        content.style.display = '';
+        detailLoading.style.display = 'none';
+        detailContent.style.display = '';
     } catch (err) {
-        content.innerHTML = `<p class="lp-empty">Error loading details: ${err instanceof Error ? err.message : String(err)}</p>`;
-        loading.style.display = 'none';
-        content.style.display = '';
+        detailContent.innerHTML = `<p class="lp-empty">Error loading details: ${err instanceof Error ? err.message : String(err)}</p>`;
+        detailLoading.style.display = 'none';
+        detailContent.style.display = '';
     }
 }
 
@@ -535,39 +590,46 @@ export function initLivePositionsHandlers(): void {
         initialFocusSelector: '#lpDetailClose',
     });
 
-    // Get DOM elements
-    panel = getOptionalElement('livePositionsPanel');
-    list = getOptionalElement('lpList');
-    empty = getOptionalElement('lpEmpty');
-    count = getOptionalElement('lpOpenCount');
-    lastUpdated = getOptionalElement('lpLastUpdated');
-    refreshBtn = getOptionalElement('lpRefreshBtn');
-    toggleBtn = getOptionalElement('lpViewToggle');
-    collapseBtn = getOptionalElement('lpCollapseBtn');
-    collapseIcon = getOptionalElement('lpCollapseIcon');
-    mismatchBanner = getOptionalElement('lpMismatchBanner');
-    mismatchText = getOptionalElement('lpMismatchText');
-    
-    if (!panel) {
-        console.warn('[LivePositions] Panel not found in DOM');
-        return;
-    }
+    const dom = createLivePositionsDom();
+    panel = dom.panel;
+    list = dom.list;
+    empty = dom.empty;
+    count = dom.count;
+    lastUpdated = dom.lastUpdated;
+    refreshBtn = dom.refreshBtn;
+    toggleBtn = dom.viewToggle;
+    collapseBtn = dom.collapseBtn;
+    collapseIcon = dom.collapseIcon;
+    mismatchBanner = dom.mismatchBanner;
+    mismatchText = dom.mismatchText;
+    pollingStatusBtn = dom.pollingStatus;
+    pollingDot = dom.pollingDot;
+    pollingText = dom.pollingText;
+    detailModal = dom.detailModal;
+    detailTitle = dom.detailTitle;
+    detailLoading = dom.detailLoading;
+    detailContent = dom.detailContent;
+    detailCloseBtn = dom.detailClose;
     
     // Restore collapse state
-    isCollapsed = localStorage.getItem('livePositionsCollapsed') === 'true';
+    isCollapsed = localStorage.getItem(LIVE_POSITIONS_COLLAPSED_STORAGE_KEY) === 'true';
     if (isCollapsed && panel) {
         panel.classList.add('collapsed');
         if (collapseIcon) collapseIcon.style.transform = 'rotate(-90deg)';
     }
+
+    isLiveUpdatesEnabled = localStorage.getItem(LIVE_POSITIONS_ENABLED_STORAGE_KEY) === 'true';
+    updatePollingStatusUi();
     
     // Bind event listeners
     refreshBtn?.addEventListener('click', handleRefresh);
     toggleBtn?.addEventListener('click', handleToggleView);
     collapseBtn?.addEventListener('click', handleCollapse);
+    pollingStatusBtn?.addEventListener('click', handlePollingToggle);
     
     // Detail modal close
-    getOptionalElement('lpDetailClose')?.addEventListener('click', closeDetailModal);
-    getOptionalElement('lpDetailModal')?.addEventListener('click', (e) => {
+    detailCloseBtn?.addEventListener('click', closeDetailModal);
+    detailModal?.addEventListener('click', (e) => {
         if (e.target === e.currentTarget) closeDetailModal();
     });
     
@@ -581,6 +643,7 @@ export function initLivePositionsHandlers(): void {
     
     // Subscribe to service updates
     unsubscribeService = livePositionsService.subscribe(onServiceStateUpdate);
+    onServiceStateUpdate(livePositionsService.getState());
     
     // Start/stop polling from current worker URL and react to URL changes.
     syncPollingWithWorkerUrl(alertService.getWorkerUrl());
