@@ -1,4 +1,5 @@
 import { state } from "../state";
+import { timeKey } from "../strategies/backtest/backtest-utils";
 import { debugLogger } from "../debug-logger";
 import { uiManager } from "../ui-manager";
 import { dataManager } from "../data-manager";
@@ -61,6 +62,12 @@ export function setupStateSubscriptions() {
             interval: state.currentInterval,
             candles: data.length,
         });
+        // Rebuild O(1) time→data index for crosshair hot-path
+        const timeMap = new Map<string, import('../strategies/index').OHLCVData>();
+        for (const candle of data) {
+            timeMap.set(timeKey(candle.time), candle);
+        }
+        state._ohlcvTimeMap = timeMap;
         // Use chartManager to apply chart mode transformation (Heikin Ashi if enabled)
         chartManager.updateChartData();
         uiManager.updatePriceDisplay();

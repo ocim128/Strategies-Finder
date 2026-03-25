@@ -34,6 +34,8 @@ export class State {
     public chartMode: ChartMode = 'candlestick';
     public isDarkTheme = true;
     public ohlcvData: OHLCVData[] = [];
+    /** O(1) lookup for crosshair hot-path; rebuilt whenever ohlcvData changes. */
+    public _ohlcvTimeMap: Map<string, OHLCVData> = new Map();
     public blockRange: { from: number; to: number } | null = null;
     public indicators: Indicator[] = [];
     public currentBacktestResult: BacktestResult | null = null;

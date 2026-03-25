@@ -56,6 +56,8 @@ export class ChartManager {
     private spreadSeries: ISeriesApi<"Line"> | null = null;
     private correlationUpperSeries: ISeriesApi<"Line"> | null = null;
     private correlationLowerSeries: ISeriesApi<"Line"> | null = null;
+    private indicatorDomCache = new Map<string, { node: HTMLElement; valNode: HTMLElement }>();
+    private cachedContainerRect: DOMRect | null = null;
     private readonly MIN_BAR_SPACING = 2;
     private readonly jakartaTimeFormatter = (time: Time): string => (
         formatJakartaTime(
@@ -241,6 +243,11 @@ export class ChartManager {
         this.tooltipCloseEl = this.tooltip.querySelector<HTMLElement>('#tooltipClose');
         this.tooltipVolumeEl = this.tooltip.querySelector<HTMLElement>('#tooltipVolume');
         this.tooltipIndicatorsEl = this.tooltip.querySelector<HTMLElement>('#tooltipIndicators');
+
+        const observer = new ResizeObserver(() => {
+            this.cachedContainerRect = null;
+        });
+        observer.observe(container);
     }
 
     public updateTooltip(param: MouseEventParams<Time>, data: OHLCVData) {
@@ -250,7 +257,11 @@ export class ChartManager {
         if (!container) return;
 
         // Calculate position
-        const containerRect = container.getBoundingClientRect();
+        let containerRect = this.cachedContainerRect;
+        if (!containerRect) {
+            containerRect = container.getBoundingClientRect();
+            this.cachedContainerRect = containerRect;
+        }
         const x = param.point?.x ?? 0;
         const y = param.point?.y ?? 0;
 
@@ -320,28 +331,62 @@ export class ChartManager {
 
         const indicators = state.indicators;
         if (indicators.length === 0) {
-            indicatorsEl.innerHTML = '';
+            if (this.indicatorDomCache.size > 0) {
+                indicatorsEl.innerHTML = '';
+                this.indicatorDomCache.clear();
+            }
             return;
+        }
+
+        const currentIds = indicators.map(i => i.id).join(',');
+        const cachedIds = Array.from(this.indicatorDomCache.keys()).join(',');
+        if (currentIds !== cachedIds) {
+            indicatorsEl.innerHTML = '';
+            this.indicatorDomCache.clear();
+            for (const ind of indicators) {
+                const node = document.createElement('div');
+                node.className = 'tooltip-indicator';
+                node.style.display = 'none';
+
+                const nameNode = document.createElement('span');
+                nameNode.className = 'tooltip-indicator-name';
+
+                const dot = document.createElement('span');
+                dot.className = 'tooltip-indicator-dot';
+                dot.style.background = ind.color;
+
+                nameNode.appendChild(dot);
+                nameNode.appendChild(document.createTextNode(' ' + ind.type));
+
+                const valNode = document.createElement('span');
+                valNode.className = 'tooltip-indicator-value';
+
+                node.appendChild(nameNode);
+                node.appendChild(valNode);
+
+                indicatorsEl.appendChild(node);
+                this.indicatorDomCache.set(ind.id, { node, valNode });
+            }
         }
 
         const tooltipTimeKey = timeKey(time);
 
-        const indicatorHtml = indicators.map(ind => {
+        for (const ind of indicators) {
             const value = this.indicatorTooltipValues.get(ind.id)?.get(tooltipTimeKey);
-            if (value === undefined || value === null) return '';
+            const dom = this.indicatorDomCache.get(ind.id);
+            if (!dom) continue;
 
-            return `
-                <div class="tooltip-indicator">
-                    <span class="tooltip-indicator-name">
-                        <span class="tooltip-indicator-dot" style="background: ${ind.color}"></span>
-                        ${ind.type}
-                    </span>
-                    <span class="tooltip-indicator-value">${value.toFixed(2)}</span>
-                </div>
-            `;
-        }).join('');
-
-        indicatorsEl.innerHTML = indicatorHtml;
+            if (value === undefined || value === null) {
+                if (dom.node.style.display !== 'none') {
+                    dom.node.style.display = 'none';
+                }
+            } else {
+                if (dom.node.style.display === 'none') {
+                    dom.node.style.display = '';
+                }
+                dom.valNode.textContent = value.toFixed(2);
+            }
+        }
     }
 
     public hideTooltip() {
@@ -609,13 +654,18 @@ export class ChartManager {
             : rawData;
 
         // Update candlestick series with transformed data
-        state.candlestickSeries.setData(displayData.map(d => ({
-            time: d.time,
-            open: d.open,
-            high: d.high,
-            low: d.low,
-            close: d.close,
-        })));
+        if (state.chartMode === 'heikin-ashi') {
+            state.candlestickSeries.setData(displayData.map(d => ({
+                time: d.time,
+                open: d.open,
+                high: d.high,
+                low: d.low,
+                close: d.close,
+            })));
+        } else {
+            // Avoid array allocation for normal candlestick mode since OHLCVData contains time, open, high, low, close
+            state.candlestickSeries.setData(displayData as any);
+        }
     }
 
     // ========================================================================

@@ -141,7 +141,16 @@ export class TradesRenderer {
     }
 
     private renderTradeItems(trades: Trade[], formatPrice: (p: number) => string, formatDate: (t: Time) => string): string {
-        return trades.slice().reverse().map((trade) => this.renderTradeItem(trade, formatPrice, formatDate)).join('');
+        const MAX_TRADES = 250;
+        const reversed = trades.slice().reverse();
+        const toRender = reversed.slice(0, MAX_TRADES);
+        let html = toRender.map((trade) => this.renderTradeItem(trade, formatPrice, formatDate)).join('');
+        
+        if (trades.length > MAX_TRADES) {
+            html += `<div class="trades-limit-notice" style="padding: 12px; text-align: center; color: var(--text-muted); font-size: 0.9em; border-top: 1px solid var(--border-color);">Showing most recent ${MAX_TRADES} of ${trades.length} trades</div>`;
+        }
+        
+        return html;
     }
 
     private renderTradeItem(trade: Trade, formatPrice: (p: number) => string, formatDate: (t: Time) => string): string {

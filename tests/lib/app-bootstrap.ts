@@ -122,7 +122,16 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         dependsOn: ["layout"],
         init: () => {
             chartManager.initCharts();
-            state.chart.subscribeCrosshairMove(handleCrosshairMove);
+            let crosshairRaf: number | null = null;
+            state.chart.subscribeCrosshairMove((param) => {
+                if (crosshairRaf !== null) {
+                    cancelAnimationFrame(crosshairRaf);
+                }
+                crosshairRaf = requestAnimationFrame(() => {
+                    handleCrosshairMove(param);
+                    crosshairRaf = null;
+                });
+            });
         },
     },
     {

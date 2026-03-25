@@ -4,6 +4,7 @@ import { uiManager } from "./ui-manager";
 import { debugLogger } from "./debug-logger";
 import { chartManager } from "./chart-manager";
 import { clearBacktestResults, setIndicators, setMarkersPlugin } from "./state-actions";
+import { timeKey } from "./strategies/backtest/backtest-utils";
 
 export function handleCrosshairMove(param: MouseEventParams<Time>) {
     if (!param.time || !param.seriesData) {
@@ -17,7 +18,7 @@ export function handleCrosshairMove(param: MouseEventParams<Time>) {
         return;
     }
 
-    const ohlc = state.ohlcvData.find(d => d.time === data.time);
+    const ohlc = state._ohlcvTimeMap.get(timeKey(data.time));
     if (!ohlc) {
         chartManager.hideTooltip();
         return;
