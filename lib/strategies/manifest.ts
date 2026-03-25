@@ -57,6 +57,8 @@ import { absorptive_wick_volume_spike } from "./lib/absorptive_wick_volume_spike
 import { noisy_wick_fade_reversion } from "./lib/noisy_wick_fade_reversion";
 import { micro_shock_retrace_scalp } from "./lib/micro_shock_retrace_scalp";
 import { deadzone_orb_proxy_breakout } from "./lib/deadzone_orb_proxy_breakout";
+import { keltner_pinch_momentum_break } from "./lib/keltner_pinch_momentum_break";
+import { percentile_rank_deadzone_launch } from "./lib/percentile_rank_deadzone_launch";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -119,6 +121,8 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "noisy_wick_fade_reversion", strategy: noisy_wick_fade_reversion },
     { key: "micro_shock_retrace_scalp", strategy: micro_shock_retrace_scalp },
     { key: "deadzone_orb_proxy_breakout", strategy: deadzone_orb_proxy_breakout },
+    { key: "keltner_pinch_momentum_break", strategy: keltner_pinch_momentum_break },
+    { key: "percentile_rank_deadzone_launch", strategy: percentile_rank_deadzone_launch },
 ];
 
 export function createStrategiesRecordFromManifest(
