@@ -7,6 +7,36 @@
         unavailable.
     </div>
 
+    <div class="section-title">Bridge Export</div>
+    <div class="section-desc polymarket-panel__desc">
+        Build a ready-to-run local bridge script from a saved configuration. The script embeds strategy params, backtest settings,
+        and capital settings, then runs the signal exporter for the current chart symbol and interval.
+    </div>
+
+    <div class="param-row">
+        <div class="param-group">
+            <label class="param-label" for="polymarketBridgeConfig">Saved Config</label>
+            <select class="param-input" id="polymarketBridgeConfig">
+                <option value="">Select saved configuration</option>
+            </select>
+        </div>
+        <div class="param-group">
+            <label class="param-label">Actions</label>
+            <div class="button-group">
+                <button class="btn btn-primary btn-compact" id="polymarketBridgeDownloadScript" type="button">
+                    Download Bridge Script
+                </button>
+                <button class="btn btn-secondary btn-compact" id="polymarketBridgeCopyEnv" type="button">
+                    Copy Bot Env
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="param-hint" id="polymarketBridgeStatus">
+        Pick a saved configuration to export a ready-to-run PowerShell bridge script.
+    </div>
+
     <div class="param-row">
         <div class="param-group">
             <label class="param-label" for="polymarketEntryPriceCents">Entry Price (cents)</label>

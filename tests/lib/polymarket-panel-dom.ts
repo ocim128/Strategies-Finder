@@ -2,6 +2,10 @@ import { getRequiredElement } from "./dom-utils";
 
 export const POLYMARKET_PANEL_REQUIRED_IDS = [
     "polymarketTab",
+    "polymarketBridgeConfig",
+    "polymarketBridgeDownloadScript",
+    "polymarketBridgeCopyEnv",
+    "polymarketBridgeStatus",
     "polymarketEntryPriceCents",
     "polymarketScope",
     "polymarketPriceNote",
@@ -19,6 +23,10 @@ export const POLYMARKET_PANEL_REQUIRED_IDS = [
 export function createPolymarketPanelDom() {
     return {
         polymarketTab: getRequiredElement("polymarketTab"),
+        polymarketBridgeConfig: getRequiredElement<HTMLSelectElement>("polymarketBridgeConfig"),
+        polymarketBridgeDownloadScript: getRequiredElement<HTMLButtonElement>("polymarketBridgeDownloadScript"),
+        polymarketBridgeCopyEnv: getRequiredElement<HTMLButtonElement>("polymarketBridgeCopyEnv"),
+        polymarketBridgeStatus: getRequiredElement("polymarketBridgeStatus"),
         polymarketEntryPriceCents: getRequiredElement<HTMLInputElement>("polymarketEntryPriceCents"),
         polymarketScope: getRequiredElement<HTMLSelectElement>("polymarketScope"),
         polymarketPriceNote: getRequiredElement("polymarketPriceNote"),

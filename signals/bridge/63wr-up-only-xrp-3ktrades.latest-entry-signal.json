@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-03-25T22:30:04.360Z",
+  "generatedAtSec": 1774477804,
+  "source": "strategy_finder_cli",
+  "symbol": "XRPUSDT",
+  "interval": "5m",
+  "strategyKey": "deadzone_orb_proxy_breakout",
+  "strategyName": "Deadzone ORB Proxy Breakout",
+  "rawSignalCount": 369,
+  "preparedSignalCount": 368,
+  "latestEntry": {
+    "direction": "long",
+    "signalTimeSec": 1774476300,
+    "signalAgeBars": 4,
+    "isFresh": false,
+    "fingerprint": "deadzone_orb_proxy_breakout:long:1774476300:1.4149",
+    "signalPrice": 1.4149,
+    "entryPrice": 1.4149
+  },
+  "latestTrade": {
+    "entryTimeSec": 1774476300,
+    "entryPrice": 1.4149,
+    "exitReason": "end_of_data",
+    "isOpen": true
+  }
+}

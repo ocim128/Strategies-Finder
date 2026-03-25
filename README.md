@@ -236,6 +236,32 @@ Automate the inspection of executed BTCUSDT, ETHUSDT, SOLUSDT, and XRPUSDT 5m `n
 5. Use `..\..\..\node_modules\.bin\esno scripts\polymarket-sync-outcomes.ts --symbol <BTCUSDT|ETHUSDT|SOLUSDT|XRPUSDT>` to backfill the matching 5m outcome series into local SQLite.
 6. Use the `Polymarket` strategy-panel tab to estimate historical YES/NO fillability for the current supported 5m backtest at a custom entry price in cents.
 
+### Export Latest Entry Signal
+Use the CLI exporter to produce a small local JSON contract for downstream consumers such as the Polymarket bot `external_signal` mode.
+
+Example:
+```bash
+npm run signal:export -- --strategy classic_nr7_breakout_surge --symbol BTCUSDT --interval 5m --bars 500 --out signals/latest-entry-signal.json
+```
+
+Useful flags:
+- `--params <json>` or `--params-file <path>`
+- `--backtest-settings <json>` or `--backtest-settings-file <path>`
+- `--capital-settings <json>` or `--capital-settings-file <path>`
+- `--freshness-bars <n>`
+
+The exporter uses Binance candles plus the same latest-entry evaluation logic used by the Worker/alert path, then writes a single JSON file containing the newest valid backtest entry signal if one exists.
+
+For the Polymarket bot bridge, use the `Polymarket` tab with a saved configuration selected. The bridge export downloads a ready-to-run PowerShell setup script that writes:
+- `signals/bridge/<config>.params.json`
+- `signals/bridge/<config>.backtest.json`
+- `signals/bridge/<config>.capital.json`
+- `signals/bridge/<config>.latest-entry-signal.json`
+- `signals/bridge/<config>.refresh.ps1`
+- `signals/bridge/<config>.bot.env`
+
+The generated `<config>.refresh.ps1` is intended for unattended refresh. Point the bot's `EXTERNAL_SIGNAL_REFRESH_SCRIPT` at that file and it can regenerate the latest signal automatically on each new 5-minute bucket.
+
 ### Change UI safely
 1. Add or update markup in `html-partials/*`.
 2. Add the required id to the matching feature-local `*-dom.ts` contract if it is structural.

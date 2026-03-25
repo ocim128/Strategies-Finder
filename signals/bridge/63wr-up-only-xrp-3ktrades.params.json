@@ -1,0 +1,5 @@
+{
+  "deadzoneLookback": 130,
+  "efficiencyCeiling": 0.6001,
+  "breakoutZscore": -1.3988
+}
