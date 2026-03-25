@@ -1,3 +1,6 @@
+import type { CapitalSettings } from "./backtest";
+import type { BacktestSettings } from "./strategies";
+
 export interface PolymarketOutcomeRow {
     series_id: string;
     event_slug: string;
@@ -74,4 +77,6 @@ export interface PolymarketEvalOptions {
     tradeDirection?: 'long' | 'short' | 'both';
     usePreparedData?: boolean;
     strategyKey?: string;
+    backtestSettings?: BacktestSettings;
+    capitalSettings?: Partial<CapitalSettings>;
 }

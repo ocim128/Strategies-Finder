@@ -11,6 +11,7 @@ import tabSettingsEndHtml from '../html-partials/tab-settings-end.html?raw';
 import tabDataminingHtml from '../html-partials/tab-datamining.html?raw';
 import tabFinderHtml from '../html-partials/tab-finder.html?raw';
 import tabParameterAuditHtml from '../html-partials/tab-parameter-audit.html?raw';
+import tabPolymarketHtml from '../html-partials/tab-polymarket.html?raw';
 
 
 import tabWalkforwardHtml from '../html-partials/tab-walkforward.html?raw';
@@ -77,6 +78,7 @@ export function injectLayout() {
         tabDataminingHtml +
         tabFinderHtml +
         tabParameterAuditHtml +
+        tabPolymarketHtml +
 
         tabWalkforwardHtml +
 

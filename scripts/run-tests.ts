@@ -70,7 +70,9 @@ const TEST_FILES = [
     "tests/feature-dom-contracts.spec.ts",
     "tests/portfolio-lab.spec.ts",
     "tests/strategy-ensemble.spec.ts",
+    "tests/polymarket-sync-utils.spec.ts",
     "tests/polymarket-outcome-evaluator.spec.ts",
+    "tests/polymarket-fill-analysis.spec.ts",
     "tests/finder-polymarket.spec.ts",
     "tests/polymarket-trade-annotations.spec.ts",
 ] as const;

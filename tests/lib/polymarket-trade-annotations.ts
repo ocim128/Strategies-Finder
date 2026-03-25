@@ -11,38 +11,24 @@ type AnnotationContext = {
 };
 
 export type PolymarketTradeEvaluationContext = {
-    executionTargetBySignalTs: Map<number, number>;
     outcomeByStartTs: Map<number, PolymarketOutcomeRow>;
-    signalBarIndexByTs: Map<number, number>;
+    executionBarIndexByTs: Map<number, number>;
     evaluatedEvents: number;
     resolvedUpCount: number;
 };
-
-function buildExecutionTargetTimeMap(chartData: OHLCVData[]): Map<number, number> {
-    const map = new Map<number, number>();
-    for (let i = 0; i < chartData.length - 1; i++) {
-        const signalTs = parseTimeToUnixSeconds(chartData[i]?.time);
-        const nextTs = parseTimeToUnixSeconds(chartData[i + 1]?.time);
-        if (signalTs === null || nextTs === null) continue;
-        if (!map.has(signalTs)) {
-            map.set(signalTs, nextTs);
-        }
-    }
-    return map;
-}
 
 export function createPolymarketTradeEvaluationContext(
     chartData: OHLCVData[],
     outcomes: PolymarketOutcomeRow[]
 ): PolymarketTradeEvaluationContext {
-    const signalBarIndexByTs = new Map<number, number>();
+    const executionBarIndexByTs = new Map<number, number>();
     const validTargetTs = new Set<number>();
 
     for (let i = 0; i < chartData.length; i++) {
         const ts = parseTimeToUnixSeconds(chartData[i]?.time);
         if (ts === null) continue;
-        if (!signalBarIndexByTs.has(ts)) {
-            signalBarIndexByTs.set(ts, i);
+        if (!executionBarIndexByTs.has(ts)) {
+            executionBarIndexByTs.set(ts, i);
         }
         if (i > 0) {
             validTargetTs.add(ts);
@@ -58,9 +44,8 @@ export function createPolymarketTradeEvaluationContext(
     }
 
     return {
-        executionTargetBySignalTs: buildExecutionTargetTimeMap(chartData),
         outcomeByStartTs: new Map(outcomes.map((row) => [row.event_start_ts, row] as const)),
-        signalBarIndexByTs,
+        executionBarIndexByTs,
         evaluatedEvents,
         resolvedUpCount,
     };
@@ -68,20 +53,14 @@ export function createPolymarketTradeEvaluationContext(
 
 function buildAnnotatedTrade(
     trade: Trade,
-    outcomeByStartTs: Map<number, PolymarketOutcomeRow>,
-    executionTargetBySignalTs: Map<number, number>
+    outcomeByStartTs: Map<number, PolymarketOutcomeRow>
 ): Trade {
     const entryTs = parseTimeToUnixSeconds(trade.entryTime);
     if (entryTs === null) {
         return { ...trade, polymarketOutcome: null };
     }
 
-    const targetTs = executionTargetBySignalTs.get(entryTs);
-    if (targetTs === undefined) {
-        return { ...trade, polymarketOutcome: null };
-    }
-
-    const outcome = outcomeByStartTs.get(targetTs);
+    const outcome = outcomeByStartTs.get(entryTs);
     if (!outcome) {
         return { ...trade, polymarketOutcome: null };
     }
@@ -121,6 +100,8 @@ export function evaluatePolymarketBacktestTrades(args: {
     let losses = 0;
     let longPredictions = 0;
     let shortPredictions = 0;
+    let scoredLongPredictions = 0;
+    let scoredShortPredictions = 0;
     let longWins = 0;
     let shortWins = 0;
     let missingOutcomeRows = 0;
@@ -133,13 +114,12 @@ export function evaluatePolymarketBacktestTrades(args: {
         }
 
         const entryTs = parseTimeToUnixSeconds(trade.entryTime);
-        const targetTs = entryTs === null ? undefined : context.executionTargetBySignalTs.get(entryTs);
-        if (targetTs === undefined) {
+        if (entryTs === null) {
             missingOutcomeRows++;
             continue;
         }
 
-        const outcome = context.outcomeByStartTs.get(targetTs);
+        const outcome = context.outcomeByStartTs.get(entryTs);
         if (!outcome) {
             missingOutcomeRows++;
             continue;
@@ -150,6 +130,12 @@ export function evaluatePolymarketBacktestTrades(args: {
             ? outcome.resolved_outcome_up === 1
             : outcome.resolved_outcome_up === 0;
 
+        if (trade.type === "long") {
+            scoredLongPredictions++;
+        } else {
+            scoredShortPredictions++;
+        }
+
         if (isWin) {
             wins++;
             if (trade.type === "long") longWins++;
@@ -159,12 +145,17 @@ export function evaluatePolymarketBacktestTrades(args: {
         }
 
         if (includeRows) {
+            const executionBarIndex = context.executionBarIndexByTs.get(entryTs);
+            const signalBarIndex = executionBarIndex === undefined ? -1 : Math.max(0, executionBarIndex - 1);
+            const signalTime = signalBarIndex >= 0
+                ? (parseTimeToUnixSeconds(args.chartData[signalBarIndex]?.time) ?? entryTs)
+                : entryTs;
             rows.push({
                 eventStartTs: outcome.event_start_ts,
                 eventEndTs: outcome.event_end_ts,
                 eventSlug: outcome.event_slug,
-                signalBarIndex: entryTs === null ? -1 : (context.signalBarIndexByTs.get(entryTs) ?? -1),
-                signalTime: entryTs ?? 0,
+                signalBarIndex,
+                signalTime,
                 prediction,
                 actualOutcomeUp: outcome.resolved_outcome_up,
                 isWin,
@@ -190,8 +181,8 @@ export function evaluatePolymarketBacktestTrades(args: {
         shortPredictions,
         longWins,
         shortWins,
-        longWinRate: longPredictions > 0 ? longWins / longPredictions : 0,
-        shortWinRate: shortPredictions > 0 ? shortWins / shortPredictions : 0,
+        longWinRate: scoredLongPredictions > 0 ? longWins / scoredLongPredictions : 0,
+        shortWinRate: scoredShortPredictions > 0 ? shortWins / scoredShortPredictions : 0,
         alwaysYesBaselineWinRate: context.evaluatedEvents > 0 ? context.resolvedUpCount / context.evaluatedEvents : 0,
         alwaysNoBaselineWinRate: context.evaluatedEvents > 0 ? (context.evaluatedEvents - context.resolvedUpCount) / context.evaluatedEvents : 0,
         missingOutcomeRows,
@@ -213,12 +204,9 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         return result;
     }
 
-    const executionTargetBySignalTs = buildExecutionTargetTimeMap(context.chartData);
     const targetTimes = result.trades
         .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
-        .filter((value): value is number => value !== null)
-        .map((entryTs) => executionTargetBySignalTs.get(entryTs))
-        .filter((value): value is number => value !== undefined);
+        .filter((value): value is number => value !== null);
     if (targetTimes.length === 0) {
         return result;
     }
@@ -230,8 +218,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
 
     const trades = result.trades.map((trade) => buildAnnotatedTrade(
         trade,
-        evaluationContext.outcomeByStartTs,
-        executionTargetBySignalTs
+        evaluationContext.outcomeByStartTs
     ));
     const scoredTrades = trades.filter((trade) => Boolean(trade.polymarketOutcome)).length;
 

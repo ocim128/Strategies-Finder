@@ -44,6 +44,7 @@ import { quickViewManager } from "./lib/quick-view";
 import { bindFormAccessibility } from "./lib/form-accessibility";
 import { strategyPanelController } from "./lib/strategy-panel-controller";
 import { getOptionalElement } from "./lib/dom-utils";
+import { polymarketPanelService } from "./lib/polymarket-panel-service";
 
 async function init() {
 	injectLayout();
@@ -77,6 +78,7 @@ async function init() {
 
 	portfolioLabService.init();
 	strategyEnsembleService.init();
+	polymarketPanelService.init();
 	initAlertHandlers();
 	initLivePositionsHandlers();
 

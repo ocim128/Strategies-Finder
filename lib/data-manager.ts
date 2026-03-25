@@ -29,6 +29,7 @@ import { tradfiSearchService } from "./tradfi-search-service";
 import { HistoricalFetchOptions } from "./types/index";
 import { getIntervalSeconds } from "./dataProviders/utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import { countRealtimeGapBars, findFirstGapAnchorTime } from "./realtime-gap-utils";
 import {
     loadCachedCandles,
     loadSeedCandlesFromPriceData,
@@ -90,6 +91,7 @@ export class DataManager {
     private cacheSyncAtByKey: Map<string, number> = new Map();
     private cachePersistTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private cachePersistPendingByKey: Map<string, { symbol: string; storageInterval: string; candles: OHLCVData[] }> = new Map();
+    private realtimeGapFillInFlight: Set<string> = new Set();
     private loadedSymbol: string | null = null;
     private loadedInterval: string | null = null;
 
@@ -1185,8 +1187,17 @@ export class DataManager {
         
         if (hasCachedData) {
             const cachedCandles = cached!.candles;
-            const lastCachedTime = Number(cachedCandles[cachedCandles.length - 1]?.time ?? 0);
-            remoteData = await fetchBinanceDataAfter(symbol, interval, lastCachedTime, {
+            const gapAnchorTime = findFirstGapAnchorTime(cachedCandles, interval);
+            const fetchFromTime = gapAnchorTime ?? Number(cachedCandles[cachedCandles.length - 1]?.time ?? 0);
+            if (gapAnchorTime !== null) {
+                debugLogger.warn('data.series.cached_gap_detected', {
+                    symbol,
+                    interval,
+                    gapAnchorTime,
+                    candles: cachedCandles.length,
+                });
+            }
+            remoteData = await fetchBinanceDataAfter(symbol, interval, fetchFromTime, {
                 signal,
                 requestDelayMs: 80,
                 maxRequests: 60,
@@ -1379,7 +1390,16 @@ export class DataManager {
         ) {
             return;
         }
-        this.applyRealtimeCandle(candle);
+        const gapBars = this.applyRealtimeCandle(candle);
+        if (gapBars > 0 && sessionId !== undefined && symbol !== undefined && interval !== undefined && provider !== undefined) {
+            debugLogger.warn('data.stream.gap_detected', {
+                symbol,
+                interval,
+                gapBars,
+                latestTime: candle.time,
+            });
+            void this.backfillRealtimeGap(sessionId, symbol, interval, provider, candle.time);
+        }
 
         const now = Date.now();
         if (!this.lastLogTime || now - this.lastLogTime > 10000) {
@@ -1510,7 +1530,72 @@ export class DataManager {
         }
     }
 
-    private applyRealtimeCandle(updatedCandle: OHLCVData): void {
+    private async backfillRealtimeGap(
+        sessionId: number,
+        symbol: string,
+        interval: string,
+        provider: DataProvider,
+        latestTime: unknown
+    ): Promise<void> {
+        if (provider !== 'binance') return;
+        if (!this.isActiveStreamContext(sessionId, symbol, interval, provider)) return;
+
+        const currentData = state.ohlcvData;
+        const previousCandle = currentData[currentData.length - 2];
+        if (!previousCandle) return;
+
+        const fromTimeSec = parseTimeToUnixSeconds(previousCandle.time);
+        const latestTimeSec = parseTimeToUnixSeconds(latestTime);
+        if (fromTimeSec === null || latestTimeSec === null || latestTimeSec <= fromTimeSec) return;
+
+        const gapKey = `${sessionId}|${symbol}|${interval}|${fromTimeSec}`;
+        if (this.realtimeGapFillInFlight.has(gapKey)) return;
+        this.realtimeGapFillInFlight.add(gapKey);
+
+        try {
+            const resampleOptions = this.getResampleOptions(interval);
+            const storageInterval = this.getStorageInterval(interval);
+            const fetched = await fetchBinanceDataAfter(symbol, interval, fromTimeSec, {
+                maxRequests: 60,
+                requestDelayMs: 80,
+                ...(resampleOptions ?? {}),
+            });
+            const sanitized = this.sanitizeBinanceCandles(symbol, storageInterval, fetched, 'stream-gap-fill');
+            if (sanitized.length === 0) return;
+            if (!this.isActiveStreamContext(sessionId, symbol, interval, provider)) return;
+
+            const merged = this.takeLastCandles(
+                this.sanitizeBinanceCandles(
+                    symbol,
+                    storageInterval,
+                    mergeCandles(state.ohlcvData, sanitized),
+                    'stream-gap-merge'
+                ),
+                this.chartLookbackBars ?? DATA_CHART_TOTAL_LIMIT
+            );
+
+            commitOhlcvData(merged, 'realtime_gap_fill');
+            this.queuePersistCandles(symbol, interval, merged, provider);
+
+            debugLogger.event('data.stream.gap_filled', {
+                symbol,
+                interval,
+                gapBars: countRealtimeGapBars(previousCandle.time, latestTime, interval),
+                fetched: sanitized.length,
+                candles: merged.length,
+            });
+        } catch (error) {
+            debugLogger.warn('data.stream.gap_fill_failed', {
+                symbol,
+                interval,
+                error: String(error),
+            });
+        } finally {
+            this.realtimeGapFillInFlight.delete(gapKey);
+        }
+    }
+
+    private applyRealtimeCandle(updatedCandle: OHLCVData): number {
         const streamInterval = this.streamInterval || state.currentInterval;
         const updatedTimeSec = parseTimeToUnixSeconds(updatedCandle.time);
         if (updatedTimeSec === null || !this.isIntervalAlignedTime(updatedTimeSec, streamInterval)) {
@@ -1519,11 +1604,12 @@ export class DataManager {
                 interval: streamInterval,
                 time: updatedCandle.time,
             });
-            return;
+            return 0;
         }
 
         const currentData = state.ohlcvData;
         let changed = false;
+        let gapBars = 0;
         if (currentData.length === 0) {
             state.set('ohlcvData', [updatedCandle]);
             changed = true;
@@ -1541,13 +1627,14 @@ export class DataManager {
                         nextClose,
                         ratio,
                     });
-                    return;
+                    return 0;
                 }
             }
             if (lastCandle.time === updatedCandle.time) {
                 currentData[currentData.length - 1] = updatedCandle;
                 changed = true;
             } else if (updatedCandle.time > lastCandle.time) {
+                gapBars = countRealtimeGapBars(lastCandle.time, updatedCandle.time, streamInterval);
                 currentData.push(updatedCandle);
                 const activeLimit = this.chartLookbackBars ?? DATA_CHART_TOTAL_LIMIT;
                 if (currentData.length > activeLimit) {
@@ -1558,7 +1645,7 @@ export class DataManager {
             }
         }
 
-        if (!changed) return;
+        if (!changed) return 0;
 
         if (state.candlestickSeries) {
             state.candlestickSeries.update(updatedCandle);
@@ -1579,6 +1666,8 @@ export class DataManager {
             this.lastUiUpdateTime = now;
             uiManager.updatePriceDisplay();
         }
+
+        return gapBars;
     }
 }
 

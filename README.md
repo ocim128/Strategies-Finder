@@ -220,10 +220,12 @@ Recommended workflow:
 - if no validation survivor exists, the UI explicitly labels the fallback as `In-Sample Candidate`
 
 ### Evaluate Polymarket Outcomes
-Automate the inspection of 5m strategy signals as correct/incorrect outcome predictions against historical Polymarket event resolution.
+Automate the inspection of executed BTCUSDT 5m `next_open` trades against historical Polymarket event resolution.
 1. Sync closed Polymarket matching events to your local SQLite database using `npm run poly:sync-outcomes` (requires the Vite server running via `npm run dev`).
-2. Run standard scripts or pass UI strategies through `evaluatePolymarketOutcomes` in `lib/polymarket-outcome-evaluator.ts`.
-3. The Evaluator enforces a strict `next_open` alignment matching signal to the event window seamlessly without lookahead.
+2. Pass UI strategies through `evaluatePolymarketOutcomes` in `lib/polymarket-outcome-evaluator.ts`.
+3. For chart-exact parity, pass the same backtest and capital settings you use in the UI. The helper scores executed trades, not raw signals.
+4. BTC 5m Polymarket scoring is intentionally restricted to the canonical `BTCUSDT` chart path.
+5. Use the `Polymarket` strategy-panel tab to estimate historical YES/NO fillability for the current BTCUSDT 5m backtest at a custom entry price in cents.
 
 ### Change UI safely
 1. Add or update markup in `html-partials/*`.

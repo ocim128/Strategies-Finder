@@ -53,6 +53,10 @@ import { momentum_zscore_exhaustion } from "./lib/momentum_zscore_exhaustion";
 import { macd_histogram_volatility_squeeze } from "./lib/macd_histogram_volatility_squeeze";
 import { volume_profile_poc_median_shift } from "./lib/volume_profile_poc_median_shift";
 import { value_area_median_shift } from "./lib/value_area_median_shift";
+import { absorptive_wick_volume_spike } from "./lib/absorptive_wick_volume_spike";
+import { noisy_wick_fade_reversion } from "./lib/noisy_wick_fade_reversion";
+import { micro_shock_retrace_scalp } from "./lib/micro_shock_retrace_scalp";
+import { deadzone_orb_proxy_breakout } from "./lib/deadzone_orb_proxy_breakout";
 
 
 export interface StrategyManifestEntry {
@@ -117,6 +121,10 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
 
     { key: "macd_histogram_volatility_squeeze", strategy: macd_histogram_volatility_squeeze },
     { key: "volume_profile_poc_median_shift", strategy: volume_profile_poc_median_shift },
+    { key: "absorptive_wick_volume_spike", strategy: absorptive_wick_volume_spike },
+    { key: "noisy_wick_fade_reversion", strategy: noisy_wick_fade_reversion },
+    { key: "micro_shock_retrace_scalp", strategy: micro_shock_retrace_scalp },
+    { key: "deadzone_orb_proxy_breakout", strategy: deadzone_orb_proxy_breakout },
 
 ];
 

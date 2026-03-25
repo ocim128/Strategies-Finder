@@ -1,0 +1,77 @@
+<div id="polymarketTab">
+    <div class="section-title">Polymarket Entry Fillability</div>
+    <div class="section-desc polymarket-panel__desc">
+        Estimate how many current BTCUSDT 5m executed trades would have filled on Polymarket at a custom entry price.
+        Long trades use YES prices. Short trades use implied NO prices = <code>1 - YES</code>.
+    </div>
+
+    <div class="param-row">
+        <div class="param-group">
+            <label class="param-label" for="polymarketEntryPriceCents">Entry Price (cents)</label>
+            <input type="number" class="param-input" id="polymarketEntryPriceCents" value="40" min="0" max="100"
+                step="0.1">
+        </div>
+        <div class="param-group">
+            <label class="param-label" for="polymarketScope">Trade Scope</label>
+            <select class="param-input" id="polymarketScope">
+                <option value="all">All Executed Trades</option>
+                <option value="long">YES Only (Long)</option>
+                <option value="short">NO Only (Short)</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="param-hint" id="polymarketPriceNote">
+        The table is cumulative: “By +2m” means the order was fillable at open, +1m, or +2m.
+    </div>
+
+    <div class="empty-state empty-state-compact" id="polymarketEmpty">
+        <div class="empty-state-icon">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 14H7v-7h4v7zm6 0h-4V7h4v10z" />
+            </svg>
+        </div>
+        <h3 class="empty-state-title">Run a BTCUSDT 5m Backtest</h3>
+        <p class="empty-state-description" id="polymarketSupport">
+            This panel is available for BTCUSDT 5m Polymarket-aligned backtests.
+        </p>
+    </div>
+
+    <div id="polymarketContent" style="display: none;">
+        <div class="stats-grid polymarket-panel__stats">
+            <div class="stat-card">
+                <div class="stat-label">Eligible Trades</div>
+                <div class="stat-value" id="polymarketEligibleTrades">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Filled By +4m</div>
+                <div class="stat-value" id="polymarketFilledTrades">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Fill Rate</div>
+                <div class="stat-value" id="polymarketFillRate">0.0%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Filled Poly Win Rate</div>
+                <div class="stat-value" id="polymarketFilledWinRate">0.0%</div>
+            </div>
+        </div>
+
+        <div class="entry-stats-hint polymarket-panel__status" id="polymarketStatus"></div>
+
+        <div class="analysis-finder-table-wrap">
+            <table class="analysis-finder-table polymarket-panel__table">
+                <thead>
+                    <tr>
+                        <th>Window</th>
+                        <th>Filled</th>
+                        <th>Fill Rate</th>
+                        <th>Poly Win Rate</th>
+                        <th>Missing Price</th>
+                    </tr>
+                </thead>
+                <tbody id="polymarketTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>

@@ -9,6 +9,8 @@
  * 5. Missing outcome row is counted, not silently dropped
  * 6. Duplicate signals targeting the same event are handled deterministically
  * 7. Prepared-data and normal execute produce identical evaluator results
+ * 8. Multi-trade metrics are based on executed trades, not raw signal count
+ * 9. Missing rows do not dilute directional win rates
  *
  * Run standalone:
  *   npx esno tests/polymarket-outcome-evaluator.spec.ts
@@ -257,20 +259,25 @@ console.log("\n[7] Prepared-data path produces identical evaluator results");
 console.log("\n[8] Metrics: winRate, coverage, baseline rates");
 {
     const T0 = 1_700_060_000;
-    const bars = makeBars(6, T0); // bars 0..5
-    // Signals on bars 0,1,2 → evaluate events at T0+300, T0+600, T0+900
+    const bars = makeBars(8, T0); // bars 0..7
+    // Signals on bars 0,2,4 become next_open trades on bars 1,3,5.
     const sigs: Signal[] = [
-        { time: bars[0].time, type: 'buy',  price: 30000, barIndex: 0 },  // →T0+300 UP  → win
-        { time: bars[1].time, type: 'buy',  price: 30000, barIndex: 1 },  // →T0+600 DOWN → loss
-        { time: bars[2].time, type: 'sell', price: 30000, barIndex: 2 },  // →T0+900 DOWN → win
+        { time: bars[0].time, type: 'buy',  price: 30000, barIndex: 0 },  // execution @ T0+300
+        { time: bars[2].time, type: 'buy',  price: 30000, barIndex: 2 },  // execution @ T0+900
+        { time: bars[4].time, type: 'sell', price: 30000, barIndex: 4 },  // execution @ T0+1500
     ];
     const outcomes = [
         makeOutcomeRow(T0 + 300, 1),  // UP
-        makeOutcomeRow(T0 + 600, 0),  // DOWN
         makeOutcomeRow(T0 + 900, 0),  // DOWN
-        makeOutcomeRow(T0 + 1200, 1), // UP – no signal → skip
+        makeOutcomeRow(T0 + 1500, 0), // DOWN
+        makeOutcomeRow(T0 + 1800, 1), // UP – no executed trade → skip
     ];
-    const r = evaluatePolymarketOutcomes(bars, makeFixedStrategy(sigs), {}, outcomes);
+    const r = evaluatePolymarketOutcomes(bars, makeFixedStrategy(sigs), {}, outcomes, {
+        backtestSettings: {
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 1,
+        },
+    });
 
     eq(r.evaluatedEvents, 4, "4 events in outcomes");
     eq(r.predictionsTaken, 3, "3 predictions taken");
@@ -290,21 +297,27 @@ console.log("\n[8] Metrics: winRate, coverage, baseline rates");
 console.log("\n[9] Missing rows do not inflate coverage");
 {
     const T0 = 1_700_070_000;
-    const bars = makeBars(4, T0);
+    const bars = makeBars(6, T0);
     const sigs: Signal[] = [
         { time: bars[0].time, type: 'buy', price: 30000, barIndex: 0 },
-        { time: bars[1].time, type: 'buy', price: 30000, barIndex: 1 },
+        { time: bars[2].time, type: 'buy', price: 30000, barIndex: 2 },
     ];
     const outcomes = [
         makeOutcomeRow(T0 + 300, 1),
     ];
 
-    const r = evaluatePolymarketOutcomes(bars, makeFixedStrategy(sigs), {}, outcomes);
+    const r = evaluatePolymarketOutcomes(bars, makeFixedStrategy(sigs), {}, outcomes, {
+        backtestSettings: {
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 1,
+        },
+    });
 
     eq(r.predictionsTaken, 2, "2 predictions taken");
     eq(r.scoredPredictions, 1, "only 1 prediction scored");
     eq(r.missingOutcomeRows, 1, "1 prediction missing outcome");
     ok(Math.abs(r.coverage - 1) < 1e-9, `coverage capped by scored predictions (got ${r.coverage})`);
+    ok(Math.abs(r.longWinRate - 1) < 1e-9, `longWinRate uses scored longs only (got ${r.longWinRate})`);
 }
 
 // ─── Summary ─────────────────────────────────────────────────────────────

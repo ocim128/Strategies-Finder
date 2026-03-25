@@ -1,14 +1,46 @@
 import { parseTimeToUnixSeconds } from './time-normalization';
-import type { OHLCVData, Strategy, StrategyParams } from './types/strategies';
+import { applySignalPolarity, precomputeIndicators, runBacktest } from './strategies/index';
+import { CAPITAL_DEFAULTS } from './backtest-settings-resolver';
+import { evaluatePolymarketBacktestTrades } from './polymarket-trade-annotations';
+import type { CapitalSettings } from './types/backtest';
+import type { BacktestSettings, OHLCVData, Strategy, StrategyParams } from './types/strategies';
 import type {
     PolymarketEvalOptions,
     PolymarketEvalResult,
-    PolymarketEvalRow,
     PolymarketOutcomeRow,
 } from './types/polymarket-outcomes';
 
 function barTimeToSec(bar: OHLCVData): number | null {
     return parseTimeToUnixSeconds(bar.time);
+}
+
+function resolvePolymarketCapitalSettings(
+    capitalSettings?: Partial<CapitalSettings>
+): CapitalSettings {
+    return {
+        initialCapital: Math.max(0, Number(capitalSettings?.initialCapital ?? CAPITAL_DEFAULTS.initialCapital) || CAPITAL_DEFAULTS.initialCapital),
+        positionSize: Math.max(0, Number(capitalSettings?.positionSize ?? CAPITAL_DEFAULTS.positionSize) || CAPITAL_DEFAULTS.positionSize),
+        commission: Math.max(0, Number(capitalSettings?.commission ?? CAPITAL_DEFAULTS.commission) || CAPITAL_DEFAULTS.commission),
+        sizingMode: capitalSettings?.sizingMode ?? 'percent',
+        fixedTradeAmount: Math.max(0, Number(capitalSettings?.fixedTradeAmount ?? CAPITAL_DEFAULTS.fixedTradeAmount) || CAPITAL_DEFAULTS.fixedTradeAmount),
+    };
+}
+
+function resolvePolymarketBacktestSettings(options: PolymarketEvalOptions): BacktestSettings {
+    return {
+        executionModel: options.executionMode ?? 'next_open',
+        tradeDirection: options.tradeDirection ?? 'both',
+        tradeFilterMode: 'none',
+        marketMode: 'all',
+        stopLossEnabled: false,
+        takeProfitEnabled: false,
+        allowSameBarExit: false,
+        slippageBps: 0,
+        invertSignals: false,
+        maxOpenTrades: 1,
+        warmUpEntryEnabled: false,
+        ...(options.backtestSettings ?? {}),
+    };
 }
 
 export function evaluatePolymarketOutcomes(
@@ -19,133 +51,39 @@ export function evaluatePolymarketOutcomes(
     options: PolymarketEvalOptions = {}
 ): PolymarketEvalResult {
     const executionMode = options.executionMode ?? 'next_open';
-    const tradeDirection = options.tradeDirection ?? 'both';
     const strategyKey = options.strategyKey;
 
     if (executionMode !== 'next_open') {
         throw new Error(`evaluatePolymarketOutcomes: unsupported executionMode "${executionMode}". Only "next_open" is supported.`);
     }
 
+    const effectiveSettings = resolvePolymarketBacktestSettings(options);
+    const effectiveCapital = resolvePolymarketCapitalSettings(options.capitalSettings);
     const normalizedParams = strategy.normalizeParams ? strategy.normalizeParams(params) : { ...params };
-    let signals = options.usePreparedData && strategy.prepareFinderData && strategy.executePrepared
+    const rawSignals = options.usePreparedData && strategy.prepareFinderData && strategy.executePrepared
         ? strategy.executePrepared(strategy.prepareFinderData(chartData), normalizedParams, chartData)
         : strategy.execute(chartData, normalizedParams);
-
-    if (tradeDirection === 'long') {
-        signals = signals.filter(signal => signal.type === 'buy');
-    } else if (tradeDirection === 'short') {
-        signals = signals.filter(signal => signal.type === 'sell');
-    }
-
-    const outcomeByStartTs = new Map<number, PolymarketOutcomeRow>();
-    for (const row of outcomes) {
-        outcomeByStartTs.set(row.event_start_ts, row);
-    }
+    const signals = applySignalPolarity(rawSignals, effectiveSettings);
+    const precomputed = precomputeIndicators(chartData, effectiveSettings);
+    const backtestResult = runBacktest(
+        chartData,
+        signals,
+        effectiveCapital.initialCapital,
+        effectiveCapital.positionSize,
+        effectiveCapital.commission,
+        effectiveSettings,
+        {
+            mode: effectiveCapital.sizingMode,
+            fixedTradeAmount: effectiveCapital.fixedTradeAmount,
+        },
+        precomputed
+    );
 
     const barTimes = chartData.map(barTimeToSec);
     const validTargetTs = new Set<number>();
     for (let i = 1; i < barTimes.length; i++) {
         const ts = barTimes[i];
         if (ts !== null) validTargetTs.add(ts);
-    }
-
-    type PendingPrediction = {
-        targetTs: number;
-        signalBarIndex: number;
-        prediction: 'yes' | 'no';
-        signalTime: number;
-        signalReason: string | undefined;
-    };
-
-    const seenTargetTs = new Set<number>();
-    const predictions: PendingPrediction[] = [];
-    let ignoredSignals = 0;
-
-    for (const signal of signals) {
-        let barIndex = signal.barIndex ?? -1;
-        if (barIndex < 0) {
-            const signalTime = parseTimeToUnixSeconds(signal.time);
-            barIndex = chartData.findIndex(bar => parseTimeToUnixSeconds(bar.time) === signalTime);
-        }
-
-        if (barIndex < 0 || barIndex >= chartData.length) {
-            ignoredSignals++;
-            continue;
-        }
-
-        const nextBarIndex = barIndex + 1;
-        if (nextBarIndex >= chartData.length) {
-            ignoredSignals++;
-            continue;
-        }
-
-        const targetTs = barTimes[nextBarIndex];
-        if (targetTs === null) {
-            ignoredSignals++;
-            continue;
-        }
-
-        if (seenTargetTs.has(targetTs)) {
-            ignoredSignals++;
-            continue;
-        }
-        seenTargetTs.add(targetTs);
-
-        predictions.push({
-            targetTs,
-            signalBarIndex: barIndex,
-            prediction: signal.type === 'buy' ? 'yes' : 'no',
-            signalTime: barTimes[barIndex] ?? 0,
-            signalReason: signal.reason,
-        });
-    }
-
-    const rows: PolymarketEvalRow[] = [];
-    let wins = 0;
-    let losses = 0;
-    let missingOutcomeRows = 0;
-    let longPredictions = 0;
-    let shortPredictions = 0;
-    let longWins = 0;
-    let shortWins = 0;
-
-    for (const prediction of predictions) {
-        if (prediction.prediction === 'yes') {
-            longPredictions++;
-        } else {
-            shortPredictions++;
-        }
-
-        const outcome = outcomeByStartTs.get(prediction.targetTs);
-        if (!outcome) {
-            missingOutcomeRows++;
-            continue;
-        }
-
-        const isWin = prediction.prediction === 'yes'
-            ? outcome.resolved_outcome_up === 1
-            : outcome.resolved_outcome_up === 0;
-
-        if (isWin) {
-            wins++;
-            if (prediction.prediction === 'yes') longWins++;
-            if (prediction.prediction === 'no') shortWins++;
-        } else {
-            losses++;
-        }
-
-        rows.push({
-            eventStartTs: outcome.event_start_ts,
-            eventEndTs: outcome.event_end_ts,
-            eventSlug: outcome.event_slug,
-            signalBarIndex: prediction.signalBarIndex,
-            signalTime: prediction.signalTime,
-            prediction: prediction.prediction,
-            actualOutcomeUp: outcome.resolved_outcome_up,
-            isWin,
-            signalReason: prediction.signalReason,
-            strategyKey,
-        });
     }
 
     let evaluatedEvents = 0;
@@ -156,28 +94,21 @@ export function evaluatePolymarketOutcomes(
         resolvedUpCount += row.resolved_outcome_up;
     }
 
-    const predictionsTaken = predictions.length;
-    const scoredPredictions = rows.length;
+    const tradeEval = evaluatePolymarketBacktestTrades({
+        chartData,
+        trades: backtestResult.trades,
+        outcomes,
+        strategyKey,
+        includeRows: true,
+    });
+
+    const ignoredSignals = Math.max(0, signals.length - backtestResult.totalTrades);
 
     return {
+        ...tradeEval,
         evaluatedEvents,
-        predictionsTaken,
-        scoredPredictions,
-        wins,
-        losses,
-        skips: Math.max(0, evaluatedEvents - scoredPredictions),
-        winRate: scoredPredictions > 0 ? wins / scoredPredictions : 0,
-        coverage: evaluatedEvents > 0 ? scoredPredictions / evaluatedEvents : 0,
-        longPredictions,
-        shortPredictions,
-        longWins,
-        shortWins,
-        longWinRate: longPredictions > 0 ? longWins / longPredictions : 0,
-        shortWinRate: shortPredictions > 0 ? shortWins / shortPredictions : 0,
         alwaysYesBaselineWinRate: evaluatedEvents > 0 ? resolvedUpCount / evaluatedEvents : 0,
         alwaysNoBaselineWinRate: evaluatedEvents > 0 ? (evaluatedEvents - resolvedUpCount) / evaluatedEvents : 0,
-        missingOutcomeRows,
         ignoredSignals,
-        rows,
     };
 }

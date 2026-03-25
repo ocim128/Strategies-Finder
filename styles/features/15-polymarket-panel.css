@@ -1,0 +1,16 @@
+.polymarket-panel__desc {
+    margin-bottom: var(--space-3);
+}
+
+.polymarket-panel__stats {
+    margin-top: var(--space-3);
+}
+
+.polymarket-panel__status {
+    margin-bottom: var(--space-3);
+}
+
+.polymarket-panel__table th:nth-child(n + 2),
+.polymarket-panel__table td:nth-child(n + 2) {
+    text-align: right;
+}

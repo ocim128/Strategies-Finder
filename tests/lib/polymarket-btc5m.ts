@@ -7,9 +7,6 @@ export const BTC_5M_POLYMARKET_SERIES_ID = "10684";
 
 const SUPPORTED_BTC_SYMBOLS = new Set([
     "BTCUSDT",
-    "BTCUSD",
-    "BTCUSDC",
-    "XBTUSD",
 ]);
 
 export function isSupportedPolymarketBtcSymbol(symbol: string): boolean {

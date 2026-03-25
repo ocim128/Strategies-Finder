@@ -24,6 +24,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { planPolymarketEventSync } from "../lib/polymarket-sync-utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -34,6 +35,7 @@ type CliConfig = {
     maxEvents: number;
     pageSize: number;
     concurrency: number;
+    refreshRecent: number;
     viteOrigin: string;
     outPath?: string;
     dryRun: boolean;
@@ -83,6 +85,10 @@ type OutcomeRow = {
     updated_at: number;
 };
 
+type ExistingOutcomeSlugRow = {
+    event_slug?: unknown;
+};
+
 // ─── Constants ────────────────────────────────────────────────────────────
 
 const DEFAULT_SERIES_ID = "10684";
@@ -116,6 +122,7 @@ function printUsage(): void {
         "  --max-events <n>       Max closed events to store after pagination (default: 10000)",
         "  --page-size <n>        Pagination page size (default: 500)",
         "  --concurrency <n>      Parallel history fetch workers (default: 8)",
+        "  --refresh-recent <n>   Re-fetch the latest N events even if already stored (default: 0)",
         "  --vite-origin <url>    Vite dev server base (default: http://localhost:5173)",
         "  --out <file>           Optional JSON audit output path",
         "  --dry-run              Fetch and print without writing to SQLite",
@@ -140,6 +147,7 @@ function parseArgs(argv: string[]): CliConfig | null {
     let maxEvents = 10000;
     let pageSize = 500;
     let concurrency = 8;
+    let refreshRecent = 0;
     let viteOrigin = "http://localhost:5173";
     let outPath: string | undefined;
     let dryRun = false;
@@ -153,12 +161,13 @@ function parseArgs(argv: string[]): CliConfig | null {
         if (arg === "--max-events") { maxEvents = Math.max(1, Math.floor(parseNumber(next, maxEvents))); i++; continue; }
         if (arg === "--page-size") { pageSize = Math.max(1, Math.floor(parseNumber(next, pageSize))); i++; continue; }
         if (arg === "--concurrency") { concurrency = Math.max(1, Math.floor(parseNumber(next, concurrency))); i++; continue; }
+        if (arg === "--refresh-recent") { refreshRecent = Math.max(0, Math.floor(parseNumber(next, refreshRecent))); i++; continue; }
         if (arg === "--vite-origin") { viteOrigin = String(next ?? "").trim() || viteOrigin; i++; continue; }
         if (arg === "--out") { outPath = String(next ?? "").trim() || undefined; i++; continue; }
         if (arg === "--dry-run") { dryRun = true; continue; }
     }
 
-    return { seriesId, startDateMin, endDateMax, maxEvents, pageSize, concurrency, viteOrigin, outPath, dryRun };
+    return { seriesId, startDateMin, endDateMax, maxEvents, pageSize, concurrency, refreshRecent, viteOrigin, outPath, dryRun };
 }
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────
@@ -411,6 +420,40 @@ async function storeRows(rows: OutcomeRow[], viteOrigin: string): Promise<number
     return payload.upserted ?? 0;
 }
 
+async function loadExistingOutcomeSlugs(
+    viteOrigin: string,
+    seriesId: string,
+    startTs: number,
+    endTs: number,
+    limit: number
+): Promise<Set<string>> {
+    const params = new URLSearchParams({
+        seriesId,
+        startTs: String(Math.floor(startTs)),
+        endTs: String(Math.floor(endTs)),
+        limit: String(Math.max(1, Math.floor(limit))),
+    });
+    const url = `${viteOrigin}/api/sqlite/load-polymarket-outcomes?${params.toString()}`;
+    const res = await fetch(url, {
+        headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`load-polymarket-outcomes failed (${res.status}): ${body.slice(0, 240)}`);
+    }
+    const payload = await res.json() as { ok?: boolean; rows?: ExistingOutcomeSlugRow[]; error?: string };
+    if (!payload.ok) {
+        throw new Error(payload.error ?? "load-polymarket-outcomes: ok=false");
+    }
+
+    const existing = new Set<string>();
+    for (const row of Array.isArray(payload.rows) ? payload.rows : []) {
+        const slug = typeof row?.event_slug === "string" ? row.event_slug.trim() : "";
+        if (slug) existing.add(slug);
+    }
+    return existing;
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -428,12 +471,40 @@ async function main(): Promise<void> {
         return;
     }
 
+    let syncEvents = events;
+    let skippedExisting = 0;
+    let refreshedExisting = 0;
+    let missingEvents = events.length;
+
+    if (!cfg.dryRun) {
+        const firstStartTs = events[0]!.endTs - EVENT_DURATION_SEC;
+        const lastStartTs = events[events.length - 1]!.endTs - EVENT_DURATION_SEC;
+        const existingSlugs = await loadExistingOutcomeSlugs(
+            cfg.viteOrigin,
+            cfg.seriesId,
+            firstStartTs,
+            lastStartTs,
+            Math.max(events.length + cfg.refreshRecent + 100, 1000)
+        );
+        const plan = planPolymarketEventSync(events, existingSlugs, cfg.refreshRecent);
+        syncEvents = plan.toFetch;
+        skippedExisting = plan.skippedExisting;
+        refreshedExisting = plan.refreshedExisting;
+        missingEvents = plan.missing;
+        console.log(
+            `[poly:sync-outcomes] Sync plan missing=${missingEvents} refreshed=${refreshedExisting} skipped_existing=${skippedExisting}`
+        );
+        if (syncEvents.length === 0) {
+            console.log("[poly:sync-outcomes] No missing outcome rows found in the requested range.");
+        }
+    }
+
     let processed = 0;
     let withHistory = 0;
     const outcomeRows: OutcomeRow[] = [];
     const buckets: (OutcomeRow | null)[] = [];
 
-    await runPool(events, cfg.concurrency, async (ev, i) => {
+    await runPool(syncEvents, cfg.concurrency, async (ev, i) => {
         try {
             const eventStartTs = ev.endTs - EVENT_DURATION_SEC;
             const points = await fetchHistoryWindow(ev.upTokenId, eventStartTs, ev.endTs);
@@ -444,8 +515,8 @@ async function main(): Promise<void> {
             buckets[i] = null;
         } finally {
             processed++;
-            if (processed % 100 === 0 || processed === events.length) {
-                console.log(`[poly:sync-outcomes] progress ${processed}/${events.length}, usable=${withHistory}`);
+            if (processed % 100 === 0 || processed === syncEvents.length) {
+                console.log(`[poly:sync-outcomes] progress ${processed}/${syncEvents.length}, usable=${withHistory}`);
             }
         }
     });
@@ -457,6 +528,9 @@ async function main(): Promise<void> {
 
     console.log(`[poly:sync-outcomes] Built ${outcomeRows.length} outcome rows`);
     if (outcomeRows.length === 0) {
+        if (syncEvents.length === 0) {
+            return;
+        }
         console.error("[poly:sync-outcomes] No usable rows. Try widening the date range.");
         process.exitCode = 1;
         return;

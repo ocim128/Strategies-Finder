@@ -69,8 +69,6 @@ afterEach(() => {
 describe("Polymarket backtest trade annotations", () => {
     it("annotates eligible BTC 5m next_open trades and renders the outcome badge", async () => {
         const bars = makeBars(4);
-        const firstSignalTs = Number(bars[0]!.time);
-        const secondSignalTs = Number(bars[1]!.time);
         const firstEventTs = Number(bars[1]!.time);
         const secondEventTs = Number(bars[2]!.time);
         installOutcomeFetch([
@@ -114,8 +112,8 @@ describe("Polymarket backtest trade annotations", () => {
 
         const result = await annotateBacktestResultWithPolymarketOutcomes(
             makeBacktestResult([
-                makeTrade(1, "long", firstSignalTs, 10),
-                makeTrade(2, "short", secondSignalTs, -10),
+                makeTrade(1, "long", firstEventTs, 10),
+                makeTrade(2, "short", secondEventTs, -10),
             ]),
             {
                 symbol: "BTCUSDT",
@@ -150,6 +148,22 @@ describe("Polymarket backtest trade annotations", () => {
         const original = makeBacktestResult([makeTrade(1, "long", 1_700_000_300, 10)]);
         const result = await annotateBacktestResultWithPolymarketOutcomes(original, {
             symbol: "ETHUSDT",
+            interval: "5m",
+            executionModel: "next_open",
+            chartData: makeBars(3),
+        });
+
+        expect(result).to.equal(original);
+    });
+
+    it("skips annotation for non-canonical BTC symbols", async () => {
+        globalThis.fetch = (async () => {
+            throw new Error("fetch should not run for non-canonical BTC symbols");
+        }) as typeof fetch;
+
+        const original = makeBacktestResult([makeTrade(1, "long", 1_700_000_300, 10)]);
+        const result = await annotateBacktestResultWithPolymarketOutcomes(original, {
+            symbol: "BTCUSD",
             interval: "5m",
             executionModel: "next_open",
             chartData: makeBars(3),
