@@ -22,6 +22,8 @@ export interface PolymarketFillAnalysis {
     scope: PolymarketFillScope;
     selectedTrades: number;
     eligibleTrades: number;
+    enrichedEligibleTrades: number;
+    fallbackEligibleTrades: number;
     missingOutcomeTrades: number;
     windows: PolymarketFillWindowStat[];
 }
@@ -64,12 +66,18 @@ function getTradeCheckpointPrices(trade: Trade, row: PolymarketOutcomeRow): Arra
     return yesPrices.map((price) => price === null ? null : clamp01(1 - price));
 }
 
+function hasUsableHistorySummary(
+    historySummary: PolymarketFillHistorySummary | undefined
+): historySummary is PolymarketFillHistorySummary {
+    return Boolean(historySummary && historySummary.windows.some((window) => window.sampleCount > 0));
+}
+
 function getTradeWindowReferencePrices(
     trade: Trade,
     row: PolymarketOutcomeRow,
     historySummary: PolymarketFillHistorySummary | undefined
 ): Array<number | null> {
-    if (!historySummary || historySummary.windows.length === 0) {
+    if (!hasUsableHistorySummary(historySummary)) {
         return getTradeCheckpointPrices(trade, row);
     }
 
@@ -129,6 +137,8 @@ export function analyzePolymarketFillability(args: {
         scope,
         selectedTrades: filteredTrades.length,
         eligibleTrades: eligibleTrades.length,
+        enrichedEligibleTrades: eligibleTrades.filter((item) => hasUsableHistorySummary(item.historySummary)).length,
+        fallbackEligibleTrades: eligibleTrades.filter((item) => !hasUsableHistorySummary(item.historySummary)).length,
         missingOutcomeTrades,
         windows: WINDOW_DEFS.map((def) => {
             let filledTrades = 0;

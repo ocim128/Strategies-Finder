@@ -1,10 +1,10 @@
 <div id="polymarketTab">
-    <div class="section-title">Polymarket Entry Fillability</div>
+    <div class="section-title">Polymarket Entry Touch Fillability</div>
     <div class="section-desc polymarket-panel__desc">
-        Estimate how many current BTCUSDT, ETHUSDT, SOLUSDT, or XRPUSDT 5m executed trades would have filled on Polymarket at a custom entry price.
+        Estimate how many current BTCUSDT, ETHUSDT, SOLUSDT, or XRPUSDT 5m executed trades would have touched a custom Polymarket entry price.
         Long trades use YES prices. Short trades use implied NO prices = <code>1 - YES</code>. The panel prefers raw
         Polymarket <code>prices-history</code> extrema and falls back to synced checkpoints only when raw history is
-        unavailable.
+        unavailable. This is a touch-based estimate, not an exact filled-order count.
     </div>
 
     <div class="section-title">Bridge Export</div>
@@ -54,7 +54,7 @@
     </div>
 
     <div class="param-hint" id="polymarketPriceNote">
-        The table is cumulative: “By +2m” means the order was fillable at open, +1m, or +2m.
+        The table is cumulative: "By +2m" means the target price was touched at open, +1m, or +2m.
     </div>
 
     <div class="empty-state empty-state-compact" id="polymarketEmpty">
@@ -72,19 +72,23 @@
     <div id="polymarketContent" style="display: none;">
         <div class="stats-grid polymarket-panel__stats">
             <div class="stat-card">
-                <div class="stat-label">Eligible Trades</div>
+                <div class="stat-label">Matched Trades</div>
                 <div class="stat-value" id="polymarketEligibleTrades">0</div>
             </div>
             <div class="stat-card">
-                <div class="stat-label">Filled By +4m</div>
+                <div class="stat-label">History-Enriched</div>
+                <div class="stat-value" id="polymarketEnrichedTrades">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Touched By +4m</div>
                 <div class="stat-value" id="polymarketFilledTrades">0</div>
             </div>
             <div class="stat-card">
-                <div class="stat-label">Fill Rate</div>
+                <div class="stat-label">Touch Fill Rate</div>
                 <div class="stat-value" id="polymarketFillRate">0.0%</div>
             </div>
             <div class="stat-card">
-                <div class="stat-label">Filled Poly Win Rate</div>
+                <div class="stat-label">Touched Poly Win Rate</div>
                 <div class="stat-value" id="polymarketFilledWinRate">0.0%</div>
             </div>
         </div>
@@ -96,8 +100,8 @@
                 <thead>
                     <tr>
                         <th>Window</th>
-                        <th>Filled</th>
-                        <th>Fill Rate</th>
+                        <th>Touched</th>
+                        <th>Touch Fill Rate</th>
                         <th>Poly Win Rate</th>
                         <th>Missing Price</th>
                     </tr>

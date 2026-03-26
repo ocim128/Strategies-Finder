@@ -49,6 +49,20 @@ type CliConfig = {
     dryRun: boolean;
 };
 
+type NpmConfigEnv = {
+    symbol?: string;
+    seriesId?: string;
+    startDate?: string;
+    endDate?: string;
+    maxEvents?: number;
+    pageSize?: number;
+    concurrency?: number;
+    refreshRecent?: number;
+    viteOrigin?: string;
+    outPath?: string;
+    dryRun?: boolean;
+};
+
 type RawMarket = {
     slug?: unknown;
     outcomes?: unknown;
@@ -118,6 +132,41 @@ function parseNumber(raw: string | undefined, fallback: number): number {
     return Number.isFinite(n) ? n : fallback;
 }
 
+function readNpmConfigEnv(): NpmConfigEnv {
+    const env = process.env;
+    const readString = (...keys: string[]): string | undefined => {
+        for (const key of keys) {
+            const value = env[key];
+            if (typeof value === "string" && value.trim()) {
+                return value.trim();
+            }
+        }
+        return undefined;
+    };
+    const readBoolean = (...keys: string[]): boolean | undefined => {
+        const raw = readString(...keys);
+        if (!raw) return undefined;
+        const normalized = raw.trim().toLowerCase();
+        if (["1", "true", "yes"].includes(normalized)) return true;
+        if (["0", "false", "no"].includes(normalized)) return false;
+        return undefined;
+    };
+
+    return {
+        symbol: readString("npm_config_symbol"),
+        seriesId: readString("npm_config_series_id", "npm_config_seriesid"),
+        startDate: readString("npm_config_start_date", "npm_config_startdate"),
+        endDate: readString("npm_config_end_date", "npm_config_enddate"),
+        maxEvents: parseNumber(readString("npm_config_max_events", "npm_config_maxevents"), Number.NaN),
+        pageSize: parseNumber(readString("npm_config_page_size", "npm_config_pagesize"), Number.NaN),
+        concurrency: parseNumber(readString("npm_config_concurrency"), Number.NaN),
+        refreshRecent: parseNumber(readString("npm_config_refresh_recent", "npm_config_refreshrecent"), Number.NaN),
+        viteOrigin: readString("npm_config_vite_origin", "npm_config_viteorigin"),
+        outPath: readString("npm_config_out"),
+        dryRun: readBoolean("npm_config_dry_run", "npm_config_dryrun"),
+    };
+}
+
 function printUsage(): void {
     console.log([
         "Usage:",
@@ -152,29 +201,44 @@ function parseArgs(argv: string[]): CliConfig | null {
         return null;
     }
 
+    const npmConfig = readNpmConfigEnv();
+
     let seriesId: string = DEFAULT_SERIES_ID;
-    let symbol: string | undefined;
-    let startDateMin = defaultStartDateIso(30);
-    let endDateMax: string | undefined;
-    let maxEvents = 10000;
-    let pageSize = 500;
-    let concurrency = 8;
-    let refreshRecent = 0;
-    let viteOrigin = "http://localhost:5173";
-    let outPath: string | undefined;
-    let dryRun = false;
+    let symbol: string | undefined = undefined;
+    let startDateMin = npmConfig.startDate ?? defaultStartDateIso(30);
+    let endDateMax: string | undefined = npmConfig.endDate;
+    let maxEvents = Number.isFinite(npmConfig.maxEvents) ? Math.max(1, Math.floor(npmConfig.maxEvents!)) : 10000;
+    let pageSize = Number.isFinite(npmConfig.pageSize) ? Math.max(1, Math.floor(npmConfig.pageSize!)) : 500;
+    let concurrency = Number.isFinite(npmConfig.concurrency) ? Math.max(1, Math.floor(npmConfig.concurrency!)) : 8;
+    let refreshRecent = Number.isFinite(npmConfig.refreshRecent) ? Math.max(0, Math.floor(npmConfig.refreshRecent!)) : 0;
+    let viteOrigin = npmConfig.viteOrigin ?? "http://localhost:5173";
+    let outPath: string | undefined = npmConfig.outPath;
+    let dryRun = npmConfig.dryRun ?? false;
+
+    const applySymbol = (raw: string | undefined): boolean => {
+        const resolvedSymbol = String(raw ?? "").trim().toUpperCase();
+        if (!resolvedSymbol) return false;
+        const resolvedSeriesId = getPolymarket5mSeriesIdForSymbol(resolvedSymbol);
+        if (!resolvedSeriesId) return false;
+        symbol = resolvedSymbol;
+        seriesId = resolvedSeriesId;
+        return true;
+    };
+
+    const positionals: string[] = [];
+
+    if (!applySymbol(npmConfig.symbol) && npmConfig.seriesId) {
+        seriesId = npmConfig.seriesId;
+    }
 
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
         const next = argv[i + 1];
         if (arg === "--symbol") {
             const resolvedSymbol = String(next ?? "").trim().toUpperCase();
-            const resolvedSeriesId = getPolymarket5mSeriesIdForSymbol(resolvedSymbol);
-            if (!resolvedSeriesId) {
+            if (!applySymbol(resolvedSymbol)) {
                 throw new Error(`Unsupported Polymarket 5m symbol "${resolvedSymbol}". Use ${getSupportedPolymarket5mSymbolsLabel()}.`);
             }
-            symbol = resolvedSymbol;
-            seriesId = resolvedSeriesId;
             i++;
             continue;
         }
@@ -188,6 +252,18 @@ function parseArgs(argv: string[]): CliConfig | null {
         if (arg === "--vite-origin") { viteOrigin = String(next ?? "").trim() || viteOrigin; i++; continue; }
         if (arg === "--out") { outPath = String(next ?? "").trim() || undefined; i++; continue; }
         if (arg === "--dry-run") { dryRun = true; continue; }
+        if (!arg.startsWith("-")) {
+            positionals.push(arg);
+        }
+    }
+
+    if (positionals.length > 0) {
+        if (!symbol && applySymbol(positionals[0])) {
+            positionals.shift();
+        }
+        if (!positionals.length && symbol && !argv.some(arg => arg.startsWith("--symbol"))) {
+            console.warn(`[poly:sync-outcomes] Interpreting positional "${symbol}" as --symbol. Use the direct esno command or npm_config_* flags for unambiguous CLI forwarding.`);
+        }
     }
 
     return { seriesId, symbol, startDateMin, endDateMax, maxEvents, pageSize, concurrency, refreshRecent, viteOrigin, outPath, dryRun };

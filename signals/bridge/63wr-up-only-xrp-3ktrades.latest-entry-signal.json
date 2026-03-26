@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-03-25T22:30:04.360Z",
-  "generatedAtSec": 1774477804,
+  "generatedAt": "2026-03-26T03:45:03.641Z",
+  "generatedAtSec": 1774496703,
   "source": "strategy_finder_cli",
   "symbol": "XRPUSDT",
   "interval": "5m",
@@ -11,16 +11,16 @@
   "preparedSignalCount": 368,
   "latestEntry": {
     "direction": "long",
-    "signalTimeSec": 1774476300,
-    "signalAgeBars": 4,
-    "isFresh": false,
-    "fingerprint": "deadzone_orb_proxy_breakout:long:1774476300:1.4149",
-    "signalPrice": 1.4149,
-    "entryPrice": 1.4149
+    "signalTimeSec": 1774496400,
+    "signalAgeBars": 0,
+    "isFresh": true,
+    "fingerprint": "deadzone_orb_proxy_breakout:long:1774496400:1.4002",
+    "signalPrice": 1.4002,
+    "entryPrice": 1.4002
   },
   "latestTrade": {
-    "entryTimeSec": 1774476300,
-    "entryPrice": 1.4149,
+    "entryTimeSec": 1774496400,
+    "entryPrice": 1.4002,
     "exitReason": "end_of_data",
     "isOpen": true
   }

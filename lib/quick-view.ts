@@ -20,7 +20,86 @@ type QuickViewPolymarketSummary = {
     coverage: number;
     winRate: number;
     outcomeRowsLoaded: number;
+    longestWinStreak: number;
+    longestLossStreak: number;
+    recentFormTrades: number;
+    recentFormWins: number;
+    recentFormLosses: number;
+    recentFormWinRate: number;
+    bestBaselineWinRate: number;
+    baselineDelta: number;
+    bestWinStreakLast100Trades: number;
 };
+
+export function summarizePolymarketStreaks(trades: Trade[]): {
+    longestWinStreak: number;
+    longestLossStreak: number;
+} {
+    let currentWinStreak = 0;
+    let currentLossStreak = 0;
+    let longestWinStreak = 0;
+    let longestLossStreak = 0;
+
+    for (const trade of trades) {
+        const isWin = trade.polymarketOutcome?.isWin;
+        if (isWin === true) {
+            currentWinStreak++;
+            currentLossStreak = 0;
+            longestWinStreak = Math.max(longestWinStreak, currentWinStreak);
+            continue;
+        }
+
+        if (isWin === false) {
+            currentLossStreak++;
+            currentWinStreak = 0;
+            longestLossStreak = Math.max(longestLossStreak, currentLossStreak);
+            continue;
+        }
+
+        currentWinStreak = 0;
+        currentLossStreak = 0;
+    }
+
+    return {
+        longestWinStreak,
+        longestLossStreak,
+    };
+}
+
+export function summarizeRecentPolymarketForm(
+    trades: Trade[],
+    windowSize = 20
+): {
+    recentFormTrades: number;
+    recentFormWins: number;
+    recentFormLosses: number;
+    recentFormWinRate: number;
+} {
+    const scoredTrades = trades.filter((trade) => trade.polymarketOutcome !== null && trade.polymarketOutcome !== undefined);
+    const recentTrades = scoredTrades.slice(-Math.max(0, windowSize));
+    const recentFormWins = recentTrades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
+    const recentFormLosses = recentTrades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
+    const recentFormTrades = recentTrades.length;
+
+    return {
+        recentFormTrades,
+        recentFormWins,
+        recentFormLosses,
+        recentFormWinRate: recentFormTrades > 0 ? recentFormWins / recentFormTrades : 0,
+    };
+}
+
+export function computePolymarketBestBaselineWinRate(trades: Trade[]): number {
+    const scoredTrades = trades.filter((trade) => trade.polymarketOutcome !== null && trade.polymarketOutcome !== undefined);
+    if (scoredTrades.length === 0) {
+        return 0;
+    }
+
+    const alwaysYesWins = scoredTrades.filter((trade) => trade.polymarketOutcome?.actualOutcomeUp === 1).length;
+    const alwaysYesWinRate = alwaysYesWins / scoredTrades.length;
+    const alwaysNoWinRate = 1 - alwaysYesWinRate;
+    return Math.max(alwaysYesWinRate, alwaysNoWinRate);
+}
 
 class QuickViewManager {
     private overlay: HTMLElement | null = null;
@@ -393,6 +472,30 @@ class QuickViewManager {
                     <div class="qv-stat-value negative">${summary.losses}</div>
                 </div>
                 <div class="qv-stat-card">
+                    <div class="qv-stat-label">Longest Win Streak</div>
+                    <div class="qv-stat-value positive">${summary.longestWinStreak}</div>
+                </div>
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Longest Loss Streak</div>
+                    <div class="qv-stat-value negative">${summary.longestLossStreak}</div>
+                </div>
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Recent Form (Last ${summary.recentFormTrades})</div>
+                    <div class="qv-stat-value ${summary.recentFormWinRate >= 0.5 ? 'positive' : 'negative'}">
+                        ${summary.recentFormWins}-${summary.recentFormLosses} (${(summary.recentFormWinRate * 100).toFixed(1)}%)
+                    </div>
+                </div>
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Baseline Delta</div>
+                    <div class="qv-stat-value ${summary.baselineDelta >= 0 ? 'positive' : 'negative'}">
+                        ${summary.baselineDelta >= 0 ? '+' : ''}${(summary.baselineDelta * 100).toFixed(1)}pp
+                    </div>
+                </div>
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Best Win Streak (Last 100)</div>
+                    <div class="qv-stat-value positive">${summary.bestWinStreakLast100Trades}</div>
+                </div>
+                <div class="qv-stat-card">
                     <div class="qv-stat-label">Scored Trades</div>
                     <div class="qv-stat-value">${summary.scoredTrades}</div>
                 </div>
@@ -422,6 +525,10 @@ class QuickViewManager {
         const missingTrades = summary?.missingOutcomeTrades ?? Math.max(0, totalTrades - scoredTrades);
         const coverageBase = Math.max(0, scoredTrades + missingTrades);
         const coverage = coverageBase > 0 ? scoredTrades / coverageBase : 0;
+        const { longestWinStreak, longestLossStreak } = summarizePolymarketStreaks(result.trades);
+        const recentForm = summarizeRecentPolymarketForm(result.trades, 20);
+        const bestBaselineWinRate = computePolymarketBestBaselineWinRate(result.trades);
+        const bestWinStreakLast100Trades = summarizePolymarketStreaks(result.trades.slice(-100)).longestWinStreak;
 
         return {
             wins,
@@ -431,6 +538,15 @@ class QuickViewManager {
             coverage,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
             outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? 0,
+            longestWinStreak,
+            longestLossStreak,
+            recentFormTrades: recentForm.recentFormTrades,
+            recentFormWins: recentForm.recentFormWins,
+            recentFormLosses: recentForm.recentFormLosses,
+            recentFormWinRate: recentForm.recentFormWinRate,
+            bestBaselineWinRate,
+            baselineDelta: (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
+            bestWinStreakLast100Trades,
         };
     }
 

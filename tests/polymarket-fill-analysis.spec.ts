@@ -74,6 +74,8 @@ describe("Polymarket fill analysis", () => {
 
         expect(analysis.selectedTrades).to.equal(2);
         expect(analysis.eligibleTrades).to.equal(2);
+        expect(analysis.enrichedEligibleTrades).to.equal(0);
+        expect(analysis.fallbackEligibleTrades).to.equal(2);
         expect(analysis.windows[0]?.filledTrades).to.equal(0);
         expect(analysis.windows[1]?.filledTrades).to.equal(1);
         expect(analysis.windows[4]?.filledTrades).to.equal(1);
@@ -95,6 +97,8 @@ describe("Polymarket fill analysis", () => {
         });
 
         expect(analysis.selectedTrades).to.equal(1);
+        expect(analysis.enrichedEligibleTrades).to.equal(0);
+        expect(analysis.fallbackEligibleTrades).to.equal(1);
         expect(analysis.windows[0]?.filledTrades).to.equal(0);
         expect(analysis.windows[2]?.filledTrades).to.equal(1);
         expect(analysis.windows[4]?.filledWinRate).to.equal(1);
@@ -119,6 +123,8 @@ describe("Polymarket fill analysis", () => {
 
         expect(analysis.selectedTrades).to.equal(2);
         expect(analysis.eligibleTrades).to.equal(1);
+        expect(analysis.enrichedEligibleTrades).to.equal(0);
+        expect(analysis.fallbackEligibleTrades).to.equal(1);
         expect(analysis.missingOutcomeTrades).to.equal(1);
         expect(analysis.windows[0]?.missingPriceTrades).to.equal(1);
         expect(analysis.windows[4]?.filledTrades).to.equal(0);
@@ -147,7 +153,32 @@ describe("Polymarket fill analysis", () => {
         });
 
         expect(coarse.windows[4]?.filledTrades).to.equal(0);
+        expect(enriched.enrichedEligibleTrades).to.equal(1);
+        expect(enriched.fallbackEligibleTrades).to.equal(0);
         expect(enriched.windows[2]?.filledTrades).to.equal(1);
         expect(enriched.windows[4]?.filledTrades).to.equal(1);
+    });
+
+    it("falls back to synced checkpoints when raw history enrichment has no usable samples", () => {
+        const t1 = 1_700_003_300;
+        const trades = [makeTrade(1, "long", t1)];
+        const outcomeByStartTs = new Map<number, PolymarketOutcomeRow>([
+            [t1, makeOutcomeRow(t1, [0.39, 0.39, 0.39, 0.39, 0.39], 1)],
+        ]);
+        const historySummaryByStartTs = new Map<number, PolymarketFillHistorySummary>([
+            [t1, makeHistorySummary(t1, [null, null, null, null, null], [null, null, null, null, null])],
+        ]);
+
+        const analysis = analyzePolymarketFillability({
+            trades,
+            outcomeByStartTs,
+            historySummaryByStartTs,
+            targetPriceCents: 40,
+        });
+
+        expect(analysis.enrichedEligibleTrades).to.equal(0);
+        expect(analysis.fallbackEligibleTrades).to.equal(1);
+        expect(analysis.windows[0]?.filledTrades).to.equal(1);
+        expect(analysis.windows[4]?.filledTrades).to.equal(1);
     });
 });

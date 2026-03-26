@@ -224,16 +224,17 @@ class PolymarketPanelService {
         const missingPriceByLastWindow = finalWindow?.missingPriceTrades ?? 0;
 
         dom.polymarketEligibleTrades.textContent = String(analysis.eligibleTrades);
+        dom.polymarketEnrichedTrades.textContent = String(analysis.enrichedEligibleTrades);
         dom.polymarketFilledTrades.textContent = String(filledByLastWindow);
         dom.polymarketFillRate.textContent = this.formatPercent(finalWindow?.fillRate ?? 0);
         dom.polymarketFilledWinRate.textContent = this.formatPercent(filledWinRate);
 
         dom.polymarketStatus.textContent = [
-            `${this.formatScopeLabel(scope)} at ${analysis.targetPriceCents.toFixed(1).replace(/\.0$/, "")}c.`,
+            `${this.formatScopeLabel(scope)} touch estimate at ${analysis.targetPriceCents.toFixed(1).replace(/\.0$/, "")}c.`,
             `${analysis.selectedTrades} selected trade${analysis.selectedTrades === 1 ? "" : "s"}, ${analysis.eligibleTrades} matched Polymarket row${analysis.eligibleTrades === 1 ? "" : "s"}.`,
-            this.historySummaryByStartTs.size > 0
-                ? `${this.historySummaryByStartTs.size} row${this.historySummaryByStartTs.size === 1 ? "" : "s"} enriched with raw prices-history extrema.`
-                : "Using synced checkpoint fallback only.",
+            analysis.eligibleTrades > 0
+                ? `${analysis.enrichedEligibleTrades} matched trade${analysis.enrichedEligibleTrades === 1 ? "" : "s"} use raw prices-history extrema, ${analysis.fallbackEligibleTrades} use synced checkpoint fallback.`
+                : "No matched Polymarket rows to estimate fills from.",
             this.isEnrichingHistory ? "Raw history enrichment is still running in the background." : "",
             analysis.missingOutcomeTrades > 0 ? `${analysis.missingOutcomeTrades} trade${analysis.missingOutcomeTrades === 1 ? "" : "s"} missing outcome rows.` : "",
             missingPriceByLastWindow > 0 ? `${missingPriceByLastWindow} trade${missingPriceByLastWindow === 1 ? "" : "s"} missing fill history through +4m.` : "",
@@ -261,6 +262,7 @@ class PolymarketPanelService {
         dom.polymarketStatus.textContent = "";
         dom.polymarketTableBody.innerHTML = "";
         dom.polymarketEligibleTrades.textContent = "0";
+        dom.polymarketEnrichedTrades.textContent = "0";
         dom.polymarketFilledTrades.textContent = "0";
         dom.polymarketFillRate.textContent = "0.0%";
         dom.polymarketFilledWinRate.textContent = "0.0%";
