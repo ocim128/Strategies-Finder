@@ -6,9 +6,15 @@ import { resolveOpenTradeDisplayMetrics } from "../open-trade-display";
 import { createTradesRendererDom, type TradesRendererDom } from "./trades-renderer-dom";
 
 export class TradesRenderer {
+    private static readonly MAX_TRADES = 250;
+    private static readonly INITIAL_RENDER_BATCH_SIZE = 20;
+    private static readonly DEFERRED_RENDER_BATCH_SIZE = 30;
+
     private dom: TradesRendererDom | null = null;
     private jumpToTrade: ((time: Time) => void) | null = null;
     private jumpHandlersBound = false;
+    private tradeRenderGeneration = 0;
+    private pendingDeferredRenderIds: number[] = [];
 
     private getDom(): TradesRendererDom {
         return this.dom ??= createTradesRendererDom();
@@ -23,6 +29,8 @@ export class TradesRenderer {
         const container = this.getDom().tradesList;
         this.jumpToTrade = jumpToTrade;
         this.ensureTradeJumpHandlersBound();
+        this.cancelPendingDeferredRenders();
+        this.tradeRenderGeneration += 1;
         container.classList.remove('trades-list-parity');
 
         if (trades.length === 0) {
@@ -36,7 +44,8 @@ export class TradesRenderer {
         setVisible('tradesSummary', true);
         this.updateSummary(trades);
 
-        container.innerHTML = this.renderTradeItems(trades, formatPrice, formatDate);
+        const renderGeneration = this.tradeRenderGeneration;
+        this.renderTradeItemsProgressively(renderGeneration, container, trades, formatPrice, formatDate);
     }
 
     public renderParity(
@@ -49,6 +58,8 @@ export class TradesRenderer {
         const container = this.getDom().tradesList;
         this.jumpToTrade = jumpToTrade;
         this.ensureTradeJumpHandlersBound();
+        this.cancelPendingDeferredRenders();
+        this.tradeRenderGeneration += 1;
         container.classList.add('trades-list-parity');
 
         const combined = [...oddTrades, ...evenTrades];
@@ -65,7 +76,7 @@ export class TradesRenderer {
 
         const renderParitySection = (label: 'odd' | 'even', trades: Trade[]): string => {
             const sectionBody = trades.length > 0
-                ? this.renderTradeItems(trades, formatPrice, formatDate)
+                ? `<div class="trades-parity-list" data-parity-list="${label}"></div>`
                 : '<div class="trades-parity-empty">No trades</div>';
             return `
                 <div class="trades-parity-column">
@@ -73,9 +84,7 @@ export class TradesRenderer {
                         <span>${label.toUpperCase()} Universe</span>
                         <span>${trades.length} trade${trades.length === 1 ? '' : 's'}</span>
                     </div>
-                    <div class="trades-parity-list">
-                        ${sectionBody}
-                    </div>
+                    ${sectionBody}
                 </div>
             `;
         };
@@ -86,6 +95,17 @@ export class TradesRenderer {
                 ${renderParitySection('even', evenTrades)}
             </div>
         `;
+
+        const renderGeneration = this.tradeRenderGeneration;
+        const oddContainer = container.querySelector<HTMLElement>('[data-parity-list="odd"]');
+        const evenContainer = container.querySelector<HTMLElement>('[data-parity-list="even"]');
+
+        if (oddContainer) {
+            this.renderTradeItemsProgressively(renderGeneration, oddContainer, oddTrades, formatPrice, formatDate);
+        }
+        if (evenContainer) {
+            this.renderTradeItemsProgressively(renderGeneration, evenContainer, evenTrades, formatPrice, formatDate);
+        }
     }
 
     private formatDuration(ms: number): string {
@@ -140,17 +160,96 @@ export class TradesRenderer {
         return encodeURIComponent(JSON.stringify(time));
     }
 
-    private renderTradeItems(trades: Trade[], formatPrice: (p: number) => string, formatDate: (t: Time) => string): string {
-        const MAX_TRADES = 250;
+    private renderTradeItemsProgressively(
+        renderGeneration: number,
+        container: HTMLElement,
+        trades: Trade[],
+        formatPrice: (p: number) => string,
+        formatDate: (t: Time) => string
+    ): void {
         const reversed = trades.slice().reverse();
-        const toRender = reversed.slice(0, MAX_TRADES);
-        let html = toRender.map((trade) => this.renderTradeItem(trade, formatPrice, formatDate)).join('');
-        
-        if (trades.length > MAX_TRADES) {
-            html += `<div class="trades-limit-notice" style="padding: 12px; text-align: center; color: var(--text-muted); font-size: 0.9em; border-top: 1px solid var(--border-color);">Showing most recent ${MAX_TRADES} of ${trades.length} trades</div>`;
+        const toRender = reversed.slice(0, TradesRenderer.MAX_TRADES);
+        const initialCount = Math.min(toRender.length, TradesRenderer.INITIAL_RENDER_BATCH_SIZE);
+        container.innerHTML = this.renderTradeChunk(toRender, 0, initialCount, formatPrice, formatDate);
+
+        let offset = initialCount;
+        const appendLimitNotice = () => {
+            if (renderGeneration !== this.tradeRenderGeneration || trades.length <= TradesRenderer.MAX_TRADES) {
+                return;
+            }
+
+            const fragment = document.createRange().createContextualFragment(
+                this.renderTradesLimitNotice(trades.length)
+            );
+            container.appendChild(fragment);
+        };
+
+        if (offset >= toRender.length) {
+            appendLimitNotice();
+            return;
         }
-        
+
+        const appendChunk = () => {
+            if (renderGeneration !== this.tradeRenderGeneration) {
+                return;
+            }
+
+            const nextOffset = Math.min(offset + TradesRenderer.DEFERRED_RENDER_BATCH_SIZE, toRender.length);
+            const fragment = document.createRange().createContextualFragment(
+                this.renderTradeChunk(toRender, offset, nextOffset, formatPrice, formatDate)
+            );
+            container.appendChild(fragment);
+            offset = nextOffset;
+
+            if (offset < toRender.length) {
+                this.scheduleDeferredRender(appendChunk);
+                return;
+            }
+
+            appendLimitNotice();
+        };
+
+        this.scheduleDeferredRender(appendChunk);
+    }
+
+    private renderTradeChunk(
+        trades: Trade[],
+        startIndex: number,
+        endIndex: number,
+        formatPrice: (p: number) => string,
+        formatDate: (t: Time) => string
+    ): string {
+        let html = '';
+        for (let index = startIndex; index < endIndex; index += 1) {
+            html += this.renderTradeItem(trades[index], formatPrice, formatDate);
+        }
         return html;
+    }
+
+    private renderTradesLimitNotice(totalTrades: number): string {
+        return `<div class="trades-limit-notice" style="padding: 12px; text-align: center; color: var(--text-muted); font-size: 0.9em; border-top: 1px solid var(--border-color);">Showing most recent ${TradesRenderer.MAX_TRADES} of ${totalTrades} trades</div>`;
+    }
+
+    private scheduleDeferredRender(callback: () => void): void {
+        if (typeof window.requestIdleCallback === 'function') {
+            const deferredId = window.requestIdleCallback(() => callback());
+            this.pendingDeferredRenderIds.push(deferredId);
+            return;
+        }
+
+        const deferredId = window.setTimeout(callback, 16);
+        this.pendingDeferredRenderIds.push(deferredId);
+    }
+
+    private cancelPendingDeferredRenders(): void {
+        for (const deferredId of this.pendingDeferredRenderIds) {
+            if (typeof window.cancelIdleCallback === 'function') {
+                window.cancelIdleCallback(deferredId);
+            } else {
+                window.clearTimeout(deferredId);
+            }
+        }
+        this.pendingDeferredRenderIds = [];
     }
 
     private renderTradeItem(trade: Trade, formatPrice: (p: number) => string, formatDate: (t: Time) => string): string {
@@ -358,6 +457,8 @@ export class TradesRenderer {
     }
 
     public clear() {
+        this.cancelPendingDeferredRenders();
+        this.tradeRenderGeneration += 1;
         setVisible('emptyTrades', true);
         setVisible('tradesSummary', false);
         const container = this.getDom().tradesList;

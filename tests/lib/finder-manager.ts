@@ -63,6 +63,8 @@ export class FinderManager {
 	private readonly timeframeLoader = new FinderTimeframeLoader(FinderManager.MAX_MULTI_TIMEFRAMES);
 	private dom: FinderManagerDom | null = null;
 	private pairCombinerDom: PairCombinerBridgeDom | null = null;
+	private yieldChannel: MessageChannel | null = null;
+	private pendingYieldResolvers: Array<() => void> = [];
 
 	private getDom(): FinderManagerDom {
 		return this.dom ??= createFinderManagerDom();
@@ -1111,6 +1113,17 @@ export class FinderManager {
 
 	private lastRealYieldAt = 0;
 
+	private getYieldChannel(): MessageChannel {
+		if (!this.yieldChannel) {
+			this.yieldChannel = new MessageChannel();
+			this.yieldChannel.port1.onmessage = () => {
+				const resolve = this.pendingYieldResolvers.shift();
+				resolve?.();
+			};
+		}
+		return this.yieldChannel;
+	}
+
 	private async yieldControl(): Promise<void> {
 		if (document.hidden) {
 			// Skip most yields for near-100% CPU speed when backgrounded.
@@ -1123,10 +1136,10 @@ export class FinderManager {
 			return;
 		}
 
+		const channel = this.getYieldChannel();
 		await new Promise<void>(resolve => {
-			const ch = new MessageChannel();
-			ch.port1.onmessage = () => resolve();
-			ch.port2.postMessage(undefined);
+			this.pendingYieldResolvers.push(resolve);
+			channel.port2.postMessage(undefined);
 		});
 	}
 

@@ -102,6 +102,10 @@ export function computePolymarketBestBaselineWinRate(trades: Trade[]): number {
 }
 
 class QuickViewManager {
+    private static readonly MAX_RENDERED_TRADES = 100;
+    private static readonly INITIAL_TRADE_BATCH_SIZE = 40;
+    private static readonly DEFERRED_TRADE_BATCH_SIZE = 80;
+
     private overlay: HTMLElement | null = null;
     private enabled = true;          // auto-show after backtest
     private visible = false;
@@ -109,6 +113,8 @@ class QuickViewManager {
     private sortNewestFirst = true;  // default: most recent trade on top
     private currentTrades: Trade[] = [];  // cached for re-sorting
     private keyboardHandler: ((e: KeyboardEvent) => void) | null = null;
+    private tradeRenderGeneration = 0;
+    private pendingDeferredRenderIds: number[] = [];
 
     // ── Initialisation ─────────────────────────────────────
 
@@ -137,6 +143,19 @@ class QuickViewManager {
         el.querySelector('#qvSortToggle')?.addEventListener('click', () => {
             this.sortNewestFirst = !this.sortNewestFirst;
             this.renderTrades(this.currentTrades);
+        });
+
+        const tradesList = el.querySelector<HTMLElement>('#qvTradesList');
+        tradesList?.addEventListener('click', (event) => {
+            this.handleTradeItemActivation(event.target, tradesList);
+        });
+        tradesList?.addEventListener('keydown', (event) => {
+            if (!(event instanceof KeyboardEvent) || (event.key !== 'Enter' && event.key !== ' ')) {
+                return;
+            }
+
+            event.preventDefault();
+            this.handleTradeItemActivation(event.target, tradesList);
         });
     }
 
@@ -279,6 +298,8 @@ class QuickViewManager {
     }
 
     destroy() {
+        this.cancelPendingDeferredRenders();
+        this.tradeRenderGeneration += 1;
         if (this.keyboardHandler) {
             window.removeEventListener('keydown', this.keyboardHandler);
             this.keyboardHandler = null;
@@ -379,10 +400,12 @@ class QuickViewManager {
 
     private renderTrades(trades: Trade[]) {
         this.currentTrades = trades;
-        const list = document.getElementById('qvTradesList');
+        const list = document.getElementById('qvTradesList') as HTMLElement;
         const count = document.getElementById('qvTradesCount');
         const sortLabel = document.getElementById('qvSortLabel');
         if (!list) return;
+        this.cancelPendingDeferredRenders();
+        this.tradeRenderGeneration += 1;
         if (count) count.textContent = String(trades.length);
         if (sortLabel) sortLabel.textContent = this.sortNewestFirst ? 'Newest first' : 'Oldest first';
 
@@ -400,6 +423,12 @@ class QuickViewManager {
 
         // Sort: newest first (reversed) or oldest first (original order)
         const sorted = this.sortNewestFirst ? [...trades].reverse() : trades;
+        const toRender = sorted.slice(0, QuickViewManager.MAX_RENDERED_TRADES);
+        const limitNotice = trades.length > QuickViewManager.MAX_RENDERED_TRADES
+            ? this.renderTradesLimitNotice(trades.length)
+            : '';
+        this.renderTradesProgressively(this.tradeRenderGeneration, list, toRender, limitNotice);
+        return;
 
         list.innerHTML = sorted.map(trade => {
             const isWin = trade.pnl > 0;
@@ -445,6 +474,138 @@ class QuickViewManager {
     }
 
     // ── Helpers ─────────────────────────────────────────────
+
+    private renderTradesProgressively(
+        renderGeneration: number,
+        list: HTMLElement,
+        trades: Trade[],
+        limitNoticeHtml: string
+    ): void {
+        const initialCount = Math.min(trades.length, QuickViewManager.INITIAL_TRADE_BATCH_SIZE);
+        list.innerHTML = this.renderTradeChunk(trades, 0, initialCount);
+
+        let offset = initialCount;
+        const appendLimitNotice = () => {
+            if (!limitNoticeHtml || renderGeneration !== this.tradeRenderGeneration) {
+                return;
+            }
+
+            const fragment = document.createRange().createContextualFragment(limitNoticeHtml);
+            list.appendChild(fragment);
+        };
+
+        if (offset >= trades.length) {
+            appendLimitNotice();
+            return;
+        }
+
+        const appendChunk = () => {
+            if (renderGeneration !== this.tradeRenderGeneration) {
+                return;
+            }
+
+            const nextOffset = Math.min(offset + QuickViewManager.DEFERRED_TRADE_BATCH_SIZE, trades.length);
+            const fragment = document.createRange().createContextualFragment(
+                this.renderTradeChunk(trades, offset, nextOffset)
+            );
+            list.appendChild(fragment);
+            offset = nextOffset;
+
+            if (offset < trades.length) {
+                this.scheduleDeferredRender(appendChunk);
+                return;
+            }
+
+            appendLimitNotice();
+        };
+
+        this.scheduleDeferredRender(appendChunk);
+    }
+
+    private renderTradeChunk(trades: Trade[], startIndex: number, endIndex: number): string {
+        let html = '';
+        for (let index = startIndex; index < endIndex; index += 1) {
+            html += this.renderTradeItem(trades[index]);
+        }
+        return html;
+    }
+
+    private renderTradeItem(trade: Trade): string {
+        const isWin = trade.pnl > 0;
+        const pnlClass = isWin ? 'positive' : 'negative';
+        const pnlSign = isWin ? '+' : '';
+        const entryDate = this.formatTradeTime(trade.entryTime);
+        const exitReason = trade.exitReason ? this.formatExitReason(trade.exitReason) : '';
+
+        return `
+            <div class="qv-trade-item" data-entry-time="${typeof trade.entryTime === 'object' ? JSON.stringify(trade.entryTime) : trade.entryTime}" role="button" tabindex="0">
+                <span class="qv-trade-type ${trade.type}">${trade.type}</span>
+                <span class="qv-trade-prices">
+                    ${this.fmtPrice(trade.entryPrice)} -> ${this.fmtPrice(trade.exitPrice)}
+                </span>
+                <span class="qv-trade-date">
+                    ${entryDate}
+                    ${exitReason}
+                </span>
+                <span class="qv-trade-pnl ${pnlClass}">
+                    ${pnlSign}$${trade.pnl.toFixed(2)} (${pnlSign}${trade.pnlPercent.toFixed(2)}%)
+                </span>
+            </div>
+        `;
+    }
+
+    private renderTradesLimitNotice(totalTrades: number): string {
+        return `<div class="qv-empty">Showing ${QuickViewManager.MAX_RENDERED_TRADES} of ${totalTrades} trades</div>`;
+    }
+
+    private handleTradeItemActivation(target: EventTarget | null, list: HTMLElement): void {
+        if (!(target instanceof Element)) {
+            return;
+        }
+
+        const item = target.closest('.qv-trade-item');
+        if (!(item instanceof HTMLElement) || !list.contains(item)) {
+            return;
+        }
+
+        const raw = item.dataset.entryTime;
+        if (!raw || !this.jumpToTrade) {
+            return;
+        }
+
+        this.jumpToTrade(this.parseTradeTime(raw));
+        this.hide();
+    }
+
+    private parseTradeTime(raw: string): Time {
+        try {
+            return JSON.parse(raw) as Time;
+        } catch {
+            return (isNaN(Number(raw)) ? raw : Number(raw)) as Time;
+        }
+    }
+
+    private scheduleDeferredRender(callback: () => void): void {
+        if (typeof window.requestIdleCallback === 'function') {
+            const deferredId = window.requestIdleCallback(() => callback());
+            this.pendingDeferredRenderIds.push(deferredId);
+            return;
+        }
+
+        const deferredId = window.setTimeout(callback, 16);
+        this.pendingDeferredRenderIds.push(deferredId);
+    }
+
+    private cancelPendingDeferredRenders(): void {
+        for (const deferredId of this.pendingDeferredRenderIds) {
+            if (typeof window.cancelIdleCallback === 'function') {
+                window.cancelIdleCallback(deferredId);
+            } else {
+                window.clearTimeout(deferredId);
+            }
+        }
+        this.pendingDeferredRenderIds = [];
+    }
 
     private buildPolymarketSection(result: BacktestResult): string {
         const summary = this.getPolymarketSummary(result);

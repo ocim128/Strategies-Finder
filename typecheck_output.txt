@@ -1,0 +1,17 @@
+﻿
+> typecheck
+> tsc --noEmit
+
+lib/strategies/lib/close_percentile_range_entry.ts(4,1): error TS6133: 'buildPercentileRank' is declared but its value is never read.
+lib/strategies/lib/close_percentile_range_entry.ts(72,10): error TS6133: 'close' is declared but its value is never read.
+lib/strategies/lib/close_percentile_range_entry.ts(73,10): error TS6133: 'prevClose' is declared but its value is never read.
+lib/strategies/lib/consecutive_direction_streak_break.ts(69,10): error TS6133: 'close' is declared but its value is never read.
+lib/strategies/lib/cumulative_close_position_shift.ts(75,10): error TS6133: 'close' is declared but its value is never read.
+lib/strategies/lib/gap_fill_momentum_sequence.ts(3,30): error TS6133: 'buildRateOfChange' is declared but its value is never read.
+lib/strategies/lib/momentum_oscillator_extreme_reclaim.ts(54,10): error TS6133: 'close' is declared but its value is never read.
+lib/strategies/lib/rolling_correlation_regime_shift.ts(48,7): error TS6133: 'shiftDirection' is declared but its value is never read.
+lib/strategies/lib/rolling_correlation_regime_shift.ts(54,10): error TS6133: 'prevClose' is declared but its value is never read.
+lib/strategies/lib/rolling_kurtosis_extreme_entry.ts(58,10): error TS6133: 'prevClose' is declared but its value is never read.
+lib/strategies/lib/rolling_kurtosis_extreme_entry.ts(62,10): error TS6133: 'range' is declared but its value is never read.
+lib/strategies/lib/volume_spike_reversion_burst.ts(59,10): error TS6133: 'volume' is declared but its value is never read.
+lib/strategies/lib/vwap_distance_persistence_entry.ts(58,10): error TS6133: 'distance' is declared but its value is never read.

@@ -68,6 +68,11 @@ type CurrentBacktestExecution = {
 
 export class BacktestService {
     private warnedStrictEngine = false;
+    private timingBreakdownSampleCount = 0;
+
+    private shouldCaptureTimingBreakdown(): boolean {
+        return Boolean(import.meta.env?.DEV) || ((++this.timingBreakdownSampleCount & 31) === 0);
+    }
 
     public async runCurrentBacktest() {
         const startedAt = Date.now();
@@ -434,23 +439,36 @@ export class BacktestService {
         requiresTsEngine: boolean
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
         const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = capitalSettings;
-        // Stage-level timing instrumentation
-        const timing = {
-            selectClosedCandleData: 0,
-            strategyExecute: 0,
-            rustRequest: 0,
-            tsBacktest: 0,
-            postProcessing: 0,
-            total: 0,
-        };
-        const runStart = performance.now();
+        const captureTiming = this.shouldCaptureTimingBreakdown();
+        const timing = captureTiming
+            ? {
+                selectClosedCandleData: 0,
+                strategyExecute: 0,
+                rustRequest: 0,
+                tsBacktest: 0,
+                postProcessing: 0,
+                total: 0,
+            }
+            : null;
+        const runStart = captureTiming ? performance.now() : 0;
 
-        const t1 = performance.now();
-        const backtestData = this.selectClosedCandleData(ohlcvData, interval, settings);
-        timing.selectClosedCandleData = performance.now() - t1;
-        const t2 = performance.now();
-        const signals = applySignalPolarity(strategy.execute(backtestData, params), settings);
-        timing.strategyExecute = performance.now() - t2;
+        let backtestData: OHLCVData[];
+        if (timing) {
+            const t1 = performance.now();
+            backtestData = this.selectClosedCandleData(ohlcvData, interval, settings);
+            timing.selectClosedCandleData = performance.now() - t1;
+        } else {
+            backtestData = this.selectClosedCandleData(ohlcvData, interval, settings);
+        }
+
+        let signals: Signal[];
+        if (timing) {
+            const t2 = performance.now();
+            signals = applySignalPolarity(strategy.execute(backtestData, params), settings);
+            timing.strategyExecute = performance.now() - t2;
+        } else {
+            signals = applySignalPolarity(strategy.execute(backtestData, params), settings);
+        }
 
         const filteredSignals = signals;
 
@@ -470,7 +488,7 @@ export class BacktestService {
         }
 
         if (!result && shouldUseRustEngine() && !requiresTsEngine) {
-            const tRust = performance.now();
+            const tRust = timing ? performance.now() : 0;
             const rustResult = await rustEngine.runBacktest(
                 backtestData,
                 blockFilteredSignals,
@@ -480,7 +498,9 @@ export class BacktestService {
                 sanitizeBacktestSettingsForRust(settings),
                 { mode: sizingMode, fixedTradeAmount }
             );
-            timing.rustRequest = performance.now() - tRust;
+            if (timing) {
+                timing.rustRequest = performance.now() - tRust;
+            }
 
             if (rustResult) {
                 if (this.isResultConsistent(rustResult)) {
@@ -495,7 +515,7 @@ export class BacktestService {
         }
 
         if (!result) {
-            const tTs = performance.now();
+            const tTs = timing ? performance.now() : 0;
             if (requiresTsEngine && shouldUseRustEngine() && !this.warnedStrictEngine) {
                 this.warnedStrictEngine = true;
                 uiManager.showToast('Current sizing or realism settings require TypeScript engine (Rust skipped).', 'info');
@@ -510,31 +530,25 @@ export class BacktestService {
                 { mode: sizingMode, fixedTradeAmount }
             );
             engineUsed = 'typescript';
-            timing.tsBacktest = performance.now() - tTs;
+            if (timing) {
+                timing.tsBacktest = performance.now() - tTs;
+            }
         }
 
-        const tPost = performance.now();
+        const tPost = timing ? performance.now() : 0;
         this.finalizeBacktestResult(result, initialCapital, backtestData);
-        timing.postProcessing = performance.now() - tPost;
+        if (timing) {
+            timing.postProcessing = performance.now() - tPost;
+            timing.total = performance.now() - runStart;
 
-        timing.total = performance.now() - runStart;
-
-        // Emit structured timing breakdown event
-        debugLogger.event('backtest.timing_breakdown', {
-            engineUsed,
-            bars: backtestData.length,
-            signalsCount: signals.length,
-            filteredSignalsCount: filteredSignals.length,
-            durations: {
-                selectClosedCandleData: timing.selectClosedCandleData,
-                strategyExecute: timing.strategyExecute,
-
-                rustRequest: timing.rustRequest,
-                tsBacktest: timing.tsBacktest,
-                postProcessing: timing.postProcessing,
-                total: timing.total,
-            },
-        });
+            debugLogger.event('backtest.timing_breakdown', {
+                engineUsed,
+                bars: backtestData.length,
+                signalsCount: signals.length,
+                filteredSignalsCount: filteredSignals.length,
+                durations: timing,
+            });
+        }
 
         return { result, engineUsed };
     }

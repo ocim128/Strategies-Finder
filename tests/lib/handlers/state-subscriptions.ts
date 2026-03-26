@@ -40,6 +40,7 @@ export function setupStateSubscriptions() {
     let lastDataLength = 0;
 
     let reloadTimeout: number | null = null;
+    let deferredBacktestUiFrame: number | null = null;
     const scheduleDataReload = () => {
         if (reloadTimeout !== null) {
             clearTimeout(reloadTimeout);
@@ -100,6 +101,10 @@ export function setupStateSubscriptions() {
 
     // Sync backtest results
     state.subscribe('currentBacktestResult', (result) => {
+        if (deferredBacktestUiFrame !== null) {
+            cancelAnimationFrame(deferredBacktestUiFrame);
+            deferredBacktestUiFrame = null;
+        }
 
 
         if (result) {
@@ -107,7 +112,6 @@ export function setupStateSubscriptions() {
             const params = strategy ? paramManager.getValues(strategy) : {};
 
             backtestService.addStrategyIndicators(params);
-            chartManager.displayTradeMarkers(result.trades, uiManager.formatPrice);
             chartManager.displayEquityCurve(result.equityCurve);
             uiManager.updateResultsUI(result);
             const jumpToTrade = (time: typeof result.trades[number]['entryTime']) => {
@@ -126,9 +130,16 @@ export function setupStateSubscriptions() {
                 uiManager.updateTradesList(result.trades, jumpToTrade);
             }
 
-            // Auto-show Quick View overlay
-            quickViewManager.setJumpToTrade(jumpToTrade);
-            quickViewManager.onBacktestComplete(result);
+            deferredBacktestUiFrame = requestAnimationFrame(() => {
+                deferredBacktestUiFrame = null;
+                if (state.currentBacktestResult !== result) {
+                    return;
+                }
+
+                chartManager.displayTradeMarkers(result.trades, uiManager.formatPrice);
+                quickViewManager.setJumpToTrade(jumpToTrade);
+                quickViewManager.onBacktestComplete(result);
+            });
         }
     });
 

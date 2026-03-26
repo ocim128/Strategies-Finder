@@ -57,6 +57,19 @@ const PARAMETER_AUDIT_STORAGE = {
 class ParameterAuditService {
     private dom: ParameterAuditDom | null = null;
     private isRunning = false;
+    private yieldChannel: MessageChannel | null = null;
+    private pendingYieldResolvers: Array<() => void> = [];
+
+    private getYieldChannel(): MessageChannel {
+        if (!this.yieldChannel) {
+            this.yieldChannel = new MessageChannel();
+            this.yieldChannel.port1.onmessage = () => {
+                const resolve = this.pendingYieldResolvers.shift();
+                resolve?.();
+            };
+        }
+        return this.yieldChannel;
+    }
 
     private getDom(): ParameterAuditDom {
         return this.dom ??= createParameterAuditDom();
@@ -877,9 +890,9 @@ class ParameterAuditService {
     }
 
     private async yieldControl(): Promise<void> {
+        const channel = this.getYieldChannel();
         await new Promise<void>((resolve) => {
-            const channel = new MessageChannel();
-            channel.port1.onmessage = () => resolve();
+            this.pendingYieldResolvers.push(resolve);
             channel.port2.postMessage(undefined);
         });
     }

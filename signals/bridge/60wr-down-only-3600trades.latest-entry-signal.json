@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-03-26T11:45:04.585Z",
+  "generatedAtSec": 1774525504,
+  "source": "strategy_finder_cli",
+  "symbol": "XRPUSDT",
+  "interval": "5m",
+  "strategyKey": "zscore_false_break",
+  "strategyName": "ZScore False Break",
+  "rawSignalCount": 483,
+  "preparedSignalCount": 482,
+  "latestEntry": {
+    "direction": "short",
+    "signalTimeSec": 1774524300,
+    "signalAgeBars": 3,
+    "isFresh": false,
+    "fingerprint": "zscore_false_break:short:1774524300:1.3701",
+    "signalPrice": 1.3701,
+    "entryPrice": 1.3701
+  },
+  "latestTrade": {
+    "entryTimeSec": 1774524300,
+    "entryPrice": 1.3701,
+    "exitReason": "end_of_data",
+    "isOpen": true
+  }
+}

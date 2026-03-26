@@ -21,7 +21,7 @@ import { formatDisplayPrice } from "./price-format";
 import { bindChartRuntime, setIndicators, setMarkersPlugin } from "./state-actions";
 
 import { Trade, OHLCVData } from "./strategies/index";
-import { compareTime, timeKey } from "./strategies/backtest/backtest-utils";
+import { getTimeIndex, timeKey } from "./strategies/backtest/backtest-utils";
 
 type IndicatorTooltipPoint = {
     time: Time;
@@ -33,6 +33,9 @@ type IndicatorTooltipPoint = {
 // ============================================================================
 
 export class ChartManager {
+    private static readonly COMPACT_MARKER_LABEL_THRESHOLD = 100;
+    private static readonly MAX_VISIBLE_TRADE_MARKERS = 250;
+
     private mainChartContainer: HTMLElement | null = null;
     private equityChartContainer: HTMLElement | null = null;
     private tooltip: HTMLElement | null = null;
@@ -57,6 +60,7 @@ export class ChartManager {
     private correlationUpperSeries: ISeriesApi<"Line"> | null = null;
     private correlationLowerSeries: ISeriesApi<"Line"> | null = null;
     private indicatorDomCache = new Map<string, { node: HTMLElement; valNode: HTMLElement }>();
+    private tooltipIndicatorSetRef: typeof state.indicators | null = null;
     private cachedContainerRect: DOMRect | null = null;
     private readonly MIN_BAR_SPACING = 2;
     private readonly jakartaTimeFormatter = (time: Time): string => (
@@ -335,38 +339,13 @@ export class ChartManager {
                 indicatorsEl.innerHTML = '';
                 this.indicatorDomCache.clear();
             }
+            this.tooltipIndicatorSetRef = indicators;
             return;
         }
 
-        const currentIds = indicators.map(i => i.id).join(',');
-        const cachedIds = Array.from(this.indicatorDomCache.keys()).join(',');
-        if (currentIds !== cachedIds) {
-            indicatorsEl.innerHTML = '';
-            this.indicatorDomCache.clear();
-            for (const ind of indicators) {
-                const node = document.createElement('div');
-                node.className = 'tooltip-indicator';
-                node.style.display = 'none';
-
-                const nameNode = document.createElement('span');
-                nameNode.className = 'tooltip-indicator-name';
-
-                const dot = document.createElement('span');
-                dot.className = 'tooltip-indicator-dot';
-                dot.style.background = ind.color;
-
-                nameNode.appendChild(dot);
-                nameNode.appendChild(document.createTextNode(' ' + ind.type));
-
-                const valNode = document.createElement('span');
-                valNode.className = 'tooltip-indicator-value';
-
-                node.appendChild(nameNode);
-                node.appendChild(valNode);
-
-                indicatorsEl.appendChild(node);
-                this.indicatorDomCache.set(ind.id, { node, valNode });
-            }
+        if (this.tooltipIndicatorSetRef !== indicators) {
+            this.rebuildTooltipIndicatorDom(indicatorsEl, indicators);
+            this.tooltipIndicatorSetRef = indicators;
         }
 
         const tooltipTimeKey = timeKey(time);
@@ -386,6 +365,39 @@ export class ChartManager {
                 }
                 dom.valNode.textContent = value.toFixed(2);
             }
+        }
+    }
+
+    private rebuildTooltipIndicatorDom(
+        indicatorsEl: HTMLElement,
+        indicators: typeof state.indicators
+    ): void {
+        indicatorsEl.innerHTML = '';
+        this.indicatorDomCache.clear();
+
+        for (const ind of indicators) {
+            const node = document.createElement('div');
+            node.className = 'tooltip-indicator';
+            node.style.display = 'none';
+
+            const nameNode = document.createElement('span');
+            nameNode.className = 'tooltip-indicator-name';
+
+            const dot = document.createElement('span');
+            dot.className = 'tooltip-indicator-dot';
+            dot.style.background = ind.color;
+
+            nameNode.appendChild(dot);
+            nameNode.appendChild(document.createTextNode(' ' + ind.type));
+
+            const valNode = document.createElement('span');
+            valNode.className = 'tooltip-indicator-value';
+
+            node.appendChild(nameNode);
+            node.appendChild(valNode);
+
+            indicatorsEl.appendChild(node);
+            this.indicatorDomCache.set(ind.id, { node, valNode });
         }
     }
 
@@ -799,6 +811,11 @@ export class ChartManager {
         state.indicators.forEach(ind => ind.series.forEach(s => state.chart.removeSeries(s)));
         setIndicators([]);
         this.indicatorTooltipValues.clear();
+        this.indicatorDomCache.clear();
+        this.tooltipIndicatorSetRef = null;
+        if (this.tooltipIndicatorsEl) {
+            this.tooltipIndicatorsEl.innerHTML = '';
+        }
     }
 
     public addIndicatorLine(type: string, period: number, data: { time: Time; value: number }[], color: string) {
@@ -848,11 +865,13 @@ export class ChartManager {
     // ========================================================================
 
     public displayTradeMarkers(trades: Trade[], formatPrice: (p: number) => string) {
+        const markerTrades = this.getTradesForMarkerRender(trades);
         const markers: SeriesMarker<Time>[] = [];
         const entryMarkerTimes = new Set<string>();
-        const compactLabels = state.currentStrategyKey === 'dynamic_vix_regime';
+        const compactLabels = trades.length > ChartManager.COMPACT_MARKER_LABEL_THRESHOLD
+            || state.currentStrategyKey === 'dynamic_vix_regime';
 
-        for (const trade of trades) {
+        for (const trade of markerTrades) {
             const isShort = trade.type === 'short';
             const entryKey = typeof trade.entryTime === 'object'
                 ? JSON.stringify(trade.entryTime)
@@ -890,6 +909,14 @@ export class ChartManager {
             state.markersPlugin.detach();
         }
         setMarkersPlugin(createSeriesMarkers(state.candlestickSeries, markers));
+    }
+
+    private getTradesForMarkerRender(trades: Trade[]): Trade[] {
+        if (trades.length <= ChartManager.MAX_VISIBLE_TRADE_MARKERS) {
+            return trades;
+        }
+
+        return trades.slice(-ChartManager.MAX_VISIBLE_TRADE_MARKERS);
     }
 
     public clearTradeMarkers() {
@@ -950,25 +977,8 @@ export class ChartManager {
     }
 
     private findTimeIndex(time: Time): number {
-        let low = 0;
-        let high = state.ohlcvData.length - 1;
-
-        while (low <= high) {
-            const mid = Math.floor((low + high) / 2);
-            const comparison = compareTime(state.ohlcvData[mid].time, time);
-
-            if (comparison === 0) {
-                return mid;
-            }
-
-            if (comparison < 0) {
-                low = mid + 1;
-            } else {
-                high = mid - 1;
-            }
-        }
-
-        return -1;
+        const index = getTimeIndex(state.ohlcvData).get(timeKey(time));
+        return index === undefined ? -1 : index;
     }
 }
 

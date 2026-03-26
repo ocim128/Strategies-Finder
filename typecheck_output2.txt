@@ -1,0 +1,10 @@
+﻿
+> typecheck
+> tsc --noEmit
+
+lib/strategies/lib/close_inside_bar_resolution.ts(50,10): error TS6133: 'parentClose' is declared but its value is never read.
+lib/strategies/lib/dual_close_position_entry.ts(82,7): error TS6133: 'pendingDirection' is declared but its value is never read.
+lib/strategies/lib/high_low_range_compression.ts(41,9): error TS6133: 'highs' is declared but its value is never read.
+lib/strategies/lib/high_low_range_compression.ts(42,9): error TS6133: 'lows' is declared but its value is never read.
+lib/strategies/lib/wick_to_body_extreme_reversal.ts(3,36): error TS6133: 'PriceActionBarMetrics' is declared but its value is never read.
+lib/strategies/lib/wick_to_body_extreme_reversal.ts(77,10): error TS6133: 'currentExtreme' is declared but its value is never read.

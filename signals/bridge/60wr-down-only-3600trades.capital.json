@@ -1,0 +1,7 @@
+{
+  "initialCapital": 10000,
+  "positionSize": 100,
+  "commission": 0,
+  "sizingMode": "fixed",
+  "fixedTradeAmount": 1000
+}
