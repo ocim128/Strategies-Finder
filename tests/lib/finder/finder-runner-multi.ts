@@ -8,6 +8,7 @@ import {
     runBacktestCompact,
 } from "../strategies/index";
 import { mergeStrategySignals } from "../signal-merge";
+import { debugLogger } from "../debug-logger";
 import { buildSelectionResult } from "./endpoint";
 import { aggregateFinderBacktestResults } from "./finder-engine";
 import { FinderResultRanker } from "./finder-result-ranker";
@@ -94,10 +95,23 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
                         { captureSnapshots: false, coerceWithoutUiToggles: true }
                     );
                     for (const dataset of activeDatasets) {
-                        const primarySigs = applySignalPolarity(
-                            primaryStrategy.execute(dataset.data, primaryConfig.strategyParams),
-                            primarySettings
-                        );
+                        let primarySigs: Signal[];
+                        try {
+                            primarySigs = applySignalPolarity(
+                                primaryStrategy.execute(dataset.data, primaryConfig.strategyParams),
+                                primarySettings
+                            );
+                        } catch (error) {
+                            const detail = error instanceof Error ? error.message : String(error);
+                            debugLogger.error("finder.combo.primary_multitimeframe_failed", {
+                                primaryConfigName,
+                                primaryStrategy: primaryConfig.strategyKey,
+                                timeframe: dataset.interval,
+                                error: detail,
+                            });
+                            callbacks.setStatus(`Combo primary strategy failed on ${dataset.interval}. ${detail}`);
+                            return { results: [] };
+                        }
                         comboPrimarySignalsByInterval.set(dataset.interval, primarySigs);
                     }
                 }

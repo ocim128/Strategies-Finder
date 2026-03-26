@@ -5,6 +5,7 @@
  * outcome accuracy for those executed trades.
  */
 import { applySignalPolarity, precomputeIndicators, runBacktest } from "../strategies/index";
+import { debugLogger } from "../debug-logger";
 import type { FinderResult } from "../types/finder";
 import {
     getPolymarket5mSeriesIdForSymbol,
@@ -119,35 +120,59 @@ export async function runPolymarketFinder(
     const ranker = new FinderResultRanker(Math.max(options.topN, 50), options.sortPriority);
     let processedCount = 0;
     let filteredCount = 0;
+    let failedCount = 0;
     let lastUiUpdateAt = 0;
 
     for (const plan of strategyPlans) {
         for (const params of plan.paramSets) {
-            const normalizedParams = plan.strategy.normalizeParams ? plan.strategy.normalizeParams(params) : { ...params };
-            const rawSignals = plan.strategy.executePrepared
-                ? plan.strategy.executePrepared(
-                    getPreparedFinderData(preparedDataCache, plan.key, plan.strategy, closedData, settings),
-                    normalizedParams,
-                    closedData
-                )
-                : plan.strategy.execute(closedData, normalizedParams);
-            const signals = applySignalPolarity(rawSignals, settings);
-            const backtestResult = runStrategyBacktest({
-                strategy: plan.strategy,
-                data: closedData,
-                signals,
-                params: normalizedParams,
-                capitalSettings: input.capitalSettings,
-                backtestSettings: settings,
-                backtestFn: runBacktest,
-                precomputed,
-            });
-            signals.length = 0;
-
             processedCount++;
+            try {
+                const normalizedParams = plan.strategy.normalizeParams ? plan.strategy.normalizeParams(params) : { ...params };
+                const rawSignals = plan.strategy.executePrepared
+                    ? plan.strategy.executePrepared(
+                        getPreparedFinderData(preparedDataCache, plan.key, plan.strategy, closedData, settings),
+                        normalizedParams,
+                        closedData
+                    )
+                    : plan.strategy.execute(closedData, normalizedParams);
+                const signals = applySignalPolarity(rawSignals, settings);
+                const backtestResult = runStrategyBacktest({
+                    strategy: plan.strategy,
+                    data: closedData,
+                    signals,
+                    params: normalizedParams,
+                    capitalSettings: input.capitalSettings,
+                    backtestSettings: settings,
+                    backtestFn: runBacktest,
+                    precomputed,
+                });
+                signals.length = 0;
 
-            if (options.tradeFilterEnabled) {
-                if (backtestResult.totalTrades < options.minTrades) {
+                if (options.tradeFilterEnabled) {
+                    if (backtestResult.totalTrades < options.minTrades || backtestResult.totalTrades > options.maxTrades) {
+                        const now = performance.now();
+                        if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
+                            lastUiUpdateAt = now;
+                            const progress = 10 + (processedCount / totalRuns) * 85;
+                            callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
+                            callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
+                        }
+                        if (processedCount % 64 === 0 || processedCount === totalRuns) {
+                            await callbacks.yieldControl();
+                        }
+                        continue;
+                    }
+                }
+
+                const evalResult = evaluatePolymarketBacktestTrades({
+                    chartData: closedData,
+                    trades: backtestResult.trades,
+                    outcomes,
+                    strategyKey: plan.key,
+                    context: polymarketContext,
+                    includeRows: false,
+                });
+                if (evalResult.scoredPredictions < (options.polymarketMinScoredPredictions ?? 0)) {
                     const now = performance.now();
                     if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
                         lastUiUpdateAt = now;
@@ -155,61 +180,34 @@ export async function runPolymarketFinder(
                         callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
                         callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
                     }
+
                     if (processedCount % 64 === 0 || processedCount === totalRuns) {
                         await callbacks.yieldControl();
                     }
                     continue;
                 }
-                if (backtestResult.totalTrades > options.maxTrades) {
-                    const now = performance.now();
-                    if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
-                        lastUiUpdateAt = now;
-                        const progress = 10 + (processedCount / totalRuns) * 85;
-                        callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
-                        callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
-                    }
-                    if (processedCount % 64 === 0 || processedCount === totalRuns) {
-                        await callbacks.yieldControl();
-                    }
-                    continue;
-                }
+                const finderResult: FinderResult = buildFinderResult({
+                    key: plan.key,
+                    name: plan.name,
+                    params,
+                    result: backtestResult,
+                    selectionResult: backtestResult,
+                    endpointAdjusted: false,
+                    endpointRemovedTrades: 0,
+                });
+                finderResult.polymarketEval = evalResult;
+
+                filteredCount++;
+                ranker.offer(finderResult);
+            } catch (error) {
+                failedCount++;
+                const detail = error instanceof Error ? error.message : String(error);
+                debugLogger.warn("[Finder][polymarket] Candidate evaluation failed", {
+                    strategyKey: plan.key,
+                    params,
+                    error: detail,
+                });
             }
-
-            const evalResult = evaluatePolymarketBacktestTrades({
-                chartData: closedData,
-                trades: backtestResult.trades,
-                outcomes,
-                strategyKey: plan.key,
-                context: polymarketContext,
-                includeRows: false,
-            });
-            if (evalResult.scoredPredictions < (options.polymarketMinScoredPredictions ?? 0)) {
-                const now = performance.now();
-                if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
-                    lastUiUpdateAt = now;
-                    const progress = 10 + (processedCount / totalRuns) * 85;
-                    callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
-                    callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
-                }
-
-                if (processedCount % 64 === 0 || processedCount === totalRuns) {
-                    await callbacks.yieldControl();
-                }
-                continue;
-            }
-            const finderResult: FinderResult = buildFinderResult({
-                key: plan.key,
-                name: plan.name,
-                params,
-                result: backtestResult,
-                selectionResult: backtestResult,
-                endpointAdjusted: false,
-                endpointRemovedTrades: 0,
-            });
-            finderResult.polymarketEval = evalResult;
-
-            filteredCount++;
-            ranker.offer(finderResult);
 
             const now = performance.now();
             if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
@@ -230,6 +228,9 @@ export async function runPolymarketFinder(
     const statusParts = [`${processedCount} evaluations`];
     if (options.tradeFilterEnabled) {
         statusParts.push(`${filteredCount} matched`);
+    }
+    if (failedCount > 0) {
+        statusParts.push(`${failedCount} failed`);
     }
     statusParts.push(`${results.length} shown`);
     statusParts.push(`${outcomes.length} outcome rows`);

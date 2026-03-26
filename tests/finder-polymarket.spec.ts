@@ -126,7 +126,8 @@ function makeInput(
     paramSets: StrategyParams[],
     optionOverrides: Partial<FinderOptions> = {},
     interval = '5m',
-    symbol = 'BTCUSDT'
+    symbol = 'BTCUSDT',
+    strategy: Strategy = fixtureStrategy
 ): FinderRunInput {
     return {
         ohlcvData: bars,
@@ -141,8 +142,8 @@ function makeInput(
         selectedStrategies: [
             {
                 key: 'fixture_strategy',
-                name: fixtureStrategy.name,
-                strategy: fixtureStrategy,
+                name: strategy.name,
+                strategy,
             },
         ],
         capitalSettings,
@@ -304,6 +305,44 @@ describe('Finder Polymarket runner', () => {
         expect(output.results).to.have.length(1);
         expect(output.results[0]?.params.variant).to.equal(5);
         expect(output.results[0]?.polymarketEval?.scoredPredictions).to.equal(3);
+    });
+
+    it('skips strategy candidates that throw during signal generation instead of aborting the whole run', async () => {
+        const bars = makeBars(4);
+        installOutcomeFetch([
+            makeOutcomeRow(Number(bars[1].time), 1),
+            makeOutcomeRow(Number(bars[2].time), 1),
+        ]);
+
+        const unstableStrategy: Strategy = {
+            ...fixtureStrategy,
+            name: 'Unstable Fixture Strategy',
+            prepareFinderData: undefined,
+            executePrepared: undefined,
+            execute(data: OHLCVData[], params: StrategyParams): Signal[] {
+                if (params.variant === 99) {
+                    throw new TypeError("Cannot read properties of undefined (reading 'low')");
+                }
+                return buildFixtureSignals(data, params);
+            },
+        };
+
+        const { callbacks, statuses } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(
+                bars,
+                [{ variant: 1 }, { variant: 99 }],
+                {},
+                '5m',
+                'BTCUSDT',
+                unstableStrategy
+            ),
+            callbacks
+        );
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]?.params.variant).to.equal(1);
+        expect(statuses.at(-1)).to.equal('Complete. 2 evaluations, 1 failed, 1 shown, 2 outcome rows.');
     });
 
     it('uses the provided polymarket sort priority instead of a hard-coded ranking', async () => {

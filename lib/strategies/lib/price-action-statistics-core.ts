@@ -386,6 +386,52 @@ export function buildRollingAutoCorrelation(
 }
 
 /**
+ * Rolling correlation between two numeric series.
+ * Measures linear relationship: +1 = perfect positive, -1 = perfect negative, 0 = no correlation.
+ */
+export function buildRollingCorrelation(
+	series1: number[],
+	series2: number[],
+	lookbackInput: number
+): (number | null)[] {
+	const lookback = Math.max(3, Math.round(lookbackInput));
+	const len = Math.min(series1.length, series2.length);
+	const result: (number | null)[] = new Array(len).fill(null);
+
+	for (let i = lookback - 1; i < len; i++) {
+		let sumX = 0;
+		let sumY = 0;
+		const n = lookback;
+
+		for (let j = 0; j < n; j++) {
+			const idx = i - n + 1 + j;
+			sumX += series1[idx];
+			sumY += series2[idx];
+		}
+		const meanX = sumX / n;
+		const meanY = sumY / n;
+
+		let cov = 0;
+		let varX = 0;
+		let varY = 0;
+		for (let j = 0; j < n; j++) {
+			const idx = i - n + 1 + j;
+			const dx = series1[idx] - meanX;
+			const dy = series2[idx] - meanY;
+			cov += dx * dy;
+			varX += dx * dx;
+			varY += dy * dy;
+		}
+
+		const denom = Math.sqrt(varX * varY);
+		if (denom <= 0) continue;
+		result[i] = cov / denom;
+	}
+
+	return result;
+}
+
+/**
  * Rolling Shannon entropy of a discretized numeric series.
  * Bins values into `numBins` equal-width buckets over the rolling window.
  * Low entropy = concentrated/predictable, high entropy = disordered/random.

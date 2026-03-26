@@ -59,6 +59,8 @@ import { micro_shock_retrace_scalp } from "./lib/micro_shock_retrace_scalp";
 import { deadzone_orb_proxy_breakout } from "./lib/deadzone_orb_proxy_breakout";
 import { keltner_pinch_momentum_break } from "./lib/keltner_pinch_momentum_break";
 import { percentile_rank_deadzone_launch } from "./lib/percentile_rank_deadzone_launch";
+import { zscore_kurtosis_regime } from "./lib/zscore_kurtosis_regime";
+import { zscore_false_break } from "./lib/zscore_false_break";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -123,6 +125,8 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "deadzone_orb_proxy_breakout", strategy: deadzone_orb_proxy_breakout },
     { key: "keltner_pinch_momentum_break", strategy: keltner_pinch_momentum_break },
     { key: "percentile_rank_deadzone_launch", strategy: percentile_rank_deadzone_launch },
+    { key: "zscore_kurtosis_regime", strategy: zscore_kurtosis_regime },
+    { key: "zscore_false_break", strategy: zscore_false_break },
 ];
 
 export function createStrategiesRecordFromManifest(

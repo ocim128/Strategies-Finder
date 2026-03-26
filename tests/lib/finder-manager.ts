@@ -704,10 +704,22 @@ export class FinderManager {
 					primaryConfig.backtestSettings as unknown as typeof settings,
 					{ captureSnapshots: false, coerceWithoutUiToggles: true }
 				);
-				comboPrimarySignals = applySignalPolarity(
-					primaryStrategy.execute(ohlcvData, primaryConfig.strategyParams),
-					comboPrimarySettings
-				);
+				try {
+					comboPrimarySignals = applySignalPolarity(
+						primaryStrategy.execute(ohlcvData, primaryConfig.strategyParams),
+						comboPrimarySettings
+					);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					debugLogger.error('finder.combo.primary_failed', {
+						primaryConfig: options.comboPrimaryConfigName,
+						primaryStrategy: primaryConfig.strategyKey,
+						error: message,
+					});
+					this.setStatus(`Combo primary strategy failed. ${message}`);
+					uiManager.showToast('Combo primary strategy failed. Check the status panel for details.', 'error');
+					return;
+				}
 				comboPrimaryCapital = settingsManager.resolveCapitalFromConfig(primaryConfig);
 
 				debugLogger.event('finder.combo.primary_resolved', {
