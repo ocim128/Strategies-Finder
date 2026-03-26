@@ -62,6 +62,7 @@ import { percentile_rank_deadzone_launch } from "./lib/percentile_rank_deadzone_
 import { zscore_kurtosis_regime } from "./lib/zscore_kurtosis_regime";
 import { zscore_false_break } from "./lib/zscore_false_break";
 import { close_percentile_range_entry } from "./lib/close_percentile_range_entry";
+import { wick_responsive_boundary } from "./lib/wick_responsive_boundary";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -129,6 +130,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "zscore_kurtosis_regime", strategy: zscore_kurtosis_regime },
     { key: "zscore_false_break", strategy: zscore_false_break },
     { key: "close_percentile_range_entry", strategy: close_percentile_range_entry },
+    { key: "wick_responsive_boundary", strategy: wick_responsive_boundary },
 ];
 
 export function createStrategiesRecordFromManifest(

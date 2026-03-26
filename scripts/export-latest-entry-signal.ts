@@ -30,6 +30,7 @@ type ExportPayload = {
     latestEntry: null | {
         direction: "long" | "short";
         signalTimeSec: number;
+        entryTimeSec: number | null;
         signalAgeBars: number;
         isFresh: boolean;
         fingerprint: string;
@@ -262,6 +263,7 @@ async function main(): Promise<void> {
             ? {
                 direction: result.latestEntry.direction,
                 signalTimeSec: result.latestEntry.signalTimeSec,
+                entryTimeSec: result.latestTrade?.entryTimeSec ?? null,
                 signalAgeBars: result.latestEntry.signalAgeBars,
                 isFresh: result.latestEntry.isFresh,
                 fingerprint: result.latestEntry.fingerprint,
@@ -283,7 +285,7 @@ async function main(): Promise<void> {
     await fs.writeFile(config.outPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 
     const summary = payload.latestEntry
-        ? `${payload.latestEntry.direction} @ ${payload.latestEntry.signalTimeSec} age=${payload.latestEntry.signalAgeBars} fresh=${payload.latestEntry.isFresh}`
+        ? `${payload.latestEntry.direction} signal=${payload.latestEntry.signalTimeSec} entry=${payload.latestEntry.entryTimeSec ?? "n/a"} age=${payload.latestEntry.signalAgeBars} fresh=${payload.latestEntry.isFresh}`
         : "no latest entry";
 
     console.log(`[signal:export] wrote ${config.outPath}`);

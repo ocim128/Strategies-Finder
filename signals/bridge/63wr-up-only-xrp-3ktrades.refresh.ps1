@@ -1,7 +1,7 @@
 param(
     [string]$StrategyFinderRoot = '',
     [int]$Bars = 500,
-    [int]$FreshnessBars = 0
+    [int]$FreshnessBars = 1
 )
 
 $ErrorActionPreference = 'Stop'

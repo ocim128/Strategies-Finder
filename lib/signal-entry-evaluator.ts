@@ -9,7 +9,13 @@ import type {
 } from "./types/strategies";
 import { strategies } from "./strategies/library";
 import { prepareSignalsForScanner } from "./strategies/backtest/signal-preparation";
-import { allowsSignalAsEntry, applySignalPolarity, normalizeTradeDirection } from "./strategies/backtest/backtest-utils";
+import {
+    allowsSignalAsEntry,
+    applySignalPolarity,
+    getExecutionShift,
+    normalizeBacktestSettings,
+    normalizeTradeDirection,
+} from "./strategies/backtest/backtest-utils";
 import { runBacktest } from "./strategies/backtest/backtest-engine";
 import { getResampleBucketStart, resampleOHLCV, type ResampleOptions } from "./strategies/resample-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -350,6 +356,72 @@ function findPreparedSignalForTradeEntry(
     return fallbackByTimeAndType;
 }
 
+function findSourceSignalForTradeEntry(
+    candles: OHLCVData[],
+    rawEntrySignals: Signal[],
+    preparedSignal: Signal | null,
+    direction: "long" | "short",
+    settings: BacktestSettings
+): Signal | null {
+    if (!preparedSignal) return null;
+
+    const normalizedSettings = normalizeBacktestSettings(settings);
+    const totalLeadBars =
+        getExecutionShift(normalizedSettings)
+        + (normalizedSettings.tradeFilterMode === "close" ? 1 : 0);
+    const preparedIndex = Number.isFinite(preparedSignal.barIndex)
+        ? Math.trunc(preparedSignal.barIndex as number)
+        : candles.findIndex((bar) => toUnixSeconds(bar.time) === toUnixSeconds(preparedSignal.time));
+
+    if (preparedIndex < totalLeadBars || preparedIndex >= candles.length) {
+        return null;
+    }
+
+    const sourceIndex = preparedIndex - totalLeadBars;
+    const sourceTime = candles[sourceIndex]?.time;
+    const sourceTimeSec = sourceTime !== undefined ? toUnixSeconds(sourceTime) : null;
+    if (sourceTime === undefined || sourceTimeSec === null) {
+        return null;
+    }
+
+    const expectedType = toSignalType(direction);
+    const normalizedTriggerPrice = normalizePriceForMatch(
+        typeof preparedSignal.triggerPrice === "number" && Number.isFinite(preparedSignal.triggerPrice)
+            ? preparedSignal.triggerPrice
+            : preparedSignal.price
+    );
+
+    let fallbackByTimeAndType: Signal | null = null;
+
+    for (const signal of rawEntrySignals) {
+        if (signal.type !== expectedType) continue;
+        const rawSignalTimeSec = toUnixSeconds(signal.time);
+        if (rawSignalTimeSec !== sourceTimeSec) continue;
+
+        const candidate: Signal = {
+            ...signal,
+            barIndex: Number.isFinite(signal.barIndex) ? Math.trunc(signal.barIndex as number) : sourceIndex,
+        };
+        if (fallbackByTimeAndType === null) {
+            fallbackByTimeAndType = candidate;
+        }
+
+        if (normalizePriceForMatch(signal.price) === normalizedTriggerPrice) {
+            return candidate;
+        }
+    }
+
+    return fallbackByTimeAndType ?? {
+        time: sourceTime,
+        type: expectedType,
+        price: typeof preparedSignal.triggerPrice === "number" && Number.isFinite(preparedSignal.triggerPrice)
+            ? preparedSignal.triggerPrice
+            : preparedSignal.price,
+        reason: preparedSignal.reason,
+        barIndex: sourceIndex,
+    };
+}
+
 export function evaluateLatestEntrySignal(
     request: EntrySignalEvaluationRequest
 ): EntrySignalEvaluationResult {
@@ -438,15 +510,21 @@ export function evaluateLatestEntrySignal(
         };
     }
 
-    const { trade: latestTrade, entryTimeSec: signalTimeSec } = latestExecutedEntry;
+    const { trade: latestTrade, entryTimeSec } = latestExecutedEntry;
     const direction: "long" | "short" = latestTrade.type;
     const matchedPreparedSignal = findPreparedSignalForTradeEntry(
         entrySignals,
         direction,
-        signalTimeSec,
+        entryTimeSec,
         latestTrade.entryPrice
     );
-    const latestSignal: Signal = matchedPreparedSignal ?? {
+    const latestSignal: Signal = findSourceSignalForTradeEntry(
+        request.candles,
+        entrySignalsRaw,
+        matchedPreparedSignal,
+        direction,
+        settings
+    ) ?? matchedPreparedSignal ?? {
         time: latestTrade.entryTime,
         type: toSignalType(direction),
         price: latestTrade.entryPrice,
@@ -460,6 +538,7 @@ export function evaluateLatestEntrySignal(
         }
     });
 
+    const signalTimeSec = toUnixSeconds(latestSignal.time) ?? entryTimeSec;
     const signalIndex = Number.isFinite(latestSignal.barIndex)
         ? Math.trunc(latestSignal.barIndex as number)
         : candleTimeToLastIndex.get(signalTimeSec);
@@ -536,7 +615,7 @@ export function evaluateLatestEntrySignal(
         preparedSignalCount: preparedSignals.length,
         latestEntry,
         latestTrade: {
-            entryTimeSec: signalTimeSec,
+            entryTimeSec,
             entryPrice: latestTrade.entryPrice,
             exitReason: latestTrade.exitReason ?? null,
             isOpen: latestTrade.exitReason === "end_of_data",
