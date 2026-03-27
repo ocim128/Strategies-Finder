@@ -3,6 +3,17 @@ import { loadPolymarketOutcomes } from "./local-sqlite-polymarket-api";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 
+// In-memory cache for Polymarket outcomes to avoid redundant SQLite fetches
+// Key: seriesId, Value: { outcomes, fetchedAt, startTs, endTs }
+type OutcomeCacheEntry = {
+    outcomes: PolymarketOutcomeRow[];
+    fetchedAt: number;
+    startTs: number;
+    endTs: number;
+};
+const outcomeCache = new Map<string, OutcomeCacheEntry>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 export const POLYMARKET_5M_SERIES_BY_SYMBOL = {
     BTCUSDT: "10684",
     ETHUSDT: "10683",
@@ -67,9 +78,34 @@ export async function loadPolymarket5mOutcomesForTimeRange(
         return [];
     }
 
-    return loadPolymarketOutcomes({
+    // Expand the time range slightly to provide buffer
+    const expandedStartTs = startTs - 300;
+    const expandedEndTs = endTs + 600;
+
+    // Check cache first
+    const cached = outcomeCache.get(seriesId);
+    const now = Date.now();
+    if (cached && (now - cached.fetchedAt) < CACHE_TTL_MS) {
+        // Check if cached range covers the requested range
+        if (cached.startTs <= expandedStartTs && cached.endTs >= expandedEndTs) {
+            return cached.outcomes;
+        }
+    }
+
+    // Fetch from SQLite
+    const outcomes = await loadPolymarketOutcomes({
         seriesId,
-        startTs: startTs - 300,
-        endTs: endTs + 600,
+        startTs: expandedStartTs,
+        endTs: expandedEndTs,
     });
+
+    // Update cache
+    outcomeCache.set(seriesId, {
+        outcomes,
+        fetchedAt: now,
+        startTs: expandedStartTs,
+        endTs: expandedEndTs,
+    });
+
+    return outcomes;
 }

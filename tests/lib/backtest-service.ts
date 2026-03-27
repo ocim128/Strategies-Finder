@@ -116,13 +116,17 @@ export class BacktestService {
                 parityMode
             );
 
-            result = await this.annotatePolymarketResult(result, settings, state.ohlcvData);
-            if (parityComparison) {
-                parityComparison = {
-                    ...parityComparison,
-                    odd: await this.annotatePolymarketResult(parityComparison.odd, settings, state.ohlcvData),
-                    even: await this.annotatePolymarketResult(parityComparison.even, settings, state.ohlcvData),
-                };
+            // Only annotate Polymarket outcomes when explicitly enabled
+            const annotatePolymarket = settings.polymarketAnnotationEnabled ?? false;
+            if (annotatePolymarket) {
+                result = await this.annotatePolymarketResult(result, settings, state.ohlcvData);
+                if (parityComparison) {
+                    parityComparison = {
+                        ...parityComparison,
+                        odd: await this.annotatePolymarketResult(parityComparison.odd, settings, state.ohlcvData),
+                        even: await this.annotatePolymarketResult(parityComparison.even, settings, state.ohlcvData),
+                    };
+                }
             }
 
             commitBacktestResult(result, 'backtest', {
@@ -649,25 +653,13 @@ export class BacktestService {
         settings: BacktestSettings,
         chartData: OHLCVData[]
     ): Promise<BacktestResult> {
-        const annotateStart = Date.now();
-        console.log('[BacktestService.annotatePolymarketResult] Starting annotation', {
-            symbol: state.currentSymbol,
-            interval: state.currentInterval,
-            executionModel: settings.executionModel,
-            tradesCount: result.trades.length,
-        });
         try {
-            const annotated = await annotateBacktestResultWithPolymarketOutcomes(result, {
+            return await annotateBacktestResultWithPolymarketOutcomes(result, {
                 symbol: state.currentSymbol,
                 interval: state.currentInterval,
                 executionModel: settings.executionModel,
                 chartData,
             });
-            console.log('[BacktestService.annotatePolymarketResult] Annotation completed', {
-                durationMs: Date.now() - annotateStart,
-                hasPolymarketSummary: !!annotated.polymarketTradeSummary,
-            });
-            return annotated;
         } catch (error) {
             debugLogger.error("backtest.polymarket_annotation_failed", {
                 symbol: state.currentSymbol,

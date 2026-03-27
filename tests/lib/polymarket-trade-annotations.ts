@@ -199,28 +199,17 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
     result: BacktestResult,
     context: AnnotationContext
 ): Promise<BacktestResult> {
-    console.log('[PolymarketAnnotation] Starting annotation check', {
-        symbol: context.symbol,
-        interval: context.interval,
-        executionModel: context.executionModel,
-        tradesCount: result.trades.length,
-        chartDataLength: context.chartData.length,
-        isSupportedRun: isSupportedPolymarket5mRun(context.symbol, context.interval),
-    });
-
     if (
         result.trades.length === 0 ||
         context.executionModel !== "next_open" ||
         context.chartData.length < 2 ||
         !isSupportedPolymarket5mRun(context.symbol, context.interval)
     ) {
-        console.log('[PolymarketAnnotation] Early exit due to guard condition');
         return result;
     }
 
     const seriesId = getPolymarket5mSeriesIdForSymbol(context.symbol);
     if (!seriesId) {
-        console.log('[PolymarketAnnotation] Early exit: no seriesId for symbol');
         return result;
     }
 
@@ -228,25 +217,12 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
         .filter((value): value is number => value !== null);
     if (targetTimes.length === 0) {
-        console.log('[PolymarketAnnotation] Early exit: no valid target times');
         return result;
     }
 
     const startTs = Math.min(...targetTimes);
     const endTs = Math.max(...targetTimes);
-    console.log('[PolymarketAnnotation] Fetching Polymarket outcomes from SQLite', {
-        seriesId,
-        startTs,
-        endTs,
-        timeRangeSec: endTs - startTs,
-        tradeCount: targetTimes.length,
-    });
-    const fetchStart = Date.now();
     const outcomes = await loadPolymarket5mOutcomesForTimeRange(context.symbol, startTs, endTs);
-    console.log('[PolymarketAnnotation] SQLite fetch completed', {
-        outcomesCount: outcomes.length,
-        durationMs: Date.now() - fetchStart,
-    });
     const evaluationContext = createPolymarketTradeEvaluationContext(context.chartData, outcomes);
 
     const trades = result.trades.map((trade) => buildAnnotatedTrade(

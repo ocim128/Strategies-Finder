@@ -336,6 +336,8 @@ export interface BacktestSettings {
     twoHourCloseParity?: 'odd' | 'even' | 'both';
     /** Capture indicator snapshots at trade entry for pattern analysis */
     captureSnapshots?: boolean;
+    /** Enable Polymarket outcome annotation for supported symbols (BTCUSDT, ETHUSDT, etc on 5m) */
+    polymarketAnnotationEnabled?: boolean;
 
     // ── Snapshot-based trade filters (stackable, AND logic) ──
     /** Minimum ATR% at entry (0 = disabled). Filters out low-volatility entries. */

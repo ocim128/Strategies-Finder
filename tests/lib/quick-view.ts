@@ -11,6 +11,15 @@ import { state } from "./state";
 import type { BacktestResult, Trade } from "./strategies/index";
 import { Time } from "lightweight-charts";
 import { formatDisplayPrice } from "./price-format";
+import {
+    getPolymarket5mSeriesIdForSymbol,
+    isSupportedPolymarket5mRun,
+    loadPolymarket5mOutcomesForTimeRange,
+} from "./polymarket-btc5m";
+import {
+    createPolymarketTradeEvaluationContext,
+} from "./polymarket-trade-annotations";
+import { parseTimeToUnixSeconds } from "./time-normalization";
 
 type QuickViewPolymarketSummary = {
     wins: number;
@@ -246,13 +255,87 @@ class QuickViewManager {
         window.addEventListener('keydown', this.keyboardHandler);
     }
 
+    // ── Polymarket On-Demand Loading ───────────────────────
+
+    private async ensurePolymarketOutcomes(result: BacktestResult): Promise<Trade[]> {
+        // Check if already annotated
+        const hasOutcomes = result.trades.some((trade) => trade.polymarketOutcome !== undefined && trade.polymarketOutcome !== null);
+        if (hasOutcomes || result.polymarketTradeSummary) {
+            return result.trades;
+        }
+
+        // Check if this is a supported Polymarket 5m run
+        if (!isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval)) {
+            return result.trades;
+        }
+
+        const seriesId = getPolymarket5mSeriesIdForSymbol(state.currentSymbol);
+        if (!seriesId) {
+            return result.trades;
+        }
+
+        // Collect entry times from trades
+        const targetTimes = result.trades
+            .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
+            .filter((value): value is number => value !== null);
+        if (targetTimes.length === 0) {
+            return result.trades;
+        }
+
+        const startTs = Math.min(...targetTimes);
+        const endTs = Math.max(...targetTimes);
+
+        // Load outcomes from SQLite (uses in-memory cache)
+        const outcomes = await loadPolymarket5mOutcomesForTimeRange(state.currentSymbol, startTs, endTs);
+        if (outcomes.length === 0) {
+            return result.trades;
+        }
+
+        // Build evaluation context for trade annotation
+        const chartData = state.ohlcvData;
+        const evalContext = createPolymarketTradeEvaluationContext(chartData, outcomes);
+
+        // Annotate trades with Polymarket outcomes
+        const outcomeByStartTs = new Map(evalContext.outcomeByStartTs.entries());
+        return result.trades.map((trade) => {
+            const entryTs = parseTimeToUnixSeconds(trade.entryTime);
+            if (entryTs === null) {
+                return { ...trade, polymarketOutcome: null };
+            }
+            const outcome = outcomeByStartTs.get(entryTs);
+            if (!outcome) {
+                return { ...trade, polymarketOutcome: null };
+            }
+            const prediction = trade.type === 'long' ? 'yes' : 'no';
+            const isWin = prediction === 'yes'
+                ? outcome.resolved_outcome_up === 1
+                : outcome.resolved_outcome_up === 0;
+            return {
+                ...trade,
+                polymarketOutcome: {
+                    eventStartTs: outcome.event_start_ts,
+                    eventEndTs: outcome.event_end_ts,
+                    eventSlug: outcome.event_slug,
+                    marketSlug: outcome.market_slug || outcome.event_slug,
+                    prediction,
+                    actualOutcomeUp: outcome.resolved_outcome_up,
+                    isWin,
+                },
+            };
+        });
+    }
+
     // ── Show / Hide ────────────────────────────────────────
 
-    show(result: BacktestResult) {
+    async show(result: BacktestResult) {
         if (!this.overlay) return;
 
-        this.renderResults(result);
-        this.renderTrades(result.trades);
+        // Load Polymarket outcomes on-demand for Quick View display
+        // This keeps backtests fast by default while still enabling Polymarket analysis in Quick View
+        const trades = await this.ensurePolymarketOutcomes(result);
+
+        this.renderResults({ ...result, trades });
+        this.renderTrades(trades);
 
         // Force a reflow before adding the visible class for CSS transition
         this.overlay.style.display = 'flex';
@@ -282,9 +365,9 @@ class QuickViewManager {
     }
 
     /** Called from state subscription when backtest finishes */
-    onBacktestComplete(result: BacktestResult) {
+    async onBacktestComplete(result: BacktestResult) {
         if (this.enabled) {
-            this.show(result);
+            await this.show(result);
         }
     }
 
