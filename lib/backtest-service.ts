@@ -649,13 +649,25 @@ export class BacktestService {
         settings: BacktestSettings,
         chartData: OHLCVData[]
     ): Promise<BacktestResult> {
+        const annotateStart = Date.now();
+        console.log('[BacktestService.annotatePolymarketResult] Starting annotation', {
+            symbol: state.currentSymbol,
+            interval: state.currentInterval,
+            executionModel: settings.executionModel,
+            tradesCount: result.trades.length,
+        });
         try {
-            return await annotateBacktestResultWithPolymarketOutcomes(result, {
+            const annotated = await annotateBacktestResultWithPolymarketOutcomes(result, {
                 symbol: state.currentSymbol,
                 interval: state.currentInterval,
                 executionModel: settings.executionModel,
                 chartData,
             });
+            console.log('[BacktestService.annotatePolymarketResult] Annotation completed', {
+                durationMs: Date.now() - annotateStart,
+                hasPolymarketSummary: !!annotated.polymarketTradeSummary,
+            });
+            return annotated;
         } catch (error) {
             debugLogger.error("backtest.polymarket_annotation_failed", {
                 symbol: state.currentSymbol,

@@ -58,8 +58,11 @@ async function checkSqliteApiAvailable(force = false): Promise<boolean> {
 export async function loadPolymarketOutcomes(
     options: LoadPolymarketOutcomesOptions = {}
 ): Promise<PolymarketOutcomeRow[]> {
+    const checkStart = Date.now();
     const available = await checkSqliteApiAvailable(true);
+    console.log('[PolymarketSQLite] API availability check', { available, checkDurationMs: Date.now() - checkStart });
     if (!available) {
+        console.error('[PolymarketSQLite] API unavailable - throwing error');
         throw new Error('Local SQLite API is unavailable. Start the Vite dev server and verify /api/sqlite/status.');
     }
 
@@ -70,11 +73,18 @@ export async function loadPolymarketOutcomes(
     if (options.limit != null) params.set('limit', String(Math.max(1, Math.floor(options.limit))));
 
     const url = `/api/sqlite/load-polymarket-outcomes${params.size ? `?${params.toString()}` : ''}`;
+    console.log('[PolymarketSQLite] Making fetch request to SQLite API', { url, seriesId: options.seriesId, startTs: options.startTs, endTs: options.endTs });
     let res: Response;
+    const fetchStart = Date.now();
     try {
         res = await fetch(url, {
             method: 'GET',
             signal: createRequestTimeoutSignal(),
+        });
+        console.log('[PolymarketSQLite] Fetch response received', {
+            status: res.status,
+            ok: res.ok,
+            durationMs: Date.now() - fetchStart,
         });
     } catch (error) {
         sqliteApiAvailable = false;

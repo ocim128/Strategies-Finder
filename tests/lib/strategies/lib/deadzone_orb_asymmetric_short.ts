@@ -6,17 +6,18 @@ function normalizeParams(params: StrategyParams): StrategyParams {
 	return {
 		deadzoneLookback: Math.max(3, Math.round(params.deadzoneLookback ?? 20)),
 		efficiencyCeiling: Number(params.efficiencyCeiling ?? 0.15),
-		breakoutZscore: Number(params.breakoutZscore ?? 2.5)
+		longBreakoutZscore: Number(params.longBreakoutZscore ?? 3.0),
+		shortBreakoutZscore: Number(params.shortBreakoutZscore ?? 2.0)
 	};
 }
 
-export const deadzone_orb_proxy_breakout: Strategy = {
-	name: "Deadzone ORB Proxy Breakout",
-	description: "Adapts the 1990s Opening Range Breakout (ORB) for 24/7 crypto markets by substituting 'time-of-day' with statistically confirmed 'deadzone structural efficiency', buying the first standard deviation pop.",
-	defaultParams: { deadzoneLookback: 20, efficiencyCeiling: 0.15, breakoutZscore: 2.5 },
-	paramLabels: { deadzoneLookback: "Deadzone Lookback", efficiencyCeiling: "Efficiency Ceiling", breakoutZscore: "Breakout ZScore" },
+export const deadzone_orb_asymmetric_short: Strategy = {
+	name: "Deadzone ORB Asymmetric Short",
+	description: "Easier shorts (lower zscore threshold) than longs - bearish bias assuming deadzone = distribution/topping pattern.",
+	defaultParams: { deadzoneLookback: 20, efficiencyCeiling: 0.15, longBreakoutZscore: 3.0, shortBreakoutZscore: 2.0 },
+	paramLabels: { deadzoneLookback: "Deadzone Lookback", efficiencyCeiling: "Efficiency Ceiling", longBreakoutZscore: "Long Breakout ZScore", shortBreakoutZscore: "Short Breakout ZScore" },
 	normalizeParams,
-	metadata: { role: "entry", direction: "both", walkForwardParams: ["deadzoneLookback", "efficiencyCeiling", "breakoutZscore"] },
+	metadata: { role: "entry", direction: "both", walkForwardParams: ["deadzoneLookback", "efficiencyCeiling", "longBreakoutZscore", "shortBreakoutZscore"] },
 	execute: (data, params) => {
 		const clean = ensureCleanData(data);
 		const p = normalizeParams(params);
@@ -37,11 +38,13 @@ export const deadzone_orb_proxy_breakout: Strategy = {
 			if (e === null || z === null) return null;
 
 			if (e < p.efficiencyCeiling) {
-				if (z > p.breakoutZscore) {
-					return createBuySignal(clean, i, "Deadzone Proxy Break Up");
+				// HARDER LONGS: requires stronger signal
+				if (z > p.longBreakoutZscore) {
+					return createBuySignal(clean, i, "Asymmetric Long Breakout");
 				}
-				if (z < -p.breakoutZscore) {
-					return createSellSignal(clean, i, "Deadzone Proxy Break Down");
+				// EASIER SHORTS: lower threshold for shorts
+				if (z < -p.shortBreakoutZscore) {
+					return createSellSignal(clean, i, "Asymmetric Short Breakout");
 				}
 			}
 

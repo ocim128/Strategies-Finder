@@ -56,7 +56,6 @@ import { volume_profile_poc_median_shift } from "./lib/volume_profile_poc_median
 import { absorptive_wick_volume_spike } from "./lib/absorptive_wick_volume_spike";
 import { noisy_wick_fade_reversion } from "./lib/noisy_wick_fade_reversion";
 import { micro_shock_retrace_scalp } from "./lib/micro_shock_retrace_scalp";
-import { deadzone_orb_proxy_breakout } from "./lib/deadzone_orb_proxy_breakout";
 import { keltner_pinch_momentum_break } from "./lib/keltner_pinch_momentum_break";
 import { percentile_rank_deadzone_launch } from "./lib/percentile_rank_deadzone_launch";
 import { zscore_kurtosis_regime } from "./lib/zscore_kurtosis_regime";
@@ -64,6 +63,9 @@ import { zscore_false_break } from "./lib/zscore_false_break";
 import { close_percentile_range_entry } from "./lib/close_percentile_range_entry";
 import { wick_responsive_boundary } from "./lib/wick_responsive_boundary";
 import { wick_responsive_boundary_retest } from "./lib/wick_responsive_boundary_retest";
+import { deadzone_orb_asymmetric_long } from "./lib/deadzone_orb_asymmetric_long";
+import { deadzone_orb_asymmetric_short } from "./lib/deadzone_orb_asymmetric_short";
+import { deadzone_consecutive_closes } from "./lib/deadzone_consecutive_closes";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -125,7 +127,6 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "absorptive_wick_volume_spike", strategy: absorptive_wick_volume_spike },
     { key: "noisy_wick_fade_reversion", strategy: noisy_wick_fade_reversion },
     { key: "micro_shock_retrace_scalp", strategy: micro_shock_retrace_scalp },
-    { key: "deadzone_orb_proxy_breakout", strategy: deadzone_orb_proxy_breakout },
     { key: "keltner_pinch_momentum_break", strategy: keltner_pinch_momentum_break },
     { key: "percentile_rank_deadzone_launch", strategy: percentile_rank_deadzone_launch },
     { key: "zscore_kurtosis_regime", strategy: zscore_kurtosis_regime },
@@ -133,6 +134,9 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "close_percentile_range_entry", strategy: close_percentile_range_entry },
     { key: "wick_responsive_boundary", strategy: wick_responsive_boundary },
     { key: "wick_responsive_boundary_retest", strategy: wick_responsive_boundary_retest },
+    { key: "deadzone_orb_asymmetric_long", strategy: deadzone_orb_asymmetric_long },
+    { key: "deadzone_orb_asymmetric_short", strategy: deadzone_orb_asymmetric_short },
+    { key: "deadzone_consecutive_closes", strategy: deadzone_consecutive_closes },
 ];
 
 export function createStrategiesRecordFromManifest(
