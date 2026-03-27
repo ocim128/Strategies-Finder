@@ -150,13 +150,13 @@ export class UIManager {
         resultsRenderer.clearParityComparison();
     }
 
-    public updateTradesList(trades: Trade[], jumpToTrade: (time: Time) => void) {
-        tradesRenderer.render(trades, jumpToTrade, this.formatPrice, this.formatDate);
+    public async updateTradesList(trades: Trade[], jumpToTrade: (time: Time) => void) {
+        await tradesRenderer.render(trades, jumpToTrade, this.formatPrice, this.formatDate);
         this.updateTradeBadge(trades.length);
     }
 
-    public updateParityTradesList(oddTrades: Trade[], evenTrades: Trade[], jumpToTrade: (time: Time) => void): void {
-        tradesRenderer.renderParity(oddTrades, evenTrades, jumpToTrade, this.formatPrice, this.formatDate);
+    public async updateParityTradesList(oddTrades: Trade[], evenTrades: Trade[], jumpToTrade: (time: Time) => void): Promise<void> {
+        await tradesRenderer.renderParity(oddTrades, evenTrades, jumpToTrade, this.formatPrice, this.formatDate);
         this.updateTradeBadge(oddTrades.length + evenTrades.length);
     }
 

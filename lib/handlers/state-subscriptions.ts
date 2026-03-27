@@ -125,9 +125,9 @@ export function setupStateSubscriptions() {
 
             const parityResults = state.twoHourParityBacktestResults;
             if (parityResults) {
-                uiManager.updateParityTradesList(parityResults.odd.trades, parityResults.even.trades, jumpToTrade);
+                void uiManager.updateParityTradesList(parityResults.odd.trades, parityResults.even.trades, jumpToTrade);
             } else {
-                uiManager.updateTradesList(result.trades, jumpToTrade);
+                void uiManager.updateTradesList(result.trades, jumpToTrade);
             }
 
             deferredBacktestUiFrame = requestAnimationFrame(() => {
@@ -147,7 +147,7 @@ export function setupStateSubscriptions() {
 
         if (results) {
             uiManager.updateParityComparisonUI(results);
-            uiManager.updateParityTradesList(results.odd.trades, results.even.trades, (time) => {
+            void uiManager.updateParityTradesList(results.odd.trades, results.even.trades, (time) => {
                 const dataIndex = state.ohlcvData.findIndex(d => d.time === time);
                 if (dataIndex !== -1) {
                     const from = Math.max(0, dataIndex - 20);
@@ -158,7 +158,7 @@ export function setupStateSubscriptions() {
         } else {
             uiManager.clearParityComparisonUI();
             if (state.currentBacktestResult) {
-                uiManager.updateTradesList(state.currentBacktestResult.trades, (time) => {
+                void uiManager.updateTradesList(state.currentBacktestResult.trades, (time) => {
                     const dataIndex = state.ohlcvData.findIndex(d => d.time === time);
                     if (dataIndex !== -1) {
                         const from = Math.max(0, dataIndex - 20);

@@ -42,6 +42,8 @@ export interface EvaluatedEntrySignal {
     signal: Signal;
     direction: "long" | "short";
     signalTimeSec: number;
+    entryTimeSec: number | null;
+    entryPrice: number | null;
     signalAgeBars: number;
     isFresh: boolean;
     fingerprint: string;
@@ -305,6 +307,36 @@ function toSignalType(direction: "long" | "short"): Signal["type"] {
     return direction === "long" ? "buy" : "sell";
 }
 
+function buildEvaluatedEntrySignal(args: {
+    strategyKey: string;
+    strategyName: string;
+    sourceSignal: Signal;
+    direction: "long" | "short";
+    signalTimeSec: number;
+    signalAgeBars: number;
+    maxAge: number;
+    entryTimeSec: number | null;
+    entryPrice: number | null;
+}): EvaluatedEntrySignal {
+    return {
+        strategyKey: args.strategyKey,
+        strategyName: args.strategyName,
+        signal: args.sourceSignal,
+        direction: args.direction,
+        signalTimeSec: args.signalTimeSec,
+        entryTimeSec: args.entryTimeSec,
+        entryPrice: args.entryPrice,
+        signalAgeBars: args.signalAgeBars,
+        isFresh: args.signalAgeBars <= args.maxAge,
+        fingerprint: buildSignalFingerprint(
+            args.strategyKey,
+            args.direction,
+            args.signalTimeSec,
+            args.sourceSignal.price
+        ),
+    };
+}
+
 function normalizePriceForMatch(price: number): number {
     return Number(price.toFixed(8));
 }
@@ -557,21 +589,17 @@ export function evaluateLatestEntrySignal(
     const signalAgeBars = request.candles.length - 1 - signalIndex;
     const maxAge = Math.max(0, Math.floor(request.freshnessBars ?? 1));
 
-    const latestEntry: EvaluatedEntrySignal = {
+    const latestEntry: EvaluatedEntrySignal = buildEvaluatedEntrySignal({
         strategyKey: request.strategyKey,
         strategyName: strategy.name,
-        signal: latestSignal,
+        sourceSignal: latestSignal,
         direction,
         signalTimeSec,
         signalAgeBars,
-        isFresh: signalAgeBars <= maxAge,
-        fingerprint: buildSignalFingerprint(
-            request.strategyKey,
-            direction,
-            signalTimeSec,
-            latestSignal.price
-        ),
-    };
+        maxAge,
+        entryTimeSec,
+        entryPrice: latestTrade.entryPrice,
+    });
 
     // Detect pending (skipped) entry signal when the latest trade is still open.
     // A "pending" signal fired while the backtest position was occupied — in live
@@ -586,25 +614,29 @@ export function evaluateLatestEntrySignal(
             const pendingSignalIndex = candleTimeToLastIndex.get(sigTimeSec);
             if (pendingSignalIndex === undefined) continue;
 
+            const pendingSourceSignal = findSourceSignalForTradeEntry(
+                request.candles,
+                entrySignalsRaw,
+                signal,
+                pendingDirection,
+                settings
+            ) ?? signal;
+            const pendingSourceTimeSec = toUnixSeconds(pendingSourceSignal.time) ?? sigTimeSec;
             const pendingAgeBars = request.candles.length - 1 - pendingSignalIndex;
 
             // Keep the NEWEST pending signal
-            if (!pendingEntry || sigTimeSec > pendingEntry.signalTimeSec) {
-                pendingEntry = {
+            if (!pendingEntry || sigTimeSec > (pendingEntry.entryTimeSec ?? pendingEntry.signalTimeSec)) {
+                pendingEntry = buildEvaluatedEntrySignal({
                     strategyKey: request.strategyKey,
                     strategyName: strategy.name,
-                    signal,
+                    sourceSignal: pendingSourceSignal,
                     direction: pendingDirection,
-                    signalTimeSec: sigTimeSec,
+                    signalTimeSec: pendingSourceTimeSec,
                     signalAgeBars: pendingAgeBars,
-                    isFresh: pendingAgeBars <= maxAge,
-                    fingerprint: buildSignalFingerprint(
-                        request.strategyKey,
-                        pendingDirection,
-                        sigTimeSec,
-                        signal.price
-                    ),
-                };
+                    maxAge,
+                    entryTimeSec: sigTimeSec,
+                    entryPrice: signal.price,
+                });
             }
         }
     }

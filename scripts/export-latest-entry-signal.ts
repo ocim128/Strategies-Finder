@@ -37,6 +37,16 @@ type ExportPayload = {
         signalPrice: number;
         entryPrice: number | null;
     };
+    pendingEntry?: null | {
+        direction: "long" | "short";
+        signalTimeSec: number;
+        entryTimeSec: number | null;
+        signalAgeBars: number;
+        isFresh: boolean;
+        fingerprint: string;
+        signalPrice: number;
+        entryPrice: number | null;
+    };
     latestTrade: null | {
         entryTimeSec: number;
         entryPrice: number;
@@ -248,6 +258,15 @@ async function main(): Promise<void> {
     }
 
     const generatedAt = new Date();
+    const actionableEntry =
+        result.pendingEntry
+        && (
+            !result.latestEntry
+            || (result.pendingEntry.entryTimeSec ?? result.pendingEntry.signalTimeSec)
+                > (result.latestEntry.entryTimeSec ?? result.latestEntry.signalTimeSec)
+        )
+            ? result.pendingEntry
+            : result.latestEntry;
     const payload: ExportPayload = {
         schemaVersion: 1,
         generatedAt: generatedAt.toISOString(),
@@ -259,16 +278,28 @@ async function main(): Promise<void> {
         strategyName: strategy.name,
         rawSignalCount: result.rawSignalCount,
         preparedSignalCount: result.preparedSignalCount,
-        latestEntry: result.latestEntry
+        latestEntry: actionableEntry
             ? {
-                direction: result.latestEntry.direction,
-                signalTimeSec: result.latestEntry.signalTimeSec,
-                entryTimeSec: result.latestTrade?.entryTimeSec ?? null,
-                signalAgeBars: result.latestEntry.signalAgeBars,
-                isFresh: result.latestEntry.isFresh,
-                fingerprint: result.latestEntry.fingerprint,
-                signalPrice: result.latestEntry.signal.price,
-                entryPrice: result.latestTrade?.entryPrice ?? null,
+                direction: actionableEntry.direction,
+                signalTimeSec: actionableEntry.signalTimeSec,
+                entryTimeSec: actionableEntry.entryTimeSec,
+                signalAgeBars: actionableEntry.signalAgeBars,
+                isFresh: actionableEntry.isFresh,
+                fingerprint: actionableEntry.fingerprint,
+                signalPrice: actionableEntry.signal.price,
+                entryPrice: actionableEntry.entryPrice ?? result.latestTrade?.entryPrice ?? null,
+            }
+            : null,
+        pendingEntry: result.pendingEntry
+            ? {
+                direction: result.pendingEntry.direction,
+                signalTimeSec: result.pendingEntry.signalTimeSec,
+                entryTimeSec: result.pendingEntry.entryTimeSec,
+                signalAgeBars: result.pendingEntry.signalAgeBars,
+                isFresh: result.pendingEntry.isFresh,
+                fingerprint: result.pendingEntry.fingerprint,
+                signalPrice: result.pendingEntry.signal.price,
+                entryPrice: result.pendingEntry.entryPrice ?? null,
             }
             : null,
         latestTrade: result.latestTrade

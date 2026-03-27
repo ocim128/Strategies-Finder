@@ -4,6 +4,13 @@ import { setVisible } from "../dom-utils";
 import { state } from "../state";
 import { resolveOpenTradeDisplayMetrics } from "../open-trade-display";
 import { createTradesRendererDom, type TradesRendererDom } from "./trades-renderer-dom";
+import {
+    getPolymarket5mSeriesIdForSymbol,
+    isSupportedPolymarket5mRun,
+    loadPolymarket5mOutcomesForTimeRange,
+} from "../polymarket-btc5m";
+import { createPolymarketTradeEvaluationContext } from "../polymarket-trade-annotations";
+import { parseTimeToUnixSeconds } from "../time-normalization";
 
 export class TradesRenderer {
     private static readonly MAX_TRADES = 250;
@@ -20,7 +27,7 @@ export class TradesRenderer {
         return this.dom ??= createTradesRendererDom();
     }
 
-    public render(
+    public async render(
         trades: Trade[],
         jumpToTrade: (time: Time) => void,
         formatPrice: (p: number) => string,
@@ -33,7 +40,10 @@ export class TradesRenderer {
         this.tradeRenderGeneration += 1;
         container.classList.remove('trades-list-parity');
 
-        if (trades.length === 0) {
+        // Load Polymarket outcomes on-demand for Trades panel display
+        const annotatedTrades = await this.ensurePolymarketOutcomes(trades);
+
+        if (annotatedTrades.length === 0) {
             setVisible('emptyTrades', true);
             setVisible('tradesSummary', false);
             container.innerHTML = '';
@@ -42,19 +52,87 @@ export class TradesRenderer {
 
         setVisible('emptyTrades', false);
         setVisible('tradesSummary', true);
-        this.updateSummary(trades);
+        this.updateSummary(annotatedTrades);
 
         const renderGeneration = this.tradeRenderGeneration;
-        this.renderTradeItemsProgressively(renderGeneration, container, trades, formatPrice, formatDate);
+        this.renderTradeItemsProgressively(renderGeneration, container, annotatedTrades, formatPrice, formatDate);
     }
 
-    public renderParity(
+    private async ensurePolymarketOutcomes(trades: Trade[]): Promise<Trade[]> {
+        // Check if already annotated
+        const hasOutcomes = trades.some((trade) => trade.polymarketOutcome !== undefined && trade.polymarketOutcome !== null);
+        if (hasOutcomes) {
+            return trades;
+        }
+
+        // Check if this is a supported Polymarket 5m run
+        if (!isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval)) {
+            return trades;
+        }
+
+        const seriesId = getPolymarket5mSeriesIdForSymbol(state.currentSymbol);
+        if (!seriesId) {
+            return trades;
+        }
+
+        // Collect entry times from trades
+        const targetTimes = trades
+            .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
+            .filter((value): value is number => value !== null);
+        if (targetTimes.length === 0) {
+            return trades;
+        }
+
+        const startTs = Math.min(...targetTimes);
+        const endTs = Math.max(...targetTimes);
+
+        // Load outcomes from SQLite (uses in-memory cache)
+        const outcomes = await loadPolymarket5mOutcomesForTimeRange(state.currentSymbol, startTs, endTs);
+        if (outcomes.length === 0) {
+            return trades;
+        }
+
+        // Build evaluation context for trade annotation
+        const chartData = state.ohlcvData;
+        const evalContext = createPolymarketTradeEvaluationContext(chartData, outcomes);
+
+        // Annotate trades with Polymarket outcomes
+        const outcomeByStartTs = new Map(evalContext.outcomeByStartTs.entries());
+        return trades.map((trade) => {
+            const entryTs = parseTimeToUnixSeconds(trade.entryTime);
+            if (entryTs === null) {
+                return { ...trade, polymarketOutcome: null };
+            }
+            const outcome = outcomeByStartTs.get(entryTs);
+            if (!outcome) {
+                return { ...trade, polymarketOutcome: null };
+            }
+            const prediction = trade.type === 'long' ? 'yes' : 'no';
+            const isWin = prediction === 'yes'
+                ? outcome.resolved_outcome_up === 1
+                : outcome.resolved_outcome_up === 0;
+            return {
+                ...trade,
+                polymarketOutcome: {
+                    eventStartTs: outcome.event_start_ts,
+                    eventEndTs: outcome.event_end_ts,
+                    eventSlug: outcome.event_slug,
+                    marketSlug: outcome.market_slug || outcome.event_slug,
+                    prediction,
+                    actualOutcomeUp: outcome.resolved_outcome_up,
+                    isWin,
+                },
+            };
+        });
+    }
+
+    public async renderParity(
         oddTrades: Trade[],
         evenTrades: Trade[],
         jumpToTrade: (time: Time) => void,
         formatPrice: (p: number) => string,
         formatDate: (t: Time) => string
-    ): void {
+    ): Promise<void> {
         const container = this.getDom().tradesList;
         this.jumpToTrade = jumpToTrade;
         this.ensureTradeJumpHandlersBound();
@@ -62,7 +140,13 @@ export class TradesRenderer {
         this.tradeRenderGeneration += 1;
         container.classList.add('trades-list-parity');
 
-        const combined = [...oddTrades, ...evenTrades];
+        // Load Polymarket outcomes on-demand for both trade sets
+        const [annotatedOdd, annotatedEven] = await Promise.all([
+            this.ensurePolymarketOutcomes(oddTrades),
+            this.ensurePolymarketOutcomes(evenTrades),
+        ]);
+
+        const combined = [...annotatedOdd, ...annotatedEven];
         if (combined.length === 0) {
             setVisible('emptyTrades', true);
             setVisible('tradesSummary', false);
