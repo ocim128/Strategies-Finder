@@ -63,6 +63,7 @@ import { zscore_kurtosis_regime } from "./lib/zscore_kurtosis_regime";
 import { zscore_false_break } from "./lib/zscore_false_break";
 import { close_percentile_range_entry } from "./lib/close_percentile_range_entry";
 import { wick_responsive_boundary } from "./lib/wick_responsive_boundary";
+import { wick_responsive_boundary_retest } from "./lib/wick_responsive_boundary_retest";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -131,6 +132,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "zscore_false_break", strategy: zscore_false_break },
     { key: "close_percentile_range_entry", strategy: close_percentile_range_entry },
     { key: "wick_responsive_boundary", strategy: wick_responsive_boundary },
+    { key: "wick_responsive_boundary_retest", strategy: wick_responsive_boundary_retest },
 ];
 
 export function createStrategiesRecordFromManifest(

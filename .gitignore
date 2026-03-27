@@ -135,6 +135,7 @@ quality_hunt*.json
 walk_forward_hunt*.json
 alpha_report.json
 go-no-go-*.json
+go-no-go-*.json
 matrix-summary-*.json
 
 # Accidental top-level generated files
@@ -144,3 +145,4 @@ matrix-summary-*.json
 # Archive directory
 archive/
 .vercel
+signals/
