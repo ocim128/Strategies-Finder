@@ -10,9 +10,11 @@
  *   npx esno scripts/polymarket-sync-outcomes.ts [options]
  *   ..\..\..\node_modules\.bin\esno scripts/polymarket-sync-outcomes.ts [options]
  *   npm run poly:sync-outcomes   (default BTC sync only)
+ *   npm run poly:sync-outcomes:all
  *
  * Options:
  *   --symbol <symbol>      Resolve series id from symbol (BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT)
+ *   --all                  Sync all supported 5m symbols in sequence
  *   --series-id <id>       Polymarket series id override (default: 10684, BTC up/down 5m)
  *   --start-date <iso>     Inclusive lower bound for event end date
  *   --end-date <iso>       Inclusive upper bound for event end date
@@ -26,11 +28,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { planPolymarketEventSync } from "../lib/polymarket-sync-utils";
 import {
     BTC_5M_POLYMARKET_SERIES_ID,
     getPolymarket5mSeriesIdForSymbol,
     getSupportedPolymarket5mSymbolsLabel,
+    SUPPORTED_POLYMARKET_5M_SYMBOLS,
+    type SupportedPolymarket5mSymbol,
 } from "../lib/polymarket-btc5m";
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -38,6 +43,7 @@ import {
 type CliConfig = {
     seriesId: string;
     symbol?: string;
+    allSymbols: boolean;
     startDateMin: string;
     endDateMax?: string;
     maxEvents: number;
@@ -52,6 +58,7 @@ type CliConfig = {
 type NpmConfigEnv = {
     symbol?: string;
     seriesId?: string;
+    allSymbols?: boolean;
     startDate?: string;
     endDate?: string;
     maxEvents?: number;
@@ -111,6 +118,24 @@ type ExistingOutcomeSlugRow = {
     event_slug?: unknown;
 };
 
+export type OutcomeSyncTarget = {
+    symbol?: SupportedPolymarket5mSymbol;
+    seriesId: string;
+};
+
+type OutcomeSyncSummary = {
+    symbol?: string;
+    seriesId: string;
+    events: number;
+    syncEvents: number;
+    rows: number;
+    withHistory: number;
+    upserted: number;
+    skippedExisting: number;
+    refreshedExisting: number;
+    missingEvents: number;
+};
+
 // ─── Constants ────────────────────────────────────────────────────────────
 
 const DEFAULT_SERIES_ID: string = BTC_5M_POLYMARKET_SERIES_ID;
@@ -155,6 +180,7 @@ function readNpmConfigEnv(): NpmConfigEnv {
     return {
         symbol: readString("npm_config_symbol"),
         seriesId: readString("npm_config_series_id", "npm_config_seriesid"),
+        allSymbols: readBoolean("npm_config_all", "npm_config_all_symbols", "npm_config_allsymbols"),
         startDate: readString("npm_config_start_date", "npm_config_startdate"),
         endDate: readString("npm_config_end_date", "npm_config_enddate"),
         maxEvents: parseNumber(readString("npm_config_max_events", "npm_config_maxevents"), Number.NaN),
@@ -171,10 +197,12 @@ function printUsage(): void {
     console.log([
         "Usage:",
         "  npm run poly:sync-outcomes",
+        "  npm run poly:sync-outcomes:all",
         "  ..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-sync-outcomes.ts [options]",
         "",
         "Options:",
         `  --symbol <symbol>      Resolve the 5m series id from symbol (${getSupportedPolymarket5mSymbolsLabel()})`,
+        "  --all                  Sync all supported 5m symbols in sequence",
         "  --series-id <id>       Polymarket series id override (default: 10684, BTC up/down 5m)",
         "  --start-date <iso>     Lower bound for event end date (default: now-30d)",
         "  --end-date <iso>       Upper bound for event end date",
@@ -192,10 +220,11 @@ function printUsage(): void {
         "  event_start_ts = event_end_ts - 300 (5 minutes).",
         "  YES prices are sampled at: open, +1m, +2m, +3m, +4m.",
         "  resolved_outcome_up = 1 if outcomePrices[YES] >= 0.5 (hard settlement).",
+        "  --all cannot be combined with --symbol or --series-id.",
     ].join("\n"));
 }
 
-function parseArgs(argv: string[]): CliConfig | null {
+export function parseArgs(argv: string[]): CliConfig | null {
     if (argv.includes("--help") || argv.includes("-h")) {
         printUsage();
         return null;
@@ -205,6 +234,7 @@ function parseArgs(argv: string[]): CliConfig | null {
 
     let seriesId: string = DEFAULT_SERIES_ID;
     let symbol: string | undefined = undefined;
+    let allSymbols = npmConfig.allSymbols ?? false;
     let startDateMin = npmConfig.startDate ?? defaultStartDateIso(30);
     let endDateMax: string | undefined = npmConfig.endDate;
     let maxEvents = Number.isFinite(npmConfig.maxEvents) ? Math.max(1, Math.floor(npmConfig.maxEvents!)) : 10000;
@@ -214,6 +244,8 @@ function parseArgs(argv: string[]): CliConfig | null {
     let viteOrigin = npmConfig.viteOrigin ?? "http://localhost:5173";
     let outPath: string | undefined = npmConfig.outPath;
     let dryRun = npmConfig.dryRun ?? false;
+    let hasExplicitSymbol = false;
+    let hasExplicitSeriesId = false;
 
     const applySymbol = (raw: string | undefined): boolean => {
         const resolvedSymbol = String(raw ?? "").trim().toUpperCase();
@@ -227,8 +259,12 @@ function parseArgs(argv: string[]): CliConfig | null {
 
     const positionals: string[] = [];
 
-    if (!applySymbol(npmConfig.symbol) && npmConfig.seriesId) {
+    if (npmConfig.symbol) {
+        hasExplicitSymbol = applySymbol(npmConfig.symbol);
+    }
+    if (!hasExplicitSymbol && npmConfig.seriesId) {
         seriesId = npmConfig.seriesId;
+        hasExplicitSeriesId = true;
     }
 
     for (let i = 0; i < argv.length; i++) {
@@ -239,10 +275,12 @@ function parseArgs(argv: string[]): CliConfig | null {
             if (!applySymbol(resolvedSymbol)) {
                 throw new Error(`Unsupported Polymarket 5m symbol "${resolvedSymbol}". Use ${getSupportedPolymarket5mSymbolsLabel()}.`);
             }
+            hasExplicitSymbol = true;
             i++;
             continue;
         }
-        if (arg === "--series-id") { seriesId = String(next ?? "").trim() || seriesId; i++; continue; }
+        if (arg === "--all") { allSymbols = true; continue; }
+        if (arg === "--series-id") { seriesId = String(next ?? "").trim() || seriesId; hasExplicitSeriesId = true; i++; continue; }
         if (arg === "--start-date") { startDateMin = String(next ?? "").trim() || startDateMin; i++; continue; }
         if (arg === "--end-date") { endDateMax = String(next ?? "").trim() || undefined; i++; continue; }
         if (arg === "--max-events") { maxEvents = Math.max(1, Math.floor(parseNumber(next, maxEvents))); i++; continue; }
@@ -259,6 +297,7 @@ function parseArgs(argv: string[]): CliConfig | null {
 
     if (positionals.length > 0) {
         if (!symbol && applySymbol(positionals[0])) {
+            hasExplicitSymbol = true;
             positionals.shift();
         }
         if (!positionals.length && symbol && !argv.some(arg => arg.startsWith("--symbol"))) {
@@ -266,7 +305,25 @@ function parseArgs(argv: string[]): CliConfig | null {
         }
     }
 
-    return { seriesId, symbol, startDateMin, endDateMax, maxEvents, pageSize, concurrency, refreshRecent, viteOrigin, outPath, dryRun };
+    if (allSymbols && (hasExplicitSymbol || hasExplicitSeriesId)) {
+        throw new Error("--all cannot be combined with --symbol or --series-id.");
+    }
+
+    return { seriesId, symbol, allSymbols, startDateMin, endDateMax, maxEvents, pageSize, concurrency, refreshRecent, viteOrigin, outPath, dryRun };
+}
+
+export function resolveOutcomeSyncTargets(config: Pick<CliConfig, "allSymbols" | "seriesId" | "symbol">): OutcomeSyncTarget[] {
+    if (config.allSymbols) {
+        return SUPPORTED_POLYMARKET_5M_SYMBOLS.map((symbol) => ({
+            symbol,
+            seriesId: getPolymarket5mSeriesIdForSymbol(symbol)!,
+        }));
+    }
+
+    return [{
+        symbol: config.symbol as SupportedPolymarket5mSymbol | undefined,
+        seriesId: config.seriesId,
+    }];
 }
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────
@@ -553,21 +610,30 @@ async function loadExistingOutcomeSlugs(
     return existing;
 }
 
+function resolveTargetOutPath(
+    baseOutPath: string | undefined,
+    target: OutcomeSyncTarget,
+    targetCount: number
+): string | undefined {
+    if (!baseOutPath || targetCount <= 1 || !target.symbol) {
+        return baseOutPath;
+    }
+
+    const ext = path.extname(baseOutPath);
+    const stem = ext ? baseOutPath.slice(0, -ext.length) : baseOutPath;
+    return `${stem}.${target.symbol.toLowerCase()}${ext}`;
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────
 
-async function main(): Promise<void> {
-    const cfg = parseArgs(process.argv.slice(2));
-    if (!cfg) return;
-
+async function runSingleSeriesSync(cfg: CliConfig): Promise<OutcomeSyncSummary> {
     console.log("[poly:sync-outcomes] Fetching closed events...");
     console.log(`  series_id=${cfg.seriesId}${cfg.symbol ? ` (${cfg.symbol})` : ""}  start=${cfg.startDateMin}  max_events=${cfg.maxEvents}`);
 
     const events = await fetchSeriesEvents(cfg);
     console.log(`[poly:sync-outcomes] Got ${events.length} unique events`);
     if (events.length === 0) {
-        console.error("[poly:sync-outcomes] No events found. Adjust --start-date, --symbol, or --series-id.");
-        process.exitCode = 1;
-        return;
+        throw new Error("No events found. Adjust --start-date, --symbol, or --series-id.");
     }
 
     let syncEvents = events;
@@ -628,29 +694,32 @@ async function main(): Promise<void> {
     console.log(`[poly:sync-outcomes] Built ${outcomeRows.length} outcome rows`);
     if (outcomeRows.length === 0) {
         if (syncEvents.length === 0) {
-            return;
+            return {
+                symbol: cfg.symbol,
+                seriesId: cfg.seriesId,
+                events: events.length,
+                syncEvents: 0,
+                rows: 0,
+                withHistory: 0,
+                upserted: 0,
+                skippedExisting,
+                refreshedExisting,
+                missingEvents,
+            };
         }
-        console.error("[poly:sync-outcomes] No usable rows. Try widening the date range.");
-        process.exitCode = 1;
-        return;
+        throw new Error("No usable rows. Try widening the date range.");
     }
 
+    let totalUpserted = 0;
     if (!cfg.dryRun) {
         const BATCH = 500;
-        let totalUpserted = 0;
         for (let i = 0; i < outcomeRows.length; i += BATCH) {
             const chunk = outcomeRows.slice(i, i + BATCH);
-            try {
-                const n = await storeRows(chunk, cfg.viteOrigin);
-                totalUpserted += n;
-                console.log(`[poly:sync-outcomes] Stored batch upserted=${n} (total so far: ${totalUpserted})`);
-            } catch (err) {
-                console.error(`[poly:sync-outcomes] Store batch failed: ${String(err)}`);
-                process.exitCode = 1;
-                return;
-            }
+            const n = await storeRows(chunk, cfg.viteOrigin);
+            totalUpserted += n;
+            console.log(`[poly:sync-outcomes] Stored batch upserted=${n} (total so far: ${totalUpserted})`);
         }
-        console.log(`[poly:sync-outcomes] Done – total upserted=${totalUpserted}`);
+        console.log(`[poly:sync-outcomes] Done - total upserted=${totalUpserted}`);
     } else {
         console.log("[poly:sync-outcomes] --dry-run mode: skipping SQLite write");
         console.log(`[poly:sync-outcomes] Sample rows (first 3):`);
@@ -670,9 +739,59 @@ async function main(): Promise<void> {
         }, null, 2), "utf8");
         console.log(`[poly:sync-outcomes] Audit written to ${resolved}`);
     }
+
+    return {
+        symbol: cfg.symbol,
+        seriesId: cfg.seriesId,
+        events: events.length,
+        syncEvents: syncEvents.length,
+        rows: outcomeRows.length,
+        withHistory,
+        upserted: totalUpserted,
+        skippedExisting,
+        refreshedExisting,
+        missingEvents,
+    };
 }
 
-main().catch(err => {
-    console.error("[poly:sync-outcomes] Fatal:", String(err));
-    process.exitCode = 1;
-});
+export async function main(argv = process.argv.slice(2)): Promise<void> {
+    const cfg = parseArgs(argv);
+    if (!cfg) return;
+
+    const targets = resolveOutcomeSyncTargets(cfg);
+    const summaries: OutcomeSyncSummary[] = [];
+
+    for (let index = 0; index < targets.length; index++) {
+        const target = targets[index]!;
+        const targetCfg: CliConfig = {
+            ...cfg,
+            symbol: target.symbol,
+            seriesId: target.seriesId,
+            outPath: resolveTargetOutPath(cfg.outPath, target, targets.length),
+        };
+
+        if (targets.length > 1) {
+            console.log(
+                `[poly:sync-outcomes] Target ${index + 1}/${targets.length}: ${target.symbol} (series ${target.seriesId})`
+            );
+        }
+
+        summaries.push(await runSingleSeriesSync(targetCfg));
+    }
+
+    if (summaries.length > 1) {
+        const totalEvents = summaries.reduce((sum, summary) => sum + summary.events, 0);
+        const totalRows = summaries.reduce((sum, summary) => sum + summary.rows, 0);
+        const totalUpserted = summaries.reduce((sum, summary) => sum + summary.upserted, 0);
+        console.log(
+            `[poly:sync-outcomes] All targets complete symbols=${summaries.length} events=${totalEvents} rows=${totalRows} upserted=${totalUpserted}`
+        );
+    }
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+    main().catch(err => {
+        console.error("[poly:sync-outcomes] Fatal:", String(err));
+        process.exitCode = 1;
+    });
+}

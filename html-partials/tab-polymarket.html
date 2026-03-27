@@ -110,4 +110,227 @@
             </table>
         </div>
     </div>
+
+    <!-- Deployability Analysis Section -->
+    <div class="section-title" style="margin-top: 24px;">Deployability Analysis (Anti-Luck)</div>
+    <div class="section-desc polymarket-panel__desc">
+        Statistical confidence, chronological stability, and fill-adjusted edge analysis to judge whether a strategy's Polymarket performance is robust enough for live deployment.
+    </div>
+
+    <div class="empty-state empty-state-compact" id="deployabilityEmpty">
+        <div class="empty-state-icon">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/>
+            </svg>
+        </div>
+        <h3 class="empty-state-title">Deployability analysis requires scored trades</h3>
+        <p class="empty-state-description" id="deployabilitySupport">
+            Run a supported 5m backtest with matched Polymarket outcomes to see deployability metrics.
+        </p>
+    </div>
+
+    <div id="deployabilityContent" style="display: none;">
+        <!-- Verdict Banner -->
+        <div class="deployability-verdict" id="deployabilityVerdict">
+            <span class="verdict-badge" id="deployabilityVerdictBadge">Robust</span>
+            <span class="verdict-text" id="deployabilityVerdictText">Edge appears statistically credible</span>
+        </div>
+
+        <!-- Confidence Summary -->
+        <div class="deployability-section">
+            <div class="section-subtitle">Confidence Summary</div>
+            <div class="stats-grid deployability-panel__stats">
+                <div class="stat-card">
+                    <div class="stat-label">Win Rate</div>
+                    <div class="stat-value" id="deployWinRate">0.0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Wins</div>
+                    <div class="stat-value" id="deployWins">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Losses</div>
+                    <div class="stat-value" id="deployLosses">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Scored Trades</div>
+                    <div class="stat-value" id="deployScoredTrades">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Coverage</div>
+                    <div class="stat-value" id="deployCoverage">0.0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Wilson Lower Bound</div>
+                    <div class="stat-value" id="deployWilsonLB">0.000</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Always-YES Baseline</div>
+                    <div class="stat-value" id="deployAlwaysYes">0.0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Always-NO Baseline</div>
+                    <div class="stat-value" id="deployAlwaysNo">0.0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Delta vs YES</div>
+                    <div class="stat-value" id="deployDeltaYes">+0.0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Delta vs NO</div>
+                    <div class="stat-value" id="deployDeltaNo">+0.0%</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chronological Stability -->
+        <div class="deployability-section">
+            <div class="section-subtitle">Chronological Stability (Rolling OOS)</div>
+            <div class="entry-stats-hint" id="deployBlockHint">
+                Blocks show edge stability over time. Default block size: 250 scored trades.
+            </div>
+            <div class="analysis-finder-table-wrap">
+                <table class="analysis-finder-table deployability-panel__table">
+                    <thead>
+                        <tr>
+                            <th>Block</th>
+                            <th>Scored</th>
+                            <th>Wins</th>
+                            <th>Losses</th>
+                            <th>Win Rate</th>
+                            <th>Wilson LB</th>
+                        </tr>
+                    </thead>
+                    <tbody id="deployBlocksBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Regime Breakdown -->
+        <div class="deployability-section">
+            <div class="section-subtitle">Regime Breakdown</div>
+            <div class="deployability-regime-grid">
+                <div class="deployability-regime-column">
+                    <div class="regime-column-title">Long vs Short</div>
+                    <div class="analysis-finder-table-wrap">
+                        <table class="analysis-finder-table deployability-panel__table">
+                            <thead>
+                                <tr>
+                                    <th>Regime</th>
+                                    <th>Scored</th>
+                                    <th>Wins</th>
+                                    <th>Losses</th>
+                                    <th>Win Rate</th>
+                                    <th>Wilson LB</th>
+                                </tr>
+                            </thead>
+                            <tbody id="deployLongShortBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="deployability-regime-column">
+                    <div class="regime-column-title">Entry Price Buckets</div>
+                    <div class="analysis-finder-table-wrap">
+                        <table class="analysis-finder-table deployability-panel__table">
+                            <thead>
+                                <tr>
+                                    <th>Bucket</th>
+                                    <th>Scored</th>
+                                    <th>Wins</th>
+                                    <th>Losses</th>
+                                    <th>Win Rate</th>
+                                    <th>Wilson LB</th>
+                                </tr>
+                            </thead>
+                            <tbody id="deployEntryBucketsBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Significance Test -->
+        <div class="deployability-section">
+            <div class="section-subtitle">Significance Test</div>
+            <div class="entry-stats-hint" id="deployShuffleHint">
+                Mixed-side strategies use a shuffle placebo test. One-sided strategies use a baseline significance test instead.
+            </div>
+            <div class="stats-grid deployability-panel__stats">
+                <div class="stat-card">
+                    <div class="stat-label">Method</div>
+                    <div class="stat-value" id="deployShuffleSims">Unavailable</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Observed Win Rate</div>
+                    <div class="stat-value" id="deployShuffleObserved">0.0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Null Baseline</div>
+                    <div class="stat-value" id="deployShuffleExceed">N/A</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">P-Value</div>
+                    <div class="stat-value" id="deployShufflePValue">1.000</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Expected Under Null</div>
+                    <div class="stat-value" id="deployShuffleMean">0.0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Diagnostic</div>
+                    <div class="stat-value" id="deployShuffleP95">N/A</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Fill-Adjusted Deployability -->
+        <div class="deployability-section">
+            <div class="section-subtitle">Fill-Adjusted Deployability</div>
+            <div class="entry-stats-hint" id="deployFillHint">
+                Uses current Polymarket panel entry price and scope. Edge should persist after realistic fills.
+            </div>
+            <div class="stats-grid deployability-panel__stats">
+                <div class="stat-card">
+                    <div class="stat-label">Fill-Adjusted Scored</div>
+                    <div class="stat-value" id="deployFillScored">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Fill-Adjusted Wins</div>
+                    <div class="stat-value" id="deployFillWins">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Fill-Adjusted Losses</div>
+                    <div class="stat-value" id="deployFillLosses">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Fill-Adjusted Win Rate</div>
+                    <div class="stat-value" id="deployFillWinRate">0.0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Fill-Adjusted Wilson LB</div>
+                    <div class="stat-value" id="deployFillWilsonLB">0.000</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Fill Rate</div>
+                    <div class="stat-value" id="deployFillRate">0.0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label" id="deployFillBestBaselineLabel">Fill-Subset Best Base</div>
+                    <div class="stat-value" id="deployFillBestBaseline">N/A</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label" id="deployFillDeltaBaselineLabel">Delta vs Best Base</div>
+                    <div class="stat-value" id="deployFillDeltaBaseline">+0.0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Break-Even Win Rate</div>
+                    <div class="stat-value" id="deployFillBreakEven">0.0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Edge vs Break-Even</div>
+                    <div class="stat-value" id="deployFillEdgeBreakEven">+0.0%</div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>

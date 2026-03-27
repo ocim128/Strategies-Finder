@@ -229,11 +229,11 @@ Recommended workflow:
 
 ### Evaluate Polymarket Outcomes
 Automate the inspection of executed BTCUSDT, ETHUSDT, SOLUSDT, and XRPUSDT 5m `next_open` trades against historical Polymarket event resolution.
-1. Sync closed Polymarket matching events to your local SQLite database using `npm run poly:sync-outcomes` (requires the Vite server running via `npm run dev`).
+1. Sync closed Polymarket matching events to your local SQLite database using `npm run poly:sync-outcomes:all` for every supported 5m symbol, or `npm run poly:sync-outcomes` / the direct `esno` command for a single symbol (requires the Vite server running via `npm run dev`).
 2. Pass UI strategies through `evaluatePolymarketOutcomes` in `lib/polymarket-outcome-evaluator.ts`.
 3. For chart-exact parity, pass the same backtest and capital settings you use in the UI. The helper scores executed trades, not raw signals.
 4. The supported Polymarket 5m chart paths are `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, and `XRPUSDT`.
-5. Use `..\..\..\node_modules\.bin\esno scripts\polymarket-sync-outcomes.ts --symbol <BTCUSDT|ETHUSDT|SOLUSDT|XRPUSDT>` to backfill the matching 5m outcome series into local SQLite.
+5. Use `npm run poly:sync-outcomes:all` to backfill every supported 5m outcome series, or `..\..\..\node_modules\.bin\esno scripts\polymarket-sync-outcomes.ts --symbol <BTCUSDT|ETHUSDT|SOLUSDT|XRPUSDT>` for a single series.
 6. Use the `Polymarket` strategy-panel tab to estimate historical YES/NO fillability for the current supported 5m backtest at a custom entry price in cents.
 
 ### Export Latest Entry Signal
