@@ -365,6 +365,52 @@
     margin-top: 0;
 }
 
+.ensemble-lab__polymarket-empty {
+    margin-top: 12px;
+}
+
+.ensemble-lab__polymarket-agreement {
+    margin-top: 12px;
+}
+
+.ensemble-lab__polymarket-verdict {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 84px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.ensemble-lab__polymarket-verdict--edge {
+    border-color: hsl(var(--hsl-success, 145 70% 42%) / 0.28);
+    background: hsl(var(--hsl-success, 145 70% 42%) / 0.12);
+    color: hsl(var(--hsl-success, 145 70% 42%));
+}
+
+.ensemble-lab__polymarket-verdict--marginal {
+    border-color: hsl(var(--hsl-warning, 38 92% 50%) / 0.28);
+    background: hsl(var(--hsl-warning, 38 92% 50%) / 0.12);
+    color: hsl(var(--hsl-warning, 38 92% 50%));
+}
+
+.ensemble-lab__polymarket-verdict--no_edge {
+    border-color: hsl(var(--hsl-danger, 4 78% 57%) / 0.28);
+    background: hsl(var(--hsl-danger, 4 78% 57%) / 0.12);
+    color: hsl(var(--hsl-danger, 4 78% 57%));
+}
+
+.ensemble-lab__polymarket-verdict--insufficient {
+    border-color: var(--border);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+}
+
 @media (max-width: 980px) {
     .ensemble-lab__toolbar {
         grid-template-columns: 1fr;

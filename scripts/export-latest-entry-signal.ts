@@ -258,15 +258,6 @@ async function main(): Promise<void> {
     }
 
     const generatedAt = new Date();
-    const actionableEntry =
-        result.pendingEntry
-        && (
-            !result.latestEntry
-            || (result.pendingEntry.entryTimeSec ?? result.pendingEntry.signalTimeSec)
-                > (result.latestEntry.entryTimeSec ?? result.latestEntry.signalTimeSec)
-        )
-            ? result.pendingEntry
-            : result.latestEntry;
     const payload: ExportPayload = {
         schemaVersion: 1,
         generatedAt: generatedAt.toISOString(),
@@ -278,16 +269,16 @@ async function main(): Promise<void> {
         strategyName: strategy.name,
         rawSignalCount: result.rawSignalCount,
         preparedSignalCount: result.preparedSignalCount,
-        latestEntry: actionableEntry
+        latestEntry: result.latestEntry
             ? {
-                direction: actionableEntry.direction,
-                signalTimeSec: actionableEntry.signalTimeSec,
-                entryTimeSec: actionableEntry.entryTimeSec,
-                signalAgeBars: actionableEntry.signalAgeBars,
-                isFresh: actionableEntry.isFresh,
-                fingerprint: actionableEntry.fingerprint,
-                signalPrice: actionableEntry.signal.price,
-                entryPrice: actionableEntry.entryPrice ?? result.latestTrade?.entryPrice ?? null,
+                direction: result.latestEntry.direction,
+                signalTimeSec: result.latestEntry.signalTimeSec,
+                entryTimeSec: result.latestEntry.entryTimeSec,
+                signalAgeBars: result.latestEntry.signalAgeBars,
+                isFresh: result.latestEntry.isFresh,
+                fingerprint: result.latestEntry.fingerprint,
+                signalPrice: result.latestEntry.signal.price,
+                entryPrice: result.latestEntry.entryPrice ?? result.latestTrade?.entryPrice ?? null,
             }
             : null,
         pendingEntry: result.pendingEntry

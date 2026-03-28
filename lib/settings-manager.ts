@@ -46,6 +46,23 @@ export type { AppSettings, BacktestSettingsData, StrategyConfig } from "./settin
 
 import type { CapitalSettings } from "./types/backtest";
 
+export function sortStrategyConfigsNewestFirst(configs: readonly StrategyConfig[]): StrategyConfig[] {
+    return [...configs].sort((left, right) => {
+        const leftCreatedAt = Date.parse(left.createdAt || "");
+        const rightCreatedAt = Date.parse(right.createdAt || "");
+
+        if (Number.isFinite(leftCreatedAt) && Number.isFinite(rightCreatedAt) && leftCreatedAt !== rightCreatedAt) {
+            return rightCreatedAt - leftCreatedAt;
+        }
+
+        if (left.createdAt !== right.createdAt) {
+            return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
+        }
+
+        return left.name.localeCompare(right.name);
+    });
+}
+
 // ============================================================================
 // Storage Keys
 // ============================================================================

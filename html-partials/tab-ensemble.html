@@ -20,6 +20,7 @@
                 <div class="analysis-finder-controls">
                     <button class="btn btn-secondary btn-compact" id="ensembleRefreshConfigsBtn" type="button">Refresh</button>
                     <button class="btn btn-primary btn-compact" id="ensembleRunBtn" type="button">Run Ensemble Lab</button>
+                    <button class="btn btn-secondary btn-compact" id="ensembleRunPolymarketBtn" type="button">Run Ensemble Polymarket</button>
                 </div>
             </div>
 
@@ -188,6 +189,50 @@
                         <tr>
                             <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
                                 Run Ensemble Lab to calculate conditional outcome probabilities.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="analysis-finder-section portfolio-lab__section" id="ensemblePolymarketSection" style="display: none;">
+            <div class="analysis-finder-header">
+                <h4 class="analysis-finder-title">Ensemble Polymarket</h4>
+            </div>
+            <div class="analysis-finder-status" id="ensemblePolymarketStatus">
+                Run Ensemble Polymarket to compare individual config edge, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, and the majority-vote overlay against matched 5m Polymarket outcomes.
+            </div>
+            <div class="empty-state empty-state-compact ensemble-lab__polymarket-empty" id="ensemblePolymarketEmpty" style="display: none;">
+                This analysis currently supports BTCUSDT, ETHUSDT, SOLUSDT, and XRPUSDT on 5m.
+            </div>
+            <div class="simulation-grid" id="ensemblePolymarketSummary"></div>
+            <div class="portfolio-lab__insights ensemble-lab__polymarket-agreement" id="ensemblePolymarketAgreement"></div>
+            <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
+                <div class="portfolio-lab__table-caption">
+                    Each selected config is backtested independently, then its executed trades are scored against matched Polymarket YES/NO outcomes. The conflict-filtered block above answers "what if conflicting long and short configs skip the trade", now split into aligned-signal coverage, true mixed-direction conflicts, and no-signal gaps. The majority-vote block appears only when it adds information, and the pooled config stats are not a tradable ensemble rule.
+                </div>
+                <table class="analysis-table portfolio-lab__table">
+                    <thead>
+                        <tr>
+                            <th>Config</th>
+                            <th>Family</th>
+                            <th>Scored</th>
+                            <th>Wins</th>
+                            <th>Losses</th>
+                            <th>Win %</th>
+                            <th>Coverage</th>
+                            <th>Wilson LB</th>
+                            <th>Long WR %</th>
+                            <th>Short WR %</th>
+                            <th>&Delta; vs Baseline</th>
+                            <th>Verdict</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ensemblePolymarketTableBody">
+                        <tr>
+                            <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                Run Ensemble Polymarket to compare individual config edge and the majority-vote overlay against Polymarket outcomes.
                             </td>
                         </tr>
                     </tbody>

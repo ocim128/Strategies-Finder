@@ -1,4 +1,9 @@
-import { settingsManager, type StrategyConfig, type BacktestSettingsData } from "../settings-manager";
+import {
+    settingsManager,
+    sortStrategyConfigsNewestFirst,
+    type StrategyConfig,
+    type BacktestSettingsData,
+} from "../settings-manager";
 import { uiManager } from "../ui-manager";
 import { debugLogger } from "../debug-logger";
 import { refreshEngineStatus } from "../engine-status-indicator";
@@ -455,7 +460,7 @@ export function updateConfigDropdown(selectName?: string) {
     const configSelect = createSettingsHandlersDom().configSelect;
     if (!configSelect) return;
 
-    const configs = settingsManager.loadAllStrategyConfigs();
+    const configs = sortStrategyConfigsNewestFirst(settingsManager.loadAllStrategyConfigs());
     const currentValue = selectName || configSelect.value;
 
     // Clear existing options
@@ -487,7 +492,7 @@ function updateCombinerDropdowns() {
     const { combinerPrimarySelect: primarySelect, combinerSecondarySelect: secondarySelect } = createSettingsHandlersDom();
     if (!primarySelect && !secondarySelect) return;
 
-    const configs = settingsManager.loadAllStrategyConfigs();
+    const configs = sortStrategyConfigsNewestFirst(settingsManager.loadAllStrategyConfigs());
 
     for (const select of [primarySelect, secondarySelect]) {
         if (!select) continue;

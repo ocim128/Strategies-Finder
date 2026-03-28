@@ -17,6 +17,7 @@ import {
     normalizeStoredAppSettings,
     normalizeStoredBacktestSettings,
     normalizeStoredStrategyConfig,
+    sortStrategyConfigsNewestFirst,
 } from './lib/settings-manager';
 import { DEFAULT_BACKTEST_SETTINGS } from './lib/settings-model';
 import { readBoolean, readNumber, toBooleanLike, toFiniteNumber } from './lib/settings-parse-utils';
@@ -466,6 +467,37 @@ describe('Backtest settings compatibility', () => {
         expect(normalized?.backtestSettings.tradeFilterMode).to.equal('rsi');
         expect(normalized?.backtestSettings.tradeFilterSettingsToggle).to.equal(true);
         expect(normalizeStoredStrategyConfig({ strategyKey: 'missing-name' })).to.equal(null);
+    });
+
+    it('sorts saved strategy configs by createdAt newest first', () => {
+        const sorted = sortStrategyConfigsNewestFirst([
+            {
+                name: 'Oldest',
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-03-01T00:00:00.000Z',
+                strategyKey: DEFAULT_BUILT_IN_STRATEGY_KEY,
+                strategyParams: {},
+                backtestSettings: { ...DEFAULT_BACKTEST_SETTINGS },
+            },
+            {
+                name: 'Newest',
+                createdAt: '2026-03-01T00:00:00.000Z',
+                updatedAt: '2026-03-02T00:00:00.000Z',
+                strategyKey: DEFAULT_BUILT_IN_STRATEGY_KEY,
+                strategyParams: {},
+                backtestSettings: { ...DEFAULT_BACKTEST_SETTINGS },
+            },
+            {
+                name: 'Middle',
+                createdAt: '2026-02-01T00:00:00.000Z',
+                updatedAt: '2026-03-03T00:00:00.000Z',
+                strategyKey: DEFAULT_BUILT_IN_STRATEGY_KEY,
+                strategyParams: {},
+                backtestSettings: { ...DEFAULT_BACKTEST_SETTINGS },
+            },
+        ]);
+
+        expect(sorted.map((config) => config.name)).to.deep.equal(['Newest', 'Middle', 'Oldest']);
     });
 
     it('keeps the shared default strategy key aligned with the built-in manifest', () => {

@@ -22,7 +22,18 @@ import {
     renderStrategyEnsembleResults,
     resetStrategyEnsembleResultPanels,
 } from "./strategy-ensemble-renderer";
-import { settingsManager, type StrategyConfig } from "./settings-manager";
+import {
+    runEnsemblePolymarket,
+} from "./strategy-ensemble-polymarket-engine";
+import {
+    renderEnsemblePolymarketResults,
+    resetEnsemblePolymarketPanel,
+} from "./strategy-ensemble-polymarket-renderer";
+import {
+    settingsManager,
+    sortStrategyConfigsNewestFirst,
+    type StrategyConfig,
+} from "./settings-manager";
 import { state } from "./state";
 import { clearBacktestResults, commitBacktestResult } from "./state-actions";
 import type { OHLCVData } from "./strategies";
@@ -33,6 +44,12 @@ import type {
 } from "./strategy-ensemble-types";
 import { uiManager } from "./ui-manager";
 import { debugLogger } from "./debug-logger";
+import {
+    getSupportedPolymarket5mSymbolsLabel,
+    isSupportedPolymarket5mRun,
+    loadPolymarket5mOutcomesForChart,
+} from "./polymarket-btc5m";
+import { setVisible } from "./dom-utils";
 
 class StrategyEnsembleService {
     private static readonly MAX_REPLACEMENT_ROWS = 12;
@@ -69,6 +86,7 @@ class StrategyEnsembleService {
         this.bindEvents(dom);
         this.syncReadouts(dom);
         this.populateConfigs(dom);
+        this.syncPolymarketAvailability();
         this.initialized = true;
     }
 
@@ -91,6 +109,9 @@ class StrategyEnsembleService {
 
         dom.ensembleRunBtn.addEventListener("click", () => {
             void this.run();
+        });
+        dom.ensembleRunPolymarketBtn.addEventListener("click", () => {
+            void this.runPolymarket();
         });
 
         dom.ensembleRefreshConfigsBtn.addEventListener("click", () => {
@@ -163,10 +184,12 @@ class StrategyEnsembleService {
 
         state.subscribe("currentSymbol", () => {
             this.syncReadouts(dom);
+            this.syncPolymarketAvailability();
             this.invalidateRunContext("Target symbol changed. Run Strategy Ensemble Lab again.");
         });
         state.subscribe("currentInterval", () => {
             this.syncReadouts(dom);
+            this.syncPolymarketAvailability();
             this.invalidateRunContext("Timeframe changed. Run Strategy Ensemble Lab again.");
         });
         state.subscribe("ohlcvData", () => {
@@ -205,13 +228,7 @@ class StrategyEnsembleService {
                 .map(([name]) => name)
         );
         const previousFamilyFilter = dom.ensembleContextFamilyFilter.value;
-        const configs = [...settingsManager.loadAllStrategyConfigs()].sort((left, right) => {
-            const familyCompare = this.getConfigFamilyLabel(left).localeCompare(this.getConfigFamilyLabel(right));
-            if (familyCompare !== 0) {
-                return familyCompare;
-            }
-            return left.name.localeCompare(right.name);
-        });
+        const configs = sortStrategyConfigsNewestFirst(settingsManager.loadAllStrategyConfigs());
 
         this.contextCheckboxes.clear();
         this.contextItems.clear();
@@ -251,6 +268,7 @@ class StrategyEnsembleService {
             dom.ensembleContextSummary.textContent = "0 selected";
             this.setConfigAvailability(false);
             resetStrategyEnsembleResultPanels(this.getDom());
+            resetEnsemblePolymarketPanel(this.getDom());
             this.updateStatus("Save strategy configurations, then select a target and context strategies to run ensemble analysis.");
             return;
         }
@@ -321,6 +339,8 @@ class StrategyEnsembleService {
         this.renderTargetSummary();
         this.applyContextFilter();
         resetStrategyEnsembleResultPanels(this.getDom());
+        resetEnsemblePolymarketPanel(this.getDom());
+        this.syncPolymarketAvailability();
         this.updateStatus("Select a target config, keep one or more context configs, then run Strategy Ensemble Lab.");
     }
 
@@ -328,6 +348,7 @@ class StrategyEnsembleService {
         const dom = this.getDom();
         dom.ensembleEmpty.style.display = hasConfigs ? "none" : "";
         dom.ensembleContent.style.display = hasConfigs ? "" : "none";
+        dom.ensemblePolymarketSection.style.display = hasConfigs ? "" : "none";
     }
 
     private buildConfigLabel(config: StrategyConfig): string {
@@ -464,10 +485,43 @@ class StrategyEnsembleService {
     private invalidateRunContext(message: string): void {
         this.runContext = null;
         this.updateStatus(message);
+        resetEnsemblePolymarketPanel(this.getDom());
+        this.syncPolymarketAvailability();
     }
 
     private updateStatus(message: string): void {
         this.getDom().ensembleStatus.textContent = message;
+    }
+
+    private updatePolymarketStatus(message: string): void {
+        this.getDom().ensemblePolymarketStatus.textContent = message;
+    }
+
+    private syncPolymarketAvailability(): void {
+        const dom = this.getDom();
+        const hasConfigs = this.contextConfigs.size > 0;
+        const supportedRun = isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval);
+        const supportMessage = `Ensemble Polymarket currently supports ${getSupportedPolymarket5mSymbolsLabel()} on 5m.`;
+
+        dom.ensemblePolymarketSection.style.display = hasConfigs ? "" : "none";
+        dom.ensembleRunPolymarketBtn.disabled = !hasConfigs || !supportedRun;
+        dom.ensembleRunPolymarketBtn.title = supportedRun ? "" : supportMessage;
+
+        if (!hasConfigs) {
+            return;
+        }
+
+        setVisible(dom.ensemblePolymarketEmpty, !supportedRun);
+        if (!supportedRun) {
+            dom.ensemblePolymarketEmpty.textContent = supportMessage;
+            this.updatePolymarketStatus(supportMessage);
+            return;
+        }
+
+        dom.ensemblePolymarketEmpty.textContent = supportMessage;
+        if (!dom.ensembleRunPolymarketBtn.disabled) {
+            this.updatePolymarketStatus("Run Ensemble Polymarket to compare individual config edge, the conflict-filtered overlay, and the majority-vote overlay against matched 5m Polymarket outcomes.");
+        }
     }
 
     private getConfigFamilyLabel(config: StrategyConfig): string {
@@ -779,6 +833,81 @@ class StrategyEnsembleService {
             maxRuleBuilderRows: StrategyEnsembleService.MAX_RULE_BUILDER_ROWS,
             maxReplacementRows: StrategyEnsembleService.MAX_REPLACEMENT_ROWS,
         };
+    }
+
+    private async runPolymarket(): Promise<void> {
+        const dom = this.getDom();
+        const targetName = this.getSelectedTargetName();
+
+        if (!targetName) {
+            uiManager.showToast("Select a target config first.", "error");
+            this.updatePolymarketStatus("Select a target config first.");
+            return;
+        }
+
+        const contextNames = this.getSelectedContextNames();
+        if (contextNames.length === 0) {
+            uiManager.showToast("Select at least one context config.", "error");
+            this.updatePolymarketStatus("Select at least one context config.");
+            return;
+        }
+
+        if (!isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval)) {
+            const message = `Ensemble Polymarket currently supports ${getSupportedPolymarket5mSymbolsLabel()} on 5m.`;
+            uiManager.showToast(message, "error");
+            this.updatePolymarketStatus(message);
+            this.syncPolymarketAvailability();
+            return;
+        }
+
+        const candles = this.prepareCandles();
+        if (candles.length < 50) {
+            uiManager.showToast("Not enough closed candle data loaded. Load more data first.", "error");
+            this.updatePolymarketStatus("Not enough closed candle data to run Ensemble Polymarket.");
+            return;
+        }
+
+        const selectedConfigNames = [targetName, ...contextNames];
+        const engineDeps = this.buildEngineDeps();
+
+        dom.ensembleRunPolymarketBtn.disabled = true;
+        dom.ensembleRunPolymarketBtn.setAttribute("aria-busy", "true");
+        this.updatePolymarketStatus(`Loading Polymarket outcomes for ${state.currentSymbol} (${state.currentInterval})...`);
+
+        try {
+            const outcomes = await loadPolymarket5mOutcomesForChart(state.currentSymbol, candles);
+            const result = await runEnsemblePolymarket({
+                targetName,
+                contextNames,
+                candles,
+                symbol: state.currentSymbol,
+                interval: state.currentInterval,
+                outcomes,
+                deps: engineDeps,
+                onProgress: (message) => this.updatePolymarketStatus(message),
+            });
+
+            renderEnsemblePolymarketResults(dom, result);
+            this.updatePolymarketStatus(
+                `Ensemble Polymarket ready. ${selectedConfigNames.length} configs scored across ${result.ensembleSummary.totalScoredTrades} executed trades.`
+            );
+            uiManager.showToast("Ensemble Polymarket complete.", "success");
+        } catch (error) {
+            console.error("[StrategyEnsembleLab][Polymarket] Run failed", error);
+            resetEnsemblePolymarketPanel(dom);
+            this.syncPolymarketAvailability();
+            uiManager.showToast(
+                `Ensemble Polymarket failed: ${error instanceof Error ? error.message : String(error)}`,
+                "error"
+            );
+            this.updatePolymarketStatus(
+                `Ensemble Polymarket failed: ${error instanceof Error ? error.message : String(error)}`
+            );
+        } finally {
+            dom.ensembleRunPolymarketBtn.disabled = this.contextConfigs.size === 0
+                || !isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval);
+            dom.ensembleRunPolymarketBtn.setAttribute("aria-busy", "false");
+        }
     }
 
     private async run(): Promise<void> {
