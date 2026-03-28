@@ -14,12 +14,14 @@ import {
 } from './lib/alert-subscription-utils';
 import { parseInputNumber } from './lib/dom-input-readers';
 import {
+    normalizeStoredEnsembleSignalRecipe,
     normalizeStoredAppSettings,
     normalizeStoredBacktestSettings,
     normalizeStoredStrategyConfig,
+    sortEnsembleSignalRecipesNewestFirst,
     sortStrategyConfigsNewestFirst,
 } from './lib/settings-manager';
-import { DEFAULT_BACKTEST_SETTINGS } from './lib/settings-model';
+import { DEFAULT_BACKTEST_SETTINGS, type EnsembleSignalRecipe } from './lib/settings-model';
 import { readBoolean, readNumber, toBooleanLike, toFiniteNumber } from './lib/settings-parse-utils';
 import { SNAPSHOT_CONFIGS } from './lib/backtest-settings-resolver';
 import {
@@ -498,6 +500,125 @@ describe('Backtest settings compatibility', () => {
         ]);
 
         expect(sorted.map((config) => config.name)).to.deep.equal(['Newest', 'Middle', 'Oldest']);
+    });
+
+    it('normalizes stored ensemble signal recipes and filters unusable payloads', () => {
+        const normalized = normalizeStoredEnsembleSignalRecipe({
+            name: 'Saved Conflict Recipe',
+            symbol: 'XRPUSDT',
+            interval: '5m',
+            mode: 'target_conflict_filter',
+            anchorConfigName: 'Target Config',
+            anchorConfig: {
+                name: 'Target Config',
+                strategyKey: DEFAULT_BUILT_IN_STRATEGY_KEY,
+                strategyParams: { threshold: '12' },
+                backtestSettings: {
+                    initialCapital: '15000',
+                    tradeFilterMode: 'rsi',
+                    tradeFilterSettingsToggle: true,
+                },
+            },
+            componentConfigs: [
+                {
+                    name: 'Target Config',
+                    strategyKey: DEFAULT_BUILT_IN_STRATEGY_KEY,
+                    strategyParams: { threshold: '12' },
+                    backtestSettings: {
+                        initialCapital: '15000',
+                        tradeFilterMode: 'rsi',
+                        tradeFilterSettingsToggle: true,
+                    },
+                },
+                {
+                    name: 'Context Config',
+                    strategyKey: DEFAULT_BUILT_IN_STRATEGY_KEY,
+                    strategyParams: { threshold: '7' },
+                    backtestSettings: {
+                        initialCapital: '12000',
+                    },
+                },
+            ],
+            notes: 'target anchored',
+            metrics: {
+                keptTrades: '42',
+                wins: '28',
+                losses: '14',
+                winRate: '0.6667',
+                coverage: '0.51',
+                overlapRate: '0.58',
+            },
+        });
+
+        expect(normalized).to.not.equal(null);
+        expect(normalized?.source).to.equal('ensemble_polymarket');
+        expect(normalized?.anchorConfig.strategyParams).to.deep.equal({ threshold: 12 });
+        expect(normalized?.componentConfigs).to.have.length(2);
+        expect(normalized?.metrics.keptTrades).to.equal(42);
+        expect(normalized?.metrics.wins).to.equal(28);
+        expect(normalized?.metrics.losses).to.equal(14);
+        expect(normalized?.metrics.winRate).to.equal(0.6667);
+        expect(normalized?.metrics.coverage).to.equal(0.51);
+        expect(normalizeStoredEnsembleSignalRecipe({
+            name: 'Broken Recipe',
+            anchorConfig: null,
+            componentConfigs: [],
+        })).to.equal(null);
+    });
+
+    it('sorts saved ensemble signal recipes by createdAt newest first', () => {
+        const makeRecipe = (name: string, createdAt: string): EnsembleSignalRecipe => ({
+            name,
+            createdAt,
+            updatedAt: createdAt,
+            source: 'ensemble_polymarket',
+            symbol: 'XRPUSDT',
+            interval: '5m',
+            mode: 'target_conflict_filter',
+            anchorConfigName: 'Anchor',
+            anchorConfig: {
+                name: 'Anchor',
+                createdAt,
+                updatedAt: createdAt,
+                strategyKey: DEFAULT_BUILT_IN_STRATEGY_KEY,
+                strategyParams: {},
+                backtestSettings: { ...DEFAULT_BACKTEST_SETTINGS },
+            },
+            componentConfigs: [
+                {
+                    name: 'Anchor',
+                    createdAt,
+                    updatedAt: createdAt,
+                    strategyKey: DEFAULT_BUILT_IN_STRATEGY_KEY,
+                    strategyParams: {},
+                    backtestSettings: { ...DEFAULT_BACKTEST_SETTINGS },
+                },
+            ],
+            notes: '',
+            metrics: {
+                keptTrades: 0,
+                wins: 0,
+                losses: 0,
+                winRate: 0,
+                retentionRate: null,
+                coverage: null,
+                overlapRate: null,
+                winRateLift: null,
+                wilsonLift: null,
+            },
+        });
+
+        const sorted = sortEnsembleSignalRecipesNewestFirst([
+            makeRecipe('Oldest Recipe', '2026-01-01T00:00:00.000Z'),
+            makeRecipe('Newest Recipe', '2026-03-01T00:00:00.000Z'),
+            makeRecipe('Middle Recipe', '2026-02-01T00:00:00.000Z'),
+        ]);
+
+        expect(sorted.map((recipe) => recipe.name)).to.deep.equal([
+            'Newest Recipe',
+            'Middle Recipe',
+            'Oldest Recipe',
+        ]);
     });
 
     it('keeps the shared default strategy key aligned with the built-in manifest', () => {

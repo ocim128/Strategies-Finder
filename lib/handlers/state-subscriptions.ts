@@ -13,6 +13,7 @@ import { clearAll } from "../app-actions";
 import { formatPolymarketDisplayName } from "../dataProviders/polymarket";
 import { quickViewManager } from "../quick-view";
 import { livePositionsService } from "../live-positions-service";
+import type { Time } from "lightweight-charts";
 
 export function setupStateSubscriptions() {
     const setPriceLoading = () => {
@@ -41,6 +42,33 @@ export function setupStateSubscriptions() {
 
     let reloadTimeout: number | null = null;
     let deferredBacktestUiFrame: number | null = null;
+    const isPanelVisible = (tabId: string) => {
+        const panel = document.getElementById(`${tabId}Tab`) as HTMLElement | null;
+        return Boolean(panel && !panel.hidden && panel.style.display !== 'none');
+    };
+    const jumpToTrade = (time: Time) => {
+        const dataIndex = state.ohlcvData.findIndex(d => d.time === time);
+        if (dataIndex !== -1) {
+            const from = Math.max(0, dataIndex - 20);
+            const to = Math.min(state.ohlcvData.length - 1, dataIndex + 20);
+            state.chart.timeScale().setVisibleLogicalRange({ from, to });
+        }
+    };
+    const renderTradesForCurrentState = async () => {
+        const result = state.currentBacktestResult;
+        if (!result) {
+            uiManager.updateTradeBadge(0);
+            return;
+        }
+
+        const parityResults = state.twoHourParityBacktestResults;
+        if (parityResults) {
+            await uiManager.updateParityTradesList(parityResults.odd.trades, parityResults.even.trades, jumpToTrade);
+            return;
+        }
+
+        await uiManager.updateTradesList(result.trades, jumpToTrade);
+    };
     const scheduleDataReload = () => {
         if (reloadTimeout !== null) {
             clearTimeout(reloadTimeout);
@@ -114,20 +142,20 @@ export function setupStateSubscriptions() {
             backtestService.addStrategyIndicators(params);
             chartManager.displayEquityCurve(result.equityCurve);
             uiManager.updateResultsUI(result);
-            const jumpToTrade = (time: typeof result.trades[number]['entryTime']) => {
-                const dataIndex = state.ohlcvData.findIndex(d => d.time === time);
-                if (dataIndex !== -1) {
-                    const from = Math.max(0, dataIndex - 20);
-                    const to = Math.min(state.ohlcvData.length - 1, dataIndex + 20);
-                    state.chart.timeScale().setVisibleLogicalRange({ from, to });
-                }
-            };
 
             const parityResults = state.twoHourParityBacktestResults;
             if (parityResults) {
-                void uiManager.updateParityTradesList(parityResults.odd.trades, parityResults.even.trades, jumpToTrade);
+                if (isPanelVisible('trades')) {
+                    void uiManager.updateParityTradesList(parityResults.odd.trades, parityResults.even.trades, jumpToTrade);
+                } else {
+                    uiManager.updateTradeBadge(parityResults.odd.trades.length + parityResults.even.trades.length);
+                }
             } else {
-                void uiManager.updateTradesList(result.trades, jumpToTrade);
+                if (isPanelVisible('trades')) {
+                    void uiManager.updateTradesList(result.trades, jumpToTrade);
+                } else {
+                    uiManager.updateTradeBadge(result.trades.length);
+                }
             }
 
             deferredBacktestUiFrame = requestAnimationFrame(() => {
@@ -147,28 +175,29 @@ export function setupStateSubscriptions() {
 
         if (results) {
             uiManager.updateParityComparisonUI(results);
-            void uiManager.updateParityTradesList(results.odd.trades, results.even.trades, (time) => {
-                const dataIndex = state.ohlcvData.findIndex(d => d.time === time);
-                if (dataIndex !== -1) {
-                    const from = Math.max(0, dataIndex - 20);
-                    const to = Math.min(state.ohlcvData.length - 1, dataIndex + 20);
-                    state.chart.timeScale().setVisibleLogicalRange({ from, to });
-                }
-            });
+            if (isPanelVisible('trades')) {
+                void uiManager.updateParityTradesList(results.odd.trades, results.even.trades, jumpToTrade);
+            } else {
+                uiManager.updateTradeBadge(results.odd.trades.length + results.even.trades.length);
+            }
         } else {
             uiManager.clearParityComparisonUI();
             if (state.currentBacktestResult) {
-                void uiManager.updateTradesList(state.currentBacktestResult.trades, (time) => {
-                    const dataIndex = state.ohlcvData.findIndex(d => d.time === time);
-                    if (dataIndex !== -1) {
-                        const from = Math.max(0, dataIndex - 20);
-                        const to = Math.min(state.ohlcvData.length - 1, dataIndex + 20);
-                        state.chart.timeScale().setVisibleLogicalRange({ from, to });
-                    }
-                });
+                if (isPanelVisible('trades')) {
+                    void uiManager.updateTradesList(state.currentBacktestResult.trades, jumpToTrade);
+                } else {
+                    uiManager.updateTradeBadge(state.currentBacktestResult.trades.length);
+                }
             }
         }
     });
+
+    window.addEventListener("strategy-panel:tab-change", ((event: CustomEvent<{ tabId?: string }>) => {
+        if (event.detail?.tabId !== 'trades' || !state.currentBacktestResult) {
+            return;
+        }
+        void renderTradesForCurrentState();
+    }) as EventListener);
 
     // Theme changes
     state.subscribe('isDarkTheme', (isDark) => {

@@ -18,6 +18,7 @@
     "hunt:quality": "..\\..\\..\\node_modules\\.bin\\esno scripts\\quality-hunt.ts",
     "signal:tower": "..\\..\\..\\node_modules\\.bin\\esno scripts\\signal-tower.ts",
     "signal:export": "..\\..\\..\\node_modules\\.bin\\esno scripts\\export-latest-entry-signal.ts",
+    "signal:export:ensemble": "..\\..\\..\\node_modules\\.bin\\esno scripts\\export-latest-ensemble-entry-signal.ts",
     "paper:trade": "..\\..\\..\\node_modules\\.bin\\esno scripts\\paper-trader.ts",
     "poly:integrity": "..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-universe-integrity.ts",
     "poly:edge": "..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-btc5m-edge.ts",

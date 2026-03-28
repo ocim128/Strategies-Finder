@@ -33,6 +33,11 @@ class PolymarketPanelService {
     private loadNonce = 0;
     private bridgeConfigSignature = "";
     private selectedBridgeConfigName = "";
+    private loadedResultSignature = "";
+    private renderFrameId: number | null = null;
+    private renderTimeoutId: number | null = null;
+    private deployabilityCacheKey = "";
+    private deployabilityCache: ReturnType<typeof analyzePolymarketDeployability> | null = null;
 
     public init(): void {
         if (this.initialized) {
@@ -43,13 +48,22 @@ class PolymarketPanelService {
         this.bindEvents();
         this.bindState();
         this.render();
+        if (this.isPanelVisible()) {
+            void this.ensureOutcomeRowsForCurrentResult();
+        }
         this.initialized = true;
     }
 
     private bindEvents(): void {
         const dom = this.getDom();
-        dom.polymarketEntryPriceCents.addEventListener("input", () => this.render());
-        dom.polymarketScope.addEventListener("change", () => this.render());
+        dom.polymarketEntryPriceCents.addEventListener("input", () => {
+            this.deployabilityCacheKey = "";
+            this.scheduleRender();
+        });
+        dom.polymarketScope.addEventListener("change", () => {
+            this.deployabilityCacheKey = "";
+            this.scheduleRender();
+        });
         dom.polymarketBridgeConfig.addEventListener("focus", () => {
             this.ensureBridgeConfigOptions(true);
             this.renderBridgeControls();
@@ -64,6 +78,13 @@ class PolymarketPanelService {
         dom.polymarketBridgeCopyEnv.addEventListener("click", () => {
             void this.handleCopyBotEnv();
         });
+        window.addEventListener("strategy-panel:tab-change", ((event: CustomEvent<{ tabId?: string }>) => {
+            if (event.detail?.tabId !== "polymarket") {
+                return;
+            }
+            this.scheduleRender();
+            void this.ensureOutcomeRowsForCurrentResult();
+        }) as EventListener);
     }
 
     private bindState(): void {
@@ -73,22 +94,49 @@ class PolymarketPanelService {
 
         state.subscribe("currentSymbol", () => {
             this.resetLoadedRows();
-            this.render();
+            this.scheduleRender();
         });
 
         state.subscribe("currentInterval", () => {
             this.resetLoadedRows();
-            this.render();
+            this.scheduleRender();
         });
     }
 
     private async handleBacktestResultChange(result: BacktestResult | null): Promise<void> {
         this.lastResult = result;
         this.loadError = null;
+        this.deployabilityCacheKey = "";
 
         if (!result || !isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval) || result.trades.length === 0) {
             this.resetLoadedRows(false);
-            this.render();
+            this.scheduleRender();
+            return;
+        }
+
+        if (!this.isPanelVisible()) {
+            this.resetLoadedRows(false);
+            return;
+        }
+
+        await this.ensureOutcomeRowsForCurrentResult();
+    }
+
+    private async ensureOutcomeRowsForCurrentResult(): Promise<void> {
+        const result = this.lastResult;
+        if (!result || !isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval) || result.trades.length === 0) {
+            this.resetLoadedRows(false);
+            this.scheduleRender();
+            return;
+        }
+
+        const resultSignature = this.getResultSignature(result);
+        if (
+            this.loadedResultSignature === resultSignature
+            && !this.isLoading
+            && !this.loadError
+        ) {
+            this.scheduleRender();
             return;
         }
 
@@ -98,13 +146,13 @@ class PolymarketPanelService {
 
         if (targetTimes.length === 0) {
             this.resetLoadedRows(false);
-            this.render();
+            this.scheduleRender();
             return;
         }
 
         const requestId = ++this.loadNonce;
         this.isLoading = true;
-        this.render();
+        this.scheduleRender();
 
         try {
             const rows = await loadPolymarket5mOutcomesForTimeRange(
@@ -123,7 +171,9 @@ class PolymarketPanelService {
             this.outcomeByStartTs = new Map(matchedRows.map((row) => [row.event_start_ts, row] as const));
             this.historySummaryByStartTs.clear();
             this.isLoading = false;
-            this.render();
+            this.loadedResultSignature = resultSignature;
+            this.deployabilityCacheKey = "";
+            this.scheduleRender();
             void this.enrichHistoryInBackground(requestId, matchedRows);
         } catch (error) {
             if (requestId !== this.loadNonce) {
@@ -136,19 +186,20 @@ class PolymarketPanelService {
             this.isLoading = false;
             this.isEnrichingHistory = false;
             this.loadError = error instanceof Error ? error.message : String(error);
-            this.render();
+            this.loadedResultSignature = resultSignature;
+            this.scheduleRender();
         }
     }
 
     private async enrichHistoryInBackground(requestId: number, rows: PolymarketOutcomeRow[]): Promise<void> {
         if (rows.length === 0) {
             this.isEnrichingHistory = false;
-            this.render();
+            this.scheduleRender();
             return;
         }
 
         this.isEnrichingHistory = true;
-        this.render();
+        this.scheduleRender();
 
         const pendingRows = [...rows];
         const concurrency = 6;
@@ -165,7 +216,8 @@ class PolymarketPanelService {
                         return;
                     }
                     this.historySummaryByStartTs.set(row.event_start_ts, summary);
-                    this.render();
+                    this.deployabilityCacheKey = "";
+                    this.scheduleRender(120);
                 } catch {
                     if (requestId !== this.loadNonce) {
                         return;
@@ -180,10 +232,14 @@ class PolymarketPanelService {
         }
 
         this.isEnrichingHistory = false;
-        this.render();
+        this.scheduleRender();
     }
 
     private render(): void {
+        if (!this.isPanelVisible()) {
+            return;
+        }
+
         const dom = this.getDom();
         const result = this.lastResult;
         const supportedRun = isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval);
@@ -279,14 +335,13 @@ class PolymarketPanelService {
 
         const fillScope = this.readScope();
         const fillTargetPriceCents = this.readEntryPriceCents();
-        const analysis = analyzePolymarketDeployability(scoredTrades, evaluationRows, {
-            blockSize: 250,
-            shuffleSimulations: 1000,
-            shuffleSeed: 42,
+        const analysis = this.getDeployabilityAnalysis(
+            result,
+            scoredTrades,
+            evaluationRows,
             fillScope,
-            fillTargetPriceCents,
-            historySummaryByStartTs: this.historySummaryByStartTs,
-        });
+            fillTargetPriceCents
+        );
 
         // Render verdict
         const verdictBadge = dom.deployabilityVerdictBadge;
@@ -479,9 +534,92 @@ class PolymarketPanelService {
         this.isLoading = false;
         this.isEnrichingHistory = false;
         this.loadError = null;
+        this.loadedResultSignature = "";
+        this.deployabilityCacheKey = "";
+        this.deployabilityCache = null;
         if (clearResult) {
             this.lastResult = null;
         }
+    }
+
+    private isPanelVisible(): boolean {
+        const dom = this.getDom();
+        return !dom.polymarketTab.hidden && dom.polymarketTab.style.display !== "none";
+    }
+
+    private scheduleRender(delayMs = 0): void {
+        if (!this.isPanelVisible()) {
+            return;
+        }
+
+        if (this.renderTimeoutId !== null) {
+            window.clearTimeout(this.renderTimeoutId);
+            this.renderTimeoutId = null;
+        }
+        if (this.renderFrameId !== null) {
+            window.cancelAnimationFrame(this.renderFrameId);
+            this.renderFrameId = null;
+        }
+
+        const queueFrame = () => {
+            this.renderTimeoutId = null;
+            this.renderFrameId = window.requestAnimationFrame(() => {
+                this.renderFrameId = null;
+                this.render();
+            });
+        };
+
+        if (delayMs > 0) {
+            this.renderTimeoutId = window.setTimeout(queueFrame, delayMs);
+            return;
+        }
+
+        queueFrame();
+    }
+
+    private getResultSignature(result: BacktestResult): string {
+        const firstTrade = result.trades[0];
+        const lastTrade = result.trades[result.trades.length - 1];
+        return [
+            state.currentSymbol,
+            state.currentInterval,
+            result.trades.length,
+            parseTimeToUnixSeconds(firstTrade?.entryTime) ?? "na",
+            parseTimeToUnixSeconds(lastTrade?.entryTime) ?? "na",
+        ].join("|");
+    }
+
+    private getDeployabilityAnalysis(
+        result: BacktestResult,
+        scoredTrades: ReturnType<typeof extractScoredTrades>,
+        evaluationRows: PolymarketOutcomeRow[],
+        fillScope: PolymarketFillScope,
+        fillTargetPriceCents: number
+    ): ReturnType<typeof analyzePolymarketDeployability> {
+        const cacheKey = [
+            this.getResultSignature(result),
+            scoredTrades.length,
+            evaluationRows.length,
+            this.historySummaryByStartTs.size,
+            fillScope,
+            fillTargetPriceCents,
+        ].join("|");
+
+        if (this.deployabilityCacheKey === cacheKey && this.deployabilityCache) {
+            return this.deployabilityCache;
+        }
+
+        const analysis = analyzePolymarketDeployability(scoredTrades, evaluationRows, {
+            blockSize: 250,
+            shuffleSimulations: 1000,
+            shuffleSeed: 42,
+            fillScope,
+            fillTargetPriceCents,
+            historySummaryByStartTs: this.historySummaryByStartTs,
+        });
+        this.deployabilityCacheKey = cacheKey;
+        this.deployabilityCache = analysis;
+        return analysis;
     }
 
     private renderBridgeControls(): void {

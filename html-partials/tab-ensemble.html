@@ -203,6 +203,30 @@
             <div class="analysis-finder-status" id="ensemblePolymarketStatus">
                 Run Ensemble Polymarket to compare individual config edge, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, the majority-vote overlay, and asymmetric veto pairs against matched 5m Polymarket outcomes.
             </div>
+            <div class="finder-strategy-actions ensemble-lab__actions" role="group" aria-label="Ensemble Polymarket tradable recipe actions">
+                <button class="btn btn-secondary btn-compact" id="ensembleLoadConflictBacktestBtn" type="button">Load Conflict Backtest</button>
+                <button class="btn btn-secondary btn-compact" id="ensembleLoadBestVetoBacktestBtn" type="button">Load Best Veto Backtest</button>
+                <button class="btn btn-secondary btn-compact" id="ensembleSaveConflictRecipeBtn" type="button">Save Conflict Recipe</button>
+                <button class="btn btn-secondary btn-compact" id="ensembleSaveBestVetoRecipeBtn" type="button">Save Best Veto Recipe</button>
+            </div>
+            <div class="portfolio-lab__control-block ensemble-lab__panel" style="margin-top: 12px;">
+                <div class="portfolio-lab__control-grid ensemble-lab__control-grid">
+                    <label class="analysis-control ensemble-lab__field" for="ensembleSignalRecipeSelect">
+                        Saved Ensemble Signal Recipes
+                        <select class="param-input" id="ensembleSignalRecipeSelect">
+                            <option value="">Select saved ensemble signal recipe</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="finder-strategy-actions ensemble-lab__actions" role="group" aria-label="Saved ensemble signal recipe actions">
+                    <button class="btn btn-primary btn-compact" id="ensembleSignalRecipeDownloadScriptBtn" type="button">Download Recipe Bridge</button>
+                    <button class="btn btn-secondary btn-compact" id="ensembleSignalRecipeCopyEnvBtn" type="button">Copy Recipe Env</button>
+                    <button class="btn btn-secondary btn-compact" id="ensembleSignalRecipeDeleteBtn" type="button">Delete Recipe</button>
+                </div>
+                <div class="ensemble-lab__helper" id="ensembleSignalRecipeStatus">
+                    Save a tradable conflict-filter or best-veto recipe from the current run to export it later as an external signal.
+                </div>
+            </div>
             <div class="empty-state empty-state-compact ensemble-lab__polymarket-empty" id="ensemblePolymarketEmpty" style="display: none;">
                 This analysis currently supports BTCUSDT, ETHUSDT, SOLUSDT, and XRPUSDT on 5m.
             </div>

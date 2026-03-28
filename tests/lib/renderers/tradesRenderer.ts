@@ -22,6 +22,8 @@ export class TradesRenderer {
     private jumpHandlersBound = false;
     private tradeRenderGeneration = 0;
     private pendingDeferredRenderIds: number[] = [];
+    private lastPolymarketAnnotationKey = '';
+    private lastPolymarketAnnotationPromise: Promise<Trade[]> | null = null;
 
     private getDom(): TradesRendererDom {
         return this.dom ??= createTradesRendererDom();
@@ -62,6 +64,47 @@ export class TradesRenderer {
         // Check if already annotated
         const hasOutcomes = trades.some((trade) => trade.polymarketOutcome !== undefined && trade.polymarketOutcome !== null);
         if (hasOutcomes) {
+            return trades;
+        }
+
+        if (!this.isTradesPanelVisible()) {
+            return trades;
+        }
+
+        const cacheKey = this.getPolymarketAnnotationCacheKey(trades);
+        if (cacheKey && this.lastPolymarketAnnotationKey === cacheKey && this.lastPolymarketAnnotationPromise) {
+            return await this.lastPolymarketAnnotationPromise;
+        }
+
+        const annotationPromise = this.loadPolymarketOutcomesForTrades(trades);
+        this.lastPolymarketAnnotationKey = cacheKey;
+        this.lastPolymarketAnnotationPromise = annotationPromise;
+        return await annotationPromise;
+    }
+
+    private isTradesPanelVisible(): boolean {
+        const panel = document.getElementById('tradesTab') as HTMLElement | null;
+        return Boolean(panel && !panel.hidden && panel.style.display !== 'none');
+    }
+
+    private getPolymarketAnnotationCacheKey(trades: readonly Trade[]): string {
+        if (trades.length === 0) {
+            return '';
+        }
+
+        const firstTrade = trades[0];
+        const lastTrade = trades[trades.length - 1];
+        return [
+            state.currentSymbol,
+            state.currentInterval,
+            trades.length,
+            parseTimeToUnixSeconds(firstTrade.entryTime) ?? 'na',
+            parseTimeToUnixSeconds(lastTrade.entryTime) ?? 'na',
+        ].join('|');
+    }
+
+    private async loadPolymarketOutcomesForTrades(trades: Trade[]): Promise<Trade[]> {
+        if (trades.length === 0) {
             return trades;
         }
 
@@ -185,10 +228,10 @@ export class TradesRenderer {
         const evenContainer = container.querySelector<HTMLElement>('[data-parity-list="even"]');
 
         if (oddContainer) {
-            this.renderTradeItemsProgressively(renderGeneration, oddContainer, oddTrades, formatPrice, formatDate);
+            this.renderTradeItemsProgressively(renderGeneration, oddContainer, annotatedOdd, formatPrice, formatDate);
         }
         if (evenContainer) {
-            this.renderTradeItemsProgressively(renderGeneration, evenContainer, evenTrades, formatPrice, formatDate);
+            this.renderTradeItemsProgressively(renderGeneration, evenContainer, annotatedEven, formatPrice, formatDate);
         }
     }
 

@@ -32,6 +32,19 @@ export interface EntrySignalEvaluationRequest {
     freshnessBars?: number;
 }
 
+export interface PreparedEntrySignalEvaluationRequest {
+    strategyKey: string;
+    strategyName: string;
+    candles: OHLCVData[];
+    preparedSignals: Signal[];
+    backtestSignals?: Signal[];
+    sourceEntrySignals?: Signal[];
+    backtestSettings?: BacktestSettings;
+    capitalSettings?: EntrySignalCapitalSettings;
+    freshnessBars?: number;
+    rawSignalCount?: number;
+}
+
 export interface EntrySignalCapitalSettings extends Partial<CapitalSettings> {
     fixedTradeToggle?: boolean;
 }
@@ -390,12 +403,12 @@ function findPreparedSignalForTradeEntry(
 
 function findSourceSignalForTradeEntry(
     candles: OHLCVData[],
-    rawEntrySignals: Signal[],
+    rawEntrySignals: Signal[] | undefined,
     preparedSignal: Signal | null,
     direction: "long" | "short",
     settings: BacktestSettings
 ): Signal | null {
-    if (!preparedSignal) return null;
+    if (!preparedSignal || !rawEntrySignals || rawEntrySignals.length === 0) return null;
 
     const normalizedSettings = normalizeBacktestSettings(settings);
     const totalLeadBars =
@@ -454,6 +467,16 @@ function findSourceSignalForTradeEntry(
     };
 }
 
+function normalizePreparedSignalBacktestSettings(settings: BacktestSettings): BacktestSettings {
+    return {
+        ...settings,
+        executionModel: "signal_close",
+        tradeFilterMode: "none",
+        entrySettingsToggle: false,
+        slippageBps: 0,
+    };
+}
+
 export function evaluateLatestEntrySignal(
     request: EntrySignalEvaluationRequest
 ): EntrySignalEvaluationResult {
@@ -500,19 +523,63 @@ export function evaluateLatestEntrySignal(
         entrySignalsRaw,
         settings
     );
+    return evaluateLatestEntrySignalFromPreparedSignals({
+        strategyKey: request.strategyKey,
+        strategyName: strategy.name,
+        candles: request.candles,
+        preparedSignals,
+        backtestSignals: entrySignalsRaw,
+        sourceEntrySignals: entrySignalsRaw.filter((signal) => allowsSignalAsEntry(signal.type, normalizeTradeDirection(settings))),
+        backtestSettings: settings,
+        capitalSettings: request.capitalSettings,
+        freshnessBars: request.freshnessBars,
+        rawSignalCount: rawSignals.length,
+    });
+}
+
+export function evaluateLatestEntrySignalFromPreparedSignals(
+    request: PreparedEntrySignalEvaluationRequest
+): EntrySignalEvaluationResult {
+    if (!request || !request.strategyKey || !Array.isArray(request.candles) || !Array.isArray(request.preparedSignals)) {
+        return {
+            ok: false,
+            reason: "invalid_input",
+            rawSignalCount: 0,
+            preparedSignalCount: 0,
+            latestEntry: null,
+            latestTrade: null,
+        };
+    }
+
+    if (request.candles.length < 2) {
+        return {
+            ok: false,
+            reason: "insufficient_data",
+            rawSignalCount: request.rawSignalCount ?? request.preparedSignals.length,
+            preparedSignalCount: request.preparedSignals.length,
+            latestEntry: null,
+            latestTrade: null,
+        };
+    }
+
+    const settings = request.backtestSettings ?? {};
     const tradeDirection = normalizeTradeDirection(settings);
-    const entrySignals = preparedSignals.filter((signal) =>
+    const entrySignals = request.preparedSignals.filter((signal) =>
         allowsSignalAsEntry(signal.type, tradeDirection)
     );
     const capitalSettings = resolveEvaluationCapitalSettings(request);
+    const backtestSignals = request.backtestSignals ?? request.preparedSignals;
+    const effectiveBacktestSettings = request.backtestSignals
+        ? settings
+        : normalizePreparedSignalBacktestSettings(settings);
 
     const backtestResult = runBacktest(
         request.candles,
-        entrySignalsRaw,
+        backtestSignals,
         capitalSettings.initialCapital,
         capitalSettings.positionSize,
         capitalSettings.commission,
-        settings,
+        effectiveBacktestSettings,
         {
             mode: capitalSettings.sizingMode,
             fixedTradeAmount: capitalSettings.fixedTradeAmount,
@@ -523,8 +590,8 @@ export function evaluateLatestEntrySignal(
         return {
             ok: true,
             reason: "no_signals",
-            rawSignalCount: rawSignals.length,
-            preparedSignalCount: preparedSignals.length,
+            rawSignalCount: request.rawSignalCount ?? request.preparedSignals.length,
+            preparedSignalCount: request.preparedSignals.length,
             latestEntry: null,
             latestTrade: null,
         };
@@ -535,8 +602,8 @@ export function evaluateLatestEntrySignal(
         return {
             ok: false,
             reason: "signal_time_not_found",
-            rawSignalCount: rawSignals.length,
-            preparedSignalCount: preparedSignals.length,
+            rawSignalCount: request.rawSignalCount ?? request.preparedSignals.length,
+            preparedSignalCount: request.preparedSignals.length,
             latestEntry: null,
             latestTrade: null,
         };
@@ -550,13 +617,14 @@ export function evaluateLatestEntrySignal(
         entryTimeSec,
         latestTrade.entryPrice
     );
-    const latestSignal: Signal = findSourceSignalForTradeEntry(
+    const matchedSourceSignal = findSourceSignalForTradeEntry(
         request.candles,
-        entrySignalsRaw,
+        request.sourceEntrySignals,
         matchedPreparedSignal,
         direction,
         settings
-    ) ?? matchedPreparedSignal ?? {
+    );
+    const latestSignal: Signal = matchedSourceSignal ?? matchedPreparedSignal ?? {
         time: latestTrade.entryTime,
         type: toSignalType(direction),
         price: latestTrade.entryPrice,
@@ -579,8 +647,8 @@ export function evaluateLatestEntrySignal(
         return {
             ok: false,
             reason: "signal_time_not_found",
-            rawSignalCount: rawSignals.length,
-            preparedSignalCount: preparedSignals.length,
+            rawSignalCount: request.rawSignalCount ?? request.preparedSignals.length,
+            preparedSignalCount: request.preparedSignals.length,
             latestEntry: null,
             latestTrade: null,
         };
@@ -591,7 +659,7 @@ export function evaluateLatestEntrySignal(
 
     const latestEntry: EvaluatedEntrySignal = buildEvaluatedEntrySignal({
         strategyKey: request.strategyKey,
-        strategyName: strategy.name,
+        strategyName: request.strategyName,
         sourceSignal: latestSignal,
         direction,
         signalTimeSec,
@@ -616,7 +684,7 @@ export function evaluateLatestEntrySignal(
 
             const pendingSourceSignal = findSourceSignalForTradeEntry(
                 request.candles,
-                entrySignalsRaw,
+                request.sourceEntrySignals,
                 signal,
                 pendingDirection,
                 settings
@@ -628,7 +696,7 @@ export function evaluateLatestEntrySignal(
             if (!pendingEntry || sigTimeSec > (pendingEntry.entryTimeSec ?? pendingEntry.signalTimeSec)) {
                 pendingEntry = buildEvaluatedEntrySignal({
                     strategyKey: request.strategyKey,
-                    strategyName: strategy.name,
+                    strategyName: request.strategyName,
                     sourceSignal: pendingSourceSignal,
                     direction: pendingDirection,
                     signalTimeSec: pendingSourceTimeSec,
@@ -643,8 +711,8 @@ export function evaluateLatestEntrySignal(
 
     return {
         ok: true,
-        rawSignalCount: rawSignals.length,
-        preparedSignalCount: preparedSignals.length,
+        rawSignalCount: request.rawSignalCount ?? request.preparedSignals.length,
+        preparedSignalCount: request.preparedSignals.length,
         latestEntry,
         latestTrade: {
             entryTimeSec,

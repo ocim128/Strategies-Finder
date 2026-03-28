@@ -4,6 +4,15 @@ import { sliceOhlcvByBlock } from "./block-selector";
 import { trimToClosedCandles } from "./closed-candle-utils";
 import { createEnsembleLabDom, type EnsembleLabDom } from "./strategy-ensemble-dom";
 import {
+    buildEnsembleRecipeBotEnvSnippet,
+    buildEnsembleRecipeBridgeScript,
+    resolveExternalSignalSymbol,
+    slugifyEnsembleSignalRecipeName,
+} from "./ensemble-signal-bridge";
+import {
+    buildPreparedSignalsForEnsembleRecipe,
+} from "./ensemble-signal-recipes";
+import {
     buildSignalArtifact,
     countDistinctFamilies,
     runConfig,
@@ -24,6 +33,7 @@ import {
 } from "./strategy-ensemble-renderer";
 import {
     runEnsemblePolymarket,
+    type EnsemblePolymarketRunResult,
 } from "./strategy-ensemble-polymarket-engine";
 import {
     renderEnsemblePolymarketResults,
@@ -31,7 +41,9 @@ import {
 } from "./strategy-ensemble-polymarket-renderer";
 import {
     settingsManager,
+    sortEnsembleSignalRecipesNewestFirst,
     sortStrategyConfigsNewestFirst,
+    type EnsembleSignalRecipe,
     type StrategyConfig,
 } from "./settings-manager";
 import { state } from "./state";
@@ -66,6 +78,8 @@ class StrategyEnsembleService {
     private contextOrder: string[] = [];
     private lastContextToggleName: string | null = null;
     private targetMenuOpen = false;
+    private lastPolymarketRunResult: EnsemblePolymarketRunResult | null = null;
+    private lastPolymarketSelection: { targetName: string; contextNames: string[]; symbol: string; interval: string } | null = null;
 
     private getDom(): EnsembleLabDom {
         return this.dom ??= createEnsembleLabDom();
@@ -87,6 +101,7 @@ class StrategyEnsembleService {
         this.syncReadouts(dom);
         this.populateConfigs(dom);
         this.syncPolymarketAvailability();
+        this.syncSavedSignalRecipeOptions();
         this.initialized = true;
     }
 
@@ -112,6 +127,30 @@ class StrategyEnsembleService {
         });
         dom.ensembleRunPolymarketBtn.addEventListener("click", () => {
             void this.runPolymarket();
+        });
+        dom.ensembleLoadConflictBacktestBtn.addEventListener("click", () => {
+            void this.loadConflictFilterBacktest();
+        });
+        dom.ensembleLoadBestVetoBacktestBtn.addEventListener("click", () => {
+            void this.loadBestVetoBacktest();
+        });
+        dom.ensembleSaveConflictRecipeBtn.addEventListener("click", () => {
+            this.saveConflictFilterRecipe();
+        });
+        dom.ensembleSaveBestVetoRecipeBtn.addEventListener("click", () => {
+            this.saveBestVetoRecipe();
+        });
+        dom.ensembleSignalRecipeSelect.addEventListener("change", () => {
+            this.syncSavedSignalRecipeControls();
+        });
+        dom.ensembleSignalRecipeDownloadScriptBtn.addEventListener("click", () => {
+            void this.downloadSelectedSignalRecipeBridge();
+        });
+        dom.ensembleSignalRecipeCopyEnvBtn.addEventListener("click", () => {
+            void this.copySelectedSignalRecipeEnv();
+        });
+        dom.ensembleSignalRecipeDeleteBtn.addEventListener("click", () => {
+            this.deleteSelectedSignalRecipe();
         });
 
         dom.ensembleRefreshConfigsBtn.addEventListener("click", () => {
@@ -220,6 +259,71 @@ class StrategyEnsembleService {
         dom.ensembleIntervalBadge.textContent = state.currentInterval;
     }
 
+    private syncSavedSignalRecipeOptions(preferredName?: string): void {
+        const dom = this.getDom();
+        const recipes = sortEnsembleSignalRecipesNewestFirst(settingsManager.loadAllEnsembleSignalRecipes());
+        const selectedName = preferredName ?? dom.ensembleSignalRecipeSelect.value;
+
+        dom.ensembleSignalRecipeSelect.innerHTML = '<option value="">Select saved ensemble signal recipe</option>';
+        for (const recipe of recipes) {
+            const option = document.createElement("option");
+            option.value = recipe.name;
+            option.textContent = `${recipe.name} | ${this.describeRecipeMode(recipe.mode)} | ${recipe.symbol} ${recipe.interval}`;
+            dom.ensembleSignalRecipeSelect.appendChild(option);
+        }
+
+        if (selectedName && recipes.some((recipe) => recipe.name === selectedName)) {
+            dom.ensembleSignalRecipeSelect.value = selectedName;
+        } else {
+            dom.ensembleSignalRecipeSelect.value = recipes[0]?.name ?? "";
+        }
+
+        this.syncSavedSignalRecipeControls();
+    }
+
+    private syncSavedSignalRecipeControls(): void {
+        const dom = this.getDom();
+        const selectedRecipe = this.getSelectedSignalRecipe();
+        const hasPolymarketResult = this.lastPolymarketRunResult !== null;
+        const hasBestVeto = Boolean(this.lastPolymarketRunResult?.vetoScan.bestPair);
+
+        dom.ensembleLoadConflictBacktestBtn.disabled = !hasPolymarketResult;
+        dom.ensembleSaveConflictRecipeBtn.disabled = !hasPolymarketResult;
+        dom.ensembleLoadBestVetoBacktestBtn.disabled = !hasBestVeto;
+        dom.ensembleSaveBestVetoRecipeBtn.disabled = !hasBestVeto;
+        dom.ensembleSignalRecipeDownloadScriptBtn.disabled = !selectedRecipe;
+        dom.ensembleSignalRecipeCopyEnvBtn.disabled = !selectedRecipe;
+        dom.ensembleSignalRecipeDeleteBtn.disabled = !selectedRecipe;
+
+        if (selectedRecipe) {
+            this.updateSignalRecipeStatus(this.describeSelectedRecipe(selectedRecipe));
+            return;
+        }
+
+        if (hasPolymarketResult) {
+            this.updateSignalRecipeStatus(
+                "Current Polymarket run is ready. Load a preview backtest or save the conflict-filter / best-veto recipe for later export."
+            );
+            return;
+        }
+
+        this.updateSignalRecipeStatus(
+            "Save a tradable conflict-filter or best-veto recipe from the current run to export it later as an external signal."
+        );
+    }
+
+    private updateSignalRecipeStatus(message: string): void {
+        this.getDom().ensembleSignalRecipeStatus.textContent = message;
+    }
+
+    private getSelectedSignalRecipe(): EnsembleSignalRecipe | null {
+        const selectedName = this.getDom().ensembleSignalRecipeSelect.value.trim();
+        if (!selectedName) {
+            return null;
+        }
+        return settingsManager.loadEnsembleSignalRecipe(selectedName);
+    }
+
     private populateConfigs(dom: EnsembleLabDom): void {
         const previousTarget = dom.ensembleTargetSelect.value.trim();
         const previousChecked = new Set(
@@ -228,6 +332,7 @@ class StrategyEnsembleService {
                 .map(([name]) => name)
         );
         const previousFamilyFilter = dom.ensembleContextFamilyFilter.value;
+        const previousRecipeSelection = dom.ensembleSignalRecipeSelect.value;
         const configs = sortStrategyConfigsNewestFirst(settingsManager.loadAllStrategyConfigs());
 
         this.contextCheckboxes.clear();
@@ -269,7 +374,10 @@ class StrategyEnsembleService {
             this.setConfigAvailability(false);
             resetStrategyEnsembleResultPanels(this.getDom());
             resetEnsemblePolymarketPanel(this.getDom());
+            this.lastPolymarketRunResult = null;
+            this.lastPolymarketSelection = null;
             this.updateStatus("Save strategy configurations, then select a target and context strategies to run ensemble analysis.");
+            this.syncSavedSignalRecipeOptions(previousRecipeSelection);
             return;
         }
 
@@ -340,7 +448,10 @@ class StrategyEnsembleService {
         this.applyContextFilter();
         resetStrategyEnsembleResultPanels(this.getDom());
         resetEnsemblePolymarketPanel(this.getDom());
+        this.lastPolymarketRunResult = null;
+        this.lastPolymarketSelection = null;
         this.syncPolymarketAvailability();
+        this.syncSavedSignalRecipeOptions(previousRecipeSelection);
         this.updateStatus("Select a target config, keep one or more context configs, then run Strategy Ensemble Lab.");
     }
 
@@ -484,9 +595,12 @@ class StrategyEnsembleService {
 
     private invalidateRunContext(message: string): void {
         this.runContext = null;
+        this.lastPolymarketRunResult = null;
+        this.lastPolymarketSelection = null;
         this.updateStatus(message);
         resetEnsemblePolymarketPanel(this.getDom());
         this.syncPolymarketAvailability();
+        this.syncSavedSignalRecipeControls();
     }
 
     private updateStatus(message: string): void {
@@ -581,6 +695,17 @@ class StrategyEnsembleService {
             return "Short";
         }
         return "Both";
+    }
+
+    private describeRecipeMode(mode: EnsembleSignalRecipe["mode"]): string {
+        return mode === "primary_veto" ? "Primary + Veto" : "Target Conflict Filter";
+    }
+
+    private describeSelectedRecipe(recipe: EnsembleSignalRecipe): string {
+        const metrics = recipe.metrics;
+        const winRateLabel = `${(metrics.winRate * 100).toFixed(1)}%`;
+        const keptTradesLabel = `${metrics.keptTrades} kept trade${metrics.keptTrades === 1 ? "" : "s"}`;
+        return `${recipe.name} | ${this.describeRecipeMode(recipe.mode)} | ${recipe.symbol} ${recipe.interval} | ${keptTradesLabel} | ${winRateLabel} win rate.`;
     }
 
     private renderTargetSummary(): void {
@@ -835,6 +960,333 @@ class StrategyEnsembleService {
         };
     }
 
+    private cloneStrategyConfigSnapshot(config: StrategyConfig): StrategyConfig {
+        return {
+            ...config,
+            strategyParams: { ...config.strategyParams },
+            backtestSettings: { ...config.backtestSettings },
+        };
+    }
+
+    private loadRequiredStrategyConfigSnapshot(configName: string, usage: string): StrategyConfig {
+        const config = settingsManager.loadStrategyConfig(configName);
+        if (!config) {
+            throw new Error(`Saved config "${configName}" is no longer available for ${usage}.`);
+        }
+        return this.cloneStrategyConfigSnapshot(config);
+    }
+
+    private buildUniqueSignalRecipeName(baseName: string): string {
+        const existingNames = new Set(
+            settingsManager.loadAllEnsembleSignalRecipes().map((recipe) => recipe.name)
+        );
+
+        if (!existingNames.has(baseName)) {
+            return baseName;
+        }
+
+        let suffix = 2;
+        let candidate = `${baseName} (${suffix})`;
+        while (existingNames.has(candidate)) {
+            suffix += 1;
+            candidate = `${baseName} (${suffix})`;
+        }
+        return candidate;
+    }
+
+    private buildConflictFilterRecipeFromCurrentRun(): EnsembleSignalRecipe {
+        const runResult = this.lastPolymarketRunResult;
+        const selection = this.lastPolymarketSelection;
+        if (!runResult || !selection) {
+            throw new Error("Run Ensemble Polymarket first.");
+        }
+
+        const targetConfig = this.loadRequiredStrategyConfigSnapshot(selection.targetName, "the conflict-filter recipe");
+        const contextConfigs = selection.contextNames.map((name) =>
+            this.loadRequiredStrategyConfigSnapshot(name, "the conflict-filter recipe")
+        );
+        const overlay = runResult.conflictFilteredOverlay;
+        const nowIso = new Date().toISOString();
+        const overlapRate = overlay.evaluatedEvents > 0
+            ? overlay.eventsWithVotes / overlay.evaluatedEvents
+            : null;
+
+        return {
+            name: this.buildUniqueSignalRecipeName(
+                `${selection.symbol} ${selection.interval} conflict ${selection.targetName}`
+            ),
+            createdAt: nowIso,
+            updatedAt: nowIso,
+            source: "ensemble_polymarket",
+            symbol: selection.symbol,
+            interval: selection.interval,
+            mode: "target_conflict_filter",
+            anchorConfigName: targetConfig.name,
+            anchorConfig: targetConfig,
+            componentConfigs: [targetConfig, ...contextConfigs],
+            notes: `Aligned one-side conflict-filter overlay derived from ${selection.targetName} with ${contextConfigs.length} context config${contextConfigs.length === 1 ? "" : "s"}. This saved recipe replays the actual conflict-filtered overlay by emitting one synthetic ensemble entry whenever the selected configs agree on only one side at the same event time.`,
+            metrics: {
+                keptTrades: overlay.scoredEvents,
+                wins: overlay.wins,
+                losses: overlay.losses,
+                winRate: overlay.winRate,
+                retentionRate: null,
+                coverage: overlay.coverage,
+                overlapRate,
+                winRateLift: null,
+                wilsonLift: null,
+            },
+        };
+    }
+
+    private buildBestVetoRecipeFromCurrentRun(): EnsembleSignalRecipe {
+        const runResult = this.lastPolymarketRunResult;
+        const selection = this.lastPolymarketSelection;
+        const bestPair = runResult?.vetoScan.bestPair ?? null;
+        if (!runResult || !selection || !bestPair) {
+            throw new Error("Run Ensemble Polymarket and produce a best veto pair first.");
+        }
+
+        const primaryConfig = this.loadRequiredStrategyConfigSnapshot(bestPair.primaryConfigName, "the best-veto recipe");
+        const vetoConfig = this.loadRequiredStrategyConfigSnapshot(bestPair.vetoConfigName, "the best-veto recipe");
+        const nowIso = new Date().toISOString();
+
+        return {
+            name: this.buildUniqueSignalRecipeName(
+                `${selection.symbol} ${selection.interval} veto ${bestPair.primaryConfigName} -> ${bestPair.vetoConfigName}`
+            ),
+            createdAt: nowIso,
+            updatedAt: nowIso,
+            source: "ensemble_polymarket",
+            symbol: selection.symbol,
+            interval: selection.interval,
+            mode: "primary_veto",
+            anchorConfigName: primaryConfig.name,
+            anchorConfig: primaryConfig,
+            componentConfigs: [primaryConfig, vetoConfig],
+            primaryConfigName: primaryConfig.name,
+            vetoConfigName: vetoConfig.name,
+            notes: `Primary-veto recipe derived from the best asymmetric veto pair. Trade ${primaryConfig.name}, but skip the event when ${vetoConfig.name} fires the opposite Polymarket side on the same event.`,
+            metrics: {
+                keptTrades: bestPair.keptEvents,
+                wins: bestPair.keptWins,
+                losses: bestPair.keptLosses,
+                winRate: bestPair.postVetoWinRate,
+                retentionRate: bestPair.retentionRate,
+                coverage: null,
+                overlapRate: bestPair.overlapRate,
+                winRateLift: bestPair.winRateLift,
+                wilsonLift: bestPair.wilsonLift,
+            },
+        };
+    }
+
+    private async loadRecipeBacktest(recipe: EnsembleSignalRecipe, successMessage: string): Promise<void> {
+        if (recipe.symbol !== state.currentSymbol || recipe.interval !== state.currentInterval) {
+            throw new Error(`Recipe ${recipe.name} is pinned to ${recipe.symbol} ${recipe.interval}. Switch the chart to that market first.`);
+        }
+
+        const candles = this.prepareCandles();
+        if (candles.length < 2) {
+            throw new Error("Not enough closed candle data loaded to preview this recipe.");
+        }
+
+        const resolved = buildPreparedSignalsForEnsembleRecipe({
+            recipe,
+            candles,
+            getStrategy: (strategyKey) => strategyRegistry.get(strategyKey),
+        });
+
+        if (resolved.preparedSignals.length === 0) {
+            throw new Error(`Recipe ${recipe.name} produced no prepared signals on the current chart window.`);
+        }
+
+        clearBacktestResults("ensemble_recipe_preview_reset");
+        await settingsManager.applyStrategyConfig(resolved.anchorConfig);
+        const preview = await backtestService.evaluateSignalsOnData(
+            candles,
+            recipe.interval,
+            resolved.preparedSignals,
+            resolved.anchorBacktestSettings,
+            settingsManager.resolveCapitalFromConfig(resolved.anchorConfig)
+        );
+        commitBacktestResult(preview.result, "ensemble_preview", {
+            parityResults: null,
+            reason: "ensemble_signal_recipe_preview",
+        });
+
+        this.updateStatus(successMessage);
+        this.updateSignalRecipeStatus(
+            `${recipe.name} preview loaded. ${preview.result.totalTrades} backtest trade${preview.result.totalTrades === 1 ? "" : "s"} generated from ${resolved.description}.`
+        );
+    }
+
+    private async loadConflictFilterBacktest(): Promise<void> {
+        try {
+            const recipe = this.buildConflictFilterRecipeFromCurrentRun();
+            await this.loadRecipeBacktest(
+                recipe,
+                `Loaded aligned one-side conflict-filter overlay preview from ${recipe.anchorConfigName}.`
+            );
+            uiManager.showToast("Conflict-filter preview loaded.", "success");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.updateSignalRecipeStatus(message);
+            uiManager.showToast(message, "error");
+        }
+    }
+
+    private async loadBestVetoBacktest(): Promise<void> {
+        try {
+            const recipe = this.buildBestVetoRecipeFromCurrentRun();
+            await this.loadRecipeBacktest(
+                recipe,
+                `Loaded primary-veto backtest preview from ${recipe.anchorConfigName}.`
+            );
+            uiManager.showToast("Best-veto preview loaded.", "success");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.updateSignalRecipeStatus(message);
+            uiManager.showToast(message, "error");
+        }
+    }
+
+    private saveConflictFilterRecipe(): void {
+        try {
+            const persisted = settingsManager.upsertEnsembleSignalRecipe(this.buildConflictFilterRecipeFromCurrentRun());
+            this.syncSavedSignalRecipeOptions(persisted.name);
+            this.updateSignalRecipeStatus(`Saved conflict-filter recipe: ${persisted.name}.`);
+            uiManager.showToast(`Saved recipe: ${persisted.name}`, "success");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.updateSignalRecipeStatus(message);
+            uiManager.showToast(message, "error");
+        }
+    }
+
+    private saveBestVetoRecipe(): void {
+        try {
+            const persisted = settingsManager.upsertEnsembleSignalRecipe(this.buildBestVetoRecipeFromCurrentRun());
+            this.syncSavedSignalRecipeOptions(persisted.name);
+            this.updateSignalRecipeStatus(`Saved best-veto recipe: ${persisted.name}.`);
+            uiManager.showToast(`Saved recipe: ${persisted.name}`, "success");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.updateSignalRecipeStatus(message);
+            uiManager.showToast(message, "error");
+        }
+    }
+
+    private async downloadSelectedSignalRecipeBridge(): Promise<void> {
+        const recipe = this.getSelectedSignalRecipe();
+        if (!recipe) {
+            const message = "Select a saved ensemble signal recipe first.";
+            this.updateSignalRecipeStatus(message);
+            uiManager.showToast(message, "error");
+            return;
+        }
+
+        const botSymbol = resolveExternalSignalSymbol(recipe.symbol);
+        if (!botSymbol) {
+            const message = `Recipe ${recipe.name} uses unsupported external-signal symbol ${recipe.symbol}.`;
+            this.updateSignalRecipeStatus(message);
+            uiManager.showToast(message, "error");
+            return;
+        }
+
+        const slug = slugifyEnsembleSignalRecipeName(recipe.name);
+        const script = buildEnsembleRecipeBridgeScript(recipe, slug, botSymbol);
+        this.downloadTextFile(`${slug}.bridge.ps1`, script, "text/plain;charset=utf-8");
+        this.updateSignalRecipeStatus(`Downloaded recipe bridge script for ${recipe.name}.`);
+        uiManager.showToast(`Downloaded bridge for ${recipe.name}`, "success");
+    }
+
+    private async copySelectedSignalRecipeEnv(): Promise<void> {
+        const recipe = this.getSelectedSignalRecipe();
+        if (!recipe) {
+            const message = "Select a saved ensemble signal recipe first.";
+            this.updateSignalRecipeStatus(message);
+            uiManager.showToast(message, "error");
+            return;
+        }
+
+        const botSymbol = resolveExternalSignalSymbol(recipe.symbol);
+        if (!botSymbol) {
+            const message = `Recipe ${recipe.name} uses unsupported external-signal symbol ${recipe.symbol}.`;
+            this.updateSignalRecipeStatus(message);
+            uiManager.showToast(message, "error");
+            return;
+        }
+
+        const slug = slugifyEnsembleSignalRecipeName(recipe.name);
+        const snippet = buildEnsembleRecipeBotEnvSnippet(recipe, slug, botSymbol);
+        const copied = await this.copyToClipboard(snippet);
+        if (!copied) {
+            const message = `Failed to copy env snippet for ${recipe.name}.`;
+            this.updateSignalRecipeStatus(message);
+            uiManager.showToast(message, "error");
+            return;
+        }
+
+        this.updateSignalRecipeStatus(`Copied recipe env snippet for ${recipe.name}.`);
+        uiManager.showToast(`Copied env snippet for ${recipe.name}`, "success");
+    }
+
+    private deleteSelectedSignalRecipe(): void {
+        const recipe = this.getSelectedSignalRecipe();
+        if (!recipe) {
+            const message = "Select a saved ensemble signal recipe first.";
+            this.updateSignalRecipeStatus(message);
+            uiManager.showToast(message, "error");
+            return;
+        }
+
+        if (!window.confirm(`Delete saved ensemble signal recipe "${recipe.name}"?`)) {
+            return;
+        }
+
+        const deleted = settingsManager.deleteEnsembleSignalRecipe(recipe.name);
+        if (!deleted) {
+            const message = `Failed to delete recipe ${recipe.name}.`;
+            this.updateSignalRecipeStatus(message);
+            uiManager.showToast(message, "error");
+            return;
+        }
+
+        this.syncSavedSignalRecipeOptions();
+        this.updateSignalRecipeStatus(`Deleted recipe ${recipe.name}.`);
+        uiManager.showToast(`Deleted recipe: ${recipe.name}`, "success");
+    }
+
+    private downloadTextFile(fileName: string, content: string, mime: string): void {
+        const blob = new Blob([content], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }
+
+    private async copyToClipboard(text: string): Promise<boolean> {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch {
+            const textarea = document.createElement("textarea");
+            textarea.value = text;
+            textarea.style.position = "fixed";
+            textarea.style.left = "-9999px";
+            document.body.appendChild(textarea);
+            textarea.select();
+            const copied = document.execCommand("copy");
+            document.body.removeChild(textarea);
+            return copied;
+        }
+    }
+
     private async runPolymarket(): Promise<void> {
         const dom = this.getDom();
         const targetName = this.getSelectedTargetName();
@@ -887,15 +1339,26 @@ class StrategyEnsembleService {
                 onProgress: (message) => this.updatePolymarketStatus(message),
             });
 
+            this.lastPolymarketRunResult = result;
+            this.lastPolymarketSelection = {
+                targetName,
+                contextNames: [...contextNames],
+                symbol: state.currentSymbol,
+                interval: state.currentInterval,
+            };
             renderEnsemblePolymarketResults(dom, result);
             this.updatePolymarketStatus(
                 `Ensemble Polymarket ready. ${selectedConfigNames.length} configs scored across ${result.ensembleSummary.totalScoredTrades} executed trades.`
             );
+            this.syncSavedSignalRecipeControls();
             uiManager.showToast("Ensemble Polymarket complete.", "success");
         } catch (error) {
+            this.lastPolymarketRunResult = null;
+            this.lastPolymarketSelection = null;
             console.error("[StrategyEnsembleLab][Polymarket] Run failed", error);
             resetEnsemblePolymarketPanel(dom);
             this.syncPolymarketAvailability();
+            this.syncSavedSignalRecipeControls();
             uiManager.showToast(
                 `Ensemble Polymarket failed: ${error instanceof Error ? error.message : String(error)}`,
                 "error"
