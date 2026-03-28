@@ -12,14 +12,24 @@ function getMemoized(cache: WeakMap<OHLCVData[], number[]>, data: OHLCVData[], m
 
 const _h = new WeakMap<OHLCVData[], number[]>();
 const _l = new WeakMap<OHLCVData[], number[]>();
+const _o = new WeakMap<OHLCVData[], number[]>();
 const _c = new WeakMap<OHLCVData[], number[]>();
 const _v = new WeakMap<OHLCVData[], number[]>();
+const _mid = new WeakMap<OHLCVData[], number[]>();
+const _typical = new WeakMap<OHLCVData[], number[]>();
+const _weightedClose = new WeakMap<OHLCVData[], number[]>();
 const _clean = new WeakMap<OHLCVData[], OHLCVData[]>();
 
 export const getHighs = (data: OHLCVData[]): number[] => getMemoized(_h, data, d => d.high);
 export const getLows = (data: OHLCVData[]): number[] => getMemoized(_l, data, d => d.low);
+export const getOpens = (data: OHLCVData[]): number[] => getMemoized(_o, data, d => d.open);
 export const getCloses = (data: OHLCVData[]): number[] => getMemoized(_c, data, d => d.close);
 export const getVolumes = (data: OHLCVData[]): number[] => getMemoized(_v, data, d => d.volume);
+export const getMidpoints = (data: OHLCVData[]): number[] => getMemoized(_mid, data, d => (d.high + d.low) / 2);
+export const getTypicalPrices = (data: OHLCVData[]): number[] =>
+    getMemoized(_typical, data, d => (d.high + d.low + d.close) / 3);
+export const getWeightedClosePrices = (data: OHLCVData[]): number[] =>
+    getMemoized(_weightedClose, data, d => (d.high + d.low + 2 * d.close) / 4);
 
 // ============================================================================
 // Signal Helpers

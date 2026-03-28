@@ -15,6 +15,7 @@ import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { uiManager } from "./ui-manager";
 import { strategyRegistry } from "../strategyRegistry";
+import { resolveBacktestResultMarketContext } from "./backtest-result-context";
 import {
     analyzePolymarketDeployability,
     extractScoredTrades,
@@ -107,8 +108,9 @@ class PolymarketPanelService {
         this.lastResult = result;
         this.loadError = null;
         this.deployabilityCacheKey = "";
+        const resultContext = resolveBacktestResultMarketContext(result);
 
-        if (!result || !isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval) || result.trades.length === 0) {
+        if (!result || !resultContext || !isSupportedPolymarket5mRun(resultContext.symbol, resultContext.interval) || result.trades.length === 0) {
             this.resetLoadedRows(false);
             this.scheduleRender();
             return;
@@ -124,7 +126,8 @@ class PolymarketPanelService {
 
     private async ensureOutcomeRowsForCurrentResult(): Promise<void> {
         const result = this.lastResult;
-        if (!result || !isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval) || result.trades.length === 0) {
+        const resultContext = resolveBacktestResultMarketContext(result);
+        if (!result || !resultContext || !isSupportedPolymarket5mRun(resultContext.symbol, resultContext.interval) || result.trades.length === 0) {
             this.resetLoadedRows(false);
             this.scheduleRender();
             return;
@@ -156,7 +159,7 @@ class PolymarketPanelService {
 
         try {
             const rows = await loadPolymarket5mOutcomesForTimeRange(
-                state.currentSymbol,
+                resultContext.symbol,
                 Math.min(...targetTimes),
                 Math.max(...targetTimes)
             );
@@ -578,11 +581,12 @@ class PolymarketPanelService {
     }
 
     private getResultSignature(result: BacktestResult): string {
+        const resultContext = resolveBacktestResultMarketContext(result);
         const firstTrade = result.trades[0];
         const lastTrade = result.trades[result.trades.length - 1];
         return [
-            state.currentSymbol,
-            state.currentInterval,
+            resultContext?.symbol ?? state.currentSymbol,
+            resultContext?.interval ?? state.currentInterval,
             result.trades.length,
             parseTimeToUnixSeconds(firstTrade?.entryTime) ?? "na",
             parseTimeToUnixSeconds(lastTrade?.entryTime) ?? "na",

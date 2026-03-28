@@ -49,7 +49,8 @@ import {
 } from "./settings-manager";
 import { state } from "./state";
 import { clearBacktestResults, commitBacktestResult } from "./state-actions";
-import { timeKey, type OHLCVData, type Signal } from "./strategies";
+import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
+import { timeKey, type BacktestSettings, type OHLCVData, type Signal } from "./strategies";
 import { setActiveBacktestRerunContext } from "./backtest-rerun-context";
 import type {
     ConfigRunArtifact,
@@ -68,6 +69,7 @@ import {
     loadPolymarket5mOutcomesForChart,
 } from "./polymarket-btc5m";
 import { setVisible } from "./dom-utils";
+import { formatJakartaTime } from "./timezone-utils";
 
 class StrategyEnsembleService {
     private static readonly MAX_REPLACEMENT_ROWS = 12;
@@ -228,11 +230,13 @@ class StrategyEnsembleService {
         });
 
         state.subscribe("currentSymbol", () => {
+            this.clearActiveEnsemblePreview("Chart market changed. Frozen ensemble preview cleared.");
             this.syncReadouts(dom);
             this.syncPolymarketAvailability();
             this.invalidateRunContext("Target symbol changed. Run Strategy Ensemble Lab again.");
         });
         state.subscribe("currentInterval", () => {
+            this.clearActiveEnsemblePreview("Chart timeframe changed. Frozen ensemble preview cleared.");
             this.syncReadouts(dom);
             this.syncPolymarketAvailability();
             this.invalidateRunContext("Timeframe changed. Run Strategy Ensemble Lab again.");
@@ -320,6 +324,15 @@ class StrategyEnsembleService {
 
     private updateSignalRecipeStatus(message: string): void {
         this.getDom().ensembleSignalRecipeStatus.textContent = message;
+    }
+
+    private clearActiveEnsemblePreview(message: string): void {
+        if (state.currentBacktestResultSource !== "ensemble_preview" || !state.currentBacktestResult) {
+            return;
+        }
+
+        clearBacktestResults("ensemble_preview_context_changed");
+        this.updateSignalRecipeStatus(`${message} Load the preview again after switching back to the original market.`);
     }
 
     private getSelectedSignalRecipe(): EnsembleSignalRecipe | null {
@@ -691,16 +704,51 @@ class StrategyEnsembleService {
     }
 
     private describeTradeDirection(direction: string | null | undefined): string {
-        if (!direction) {
-            return "Both";
+        switch (direction) {
+            case "long":
+                return "Long";
+            case "short":
+                return "Short";
+            case "combined":
+                return "Combine";
+            case "both_flip_loss_2":
+                return "Both Flip Loss 2";
+            case "both":
+            case undefined:
+            case null:
+            case "":
+                return "Both";
+            default:
+                return String(direction);
         }
-        if (direction === "long") {
-            return "Long";
+    }
+
+    private describeExecutionModel(model: string | null | undefined): string {
+        switch (model) {
+            case "signal_close":
+                return "Signal Close";
+            case "next_open":
+                return "Next Open";
+            case "next_close":
+                return "Next Close";
+            case undefined:
+            case null:
+            case "":
+                return "Next Open";
+            default:
+                return String(model);
         }
-        if (direction === "short") {
-            return "Short";
-        }
-        return "Both";
+    }
+
+    private formatPreviewExecutionSettings(config: StrategyConfig): string {
+        const settings = resolveBacktestSettingsFromRaw(
+            config.backtestSettings as BacktestSettings,
+            { coerceWithoutUiToggles: true }
+        );
+        return [
+            `direction ${this.describeTradeDirection(settings.tradeDirection)}`,
+            `execution ${this.describeExecutionModel(settings.executionModel)}`,
+        ].join(" | ");
     }
 
     private describeRecipeMode(mode: EnsembleSignalRecipe["mode"]): string {
@@ -930,26 +978,25 @@ class StrategyEnsembleService {
             parityResults: null,
             reason: "ensemble_preview",
         });
+        const frozenPreviewResult = preview.result;
+        const frozenTargetConfig = this.cloneStrategyConfigSnapshot(targetArtifact.config);
+        const frozenRuleLabel = preview.row.rule;
+        const previewExecutionLabel = this.formatPreviewExecutionSettings(frozenTargetConfig);
         setActiveBacktestRerunContext({
             source: "ensemble_preview",
-            label: `Ensemble rule preview: ${preview.row.rule}`,
+            label: `Ensemble rule preview: ${frozenRuleLabel}`,
             rerun: async () => {
-                const latestContext = this.runContext;
-                const latestPreview = latestContext?.builderPreviewByRuleId.get(ruleId) ?? null;
-                if (!latestPreview || !latestContext) {
-                    throw new Error("Run Strategy Ensemble Lab again before rerunning this ensemble preview.");
-                }
                 clearBacktestResults("ensemble_preview_rerun_reset");
-                await settingsManager.applyStrategyConfig(latestContext.targetArtifact.config);
-                commitBacktestResult(latestPreview.result, "ensemble_preview", {
+                await settingsManager.applyStrategyConfig(frozenTargetConfig);
+                commitBacktestResult(frozenPreviewResult, "ensemble_preview", {
                     parityResults: null,
                     reason: "ensemble_preview_rerun",
                 });
-                this.updateStatus(`Refreshed exact ensemble preview: ${latestPreview.row.rule}.`);
+                this.updateStatus(`Refreshed frozen ensemble preview: ${frozenRuleLabel} | ${previewExecutionLabel}.`);
             },
         });
 
-        this.updateStatus(`Loaded exact ensemble preview: ${preview.row.rule}.`);
+        this.updateStatus(`Loaded exact ensemble preview: ${preview.row.rule} | ${previewExecutionLabel}.`);
         uiManager.showToast(`Loaded ensemble preview: ${preview.row.rule}`, "success");
     }
 
@@ -964,22 +1011,6 @@ class StrategyEnsembleService {
         return {
             interval: state.currentInterval,
             loadStrategyConfig: (configName) => settingsManager.loadStrategyConfig(configName),
-            getStrategy: (strategyKey) => strategyRegistry.get(strategyKey),
-            resolveCapitalFromConfig: (config) => settingsManager.resolveCapitalFromConfig(config),
-            evaluateStrategyOnData: (...args) => backtestService.evaluateStrategyOnData(...args),
-            evaluateSignalsOnData: (...args) => backtestService.evaluateSignalsOnData(...args),
-            warn: (message, details) => debugLogger.warn(message, details),
-        };
-    }
-
-    private buildSnapshotEngineDeps(configs: readonly StrategyConfig[]): StrategyEnsembleEngineDeps {
-        const snapshotByName = new Map(
-            configs.map((config) => [config.name, this.cloneStrategyConfigSnapshot(config)] as const)
-        );
-
-        return {
-            interval: state.currentInterval,
-            loadStrategyConfig: (configName) => snapshotByName.get(configName) ?? null,
             getStrategy: (strategyKey) => strategyRegistry.get(strategyKey),
             resolveCapitalFromConfig: (config) => settingsManager.resolveCapitalFromConfig(config),
             evaluateStrategyOnData: (...args) => backtestService.evaluateStrategyOnData(...args),
@@ -1122,7 +1153,10 @@ class StrategyEnsembleService {
     }
 
     private async loadRecipeBacktest(recipe: EnsembleSignalRecipe, successMessage: string): Promise<void> {
-        await this.loadRecipeBacktestWithOptions(recipe, successMessage);
+        await this.loadRecipeBacktestWithOptions(recipe, successMessage, {
+            snapshotModeLabel: "Rebuilt Recipe Snapshot",
+            freezeInstruction: "Frozen to the candle snapshot used when you loaded this preview. Rerun Ensemble Polymarket if you want it rebuilt on fresh candles.",
+        });
     }
 
     private async loadRecipeBacktestWithOptions(
@@ -1132,8 +1166,9 @@ class StrategyEnsembleService {
             overridePreparedSignals?: (candles: OHLCVData[]) => Signal[];
             overrideDescription?: string;
             registerRerun?: boolean;
-            rerunFactory?: () => Promise<void>;
             silent?: boolean;
+            snapshotModeLabel?: string;
+            freezeInstruction?: string;
         }
     ): Promise<void> {
         if (recipe.symbol !== state.currentSymbol || recipe.interval !== state.currentInterval) {
@@ -1154,10 +1189,6 @@ class StrategyEnsembleService {
         const preparedSignals = overridePreparedSignals.length > 0
             ? overridePreparedSignals
             : resolved.preparedSignals;
-        const description = overridePreparedSignals.length > 0
-            ? (options?.overrideDescription ?? resolved.description)
-            : resolved.description;
-
         if (preparedSignals.length === 0) {
             throw new Error(`Recipe ${recipe.name} produced no prepared signals on the current chart window.`);
         }
@@ -1175,23 +1206,35 @@ class StrategyEnsembleService {
             parityResults: null,
             reason: "ensemble_signal_recipe_preview",
         });
+        const snapshotStatus = this.buildPreviewSnapshotStatus({
+            recipe,
+            anchorConfig: resolved.anchorConfig,
+            candles,
+            totalTrades: preview.result.totalTrades,
+            snapshotModeLabel: options?.snapshotModeLabel ?? "Rebuilt Recipe Snapshot",
+            freezeInstruction: options?.freezeInstruction ?? "Frozen to the candle snapshot used when you loaded this preview.",
+        });
+        const frozenPreviewResult = preview.result;
+        const frozenAnchorConfig = this.cloneStrategyConfigSnapshot(resolved.anchorConfig);
         if (options?.registerRerun !== false) {
             setActiveBacktestRerunContext({
                 source: "ensemble_preview",
                 label: recipe.name,
-                rerun: options?.rerunFactory ?? (async () => {
-                    await this.loadRecipeBacktestWithOptions(recipe, successMessage, {
-                        ...options,
-                        silent: true,
+                rerun: async () => {
+                    clearBacktestResults("ensemble_recipe_preview_rerun_reset");
+                    await settingsManager.applyStrategyConfig(frozenAnchorConfig);
+                    commitBacktestResult(frozenPreviewResult, "ensemble_preview", {
+                        parityResults: null,
+                        reason: "ensemble_signal_recipe_preview_rerun",
                     });
-                }),
+                    this.updateStatus(`Refreshed frozen ensemble preview: ${recipe.name}.`);
+                    this.updateSignalRecipeStatus(snapshotStatus);
+                },
             });
         }
 
         this.updateStatus(successMessage);
-        this.updateSignalRecipeStatus(
-            `${recipe.name} preview loaded. ${preview.result.totalTrades} backtest trade${preview.result.totalTrades === 1 ? "" : "s"} generated from ${description}.`
-        );
+        this.updateSignalRecipeStatus(snapshotStatus);
         if (!options?.silent) {
             uiManager.showToast(successMessage, "success");
         }
@@ -1236,69 +1279,19 @@ class StrategyEnsembleService {
         return signals;
     }
 
-    private async buildConflictPreviewSignalsFromRecipe(
-        recipe: EnsembleSignalRecipe,
-        candles: OHLCVData[]
-    ): Promise<Signal[]> {
-        const outcomes = await loadPolymarket5mOutcomesForChart(recipe.symbol, candles);
-        const runResult = await runEnsemblePolymarket({
-            targetName: recipe.anchorConfigName,
-            contextNames: recipe.componentConfigs
-                .map((config) => config.name)
-                .filter((name) => name !== recipe.anchorConfigName),
-            candles,
-            symbol: recipe.symbol,
-            interval: recipe.interval,
-            outcomes,
-            deps: this.buildSnapshotEngineDeps(recipe.componentConfigs),
-        });
-        return this.buildConflictPreviewSignalsFromPolymarketResult(runResult, candles);
-    }
-
     private async loadConflictFilterRecipePreview(
         recipe: EnsembleSignalRecipe,
         options?: { silent?: boolean }
     ): Promise<void> {
-        let exactConflictSignals: Signal[] | null = null;
-        if (!this.lastPolymarketRunResult) {
-            const candles = this.prepareCandles();
-            if (candles.length < 2) {
-                throw new Error("Not enough closed candle data loaded to preview this recipe.");
-            }
-            exactConflictSignals = await this.buildConflictPreviewSignalsFromRecipe(recipe, candles);
-        }
-
         await this.loadRecipeBacktestWithOptions(
             recipe,
             `Loaded aligned one-side conflict-filter overlay preview from ${recipe.anchorConfigName}.`,
             {
                 silent: options?.silent,
-                overridePreparedSignals: (candles) => exactConflictSignals ?? this.buildCurrentConflictPreviewSignals(candles),
+                overridePreparedSignals: (candles) => this.buildCurrentConflictPreviewSignals(candles),
                 overrideDescription: "the exact scored conflict-filter overlay from the current Polymarket run",
-                rerunFactory: async () => {
-                    const candles = this.prepareCandles();
-                    if (candles.length < 2) {
-                        throw new Error("Not enough closed candle data loaded to preview this recipe.");
-                    }
-                    const conflictSignals = await this.buildConflictPreviewSignalsFromRecipe(recipe, candles);
-                    await this.loadRecipeBacktestWithOptions(
-                        recipe,
-                        `Loaded aligned one-side conflict-filter overlay preview from ${recipe.anchorConfigName}.`,
-                        {
-                            silent: true,
-                            registerRerun: false,
-                            overridePreparedSignals: () => conflictSignals,
-                            overrideDescription: "the exact scored conflict-filter overlay from the current Polymarket run",
-                        }
-                    );
-                    setActiveBacktestRerunContext({
-                        source: "ensemble_preview",
-                        label: recipe.name,
-                        rerun: async () => {
-                            await this.loadConflictFilterRecipePreview(recipe, { silent: true });
-                        },
-                    });
-                },
+                snapshotModeLabel: "Exact Current-Run Snapshot",
+                freezeInstruction: "Frozen to the exact Ensemble Polymarket run that produced this conflict-filter preview. Rerun Ensemble Polymarket if you want it rebuilt on fresh candles.",
             }
         );
     }
@@ -1396,6 +1389,38 @@ class StrategyEnsembleService {
             this.updateSignalRecipeStatus(message);
             uiManager.showToast(message, "error");
         }
+    }
+
+    private buildPreviewSnapshotStatus(args: {
+        recipe: EnsembleSignalRecipe;
+        anchorConfig: StrategyConfig;
+        candles: readonly OHLCVData[];
+        totalTrades: number;
+        snapshotModeLabel: string;
+        freezeInstruction: string;
+    }): string {
+        const lastCandle = args.candles[args.candles.length - 1] ?? null;
+        const lastCandleLabel = lastCandle
+            ? formatJakartaTime(lastCandle.time, {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+            })
+            : "n/a";
+
+        return [
+            args.recipe.name,
+            args.snapshotModeLabel,
+            `${args.recipe.symbol} ${args.recipe.interval}`,
+            this.formatPreviewExecutionSettings(args.anchorConfig),
+            `${args.candles.length} candles`,
+            `last candle ${lastCandleLabel}`,
+            `${args.totalTrades} backtest trade${args.totalTrades === 1 ? "" : "s"}`,
+            args.freezeInstruction,
+        ].join(" | ");
     }
 
     private async downloadSelectedSignalRecipeBridge(): Promise<void> {

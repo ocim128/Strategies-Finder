@@ -17,8 +17,9 @@ import {
     loadPolymarket5mOutcomesForTimeRange,
 } from "./polymarket-btc5m";
 import {
-    createPolymarketTradeEvaluationContext,
+    annotateTradesWithPolymarketOutcomes,
 } from "./polymarket-trade-annotations";
+import { resolveBacktestResultMarketContext } from "./backtest-result-context";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 
 type QuickViewPolymarketSummary = {
@@ -294,15 +295,20 @@ class QuickViewManager {
     }
 
     private async ensurePolymarketOutcomes(result: BacktestResult): Promise<BacktestResult> {
+        const resultContext = resolveBacktestResultMarketContext(result);
+        if (!resultContext) {
+            return result;
+        }
+
         // Check if already annotated
         const hasOutcomes = result.trades.some((trade) => trade.polymarketOutcome !== undefined && trade.polymarketOutcome !== null);
-        const seriesId = getPolymarket5mSeriesIdForSymbol(state.currentSymbol);
+        const seriesId = getPolymarket5mSeriesIdForSymbol(resultContext.symbol);
         if (hasOutcomes || result.polymarketTradeSummary) {
             return this.withPolymarketTradeSummary(result, result.trades, seriesId);
         }
 
         // Check if this is a supported Polymarket 5m run
-        if (!isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval)) {
+        if (!isSupportedPolymarket5mRun(resultContext.symbol, resultContext.interval)) {
             return result;
         }
 
@@ -322,43 +328,12 @@ class QuickViewManager {
         const endTs = Math.max(...targetTimes);
 
         // Load outcomes from SQLite (uses in-memory cache)
-        const outcomes = await loadPolymarket5mOutcomesForTimeRange(state.currentSymbol, startTs, endTs);
+        const outcomes = await loadPolymarket5mOutcomesForTimeRange(resultContext.symbol, startTs, endTs);
         if (outcomes.length === 0) {
             return result;
         }
 
-        // Build evaluation context for trade annotation
-        const chartData = state.ohlcvData;
-        const evalContext = createPolymarketTradeEvaluationContext(chartData, outcomes);
-
-        // Annotate trades with Polymarket outcomes
-        const outcomeByStartTs = new Map(evalContext.outcomeByStartTs.entries());
-        const trades = result.trades.map((trade): Trade => {
-            const entryTs = parseTimeToUnixSeconds(trade.entryTime);
-            if (entryTs === null) {
-                return { ...trade, polymarketOutcome: null };
-            }
-            const outcome = outcomeByStartTs.get(entryTs);
-            if (!outcome) {
-                return { ...trade, polymarketOutcome: null };
-            }
-            const prediction: "yes" | "no" = trade.type === 'long' ? 'yes' : 'no';
-            const isWin = prediction === 'yes'
-                ? outcome.resolved_outcome_up === 1
-                : outcome.resolved_outcome_up === 0;
-            return {
-                ...trade,
-                polymarketOutcome: {
-                    eventStartTs: outcome.event_start_ts,
-                    eventEndTs: outcome.event_end_ts,
-                    eventSlug: outcome.event_slug,
-                    marketSlug: outcome.market_slug || outcome.event_slug,
-                    prediction,
-                    actualOutcomeUp: outcome.resolved_outcome_up,
-                    isWin,
-                },
-            };
-        });
+        const trades = annotateTradesWithPolymarketOutcomes(result.trades, outcomes);
 
         return this.withPolymarketTradeSummary(result, trades, seriesId, outcomes.length);
     }

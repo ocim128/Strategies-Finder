@@ -649,6 +649,13 @@ export class BacktestService {
         initialCapital: number,
         backtestData: OHLCVData[]
     ): void {
+        result.marketContext = {
+            symbol: state.currentSymbol,
+            interval: state.currentInterval,
+            candleCount: backtestData.length,
+            firstCandleTime: backtestData[0]?.time ?? null,
+            lastCandleTime: backtestData[backtestData.length - 1]?.time ?? null,
+        };
         if (!result.entryStats) {
             result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
         }

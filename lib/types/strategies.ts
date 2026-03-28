@@ -97,6 +97,14 @@ export interface Trade {
     polymarketOutcome?: TradePolymarketOutcome | null;
 }
 
+export interface BacktestResultMarketContext {
+    symbol: string;
+    interval: string;
+    candleCount: number;
+    firstCandleTime: Time | null;
+    lastCandleTime: Time | null;
+}
+
 export interface BacktestResult {
     trades: Trade[];
     netProfit: number;
@@ -118,6 +126,7 @@ export interface BacktestResult {
     postEntryPath?: PostEntryPathStats;
     edgeStatistics?: import('../strategies/backtest/edge-statistics').EdgeStatistics;
     polymarketTradeSummary?: BacktestPolymarketTradeSummary;
+    marketContext?: BacktestResultMarketContext;
 }
 
 export interface PostEntryPathBucketStats {

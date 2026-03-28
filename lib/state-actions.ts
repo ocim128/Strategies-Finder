@@ -1,4 +1,5 @@
 import { debugLogger } from "./debug-logger";
+import { clearActiveBacktestRerunContext } from "./backtest-rerun-context";
 import { state, type BacktestResultSource, type ChartMode, type MockChartModel, type TwoHourCloseParityMode, type TwoHourParityBacktestResults } from "./state";
 import type { Indicator } from "./types/index";
 import type { BacktestResult, OHLCVData } from "./strategies/index";
@@ -90,6 +91,7 @@ export function setStrategyTimeframeSettings(settings: {
 
 export function clearBacktestResults(reason?: string): void {
     debugLogger.event('state.clear.backtest_result', { reason });
+    clearActiveBacktestRerunContext();
     state.set('currentBacktestResult', null);
     state.set('currentBacktestResultSource', 'backtest');
     state.set('twoHourParityBacktestResults', null);

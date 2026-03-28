@@ -122,10 +122,7 @@ export function setupStateSubscriptions() {
             applyDefaultVisibleRange(data.length);
         }
 
-        if (
-            state.currentBacktestResult
-            && (state.currentBacktestResultSource === 'backtest' || state.currentBacktestResultSource === 'ensemble_preview')
-        ) {
+        if (state.currentBacktestResult && state.currentBacktestResultSource === 'backtest') {
             void backtestService.runCurrentBacktest().catch((error) => {
                 debugLogger.error('backtest.auto_refresh_failed', {
                     source: state.currentBacktestResultSource,

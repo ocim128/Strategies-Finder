@@ -88,6 +88,14 @@ function buildAnnotatedTrade(
     };
 }
 
+export function annotateTradesWithPolymarketOutcomes(
+    trades: readonly Trade[],
+    outcomes: readonly PolymarketOutcomeRow[]
+): Trade[] {
+    const outcomeByStartTs = new Map(outcomes.map((row) => [row.event_start_ts, row] as const));
+    return trades.map((trade) => buildAnnotatedTrade(trade, outcomeByStartTs));
+}
+
 export function evaluatePolymarketBacktestTrades(args: {
     chartData: OHLCVData[];
     trades: Trade[];
@@ -225,10 +233,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
     const outcomes = await loadPolymarket5mOutcomesForTimeRange(context.symbol, startTs, endTs);
     const evaluationContext = createPolymarketTradeEvaluationContext(context.chartData, outcomes);
 
-    const trades = result.trades.map((trade) => buildAnnotatedTrade(
-        trade,
-        evaluationContext.outcomeByStartTs
-    ));
+    const trades = result.trades.map((trade) => buildAnnotatedTrade(trade, evaluationContext.outcomeByStartTs));
     const scoredTrades = trades.filter((trade) => Boolean(trade.polymarketOutcome)).length;
 
     return {

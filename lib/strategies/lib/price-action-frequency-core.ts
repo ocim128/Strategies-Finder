@@ -56,6 +56,44 @@ export function getPriceActionBarMetrics(bar: OHLCVData): PriceActionBarMetrics 
 	};
 }
 
+function buildMetricSeries(
+	data: OHLCVData[],
+	getValue: (bar: OHLCVData, metrics: PriceActionBarMetrics) => number
+): number[] {
+	const result: number[] = new Array(data.length);
+
+	for (let i = 0; i < data.length; i++) {
+		const bar = data[i];
+		result[i] = getValue(bar, getPriceActionBarMetrics(bar));
+	}
+
+	return result;
+}
+
+export function buildRangeSeries(data: OHLCVData[]): number[] {
+	return buildMetricSeries(data, (_bar, metrics) => metrics.range);
+}
+
+export function buildBodySeries(data: OHLCVData[]): number[] {
+	return buildMetricSeries(data, (_bar, metrics) => metrics.body);
+}
+
+export function buildBodyPctSeries(data: OHLCVData[]): number[] {
+	return buildMetricSeries(data, (_bar, metrics) => metrics.bodyPct);
+}
+
+export function buildUpperWickSeries(data: OHLCVData[]): number[] {
+	return buildMetricSeries(data, (_bar, metrics) => metrics.upperWick);
+}
+
+export function buildLowerWickSeries(data: OHLCVData[]): number[] {
+	return buildMetricSeries(data, (_bar, metrics) => metrics.lowerWick);
+}
+
+export function buildCloseLocationSeries(data: OHLCVData[]): number[] {
+	return buildMetricSeries(data, (_bar, metrics) => metrics.closeLocation);
+}
+
 export function buildRollingAverage(
 	values: number[],
 	lookbackInput: number

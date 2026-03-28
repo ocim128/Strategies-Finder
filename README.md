@@ -200,6 +200,8 @@ The short version:
 4. Keep `normalizeParams(...)` aligned with `execute(...)`.
 5. Run `npm run typecheck` and confirm the strategy appears in the UI.
 
+For strategy-idea generation via [`archive/prompt.txt`](c:\Users\user\Documents\Repo\Experimental\lightweight-charts\debug\playground\Strategies-Finder\archive\prompt.txt), keep the allowed helper surface aligned with helpers that are either already used by manifest-backed built-ins or explicitly approved low-complexity primitives from the shared strategy helper modules. Favor simple price extractors and bar-geometry helpers such as `getOpens`, `getMidpoints`, `getTypicalPrices`, `buildRangeSeries`, `buildBodySeries`, and `buildCloseLocationSeries` before reaching for heavier transforms. Do not add prompt-only helper names that do not exist in the codebase.
+
 ### Use Portfolio Lab effectively
 Portfolio Lab is most useful when you separate decision outputs from diagnostics.
 
