@@ -3,6 +3,7 @@ import type { EnsembleLabDom } from "./strategy-ensemble-dom";
 import type {
     EnsemblePolymarketConfigResult,
     EnsemblePolymarketRunResult,
+    EnsemblePolymarketVetoPairResult,
     EnsemblePolymarketVerdict,
 } from "./strategy-ensemble-polymarket-engine";
 import { escapeHtml } from "./strategy-ensemble-renderer";
@@ -11,6 +12,14 @@ const EMPTY_TABLE_ROW = `
     <tr>
         <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
             Run Ensemble Polymarket to compare individual config edge and the majority-vote overlay against Polymarket outcomes.
+        </td>
+    </tr>
+`;
+
+const EMPTY_VETO_TABLE_ROW = `
+    <tr>
+        <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+            Run Ensemble Polymarket to rank asymmetric veto pairs.
         </td>
     </tr>
 `;
@@ -88,6 +97,13 @@ export function renderEnsemblePolymarketResults(
         ));
     }
 
+    if (result.vetoScan.bestPair) {
+        agreementInsights.push(insight(
+            "Best Veto Pair",
+            `${result.vetoScan.bestPair.primaryConfigName} improved to ${formatPercent(result.vetoScan.bestPair.postVetoWinRate)} when ${result.vetoScan.bestPair.vetoConfigName} vetoed opposite-side events, leaving ${result.vetoScan.bestPair.keptEvents} kept trades, ${result.vetoScan.bestPair.keptWins} wins, ${result.vetoScan.bestPair.keptLosses} losses, ${formatPercent(result.vetoScan.bestPair.retentionRate)} retention, and ${formatSignedPercent(result.vetoScan.bestPair.winRateLift)} win-rate lift.`
+        ));
+    }
+
     dom.ensemblePolymarketAgreement.innerHTML = agreementInsights.join("");
 
     dom.ensemblePolymarketTableBody.innerHTML = result.configResults.length > 0
@@ -95,15 +111,35 @@ export function renderEnsemblePolymarketResults(
             .map((configResult) => renderConfigRow(configResult))
             .join("")
         : EMPTY_TABLE_ROW;
+
+    const bestVetoPair = result.vetoScan.bestPair;
+    dom.ensemblePolymarketVetoSummary.innerHTML = bestVetoPair
+        ? [
+            card("Best Veto Pair", `${bestVetoPair.primaryConfigName} -> ${bestVetoPair.vetoConfigName}`),
+            card("Best Kept Trades", String(bestVetoPair.keptEvents)),
+            card("Best Wins", String(bestVetoPair.keptWins)),
+            card("Best Losses", String(bestVetoPair.keptLosses)),
+            card("Best Post-Veto WR", formatPercent(bestVetoPair.postVetoWinRate)),
+            card("Best WR Lift", formatSignedPercent(bestVetoPair.winRateLift)),
+            card("Best Retention", formatPercent(bestVetoPair.retentionRate)),
+            card("Positive Pairs", String(result.vetoScan.positivePairCount)),
+        ].join("")
+        : "";
+
+    dom.ensemblePolymarketVetoTableBody.innerHTML = result.vetoScan.pairResults.length > 0
+        ? result.vetoScan.pairResults.map((pairResult) => renderVetoPairRow(pairResult)).join("")
+        : EMPTY_VETO_TABLE_ROW;
 }
 
 export function resetEnsemblePolymarketPanel(dom: EnsembleLabDom): void {
     dom.ensemblePolymarketSection.style.display = "";
     setVisible(dom.ensemblePolymarketEmpty, false);
-    dom.ensemblePolymarketStatus.textContent = "Run Ensemble Polymarket to compare individual config edge, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, and the majority-vote overlay against matched 5m Polymarket outcomes.";
+    dom.ensemblePolymarketStatus.textContent = "Run Ensemble Polymarket to compare individual config edge, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, the majority-vote overlay, and asymmetric veto pairs against matched 5m Polymarket outcomes.";
     dom.ensemblePolymarketSummary.innerHTML = "";
     dom.ensemblePolymarketAgreement.innerHTML = "";
     dom.ensemblePolymarketTableBody.innerHTML = EMPTY_TABLE_ROW;
+    dom.ensemblePolymarketVetoSummary.innerHTML = "";
+    dom.ensemblePolymarketVetoTableBody.innerHTML = EMPTY_VETO_TABLE_ROW;
 }
 
 function renderConfigRow(result: EnsemblePolymarketConfigResult): string {
@@ -136,6 +172,34 @@ function renderConfigRow(result: EnsemblePolymarketConfigResult): string {
     `;
 }
 
+function renderVetoPairRow(result: EnsemblePolymarketVetoPairResult): string {
+    const verdictClass = `ensemble-lab__polymarket-verdict ${formatVetoVerdictClass(result.verdict)}`;
+    const rowStyle = result.verdict === "interesting"
+        ? ' style="background:var(--bg-success-subtle,rgba(0,200,100,0.08));"'
+        : result.verdict === "marginal"
+            ? ' style="background:var(--bg-info-subtle,rgba(0,120,255,0.08));"'
+            : result.verdict === "neutral"
+                ? ' style="background:var(--bg-danger-subtle,rgba(220,80,80,0.08));"'
+                : "";
+
+    return `
+        <tr${rowStyle}>
+            <td>${escapeHtml(result.primaryConfigName)}<br><span class="ensemble-lab__config-strategy">${escapeHtml(result.primaryFamilyLabel)}</span></td>
+            <td>${escapeHtml(result.vetoConfigName)}<br><span class="ensemble-lab__config-strategy">${escapeHtml(result.vetoFamilyLabel)}</span></td>
+            <td>${result.keptEvents}</td>
+            <td>${result.keptWins}</td>
+            <td>${result.keptLosses}</td>
+            <td>${result.vetoedEvents}</td>
+            <td>${formatPercent(result.retentionRate)}</td>
+            <td>${formatPercent(result.overlapRate)}</td>
+            <td>${formatPercent(result.postVetoWinRate)}</td>
+            <td>${formatSignedPercent(result.winRateLift)}</td>
+            <td>${formatSignedFixed(result.wilsonLift)}</td>
+            <td><span class="${verdictClass}">${escapeHtml(formatVetoVerdictLabel(result.verdict))}</span></td>
+        </tr>
+    `;
+}
+
 function card(label: string, value: string): string {
     return `
         <div class="sim-card">
@@ -162,6 +226,11 @@ function formatSignedPercent(value: number): string {
     return `${sign}${Math.abs(value * 100).toFixed(1)}%`;
 }
 
+function formatSignedFixed(value: number): string {
+    const sign = value >= 0 ? "+" : "-";
+    return `${sign}${Math.abs(value).toFixed(3)}`;
+}
+
 function formatVerdictLabel(verdict: EnsemblePolymarketVerdict): string {
     if (verdict === "no_edge") {
         return "No Edge";
@@ -172,4 +241,29 @@ function formatVerdictLabel(verdict: EnsemblePolymarketVerdict): string {
     }
 
     return verdict.charAt(0).toUpperCase() + verdict.slice(1);
+}
+
+function formatVetoVerdictLabel(verdict: EnsemblePolymarketVetoPairResult["verdict"]): string {
+    if (verdict === "neutral") {
+        return "Neutral";
+    }
+
+    if (verdict === "insufficient") {
+        return "Insufficient";
+    }
+
+    return verdict.charAt(0).toUpperCase() + verdict.slice(1);
+}
+
+function formatVetoVerdictClass(verdict: EnsemblePolymarketVetoPairResult["verdict"]): string {
+    switch (verdict) {
+        case "interesting":
+            return "ensemble-lab__polymarket-verdict--edge";
+        case "marginal":
+            return "ensemble-lab__polymarket-verdict--marginal";
+        case "neutral":
+            return "ensemble-lab__polymarket-verdict--no_edge";
+        default:
+            return "ensemble-lab__polymarket-verdict--insufficient";
+    }
 }

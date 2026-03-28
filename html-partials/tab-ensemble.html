@@ -201,7 +201,7 @@
                 <h4 class="analysis-finder-title">Ensemble Polymarket</h4>
             </div>
             <div class="analysis-finder-status" id="ensemblePolymarketStatus">
-                Run Ensemble Polymarket to compare individual config edge, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, and the majority-vote overlay against matched 5m Polymarket outcomes.
+                Run Ensemble Polymarket to compare individual config edge, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, the majority-vote overlay, and asymmetric veto pairs against matched 5m Polymarket outcomes.
             </div>
             <div class="empty-state empty-state-compact ensemble-lab__polymarket-empty" id="ensemblePolymarketEmpty" style="display: none;">
                 This analysis currently supports BTCUSDT, ETHUSDT, SOLUSDT, and XRPUSDT on 5m.
@@ -210,7 +210,7 @@
             <div class="portfolio-lab__insights ensemble-lab__polymarket-agreement" id="ensemblePolymarketAgreement"></div>
             <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
                 <div class="portfolio-lab__table-caption">
-                    Each selected config is backtested independently, then its executed trades are scored against matched Polymarket YES/NO outcomes. The conflict-filtered block above answers "what if conflicting long and short configs skip the trade", now split into aligned-signal coverage, true mixed-direction conflicts, and no-signal gaps. The majority-vote block appears only when it adds information, and the pooled config stats are not a tradable ensemble rule.
+                    Each selected config is backtested independently, then its executed trades are scored against matched Polymarket YES/NO outcomes. The conflict-filtered block above answers "what if conflicting long and short configs skip the trade", now split into aligned-signal coverage, true mixed-direction conflicts, and no-signal gaps. The majority-vote block appears only when it adds information, the veto scan tests "trade A, let B veto only opposite signals", and the pooled config stats are not a tradable ensemble rule.
                 </div>
                 <table class="analysis-table portfolio-lab__table">
                     <thead>
@@ -237,6 +237,42 @@
                         </tr>
                     </tbody>
                 </table>
+            </div>
+            <div class="analysis-finder-section portfolio-lab__section">
+                <div class="analysis-finder-header">
+                    <h4 class="analysis-finder-title">Asymmetric Veto Scan</h4>
+                </div>
+                <div class="simulation-grid" id="ensemblePolymarketVetoSummary"></div>
+                <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
+                    <div class="portfolio-lab__table-caption">
+                        Ordered pairs ranked as "trade the Primary config, but skip that event if the Veto config fires the opposite Polymarket side." This keeps the current conflict-skip findings and adds an asymmetric search for deployable veto relationships.
+                    </div>
+                    <table class="analysis-table portfolio-lab__table">
+                        <thead>
+                            <tr>
+                                <th>Primary</th>
+                                <th>Veto</th>
+                                <th>Kept</th>
+                                <th>Wins</th>
+                                <th>Losses</th>
+                                <th>Vetoed</th>
+                                <th>Retention</th>
+                                <th>Overlap</th>
+                                <th>Post-Veto WR</th>
+                                <th>Lift vs Primary</th>
+                                <th>Wilson Lift</th>
+                                <th>Verdict</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ensemblePolymarketVetoTableBody">
+                            <tr>
+                                <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                    Run Ensemble Polymarket to rank asymmetric veto pairs.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 

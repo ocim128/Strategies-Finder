@@ -19,6 +19,7 @@ import type {
 } from "./types/polymarket-outcomes";
 
 export type EnsemblePolymarketVerdict = "edge" | "marginal" | "no_edge" | "insufficient";
+export type EnsemblePolymarketVetoVerdict = "interesting" | "marginal" | "neutral" | "insufficient";
 
 export interface EnsemblePolymarketConfigResult {
     configName: string;
@@ -50,6 +51,28 @@ export interface EnsemblePolymarketAgreementSummary {
     decisiveNoEvents: number;
 }
 
+export interface EnsemblePolymarketVetoPairResult {
+    primaryConfigName: string;
+    primaryFamilyLabel: string;
+    vetoConfigName: string;
+    vetoFamilyLabel: string;
+    primaryScoredEvents: number;
+    overlapEvents: number;
+    vetoedEvents: number;
+    keptEvents: number;
+    keptWins: number;
+    keptLosses: number;
+    primaryWinRate: number;
+    postVetoWinRate: number;
+    winRateLift: number;
+    retentionRate: number;
+    overlapRate: number;
+    postVetoWilsonLowerBound: number;
+    primaryWilsonLowerBound: number;
+    wilsonLift: number;
+    verdict: EnsemblePolymarketVetoVerdict;
+}
+
 export interface EnsemblePolymarketRunResult {
     symbol: string;
     interval: string;
@@ -69,10 +92,16 @@ export interface EnsemblePolymarketRunResult {
     };
     conflictFilteredOverlay: EnsemblePolymarketAgreementSummary;
     majorityVoteOverlay: EnsemblePolymarketAgreementSummary;
+    vetoScan: {
+        pairResults: EnsemblePolymarketVetoPairResult[];
+        positivePairCount: number;
+        bestPair: EnsemblePolymarketVetoPairResult | null;
+    };
 }
 
 const ENSEMBLE_POLYMARKET_MIN_SCORED = 30;
 const ENSEMBLE_POLYMARKET_EDGE_BUFFER = 0.02;
+const ENSEMBLE_POLYMARKET_VETO_INTERESTING_WILSON_LIFT = 0.02;
 
 type EventVoteBucket = {
     actualOutcomeUp: 0 | 1;
@@ -98,6 +127,26 @@ export function determineEnsemblePolymarketVerdict(
     }
 
     return "no_edge";
+}
+
+export function determineEnsemblePolymarketVetoVerdict(
+    wilsonLift: number,
+    winRateLift: number,
+    keptEvents: number
+): EnsemblePolymarketVetoVerdict {
+    if (keptEvents < ENSEMBLE_POLYMARKET_MIN_SCORED) {
+        return "insufficient";
+    }
+
+    if (wilsonLift > ENSEMBLE_POLYMARKET_VETO_INTERESTING_WILSON_LIFT && winRateLift > 0) {
+        return "interesting";
+    }
+
+    if (wilsonLift > 0 && winRateLift > 0) {
+        return "marginal";
+    }
+
+    return "neutral";
 }
 
 function buildEventVoteBuckets(
@@ -126,6 +175,20 @@ function buildEventVoteBuckets(
     }
 
     return eventVotes;
+}
+
+function buildConfigPredictionIndex(
+    configResult: EnsemblePolymarketConfigResult
+): Map<number, Set<"yes" | "no">> {
+    const predictionByEventStartTs = new Map<number, Set<"yes" | "no">>();
+
+    for (const row of configResult.evalResult.rows) {
+        const predictions = predictionByEventStartTs.get(row.eventStartTs) ?? new Set<"yes" | "no">();
+        predictions.add(row.prediction);
+        predictionByEventStartTs.set(row.eventStartTs, predictions);
+    }
+
+    return predictionByEventStartTs;
 }
 
 export function buildEnsemblePolymarketAgreement(
@@ -209,6 +272,122 @@ export function buildEnsemblePolymarketAgreement(
         decisiveYesEvents,
         decisiveNoEvents,
     };
+}
+
+export function buildEnsemblePolymarketVetoScan(
+    configResults: readonly EnsemblePolymarketConfigResult[]
+): EnsemblePolymarketRunResult["vetoScan"] {
+    const predictionIndexByConfig = new Map<string, Map<number, Set<"yes" | "no">>>();
+    const pairResults: EnsemblePolymarketVetoPairResult[] = [];
+
+    for (const configResult of configResults) {
+        predictionIndexByConfig.set(configResult.configName, buildConfigPredictionIndex(configResult));
+    }
+
+    for (const primaryResult of configResults) {
+        if (primaryResult.evalResult.scoredPredictions <= 0) {
+            continue;
+        }
+
+        for (const vetoResult of configResults) {
+            if (primaryResult.configName === vetoResult.configName) {
+                continue;
+            }
+
+            const vetoPredictions = predictionIndexByConfig.get(vetoResult.configName) ?? new Map<number, Set<"yes" | "no">>();
+            let overlapEvents = 0;
+            let vetoedEvents = 0;
+            let keptWins = 0;
+            let keptLosses = 0;
+
+            for (const row of primaryResult.evalResult.rows) {
+                const vetoSignals = vetoPredictions.get(row.eventStartTs);
+                if (vetoSignals) {
+                    overlapEvents += 1;
+                }
+
+                const oppositePrediction = row.prediction === "yes" ? "no" : "yes";
+                if (vetoSignals?.has(oppositePrediction)) {
+                    vetoedEvents += 1;
+                    continue;
+                }
+
+                if (row.isWin) {
+                    keptWins += 1;
+                } else {
+                    keptLosses += 1;
+                }
+            }
+
+            const keptEvents = keptWins + keptLosses;
+            const postVetoWinRate = keptEvents > 0 ? keptWins / keptEvents : 0;
+            const postVetoWilsonLowerBound = computeWilsonLowerBound(keptWins, keptEvents);
+            const winRateLift = postVetoWinRate - primaryResult.evalResult.winRate;
+            const wilsonLift = postVetoWilsonLowerBound - primaryResult.wilsonLowerBound;
+
+            pairResults.push({
+                primaryConfigName: primaryResult.configName,
+                primaryFamilyLabel: primaryResult.familyLabel,
+                vetoConfigName: vetoResult.configName,
+                vetoFamilyLabel: vetoResult.familyLabel,
+                primaryScoredEvents: primaryResult.evalResult.scoredPredictions,
+                overlapEvents,
+                vetoedEvents,
+                keptEvents,
+                keptWins,
+                keptLosses,
+                primaryWinRate: primaryResult.evalResult.winRate,
+                postVetoWinRate,
+                winRateLift,
+                retentionRate: primaryResult.evalResult.scoredPredictions > 0
+                    ? keptEvents / primaryResult.evalResult.scoredPredictions
+                    : 0,
+                overlapRate: primaryResult.evalResult.scoredPredictions > 0
+                    ? overlapEvents / primaryResult.evalResult.scoredPredictions
+                    : 0,
+                postVetoWilsonLowerBound,
+                primaryWilsonLowerBound: primaryResult.wilsonLowerBound,
+                wilsonLift,
+                verdict: determineEnsemblePolymarketVetoVerdict(wilsonLift, winRateLift, keptEvents),
+            });
+        }
+    }
+
+    pairResults.sort((left, right) => {
+        const verdictRank = getVetoVerdictRank(right.verdict) - getVetoVerdictRank(left.verdict);
+        if (verdictRank !== 0) {
+            return verdictRank;
+        }
+        if (right.wilsonLift !== left.wilsonLift) {
+            return right.wilsonLift - left.wilsonLift;
+        }
+        if (right.winRateLift !== left.winRateLift) {
+            return right.winRateLift - left.winRateLift;
+        }
+        if (right.retentionRate !== left.retentionRate) {
+            return right.retentionRate - left.retentionRate;
+        }
+        return right.keptEvents - left.keptEvents;
+    });
+
+    return {
+        pairResults,
+        positivePairCount: pairResults.filter((pairResult) => pairResult.verdict === "interesting" || pairResult.verdict === "marginal").length,
+        bestPair: pairResults[0] ?? null,
+    };
+}
+
+function getVetoVerdictRank(verdict: EnsemblePolymarketVetoVerdict): number {
+    switch (verdict) {
+        case "interesting":
+            return 3;
+        case "marginal":
+            return 2;
+        case "neutral":
+            return 1;
+        default:
+            return 0;
+    }
 }
 
 export async function runEnsemblePolymarket(args: {
@@ -343,5 +522,6 @@ export async function runEnsemblePolymarket(args: {
             evaluationContext.evaluatedEvents,
             "majority_vote"
         ),
+        vetoScan: buildEnsemblePolymarketVetoScan(configResults),
     };
 }

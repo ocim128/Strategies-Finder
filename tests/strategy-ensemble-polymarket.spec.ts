@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { DEFAULT_BACKTEST_SETTINGS, type StrategyConfig } from "../lib/settings-model";
 import {
     determineEnsemblePolymarketVerdict,
+    determineEnsemblePolymarketVetoVerdict,
     runEnsemblePolymarket,
     type EnsemblePolymarketRunResult,
 } from "../lib/strategy-ensemble-polymarket-engine";
@@ -263,6 +264,10 @@ describe("Strategy Ensemble Polymarket engine", () => {
         expect(determineEnsemblePolymarketVerdict(0.551, 0.55, 30)).to.equal("marginal");
         expect(determineEnsemblePolymarketVerdict(0.571, 0.55, 30)).to.equal("edge");
         expect(determineEnsemblePolymarketVerdict(0.54, 0.55, 30)).to.equal("no_edge");
+        expect(determineEnsemblePolymarketVetoVerdict(0.03, 0.05, 30)).to.equal("interesting");
+        expect(determineEnsemblePolymarketVetoVerdict(0.005, 0.01, 30)).to.equal("marginal");
+        expect(determineEnsemblePolymarketVetoVerdict(-0.01, -0.02, 30)).to.equal("neutral");
+        expect(determineEnsemblePolymarketVetoVerdict(0.10, 0.20, 29)).to.equal("insufficient");
     });
 
     it("aggregates ensemble summary metrics using weighted scored-trade totals", async () => {
@@ -353,5 +358,41 @@ describe("Strategy Ensemble Polymarket engine", () => {
         expect(result.majorityVoteOverlay.scoredEvents).to.equal(2);
         expect(result.majorityVoteOverlay.conflictedEvents).to.equal(1);
         expect(result.majorityVoteOverlay.noSignalEvents).to.equal(1);
+    });
+
+    it("ranks asymmetric veto pairs by post-veto lift versus the primary config", async () => {
+        const eventCount = 60;
+        const candles = Array.from({ length: eventCount + 1 }, (_, index) => createCandle(index * 300));
+        const entries = candles.slice(1).map((candle) => Number(candle.time));
+        const configs = [
+            createConfig("Primary Long", "primary_long"),
+            createConfig("Short Veto", "short_veto"),
+        ];
+        const tradesByStrategyKey = new Map<string, Trade[]>([
+            ["primary_long", entries.map((entryTime) => createTrade(entryTime, "long"))],
+            ["short_veto", entries.slice(0, 30).map((entryTime) => createTrade(entryTime, "short"))],
+        ]);
+        const outcomes = entries.map((entryTime, index) => createOutcome(entryTime, index < 30 ? 0 : 1));
+
+        const { resultPromise } = buildFixture({
+            candles,
+            configs,
+            targetName: "Primary Long",
+            contextNames: ["Short Veto"],
+            tradesByStrategyKey,
+            outcomes,
+        });
+        const result = await resultPromise;
+
+        expect(result.vetoScan.pairResults).to.have.length(2);
+        expect(result.vetoScan.positivePairCount).to.equal(1);
+        expect(result.vetoScan.bestPair?.primaryConfigName).to.equal("Primary Long");
+        expect(result.vetoScan.bestPair?.vetoConfigName).to.equal("Short Veto");
+        expect(result.vetoScan.bestPair?.keptEvents).to.equal(30);
+        expect(result.vetoScan.bestPair?.vetoedEvents).to.equal(30);
+        expect(result.vetoScan.bestPair?.retentionRate).to.equal(0.5);
+        expect(result.vetoScan.bestPair?.postVetoWinRate).to.equal(1);
+        expect(result.vetoScan.bestPair?.winRateLift).to.equal(0.5);
+        expect(result.vetoScan.bestPair?.verdict).to.equal("interesting");
     });
 });
