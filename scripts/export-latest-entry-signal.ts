@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { selectExecutionAwareClosedCandles } from "../lib/alert-evaluation-window";
 import { fetchBinanceDataWithLimit } from "../lib/dataProviders/binance";
+import { selectLatestEntryExportCandles } from "../lib/latest-entry-export-window";
 import { evaluateLatestEntrySignal, type EntrySignalEvaluationRequest } from "../lib/signal-entry-evaluator";
 import { strategies } from "../lib/strategies/library";
 
@@ -322,15 +322,11 @@ async function main(): Promise<void> {
     if (!rawCandles.length) {
         throw new Error(`No candles returned for ${config.symbol} ${config.interval}.`);
     }
-    const candles = selectExecutionAwareClosedCandles(
+    const candles = selectLatestEntryExportCandles(
         rawCandles,
         config.interval,
         config.backtestSettings,
-        {
-            nowSec: Math.floor(Date.now() / 1000),
-            minClosedCandles: 2,
-            fallbackToTrimmedClosed: true,
-        }
+        Math.floor(Date.now() / 1000)
     );
     if (!candles || candles.length < 2) {
         throw new Error(`Not enough closed candles returned for ${config.symbol} ${config.interval}.`);

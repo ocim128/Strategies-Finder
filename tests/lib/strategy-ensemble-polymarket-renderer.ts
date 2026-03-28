@@ -78,7 +78,7 @@ export function renderEnsemblePolymarketResults(
         insight(
             "Executable Conflict Backtest",
             executableConflict
-                ? `${executableConflict.totalTrades} executed trades, ${executableConflict.wins} wins, ${executableConflict.losses} losses, ${formatPercent(executableConflict.winRate)} win rate. This is the tradable backtest result after execution rules are applied to the conflict-filtered overlay.`
+                ? `${executableConflict.totalTrades} executed trades, ${executableConflict.wins} wins, ${executableConflict.losses} losses, ${formatPercent(executableConflict.winRate)} win rate. This is the tradable target-anchored conflict recipe backtest after execution rules are applied.`
                 : "Executable conflict backtest metrics are unavailable for this run."
         ),
         insight(
@@ -97,7 +97,7 @@ export function renderEnsemblePolymarketResults(
         ),
         insight(
             "Interpretation",
-            `If the question is "short config X plus long config Y, but ignore trades when they conflict", compare Event-Level Conflict WR with Executable Conflict WR. The first measures signal quality, the second measures the actual tradable backtest after execution rules. Pooled Config Win Rate is not a tradable ensemble rule.`
+            `If the question is "short config X plus long config Y, but ignore trades when they conflict", compare Event-Level Conflict WR with Executable Conflict WR. The first measures Polymarket vote quality, the second measures the actual target-anchored recipe you can preview and export as an external signal. Pooled Config Win Rate is not a tradable ensemble rule.`
         ),
     ];
 
@@ -150,7 +150,7 @@ export function renderEnsemblePolymarketResults(
 export function resetEnsemblePolymarketPanel(dom: EnsembleLabDom): void {
     dom.ensemblePolymarketSection.style.display = "";
     setVisible(dom.ensemblePolymarketEmpty, false);
-    dom.ensemblePolymarketStatus.textContent = "Run Ensemble Polymarket to compare individual config edge, event-level conflict overlay quality, executable conflict backtest quality, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, the majority-vote overlay, and asymmetric veto pairs against matched 5m Polymarket outcomes.";
+    dom.ensemblePolymarketStatus.textContent = "Run Ensemble Polymarket to compare individual config edge, event-level conflict overlay quality, the executable target-anchored conflict recipe backtest, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, the majority-vote overlay, and asymmetric veto pairs against matched 5m Polymarket outcomes.";
     dom.ensemblePolymarketSummary.innerHTML = "";
     dom.ensemblePolymarketAgreement.innerHTML = "";
     dom.ensemblePolymarketTableBody.innerHTML = EMPTY_TABLE_ROW;

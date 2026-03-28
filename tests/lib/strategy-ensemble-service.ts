@@ -10,6 +10,12 @@ import {
     slugifyEnsembleSignalRecipeName,
 } from "./ensemble-signal-bridge";
 import {
+    buildEnsembleRecipeVariantSlug,
+    describeEnsembleRecipeReplayDirectionOverride,
+    normalizeEnsembleRecipeReplayDirectionOverride,
+    type EnsembleRecipeReplayDirectionOverride,
+} from "./ensemble-signal-direction";
+import {
     buildPreparedSignalsForEnsembleRecipe,
 } from "./ensemble-signal-recipes";
 import {
@@ -32,7 +38,6 @@ import {
     resetStrategyEnsembleResultPanels,
 } from "./strategy-ensemble-renderer";
 import {
-    collectEnsemblePolymarketOverlayVotes,
     runEnsemblePolymarket,
     type EnsemblePolymarketRunResult,
 } from "./strategy-ensemble-polymarket-engine";
@@ -50,7 +55,7 @@ import {
 import { state } from "./state";
 import { clearBacktestResults, commitBacktestResult } from "./state-actions";
 import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
-import { timeKey, type BacktestSettings, type OHLCVData, type Signal } from "./strategies";
+import { type BacktestSettings, type OHLCVData, type Signal } from "./strategies";
 import { setActiveBacktestRerunContext } from "./backtest-rerun-context";
 import type {
     ConfigRunArtifact,
@@ -149,6 +154,9 @@ class StrategyEnsembleService {
             this.saveBestVetoRecipe();
         });
         dom.ensembleSignalRecipeSelect.addEventListener("change", () => {
+            this.syncSavedSignalRecipeControls();
+        });
+        dom.ensembleSignalRecipeDirectionSelect.addEventListener("change", () => {
             this.syncSavedSignalRecipeControls();
         });
         dom.ensembleSignalRecipeDownloadScriptBtn.addEventListener("click", () => {
@@ -324,6 +332,13 @@ class StrategyEnsembleService {
 
     private updateSignalRecipeStatus(message: string): void {
         this.getDom().ensembleSignalRecipeStatus.textContent = message;
+    }
+
+    private getSelectedRecipeDirectionOverride(): EnsembleRecipeReplayDirectionOverride {
+        return normalizeEnsembleRecipeReplayDirectionOverride(
+            this.getDom().ensembleSignalRecipeDirectionSelect.value,
+            "auto"
+        );
     }
 
     private clearActiveEnsemblePreview(message: string): void {
@@ -759,7 +774,8 @@ class StrategyEnsembleService {
         const metrics = recipe.metrics;
         const winRateLabel = `${(metrics.winRate * 100).toFixed(1)}%`;
         const keptTradesLabel = `${metrics.keptTrades} kept trade${metrics.keptTrades === 1 ? "" : "s"}`;
-        return `${recipe.name} | ${this.describeRecipeMode(recipe.mode)} | ${recipe.symbol} ${recipe.interval} | ${keptTradesLabel} | ${winRateLabel} win rate.`;
+        const directionVariant = describeEnsembleRecipeReplayDirectionOverride(this.getSelectedRecipeDirectionOverride());
+        return `${recipe.name} | ${this.describeRecipeMode(recipe.mode)} | ${recipe.symbol} ${recipe.interval} | ${keptTradesLabel} | ${winRateLabel} win rate | Export Variant: ${directionVariant}.`;
     }
 
     private renderTargetSummary(): void {
@@ -1095,7 +1111,7 @@ class StrategyEnsembleService {
             anchorConfigName: targetConfig.name,
             anchorConfig: targetConfig,
             componentConfigs: [targetConfig, ...contextConfigs],
-            notes: `Aligned one-side conflict-filter overlay derived from ${selection.targetName} with ${contextConfigs.length} context config${contextConfigs.length === 1 ? "" : "s"}. This saved recipe replays the actual conflict-filtered overlay by emitting one synthetic ensemble entry whenever the selected configs agree on only one side at the same event time.`,
+            notes: `Target-anchored conflict-filter overlay derived from ${selection.targetName} with ${contextConfigs.length} context config${contextConfigs.length === 1 ? "" : "s"}. This saved recipe replays the target config entries after removing bars where any selected context config fires the opposite side at the same event time.`,
             metrics: {
                 keptTrades: overlay.scoredEvents,
                 wins: overlay.wins,
@@ -1240,58 +1256,17 @@ class StrategyEnsembleService {
         }
     }
 
-    private buildCurrentConflictPreviewSignals(candles: OHLCVData[]): Signal[] {
-        if (!this.lastPolymarketRunResult) {
-            return [];
-        }
-        return this.buildConflictPreviewSignalsFromPolymarketResult(this.lastPolymarketRunResult, candles);
-    }
-
-    private buildConflictPreviewSignalsFromPolymarketResult(
-        runResult: EnsemblePolymarketRunResult,
-        candles: OHLCVData[]
-    ): Signal[] {
-        const candlesByTime = new Map<string, { candle: OHLCVData; index: number }>();
-        candles.forEach((candle, index) => {
-            candlesByTime.set(timeKey(candle.time), { candle, index });
-        });
-
-        const signals: Signal[] = [];
-        for (const vote of collectEnsemblePolymarketOverlayVotes(
-            runResult.configResults,
-            "conflict_filtered"
-        )) {
-            const candleMatch = candlesByTime.get(String(vote.eventStartTs));
-            if (!candleMatch) {
-                continue;
-            }
-
-            const price = candleMatch.candle.close;
-            signals.push({
-                time: candleMatch.candle.time,
-                type: vote.prediction === "yes" ? "buy" : "sell",
-                price,
-                triggerPrice: price,
-                barIndex: candleMatch.index,
-                reason: `ensemble_conflict_filtered_${vote.prediction}`,
-            });
-        }
-        return signals;
-    }
-
     private async loadConflictFilterRecipePreview(
         recipe: EnsembleSignalRecipe,
         options?: { silent?: boolean }
     ): Promise<void> {
         await this.loadRecipeBacktestWithOptions(
             recipe,
-            `Loaded aligned one-side conflict-filter overlay preview from ${recipe.anchorConfigName}.`,
+            `Loaded target-anchored conflict-filter overlay preview from ${recipe.anchorConfigName}.`,
             {
                 silent: options?.silent,
-                overridePreparedSignals: (candles) => this.buildCurrentConflictPreviewSignals(candles),
-                overrideDescription: "the exact scored conflict-filter overlay from the current Polymarket run",
-                snapshotModeLabel: "Exact Current-Run Snapshot",
-                freezeInstruction: "Frozen to the exact Ensemble Polymarket run that produced this conflict-filter preview. Rerun Ensemble Polymarket if you want it rebuilt on fresh candles.",
+                snapshotModeLabel: "Rebuilt Target-Anchored Recipe Snapshot",
+                freezeInstruction: "Frozen to the candle snapshot used when you loaded this target-anchored conflict-filter preview. Rerun Ensemble Polymarket if you want it rebuilt on fresh candles.",
             }
         );
     }
@@ -1310,11 +1285,10 @@ class StrategyEnsembleService {
             candles,
             getStrategy: (strategyKey) => strategyRegistry.get(strategyKey),
         });
-        const previewSignals = this.buildCurrentConflictPreviewSignals(candles);
         const preview = await backtestService.evaluateSignalsOnData(
             candles,
             recipe.interval,
-            previewSignals,
+            resolved.preparedSignals,
             resolved.anchorBacktestSettings,
             settingsManager.resolveCapitalFromConfig(resolved.anchorConfig)
         );
@@ -1441,10 +1415,13 @@ class StrategyEnsembleService {
         }
 
         const slug = slugifyEnsembleSignalRecipeName(recipe.name);
-        const script = buildEnsembleRecipeBridgeScript(recipe, slug, botSymbol);
-        this.downloadTextFile(`${slug}.bridge.ps1`, script, "text/plain;charset=utf-8");
-        this.updateSignalRecipeStatus(`Downloaded recipe bridge script for ${recipe.name}.`);
-        uiManager.showToast(`Downloaded bridge for ${recipe.name}`, "success");
+        const directionOverride = this.getSelectedRecipeDirectionOverride();
+        const variantSlug = buildEnsembleRecipeVariantSlug(slug, directionOverride);
+        const variantLabel = describeEnsembleRecipeReplayDirectionOverride(directionOverride);
+        const script = buildEnsembleRecipeBridgeScript(recipe, slug, botSymbol, directionOverride);
+        this.downloadTextFile(`${variantSlug}.bridge.ps1`, script, "text/plain;charset=utf-8");
+        this.updateSignalRecipeStatus(`Downloaded recipe bridge script for ${recipe.name} (${variantLabel}).`);
+        uiManager.showToast(`Downloaded bridge for ${recipe.name} (${variantLabel})`, "success");
     }
 
     private async copySelectedSignalRecipeEnv(): Promise<void> {
@@ -1465,7 +1442,9 @@ class StrategyEnsembleService {
         }
 
         const slug = slugifyEnsembleSignalRecipeName(recipe.name);
-        const snippet = buildEnsembleRecipeBotEnvSnippet(recipe, slug, botSymbol);
+        const directionOverride = this.getSelectedRecipeDirectionOverride();
+        const variantLabel = describeEnsembleRecipeReplayDirectionOverride(directionOverride);
+        const snippet = buildEnsembleRecipeBotEnvSnippet(recipe, slug, botSymbol, directionOverride);
         const copied = await this.copyToClipboard(snippet);
         if (!copied) {
             const message = `Failed to copy env snippet for ${recipe.name}.`;
@@ -1474,8 +1453,8 @@ class StrategyEnsembleService {
             return;
         }
 
-        this.updateSignalRecipeStatus(`Copied recipe env snippet for ${recipe.name}.`);
-        uiManager.showToast(`Copied env snippet for ${recipe.name}`, "success");
+        this.updateSignalRecipeStatus(`Copied recipe env snippet for ${recipe.name} (${variantLabel}).`);
+        uiManager.showToast(`Copied env snippet for ${recipe.name} (${variantLabel})`, "success");
     }
 
     private deleteSelectedSignalRecipe(): void {

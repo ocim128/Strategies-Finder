@@ -1,7 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { selectExecutionAwareClosedCandles } from "../lib/alert-evaluation-window";
 import { fetchBinanceDataWithLimit } from "../lib/dataProviders/binance";
+import {
+    normalizeEnsembleRecipeReplayDirectionOverride,
+    type EnsembleRecipeReplayDirectionOverride,
+} from "../lib/ensemble-signal-direction";
+import { selectLatestEntryExportCandles } from "../lib/latest-entry-export-window";
 import { buildPreparedSignalsForEnsembleRecipe } from "../lib/ensemble-signal-recipes";
 import { normalizeStoredEnsembleSignalRecipe } from "../lib/settings-model";
 import { evaluateLatestEntrySignalFromPreparedSignals } from "../lib/signal-entry-evaluator";
@@ -16,6 +20,7 @@ type CliConfig = {
     freshnessBars: number;
     recipePath: string;
     maxEntryDelaySecs: number;
+    directionOverride: EnsembleRecipeReplayDirectionOverride;
 };
 
 type ExportEntry = {
@@ -38,6 +43,7 @@ type ExportPayload = {
     interval: string;
     strategyKey: string;
     strategyName: string;
+    directionOverride: EnsembleRecipeReplayDirectionOverride;
     rawSignalCount: number;
     preparedSignalCount: number;
     latestEntry: null | ExportEntry;
@@ -69,6 +75,7 @@ function printUsage(): void {
         "  --bars <n>                    Candle lookback (default: 500)",
         "  --freshness-bars <n>          Signal freshness threshold in bars (default: 0)",
         "  --max-entry-delay-secs <n>    Null latestEntry when the actionable time is older than this (default: 120)",
+        "  --direction-override <mode>   auto | short | long | combined (default: auto)",
         "  --out <path>                  Output JSON path (default: ./signals/latest-entry-signal.json)",
     ].join("\n"));
 }
@@ -96,6 +103,7 @@ async function parseArgs(argv: string[]): Promise<CliConfig | null> {
     let bars = 500;
     let freshnessBars = 0;
     let maxEntryDelaySecs = 120;
+    let directionOverride: EnsembleRecipeReplayDirectionOverride = "auto";
     let outPath = path.resolve("signals", "latest-entry-signal.json");
 
     for (let i = 0; i < argv.length; i++) {
@@ -139,6 +147,11 @@ async function parseArgs(argv: string[]): Promise<CliConfig | null> {
             i++;
             continue;
         }
+        if (arg === "--direction-override") {
+            directionOverride = normalizeEnsembleRecipeReplayDirectionOverride(next, "auto");
+            i++;
+            continue;
+        }
     }
 
     if (!recipePath) {
@@ -155,6 +168,7 @@ async function parseArgs(argv: string[]): Promise<CliConfig | null> {
         outPath,
         freshnessBars,
         maxEntryDelaySecs,
+        directionOverride,
     };
 }
 
@@ -235,15 +249,11 @@ async function main(): Promise<void> {
     if (!rawCandles.length) {
         throw new Error(`No candles returned for ${config.symbol} ${config.interval}.`);
     }
-    const candles = selectExecutionAwareClosedCandles(
+    const candles = selectLatestEntryExportCandles(
         rawCandles,
         config.interval,
-        { executionModel: "signal_close" },
-        {
-            nowSec: Math.floor(Date.now() / 1000),
-            minClosedCandles: 2,
-            fallbackToTrimmedClosed: true,
-        }
+        recipe.anchorConfig.backtestSettings ?? { executionModel: "next_open" },
+        Math.floor(Date.now() / 1000)
     );
     if (!candles || candles.length < 2) {
         throw new Error(`Not enough closed candles returned for ${config.symbol} ${config.interval}.`);
@@ -257,6 +267,7 @@ async function main(): Promise<void> {
         },
         candles,
         getStrategy: (strategyKey) => strategies[strategyKey],
+        directionOverride: config.directionOverride,
     });
     const capitalSettings = resolveCapitalSettingsFromRaw(resolved.anchorConfig.backtestSettings);
     const result = evaluateLatestEntrySignalFromPreparedSignals({
@@ -304,6 +315,7 @@ async function main(): Promise<void> {
         interval: config.interval,
         strategyKey: `ensemble_recipe:${recipe.mode}`,
         strategyName: recipe.name,
+        directionOverride: config.directionOverride,
         rawSignalCount: result.rawSignalCount,
         preparedSignalCount: result.preparedSignalCount,
         latestEntry: latestEntryExport.latestEntry,

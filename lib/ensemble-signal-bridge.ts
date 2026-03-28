@@ -1,4 +1,9 @@
 import type { EnsembleSignalRecipe } from "./settings-model";
+import {
+    buildEnsembleRecipeVariantSlug,
+    describeEnsembleRecipeReplayDirectionOverride,
+    type EnsembleRecipeReplayDirectionOverride,
+} from "./ensemble-signal-direction";
 
 export function slugifyEnsembleSignalRecipeName(name: string): string {
     const slug = name
@@ -21,19 +26,22 @@ export function resolveExternalSignalSymbol(symbol: string): string | null {
 export function buildEnsembleRecipeBotEnvSnippet(
     recipe: EnsembleSignalRecipe,
     slug: string,
-    botSymbol: string
+    botSymbol: string,
+    directionOverride: EnsembleRecipeReplayDirectionOverride = "auto"
 ): string {
+    const variantSlug = buildEnsembleRecipeVariantSlug(slug, directionOverride);
+    const variantLabel = describeEnsembleRecipeReplayDirectionOverride(directionOverride);
     return [
-        `# ${recipe.name}`,
+        `# ${recipe.name} (${variantLabel})`,
         "# Replace <STRATEGY_FINDER_ROOT> with your local Strategies-Finder path, using forward slashes, or run the downloaded script and use the generated .bot.env file.",
         "TRADING_MODE=external_signal",
         "DRY_RUN=true",
         `EXTERNAL_SIGNAL_SYMBOL=${botSymbol}`,
-        `EXTERNAL_SIGNAL_FILE=<STRATEGY_FINDER_ROOT>/signals/ensemble-bridge/${slug}.latest-entry-signal.json`,
+        `EXTERNAL_SIGNAL_FILE=<STRATEGY_FINDER_ROOT>/signals/ensemble-bridge/${variantSlug}.latest-entry-signal.json`,
         "EXTERNAL_SIGNAL_POLL_INTERVAL_MS=2000",
         "EXTERNAL_SIGNAL_MAX_SIGNAL_LAG_SECS=600",
         "EXTERNAL_SIGNAL_LOG_FILE=logs/external_signal.jsonl",
-        `EXTERNAL_SIGNAL_REFRESH_SCRIPT=<STRATEGY_FINDER_ROOT>/signals/ensemble-bridge/${slug}.refresh.ps1`,
+        `EXTERNAL_SIGNAL_REFRESH_SCRIPT=<STRATEGY_FINDER_ROOT>/signals/ensemble-bridge/${variantSlug}.refresh.ps1`,
         "EXTERNAL_SIGNAL_REFRESH_DELAY_SECS=2",
         "EXTERNAL_SIGNAL_REFRESH_TIMEOUT_SECS=120",
         "MULTI_WALLET_NON_INTERACTIVE=true",
@@ -44,19 +52,25 @@ export function buildEnsembleRecipeBotEnvSnippet(
 export function buildEnsembleRecipeBridgeScript(
     recipe: EnsembleSignalRecipe,
     slug: string,
-    botSymbol: string
+    botSymbol: string,
+    directionOverride: EnsembleRecipeReplayDirectionOverride = "auto"
 ): string {
     const recipeJson = JSON.stringify(recipe, null, 2);
     const recipeName = toPowerShellSingleQuoted(recipe.name);
+    const recipeUpdatedAtLiteral = toPowerShellSingleQuoted(recipe.updatedAt);
     const symbol = toPowerShellSingleQuoted(recipe.symbol);
     const interval = toPowerShellSingleQuoted(recipe.interval);
-    const slugLiteral = toPowerShellSingleQuoted(slug);
+    const variantSlug = buildEnsembleRecipeVariantSlug(slug, directionOverride);
+    const slugLiteral = toPowerShellSingleQuoted(variantSlug);
     const botSymbolLiteral = toPowerShellSingleQuoted(botSymbol);
+    const directionOverrideLiteral = toPowerShellSingleQuoted(directionOverride);
+    const directionLabel = describeEnsembleRecipeReplayDirectionOverride(directionOverride);
     const refreshScriptBody = [
         "param(",
         "    [string]$StrategyFinderRoot = '',",
         "    [int]$Bars = 500,",
-        "    [int]$FreshnessBars = 0",
+        "    [int]$FreshnessBars = 0,",
+        "    [string]$DirectionOverride = ''",
         ")",
         "",
         "$ErrorActionPreference = 'Stop'",
@@ -95,6 +109,7 @@ export function buildEnsembleRecipeBridgeScript(
         `$Symbol = ${symbol}`,
         `$Interval = ${interval}`,
         `$RecipeSlug = ${slugLiteral}`,
+        `$DirectionOverride = if ([string]::IsNullOrWhiteSpace($DirectionOverride)) { ${directionOverrideLiteral} } else { $DirectionOverride }`,
         "",
         "$ResolvedRoot = Resolve-StrategyFinderRoot -ExplicitPath $StrategyFinderRoot",
         "$BridgeDir = Join-Path $ResolvedRoot 'signals\\ensemble-bridge'",
@@ -111,7 +126,7 @@ export function buildEnsembleRecipeBridgeScript(
         "",
         "Push-Location $ResolvedRoot",
         "try {",
-        "    & $npmCommand.Source run signal:export:ensemble -- --recipe-file $RecipePath --symbol $Symbol --interval $Interval --bars $Bars --freshness-bars $FreshnessBars --out $SignalPath",
+        "    & $npmCommand.Source run signal:export:ensemble -- --recipe-file $RecipePath --symbol $Symbol --interval $Interval --bars $Bars --freshness-bars $FreshnessBars --direction-override $DirectionOverride --out $SignalPath",
         "    if ($LASTEXITCODE -ne 0) {",
         "        throw ('signal:export:ensemble exited with code ' + $LASTEXITCODE)",
         "    }",
@@ -128,16 +143,19 @@ export function buildEnsembleRecipeBridgeScript(
         "param(",
         "    [string]$StrategyFinderRoot = '',",
         "    [int]$Bars = 500,",
-        "    [int]$FreshnessBars = 0",
+        "    [int]$FreshnessBars = 0,",
+        "    [string]$DirectionOverride = ''",
         ")",
         "",
         "$ErrorActionPreference = 'Stop'",
         "",
         `$RecipeName = ${recipeName}`,
+        `$RecipeUpdatedAt = ${recipeUpdatedAtLiteral}`,
         `$RecipeSlug = ${slugLiteral}`,
         `$Symbol = ${symbol}`,
         `$Interval = ${interval}`,
         `$BotSymbol = ${botSymbolLiteral}`,
+        `$DirectionOverride = if ([string]::IsNullOrWhiteSpace($DirectionOverride)) { ${directionOverrideLiteral} } else { $DirectionOverride }`,
         "",
         "function Test-StrategyFinderRoot {",
         "    param([string]$CandidatePath)",
@@ -209,7 +227,27 @@ export function buildEnsembleRecipeBridgeScript(
         recipeJson,
         "'@",
         "",
-        "Write-Utf8NoBomFile -Path $RecipePath -Content $RecipeJson",
+        "$ShouldWriteRecipe = $true",
+        "if (Test-Path $RecipePath) {",
+        "    try {",
+        "        $ExistingRecipe = Get-Content -LiteralPath $RecipePath -Raw | ConvertFrom-Json",
+        "        $ExistingRecipeUpdatedAt = [string]$ExistingRecipe.updatedAt",
+        "        if (-not [string]::IsNullOrWhiteSpace($ExistingRecipeUpdatedAt)) {",
+        "            $ExistingRecipeTime = [DateTimeOffset]::Parse($ExistingRecipeUpdatedAt)",
+        "            $EmbeddedRecipeTime = [DateTimeOffset]::Parse($RecipeUpdatedAt)",
+        "            if ($ExistingRecipeTime -gt $EmbeddedRecipeTime) {",
+        "                $ShouldWriteRecipe = $false",
+        "                Write-Warning ('Existing recipe is newer than this bridge snapshot. Keeping ' + $RecipePath + ' (' + $ExistingRecipeUpdatedAt + ' > ' + $RecipeUpdatedAt + ').')",
+        "            }",
+        "        }",
+        "    }",
+        "    catch {",
+        "        Write-Warning ('Could not compare existing recipe snapshot at ' + $RecipePath + '. Overwriting with embedded bridge snapshot.')",
+        "    }",
+        "}",
+        "if ($ShouldWriteRecipe) {",
+        "    Write-Utf8NoBomFile -Path $RecipePath -Content $RecipeJson",
+        "}",
         "",
         "$RefreshScript = @'",
         refreshScriptBody,
@@ -233,9 +271,10 @@ export function buildEnsembleRecipeBridgeScript(
         '"@',
         "Write-Utf8NoBomFile -Path $BotEnvPath -Content $BotEnv",
         "",
-        "& $RefreshScriptPath -StrategyFinderRoot $StrategyFinderRoot -Bars $Bars -FreshnessBars $FreshnessBars",
+        "& $RefreshScriptPath -StrategyFinderRoot $StrategyFinderRoot -Bars $Bars -FreshnessBars $FreshnessBars -DirectionOverride $DirectionOverride",
         "",
-        "Write-Host ('Ensemble recipe bridge ready for ' + $RecipeName)",
+        `Write-Host ('Ensemble recipe bridge ready for ' + $RecipeName + ' (${directionLabel})')`,
+        "Write-Host ('Embedded recipe snapshot updatedAt: ' + $RecipeUpdatedAt)",
         "Write-Host ('Signal file: ' + $SignalPath)",
         "Write-Host ('Refresh script: ' + $RefreshScriptPath)",
         "Write-Host ('Bot env snippet: ' + $BotEnvPath)",

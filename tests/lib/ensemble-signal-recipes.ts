@@ -2,6 +2,10 @@ import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
 import { resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
 import type { EntrySignalCapitalSettings, EntrySignalEvaluationResult } from "./signal-entry-evaluator";
 import { evaluateLatestEntrySignalFromPreparedSignals } from "./signal-entry-evaluator";
+import {
+    normalizeEnsembleRecipeReplayDirectionOverride,
+    type EnsembleRecipeReplayDirectionOverride,
+} from "./ensemble-signal-direction";
 import type {
     EnsembleSignalRecipe,
     StrategyConfig,
@@ -76,8 +80,10 @@ export function buildPreparedSignalsForEnsembleRecipe(args: {
     recipe: EnsembleSignalRecipe;
     candles: OHLCVData[];
     getStrategy: (strategyKey: string) => Strategy | undefined;
+    directionOverride?: EnsembleRecipeReplayDirectionOverride;
 }): { preparedSignals: Signal[]; anchorConfig: StrategyConfig; anchorBacktestSettings: BacktestSettings; description: string } {
     const { recipe, candles, getStrategy } = args;
+    const directionOverride = normalizeEnsembleRecipeReplayDirectionOverride(args.directionOverride);
     const artifactByName = new Map<string, EnsembleRecipeSignalArtifact>();
 
     for (const config of recipe.componentConfigs) {
@@ -104,31 +110,40 @@ export function buildPreparedSignalsForEnsembleRecipe(args: {
             throw new Error(`Recipe veto config "${vetoName}" is missing.`);
         }
 
+        const preparedSignals = applyEnsembleRecipeReplayDirectionOverride(
+            buildPrimaryVetoPreparedSignals(anchorArtifact, vetoArtifact),
+            directionOverride
+        );
         return {
-            preparedSignals: buildPrimaryVetoPreparedSignals(anchorArtifact, vetoArtifact),
+            preparedSignals,
             anchorConfig: buildRecipeReplayConfig(
                 anchorArtifact.config,
-                buildPrimaryVetoPreparedSignals(anchorArtifact, vetoArtifact)
+                preparedSignals,
+                directionOverride
             ),
             anchorBacktestSettings: buildRecipeReplayBacktestSettings(
                 anchorArtifact.backtestSettings,
-                buildPrimaryVetoPreparedSignals(anchorArtifact, vetoArtifact)
+                preparedSignals,
+                directionOverride
             ),
-            description: `${anchorArtifact.config.name} vetoed by ${vetoArtifact.config.name}`,
+            description: `${anchorArtifact.config.name} vetoed by ${vetoArtifact.config.name} (${directionOverride === "auto" ? "auto" : `${directionOverride} override`})`,
         };
     }
 
     const contextArtifacts = Array.from(artifactByName.values())
         .filter((artifact) => artifact.config.name !== anchorArtifact.config.name);
-    const overlaySignals = buildTargetConflictFilterPreparedSignals(anchorArtifact, contextArtifacts);
+    const overlaySignals = applyEnsembleRecipeReplayDirectionOverride(
+        buildTargetConflictFilterPreparedSignals(anchorArtifact, contextArtifacts),
+        directionOverride
+    );
 
-    return {
-        preparedSignals: overlaySignals,
-        anchorConfig: buildRecipeReplayConfig(anchorArtifact.config, overlaySignals),
-        anchorBacktestSettings: buildRecipeReplayBacktestSettings(anchorArtifact.backtestSettings, overlaySignals),
-        description: `aligned one-side conflict-filter overlay across ${artifactByName.size} config${artifactByName.size === 1 ? "" : "s"}`,
-    };
-}
+        return {
+            preparedSignals: overlaySignals,
+            anchorConfig: buildRecipeReplayConfig(anchorArtifact.config, overlaySignals, directionOverride),
+            anchorBacktestSettings: buildRecipeReplayBacktestSettings(anchorArtifact.backtestSettings, overlaySignals, directionOverride),
+            description: `target-anchored conflict-filter overlay from ${anchorArtifact.config.name} across ${contextArtifacts.length} context config${contextArtifacts.length === 1 ? "" : "s"} (${directionOverride === "auto" ? "auto" : `${directionOverride} override`})`,
+        };
+    }
 
 export function evaluateEnsembleRecipeLatestEntry(args: {
     recipe: EnsembleSignalRecipe;
@@ -136,11 +151,13 @@ export function evaluateEnsembleRecipeLatestEntry(args: {
     getStrategy: (strategyKey: string) => Strategy | undefined;
     freshnessBars?: number;
     capitalSettings?: EntrySignalCapitalSettings;
+    directionOverride?: EnsembleRecipeReplayDirectionOverride;
 }): EntrySignalEvaluationResult {
     const resolved = buildPreparedSignalsForEnsembleRecipe({
         recipe: args.recipe,
         candles: args.candles,
         getStrategy: args.getStrategy,
+        directionOverride: args.directionOverride,
     });
 
     return evaluateLatestEntrySignalFromPreparedSignals({
@@ -158,37 +175,19 @@ export function buildTargetConflictFilterPreparedSignals(
     targetArtifact: EnsembleRecipeSignalArtifact,
     contextArtifacts: readonly EnsembleRecipeSignalArtifact[]
 ): Signal[] {
-    const signalBuckets = new Map<string, { buySignals: Signal[]; sellSignals: Signal[] }>();
-    const artifacts = [targetArtifact, ...contextArtifacts];
-
-    for (const artifact of artifacts) {
-        for (const signal of artifact.preparedSignals) {
-            if (!isEntrySignal(signal, artifact.tradeDirection)) {
-                continue;
+    return targetArtifact.preparedSignals
+        .filter((signal) => {
+            if (!isEntrySignal(signal, targetArtifact.tradeDirection)) {
+                return true;
             }
-            const bucket = signalBuckets.get(timeKey(signal.time)) ?? { buySignals: [], sellSignals: [] };
-            if (signal.type === "buy") {
-                bucket.buySignals.push(signal);
-            } else {
-                bucket.sellSignals.push(signal);
-            }
-            signalBuckets.set(timeKey(signal.time), bucket);
-        }
-    }
 
-    const overlaySignals: Signal[] = [];
-    for (const bucket of signalBuckets.values()) {
-        if (bucket.buySignals.length > 0 && bucket.sellSignals.length > 0) {
-            continue;
-        }
-        const sameSideSignals = bucket.buySignals.length > 0 ? bucket.buySignals : bucket.sellSignals;
-        if (sameSideSignals.length === 0) {
-            continue;
-        }
-        overlaySignals.push(buildOverlaySignal(sameSideSignals));
-    }
-
-    return overlaySignals.sort(compareSignalsByBarIndexThenTime);
+            const direction = signal.type === "buy" ? "long" : "short";
+            return contextArtifacts.every((artifact) => {
+                const vote = resolveContextVote(direction, artifact.entryPresenceByTime.get(timeKey(signal.time)));
+                return vote !== "oppose" && vote !== "conflict";
+            });
+        })
+        .sort(compareSignalsByBarIndexThenTime);
 }
 
 export function buildPrimaryVetoPreparedSignals(
@@ -236,9 +235,10 @@ function buildExecutedEntrySignals(
 
 function buildRecipeReplayBacktestSettings(
     anchorBacktestSettings: BacktestSettings,
-    preparedSignals: readonly Signal[]
+    preparedSignals: readonly Signal[],
+    directionOverride: EnsembleRecipeReplayDirectionOverride
 ): BacktestSettings {
-    const tradeDirection = inferReplayTradeDirection(preparedSignals);
+    const tradeDirection = resolveReplayTradeDirection(preparedSignals, directionOverride);
 
     return {
         ...anchorBacktestSettings,
@@ -252,7 +252,8 @@ function buildRecipeReplayBacktestSettings(
 
 function buildRecipeReplayConfig(
     anchorConfig: StrategyConfig,
-    preparedSignals: readonly Signal[]
+    preparedSignals: readonly Signal[],
+    directionOverride: EnsembleRecipeReplayDirectionOverride
 ): StrategyConfig {
     return {
         ...anchorConfig,
@@ -260,7 +261,7 @@ function buildRecipeReplayConfig(
         backtestSettings: {
             ...anchorConfig.backtestSettings,
             executionModel: "signal_close",
-            tradeDirection: inferReplayTradeDirection(preparedSignals),
+            tradeDirection: resolveReplayTradeDirection(preparedSignals, directionOverride),
             tradeFilterMode: "none",
             tradeFilterSettingsToggle: false,
             entrySettingsToggle: false,
@@ -269,19 +270,15 @@ function buildRecipeReplayConfig(
     };
 }
 
-function buildOverlaySignal(signals: readonly Signal[]): Signal {
-    const first = signals[0]!;
-    const averagePrice = signals.reduce((sum, signal) => sum + signal.price, 0) / signals.length;
-    const triggerPrice = signals.reduce((sum, signal) => sum + (signal.triggerPrice ?? signal.price), 0) / signals.length;
-
-    return {
-        time: first.time,
-        type: first.type,
-        price: averagePrice,
-        triggerPrice,
-        barIndex: first.barIndex,
-        reason: `ensemble_conflict_filtered_${first.type}`,
-    };
+export function applyEnsembleRecipeReplayDirectionOverride(
+    preparedSignals: readonly Signal[],
+    directionOverride: EnsembleRecipeReplayDirectionOverride
+): Signal[] {
+    if (directionOverride === "auto" || directionOverride === "combined") {
+        return [...preparedSignals];
+    }
+    const signalType = directionOverride === "short" ? "sell" : "buy";
+    return preparedSignals.filter((signal) => signal.type === signalType);
 }
 
 function compareSignalsByBarIndexThenTime(left: Signal, right: Signal): number {
@@ -309,6 +306,22 @@ function inferReplayTradeDirection(preparedSignals: readonly Signal[]): TradeDir
         return "short";
     }
     return "long";
+}
+
+function resolveReplayTradeDirection(
+    preparedSignals: readonly Signal[],
+    directionOverride: EnsembleRecipeReplayDirectionOverride
+): TradeDirection {
+    if (directionOverride === "short") {
+        return "short";
+    }
+    if (directionOverride === "long") {
+        return "long";
+    }
+    if (directionOverride === "combined") {
+        return "combined";
+    }
+    return inferReplayTradeDirection(preparedSignals);
 }
 
 function isEntrySignal(signal: Signal, tradeDirection: TradeDirection): boolean {

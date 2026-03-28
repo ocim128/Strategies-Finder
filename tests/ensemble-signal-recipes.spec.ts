@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
+    applyEnsembleRecipeReplayDirectionOverride,
     buildPrimaryVetoPreparedSignals,
     buildTargetConflictFilterPreparedSignals,
     type EnsembleRecipeSignalArtifact,
@@ -76,7 +77,7 @@ function createArtifact(input: {
 }
 
 describe("Ensemble signal recipes", () => {
-    it("builds the aligned one-side conflict overlay across all selected configs, not just the target", () => {
+    it("keeps only target-side entries that are not opposed by the selected context configs", () => {
         const targetArtifact = createArtifact({
             name: "Target",
             tradeDirection: "long",
@@ -104,9 +105,7 @@ describe("Ensemble signal recipes", () => {
         const filtered = buildTargetConflictFilterPreparedSignals(targetArtifact, [contextArtifact]);
 
         expect(filtered.map((signal) => `${signal.type}@${signal.time}`)).to.deep.equal([
-            "sell@600",
             "buy@900",
-            "buy@1200",
         ]);
     });
 
@@ -134,6 +133,30 @@ describe("Ensemble signal recipes", () => {
         expect(filtered.map((signal) => `${signal.type}@${signal.time}`)).to.deep.equal([
             "buy@600",
             "sell@900",
+        ]);
+    });
+
+    it("applies replay direction overrides so short-only and combined exports can be separated", () => {
+        const preparedSignals = [
+            createSignal(300, "buy", 1),
+            createSignal(600, "sell", 2),
+            createSignal(900, "buy", 3),
+        ];
+
+        expect(
+            applyEnsembleRecipeReplayDirectionOverride(preparedSignals, "short")
+                .map((signal) => `${signal.type}@${signal.time}`)
+        ).to.deep.equal([
+            "sell@600",
+        ]);
+
+        expect(
+            applyEnsembleRecipeReplayDirectionOverride(preparedSignals, "combined")
+                .map((signal) => `${signal.type}@${signal.time}`)
+        ).to.deep.equal([
+            "buy@300",
+            "sell@600",
+            "buy@900",
         ]);
     });
 });
