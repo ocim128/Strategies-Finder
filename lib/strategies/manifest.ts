@@ -66,6 +66,8 @@ import { wick_responsive_boundary_retest } from "./lib/wick_responsive_boundary_
 import { deadzone_orb_asymmetric_long } from "./lib/deadzone_orb_asymmetric_long";
 import { deadzone_orb_asymmetric_short } from "./lib/deadzone_orb_asymmetric_short";
 import { deadzone_consecutive_closes } from "./lib/deadzone_consecutive_closes";
+import { deadzone_orb_asymmetric_long_exact } from "./lib/deadzone_orb_asymmetric_long_exact";
+import { deadzone_orb_asymmetric_short_exact } from "./lib/deadzone_orb_asymmetric_short_exact";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -137,6 +139,8 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "deadzone_orb_asymmetric_long", strategy: deadzone_orb_asymmetric_long },
     { key: "deadzone_orb_asymmetric_short", strategy: deadzone_orb_asymmetric_short },
     { key: "deadzone_consecutive_closes", strategy: deadzone_consecutive_closes },
+    { key: "deadzone_orb_asymmetric_long_exact", strategy: deadzone_orb_asymmetric_long_exact },
+    { key: "deadzone_orb_asymmetric_short_exact", strategy: deadzone_orb_asymmetric_short_exact },
 ];
 
 export function createStrategiesRecordFromManifest(
