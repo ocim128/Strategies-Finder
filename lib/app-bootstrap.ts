@@ -36,6 +36,7 @@ import { bindFormAccessibility } from "./form-accessibility";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { getOptionalElement } from "./dom-utils";
 import { polymarketPanelService } from "./polymarket-panel-service";
+import { previewTabService } from "./preview-tab-service";
 import { setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
 import {
     runBootstrapFeatureStage,
@@ -199,6 +200,12 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         stage: "pre_restore",
         dependsOn: ["ui-events"],
         init: () => polymarketPanelService.init(),
+    },
+    {
+        id: "preview-tab",
+        stage: "pre_restore",
+        dependsOn: ["ui-events"],
+        init: () => previewTabService.init(),
     },
     {
         id: "alert-handlers",

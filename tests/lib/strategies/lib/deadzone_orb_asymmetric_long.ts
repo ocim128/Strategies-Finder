@@ -1,6 +1,7 @@
 import { Strategy, StrategyParams } from "../../types/strategies";
 import { createSignalLoop, ensureCleanData, createBuySignal, createSellSignal, getCloses } from "../strategy-helpers";
 import { buildEfficiencyRatio, buildRollingZScore, buildRateOfChange } from "./price-action-statistics-core";
+import { buildDeadzoneOrbAsymmetricLivePreview } from "./deadzone-orb-asymmetric-live-preview";
 
 function normalizeParams(params: StrategyParams): StrategyParams {
 	return {
@@ -18,6 +19,7 @@ export const deadzone_orb_asymmetric_long: Strategy = {
 	paramLabels: { deadzoneLookback: "Deadzone Lookback", efficiencyCeiling: "Efficiency Ceiling", longBreakoutZscore: "Long Breakout ZScore", shortBreakoutZscore: "Short Breakout ZScore" },
 	normalizeParams,
 	metadata: { role: "entry", direction: "both", walkForwardParams: ["deadzoneLookback", "efficiencyCeiling", "longBreakoutZscore", "shortBreakoutZscore"] },
+	entryPreview: (data, params) => buildDeadzoneOrbAsymmetricLivePreview(data, normalizeParams(params)),
 	execute: (data, params) => {
 		const clean = ensureCleanData(data);
 		const p = normalizeParams(params);

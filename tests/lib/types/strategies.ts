@@ -515,7 +515,34 @@ export interface EntryPreview {
     distance: number | null;
     distancePct: number | null;
     status: 'triggered' | 'waiting' | 'unavailable';
+    title?: string;
+    summary?: EntryPreviewSummary;
+    meta?: EntryPreviewMeta;
+    rows?: EntryPreviewRow[];
     note?: string;
+}
+
+export interface EntryPreviewSummary {
+    eyebrow?: string;
+    headline: string;
+    detail?: string;
+    tone?: 'positive' | 'negative' | 'neutral' | 'waiting';
+}
+
+export interface EntryPreviewMeta {
+    longReady?: boolean;
+    shortReady?: boolean;
+    nearestSide?: 'long' | 'short' | 'none';
+    deadzoneActive?: boolean;
+    secondsToClose?: number | null;
+    isClosedBarPreview?: boolean;
+    isStaleData?: boolean;
+}
+
+export interface EntryPreviewRow {
+    label: string;
+    value: string;
+    section?: string;
 }
 
 export interface StrategyEvaluation {

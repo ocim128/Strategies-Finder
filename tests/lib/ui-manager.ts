@@ -175,12 +175,7 @@ export class UIManager {
 			<div class="indicator-color" style="background: ${color};"></div>
 			<span class="indicator-name">${type} ${period}</span>
 		`;
-        const preview = panel.querySelector('#entryPreviewPanel');
-        if (preview) {
-            panel.insertBefore(badge, preview);
-        } else {
-            panel.appendChild(badge);
-        }
+        panel.appendChild(badge);
     }
 
     public updateStrategyParams(currentStrategyKey: string) {
@@ -296,100 +291,95 @@ export class UIManager {
     }
 
     public updateEntryPreview(preview: EntryPreview | null) {
-        const panel = this.ensureEntryPreviewPanel();
-        if (!panel) return;
+        const dom = this.getDom();
+        const panel = dom.strategyEntryPreviewPanel;
+        const emptyState = dom.strategyEntryPreviewEmpty;
 
         if (!preview) {
-            panel.style.display = 'none';
+            panel.hidden = true;
+            emptyState.hidden = false;
             return;
         }
 
-        panel.style.display = 'flex';
+        panel.hidden = false;
+        emptyState.hidden = true;
 
-        const statusEl = panel.querySelector('#entryPreviewStatus') as HTMLElement | null;
-        const modeEl = panel.querySelector('#entryPreviewMode') as HTMLElement | null;
-        const directionEl = panel.querySelector('#entryPreviewDirection') as HTMLElement | null;
-        const levelEl = panel.querySelector('#entryPreviewLevel') as HTMLElement | null;
-        const priceEl = panel.querySelector('#entryPreviewPrice') as HTMLElement | null;
-        const distanceEl = panel.querySelector('#entryPreviewDistance') as HTMLElement | null;
-        const noteEl = panel.querySelector('#entryPreviewNote') as HTMLElement | null;
+        dom.entryPreviewTitle.textContent = preview.title ?? 'Next Potential Entry';
+        dom.entryPreviewStatus.textContent = this.formatPreviewStatus(preview.status);
+        dom.entryPreviewStatus.className = `entry-preview-status ${preview.status}`;
+        dom.entryPreviewSummary.className = `strategy-live-preview-summary strategy-live-preview-summary--${preview.summary?.tone ?? 'neutral'}`;
+        dom.entryPreviewSummaryEyebrow.textContent = preview.summary?.eyebrow ?? 'Preview';
+        dom.entryPreviewSummaryHeadline.textContent = preview.summary?.headline ?? 'No preview summary';
+        dom.entryPreviewSummaryDetail.textContent = preview.summary?.detail ?? '';
 
-        if (statusEl) {
-            statusEl.textContent = preview.status;
-            statusEl.className = `entry-preview-status ${preview.status}`;
+        const hasStructuredRows = Array.isArray(preview.rows) && preview.rows.length > 0;
+        dom.entryPreviewLegacyRows.hidden = hasStructuredRows;
+        dom.entryPreviewRows.hidden = !hasStructuredRows;
+        dom.entryPreviewRows.replaceChildren();
+
+        if (hasStructuredRows) {
+            let currentSection: string | null = null;
+
+            for (const row of preview.rows ?? []) {
+                if (row.section && row.section !== currentSection) {
+                    const sectionEl = document.createElement('div');
+                    sectionEl.className = 'strategy-live-preview-section';
+
+                    const headingEl = document.createElement('div');
+                    headingEl.className = 'strategy-live-preview-section-heading';
+                    headingEl.textContent = row.section;
+
+                    sectionEl.appendChild(headingEl);
+                    dom.entryPreviewRows.appendChild(sectionEl);
+                    currentSection = row.section;
+                }
+
+                const sectionHost = row.section && currentSection
+                    ? dom.entryPreviewRows.lastElementChild
+                    : dom.entryPreviewRows;
+                const rowEl = document.createElement('div');
+                rowEl.className = 'entry-preview-row';
+
+                const labelEl = document.createElement('span');
+                labelEl.textContent = row.label;
+
+                const valueEl = document.createElement('span');
+                valueEl.textContent = row.value;
+
+                rowEl.append(labelEl, valueEl);
+                sectionHost?.appendChild(rowEl);
+            }
         }
 
-        if (modeEl) {
-            modeEl.textContent = this.formatEntryMode(preview.mode);
-        }
+        if (!hasStructuredRows) {
+            dom.entryPreviewMode.textContent = this.formatEntryMode(preview.mode);
+            dom.entryPreviewDirection.textContent = preview.direction;
+            dom.entryPreviewLevel.textContent = preview.level.toFixed(3).replace(/\.?0+$/, '');
+            dom.entryPreviewPrice.textContent = preview.fanPrice !== null ? this.formatPrice(preview.fanPrice) : '-';
 
-        if (directionEl) {
-            directionEl.textContent = preview.direction;
-        }
-
-        if (levelEl) {
-            levelEl.textContent = preview.level.toFixed(3).replace(/\.?0+$/, '');
-        }
-
-        if (priceEl) {
-            priceEl.textContent = preview.fanPrice !== null ? this.formatPrice(preview.fanPrice) : '-';
-        }
-
-        if (distanceEl) {
             if (preview.distance === null || preview.distancePct === null || preview.lastClose === null) {
-                distanceEl.textContent = '-';
+                dom.entryPreviewDistance.textContent = '-';
             } else {
                 const sign = preview.distance >= 0 ? '+' : '-';
                 const diff = Math.abs(preview.distance);
                 const pct = Math.abs(preview.distancePct);
-                distanceEl.textContent = `${sign}${this.formatPrice(diff)} (${sign}${pct.toFixed(2)}%)`;
+                dom.entryPreviewDistance.textContent = `${sign}${this.formatPrice(diff)} (${sign}${pct.toFixed(2)}%)`;
             }
+        } else {
+            dom.entryPreviewMode.textContent = '-';
+            dom.entryPreviewDirection.textContent = '-';
+            dom.entryPreviewLevel.textContent = '-';
+            dom.entryPreviewPrice.textContent = '-';
+            dom.entryPreviewDistance.textContent = '-';
         }
 
-        if (noteEl) {
-            noteEl.textContent = preview.note ?? '';
-        }
+        dom.entryPreviewNote.textContent = preview.note ?? '';
     }
 
-    private ensureEntryPreviewPanel(): HTMLElement | null {
-        let panel = document.getElementById('entryPreviewPanel');
-        if (panel) return panel;
-
-        const { indicatorsPanel: container } = this.getDom();
-
-        panel = document.createElement('div');
-        panel.id = 'entryPreviewPanel';
-        panel.className = 'entry-preview-panel';
-        panel.style.display = 'none';
-        panel.innerHTML = `
-            <div class="entry-preview-header">
-                <span class="entry-preview-title">Next Potential Entry</span>
-                <span class="entry-preview-status unavailable" id="entryPreviewStatus">-</span>
-            </div>
-            <div class="entry-preview-row">
-                <span>Mode</span>
-                <span id="entryPreviewMode">-</span>
-            </div>
-            <div class="entry-preview-row">
-                <span>Direction</span>
-                <span id="entryPreviewDirection">-</span>
-            </div>
-            <div class="entry-preview-row">
-                <span>Level</span>
-                <span id="entryPreviewLevel">-</span>
-            </div>
-            <div class="entry-preview-row">
-                <span>Fan Price</span>
-                <span id="entryPreviewPrice">-</span>
-            </div>
-            <div class="entry-preview-row">
-                <span>Distance</span>
-                <span id="entryPreviewDistance">-</span>
-            </div>
-            <div class="entry-preview-note" id="entryPreviewNote"></div>
-        `;
-        container.appendChild(panel);
-        return panel;
+    private formatPreviewStatus(status: EntryPreview['status']): string {
+        if (status === 'triggered') return 'Triggered';
+        if (status === 'waiting') return 'Watching';
+        return 'Unavailable';
     }
 
     private formatEntryMode(mode: number): string {
@@ -400,4 +390,3 @@ export class UIManager {
 }
 
 export const uiManager = new UIManager();
-

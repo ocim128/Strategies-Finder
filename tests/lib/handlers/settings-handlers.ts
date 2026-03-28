@@ -19,9 +19,14 @@ import {
 import { strategyPanelController } from "../strategy-panel-controller";
 import { parseInputNumber } from "../dom-input-readers";
 import { createSettingsHandlersDom } from "./settings-handlers-dom";
+import { STRATEGY_CONFIGS_CHANGED_EVENT } from "../preview-tab-service";
 
 const SHARED_DEFAULT_SYMBOL = 'ETHUSDT';
 const SHARED_DEFAULT_INTERVAL = '120m';
+
+function notifyStrategyConfigsChanged(): void {
+    window.dispatchEvent(new Event(STRATEGY_CONFIGS_CHANGED_EVENT));
+}
 
 export function setupSettingsHandlers() {
     const dom = createSettingsHandlersDom();
@@ -56,6 +61,7 @@ export function setupSettingsHandlers() {
 
             // Update dropdown and select the new config
             updateConfigDropdown(name);
+            notifyStrategyConfigsChanged();
 
             configNameInput.value = '';
             uiManager.showToast(`Configuration "${name}" saved`, 'success');
@@ -115,6 +121,7 @@ export function setupSettingsHandlers() {
             if (confirm(`Delete configuration "${name}"?`)) {
                 settingsManager.deleteStrategyConfig(name);
                 updateConfigDropdown();
+                notifyStrategyConfigsChanged();
                 uiManager.showToast(`Configuration "${name}" deleted`, 'info');
                 debugLogger.event('ui.config.deleted', { name });
             }
@@ -151,6 +158,7 @@ export function setupSettingsHandlers() {
         const persisted = settingsManager.upsertStrategyConfig(parsed);
         settingsManager.applyStrategyConfig(persisted);
         updateConfigDropdown(persisted.name);
+        notifyStrategyConfigsChanged();
         debugLogger.event('ui.config.shared.loaded', { name: persisted.name, source });
         return persisted;
     };

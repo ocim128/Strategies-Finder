@@ -246,6 +246,20 @@
 
 
 
+.entry-preview-legacy-rows,
+
+.entry-preview-rows {
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: var(--space-1);
+
+}
+
+
+
 .entry-preview-row span:first-child {
 
     color: var(--text-tertiary);
@@ -277,6 +291,5 @@
     border-top: 1px solid var(--border-color);
 
 }
-
 
 

@@ -14,3 +14,4 @@ export * from "./pairCombiner/pair-combiner-bridge-dom";
 export * from "./walk-forward-dom";
 export * from "./parameter-audit-dom";
 export * from "./strategy-ensemble-dom";
+export * from "./preview-tab-dom";

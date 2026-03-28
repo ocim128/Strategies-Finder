@@ -16,6 +16,7 @@ import { PAIR_COMBINER_BRIDGE_REQUIRED_IDS } from "./lib/pairCombiner/pair-combi
 import { WALK_FORWARD_SERVICE_REQUIRED_IDS } from "./lib/walk-forward-dom";
 import { PARAMETER_AUDIT_REQUIRED_IDS } from "./lib/parameter-audit-dom";
 import { ENSEMBLE_LAB_REQUIRED_IDS } from "./lib/strategy-ensemble-dom";
+import { PREVIEW_TAB_REQUIRED_IDS } from "./lib/preview-tab-dom";
 
 const PARTIALS_DIR = path.join(process.cwd(), "html-partials");
 
@@ -57,6 +58,7 @@ describe("Feature DOM contracts", () => {
         ensembleLab: [...ENSEMBLE_LAB_REQUIRED_IDS],
         finderManager: [...FINDER_MANAGER_REQUIRED_IDS],
         parameterAudit: [...PARAMETER_AUDIT_REQUIRED_IDS],
+        previewTab: [...PREVIEW_TAB_REQUIRED_IDS],
         pairCombinerBridge: [...PAIR_COMBINER_BRIDGE_REQUIRED_IDS],
         walkForwardService: [...WALK_FORWARD_SERVICE_REQUIRED_IDS],
     } as const;

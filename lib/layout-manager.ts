@@ -12,6 +12,7 @@ import tabDataminingHtml from '../html-partials/tab-datamining.html?raw';
 import tabFinderHtml from '../html-partials/tab-finder.html?raw';
 import tabParameterAuditHtml from '../html-partials/tab-parameter-audit.html?raw';
 import tabPolymarketHtml from '../html-partials/tab-polymarket.html?raw';
+import tabPreviewHtml from '../html-partials/tab-preview.html?raw';
 
 
 import tabWalkforwardHtml from '../html-partials/tab-walkforward.html?raw';
@@ -40,6 +41,7 @@ const SETTINGS_TAB_HTML = [
 
 const STRATEGY_PANEL_TAB_PARTIALS = [
     SETTINGS_TAB_HTML,
+    tabPreviewHtml,
     tabDataminingHtml,
     tabFinderHtml,
     tabParameterAuditHtml,
