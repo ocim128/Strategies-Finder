@@ -51,6 +51,26 @@ export interface EnsemblePolymarketAgreementSummary {
     decisiveNoEvents: number;
 }
 
+export interface EnsemblePolymarketOverlayVote {
+    eventStartTs: number;
+    prediction: "yes" | "no";
+    actualOutcomeUp: 0 | 1;
+    yesVotes: number;
+    noVotes: number;
+}
+
+export interface EnsemblePolymarketExecutableConflictSummary {
+    totalTrades: number;
+    scoredTrades: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+    coverage: number;
+    retentionRate: number;
+    skippedByExecution: number;
+    missingOutcomeTrades: number;
+}
+
 export interface EnsemblePolymarketVetoPairResult {
     primaryConfigName: string;
     primaryFamilyLabel: string;
@@ -91,6 +111,7 @@ export interface EnsemblePolymarketRunResult {
         ensembleDeltaVsBestBaseline: number;
     };
     conflictFilteredOverlay: EnsemblePolymarketAgreementSummary;
+    conflictExecutableOverlay?: EnsemblePolymarketExecutableConflictSummary | null;
     majorityVoteOverlay: EnsemblePolymarketAgreementSummary;
     vetoScan: {
         pairResults: EnsemblePolymarketVetoPairResult[];
@@ -189,6 +210,42 @@ function buildConfigPredictionIndex(
     }
 
     return predictionByEventStartTs;
+}
+
+export function collectEnsemblePolymarketOverlayVotes(
+    configResults: readonly EnsemblePolymarketConfigResult[],
+    mode: "majority_vote" | "conflict_filtered"
+): EnsemblePolymarketOverlayVote[] {
+    const eventVotes = buildEventVoteBuckets(configResults);
+    const overlayVotes: EnsemblePolymarketOverlayVote[] = [];
+
+    for (const [eventStartTs, bucket] of eventVotes.entries()) {
+        const yesVotes = bucket.yesConfigs.size;
+        const noVotes = bucket.noConfigs.size;
+        if (yesVotes === 0 && noVotes === 0) {
+            continue;
+        }
+
+        const isMixedDirection = yesVotes > 0 && noVotes > 0;
+        if (mode === "conflict_filtered" && isMixedDirection) {
+            continue;
+        }
+
+        if (mode === "majority_vote" && yesVotes === noVotes) {
+            continue;
+        }
+
+        overlayVotes.push({
+            eventStartTs,
+            prediction: yesVotes > noVotes ? "yes" : "no",
+            actualOutcomeUp: bucket.actualOutcomeUp,
+            yesVotes,
+            noVotes,
+        });
+    }
+
+    overlayVotes.sort((left, right) => left.eventStartTs - right.eventStartTs);
+    return overlayVotes;
 }
 
 export function buildEnsemblePolymarketAgreement(

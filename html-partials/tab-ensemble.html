@@ -201,7 +201,7 @@
                 <h4 class="analysis-finder-title">Ensemble Polymarket</h4>
             </div>
             <div class="analysis-finder-status" id="ensemblePolymarketStatus">
-                Run Ensemble Polymarket to compare individual config edge, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, the majority-vote overlay, and asymmetric veto pairs against matched 5m Polymarket outcomes.
+                Run Ensemble Polymarket to compare individual config edge, event-level conflict overlay quality, executable conflict backtest quality, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, the majority-vote overlay, and asymmetric veto pairs against matched 5m Polymarket outcomes.
             </div>
             <div class="finder-strategy-actions ensemble-lab__actions" role="group" aria-label="Ensemble Polymarket tradable recipe actions">
                 <button class="btn btn-secondary btn-compact" id="ensembleLoadConflictBacktestBtn" type="button">Load Conflict Backtest</button>
@@ -234,7 +234,7 @@
             <div class="portfolio-lab__insights ensemble-lab__polymarket-agreement" id="ensemblePolymarketAgreement"></div>
             <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
                 <div class="portfolio-lab__table-caption">
-                    Each selected config is backtested independently, then its executed trades are scored against matched Polymarket YES/NO outcomes. The conflict-filtered block above answers "what if conflicting long and short configs skip the trade", now split into aligned-signal coverage, true mixed-direction conflicts, and no-signal gaps. The majority-vote block appears only when it adds information, the veto scan tests "trade A, let B veto only opposite signals", and the pooled config stats are not a tradable ensemble rule.
+                    Each selected config is backtested independently, then its executed trades are scored against matched Polymarket YES/NO outcomes. The conflict block above now separates event-level conflict overlay quality from the executable conflict backtest result, alongside aligned-signal coverage, true mixed-direction conflicts, and no-signal gaps. The majority-vote block appears only when it adds information, the veto scan tests "trade A, let B veto only opposite signals", and the pooled config stats are not a tradable ensemble rule.
                 </div>
                 <table class="analysis-table portfolio-lab__table">
                     <thead>

@@ -110,6 +110,17 @@ export function computePolymarketBestBaselineWinRate(trades: Trade[]): number {
     return Math.max(alwaysYesWinRate, alwaysNoWinRate);
 }
 
+export function countDistinctPolymarketOutcomeRows(trades: Trade[]): number {
+    const distinctEventStartTs = new Set<number>();
+    for (const trade of trades) {
+        const eventStartTs = trade.polymarketOutcome?.eventStartTs;
+        if (typeof eventStartTs === "number" && Number.isFinite(eventStartTs)) {
+            distinctEventStartTs.add(eventStartTs);
+        }
+    }
+    return distinctEventStartTs.size;
+}
+
 class QuickViewManager {
     private static readonly MAX_RENDERED_TRADES = 100;
     private static readonly INITIAL_TRADE_BATCH_SIZE = 40;
@@ -257,21 +268,46 @@ class QuickViewManager {
 
     // ── Polymarket On-Demand Loading ───────────────────────
 
-    private async ensurePolymarketOutcomes(result: BacktestResult): Promise<Trade[]> {
+    private withPolymarketTradeSummary(
+        result: BacktestResult,
+        trades: Trade[],
+        seriesId: string | null,
+        outcomeRowsLoaded?: number
+    ): BacktestResult {
+        const scoredTrades = trades.filter((trade) => trade.polymarketOutcome !== undefined && trade.polymarketOutcome !== null).length;
+        const totalTrades = result.totalTrades > 0 ? result.totalTrades : trades.length;
+        const fallbackOutcomeRowsLoaded = outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(trades);
+        const existingSummary = result.polymarketTradeSummary;
+
+        return {
+            ...result,
+            trades,
+            polymarketTradeSummary: {
+                seriesId: existingSummary?.seriesId || seriesId || "",
+                outcomeRowsLoaded: existingSummary?.outcomeRowsLoaded && existingSummary.outcomeRowsLoaded > 0
+                    ? existingSummary.outcomeRowsLoaded
+                    : fallbackOutcomeRowsLoaded,
+                scoredTrades: existingSummary?.scoredTrades ?? scoredTrades,
+                missingOutcomeTrades: existingSummary?.missingOutcomeTrades ?? Math.max(0, totalTrades - scoredTrades),
+            },
+        };
+    }
+
+    private async ensurePolymarketOutcomes(result: BacktestResult): Promise<BacktestResult> {
         // Check if already annotated
         const hasOutcomes = result.trades.some((trade) => trade.polymarketOutcome !== undefined && trade.polymarketOutcome !== null);
+        const seriesId = getPolymarket5mSeriesIdForSymbol(state.currentSymbol);
         if (hasOutcomes || result.polymarketTradeSummary) {
-            return result.trades;
+            return this.withPolymarketTradeSummary(result, result.trades, seriesId);
         }
 
         // Check if this is a supported Polymarket 5m run
         if (!isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval)) {
-            return result.trades;
+            return result;
         }
 
-        const seriesId = getPolymarket5mSeriesIdForSymbol(state.currentSymbol);
         if (!seriesId) {
-            return result.trades;
+            return result;
         }
 
         // Collect entry times from trades
@@ -279,7 +315,7 @@ class QuickViewManager {
             .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
             .filter((value): value is number => value !== null);
         if (targetTimes.length === 0) {
-            return result.trades;
+            return result;
         }
 
         const startTs = Math.min(...targetTimes);
@@ -288,7 +324,7 @@ class QuickViewManager {
         // Load outcomes from SQLite (uses in-memory cache)
         const outcomes = await loadPolymarket5mOutcomesForTimeRange(state.currentSymbol, startTs, endTs);
         if (outcomes.length === 0) {
-            return result.trades;
+            return result;
         }
 
         // Build evaluation context for trade annotation
@@ -297,7 +333,7 @@ class QuickViewManager {
 
         // Annotate trades with Polymarket outcomes
         const outcomeByStartTs = new Map(evalContext.outcomeByStartTs.entries());
-        return result.trades.map((trade) => {
+        const trades = result.trades.map((trade): Trade => {
             const entryTs = parseTimeToUnixSeconds(trade.entryTime);
             if (entryTs === null) {
                 return { ...trade, polymarketOutcome: null };
@@ -306,7 +342,7 @@ class QuickViewManager {
             if (!outcome) {
                 return { ...trade, polymarketOutcome: null };
             }
-            const prediction = trade.type === 'long' ? 'yes' : 'no';
+            const prediction: "yes" | "no" = trade.type === 'long' ? 'yes' : 'no';
             const isWin = prediction === 'yes'
                 ? outcome.resolved_outcome_up === 1
                 : outcome.resolved_outcome_up === 0;
@@ -323,6 +359,8 @@ class QuickViewManager {
                 },
             };
         });
+
+        return this.withPolymarketTradeSummary(result, trades, seriesId, outcomes.length);
     }
 
     // ── Show / Hide ────────────────────────────────────────
@@ -332,10 +370,10 @@ class QuickViewManager {
 
         // Load Polymarket outcomes on-demand for Quick View display
         // This keeps backtests fast by default while still enabling Polymarket analysis in Quick View
-        const trades = await this.ensurePolymarketOutcomes(result);
+        const enrichedResult = await this.ensurePolymarketOutcomes(result);
 
-        this.renderResults({ ...result, trades });
-        this.renderTrades(trades);
+        this.renderResults(enrichedResult);
+        this.renderTrades(enrichedResult.trades);
 
         // Force a reflow before adding the visible class for CSS transition
         this.overlay.style.display = 'flex';
@@ -781,7 +819,7 @@ class QuickViewManager {
             missingTrades,
             coverage,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
-            outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? 0,
+            outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
             longestWinStreak,
             longestLossStreak,
             recentFormTrades: recentForm.recentFormTrades,

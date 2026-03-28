@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { DEFAULT_BACKTEST_SETTINGS, type StrategyConfig } from "../lib/settings-model";
 import {
+    collectEnsemblePolymarketOverlayVotes,
     determineEnsemblePolymarketVerdict,
     determineEnsemblePolymarketVetoVerdict,
     runEnsemblePolymarket,
@@ -234,6 +235,50 @@ describe("Strategy Ensemble Polymarket engine", () => {
         expect(result.configResults[0]?.evalResult.coverage).to.equal(1);
         expect(result.configResults[1]?.evalResult.wins).to.equal(1);
         expect(result.ensembleSummary.bestBaseline).to.equal(2 / 3);
+    });
+
+    it("collects exact scored conflict-filter overlay votes from config results", async () => {
+        const configs = [
+            createConfig("Target Alpha", "target_alpha"),
+            createConfig("Context Beta", "context_beta"),
+        ];
+        const tradesByStrategyKey = new Map<string, Trade[]>([
+            ["target_alpha", [createTrade(300, "long"), createTrade(600, "short"), createTrade(900, "long")]],
+            ["context_beta", [createTrade(300, "short"), createTrade(600, "short"), createTrade(900, "long")]],
+        ]);
+        const outcomes = [
+            createOutcome(300, 1),
+            createOutcome(600, 0),
+            createOutcome(900, 0),
+        ];
+
+        const { resultPromise } = buildFixture({
+            configs,
+            targetName: "Target Alpha",
+            contextNames: ["Context Beta"],
+            tradesByStrategyKey,
+            outcomes,
+        });
+        const result = await resultPromise;
+
+        expect(
+            collectEnsemblePolymarketOverlayVotes(result.configResults, "conflict_filtered")
+        ).to.deep.equal([
+            {
+                eventStartTs: 600,
+                prediction: "no",
+                actualOutcomeUp: 0,
+                yesVotes: 0,
+                noVotes: 2,
+            },
+            {
+                eventStartTs: 900,
+                prediction: "yes",
+                actualOutcomeUp: 0,
+                yesVotes: 2,
+                noVotes: 0,
+            },
+        ]);
     });
 
     it("computes Wilson lower bounds for each config result", async () => {

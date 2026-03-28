@@ -214,14 +214,24 @@ function buildExecutedEntrySignals(
     candles.forEach((candle, index) => {
         barIndexByTime.set(timeKey(candle.time), index);
     });
+    const dedupedByEventSide = new Map<string, Signal>();
 
-    return trades.map((trade) => ({
-        time: trade.entryTime,
-        type: trade.type === "long" ? "buy" : "sell",
-        price: trade.entryPrice,
-        triggerPrice: trade.entryPrice,
-        barIndex: barIndexByTime.get(timeKey(trade.entryTime)),
-    }));
+    for (const trade of trades) {
+        const type: Signal["type"] = trade.type === "long" ? "buy" : "sell";
+        const eventKey = `${timeKey(trade.entryTime)}:${type}`;
+        if (dedupedByEventSide.has(eventKey)) {
+            continue;
+        }
+        dedupedByEventSide.set(eventKey, {
+            time: trade.entryTime,
+            type,
+            price: trade.entryPrice,
+            triggerPrice: trade.entryPrice,
+            barIndex: barIndexByTime.get(timeKey(trade.entryTime)),
+        });
+    }
+
+    return Array.from(dedupedByEventSide.values()).sort(compareSignalsByBarIndexThenTime);
 }
 
 function buildRecipeReplayBacktestSettings(

@@ -122,8 +122,16 @@ export function setupStateSubscriptions() {
             applyDefaultVisibleRange(data.length);
         }
 
-        if (state.currentBacktestResult && state.currentBacktestResultSource === 'backtest') {
-            backtestService.runCurrentBacktest();
+        if (
+            state.currentBacktestResult
+            && (state.currentBacktestResultSource === 'backtest' || state.currentBacktestResultSource === 'ensemble_preview')
+        ) {
+            void backtestService.runCurrentBacktest().catch((error) => {
+                debugLogger.error('backtest.auto_refresh_failed', {
+                    source: state.currentBacktestResultSource,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            });
         }
     });
 

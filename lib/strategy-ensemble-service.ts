@@ -32,6 +32,7 @@ import {
     resetStrategyEnsembleResultPanels,
 } from "./strategy-ensemble-renderer";
 import {
+    collectEnsemblePolymarketOverlayVotes,
     runEnsemblePolymarket,
     type EnsemblePolymarketRunResult,
 } from "./strategy-ensemble-polymarket-engine";
@@ -48,7 +49,8 @@ import {
 } from "./settings-manager";
 import { state } from "./state";
 import { clearBacktestResults, commitBacktestResult } from "./state-actions";
-import type { OHLCVData } from "./strategies";
+import { timeKey, type OHLCVData, type Signal } from "./strategies";
+import { setActiveBacktestRerunContext } from "./backtest-rerun-context";
 import type {
     ConfigRunArtifact,
     ConfigSignalArtifact,
@@ -56,6 +58,10 @@ import type {
 } from "./strategy-ensemble-types";
 import { uiManager } from "./ui-manager";
 import { debugLogger } from "./debug-logger";
+import {
+    createPolymarketTradeEvaluationContext,
+    evaluatePolymarketBacktestTrades,
+} from "./polymarket-trade-annotations";
 import {
     getSupportedPolymarket5mSymbolsLabel,
     isSupportedPolymarket5mRun,
@@ -924,6 +930,24 @@ class StrategyEnsembleService {
             parityResults: null,
             reason: "ensemble_preview",
         });
+        setActiveBacktestRerunContext({
+            source: "ensemble_preview",
+            label: `Ensemble rule preview: ${preview.row.rule}`,
+            rerun: async () => {
+                const latestContext = this.runContext;
+                const latestPreview = latestContext?.builderPreviewByRuleId.get(ruleId) ?? null;
+                if (!latestPreview || !latestContext) {
+                    throw new Error("Run Strategy Ensemble Lab again before rerunning this ensemble preview.");
+                }
+                clearBacktestResults("ensemble_preview_rerun_reset");
+                await settingsManager.applyStrategyConfig(latestContext.targetArtifact.config);
+                commitBacktestResult(latestPreview.result, "ensemble_preview", {
+                    parityResults: null,
+                    reason: "ensemble_preview_rerun",
+                });
+                this.updateStatus(`Refreshed exact ensemble preview: ${latestPreview.row.rule}.`);
+            },
+        });
 
         this.updateStatus(`Loaded exact ensemble preview: ${preview.row.rule}.`);
         uiManager.showToast(`Loaded ensemble preview: ${preview.row.rule}`, "success");
@@ -940,6 +964,22 @@ class StrategyEnsembleService {
         return {
             interval: state.currentInterval,
             loadStrategyConfig: (configName) => settingsManager.loadStrategyConfig(configName),
+            getStrategy: (strategyKey) => strategyRegistry.get(strategyKey),
+            resolveCapitalFromConfig: (config) => settingsManager.resolveCapitalFromConfig(config),
+            evaluateStrategyOnData: (...args) => backtestService.evaluateStrategyOnData(...args),
+            evaluateSignalsOnData: (...args) => backtestService.evaluateSignalsOnData(...args),
+            warn: (message, details) => debugLogger.warn(message, details),
+        };
+    }
+
+    private buildSnapshotEngineDeps(configs: readonly StrategyConfig[]): StrategyEnsembleEngineDeps {
+        const snapshotByName = new Map(
+            configs.map((config) => [config.name, this.cloneStrategyConfigSnapshot(config)] as const)
+        );
+
+        return {
+            interval: state.currentInterval,
+            loadStrategyConfig: (configName) => snapshotByName.get(configName) ?? null,
             getStrategy: (strategyKey) => strategyRegistry.get(strategyKey),
             resolveCapitalFromConfig: (config) => settingsManager.resolveCapitalFromConfig(config),
             evaluateStrategyOnData: (...args) => backtestService.evaluateStrategyOnData(...args),
@@ -1082,6 +1122,20 @@ class StrategyEnsembleService {
     }
 
     private async loadRecipeBacktest(recipe: EnsembleSignalRecipe, successMessage: string): Promise<void> {
+        await this.loadRecipeBacktestWithOptions(recipe, successMessage);
+    }
+
+    private async loadRecipeBacktestWithOptions(
+        recipe: EnsembleSignalRecipe,
+        successMessage: string,
+        options?: {
+            overridePreparedSignals?: (candles: OHLCVData[]) => Signal[];
+            overrideDescription?: string;
+            registerRerun?: boolean;
+            rerunFactory?: () => Promise<void>;
+            silent?: boolean;
+        }
+    ): Promise<void> {
         if (recipe.symbol !== state.currentSymbol || recipe.interval !== state.currentInterval) {
             throw new Error(`Recipe ${recipe.name} is pinned to ${recipe.symbol} ${recipe.interval}. Switch the chart to that market first.`);
         }
@@ -1096,8 +1150,15 @@ class StrategyEnsembleService {
             candles,
             getStrategy: (strategyKey) => strategyRegistry.get(strategyKey),
         });
+        const overridePreparedSignals = options?.overridePreparedSignals?.(candles) ?? [];
+        const preparedSignals = overridePreparedSignals.length > 0
+            ? overridePreparedSignals
+            : resolved.preparedSignals;
+        const description = overridePreparedSignals.length > 0
+            ? (options?.overrideDescription ?? resolved.description)
+            : resolved.description;
 
-        if (resolved.preparedSignals.length === 0) {
+        if (preparedSignals.length === 0) {
             throw new Error(`Recipe ${recipe.name} produced no prepared signals on the current chart window.`);
         }
 
@@ -1106,7 +1167,7 @@ class StrategyEnsembleService {
         const preview = await backtestService.evaluateSignalsOnData(
             candles,
             recipe.interval,
-            resolved.preparedSignals,
+            preparedSignals,
             resolved.anchorBacktestSettings,
             settingsManager.resolveCapitalFromConfig(resolved.anchorConfig)
         );
@@ -1114,21 +1175,182 @@ class StrategyEnsembleService {
             parityResults: null,
             reason: "ensemble_signal_recipe_preview",
         });
+        if (options?.registerRerun !== false) {
+            setActiveBacktestRerunContext({
+                source: "ensemble_preview",
+                label: recipe.name,
+                rerun: options?.rerunFactory ?? (async () => {
+                    await this.loadRecipeBacktestWithOptions(recipe, successMessage, {
+                        ...options,
+                        silent: true,
+                    });
+                }),
+            });
+        }
 
         this.updateStatus(successMessage);
         this.updateSignalRecipeStatus(
-            `${recipe.name} preview loaded. ${preview.result.totalTrades} backtest trade${preview.result.totalTrades === 1 ? "" : "s"} generated from ${resolved.description}.`
+            `${recipe.name} preview loaded. ${preview.result.totalTrades} backtest trade${preview.result.totalTrades === 1 ? "" : "s"} generated from ${description}.`
         );
+        if (!options?.silent) {
+            uiManager.showToast(successMessage, "success");
+        }
+    }
+
+    private buildCurrentConflictPreviewSignals(candles: OHLCVData[]): Signal[] {
+        if (!this.lastPolymarketRunResult) {
+            return [];
+        }
+        return this.buildConflictPreviewSignalsFromPolymarketResult(this.lastPolymarketRunResult, candles);
+    }
+
+    private buildConflictPreviewSignalsFromPolymarketResult(
+        runResult: EnsemblePolymarketRunResult,
+        candles: OHLCVData[]
+    ): Signal[] {
+        const candlesByTime = new Map<string, { candle: OHLCVData; index: number }>();
+        candles.forEach((candle, index) => {
+            candlesByTime.set(timeKey(candle.time), { candle, index });
+        });
+
+        const signals: Signal[] = [];
+        for (const vote of collectEnsemblePolymarketOverlayVotes(
+            runResult.configResults,
+            "conflict_filtered"
+        )) {
+            const candleMatch = candlesByTime.get(String(vote.eventStartTs));
+            if (!candleMatch) {
+                continue;
+            }
+
+            const price = candleMatch.candle.close;
+            signals.push({
+                time: candleMatch.candle.time,
+                type: vote.prediction === "yes" ? "buy" : "sell",
+                price,
+                triggerPrice: price,
+                barIndex: candleMatch.index,
+                reason: `ensemble_conflict_filtered_${vote.prediction}`,
+            });
+        }
+        return signals;
+    }
+
+    private async buildConflictPreviewSignalsFromRecipe(
+        recipe: EnsembleSignalRecipe,
+        candles: OHLCVData[]
+    ): Promise<Signal[]> {
+        const outcomes = await loadPolymarket5mOutcomesForChart(recipe.symbol, candles);
+        const runResult = await runEnsemblePolymarket({
+            targetName: recipe.anchorConfigName,
+            contextNames: recipe.componentConfigs
+                .map((config) => config.name)
+                .filter((name) => name !== recipe.anchorConfigName),
+            candles,
+            symbol: recipe.symbol,
+            interval: recipe.interval,
+            outcomes,
+            deps: this.buildSnapshotEngineDeps(recipe.componentConfigs),
+        });
+        return this.buildConflictPreviewSignalsFromPolymarketResult(runResult, candles);
+    }
+
+    private async loadConflictFilterRecipePreview(
+        recipe: EnsembleSignalRecipe,
+        options?: { silent?: boolean }
+    ): Promise<void> {
+        let exactConflictSignals: Signal[] | null = null;
+        if (!this.lastPolymarketRunResult) {
+            const candles = this.prepareCandles();
+            if (candles.length < 2) {
+                throw new Error("Not enough closed candle data loaded to preview this recipe.");
+            }
+            exactConflictSignals = await this.buildConflictPreviewSignalsFromRecipe(recipe, candles);
+        }
+
+        await this.loadRecipeBacktestWithOptions(
+            recipe,
+            `Loaded aligned one-side conflict-filter overlay preview from ${recipe.anchorConfigName}.`,
+            {
+                silent: options?.silent,
+                overridePreparedSignals: (candles) => exactConflictSignals ?? this.buildCurrentConflictPreviewSignals(candles),
+                overrideDescription: "the exact scored conflict-filter overlay from the current Polymarket run",
+                rerunFactory: async () => {
+                    const candles = this.prepareCandles();
+                    if (candles.length < 2) {
+                        throw new Error("Not enough closed candle data loaded to preview this recipe.");
+                    }
+                    const conflictSignals = await this.buildConflictPreviewSignalsFromRecipe(recipe, candles);
+                    await this.loadRecipeBacktestWithOptions(
+                        recipe,
+                        `Loaded aligned one-side conflict-filter overlay preview from ${recipe.anchorConfigName}.`,
+                        {
+                            silent: true,
+                            registerRerun: false,
+                            overridePreparedSignals: () => conflictSignals,
+                            overrideDescription: "the exact scored conflict-filter overlay from the current Polymarket run",
+                        }
+                    );
+                    setActiveBacktestRerunContext({
+                        source: "ensemble_preview",
+                        label: recipe.name,
+                        rerun: async () => {
+                            await this.loadConflictFilterRecipePreview(recipe, { silent: true });
+                        },
+                    });
+                },
+            }
+        );
+    }
+
+    private async buildConflictExecutableSummary(
+        candles: OHLCVData[],
+        outcomes: Awaited<ReturnType<typeof loadPolymarket5mOutcomesForChart>>
+    ): Promise<NonNullable<EnsemblePolymarketRunResult["conflictExecutableOverlay"]>> {
+        if (!this.lastPolymarketRunResult) {
+            throw new Error("Run Ensemble Polymarket first.");
+        }
+
+        const recipe = this.buildConflictFilterRecipeFromCurrentRun();
+        const resolved = buildPreparedSignalsForEnsembleRecipe({
+            recipe,
+            candles,
+            getStrategy: (strategyKey) => strategyRegistry.get(strategyKey),
+        });
+        const previewSignals = this.buildCurrentConflictPreviewSignals(candles);
+        const preview = await backtestService.evaluateSignalsOnData(
+            candles,
+            recipe.interval,
+            previewSignals,
+            resolved.anchorBacktestSettings,
+            settingsManager.resolveCapitalFromConfig(resolved.anchorConfig)
+        );
+        const evalContext = createPolymarketTradeEvaluationContext(candles, outcomes);
+        const evalResult = evaluatePolymarketBacktestTrades({
+            trades: preview.result.trades,
+            chartData: candles,
+            outcomes,
+            context: evalContext,
+        });
+        const eventLevelScored = this.lastPolymarketRunResult.conflictFilteredOverlay.scoredEvents;
+
+        return {
+            totalTrades: preview.result.totalTrades,
+            scoredTrades: evalResult.scoredPredictions,
+            wins: evalResult.wins,
+            losses: evalResult.losses,
+            winRate: evalResult.winRate,
+            coverage: evalResult.coverage,
+            retentionRate: eventLevelScored > 0 ? evalResult.scoredPredictions / eventLevelScored : 0,
+            skippedByExecution: Math.max(0, eventLevelScored - evalResult.scoredPredictions),
+            missingOutcomeTrades: evalResult.missingOutcomeRows,
+        };
     }
 
     private async loadConflictFilterBacktest(): Promise<void> {
         try {
             const recipe = this.buildConflictFilterRecipeFromCurrentRun();
-            await this.loadRecipeBacktest(
-                recipe,
-                `Loaded aligned one-side conflict-filter overlay preview from ${recipe.anchorConfigName}.`
-            );
-            uiManager.showToast("Conflict-filter preview loaded.", "success");
+            await this.loadConflictFilterRecipePreview(recipe);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.updateSignalRecipeStatus(message);
@@ -1143,7 +1365,6 @@ class StrategyEnsembleService {
                 recipe,
                 `Loaded primary-veto backtest preview from ${recipe.anchorConfigName}.`
             );
-            uiManager.showToast("Best-veto preview loaded.", "success");
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.updateSignalRecipeStatus(message);
@@ -1346,9 +1567,15 @@ class StrategyEnsembleService {
                 symbol: state.currentSymbol,
                 interval: state.currentInterval,
             };
-            renderEnsemblePolymarketResults(dom, result);
+            this.updatePolymarketStatus("Scoring executable conflict backtest...");
+            const enrichedResult: EnsemblePolymarketRunResult = {
+                ...result,
+                conflictExecutableOverlay: await this.buildConflictExecutableSummary(candles, outcomes),
+            };
+            this.lastPolymarketRunResult = enrichedResult;
+            renderEnsemblePolymarketResults(dom, enrichedResult);
             this.updatePolymarketStatus(
-                `Ensemble Polymarket ready. ${selectedConfigNames.length} configs scored across ${result.ensembleSummary.totalScoredTrades} executed trades.`
+                `Ensemble Polymarket ready. ${selectedConfigNames.length} configs scored across ${enrichedResult.ensembleSummary.totalScoredTrades} executed trades.`
             );
             this.syncSavedSignalRecipeControls();
             uiManager.showToast("Ensemble Polymarket complete.", "success");

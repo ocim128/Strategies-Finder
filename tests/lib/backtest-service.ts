@@ -2,6 +2,7 @@ import { state } from "./state";
 import { uiManager } from "./ui-manager";
 import { chartManager } from "./chart-manager";
 import { dataManager } from "./data-manager";
+import { clearActiveBacktestRerunContext, getActiveBacktestRerunContext } from "./backtest-rerun-context";
 
 import {
     runBacktest,
@@ -75,6 +76,15 @@ export class BacktestService {
     }
 
     public async runCurrentBacktest() {
+        const activePreviewRerun = state.currentBacktestResultSource === 'ensemble_preview'
+            ? getActiveBacktestRerunContext()
+            : null;
+        if (activePreviewRerun?.source === 'ensemble_preview') {
+            await activePreviewRerun.rerun();
+            return;
+        }
+
+        clearActiveBacktestRerunContext();
         const startedAt = Date.now();
         debugLogger.event('backtest.start', {
             strategy: state.currentStrategyKey,
@@ -903,4 +913,3 @@ export class BacktestService {
 }
 
 export const backtestService = new BacktestService();
-

@@ -31,6 +31,7 @@ export function renderEnsemblePolymarketResults(
     dom.ensemblePolymarketSection.style.display = "";
     setVisible(dom.ensemblePolymarketEmpty, false);
     const showMajorityVote = result.ensembleSummary.configsScored > 2;
+    const executableConflict = result.conflictExecutableOverlay ?? null;
     const conflictFilteredConflictRate = result.conflictFilteredOverlay.evaluatedEvents > 0
         ? result.conflictFilteredOverlay.mixedDirectionEvents / result.conflictFilteredOverlay.evaluatedEvents
         : 0;
@@ -41,7 +42,10 @@ export function renderEnsemblePolymarketResults(
     const summaryCards = [
         card("Configs Scored", String(result.ensembleSummary.configsScored)),
         card("Total Scored Trades", String(result.ensembleSummary.totalScoredTrades)),
-        card("Conflict-Filtered WR", formatPercent(result.conflictFilteredOverlay.winRate)),
+        card("Event-Level Conflict WR", formatPercent(result.conflictFilteredOverlay.winRate)),
+        card("Executable Conflict WR", executableConflict ? formatPercent(executableConflict.winRate) : "-"),
+        card("Executable Conflict Trades", executableConflict ? String(executableConflict.totalTrades) : "-"),
+        card("Executable Retention", executableConflict ? formatPercent(executableConflict.retentionRate) : "-"),
         card("Aligned-Signal Coverage", formatPercent(result.conflictFilteredOverlay.coverage)),
         card("Overlap With Signal", formatPercent(overlapWithSignalRate)),
         card("Conflict Rate", formatPercent(conflictFilteredConflictRate)),
@@ -68,8 +72,20 @@ export function renderEnsemblePolymarketResults(
 
     const agreementInsights = [
         insight(
-            "Conflict-Filtered Overlay",
-            `${result.conflictFilteredOverlay.scoredEvents} scored events, ${result.conflictFilteredOverlay.wins} wins, ${result.conflictFilteredOverlay.losses} losses, ${formatPercent(result.conflictFilteredOverlay.winRate)} win rate. Use this when you want long and short configs to skip any mixed-direction event.`
+            "Event-Level Conflict Overlay",
+            `${result.conflictFilteredOverlay.scoredEvents} scored events, ${result.conflictFilteredOverlay.wins} wins, ${result.conflictFilteredOverlay.losses} losses, ${formatPercent(result.conflictFilteredOverlay.winRate)} win rate. This is the pre-execution signal-quality read for "skip mixed-direction conflicts".`
+        ),
+        insight(
+            "Executable Conflict Backtest",
+            executableConflict
+                ? `${executableConflict.totalTrades} executed trades, ${executableConflict.wins} wins, ${executableConflict.losses} losses, ${formatPercent(executableConflict.winRate)} win rate. This is the tradable backtest result after execution rules are applied to the conflict-filtered overlay.`
+                : "Executable conflict backtest metrics are unavailable for this run."
+        ),
+        insight(
+            "Execution Gap",
+            executableConflict
+                ? `${executableConflict.skippedByExecution} event-level overlay signals did not become scored executable trades, leaving ${formatPercent(executableConflict.retentionRate)} executable retention and ${formatPercent(executableConflict.coverage)} evaluated-event coverage after execution.`
+                : "Executable retention is unavailable for this run."
         ),
         insight(
             "Conflict Skips",
@@ -81,7 +97,7 @@ export function renderEnsemblePolymarketResults(
         ),
         insight(
             "Interpretation",
-            `If the question is "short config X plus long config Y, but ignore trades when they conflict", read the Conflict-Filtered Overlay first. Pooled Config Win Rate is not a tradable ensemble rule.`
+            `If the question is "short config X plus long config Y, but ignore trades when they conflict", compare Event-Level Conflict WR with Executable Conflict WR. The first measures signal quality, the second measures the actual tradable backtest after execution rules. Pooled Config Win Rate is not a tradable ensemble rule.`
         ),
     ];
 
@@ -134,7 +150,7 @@ export function renderEnsemblePolymarketResults(
 export function resetEnsemblePolymarketPanel(dom: EnsembleLabDom): void {
     dom.ensemblePolymarketSection.style.display = "";
     setVisible(dom.ensemblePolymarketEmpty, false);
-    dom.ensemblePolymarketStatus.textContent = "Run Ensemble Polymarket to compare individual config edge, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, the majority-vote overlay, and asymmetric veto pairs against matched 5m Polymarket outcomes.";
+    dom.ensemblePolymarketStatus.textContent = "Run Ensemble Polymarket to compare individual config edge, event-level conflict overlay quality, executable conflict backtest quality, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, the majority-vote overlay, and asymmetric veto pairs against matched 5m Polymarket outcomes.";
     dom.ensemblePolymarketSummary.innerHTML = "";
     dom.ensemblePolymarketAgreement.innerHTML = "";
     dom.ensemblePolymarketTableBody.innerHTML = EMPTY_TABLE_ROW;

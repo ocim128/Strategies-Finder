@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
+    countDistinctPolymarketOutcomeRows,
     computePolymarketBestBaselineWinRate,
     summarizePolymarketStreaks,
     summarizeRecentPolymarketForm,
@@ -96,5 +97,22 @@ describe("Quick View Polymarket streak summary", () => {
         const summary = summarizePolymarketStreaks(trades.slice(-100));
 
         expect(summary.longestWinStreak).to.equal(5);
+    });
+
+    it("counts distinct annotated outcome rows instead of defaulting to zero", () => {
+        const trades = [
+            makeTrade(1, true),
+            makeTrade(2, false),
+            {
+                ...makeTrade(3, true),
+                polymarketOutcome: {
+                    ...makeTrade(1, true).polymarketOutcome!,
+                    isWin: true,
+                },
+            },
+            makeTrade(4, null),
+        ];
+
+        expect(countDistinctPolymarketOutcomeRows(trades)).to.equal(2);
     });
 });
