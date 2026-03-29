@@ -68,6 +68,9 @@ import { deadzone_orb_asymmetric_short } from "./lib/deadzone_orb_asymmetric_sho
 import { deadzone_consecutive_closes } from "./lib/deadzone_consecutive_closes";
 import { deadzone_orb_asymmetric_long_exact } from "./lib/deadzone_orb_asymmetric_long_exact";
 import { deadzone_orb_asymmetric_short_exact } from "./lib/deadzone_orb_asymmetric_short_exact";
+import { poly_5m_cumulative_decay_momentum } from "./lib/poly_5m_cumulative_decay_momentum";
+import { poly_5m_pivot_breakout_entry } from "./lib/poly_5m_pivot_breakout_entry";
+import { midpoint_streak_breakout } from "./lib/midpoint_streak_breakout";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -141,6 +144,9 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "deadzone_consecutive_closes", strategy: deadzone_consecutive_closes },
     { key: "deadzone_orb_asymmetric_long_exact", strategy: deadzone_orb_asymmetric_long_exact },
     { key: "deadzone_orb_asymmetric_short_exact", strategy: deadzone_orb_asymmetric_short_exact },
+    { key: "poly_5m_cumulative_decay_momentum", strategy: poly_5m_cumulative_decay_momentum },
+    { key: "poly_5m_pivot_breakout_entry", strategy: poly_5m_pivot_breakout_entry },
+    { key: "midpoint_streak_breakout", strategy: midpoint_streak_breakout },
 ];
 
 export function createStrategiesRecordFromManifest(
