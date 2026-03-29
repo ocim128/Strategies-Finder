@@ -102,6 +102,16 @@ export function buildDeadzoneOrbAsymmetricLivePreview(
 		shortBreakoutZscore: Number(params.shortBreakoutZscore ?? 3),
 	};
 
+	// Validate params are finite numbers to prevent downstream NaN propagation
+	if (
+		!Number.isFinite(p.deadzoneLookback) ||
+		!Number.isFinite(p.efficiencyCeiling) ||
+		!Number.isFinite(p.longBreakoutZscore) ||
+		!Number.isFinite(p.shortBreakoutZscore)
+	) {
+		return buildUnavailablePreview("Invalid strategy parameters for preview.");
+	}
+
 	if (clean.length < p.deadzoneLookback * 2) {
 		return buildUnavailablePreview(
 			`Need at least ${p.deadzoneLookback * 2} clean candles before the live preview becomes meaningful.`
@@ -123,8 +133,13 @@ export function buildDeadzoneOrbAsymmetricLivePreview(
 	const zValue = zscore[latestIndex];
 	const lastClose = clean[latestIndex]?.close ?? null;
 
-	if (erValue === null || zValue === null || lastClose === null) {
+	if (erValue == null || zValue == null || lastClose == null) {
 		return buildUnavailablePreview("Rolling ER and z-score are not populated yet for the current forming bar.");
+	}
+
+	// Validate numeric values to prevent toFixed() errors on NaN/undefined
+	if (!Number.isFinite(erValue) || !Number.isFinite(zValue) || !Number.isFinite(lastClose)) {
+		return buildUnavailablePreview("Invalid numeric values in indicator calculations.");
 	}
 
 	const deadzoneActive = erValue < p.efficiencyCeiling;
@@ -136,6 +151,12 @@ export function buildDeadzoneOrbAsymmetricLivePreview(
 	const activeThreshold = direction === "short" ? -p.shortBreakoutZscore : p.longBreakoutZscore;
 	const nearestSide = Math.abs(longGap) <= Math.abs(shortGap) ? "long" : "short";
 	const nearestGap = nearestSide === "long" ? longGap : shortGap;
+
+	// Validate nearestGap is finite before using toFixed
+	if (!Number.isFinite(nearestGap)) {
+		return buildUnavailablePreview("Invalid gap calculation - check strategy parameters.");
+	}
+
 	const latestOpenSec = parseTimeToUnixSeconds(clean[latestIndex]?.time);
 	const intervalSeconds = inferIntervalSeconds(clean);
 	const countdownWindow = resolveSecondsToNextClose(
