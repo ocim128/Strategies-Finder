@@ -25,6 +25,7 @@ export interface FinderOptionsInput {
     polymarketScoringEnabled: boolean;
     polymarketRankMode: PolymarketFinderRankMode;
     polymarketMinScoredPredictions: number;
+    polymarketLockOffset: boolean;
 }
 
 export type FinderTimeframeSelectionResult =
@@ -88,6 +89,7 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         polymarketScoringEnabled: input.polymarketScoringEnabled,
         polymarketRankMode: input.polymarketRankMode,
         polymarketMinScoredPredictions: Math.max(0, input.polymarketMinScoredPredictions),
+        polymarketLockOffset: input.polymarketScoringEnabled && input.polymarketLockOffset,
     };
 }
 

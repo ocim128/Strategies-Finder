@@ -141,6 +141,53 @@
     border-color: hsl(var(--hsl-accent) / 0.2);
 }
 
+.qv-poly-profile-grid {
+    display: grid;
+    gap: 4px;
+}
+
+.qv-poly-profile-row {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr 0.8fr 0.9fr 0.7fr;
+    gap: 6px;
+    align-items: center;
+    padding: 6px 8px;
+    border-radius: var(--radius-xs);
+    background: hsl(var(--hsl-surface-3) / 0.28);
+}
+
+.qv-poly-profile-row--header {
+    background: transparent;
+    padding: 2px 0 4px;
+}
+
+.qv-poly-profile-row.is-selected {
+    border: 1px solid hsl(var(--hsl-accent) / 0.35);
+}
+
+.qv-poly-profile-row.is-best {
+    background: hsl(var(--hsl-green) / 0.12);
+}
+
+.qv-poly-profile-cell {
+    font-family: var(--font-family-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-align: right;
+}
+
+.qv-poly-profile-row--header .qv-poly-profile-cell {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.qv-poly-profile-cell--offset {
+    text-align: left;
+    color: var(--text-primary);
+}
+
 .qv-stat-label {
     font-size: 10px;
     font-weight: var(--font-weight-medium);

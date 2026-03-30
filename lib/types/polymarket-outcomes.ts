@@ -31,6 +31,8 @@ export interface PolymarketEvalRow {
     isWin: boolean;
     signalReason: string | undefined;
     strategyKey: string | undefined;
+    /** Entry offset minute within 5m event (0..4), only populated for 1m runs */
+    entryOffset?: number;
 }
 
 export interface TradePolymarketOutcome {
@@ -41,6 +43,19 @@ export interface TradePolymarketOutcome {
     prediction: 'yes' | 'no';
     actualOutcomeUp: 0 | 1;
     isWin: boolean;
+    /** Entry offset minute within 5m event (0..4), only populated for 1m runs */
+    entryOffset?: number;
+}
+
+export interface BacktestPolymarketTimingProfileEntry {
+    entryOffset: number;
+    scoredTrades: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+    coverage: number;
+    missingOutcomeRows: number;
+    duplicateTradesIgnored: number;
 }
 
 export interface BacktestPolymarketTradeSummary {
@@ -48,6 +63,9 @@ export interface BacktestPolymarketTradeSummary {
     outcomeRowsLoaded: number;
     scoredTrades: number;
     missingOutcomeTrades: number;
+    entryOffset?: number;
+    duplicateTradesIgnored?: number;
+    timingProfile?: BacktestPolymarketTimingProfileEntry[];
 }
 
 export interface PolymarketEvalResult {
@@ -69,6 +87,10 @@ export interface PolymarketEvalResult {
     alwaysNoBaselineWinRate: number;
     missingOutcomeRows: number;
     ignoredSignals: number;
+    /** Entry offset used for scoring (0..4), only for 1m runs */
+    entryOffset?: number;
+    /** Number of duplicate trades ignored due to same-event deduplication */
+    duplicateTradesIgnored?: number;
     rows: PolymarketEvalRow[];
 }
 

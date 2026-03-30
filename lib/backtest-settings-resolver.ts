@@ -87,6 +87,7 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     strategyTimeframeMinutes: 120,
     twoHourCloseParity: "odd" as const,
     polymarketAnnotationEnabled: false,
+    polymarketEntryOffset: 0,
 });
 
 export type SnapshotConfig = {
@@ -479,6 +480,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "strategyTimeframeMinutes",
     "twoHourCloseParity",
     "polymarketAnnotationEnabled",
+    "polymarketEntryOffset",
     ...SNAPSHOT_CONFIGS.flatMap((snapshot) => {
         const keys: string[] = [snapshot.toggleKey];
         if ("minKey" in snapshot) {
@@ -725,6 +727,7 @@ export function resolveBacktestSettingsFromRaw(
         captureSnapshots: options?.captureSnapshots ?? false,
         twoHourCloseParity,
         polymarketAnnotationEnabled: readBoolean(raw, "polymarketAnnotationEnabled", EFFECTIVE_BACKTEST_DEFAULTS.polymarketAnnotationEnabled),
+        polymarketEntryOffset: readNumber(raw, "polymarketEntryOffset", EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryOffset),
     };
 
     for (const snapshot of SNAPSHOT_CONFIGS) {

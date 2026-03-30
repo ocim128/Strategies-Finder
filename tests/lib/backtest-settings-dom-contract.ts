@@ -272,6 +272,8 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         rustSupport: "unsupported",
         readFromSettings: (settings) => resolveTwoHourCloseParity(settings.twoHourCloseParity, DEFAULT_BACKTEST_SETTINGS),
     }),
+    createField("polymarketAnnotationEnabled", { rustSupport: "unsupported" }),
+    createField("polymarketEntryOffset", { rustSupport: "unsupported" }),
 ];
 
 const SNAPSHOT_BACKTEST_DOM_CONTRACTS = SNAPSHOT_CONFIGS.flatMap((snapshot) => {

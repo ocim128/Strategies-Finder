@@ -6,10 +6,10 @@ import { resolveOpenTradeDisplayMetrics } from "../open-trade-display";
 import { createTradesRendererDom, type TradesRendererDom } from "./trades-renderer-dom";
 import {
     getPolymarket5mSeriesIdForSymbol,
-    isSupportedPolymarket5mRun,
     loadPolymarket5mOutcomesForTimeRange,
+    supportsPolymarketOutcomeBridgeRun,
 } from "../polymarket-btc5m";
-import { annotateTradesWithPolymarketOutcomes } from "../polymarket-trade-annotations";
+import { annotateTradesWithPolymarketOutcomesForRun } from "../polymarket-trade-annotations";
 import { resolveBacktestResultMarketContext } from "../backtest-result-context";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 
@@ -94,15 +94,34 @@ export class TradesRenderer {
         }
 
         const resultContext = resolveBacktestResultMarketContext(state.currentBacktestResult);
+        const summaryOffset = state.currentBacktestResult?.polymarketTradeSummary?.entryOffset;
         const firstTrade = trades[0];
         const lastTrade = trades[trades.length - 1];
         return [
             resultContext?.symbol ?? state.currentSymbol,
             resultContext?.interval ?? state.currentInterval,
+            typeof summaryOffset === 'number' ? summaryOffset : 'na',
             trades.length,
             parseTimeToUnixSeconds(firstTrade.entryTime) ?? 'na',
             parseTimeToUnixSeconds(lastTrade.entryTime) ?? 'na',
         ].join('|');
+    }
+
+    private resolveSelectedPolymarketEntryOffset(): number {
+        const summaryOffset = state.currentBacktestResult?.polymarketTradeSummary?.entryOffset;
+        if (typeof summaryOffset === 'number' && Number.isFinite(summaryOffset)) {
+            return Math.max(0, Math.min(4, Math.floor(summaryOffset)));
+        }
+
+        const element = document.getElementById('polymarketEntryOffset');
+        if (element instanceof HTMLSelectElement) {
+            const value = Number(element.value);
+            if (Number.isFinite(value)) {
+                return Math.max(0, Math.min(4, Math.floor(value)));
+            }
+        }
+
+        return 0;
     }
 
     private async loadPolymarketOutcomesForTrades(trades: Trade[]): Promise<Trade[]> {
@@ -115,8 +134,7 @@ export class TradesRenderer {
             return trades;
         }
 
-        // Check if this is a supported Polymarket 5m run
-        if (!isSupportedPolymarket5mRun(resultContext.symbol, resultContext.interval)) {
+        if (!supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval)) {
             return trades;
         }
 
@@ -142,7 +160,15 @@ export class TradesRenderer {
             return trades;
         }
 
-        return annotateTradesWithPolymarketOutcomes(trades, outcomes);
+        const selectedOffset = resultContext.interval === '1m'
+            ? this.resolveSelectedPolymarketEntryOffset()
+            : undefined;
+        return annotateTradesWithPolymarketOutcomesForRun(
+            trades,
+            outcomes,
+            resultContext.interval,
+            selectedOffset
+        );
     }
 
     public async renderParity(

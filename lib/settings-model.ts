@@ -112,6 +112,8 @@ export interface BacktestSettingsData extends SnapshotFilterFields {
     strategyTimeframeEnabled: boolean;
     strategyTimeframeMinutes: number;
     twoHourCloseParity: 'odd' | 'even' | 'both';
+    polymarketAnnotationEnabled: boolean;
+    polymarketEntryOffset: number;
 }
 
 export interface StrategyConfig {

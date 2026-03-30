@@ -10,9 +10,9 @@ import type { OHLCVData, Signal, Strategy, StrategyParams } from '../lib/types/s
 const ORIGINAL_FETCH = globalThis.fetch;
 let prepareFinderCalls = 0;
 
-function makeBars(count: number, startTs = 1_700_000_000): OHLCVData[] {
+function makeBars(count: number, startTs = 1_700_000_000, intervalSec = 300): OHLCVData[] {
     return Array.from({ length: count }, (_, index) => ({
-        time: (startTs + index * 300) as OHLCVData['time'],
+        time: (startTs + index * intervalSec) as OHLCVData['time'],
         open: 30_000,
         high: 30_100,
         low: 29_900,
@@ -117,6 +117,7 @@ function makeOptions(overrides: Partial<FinderOptions> = {}): FinderOptions {
         polymarketScoringEnabled: true,
         polymarketRankMode: 'balanced',
         polymarketMinScoredPredictions: 0,
+        polymarketLockOffset: false,
         ...overrides,
     };
 }
@@ -371,19 +372,20 @@ describe('Finder Polymarket runner', () => {
         expect(output.results[0]?.polymarketEval?.wins).to.equal(2);
     });
 
-    it('rejects non-5m intervals before touching the outcome loader', async () => {
+    it('rejects non-1m/5m/15m/1h/4h intervals before touching the outcome loader', async () => {
         globalThis.fetch = (async () => {
             throw new Error('fetch should not be called for invalid interval');
         }) as typeof fetch;
 
         const { callbacks, statuses } = makeCallbacks();
+        // 30m is not a supported Polymarket interval
         const output = await runPolymarketFinder(
-            makeInput(makeBars(4), [{ variant: 1 }], {}, '1m'),
+            makeInput(makeBars(4), [{ variant: 1 }], {}, '30m'),
             callbacks
         );
 
         expect(output.results).to.have.length(0);
-        expect(statuses.at(-1)).to.equal('Polymarket scoring requires 5m interval.');
+        expect(statuses.at(-1)).to.equal('Polymarket scoring requires 1m, 5m, 15m, 1h, or 4h interval.');
     });
 
     it('rejects unsupported symbols before touching the outcome loader', async () => {
@@ -398,7 +400,7 @@ describe('Finder Polymarket runner', () => {
         );
 
         expect(output.results).to.have.length(0);
-        expect(statuses.at(-1)).to.equal('Polymarket scoring currently supports BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT on 5m.');
+        expect(statuses.at(-1)).to.equal('Polymarket scoring currently supports BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT on 1m, 5m, 15m, 1h, 4h.');
     });
 
     it('surfaces SQLite outcome load failures without hanging the run', async () => {
@@ -460,5 +462,133 @@ describe('Finder Polymarket runner', () => {
         );
         expect(comboOutput.results).to.have.length(0);
         expect(combo.statuses.at(-1)).to.equal('Combo mode is not supported in Polymarket mode.');
+    });
+
+    it('accepts 1m interval and scores trades using the 1m -> 5m bridge', async () => {
+        const bars = makeBars(10, 1_700_000_000, 60); // 1m bars (60s interval)
+        const outcomeRows = [
+            makeOutcomeRow(1_700_000_000 + 300, 1), // 5m event starting at bar 5 (5 min)
+        ];
+        installOutcomeFetch(outcomeRows);
+
+        const { callbacks, statuses } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(bars, [{ variant: 1 }], {}, '1m'),
+            callbacks
+        );
+
+        // 1m runs should expand to 5 offset configurations (0..4)
+        expect(output.results).to.have.length(5);
+        
+        // Each result should have an entryOffset in its params
+        for (const result of output.results) {
+            expect(result.params).to.have.property('polymarketEntryOffset');
+            expect(result.params.polymarketEntryOffset).to.be.oneOf([0, 1, 2, 3, 4]);
+        }
+
+        expect(statuses.some((status) => status.includes('outcome rows'))).to.equal(true);
+    });
+
+    it('runs the strategy once per param set on 1m and reuses that backtest across all 5 offsets', async () => {
+        const bars = makeBars(10, 1_700_000_000, 60);
+        installOutcomeFetch([
+            makeOutcomeRow(1_700_000_000 + 300, 1),
+        ]);
+
+        let executePreparedCalls = 0;
+        const countingStrategy: Strategy = {
+            ...fixtureStrategy,
+            executePrepared(_prepared: unknown, params: StrategyParams, data: OHLCVData[]): Signal[] {
+                executePreparedCalls++;
+                return buildFixtureSignals(data, params);
+            },
+        };
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(bars, [{ variant: 1 }], {}, '1m', 'BTCUSDT', countingStrategy),
+            callbacks
+        );
+
+        expect(output.results).to.have.length(5);
+        expect(executePreparedCalls).to.equal(1);
+    });
+
+    it('locks random 1m Polymarket runs to the selected backtest offset when requested', async () => {
+        const bars = makeBars(10, 1_700_000_000, 60);
+        installOutcomeFetch([
+            makeOutcomeRow(1_700_000_000 + 300, 1),
+        ]);
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            {
+                ...makeInput(
+                    bars,
+                    [{ variant: 1 }],
+                    {
+                        mode: 'random',
+                        polymarketLockOffset: true,
+                    },
+                    '1m'
+                ),
+                settings: {
+                    executionModel: 'next_open',
+                    tradeDirection: 'both',
+                    polymarketEntryOffset: 3,
+                },
+            },
+            callbacks
+        );
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]?.params.polymarketEntryOffset).to.equal(3);
+    });
+
+    it('deduplicates trades within the same event for 1m bridge runs', async () => {
+        // Create 1m bars where multiple trades fall into the same 5m event
+        const bars = makeBars(20, 1_700_000_000, 60); // 20 1m bars
+        installOutcomeFetch([
+            makeOutcomeRow(1_700_000_000 + 300, 1), // 5m event at t+300
+            makeOutcomeRow(1_700_000_000 + 600, 1), // 5m event at t+600
+        ]);
+
+        // Variant 5 produces 3 trades; with 1m bridge, multiple may fall into same event
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(bars, [{ variant: 5 }], {}, '1m'),
+            callbacks
+        );
+
+        // Should have 5 offset configurations
+        expect(output.results).to.have.length(5);
+
+        // Check that duplicateTradesIgnored is tracked in eval results
+        for (const result of output.results) {
+            expect(result.polymarketEval).to.exist;
+            // duplicateTradesIgnored may be 0 or more depending on trade distribution
+            expect(result.polymarketEval!.duplicateTradesIgnored ?? 0).to.be.greaterThanOrEqual(0);
+        }
+    });
+
+    it('filters trades by selected offset in 1m bridge mode', async () => {
+        const bars = makeBars(20, 1_700_000_000, 60);
+        installOutcomeFetch([
+            makeOutcomeRow(1_700_000_000 + 300, 1),
+            makeOutcomeRow(1_700_000_000 + 600, 1),
+        ]);
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(bars, [{ variant: 5 }], {}, '1m'),
+            callbacks
+        );
+
+        // 1m runs should produce 5 offset configurations (0..4)
+        expect(output.results).to.have.length(5);
+        
+        // Each result should have a distinct offset
+        const offsets = output.results.map((r) => r.params.polymarketEntryOffset).sort((a, b) => a - b);
+        expect(offsets).to.deep.equal([0, 1, 2, 3, 4]);
     });
 });

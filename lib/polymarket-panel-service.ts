@@ -5,6 +5,7 @@ import {
     getSupportedPolymarket5mSymbolsLabel,
     isSupportedPolymarket5mRun,
     loadPolymarket5mOutcomesForTimeRange,
+    supportsPolymarketOutcomeBridgeRun,
 } from "./polymarket-btc5m";
 import { analyzePolymarketFillability, type PolymarketFillScope } from "./polymarket-fill-analysis";
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -110,7 +111,7 @@ class PolymarketPanelService {
         this.deployabilityCacheKey = "";
         const resultContext = resolveBacktestResultMarketContext(result);
 
-        if (!result || !resultContext || !isSupportedPolymarket5mRun(resultContext.symbol, resultContext.interval) || result.trades.length === 0) {
+        if (!result || !resultContext || !supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval) || result.trades.length === 0) {
             this.resetLoadedRows(false);
             this.scheduleRender();
             return;
@@ -127,7 +128,7 @@ class PolymarketPanelService {
     private async ensureOutcomeRowsForCurrentResult(): Promise<void> {
         const result = this.lastResult;
         const resultContext = resolveBacktestResultMarketContext(result);
-        if (!result || !resultContext || !isSupportedPolymarket5mRun(resultContext.symbol, resultContext.interval) || result.trades.length === 0) {
+        if (!result || !resultContext || !supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval) || result.trades.length === 0) {
             this.resetLoadedRows(false);
             this.scheduleRender();
             return;
@@ -144,7 +145,7 @@ class PolymarketPanelService {
         }
 
         const targetTimes = result.trades
-            .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
+            .map((trade) => trade.polymarketOutcome?.eventStartTs ?? parseTimeToUnixSeconds(trade.entryTime))
             .filter((value): value is number => value !== null);
 
         if (targetTimes.length === 0) {
@@ -245,7 +246,7 @@ class PolymarketPanelService {
 
         const dom = this.getDom();
         const result = this.lastResult;
-        const supportedRun = isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval);
+        const supportedRun = supportsPolymarketOutcomeBridgeRun(state.currentSymbol, state.currentInterval);
 
         this.renderBridgeControls();
 
@@ -255,7 +256,7 @@ class PolymarketPanelService {
         }
 
         if (!supportedRun) {
-            this.showEmpty(`This tab currently supports ${getSupportedPolymarket5mSymbolsLabel()} on the 5m chart.`);
+            this.showEmpty(`This tab currently supports ${getSupportedPolymarket5mSymbolsLabel()} on the 5m chart or on 1m via the 5m outcome bridge.`);
             return;
         }
 

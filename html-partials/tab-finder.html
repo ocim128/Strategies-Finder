@@ -148,7 +148,13 @@
                 <input type="number" class="param-input" id="finderPolymarketMinScored" value="0" min="0" step="1">
             </div>
         </div>
-        <div class="param-hint">Classification-only · 5m BTC/ETH/SOL/XRP · next-open alignment. Balanced mode uses a confidence-weighted score so tiny-sample win rates do not dominate.</div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label" for="finderPolymarketLockOffset">Lock Offset in Random 1m</label>
+                <input type="checkbox" id="finderPolymarketLockOffset">
+            </div>
+        </div>
+        <div class="param-hint">Classification-only · 5m BTC/ETH/SOL/XRP · next-open alignment. Balanced mode uses a confidence-weighted score so tiny-sample win rates do not dominate. Lock Offset limits random 1m Polymarket Finder to the currently selected backtest offset instead of testing all 5 offsets.</div>
     </div>
 
     <div class="section-header">

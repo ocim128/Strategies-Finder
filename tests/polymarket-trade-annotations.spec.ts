@@ -53,6 +53,17 @@ function makeBars(count: number, startTs = 1_700_000_000): OHLCVData[] {
     }));
 }
 
+function makeMinuteBars(count: number, startTs = 1_700_000_000): OHLCVData[] {
+    return Array.from({ length: count }, (_, index) => ({
+        time: startTs + index * 60,
+        open: 30_000,
+        high: 30_100,
+        low: 29_900,
+        close: 30_050,
+        volume: 100,
+    }));
+}
+
 function installOutcomeFetch(rows: unknown[], onRequest?: (url: URL) => void): void {
     globalThis.fetch = (async (input) => {
         const url = new URL(
@@ -199,6 +210,56 @@ describe("Polymarket backtest trade annotations", () => {
         expect(requestedSeriesIds).to.deep.equal(["10683"]);
         expect(result.polymarketTradeSummary?.seriesId).to.equal("10683");
         expect(result.trades[0]?.polymarketOutcome?.marketSlug).to.equal("eth-1");
+    });
+
+    it("annotates 1m bridge runs using the selected offset and ignores same-event duplicates", async () => {
+        const bars = makeMinuteBars(12);
+        const eventStartTs = 1_700_000_300;
+        installOutcomeFetch([
+            {
+                series_id: "10684",
+                event_slug: "btc-bridge-1",
+                market_slug: "btc-bridge-1",
+                interval: "5m",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.52,
+                yes_entry_minute_2_price: 0.54,
+                yes_entry_minute_3_price: 0.56,
+                yes_entry_minute_4_price: 0.58,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ]);
+
+        const firstEligibleEntry = eventStartTs + 60;
+        const duplicateEntry = eventStartTs + 90;
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([
+                makeTrade(1, "long", firstEligibleEntry, 10),
+                makeTrade(2, "long", duplicateEntry, 8),
+            ]),
+            {
+                symbol: "BTCUSDT",
+                interval: "1m",
+                executionModel: "next_open",
+                chartData: bars,
+            },
+            1
+        );
+
+        expect(result.polymarketTradeSummary?.entryOffset).to.equal(1);
+        expect(result.polymarketTradeSummary?.scoredTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.duplicateTradesIgnored).to.equal(1);
+        expect(result.polymarketTradeSummary?.timingProfile?.map((entry) => entry.entryOffset)).to.deep.equal([0, 1, 2, 3, 4]);
+        expect(result.polymarketTradeSummary?.timingProfile?.find((entry) => entry.entryOffset === 1)?.scoredTrades).to.equal(1);
+        expect(result.trades[0]?.polymarketOutcome?.isWin).to.equal(true);
+        expect(result.trades[0]?.polymarketOutcome?.entryOffset).to.equal(1);
+        expect(result.trades[1]?.polymarketOutcome).to.equal(null);
     });
 
     it("skips annotation for unsupported runs", async () => {

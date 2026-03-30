@@ -112,13 +112,26 @@
             <div class="param-row">
                 <div class="param-group">
                     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Polymarket Annotation (5m)</label>
+                        <label class="param-label" style="margin-bottom: 0;">Polymarket Annotation</label>
                         <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle Polymarket annotation">
                             <input type="checkbox" id="polymarketAnnotationEnabled">
                             <span class="section-toggle-track"></span>
                         </label>
                     </div>
-                    <div class="param-hint">Score trades against Polymarket crypto 5m outcomes. Only for BTCUSDT/ETHUSDT/SOLUSDT/XRPUSDT on 5m. Disable for faster backtests.</div>
+                    <div class="param-hint">Score trades against Polymarket crypto 5m outcome events. Supports 5m chart (exact match) and 1m chart (entry timing offset). Only for BTCUSDT/ETHUSDT/SOLUSDT/XRPUSDT.</div>
+                </div>
+            </div>
+            <div class="param-row" id="polymarketEntryOffsetRow" style="display: none;">
+                <div class="param-group">
+                    <label class="param-label">Polymarket Entry Offset (1m -&gt; 5m bridge)</label>
+                    <select class="param-input" id="polymarketEntryOffset">
+                        <option value="0">Minute 0 (first minute after event start)</option>
+                        <option value="1">Minute 1 (second minute)</option>
+                        <option value="2">Minute 2 (third minute)</option>
+                        <option value="3">Minute 3 (fourth minute)</option>
+                        <option value="4">Minute 4 (fifth minute / last before resolution)</option>
+                    </select>
+                    <div class="param-hint">For 1m chart runs: only trades entering at the selected minute offset within each 5m Polymarket event will be scored. One trade per event is scored; duplicates are ignored.</div>
                 </div>
             </div>
             <div class="param-hint">Realism settings use the TypeScript engine (Rust skipped for accuracy).</div>

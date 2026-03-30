@@ -403,6 +403,8 @@ describe('Backtest settings compatibility', () => {
         expect(getBacktestDomSettingContract('confirmRsiPeriod')?.legacyAliases).to.deep.equal(['rsiPeriod']);
         expect(getBacktestDomSettingContract('tradeFilterMode')?.legacyAliases).to.deep.equal(['entryConfirmation']);
         expect(getBacktestDomSettingContract('tradeFilterSettingsToggle')?.legacyAliases).to.deep.equal(['entrySettingsToggle']);
+        expect(getBacktestDomSettingContract('polymarketAnnotationEnabled')).to.not.equal(undefined);
+        expect(getBacktestDomSettingContract('polymarketEntryOffset')).to.not.equal(undefined);
     });
 
     it('derives shared write-back values for trade filter toggles from the same DOM contract', () => {

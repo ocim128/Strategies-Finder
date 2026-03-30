@@ -1,7 +1,7 @@
 import { parseTimeToUnixSeconds } from './time-normalization';
 import { applySignalPolarity, precomputeIndicators, runBacktest } from './strategies/index';
 import { CAPITAL_DEFAULTS } from './backtest-settings-resolver';
-import { evaluatePolymarketBacktestTrades } from './polymarket-trade-annotations';
+import { evaluatePolymarketBacktestTrades, evaluatePolymarketBacktestTrades1mBridge } from './polymarket-trade-annotations';
 import type { CapitalSettings } from './types/backtest';
 import type { BacktestSettings, OHLCVData, Strategy, StrategyParams } from './types/strategies';
 import type {
@@ -41,6 +41,11 @@ function resolvePolymarketBacktestSettings(options: PolymarketEvalOptions): Back
         warmUpEntryEnabled: false,
         ...(options.backtestSettings ?? {}),
     };
+}
+
+export interface PolymarketEvalOptions1mBridge extends PolymarketEvalOptions {
+    /** Entry offset minute (0..4) for 1m -> 5m bridge evaluation */
+    entryOffset?: number;
 }
 
 export function evaluatePolymarketOutcomes(
@@ -94,13 +99,24 @@ export function evaluatePolymarketOutcomes(
         resolvedUpCount += row.resolved_outcome_up;
     }
 
-    const tradeEval = evaluatePolymarketBacktestTrades({
-        chartData,
-        trades: backtestResult.trades,
-        outcomes,
-        strategyKey,
-        includeRows: true,
-    });
+    // Check if 1m bridge evaluation is requested
+    const bridgeOptions = options as PolymarketEvalOptions1mBridge;
+    const tradeEval = bridgeOptions.entryOffset !== undefined
+        ? evaluatePolymarketBacktestTrades1mBridge({
+            chartData,
+            trades: backtestResult.trades,
+            outcomes,
+            strategyKey,
+            selectedOffset: bridgeOptions.entryOffset,
+            includeRows: true,
+        })
+        : evaluatePolymarketBacktestTrades({
+            chartData,
+            trades: backtestResult.trades,
+            outcomes,
+            strategyKey,
+            includeRows: true,
+        });
 
     const ignoredSignals = Math.max(0, signals.length - backtestResult.totalTrades);
 

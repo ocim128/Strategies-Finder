@@ -11,13 +11,14 @@ import { state } from "./state";
 import type { BacktestResult, Trade } from "./strategies/index";
 import { Time } from "lightweight-charts";
 import { formatDisplayPrice } from "./price-format";
+import type { BacktestPolymarketTimingProfileEntry } from "./types/polymarket-outcomes";
 import {
     getPolymarket5mSeriesIdForSymbol,
-    isSupportedPolymarket5mRun,
     loadPolymarket5mOutcomesForTimeRange,
+    supportsPolymarketOutcomeBridgeRun,
 } from "./polymarket-btc5m";
 import {
-    annotateTradesWithPolymarketOutcomes,
+    annotateTradesWithPolymarketOutcomesForRun,
 } from "./polymarket-trade-annotations";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -39,6 +40,9 @@ type QuickViewPolymarketSummary = {
     bestBaselineWinRate: number;
     baselineDelta: number;
     bestWinStreakLast100Trades: number;
+    entryOffset?: number;
+    timingProfile?: BacktestPolymarketTimingProfileEntry[];
+    bestTimingProfile?: BacktestPolymarketTimingProfileEntry | null;
 };
 
 export function summarizePolymarketStreaks(trades: Trade[]): {
@@ -273,7 +277,8 @@ class QuickViewManager {
         result: BacktestResult,
         trades: Trade[],
         seriesId: string | null,
-        outcomeRowsLoaded?: number
+        outcomeRowsLoaded?: number,
+        selectedOffset?: number
     ): BacktestResult {
         const scoredTrades = trades.filter((trade) => trade.polymarketOutcome !== undefined && trade.polymarketOutcome !== null).length;
         const totalTrades = result.totalTrades > 0 ? result.totalTrades : trades.length;
@@ -290,8 +295,28 @@ class QuickViewManager {
                     : fallbackOutcomeRowsLoaded,
                 scoredTrades: existingSummary?.scoredTrades ?? scoredTrades,
                 missingOutcomeTrades: existingSummary?.missingOutcomeTrades ?? Math.max(0, totalTrades - scoredTrades),
+                duplicateTradesIgnored: existingSummary?.duplicateTradesIgnored,
+                entryOffset: existingSummary?.entryOffset ?? selectedOffset,
+                timingProfile: existingSummary?.timingProfile,
             },
         };
+    }
+
+    private resolveSelectedPolymarketEntryOffset(result: BacktestResult): number {
+        const summaryOffset = result.polymarketTradeSummary?.entryOffset;
+        if (typeof summaryOffset === "number" && Number.isFinite(summaryOffset)) {
+            return Math.max(0, Math.min(4, Math.floor(summaryOffset)));
+        }
+
+        const element = document.getElementById("polymarketEntryOffset");
+        if (element instanceof HTMLSelectElement) {
+            const value = Number(element.value);
+            if (Number.isFinite(value)) {
+                return Math.max(0, Math.min(4, Math.floor(value)));
+            }
+        }
+
+        return 0;
     }
 
     private async ensurePolymarketOutcomes(result: BacktestResult): Promise<BacktestResult> {
@@ -304,11 +329,10 @@ class QuickViewManager {
         const hasOutcomes = result.trades.some((trade) => trade.polymarketOutcome !== undefined && trade.polymarketOutcome !== null);
         const seriesId = getPolymarket5mSeriesIdForSymbol(resultContext.symbol);
         if (hasOutcomes || result.polymarketTradeSummary) {
-            return this.withPolymarketTradeSummary(result, result.trades, seriesId);
+            return this.withPolymarketTradeSummary(result, result.trades, seriesId, undefined, result.polymarketTradeSummary?.entryOffset);
         }
 
-        // Check if this is a supported Polymarket 5m run
-        if (!isSupportedPolymarket5mRun(resultContext.symbol, resultContext.interval)) {
+        if (!supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval)) {
             return result;
         }
 
@@ -333,9 +357,17 @@ class QuickViewManager {
             return result;
         }
 
-        const trades = annotateTradesWithPolymarketOutcomes(result.trades, outcomes);
+        const selectedOffset = resultContext.interval === "1m"
+            ? this.resolveSelectedPolymarketEntryOffset(result)
+            : undefined;
+        const trades = annotateTradesWithPolymarketOutcomesForRun(
+            result.trades,
+            outcomes,
+            resultContext.interval,
+            selectedOffset
+        );
 
-        return this.withPolymarketTradeSummary(result, trades, seriesId, outcomes.length);
+        return this.withPolymarketTradeSummary(result, trades, seriesId, outcomes.length, selectedOffset);
     }
 
     // ── Show / Hide ────────────────────────────────────────
@@ -706,10 +738,20 @@ class QuickViewManager {
     private buildPolymarketSection(result: BacktestResult): string {
         const summary = this.getPolymarketSummary(result);
         if (!summary) return '';
+        const offsetSummary = typeof summary.entryOffset === 'number'
+            ? `Selected Offset: Minute ${summary.entryOffset}`
+            : 'Selected Offset: n/a';
+        const timingProfileSection = summary.timingProfile && summary.timingProfile.length > 0
+            ? this.buildPolymarketTimingProfileSection(summary)
+            : '';
 
         return `
             <div class="qv-section-title">Polymarket</div>
             <div class="qv-stats-grid">
+                <div class="qv-stat-card full-width qv-poly-meta-card">
+                    <div class="qv-stat-label">${offsetSummary}</div>
+                    <div class="qv-stat-value">${summary.bestTimingProfile ? `Best Minute ${summary.bestTimingProfile.entryOffset} (${(summary.bestTimingProfile.winRate * 100).toFixed(1)}%)` : 'Single-offset summary'}</div>
+                </div>
                 <div class="qv-stat-card">
                     <div class="qv-stat-label">Poly Win Rate</div>
                     <div class="qv-stat-value ${summary.winRate >= 0.5 ? 'positive' : 'negative'}">
@@ -764,8 +806,66 @@ class QuickViewManager {
                     <div class="qv-stat-label">Outcome Rows Loaded</div>
                     <div class="qv-stat-value">${summary.outcomeRowsLoaded}</div>
                 </div>
+                ${timingProfileSection}
             </div>
         `;
+    }
+
+    private buildPolymarketTimingProfileSection(summary: QuickViewPolymarketSummary): string {
+        const timingProfile = summary.timingProfile ?? [];
+        if (timingProfile.length === 0) {
+            return '';
+        }
+
+        const bestOffset = summary.bestTimingProfile?.entryOffset;
+        const rows = timingProfile.map((entry) => `
+            <div class="qv-poly-profile-row ${entry.entryOffset === bestOffset ? 'is-best' : ''} ${entry.entryOffset === summary.entryOffset ? 'is-selected' : ''}">
+                <div class="qv-poly-profile-cell qv-poly-profile-cell--offset">Minute ${entry.entryOffset}</div>
+                <div class="qv-poly-profile-cell">${(entry.winRate * 100).toFixed(1)}%</div>
+                <div class="qv-poly-profile-cell">${entry.scoredTrades}</div>
+                <div class="qv-poly-profile-cell">${(entry.coverage * 100).toFixed(1)}%</div>
+                <div class="qv-poly-profile-cell">${entry.duplicateTradesIgnored}</div>
+            </div>
+        `).join('');
+
+        return `
+            <div class="qv-stat-card full-width qv-poly-meta-card">
+                <div class="qv-stat-label">Entry Timing Profile (1m -> 5m)</div>
+                <div class="qv-poly-profile-grid">
+                    <div class="qv-poly-profile-row qv-poly-profile-row--header">
+                        <div class="qv-poly-profile-cell qv-poly-profile-cell--offset">Offset</div>
+                        <div class="qv-poly-profile-cell">Win Rate</div>
+                        <div class="qv-poly-profile-cell">Scored</div>
+                        <div class="qv-poly-profile-cell">Coverage</div>
+                        <div class="qv-poly-profile-cell">Dupes</div>
+                    </div>
+                    ${rows}
+                </div>
+            </div>
+        `;
+    }
+
+    private getBestTimingProfileEntry(
+        timingProfile: readonly BacktestPolymarketTimingProfileEntry[]
+    ): BacktestPolymarketTimingProfileEntry | null {
+        if (timingProfile.length === 0) {
+            return null;
+        }
+
+        const scoredEntries = timingProfile.filter((entry) => entry.scoredTrades > 0);
+        if (scoredEntries.length === 0) {
+            return null;
+        }
+
+        return [...scoredEntries].sort((left, right) => {
+            if (right.winRate !== left.winRate) {
+                return right.winRate - left.winRate;
+            }
+            if (right.scoredTrades !== left.scoredTrades) {
+                return right.scoredTrades - left.scoredTrades;
+            }
+            return left.entryOffset - right.entryOffset;
+        })[0] ?? null;
     }
 
     private getPolymarketSummary(result: BacktestResult): QuickViewPolymarketSummary | null {
@@ -786,6 +886,8 @@ class QuickViewManager {
         const recentForm = summarizeRecentPolymarketForm(result.trades, 20);
         const bestBaselineWinRate = computePolymarketBestBaselineWinRate(result.trades);
         const bestWinStreakLast100Trades = summarizePolymarketStreaks(result.trades.slice(-100)).longestWinStreak;
+        const timingProfile = summary?.timingProfile;
+        const bestTimingProfile = timingProfile ? this.getBestTimingProfileEntry(timingProfile) : null;
 
         return {
             wins,
@@ -804,6 +906,9 @@ class QuickViewManager {
             bestBaselineWinRate,
             baselineDelta: (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
             bestWinStreakLast100Trades,
+            entryOffset: summary?.entryOffset,
+            timingProfile,
+            bestTimingProfile,
         };
     }
 

@@ -317,6 +317,7 @@ export class FinderManager {
 		dom.finderPolymarketSettings.classList.toggle('is-disabled', !enabled);
 		dom.finderPolymarketRankMode.disabled = !enabled;
 		dom.finderPolymarketMinScored.disabled = !enabled;
+		dom.finderPolymarketLockOffset.disabled = !enabled;
 	}
 
 	public clearTimeframeCache(): void {
@@ -807,6 +808,7 @@ export class FinderManager {
 		const polymarketMinScoredPredictions = polymarketScoringEnabled
 			? Math.round(this.readFinderNumberInput(dom.finderPolymarketMinScored, 0, 0))
 			: 0;
+		const polymarketLockOffset = polymarketScoringEnabled && dom.finderPolymarketLockOffset.checked;
 
 		return buildFinderOptions({
 			mode,
@@ -832,6 +834,7 @@ export class FinderManager {
 			polymarketScoringEnabled,
 			polymarketRankMode,
 			polymarketMinScoredPredictions,
+			polymarketLockOffset,
 		});
 	}
 
@@ -1100,6 +1103,12 @@ export class FinderManager {
 			? this.cloneBacktestSettings(this.lastFinderRunBacktestSettings)
 			: settingsManager.getBacktestSettings();
 		const mergedSettings = mergeFinderRiskParamsIntoBacktestSettings(baseSettings, result.params, this.lastFinderOptions ?? undefined);
+		if (Number.isFinite(result.params.polymarketEntryOffset)) {
+			mergedSettings.polymarketEntryOffset = Math.max(0, Math.min(4, Math.round(Number(result.params.polymarketEntryOffset))));
+			if (result.polymarketEval) {
+				mergedSettings.polymarketAnnotationEnabled = true;
+			}
+		}
 		settingsManager.applyBacktestSettings(mergedSettings);
 	}
 

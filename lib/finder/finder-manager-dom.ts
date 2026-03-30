@@ -43,6 +43,7 @@ export const FINDER_MANAGER_REQUIRED_IDS = [
     "finderPolymarketSettings",
     "finderPolymarketRankMode",
     "finderPolymarketMinScored",
+    "finderPolymarketLockOffset",
 ] as const;
 
 export function createFinderManagerDom() {
@@ -89,6 +90,7 @@ export function createFinderManagerDom() {
         finderPolymarketSettings: getRequiredElement("finderPolymarketSettings"),
         finderPolymarketRankMode: getRequiredElement<HTMLSelectElement>("finderPolymarketRankMode"),
         finderPolymarketMinScored: getRequiredElement<HTMLInputElement>("finderPolymarketMinScored"),
+        finderPolymarketLockOffset: getRequiredElement<HTMLInputElement>("finderPolymarketLockOffset"),
     };
 }
 

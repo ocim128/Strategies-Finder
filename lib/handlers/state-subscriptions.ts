@@ -15,7 +15,26 @@ import { quickViewManager } from "../quick-view";
 import { livePositionsService } from "../live-positions-service";
 import type { Time } from "lightweight-charts";
 
+function updatePolymarketEntryOffsetVisibility(interval: string = state.currentInterval): void {
+    const offsetRow = document.getElementById('polymarketEntryOffsetRow');
+    const annotationToggle = document.getElementById('polymarketAnnotationEnabled');
+    if (offsetRow) {
+        const annotationEnabled = annotationToggle instanceof HTMLInputElement
+            ? annotationToggle.checked
+            : false;
+        offsetRow.style.display = interval === '1m' && annotationEnabled ? 'block' : 'none';
+    }
+}
+
 export function setupStateSubscriptions() {
+    updatePolymarketEntryOffsetVisibility();
+    const polymarketAnnotationToggle = document.getElementById('polymarketAnnotationEnabled');
+    if (polymarketAnnotationToggle instanceof HTMLInputElement) {
+        polymarketAnnotationToggle.addEventListener('change', () => {
+            updatePolymarketEntryOffsetVisibility();
+        });
+    }
+
     const setPriceLoading = () => {
         const priceEl = getRequiredElement('symbolPrice');
         const changeEl = getRequiredElement('symbolChange');
@@ -253,6 +272,7 @@ export function setupStateSubscriptions() {
     state.subscribe('currentInterval', (interval) => {
         debugLogger.event('state.currentInterval', { interval });
         uiManager.updateTimeframeUI(interval);
+        updatePolymarketEntryOffsetVisibility(interval);
         scheduleDataReload();
     });
 

@@ -347,6 +347,8 @@ export interface BacktestSettings {
     captureSnapshots?: boolean;
     /** Enable Polymarket outcome annotation for supported symbols (BTCUSDT, ETHUSDT, etc on 5m) */
     polymarketAnnotationEnabled?: boolean;
+    /** Entry offset minute (0..4) for 1m -> 5m Polymarket bridge scoring */
+    polymarketEntryOffset?: number;
 
     // ── Snapshot-based trade filters (stackable, AND logic) ──
     /** Minimum ATR% at entry (0 = disabled). Filters out low-volatility entries. */

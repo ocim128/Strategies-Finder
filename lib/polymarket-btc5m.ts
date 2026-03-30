@@ -46,6 +46,22 @@ export function isSupportedPolymarket5mRun(symbol: string, interval: string): bo
     return interval === "5m" && getPolymarket5mSeriesIdForSymbol(symbol) !== null;
 }
 
+export function supportsPolymarketOutcomeBridgeRun(symbol: string, interval: string): boolean {
+    return (interval === "5m" || interval === "1m") && getPolymarket5mSeriesIdForSymbol(symbol) !== null;
+}
+
+/**
+ * Check if a symbol/interval combination is supported for Polymarket multi-interval backtesting.
+ * Supports 1m, 5m, 15m, 1h, 4h intervals using the same 5m SQLite outcome data.
+ */
+export function isSupportedPolymarketMultiIntervalRun(
+    symbol: string,
+    interval: string
+): boolean {
+    const supportedIntervals: string[] = ["1m", "5m", "15m", "1h", "4h"];
+    return supportedIntervals.includes(interval) && getPolymarket5mSeriesIdForSymbol(symbol) !== null;
+}
+
 export async function loadPolymarket5mOutcomesForChart(
     symbol: string,
     chartData: OHLCVData[]
