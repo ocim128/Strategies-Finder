@@ -8,6 +8,7 @@ import type {
 } from "./types";
 import { createSeededRandom } from "./utils";
 import { calculateSharpeRatioFromEquitySamples } from "../performance-metrics";
+import { mean, median, percentile, sampleStdDev } from "../../statistics-utils";
 
 export * from "./types";
 
@@ -362,7 +363,7 @@ function computeRuinProbabilityMetrics(
         maxDrawdownDistribution: {
             mean: mean(maxDrawdownPercentValues),
             median: median(maxDrawdownPercentValues),
-            stdDev: stdDev(maxDrawdownPercentValues),
+            stdDev: sampleStdDev(maxDrawdownPercentValues),
             percentile5: percentile(maxDrawdownPercentValues, 5),
             percentile25: percentile(maxDrawdownPercentValues, 25),
             percentile75: percentile(maxDrawdownPercentValues, 75),
@@ -417,7 +418,7 @@ function computeDistributionStatistics(values: readonly number[]) {
 
     const meanValue = mean(values);
     const medianValue = median(values);
-    const stdDevValue = stdDev(values);
+    const stdDevValue = sampleStdDev(values);
     const sorted = [...values].sort((left, right) => left - right);
 
     let skewness = 0;
@@ -444,48 +445,6 @@ function computeDistributionStatistics(values: readonly number[]) {
         min: sorted[0] ?? 0,
         max: sorted[n - 1] ?? 0,
     };
-}
-
-function mean(values: readonly number[]): number {
-    if (values.length === 0) {
-        return 0;
-    }
-    return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function median(values: readonly number[]): number {
-    if (values.length === 0) {
-        return 0;
-    }
-    const sorted = [...values].sort((left, right) => left - right);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 1 ? sorted[mid] ?? 0 : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
-}
-
-function stdDev(values: readonly number[]): number {
-    if (values.length < 2) {
-        return 0;
-    }
-    const average = mean(values);
-    const variance =
-        values.reduce((sum, value) => sum + ((value - average) ** 2), 0) / (values.length - 1);
-    return Math.sqrt(Math.max(0, variance));
-}
-
-function percentile(values: readonly number[], p: number): number {
-    if (values.length === 0) {
-        return 0;
-    }
-    const sorted = [...values].sort((left, right) => left - right);
-    const index = (p / 100) * (sorted.length - 1);
-    const lower = Math.floor(index);
-    const upper = Math.ceil(index);
-    if (lower === upper) {
-        return sorted[lower] ?? 0;
-    }
-    const lowerValue = sorted[lower] ?? 0;
-    const upperValue = sorted[upper] ?? lowerValue;
-    return lowerValue * (upper - index) + upperValue * (index - lower);
 }
 
 function createEmptyConfidenceIntervals(): ConfidenceIntervals {

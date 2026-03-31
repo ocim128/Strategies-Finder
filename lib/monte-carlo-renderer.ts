@@ -1,5 +1,6 @@
 import type { MonteCarloResult, MonteCarloSimulation } from "./strategies/monte-carlo/monte-carlo-engine";
 import type { MonteCarloDomElements } from "./monte-carlo-dom";
+import { mean, median, percentile, sampleStdDev } from "./statistics-utils";
 
 export interface MonteCarloMethodComparisonRow {
     label: string;
@@ -238,17 +239,10 @@ function computeDistributionStats(values: readonly number[]) {
         return { mean: 0, median: 0, stdDev: 0 };
     }
 
-    const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-    const middle = median(values);
-    const variance =
-        values.length > 1
-            ? values.reduce((sum, value) => sum + ((value - average) ** 2), 0) / (values.length - 1)
-            : 0;
-
     return {
-        mean: average,
-        median: middle,
-        stdDev: Math.sqrt(Math.max(0, variance)),
+        mean: mean(values),
+        median: median(values),
+        stdDev: sampleStdDev(values),
     };
 }
 
@@ -381,29 +375,4 @@ function formatPercent(value: number): string {
 
 function formatDecimal(value: number): string {
     return value.toFixed(3);
-}
-
-function median(values: readonly number[]): number {
-    if (values.length === 0) {
-        return 0;
-    }
-    const sorted = [...values].sort((left, right) => left - right);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 1 ? sorted[mid] ?? 0 : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
-}
-
-function percentile(values: readonly number[], p: number): number {
-    if (values.length === 0) {
-        return 0;
-    }
-    const sorted = [...values].sort((left, right) => left - right);
-    const index = (p / 100) * (sorted.length - 1);
-    const lower = Math.floor(index);
-    const upper = Math.ceil(index);
-    if (lower === upper) {
-        return sorted[lower] ?? 0;
-    }
-    const lowerValue = sorted[lower] ?? 0;
-    const upperValue = sorted[upper] ?? lowerValue;
-    return lowerValue * (upper - index) + upperValue * (index - lower);
 }

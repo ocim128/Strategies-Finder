@@ -1,5 +1,6 @@
 import type { Trade } from "../../types/strategies";
 import type { EquityCurvePoint, RuinProbabilityMetrics } from "./types";
+import { mean, median, percentile, sampleStdDev } from "../../statistics-utils";
 
 /**
  * Builds equity curve from sequence of trades
@@ -139,7 +140,7 @@ export function computeRuinProbabilityMetrics(
     const drawdownDistribution = {
         mean: mean(drawdowns),
         median: median(drawdowns),
-        stdDev: stdDev(drawdowns),
+        stdDev: sampleStdDev(drawdowns),
         percentile5: percentile(drawdowns, 5),
         percentile25: percentile(drawdowns, 25),
         percentile75: percentile(drawdowns, 75),
@@ -155,32 +156,3 @@ export function computeRuinProbabilityMetrics(
     };
 }
 
-// Helper functions
-function mean(values: number[]): number {
-    if (values.length === 0) return 0;
-    return values.reduce((sum, v) => sum + v, 0) / values.length;
-}
-
-function median(values: number[]): number {
-    if (values.length === 0) return 0;
-    const sorted = [...values].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function stdDev(values: number[]): number {
-    if (values.length < 2) return 0;
-    const avg = mean(values);
-    const variance = values.reduce((sum, v) => sum + Math.pow(v - avg, 2), 0) / (values.length - 1);
-    return Math.sqrt(variance);
-}
-
-function percentile(values: number[], p: number): number {
-    if (values.length === 0) return 0;
-    const sorted = [...values].sort((a, b) => a - b);
-    const index = (p / 100) * (sorted.length - 1);
-    const lower = Math.floor(index);
-    const upper = Math.ceil(index);
-    if (lower === upper) return sorted[lower];
-    return sorted[lower] * (upper - index) + sorted[upper] * (index - lower);
-}

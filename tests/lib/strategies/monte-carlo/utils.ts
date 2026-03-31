@@ -1,17 +1,7 @@
 /**
  * Create a seeded PRNG (Mulberry32)
  */
-export function createSeededRandom(seed: number): () => number {
-    let state = seed >>> 0;
-    
-    return function() {
-        state |= 0;
-        state = (state + 0x6D2B79F5) | 0;
-        let t = Math.imul(state ^ (state >>> 15), 1 | state);
-        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-}
+export { createSeededRandom } from "../../param-math-utils";
 
 /**
  * Generate Gaussian (normal) random numbers using Box-Muller transform

@@ -71,6 +71,7 @@ const TEST_FILES = [
     "tests/finder-manager-logic.spec.ts",
     "tests/state-domains.spec.ts",
     "tests/edge-statistics.spec.ts",
+    "tests/statistics-utils.spec.ts",
     "tests/walk-forward-thresholds.spec.ts",
     "tests/walk-forward-permutation.spec.ts",
     "tests/parameter-audit.spec.ts",

@@ -2,10 +2,33 @@ import {
     type Time,
     compareTime
 } from "../strategies/index";
-import { calculateSharpeRatioFromMoments } from "../strategies/performance-metrics";
+import {
+    calculateSharpeRatioFromEquityCurve,
+    calculateSharpeRatioFromReturns,
+} from "../strategies/performance-metrics";
 import type {
     EndpointSelectionAdjustment
 } from '../types/index';
+
+function calculateSelectionSharpe(
+    trades: EndpointSelectionAdjustment["result"]["trades"],
+    initialCapital: number
+): number {
+    let equity = initialCapital;
+    const equityCurve: Array<{ time: Time; value: number }> = [];
+
+    for (const trade of trades) {
+        if (!Number.isFinite(trade.pnl)) continue;
+        equity += trade.pnl;
+        equityCurve.push({ time: trade.exitTime, value: equity });
+    }
+
+    if (equityCurve.length > 1) {
+        return calculateSharpeRatioFromEquityCurve(equityCurve);
+    }
+
+    return calculateSharpeRatioFromReturns(trades.map((trade) => trade.pnlPercent));
+}
 
 /**
  * Endpoint Selection Adjustment
@@ -30,9 +53,6 @@ export function buildSelectionResult(
     let totalProfit = 0;
     let totalLoss = 0;
     let netProfit = 0;
-    let returnCount = 0;
-    let avgReturn = 0;
-    let returnM2 = 0;
 
     for (const trade of rawTrades) {
         if (compareTime(trade.exitTime, lastDataTime) >= 0) {
@@ -50,13 +70,6 @@ export function buildSelectionResult(
             losingTrades++;
             totalLoss += Math.abs(trade.pnl);
         }
-
-        if (Number.isFinite(trade.pnlPercent)) {
-            returnCount++;
-            const delta = trade.pnlPercent - avgReturn;
-            avgReturn += delta / returnCount;
-            returnM2 += delta * (trade.pnlPercent - avgReturn);
-        }
     }
 
     const removedTrades = rawTrades.length - filteredTrades.length;
@@ -72,9 +85,9 @@ export function buildSelectionResult(
     const expectancy = (winRate * avgWin) - (lossRate * avgLoss);
     const avgTrade = totalTrades > 0 ? netProfit / totalTrades : 0;
     const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
-
-    const stdReturn = returnCount > 1 ? Math.sqrt(returnM2 / (returnCount - 1)) : 0;
-    const sharpeRatio = calculateSharpeRatioFromMoments(avgReturn, stdReturn, returnCount);
+    // Recompute Sharpe on an equity-curve basis so endpoint-adjusted Finder rows
+    // stay on the same scale as the backtest engine and result panels.
+    const sharpeRatio = calculateSelectionSharpe(filteredTrades, initialCapital);
 
     return {
         result: {

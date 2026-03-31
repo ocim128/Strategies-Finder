@@ -2,9 +2,11 @@ import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import type { BacktestSettings } from './lib/types/strategies';
 import type { FinderResult } from './lib/types/finder';
+import { buildSelectionResult } from './lib/finder/endpoint';
 import { getFinderMetricValue } from './lib/finder/finder-engine';
 import { getFinderDisplayResult } from './lib/finder/finder-ui';
 import { FinderParamSpace } from './lib/finder/finder-param-space';
+import { calculateSharpeRatioFromEquityCurve } from './lib/strategies/performance-metrics';
 import {
     buildFinderEvaluationData,
     resolveFinderCandidateBacktestSettings,
@@ -717,6 +719,49 @@ describe('Finder selection metrics', () => {
         expect(getFinderMetricValue(candidate, 'profitFactor')).to.equal(1.66);
         expect(getFinderDisplayResult(candidate).netProfit).to.equal(4285.25);
         expect(getFinderDisplayResult(candidate).sharpeRatio).to.equal(0.23);
+    });
+
+    it('recomputes endpoint-adjusted sharpe on an equity-curve basis', () => {
+        const initialCapital = 10_000;
+        const keptTrades = [
+            { id: 1, type: 'long', entryTime: '2024-01-01', entryPrice: 100, exitTime: '2024-01-01', exitPrice: 101, pnl: 100, pnlPercent: 1, size: 1 },
+            { id: 2, type: 'long', entryTime: '2024-01-02', entryPrice: 100, exitTime: '2024-01-02', exitPrice: 99.5, pnl: -50, pnlPercent: -0.5, size: 1 },
+            { id: 3, type: 'long', entryTime: '2024-01-03', entryPrice: 100, exitTime: '2024-01-03', exitPrice: 101.2, pnl: 120, pnlPercent: 1.2, size: 1 },
+            { id: 4, type: 'long', entryTime: '2024-01-04', entryPrice: 100, exitTime: '2024-01-04', exitPrice: 99.7, pnl: -30, pnlPercent: -0.3, size: 1 },
+            { id: 5, type: 'long', entryTime: '2024-01-05', entryPrice: 100, exitTime: '2024-01-05', exitPrice: 102, pnl: 200, pnlPercent: 2, size: 1 },
+            { id: 6, type: 'long', entryTime: '2024-01-06', entryPrice: 100, exitTime: '2024-01-06', exitPrice: 99.8, pnl: -20, pnlPercent: -0.2, size: 1 },
+        ] as const;
+        const removedTrade = { id: 7, type: 'long', entryTime: '2024-01-07', entryPrice: 100, exitTime: '2024-01-07', exitPrice: 101, pnl: 80, pnlPercent: 0.8, size: 1 } as const;
+        let equity = initialCapital;
+        const expectedEquityCurve = keptTrades.map((trade) => {
+            equity += trade.pnl;
+            return { time: trade.exitTime, value: equity };
+        });
+        const expectedSharpe = calculateSharpeRatioFromEquityCurve(expectedEquityCurve);
+
+        const adjustment = buildSelectionResult({
+            trades: [...keptTrades, removedTrade] as any,
+            netProfit: 400,
+            netProfitPercent: 4,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 7,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+        }, '2024-01-07' as any, initialCapital);
+
+        expect(adjustment.adjusted).to.equal(true);
+        expect(adjustment.removedTrades).to.equal(1);
+        expect(adjustment.result.totalTrades).to.equal(6);
+        expect(adjustment.result.sharpeRatio).to.be.closeTo(expectedSharpe, 1e-12);
     });
 });
 

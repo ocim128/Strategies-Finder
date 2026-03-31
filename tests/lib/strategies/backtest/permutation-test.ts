@@ -1,6 +1,8 @@
 import type { Trade } from "../../types/index";
 import type { WalkForwardResult } from "../walk-forward";
 import { calculateSharpeRatioFromReturns } from "../performance-metrics";
+import { createSeededRandom } from "../../param-math-utils";
+import { mean, median } from "../../statistics-utils";
 
 export type WalkForwardPermutationMetric =
     | "net_profit"
@@ -273,17 +275,6 @@ function isAtLeastAsGood(candidate: number, observed: number): boolean {
     return candidate > observed;
 }
 
-function createSeededRandom(seed: number): () => number {
-    let state = seed || 1;
-    return () => {
-        state += 0x6D2B79F5;
-        let t = state;
-        t = Math.imul(t ^ (t >>> 15), t | 1);
-        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-}
-
 function describePermutationEvidence(observedValue: number, pValue: number): string {
     if (!Number.isFinite(observedValue) || observedValue <= 0) {
         return "Observed metric is not positive, so this run does not provide evidence against luck.";
@@ -299,17 +290,4 @@ function buildSummary(metricLabel: string, observedValue: number, pValue: number
         return `${metricLabel} is not positive on the observed OOS sample (${tradeCount} trades). This test stays inconclusive.`;
     }
     return `${metricLabel} beat ${tradeCount} OOS trade sign-randomizations with one-sided p=${formatWalkForwardPermutationPValue(pValue)}.`;
-}
-
-function mean(values: number[]): number {
-    if (values.length === 0) return 0;
-    return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function median(values: number[]): number {
-    if (values.length === 0) return 0;
-    const sorted = [...values].sort((a, b) => a - b);
-    const middle = Math.floor(sorted.length / 2);
-    if (sorted.length % 2 === 1) return sorted[middle];
-    return (sorted[middle - 1] + sorted[middle]) / 2;
 }

@@ -1,5 +1,6 @@
 import type { Time } from "../types/strategies";
 import { timeToNumber } from "./backtest/backtest-utils";
+import { median } from "../statistics-utils";
 
 const SHARPE_MIN_SAMPLES = 5;
 const SHARPE_MIN_STD_DEV = 1e-4;
@@ -39,16 +40,6 @@ function toUtcDayKey(time: Time): string | null {
     const epochMs = toEpochMilliseconds(time);
     if (epochMs === null) return null;
     return new Date(epochMs).toISOString().slice(0, 10);
-}
-
-function median(values: number[]): number {
-    if (values.length === 0) return 0;
-    const sorted = values.slice().sort((a, b) => a - b);
-    const middle = Math.floor(sorted.length / 2);
-    if (sorted.length % 2 === 1) {
-        return sorted[middle];
-    }
-    return (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
 export function estimatePeriodsPerYear(

@@ -10,6 +10,7 @@ import {
     renderMonteCarloResults,
     type MonteCarloMethodComparisonRow,
 } from "./monte-carlo-renderer";
+import { median } from "./statistics-utils";
 
 const MAX_SIMULATION_CAP = 10_000;
 const MIN_SIMULATION_CAP = 250;
@@ -320,15 +321,6 @@ function formatCompletionStatus(
 
 function isAbortError(error: unknown): boolean {
     return error instanceof Error && error.name === "AbortError";
-}
-
-function median(values: readonly number[]): number {
-    if (values.length === 0) {
-        return 0;
-    }
-    const sorted = [...values].sort((left, right) => left - right);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 1 ? sorted[mid] ?? 0 : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
 }
 
 export function showMonteCarloTab(): void {
