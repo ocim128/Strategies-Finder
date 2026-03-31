@@ -204,6 +204,24 @@ Strategy-lib failure modes seen repeatedly:
 - `walk_forward_oos` snapshots intentionally route through shared result state
 - Keep robustness summary / candidate validation panels aligned with actual run data
 
+### Modify Monte Carlo
+- Keep the summary contract explicit:
+  - `simulations completed` is per scenario when multiple method sets run
+  - status text should distinguish per-scenario counts from total counts
+- Preserve the compact-memory design in `lib/strategies/monte-carlo/monte-carlo-engine.ts`
+  - keep full metric arrays only
+  - keep sampled equity paths bounded
+  - yield to the event loop during long runs
+- Treat Sharpe, drawdown percent, and ruin metrics as app-wide contracts
+  - Sharpe should stay aligned with shared performance-metric helpers
+  - drawdown percent is percentage points, not fractions
+- If Monte Carlo UI ids change, update together:
+  - `html-partials/tab-monte-carlo.html`
+  - `lib/monte-carlo-dom.ts`
+  - `lib/monte-carlo-service.ts`
+  - `lib/monte-carlo-renderer.ts`
+  - `tests/feature-dom-contracts.spec.ts`
+
 ### Modify Chart
 - Main containers are `#main-chart` and `#equity-chart`
 - Keep tooltip and equity-overlay element references cached; do not re-query structural children in crosshair hot paths

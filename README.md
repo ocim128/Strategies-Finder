@@ -6,7 +6,7 @@ It combines:
 - a browser UI assembled from HTML partials at runtime
 - a TypeScript backtest engine with optional Rust acceleration
 - a multi-source data pipeline with local caching
-- research tools such as Finder, Walk Forward, Scanner, Replay, Pair Combiner, Portfolio Lab, and Strategy Ensemble Lab
+- research tools such as Finder, Walk Forward, Monte Carlo, Scanner, Replay, Pair Combiner, Portfolio Lab, and Strategy Ensemble Lab
 - optional Cloudflare Worker alerting and subscription execution
 
 ## What You Can Do Here
@@ -15,6 +15,7 @@ It combines:
 - Compare strategies, inspect trades, and review backtest result diagnostics
 - Search parameter spaces with Finder, including random, genetic, and `robust_random_wf`
 - Validate robustness with walk-forward analysis and latest-OOS checks
+- Stress trade-path robustness with Monte Carlo sequence randomization and bootstrap resampling
 - Audit parameter usefulness and redundancy with `Parameter Audit`
 - Run Portfolio Lab across multiple pairs for context, ranking, and sizing decisions
 - Build live or scheduled alert subscriptions through the Worker API
@@ -39,6 +40,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 2. Select a strategy from the dropdown.
 3. Click `Run Backtest`.
 4. Open `Trades`, `Results`, `Finder`, and `Walk Forward` to verify the feature panels loaded.
+5. Open `Monte Carlo` after a backtest to inspect drawdown tails and ruin probability under reshuffled paths.
 
 ## Architecture Map
 
@@ -78,6 +80,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 ### Research tools
 - Finder: `lib/finder-manager.ts`, `lib/finder/*`
 - Walk Forward: `lib/walk-forward-service.ts`
+- Monte Carlo: `lib/monte-carlo-service.ts`, `lib/strategies/monte-carlo/*`
 - Portfolio Lab: `lib/portfolio-lab-service.ts`
 - Scanner: `lib/scanner/*`
 - Replay: `lib/replay/*`
