@@ -14,8 +14,8 @@ import tabParameterAuditHtml from '../html-partials/tab-parameter-audit.html?raw
 import tabPolymarketHtml from '../html-partials/tab-polymarket.html?raw';
 import tabPreviewHtml from '../html-partials/tab-preview.html?raw';
 
-
 import tabWalkforwardHtml from '../html-partials/tab-walkforward.html?raw';
+import tabMonteCarloHtml from '../html-partials/tab-monte-carlo.html?raw';
 
 import tabResultsHtml from '../html-partials/tab-results.html?raw';
 import tabTradesHtml from '../html-partials/tab-trades.html?raw';
@@ -47,6 +47,7 @@ const STRATEGY_PANEL_TAB_PARTIALS = [
     tabParameterAuditHtml,
     tabPolymarketHtml,
     tabWalkforwardHtml,
+    tabMonteCarloHtml,
     tabResultsHtml,
     tabTradesHtml,
     tabPortfolioHtml,

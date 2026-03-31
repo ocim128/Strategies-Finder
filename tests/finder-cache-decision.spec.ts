@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import type { BacktestSettings } from './lib/types/strategies';
 import type { FinderResult } from './lib/types/finder';
 import { getFinderMetricValue } from './lib/finder/finder-engine';
+import { getFinderDisplayResult } from './lib/finder/finder-ui';
 import { FinderParamSpace } from './lib/finder/finder-param-space';
 import {
     buildFinderEvaluationData,
@@ -714,6 +715,8 @@ describe('Finder selection metrics', () => {
         expect(getFinderMetricValue(candidate, 'netProfit')).to.equal(4285.25);
         expect(getFinderMetricValue(candidate, 'totalTrades')).to.equal(108);
         expect(getFinderMetricValue(candidate, 'profitFactor')).to.equal(1.66);
+        expect(getFinderDisplayResult(candidate).netProfit).to.equal(4285.25);
+        expect(getFinderDisplayResult(candidate).sharpeRatio).to.equal(0.23);
     });
 });
 

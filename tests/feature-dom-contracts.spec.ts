@@ -17,6 +17,7 @@ import { WALK_FORWARD_SERVICE_REQUIRED_IDS } from "./lib/walk-forward-dom";
 import { PARAMETER_AUDIT_REQUIRED_IDS } from "./lib/parameter-audit-dom";
 import { ENSEMBLE_LAB_REQUIRED_IDS } from "./lib/strategy-ensemble-dom";
 import { PREVIEW_TAB_REQUIRED_IDS } from "./lib/preview-tab-dom";
+import { MONTE_CARLO_REQUIRED_IDS } from "../lib/monte-carlo-dom";
 
 const PARTIALS_DIR = path.join(process.cwd(), "html-partials");
 
@@ -61,6 +62,7 @@ describe("Feature DOM contracts", () => {
         previewTab: [...PREVIEW_TAB_REQUIRED_IDS],
         pairCombinerBridge: [...PAIR_COMBINER_BRIDGE_REQUIRED_IDS],
         walkForwardService: [...WALK_FORWARD_SERVICE_REQUIRED_IDS],
+        monteCarlo: [...MONTE_CARLO_REQUIRED_IDS],
     } as const;
 
     for (const [groupName, ids] of Object.entries(contractGroups)) {

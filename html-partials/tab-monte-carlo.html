@@ -1,0 +1,268 @@
+<!-- Monte Carlo Simulation Tab -->
+<div id="montecarloTab">
+    <div class="section-title">Monte Carlo Simulation</div>
+    <p class="section-desc">Statistical validation of backtest results through trade sequence randomization and bootstrap resampling.</p>
+
+    <div class="section-header">
+        <div class="section-title">Simulation Settings</div>
+    </div>
+    <div class="section-body">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Simulations</label>
+                <input type="number" class="param-input" id="mc-simulations" value="1000" min="100" max="10000" step="100">
+                <div class="param-hint" id="mc-sim-cap-hint">Safe cap adjusts to trade count and enabled methods.</div>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Seed</label>
+                <input type="number" class="param-input" id="mc-seed" value="1337" min="1">
+                <div class="param-hint">Random seed for reproducibility</div>
+            </div>
+        </div>
+
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Quick Presets</label>
+                <div class="mc-preset-row" id="mc-preset-row">
+                    <button class="btn btn-secondary btn-compact" id="mc-preset-500" type="button">500</button>
+                    <button class="btn btn-secondary btn-compact" id="mc-preset-2000" type="button">2000</button>
+                    <button class="btn btn-secondary btn-compact" id="mc-preset-5000" type="button">5000</button>
+                </div>
+                <div class="param-hint">Use these before pushing the simulation count higher.</div>
+            </div>
+        </div>
+
+        <div class="param-row">
+            <div class="param-group">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                    <label class="param-label" style="margin-bottom: 0;">Sequence Randomization</label>
+                    <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle sequence randomization">
+                        <input type="checkbox" id="mc-sequence-toggle" checked>
+                        <span class="section-toggle-track"></span>
+                    </label>
+                </div>
+                <div class="param-hint">Shuffle trade order to test path dependency.</div>
+            </div>
+            <div class="param-group">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                    <label class="param-label" style="margin-bottom: 0;">Bootstrap Resampling</label>
+                    <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle bootstrap resampling">
+                        <input type="checkbox" id="mc-bootstrap-toggle" checked>
+                        <span class="section-toggle-track"></span>
+                    </label>
+                </div>
+                <div class="param-hint">Sample trades with replacement to stress expectancy and tail risk.</div>
+            </div>
+        </div>
+
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Ruin Threshold (%)</label>
+                <input type="number" class="param-input" id="mc-ruin-threshold" value="50" min="10" max="90" step="5">
+                <div class="param-hint">Equity falls below this % of initial capital = ruin.</div>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Initial Capital ($)</label>
+                <input type="number" class="param-input" id="mc-initial-capital" value="10000" min="100">
+            </div>
+        </div>
+    </div>
+
+    <div class="mc-actions">
+        <button class="btn btn-primary run-btn" id="mc-run-btn">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8 5v14l11-7z" />
+            </svg>
+            Run Monte Carlo
+            <span class="spinner" id="mc-spinner" style="display:none;"></span>
+        </button>
+        <button class="btn btn-secondary" id="mc-cancel-btn" style="display:none;">Cancel</button>
+    </div>
+
+    <div class="mc-status-bar">
+        <span id="mc-status">Ready</span>
+    </div>
+
+    <div id="mc-results" style="display: none;">
+        <div class="section-header">
+            <div class="section-title">Simulation Summary</div>
+        </div>
+        <div class="stats-grid" id="mc-summary-grid">
+            <div class="stat-card">
+                <div class="stat-label">Simulations Completed</div>
+                <div class="stat-value" id="mc-sim-count">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Ruin Probability</div>
+                <div class="stat-value" id="mc-ruin-prob">0%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Median Net Profit</div>
+                <div class="stat-value" id="mc-median-profit">$0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Median Sharpe Ratio</div>
+                <div class="stat-value" id="mc-median-sharpe">0.000</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Median Max Drawdown</div>
+                <div class="stat-value" id="mc-median-dd">0%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Execution Time</div>
+                <div class="stat-value" id="mc-exec-time">0s</div>
+            </div>
+        </div>
+
+        <div class="section-header">
+            <div class="section-title">Risk Assessment</div>
+        </div>
+        <div class="stats-grid" id="mc-risk-grid">
+            <div class="stat-card">
+                <div class="stat-label">Risk Flag</div>
+                <div class="stat-value" id="mc-risk-flag">Pending</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Observed vs MC DD95</div>
+                <div class="stat-value" id="mc-dd-stress-multiple">0.0x</div>
+            </div>
+        </div>
+        <div class="param-hint" id="mc-risk-detail">Run Monte Carlo to compare the observed path against stressed path outcomes.</div>
+
+        <div class="section-header">
+            <div class="section-title">Method Comparison</div>
+        </div>
+        <div class="ci-table-wrapper">
+            <table class="ci-table">
+                <thead>
+                    <tr>
+                        <th>Method</th>
+                        <th>Median Net Profit</th>
+                        <th>Median Max DD</th>
+                        <th>DD 95th</th>
+                        <th>Median Sharpe</th>
+                        <th>Ruin Prob.</th>
+                    </tr>
+                </thead>
+                <tbody id="mc-method-comparison-body"></tbody>
+            </table>
+        </div>
+
+        <div class="section-header">
+            <div class="section-title">Confidence Intervals</div>
+        </div>
+        <div class="ci-table-wrapper">
+            <table class="ci-table">
+                <thead>
+                    <tr>
+                        <th>Metric</th>
+                        <th>Observed</th>
+                        <th>50% CI</th>
+                        <th>90% CI</th>
+                        <th>95% CI</th>
+                    </tr>
+                </thead>
+                <tbody id="mc-ci-body"></tbody>
+            </table>
+        </div>
+
+        <div class="section-header">
+            <div class="section-title">Drawdown Percentiles</div>
+        </div>
+        <div class="ci-table-wrapper">
+            <table class="ci-table">
+                <thead>
+                    <tr>
+                        <th>Percentile</th>
+                        <th>Max Drawdown</th>
+                    </tr>
+                </thead>
+                <tbody id="mc-dd-percentiles-body"></tbody>
+            </table>
+        </div>
+
+        <div class="section-header">
+            <div class="section-title">Distribution Analysis</div>
+        </div>
+        <div class="dist-grid">
+            <div class="dist-card">
+                <div class="dist-title">Net Profit Distribution</div>
+                <canvas id="mc-profit-histogram"></canvas>
+                <div class="dist-stats" id="mc-profit-stats">
+                    <div>Mean: --</div>
+                    <div>Median: --</div>
+                    <div>Std Dev: --</div>
+                </div>
+            </div>
+            <div class="dist-card">
+                <div class="dist-title">Max Drawdown Distribution</div>
+                <canvas id="mc-dd-histogram"></canvas>
+                <div class="dist-stats" id="mc-dd-stats">
+                    <div>Mean: --</div>
+                    <div>Median: --</div>
+                    <div>Std Dev: --</div>
+                </div>
+            </div>
+            <div class="dist-card">
+                <div class="dist-title">Sharpe Ratio Distribution</div>
+                <canvas id="mc-sharpe-histogram"></canvas>
+                <div class="dist-stats" id="mc-sharpe-stats">
+                    <div>Mean: --</div>
+                    <div>Median: --</div>
+                    <div>Std Dev: --</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section-header">
+            <div class="section-title">Equity Curve Distribution</div>
+        </div>
+        <div class="fan-chart-container">
+            <canvas id="mc-equity-fan"></canvas>
+            <div class="fan-chart-legend" id="mc-fan-legend"></div>
+        </div>
+
+        <div class="section-header">
+            <div class="section-title">Ruin Analysis</div>
+        </div>
+        <div class="ruin-grid" id="mc-ruin-grid">
+            <div class="ruin-card">
+                <div class="ruin-label">Ruin Rate</div>
+                <div class="ruin-value" id="mc-ruin-rate">0%</div>
+                <div class="ruin-hint">% of simulations that hit ruin threshold</div>
+            </div>
+            <div class="ruin-card">
+                <div class="ruin-label">Expected Trades to Ruin</div>
+                <div class="ruin-value" id="mc-expected-trades-to-ruin">--</div>
+                <div class="ruin-hint">Average trades until ruin (for ruined sims)</div>
+            </div>
+            <div class="ruin-card">
+                <div class="ruin-label">Median Trades to Ruin</div>
+                <div class="ruin-value" id="mc-median-trades-to-ruin">--</div>
+                <div class="ruin-hint">Median trades until ruin (for ruined sims)</div>
+            </div>
+            <div class="ruin-card">
+                <div class="ruin-label">Drawdown at 95th Percentile</div>
+                <div class="ruin-value" id="mc-dd-95">0%</div>
+                <div class="ruin-hint">95% of simulations had DD <= this value</div>
+            </div>
+        </div>
+
+        <div class="section-header" id="mc-sensitivity-header" style="display: none;">
+            <div class="section-title">Parameter Sensitivity</div>
+        </div>
+        <div class="sensitivity-section" id="mc-sensitivity-section" style="display: none;">
+            <div class="sensitivity-grid" id="mc-sensitivity-grid"></div>
+        </div>
+    </div>
+
+    <div class="empty-state" id="mc-empty-state">
+        <div class="empty-state-icon">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z" />
+            </svg>
+        </div>
+        <h3 class="empty-state-title">Ready to Simulate</h3>
+        <p class="empty-state-description">Run a backtest first, then configure and run Monte Carlo simulation to analyze statistical significance.</p>
+    </div>
+</div>

@@ -15,3 +15,4 @@ export * from "./walk-forward-dom";
 export * from "./parameter-audit-dom";
 export * from "./strategy-ensemble-dom";
 export * from "./preview-tab-dom";
+export { MONTE_CARLO_REQUIRED_IDS } from "./monte-carlo-dom";
