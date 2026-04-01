@@ -50,7 +50,7 @@ It deduplicates signals in D1, so the same entry is only produced once.
 Notes:
 - Send at least 200 candles per call by default (configurable via `MIN_CLOSED_CANDLES` for worker-side evaluation).
 - `time` can be unix seconds, unix milliseconds, ISO string, or business-day object.
-- Subscription `backtestSettings` preserve adaptive percentage take-profit modes, including `velocity`, together with their mode-specific parameters.
+- Subscription `backtestSettings` preserve the surviving percentage take-profit modes: `fixed` and `mfe_bootstrap`.
 
 ## Automatic Scheduled Runs (new candle only)
 

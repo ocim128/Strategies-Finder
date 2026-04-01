@@ -147,141 +147,19 @@ describe('Backtesting Engine', () => {
         expect(result.trades[2].exitTime).to.equal('2023-01-07' as Time);
     });
 
-    it('should resolve shrinkage take-profit settings from raw UI values', () => {
+    it('should resolve MFE bootstrap take-profit settings from raw UI values', () => {
         const resolved = resolveBacktestSettingsFromRaw({
             riskSettingsToggle: true,
             riskMode: 'percentage',
             takeProfitToggle: true,
             takeProfitPercent: '8',
-            takeProfitMode: 'shrinkage',
-            takeProfitMfeLookbackTrades: '75',
-            takeProfitMfePercentile: '65',
-            takeProfitShrinkageStrength: '12',
+            takeProfitMode: 'mfe_bootstrap',
+            takeProfitMfeBootstrapPercentile: '65',
         } as any);
 
-        expect(resolved.takeProfitMode).to.equal('shrinkage');
+        expect(resolved.takeProfitMode).to.equal('mfe_bootstrap');
         expect(resolved.takeProfitPercent).to.equal(8);
-        expect(resolved.takeProfitMfeLookbackTrades).to.equal(75);
-        expect(resolved.takeProfitMfePercentile).to.equal(65);
-        expect(resolved.takeProfitShrinkageStrength).to.equal(12);
-    });
-
-    it('should resolve momentum-gated take-profit settings from raw UI values', () => {
-        const resolved = resolveBacktestSettingsFromRaw({
-            riskSettingsToggle: true,
-            riskMode: 'percentage',
-            takeProfitToggle: true,
-            takeProfitPercent: '6',
-            takeProfitMode: 'momentum_gated',
-            takeProfitMomentumRsiPeriod: '9',
-            takeProfitMomentumRsiPauseLevel: '58',
-            takeProfitMomentumDecayPercentPerBar: '0.35',
-        } as any);
-
-        expect(resolved.takeProfitMode).to.equal('momentum_gated');
-        expect(resolved.takeProfitPercent).to.equal(6);
-        expect(resolved.takeProfitMomentumRsiPeriod).to.equal(9);
-        expect(resolved.takeProfitMomentumRsiPauseLevel).to.equal(58);
-        expect(resolved.takeProfitMomentumDecayPercentPerBar).to.equal(0.35);
-    });
-
-    it('should shrink pair-specific rolling MFE toward the base take-profit percent', () => {
-        const data: OHLCVData[] = [
-            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
-            { time: '2023-01-02' as Time, open: 100, high: 105, low: 99, close: 103, volume: 1000 },
-            { time: '2023-01-03' as Time, open: 103, high: 103, low: 102, close: 103, volume: 1000 },
-            { time: '2023-01-04' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
-            { time: '2023-01-05' as Time, open: 100, high: 103.6, low: 99.8, close: 101, volume: 1000 },
-        ];
-        const signals: Signal[] = [
-            { time: '2023-01-01' as Time, type: 'buy', price: 100 },
-            { time: '2023-01-04' as Time, type: 'buy', price: 100 },
-        ];
-
-        const result = runBacktest(data, signals, 1000, 100, 0, {
-            riskMode: 'percentage',
-            stopLossEnabled: false,
-            takeProfitEnabled: true,
-            takeProfitPercent: 2,
-            takeProfitMode: 'shrinkage',
-            takeProfitMfeLookbackTrades: 10,
-            takeProfitMfePercentile: 60,
-            takeProfitShrinkageStrength: 1,
-        });
-
-        expect(result.totalTrades).to.equal(2);
-        expect(result.trades[0].exitReason).to.equal('take_profit');
-        expect(result.trades[0].exitPrice).to.equal(102);
-        expect(result.trades[1].exitReason).to.equal('take_profit');
-        expect(result.trades[1].exitPrice).to.be.closeTo(102, 1e-9);
-    });
-
-    it('should not use a same-bar closed trade to set shrinkage TP for next_open warm-up entries', () => {
-        const data: OHLCVData[] = [
-            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
-            { time: '2023-01-02' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
-            { time: '2023-01-03' as Time, open: 100, high: 104, low: 99, close: 104, volume: 1000 },
-            { time: '2023-01-04' as Time, open: 104, high: 108.5, low: 100, close: 101, volume: 1000 },
-        ];
-        const signals: Signal[] = [
-            { time: '2023-01-01' as Time, type: 'buy', price: 100 },
-            { time: '2023-01-01' as Time, type: 'buy', price: 100 },
-        ];
-
-        const result = runBacktest(data, signals, 1000, 100, 0, {
-            executionModel: 'next_open',
-            warmUpEntryEnabled: true,
-            maxOpenTrades: 1,
-            riskMode: 'percentage',
-            stopLossEnabled: false,
-            takeProfitEnabled: true,
-            takeProfitPercent: 10,
-            takeProfitMode: 'shrinkage',
-            takeProfitMfeLookbackTrades: 10,
-            takeProfitMfePercentile: 60,
-            takeProfitShrinkageStrength: 1,
-            riskMaxHoldEnabled: true,
-            riskMaxHoldBars: 1,
-        });
-
-        expect(result.totalTrades).to.equal(2);
-        expect(result.trades[0].exitReason).to.equal('time_stop');
-        expect(result.trades[0].exitPrice).to.equal(104);
-        expect(result.trades[1].entryTime).to.equal('2023-01-03' as Time);
-        expect(result.trades[1].exitReason).to.equal('time_stop');
-        expect(result.trades[1].exitPrice).to.equal(101);
-    });
-
-    it('should keep full exit-bar excursion for signal-close exits that stay open through the close', () => {
-        const data: OHLCVData[] = [
-            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
-            { time: '2023-01-02' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
-            { time: '2023-01-03' as Time, open: 100, high: 110, low: 99, close: 104, volume: 1000 },
-            { time: '2023-01-04' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
-            { time: '2023-01-05' as Time, open: 100, high: 113, low: 99, close: 101, volume: 1000 },
-        ];
-        const signals: Signal[] = [
-            { time: '2023-01-01' as Time, type: 'buy', price: 100 },
-            { time: '2023-01-03' as Time, type: 'sell', price: 104 },
-            { time: '2023-01-04' as Time, type: 'buy', price: 100 },
-        ];
-
-        const result = runBacktest(data, signals, 1000, 100, 0, {
-            riskMode: 'percentage',
-            stopLossEnabled: false,
-            takeProfitEnabled: true,
-            takeProfitPercent: 20,
-            takeProfitMode: 'shrinkage',
-            takeProfitMfeLookbackTrades: 10,
-            takeProfitMfePercentile: 60,
-            takeProfitShrinkageStrength: 1,
-        });
-
-        expect(result.totalTrades).to.equal(2);
-        expect(result.trades[0].exitReason).to.equal('signal');
-        expect(result.trades[0].exitPrice).to.equal(104);
-        expect(result.trades[1].exitReason).to.equal('end_of_data');
-        expect(result.trades[1].takeProfitPrice).to.be.closeTo(115, 1e-9);
+        expect(resolved.takeProfitMfeBootstrapPercentile).to.equal(65);
     });
 
     it('scanner settings resolver should mirror backtest toggle behavior', () => {
@@ -753,97 +631,6 @@ describe('Backtesting Engine', () => {
 
         expect(result.totalTrades).to.equal(1);
         expect(result.netProfit).to.be.closeTo(-500, 1e-9);
-    });
-
-    it('should not let next_open entry-bar range expand velocity TP when same-bar exits are disabled', () => {
-        const data: OHLCVData[] = [
-            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
-            { time: '2023-01-02' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
-            { time: '2023-01-03' as Time, open: 100, high: 110, low: 100, close: 105, volume: 1000 },
-            { time: '2023-01-04' as Time, open: 105, high: 110, low: 104, close: 108, volume: 1000 },
-            { time: '2023-01-05' as Time, open: 108, high: 108, low: 108, close: 108, volume: 1000 },
-        ];
-
-        const signals: Signal[] = [
-            { time: '2023-01-02' as Time, type: 'buy', price: 100, barIndex: 1 },
-        ];
-
-        const result = runBacktest(data, signals, 10000, 100, 0, {
-            tradeDirection: 'long' as const,
-            executionModel: 'next_open' as const,
-            allowSameBarExit: false,
-            riskMode: 'percentage' as const,
-            stopLossEnabled: false,
-            takeProfitEnabled: true,
-            takeProfitPercent: 10,
-            takeProfitMode: 'velocity' as const,
-            takeProfitVelocityFastBars: 1,
-            takeProfitVelocitySlowBars: 5,
-            takeProfitVelocityProgressPercent: 100,
-            takeProfitVelocityExpandMultiplier: 2,
-            takeProfitVelocityShrinkMultiplier: 0.5,
-        });
-
-        expect(result.totalTrades).to.equal(1);
-        expect(result.trades[0].entryTime).to.equal('2023-01-03' as Time);
-        expect(result.trades[0].exitReason).to.equal('take_profit');
-        expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
-        expect(result.trades[0].exitPrice).to.be.closeTo(110, 1e-9);
-    });
-
-    it('should still shrink velocity TP after slow bars when progress stays below 100 percent', () => {
-        const data: OHLCVData[] = [
-            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
-            { time: '2023-01-02' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
-            { time: '2023-01-03' as Time, open: 100, high: 107, low: 100, close: 106, volume: 1000 },
-            { time: '2023-01-04' as Time, open: 106, high: 108, low: 104, close: 107, volume: 1000 },
-            { time: '2023-01-05' as Time, open: 107, high: 105, low: 104, close: 105, volume: 1000 },
-            { time: '2023-01-06' as Time, open: 105, high: 105, low: 105, close: 105, volume: 1000 },
-        ];
-
-        const signals: Signal[] = [
-            { time: '2023-01-02' as Time, type: 'buy', price: 100, barIndex: 1 },
-        ];
-
-        const shrunk = runBacktest(data, signals, 10000, 100, 0, {
-            tradeDirection: 'long' as const,
-            executionModel: 'next_open' as const,
-            allowSameBarExit: false,
-            riskMode: 'percentage' as const,
-            stopLossEnabled: false,
-            takeProfitEnabled: true,
-            takeProfitPercent: 10,
-            takeProfitMode: 'velocity' as const,
-            takeProfitVelocityFastBars: 1,
-            takeProfitVelocitySlowBars: 2,
-            takeProfitVelocityProgressPercent: 100,
-            takeProfitVelocityExpandMultiplier: 2,
-            takeProfitVelocityShrinkMultiplier: 0.5,
-        });
-
-        const unshrunk = runBacktest(data, signals, 10000, 100, 0, {
-            tradeDirection: 'long' as const,
-            executionModel: 'next_open' as const,
-            allowSameBarExit: false,
-            riskMode: 'percentage' as const,
-            stopLossEnabled: false,
-            takeProfitEnabled: true,
-            takeProfitPercent: 10,
-            takeProfitMode: 'velocity' as const,
-            takeProfitVelocityFastBars: 1,
-            takeProfitVelocitySlowBars: 2,
-            takeProfitVelocityProgressPercent: 100,
-            takeProfitVelocityExpandMultiplier: 2,
-            takeProfitVelocityShrinkMultiplier: 1,
-        });
-
-        expect(shrunk.totalTrades).to.equal(1);
-        expect(shrunk.trades[0].exitReason).to.equal('take_profit');
-        expect(shrunk.trades[0].exitTime).to.equal('2023-01-06' as Time);
-        expect(shrunk.trades[0].exitPrice).to.be.closeTo(105, 1e-9);
-
-        expect(unshrunk.totalTrades).to.equal(1);
-        expect(unshrunk.trades[0].exitReason).to.equal('end_of_data');
     });
 
     it('should resolve next_open ATR targets from the prior closed bar for alert parity', () => {

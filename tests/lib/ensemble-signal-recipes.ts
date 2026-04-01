@@ -23,8 +23,16 @@ import {
 import {
     normalizeTradeDirection,
 } from "./strategy-ensemble-engine";
-import { resolveContextVote } from "./strategy-ensemble-rules";
 import type { EnsembleEntryPresence } from "./strategy-ensemble-types";
+import {
+    buildPrimaryVetoPreparedSignals,
+    buildTargetConflictFilterPreparedSignals,
+} from "./strategy-ensemble-signal-filters";
+
+export {
+    buildPrimaryVetoPreparedSignals,
+    buildTargetConflictFilterPreparedSignals,
+} from "./strategy-ensemble-signal-filters";
 
 export interface EnsembleRecipeSignalArtifact {
     config: StrategyConfig;
@@ -172,40 +180,6 @@ export function evaluateEnsembleRecipeLatestEntry(args: {
     });
 }
 
-export function buildTargetConflictFilterPreparedSignals(
-    targetArtifact: EnsembleRecipeSignalArtifact,
-    contextArtifacts: readonly EnsembleRecipeSignalArtifact[]
-): Signal[] {
-    return targetArtifact.preparedSignals
-        .filter((signal) => {
-            if (!isEntrySignal(signal, targetArtifact.tradeDirection)) {
-                return true;
-            }
-
-            const direction = signal.type === "buy" ? "long" : "short";
-            return contextArtifacts.every((artifact) => {
-                const vote = resolveContextVote(direction, artifact.entryPresenceByTime.get(timeKey(signal.time)));
-                return vote !== "oppose" && vote !== "conflict";
-            });
-        })
-        .sort(compareSignalsByBarIndexThenTime);
-}
-
-export function buildPrimaryVetoPreparedSignals(
-    primaryArtifact: EnsembleRecipeSignalArtifact,
-    vetoArtifact: EnsembleRecipeSignalArtifact
-): Signal[] {
-    return primaryArtifact.preparedSignals.filter((signal) => {
-        if (!isEntrySignal(signal, primaryArtifact.tradeDirection)) {
-            return true;
-        }
-
-        const direction = signal.type === "buy" ? "long" : "short";
-        const vote = resolveContextVote(direction, vetoArtifact.entryPresenceByTime.get(timeKey(signal.time)));
-        return vote !== "oppose" && vote !== "conflict";
-    });
-}
-
 function buildExecutedEntrySignals(
     trades: readonly { entryTime: Signal["time"]; entryPrice: number; type: "long" | "short" }[],
     candles: OHLCVData[]
@@ -323,18 +297,6 @@ function resolveReplayTradeDirection(
         return "combined";
     }
     return inferReplayTradeDirection(preparedSignals);
-}
-
-function isEntrySignal(signal: Signal, tradeDirection: TradeDirection): boolean {
-    if (
-        tradeDirection === "both"
-        || tradeDirection === "both_flip_loss_2"
-        || tradeDirection === "combined"
-    ) {
-        return signal.type === "buy" || signal.type === "sell";
-    }
-
-    return tradeDirection === "short" ? signal.type === "sell" : signal.type === "buy";
 }
 
 function buildEntryPresenceLookup(signals: Signal[]): Map<string, EnsembleEntryPresence> {

@@ -168,7 +168,7 @@ describe('Backtest settings compatibility', () => {
             riskMode: 'percentage',
             stopLossToggle: true,
             takeProfitToggle: 1,
-            takeProfitVelocityFastBars: 0.4,
+            takeProfitMfeBootstrapPercentile: 120,
             riskWinStreakStopLossToggle: true,
             riskWinStreakStopLossAfterWins: 0.2,
             riskWinStreakStopLossPercent: -5,
@@ -182,7 +182,7 @@ describe('Backtest settings compatibility', () => {
 
         expect(resolved.stopLossEnabled).to.equal(true);
         expect(resolved.takeProfitEnabled).to.equal(true);
-        expect(resolved.takeProfitVelocityFastBars).to.equal(1);
+        expect(resolved.takeProfitMfeBootstrapPercentile).to.equal(99);
         expect(resolved.riskWinStreakStopLossEnabled).to.equal(true);
         expect(resolved.riskWinStreakStopLossAfterWins).to.equal(1);
         expect(resolved.riskWinStreakStopLossPercent).to.equal(0);
@@ -232,25 +232,17 @@ describe('Backtest settings compatibility', () => {
         expect(resolved.executionModel).to.equal('next_close');
     });
 
-    it('preserves velocity take-profit mode and parameters for subscription execution settings', () => {
+    it('preserves MFE bootstrap take-profit settings for subscription execution settings', () => {
         const resolved = resolveSubscriptionExecutionBacktestSettings({
             riskMode: 'percentage',
             takeProfitEnabled: true,
             takeProfitPercent: 8,
-            takeProfitMode: 'velocity',
-            takeProfitVelocityFastBars: 3,
-            takeProfitVelocitySlowBars: 18,
-            takeProfitVelocityProgressPercent: 55,
-            takeProfitVelocityExpandMultiplier: 1.8,
-            takeProfitVelocityShrinkMultiplier: 0.7,
+            takeProfitMode: 'mfe_bootstrap',
+            takeProfitMfeBootstrapPercentile: 73,
         } as unknown as BacktestSettings);
 
-        expect(resolved.takeProfitMode).to.equal('velocity');
-        expect(resolved.takeProfitVelocityFastBars).to.equal(3);
-        expect(resolved.takeProfitVelocitySlowBars).to.equal(18);
-        expect(resolved.takeProfitVelocityProgressPercent).to.equal(55);
-        expect(resolved.takeProfitVelocityExpandMultiplier).to.equal(1.8);
-        expect(resolved.takeProfitVelocityShrinkMultiplier).to.equal(0.7);
+        expect(resolved.takeProfitMode).to.equal('mfe_bootstrap');
+        expect(resolved.takeProfitMfeBootstrapPercentile).to.equal(73);
     });
 
     it('normalizes deleted percentage TP modes back to fixed mode', () => {
@@ -270,6 +262,30 @@ describe('Backtest settings compatibility', () => {
 
         expect(rawResolved.takeProfitMode).to.equal('fixed');
         expect(subscriptionResolved.takeProfitMode).to.equal('fixed');
+    });
+
+    it('strips deleted percentage TP fields when normalizing stored settings', () => {
+        const normalized = normalizeStoredBacktestSettings({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitPercent: 8,
+            takeProfitMode: 'velocity',
+            takeProfitVelocityFastBars: 3,
+            takeProfitVelocitySlowBars: 18,
+            takeProfitVelocityProgressPercent: 55,
+            takeProfitVelocityExpandMultiplier: 1.8,
+            takeProfitVelocityShrinkMultiplier: 0.7,
+            takeProfitMfeBootstrapPercentile: 73,
+        });
+
+        expect(normalized.takeProfitMode).to.equal('fixed');
+        expect(normalized.takeProfitMfeBootstrapPercentile).to.equal(73);
+        expect('takeProfitVelocityFastBars' in (normalized as Record<string, unknown>)).to.equal(false);
+        expect('takeProfitVelocitySlowBars' in (normalized as Record<string, unknown>)).to.equal(false);
+        expect('takeProfitVelocityProgressPercent' in (normalized as Record<string, unknown>)).to.equal(false);
+        expect('takeProfitVelocityExpandMultiplier' in (normalized as Record<string, unknown>)).to.equal(false);
+        expect('takeProfitVelocityShrinkMultiplier' in (normalized as Record<string, unknown>)).to.equal(false);
     });
 
     it('keeps legacy fixed toggle compatibility while upgrading legacy smart sizing mode', () => {

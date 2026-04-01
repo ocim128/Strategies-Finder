@@ -104,20 +104,6 @@ function clampAtrPeriod(value: number): number {
     return Math.max(1, Math.round(value));
 }
 
-function clampTakeProfitMfeLookbackTrades(value: number): number {
-    if (!Number.isFinite(value)) return 5;
-    return Math.max(5, Math.round(value));
-}
-
-function clampTakeProfitMfePercentile(value: number): number {
-    return clampPercentValue(value, 1, 99);
-}
-
-function clampTakeProfitShrinkageStrength(value: number): number {
-    if (!Number.isFinite(value)) return 1;
-    return Math.max(1, Number(value));
-}
-
 function usesPercentageTakeProfitMode(
     settings: BacktestSettings,
     mode: TakeProfitMode
@@ -127,85 +113,11 @@ function usesPercentageTakeProfitMode(
         && settings.takeProfitMode === mode;
 }
 
-function clampTakeProfitMomentumRsiPeriod(value: number): number {
-    if (!Number.isFinite(value)) return 2;
-    return Math.max(2, Math.round(value));
-}
-
-function clampTakeProfitMomentumRsiPauseLevel(value: number): number {
-    return clampPercentValue(value, 1, 99);
-}
-
-function clampTakeProfitMomentumDecayPercentPerBar(value: number): number {
-    if (!Number.isFinite(value)) return 0;
-    return Math.max(0, Number(value));
-}
-
-function clampTakeProfitVelocityFastBars(value: number): number {
-    if (!Number.isFinite(value)) return 1;
-    return Math.max(1, Math.round(value));
-}
-
-function clampTakeProfitVelocitySlowBars(value: number): number {
-    if (!Number.isFinite(value)) return 1;
-    return Math.max(1, Math.round(value));
-}
-
-function clampTakeProfitVelocityProgressPercent(value: number): number {
-    return clampPercentValue(value, 1, 100);
-}
-
-function clampTakeProfitVelocityMultiplier(value: number): number {
-    if (!Number.isFinite(value)) return 0.1;
-    return Math.max(0.1, Number(value));
-}
-
-function clampTakeProfitAtrScaledMultiplier(value: number): number {
-    if (!Number.isFinite(value)) return 0.1;
-    return Math.max(0.1, Number(value));
-}
-
-function clampTakeProfitRangeScaledLookback(value: number): number {
-    if (!Number.isFinite(value)) return 5;
-    return Math.max(5, Math.round(value));
-}
-
-function clampTakeProfitRangeScaledFraction(value: number): number {
-    if (!Number.isFinite(value)) return 0.01;
-    return Math.max(0.01, Math.min(1, Number(value)));
-}
-
-function clampTakeProfitMedianBarLookback(value: number): number {
-    if (!Number.isFinite(value)) return 5;
-    return Math.max(5, Math.round(value));
-}
-
-function clampTakeProfitMedianBarMultiplier(value: number): number {
-    if (!Number.isFinite(value)) return 0.1;
-    return Math.max(0.1, Number(value));
-}
-
 function clampTakeProfitMfeBootstrapPercentile(value: number): number {
     return clampPercentValue(value, 1, 99);
 }
 
 const TP_PARAM_SPECS: readonly TpParamSpec[] = [
-    { key: "takeProfitMfeLookbackTrades", mode: "shrinkage", clamp: clampTakeProfitMfeLookbackTrades },
-    { key: "takeProfitMfePercentile", mode: "shrinkage", clamp: clampTakeProfitMfePercentile },
-    { key: "takeProfitShrinkageStrength", mode: "shrinkage", clamp: clampTakeProfitShrinkageStrength },
-    { key: "takeProfitMomentumRsiPeriod", mode: "momentum_gated", clamp: clampTakeProfitMomentumRsiPeriod },
-    { key: "takeProfitMomentumRsiPauseLevel", mode: "momentum_gated", clamp: clampTakeProfitMomentumRsiPauseLevel },
-    { key: "takeProfitMomentumDecayPercentPerBar", mode: "momentum_gated", clamp: clampTakeProfitMomentumDecayPercentPerBar },
-    { key: "takeProfitVelocityFastBars", mode: "velocity", clamp: clampTakeProfitVelocityFastBars },
-    { key: "takeProfitVelocitySlowBars", mode: "velocity", clamp: clampTakeProfitVelocitySlowBars },
-    { key: "takeProfitVelocityProgressPercent", mode: "velocity", clamp: clampTakeProfitVelocityProgressPercent },
-    { key: "takeProfitVelocityExpandMultiplier", mode: "velocity", clamp: clampTakeProfitVelocityMultiplier },
-    { key: "takeProfitVelocityShrinkMultiplier", mode: "velocity", clamp: clampTakeProfitVelocityMultiplier },
-    { key: "takeProfitAtrScaledMultiplier", mode: "atr_scaled", clamp: clampTakeProfitAtrScaledMultiplier },
-    { key: "takeProfitRangeScaledLookback", mode: "range_scaled", clamp: clampTakeProfitRangeScaledLookback },
-    { key: "takeProfitRangeScaledFraction", mode: "range_scaled", clamp: clampTakeProfitRangeScaledFraction },
-    { key: "takeProfitMedianBarLookback", mode: "median_bar", clamp: clampTakeProfitMedianBarLookback },
-    { key: "takeProfitMedianBarMultiplier", mode: "median_bar", clamp: clampTakeProfitMedianBarMultiplier },
     { key: "takeProfitMfeBootstrapPercentile", mode: "mfe_bootstrap", clamp: clampTakeProfitMfeBootstrapPercentile },
 ];
 

@@ -32,31 +32,9 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         riskMode: settings?.riskMode ?? 'simple',
         stopLossPercent: Math.max(0, toNumberOr(settings?.stopLossPercent, 0)),
         takeProfitPercent: Math.max(0, toNumberOr(settings?.takeProfitPercent, 0)),
-        takeProfitMode: settings?.takeProfitMode === 'shrinkage'
-            || settings?.takeProfitMode === 'momentum_gated'
-            || settings?.takeProfitMode === 'velocity'
-            || settings?.takeProfitMode === 'atr_scaled'
-            || settings?.takeProfitMode === 'range_scaled'
-            || settings?.takeProfitMode === 'median_bar'
-            || settings?.takeProfitMode === 'mfe_bootstrap'
+        takeProfitMode: settings?.takeProfitMode === 'mfe_bootstrap'
             ? settings.takeProfitMode
             : 'fixed',
-        takeProfitMfeLookbackTrades: Math.max(5, Math.round(toNumberOr(settings?.takeProfitMfeLookbackTrades, 100))),
-        takeProfitMfePercentile: clamp(toNumberOr(settings?.takeProfitMfePercentile, 60), 1, 99),
-        takeProfitShrinkageStrength: Math.max(1, toNumberOr(settings?.takeProfitShrinkageStrength, 20)),
-        takeProfitMomentumRsiPeriod: Math.max(2, Math.round(toNumberOr(settings?.takeProfitMomentumRsiPeriod, 14))),
-        takeProfitMomentumRsiPauseLevel: clamp(toNumberOr(settings?.takeProfitMomentumRsiPauseLevel, 60), 1, 99),
-        takeProfitMomentumDecayPercentPerBar: Math.max(0, toNumberOr(settings?.takeProfitMomentumDecayPercentPerBar, 0.15)),
-        takeProfitVelocityFastBars: Math.max(1, Math.round(toNumberOr(settings?.takeProfitVelocityFastBars, 2))),
-        takeProfitVelocitySlowBars: Math.max(1, Math.round(toNumberOr(settings?.takeProfitVelocitySlowBars, 20))),
-        takeProfitVelocityProgressPercent: clamp(toNumberOr(settings?.takeProfitVelocityProgressPercent, 50), 1, 100),
-        takeProfitVelocityExpandMultiplier: Math.max(0.1, toNumberOr(settings?.takeProfitVelocityExpandMultiplier, 1.5)),
-        takeProfitVelocityShrinkMultiplier: Math.max(0.1, toNumberOr(settings?.takeProfitVelocityShrinkMultiplier, 0.65)),
-        takeProfitAtrScaledMultiplier: Math.max(0.1, toNumberOr(settings?.takeProfitAtrScaledMultiplier, 1.5)),
-        takeProfitRangeScaledLookback: Math.max(5, Math.round(toNumberOr(settings?.takeProfitRangeScaledLookback, 20))),
-        takeProfitRangeScaledFraction: clamp(toNumberOr(settings?.takeProfitRangeScaledFraction, 0.3), 0.01, 1),
-        takeProfitMedianBarLookback: Math.max(5, Math.round(toNumberOr(settings?.takeProfitMedianBarLookback, 20))),
-        takeProfitMedianBarMultiplier: Math.max(0.1, toNumberOr(settings?.takeProfitMedianBarMultiplier, 2)),
         takeProfitMfeBootstrapPercentile: clamp(toNumberOr(settings?.takeProfitMfeBootstrapPercentile, 60), 1, 99),
         stopLossEnabled: settings?.stopLossEnabled ?? false,
         takeProfitEnabled: settings?.takeProfitEnabled ?? false,

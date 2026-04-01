@@ -225,7 +225,7 @@ describe('Alert Entry Evaluator', () => {
                     stopLossEnabled: true,
                     stopLossPercent: 5,
                     takeProfitEnabled: true,
-                    takeProfitMode: 'velocity',
+                    takeProfitMode: 'fixed',
                     takeProfitPercent: 10,
                 },
                 freshnessBars: 20

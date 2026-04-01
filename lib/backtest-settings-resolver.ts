@@ -35,22 +35,6 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     stopLossPercent: 5,
     takeProfitPercent: 10,
     takeProfitMode: "fixed" as NonNullable<BacktestSettings["takeProfitMode"]>,
-    takeProfitMfeLookbackTrades: 100,
-    takeProfitMfePercentile: 60,
-    takeProfitShrinkageStrength: 20,
-    takeProfitMomentumRsiPeriod: 14,
-    takeProfitMomentumRsiPauseLevel: 60,
-    takeProfitMomentumDecayPercentPerBar: 0.15,
-    takeProfitVelocityFastBars: 2,
-    takeProfitVelocitySlowBars: 20,
-    takeProfitVelocityProgressPercent: 50,
-    takeProfitVelocityExpandMultiplier: 1.5,
-    takeProfitVelocityShrinkMultiplier: 0.65,
-    takeProfitAtrScaledMultiplier: 1.5,
-    takeProfitRangeScaledLookback: 20,
-    takeProfitRangeScaledFraction: 0.3,
-    takeProfitMedianBarLookback: 20,
-    takeProfitMedianBarMultiplier: 2,
     takeProfitMfeBootstrapPercentile: 60,
     stopLossEnabled: true,
     takeProfitEnabled: true,
@@ -147,22 +131,6 @@ type NumericResolverKey =
     | "timeStopBars"
     | "stopLossPercent"
     | "takeProfitPercent"
-    | "takeProfitMfeLookbackTrades"
-    | "takeProfitMfePercentile"
-    | "takeProfitShrinkageStrength"
-    | "takeProfitMomentumRsiPeriod"
-    | "takeProfitMomentumRsiPauseLevel"
-    | "takeProfitMomentumDecayPercentPerBar"
-    | "takeProfitVelocityFastBars"
-    | "takeProfitVelocitySlowBars"
-    | "takeProfitVelocityProgressPercent"
-    | "takeProfitVelocityExpandMultiplier"
-    | "takeProfitVelocityShrinkMultiplier"
-    | "takeProfitAtrScaledMultiplier"
-    | "takeProfitRangeScaledLookback"
-    | "takeProfitRangeScaledFraction"
-    | "takeProfitMedianBarLookback"
-    | "takeProfitMedianBarMultiplier"
     | "takeProfitMfeBootstrapPercentile"
     | "riskMaxHoldBars"
     | "riskWinStreakStopLossAfterWins"
@@ -226,86 +194,6 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
     { key: "timeStopBars", guard: "useAdvancedRisk", disabledValue: 0 },
     { key: "stopLossPercent", guard: "usePercentRisk", disabledValue: 0 },
     { key: "takeProfitPercent", guard: "usePercentRisk", disabledValue: 0 },
-    {
-        key: "takeProfitMfeLookbackTrades",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(5, Math.round(readDefaultedNumber(raw, "takeProfitMfeLookbackTrades"))),
-    },
-    {
-        key: "takeProfitMfePercentile",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(1, Math.min(99, readDefaultedNumber(raw, "takeProfitMfePercentile"))),
-    },
-    {
-        key: "takeProfitShrinkageStrength",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(1, readDefaultedNumber(raw, "takeProfitShrinkageStrength")),
-    },
-    {
-        key: "takeProfitMomentumRsiPeriod",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(2, Math.round(readDefaultedNumber(raw, "takeProfitMomentumRsiPeriod"))),
-    },
-    {
-        key: "takeProfitMomentumRsiPauseLevel",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(1, Math.min(99, readDefaultedNumber(raw, "takeProfitMomentumRsiPauseLevel"))),
-    },
-    {
-        key: "takeProfitMomentumDecayPercentPerBar",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(0, readDefaultedNumber(raw, "takeProfitMomentumDecayPercentPerBar")),
-    },
-    {
-        key: "takeProfitVelocityFastBars",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(1, Math.round(readDefaultedNumber(raw, "takeProfitVelocityFastBars"))),
-    },
-    {
-        key: "takeProfitVelocitySlowBars",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(1, Math.round(readDefaultedNumber(raw, "takeProfitVelocitySlowBars"))),
-    },
-    {
-        key: "takeProfitVelocityProgressPercent",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(1, Math.min(100, readDefaultedNumber(raw, "takeProfitVelocityProgressPercent"))),
-    },
-    {
-        key: "takeProfitVelocityExpandMultiplier",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(0.1, readDefaultedNumber(raw, "takeProfitVelocityExpandMultiplier")),
-    },
-    {
-        key: "takeProfitVelocityShrinkMultiplier",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(0.1, readDefaultedNumber(raw, "takeProfitVelocityShrinkMultiplier")),
-    },
-    {
-        key: "takeProfitAtrScaledMultiplier",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(0.1, readDefaultedNumber(raw, "takeProfitAtrScaledMultiplier")),
-    },
-    {
-        key: "takeProfitRangeScaledLookback",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(5, Math.round(readDefaultedNumber(raw, "takeProfitRangeScaledLookback"))),
-    },
-    {
-        key: "takeProfitRangeScaledFraction",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(0.01, Math.min(1, readDefaultedNumber(raw, "takeProfitRangeScaledFraction"))),
-    },
-    {
-        key: "takeProfitMedianBarLookback",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(5, Math.round(readDefaultedNumber(raw, "takeProfitMedianBarLookback"))),
-    },
-    {
-        key: "takeProfitMedianBarMultiplier",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(0.1, readDefaultedNumber(raw, "takeProfitMedianBarMultiplier")),
-    },
     {
         key: "takeProfitMfeBootstrapPercentile",
         guard: "usePercentRisk",
@@ -428,22 +316,6 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "stopLossPercent",
     "takeProfitPercent",
     "takeProfitMode",
-    "takeProfitMfeLookbackTrades",
-    "takeProfitMfePercentile",
-    "takeProfitShrinkageStrength",
-    "takeProfitMomentumRsiPeriod",
-    "takeProfitMomentumRsiPauseLevel",
-    "takeProfitMomentumDecayPercentPerBar",
-    "takeProfitVelocityFastBars",
-    "takeProfitVelocitySlowBars",
-    "takeProfitVelocityProgressPercent",
-    "takeProfitVelocityExpandMultiplier",
-    "takeProfitVelocityShrinkMultiplier",
-    "takeProfitAtrScaledMultiplier",
-    "takeProfitRangeScaledLookback",
-    "takeProfitRangeScaledFraction",
-    "takeProfitMedianBarLookback",
-    "takeProfitMedianBarMultiplier",
     "takeProfitMfeBootstrapPercentile",
     "stopLossToggle",
     "takeProfitToggle",
@@ -510,12 +382,6 @@ const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>([
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_flip_loss_2", "combined"]);
 const VALID_TAKE_PROFIT_MODES = new Set<NonNullable<BacktestSettings["takeProfitMode"]>>([
     "fixed",
-    "shrinkage",
-    "momentum_gated",
-    "velocity",
-    "atr_scaled",
-    "range_scaled",
-    "median_bar",
     "mfe_bootstrap",
 ]);
 

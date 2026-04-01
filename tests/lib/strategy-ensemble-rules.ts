@@ -10,6 +10,11 @@ import {
     type EnsembleRuleSelection,
     type EnsembleRuleSpec,
 } from "./strategy-ensemble-rule-selection";
+import {
+    buildPrimaryVetoPreparedSignals,
+    buildTargetConflictFilterPreparedSignals,
+    resolveContextVote,
+} from "./strategy-ensemble-signal-filters";
 import { timeKey, type OHLCVData, type Signal, type Trade } from "./strategies";
 import type {
     ConfigRunArtifact,
@@ -35,6 +40,8 @@ import type {
 const DEFAULT_MAX_RULE_VALIDATION_CANDIDATES = 12;
 const DEFAULT_MAX_RULE_BUILDER_ROWS = 10;
 const DEFAULT_MAX_REPLACEMENT_ROWS = 12;
+const CONFLICT_FILTER_RULE_ID = "scenario:conflict_filter";
+const BEST_PRIMARY_VETO_RULE_ID = "scenario:best_primary_veto";
 
 const byExpectancyThenTrades = (left: ProxyRuleEvaluation, right: ProxyRuleEvaluation): number =>
     (right.expectancy - left.expectancy) || (right.trades - left.trades);
@@ -183,29 +190,6 @@ export function buildContextCountsForTimeKey(
         neutralFamilies,
         conflictedFamilies,
     };
-}
-
-export function resolveContextVote(
-    direction: Trade["type"],
-    presence: ConfigSignalArtifact["entryPresenceByTime"] extends Map<string, infer T> ? T | null | undefined : never
-): EnsembleVoteLabel {
-    if (!presence) {
-        return "neutral";
-    }
-
-    const agrees = direction === "long" ? presence.longEntry : presence.shortEntry;
-    const opposes = direction === "long" ? presence.shortEntry : presence.longEntry;
-
-    if (agrees && opposes) {
-        return "conflict";
-    }
-    if (agrees) {
-        return "agree";
-    }
-    if (opposes) {
-        return "oppose";
-    }
-    return "neutral";
 }
 
 export function buildBuckets(samples: EnsembleTradeSample[], minSamples: number): EnsembleBucketSummary[] {
@@ -535,6 +519,98 @@ export function resolveAnalysisRule(
         };
 }
 
+function compareBacktestRows(
+    left: EnsembleBuilderRow,
+    right: EnsembleBuilderRow
+): number {
+    if (left.expectancy !== right.expectancy) {
+        return right.expectancy - left.expectancy;
+    }
+    if (left.netProfitPercent !== right.netProfitPercent) {
+        return right.netProfitPercent - left.netProfitPercent;
+    }
+    if (left.trades !== right.trades) {
+        return right.trades - left.trades;
+    }
+    if (left.profitFactor !== right.profitFactor) {
+        return right.profitFactor - left.profitFactor;
+    }
+    if (Math.abs(left.maxDrawdownPercent) !== Math.abs(right.maxDrawdownPercent)) {
+        return Math.abs(left.maxDrawdownPercent) - Math.abs(right.maxDrawdownPercent);
+    }
+    return left.rule.localeCompare(right.rule);
+}
+
+async function buildExplicitScenarioRows(
+    targetArtifact: ConfigRunArtifact,
+    contextArtifacts: ConfigRunArtifact[],
+    candles: OHLCVData[],
+    runtime: StrategyEnsembleRulesRuntime
+): Promise<Array<{ row: EnsembleBuilderRow; result: ConfigRunArtifact["result"]; filteredSignals: Signal[] }>> {
+    if (contextArtifacts.length === 0) {
+        return [];
+    }
+
+    const rows: Array<{ row: EnsembleBuilderRow; result: ConfigRunArtifact["result"]; filteredSignals: Signal[] }> = [];
+
+    runtime.updateStatus?.("Scoring explicit conflict-skip ensemble scenario...");
+    const conflictFilteredSignals = buildTargetConflictFilterPreparedSignals(targetArtifact, contextArtifacts);
+    const conflictFilteredResult = await runtime.runFilteredBacktest(targetArtifact, conflictFilteredSignals, candles);
+    if (conflictFilteredResult) {
+        rows.push({
+            row: buildResultRow(
+                CONFLICT_FILTER_RULE_ID,
+                "Conflict Filter (skip opposed/conflicted)",
+                conflictFilteredResult.result,
+                conflictFilteredSignals,
+                conflictFilteredResult.engineUsed,
+                null
+            ),
+            result: conflictFilteredResult.result,
+            filteredSignals: conflictFilteredSignals,
+        });
+    }
+
+    let bestPrimaryVeto: { row: EnsembleBuilderRow; result: ConfigRunArtifact["result"]; filteredSignals: Signal[] } | null = null;
+
+    for (let index = 0; index < contextArtifacts.length; index += 1) {
+        const vetoArtifact = contextArtifacts[index];
+        runtime.updateStatus?.(
+            `Scoring target-primary veto ${index + 1}/${contextArtifacts.length}: ${vetoArtifact.config.name}...`
+        );
+        const vetoSignals = buildPrimaryVetoPreparedSignals(targetArtifact, vetoArtifact);
+        const vetoResult = await runtime.runFilteredBacktest(targetArtifact, vetoSignals, candles);
+        if (!vetoResult) {
+            await runtime.yieldToUi();
+            continue;
+        }
+
+        const candidate = {
+            row: buildResultRow(
+                BEST_PRIMARY_VETO_RULE_ID,
+                `Best Primary Veto (${vetoArtifact.config.name})`,
+                vetoResult.result,
+                vetoSignals,
+                vetoResult.engineUsed,
+                null
+            ),
+            result: vetoResult.result,
+            filteredSignals: vetoSignals,
+        };
+
+        if (!bestPrimaryVeto || compareBacktestRows(candidate.row, bestPrimaryVeto.row) < 0) {
+            bestPrimaryVeto = candidate;
+        }
+        await runtime.yieldToUi();
+    }
+
+    if (bestPrimaryVeto) {
+        rows.push(bestPrimaryVeto);
+    }
+
+    return rows;
+}
+
 export async function buildEnsembleRows(
     targetArtifact: ConfigRunArtifact,
     contextArtifacts: ConfigRunArtifact[],
@@ -544,25 +620,20 @@ export async function buildEnsembleRows(
     selectedRule: EnsembleRuleSelection | null,
     runtime: StrategyEnsembleRulesRuntime
 ): Promise<{ rows: EnsembleBuilderRow[]; previewByRuleId: Map<string, EnsembleBuilderPreview> }> {
-    const baselineEvaluated = await runtime.runFilteredBacktest(
-        targetArtifact,
-        targetArtifact.preparedSignals,
-        candles
-    );
     const previewByRuleId = new Map<string, EnsembleBuilderPreview>();
     const baselineRuleId = "baseline";
     const baselineRow = buildResultRow(
         baselineRuleId,
         "Baseline (target only)",
-        baselineEvaluated?.result ?? targetArtifact.result,
+        targetArtifact.result,
         targetArtifact.preparedSignals,
-        baselineEvaluated?.engineUsed ?? targetArtifact.engineUsed,
+        targetArtifact.engineUsed,
         null
     );
     const rows: EnsembleBuilderRow[] = [baselineRow];
     previewByRuleId.set(baselineRuleId, {
         row: baselineRow,
-        result: baselineEvaluated?.result ?? targetArtifact.result,
+        result: targetArtifact.result,
         filteredSignals: targetArtifact.preparedSignals,
     });
 
@@ -571,6 +642,21 @@ export async function buildEnsembleRows(
             rows,
             previewByRuleId,
         };
+    }
+
+    const explicitScenarioRows = await buildExplicitScenarioRows(
+        targetArtifact,
+        contextArtifacts,
+        candles,
+        runtime
+    );
+    for (const explicitScenario of explicitScenarioRows) {
+        rows.push(explicitScenario.row);
+        previewByRuleId.set(explicitScenario.row.ruleId, {
+            row: explicitScenario.row,
+            result: explicitScenario.result,
+            filteredSignals: explicitScenario.filteredSignals,
+        });
     }
 
     for (const rule of candidateRules) {

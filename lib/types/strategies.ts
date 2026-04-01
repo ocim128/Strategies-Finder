@@ -221,12 +221,6 @@ export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';
 export type PercentageTakeProfitMode =
     | 'fixed'
-    | 'shrinkage'
-    | 'momentum_gated'
-    | 'velocity'
-    | 'atr_scaled'
-    | 'range_scaled'
-    | 'median_bar'
     | 'mfe_bootstrap';
 
 export interface BacktestSettings {
@@ -246,27 +240,6 @@ export interface BacktestSettings {
     stopLossPercent?: number;
     takeProfitPercent?: number;
     takeProfitMode?: PercentageTakeProfitMode;
-    takeProfitMfeLookbackTrades?: number;
-    takeProfitMfePercentile?: number;
-    takeProfitShrinkageStrength?: number;
-    takeProfitMomentumRsiPeriod?: number;
-    takeProfitMomentumRsiPauseLevel?: number;
-    takeProfitMomentumDecayPercentPerBar?: number;
-    takeProfitVelocityFastBars?: number;
-    takeProfitVelocitySlowBars?: number;
-    takeProfitVelocityProgressPercent?: number;
-    takeProfitVelocityExpandMultiplier?: number;
-    takeProfitVelocityShrinkMultiplier?: number;
-    /** ATR-scaled TP: multiplier applied to ATR% at entry to derive TP% */
-    takeProfitAtrScaledMultiplier?: number;
-    /** Range-scaled TP: lookback bars for recent high-low range */
-    takeProfitRangeScaledLookback?: number;
-    /** Range-scaled TP: fraction of recent range used as TP distance */
-    takeProfitRangeScaledFraction?: number;
-    /** Median-bar TP: lookback bars for computing median bar range */
-    takeProfitMedianBarLookback?: number;
-    /** Median-bar TP: multiplier applied to median bar range% */
-    takeProfitMedianBarMultiplier?: number;
     /** MFE-bootstrap TP: percentile of historical winning MFE distribution used as TP% (non-causal) */
     takeProfitMfeBootstrapPercentile?: number;
     stopLossEnabled?: boolean;

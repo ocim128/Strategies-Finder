@@ -239,8 +239,7 @@ describe('Strategy Calculations', () => {
         const baseSettings = {
             riskMode: 'percentage' as const,
             takeProfitEnabled: true,
-            takeProfitMode: 'momentum_gated' as const,
-            takeProfitMomentumRsiPeriod: 9,
+            takeProfitMode: 'fixed' as const,
             tradeFilterMode: 'rsi' as const,
             rsiPeriod: 14,
             trendEmaPeriod: 50,

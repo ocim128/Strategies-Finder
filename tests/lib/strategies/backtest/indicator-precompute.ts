@@ -29,9 +29,7 @@ function buildIndicatorCacheKey(config: NormalizedSettings): string {
         config.adxMin,
         config.adxMax,
         config.volumeSmaPeriod,
-        config.rsiPeriod,
-        config.takeProfitMode,
-        config.takeProfitMomentumRsiPeriod
+        config.rsiPeriod
     ].join('|');
 }
 
@@ -67,14 +65,11 @@ function precomputeIndicatorsFromConfig(
     const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
     const adx = useAdx ? calculateADX(highs, lows, closes, adxPeriod) : [];
 
-    const usesAdaptivePercentageTakeProfit = config.riskMode === 'percentage' && config.takeProfitEnabled;
-    const useMomentumRsi = usesAdaptivePercentageTakeProfit && config.takeProfitMode === 'momentum_gated';
-
     const volumeSma = config.tradeFilterMode === 'volume'
         ? calculateSMA(volumes, config.volumeSmaPeriod)
         : [];
-    const rsi = (config.tradeFilterMode === 'rsi' || useMomentumRsi)
-        ? calculateRSI(closes, useMomentumRsi ? config.takeProfitMomentumRsiPeriod : config.rsiPeriod)
+    const rsi = config.tradeFilterMode === 'rsi'
+        ? calculateRSI(closes, config.rsiPeriod)
         : [];
 
     const sessionVwap: (number | null)[] = [];

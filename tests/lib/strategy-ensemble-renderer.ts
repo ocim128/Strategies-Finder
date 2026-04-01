@@ -232,6 +232,19 @@ function renderHistoricalOdds(dom: EnsembleLabDom, context: EnsembleRunContext):
 
 function renderBuilder(dom: EnsembleLabDom, context: EnsembleRunContext): void {
     const baselineRow = context.builderRows.find((row) => row.rule === "Baseline (target only)") ?? context.builderRows[0] ?? null;
+    const conflictFilterRow = context.builderRows.find((row) => row.rule === "Conflict Filter (skip opposed/conflicted)") ?? null;
+    const bestPrimaryVetoRow = context.builderRows.find((row) => row.rule.startsWith("Best Primary Veto (")) ?? null;
+    const bestExplicitRow = [conflictFilterRow, bestPrimaryVetoRow]
+        .filter((row): row is EnsembleBuilderRow => row !== null)
+        .reduce<EnsembleBuilderRow | null>((best, row) => {
+            if (!best) {
+                return row;
+            }
+            if (row.expectancy !== best.expectancy) {
+                return row.expectancy > best.expectancy ? row : best;
+            }
+            return row.trades > best.trades ? row : best;
+        }, null);
     const nonBaselineRows = context.builderRows.filter((row) => row.rule !== "Baseline (target only)" && row.trades >= context.minSamples);
     const bestExpectancyRow = nonBaselineRows.length > 0
         ? nonBaselineRows.reduce((best, row) => row.expectancy > best.expectancy ? row : best)
@@ -265,6 +278,24 @@ function renderBuilder(dom: EnsembleLabDom, context: EnsembleRunContext): void {
         summaryCards.push(card(
             selectionLabel,
             `${context.selectedRule.evaluation.rule.label} ($${validationExp.toFixed(2)}, n=${validationTrades})`
+        ));
+    }
+    if (conflictFilterRow) {
+        summaryCards.push(card(
+            "Conflict Skip",
+            `$${conflictFilterRow.expectancy.toFixed(2)} | ${conflictFilterRow.trades} trades`
+        ));
+    }
+    if (bestPrimaryVetoRow) {
+        summaryCards.push(card(
+            "Best Primary Veto",
+            `${bestPrimaryVetoRow.rule.replace("Best Primary Veto ", "")} | $${bestPrimaryVetoRow.expectancy.toFixed(2)}`
+        ));
+    }
+    if (bestExplicitRow && (conflictFilterRow || bestPrimaryVetoRow)) {
+        summaryCards.push(card(
+            "Best Explicit Variant",
+            `${bestExplicitRow.rule} ($${bestExplicitRow.expectancy.toFixed(2)})`
         ));
     }
     if (bestExpectancyRow) {

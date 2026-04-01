@@ -52,27 +52,9 @@ export function computeParamRange(
     if (key === "stopLossPercent") {
         min = Math.max(0, min);
         max = Math.min(15, max);
-    } else if (key === "takeProfitMfeLookbackTrades") {
-        min = Math.max(5, min);
-    } else if (key === "takeProfitMfePercentile") {
+    } else if (key === "takeProfitMfeBootstrapPercentile") {
         min = Math.max(1, min);
         max = Math.min(99, max);
-    } else if (key === "takeProfitShrinkageStrength") {
-        min = Math.max(1, min);
-    } else if (key === "takeProfitMomentumRsiPeriod") {
-        min = Math.max(2, min);
-    } else if (key === "takeProfitMomentumRsiPauseLevel") {
-        min = Math.max(1, min);
-        max = Math.min(99, max);
-    } else if (key === "takeProfitMomentumDecayPercentPerBar") {
-        min = Math.max(0, min);
-    } else if (key === "takeProfitVelocityFastBars" || key === "takeProfitVelocitySlowBars") {
-        min = Math.max(1, min);
-    } else if (key === "takeProfitVelocityProgressPercent") {
-        min = Math.max(1, min);
-        max = Math.min(100, max);
-    } else if (key === "takeProfitVelocityExpandMultiplier" || key === "takeProfitVelocityShrinkMultiplier") {
-        min = Math.max(0.1, min);
     } else if (key === "takeProfitPercent") {
         min = Math.max(0, min);
         max = Math.min(100, max);
@@ -101,24 +83,8 @@ export function normalizeParamValue(
         next = Math.min(2, Math.max(0, Math.round(next)));
     } else if (options.includeFinderExtraBounds && key === "midpointBars") {
         next = Math.min(6, Math.max(1, Math.round(next)));
-    } else if (key === "takeProfitMfeLookbackTrades") {
-        next = Math.max(5, Math.round(next));
-    } else if (key === "takeProfitMfePercentile") {
+    } else if (key === "takeProfitMfeBootstrapPercentile") {
         next = Math.min(99, Math.max(1, Number(next.toFixed(2))));
-    } else if (key === "takeProfitShrinkageStrength") {
-        next = Math.max(1, Number(next.toFixed(2)));
-    } else if (key === "takeProfitMomentumRsiPeriod") {
-        next = Math.max(2, Math.round(next));
-    } else if (key === "takeProfitMomentumRsiPauseLevel") {
-        next = Math.min(99, Math.max(1, Number(next.toFixed(2))));
-    } else if (key === "takeProfitMomentumDecayPercentPerBar") {
-        next = Math.max(0, Number(next.toFixed(4)));
-    } else if (key === "takeProfitVelocityFastBars" || key === "takeProfitVelocitySlowBars") {
-        next = Math.max(1, Math.round(next));
-    } else if (key === "takeProfitVelocityProgressPercent") {
-        next = Math.min(100, Math.max(1, Number(next.toFixed(2))));
-    } else if (key === "takeProfitVelocityExpandMultiplier" || key === "takeProfitVelocityShrinkMultiplier") {
-        next = Math.max(0.1, Number(next.toFixed(4)));
     } else if (options.includeFinderExtraBounds && (key === "crossThreshold" || key === "minRangePct")) {
         next = Math.min(0.05, Math.max(0, Number(next.toFixed(4))));
     } else if (periodLike) {
@@ -146,18 +112,13 @@ export function normalizeParamValue(
         !percentLike &&
         key !== "stopLossPercent" &&
         key !== "takeProfitPercent" &&
-        key !== "takeProfitMfePercentile" &&
-        key !== "takeProfitMomentumRsiPauseLevel" &&
-        key !== "takeProfitVelocityProgressPercent"
+        key !== "takeProfitMfeBootstrapPercentile"
     ) {
         next = Math.round(next);
     } else if (
         key === "stopLossPercent" ||
         key === "takeProfitPercent" ||
-        key === "takeProfitMfePercentile" ||
-        key === "takeProfitShrinkageStrength" ||
-        key === "takeProfitMomentumRsiPauseLevel" ||
-        key === "takeProfitVelocityProgressPercent"
+        key === "takeProfitMfeBootstrapPercentile"
     ) {
         next = Number(next.toFixed(2));
     } else if (!Number.isInteger(defaultValue)) {

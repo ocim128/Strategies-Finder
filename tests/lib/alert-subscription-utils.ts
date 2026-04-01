@@ -16,9 +16,7 @@ export interface WorkerStrategySupportSnapshot {
 
 const VALID_TAKE_PROFIT_MODES = new Set<NonNullable<BacktestSettings["takeProfitMode"]>>([
     "fixed",
-    "shrinkage",
-    "momentum_gated",
-    "velocity",
+    "mfe_bootstrap",
 ]);
 
 function isValidTradeDirection(value: unknown): value is TradeDirection {
@@ -107,25 +105,12 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
     merged.twoHourCloseParity = merged.twoHourCloseParity === "even" || merged.twoHourCloseParity === "both"
         ? merged.twoHourCloseParity
         : EFFECTIVE_BACKTEST_DEFAULTS.twoHourCloseParity;
-    merged.takeProfitVelocityFastBars = Math.max(
+    merged.takeProfitMfeBootstrapPercentile = Math.max(
         1,
-        Math.round(toFiniteNumber(merged.takeProfitVelocityFastBars) ?? EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityFastBars)
-    );
-    merged.takeProfitVelocitySlowBars = Math.max(
-        1,
-        Math.round(toFiniteNumber(merged.takeProfitVelocitySlowBars) ?? EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocitySlowBars)
-    );
-    merged.takeProfitVelocityProgressPercent = Math.max(
-        1,
-        Math.min(100, toFiniteNumber(merged.takeProfitVelocityProgressPercent) ?? EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityProgressPercent)
-    );
-    merged.takeProfitVelocityExpandMultiplier = Math.max(
-        0.1,
-        toFiniteNumber(merged.takeProfitVelocityExpandMultiplier) ?? EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityExpandMultiplier
-    );
-    merged.takeProfitVelocityShrinkMultiplier = Math.max(
-        0.1,
-        toFiniteNumber(merged.takeProfitVelocityShrinkMultiplier) ?? EFFECTIVE_BACKTEST_DEFAULTS.takeProfitVelocityShrinkMultiplier
+        Math.min(
+            99,
+            toFiniteNumber(merged.takeProfitMfeBootstrapPercentile) ?? EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeBootstrapPercentile
+        )
     );
 
     const initialCapital = toFiniteNumber(raw.initialCapital);

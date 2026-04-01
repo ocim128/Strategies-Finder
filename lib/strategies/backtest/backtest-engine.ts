@@ -187,6 +187,9 @@ type SmartSizingPositionState = {
     fastProgressHit: boolean;
 };
 
+const SMART_SIZING_FAST_PROGRESS_BARS = 2;
+const SMART_SIZING_PROGRESS_PERCENT = 50;
+
 function createFlipLossDirectionState(): FlipLossDirectionState {
     return {
         longConsecutiveLosses: 0,
@@ -352,7 +355,7 @@ function registerSmartSizingPosition(
 }
 
 function updateSmartSizingPosition(
-    config: NormalizedSettings,
+    _config: NormalizedSettings,
     smartSizingPositionState: WeakMap<PositionState, SmartSizingPositionState>,
     position: PositionState,
     candle: OHLCVData
@@ -360,7 +363,7 @@ function updateSmartSizingPosition(
     const state = smartSizingPositionState.get(position);
     if (!state) return;
 
-    const fastWindow = Math.max(1, config.takeProfitVelocityFastBars);
+    const fastWindow = SMART_SIZING_FAST_PROGRESS_BARS;
     if (state.fastProgressHit || state.initialTargetPercent === null || state.initialTargetPercent <= 0 || position.barsInTrade > fastWindow) return;
 
     const favorablePrice = position.direction === 'short'
@@ -368,7 +371,7 @@ function updateSmartSizingPosition(
         : Math.max(position.extremePrice, candle.high);
     const favorableMovePercent = directionFactorFor(position.direction) * ((favorablePrice - position.entryPrice) / position.entryPrice) * 100;
     const progressPercent = (Math.max(0, favorableMovePercent) / state.initialTargetPercent) * 100;
-    if (greaterThanOrNearlyEqual(progressPercent, config.takeProfitVelocityProgressPercent)) {
+    if (greaterThanOrNearlyEqual(progressPercent, SMART_SIZING_PROGRESS_PERCENT)) {
         state.fastProgressHit = true;
     }
 }

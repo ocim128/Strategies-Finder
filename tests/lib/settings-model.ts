@@ -70,22 +70,6 @@ export interface BacktestSettingsData extends SnapshotFilterFields {
     stopLossPercent: number;
     takeProfitPercent: number;
     takeProfitMode: PercentageTakeProfitMode;
-    takeProfitMfeLookbackTrades: number;
-    takeProfitMfePercentile: number;
-    takeProfitShrinkageStrength: number;
-    takeProfitMomentumRsiPeriod: number;
-    takeProfitMomentumRsiPauseLevel: number;
-    takeProfitMomentumDecayPercentPerBar: number;
-    takeProfitVelocityFastBars: number;
-    takeProfitVelocitySlowBars: number;
-    takeProfitVelocityProgressPercent: number;
-    takeProfitVelocityExpandMultiplier: number;
-    takeProfitVelocityShrinkMultiplier: number;
-    takeProfitAtrScaledMultiplier: number;
-    takeProfitRangeScaledLookback: number;
-    takeProfitRangeScaledFraction: number;
-    takeProfitMedianBarLookback: number;
-    takeProfitMedianBarMultiplier: number;
     takeProfitMfeBootstrapPercentile: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
@@ -536,16 +520,7 @@ export function resolveTakeProfitModeValue(
     value: unknown,
     defaults: BacktestSettingsData = DEFAULT_BACKTEST_SETTINGS
 ): PercentageTakeProfitMode {
-    if (
-        value === "fixed"
-        || value === "shrinkage"
-        || value === "momentum_gated"
-        || value === "velocity"
-        || value === "atr_scaled"
-        || value === "range_scaled"
-        || value === "median_bar"
-        || value === "mfe_bootstrap"
-    ) {
+    if (value === "fixed" || value === "mfe_bootstrap") {
         return value;
     }
     return defaults.takeProfitMode;

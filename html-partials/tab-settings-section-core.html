@@ -215,15 +215,9 @@
                             <label class="param-label">Take Profit Mode</label>
                             <select class="param-input" id="takeProfitMode">
                                 <option value="fixed" selected>Fixed %</option>
-                                <option value="shrinkage">Shrinkage to Base %</option>
-                                <option value="momentum_gated">Volatility-Gated Shrinkage</option>
-                                <option value="velocity">Time-in-Profit Velocity</option>
-                                <option value="atr_scaled">ATR-Scaled %</option>
-                                <option value="range_scaled">Range-Scaled %</option>
-                                <option value="median_bar">Median Bar Range %</option>
                                 <option value="mfe_bootstrap">MFE Bootstrap %</option>
                             </select>
-                            <div class="param-hint">Adaptive modes only use prior closed trades and current or prior closed candles to avoid repainting and look-ahead bias.</div>
+                            <div class="param-hint">`fixed` is causal. `mfe_bootstrap` is non-causal and derives the target from the full dataset MFE distribution.</div>
                         </div>
                     </div>
                     <div class="param-row">
@@ -250,117 +244,7 @@
                             </div>
                             <input type="number" class="param-input" id="takeProfitPercent" value="10" min="0.1"
                                 max="100" step="0.1">
-                            <div class="param-hint">Fixed mode uses this directly. Rolling/Shrinkage use it as fallback or anchor.</div>
-                        </div>
-                    </div>
-                    <div class="param-row is-hidden" id="takeProfitShrinkageSettingsRow" data-tp-mode-panel="shrinkage">
-                        <div class="param-group">
-                            <label class="param-label">Shrinkage Lookback (wins)</label>
-                            <input type="number" class="param-input" id="takeProfitMfeLookbackTrades" value="100" min="5"
-                                step="1">
-                            <div class="param-hint">Use the last N winning trades on this pair and side.</div>
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Pair Estimate Percentile</label>
-                            <input type="number" class="param-input" id="takeProfitMfePercentile" value="60" min="1"
-                                max="99" step="1">
-                            <div class="param-hint">`60` means the pair estimate uses p60 of recent winning-trade MFE.</div>
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Shrinkage Strength</label>
-                            <input type="number" class="param-input" id="takeProfitShrinkageStrength" value="20" min="1"
-                                step="1">
-                            <div class="param-hint">Higher pulls the pair estimate back toward the base TP %.</div>
-                        </div>
-                    </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="momentum_gated">
-                        <div class="param-group">
-                            <label class="param-label">Momentum RSI Period</label>
-                            <input type="number" class="param-input" id="takeProfitMomentumRsiPeriod" value="14" min="2"
-                                step="1">
-                            <div class="param-hint">Directional RSI is derived from closed candles only.</div>
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Pause RSI Level</label>
-                            <input type="number" class="param-input" id="takeProfitMomentumRsiPauseLevel" value="60" min="1"
-                                max="99" step="1">
-                            <div class="param-hint">As long as directional RSI is still improving above this level, TP decay pauses.</div>
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Decay Per Bar (%)</label>
-                            <input type="number" class="param-input" id="takeProfitMomentumDecayPercentPerBar" value="0.15" min="0"
-                                step="0.01">
-                            <div class="param-hint">Once momentum rolls over, TP tightens by this amount per closed bar while the trade stays in profit.</div>
-                        </div>
-                    </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="velocity">
-                        <div class="param-group">
-                            <label class="param-label">Fast Bars</label>
-                            <input type="number" class="param-input" id="takeProfitVelocityFastBars" value="2" min="1"
-                                step="1">
-                            <div class="param-hint">If the trade reaches the progress trigger inside this window, TP expands.</div>
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Slow Bars</label>
-                            <input type="number" class="param-input" id="takeProfitVelocitySlowBars" value="20" min="1"
-                                step="1">
-                            <div class="param-hint">If the trade still has not reached the progress trigger by this many bars, TP contracts.</div>
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Progress Trigger (%)</label>
-                            <input type="number" class="param-input" id="takeProfitVelocityProgressPercent" value="50" min="1"
-                                max="100" step="1">
-                            <div class="param-hint">Measured as percent of the original base TP distance.</div>
-                        </div>
-                    </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="velocity">
-                        <div class="param-group">
-                            <label class="param-label">Expand Multiplier</label>
-                            <input type="number" class="param-input" id="takeProfitVelocityExpandMultiplier" value="1.5" min="0.1"
-                                step="0.05">
-                            <div class="param-hint">Applied when the initial move is explosive.</div>
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Shrink Multiplier</label>
-                            <input type="number" class="param-input" id="takeProfitVelocityShrinkMultiplier" value="0.65" min="0.1"
-                                step="0.05">
-                            <div class="param-hint">Applied when early progress is too slow.</div>
-                        </div>
-                    </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="atr_scaled">
-                        <div class="param-group">
-                            <label class="param-label">ATR Scaled Multiplier</label>
-                            <input type="number" class="param-input" id="takeProfitAtrScaledMultiplier" value="1.5" min="0.1"
-                                step="0.1">
-                            <div class="param-hint">TP% = ATR% × multiplier. Adapts to each pair's volatility at entry.</div>
-                        </div>
-                    </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="range_scaled">
-                        <div class="param-group">
-                            <label class="param-label">Range Lookback (bars)</label>
-                            <input type="number" class="param-input" id="takeProfitRangeScaledLookback" value="20" min="5"
-                                step="1">
-                            <div class="param-hint">Number of bars to measure recent high-low range.</div>
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Range Fraction</label>
-                            <input type="number" class="param-input" id="takeProfitRangeScaledFraction" value="0.3" min="0.01"
-                                max="1" step="0.01">
-                            <div class="param-hint">TP distance = fraction × recent range. 0.3 = 30% of recent swing.</div>
-                        </div>
-                    </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="median_bar">
-                        <div class="param-group">
-                            <label class="param-label">Median Bar Lookback</label>
-                            <input type="number" class="param-input" id="takeProfitMedianBarLookback" value="20" min="5"
-                                step="1">
-                            <div class="param-hint">Number of bars to compute median bar range.</div>
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Bar Range Multiplier</label>
-                            <input type="number" class="param-input" id="takeProfitMedianBarMultiplier" value="2" min="0.1"
-                                step="0.1">
-                            <div class="param-hint">TP% = median bar range% × multiplier. 2× median = expect ~2 bars of favorable movement.</div>
+                            <div class="param-hint">`fixed` uses this directly. `mfe_bootstrap` uses it as the fallback when the dataset cannot produce a percentile target.</div>
                         </div>
                     </div>
                     <div class="param-row is-hidden" data-tp-mode-panel="mfe_bootstrap">

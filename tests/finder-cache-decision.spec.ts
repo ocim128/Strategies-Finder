@@ -283,7 +283,7 @@ describe('Finder ATR risk randomization support', () => {
         expect(resolved.rustBacktestSettings).to.equal(rustSettings);
     });
 
-    it('adds shrinkage take-profit params to finder search params when shrinkage mode is active', () => {
+    it('adds MFE bootstrap take-profit params to finder search params when mfe_bootstrap mode is active', () => {
         const strategy = {
             defaultParams: {
                 lookback: 20,
@@ -292,23 +292,19 @@ describe('Finder ATR risk randomization support', () => {
         const settings: BacktestSettings = {
             riskMode: 'percentage',
             takeProfitEnabled: true,
-            takeProfitMode: 'shrinkage',
+            takeProfitMode: 'mfe_bootstrap',
             takeProfitPercent: 6,
-            takeProfitMfeLookbackTrades: 80,
-            takeProfitMfePercentile: 67,
-            takeProfitShrinkageStrength: 14,
+            takeProfitMfeBootstrapPercentile: 67,
         };
 
         const baseParams = buildFinderSearchBaseParams(strategy, settings);
 
         expect(baseParams.lookback).to.equal(20);
         expect(baseParams.takeProfitPercent).to.equal(6);
-        expect(baseParams.takeProfitMfeLookbackTrades).to.equal(80);
-        expect(baseParams.takeProfitMfePercentile).to.equal(67);
-        expect(baseParams.takeProfitShrinkageStrength).to.equal(14);
+        expect(baseParams.takeProfitMfeBootstrapPercentile).to.equal(67);
     });
 
-    it('does not add shrinkage take-profit params when take-profit mode is fixed', () => {
+    it('does not add MFE bootstrap take-profit params when take-profit mode is fixed', () => {
         const strategy = {
             defaultParams: {
                 lookback: 20,
@@ -319,28 +315,22 @@ describe('Finder ATR risk randomization support', () => {
             takeProfitEnabled: true,
             takeProfitMode: 'fixed',
             takeProfitPercent: 6,
-            takeProfitMfeLookbackTrades: 80,
-            takeProfitMfePercentile: 67,
-            takeProfitShrinkageStrength: 14,
+            takeProfitMfeBootstrapPercentile: 67,
         };
 
         const baseParams = buildFinderSearchBaseParams(strategy, settings);
 
         expect(baseParams.lookback).to.equal(20);
         expect(baseParams.takeProfitPercent).to.equal(6);
-        expect('takeProfitMfeLookbackTrades' in baseParams).to.equal(false);
-        expect('takeProfitMfePercentile' in baseParams).to.equal(false);
-        expect('takeProfitShrinkageStrength' in baseParams).to.equal(false);
+        expect('takeProfitMfeBootstrapPercentile' in baseParams).to.equal(false);
     });
 
-    it('random mode can vary shrinkage take-profit params once they are part of the finder search params', () => {
+    it('random mode can vary MFE bootstrap take-profit params within finder bounds', () => {
         const paramSpace = new FinderParamSpace();
         const combos = paramSpace.generateParamSets(
             {
                 lookback: 20,
-                takeProfitMfeLookbackTrades: 100,
-                takeProfitMfePercentile: 60,
-                takeProfitShrinkageStrength: 20,
+                takeProfitMfeBootstrapPercentile: 60,
             },
             {
                 mode: 'random',
@@ -361,27 +351,19 @@ describe('Finder ATR risk randomization support', () => {
             }
         );
 
-        const lookbacks = new Set(combos.map((combo) => combo.takeProfitMfeLookbackTrades));
-        const percentiles = new Set(combos.map((combo) => combo.takeProfitMfePercentile));
-        const strengths = new Set(combos.map((combo) => combo.takeProfitShrinkageStrength));
+        const percentiles = new Set(combos.map((combo) => combo.takeProfitMfeBootstrapPercentile));
 
-        expect(lookbacks.size).to.be.greaterThan(1);
         expect(percentiles.size).to.be.greaterThan(1);
-        expect(strengths.size).to.be.greaterThan(1);
-        expect(combos.every((combo) => Number.isInteger(combo.takeProfitMfeLookbackTrades))).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitMfePercentile ?? 0) >= 1 && (combo.takeProfitMfePercentile ?? 100) <= 99)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitShrinkageStrength ?? 0) >= 1)).to.equal(true);
+        expect(combos.every((combo) => (combo.takeProfitMfeBootstrapPercentile ?? 0) >= 1 && (combo.takeProfitMfeBootstrapPercentile ?? 100) <= 99)).to.equal(true);
     });
 
-    it('applies shrinkage finder overrides only to the TS backtest settings', () => {
+    it('applies mfe_bootstrap finder overrides only to the TS backtest settings', () => {
         const settings: BacktestSettings = {
             riskMode: 'percentage',
             takeProfitEnabled: true,
-            takeProfitMode: 'shrinkage',
+            takeProfitMode: 'mfe_bootstrap',
             takeProfitPercent: 6,
-            takeProfitMfeLookbackTrades: 80,
-            takeProfitMfePercentile: 67,
-            takeProfitShrinkageStrength: 14,
+            takeProfitMfeBootstrapPercentile: 67,
         };
         const rustSettings: BacktestSettings = {
             riskMode: 'percentage',
@@ -390,191 +372,30 @@ describe('Finder ATR risk randomization support', () => {
         };
 
         const resolved = resolveFinderRiskOverrides(settings, rustSettings, {
-            takeProfitMfeLookbackTrades: 135,
-            takeProfitMfePercentile: 72.4,
-            takeProfitShrinkageStrength: 9.5,
+            takeProfitMfeBootstrapPercentile: 72.4,
         });
 
-        expect(resolved.backtestSettings.takeProfitMfeLookbackTrades).to.equal(135);
-        expect(resolved.backtestSettings.takeProfitMfePercentile).to.equal(72.4);
-        expect(resolved.backtestSettings.takeProfitShrinkageStrength).to.equal(9.5);
-        expect('takeProfitMfeLookbackTrades' in resolved.rustBacktestSettings).to.equal(false);
-        expect('takeProfitMfePercentile' in resolved.rustBacktestSettings).to.equal(false);
-        expect('takeProfitShrinkageStrength' in resolved.rustBacktestSettings).to.equal(false);
+        expect(resolved.backtestSettings.takeProfitMfeBootstrapPercentile).to.equal(72.4);
+        expect('takeProfitMfeBootstrapPercentile' in resolved.rustBacktestSettings).to.equal(false);
     });
 
-    it('adds mode-specific take-profit params to finder search params for the new TP modes', () => {
+    it('only exposes supported mode-specific take-profit params in finder search params', () => {
         const strategy = {
             defaultParams: {
                 lookback: 20,
             },
         } as any;
+        const baseParams = buildFinderSearchBaseParams(strategy, {
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitMode: 'mfe_bootstrap',
+            takeProfitPercent: 6,
+            takeProfitMfeBootstrapPercentile: 73,
+        });
 
-        const cases: Array<{
-            mode: NonNullable<BacktestSettings['takeProfitMode']>;
-            settings: BacktestSettings;
-            expected: Record<string, number>;
-        }> = [
-            {
-                mode: 'momentum_gated',
-                settings: {
-                    riskMode: 'percentage',
-                    takeProfitEnabled: true,
-                    takeProfitMode: 'momentum_gated',
-                    takeProfitPercent: 6,
-                    takeProfitMomentumRsiPeriod: 9,
-                    takeProfitMomentumRsiPauseLevel: 58,
-                    takeProfitMomentumDecayPercentPerBar: 0.35,
-                },
-                expected: {
-                    takeProfitMomentumRsiPeriod: 9,
-                    takeProfitMomentumRsiPauseLevel: 58,
-                    takeProfitMomentumDecayPercentPerBar: 0.35,
-                },
-            },
-            {
-                mode: 'velocity',
-                settings: {
-                    riskMode: 'percentage',
-                    takeProfitEnabled: true,
-                    takeProfitMode: 'velocity',
-                    takeProfitPercent: 6,
-                    takeProfitVelocityFastBars: 3,
-                    takeProfitVelocitySlowBars: 18,
-                    takeProfitVelocityProgressPercent: 55,
-                    takeProfitVelocityExpandMultiplier: 1.8,
-                    takeProfitVelocityShrinkMultiplier: 0.7,
-                },
-                expected: {
-                    takeProfitVelocityFastBars: 3,
-                    takeProfitVelocitySlowBars: 18,
-                    takeProfitVelocityProgressPercent: 55,
-                    takeProfitVelocityExpandMultiplier: 1.8,
-                    takeProfitVelocityShrinkMultiplier: 0.7,
-                },
-            },
-        ];
-
-        for (const testCase of cases) {
-            const baseParams = buildFinderSearchBaseParams(strategy, testCase.settings);
-            expect(baseParams.lookback).to.equal(20);
-            expect(baseParams.takeProfitPercent).to.equal(6);
-            Object.entries(testCase.expected).forEach(([key, value]) => {
-                expect(baseParams[key]).to.equal(value, `${testCase.mode}:${key}`);
-            });
-            expect('takeProfitMfeLookbackTrades' in baseParams).to.equal(false, `${testCase.mode}:unexpected shrinkage key`);
-        }
-    });
-
-    it('random mode can vary the new take-profit params within finder bounds', () => {
-        const paramSpace = new FinderParamSpace();
-        const combos = paramSpace.generateParamSets(
-            {
-                lookback: 20,
-                takeProfitMomentumRsiPeriod: 14,
-                takeProfitMomentumRsiPauseLevel: 60,
-                takeProfitMomentumDecayPercentPerBar: 0.15,
-                takeProfitVelocityFastBars: 2,
-                takeProfitVelocitySlowBars: 20,
-                takeProfitVelocityProgressPercent: 50,
-                takeProfitVelocityExpandMultiplier: 1.5,
-                takeProfitVelocityShrinkMultiplier: 0.65,
-            },
-            {
-                mode: 'random',
-                sortPriority: ['netProfit'],
-                useAdvancedSort: false,
-                robustSeed: 1337,
-                multiTimeframeEnabled: false,
-                timeframes: [],
-                topN: 10,
-                steps: 3,
-                rangePercent: 40,
-                maxRuns: 20,
-                tradeFilterEnabled: false,
-                minTrades: 0,
-                maxTrades: Number.POSITIVE_INFINITY,
-                comboEnabled: false,
-                randomSeed: 42,
-            }
-        );
-
-        expect(new Set(combos.map((combo) => combo.takeProfitMomentumRsiPeriod)).size).to.be.greaterThan(1);
-        expect(new Set(combos.map((combo) => combo.takeProfitVelocityExpandMultiplier)).size).to.be.greaterThan(1);
-
-        expect(combos.every((combo) => (combo.takeProfitMomentumRsiPeriod ?? 0) >= 2)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitMomentumRsiPauseLevel ?? 0) >= 1 && (combo.takeProfitMomentumRsiPauseLevel ?? 100) <= 99)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitMomentumDecayPercentPerBar ?? -1) >= 0)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitVelocityFastBars ?? 0) >= 1)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitVelocitySlowBars ?? 0) >= 1)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitVelocityProgressPercent ?? 0) >= 1 && (combo.takeProfitVelocityProgressPercent ?? 101) <= 100)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitVelocityExpandMultiplier ?? 0) >= 0.1)).to.equal(true);
-        expect(combos.every((combo) => (combo.takeProfitVelocityShrinkMultiplier ?? 0) >= 0.1)).to.equal(true);
-    });
-
-    it('applies the new TP-mode finder overrides only to the TS backtest settings', () => {
-        const cases: Array<{
-            mode: NonNullable<BacktestSettings['takeProfitMode']>;
-            settings: BacktestSettings;
-            params: Record<string, number>;
-            expected: Record<string, number>;
-        }> = [
-            {
-                mode: 'momentum_gated',
-                settings: {
-                    riskMode: 'percentage',
-                    takeProfitEnabled: true,
-                    takeProfitMode: 'momentum_gated',
-                    takeProfitPercent: 6,
-                },
-                params: {
-                    takeProfitMomentumRsiPeriod: 8.7,
-                    takeProfitMomentumRsiPauseLevel: 64.2,
-                    takeProfitMomentumDecayPercentPerBar: 0.28,
-                },
-                expected: {
-                    takeProfitMomentumRsiPeriod: 9,
-                    takeProfitMomentumRsiPauseLevel: 64.2,
-                    takeProfitMomentumDecayPercentPerBar: 0.28,
-                },
-            },
-            {
-                mode: 'velocity',
-                settings: {
-                    riskMode: 'percentage',
-                    takeProfitEnabled: true,
-                    takeProfitMode: 'velocity',
-                    takeProfitPercent: 6,
-                },
-                params: {
-                    takeProfitVelocityFastBars: 3.2,
-                    takeProfitVelocitySlowBars: 17.6,
-                    takeProfitVelocityProgressPercent: 57.5,
-                    takeProfitVelocityExpandMultiplier: 1.9,
-                    takeProfitVelocityShrinkMultiplier: 0.72,
-                },
-                expected: {
-                    takeProfitVelocityFastBars: 3,
-                    takeProfitVelocitySlowBars: 18,
-                    takeProfitVelocityProgressPercent: 57.5,
-                    takeProfitVelocityExpandMultiplier: 1.9,
-                    takeProfitVelocityShrinkMultiplier: 0.72,
-                },
-            },
-        ];
-
-        for (const testCase of cases) {
-            const rustSettings: BacktestSettings = {
-                riskMode: 'percentage',
-                takeProfitEnabled: true,
-                takeProfitPercent: 6,
-            };
-            const resolved = resolveFinderRiskOverrides(testCase.settings, rustSettings, testCase.params);
-            Object.entries(testCase.expected).forEach(([key, value]) => {
-                expect((resolved.backtestSettings as Record<string, number | undefined>)[key]).to.equal(value, `${testCase.mode}:${key}`);
-                expect(key in resolved.rustBacktestSettings).to.equal(false, `${testCase.mode}:${key}:rust`);
-            });
-        }
+        expect(baseParams.lookback).to.equal(20);
+        expect(baseParams.takeProfitPercent).to.equal(6);
+        expect(baseParams.takeProfitMfeBootstrapPercentile).to.equal(73);
     });
 
     it('reapplies mode-specific TP params back into backtest settings when a finder row is applied', () => {
@@ -584,63 +405,15 @@ describe('Finder ATR risk randomization support', () => {
             takeProfitEnabled: true,
             takeProfitPercent: 6,
             takeProfitMode: 'fixed',
-            takeProfitAtrScaledMultiplier: 1.5,
-            takeProfitRangeScaledLookback: 20,
-            takeProfitRangeScaledFraction: 0.3,
-            takeProfitMedianBarLookback: 20,
-            takeProfitMedianBarMultiplier: 2,
             takeProfitMfeBootstrapPercentile: 60,
         };
 
-        const cases: Array<{
-            mode: NonNullable<BacktestSettings['takeProfitMode']>;
-            params: Record<string, number>;
-            expected: Partial<BacktestSettings>;
-        }> = [
-            {
-                mode: 'atr_scaled',
-                params: { takeProfitAtrScaledMultiplier: 2.4 },
-                expected: { takeProfitAtrScaledMultiplier: 2.4 },
-            },
-            {
-                mode: 'range_scaled',
-                params: {
-                    takeProfitRangeScaledLookback: 37.8,
-                    takeProfitRangeScaledFraction: 0.42,
-                },
-                expected: {
-                    takeProfitRangeScaledLookback: 38,
-                    takeProfitRangeScaledFraction: 0.42,
-                },
-            },
-            {
-                mode: 'median_bar',
-                params: {
-                    takeProfitMedianBarLookback: 18.2,
-                    takeProfitMedianBarMultiplier: 3.1,
-                },
-                expected: {
-                    takeProfitMedianBarLookback: 18,
-                    takeProfitMedianBarMultiplier: 3.1,
-                },
-            },
-            {
-                mode: 'mfe_bootstrap',
-                params: { takeProfitMfeBootstrapPercentile: 73.6 },
-                expected: { takeProfitMfeBootstrapPercentile: 73.6 },
-            },
-        ];
+        const merged = mergeFinderRiskParamsIntoBacktestSettings(
+            { ...baseSettings, takeProfitMode: 'mfe_bootstrap' },
+            { takeProfitMfeBootstrapPercentile: 73.6 }
+        );
 
-        for (const testCase of cases) {
-            const merged = mergeFinderRiskParamsIntoBacktestSettings(
-                { ...baseSettings, takeProfitMode: testCase.mode },
-                testCase.params
-            );
-
-            Object.entries(testCase.expected).forEach(([key, value]) => {
-                expect((merged as Record<string, unknown>)[key]).to.equal(value, `${testCase.mode}:${key}`);
-            });
-        }
+        expect(merged.takeProfitMfeBootstrapPercentile).to.equal(73.6);
     });
 
     it('does not merge Finder risk params back into settings when risk management is frozen', () => {

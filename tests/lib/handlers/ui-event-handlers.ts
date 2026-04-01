@@ -711,27 +711,17 @@ export function setupEventHandlers() {
 
     const riskPercentageGroups = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLElement>('.param-group')) : [];
     const riskPercentageInputs = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLInputElement>('input')) : [];
-    const takeProfitShrinkageSettingsRow = dom.takeProfitShrinkageSettingsRow;
-    const takeProfitShrinkageInputs = [
-        dom.takeProfitMfeLookbackTrades,
-        dom.takeProfitMfePercentile,
-        dom.takeProfitShrinkageStrength,
-    ];
     const takeProfitModePanels = riskPercentage
         ? Array.from(riskPercentage.querySelectorAll<HTMLElement>('[data-tp-mode-panel]'))
         : [];
 
     const applyTakeProfitMode = () => {
         const mode = takeProfitModeSelect.value;
-        const showShrinkage = mode === 'shrinkage';
         takeProfitModePanels.forEach((panel) => {
             const panelMode = panel.dataset.tpModePanel;
-            const shouldShow = panelMode === mode;
+            const shouldShow = panelMode === mode && mode === 'mfe_bootstrap';
             setInteractiveSectionState(panel, shouldShow);
         });
-
-        setSectionVisibility(takeProfitShrinkageSettingsRow, showShrinkage);
-        setInputGroupState(takeProfitShrinkageInputs, showShrinkage);
     };
 
     const applyRiskMode = () => {
@@ -757,7 +747,6 @@ export function setupEventHandlers() {
         if (isPercentage) {
             applyTakeProfitMode();
         } else {
-            setSectionVisibility(takeProfitShrinkageSettingsRow, false);
             takeProfitModePanels.forEach((panel) => {
                 setInteractiveSectionState(panel, false);
             });
