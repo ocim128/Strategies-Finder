@@ -2,6 +2,8 @@
  * Headless settings schema, defaults, and normalization helpers.
  */
 
+import type { BinanceMarketType } from "./binance-market";
+import { resolveBinanceMarketType } from "./binance-market";
 import type { ChartMode } from "./state";
 import { parseInputNumber } from "./dom-input-readers";
 import { readBoolean as readBooleanValue, readNumber as readNumberValue } from "./settings-parse-utils";
@@ -169,6 +171,7 @@ export interface EnsembleSignalRecipe {
 export interface AppSettings {
     currentSymbol: string;
     currentInterval: string;
+    binanceMarketType: BinanceMarketType;
     isDarkTheme: boolean;
     currentStrategyKey: string;
     chartMode: ChartMode;
@@ -226,6 +229,7 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
 export const DEFAULT_APP_SETTINGS: AppSettings = {
     currentSymbol: 'ETHUSDT',
     currentInterval: '1d',
+    binanceMarketType: 'spot',
     isDarkTheme: true,
     currentStrategyKey: DEFAULT_BUILT_IN_STRATEGY_KEY,
     chartMode: 'candlestick',
@@ -421,6 +425,7 @@ export function normalizeStoredAppSettings(raw: unknown): AppSettings | null {
     return {
         currentSymbol: readString(source.currentSymbol, DEFAULT_APP_SETTINGS.currentSymbol),
         currentInterval: readString(source.currentInterval, DEFAULT_APP_SETTINGS.currentInterval),
+        binanceMarketType: resolveBinanceMarketType(source.binanceMarketType, DEFAULT_APP_SETTINGS.binanceMarketType),
         isDarkTheme: readBoolean(source.isDarkTheme, DEFAULT_APP_SETTINGS.isDarkTheme),
         currentStrategyKey: readString(source.currentStrategyKey, DEFAULT_APP_SETTINGS.currentStrategyKey),
         chartMode,

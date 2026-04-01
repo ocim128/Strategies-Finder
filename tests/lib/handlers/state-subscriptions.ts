@@ -13,6 +13,7 @@ import { clearAll } from "../app-actions";
 import { formatPolymarketDisplayName } from "../dataProviders/polymarket";
 import { quickViewManager } from "../quick-view";
 import { livePositionsService } from "../live-positions-service";
+import { isBinanceDataProvider } from "../binance-market";
 import type { Time } from "lightweight-charts";
 
 function updatePolymarketEntryOffsetVisibility(interval: string = state.currentInterval): void {
@@ -273,6 +274,14 @@ export function setupStateSubscriptions() {
         debugLogger.event('state.currentInterval', { interval });
         uiManager.updateTimeframeUI(interval);
         updatePolymarketEntryOffsetVisibility(interval);
+        scheduleDataReload();
+    });
+
+    state.subscribe('binanceMarketType', (binanceMarketType) => {
+        debugLogger.event('state.binanceMarketType', { binanceMarketType });
+        if (!isBinanceDataProvider(dataManager.getProvider(state.currentSymbol))) {
+            return;
+        }
         scheduleDataReload();
     });
 

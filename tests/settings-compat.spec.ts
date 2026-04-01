@@ -490,6 +490,7 @@ describe('Backtest settings compatibility', () => {
         const normalized = normalizeStoredAppSettings({
             currentSymbol: 'BTCUSDT',
             currentInterval: '4h',
+            binanceMarketType: 'futures',
             isDarkTheme: 'false',
             currentStrategyKey: '',
             chartMode: 'invalid',
@@ -499,10 +500,21 @@ describe('Backtest settings compatibility', () => {
         expect(normalized).to.not.equal(null);
         expect(normalized?.currentSymbol).to.equal('BTCUSDT');
         expect(normalized?.currentInterval).to.equal('4h');
+        expect(normalized?.binanceMarketType).to.equal('futures');
         expect(normalized?.isDarkTheme).to.equal(false);
         expect(normalized?.currentStrategyKey).to.equal(DEFAULT_BUILT_IN_STRATEGY_KEY);
         expect(normalized?.chartMode).to.equal('candlestick');
         expect(normalized?.backtestSettings.initialCapital).to.equal(10000);
+    });
+
+    it('falls back to spot when stored Binance market type is invalid', () => {
+        const normalized = normalizeStoredAppSettings({
+            currentSymbol: 'BTCUSDT',
+            currentInterval: '1h',
+            binanceMarketType: 'delivery',
+        });
+
+        expect(normalized?.binanceMarketType).to.equal('spot');
     });
 
     it('normalizes malformed saved strategy configs and filters unusable entries', () => {

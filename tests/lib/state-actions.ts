@@ -1,6 +1,7 @@
 import { debugLogger } from "./debug-logger";
 import { clearActiveBacktestRerunContext } from "./backtest-rerun-context";
 import { state, type BacktestResultSource, type ChartMode, type MockChartModel, type TwoHourCloseParityMode, type TwoHourParityBacktestResults } from "./state";
+import type { BinanceMarketType } from "./binance-market";
 import type { Indicator } from "./types/index";
 import type { BacktestResult, OHLCVData } from "./strategies/index";
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, Time } from "lightweight-charts";
@@ -25,15 +26,23 @@ export function setCurrentInterval(interval: string): void {
     state.set('currentInterval', interval);
 }
 
+export function setBinanceMarketType(marketType: BinanceMarketType): void {
+    state.set('binanceMarketType', marketType);
+}
+
 export function setMarketSelection(selection: {
     symbol?: string;
     interval?: string;
+    binanceMarketType?: BinanceMarketType;
 }): void {
     if (selection.symbol !== undefined) {
         state.set('currentSymbol', selection.symbol);
     }
     if (selection.interval !== undefined) {
         state.set('currentInterval', selection.interval);
+    }
+    if (selection.binanceMarketType !== undefined) {
+        state.set('binanceMarketType', selection.binanceMarketType);
     }
 }
 

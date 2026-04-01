@@ -19,7 +19,6 @@ import {
 } from './alert-signal-utils';
 import { backtestService } from './backtest-service';
 import { dataManager } from './data-manager';
-import { assetSearchService } from './asset-search-service';
 import { fetchBybitTradFiLatest } from './dataProviders/bybit';
 import { parseIntervalSeconds } from './interval-utils';
 import { parseTimeToUnixSeconds } from './time-normalization';
@@ -35,6 +34,7 @@ import {
     isAlertWorkerProviderCompatible,
 } from './alert-worker-compat';
 import { applySlippage, entrySideForDirection } from './strategies/backtest/backtest-utils';
+import { getBinanceProviderForMarketType, isBinanceDataProvider, resolveBinanceMarketType } from './binance-market';
 
 export interface LivePosition {
     streamId: string;
@@ -307,7 +307,7 @@ class LivePositionsService {
         const strategyParams = this.safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
         const backtestSettings = this.resolveBacktestSettings(sub);
         const configName = parseAlertConfigNameFromStreamId(sub.stream_id);
-        const provider = dataManager.getProvider(sub.symbol);
+        const provider = this.resolveProviderForSymbol(sub.symbol, backtestSettings);
         const localComparisonCompatible = isAlertWorkerProviderCompatible(provider);
 
         const [signals, workerState, localTrades] = await Promise.all([
@@ -329,7 +329,7 @@ class LivePositionsService {
             };
 
         const shouldShowOpen = localSnapshot.openTrade !== null || (workerSnapshot.stateAvailable && workerSnapshot.hasOpen);
-        const currentPrice = shouldShowOpen ? await this.fetchCurrentPrice(sub.symbol, sub.interval) : null;
+        const currentPrice = shouldShowOpen ? await this.fetchCurrentPrice(sub.symbol, sub.interval, provider) : null;
 
         const openPosition = shouldShowOpen
             ? this.buildOpenPosition(
@@ -632,6 +632,19 @@ class LivePositionsService {
         };
     }
 
+    private resolveProviderForSymbol(symbol: string, backtestSettings?: BacktestSettings): ReturnType<typeof dataManager.getProvider> {
+        const provider = dataManager.getProvider(symbol);
+        if (!isBinanceDataProvider(provider)) {
+            return provider;
+        }
+
+        const marketType = resolveBinanceMarketType(
+            (backtestSettings as Record<string, unknown> | undefined)?.binanceMarketType,
+            'spot'
+        );
+        return getBinanceProviderForMarketType(marketType);
+    }
+
     private getLocalBacktestCacheKey(sub: AlertSubscription): string {
         return sub.stream_id;
     }
@@ -735,7 +748,7 @@ class LivePositionsService {
         }
     }
 
-    private async fetchCurrentPrice(symbol: string, interval: string): Promise<number | null> {
+    private async fetchCurrentPrice(symbol: string, interval: string, providerOverride?: ReturnType<typeof dataManager.getProvider>): Promise<number | null> {
         const normalizedSymbol = symbol.trim().toUpperCase();
         const activeChartPrice = this.getActiveChartPrice(normalizedSymbol, interval);
         if (activeChartPrice !== null) {
@@ -753,7 +766,7 @@ class LivePositionsService {
         }
 
         const request = (async () => {
-            const provider = assetSearchService.getProvider(normalizedSymbol);
+            const provider = providerOverride ?? dataManager.getProvider(normalizedSymbol);
 
             try {
                 if (provider === 'bybit-tradfi') {
@@ -767,8 +780,11 @@ class LivePositionsService {
                     return null;
                 }
 
-                if (provider === 'binance') {
-                    const response = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${normalizedSymbol}`);
+                if (provider === 'binance' || provider === 'binance-futures') {
+                    const endpoint = provider === 'binance-futures'
+                        ? 'https://fapi.binance.com/fapi/v1/ticker/price'
+                        : 'https://api.binance.com/api/v3/ticker/price';
+                    const response = await fetch(`${endpoint}?symbol=${normalizedSymbol}`);
                     if (!response.ok) throw new Error('Price fetch failed');
 
                     const data = await response.json() as { price: string };

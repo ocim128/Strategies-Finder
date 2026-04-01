@@ -3,7 +3,9 @@ import type { AssetProvider } from "./asset-search-service";
 function labelForProvider(provider: AssetProvider): string {
     switch (provider) {
         case "binance":
-            return "Binance";
+            return "Binance Spot";
+        case "binance-futures":
+            return "Binance Futures";
         case "bybit-tradfi":
             return "Bybit TradFi";
         case "polymarket":

@@ -2,6 +2,7 @@
 import { Time } from "lightweight-charts";
 import { OHLCVData } from "../strategies/index";
 import { resampleOHLCV, type ResampleOptions } from "../strategies/resample-utils";
+import type { BinanceMarketType } from "../binance-market";
 import { debugLogger } from "../debug-logger";
 import { DATA_PROVIDER_TOTAL_LIMIT } from "../data/constants";
 import { BinanceKline, HistoricalFetchOptions } from '../types/index';
@@ -15,6 +16,14 @@ import {
 
 const LIMIT_PER_REQUEST = 1000;
 const MAX_REQUESTS = 15;
+const BINANCE_API_BASES: Record<BinanceMarketType, string> = {
+    spot: "https://api.binance.com",
+    futures: "https://fapi.binance.com",
+};
+const BINANCE_WS_BASES: Record<BinanceMarketType, string> = {
+    spot: "wss://stream.binance.com:9443",
+    futures: "wss://fstream.binance.com",
+};
 const BINANCE_INTERVALS = new Set([
     '1m', '3m', '5m', '15m', '30m',
     '1h', '2h', '4h', '6h', '8h', '12h',
@@ -62,6 +71,7 @@ type FetchKlinesBatchOptions = {
     startTime?: number;
     endTime?: number;
     signal?: AbortSignal;
+    marketType?: BinanceMarketType;
 };
 
 async function fetchKlinesBatch(
@@ -70,7 +80,9 @@ async function fetchKlinesBatch(
     limit: number,
     options?: FetchKlinesBatchOptions
 ): Promise<BinanceKline[]> {
-    let url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+    const marketType = options?.marketType ?? "spot";
+    const endpointPath = marketType === "futures" ? "/fapi/v1/klines" : "/api/v3/klines";
+    let url = `${BINANCE_API_BASES[marketType]}${endpointPath}?symbol=${symbol}&interval=${interval}&limit=${limit}`;
     const startTime = options?.startTime;
     const endTime = options?.endTime;
     if (typeof startTime === 'number' && Number.isFinite(startTime)) url += `&startTime=${Math.floor(startTime)}`;
@@ -105,7 +117,7 @@ export async function fetchBinanceData(
     symbol: string,
     interval: string,
     signal?: AbortSignal,
-    options?: ResampleOptions
+    options?: ResampleOptions & { marketType?: BinanceMarketType }
 ): Promise<OHLCVData[]> {
     try {
         const batches: BinanceKline[][] = [];
@@ -119,7 +131,11 @@ export async function fetchBinanceData(
             const remaining = DATA_PROVIDER_TOTAL_LIMIT - totalDataLength;
             const limit = Math.min(remaining, LIMIT_PER_REQUEST);
 
-            const data = await fetchKlinesBatch(symbol, sourceInterval, limit, { endTime, signal });
+            const data = await fetchKlinesBatch(symbol, sourceInterval, limit, {
+                endTime,
+                signal,
+                marketType: options?.marketType,
+            });
 
             if (data.length === 0) break;
 
@@ -165,7 +181,7 @@ export async function fetchBinanceDataWithLimit(
     symbol: string,
     interval: string,
     totalBars: number,
-    options?: HistoricalFetchOptions & ResampleOptions
+    options?: HistoricalFetchOptions & ResampleOptions & { marketType?: BinanceMarketType }
 ): Promise<OHLCVData[]> {
     try {
         const targetBars = Math.max(1, Math.floor(totalBars));
@@ -188,6 +204,7 @@ export async function fetchBinanceDataWithLimit(
             const data = await fetchKlinesBatch(symbol, sourceInterval, limit, {
                 endTime,
                 signal: options?.signal,
+                marketType: options?.marketType,
             });
             if (data.length === 0) break;
 
@@ -233,7 +250,7 @@ export async function fetchBinanceDataAfter(
     symbol: string,
     interval: string,
     fromTimeSec: number,
-    options?: HistoricalFetchOptions & ResampleOptions
+    options?: HistoricalFetchOptions & ResampleOptions & { marketType?: BinanceMarketType }
 ): Promise<OHLCVData[]> {
     try {
         const fromSec = Math.max(0, Math.floor(fromTimeSec || 0));
@@ -253,6 +270,7 @@ export async function fetchBinanceDataAfter(
             const data = await fetchKlinesBatch(symbol, sourceInterval, LIMIT_PER_REQUEST, {
                 startTime: cursorMs,
                 signal: options?.signal,
+                marketType: options?.marketType,
             });
             if (data.length === 0) break;
 
@@ -293,10 +311,11 @@ export function startBinanceStream(
     interval: string,
     onUpdate: (candle: OHLCVData) => void,
     onError?: (error: unknown) => void,
-    onClose?: (event: CloseEvent) => void
+    onClose?: (event: CloseEvent) => void,
+    marketType: BinanceMarketType = "spot"
 ): WebSocket {
     const streamName = `${symbol.toLowerCase()}@kline_${interval}`;
-    const wsUrl = `wss://stream.binance.com:9443/ws/${streamName}`;
+    const wsUrl = `${BINANCE_WS_BASES[marketType]}/ws/${streamName}`;
     const ws = new WebSocket(wsUrl);
 
     ws.onmessage = (event) => {

@@ -529,7 +529,7 @@ class ParameterAuditService {
     }
 
     private async ensureAuditData(settings: BacktestSettings): Promise<OHLCVData[]> {
-        const contextKey = `${state.currentSymbol}|${state.currentInterval}`;
+        const contextKey = `${state.currentSymbol}|${state.currentInterval}|${state.binanceMarketType}`;
         if (state.ohlcvData.length === 0 || dataManager.getLoadedContextKey() !== contextKey) {
             await dataManager.loadData(state.currentSymbol, state.currentInterval);
         }

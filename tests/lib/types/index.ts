@@ -1,6 +1,7 @@
 import { ISeriesApi, Time, ISeriesMarkersPluginApi, IChartApi } from "lightweight-charts";
 import { BacktestResult, OHLCVData } from "./strategies";
 import type { BacktestResultSource, TwoHourParityBacktestResults } from "../state";
+import type { BinanceMarketType } from "../binance-market";
 
 export * from './strategies';
 export * from './backtest';
@@ -24,6 +25,7 @@ export interface AppState {
     markersPlugin: ISeriesMarkersPluginApi<Time> | null;
     currentSymbol: string;
     currentInterval: string;
+    binanceMarketType: BinanceMarketType;
     isDarkTheme: boolean;
     mockChartModel: string;
     mockChartBars: number;

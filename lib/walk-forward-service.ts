@@ -284,7 +284,7 @@ class WalkForwardService {
     }
 
     private async ensureDataReadyForCurrentContext(): Promise<OHLCVData[]> {
-        const contextKey = `${state.currentSymbol}|${state.currentInterval}`;
+        const contextKey = `${state.currentSymbol}|${state.currentInterval}|${state.binanceMarketType}`;
         const loadedContextKey = dataManager.getLoadedContextKey();
         const canReuseCurrentData = state.ohlcvData.length > 0 && loadedContextKey === contextKey;
 

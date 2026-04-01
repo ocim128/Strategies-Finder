@@ -36,6 +36,7 @@ import {
     buildAlertWorkerProviderMismatchMessage,
     isAlertWorkerProviderCompatible,
 } from '../alert-worker-compat';
+import { getBinanceProviderForMarketType, isBinanceDataProvider, resolveBinanceMarketType } from '../binance-market';
 
 let subscriptionsByStreamId: Map<string, AlertSubscription> = new Map();
 const localWorkerStrategySupport = getWorkerStrategySupportSnapshot();
@@ -153,6 +154,7 @@ function collectCurrentSubscriptionBacktestSettings(): Record<string, unknown> {
     const merged = {
         ...settings,
         ...uiToggleSettings,
+        binanceMarketType: state.binanceMarketType,
         initialCapital: capital.initialCapital,
         positionSize: capital.positionSize,
         commission: capital.commission,
@@ -165,8 +167,18 @@ function collectCurrentSubscriptionBacktestSettings(): Record<string, unknown> {
     return merged;
 }
 
-function getAlertWorkerProviderCompatibilityError(symbol: string): string | null {
+function resolveAlertProvider(symbol: string, backtestSettings?: Record<string, unknown>) {
     const provider = dataManager.getProvider(symbol);
+    if (!isBinanceDataProvider(provider)) {
+        return provider;
+    }
+
+    const marketType = resolveBinanceMarketType(backtestSettings?.binanceMarketType, state.binanceMarketType);
+    return getBinanceProviderForMarketType(marketType);
+}
+
+function getAlertWorkerProviderCompatibilityError(symbol: string, backtestSettings?: Record<string, unknown>): string | null {
+    const provider = resolveAlertProvider(symbol, backtestSettings);
     return isAlertWorkerProviderCompatible(provider)
         ? null
         : buildAlertWorkerProviderMismatchMessage(symbol, provider);
@@ -374,7 +386,13 @@ async function handleTableAction(action: string, streamId: string) {
             }
 
             const sub = subscriptionsByStreamId.get(streamId);
-            const providerError = getAlertWorkerProviderCompatibilityError(sub?.symbol ?? state.currentSymbol);
+            const subBacktestSettings = sub
+                ? safeJsonParse<Record<string, unknown>>(sub.backtest_settings_json, {})
+                : undefined;
+            const providerError = getAlertWorkerProviderCompatibilityError(
+                sub?.symbol ?? state.currentSymbol,
+                subBacktestSettings
+            );
             if (providerError) {
                 uiManager.showToast(providerError, 'error');
                 return;

@@ -1,5 +1,14 @@
 
 import { OHLCVData } from "./types/index";
+import type { DataProvider } from "./types/data-providers";
+import {
+    getBinanceMarketLabel,
+    getBinanceMarketTypeForProvider,
+    getBinanceProviderForMarketType,
+    getScopedBinanceStorageSymbol,
+    isBinanceDataProvider,
+    type BinanceDataProvider,
+} from "./binance-market";
 import { state } from "./state";
 import { debugLogger } from "./debug-logger";
 import { uiManager } from "./ui-manager";
@@ -57,7 +66,6 @@ import {
 } from "./data/data-interval-utils";
 import { commitOhlcvData, setMarketSelection } from "./state-actions";
 
-type DataProvider = 'binance' | 'bybit-tradfi' | 'polymarket';
 type NonBinanceLocalSource = 'imported' | 'sqlite' | 'cache' | 'seed';
 type NonBinanceLocalData = { candles: OHLCVData[]; source: NonBinanceLocalSource };
 type ProviderFallbackChain = {
@@ -70,7 +78,7 @@ type ProviderFallbackChain = {
 
 export class DataManager {
     private static readonly PRICE_JUMP_GUARD_RATIO = 8;
-    private nonBinanceProviderOverride: Map<string, DataProvider> = new Map();
+    private providerOverrideBySymbol: Map<string, Exclude<DataProvider, BinanceDataProvider>> = new Map();
     private autoReloadSuppressCount = 0;
     private importedDataByKey: Map<string, OHLCVData[]> = new Map();
     private ws: WebSocket | null = null;
@@ -102,6 +110,7 @@ export class DataManager {
     private realtimeGapFillInFlight: Set<string> = new Set();
     private loadedSymbol: string | null = null;
     private loadedInterval: string | null = null;
+    private loadedBinanceMarketType = state.binanceMarketType;
 
     // ============================================================================
     // Public API
@@ -135,9 +144,10 @@ export class DataManager {
         if (!normalizedSymbol || !normalizedInterval || candles.length === 0) return;
 
         const storageIntervals = resolveImportStorageIntervals(normalizedInterval);
+        const provider = this.getProvider(normalizedSymbol);
         const now = Date.now();
         for (const storageInterval of storageIntervals) {
-            const cacheKey = this.buildCacheKey(normalizedSymbol, storageInterval);
+            const cacheKey = this.buildCacheKey(normalizedSymbol, storageInterval, provider);
             this.importedDataByKey.set(cacheKey, candles);
             this.cacheSyncAtByKey.set(cacheKey, now);
         }
@@ -153,36 +163,47 @@ export class DataManager {
 
     public getLoadedContextKey(): string | null {
         if (!this.loadedSymbol || !this.loadedInterval) return null;
-        return `${this.loadedSymbol}|${this.loadedInterval}`;
+        return `${this.loadedSymbol}|${this.loadedInterval}|${this.loadedBinanceMarketType}`;
+    }
+
+    private getDefaultBinanceProvider(): BinanceDataProvider {
+        return getBinanceProviderForMarketType(state.binanceMarketType);
+    }
+
+    private getStorageSymbol(symbol: string, provider: DataProvider): string {
+        if (provider === "binance-futures") {
+            return getScopedBinanceStorageSymbol(symbol, "futures");
+        }
+        return symbol.trim().toUpperCase();
     }
 
     public getProvider(symbol: string): DataProvider {
         const normalizedSymbol = symbol.trim().toUpperCase();
-        if (this.nonBinanceProviderOverride.has(normalizedSymbol)) {
-            return this.nonBinanceProviderOverride.get(normalizedSymbol)!;
+        if (this.providerOverrideBySymbol.has(normalizedSymbol)) {
+            return this.providerOverrideBySymbol.get(normalizedSymbol)!;
         }
         if (isPolymarketEventSymbol(symbol)) {
-            this.nonBinanceProviderOverride.set(normalizedSymbol, 'polymarket');
+            this.providerOverrideBySymbol.set(normalizedSymbol, 'polymarket');
             return 'polymarket';
         }
         if (tradfiSearchService.isTradFiSymbol(normalizedSymbol)) {
-            this.nonBinanceProviderOverride.set(normalizedSymbol, 'bybit-tradfi');
+            this.providerOverrideBySymbol.set(normalizedSymbol, 'bybit-tradfi');
             return 'bybit-tradfi';
         }
 
-        return 'binance';
+        return this.getDefaultBinanceProvider();
     }
 
-    public setProviderOverride(symbol: string, provider: 'binance' | 'bybit-tradfi' | 'polymarket' | null): void {
+    public setProviderOverride(symbol: string, provider: DataProvider | null): void {
         const normalizedSymbol = symbol.trim().toUpperCase();
         if (!normalizedSymbol) return;
 
-        if (!provider || provider === 'binance') {
-            this.nonBinanceProviderOverride.delete(normalizedSymbol);
+        if (!provider || isBinanceDataProvider(provider)) {
+            this.providerOverrideBySymbol.delete(normalizedSymbol);
             return;
         }
 
-        this.nonBinanceProviderOverride.set(normalizedSymbol, provider);
+        this.providerOverrideBySymbol.set(normalizedSymbol, provider);
     }
 
     public async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
@@ -210,7 +231,7 @@ export class DataManager {
         }
 
         const provider = this.getProvider(symbol);
-        const localNonBinance = provider !== 'binance'
+        const localNonBinance = !isBinanceDataProvider(provider)
             ? await this.loadNonBinanceLocalData(symbol, interval, maxBars, signal)
             : null;
 
@@ -233,7 +254,7 @@ export class DataManager {
             return this.fetchMockChartData(symbol, interval, signal, chain.lookbackBars);
         }
 
-        if (chain.provider === 'binance') {
+        if (isBinanceDataProvider(chain.provider)) {
             return this.fetchBinanceChartData(symbol, interval, signal, chain.lookbackBars);
         }
 
@@ -275,13 +296,17 @@ export class DataManager {
         signal: AbortSignal | undefined,
         lookbackBars: number | null
     ): Promise<OHLCVData[]> {
+        const provider = this.getProvider(symbol);
+        if (!isBinanceDataProvider(provider)) {
+            throw new Error(`Expected Binance provider for ${symbol}, received ${provider}.`);
+        }
         const result = await this.fetchBinanceDataHybridWithMeta(symbol, interval, signal, {
             maxBars: lookbackBars ?? undefined,
         });
         uiManager.updateSymbolDataSource(
-            'Live: Binance',
+            `Live: ${getBinanceMarketLabel(getBinanceMarketTypeForProvider(provider))}`,
             'live',
-            'Chart data is loaded from Binance.'
+            `Chart data is loaded from ${getBinanceMarketLabel(getBinanceMarketTypeForProvider(provider))}.`
         );
         return result.data;
     }
@@ -401,7 +426,7 @@ export class DataManager {
     }
 
     private async fetchLimitedNonBinanceNetworkData(
-        provider: Exclude<DataProvider, 'binance'>,
+        provider: Exclude<DataProvider, BinanceDataProvider>,
         symbol: string,
         interval: string,
         limit: number,
@@ -457,7 +482,7 @@ export class DataManager {
             : 1000;
         const resampleOptions = this.getResampleOptions(interval);
 
-        if (provider !== 'binance') {
+        if (!isBinanceDataProvider(provider)) {
             const localData = await this.loadNonBinanceLocalData(symbol, interval, maxBars, signal);
             if (localData) {
                 return {
@@ -467,7 +492,7 @@ export class DataManager {
             }
         }
         
-        if (provider === 'binance') {
+        if (isBinanceDataProvider(provider)) {
             const result = await this.fetchBinanceDataHybridWithMeta(symbol, interval, signal, {
                 maxBars,
             });
@@ -504,14 +529,15 @@ export class DataManager {
 
         const provider = this.getProvider(symbol);
         const resampleOptions = this.getResampleOptions(interval);
-        const localNonBinance = provider !== 'binance'
+        const localNonBinance = !isBinanceDataProvider(provider)
             ? await this.loadNonBinanceLocalData(symbol, interval, limit, options?.signal)
             : null;
 
-        if (provider === 'binance') {
+        if (isBinanceDataProvider(provider)) {
             return fetchBinanceDataWithLimit(symbol, interval, limit, {
                 ...options,
                 ...(resampleOptions ?? {}),
+                marketType: getBinanceMarketTypeForProvider(provider),
             });
         }
 
@@ -557,6 +583,7 @@ export class DataManager {
         commitOhlcvData(data, 'set_symbol_load');
         this.loadedSymbol = symbol;
         this.loadedInterval = interval;
+        this.loadedBinanceMarketType = state.binanceMarketType;
 
         this.startStreaming(symbol, interval);
 
@@ -578,18 +605,18 @@ export class DataManager {
             return;
         }
         const provider = this.getProvider(symbol);
-        if (provider !== 'binance') {
-            this.nonBinanceProviderOverride.set(symbol.trim().toUpperCase(), provider);
+        if (!isBinanceDataProvider(provider)) {
+            this.providerOverrideBySymbol.set(symbol.trim().toUpperCase(), provider);
         }
         if (provider === 'polymarket') {
             debugLogger.info('data.stream.skip_polymarket', { symbol, interval });
             return;
         }
-        if (provider === 'binance' && !isBinanceInterval(interval)) {
+        if (isBinanceDataProvider(provider) && !isBinanceInterval(interval)) {
             debugLogger.info('data.stream.skip_interval', { symbol, interval, provider });
             return;
         }
-        const useBinanceAlignedPolling = provider === 'binance' && this.shouldUseBinanceAlignedPolling(interval);
+        const useBinanceAlignedPolling = isBinanceDataProvider(provider) && this.shouldUseBinanceAlignedPolling(interval);
 
         if (this.isStreaming && this.streamSymbol === symbol && this.streamInterval === interval && this.streamProvider === provider) {
             return;
@@ -603,7 +630,7 @@ export class DataManager {
         this.streamSessionId += 1;
         this.reconnectAttempts = 0;
 
-        if (provider === 'binance' && !useBinanceAlignedPolling) {
+        if (isBinanceDataProvider(provider) && !useBinanceAlignedPolling) {
             this.connectBinanceStream();
         } else {
             this.startPolling();
@@ -696,9 +723,10 @@ export class DataManager {
     }
 
     private getProviderStorageLabel(provider: DataProvider): string {
+        if (provider === 'binance-futures') return 'Binance Futures';
         if (provider === 'bybit-tradfi') return 'Bybit TradFi';
         if (provider === 'polymarket') return 'Polymarket';
-        return 'Binance';
+        return 'Binance Spot';
     }
 
     private async loadNonBinanceLocalData(
@@ -709,7 +737,9 @@ export class DataManager {
     ): Promise<{ candles: OHLCVData[]; source: NonBinanceLocalSource } | null> {
         const normalizedLimit = Math.max(1, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(maxBars)));
         const storageInterval = this.getStorageInterval(interval);
-        const cacheKey = this.buildCacheKey(symbol, storageInterval);
+        const provider = this.getProvider(symbol);
+        const storageSymbol = this.getStorageSymbol(symbol, provider);
+        const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
         const candidates: Array<{ candles: OHLCVData[]; source: NonBinanceLocalSource }> = [];
 
         const imported = this.importedDataByKey.get(cacheKey);
@@ -720,7 +750,7 @@ export class DataManager {
             });
         }
 
-        const sqliteRaw = await loadSqliteCandles(symbol, storageInterval, normalizedLimit);
+        const sqliteRaw = await loadSqliteCandles(storageSymbol, storageInterval, normalizedLimit);
         if (sqliteRaw && sqliteRaw.length > 0) {
             candidates.push({
                 candles: this.takeLastCandles(this.normalizeExternalCandles(sqliteRaw), normalizedLimit),
@@ -728,7 +758,7 @@ export class DataManager {
             });
         }
 
-        const cached = await loadCachedCandles(symbol, storageInterval);
+        const cached = await loadCachedCandles(storageSymbol, storageInterval);
         if (cached && cached.candles.length > 0) {
             candidates.push({
                 candles: this.takeLastCandles(this.normalizeExternalCandles(cached.candles), normalizedLimit),
@@ -775,8 +805,9 @@ export class DataManager {
         if (candles.length === 0) return;
         const storageInterval = this.getStorageInterval(interval);
         const normalized = this.normalizeExternalCandles(candles);
+        const storageSymbol = this.getStorageSymbol(symbol, provider);
         await this.persistLocalCandles({
-            symbol,
+            symbol: storageSymbol,
             storageInterval,
             cacheCandles: normalized,
             sqliteCandles: normalized,
@@ -988,8 +1019,9 @@ export class DataManager {
         return cleaned;
     }
 
-    private buildCacheKey(symbol: string, interval: string): string {
-        return `${symbol.trim().toUpperCase()}::${this.getStorageInterval(interval)}`;
+    private buildCacheKey(symbol: string, interval: string, provider?: DataProvider): string {
+        const resolvedProvider = provider ?? this.getProvider(symbol);
+        return `${this.getStorageSymbol(symbol, resolvedProvider)}::${this.getStorageInterval(interval)}`;
     }
 
     /**
@@ -1018,6 +1050,13 @@ export class DataManager {
         signal?: AbortSignal,
         options?: { maxBars?: number }
     ): Promise<{ data: OHLCVData[]; source: 'local' | 'network'; cached: { candles: OHLCVData[]; updatedAt: number; source: string } | null; hasSqliteBase: boolean; cacheKey: string; storageInterval: string; effectiveMaxBars: number }> {
+        const provider = this.getProvider(symbol);
+        if (!isBinanceDataProvider(provider)) {
+            throw new Error(`Expected Binance provider for ${symbol}, received ${provider}.`);
+        }
+        const marketType = getBinanceMarketTypeForProvider(provider);
+        const providerLabel = this.getProviderStorageLabel(provider);
+        const storageSymbol = this.getStorageSymbol(symbol, provider);
         const requestedMaxBars = options?.maxBars;
         const hasMaxBars = typeof requestedMaxBars === 'number' && Number.isFinite(requestedMaxBars);
         const effectiveMaxBars = hasMaxBars
@@ -1028,7 +1067,7 @@ export class DataManager {
         const requiresEven2hAlignment = getIntervalSeconds(normalizedInterval) === 7200 && twoHourCloseParity === 'even';
         const storageInterval = this.getStorageInterval(interval);
         const resampleOptions = this.getResampleOptions(interval);
-        const cacheKey = this.buildCacheKey(symbol, storageInterval);
+        const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
 
         // Load local cache
         const imported = this.importedDataByKey.get(cacheKey);
@@ -1040,7 +1079,7 @@ export class DataManager {
             return { data, source: 'local', cached: null, hasSqliteBase: false, cacheKey, storageInterval, effectiveMaxBars };
         }
 
-        const sqliteRaw = await loadSqliteCandles(symbol, storageInterval, effectiveMaxBars);
+        const sqliteRaw = await loadSqliteCandles(storageSymbol, storageInterval, effectiveMaxBars);
         const sqliteLoadedCandles = sqliteRaw
             ? this.sanitizeBinanceCandles(symbol, storageInterval, sqliteRaw, 'sqlite')
             : null;
@@ -1052,7 +1091,7 @@ export class DataManager {
 
         let cached: { candles: OHLCVData[]; updatedAt: number; source: string } | null = hasSqliteBase
             ? { candles: sqliteCachedCandles!, updatedAt: Date.now(), source: 'sqlite' }
-            : await loadCachedCandles(symbol, storageInterval);
+            : await loadCachedCandles(storageSymbol, storageInterval);
         let cachedSanitized = sqliteSanitized;
 
         if (cached) {
@@ -1071,7 +1110,7 @@ export class DataManager {
         }
 
         if (!cached || cached.candles.length === 0) {
-            const seedCandles = requiresEven2hAlignment
+            const seedCandles = requiresEven2hAlignment || marketType === "futures"
                 ? null
                 : await loadSeedCandlesFromPriceData(symbol, interval, signal);
             if (seedCandles && seedCandles.length > 0) {
@@ -1082,11 +1121,11 @@ export class DataManager {
                     source: 'seed-file',
                 };
                 await this.persistLocalCandles({
-                    symbol,
+                    symbol: storageSymbol,
                     storageInterval,
                     cacheCandles: sanitizedSeedCandles,
                     sqliteCandles: sanitizedSeedCandles,
-                    providerLabel: 'Binance',
+                    providerLabel,
                     sourceTrait: 'seed-file',
                 });
                 debugLogger.event('data.cache.seed_loaded', {
@@ -1105,11 +1144,11 @@ export class DataManager {
         if (hasCachedData && recentlySynced) {
             if (cachedSanitized) {
                 await this.persistLocalCandles({
-                    symbol,
+                    symbol: storageSymbol,
                     storageInterval,
                     cacheCandles: cached!.candles,
                     sqliteCandles: cached!.candles,
-                    providerLabel: 'Binance',
+                    providerLabel,
                     sourceTrait: 'sanitized',
                 });
             }
@@ -1143,6 +1182,7 @@ export class DataManager {
                 signal,
                 requestDelayMs: 80,
                 maxRequests: 60,
+                marketType,
                 ...(resampleOptions ?? {}),
             });
         } else {
@@ -1151,10 +1191,14 @@ export class DataManager {
                     signal,
                     requestDelayMs: 80,
                     maxRequests: 60,
+                    marketType,
                     ...(resampleOptions ?? {}),
                 });
             } else {
-                remoteData = await fetchBinanceData(symbol, interval, signal, resampleOptions);
+                remoteData = await fetchBinanceData(symbol, interval, signal, {
+                    marketType,
+                    ...(resampleOptions ?? {}),
+                });
             }
         }
 
@@ -1169,11 +1213,11 @@ export class DataManager {
             const fresh = this.takeLastCandles(remoteData, effectiveMaxBars);
             if (fresh.length > 0) {
                 await this.persistLocalCandles({
-                    symbol,
+                    symbol: storageSymbol,
                     storageInterval,
                     cacheCandles: fresh,
                     sqliteCandles: fresh,
-                    providerLabel: 'Binance',
+                    providerLabel,
                     sourceTrait: 'binance-full',
                     cacheKey,
                     updateSyncTime: true,
@@ -1205,11 +1249,11 @@ export class DataManager {
         );
         if (merged.length > 0) {
             await this.persistLocalCandles({
-                symbol,
+                symbol: storageSymbol,
                 storageInterval,
                 cacheCandles: merged,
                 sqliteCandles: hasSqliteBase ? remoteData : merged,
-                providerLabel: 'Binance',
+                providerLabel,
                 sourceTrait: 'binance-gap',
                 cacheKey,
                 updateSyncTime: true,
@@ -1233,10 +1277,12 @@ export class DataManager {
         provider: DataProvider | '' = ''
     ): void {
         if (!symbol || !interval || candles.length === 0) return;
+        const resolvedProvider: DataProvider = provider || this.getProvider(symbol);
+        const storageSymbol = this.getStorageSymbol(symbol, resolvedProvider);
         const storageInterval = this.getStorageInterval(interval);
-        const cacheKey = this.buildCacheKey(symbol, storageInterval);
+        const cacheKey = this.buildCacheKey(symbol, storageInterval, resolvedProvider);
         this.cachePersistPendingByKey.set(cacheKey, {
-            symbol,
+            symbol: storageSymbol,
             storageInterval,
             candles,
         });
@@ -1259,7 +1305,7 @@ export class DataManager {
                     pending.symbol,
                     pending.storageInterval,
                     delta,
-                    provider ? this.getProviderStorageLabel(provider) : 'Binance',
+                    this.getProviderStorageLabel(resolvedProvider),
                     'stream'
                 );
                 const lastSync = this.cacheSyncAtByKey.get(cacheKey) ?? 0;
@@ -1268,7 +1314,7 @@ export class DataManager {
                     symbol: pending.symbol,
                     storageInterval: pending.storageInterval,
                     cacheCandles: shouldPersistSnapshot ? snapshot : undefined,
-                    providerLabel: provider ? this.getProviderStorageLabel(provider) : 'Binance',
+                    providerLabel: this.getProviderStorageLabel(resolvedProvider),
                     sourceTrait: 'stream',
                     cacheKey,
                     updateSyncTime: true,
@@ -1285,26 +1331,29 @@ export class DataManager {
     private connectBinanceStream(): void {
         const symbol = this.streamSymbol;
         const interval = this.streamInterval;
+        const provider = this.streamProvider as BinanceDataProvider;
+        const marketType = getBinanceMarketTypeForProvider(provider);
         const sessionId = this.streamSessionId;
 
-        debugLogger.info('data.stream.connecting', { symbol, interval });
+        debugLogger.info('data.stream.connecting', { symbol, interval, provider });
 
         try {
             this.ws = startBinanceStream(
                 symbol,
                 interval,
                 (candle) => {
-                    if (!this.isActiveStreamContext(sessionId, symbol, interval, 'binance')) return;
-                    this.handleStreamUpdate(candle, sessionId, symbol, interval, 'binance');
+                    if (!this.isActiveStreamContext(sessionId, symbol, interval, provider)) return;
+                    this.handleStreamUpdate(candle, sessionId, symbol, interval, provider);
                 },
                 (error) => {
-                    if (!this.isActiveStreamContext(sessionId, symbol, interval, 'binance')) return;
+                    if (!this.isActiveStreamContext(sessionId, symbol, interval, provider)) return;
                     debugLogger.error('data.stream.error', { error: String(error) });
                 },
                 (event) => {
-                    if (!this.isActiveStreamContext(sessionId, symbol, interval, 'binance')) return;
+                    if (!this.isActiveStreamContext(sessionId, symbol, interval, provider)) return;
                     this.handleStreamClose(event);
-                }
+                },
+                marketType
             );
 
             // WebSocket state handled by browser API, we just assume connected for now or handle in callbacks
@@ -1373,7 +1422,7 @@ export class DataManager {
         debugLogger.info('data.stream.reconnecting', { attempt: this.reconnectAttempts, delay });
 
         this.reconnectTimeout = setTimeout(() => {
-            if (this.streamSymbol && this.streamInterval && this.streamProvider === 'binance') {
+            if (this.streamSymbol && this.streamInterval && isBinanceDataProvider(this.streamProvider)) {
                 this.connectBinanceStream();
             }
         }, delay);
@@ -1436,10 +1485,11 @@ export class DataManager {
 
             if (this.streamProvider === 'bybit-tradfi') {
                 candle = await fetchBybitTradFiLatest(symbol, interval, abort.signal, resampleOptions);
-            } else if (this.streamProvider === 'binance' && this.shouldUseBinanceAlignedPolling(interval)) {
+            } else if (isBinanceDataProvider(this.streamProvider) && this.shouldUseBinanceAlignedPolling(interval)) {
                 const latestSeries = await fetchBinanceDataWithLimit(symbol, interval, 2, {
                     signal: abort.signal,
                     maxRequests: 2,
+                    marketType: getBinanceMarketTypeForProvider(this.streamProvider),
                     ...(resampleOptions ?? {}),
                 });
                 candle = latestSeries[latestSeries.length - 1] ?? null;
@@ -1447,7 +1497,7 @@ export class DataManager {
 
             if (abort.signal.aborted) return;
 
-            if (candle && (provider === 'binance' || provider === 'bybit-tradfi' || provider === 'polymarket')) {
+            if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi' || provider === 'polymarket')) {
                 if (provider === 'bybit-tradfi') {
                     uiManager.updateSymbolDataSource(
                         'Live: Bybit',
@@ -1479,7 +1529,7 @@ export class DataManager {
         provider: DataProvider,
         latestTime: unknown
     ): Promise<void> {
-        if (provider !== 'binance') return;
+        if (!isBinanceDataProvider(provider)) return;
         if (!this.isActiveStreamContext(sessionId, symbol, interval, provider)) return;
 
         const currentData = state.ohlcvData;
@@ -1500,6 +1550,7 @@ export class DataManager {
             const fetched = await fetchBinanceDataAfter(symbol, interval, fromTimeSec, {
                 maxRequests: 60,
                 requestDelayMs: 80,
+                marketType: getBinanceMarketTypeForProvider(provider),
                 ...(resampleOptions ?? {}),
             });
             const sanitized = this.sanitizeBinanceCandles(symbol, storageInterval, fetched, 'stream-gap-fill');

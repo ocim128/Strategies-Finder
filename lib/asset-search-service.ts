@@ -3,6 +3,8 @@
  * Supports Binance (Crypto), Bybit TradFi, and Twelve Data fallback assets
  */
 
+import type { BinanceMarketType } from './binance-market';
+import { getBinanceProviderForMarketType } from './binance-market';
 import { binanceSearchService, BinanceSymbol } from './binance-search-service';
 import { tradfiSearchService, type TradFiSymbol } from './tradfi-search-service';
 import { getLocalSp500Assets, searchLocalSp500Assets } from './local-sp500-catalog';
@@ -12,7 +14,7 @@ import {
 } from './dataProviders/polymarket';
 
 export type AssetType = 'crypto' | 'stock' | 'forex' | 'commodity';
-export type AssetProvider = 'binance' | 'bybit-tradfi' | 'polymarket' | 'mock';
+export type AssetProvider = 'binance' | 'binance-futures' | 'bybit-tradfi' | 'polymarket' | 'mock';
 
 export interface Asset {
     symbol: string;          // e.g., "AAPL", "ETHUSDT", "EURUSD"
@@ -70,9 +72,15 @@ class AssetSearchService {
     /**
      * Search for assets across all providers
      */
-    async searchAssets(query: string, limit = 50): Promise<Asset[]> {
+    async searchAssets(
+        query: string,
+        limit = 50,
+        options?: { binanceMarketType?: BinanceMarketType }
+    ): Promise<Asset[]> {
+        const binanceMarketType = options?.binanceMarketType ?? 'spot';
+        const binanceProvider = getBinanceProviderForMarketType(binanceMarketType);
         if (!query.trim()) {
-            const popular = this.getPopularAssets(limit);
+            const popular = this.getPopularAssets(limit, binanceMarketType);
             try {
                 const localSp500 = await searchLocalSp500Assets('', limit);
                 const merged = this.dedupeAssets([
@@ -110,12 +118,12 @@ class AssetSearchService {
 
         // Search Binance (crypto)
         try {
-            const binanceResults = await binanceSearchService.searchSymbols(query, Math.floor(limit / 2));
+            const binanceResults = await binanceSearchService.searchSymbols(query, Math.floor(limit / 2), binanceMarketType);
             const cryptoAssets = binanceResults.map((b: BinanceSymbol) => ({
                 symbol: b.symbol,
                 displayName: b.displayName,
                 type: 'crypto' as AssetType,
-                provider: 'binance' as const,
+                provider: binanceProvider,
                 baseAsset: b.baseAsset,
                 quoteAsset: b.quoteAsset,
             }));
@@ -173,16 +181,17 @@ class AssetSearchService {
     /**
      * Get popular assets when no search query is provided
      */
-    private getPopularAssets(limit: number): Asset[] {
+    private getPopularAssets(limit: number, binanceMarketType: BinanceMarketType = 'spot'): Asset[] {
         const popular: Asset[] = [];
+        const binanceProvider = getBinanceProviderForMarketType(binanceMarketType);
 
         // Add top crypto pairs from Binance
         const topCrypto: Asset[] = [
-            { symbol: 'BTCUSDT', displayName: 'BTC/USDT', type: 'crypto', provider: 'binance', baseAsset: 'BTC', quoteAsset: 'USDT' },
-            { symbol: 'ETHUSDT', displayName: 'ETH/USDT', type: 'crypto', provider: 'binance', baseAsset: 'ETH', quoteAsset: 'USDT' },
-            { symbol: 'BNBUSDT', displayName: 'BNB/USDT', type: 'crypto', provider: 'binance', baseAsset: 'BNB', quoteAsset: 'USDT' },
-            { symbol: 'SOLUSDT', displayName: 'SOL/USDT', type: 'crypto', provider: 'binance', baseAsset: 'SOL', quoteAsset: 'USDT' },
-            { symbol: 'XRPUSDT', displayName: 'XRP/USDT', type: 'crypto', provider: 'binance', baseAsset: 'XRP', quoteAsset: 'USDT' },
+            { symbol: 'BTCUSDT', displayName: 'BTC/USDT', type: 'crypto', provider: binanceProvider, baseAsset: 'BTC', quoteAsset: 'USDT' },
+            { symbol: 'ETHUSDT', displayName: 'ETH/USDT', type: 'crypto', provider: binanceProvider, baseAsset: 'ETH', quoteAsset: 'USDT' },
+            { symbol: 'BNBUSDT', displayName: 'BNB/USDT', type: 'crypto', provider: binanceProvider, baseAsset: 'BNB', quoteAsset: 'USDT' },
+            { symbol: 'SOLUSDT', displayName: 'SOL/USDT', type: 'crypto', provider: binanceProvider, baseAsset: 'SOL', quoteAsset: 'USDT' },
+            { symbol: 'XRPUSDT', displayName: 'XRP/USDT', type: 'crypto', provider: binanceProvider, baseAsset: 'XRP', quoteAsset: 'USDT' },
         ];
 
         const bybitTradFi = tradfiSearchService
@@ -200,7 +209,8 @@ class AssetSearchService {
     /**
      * Check if a symbol is valid
      */
-    async isValidAsset(symbol: string): Promise<boolean> {
+    async isValidAsset(symbol: string, options?: { binanceMarketType?: BinanceMarketType }): Promise<boolean> {
+        const binanceMarketType = options?.binanceMarketType ?? 'spot';
         if (parsePolymarketEventInput(symbol)) {
             return true;
         }
@@ -225,7 +235,7 @@ class AssetSearchService {
 
         // Check Binance
         try {
-            const isValidOnBinance = await binanceSearchService.isValidSymbol(symbol);
+            const isValidOnBinance = await binanceSearchService.isValidSymbol(symbol, binanceMarketType);
             if (isValidOnBinance) return true;
         } catch (error) {
             // Continue to other checks
@@ -237,7 +247,8 @@ class AssetSearchService {
     /**
      * Get asset info
      */
-    async getAssetInfo(symbol: string): Promise<Asset | null> {
+    async getAssetInfo(symbol: string, options?: { binanceMarketType?: BinanceMarketType }): Promise<Asset | null> {
+        const binanceMarketType = options?.binanceMarketType ?? 'spot';
         const polymarket = this.mapPolymarketAsset(symbol);
         if (polymarket) return polymarket;
 
@@ -263,13 +274,13 @@ class AssetSearchService {
 
         // Check Binance
         try {
-            const binanceInfo = await binanceSearchService.getSymbolInfo(symbol);
+            const binanceInfo = await binanceSearchService.getSymbolInfo(symbol, binanceMarketType);
             if (binanceInfo) {
                 return {
                     symbol: binanceInfo.symbol,
                     displayName: binanceInfo.displayName,
                     type: 'crypto',
-                    provider: 'binance',
+                    provider: getBinanceProviderForMarketType(binanceMarketType),
                     baseAsset: binanceInfo.baseAsset,
                     quoteAsset: binanceInfo.quoteAsset,
                 };
@@ -304,7 +315,8 @@ class AssetSearchService {
     /**
      * Determine provider from symbol
      */
-    getProvider(symbol: string): AssetProvider {
+    getProvider(symbol: string, options?: { binanceMarketType?: BinanceMarketType }): AssetProvider {
+        const binanceMarketType = options?.binanceMarketType ?? 'spot';
         if (parsePolymarketEventInput(symbol)) {
             return 'polymarket';
         }
@@ -317,11 +329,11 @@ class AssetSearchService {
 
         // Check if it looks like a Binance symbol
         if (symbol.endsWith('USDT') || symbol.endsWith('BUSD') || symbol.endsWith('BTC')) {
-            return 'binance';
+            return getBinanceProviderForMarketType(binanceMarketType);
         }
 
         // Default to binance
-        return 'binance';
+        return getBinanceProviderForMarketType(binanceMarketType);
     }
 }
 

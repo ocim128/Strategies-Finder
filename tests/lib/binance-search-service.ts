@@ -3,6 +3,8 @@
  * Provides functionality to search and fetch trading pairs from Binance
  */
 
+import type { BinanceMarketType } from "./binance-market";
+
 export interface BinanceSymbol {
     symbol: string;          // e.g., "ETHUSDT"
     baseAsset: string;       // e.g., "ETH"
@@ -23,50 +25,54 @@ interface BinanceExchangeInfoResponse {
 }
 
 class BinanceSearchService {
-    private readonly EXCHANGE_INFO_URL = 'https://api.binance.com/api/v3/exchangeInfo';
+    private readonly EXCHANGE_INFO_URLS: Record<BinanceMarketType, string> = {
+        spot: 'https://api.binance.com/api/v3/exchangeInfo',
+        futures: 'https://fapi.binance.com/fapi/v1/exchangeInfo',
+    };
     private readonly CACHE_DURATION_MS = 30 * 60 * 1000; // 30 minutes cache
 
-    private symbolsCache: BinanceSymbol[] = [];
-    private cacheTimestamp = 0;
-    private isLoading = false;
-    private loadingPromise: Promise<BinanceSymbol[]> | null = null;
+    private symbolsCache = new Map<BinanceMarketType, BinanceSymbol[]>();
+    private cacheTimestamp = new Map<BinanceMarketType, number>();
+    private loadingPromise = new Map<BinanceMarketType, Promise<BinanceSymbol[]>>();
 
     /**
      * Get all available trading symbols from Binance
      */
-    async getAllSymbols(): Promise<BinanceSymbol[]> {
+    async getAllSymbols(marketType: BinanceMarketType = 'spot'): Promise<BinanceSymbol[]> {
         const now = Date.now();
+        const cached = this.symbolsCache.get(marketType) ?? [];
+        const cachedAt = this.cacheTimestamp.get(marketType) ?? 0;
 
         // Return cached data if still valid
-        if (this.symbolsCache.length > 0 && (now - this.cacheTimestamp) < this.CACHE_DURATION_MS) {
-            return this.symbolsCache;
+        if (cached.length > 0 && (now - cachedAt) < this.CACHE_DURATION_MS) {
+            return cached;
         }
 
         // If already loading, wait for the existing promise
-        if (this.isLoading && this.loadingPromise) {
-            return this.loadingPromise;
+        const pending = this.loadingPromise.get(marketType);
+        if (pending) {
+            return pending;
         }
 
-        this.isLoading = true;
-        this.loadingPromise = this.fetchExchangeInfo();
+        const nextPromise = this.fetchExchangeInfo(marketType);
+        this.loadingPromise.set(marketType, nextPromise);
 
         try {
-            this.symbolsCache = await this.loadingPromise;
-            this.cacheTimestamp = now;
+            const symbols = await nextPromise;
+            this.symbolsCache.set(marketType, symbols);
+            this.cacheTimestamp.set(marketType, now);
+            return symbols;
         } finally {
-            this.isLoading = false;
-            this.loadingPromise = null;
+            this.loadingPromise.delete(marketType);
         }
-
-        return this.symbolsCache;
     }
 
     /**
      * Fetch exchange info from Binance API
      */
-    private async fetchExchangeInfo(): Promise<BinanceSymbol[]> {
+    private async fetchExchangeInfo(marketType: BinanceMarketType): Promise<BinanceSymbol[]> {
         try {
-            const response = await fetch(this.EXCHANGE_INFO_URL);
+            const response = await fetch(this.EXCHANGE_INFO_URLS[marketType]);
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
@@ -98,8 +104,8 @@ class BinanceSearchService {
     /**
      * Search for symbols matching the query
      */
-    async searchSymbols(query: string, limit = 50): Promise<BinanceSymbol[]> {
-        const symbols = await this.getAllSymbols();
+    async searchSymbols(query: string, limit = 50, marketType: BinanceMarketType = 'spot'): Promise<BinanceSymbol[]> {
+        const symbols = await this.getAllSymbols(marketType);
 
         if (!query.trim()) {
             // Return popular pairs when no query
@@ -180,16 +186,16 @@ class BinanceSearchService {
     /**
      * Check if a symbol is valid (exists on Binance)
      */
-    async isValidSymbol(symbol: string): Promise<boolean> {
-        const symbols = await this.getAllSymbols();
+    async isValidSymbol(symbol: string, marketType: BinanceMarketType = 'spot'): Promise<boolean> {
+        const symbols = await this.getAllSymbols(marketType);
         return symbols.some(s => s.symbol === symbol.toUpperCase());
     }
 
     /**
      * Get symbol info
      */
-    async getSymbolInfo(symbol: string): Promise<BinanceSymbol | null> {
-        const symbols = await this.getAllSymbols();
+    async getSymbolInfo(symbol: string, marketType: BinanceMarketType = 'spot'): Promise<BinanceSymbol | null> {
+        const symbols = await this.getAllSymbols(marketType);
         return symbols.find(s => s.symbol === symbol.toUpperCase()) || null;
     }
 }

@@ -1,4 +1,6 @@
-export type DataProvider = 'binance' | 'bybit-tradfi' | 'polymarket';
+import type { BinanceDataProvider } from "../binance-market";
+
+export type DataProvider = BinanceDataProvider | 'bybit-tradfi' | 'polymarket';
 
 export type HistoricalFetchProgress = {
     fetched: number;

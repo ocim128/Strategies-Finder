@@ -133,6 +133,7 @@ class SettingsManager {
         return {
             currentSymbol: state.currentSymbol,
             currentInterval: state.currentInterval,
+            binanceMarketType: state.binanceMarketType,
             isDarkTheme: state.isDarkTheme,
             currentStrategyKey: state.currentStrategyKey,
             chartMode: state.chartMode,
@@ -405,6 +406,9 @@ class SettingsManager {
 
         // Listen for state changes
         state.subscribe('currentStrategyKey', () => this.saveSettingsDebounced());
+        state.subscribe('currentSymbol', () => this.saveSettingsDebounced());
+        state.subscribe('currentInterval', () => this.saveSettingsDebounced());
+        state.subscribe('binanceMarketType', () => this.saveSettingsDebounced());
         state.subscribe('isDarkTheme', () => this.saveSettingsDebounced());
     }
 

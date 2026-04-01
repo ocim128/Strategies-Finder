@@ -5,6 +5,7 @@ import { TAKE_PROFIT_DOM_IDS } from "../take-profit-dom";
 export const UI_EVENT_HANDLER_REQUIRED_IDS = [
     "symbolSelector",
     "symbolDropdown",
+    "binanceMarketTypeSelect",
     "themeToggle",
     "strategySelect",
     "strategyTabs",
@@ -97,6 +98,7 @@ export function createUiEventHandlersDom() {
     return {
         symbolSelector: getRequiredElement("symbolSelector"),
         symbolDropdown: getRequiredElement("symbolDropdown"),
+        binanceMarketTypeSelect: getRequiredElement<HTMLSelectElement>("binanceMarketTypeSelect"),
         symbolSearchInput: getOptionalElement<HTMLInputElement>("symbolSearchInput"),
         symbolSearchResults: getOptionalElement("symbolSearchResults"),
         symbolSearchSpinner: getOptionalElement("symbolSearchSpinner"),

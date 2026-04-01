@@ -2,7 +2,6 @@ import { Time } from "lightweight-charts";
 import { state } from "./state";
 import { setCurrentInterval, setCurrentSymbol } from "./state-actions";
 import { uiManager } from "./ui-manager";
-import { assetSearchService } from "./asset-search-service";
 import { dataManager } from "./data-manager";
 import { SYMBOL_MAP } from "./constants";
 import { debugLogger } from "./debug-logger";
@@ -213,8 +212,8 @@ export class DataMiningManager {
         if (!request) return;
 
         const { symbol, interval, bars } = request;
-        const provider = assetSearchService.getProvider(symbol);
-        if (provider !== 'binance' && provider !== 'bybit-tradfi' && provider !== 'polymarket') {
+        const provider = dataManager.getProvider(symbol);
+        if (provider !== 'binance' && provider !== 'binance-futures' && provider !== 'bybit-tradfi' && provider !== 'polymarket') {
             uiManager.showToast('Historical bulk download is supported for Binance / Bybit TradFi / Polymarket symbols only.', 'error');
             this.setStatus('Historical download not supported for this provider.', 'error');
             return;
@@ -284,8 +283,8 @@ export class DataMiningManager {
         if (!request) return;
 
         const { symbol, interval, bars } = request;
-        const provider = assetSearchService.getProvider(symbol);
-        if (provider !== 'binance' && provider !== 'bybit-tradfi' && provider !== 'polymarket') {
+        const provider = dataManager.getProvider(symbol);
+        if (provider !== 'binance' && provider !== 'binance-futures' && provider !== 'bybit-tradfi' && provider !== 'polymarket') {
             uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit TradFi / Polymarket symbols only.', 'error');
             this.setStatus('SQLite sync not supported for this provider.', 'error');
             return;
@@ -521,8 +520,9 @@ export class DataMiningManager {
     private getProviderLabel(symbol: string): string {
         if (dataManager.isMockSymbol(symbol)) return 'Mock';
 
-        const provider = assetSearchService.getProvider(symbol);
-        if (provider === 'binance') return 'Binance';
+        const provider = dataManager.getProvider(symbol);
+        if (provider === 'binance') return 'Binance Spot';
+        if (provider === 'binance-futures') return 'Binance Futures';
         if (provider === 'bybit-tradfi') return 'Bybit TradFi';
         if (provider === 'polymarket') return 'Polymarket';
 

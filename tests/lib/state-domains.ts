@@ -1,11 +1,13 @@
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, Time } from "lightweight-charts";
 import type { Indicator } from "./types/index";
 import { state, type BacktestResultSource, type MockChartModel, type State, type TwoHourCloseParityMode, type TwoHourParityBacktestResults, type ChartMode } from "./state";
+import type { BinanceMarketType } from "./binance-market";
 import type { BacktestResult, OHLCVData } from "./strategies/index";
 
 export interface MarketState {
     currentSymbol: string;
     currentInterval: string;
+    binanceMarketType: BinanceMarketType;
     ohlcvData: OHLCVData[];
     twoHourCloseParity: TwoHourCloseParityMode;
 }
@@ -40,6 +42,7 @@ export function selectMarketState(source: State = state): Readonly<MarketState> 
     return {
         currentSymbol: source.currentSymbol,
         currentInterval: source.currentInterval,
+        binanceMarketType: source.binanceMarketType,
         ohlcvData: source.ohlcvData,
         twoHourCloseParity: source.twoHourCloseParity,
     };

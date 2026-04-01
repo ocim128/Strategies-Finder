@@ -19,7 +19,9 @@ import { STRATEGY_PANEL_SETTINGS_SECTIONS } from "../strategy-panel-settings-reg
 import { parseInputNumber } from "../dom-input-readers";
 import { ADVANCED_SIZING_SUBSECTION_IDS } from "../advanced-sizing-dom";
 import { TAKE_PROFIT_MODE_PANEL_IDS } from "../take-profit-dom";
+import { getBinanceMarketTypeForProvider, isBinanceDataProvider, type BinanceMarketType } from "../binance-market";
 import {
+    setBinanceMarketType,
     setChartMode,
     setCurrentInterval,
     setCurrentStrategyKey,
@@ -37,6 +39,7 @@ export function setupEventHandlers() {
     // Symbol dropdown with search
     const symbolSelector = dom.symbolSelector;
     const symbolDropdown = dom.symbolDropdown;
+    const binanceMarketTypeSelect = dom.binanceMarketTypeSelect;
     const symbolSearchInput = dom.symbolSearchInput;
     const symbolSearchResults = dom.symbolSearchResults;
     const symbolSearchSpinner = dom.symbolSearchSpinner;
@@ -52,6 +55,7 @@ export function setupEventHandlers() {
     let isSearchInitialized = false;
     let selectedIndex = -1;
     const localSp500Symbols = new Set<string>();
+    const getActiveBinanceMarketType = (): BinanceMarketType => state.binanceMarketType;
 
     const syncLocalSp500Picker = () => {
         if (!localSp500Select) return;
@@ -249,7 +253,8 @@ export function setupEventHandlers() {
             const iconText = asset.baseAsset?.substring(0, 3) || asset.symbol.substring(0, 3);
 
             // Get badge text
-            const badgeText = asset.type === 'crypto' ? 'Crypto' :
+            const badgeText = asset.provider === 'binance-futures' ? 'Futures' :
+                asset.type === 'crypto' ? 'Crypto' :
                 asset.type === 'stock' ? 'Stock' :
                     asset.type === 'forex' ? 'Forex' : 'Commodity';
 
@@ -297,6 +302,12 @@ export function setupEventHandlers() {
 
     // Select symbol handler
     const selectSymbol = (symbol: string, displayName?: string, provider?: Asset['provider']) => {
+        if (provider && isBinanceDataProvider(provider)) {
+            const nextMarketType = getBinanceMarketTypeForProvider(provider);
+            if (nextMarketType !== state.binanceMarketType) {
+                setBinanceMarketType(nextMarketType);
+            }
+        }
         if (provider && provider !== 'mock') {
             dataManager.setProviderOverride(symbol, provider);
         }
@@ -328,7 +339,9 @@ export function setupEventHandlers() {
         symbolSearchSpinner?.classList.remove('is-hidden');
 
         try {
-            const results = await assetSearchService.searchAssets(query, 20);
+            const results = await assetSearchService.searchAssets(query, 20, {
+                binanceMarketType: getActiveBinanceMarketType(),
+            });
             renderSearchResults(results, query);
         } catch (error) {
             debugLogger.error('ui.asset_search_failed', { error: error instanceof Error ? error.message : String(error) });
@@ -346,12 +359,28 @@ export function setupEventHandlers() {
         symbolSearchLoading?.classList.remove('is-hidden');
 
         try {
-            const popularAssets = await assetSearchService.searchAssets('', 20);
+            const popularAssets = await assetSearchService.searchAssets('', 20, {
+                binanceMarketType: getActiveBinanceMarketType(),
+            });
             renderSearchResults(popularAssets);
         } catch (error) {
             debugLogger.error('ui.asset_search_init_failed', { error: error instanceof Error ? error.message : String(error) });
         }
     };
+
+    if (binanceMarketTypeSelect) {
+        binanceMarketTypeSelect.value = state.binanceMarketType;
+        binanceMarketTypeSelect.addEventListener('change', () => {
+            const nextMarketType = binanceMarketTypeSelect.value === 'futures' ? 'futures' : 'spot';
+            if (nextMarketType === state.binanceMarketType) {
+                return;
+            }
+            setBinanceMarketType(nextMarketType);
+            if (symbolDropdown.classList.contains('active')) {
+                performSearch(symbolSearchInput?.value ?? '');
+            }
+        });
+    }
 
     // Toggle dropdown
     symbolSelector.addEventListener('click', (e) => {
@@ -981,6 +1010,15 @@ export function setupEventHandlers() {
             syncLocalSp500Picker();
         });
     }
+
+    state.subscribe('binanceMarketType', (marketType) => {
+        if (binanceMarketTypeSelect && binanceMarketTypeSelect.value !== marketType) {
+            binanceMarketTypeSelect.value = marketType;
+        }
+        if (symbolDropdown.classList.contains('active')) {
+            performSearch(symbolSearchInput?.value ?? '');
+        }
+    });
 
     // Finder settings toggles
     const finderTradesToggle = dom.finderTradesToggle;

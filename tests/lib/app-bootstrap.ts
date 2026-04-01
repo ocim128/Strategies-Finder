@@ -38,7 +38,7 @@ import { getOptionalElement } from "./dom-utils";
 import { polymarketPanelService } from "./polymarket-panel-service";
 import { previewTabService } from "./preview-tab-service";
 import { initMonteCarloService } from "./monte-carlo-service";
-import { setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
+import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
 import {
     runBootstrapFeatureStage,
     type AppBootstrapFeature,
@@ -71,6 +71,11 @@ async function restoreSavedSettings(context: AppBootstrapContext): Promise<void>
 
         if (savedSettings.currentInterval && savedSettings.currentInterval !== state.currentInterval) {
             setCurrentInterval(savedSettings.currentInterval);
+            context.shouldLoadData = false;
+        }
+
+        if (savedSettings.binanceMarketType && savedSettings.binanceMarketType !== state.binanceMarketType) {
+            setBinanceMarketType(savedSettings.binanceMarketType);
             context.shouldLoadData = false;
         }
 

@@ -24,6 +24,7 @@ describe("State domains", () => {
         const localState = new State();
         localState.currentSymbol = "BTCUSDT";
         localState.currentInterval = "4h";
+        localState.binanceMarketType = "futures";
         localState.ohlcvData = [{ time: 1, open: 1, high: 2, low: 0.5, close: 1.5, volume: 10 }];
         localState.twoHourCloseParity = "both";
         localState.mockChartModel = "v5";
@@ -39,6 +40,7 @@ describe("State domains", () => {
         expect(selectMarketState(localState)).to.deep.equal({
             currentSymbol: "BTCUSDT",
             currentInterval: "4h",
+            binanceMarketType: "futures",
             ohlcvData: localState.ohlcvData,
             twoHourCloseParity: "both",
         });
@@ -60,6 +62,7 @@ describe("State domains", () => {
         const previous = {
             currentSymbol: state.currentSymbol,
             currentInterval: state.currentInterval,
+            binanceMarketType: state.binanceMarketType,
             twoHourCloseParity: state.twoHourCloseParity,
             currentStrategyKey: state.currentStrategyKey,
             isDarkTheme: state.isDarkTheme,
@@ -72,7 +75,7 @@ describe("State domains", () => {
         };
 
         try {
-            setMarketSelection({ symbol: "SOLUSDT", interval: "2h" });
+            setMarketSelection({ symbol: "SOLUSDT", interval: "2h", binanceMarketType: "futures" });
             setTwoHourCloseParity("even");
             setCurrentStrategyKey("test_strategy");
             setDarkTheme(false);
@@ -85,6 +88,7 @@ describe("State domains", () => {
             expect(selectMarketState()).to.include({
                 currentSymbol: "SOLUSDT",
                 currentInterval: "2h",
+                binanceMarketType: "futures",
                 twoHourCloseParity: "even",
             });
             expect(selectLayoutState()).to.deep.equal({
@@ -102,7 +106,11 @@ describe("State domains", () => {
                 strategyTimeframeMinutes: 180,
             });
         } finally {
-            setMarketSelection({ symbol: previous.currentSymbol, interval: previous.currentInterval });
+            setMarketSelection({
+                symbol: previous.currentSymbol,
+                interval: previous.currentInterval,
+                binanceMarketType: previous.binanceMarketType,
+            });
             setTwoHourCloseParity(previous.twoHourCloseParity);
             setCurrentStrategyKey(previous.currentStrategyKey);
             setDarkTheme(previous.isDarkTheme);
