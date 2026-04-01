@@ -46,6 +46,7 @@ export class ResultsRenderer {
         const sharpeClass = result.sharpeRatio >= 1 ? 'positive' : result.sharpeRatio < 0 ? 'negative' : '';
         updateTextContent('sharpeRatio', result.sharpeRatio.toFixed(2), `stat-value ${sharpeClass}`);
 
+        this.renderAdvancedAnalytics(result.performanceAnalytics);
         this.renderEdgeAnalysis(result.edgeStatistics);
         this.renderPostEntryPath(result.postEntryPath);
         this.renderSnapshotProfile(result.postEntryPath?.snapshotProfile);
@@ -185,6 +186,50 @@ export class ResultsRenderer {
 
     private formatLevel(level: number): string {
         return level.toFixed(3).replace(/\.?0+$/, '');
+    }
+
+    private renderAdvancedAnalytics(analytics: BacktestResult['performanceAnalytics']): void {
+        const hasAnalytics = !!analytics;
+        setVisible('advancedAnalyticsTitle', hasAnalytics);
+        setVisible('advancedAnalyticsContainer', hasAnalytics, 'grid');
+        setVisible('advancedAnalyticsHint', hasAnalytics);
+        if (!hasAnalytics || !analytics) {
+            return;
+        }
+
+        const dom = this.getDom();
+        const cards = [
+            this.renderAdvancedAnalyticsCard('Sortino Ratio', this.formatMetricValue(analytics.sortinoRatio, 3), analytics.sortinoRatio),
+            this.renderAdvancedAnalyticsCard('Calmar Ratio', this.formatMetricValue(analytics.calmarRatio, 3), analytics.calmarRatio),
+            this.renderAdvancedAnalyticsCard('Sterling Ratio', this.formatMetricValue(analytics.sterlingRatio, 3), analytics.sterlingRatio),
+            this.renderAdvancedAnalyticsCard('Tail Ratio', this.formatMetricValue(analytics.tailRatio, 3), analytics.tailRatio >= 1 ? 1 : -1),
+            this.renderAdvancedAnalyticsCard('Skewness', this.formatMetricValue(analytics.skewness, 3), analytics.skewness),
+            this.renderAdvancedAnalyticsCard('Kurtosis (Excess)', this.formatMetricValue(analytics.kurtosis, 3), analytics.kurtosis),
+            this.renderAdvancedAnalyticsCard(`VaR ${analytics.confidenceLevelPct}%`, this.formatMetricValue(analytics.valueAtRisk95, 2, '%')),
+            this.renderAdvancedAnalyticsCard(`CVaR ${analytics.confidenceLevelPct}%`, this.formatMetricValue(analytics.conditionalValueAtRisk95, 2, '%')),
+            this.renderAdvancedAnalyticsCard('Ulcer Index', this.formatMetricValue(analytics.ulcerIndex, 2, '%')),
+            this.renderAdvancedAnalyticsCard('Serenity Index', this.formatMetricValue(analytics.serenityIndex, 3), analytics.serenityIndex),
+        ];
+
+        dom.advancedAnalyticsContainer.innerHTML = cards.join('');
+        dom.advancedAnalyticsHint.textContent = `Equity-return basis | CAGR ${this.formatMetricValue(analytics.cagr, 2, '%')} | RF ${this.formatMetricValue(analytics.riskFreeRateAnnual * 100, 2, '%')} | ${analytics.confidenceLevelPct}% tail metrics | ${analytics.sampleCount} return samples.`;
+    }
+
+    private renderAdvancedAnalyticsCard(label: string, value: string, directionalValue?: number): string {
+        const valueClass = Number.isFinite(directionalValue as number)
+            ? directionalValue! > 0
+                ? 'positive'
+                : directionalValue! < 0
+                    ? 'negative'
+                    : ''
+            : '';
+
+        return `
+            <div class="stat-card">
+                <div class="stat-label">${label}</div>
+                <div class="stat-value ${valueClass}">${value}</div>
+            </div>
+        `;
     }
 
     private renderPostEntryPath(postEntryPath: PostEntryPathStats | undefined): void {
@@ -540,11 +585,25 @@ export class ResultsRenderer {
         return value.toFixed(decimals);
     }
 
+    private formatMetricValue(value: number, decimals: number, suffix = ''): string {
+        if (!Number.isFinite(value)) {
+            if (value === Number.POSITIVE_INFINITY) return `INF${suffix}`;
+            if (value === Number.NEGATIVE_INFINITY) return `-INF${suffix}`;
+            return '--';
+        }
+        return `${value.toFixed(decimals)}${suffix}`;
+    }
+
     public clear() {
         const dom = this.getDom();
         setVisible('emptyResults', true);
         setVisible('resultsContent', false);
         this.clearParityComparison();
+        setVisible('advancedAnalyticsTitle', false);
+        setVisible('advancedAnalyticsContainer', false);
+        setVisible('advancedAnalyticsHint', false);
+        dom.advancedAnalyticsContainer.innerHTML = '';
+        dom.advancedAnalyticsHint.textContent = '';
         setVisible('postEntryPathTitle', false);
         setVisible('postEntryPathContainer', false);
         setVisible('postEntryPathHint', false);

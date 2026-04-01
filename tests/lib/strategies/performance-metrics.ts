@@ -1,14 +1,27 @@
-import type { Time } from "../types/strategies";
+import type { AdvancedPerformanceAnalytics, Time } from "../types/strategies";
 import { timeToNumber } from "./backtest/backtest-utils";
-import { median } from "../statistics-utils";
+import { mean, median, percentile, sampleStdDev } from "../statistics-utils";
 
 const SHARPE_MIN_SAMPLES = 5;
 const SHARPE_MIN_STD_DEV = 1e-4;
 const SHARPE_MAX_ABS = 8;
 const MILLIS_PER_YEAR = 365.2425 * 24 * 60 * 60 * 1000;
 const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
+const PERFORMANCE_CONFIDENCE_LEVEL = 95;
+const PERFORMANCE_RISK_FREE_RATE_ANNUAL = 0;
+const EPSILON = 1e-9;
 
 type TimedPoint = { time: Time };
+type CollapsedEquitySeries = { times: Time[]; values: number[] };
+type PreparedEquitySeries = {
+    collapsed: CollapsedEquitySeries;
+    returns: number[];
+    drawdownFractions: number[];
+    periodsPerYear: number;
+    durationYears: number;
+    startValue: number;
+    endValue: number;
+};
 
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
@@ -74,7 +87,7 @@ function collapseIntradayEquitySamples(
     samples: ArrayLike<Time | TimedPoint>,
     equityValues: ArrayLike<number>,
     sampleCount: number
-): { times: Time[]; values: number[] } {
+): CollapsedEquitySeries {
     if (sampleCount === 0) return { times: [], values: [] };
 
     const periodsPerYear = estimatePeriodsPerYear(samples, sampleCount);
@@ -195,4 +208,205 @@ export function calculateSharpeRatioFromEquitySamples(
 export function sanitizeSharpeRatio(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return clamp(value, -SHARPE_MAX_ABS, SHARPE_MAX_ABS);
+}
+
+function prepareEquitySeries(
+    equityCurve: Array<{ time: Time; value: number }>
+): PreparedEquitySeries | null {
+    if (equityCurve.length < 2) return null;
+
+    const collapsed = collapseIntradayEquitySamples(
+        equityCurve,
+        equityCurve.map((point) => point.value),
+        equityCurve.length
+    );
+    if (collapsed.times.length < 2 || collapsed.values.length < 2) return null;
+
+    const returns: number[] = [];
+    const drawdownFractions: number[] = [];
+    let peak = collapsed.values[0];
+
+    for (let index = 0; index < collapsed.values.length; index += 1) {
+        const value = collapsed.values[index];
+        if (!Number.isFinite(value) || value <= 0) continue;
+
+        if (value > peak) {
+            peak = value;
+        }
+
+        drawdownFractions.push(peak > 0 ? Math.max(0, (peak - value) / peak) : 0);
+
+        if (index === 0) continue;
+
+        const previous = collapsed.values[index - 1];
+        if (!Number.isFinite(previous) || previous <= 0) continue;
+        returns.push((value - previous) / previous);
+    }
+
+    const startTime = toEpochMilliseconds(collapsed.times[0]);
+    const endTime = toEpochMilliseconds(collapsed.times[collapsed.times.length - 1]);
+    const durationYears = startTime !== null && endTime !== null && endTime > startTime
+        ? (endTime - startTime) / MILLIS_PER_YEAR
+        : 0;
+
+    return {
+        collapsed,
+        returns,
+        drawdownFractions,
+        periodsPerYear: estimatePeriodsPerYear(collapsed.times, collapsed.times.length),
+        durationYears,
+        startValue: collapsed.values[0],
+        endValue: collapsed.values[collapsed.values.length - 1],
+    };
+}
+
+function calculateDownsideDeviation(
+    returns: readonly number[],
+    targetReturn = 0
+): number {
+    if (returns.length === 0) return 0;
+
+    const downsideSquares = returns.map((value) => {
+        const downside = Math.min(0, value - targetReturn);
+        return downside * downside;
+    });
+
+    return Math.sqrt(mean(downsideSquares));
+}
+
+function calculateExcessReturnRatio(
+    numerator: number,
+    denominator: number
+): number {
+    if (!Number.isFinite(numerator)) return 0;
+    if (Math.abs(denominator) <= EPSILON) {
+        if (Math.abs(numerator) <= EPSILON) return 0;
+        return numerator > 0 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+    }
+    return numerator / denominator;
+}
+
+function calculateCagr(
+    startValue: number,
+    endValue: number,
+    durationYears: number
+): number {
+    if (!Number.isFinite(startValue) || !Number.isFinite(endValue) || startValue <= 0 || endValue <= 0) {
+        return 0;
+    }
+    if (!Number.isFinite(durationYears) || durationYears <= 0) {
+        return 0;
+    }
+    return Math.pow(endValue / startValue, 1 / durationYears) - 1;
+}
+
+function calculateTailRatio(
+    returns: readonly number[],
+    confidenceLevelPct: number
+): number {
+    if (returns.length === 0) return 0;
+
+    const lowerPercentile = Math.max(0, 100 - confidenceLevelPct);
+    const upper = percentile(returns, confidenceLevelPct);
+    const lower = percentile(returns, lowerPercentile);
+    const denominator = Math.abs(lower);
+
+    if (denominator <= EPSILON) {
+        if (upper <= EPSILON) return 0;
+        return Number.POSITIVE_INFINITY;
+    }
+
+    return upper / denominator;
+}
+
+function calculateDistributionShape(
+    returns: readonly number[]
+): { skewness: number; kurtosis: number } {
+    if (returns.length === 0) {
+        return { skewness: 0, kurtosis: 0 };
+    }
+
+    const stdDev = sampleStdDev(returns);
+    if (stdDev <= EPSILON) {
+        return { skewness: 0, kurtosis: 0 };
+    }
+
+    const average = mean(returns);
+    let thirdMoment = 0;
+    let fourthMoment = 0;
+
+    for (const value of returns) {
+        const z = (value - average) / stdDev;
+        thirdMoment += z ** 3;
+        fourthMoment += z ** 4;
+    }
+
+    return {
+        skewness: thirdMoment / returns.length,
+        kurtosis: (fourthMoment / returns.length) - 3,
+    };
+}
+
+function calculateUlcerIndex(drawdownFractions: readonly number[]): number {
+    if (drawdownFractions.length === 0) return 0;
+    return Math.sqrt(mean(drawdownFractions.map((value) => value * value)));
+}
+
+export function calculateAdvancedPerformanceAnalyticsFromEquityCurve(
+    equityCurve: Array<{ time: Time; value: number }>,
+    riskFreeRateAnnual = PERFORMANCE_RISK_FREE_RATE_ANNUAL,
+    confidenceLevelPct = PERFORMANCE_CONFIDENCE_LEVEL
+): AdvancedPerformanceAnalytics | undefined {
+    const prepared = prepareEquitySeries(equityCurve);
+    if (!prepared || prepared.returns.length === 0) {
+        return undefined;
+    }
+
+    const { returns, drawdownFractions, periodsPerYear, durationYears, startValue, endValue } = prepared;
+    const riskFreeRatePerPeriod = periodsPerYear > 0 ? riskFreeRateAnnual / periodsPerYear : 0;
+    const averageReturn = mean(returns);
+    const downsideDeviation = calculateDownsideDeviation(returns, riskFreeRatePerPeriod);
+    const sortinoRatio = calculateExcessReturnRatio(
+        (averageReturn - riskFreeRatePerPeriod) * Math.sqrt(Math.max(1, periodsPerYear)),
+        downsideDeviation
+    );
+
+    const cagrFraction = calculateCagr(startValue, endValue, durationYears);
+    const maxDrawdownFraction = drawdownFractions.reduce((maxValue, value) => Math.max(maxValue, value), 0);
+    const calmarRatio = calculateExcessReturnRatio(cagrFraction, maxDrawdownFraction);
+    // Sterling's classic 10% adjustment becomes pathological below that threshold, so floor it.
+    const sterlingRatio = calculateExcessReturnRatio(cagrFraction, Math.max(EPSILON, maxDrawdownFraction - 0.10));
+    const tailRatio = calculateTailRatio(returns, confidenceLevelPct);
+    const { skewness, kurtosis } = calculateDistributionShape(returns);
+
+    const lowerPercentile = Math.max(0, 100 - confidenceLevelPct);
+    const varThreshold = percentile(returns, lowerPercentile);
+    const tailReturns = returns.filter((value) => value <= varThreshold);
+    const varFraction = Math.max(0, -varThreshold);
+    const cvarFraction = tailReturns.length > 0
+        ? Math.max(0, -mean(tailReturns))
+        : varFraction;
+
+    const ulcerIndexFraction = calculateUlcerIndex(drawdownFractions);
+    const serenityIndex = calculateExcessReturnRatio(
+        cagrFraction - riskFreeRateAnnual,
+        ulcerIndexFraction
+    );
+
+    return {
+        sortinoRatio,
+        calmarRatio,
+        sterlingRatio,
+        tailRatio,
+        skewness,
+        kurtosis,
+        valueAtRisk95: varFraction * 100,
+        conditionalValueAtRisk95: cvarFraction * 100,
+        ulcerIndex: ulcerIndexFraction * 100,
+        serenityIndex,
+        cagr: cagrFraction * 100,
+        confidenceLevelPct,
+        riskFreeRateAnnual,
+        sampleCount: returns.length,
+    };
 }

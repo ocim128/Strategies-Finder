@@ -22,7 +22,11 @@ import { debugLogger } from "./debug-logger";
 import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
 
-import { calculateSharpeRatioFromEquityCurve, calculateSharpeRatioFromReturns } from "./strategies/performance-metrics";
+import {
+    calculateAdvancedPerformanceAnalyticsFromEquityCurve,
+    calculateSharpeRatioFromEquityCurve,
+    calculateSharpeRatioFromReturns,
+} from "./strategies/performance-metrics";
 import { computeEdgeStatistics } from "./strategies/backtest/edge-statistics";
 import { getIntervalSeconds } from "./dataProviders/utils";
 import { getOptionalElement } from "./dom-utils";
@@ -710,6 +714,7 @@ export class BacktestService {
         };
         if (!result.entryStats) {
             result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
+            result.performanceAnalytics = this.recomputePerformanceAnalytics(result);
         }
         result.postEntryPath = this.buildPostEntryPathStats(result, 5, backtestData);
         if (result.trades.length >= 3) {
@@ -851,6 +856,14 @@ export class BacktestService {
         }
 
         return Number.isFinite(result.sharpeRatio) ? result.sharpeRatio : 0;
+    }
+
+    private recomputePerformanceAnalytics(result: BacktestResult) {
+        if (Array.isArray(result.equityCurve) && result.equityCurve.length > 1) {
+            return calculateAdvancedPerformanceAnalyticsFromEquityCurve(result.equityCurve);
+        }
+
+        return undefined;
     }
 
     private buildPostEntryPathStats(result: BacktestResult, horizonMaxBars: number, ohlcvData: OHLCVData[]): PostEntryPathStats {

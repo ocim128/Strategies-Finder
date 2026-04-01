@@ -1,6 +1,10 @@
 
 import { BacktestResult, Time, Trade } from '../../types/index';
-import { calculateSharpeRatioFromEquityCurve, calculateSharpeRatioFromReturns } from '../performance-metrics';
+import {
+    calculateAdvancedPerformanceAnalyticsFromEquityCurve,
+    calculateSharpeRatioFromEquityCurve,
+    calculateSharpeRatioFromReturns,
+} from '../performance-metrics';
 import { directionFactorFor } from './backtest-utils';
 import { PositionState } from '../../types/backtest';
 
@@ -54,6 +58,9 @@ export function calculateBacktestStats(
     const sharpeRatio = equityCurve.length > 1
         ? calculateSharpeRatioFromEquityCurve(equityCurve)
         : calculateSharpeRatioFromReturns(trades.map(t => t.pnlPercent));
+    const performanceAnalytics = equityCurve.length > 1
+        ? calculateAdvancedPerformanceAnalyticsFromEquityCurve(equityCurve)
+        : undefined;
 
     return {
         trades,
@@ -71,6 +78,7 @@ export function calculateBacktestStats(
         avgWin,
         avgLoss,
         sharpeRatio,
+        performanceAnalytics,
         equityCurve
     };
 }

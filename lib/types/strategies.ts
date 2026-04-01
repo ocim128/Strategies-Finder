@@ -105,6 +105,28 @@ export interface BacktestResultMarketContext {
     lastCandleTime: Time | null;
 }
 
+export interface AdvancedPerformanceAnalytics {
+    sortinoRatio: number;
+    calmarRatio: number;
+    sterlingRatio: number;
+    tailRatio: number;
+    skewness: number;
+    /** Excess kurtosis where a normal distribution is approximately 0. */
+    kurtosis: number;
+    /** 95% one-period Value at Risk as a positive percentage loss. */
+    valueAtRisk95: number;
+    /** 95% one-period Conditional Value at Risk as a positive percentage loss. */
+    conditionalValueAtRisk95: number;
+    /** Ulcer Index as a percentage drawdown severity score. */
+    ulcerIndex: number;
+    serenityIndex: number;
+    /** Annualized compounded growth rate expressed in percent. */
+    cagr: number;
+    confidenceLevelPct: number;
+    riskFreeRateAnnual: number;
+    sampleCount: number;
+}
+
 export interface BacktestResult {
     trades: Trade[];
     netProfit: number;
@@ -122,6 +144,7 @@ export interface BacktestResult {
     avgLoss: number;
     sharpeRatio: number;
     equityCurve: { time: Time; value: number }[];
+    performanceAnalytics?: AdvancedPerformanceAnalytics;
     entryStats?: EntryStats;
     postEntryPath?: PostEntryPathStats;
     edgeStatistics?: import('../strategies/backtest/edge-statistics').EdgeStatistics;
