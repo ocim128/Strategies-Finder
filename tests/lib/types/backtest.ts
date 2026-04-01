@@ -172,11 +172,44 @@ export interface PositionState {
     warmUpEntry?: boolean;
 }
 
+export type KellyFraction = 'full' | 'half' | 'quarter';
+export type VolScalingMethod = 'ewma' | 'sma' | 'expanding';
+export type RiskParityMethod = 'var' | 'expected_shortfall' | 'historical_std';
+export type MartingaleBaseSize = 'fixed' | 'percent';
+export type SecureFMethod = 'bootstrap' | 'analytical';
+
+export interface AdvancedSizingSettings {
+    kellyFraction?: KellyFraction;
+    kellyWinRateCap?: number;
+    kellyProfitFactorCap?: number;
+    volTargetAnnual?: number;
+    volLookbackBars?: number;
+    volScalingMethod?: VolScalingMethod;
+    riskParityLookback?: number;
+    riskParityMethod?: RiskParityMethod;
+    martingaleMultiplier?: number;
+    martingaleMaxSequence?: number;
+    martingaleResetOnWin?: boolean;
+    martingaleResetOnLoss?: boolean;
+    martingaleBaseSize?: MartingaleBaseSize;
+    optimalFLookback?: number;
+    optimalFBootstrapSamples?: number;
+    secureFConfidence?: number;
+    secureFMethod?: SecureFMethod;
+}
+
 export const TRADE_SIZING_MODES = [
     'percent',
     'fixed',
     'smart_fixed_velocity_memory',
     'smart_fixed_quality_x_velocity',
+    'kelly_criterion',
+    'volatility_targeting',
+    'risk_parity',
+    'martingale',
+    'anti_martingale',
+    'optimal_f',
+    'secure_f',
 ] as const;
 
 export type TradeSizingMode = (typeof TRADE_SIZING_MODES)[number];
@@ -189,8 +222,12 @@ export function isSmartTradeSizingMode(mode: TradeSizingMode): boolean {
     return mode !== 'percent' && mode !== 'fixed';
 }
 
+export function isDirectFractionTradeSizingMode(mode: TradeSizingMode): boolean {
+    return mode === 'kelly_criterion' || mode === 'optimal_f' || mode === 'secure_f';
+}
+
 export function usesFixedDollarSizing(mode: TradeSizingMode): boolean {
-    return mode !== 'percent';
+    return mode !== 'percent' && !isDirectFractionTradeSizingMode(mode);
 }
 
 export interface CapitalSettings {
@@ -199,11 +236,13 @@ export interface CapitalSettings {
     commission: number;
     sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
+    advancedSizing?: AdvancedSizingSettings;
 }
 
 export interface TradeSizingConfig {
     mode: TradeSizingMode;
     fixedTradeAmount: number;
+    advancedSizing?: AdvancedSizingSettings;
 }
 
 export interface PreparedSignal extends Signal {

@@ -563,7 +563,7 @@ async function runRobustFixedParamWalkForward(
     capitalSettings: CapitalSettings,
     settings: BacktestSettings
 ): Promise<Awaited<ReturnType<typeof runFixedParamWalkForward>>> {
-    const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = capitalSettings;
+    const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount, advancedSizing } = capitalSettings;
     const testWindow = Math.max(20, Math.floor(data.length / Math.max(2, targetWindows)));
     const stepSize = testWindow;
     return runFixedParamWalkForward(
@@ -579,7 +579,7 @@ async function runRobustFixedParamWalkForward(
         positionSize,
         commission,
         settings,
-        { mode: sizingMode, fixedTradeAmount }
+        { mode: sizingMode, fixedTradeAmount, advancedSizing }
     );
 }
 

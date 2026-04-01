@@ -23,6 +23,7 @@ import { replaceTwoHourParityInStreamId, stripTwoHourParityFromStreamId } from '
 import { uiManager } from '../ui-manager';
 import { state } from '../state';
 import { backtestService } from '../backtest-service';
+import { writeAdvancedSizingIntoRecord } from '../advanced-sizing-settings';
 import { settingsManager } from '../settings-manager';
 import { dataManager } from '../data-manager';
 import { getOptionalElement } from '../dom-utils';
@@ -149,7 +150,7 @@ function collectCurrentSubscriptionBacktestSettings(): Record<string, unknown> {
         )
     );
 
-    return {
+    const merged = {
         ...settings,
         ...uiToggleSettings,
         initialCapital: capital.initialCapital,
@@ -159,6 +160,9 @@ function collectCurrentSubscriptionBacktestSettings(): Record<string, unknown> {
         fixedTradeToggle: capital.sizingMode !== 'percent',
         fixedTradeAmount: capital.fixedTradeAmount,
     };
+
+    writeAdvancedSizingIntoRecord(merged, capital.advancedSizing);
+    return merged;
 }
 
 function getAlertWorkerProviderCompatibilityError(symbol: string): string | null {

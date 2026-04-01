@@ -1,6 +1,13 @@
 import { parseInputNumber } from "./dom-input-readers";
 import { readBoolean, readNumber } from "./settings-parse-utils";
 import {
+    resolveKellyFraction,
+    resolveMartingaleBaseSize,
+    resolveRiskParityMethod,
+    resolveSecureFMethod,
+    resolveVolScalingMethod,
+} from "./advanced-sizing-settings";
+import {
     DEFAULT_BACKTEST_SETTINGS,
     resolveExecutionModelValue,
     resolveMarketMode,
@@ -29,7 +36,12 @@ export type BacktestDomSettingParser =
     | "marketMode"
     | "executionModel"
     | "tradeSizingMode"
-    | "twoHourCloseParity";
+    | "twoHourCloseParity"
+    | "kellyFraction"
+    | "volScalingMethod"
+    | "riskParityMethod"
+    | "martingaleBaseSize"
+    | "secureFMethod";
 
 export type SettingSupportLevel = "supported" | "unsupported" | "conditional" | "ui_only";
 
@@ -78,6 +90,16 @@ function inferParser(settingKey: BacktestDomSettingKey): BacktestDomSettingParse
             return "tradeSizingMode";
         case "twoHourCloseParity":
             return "twoHourCloseParity";
+        case "kellyFraction":
+            return "kellyFraction";
+        case "volScalingMethod":
+            return "volScalingMethod";
+        case "riskParityMethod":
+            return "riskParityMethod";
+        case "martingaleBaseSize":
+            return "martingaleBaseSize";
+        case "secureFMethod":
+            return "secureFMethod";
         case "entrySettingsToggle":
             return "boolean";
         default: {
@@ -113,6 +135,43 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         readFromSettings: (settings) => resolveTradeSizingModeValue(settings.sizingMode, DEFAULT_BACKTEST_SETTINGS),
     }),
     createField("fixedTradeAmount"),
+    createField("kellyFraction", {
+        parser: "kellyFraction",
+        rustSupport: "unsupported",
+        workerSupport: "ui_only",
+    }),
+    createField("kellyWinRateCap", { rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("kellyProfitFactorCap", { rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("volTargetAnnual", { rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("volLookbackBars", { rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("volScalingMethod", {
+        parser: "volScalingMethod",
+        rustSupport: "unsupported",
+        workerSupport: "ui_only",
+    }),
+    createField("riskParityLookback", { rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("riskParityMethod", {
+        parser: "riskParityMethod",
+        rustSupport: "unsupported",
+        workerSupport: "ui_only",
+    }),
+    createField("martingaleMultiplier", { rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("martingaleMaxSequence", { rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("martingaleResetOnWin", { parser: "boolean", rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("martingaleResetOnLoss", { parser: "boolean", rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("martingaleBaseSize", {
+        parser: "martingaleBaseSize",
+        rustSupport: "unsupported",
+        workerSupport: "ui_only",
+    }),
+    createField("optimalFLookback", { rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("optimalFBootstrapSamples", { rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("secureFConfidence", { rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("secureFMethod", {
+        parser: "secureFMethod",
+        rustSupport: "unsupported",
+        workerSupport: "ui_only",
+    }),
     createField("useRustEngineToggle", {
         settingKey: "useRustEngine",
         parser: "boolean",
@@ -331,6 +390,16 @@ export function coerceBacktestDomSettingValue(
             return resolveExecutionModelValue(value, DEFAULT_BACKTEST_SETTINGS);
         case "twoHourCloseParity":
             return resolveTwoHourCloseParity(value, DEFAULT_BACKTEST_SETTINGS);
+        case "kellyFraction":
+            return resolveKellyFraction(value);
+        case "volScalingMethod":
+            return resolveVolScalingMethod(value);
+        case "riskParityMethod":
+            return resolveRiskParityMethod(value);
+        case "martingaleBaseSize":
+            return resolveMartingaleBaseSize(value);
+        case "secureFMethod":
+            return resolveSecureFMethod(value);
         case "boolean":
             return readBooleanValue(value, Boolean(contract.fallbackValue ?? (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[contract.settingKey] ?? false));
         case "number": {

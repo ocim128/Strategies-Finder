@@ -3,6 +3,7 @@ import {
     hasUiToggleSettings,
     resolveBacktestSettingsFromRaw,
 } from "./backtest-settings-resolver";
+import { extractAdvancedSizingRaw, writeAdvancedSizingIntoRecord } from "./advanced-sizing-settings";
 import { toBooleanLike, toFiniteNumber } from "./settings-parse-utils";
 import { strategies } from "./strategies/library";
 import type { BacktestSettings, TradeDirection } from "./types/strategies";
@@ -158,6 +159,10 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
     const fixedTradeAmount = toFiniteNumber(raw.fixedTradeAmount);
     if (fixedTradeAmount !== null) {
         merged.fixedTradeAmount = fixedTradeAmount;
+    }
+    const advancedSizingRaw = extractAdvancedSizingRaw(raw);
+    if (Object.keys(advancedSizingRaw).length > 0) {
+        writeAdvancedSizingIntoRecord(merged, advancedSizingRaw as any);
     }
 
     if (raw.captureSnapshots === true) {

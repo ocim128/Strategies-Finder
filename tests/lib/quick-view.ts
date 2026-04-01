@@ -140,6 +140,7 @@ class QuickViewManager {
     private keyboardHandler: ((e: KeyboardEvent) => void) | null = null;
     private tradeRenderGeneration = 0;
     private pendingDeferredRenderIds: number[] = [];
+    private overlayRenderGeneration = 0;
 
     // ── Initialisation ─────────────────────────────────────
 
@@ -374,10 +375,14 @@ class QuickViewManager {
 
     async show(result: BacktestResult) {
         if (!this.overlay) return;
+        const renderGeneration = ++this.overlayRenderGeneration;
 
         // Load Polymarket outcomes on-demand for Quick View display
         // This keeps backtests fast by default while still enabling Polymarket analysis in Quick View
         const enrichedResult = await this.ensurePolymarketOutcomes(result);
+        if (renderGeneration !== this.overlayRenderGeneration) {
+            return;
+        }
 
         this.renderResults(enrichedResult);
         this.renderTrades(enrichedResult.trades);
@@ -394,6 +399,7 @@ class QuickViewManager {
 
     hide() {
         if (!this.overlay) return;
+        this.overlayRenderGeneration += 1;
 
         this.overlay.classList.remove('is-visible');
         // Wait for transition to finish before hiding
@@ -428,6 +434,7 @@ class QuickViewManager {
     destroy() {
         this.cancelPendingDeferredRenders();
         this.tradeRenderGeneration += 1;
+        this.overlayRenderGeneration += 1;
         if (this.keyboardHandler) {
             window.removeEventListener('keydown', this.keyboardHandler);
             this.keyboardHandler = null;

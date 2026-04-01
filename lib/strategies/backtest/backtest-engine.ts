@@ -8,7 +8,7 @@ import { calculateSharpeRatioFromEquitySamples } from '../performance-metrics';
 import { prepareSignals } from './signal-preparation';
 import { calculateTradeExitDetails, createEmptyBacktestResult, finalizeBacktestMetrics, calculateBacktestStats, calculateMaxDrawdown } from './position-stats';
 import { precomputeIndicators, resolveIndicators } from './indicator-precompute';
-import { buildPositionFromSignal } from './position-builder';
+import { buildPositionFromSignal, type SmartSizingState } from './position-builder';
 import { processPositionExits, updatePositionState } from './exit-handlers';
 import { captureTradeSnapshot, computeSnapshotIndicators, SnapshotIndicators } from './snapshot-capture';
 import {
@@ -18,6 +18,9 @@ import {
     updateAdaptiveTakeProfitPosition,
     updateAdaptiveTakeProfitHistory,
 } from './adaptive-take-profit';
+import { createKellySizingState, updateKellyState } from '../sizing/kelly-criterion';
+import { createMartingaleState, updateMartingaleState } from '../sizing/martingale';
+import { createOptimalFState, updateOptimalFState } from '../sizing/optimal-f';
 import { TradeSnapshot } from '../../types/index';
 
 type AdaptiveTakeProfitHistoryUpdate = {
@@ -41,6 +44,7 @@ type EntryBuildContext = {
     tradeDirection: ReturnType<typeof normalizeTradeDirection>;
     sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
+    advancedSizing: TradeSizingConfig["advancedSizing"];
     smartSizingState: SmartSizingState;
     winStreakRisk: WinStreakRiskState;
     adaptiveTakeProfitState: ReturnType<typeof createAdaptiveTakeProfitState>;
@@ -66,6 +70,7 @@ function buildEntryPosition(
         tradeDirection: context.tradeDirection,
         sizingMode: context.sizingMode,
         fixedTradeAmount: context.fixedTradeAmount,
+        advancedSizing: context.advancedSizing,
         smartSizingState: context.smartSizingState,
         ...buildPositionRiskOverrides(context.settings, context.winStreakRisk),
         ...buildPercentageTakeProfitOverrides(
@@ -177,10 +182,6 @@ function createWinStreakRiskState(): WinStreakRiskState {
     };
 }
 
-type SmartSizingState = {
-    recentVelocityScores: number[];
-};
-
 type SmartSizingPositionState = {
     initialTargetPercent: number | null;
     fastProgressHit: boolean;
@@ -285,6 +286,9 @@ function buildPositionRiskOverrides(config: NormalizedSettings, state: WinStreak
 function createSmartSizingState(_initialCapital: number): SmartSizingState {
     return {
         recentVelocityScores: [],
+        kellyState: createKellySizingState(),
+        martingaleState: createMartingaleState(),
+        optimalFState: createOptimalFState(),
     };
 }
 
@@ -296,8 +300,30 @@ function pushRollingScore(target: number[], score: number | null, maxLength = 12
     }
 }
 
-function updateSmartSizingState(state: SmartSizingState, velocityScore: number | null): void {
+function updateSmartSizingState(
+    state: SmartSizingState,
+    velocityScore: number | null,
+    tradePnl?: number,
+    sizingMode?: TradeSizingMode,
+    advancedSizing?: TradeSizingConfig["advancedSizing"]
+): void {
     pushRollingScore(state.recentVelocityScores, velocityScore);
+    if (typeof tradePnl !== "number" || !Number.isFinite(tradePnl) || !sizingMode) {
+        return;
+    }
+
+    updateKellyState(state.kellyState ?? createKellySizingState(), { pnl: tradePnl, isWin: tradePnl > 0 });
+    if (sizingMode === "martingale" || sizingMode === "anti_martingale") {
+        updateMartingaleState(
+            state.martingaleState ?? createMartingaleState(),
+            { pnl: tradePnl, isWin: tradePnl > 0 },
+            advancedSizing,
+            sizingMode === "anti_martingale"
+        );
+    }
+    if (sizingMode === "optimal_f" || sizingMode === "secure_f") {
+        updateOptimalFState(state.optimalFState ?? createOptimalFState(), tradePnl, advancedSizing);
+    }
 }
 
 function greaterThanOrNearlyEqual(left: number, right: number): boolean {
@@ -479,6 +505,7 @@ function runCombinedBacktestCompact(
     const splitSizing: Partial<TradeSizingConfig> = {
         mode: sizing?.mode ?? 'percent',
         fixedTradeAmount: sizing?.fixedTradeAmount ?? 0,
+        advancedSizing: sizing?.advancedSizing,
     };
 
     // Allocate per-bar equity buffers for proper combined drawdown calculation
@@ -531,6 +558,7 @@ function runCombinedBacktest(
     const splitSizing: Partial<TradeSizingConfig> = {
         mode: sizing?.mode ?? 'percent',
         fixedTradeAmount: sizing?.fixedTradeAmount ?? 0,
+        advancedSizing: sizing?.advancedSizing,
     };
 
     const longResult = runBacktest(
@@ -611,6 +639,7 @@ export function runBacktestCompact(
     const config = normalizeBacktestSettings(settings);
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
+    const advancedSizing = sizing?.advancedSizing;
     const indicatorSeries = resolveIndicators(data, settings, precomputed);
 
     const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators(config)
@@ -648,6 +677,7 @@ export function runBacktestCompact(
         tradeDirection,
         sizingMode,
         fixedTradeAmount,
+        advancedSizing,
         smartSizingState,
         winStreakRisk,
         adaptiveTakeProfitState,
@@ -674,7 +704,13 @@ export function runBacktestCompact(
         queueAdaptiveTakeProfitUpdate(position, exitPrice, exitReason, candle, capital);
         updateWinStreakRiskState(winStreakRisk, position.realizedPnl);
         updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, position.direction, position.realizedPnl);
-        updateSmartSizingState(smartSizingState, resolveVelocitySizingScore(smartSizingPositionState, position));
+        updateSmartSizingState(
+            smartSizingState,
+            resolveVelocitySizingScore(smartSizingPositionState, position),
+            position.realizedPnl,
+            sizingMode,
+            advancedSizing
+        );
     };
 
     const flushAdaptiveTakeProfitUpdates = () => {
@@ -947,6 +983,7 @@ export function runBacktest(
     const config = normalizeBacktestSettings(settings);
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
+    const advancedSizing = sizing?.advancedSizing;
     const indicatorSeries = resolveIndicators(data, settings, precomputed);
 
     const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators(config, !!settings.captureSnapshots)
@@ -985,6 +1022,7 @@ export function runBacktest(
         tradeDirection,
         sizingMode,
         fixedTradeAmount,
+        advancedSizing,
         smartSizingState,
         winStreakRisk,
         adaptiveTakeProfitState,
@@ -1011,7 +1049,13 @@ export function runBacktest(
         queueAdaptiveTakeProfitUpdate(position, exitPrice, exitReason, candle, capital);
         updateWinStreakRiskState(winStreakRisk, position.realizedPnl);
         updateLossFlipDirectionAfterClose(tradeDirection, config, flipLossDirection, position.direction, position.realizedPnl);
-        updateSmartSizingState(smartSizingState, resolveVelocitySizingScore(smartSizingPositionState, position));
+        updateSmartSizingState(
+            smartSizingState,
+            resolveVelocitySizingScore(smartSizingPositionState, position),
+            position.realizedPnl,
+            sizingMode,
+            advancedSizing
+        );
     };
 
     const flushAdaptiveTakeProfitUpdates = () => {

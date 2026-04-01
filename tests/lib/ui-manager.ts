@@ -151,13 +151,17 @@ export class UIManager {
     }
 
     public async updateTradesList(trades: Trade[], jumpToTrade: (time: Time) => void) {
-        await tradesRenderer.render(trades, jumpToTrade, this.formatPrice, this.formatDate);
-        this.updateTradeBadge(trades.length);
+        const didRender = await tradesRenderer.render(trades, jumpToTrade, this.formatPrice, this.formatDate);
+        if (didRender) {
+            this.updateTradeBadge(trades.length);
+        }
     }
 
     public async updateParityTradesList(oddTrades: Trade[], evenTrades: Trade[], jumpToTrade: (time: Time) => void): Promise<void> {
-        await tradesRenderer.renderParity(oddTrades, evenTrades, jumpToTrade, this.formatPrice, this.formatDate);
-        this.updateTradeBadge(oddTrades.length + evenTrades.length);
+        const didRender = await tradesRenderer.renderParity(oddTrades, evenTrades, jumpToTrade, this.formatPrice, this.formatDate);
+        if (didRender) {
+            this.updateTradeBadge(oddTrades.length + evenTrades.length);
+        }
     }
 
     public updateTradeBadge(count: number) {

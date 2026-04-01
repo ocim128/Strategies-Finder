@@ -1,12 +1,20 @@
 import { OHLCVData, Signal, type TradeDirection } from '../../types/index';
 import {
+    AdvancedSizingSettings,
     NormalizedSettings,
     PositionState,
+    isDirectFractionTradeSizingMode,
     isSmartTradeSizingMode,
     usesFixedDollarSizing,
     type TradeSizingMode
 } from '../../types/backtest';
 import { allowsSignalAsEntry, applySlippage, directionFactorFor, entrySideForDirection, signalToPositionDirection } from './backtest-utils';
+import { calculateKelly, type KellySizingState } from '../sizing/kelly-criterion';
+import { type MartingaleState, resolveMartingaleMultiplier } from '../sizing/martingale';
+import { type OptimalFState, calculateSecureF } from '../sizing/optimal-f';
+import { resolveRiskParityMultiplier } from '../sizing/risk-parity';
+import { average, clamp } from '../sizing/shared';
+import { resolveVolTargetingMultiplier } from '../sizing/volatility-targeting';
 const VELOCITY_MEMORY_MIN_MULTIPLIER = 0.75;
 const VELOCITY_MEMORY_MAX_MULTIPLIER = 1.2;
 const QUALITY_X_VELOCITY_MIN_MULTIPLIER = 0.72;
@@ -14,6 +22,9 @@ const QUALITY_X_VELOCITY_MAX_MULTIPLIER = 1.28;
 
 export interface SmartSizingState {
     recentVelocityScores: number[];
+    kellyState?: KellySizingState;
+    martingaleState?: MartingaleState;
+    optimalFState?: OptimalFState;
 }
 
 export interface PositionBuilderParams {
@@ -30,6 +41,7 @@ export interface PositionBuilderParams {
     tradeDirection: TradeDirection;
     sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
+    advancedSizing?: AdvancedSizingSettings;
     smartSizingState?: SmartSizingState;
     effectiveStopLossPercent?: number;
     enablePercentageStopLoss?: boolean;
@@ -39,15 +51,6 @@ export interface PositionBuilderParams {
 export interface BuiltPosition {
     nextPosition: PositionState;
     entryCommission: number;
-}
-
-function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
-}
-
-function average(values: number[]): number {
-    if (values.length === 0) return 0;
-    return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function resolveVelocityMemoryMultiplier(smartSizingState?: SmartSizingState): number {
@@ -157,7 +160,8 @@ function resolveSizingMultiplier(
     sizingBarIndex: number,
     direction: 'long' | 'short',
     _triggerPrice: number | null,
-    atrValue: number | null
+    atrValue: number | null,
+    advancedSizing?: AdvancedSizingSettings
 ): number {
     switch (sizingMode) {
         case 'smart_fixed_velocity_memory':
@@ -170,9 +174,47 @@ function resolveSizingMultiplier(
                 direction,
                 atrValue
             );
+        case 'volatility_targeting':
+            return resolveVolTargetingMultiplier(data, sizingBarIndex, advancedSizing);
+        case 'risk_parity':
+            return resolveRiskParityMultiplier(data, sizingBarIndex, advancedSizing);
+        case 'martingale':
+            return resolveMartingaleMultiplier(smartSizingState?.martingaleState, advancedSizing);
+        case 'anti_martingale':
+            return resolveMartingaleMultiplier(smartSizingState?.martingaleState, advancedSizing);
         default:
             return 1;
     }
+}
+
+function resolveDirectAllocation(
+    sizingMode: TradeSizingMode,
+    capital: number,
+    smartSizingState: SmartSizingState | undefined,
+    advancedSizing?: AdvancedSizingSettings
+): number | null {
+    if (sizingMode === 'kelly_criterion') {
+        const result = calculateKelly(smartSizingState?.kellyState, advancedSizing);
+        return result.isValid ? capital * result.appliedFraction : null;
+    }
+
+    if (sizingMode === 'optimal_f' || sizingMode === 'secure_f') {
+        const optimalFState = smartSizingState?.optimalFState;
+        const cachedFraction = sizingMode === 'optimal_f'
+            ? optimalFState?.calculatedOptimalF
+            : optimalFState?.calculatedSecureF;
+
+        if (Number.isFinite(cachedFraction) && (cachedFraction ?? 0) > 0) {
+            return capital * Number(cachedFraction);
+        }
+
+        const tradeHistory = optimalFState?.tradeHistory ?? [];
+        const result = calculateSecureF(tradeHistory, advancedSizing);
+        const fraction = sizingMode === 'optimal_f' ? result.optimalF : result.secureF;
+        return result.isValid ? capital * fraction : null;
+    }
+
+    return null;
 }
 
 function resolveAllocatedCapital(
@@ -185,13 +227,27 @@ function resolveAllocatedCapital(
     direction: 'long' | 'short',
     triggerPrice: number | null,
     atrValue: number | null,
-    smartSizingState?: SmartSizingState
+    smartSizingState?: SmartSizingState,
+    advancedSizing?: AdvancedSizingSettings
 ): number {
-    const baseAllocation = usesFixedDollarSizing(sizingMode) && fixedTradeAmount > 0
+    const directAllocation = resolveDirectAllocation(
+        sizingMode,
+        capital,
+        smartSizingState,
+        advancedSizing
+    );
+    if (directAllocation !== null) {
+        return directAllocation;
+    }
+
+    const usePercentBase = (sizingMode === 'martingale' || sizingMode === 'anti_martingale')
+        && advancedSizing?.martingaleBaseSize === 'percent';
+    const preferFixedFallback = isDirectFractionTradeSizingMode(sizingMode) && fixedTradeAmount > 0;
+    const baseAllocation = !usePercentBase && (usesFixedDollarSizing(sizingMode) || preferFixedFallback) && fixedTradeAmount > 0
         ? fixedTradeAmount
         : capital * (positionSizePercent / 100);
 
-    if (!isSmartTradeSizingMode(sizingMode) || baseAllocation <= 0) {
+    if ((!isSmartTradeSizingMode(sizingMode) && !isDirectFractionTradeSizingMode(sizingMode)) || baseAllocation <= 0) {
         return baseAllocation;
     }
 
@@ -202,7 +258,8 @@ function resolveAllocatedCapital(
         sizingBarIndex,
         direction,
         triggerPrice,
-        atrValue
+        atrValue,
+        advancedSizing
     );
 }
 
@@ -224,6 +281,7 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
         tradeDirection,
         sizingMode,
         fixedTradeAmount,
+        advancedSizing,
         smartSizingState,
         effectiveStopLossPercent,
         enablePercentageStopLoss,
@@ -311,7 +369,8 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
         direction,
         (typeof signal.triggerPrice === 'number' && Number.isFinite(signal.triggerPrice) ? signal.triggerPrice : signal.price) ?? null,
         atrValue,
-        smartSizingState
+        smartSizingState,
+        advancedSizing
     );
     if (!Number.isFinite(allocatedCapital) || allocatedCapital <= 0) return null;
 

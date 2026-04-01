@@ -42,6 +42,7 @@ import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { mergeStrategySignals } from "./signal-merge";
 import { resolveSubscriptionExecutionBacktestSettings } from "./alert-subscription-utils";
 import { isSmartTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
+import { ADVANCED_SIZING_DOM_IDS, ADVANCED_SIZING_FIELD_IDS } from "./advanced-sizing-dom";
 import {
     resolveCapitalSettingsFromRaw,
     SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS,
@@ -71,12 +72,23 @@ type CurrentBacktestExecution = {
 export class BacktestService {
     private warnedStrictEngine = false;
     private timingBreakdownSampleCount = 0;
+    private interactiveRunSequence = 0;
 
     private shouldCaptureTimingBreakdown(): boolean {
         return Boolean(import.meta.env?.DEV) || ((++this.timingBreakdownSampleCount & 31) === 0);
     }
 
+    private beginInteractiveRun(): number {
+        this.interactiveRunSequence += 1;
+        return this.interactiveRunSequence;
+    }
+
+    private isLatestInteractiveRun(runId: number): boolean {
+        return runId === this.interactiveRunSequence;
+    }
+
     public async runCurrentBacktest() {
+        const runId = this.beginInteractiveRun();
         const activePreviewRerun = state.currentBacktestResultSource === 'ensemble_preview'
             ? getActiveBacktestRerunContext()
             : null;
@@ -140,6 +152,15 @@ export class BacktestService {
                 }
             }
 
+            if (!this.isLatestInteractiveRun(runId)) {
+                debugLogger.event('backtest.stale_ignored', {
+                    strategy: state.currentStrategyKey,
+                    runId,
+                    phase: 'commit',
+                });
+                return;
+            }
+
             commitBacktestResult(result, 'backtest', {
                 parityResults: parityComparison,
                 reason: 'manual_backtest',
@@ -158,6 +179,14 @@ export class BacktestService {
             // Enable replay button if there are results
             setReplayStartButtonDisabled(result.totalTrades === 0);
         } catch (error) {
+            if (!this.isLatestInteractiveRun(runId)) {
+                debugLogger.event('backtest.stale_ignored', {
+                    strategy: state.currentStrategyKey,
+                    runId,
+                    phase: 'error',
+                });
+                return;
+            }
             debugLogger.error('backtest.error', {
                 strategy: state.currentStrategyKey,
                 error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
@@ -168,7 +197,7 @@ export class BacktestService {
 
             throw error;
         } finally {
-            if (shouldDelayHide) {
+            if (shouldDelayHide && this.isLatestInteractiveRun(runId)) {
                 await delayBacktestUi(500);
             }
             runUi.finish();
@@ -337,6 +366,7 @@ export class BacktestService {
         secondaryConfig: StrategyConfig,
         mode: 'and' | 'or'
     ): Promise<void> {
+        const runId = this.beginInteractiveRun();
         const startedAt = Date.now();
         debugLogger.event('backtest.combined.start', {
             primary: primaryConfig.strategyKey,
@@ -410,6 +440,17 @@ export class BacktestService {
                 requiresTsEngine
             );
 
+            if (!this.isLatestInteractiveRun(runId)) {
+                debugLogger.event('backtest.stale_ignored', {
+                    primary: primaryConfig.strategyKey,
+                    secondary: secondaryConfig.strategyKey,
+                    mode,
+                    runId,
+                    phase: 'combined_commit',
+                });
+                return;
+            }
+
             // --- 6. Update state and UI ---
             commitBacktestResult(result, 'backtest', {
                 parityResults: null,
@@ -432,6 +473,16 @@ export class BacktestService {
 
             await delayBacktestUi(500);
         } catch (error) {
+            if (!this.isLatestInteractiveRun(runId)) {
+                debugLogger.event('backtest.stale_ignored', {
+                    primary: primaryConfig.strategyKey,
+                    secondary: secondaryConfig.strategyKey,
+                    mode,
+                    runId,
+                    phase: 'combined_error',
+                });
+                return;
+            }
             debugLogger.error('backtest.combined.error', {
                 primary: primaryConfig.strategyKey,
                 secondary: secondaryConfig.strategyKey,
@@ -511,7 +562,7 @@ export class BacktestService {
                 positionSize,
                 commission,
                 sanitizeBacktestSettingsForRust(settings),
-                { mode: sizingMode, fixedTradeAmount }
+                { mode: sizingMode, fixedTradeAmount, advancedSizing: capitalSettings.advancedSizing }
             );
             if (timing) {
                 timing.rustRequest = performance.now() - tRust;
@@ -542,7 +593,7 @@ export class BacktestService {
                 positionSize,
                 commission,
                 settings,
-                { mode: sizingMode, fixedTradeAmount }
+                { mode: sizingMode, fixedTradeAmount, advancedSizing: capitalSettings.advancedSizing }
             );
             engineUsed = 'typescript';
             if (timing) {
@@ -608,7 +659,7 @@ export class BacktestService {
                 positionSize,
                 commission,
                 sanitizeBacktestSettingsForRust(settings),
-                { mode: sizingMode, fixedTradeAmount }
+                { mode: sizingMode, fixedTradeAmount, advancedSizing: capitalSettings.advancedSizing }
             );
 
             if (rustResult && this.isResultConsistent(rustResult)) {
@@ -625,7 +676,7 @@ export class BacktestService {
                 positionSize,
                 commission,
                 settings,
-                { mode: sizingMode, fixedTradeAmount }
+                { mode: sizingMode, fixedTradeAmount, advancedSizing: capitalSettings.advancedSizing }
             );
             engineUsed = 'typescript';
         }
@@ -712,14 +763,24 @@ export class BacktestService {
     public getCapitalSettings(): CapitalSettings {
         const fixedTradeToggle = getOptionalElement<HTMLInputElement>('fixedTradeToggle');
         const tradeSizingMode = getOptionalElement<HTMLSelectElement>('tradeSizingMode');
-        return resolveCapitalSettingsFromRaw({
+        const raw: Record<string, unknown> = {
             initialCapital: readNumberInputValue('initialCapital', CAPITAL_DEFAULTS.initialCapital),
             positionSize: readNumberInputValue('positionSize', CAPITAL_DEFAULTS.positionSize),
             commission: readNumberInputValue('commission', CAPITAL_DEFAULTS.commission),
             fixedTradeAmount: readNumberInputValue('fixedTradeAmount', CAPITAL_DEFAULTS.fixedTradeAmount),
             fixedTradeToggle: fixedTradeToggle?.checked,
             sizingMode: tradeSizingMode?.value,
-        });
+        };
+
+        for (const key of ADVANCED_SIZING_FIELD_IDS) {
+            const element = getOptionalElement<HTMLInputElement | HTMLSelectElement>(ADVANCED_SIZING_DOM_IDS[key]);
+            if (!element) continue;
+            raw[key] = element instanceof HTMLInputElement && element.type === "checkbox"
+                ? element.checked
+                : element.value;
+        }
+
+        return resolveCapitalSettingsFromRaw(raw);
     }
 
     public getBacktestSettings(): BacktestSettings {

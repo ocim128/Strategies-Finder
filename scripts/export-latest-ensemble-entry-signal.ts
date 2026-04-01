@@ -269,7 +269,7 @@ async function main(): Promise<void> {
         getStrategy: (strategyKey) => strategies[strategyKey],
         directionOverride: config.directionOverride,
     });
-    const capitalSettings = resolveCapitalSettingsFromRaw(resolved.anchorConfig.backtestSettings);
+    const capitalSettings = resolveCapitalSettingsFromRaw(resolved.anchorConfig.backtestSettings as unknown as Record<string, unknown>);
     const result = evaluateLatestEntrySignalFromPreparedSignals({
         strategyKey: `ensemble_recipe:${recipe.mode}`,
         strategyName: recipe.name,

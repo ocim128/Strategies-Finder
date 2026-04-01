@@ -20,8 +20,9 @@ import { runBacktest } from "./strategies/backtest/backtest-engine";
 import { getResampleBucketStart, resampleOHLCV, type ResampleOptions } from "./strategies/resample-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { mergeStrategySignals } from "./signal-merge";
-import { toBooleanLike, toFiniteNumber } from "./settings-parse-utils";
+import { toBooleanLike } from "./settings-parse-utils";
 import { isTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
+import { resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
 
 export interface EntrySignalEvaluationRequest {
     strategyKey: string;
@@ -129,39 +130,15 @@ function toSizingMode(value: unknown): TradeSizingMode | null {
 function resolveEvaluationCapitalSettings(request: EntrySignalEvaluationRequest): CapitalSettings {
     const rawBacktestSettings = request.backtestSettings as Record<string, unknown> | undefined;
     const rawCapitalSettings = request.capitalSettings as Record<string, unknown> | undefined;
+    const explicitSizingMode = toSizingMode(rawCapitalSettings?.sizingMode) ?? toSizingMode(rawBacktestSettings?.sizingMode);
+    const fixedTradeToggle = toBooleanLike(rawCapitalSettings?.fixedTradeToggle) ?? toBooleanLike(rawBacktestSettings?.fixedTradeToggle);
 
-    const initialCapital = Math.max(
-        0,
-        toFiniteNumber(rawCapitalSettings?.initialCapital)
-        ?? toFiniteNumber(rawBacktestSettings?.initialCapital)
-        ?? EVALUATION_CAPITAL_DEFAULTS.initialCapital
-    );
-    const positionSize = Math.max(
-        0,
-        toFiniteNumber(rawCapitalSettings?.positionSize)
-        ?? toFiniteNumber(rawBacktestSettings?.positionSize)
-        ?? EVALUATION_CAPITAL_DEFAULTS.positionSize
-    );
-    const commission = Math.max(
-        0,
-        toFiniteNumber(rawCapitalSettings?.commission)
-        ?? toFiniteNumber(rawBacktestSettings?.commission)
-        ?? EVALUATION_CAPITAL_DEFAULTS.commission
-    );
-    const fixedTradeAmount = Math.max(
-        0,
-        toFiniteNumber(rawCapitalSettings?.fixedTradeAmount)
-        ?? toFiniteNumber(rawBacktestSettings?.fixedTradeAmount)
-        ?? EVALUATION_CAPITAL_DEFAULTS.fixedTradeAmount
-    );
-
-    const explicitSizingMode = toSizingMode(rawCapitalSettings?.sizingMode)
-        ?? toSizingMode(rawBacktestSettings?.sizingMode);
-    const fixedTradeToggle = toBooleanLike(rawCapitalSettings?.fixedTradeToggle)
-        ?? toBooleanLike(rawBacktestSettings?.fixedTradeToggle);
-    const sizingMode = explicitSizingMode ?? (fixedTradeToggle === true ? "fixed" : EVALUATION_CAPITAL_DEFAULTS.sizingMode);
-
-    return { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount };
+    return resolveCapitalSettingsFromRaw({
+        ...rawBacktestSettings,
+        ...rawCapitalSettings,
+        sizingMode: explicitSizingMode ?? rawCapitalSettings?.sizingMode ?? rawBacktestSettings?.sizingMode,
+        fixedTradeToggle,
+    }, EVALUATION_CAPITAL_DEFAULTS);
 }
 
 function toNumericTimeData(data: OHLCVData[]): OHLCVData[] | null {
@@ -583,6 +560,7 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
         {
             mode: capitalSettings.sizingMode,
             fixedTradeAmount: capitalSettings.fixedTradeAmount,
+            advancedSizing: capitalSettings.advancedSizing,
         }
     );
 

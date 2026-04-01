@@ -61,6 +61,7 @@ export function buildEnsembleRecipeSignalArtifact(
         {
             mode: capitalSettings.sizingMode,
             fixedTradeAmount: capitalSettings.fixedTradeAmount,
+            advancedSizing: capitalSettings.advancedSizing,
         }
     );
     const entrySignals = buildExecutedEntrySignals(result.trades, candles);

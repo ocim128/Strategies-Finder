@@ -1,6 +1,8 @@
 import { getOptionalElement, getRequiredElement } from "./dom-utils";
 import type { BacktestResult } from "./strategies/index";
 
+const ACTIVE_BACKTEST_UI_TOKENS = new Map<string, number>();
+
 export type BacktestRunHandle = {
     setStatus(message: string): void;
     setProgress(width: string, text: string): void;
@@ -33,6 +35,9 @@ export function createDomBacktestRunHandle(
     const progressFill = getRequiredElement("progressFill");
     const progressText = getRequiredElement("progressText");
     const statusEl = getRequiredElement("strategyStatus");
+    const nextToken = (ACTIVE_BACKTEST_UI_TOKENS.get(buttonId) ?? 0) + 1;
+    ACTIVE_BACKTEST_UI_TOKENS.set(buttonId, nextToken);
+    const isActive = () => ACTIVE_BACKTEST_UI_TOKENS.get(buttonId) === nextToken;
 
     setBacktestButtonLoading(buttonId, true, manageAriaBusy);
     progressContainer.classList.add("active");
@@ -40,13 +45,16 @@ export function createDomBacktestRunHandle(
 
     return {
         setStatus(message: string) {
+            if (!isActive()) return;
             statusEl.textContent = message;
         },
         setProgress(width: string, text: string) {
+            if (!isActive()) return;
             progressFill.style.width = width;
             progressText.textContent = text;
         },
         finish() {
+            if (!isActive()) return;
             progressContainer.classList.remove("active");
             progressFill.style.width = "0%";
             setBacktestButtonLoading(buttonId, false, manageAriaBusy);

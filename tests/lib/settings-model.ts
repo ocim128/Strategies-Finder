@@ -6,9 +6,10 @@ import type { ChartMode } from "./state";
 import { parseInputNumber } from "./dom-input-readers";
 import { readBoolean as readBooleanValue, readNumber as readNumberValue } from "./settings-parse-utils";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
+import { ADVANCED_SIZING_DEFAULTS, coerceAdvancedSizingFieldValue } from "./advanced-sizing-settings";
 
 import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, TradeDirection, TradeFilterMode } from "./types/strategies";
-import { isTradeSizingMode, type TradeSizingMode } from "./types/backtest";
+import { isTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from "./types/backtest";
 import { CAPITAL_DEFAULTS, EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw, SNAPSHOT_CONFIGS } from "./backtest-settings-resolver";
 import { getLegacyCompatibleTradeFilterModeValue, getLegacyCompatibleTradeFilterToggleValue } from "./legacy-settings-compat";
 
@@ -33,6 +34,23 @@ export interface BacktestSettingsData extends SnapshotFilterFields {
     fixedTradeToggle: boolean;
     sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
+    kellyFraction: NonNullable<AdvancedSizingSettings["kellyFraction"]>;
+    kellyWinRateCap: number;
+    kellyProfitFactorCap: number;
+    volTargetAnnual: number;
+    volLookbackBars: number;
+    volScalingMethod: NonNullable<AdvancedSizingSettings["volScalingMethod"]>;
+    riskParityLookback: number;
+    riskParityMethod: NonNullable<AdvancedSizingSettings["riskParityMethod"]>;
+    martingaleMultiplier: number;
+    martingaleMaxSequence: number;
+    martingaleResetOnWin: boolean;
+    martingaleResetOnLoss: boolean;
+    martingaleBaseSize: NonNullable<AdvancedSizingSettings["martingaleBaseSize"]>;
+    optimalFLookback: number;
+    optimalFBootstrapSamples: number;
+    secureFConfidence: number;
+    secureFMethod: NonNullable<AdvancedSizingSettings["secureFMethod"]>;
 
     // Engine preference
     useRustEngine: boolean;
@@ -198,6 +216,7 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     fixedTradeToggle: true,
     sizingMode: "fixed",
     fixedTradeAmount: CAPITAL_DEFAULTS.fixedTradeAmount,
+    ...ADVANCED_SIZING_DEFAULTS,
     useRustEngine: true,
 
     // Risk management
@@ -277,6 +296,23 @@ const UI_ONLY_BACKTEST_SETTING_KEYS = new Set<keyof BacktestSettingsData>([
     'fixedTradeToggle',
     'sizingMode',
     'fixedTradeAmount',
+    'kellyFraction',
+    'kellyWinRateCap',
+    'kellyProfitFactorCap',
+    'volTargetAnnual',
+    'volLookbackBars',
+    'volScalingMethod',
+    'riskParityLookback',
+    'riskParityMethod',
+    'martingaleMultiplier',
+    'martingaleMaxSequence',
+    'martingaleResetOnWin',
+    'martingaleResetOnLoss',
+    'martingaleBaseSize',
+    'optimalFLookback',
+    'optimalFBootstrapSamples',
+    'secureFConfidence',
+    'secureFMethod',
     'useRustEngine',
     'riskSettingsToggle',
     'tradeFilterSettingsToggle',
@@ -330,6 +366,23 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
     normalized.fixedTradeToggle = fixedTradeToggle;
     normalized.sizingMode = sizingMode;
     normalized.fixedTradeAmount = readNumber(source.fixedTradeAmount, DEFAULT_BACKTEST_SETTINGS.fixedTradeAmount);
+    normalized.kellyFraction = coerceAdvancedSizingFieldValue("kellyFraction", source.kellyFraction) as BacktestSettingsData["kellyFraction"];
+    normalized.kellyWinRateCap = coerceAdvancedSizingFieldValue("kellyWinRateCap", source.kellyWinRateCap) as number;
+    normalized.kellyProfitFactorCap = coerceAdvancedSizingFieldValue("kellyProfitFactorCap", source.kellyProfitFactorCap) as number;
+    normalized.volTargetAnnual = coerceAdvancedSizingFieldValue("volTargetAnnual", source.volTargetAnnual) as number;
+    normalized.volLookbackBars = coerceAdvancedSizingFieldValue("volLookbackBars", source.volLookbackBars) as number;
+    normalized.volScalingMethod = coerceAdvancedSizingFieldValue("volScalingMethod", source.volScalingMethod) as BacktestSettingsData["volScalingMethod"];
+    normalized.riskParityLookback = coerceAdvancedSizingFieldValue("riskParityLookback", source.riskParityLookback) as number;
+    normalized.riskParityMethod = coerceAdvancedSizingFieldValue("riskParityMethod", source.riskParityMethod) as BacktestSettingsData["riskParityMethod"];
+    normalized.martingaleMultiplier = coerceAdvancedSizingFieldValue("martingaleMultiplier", source.martingaleMultiplier) as number;
+    normalized.martingaleMaxSequence = coerceAdvancedSizingFieldValue("martingaleMaxSequence", source.martingaleMaxSequence) as number;
+    normalized.martingaleResetOnWin = coerceAdvancedSizingFieldValue("martingaleResetOnWin", source.martingaleResetOnWin) as boolean;
+    normalized.martingaleResetOnLoss = coerceAdvancedSizingFieldValue("martingaleResetOnLoss", source.martingaleResetOnLoss) as boolean;
+    normalized.martingaleBaseSize = coerceAdvancedSizingFieldValue("martingaleBaseSize", source.martingaleBaseSize) as BacktestSettingsData["martingaleBaseSize"];
+    normalized.optimalFLookback = coerceAdvancedSizingFieldValue("optimalFLookback", source.optimalFLookback) as number;
+    normalized.optimalFBootstrapSamples = coerceAdvancedSizingFieldValue("optimalFBootstrapSamples", source.optimalFBootstrapSamples) as number;
+    normalized.secureFConfidence = coerceAdvancedSizingFieldValue("secureFConfidence", source.secureFConfidence) as number;
+    normalized.secureFMethod = coerceAdvancedSizingFieldValue("secureFMethod", source.secureFMethod) as BacktestSettingsData["secureFMethod"];
     normalized.useRustEngine = readBoolean(source.useRustEngine, DEFAULT_BACKTEST_SETTINGS.useRustEngine);
     normalized.riskSettingsToggle = readBoolean(source.riskSettingsToggle, DEFAULT_BACKTEST_SETTINGS.riskSettingsToggle);
     normalized.tradeFilterSettingsToggle = readBoolean(

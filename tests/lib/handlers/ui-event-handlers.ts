@@ -17,6 +17,7 @@ import { isTwoHourInterval } from "../interval-utils";
 import { strategyPanelController } from "../strategy-panel-controller";
 import { STRATEGY_PANEL_SETTINGS_SECTIONS } from "../strategy-panel-settings-registry";
 import { parseInputNumber } from "../dom-input-readers";
+import { ADVANCED_SIZING_SUBSECTION_IDS } from "../advanced-sizing-dom";
 import {
     setChartMode,
     setCurrentInterval,
@@ -967,21 +968,48 @@ export function setupEventHandlers() {
     const tradeSizingModeInput = dom.tradeSizingMode;
     const fixedTradeAmountInput = dom.fixedTradeAmount;
     const positionSizeInput = dom.positionSize;
+    const advancedSizingPanel = dom.advancedSizingSettingsPanel;
+    const martingaleBaseSizeInput = dom.martingaleBaseSize;
+    const advancedSizingSubsections = [
+        dom.kellySettings,
+        dom.volatilityTargetingSettings,
+        dom.riskParitySettings,
+        dom.martingaleSettings,
+        dom.optimalFSettings,
+    ];
 
     const applyTradeSizingMode = () => {
-        const useFixedAmount = fixedTradeToggle.checked;
-        initialCapitalGroup.classList.toggle('is-hidden', useFixedAmount);
-        fixedTradeGroup.classList.toggle('is-hidden', !useFixedAmount);
-        tradeSizingModeGroup.classList.toggle('is-hidden', !useFixedAmount);
-        positionSizeGroup.classList.toggle('is-hidden', useFixedAmount);
+        const useAlternativeSizing = fixedTradeToggle.checked;
+        const selectedMode = useAlternativeSizing ? tradeSizingModeInput.value : 'percent';
+        const usesDirectFractionSizing = selectedMode === 'kelly_criterion'
+            || selectedMode === 'optimal_f'
+            || selectedMode === 'secure_f';
+        const usesPercentBase = useAlternativeSizing
+            && (selectedMode === 'martingale' || selectedMode === 'anti_martingale')
+            && martingaleBaseSizeInput.value === 'percent';
 
-        initialCapitalInput.disabled = useFixedAmount;
-        tradeSizingModeInput.disabled = !useFixedAmount;
-        fixedTradeAmountInput.disabled = !useFixedAmount;
-        positionSizeInput.disabled = useFixedAmount;
+        initialCapitalGroup.classList.toggle('is-hidden', false);
+        fixedTradeGroup.classList.toggle('is-hidden', !useAlternativeSizing || usesDirectFractionSizing || usesPercentBase);
+        tradeSizingModeGroup.classList.toggle('is-hidden', !useAlternativeSizing);
+        positionSizeGroup.classList.toggle('is-hidden', useAlternativeSizing && !usesPercentBase);
+
+        initialCapitalInput.disabled = false;
+        tradeSizingModeInput.disabled = !useAlternativeSizing;
+        fixedTradeAmountInput.disabled = !useAlternativeSizing || usesDirectFractionSizing || usesPercentBase;
+        positionSizeInput.disabled = useAlternativeSizing && !usesPercentBase;
+
+        const activeSubsectionId = ADVANCED_SIZING_SUBSECTION_IDS[selectedMode as keyof typeof ADVANCED_SIZING_SUBSECTION_IDS];
+        const hasAdvancedPanel = useAlternativeSizing && Boolean(activeSubsectionId);
+        advancedSizingPanel.classList.toggle('is-hidden', !hasAdvancedPanel);
+
+        advancedSizingSubsections.forEach((section) => {
+            section.classList.toggle('is-hidden', !hasAdvancedPanel || section.id !== activeSubsectionId);
+        });
     };
 
     fixedTradeToggle.addEventListener('change', applyTradeSizingMode);
+    tradeSizingModeInput.addEventListener('change', applyTradeSizingMode);
+    martingaleBaseSizeInput.addEventListener('change', applyTradeSizingMode);
     applyTradeSizingMode();
 
     // Keyboard shortcuts

@@ -755,7 +755,11 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
                 capitalSettings.positionSize,
                 capitalSettings.commission,
                 rustSettings,
-                { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount },
+                {
+                    mode: capitalSettings.sizingMode,
+                    fixedTradeAmount: capitalSettings.fixedTradeAmount,
+                    advancedSizing: capitalSettings.advancedSizing,
+                },
                 rustCompactMode
             )
             : await rustEngine.runBatchBacktest(
@@ -765,7 +769,11 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
                 capitalSettings.positionSize,
                 capitalSettings.commission,
                 rustSettings,
-                { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount },
+                {
+                    mode: capitalSettings.sizingMode,
+                    fixedTradeAmount: capitalSettings.fixedTradeAmount,
+                    advancedSizing: capitalSettings.advancedSizing,
+                },
                 rustCompactMode
             );
 

@@ -11,7 +11,7 @@
 
 import { OHLCVData, Signal, BacktestResult, BacktestSettings } from './types/strategies';
 import { debugLogger } from './debug-logger';
-import { isSmartTradeSizingMode, type TradeSizingMode } from './types/backtest';
+import { isSmartTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from './types/backtest';
 
 const rustLog = {
     info: (message: string, ...data: unknown[]) => debugLogger.info(message, data.length <= 1 ? data[0] : data),
@@ -39,6 +39,7 @@ interface RustBacktestRequest {
     sizing?: {
         mode: TradeSizingMode;
         fixedTradeAmount: number;
+        advancedSizing?: AdvancedSizingSettings;
     };
 }
 
@@ -267,7 +268,7 @@ export class RustEngineClient {
         positionSizePercent: number,
         commissionPercent: number,
         settings: BacktestSettings,
-        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number }
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings }
     ): Promise<BacktestResult | null> {
         if (!await this.checkHealth()) {
             return null;
@@ -332,7 +333,7 @@ export class RustEngineClient {
         positionSizePercent: number,
         commissionPercent: number,
         baseSettings: BacktestSettings,
-        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number },
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
         compact: boolean = true
     ): Promise<{ results: Array<{ id: string; result: BacktestResult }>; processingTimeMs: number } | null> {
         if (!await this.checkHealth()) {
@@ -451,7 +452,7 @@ export class RustEngineClient {
         positionSizePercent: number,
         commissionPercent: number,
         baseSettings: BacktestSettings,
-        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number },
+        sizing?: { mode: TradeSizingMode; fixedTradeAmount: number; advancedSizing?: AdvancedSizingSettings },
         compact: boolean = true
     ): Promise<{ results: Array<{ id: string; result: BacktestResult }>; processingTimeMs: number } | null> {
         if (!await this.checkHealth()) {

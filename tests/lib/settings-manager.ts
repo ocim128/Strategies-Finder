@@ -28,7 +28,6 @@ import {
     normalizeStoredAppSettings,
     normalizeStoredBacktestSettings,
     normalizeStoredStrategyConfig,
-    resolveTradeSizingModeValue,
     type AppSettings,
     type BacktestSettingsData,
     type EnsembleSignalRecipe,
@@ -48,6 +47,7 @@ export {
 export type { AppSettings, BacktestSettingsData, EnsembleSignalRecipe, StrategyConfig } from "./settings-model";
 
 import type { CapitalSettings } from "./types/backtest";
+import { resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
 
 export function sortStrategyConfigsNewestFirst(configs: readonly StrategyConfig[]): StrategyConfig[] {
     return [...configs].sort((left, right) => {
@@ -390,14 +390,7 @@ class SettingsManager {
      * without touching the DOM. Used by combined-strategy flow.
      */
     public resolveCapitalFromConfig(config: StrategyConfig): CapitalSettings {
-        const s = config.backtestSettings;
-        return {
-            initialCapital: Math.max(0, s.initialCapital ?? 10000),
-            positionSize: Math.max(0, s.positionSize ?? 100),
-            commission: Math.max(0, s.commission ?? 0.1),
-            sizingMode: this.resolveTradeSizingModeValue(s.sizingMode, s.fixedTradeToggle ? 'fixed' : 'percent'),
-            fixedTradeAmount: Math.max(0, s.fixedTradeAmount ?? 1000),
-        };
+        return resolveCapitalSettingsFromRaw(config.backtestSettings as unknown as Record<string, unknown>);
     }
 
     // ========================================================================
@@ -537,15 +530,12 @@ class SettingsManager {
         }
     }
 
-    private resolveTradeSizingModeValue(value: unknown, fallback?: BacktestSettingsData["sizingMode"]) {
-        return resolveTradeSizingModeValue(value, DEFAULT_BACKTEST_SETTINGS, fallback);
-    }
-
     private triggerChangeEvents(): void {
         const dom = this.getDom();
         const toggleIds = [
             'fixedTradeToggle',
             'tradeSizingMode',
+            'martingaleBaseSize',
             'riskSettingsToggle',
             'tradeFilterSettingsToggle',
             'invertSignalsToggle',

@@ -8,7 +8,7 @@ import {
     type Strategy,
     type StrategyParams,
 } from "../strategies/index";
-import type { TradeSizingMode } from "../types/backtest";
+import type { AdvancedSizingSettings, TradeSizingMode } from "../types/backtest";
 import {
     computeParamRange,
     createSeededRandom,
@@ -52,6 +52,7 @@ export interface GeneticBacktestConfig {
     commission: number;
     sizingMode: TradeSizingMode;
     fixedTradeAmount: number;
+    advancedSizing?: AdvancedSizingSettings;
     minTrades: number;
 }
 
@@ -295,7 +296,11 @@ export async function runGeneticOptimization(input: GeneticOptimizerInput): Prom
             cfg.backtest.positionSize,
             cfg.backtest.commission,
             backtestSettings,
-            { mode: cfg.backtest.sizingMode, fixedTradeAmount: cfg.backtest.fixedTradeAmount },
+            {
+                mode: cfg.backtest.sizingMode,
+                fixedTradeAmount: cfg.backtest.fixedTradeAmount,
+                advancedSizing: cfg.backtest.advancedSizing,
+            },
             precomputed
         );
 

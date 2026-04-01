@@ -413,7 +413,11 @@ class WalkForwardService {
                 capitalSettings.positionSize,
                 capitalSettings.commission,
                 backtestSettings,
-                { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount }
+                {
+                    mode: capitalSettings.sizingMode,
+                    fixedTradeAmount: capitalSettings.fixedTradeAmount,
+                    advancedSizing: capitalSettings.advancedSizing,
+                }
             );
             const totalTrades = Math.max(0, result.totalTrades);
             return {
@@ -473,7 +477,11 @@ class WalkForwardService {
         return this.withRunGuard("analysis", "No data loaded for walk-forward analysis", async ({ signal, data, strategyKey, strategy }) => {
             const capitalSettings = backtestService.getCapitalSettings();
             const backtestSettings = backtestService.getBacktestSettings();
-            const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
+            const sizing = {
+                mode: capitalSettings.sizingMode,
+                fixedTradeAmount: capitalSettings.fixedTradeAmount,
+                advancedSizing: capitalSettings.advancedSizing,
+            };
 
             this.setLoading(true);
 
@@ -626,7 +634,11 @@ class WalkForwardService {
         return this.withRunGuard("quick", "No data loaded for walk-forward analysis", async ({ signal, data, strategyKey, strategy }) => {
             const capitalSettings = backtestService.getCapitalSettings();
             const backtestSettings = backtestService.getBacktestSettings();
-            const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
+            const sizing = {
+                mode: capitalSettings.sizingMode,
+                fixedTradeAmount: capitalSettings.fixedTradeAmount,
+                advancedSizing: capitalSettings.advancedSizing,
+            };
 
             this.setLoading(true, "quick");
 
@@ -714,7 +726,11 @@ class WalkForwardService {
         return this.withRunGuard("validation", "No data loaded for candidate validation", async ({ signal, data, strategyKey, strategy }) => {
             const capitalSettings = backtestService.getCapitalSettings();
             const backtestSettings = backtestService.getBacktestSettings();
-            const sizing = { mode: capitalSettings.sizingMode, fixedTradeAmount: capitalSettings.fixedTradeAmount };
+            const sizing = {
+                mode: capitalSettings.sizingMode,
+                fixedTradeAmount: capitalSettings.fixedTradeAmount,
+                advancedSizing: capitalSettings.advancedSizing,
+            };
 
             const fixedParams = this.normalizeStrategyParams(strategy, paramManager.getValues(strategy));
             const seedInput = this.readStringInput("wf-validation-seeds", DEFAULT_CANDIDATE_VALIDATION_SEEDS.join(","));

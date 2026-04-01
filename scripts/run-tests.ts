@@ -40,6 +40,7 @@ type TestRunSummary = {
 
 const TEST_FILES = [
     "tests/app-bootstrap.spec.ts",
+    "tests/advanced-sizing.spec.ts",
     "tests/backtest-capital-settings.spec.ts",
     "tests/strategy-calculations.spec.ts",
     "tests/time-parity.spec.ts",
@@ -49,6 +50,7 @@ const TEST_FILES = [
     "tests/strategies-lib/noise_to_signal_efficiency_breakout.spec.ts",
     "tests/strategies-lib/candle-pattern-persistence-score.spec.ts",
     "tests/strategies-lib/candle-pattern-persistence-score-stoch-mid.spec.ts",
+    "tests/strategies-lib/close_percentile_range_entry.spec.ts",
     "tests/strategies-lib/median_deviation_streak.spec.ts",
     "tests/strategies-lib/candle-pattern-persistence-score-median-deviation-streak.spec.ts",
     "tests/strategies-lib/prepared-execution-parity.spec.ts",

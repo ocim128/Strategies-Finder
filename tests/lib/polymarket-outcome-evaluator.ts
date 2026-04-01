@@ -2,6 +2,7 @@ import { parseTimeToUnixSeconds } from './time-normalization';
 import { applySignalPolarity, precomputeIndicators, runBacktest } from './strategies/index';
 import { CAPITAL_DEFAULTS } from './backtest-settings-resolver';
 import { evaluatePolymarketBacktestTrades, evaluatePolymarketBacktestTrades1mBridge } from './polymarket-trade-annotations';
+import { resolveCapitalSettingsFromRaw } from './backtest-capital-settings';
 import type { CapitalSettings } from './types/backtest';
 import type { BacktestSettings, OHLCVData, Strategy, StrategyParams } from './types/strategies';
 import type {
@@ -17,13 +18,16 @@ function barTimeToSec(bar: OHLCVData): number | null {
 function resolvePolymarketCapitalSettings(
     capitalSettings?: Partial<CapitalSettings>
 ): CapitalSettings {
-    return {
-        initialCapital: Math.max(0, Number(capitalSettings?.initialCapital ?? CAPITAL_DEFAULTS.initialCapital) || CAPITAL_DEFAULTS.initialCapital),
-        positionSize: Math.max(0, Number(capitalSettings?.positionSize ?? CAPITAL_DEFAULTS.positionSize) || CAPITAL_DEFAULTS.positionSize),
-        commission: Math.max(0, Number(capitalSettings?.commission ?? CAPITAL_DEFAULTS.commission) || CAPITAL_DEFAULTS.commission),
-        sizingMode: capitalSettings?.sizingMode ?? 'percent',
-        fixedTradeAmount: Math.max(0, Number(capitalSettings?.fixedTradeAmount ?? CAPITAL_DEFAULTS.fixedTradeAmount) || CAPITAL_DEFAULTS.fixedTradeAmount),
-    };
+    return resolveCapitalSettingsFromRaw({
+        ...capitalSettings,
+        fixedTradeToggle: capitalSettings?.sizingMode && capitalSettings.sizingMode !== "percent",
+    }, {
+        initialCapital: CAPITAL_DEFAULTS.initialCapital,
+        positionSize: CAPITAL_DEFAULTS.positionSize,
+        commission: CAPITAL_DEFAULTS.commission,
+        fixedTradeAmount: CAPITAL_DEFAULTS.fixedTradeAmount,
+        sizingMode: "percent",
+    });
 }
 
 function resolvePolymarketBacktestSettings(options: PolymarketEvalOptions): BacktestSettings {
@@ -80,6 +84,7 @@ export function evaluatePolymarketOutcomes(
         {
             mode: effectiveCapital.sizingMode,
             fixedTradeAmount: effectiveCapital.fixedTradeAmount,
+            advancedSizing: effectiveCapital.advancedSizing,
         },
         precomputed
     );

@@ -35,30 +35,33 @@ export class TradesRenderer {
         jumpToTrade: (time: Time) => void,
         formatPrice: (p: number) => string,
         formatDate: (t: Time) => string
-    ) {
+    ): Promise<boolean> {
         const container = this.getDom().tradesList;
         this.jumpToTrade = jumpToTrade;
         this.ensureTradeJumpHandlersBound();
         this.cancelPendingDeferredRenders();
-        this.tradeRenderGeneration += 1;
+        const renderGeneration = ++this.tradeRenderGeneration;
         container.classList.remove('trades-list-parity');
 
         // Load Polymarket outcomes on-demand for Trades panel display
         const annotatedTrades = await this.ensurePolymarketOutcomes(trades);
+        if (renderGeneration !== this.tradeRenderGeneration) {
+            return false;
+        }
 
         if (annotatedTrades.length === 0) {
             setVisible('emptyTrades', true);
             setVisible('tradesSummary', false);
             container.innerHTML = '';
-            return;
+            return true;
         }
 
         setVisible('emptyTrades', false);
         setVisible('tradesSummary', true);
         this.updateSummary(annotatedTrades);
 
-        const renderGeneration = this.tradeRenderGeneration;
         this.renderTradeItemsProgressively(renderGeneration, container, annotatedTrades, formatPrice, formatDate);
+        return true;
     }
 
     private async ensurePolymarketOutcomes(trades: Trade[]): Promise<Trade[]> {
@@ -177,12 +180,12 @@ export class TradesRenderer {
         jumpToTrade: (time: Time) => void,
         formatPrice: (p: number) => string,
         formatDate: (t: Time) => string
-    ): Promise<void> {
+    ): Promise<boolean> {
         const container = this.getDom().tradesList;
         this.jumpToTrade = jumpToTrade;
         this.ensureTradeJumpHandlersBound();
         this.cancelPendingDeferredRenders();
-        this.tradeRenderGeneration += 1;
+        const renderGeneration = ++this.tradeRenderGeneration;
         container.classList.add('trades-list-parity');
 
         // Load Polymarket outcomes on-demand for both trade sets
@@ -190,13 +193,16 @@ export class TradesRenderer {
             this.ensurePolymarketOutcomes(oddTrades),
             this.ensurePolymarketOutcomes(evenTrades),
         ]);
+        if (renderGeneration !== this.tradeRenderGeneration) {
+            return false;
+        }
 
         const combined = [...annotatedOdd, ...annotatedEven];
         if (combined.length === 0) {
             setVisible('emptyTrades', true);
             setVisible('tradesSummary', false);
             container.innerHTML = '';
-            return;
+            return true;
         }
 
         setVisible('emptyTrades', false);
@@ -225,7 +231,6 @@ export class TradesRenderer {
             </div>
         `;
 
-        const renderGeneration = this.tradeRenderGeneration;
         const oddContainer = container.querySelector<HTMLElement>('[data-parity-list="odd"]');
         const evenContainer = container.querySelector<HTMLElement>('[data-parity-list="even"]');
 
@@ -235,6 +240,7 @@ export class TradesRenderer {
         if (evenContainer) {
             this.renderTradeItemsProgressively(renderGeneration, evenContainer, annotatedEven, formatPrice, formatDate);
         }
+        return true;
     }
 
     private formatDuration(ms: number): string {

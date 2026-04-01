@@ -44,8 +44,8 @@ export const close_percentile_range_entry: Strategy = {
 		// Compute trailing high/low
 		const { highest, lowest } = buildTrailingHighLow(cleanData, normalizedParams.rangeWindow, false);
 
-		// Compute close position within range as percentile
-		const closePercentiles: (number | null)[] = [];
+		// Keep the derived series aligned to source bar indexes.
+		const closePercentiles: (number | null)[] = new Array(cleanData.length).fill(null);
 
 		for (let i = normalizedParams.rangeWindow - 1; i < cleanData.length; i++) {
 			const high = highest[i];
@@ -53,13 +53,12 @@ export const close_percentile_range_entry: Strategy = {
 			const close = closes[i];
 
 			if (high === null || low === null || high === low) {
-				closePercentiles.push(null);
 				continue;
 			}
 
 			// Position as percentage (0 = low, 100 = high)
 			const position = ((close - low) / (high - low)) * 100;
-			closePercentiles.push(position);
+			closePercentiles[i] = position;
 		}
 
 		// Track extreme state
@@ -70,8 +69,6 @@ export const close_percentile_range_entry: Strategy = {
 		return createSignalLoop(cleanData, [highest, lowest, closePercentiles], (i) => {
 			const high = highest[i];
 			const low = lowest[i];
-			const close = closes[i];
-			const prevClose = closes[i - 1];
 			const percentile = closePercentiles[i];
 
 			if (high === null || low === null || percentile === null) return null;

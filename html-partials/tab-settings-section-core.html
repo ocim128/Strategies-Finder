@@ -426,22 +426,31 @@
                 <div class="param-group" id="initialCapitalGroup">
                     <label class="param-label">Initial Capital ($)</label>
                     <input type="number" class="param-input" id="initialCapital" value="10000" min="100">
+                    <div class="param-hint">Account equity used for compounding, Kelly, and Optimal f calculations.</div>
                 </div>
                 <div class="param-group" id="fixedTradeGroup">
-                    <label class="param-label">Fixed Trade Amount ($)</label>
+                    <label class="param-label">Base Trade Amount ($)</label>
                     <input type="number" class="param-input" id="fixedTradeAmount" value="1000" min="1">
+                    <div class="param-hint">Used by fixed-dollar and multiplier-based advanced sizing modes.</div>
                 </div>
             </div>
 
             <div class="param-row">
                 <div class="param-group" id="tradeSizingModeGroup">
-                    <label class="param-label">Dollar Sizing Mode</label>
+                    <label class="param-label">Alternative Sizing Mode</label>
                     <select class="param-input" id="tradeSizingMode">
                         <option value="fixed" selected>Fixed Amount</option>
                         <option value="smart_fixed_velocity_memory">Smart Fixed Velocity Memory</option>
                         <option value="smart_fixed_quality_x_velocity">Smart Fixed Quality x Velocity</option>
+                        <option value="kelly_criterion">Kelly Criterion</option>
+                        <option value="volatility_targeting">Volatility Targeting</option>
+                        <option value="risk_parity">Risk Parity</option>
+                        <option value="martingale">Martingale</option>
+                        <option value="anti_martingale">Anti-Martingale</option>
+                        <option value="optimal_f">Optimal f</option>
+                        <option value="secure_f">Secure f</option>
                     </select>
-                    <div class="param-hint">Keeps the $1000 base amount, then adjusts it from recent trade path quality. Entries and exits stay the same; only the deployed dollar size changes.</div>
+                    <div class="param-hint">Percent sizing stays available when this section toggle is off. When enabled, multiplier-based modes use the base trade amount and direct-fraction modes size directly from capital.</div>
                 </div>
             </div>
 
@@ -453,6 +462,90 @@
                 <div class="param-group">
                     <label class="param-label">Commission (%)</label>
                     <input type="number" class="param-input" id="commission" value="0.1" min="0" step="0.01">
+                </div>
+            </div>
+
+            <div class="param-row is-hidden" id="advancedSizingSettingsPanel">
+                <div class="param-group is-hidden" id="kellySettings">
+                    <label class="param-label">Kelly Fraction</label>
+                    <select class="param-input" id="kellyFraction">
+                        <option value="full">Full Kelly</option>
+                        <option value="half" selected>Half Kelly</option>
+                        <option value="quarter">Quarter Kelly</option>
+                    </select>
+                    <label class="param-label" style="margin-top: 8px;">Win Rate Trust Cap</label>
+                    <input type="number" class="param-input" id="kellyWinRateCap" value="0.7" min="0.5" max="0.95" step="0.05">
+                    <label class="param-label" style="margin-top: 8px;">Min Profit Factor</label>
+                    <input type="number" class="param-input" id="kellyProfitFactorCap" value="1.2" min="0.5" step="0.1">
+                    <div class="param-hint">Uses rolling closed-trade stats. Until enough history exists, sizing falls back to the base allocation.</div>
+                </div>
+
+                <div class="param-group is-hidden" id="volatilityTargetingSettings">
+                    <label class="param-label">Target Annual Volatility</label>
+                    <input type="number" class="param-input" id="volTargetAnnual" value="0.15" min="0.01" max="2" step="0.01">
+                    <label class="param-label" style="margin-top: 8px;">Volatility Lookback (bars)</label>
+                    <input type="number" class="param-input" id="volLookbackBars" value="60" min="5" step="1">
+                    <label class="param-label" style="margin-top: 8px;">Scaling Method</label>
+                    <select class="param-input" id="volScalingMethod">
+                        <option value="ewma" selected>EWMA</option>
+                        <option value="sma">SMA</option>
+                        <option value="expanding">Expanding</option>
+                    </select>
+                    <div class="param-hint">Scales the base allocation down in high-volatility regimes and up in calmer conditions.</div>
+                </div>
+
+                <div class="param-group is-hidden" id="riskParitySettings">
+                    <label class="param-label">Risk Lookback (bars)</label>
+                    <input type="number" class="param-input" id="riskParityLookback" value="100" min="5" step="1">
+                    <label class="param-label" style="margin-top: 8px;">Risk Method</label>
+                    <select class="param-input" id="riskParityMethod">
+                        <option value="historical_std" selected>Historical Std</option>
+                        <option value="var">Value at Risk</option>
+                        <option value="expected_shortfall">Expected Shortfall</option>
+                    </select>
+                    <div class="param-hint">Single-symbol approximation of equal-risk allocation using recent realized risk.</div>
+                </div>
+
+                <div class="param-group is-hidden" id="martingaleSettings">
+                    <label class="param-label">Multiplier</label>
+                    <input type="number" class="param-input" id="martingaleMultiplier" value="2" min="1" step="0.1">
+                    <label class="param-label" style="margin-top: 8px;">Max Sequence</label>
+                    <input type="number" class="param-input" id="martingaleMaxSequence" value="4" min="0" step="1">
+                    <label class="param-label" style="margin-top: 8px;">Base Size Mode</label>
+                    <select class="param-input" id="martingaleBaseSize">
+                        <option value="fixed" selected>Fixed $ Base</option>
+                        <option value="percent">Percent Base</option>
+                    </select>
+                    <div style="display:flex;gap:12px;margin-top:8px;">
+                        <label class="section-toggle" aria-label="Reset martingale on win">
+                            <input type="checkbox" id="martingaleResetOnWin" checked>
+                            <span class="section-toggle-track"></span>
+                        </label>
+                        <span class="param-hint" style="margin:0;">Reset on win</span>
+                    </div>
+                    <div style="display:flex;gap:12px;margin-top:8px;">
+                        <label class="section-toggle" aria-label="Reset martingale on loss">
+                            <input type="checkbox" id="martingaleResetOnLoss">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                        <span class="param-hint" style="margin:0;">Reset on loss</span>
+                    </div>
+                    <div class="param-hint">Martingale increases after losses. Anti-martingale uses the same controls but ramps size after wins.</div>
+                </div>
+
+                <div class="param-group is-hidden" id="optimalFSettings">
+                    <label class="param-label">Lookback Trades</label>
+                    <input type="number" class="param-input" id="optimalFLookback" value="100" min="10" step="1">
+                    <label class="param-label" style="margin-top: 8px;">Bootstrap Samples</label>
+                    <input type="number" class="param-input" id="optimalFBootstrapSamples" value="250" min="10" step="10">
+                    <label class="param-label" style="margin-top: 8px;">Confidence</label>
+                    <input type="number" class="param-input" id="secureFConfidence" value="0.95" min="0.5" max="0.999" step="0.01">
+                    <label class="param-label" style="margin-top: 8px;">Method</label>
+                    <select class="param-input" id="secureFMethod">
+                        <option value="bootstrap" selected>Bootstrap</option>
+                        <option value="analytical">Analytical</option>
+                    </select>
+                    <div class="param-hint">Finds the historical `f` that maximizes geometric growth and applies it directly to capital.</div>
                 </div>
             </div>
         </div>

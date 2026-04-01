@@ -1,5 +1,6 @@
 import { CAPITAL_DEFAULTS } from "./backtest-settings-resolver";
 import { toBooleanLike, toFiniteNumber } from "./settings-parse-utils";
+import { extractAdvancedSizingRaw, resolveAdvancedSizingSettings } from "./advanced-sizing-settings";
 import { isTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
 
 export const DEFAULT_CAPITAL_SETTINGS_INPUT = Object.freeze({
@@ -25,6 +26,8 @@ export interface CapitalSettingsRaw {
     fixedTradeAmount?: unknown;
     sizingMode?: unknown;
     fixedTradeToggle?: unknown;
+    advancedSizing?: unknown;
+    [key: string]: unknown;
 }
 
 export interface CapitalSettingsDefaults {
@@ -63,5 +66,6 @@ export function resolveCapitalSettingsFromRaw(
         commission: Math.max(0, toFiniteNumber(raw.commission) ?? defaults.commission),
         sizingMode,
         fixedTradeAmount: Math.max(0, toFiniteNumber(raw.fixedTradeAmount) ?? defaults.fixedTradeAmount),
+        advancedSizing: resolveAdvancedSizingSettings(extractAdvancedSizingRaw(raw)),
     };
 }

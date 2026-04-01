@@ -1,5 +1,6 @@
 import { OHLCVData, BacktestResult, StrategyParams, BacktestSettings, Strategy, Time, Signal } from '../types/strategies';
 import { runBacktest, runBacktestCompact, calculateBacktestStats, calculateMaxDrawdown, compareTime, timeToNumber, applySignalPolarity } from './backtest';
+import type { AdvancedSizingSettings } from '../types/backtest';
 import { ensureCleanData } from './strategy-helpers';
 import { sanitizeSharpeRatio } from './performance-metrics';
 import { deriveAutoWalkForwardRange, shouldTreatParamAsWholeNumber } from '../walk-forward-range-utils';
@@ -121,6 +122,7 @@ export interface OptimizationResult {
 type TradeSizing = {
     mode: TradeSizingMode;
     fixedTradeAmount: number;
+    advancedSizing?: AdvancedSizingSettings;
 };
 
 function normalizeStrategyParams(strategy: Strategy, params: StrategyParams): StrategyParams {

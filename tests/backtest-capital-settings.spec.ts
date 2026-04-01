@@ -23,13 +23,12 @@ describe("Backtest capital settings", () => {
             sizingMode: "invalid",
         });
 
-        expect(fixed).to.deep.equal({
-            initialCapital: 25000,
-            positionSize: 50,
-            commission: 0.2,
-            sizingMode: "fixed",
-            fixedTradeAmount: 1200,
-        });
+        expect(fixed.initialCapital).to.equal(25000);
+        expect(fixed.positionSize).to.equal(50);
+        expect(fixed.commission).to.equal(0.2);
+        expect(fixed.sizingMode).to.equal("fixed");
+        expect(fixed.fixedTradeAmount).to.equal(1200);
+        expect(fixed.advancedSizing?.kellyFraction).to.equal("half");
     });
 
     it("preserves subscription defaults when legacy payloads omit fixed toggle", () => {
@@ -42,5 +41,19 @@ describe("Backtest capital settings", () => {
         expect(resolved.sizingMode).to.equal("percent");
         expect(resolved.initialCapital).to.equal(5000);
         expect(resolved.commission).to.equal(0);
+    });
+
+    it("hydrates advanced sizing settings alongside capital fields", () => {
+        const resolved = resolveCapitalSettingsFromRaw({
+            sizingMode: "kelly_criterion",
+            kellyFraction: "quarter",
+            kellyWinRateCap: "0.8",
+            secureFMethod: "analytical",
+        });
+
+        expect(resolved.sizingMode).to.equal("kelly_criterion");
+        expect(resolved.advancedSizing?.kellyFraction).to.equal("quarter");
+        expect(resolved.advancedSizing?.kellyWinRateCap).to.equal(0.8);
+        expect(resolved.advancedSizing?.secureFMethod).to.equal("analytical");
     });
 });

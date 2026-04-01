@@ -124,7 +124,7 @@ export function runStrategyBacktest(args: {
         backtestFn,
         precomputed,
     } = args;
-    const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = capitalSettings;
+    const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount, advancedSizing } = capitalSettings;
     const evaluation = strategy.evaluate?.(data, params, signals);
     const entryStats = evaluation?.entryStats;
     return strategy.metadata?.role === "entry" && entryStats
@@ -136,7 +136,7 @@ export function runStrategyBacktest(args: {
             positionSize,
             commission,
             backtestSettings,
-            { mode: sizingMode, fixedTradeAmount },
+            { mode: sizingMode, fixedTradeAmount, advancedSizing },
             precomputed
         );
 }

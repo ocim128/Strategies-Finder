@@ -707,6 +707,7 @@ class ParameterAuditService {
                 {
                     mode: sourceContext.capitalSettings.sizingMode,
                     fixedTradeAmount: sourceContext.capitalSettings.fixedTradeAmount,
+                    advancedSizing: sourceContext.capitalSettings.advancedSizing,
                 }
             );
             results.push({
