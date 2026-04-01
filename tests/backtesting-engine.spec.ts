@@ -162,6 +162,26 @@ describe('Backtesting Engine', () => {
         expect(resolved.takeProfitMfeBootstrapPercentile).to.equal(65);
     });
 
+    it('should resolve adaptive TP settings from raw UI values', () => {
+        const resolved = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            takeProfitToggle: true,
+            takeProfitPercent: '8',
+            takeProfitMode: 'expectancy_optimal',
+            takeProfitAdaptiveLookbackTrades: '30',
+            takeProfitAdaptiveGridSteps: '9',
+            takeProfitAdaptiveMinMultiplier: '0.6',
+            takeProfitAdaptiveMaxMultiplier: '1.8',
+        } as any);
+
+        expect(resolved.takeProfitMode).to.equal('expectancy_optimal');
+        expect(resolved.takeProfitAdaptiveLookbackTrades).to.equal(30);
+        expect(resolved.takeProfitAdaptiveGridSteps).to.equal(9);
+        expect(resolved.takeProfitAdaptiveMinMultiplier).to.equal(0.6);
+        expect(resolved.takeProfitAdaptiveMaxMultiplier).to.equal(1.8);
+    });
+
     it('scanner settings resolver should mirror backtest toggle behavior', () => {
         const rawScannerSettings = {
             riskSettingsToggle: false,
@@ -554,6 +574,109 @@ describe('Backtesting Engine', () => {
         expect(result.trades[0].exitReason).to.equal('take_profit');
         expect(result.trades[0].exitTime).to.equal('2023-01-03' as Time);
         expect(result.trades[0].exitPrice).to.be.closeTo(89.991, 1e-9);
+    });
+
+    it('edge_weighted should assign wider TP to stronger entry candles', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-02-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-02-02' as Time, open: 100, high: 101, low: 99.8, close: 100.05, volume: 900 },
+            { time: '2023-02-03' as Time, open: 100.05, high: 100.4, low: 99.8, close: 100.1, volume: 850 },
+            { time: '2023-02-04' as Time, open: 100.1, high: 102.5, low: 100, close: 102.3, volume: 1900 },
+            { time: '2023-02-05' as Time, open: 102.3, high: 102.8, low: 101.8, close: 102.6, volume: 1600 },
+            { time: '2023-02-06' as Time, open: 102.6, high: 102.8, low: 102.1, close: 102.4, volume: 1200 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-02-02' as Time, type: 'buy', price: 100.05 },
+            { time: '2023-02-03' as Time, type: 'sell', price: 100.1 },
+            { time: '2023-02-04' as Time, type: 'buy', price: 102.3 },
+            { time: '2023-02-06' as Time, type: 'sell', price: 102.4 },
+        ];
+
+        const result = runBacktest(data, signals, 10000, 100, 0, {
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+            takeProfitMode: 'edge_weighted',
+            stopLossEnabled: false,
+            takeProfitAdaptiveMinMultiplier: 0.7,
+            takeProfitAdaptiveMaxMultiplier: 1.6,
+        });
+
+        expect(result.totalTrades).to.equal(2);
+        const firstTargetPct = ((result.trades[0].takeProfitPrice! - result.trades[0].entryPrice) / result.trades[0].entryPrice) * 100;
+        const secondTargetPct = ((result.trades[1].takeProfitPrice! - result.trades[1].entryPrice) / result.trades[1].entryPrice) * 100;
+        expect(secondTargetPct).to.be.greaterThan(firstTargetPct);
+        expect(firstTargetPct).to.be.greaterThan(6.5);
+    });
+
+    it('expectancy_optimal should tighten later TP after shallow favorable history', () => {
+        const data: OHLCVData[] = [];
+        const signals: Signal[] = [];
+        let price = 100;
+
+        for (let cycle = 0; cycle < 5; cycle++) {
+            const entryDate = `2023-03-${String(cycle * 2 + 1).padStart(2, '0')}` as Time;
+            const exitDate = `2023-03-${String(cycle * 2 + 2).padStart(2, '0')}` as Time;
+
+            data.push({
+                time: entryDate,
+                open: price,
+                high: price * 1.01,
+                low: price * 0.99,
+                close: price,
+                volume: 1000 + cycle * 20,
+            });
+            data.push({
+                time: exitDate,
+                open: price,
+                high: price * 1.05,
+                low: price * 0.99,
+                close: price * 1.02,
+                volume: 1050 + cycle * 20,
+            });
+
+            signals.push({ time: entryDate, type: 'buy', price });
+            signals.push({ time: exitDate, type: 'sell', price: price * 1.02 });
+            price *= 1.01;
+        }
+
+        data.push({
+            time: '2023-03-11' as Time,
+            open: price,
+            high: price * 1.01,
+            low: price * 0.99,
+            close: price,
+            volume: 1200,
+        });
+        data.push({
+            time: '2023-03-12' as Time,
+            open: price,
+            high: price * 1.05,
+            low: price * 0.99,
+            close: price * 1.02,
+            volume: 1220,
+        });
+
+        signals.push({ time: '2023-03-11' as Time, type: 'buy', price });
+        signals.push({ time: '2023-03-12' as Time, type: 'sell', price: price * 1.02 });
+
+        const result = runBacktest(data, signals, 10000, 100, 0, {
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+            takeProfitMode: 'expectancy_optimal',
+            stopLossEnabled: false,
+            takeProfitAdaptiveLookbackTrades: 10,
+            takeProfitAdaptiveGridSteps: 5,
+            takeProfitAdaptiveMinMultiplier: 0.4,
+            takeProfitAdaptiveMaxMultiplier: 1.2,
+        });
+
+        expect(result.totalTrades).to.equal(6);
+        const finalTargetPct = ((result.trades[5].takeProfitPrice! - result.trades[5].entryPrice) / result.trades[5].entryPrice) * 100;
+        expect(finalTargetPct).to.be.lessThan(10);
+        expect(finalTargetPct).to.be.closeTo(4, 0.25);
     });
 
     it('should cap a long percentage take profit at the target when price gaps beyond it', () => {

@@ -216,8 +216,15 @@
                             <select class="param-input" id="takeProfitMode">
                                 <option value="fixed" selected>Fixed %</option>
                                 <option value="mfe_bootstrap">MFE Bootstrap %</option>
+                                <option value="edge_weighted">Edge-Weighted</option>
+                                <option value="expectancy_optimal">Expectancy-Optimal</option>
+                                <option value="regime_calibrated">Regime-Calibrated</option>
+                                <option value="information_coefficient">Information Coefficient</option>
+                                <option value="path_efficiency">Path Efficiency</option>
+                                <option value="serial_dependency">Serial Dependency</option>
+                                <option value="minimum_surprisal">Minimum Surprisal</option>
                             </select>
-                            <div class="param-hint">`fixed` is causal. `mfe_bootstrap` is non-causal and derives the target from the full dataset MFE distribution.</div>
+                            <div class="param-hint">`fixed` is static. `mfe_bootstrap` is non-causal. The adaptive modes below use entry context or rolling closed-trade history to reveal where the strategy's TP edge actually concentrates.</div>
                         </div>
                     </div>
                     <div class="param-row">
@@ -253,6 +260,123 @@
                             <input type="number" class="param-input" id="takeProfitMfeBootstrapPercentile" value="60" min="1"
                                 max="99" step="1">
                             <div class="param-hint">Uses percentile of the full dataset's MFE distribution as TP%. Higher = more aggressive. NON-CAUSAL: uses future data for target estimation.</div>
+                        </div>
+                    </div>
+                    <div class="param-row is-hidden" data-tp-mode-panel="edge_weighted" id="takeProfitEdgeWeightedSettings">
+                        <div class="param-group">
+                            <label class="param-label">Min TP Multiplier</label>
+                            <input type="number" class="param-input" id="takeProfitAdaptiveMinMultiplier" value="0.75" min="0.1" max="5" step="0.05">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Max TP Multiplier</label>
+                            <input type="number" class="param-input" id="takeProfitAdaptiveMaxMultiplier" value="1.5" min="0.1" max="5" step="0.05">
+                            <div class="param-hint">Scales the base TP by current entry quality, signal strength, and regime alignment on the signal bar.</div>
+                        </div>
+                    </div>
+                    <div class="param-row is-hidden" data-tp-mode-panel="expectancy_optimal" id="takeProfitExpectancyOptimalSettings">
+                        <div class="param-group">
+                            <label class="param-label">Lookback Trades</label>
+                            <input type="number" class="param-input" id="takeProfitAdaptiveLookbackTrades" value="40" min="5" step="1">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Grid Steps</label>
+                            <input type="number" class="param-input" id="takeProfitAdaptiveGridSteps" value="7" min="3" max="25" step="1">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Min TP Multiplier</label>
+                            <input type="number" class="param-input" value="0.75" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMinMultiplier">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Max TP Multiplier</label>
+                            <input type="number" class="param-input" value="1.5" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMaxMultiplier">
+                            <div class="param-hint">Searches a TP grid around the base target and selects the candidate with the best geometric growth on rolling closed trades.</div>
+                        </div>
+                    </div>
+                    <div class="param-row is-hidden" data-tp-mode-panel="regime_calibrated" id="takeProfitRegimeCalibratedSettings">
+                        <div class="param-group">
+                            <label class="param-label">Lookback Trades</label>
+                            <input type="number" class="param-input" value="40" min="5" step="1" data-shared-tp-field="takeProfitAdaptiveLookbackTrades">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Grid Steps</label>
+                            <input type="number" class="param-input" value="7" min="3" max="25" step="1" data-shared-tp-field="takeProfitAdaptiveGridSteps">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Regime Blend</label>
+                            <input type="number" class="param-input" id="takeProfitAdaptiveRegimeBlend" value="0.6" min="0" max="1" step="0.05">
+                            <div class="param-hint">Blends the global TP optimum with the current regime's historical TP optimum. Higher = more regime-specific.</div>
+                        </div>
+                    </div>
+                    <div class="param-row is-hidden" data-tp-mode-panel="information_coefficient" id="takeProfitInformationCoefficientSettings">
+                        <div class="param-group">
+                            <label class="param-label">Lookback Trades</label>
+                            <input type="number" class="param-input" value="40" min="5" step="1" data-shared-tp-field="takeProfitAdaptiveLookbackTrades">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">IC Scale</label>
+                            <input type="number" class="param-input" id="takeProfitAdaptiveIcScale" value="0.5" min="0" max="2" step="0.05">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Min TP Multiplier</label>
+                            <input type="number" class="param-input" value="0.75" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMinMultiplier">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Max TP Multiplier</label>
+                            <input type="number" class="param-input" value="1.5" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMaxMultiplier">
+                            <div class="param-hint">Uses correlation between entry quality and realized MFE to widen or tighten the target.</div>
+                        </div>
+                    </div>
+                    <div class="param-row is-hidden" data-tp-mode-panel="path_efficiency" id="takeProfitPathEfficiencySettings">
+                        <div class="param-group">
+                            <label class="param-label">Lookback Trades</label>
+                            <input type="number" class="param-input" value="40" min="5" step="1" data-shared-tp-field="takeProfitAdaptiveLookbackTrades">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Min TP Multiplier</label>
+                            <input type="number" class="param-input" value="0.75" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMinMultiplier">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Max TP Multiplier</label>
+                            <input type="number" class="param-input" value="1.5" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMaxMultiplier">
+                            <div class="param-hint">Measures how cleanly winners reach profit. Cleaner paths earn wider TP, messy winners tighten it.</div>
+                        </div>
+                    </div>
+                    <div class="param-row is-hidden" data-tp-mode-panel="serial_dependency" id="takeProfitSerialDependencySettings">
+                        <div class="param-group">
+                            <label class="param-label">Lookback Trades</label>
+                            <input type="number" class="param-input" value="40" min="5" step="1" data-shared-tp-field="takeProfitAdaptiveLookbackTrades">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Recent Window</label>
+                            <input type="number" class="param-input" id="takeProfitAdaptiveRecentWindow" value="12" min="3" step="1">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Min TP Multiplier</label>
+                            <input type="number" class="param-input" value="0.75" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMinMultiplier">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Max TP Multiplier</label>
+                            <input type="number" class="param-input" value="1.5" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMaxMultiplier">
+                            <div class="param-hint">Compares recent vs. rolling hit-rate behavior. Hot streaks widen TP, cold streaks tighten it.</div>
+                        </div>
+                    </div>
+                    <div class="param-row is-hidden" data-tp-mode-panel="minimum_surprisal" id="takeProfitMinimumSurprisalSettings">
+                        <div class="param-group">
+                            <label class="param-label">Lookback Trades</label>
+                            <input type="number" class="param-input" value="40" min="5" step="1" data-shared-tp-field="takeProfitAdaptiveLookbackTrades">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Grid Steps</label>
+                            <input type="number" class="param-input" value="7" min="3" max="25" step="1" data-shared-tp-field="takeProfitAdaptiveGridSteps">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Min TP Multiplier</label>
+                            <input type="number" class="param-input" value="0.75" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMinMultiplier">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Max TP Multiplier</label>
+                            <input type="number" class="param-input" value="1.5" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMaxMultiplier">
+                            <div class="param-hint">Chooses the TP that best matches observed hit/miss outcomes given the entry-quality distribution, minimizing outcome surprisal.</div>
                         </div>
                     </div>
                     <div class="param-row">

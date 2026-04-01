@@ -245,6 +245,46 @@ describe('Backtest settings compatibility', () => {
         expect(resolved.takeProfitMfeBootstrapPercentile).to.equal(73);
     });
 
+    it('preserves new adaptive TP modes and clamps their shared settings', () => {
+        const resolved = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            takeProfitToggle: true,
+            takeProfitPercent: 8,
+            takeProfitMode: 'information_coefficient',
+            takeProfitAdaptiveLookbackTrades: 2,
+            takeProfitAdaptiveRecentWindow: 1,
+            takeProfitAdaptiveMinMultiplier: 0.01,
+            takeProfitAdaptiveMaxMultiplier: 7,
+            takeProfitAdaptiveGridSteps: 1,
+            takeProfitAdaptiveRegimeBlend: 2,
+            takeProfitAdaptiveIcScale: -1,
+        } as unknown as BacktestSettings);
+
+        expect(resolved.takeProfitMode).to.equal('information_coefficient');
+        expect(resolved.takeProfitAdaptiveLookbackTrades).to.equal(5);
+        expect(resolved.takeProfitAdaptiveRecentWindow).to.equal(3);
+        expect(resolved.takeProfitAdaptiveMinMultiplier).to.equal(0.1);
+        expect(resolved.takeProfitAdaptiveMaxMultiplier).to.equal(7);
+        expect(resolved.takeProfitAdaptiveGridSteps).to.equal(3);
+        expect(resolved.takeProfitAdaptiveRegimeBlend).to.equal(1);
+        expect(resolved.takeProfitAdaptiveIcScale).to.equal(0);
+    });
+
+    it('requires TS engine for new adaptive take-profit modes', () => {
+        expect(requiresTypescriptEngine({
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitMode: 'edge_weighted',
+        })).to.equal(true);
+
+        expect(requiresTypescriptEngine({
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitMode: 'minimum_surprisal',
+        })).to.equal(true);
+    });
+
     it('normalizes deleted percentage TP modes back to fixed mode', () => {
         const rawResolved = resolveBacktestSettingsFromRaw({
             riskSettingsToggle: true,

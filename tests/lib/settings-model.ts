@@ -7,6 +7,7 @@ import { parseInputNumber } from "./dom-input-readers";
 import { readBoolean as readBooleanValue, readNumber as readNumberValue } from "./settings-parse-utils";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import { ADVANCED_SIZING_DEFAULTS, coerceAdvancedSizingFieldValue } from "./advanced-sizing-settings";
+import { coerceAdaptiveTakeProfitFieldValue, resolveTakeProfitMode } from "./take-profit-settings";
 
 import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, TradeDirection, TradeFilterMode } from "./types/strategies";
 import { isTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from "./types/backtest";
@@ -71,6 +72,13 @@ export interface BacktestSettingsData extends SnapshotFilterFields {
     takeProfitPercent: number;
     takeProfitMode: PercentageTakeProfitMode;
     takeProfitMfeBootstrapPercentile: number;
+    takeProfitAdaptiveLookbackTrades: number;
+    takeProfitAdaptiveRecentWindow: number;
+    takeProfitAdaptiveMinMultiplier: number;
+    takeProfitAdaptiveMaxMultiplier: number;
+    takeProfitAdaptiveGridSteps: number;
+    takeProfitAdaptiveRegimeBlend: number;
+    takeProfitAdaptiveIcScale: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
     riskMaxHoldBars: number;
@@ -297,6 +305,13 @@ const UI_ONLY_BACKTEST_SETTING_KEYS = new Set<keyof BacktestSettingsData>([
     'optimalFBootstrapSamples',
     'secureFConfidence',
     'secureFMethod',
+    'takeProfitAdaptiveLookbackTrades',
+    'takeProfitAdaptiveRecentWindow',
+    'takeProfitAdaptiveMinMultiplier',
+    'takeProfitAdaptiveMaxMultiplier',
+    'takeProfitAdaptiveGridSteps',
+    'takeProfitAdaptiveRegimeBlend',
+    'takeProfitAdaptiveIcScale',
     'useRustEngine',
     'riskSettingsToggle',
     'tradeFilterSettingsToggle',
@@ -367,6 +382,13 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
     normalized.optimalFBootstrapSamples = coerceAdvancedSizingFieldValue("optimalFBootstrapSamples", source.optimalFBootstrapSamples) as number;
     normalized.secureFConfidence = coerceAdvancedSizingFieldValue("secureFConfidence", source.secureFConfidence) as number;
     normalized.secureFMethod = coerceAdvancedSizingFieldValue("secureFMethod", source.secureFMethod) as BacktestSettingsData["secureFMethod"];
+    normalized.takeProfitAdaptiveLookbackTrades = coerceAdaptiveTakeProfitFieldValue("takeProfitAdaptiveLookbackTrades", source.takeProfitAdaptiveLookbackTrades);
+    normalized.takeProfitAdaptiveRecentWindow = coerceAdaptiveTakeProfitFieldValue("takeProfitAdaptiveRecentWindow", source.takeProfitAdaptiveRecentWindow);
+    normalized.takeProfitAdaptiveMinMultiplier = coerceAdaptiveTakeProfitFieldValue("takeProfitAdaptiveMinMultiplier", source.takeProfitAdaptiveMinMultiplier);
+    normalized.takeProfitAdaptiveMaxMultiplier = coerceAdaptiveTakeProfitFieldValue("takeProfitAdaptiveMaxMultiplier", source.takeProfitAdaptiveMaxMultiplier);
+    normalized.takeProfitAdaptiveGridSteps = coerceAdaptiveTakeProfitFieldValue("takeProfitAdaptiveGridSteps", source.takeProfitAdaptiveGridSteps);
+    normalized.takeProfitAdaptiveRegimeBlend = coerceAdaptiveTakeProfitFieldValue("takeProfitAdaptiveRegimeBlend", source.takeProfitAdaptiveRegimeBlend);
+    normalized.takeProfitAdaptiveIcScale = coerceAdaptiveTakeProfitFieldValue("takeProfitAdaptiveIcScale", source.takeProfitAdaptiveIcScale);
     normalized.useRustEngine = readBoolean(source.useRustEngine, DEFAULT_BACKTEST_SETTINGS.useRustEngine);
     normalized.riskSettingsToggle = readBoolean(source.riskSettingsToggle, DEFAULT_BACKTEST_SETTINGS.riskSettingsToggle);
     normalized.tradeFilterSettingsToggle = readBoolean(
@@ -520,10 +542,7 @@ export function resolveTakeProfitModeValue(
     value: unknown,
     defaults: BacktestSettingsData = DEFAULT_BACKTEST_SETTINGS
 ): PercentageTakeProfitMode {
-    if (value === "fixed" || value === "mfe_bootstrap") {
-        return value;
-    }
-    return defaults.takeProfitMode;
+    return resolveTakeProfitMode(value) ?? defaults.takeProfitMode;
 }
 
 export function resolveTradeSizingModeValue(

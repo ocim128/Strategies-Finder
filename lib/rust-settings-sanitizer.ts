@@ -58,7 +58,8 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const usesAdaptivePercentageTakeProfit =
         settings.riskMode === 'percentage'
         && settings.takeProfitEnabled === true
-        && settings.takeProfitMode === 'mfe_bootstrap';
+        && settings.takeProfitMode !== undefined
+        && settings.takeProfitMode !== 'fixed';
 
     // Snapshot filters
     const hasSnapshotFilters = hasNonZeroSnapshotFilter(settings);
@@ -152,6 +153,13 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "riskWinStreakStopLossAfterWins",
     "riskWinStreakStopLossPercent",
     "takeProfitMfeBootstrapPercentile",
+    "takeProfitAdaptiveLookbackTrades",
+    "takeProfitAdaptiveRecentWindow",
+    "takeProfitAdaptiveMinMultiplier",
+    "takeProfitAdaptiveMaxMultiplier",
+    "takeProfitAdaptiveGridSteps",
+    "takeProfitAdaptiveRegimeBlend",
+    "takeProfitAdaptiveIcScale",
     "invertSignals",
     "flipAfterConsecutiveLosses",
     "flipCooldownTrades",

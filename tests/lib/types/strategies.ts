@@ -221,7 +221,14 @@ export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';
 export type PercentageTakeProfitMode =
     | 'fixed'
-    | 'mfe_bootstrap';
+    | 'mfe_bootstrap'
+    | 'edge_weighted'
+    | 'expectancy_optimal'
+    | 'regime_calibrated'
+    | 'information_coefficient'
+    | 'path_efficiency'
+    | 'serial_dependency'
+    | 'minimum_surprisal';
 
 export interface BacktestSettings {
     atrPeriod?: number;
@@ -242,6 +249,20 @@ export interface BacktestSettings {
     takeProfitMode?: PercentageTakeProfitMode;
     /** MFE-bootstrap TP: percentile of historical winning MFE distribution used as TP% (non-causal) */
     takeProfitMfeBootstrapPercentile?: number;
+    /** Adaptive TP modes: rolling closed-trade lookback used for TP calibration. */
+    takeProfitAdaptiveLookbackTrades?: number;
+    /** Adaptive TP modes: recent sub-window used by serial/stability-sensitive modes. */
+    takeProfitAdaptiveRecentWindow?: number;
+    /** Adaptive TP modes: floor multiplier applied to Base Take Profit %. */
+    takeProfitAdaptiveMinMultiplier?: number;
+    /** Adaptive TP modes: ceiling multiplier applied to Base Take Profit %. */
+    takeProfitAdaptiveMaxMultiplier?: number;
+    /** Adaptive TP modes: number of TP candidates sampled between min/max multipliers. */
+    takeProfitAdaptiveGridSteps?: number;
+    /** Regime-calibrated TP: blend weight between global and regime-specific target. */
+    takeProfitAdaptiveRegimeBlend?: number;
+    /** Information-coefficient TP: scales how strongly IC widens/tightens the target. */
+    takeProfitAdaptiveIcScale?: number;
     stopLossEnabled?: boolean;
     takeProfitEnabled?: boolean;
     /** Hard cap on bars held when risk management is active */

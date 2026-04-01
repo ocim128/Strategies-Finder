@@ -13,6 +13,7 @@ import {
     toBooleanLike,
     toFiniteNumber,
 } from "./settings-parse-utils";
+import { ADAPTIVE_TAKE_PROFIT_DEFAULTS, resolveTakeProfitMode } from "./take-profit-settings";
 
 export const CAPITAL_DEFAULTS = Object.freeze({
     initialCapital: 10000,
@@ -36,6 +37,13 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     takeProfitPercent: 10,
     takeProfitMode: "fixed" as NonNullable<BacktestSettings["takeProfitMode"]>,
     takeProfitMfeBootstrapPercentile: 60,
+    takeProfitAdaptiveLookbackTrades: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveLookbackTrades,
+    takeProfitAdaptiveRecentWindow: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveRecentWindow,
+    takeProfitAdaptiveMinMultiplier: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveMinMultiplier,
+    takeProfitAdaptiveMaxMultiplier: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveMaxMultiplier,
+    takeProfitAdaptiveGridSteps: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveGridSteps,
+    takeProfitAdaptiveRegimeBlend: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveRegimeBlend,
+    takeProfitAdaptiveIcScale: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveIcScale,
     stopLossEnabled: true,
     takeProfitEnabled: true,
     riskMaxHoldBars: 10,
@@ -132,6 +140,13 @@ type NumericResolverKey =
     | "stopLossPercent"
     | "takeProfitPercent"
     | "takeProfitMfeBootstrapPercentile"
+    | "takeProfitAdaptiveLookbackTrades"
+    | "takeProfitAdaptiveRecentWindow"
+    | "takeProfitAdaptiveMinMultiplier"
+    | "takeProfitAdaptiveMaxMultiplier"
+    | "takeProfitAdaptiveGridSteps"
+    | "takeProfitAdaptiveRegimeBlend"
+    | "takeProfitAdaptiveIcScale"
     | "riskMaxHoldBars"
     | "riskWinStreakStopLossAfterWins"
     | "riskWinStreakStopLossPercent"
@@ -198,6 +213,41 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
         key: "takeProfitMfeBootstrapPercentile",
         guard: "usePercentRisk",
         resolve: (raw) => Math.max(1, Math.min(99, readDefaultedNumber(raw, "takeProfitMfeBootstrapPercentile"))),
+    },
+    {
+        key: "takeProfitAdaptiveLookbackTrades",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(5, Math.round(readDefaultedNumber(raw, "takeProfitAdaptiveLookbackTrades"))),
+    },
+    {
+        key: "takeProfitAdaptiveRecentWindow",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(3, Math.round(readDefaultedNumber(raw, "takeProfitAdaptiveRecentWindow"))),
+    },
+    {
+        key: "takeProfitAdaptiveMinMultiplier",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(0.1, readDefaultedNumber(raw, "takeProfitAdaptiveMinMultiplier")),
+    },
+    {
+        key: "takeProfitAdaptiveMaxMultiplier",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(0.2, readDefaultedNumber(raw, "takeProfitAdaptiveMaxMultiplier")),
+    },
+    {
+        key: "takeProfitAdaptiveGridSteps",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(3, Math.round(readDefaultedNumber(raw, "takeProfitAdaptiveGridSteps"))),
+    },
+    {
+        key: "takeProfitAdaptiveRegimeBlend",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(0, Math.min(1, readDefaultedNumber(raw, "takeProfitAdaptiveRegimeBlend"))),
+    },
+    {
+        key: "takeProfitAdaptiveIcScale",
+        guard: "usePercentRisk",
+        resolve: (raw) => Math.max(0, Math.min(2, readDefaultedNumber(raw, "takeProfitAdaptiveIcScale"))),
     },
     { key: "riskMaxHoldBars", guard: "useRiskMaxHold", disabledValue: 0 },
     {
@@ -317,6 +367,13 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "takeProfitPercent",
     "takeProfitMode",
     "takeProfitMfeBootstrapPercentile",
+    "takeProfitAdaptiveLookbackTrades",
+    "takeProfitAdaptiveRecentWindow",
+    "takeProfitAdaptiveMinMultiplier",
+    "takeProfitAdaptiveMaxMultiplier",
+    "takeProfitAdaptiveGridSteps",
+    "takeProfitAdaptiveRegimeBlend",
+    "takeProfitAdaptiveIcScale",
     "stopLossToggle",
     "takeProfitToggle",
     "riskMaxHoldBars",
@@ -380,11 +437,6 @@ const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>([
     "trend_mtf_stack",
 ]);
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_flip_loss_2", "combined"]);
-const VALID_TAKE_PROFIT_MODES = new Set<NonNullable<BacktestSettings["takeProfitMode"]>>([
-    "fixed",
-    "mfe_bootstrap",
-]);
-
 function coerceScalar(rawValue: unknown): unknown {
     const asBoolean = toBooleanLike(rawValue);
     if (asBoolean !== null) return asBoolean;
@@ -573,8 +625,8 @@ export function resolveBacktestSettingsFromRaw(
     const resolved: BacktestSettings = {
         ...numericSettings,
         riskMode,
-        takeProfitMode: usePercentRisk && typeof raw["takeProfitMode"] === "string" && VALID_TAKE_PROFIT_MODES.has(raw["takeProfitMode"] as NonNullable<BacktestSettings["takeProfitMode"]>)
-            ? raw["takeProfitMode"] as NonNullable<BacktestSettings["takeProfitMode"]>
+        takeProfitMode: usePercentRisk
+            ? resolveTakeProfitMode(raw["takeProfitMode"])
             : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMode,
         ...booleanSettings,
         marketMode,

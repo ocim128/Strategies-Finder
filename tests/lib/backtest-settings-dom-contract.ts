@@ -7,6 +7,7 @@ import {
     resolveSecureFMethod,
     resolveVolScalingMethod,
 } from "./advanced-sizing-settings";
+import { TAKE_PROFIT_DOM_IDS } from "./take-profit-dom";
 import {
     DEFAULT_BACKTEST_SETTINGS,
     resolveExecutionModelValue,
@@ -23,6 +24,7 @@ import {
 } from "./settings-model";
 import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "./rust-settings-sanitizer";
 import { SNAPSHOT_CONFIGS } from "./backtest-settings-resolver";
+import { resolveTakeProfitMode } from "./take-profit-settings";
 import type { BacktestSettings } from "./types/strategies";
 
 export type BacktestDomSettingKey = keyof BacktestSettingsData | "entrySettingsToggle";
@@ -202,6 +204,13 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         readFromSettings: (settings) => resolveTakeProfitModeValue(settings.takeProfitMode, DEFAULT_BACKTEST_SETTINGS),
     }),
     createField("takeProfitMfeBootstrapPercentile", { rustSupport: "unsupported" }),
+    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveLookbackTrades, { rustSupport: "unsupported" }),
+    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRecentWindow, { rustSupport: "unsupported" }),
+    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveMinMultiplier, { rustSupport: "unsupported" }),
+    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveMaxMultiplier, { rustSupport: "unsupported" }),
+    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveGridSteps, { rustSupport: "unsupported" }),
+    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRegimeBlend, { rustSupport: "unsupported" }),
+    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveIcScale, { rustSupport: "unsupported" }),
     createField("stopLossToggle", {
         settingKey: "stopLossEnabled",
         parser: "boolean",
@@ -363,7 +372,7 @@ export function coerceBacktestDomSettingValue(
         case "riskMode":
             return resolveRiskModeValue(value, DEFAULT_BACKTEST_SETTINGS);
         case "takeProfitMode":
-            return resolveTakeProfitModeValue(value, DEFAULT_BACKTEST_SETTINGS);
+            return resolveTakeProfitMode(value);
         case "tradeFilterMode":
             return resolveTradeFilterModeValue(value, DEFAULT_BACKTEST_SETTINGS);
         case "tradeDirection":

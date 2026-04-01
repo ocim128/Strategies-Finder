@@ -398,6 +398,62 @@ describe('Finder ATR risk randomization support', () => {
         expect(baseParams.takeProfitMfeBootstrapPercentile).to.equal(73);
     });
 
+    it('adds information-coefficient TP params to finder search params only when that mode is active', () => {
+        const strategy = {
+            defaultParams: {
+                lookback: 20,
+            },
+        } as any;
+        const baseParams = buildFinderSearchBaseParams(strategy, {
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitMode: 'information_coefficient',
+            takeProfitPercent: 6,
+            takeProfitAdaptiveLookbackTrades: 25,
+            takeProfitAdaptiveIcScale: 0.8,
+            takeProfitAdaptiveMinMultiplier: 0.7,
+            takeProfitAdaptiveMaxMultiplier: 1.6,
+        });
+
+        expect(baseParams.lookback).to.equal(20);
+        expect(baseParams.takeProfitPercent).to.equal(6);
+        expect(baseParams.takeProfitAdaptiveLookbackTrades).to.equal(25);
+        expect(baseParams.takeProfitAdaptiveIcScale).to.equal(0.8);
+        expect(baseParams.takeProfitAdaptiveMinMultiplier).to.equal(0.7);
+        expect(baseParams.takeProfitAdaptiveMaxMultiplier).to.equal(1.6);
+        expect('takeProfitAdaptiveGridSteps' in baseParams).to.equal(false);
+    });
+
+    it('applies adaptive TP finder overrides only to the TS backtest settings', () => {
+        const settings: BacktestSettings = {
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitMode: 'regime_calibrated',
+            takeProfitPercent: 6,
+            takeProfitAdaptiveLookbackTrades: 25,
+            takeProfitAdaptiveGridSteps: 7,
+            takeProfitAdaptiveRegimeBlend: 0.6,
+        };
+        const rustSettings: BacktestSettings = {
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitPercent: 6,
+        };
+
+        const resolved = resolveFinderRiskOverrides(settings, rustSettings, {
+            takeProfitAdaptiveLookbackTrades: 31,
+            takeProfitAdaptiveGridSteps: 9,
+            takeProfitAdaptiveRegimeBlend: 0.75,
+        });
+
+        expect(resolved.backtestSettings.takeProfitAdaptiveLookbackTrades).to.equal(31);
+        expect(resolved.backtestSettings.takeProfitAdaptiveGridSteps).to.equal(9);
+        expect(resolved.backtestSettings.takeProfitAdaptiveRegimeBlend).to.equal(0.75);
+        expect('takeProfitAdaptiveLookbackTrades' in resolved.rustBacktestSettings).to.equal(false);
+        expect('takeProfitAdaptiveGridSteps' in resolved.rustBacktestSettings).to.equal(false);
+        expect('takeProfitAdaptiveRegimeBlend' in resolved.rustBacktestSettings).to.equal(false);
+    });
+
     it('reapplies mode-specific TP params back into backtest settings when a finder row is applied', () => {
         const baseSettings: BacktestSettings = {
             riskSettingsToggle: true,

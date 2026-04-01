@@ -119,6 +119,30 @@ function clampTakeProfitMfeBootstrapPercentile(value: number): number {
 
 const TP_PARAM_SPECS: readonly TpParamSpec[] = [
     { key: "takeProfitMfeBootstrapPercentile", mode: "mfe_bootstrap", clamp: clampTakeProfitMfeBootstrapPercentile },
+    { key: "takeProfitAdaptiveLookbackTrades", mode: "expectancy_optimal", clamp: clampAtrPeriod },
+    { key: "takeProfitAdaptiveLookbackTrades", mode: "regime_calibrated", clamp: clampAtrPeriod },
+    { key: "takeProfitAdaptiveLookbackTrades", mode: "information_coefficient", clamp: clampAtrPeriod },
+    { key: "takeProfitAdaptiveLookbackTrades", mode: "path_efficiency", clamp: clampAtrPeriod },
+    { key: "takeProfitAdaptiveLookbackTrades", mode: "serial_dependency", clamp: clampAtrPeriod },
+    { key: "takeProfitAdaptiveLookbackTrades", mode: "minimum_surprisal", clamp: clampAtrPeriod },
+    { key: "takeProfitAdaptiveRecentWindow", mode: "serial_dependency", clamp: clampAtrPeriod },
+    { key: "takeProfitAdaptiveMinMultiplier", mode: "edge_weighted", clamp: (value) => clampPercentValue(value, 0.1, 5) },
+    { key: "takeProfitAdaptiveMinMultiplier", mode: "expectancy_optimal", clamp: (value) => clampPercentValue(value, 0.1, 5) },
+    { key: "takeProfitAdaptiveMinMultiplier", mode: "information_coefficient", clamp: (value) => clampPercentValue(value, 0.1, 5) },
+    { key: "takeProfitAdaptiveMinMultiplier", mode: "path_efficiency", clamp: (value) => clampPercentValue(value, 0.1, 5) },
+    { key: "takeProfitAdaptiveMinMultiplier", mode: "serial_dependency", clamp: (value) => clampPercentValue(value, 0.1, 5) },
+    { key: "takeProfitAdaptiveMinMultiplier", mode: "minimum_surprisal", clamp: (value) => clampPercentValue(value, 0.1, 5) },
+    { key: "takeProfitAdaptiveMaxMultiplier", mode: "edge_weighted", clamp: (value) => clampPercentValue(value, 0.1, 5) },
+    { key: "takeProfitAdaptiveMaxMultiplier", mode: "expectancy_optimal", clamp: (value) => clampPercentValue(value, 0.1, 5) },
+    { key: "takeProfitAdaptiveMaxMultiplier", mode: "information_coefficient", clamp: (value) => clampPercentValue(value, 0.1, 5) },
+    { key: "takeProfitAdaptiveMaxMultiplier", mode: "path_efficiency", clamp: (value) => clampPercentValue(value, 0.1, 5) },
+    { key: "takeProfitAdaptiveMaxMultiplier", mode: "serial_dependency", clamp: (value) => clampPercentValue(value, 0.1, 5) },
+    { key: "takeProfitAdaptiveMaxMultiplier", mode: "minimum_surprisal", clamp: (value) => clampPercentValue(value, 0.1, 5) },
+    { key: "takeProfitAdaptiveGridSteps", mode: "expectancy_optimal", clamp: clampAtrPeriod },
+    { key: "takeProfitAdaptiveGridSteps", mode: "regime_calibrated", clamp: clampAtrPeriod },
+    { key: "takeProfitAdaptiveGridSteps", mode: "minimum_surprisal", clamp: clampAtrPeriod },
+    { key: "takeProfitAdaptiveRegimeBlend", mode: "regime_calibrated", clamp: (value) => clampPercentValue(value, 0, 1) },
+    { key: "takeProfitAdaptiveIcScale", mode: "information_coefficient", clamp: (value) => clampPercentValue(value, 0, 2) },
 ];
 
 function addBaseParamIfFinite(

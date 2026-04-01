@@ -5,19 +5,10 @@ import {
 } from "./backtest-settings-resolver";
 import { extractAdvancedSizingRaw, writeAdvancedSizingIntoRecord } from "./advanced-sizing-settings";
 import { toBooleanLike, toFiniteNumber } from "./settings-parse-utils";
+import { resolveTakeProfitMode } from "./take-profit-settings";
 import { strategies } from "./strategies/library";
 import type { BacktestSettings, TradeDirection } from "./types/strategies";
-
-export interface WorkerStrategySupportSnapshot {
-    supportedStrategyKeys: string[];
-    supportedStrategyCount: number;
-    strategyManifestFingerprint: string;
-}
-
-const VALID_TAKE_PROFIT_MODES = new Set<NonNullable<BacktestSettings["takeProfitMode"]>>([
-    "fixed",
-    "mfe_bootstrap",
-]);
+import { isTradeSizingMode } from "./types/backtest";
 
 function isValidTradeDirection(value: unknown): value is TradeDirection {
     return value === "long"
@@ -31,8 +22,10 @@ function isValidExecutionModel(value: unknown): value is NonNullable<BacktestSet
     return value === "signal_close" || value === "next_open" || value === "next_close";
 }
 
-function isValidTakeProfitMode(value: unknown): value is NonNullable<BacktestSettings["takeProfitMode"]> {
-    return typeof value === "string" && VALID_TAKE_PROFIT_MODES.has(value as NonNullable<BacktestSettings["takeProfitMode"]>);
+export interface WorkerStrategySupportSnapshot {
+    supportedStrategyKeys: string[];
+    supportedStrategyCount: number;
+    strategyManifestFingerprint: string;
 }
 
 export function getWorkerSupportedStrategyKeys(): string[] {
@@ -79,9 +72,7 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
     merged.executionModel = isValidExecutionModel(merged.executionModel)
         ? merged.executionModel
         : EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
-    merged.takeProfitMode = isValidTakeProfitMode(merged.takeProfitMode)
-        ? merged.takeProfitMode
-        : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMode;
+    merged.takeProfitMode = resolveTakeProfitMode(merged.takeProfitMode);
     merged.allowSameBarExit = toBooleanLike(merged.allowSameBarExit)
         ?? EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit;
     merged.invertSignals = toBooleanLike(merged.invertSignals)
@@ -156,4 +147,3 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
 
     return merged as BacktestSettings;
 }
-import { isTradeSizingMode } from "./types/backtest";

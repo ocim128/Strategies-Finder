@@ -1,5 +1,6 @@
 import { getOptionalElement, getRequiredElement } from "../dom-utils";
 import { ADVANCED_SIZING_DOM_IDS } from "../advanced-sizing-dom";
+import { TAKE_PROFIT_DOM_IDS } from "../take-profit-dom";
 
 export const UI_EVENT_HANDLER_REQUIRED_IDS = [
     "symbolSelector",
@@ -21,6 +22,13 @@ export const UI_EVENT_HANDLER_REQUIRED_IDS = [
     "tradeFilterSettings",
     "riskMode",
     "takeProfitMode",
+    "takeProfitAdaptiveLookbackTrades",
+    "takeProfitAdaptiveRecentWindow",
+    "takeProfitAdaptiveMinMultiplier",
+    "takeProfitAdaptiveMaxMultiplier",
+    "takeProfitAdaptiveGridSteps",
+    "takeProfitAdaptiveRegimeBlend",
+    "takeProfitAdaptiveIcScale",
     "riskAdvanced",
     "tradeDirection",
     "flipAfterConsecutiveLosses",
@@ -76,6 +84,13 @@ export const UI_EVENT_HANDLER_REQUIRED_IDS = [
     "secureFConfidence",
     "secureFMethod",
     "panelResizeHandle",
+    "takeProfitEdgeWeightedSettings",
+    "takeProfitExpectancyOptimalSettings",
+    "takeProfitRegimeCalibratedSettings",
+    "takeProfitInformationCoefficientSettings",
+    "takeProfitPathEfficiencySettings",
+    "takeProfitSerialDependencySettings",
+    "takeProfitMinimumSurprisalSettings",
 ] as const;
 
 export function createUiEventHandlersDom() {
@@ -116,9 +131,23 @@ export function createUiEventHandlersDom() {
         tradeFilterSettings: getRequiredElement("tradeFilterSettings"),
         riskMode: getRequiredElement<HTMLSelectElement>("riskMode"),
         takeProfitMode: getRequiredElement<HTMLSelectElement>("takeProfitMode"),
+        takeProfitAdaptiveLookbackTrades: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveLookbackTrades),
+        takeProfitAdaptiveRecentWindow: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRecentWindow),
+        takeProfitAdaptiveMinMultiplier: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveMinMultiplier),
+        takeProfitAdaptiveMaxMultiplier: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveMaxMultiplier),
+        takeProfitAdaptiveGridSteps: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveGridSteps),
+        takeProfitAdaptiveRegimeBlend: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRegimeBlend),
+        takeProfitAdaptiveIcScale: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveIcScale),
         riskSimpleAdvanced: getOptionalElement("riskSimpleAdvanced"),
         riskPercentage: getOptionalElement("riskPercentage"),
         riskAdvanced: getRequiredElement("riskAdvanced"),
+        takeProfitEdgeWeightedSettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.edgeWeightedSettings),
+        takeProfitExpectancyOptimalSettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.expectancyOptimalSettings),
+        takeProfitRegimeCalibratedSettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.regimeCalibratedSettings),
+        takeProfitInformationCoefficientSettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.informationCoefficientSettings),
+        takeProfitPathEfficiencySettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.pathEfficiencySettings),
+        takeProfitSerialDependencySettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.serialDependencySettings),
+        takeProfitMinimumSurprisalSettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.minimumSurprisalSettings),
         tradeDirection: getRequiredElement<HTMLSelectElement>("tradeDirection"),
         flipLossStreakSettingsRow: getOptionalElement("flipLossStreakSettingsRow"),
         flipAfterConsecutiveLosses: getRequiredElement<HTMLInputElement>("flipAfterConsecutiveLosses"),
