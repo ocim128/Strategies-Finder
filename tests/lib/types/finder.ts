@@ -1,8 +1,8 @@
-import type { BacktestResult, StrategyParams, TradeDirection, TradeFilterMode } from "../types/strategies";
+import type { BacktestResult, StrategyParams } from "../types/strategies";
 import type { PolymarketEvalResult } from "../types/polymarket-outcomes";
 
-export type FinderMode = 'default' | 'grid' | 'random' | 'genetic' | 'robust_random_wf';
-export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'volume';
+export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
+export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'volume' | 'expectancy';
 export type FinderMetric =
     | 'netProfit'
     | 'profitFactor'
@@ -18,13 +18,13 @@ export type FinderMetric =
     | 'polyWins'
     | 'polyWinRate'
     | 'polyCoverage'
-    | 'polyPredictions';
+    | 'polyPredictions'
+    | 'polyExpectancy';
 
 export interface FinderOptions {
     mode: FinderMode;
     sortPriority: FinderMetric[];
     useAdvancedSort: boolean;
-    robustSeed?: number;
     randomSeed?: number;
     multiTimeframeEnabled?: boolean;
     timeframes?: string[];
@@ -65,28 +65,6 @@ export interface FinderResult {
     compositeEdgeRatio?: number;
     endpointAdjusted: boolean;
     endpointRemovedTrades: number;
-    robustMetrics?: {
-        mode: 'robust_random_wf';
-        seed: number;
-        cellSeed: number;
-        symbol?: string;
-        tradeFilterMode?: TradeFilterMode;
-        tradeDirection?: TradeDirection;
-        decision: 'PASS' | 'FAIL';
-        decisionReason: string;
-        timeframe: string;
-        sampledParams: number;
-        stageASurvivors: number;
-        stageBSurvivors: number;
-        stageCSurvivors: number;
-        passRate: number;
-        topDecileMedianOOSExpectancy: number;
-        topDecileMedianProfitableFoldRatio: number;
-        medianFoldStabilityPenalty: number;
-        topDecileMedianDDBreachRate: number;
-        robustScore: number;
-        rejectionReasons: Record<string, number>;
-    };
     polymarketEval?: PolymarketEvalResult;
 }
 

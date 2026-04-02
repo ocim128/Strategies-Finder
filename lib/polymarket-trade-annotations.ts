@@ -20,7 +20,58 @@ import type {
     PolymarketEvalResult,
     PolymarketEvalRow,
     PolymarketOutcomeRow,
+    BacktestPolymarketTradeSummary,
 } from "./types/polymarket-outcomes";
+
+function clampProbability(value: number | null): number | null {
+    if (value === null || !Number.isFinite(value)) {
+        return null;
+    }
+    if (value <= 0) return 0;
+    if (value >= 1) return 1;
+    return value;
+}
+
+function getYesPriceForOffset(outcome: PolymarketOutcomeRow, entryOffset: number): number | null {
+    switch (entryOffset) {
+        case 0:
+            return outcome.yes_open_price;
+        case 1:
+            return outcome.yes_entry_minute_1_price;
+        case 2:
+            return outcome.yes_entry_minute_2_price;
+        case 3:
+            return outcome.yes_entry_minute_3_price;
+        case 4:
+            return outcome.yes_entry_minute_4_price;
+        default:
+            return null;
+    }
+}
+
+export function getTradeMarketEntryPrice(
+    outcome: PolymarketOutcomeRow,
+    prediction: "yes" | "no",
+    entryOffset = 0
+): number | null {
+    const yesPrice = clampProbability(getYesPriceForOffset(outcome, entryOffset));
+    if (yesPrice === null) {
+        return null;
+    }
+    return prediction === "yes"
+        ? yesPrice
+        : clampProbability(1 - yesPrice);
+}
+
+function getTradePayoutFromPrice(
+    marketEntryPrice: number | null,
+    isWin: boolean
+): number | null {
+    if (marketEntryPrice === null || !Number.isFinite(marketEntryPrice)) {
+        return null;
+    }
+    return isWin ? (1 - marketEntryPrice) : -marketEntryPrice;
+}
 
 type AnnotationContext = {
     symbol: string;
@@ -50,10 +101,10 @@ export type PolymarketBridgeEvaluationContext = {
     resolvedUpCount: number;
 };
 
-export function createPolymarketTradeEvaluationContext(
+function buildPolymarketEvaluationIndexContext(
     chartData: OHLCVData[],
     outcomes: PolymarketOutcomeRow[]
-): PolymarketTradeEvaluationContext {
+): Pick<PolymarketTradeEvaluationContext, "executionBarIndexByTs" | "evaluatedEvents" | "resolvedUpCount"> {
     const executionBarIndexByTs = new Map<number, number>();
     const validTargetTs = new Set<number>();
 
@@ -77,10 +128,31 @@ export function createPolymarketTradeEvaluationContext(
     }
 
     return {
-        outcomeByStartTs: new Map(outcomes.map((row) => [row.event_start_ts, row] as const)),
         executionBarIndexByTs,
         evaluatedEvents,
         resolvedUpCount,
+    };
+}
+
+export function createPolymarketTradeEvaluationContext(
+    chartData: OHLCVData[],
+    outcomes: PolymarketOutcomeRow[]
+): PolymarketTradeEvaluationContext {
+    const shared = buildPolymarketEvaluationIndexContext(chartData, outcomes);
+    return {
+        outcomeByStartTs: new Map(outcomes.map((row) => [row.event_start_ts, row] as const)),
+        ...shared,
+    };
+}
+
+export function createPolymarketBridgeEvaluationContext(
+    chartData: OHLCVData[],
+    outcomes: PolymarketOutcomeRow[]
+): PolymarketBridgeEvaluationContext {
+    const shared = buildPolymarketEvaluationIndexContext(chartData, outcomes);
+    return {
+        outcomes,
+        ...shared,
     };
 }
 
@@ -113,6 +185,7 @@ function buildAnnotatedTrade(
             prediction,
             actualOutcomeUp: outcome.resolved_outcome_up,
             isWin,
+            marketEntryPrice: getTradeMarketEntryPrice(outcome, prediction),
         },
     };
 }
@@ -161,6 +234,7 @@ function buildAnnotatedTradeForBridge(
             prediction,
             actualOutcomeUp: outcome.resolved_outcome_up,
             isWin,
+            marketEntryPrice: getTradeMarketEntryPrice(outcome, prediction, entryOffset),
             entryOffset,
         },
     };
@@ -215,6 +289,9 @@ export function evaluatePolymarketBacktestTrades(args: {
     let longWins = 0;
     let shortWins = 0;
     let missingOutcomeRows = 0;
+    let pricedPredictions = 0;
+    let totalEntryPrice = 0;
+    let totalPayout = 0;
 
     for (const trade of trades) {
         if (trade.type === "long") {
@@ -239,6 +316,8 @@ export function evaluatePolymarketBacktestTrades(args: {
         const isWin = prediction === "yes"
             ? outcome.resolved_outcome_up === 1
             : outcome.resolved_outcome_up === 0;
+        const marketEntryPrice = getTradeMarketEntryPrice(outcome, prediction);
+        const payout = getTradePayoutFromPrice(marketEntryPrice, isWin);
 
         if (trade.type === "long") {
             scoredLongPredictions++;
@@ -252,6 +331,12 @@ export function evaluatePolymarketBacktestTrades(args: {
             else shortWins++;
         } else {
             losses++;
+        }
+
+        if (marketEntryPrice !== null && payout !== null) {
+            pricedPredictions++;
+            totalEntryPrice += marketEntryPrice;
+            totalPayout += payout;
         }
 
         if (includeRows) {
@@ -277,11 +362,15 @@ export function evaluatePolymarketBacktestTrades(args: {
 
     const predictionsTaken = trades.length;
     const scoredCount = includeRows ? rows.length : wins + losses;
+    const avgEntryPrice = pricedPredictions > 0 ? totalEntryPrice / pricedPredictions : 0;
+    const breakEvenWinRate = avgEntryPrice;
+    const expectancy = pricedPredictions > 0 ? totalPayout / pricedPredictions : 0;
 
     return {
         evaluatedEvents: context.evaluatedEvents,
         predictionsTaken,
         scoredPredictions: scoredCount,
+        pricedPredictions,
         wins,
         losses,
         skips: Math.max(0, context.evaluatedEvents - scoredCount),
@@ -295,6 +384,10 @@ export function evaluatePolymarketBacktestTrades(args: {
         shortWinRate: scoredShortPredictions > 0 ? shortWins / scoredShortPredictions : 0,
         alwaysYesBaselineWinRate: context.evaluatedEvents > 0 ? context.resolvedUpCount / context.evaluatedEvents : 0,
         alwaysNoBaselineWinRate: context.evaluatedEvents > 0 ? (context.evaluatedEvents - context.resolvedUpCount) / context.evaluatedEvents : 0,
+        avgEntryPrice,
+        breakEvenWinRate,
+        expectancy,
+        edgeVsBreakEven: (scoredCount > 0 ? wins / scoredCount : 0) - breakEvenWinRate,
         missingOutcomeRows,
         ignoredSignals: 0,
         rows,
@@ -320,8 +413,9 @@ export function evaluatePolymarketBacktestTrades1mBridge(args: {
     strategyKey?: string;
     selectedOffset: number;
     includeRows?: boolean;
+    context?: PolymarketBridgeEvaluationContext;
 }): PolymarketEvalResult {
-    const { chartData, trades, outcomes, strategyKey, selectedOffset } = args;
+    const { chartData, trades, outcomes, strategyKey, selectedOffset, context } = args;
     const includeRows = args.includeRows !== false;
 
     const mappedTrades = mapTradesToEvents(trades, outcomes);
@@ -333,6 +427,7 @@ export function evaluatePolymarketBacktestTrades1mBridge(args: {
         selectedOffset,
         includeRows,
         predictionsTaken: trades.length,
+        context,
     });
 }
 
@@ -344,34 +439,17 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
     selectedOffset: number;
     includeRows?: boolean;
     predictionsTaken?: number;
+    context?: PolymarketBridgeEvaluationContext;
 }): PolymarketEvalResult {
     const { chartData, mappedTrades, outcomes, strategyKey, selectedOffset } = args;
     const includeRows = args.includeRows !== false;
+    const context = args.context ?? createPolymarketBridgeEvaluationContext(chartData, outcomes);
 
     const filteredForOffset = filterByEntryOffsetLegacy(mappedTrades, selectedOffset);
     const selected = deduplicateByEventLegacy(filteredForOffset);
-
-    // Build context for metrics
-    const executionBarIndexByTs = new Map<number, number>();
-    const validTargetTs = new Set<number>();
-    for (let i = 0; i < chartData.length; i++) {
-        const ts = parseTimeToUnixSeconds(chartData[i]?.time);
-        if (ts === null) continue;
-        if (!executionBarIndexByTs.has(ts)) {
-            executionBarIndexByTs.set(ts, i);
-        }
-        if (i > 0) {
-            validTargetTs.add(ts);
-        }
-    }
-
-    let evaluatedEvents = 0;
-    let resolvedUpCount = 0;
-    for (const row of outcomes) {
-        if (!validTargetTs.has(row.event_start_ts)) continue;
-        evaluatedEvents++;
-        resolvedUpCount += row.resolved_outcome_up;
-    }
+    const executionBarIndexByTs = context.executionBarIndexByTs;
+    const evaluatedEvents = context.evaluatedEvents;
+    const resolvedUpCount = context.resolvedUpCount;
 
     // Evaluate selected trades
     const rows: PolymarketEvalRow[] = [];
@@ -384,6 +462,9 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
     let longWins = 0;
     let shortWins = 0;
     let missingOutcomeRows = 0;
+    let pricedPredictions = 0;
+    let totalEntryPrice = 0;
+    let totalPayout = 0;
 
     for (const mapped of selected) {
         const { trade, outcome, entryOffset, entryTs } = mapped;
@@ -398,6 +479,8 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
         const isWin = prediction === "yes"
             ? outcome.resolved_outcome_up === 1
             : outcome.resolved_outcome_up === 0;
+        const marketEntryPrice = getTradeMarketEntryPrice(outcome, prediction, entryOffset);
+        const payout = getTradePayoutFromPrice(marketEntryPrice, isWin);
 
         if (trade.type === "long") {
             scoredLongPredictions++;
@@ -411,6 +494,12 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
             else shortWins++;
         } else {
             losses++;
+        }
+
+        if (marketEntryPrice !== null && payout !== null) {
+            pricedPredictions++;
+            totalEntryPrice += marketEntryPrice;
+            totalPayout += payout;
         }
 
         if (includeRows) {
@@ -441,11 +530,15 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
     );
     const scoredCount = includeRows ? rows.length : wins + losses;
     const duplicateTradesIgnored = Math.max(0, filteredForOffset.length - selected.length);
+    const avgEntryPrice = pricedPredictions > 0 ? totalEntryPrice / pricedPredictions : 0;
+    const breakEvenWinRate = avgEntryPrice;
+    const expectancy = pricedPredictions > 0 ? totalPayout / pricedPredictions : 0;
 
     return {
         evaluatedEvents,
         predictionsTaken,
         scoredPredictions: scoredCount,
+        pricedPredictions,
         wins,
         losses,
         skips: Math.max(0, evaluatedEvents - scoredCount),
@@ -459,6 +552,10 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
         shortWinRate: scoredShortPredictions > 0 ? shortWins / scoredShortPredictions : 0,
         alwaysYesBaselineWinRate: evaluatedEvents > 0 ? resolvedUpCount / evaluatedEvents : 0,
         alwaysNoBaselineWinRate: evaluatedEvents > 0 ? (evaluatedEvents - resolvedUpCount) / evaluatedEvents : 0,
+        avgEntryPrice,
+        breakEvenWinRate,
+        expectancy,
+        edgeVsBreakEven: (scoredCount > 0 ? wins / scoredCount : 0) - breakEvenWinRate,
         missingOutcomeRows,
         ignoredSignals: 0,
         entryOffset: selectedOffset,
@@ -474,6 +571,7 @@ export function buildPolymarketTimingProfileFor1mBridge(args: {
     strategyKey?: string;
 }): BacktestPolymarketTimingProfileEntry[] {
     const profile: BacktestPolymarketTimingProfileEntry[] = [];
+    const context = createPolymarketBridgeEvaluationContext(args.chartData, args.outcomes);
 
     for (let offset = 0; offset <= 4; offset++) {
         const evaluation = evaluatePolymarketBacktestTrades1mBridge({
@@ -483,6 +581,7 @@ export function buildPolymarketTimingProfileFor1mBridge(args: {
             strategyKey: args.strategyKey,
             selectedOffset: offset,
             includeRows: false,
+            context,
         });
 
         profile.push({
@@ -498,6 +597,60 @@ export function buildPolymarketTimingProfileFor1mBridge(args: {
     }
 
     return profile;
+}
+
+export function summarizePolymarketTradesForRun(args: {
+    trades: readonly Trade[];
+    outcomes: readonly PolymarketOutcomeRow[];
+    interval: string;
+    selectedOffset?: number;
+    timingProfile?: BacktestPolymarketTimingProfileEntry[];
+}): Pick<
+    BacktestPolymarketTradeSummary,
+    "scoredTrades" | "missingOutcomeTrades" | "unscoredTrades" | "duplicateTradesIgnored" | "entryOffset" | "timingProfile"
+> {
+    const totalTrades = args.trades.length;
+
+    if (args.interval === "1m") {
+        const selectedOffset = args.selectedOffset ?? 0;
+        const mappedTrades = mapTradesToEvents(args.trades, args.outcomes);
+        const filteredForOffset = filterByEntryOffsetLegacy(mappedTrades, selectedOffset);
+        const selectedTrades = deduplicateByEventLegacy(filteredForOffset);
+        const scoredTrades = selectedTrades.length;
+        const missingOutcomeTrades = Math.max(0, totalTrades - mappedTrades.length);
+        const duplicateTradesIgnored = Math.max(0, filteredForOffset.length - selectedTrades.length);
+
+        return {
+            scoredTrades,
+            missingOutcomeTrades,
+            unscoredTrades: Math.max(0, totalTrades - scoredTrades),
+            duplicateTradesIgnored: duplicateTradesIgnored > 0 ? duplicateTradesIgnored : undefined,
+            entryOffset: selectedOffset,
+            timingProfile: args.timingProfile,
+        };
+    }
+
+    const outcomeByStartTs = new Map(args.outcomes.map((row) => [row.event_start_ts, row] as const));
+    let scoredTrades = 0;
+    let missingOutcomeTrades = 0;
+
+    for (const trade of args.trades) {
+        const entryTs = parseTimeToUnixSeconds(trade.entryTime);
+        if (entryTs === null || !outcomeByStartTs.has(entryTs)) {
+            missingOutcomeTrades++;
+            continue;
+        }
+
+        scoredTrades++;
+    }
+
+    return {
+        scoredTrades,
+        missingOutcomeTrades,
+        unscoredTrades: missingOutcomeTrades,
+        entryOffset: undefined,
+        timingProfile: args.timingProfile,
+    };
 }
 
 export async function annotateBacktestResultWithPolymarketOutcomes(
@@ -550,10 +703,6 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         context.interval,
         selectedOffset
     );
-    const scoredTrades = trades.filter((trade) => Boolean(trade.polymarketOutcome)).length;
-    const duplicateTradesIgnored = is1mRun
-        ? Math.max(0, filterByEntryOffsetLegacy(mapTradesToEvents(result.trades, outcomes), selectedOffset ?? 0).length - scoredTrades)
-        : 0;
     const timingProfile = is1mRun
         ? buildPolymarketTimingProfileFor1mBridge({
             chartData: context.chartData,
@@ -561,6 +710,13 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
             outcomes,
         })
         : undefined;
+    const summary = summarizePolymarketTradesForRun({
+        trades: result.trades,
+        outcomes,
+        interval: context.interval,
+        selectedOffset,
+        timingProfile,
+    });
 
     return {
         ...result,
@@ -568,11 +724,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         polymarketTradeSummary: {
             seriesId,
             outcomeRowsLoaded: outcomes.length,
-            scoredTrades,
-            missingOutcomeTrades: trades.length - scoredTrades,
-            entryOffset: is1mRun ? (selectedOffset ?? 0) : undefined,
-            duplicateTradesIgnored: duplicateTradesIgnored > 0 ? duplicateTradesIgnored : undefined,
-            timingProfile,
+            ...summary,
         },
     };
 }

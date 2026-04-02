@@ -127,6 +127,31 @@ export interface AdvancedPerformanceAnalytics {
     sampleCount: number;
 }
 
+export interface ExpectancyBreakdownRow {
+    label: string;
+    tradeCount: number;
+    winRate: number;
+    netProfit: number;
+    expectancy: number;
+    avgWin: number;
+    avgLoss: number;
+    profitFactor: number;
+    avgEntryPrice?: number | null;
+    breakEvenWinRate?: number | null;
+    edgeVsBreakEven?: number | null;
+}
+
+export interface ExpectancyBreakdownSection {
+    id: "side" | "session_minute" | "price_range_position";
+    title: string;
+    hint: string;
+    rows: ExpectancyBreakdownRow[];
+}
+
+export interface BacktestExpectancyBreakdown {
+    sections: ExpectancyBreakdownSection[];
+}
+
 export interface BacktestResult {
     trades: Trade[];
     netProfit: number;
@@ -145,6 +170,7 @@ export interface BacktestResult {
     sharpeRatio: number;
     equityCurve: { time: Time; value: number }[];
     performanceAnalytics?: AdvancedPerformanceAnalytics;
+    expectancyBreakdown?: BacktestExpectancyBreakdown;
     entryStats?: EntryStats;
     postEntryPath?: PostEntryPathStats;
     edgeStatistics?: import('../strategies/backtest/edge-statistics').EdgeStatistics;

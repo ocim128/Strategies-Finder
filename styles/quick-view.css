@@ -141,6 +141,72 @@
     border-color: hsl(var(--hsl-accent) / 0.2);
 }
 
+.qv-diagnostic-card {
+    background: hsl(var(--hsl-surface-3) / 0.42);
+}
+
+.qv-diagnostic-hint {
+    font-size: 10px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+    margin-bottom: 8px;
+}
+
+.qv-diagnostic-grid {
+    display: grid;
+    gap: 4px;
+}
+
+.qv-diagnostic-grid--summary {
+    gap: 6px;
+}
+
+.qv-diagnostic-row {
+    display: grid;
+    grid-template-columns: 1.4fr 0.75fr 0.8fr 0.9fr;
+    gap: 6px;
+    align-items: center;
+    padding: 6px 8px;
+    border-radius: var(--radius-xs);
+    background: hsl(var(--hsl-surface-2) / 0.4);
+}
+
+.qv-diagnostic-row--header {
+    background: transparent;
+    padding: 2px 0 4px;
+}
+
+.qv-diagnostic-row--summary {
+    grid-template-columns: 1.35fr 1fr;
+}
+
+.qv-diagnostic-cell {
+    font-family: var(--font-family-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-align: right;
+}
+
+.qv-diagnostic-row--header .qv-diagnostic-cell {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.qv-diagnostic-cell--label {
+    text-align: left;
+    color: var(--text-primary);
+}
+
+.qv-diagnostic-cell.positive {
+    color: var(--green);
+}
+
+.qv-diagnostic-cell.negative {
+    color: var(--red);
+}
+
 .qv-poly-profile-grid {
     display: grid;
     gap: 4px;

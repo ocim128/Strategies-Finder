@@ -3,12 +3,15 @@ import { describe, it } from "node:test";
 import {
     countDistinctPolymarketOutcomeRows,
     computePolymarketBestBaselineWinRate,
+    getQuickViewDiagnosticSections,
+    summarizePolymarketExecutionGap,
+    summarizePolymarketPayoutDiagnostics,
     summarizePolymarketStreaks,
     summarizeRecentPolymarketForm,
 } from "../lib/quick-view";
-import type { Trade } from "../lib/strategies/index";
+import type { BacktestResult, Trade } from "../lib/strategies/index";
 
-function makeTrade(id: number, isWin: boolean | null): Trade {
+function makeTrade(id: number, isWin: boolean | null, overrides: Partial<Trade> = {}): Trade {
     return {
         id,
         type: "long",
@@ -28,7 +31,9 @@ function makeTrade(id: number, isWin: boolean | null): Trade {
             prediction: "yes",
             actualOutcomeUp: isWin ? 1 : 0,
             isWin,
+            marketEntryPrice: 0.5,
         },
+        ...overrides,
     };
 }
 
@@ -114,5 +119,204 @@ describe("Quick View Polymarket streak summary", () => {
         ];
 
         expect(countDistinctPolymarketOutcomeRows(trades)).to.equal(2);
+    });
+
+    it("keeps only execution diagnostics in Quick View", () => {
+        const result = {
+            trades: [],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            expectancyBreakdown: {
+                sections: [
+                    { id: "side", title: "By Side", hint: "", rows: [] },
+                    { id: "session_minute", title: "By 5m Session Minute", hint: "", rows: [] },
+                    { id: "price_range_position", title: "By Entry Range Position", hint: "", rows: [] },
+                ],
+            },
+        } satisfies BacktestResult;
+
+        expect(getQuickViewDiagnosticSections(result).map((section) => section.id)).to.deep.equal([
+            "session_minute",
+            "price_range_position",
+        ]);
+    });
+
+    it("summarizes polymarket payout expectancy from entry prices", () => {
+        const summary = summarizePolymarketPayoutDiagnostics([
+            makeTrade(1, true, {
+                polymarketOutcome: {
+                    ...makeTrade(1, true).polymarketOutcome!,
+                    marketEntryPrice: 0.4,
+                },
+            }),
+            makeTrade(2, false, {
+                polymarketOutcome: {
+                    ...makeTrade(2, false).polymarketOutcome!,
+                    marketEntryPrice: 0.6,
+                },
+            }),
+        ]);
+
+        expect(summary).to.not.equal(null);
+        expect(summary?.pricedTrades).to.equal(2);
+        expect(summary?.unpricedScoredTrades).to.equal(0);
+        expect(summary?.avgEntryPrice).to.equal(0.5);
+        expect(summary?.breakEvenWinRate).to.equal(0.5);
+        expect(summary?.winRate).to.equal(0.5);
+        expect(summary?.expectancy).to.equal(0);
+        expect(summary?.edgeVsBreakEven).to.equal(0);
+    });
+
+    it("keeps unpriced scored trades out of payout maths but reports the exclusion", () => {
+        const summary = summarizePolymarketPayoutDiagnostics([
+            makeTrade(1, true, {
+                polymarketOutcome: {
+                    ...makeTrade(1, true).polymarketOutcome!,
+                    marketEntryPrice: 0.4,
+                },
+            }),
+            makeTrade(2, false, {
+                polymarketOutcome: {
+                    ...makeTrade(2, false).polymarketOutcome!,
+                    marketEntryPrice: null,
+                },
+            }),
+        ]);
+
+        expect(summary).to.not.equal(null);
+        expect(summary?.pricedTrades).to.equal(1);
+        expect(summary?.unpricedScoredTrades).to.equal(1);
+        expect(summary?.winRate).to.equal(1);
+        expect(summary?.expectancy).to.equal(0.6);
+    });
+
+    it("builds quick view sections from polymarket payout instead of binance pnl when priced trades exist", () => {
+        const result = {
+            trades: [
+                makeTrade(1, true, {
+                    entryTime: 1_699_999_800,
+                    pnl: -100,
+                    polymarketOutcome: {
+                        ...makeTrade(1, true).polymarketOutcome!,
+                        marketEntryPrice: 0.4,
+                    },
+                    entrySnapshot: { priceRangePos: 0.9 },
+                }),
+                makeTrade(2, false, {
+                    entryTime: 1_699_999_860,
+                    pnl: 100,
+                    polymarketOutcome: {
+                        ...makeTrade(2, false).polymarketOutcome!,
+                        marketEntryPrice: 0.2,
+                    },
+                    entrySnapshot: { priceRangePos: 0.1 },
+                }),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 2,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            expectancyBreakdown: {
+                sections: [
+                    { id: "session_minute", title: "By 5m Session Minute", hint: "", rows: [] },
+                    { id: "price_range_position", title: "By Entry Range Position", hint: "", rows: [] },
+                ],
+            },
+        } satisfies BacktestResult;
+
+        const sections = getQuickViewDiagnosticSections(result);
+        const minute0 = sections[0]?.rows.find((row) => row.label === "Minute 0");
+        const minute1 = sections[0]?.rows.find((row) => row.label === "Minute 1");
+
+        expect(sections.map((section) => section.id)).to.deep.equal(["session_minute", "price_range_position"]);
+        expect(minute0?.expectancy).to.equal(0.6);
+        expect(minute1?.expectancy).to.equal(-0.2);
+    });
+
+    it("compares polymarket payout against realized binance execution", () => {
+        const summary = summarizePolymarketExecutionGap([
+            makeTrade(1, true, {
+                pnl: 5,
+                polymarketOutcome: {
+                    ...makeTrade(1, true).polymarketOutcome!,
+                    marketEntryPrice: 0.4,
+                },
+            }),
+            makeTrade(2, true, {
+                pnl: -3,
+                polymarketOutcome: {
+                    ...makeTrade(2, true).polymarketOutcome!,
+                    marketEntryPrice: 0.7,
+                },
+            }),
+            makeTrade(3, false, {
+                pnl: -4,
+                polymarketOutcome: {
+                    ...makeTrade(3, false).polymarketOutcome!,
+                    marketEntryPrice: 0.2,
+                },
+            }),
+            makeTrade(4, null, { pnl: 9 }),
+        ]);
+
+        expect(summary).to.not.equal(null);
+        expect(summary?.pricedTrades).to.equal(3);
+        expect(summary?.unpricedScoredTrades).to.equal(0);
+        expect(summary?.polymarketWinRate).to.be.closeTo(2 / 3, 1e-12);
+        expect(summary?.avgEntryPrice).to.be.closeTo((0.4 + 0.7 + 0.2) / 3, 1e-12);
+        expect(summary?.breakEvenWinRate).to.be.closeTo((0.4 + 0.7 + 0.2) / 3, 1e-12);
+        expect(summary?.polymarketExpectancy).to.be.closeTo(0.7 / 3, 1e-12);
+        expect(summary?.realizedWinRate).to.equal(1 / 3);
+        expect(summary?.realizedExpectancy).to.equal(-2 / 3);
+    });
+
+    it("keeps unpriced scored trades out of the execution-gap subset but reports them", () => {
+        const summary = summarizePolymarketExecutionGap([
+            makeTrade(1, true, {
+                pnl: 5,
+                polymarketOutcome: {
+                    ...makeTrade(1, true).polymarketOutcome!,
+                    marketEntryPrice: 0.4,
+                },
+            }),
+            makeTrade(2, false, {
+                pnl: -9,
+                polymarketOutcome: {
+                    ...makeTrade(2, false).polymarketOutcome!,
+                    marketEntryPrice: null,
+                },
+            }),
+        ]);
+
+        expect(summary).to.not.equal(null);
+        expect(summary?.pricedTrades).to.equal(1);
+        expect(summary?.unpricedScoredTrades).to.equal(1);
+        expect(summary?.polymarketWinRate).to.equal(1);
+        expect(summary?.realizedWinRate).to.equal(1);
+        expect(summary?.realizedExpectancy).to.equal(5);
     });
 });

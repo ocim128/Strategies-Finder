@@ -574,10 +574,10 @@ export class ResultsRenderer {
         `;
     }
 
-    private formatPercent(value: number | null, decimals: number, signed = false): string {
-        if (value === null || !Number.isFinite(value)) return '--';
+    private formatPercent(value: number | null | undefined, decimals: number, signed = false, suffix = '%'): string {
+        if (typeof value !== 'number' || !Number.isFinite(value)) return '--';
         const prefix = signed && value > 0 ? '+' : '';
-        return `${prefix}${value.toFixed(decimals)}%`;
+        return `${prefix}${value.toFixed(decimals)}${suffix}`;
     }
 
     private formatNumber(value: number | null, decimals: number): string {

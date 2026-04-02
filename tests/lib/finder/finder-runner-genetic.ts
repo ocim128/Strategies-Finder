@@ -66,7 +66,7 @@ export async function runGeneticFinder(params: GeneticFinderRunParams): Promise<
                     mutationRate: 0.2,
                     mutationSigma: 0.18,
                     rangePercent: input.options.rangePercent,
-                    seed: deriveStrategySeed(input.options.robustSeed ?? 1337, selection.key),
+                    seed: deriveStrategySeed(1337, selection.key),
                     tournamentSize: 4,
                     adaptiveMutation: {
                         enabled: true,

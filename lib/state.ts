@@ -14,7 +14,7 @@ export type MockChartModel = 'simple' | 'hard' | 'v3' | 'v4' | 'v5' | 'v6';
 export type ChartMode = 'candlestick' | 'heikin-ashi';
 export type TwoHourCloseParity = 'odd' | 'even';
 export type TwoHourCloseParityMode = TwoHourCloseParity | 'both';
-export type BacktestResultSource = 'backtest' | 'ensemble_preview' | 'finder_selection' | 'finder_robust_oos' | 'walk_forward_oos';
+export type BacktestResultSource = 'backtest' | 'ensemble_preview' | 'finder_selection' | 'walk_forward_oos';
 
 export interface TwoHourParityBacktestResults {
     odd: BacktestResult;

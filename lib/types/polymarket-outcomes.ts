@@ -43,6 +43,8 @@ export interface TradePolymarketOutcome {
     prediction: 'yes' | 'no';
     actualOutcomeUp: 0 | 1;
     isWin: boolean;
+    /** Entry probability paid for this trade (YES for longs, NO for shorts). */
+    marketEntryPrice?: number | null;
     /** Entry offset minute within 5m event (0..4), only populated for 1m runs */
     entryOffset?: number;
 }
@@ -63,6 +65,7 @@ export interface BacktestPolymarketTradeSummary {
     outcomeRowsLoaded: number;
     scoredTrades: number;
     missingOutcomeTrades: number;
+    unscoredTrades?: number;
     entryOffset?: number;
     duplicateTradesIgnored?: number;
     timingProfile?: BacktestPolymarketTimingProfileEntry[];
@@ -72,6 +75,7 @@ export interface PolymarketEvalResult {
     evaluatedEvents: number;
     predictionsTaken: number;
     scoredPredictions: number;
+    pricedPredictions?: number;
     wins: number;
     losses: number;
     skips: number;
@@ -85,6 +89,10 @@ export interface PolymarketEvalResult {
     shortWinRate: number;
     alwaysYesBaselineWinRate: number;
     alwaysNoBaselineWinRate: number;
+    avgEntryPrice?: number;
+    breakEvenWinRate?: number;
+    expectancy?: number;
+    edgeVsBreakEven?: number;
     missingOutcomeRows: number;
     ignoredSignals: number;
     /** Entry offset used for scoring (0..4), only for 1m runs */

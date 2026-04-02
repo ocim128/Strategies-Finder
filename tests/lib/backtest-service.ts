@@ -65,7 +65,10 @@ import { commitBacktestResult, commitParityBacktestResults, setTwoHourCloseParit
 import { annotateBacktestResultWithPolymarketOutcomes } from "./polymarket-trade-annotations";
 
 import { resolveTwoHourParityFromTime } from "./two-hour-parity";
-import { buildPostEntryPathStats as analyzeBacktestResult } from "./backtest-result-analysis";
+import {
+    buildExpectancyBreakdown,
+    buildPostEntryPathStats as analyzeBacktestResult,
+} from "./backtest-result-analysis";
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
@@ -716,6 +719,7 @@ export class BacktestService {
             result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
             result.performanceAnalytics = this.recomputePerformanceAnalytics(result);
         }
+        result.expectancyBreakdown = buildExpectancyBreakdown(result);
         result.postEntryPath = this.buildPostEntryPathStats(result, 5, backtestData);
         if (result.trades.length >= 3) {
             result.edgeStatistics = computeEdgeStatistics(result, backtestData);

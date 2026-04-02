@@ -8,14 +8,6 @@ import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
 import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
 import { applySignalPolarity, runBacktestCompact } from "./strategies/backtest";
-import {
-    formatWalkForwardPermutationMetricValue,
-    formatWalkForwardPermutationPValue,
-    runWalkForwardPermutationTest,
-    type WalkForwardPermutationConfig,
-    type WalkForwardPermutationMetric,
-    type WalkForwardPermutationResult
-} from "./strategies/backtest/permutation-test";
 import { parseInputNumber } from "./dom-input-readers";
 import type { Strategy, StrategyParams, BacktestSettings, OHLCVData, BacktestResult } from "./strategies/index";
 import { sliceOhlcvByBlock } from "./block-selector";
@@ -33,7 +25,7 @@ import {
     resolveFiniteRangeReferenceValue,
     shouldTreatParamAsWholeNumber
 } from "./walk-forward-range-utils";
-import { createSeededRandom, snapValueToStepRange } from "./param-math-utils";
+import { snapValueToStepRange } from "./param-math-utils";
 import {
     runWalkForwardAnalysis,
     runFixedParamWalkForward,
@@ -52,8 +44,6 @@ import {
 } from "./walk-forward-dom";
 import {
     renderWalkForwardDecayPanel,
-    renderWalkForwardCandidateValidationSummary,
-    renderWalkForwardPermutationSummary,
     setWalkForwardLoading,
     updateWalkForwardRobustnessGauge,
     updateWalkForwardSummaryPanel,
@@ -61,59 +51,7 @@ import {
 } from "./walk-forward-ui";
 import { commitBacktestResult } from "./state-actions";
 
-const DEFAULT_CANDIDATE_VALIDATION_SEEDS = [1337, 7331, 2026, 4242, 9001];
-const DEFAULT_MIN_SEED_PASSES = 3;
-const DEFAULT_MAX_OOS_DD_PERCENT = 30;
-const DEFAULT_WF_PERMUTATIONS = 500;
-const DEFAULT_WF_PERMUTATION_SEED = 1337;
-const DEFAULT_WF_PERMUTATION_METRIC: WalkForwardPermutationMetric = "net_profit";
-
-type CandidateValidationDecisionReason =
-    | "pass"
-    | "net_loss"
-    | "low_profit_factor"
-    | "drawdown_breach"
-    | "low_trades"
-    | "run_error";
-
-type CandidateSeedValidationRow = {
-    seed: number;
-    pass: boolean;
-    decisionReason: CandidateValidationDecisionReason;
-    netProfitPercent: number | null;
-    profitFactor: number | null;
-    maxDrawdownPercent: number | null;
-    totalTrades: number | null;
-    robustnessScore: number | null;
-    testWindow: number;
-    stepSize: number;
-    commissionPercent: number;
-    slippageBps: number;
-    dataOffset: number;
-    totalWindows: number | null;
-    error?: string;
-};
-
-type CandidateValidationSummary = {
-    seeds: number[];
-    minPasses: number;
-    passCount: number;
-    failCount: number;
-    decision: "PASS" | "FAIL";
-    maxDrawdownLimit: number;
-    minTrades: number;
-    rows: CandidateSeedValidationRow[];
-};
-
-type CandidateSeedValidationProfile = {
-    testWindow: number;
-    stepSize: number;
-    commissionPercent: number;
-    slippageBps: number;
-    dataOffset: number;
-};
-
-type WalkForwardRunMode = "analysis" | "quick" | "validation";
+type WalkForwardRunMode = "analysis" | "quick";
 
 type WalkForwardRunContext = {
     signal: AbortSignal;
@@ -127,13 +65,7 @@ type WalkForwardNumberInputId =
     | "wf-test-window"
     | "wf-step-size"
     | "wf-min-trades"
-    | "wf-top-n"
-    | "wf-validation-min-passes"
-    | "wf-validation-max-dd"
-    | "wf-permutation-count"
-    | "wf-permutation-seed";
-
-type WalkForwardStringInputId = "wf-validation-seeds";
+    | "wf-top-n";
 
 type PreviousBacktestSnapshot = {
     result: BacktestResult | null;
@@ -152,16 +84,12 @@ class WalkForwardService {
     private lastRunBaseParams: { strategyKey: string; params: StrategyParams } | null = null;
     private dom: WalkForwardServiceDom | null = null;
     private numberInputs: Record<WalkForwardNumberInputId, HTMLInputElement> | null = null;
-    private stringInputs: Record<WalkForwardStringInputId, HTMLInputElement> | null = null;
     private readonly uiHost = {
-        formatPermutationValue: (metric: WalkForwardPermutationMetric, value: number | null) => this.formatPermutationValue(metric, value),
-        formatCandidateValidationDecision: (reason: CandidateValidationDecisionReason) => this.formatCandidateValidationDecision(reason),
         formatSignedPercent: formatWalkForwardSignedPercent,
         formatNumber: (value: number | null, digits?: number) => this.formatNumber(value, digits),
         formatPercent: (value: number | null, digits?: number) => this.formatPercent(value, digits),
         formatBaseParamsSummary: () => formatWalkForwardBaseParamsSummary(this.lastRunBaseParams),
         formatWindowParams: formatWalkForwardWindowParams,
-        getPermutationTone: (result: WalkForwardPermutationResult) => this.getPermutationTone(result),
     };
 
     private getDom(): WalkForwardServiceDom {
@@ -180,24 +108,8 @@ class WalkForwardService {
             "wf-step-size": dom.wfStepSize,
             "wf-min-trades": dom.wfMinTrades,
             "wf-top-n": dom.wfTopN,
-            "wf-validation-min-passes": dom.wfValidationMinPasses,
-            "wf-validation-max-dd": dom.wfValidationMaxDd,
-            "wf-permutation-count": dom.wfPermutationCount,
-            "wf-permutation-seed": dom.wfPermutationSeed,
         };
         return this.numberInputs;
-    }
-
-    private getStringInputs(): Record<WalkForwardStringInputId, HTMLInputElement> {
-        if (this.stringInputs) {
-            return this.stringInputs;
-        }
-
-        const dom = this.getDom();
-        this.stringInputs = {
-            "wf-validation-seeds": dom.wfValidationSeeds,
-        };
-        return this.stringInputs;
     }
 
     private async withRunGuard<T>(
@@ -726,274 +638,6 @@ class WalkForwardService {
         });
     }
 
-    async runCandidateValidation(): Promise<CandidateValidationSummary | null> {
-        return this.withRunGuard("validation", "No data loaded for candidate validation", async ({ signal, data, strategyKey, strategy }) => {
-            const capitalSettings = backtestService.getCapitalSettings();
-            const backtestSettings = backtestService.getBacktestSettings();
-            const sizing = {
-                mode: capitalSettings.sizingMode,
-                fixedTradeAmount: capitalSettings.fixedTradeAmount,
-                advancedSizing: capitalSettings.advancedSizing,
-            };
-
-            const fixedParams = this.normalizeStrategyParams(strategy, paramManager.getValues(strategy));
-            const seedInput = this.readStringInput("wf-validation-seeds", DEFAULT_CANDIDATE_VALIDATION_SEEDS.join(","));
-            const seeds = this.parseSeedList(seedInput);
-            if (seeds.length === 0) {
-                this.updateStatus("Candidate validation needs at least one valid seed.");
-                return null;
-            }
-
-            const minPassesRaw = Math.round(this.readNumberInput("wf-validation-min-passes", DEFAULT_MIN_SEED_PASSES));
-            const minPasses = Math.max(1, Math.min(seeds.length, minPassesRaw));
-            const maxDrawdownLimit = Math.max(
-                1,
-                this.readNumberInput("wf-validation-max-dd", DEFAULT_MAX_OOS_DD_PERCENT)
-            );
-            const baseMinTrades = Math.max(1, this.readNumberInput("wf-min-trades", 5));
-            const baseTestWindow = Math.max(10, this.readNumberInput("wf-test-window", Math.floor(data.length * 0.2)));
-            const baseStepSize = Math.max(10, this.readNumberInput("wf-step-size", baseTestWindow));
-            const baseCommission = Math.max(0, capitalSettings.commission);
-            const baseSlippageBps = Math.max(0, backtestSettings.slippageBps ?? 0);
-
-            this.setLoading(true, "validation");
-            this.updateStatus(`Validating candidate across ${seeds.length} seed(s)...`);
-
-            try {
-                const rows: CandidateSeedValidationRow[] = [];
-
-            for (let i = 0; i < seeds.length; i++) {
-                if (signal.aborted) break;
-                const seed = seeds[i];
-                this.updateStatus(`Seed ${i + 1}/${seeds.length}: evaluating...`, false);
-
-                const profile = this.buildCandidateValidationProfile(seed, {
-                    dataLength: data.length,
-                    baseTestWindow,
-                    baseStepSize,
-                    baseCommission,
-                    baseSlippageBps
-                });
-
-                let runData = data.slice(profile.dataOffset);
-                let testWindow = profile.testWindow;
-                if (runData.length < testWindow * 2) {
-                    runData = data;
-                    testWindow = Math.max(10, Math.min(testWindow, Math.floor(runData.length / 3)));
-                }
-
-                if (runData.length < testWindow * 2) {
-                    rows.push({
-                        seed,
-                        pass: false,
-                        decisionReason: "run_error",
-                        netProfitPercent: null,
-                        profitFactor: null,
-                        maxDrawdownPercent: null,
-                        totalTrades: null,
-                        robustnessScore: null,
-                        testWindow,
-                        stepSize: profile.stepSize,
-                        commissionPercent: profile.commissionPercent,
-                        slippageBps: profile.slippageBps,
-                        dataOffset: profile.dataOffset,
-                        totalWindows: null,
-                        error: "insufficient_data"
-                    });
-                    await new Promise(resolve => setTimeout(resolve, 0));
-                    continue;
-                }
-
-                const seedSettings: BacktestSettings = {
-                    ...backtestSettings,
-                    executionModel: "next_open",
-                    allowSameBarExit: false,
-                    slippageBps: Math.max(baseSlippageBps, profile.slippageBps)
-                };
-
-                try {
-                    const result = await runFixedParamWalkForward(
-                        runData,
-                        { ...strategy, defaultParams: fixedParams },
-                        {
-                            testWindow,
-                            stepSize: Math.max(10, Math.min(profile.stepSize, testWindow)),
-                            fixedParams,
-                            minTrades: baseMinTrades
-                        },
-                        capitalSettings.initialCapital,
-                        capitalSettings.positionSize,
-                        profile.commissionPercent,
-                        seedSettings,
-                        sizing
-                    );
-
-                    const decisionReason = this.resolveCandidateValidationDecisionReason(
-                        result,
-                        maxDrawdownLimit,
-                        baseMinTrades
-                    );
-
-                    rows.push({
-                        seed,
-                        pass: decisionReason === "pass",
-                        decisionReason,
-                        netProfitPercent: result.combinedOOSTrades.netProfitPercent,
-                        profitFactor: result.combinedOOSTrades.profitFactor,
-                        maxDrawdownPercent: result.combinedOOSTrades.maxDrawdownPercent,
-                        totalTrades: result.combinedOOSTrades.totalTrades,
-                        robustnessScore: result.robustnessScore,
-                        testWindow,
-                        stepSize: Math.max(10, Math.min(profile.stepSize, testWindow)),
-                        commissionPercent: profile.commissionPercent,
-                        slippageBps: seedSettings.slippageBps ?? profile.slippageBps,
-                        dataOffset: profile.dataOffset,
-                        totalWindows: result.totalWindows
-                    });
-                } catch (error) {
-                    rows.push({
-                        seed,
-                        pass: false,
-                        decisionReason: "run_error",
-                        netProfitPercent: null,
-                        profitFactor: null,
-                        maxDrawdownPercent: null,
-                        totalTrades: null,
-                        robustnessScore: null,
-                        testWindow,
-                        stepSize: profile.stepSize,
-                        commissionPercent: profile.commissionPercent,
-                        slippageBps: profile.slippageBps,
-                        dataOffset: profile.dataOffset,
-                        totalWindows: null,
-                        error: error instanceof Error ? error.message : String(error)
-                    });
-                }
-
-                await new Promise(resolve => setTimeout(resolve, 0));
-            }
-
-            const passCount = rows.filter(row => row.pass).length;
-            const summary: CandidateValidationSummary = {
-                seeds,
-                minPasses,
-                passCount,
-                failCount: rows.length - passCount,
-                decision: passCount >= minPasses ? "PASS" : "FAIL",
-                maxDrawdownLimit,
-                minTrades: baseMinTrades,
-                rows
-            };
-
-            this.renderCandidateValidationSummary(summary);
-            this.updateStatus(
-                `Candidate validation ${summary.decision}: ${summary.passCount}/${summary.seeds.length} seeds passed (required ${summary.minPasses}).`
-            );
-            debugLogger.info("[WalkForward] Candidate validation complete", {
-                strategyKey,
-                decision: summary.decision,
-                passCount: summary.passCount,
-                seedCount: summary.seeds.length,
-                minPasses: summary.minPasses,
-                maxDrawdownLimit: summary.maxDrawdownLimit
-            });
-                return summary;
-            } catch (error) {
-                const msg = error instanceof Error ? error.message : String(error);
-                debugLogger.error(`Candidate validation failed: ${msg}`);
-                this.updateStatus(`Candidate validation error: ${msg}`);
-                return null;
-            }
-        });
-    }
-
-    private resolveCandidateValidationDecisionReason(
-        result: WalkForwardResult,
-        maxDrawdownLimit: number,
-        minTrades: number
-    ): CandidateValidationDecisionReason {
-        const oos = result.combinedOOSTrades;
-        if (oos.totalTrades < minTrades) return "low_trades";
-        if (oos.netProfit <= 0) return "net_loss";
-        if (!Number.isFinite(oos.profitFactor) || oos.profitFactor < 1) return "low_profit_factor";
-        if (oos.maxDrawdownPercent > maxDrawdownLimit) return "drawdown_breach";
-        return "pass";
-    }
-
-    private buildCandidateValidationProfile(
-        seed: number,
-        base: {
-            dataLength: number;
-            baseTestWindow: number;
-            baseStepSize: number;
-            baseCommission: number;
-            baseSlippageBps: number;
-        }
-    ): CandidateSeedValidationProfile {
-        const rand = createSeededRandom(seed);
-        const maxTestWindow = Math.max(20, Math.floor(base.dataLength * 0.45));
-        const testScale = 0.85 + rand() * 0.35; // 85%-120%
-        const stepScale = 0.85 + rand() * 0.25; // 85%-110%
-
-        const testWindow = Math.max(
-            10,
-            Math.min(maxTestWindow, Math.round(base.baseTestWindow * testScale))
-        );
-        const stepSize = Math.max(10, Math.round(base.baseStepSize * stepScale));
-
-        const minRequiredBars = Math.max(40, testWindow * 2);
-        const offsetBudget = Math.max(0, base.dataLength - minRequiredBars);
-        const maxOffset = Math.min(offsetBudget, Math.max(0, base.baseStepSize * 3));
-        const dataOffset = maxOffset > 0 ? Math.floor(rand() * (maxOffset + 1)) : 0;
-
-        const stressedCommissionBase = Math.max(0.02, base.baseCommission);
-        const commissionPercent = Number((stressedCommissionBase * (1.1 + rand() * 0.35)).toFixed(4));
-        const slippageBps = Math.max(base.baseSlippageBps + 1, Math.round(base.baseSlippageBps + 1 + rand() * 6));
-
-        return {
-            testWindow,
-            stepSize,
-            commissionPercent,
-            slippageBps,
-            dataOffset
-        };
-    }
-
-    private parseSeedList(raw: string): number[] {
-        const source = raw.trim().length > 0 ? raw : DEFAULT_CANDIDATE_VALIDATION_SEEDS.join(",");
-        const parsed = source
-            .split(/[\s,]+/)
-            .map(token => Number(token.trim()))
-            .filter(value => Number.isFinite(value))
-            .map(value => (Math.trunc(value) >>> 0) || 1);
-
-        const unique: number[] = [];
-        const seen = new Set<number>();
-        for (const value of parsed) {
-            if (seen.has(value)) continue;
-            seen.add(value);
-            unique.push(value);
-        }
-
-        return unique.length > 0 ? unique : [...DEFAULT_CANDIDATE_VALIDATION_SEEDS];
-    }
-
-    private readStringInput(id: string, fallback: string): string {
-        const el = this.getStringInputs()[id as WalkForwardStringInputId];
-        if (!el) return fallback;
-        const value = el.value.trim();
-        return value.length > 0 ? value : fallback;
-    }
-
-    private formatCandidateValidationDecision(reason: CandidateValidationDecisionReason): string {
-        if (reason === "pass") return "PASS";
-        if (reason === "net_loss") return "FAIL(net)";
-        if (reason === "low_profit_factor") return "FAIL(pf)";
-        if (reason === "drawdown_breach") return "FAIL(dd)";
-        if (reason === "low_trades") return "FAIL(trades)";
-        return "FAIL(error)";
-    }
-
     private formatNumber(value: number | null, digits: number = 2): string {
         if (value === Infinity) return "Inf";
         if (!Number.isFinite(value)) return "-";
@@ -1004,87 +648,6 @@ class WalkForwardService {
         if (!Number.isFinite(value)) return "-";
         return `${Number(value).toFixed(digits)}%`;
     }
-
-    private formatPermutationValue(metric: WalkForwardPermutationMetric, value: number | null): string {
-        return formatWalkForwardPermutationMetricValue(metric, value);
-    }
-
-    private getPermutationMetricFromUI(): WalkForwardPermutationMetric {
-        const value = this.getDom().wfPermutationMetric.value;
-        if (value === "net_profit" || value === "profit_factor" || value === "expectancy" || value === "trade_sharpe") {
-            return value;
-        }
-        return DEFAULT_WF_PERMUTATION_METRIC;
-    }
-
-    private getPermutationConfigFromUI(): WalkForwardPermutationConfig {
-        const permutations = Math.max(50, Math.round(this.readNumberInput("wf-permutation-count", DEFAULT_WF_PERMUTATIONS)));
-        const seed = Math.max(1, Math.trunc(this.readNumberInput("wf-permutation-seed", DEFAULT_WF_PERMUTATION_SEED)));
-
-        return {
-            permutations,
-            seed,
-            metric: this.getPermutationMetricFromUI(),
-        };
-    }
-
-    async runPermutationTest(): Promise<WalkForwardPermutationResult | null> {
-        if (this.isRunning) {
-            this.updateStatus("Analysis already running.");
-            return null;
-        }
-        if (!this.lastResult) {
-            this.renderPermutationSummary(null);
-            this.updateStatus("Run Walk-Forward or Quick Analysis first.");
-            return null;
-        }
-
-        this.isRunning = true;
-        this.setLoading(true, "permutation");
-
-        try {
-            const config = this.getPermutationConfigFromUI();
-            this.updateStatus(`Running ${config.permutations} permutation samples on latest WFA OOS trades...`);
-            await new Promise(resolve => setTimeout(resolve, 0));
-
-            const result = runWalkForwardPermutationTest(this.lastResult, config);
-            this.renderPermutationSummary(result);
-
-            if (result.status === "ok") {
-                this.updateStatus(
-                    `Permutation test: p=${formatWalkForwardPermutationPValue(result.pValue)} (${result.interpretation}).`
-                );
-            } else {
-                this.updateStatus(`Permutation test: ${result.interpretation}`);
-            }
-
-            return result;
-        } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            debugLogger.error(`Permutation test failed: ${msg}`);
-            this.updateStatus(`Permutation test error: ${msg}`);
-            return null;
-        } finally {
-            this.isRunning = false;
-            this.setLoading(false, "permutation");
-        }
-    }
-
-    private getPermutationTone(result: WalkForwardPermutationResult): "positive" | "negative" | "neutral" {
-        if (result.status !== "ok") return "neutral";
-        if ((result.pValue ?? 1) <= 0.05 && (result.observedValue ?? 0) > 0) return "positive";
-        if ((result.observedValue ?? 0) <= 0) return "negative";
-        return "neutral";
-    }
-
-    private renderPermutationSummary(result: WalkForwardPermutationResult | null): void {
-        renderWalkForwardPermutationSummary(this.getDom(), this.uiHost, result, this.lastResult);
-    }
-
-    private renderCandidateValidationSummary(summary: CandidateValidationSummary | null): void {
-        renderWalkForwardCandidateValidationSummary(this.getDom(), this.uiHost, summary);
-    }
-
 
     /**
      * Build parameter ranges from current params with reasonable bounds
@@ -1246,8 +809,6 @@ class WalkForwardService {
      * Display results in the UI
      */
     private displayResults(result: WalkForwardResult): void {
-        this.renderPermutationSummary(null);
-
         // Update summary panel
         this.updateSummaryPanel(result);
 
@@ -1301,8 +862,8 @@ class WalkForwardService {
         });
     }
 
-    private setLoading(loading: boolean, mode: "analysis" | "quick" | "validation" | "permutation" = "analysis"): void {
-        setWalkForwardLoading(this.getDom(), loading, mode, Boolean(this.lastResult));
+    private setLoading(loading: boolean, mode: "analysis" | "quick" = "analysis"): void {
+        setWalkForwardLoading(this.getDom(), loading, mode);
     }
 
     private updateStatus(message: string, log: boolean = true): void {
@@ -1382,16 +943,12 @@ class WalkForwardService {
         const {
             wfRunBtn: runBtn,
             wfQuickBtn: quickBtn,
-            wfValidateBtn: validateBtn,
-            wfPermutationBtn: permutationBtn,
             wfCancelBtn: cancelBtn,
             wfAutoSuggest: autoSuggestToggle,
         } = this.getDom();
 
         runBtn.addEventListener('click', () => this.runAnalysis());
         quickBtn.addEventListener('click', () => this.runQuickAnalysis());
-        validateBtn.addEventListener('click', () => this.runCandidateValidation());
-        permutationBtn.addEventListener('click', () => this.runPermutationTest());
         cancelBtn.addEventListener('click', () => this.cancelRun());
         autoSuggestToggle.addEventListener('change', () => {
             if (autoSuggestToggle.checked) {
@@ -1399,7 +956,6 @@ class WalkForwardService {
             }
         });
 
-        this.renderPermutationSummary(null);
         this.setLoading(false);
 
         state.subscribe('currentBacktestResult', (result) => {

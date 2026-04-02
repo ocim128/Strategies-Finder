@@ -29,6 +29,7 @@ export const METRIC_LABELS: Record<FinderMetric, string> = {
 	polyWinRate: 'Poly Win %',
 	polyCoverage: 'Poly Cov %',
 	polyPredictions: 'Poly Scored',
+	polyExpectancy: 'Poly Exp',
 };
 
 export const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
@@ -47,16 +48,20 @@ export const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
 	polyWinRate: 'Poly Win Rate',
 	polyCoverage: 'Poly Coverage',
 	polyPredictions: 'Polymarket Scored Predictions',
+	polyExpectancy: 'Polymarket Expectancy',
 };
 
 export const POLYMARKET_RANK_MODE_LABELS: Record<PolymarketFinderRankMode, string> = {
 	balanced: 'Balanced',
 	accuracy: 'Accuracy',
 	volume: 'Volume',
+	expectancy: 'Expectancy',
 };
 
 export function getPolymarketSortPriority(mode: PolymarketFinderRankMode = 'balanced'): FinderMetric[] {
 	switch (mode) {
+		case 'expectancy':
+			return ['polyExpectancy', 'polyWinRate', 'polyPredictions'];
 		case 'accuracy':
 			return ['polyWinRate', 'polyPredictions', 'polyCoverage'];
 		case 'volume':

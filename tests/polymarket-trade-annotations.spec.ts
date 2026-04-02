@@ -155,6 +155,8 @@ describe("Polymarket backtest trade annotations", () => {
         expect(result.trades[0]?.polymarketOutcome?.isWin).to.equal(true);
         expect(result.trades[1]?.polymarketOutcome?.isWin).to.equal(false);
         expect(result.trades[0]?.polymarketOutcome?.marketSlug).to.equal("btc-1");
+        expect(result.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.5);
+        expect(result.trades[1]?.polymarketOutcome?.marketEntryPrice).to.equal(0.5);
 
         const renderer = new TradesRenderer() as unknown as {
             renderTradeItem: (trade: Trade, formatPrice: (price: number) => string, formatDate: (time: Trade["entryTime"]) => string) => string;
@@ -254,11 +256,14 @@ describe("Polymarket backtest trade annotations", () => {
 
         expect(result.polymarketTradeSummary?.entryOffset).to.equal(1);
         expect(result.polymarketTradeSummary?.scoredTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.missingOutcomeTrades).to.equal(0);
+        expect(result.polymarketTradeSummary?.unscoredTrades).to.equal(1);
         expect(result.polymarketTradeSummary?.duplicateTradesIgnored).to.equal(1);
         expect(result.polymarketTradeSummary?.timingProfile?.map((entry) => entry.entryOffset)).to.deep.equal([0, 1, 2, 3, 4]);
         expect(result.polymarketTradeSummary?.timingProfile?.find((entry) => entry.entryOffset === 1)?.scoredTrades).to.equal(1);
         expect(result.trades[0]?.polymarketOutcome?.isWin).to.equal(true);
         expect(result.trades[0]?.polymarketOutcome?.entryOffset).to.equal(1);
+        expect(result.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.52);
         expect(result.trades[1]?.polymarketOutcome).to.equal(null);
     });
 

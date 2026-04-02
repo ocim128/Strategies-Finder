@@ -37,6 +37,8 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
                 return item.polymarketEval.coverage;
             case "polyPredictions":
                 return item.polymarketEval.scoredPredictions;
+            case "polyExpectancy":
+                return item.polymarketEval.expectancy ?? 0;
         }
     }
     const result = getFinderSelectionResult(item);
@@ -69,6 +71,7 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
         case "polyWinRate":
         case "polyCoverage":
         case "polyPredictions":
+        case "polyExpectancy":
             return 0; // No polymarketEval present
         default:
             return 0;

@@ -21,7 +21,19 @@ function makeBars(count: number, startTs = 1_700_000_000, intervalSec = 300): OH
     }));
 }
 
-function makeOutcomeRow(eventStartTs: number, resolvedUp: 0 | 1, seriesId = '10684'): PolymarketOutcomeRow {
+function makeOutcomeRow(
+    eventStartTs: number,
+    resolvedUp: 0 | 1,
+    seriesId = '10684',
+    prices: Partial<Pick<
+        PolymarketOutcomeRow,
+        'yes_open_price'
+        | 'yes_entry_minute_1_price'
+        | 'yes_entry_minute_2_price'
+        | 'yes_entry_minute_3_price'
+        | 'yes_entry_minute_4_price'
+    >> = {}
+): PolymarketOutcomeRow {
     return {
         series_id: seriesId,
         event_slug: `btc-5m-${eventStartTs}`,
@@ -31,11 +43,11 @@ function makeOutcomeRow(eventStartTs: number, resolvedUp: 0 | 1, seriesId = '106
         event_end_ts: eventStartTs + 300,
         yes_token_id: 'yes-token',
         no_token_id: 'no-token',
-        yes_open_price: 0.5,
-        yes_entry_minute_1_price: 0.51,
-        yes_entry_minute_2_price: 0.52,
-        yes_entry_minute_3_price: 0.53,
-        yes_entry_minute_4_price: 0.54,
+        yes_open_price: prices.yes_open_price ?? 0.5,
+        yes_entry_minute_1_price: prices.yes_entry_minute_1_price ?? 0.51,
+        yes_entry_minute_2_price: prices.yes_entry_minute_2_price ?? 0.52,
+        yes_entry_minute_3_price: prices.yes_entry_minute_3_price ?? 0.53,
+        yes_entry_minute_4_price: prices.yes_entry_minute_4_price ?? 0.54,
         resolved_outcome_up: resolvedUp,
         resolution_source: 'outcomePrices',
         updated_at: 1_700_100_000,
@@ -102,7 +114,6 @@ function makeOptions(overrides: Partial<FinderOptions> = {}): FinderOptions {
         mode: 'grid',
         sortPriority: ['polyScore', 'polyWinRate', 'polyPredictions'],
         useAdvancedSort: false,
-        robustSeed: 1337,
         multiTimeframeEnabled: false,
         timeframes: [],
         topN: 10,
@@ -259,7 +270,7 @@ describe('Finder Polymarket runner', () => {
         expect(output.results[0]?.polymarketEval?.scoredPredictions).to.equal(1);
     });
 
-    it('uses executed trade count for the Finder min/max filter in Polymarket mode', async () => {
+    it('does not let the normal trade-count filter suppress Polymarket results', async () => {
         const bars = makeBars(4);
         installOutcomeFetch([
             makeOutcomeRow(Number(bars[1].time), 1),
@@ -273,14 +284,14 @@ describe('Finder Polymarket runner', () => {
                 [{ variant: 1 }, { variant: 2 }],
                 {
                     tradeFilterEnabled: true,
-                    minTrades: 2,
-                    maxTrades: 2,
+                    minTrades: 999,
+                    maxTrades: 999,
                 }
             ),
             callbacks
         );
 
-        expect(output.results).to.have.length(0);
+        expect(output.results.length).to.be.greaterThan(0);
     });
 
     it('filters out candidates below the polymarket minimum scored threshold', async () => {
@@ -372,6 +383,66 @@ describe('Finder Polymarket runner', () => {
         expect(output.results[0]?.polymarketEval?.wins).to.equal(2);
     });
 
+    it('supports expectancy-based polymarket ranking', async () => {
+        const bars = makeBars(4);
+        installOutcomeFetch([
+            makeOutcomeRow(Number(bars[1].time), 1, '10684', { yes_open_price: 0.8 }),
+            makeOutcomeRow(Number(bars[2].time), 1, '10684', { yes_open_price: 0.2 }),
+        ]);
+
+        const earlyBuyStrategy: Strategy = {
+            name: 'Early Buy',
+            description: 'Scores the expensive first event',
+            defaultParams: {},
+            paramLabels: {},
+            execute(data: OHLCVData[]): Signal[] {
+                return [{ time: data[0].time, type: 'buy', price: data[0].close, barIndex: 0 }];
+            },
+        };
+        const lateBuyStrategy: Strategy = {
+            name: 'Late Buy',
+            description: 'Scores the cheaper second event',
+            defaultParams: {},
+            paramLabels: {},
+            execute(data: OHLCVData[]): Signal[] {
+                return [{ time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 }];
+            },
+        };
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            {
+                ...makeInput(
+                    bars,
+                    [{}],
+                    {
+                        sortPriority: ['polyExpectancy', 'polyWinRate', 'polyPredictions'],
+                        polymarketRankMode: 'expectancy',
+                    }
+                ),
+                selectedStrategies: [
+                    {
+                        key: 'early_buy',
+                        name: earlyBuyStrategy.name,
+                        strategy: earlyBuyStrategy,
+                    },
+                    {
+                        key: 'late_buy',
+                        name: lateBuyStrategy.name,
+                        strategy: lateBuyStrategy,
+                    },
+                ],
+            },
+            callbacks
+        );
+
+        expect(output.results).to.have.length(2);
+        expect(output.results[0]?.key).to.equal('late_buy');
+        expect(output.results[0]?.polymarketEval?.expectancy).to.be.closeTo(0.8, 1e-12);
+        expect(output.results[1]?.key).to.equal('early_buy');
+        expect(output.results[1]?.polymarketEval?.expectancy).to.be.closeTo(0.2, 1e-12);
+    });
+
     it('rejects non-1m/5m/15m/1h/4h intervals before touching the outcome loader', async () => {
         globalThis.fetch = (async () => {
             throw new Error('fetch should not be called for invalid interval');
@@ -428,7 +499,7 @@ describe('Finder Polymarket runner', () => {
             throw new Error('fetch should not be called for unsupported mode');
         }) as typeof fetch;
 
-        for (const mode of ['default', 'genetic', 'robust_random_wf'] as const) {
+        for (const mode of ['default', 'genetic'] as const) {
             const { callbacks, statuses } = makeCallbacks();
             const output = await runPolymarketFinder(
                 makeInput(makeBars(4), [{ variant: 1 }], { mode }),
@@ -439,7 +510,7 @@ describe('Finder Polymarket runner', () => {
             seenModes.push(mode);
         }
 
-        expect(seenModes).to.deep.equal(['default', 'genetic', 'robust_random_wf']);
+        expect(seenModes).to.deep.equal(['default', 'genetic']);
     });
 
     it('rejects multi-timeframe and combo Polymarket runs', async () => {
@@ -487,6 +558,29 @@ describe('Finder Polymarket runner', () => {
         }
 
         expect(statuses.some((status) => status.includes('outcome rows'))).to.equal(true);
+    });
+
+    it('scores non-zero offsets for multi-interval Polymarket runs', async () => {
+        const bars = makeBars(4, 1_700_000_300, 900);
+        installOutcomeFetch([
+            makeOutcomeRow(1_700_000_000, 1),
+            makeOutcomeRow(1_700_000_300, 1),
+            makeOutcomeRow(1_700_000_600, 0),
+            makeOutcomeRow(1_700_000_900, 1),
+            makeOutcomeRow(1_700_001_200, 1),
+            makeOutcomeRow(1_700_001_500, 0),
+        ]);
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(bars, [{ variant: 1 }], {}, '15m'),
+            callbacks
+        );
+
+        expect(output.results).to.have.length(3);
+        expect(output.results.map((result) => result.params.polymarketEntryOffset).sort((a, b) => a - b)).to.deep.equal([0, 1, 2]);
+        expect(output.results.find((result) => result.params.polymarketEntryOffset === 1)?.polymarketEval?.scoredPredictions).to.equal(1);
+        expect(output.results.find((result) => result.params.polymarketEntryOffset === 0)?.polymarketEval?.scoredPredictions).to.equal(0);
     });
 
     it('runs the strategy once per param set on 1m and reuses that backtest across all 5 offsets', async () => {
@@ -543,6 +637,51 @@ describe('Finder Polymarket runner', () => {
 
         expect(output.results).to.have.length(1);
         expect(output.results[0]?.params.polymarketEntryOffset).to.equal(3);
+    });
+
+    it('scores locked 1m offsets with the 1m bridge mapper instead of dropping them to zero', async () => {
+        const bars = makeBars(12, 1_700_000_000, 60);
+        installOutcomeFetch([
+            makeOutcomeRow(1_700_000_000 + 300, 1),
+        ]);
+
+        const offsetTwoStrategy: Strategy = {
+            name: 'Offset Two Entry',
+            description: 'Signals on the bar that should enter minute 2',
+            defaultParams: {},
+            paramLabels: {},
+            execute(data: OHLCVData[]): Signal[] {
+                return [{ time: data[6]!.time, type: 'buy', price: data[6]!.close, barIndex: 6 }];
+            },
+        };
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            {
+                ...makeInput(
+                    bars,
+                    [{}],
+                    {
+                        mode: 'random',
+                        polymarketLockOffset: true,
+                        polymarketMinScoredPredictions: 1,
+                    },
+                    '1m',
+                    'BTCUSDT',
+                    offsetTwoStrategy
+                ),
+                settings: {
+                    executionModel: 'next_open',
+                    tradeDirection: 'both',
+                    polymarketEntryOffset: 2,
+                },
+            },
+            callbacks
+        );
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]?.params.polymarketEntryOffset).to.equal(2);
+        expect(output.results[0]?.polymarketEval?.scoredPredictions).to.be.greaterThan(0);
     });
 
     it('deduplicates trades within the same event for 1m bridge runs', async () => {

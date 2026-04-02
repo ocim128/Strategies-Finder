@@ -20,11 +20,11 @@ import {
 	removeFinderTimeframeSelection,
 } from "./finder/finder-manager-logic";
 import { mergeFinderRiskParamsIntoBacktestSettings } from "./finder/finder-runner-core";
-import { debugLogger, robustAuditSink } from "./debug-logger";
+import { debugLogger } from "./debug-logger";
 import { parseInputNumber } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { strategyPanelController } from "./strategy-panel-controller";
-import { commitBacktestResult, commitParityBacktestResults, setCurrentStrategyKey } from "./state-actions";
+import { commitParityBacktestResults, setCurrentStrategyKey } from "./state-actions";
 import {
 	createFinderManagerDom,
 	type FinderManagerDom,
@@ -84,11 +84,6 @@ export class FinderManager {
 		copyTopButton.disabled = true;
 		copyTopButton.addEventListener('click', () => {
 			void this.copyTopResultsMetadata();
-		});
-
-		const saveSeedAuditButton = dom.finderSaveSeedAudit;
-		saveSeedAuditButton.addEventListener('click', () => {
-			void this.saveCurrentSeedAuditFile();
 		});
 
 		dom.finderList.addEventListener('click', (event) => {
@@ -792,7 +787,6 @@ export class FinderManager {
 		const mode = dom.finderMode.value as FinderMode;
 		const topN = Math.round(this.readFinderNumberInput(dom.finderTopN, 10, 1));
 		const steps = Math.round(this.readFinderNumberInput(dom.finderSteps, 3, 2));
-		const robustSeed = Math.round(this.readFinderNumberInput(dom.finderRobustSeed, 1337, -2147483648));
 		const rangePercent = this.readFinderNumberInput(dom.finderRange, 35, 0);
 		const maxRuns = Math.round(this.readFinderNumberInput(dom.finderMaxRuns, 120, 1));
 		const tradeFilterEnabled = dom.finderTradesToggle.checked;
@@ -816,7 +810,6 @@ export class FinderManager {
 			advancedSortValues,
 			primarySort: dom.finderSort.value as FinderMetric,
 			secondarySort: dom.finderSortSecondary.value as FinderMetric,
-			robustSeed,
 			multiTimeframeRequested: dom.finderMultiTimeframeToggle.checked,
 			isMockSymbol: dataManager.isMockSymbol(state.currentSymbol),
 			selectedTimeframes: this.selectedFinderTimeframes,
@@ -907,7 +900,6 @@ export class FinderManager {
 			},
 			endpointAdjusted: result.endpointAdjusted,
 			endpointRemovedTrades: result.endpointRemovedTrades,
-			robustMetrics: result.robustMetrics ?? null,
 			polymarketEval: result.polymarketEval ?? null,
 		};
 	}
@@ -929,63 +921,6 @@ export class FinderManager {
 		}
 	}
 
-	private async saveCurrentSeedAuditFile(): Promise<void> {
-		const dom = this.getDom();
-		const mode = dom.finderMode.value as FinderMode;
-		if (mode !== 'robust_random_wf') {
-			uiManager.showToast('Seed audit export is available only in Robust Random WF mode.', 'info');
-			return;
-		}
-
-		const seed = Math.round(this.readFinderNumberInput(dom.finderRobustSeed, 1337, -2147483648));
-		if (!Number.isFinite(seed)) {
-			uiManager.showToast('Invalid robust seed value.', 'error');
-			return;
-		}
-
-		// Query from robust audit sink for complete audit trail (not capped like debugLogger)
-		const matchingEntries = robustAuditSink.query((entry) => {
-			if (entry.message !== '[Finder][robust_random_wf][cell_audit]') return false;
-			if (!entry.data || typeof entry.data !== 'object') return false;
-			const dataSeed = Number((entry.data as Record<string, unknown>).seed);
-			return Number.isFinite(dataSeed) && Math.round(dataSeed) === seed;
-		});
-
-		if (matchingEntries.length === 0) {
-			uiManager.showToast(`No robust cell-audit logs found for seed ${seed}. Run Finder first.`, 'warning');
-			return;
-		}
-
-		const payload = matchingEntries
-			.map((entry) => `${entry.message} ${JSON.stringify(entry.data)}`)
-			.join('\n');
-		const fileName = `run-seed-${seed}.txt`;
-
-		try {
-			const response = await fetch('/api/sqlite/write-seed-log', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					seed,
-					content: payload
-				})
-			});
-
-			const responseBody = await response.json().catch(() => null) as { ok?: boolean; error?: string; path?: string } | null;
-			if (!response.ok || !responseBody?.ok) {
-				throw new Error(responseBody?.error || `HTTP ${response.status}`);
-			}
-
-			uiManager.showToast(`Saved ${fileName}`, 'success');
-		} catch (error) {
-			debugLogger.error('finder.save_seed_audit_failed', {
-				seed,
-				error: error instanceof Error ? error.message : String(error)
-			});
-			uiManager.showToast('Failed to save seed audit file. Start app with Vite dev server.', 'error');
-		}
-	}
-
 	private async applyResult(result: FinderResult): Promise<void> {
 		const isPolymarketResult = Boolean(result.polymarketEval);
 
@@ -1002,21 +937,6 @@ export class FinderManager {
 		if (!strategy) return;
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, result.params);
-
-		// Robust finder rows represent combined OOS walk-forward outcomes, not a single full-history backtest.
-		// Show the exact robust OOS snapshot to avoid mismatch with an auto-rerun full backtest.
-		if (result.robustMetrics?.mode === 'robust_random_wf') {
-			commitBacktestResult(result.result, 'finder_robust_oos', {
-				parityResults: null,
-				reason: 'finder_robust_snapshot',
-			});
-			strategyPanelController.switchTab('trades');
-			uiManager.showToast(
-				'Applied robust OOS walk-forward snapshot. Full backtest runs can differ from Finder robust metrics.',
-				'info'
-			);
-			return;
-		}
 
 		if (result.comboMode) {
 			const primaryConfigName = result.comboPrimaryConfigName || this.getDom().finderComboPrimarySelect.value || '';

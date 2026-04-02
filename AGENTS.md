@@ -202,7 +202,7 @@ Strategy-lib failure modes seen repeatedly:
 ### Modify Walk Forward
 - Be careful with UI state versus backtest state handoff
 - `walk_forward_oos` snapshots intentionally route through shared result state
-- Keep robustness summary / candidate validation panels aligned with actual run data
+- Keep robustness summary and decay panels aligned with actual run data
 
 ### Modify Monte Carlo
 - Keep the summary contract explicit:
@@ -288,22 +288,6 @@ Validation habit after Portfolio Lab changes:
   - `Sizing Scenarios`
   - collapsed diagnostics state
 
-## Robust Random WF Discipline
-
-Treat `robust_random_wf` as survivability validation, not as a peak-profit optimizer.
-
-Hard expectations:
-- deterministic `robustSeed`
-- explicit `PASS` or `FAIL`
-- pass rate computed from Stage C survivors
-- audit event emitted for both passes and fails:
-  - `[Finder][robust_random_wf][cell_audit]`
-
-Recommended validation habit:
-- hold strategy set, symbols, timeframes, data span, and cost assumptions fixed
-- use a fixed seed set such as `1337, 7331, 2026, 4242, 9001`
-- do not reroll seeds until the result passes
-
 ## Validation Commands
 
 Run from this directory.
@@ -323,7 +307,6 @@ Useful test runner variants:
 Useful extras:
 - `..\\..\\..\\node_modules\\.bin\\esno tests\\feature-dom-contracts.spec.ts`
 - `..\\..\\..\\node_modules\\.bin\\esno tests\\pairCombiner.spec.ts`
-- `npm run robust:summary -- run-seed-1337.txt run-seed-7331.txt`
 
 ## Current Baseline
 

@@ -3,16 +3,10 @@ import { loadPolymarketOutcomes } from "./local-sqlite-polymarket-api";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 
-// In-memory cache for Polymarket outcomes to avoid redundant SQLite fetches
-// Key: seriesId, Value: { outcomes, fetchedAt, startTs, endTs }
-type OutcomeCacheEntry = {
-    outcomes: PolymarketOutcomeRow[];
-    fetchedAt: number;
-    startTs: number;
-    endTs: number;
-};
-const outcomeCache = new Map<string, OutcomeCacheEntry>();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+// Deduplicate only concurrent identical requests.
+// Persisting time-based rows across sequential calls can serve stale checkpoint
+// prices after a sync updates the local SQLite data.
+const pendingOutcomeRequests = new Map<string, Promise<PolymarketOutcomeRow[]>>();
 
 export const POLYMARKET_5M_SERIES_BY_SYMBOL = {
     BTCUSDT: "10684",
@@ -77,11 +71,7 @@ export async function loadPolymarket5mOutcomesForChart(
     const lastTs = parseTimeToUnixSeconds(chartData[chartData.length - 1].time);
     if (firstTs === null || lastTs === null) return [];
 
-    return loadPolymarketOutcomes({
-        seriesId,
-        startTs: firstTs - 300,
-        endTs: lastTs + 600,
-    });
+    return loadPolymarketOutcomesForExpandedRange(seriesId, firstTs - 300, lastTs + 600);
 }
 
 export async function loadPolymarket5mOutcomesForTimeRange(
@@ -98,30 +88,34 @@ export async function loadPolymarket5mOutcomesForTimeRange(
     const expandedStartTs = startTs - 300;
     const expandedEndTs = endTs + 600;
 
-    // Check cache first
-    const cached = outcomeCache.get(seriesId);
-    const now = Date.now();
-    if (cached && (now - cached.fetchedAt) < CACHE_TTL_MS) {
-        // Check if cached range covers the requested range
-        if (cached.startTs <= expandedStartTs && cached.endTs >= expandedEndTs) {
-            return cached.outcomes;
-        }
+    return loadPolymarketOutcomesForExpandedRange(seriesId, expandedStartTs, expandedEndTs);
+}
+
+function buildOutcomeRequestKey(seriesId: string, startTs: number, endTs: number): string {
+    return `${seriesId}:${startTs}:${endTs}`;
+}
+
+async function loadPolymarketOutcomesForExpandedRange(
+    seriesId: string,
+    startTs: number,
+    endTs: number
+): Promise<PolymarketOutcomeRow[]> {
+    const requestKey = buildOutcomeRequestKey(seriesId, startTs, endTs);
+    const pending = pendingOutcomeRequests.get(requestKey);
+    if (pending) {
+        return await pending;
     }
 
-    // Fetch from SQLite
-    const outcomes = await loadPolymarketOutcomes({
+    const request = loadPolymarketOutcomes({
         seriesId,
-        startTs: expandedStartTs,
-        endTs: expandedEndTs,
+        startTs,
+        endTs,
     });
+    pendingOutcomeRequests.set(requestKey, request);
 
-    // Update cache
-    outcomeCache.set(seriesId, {
-        outcomes,
-        fetchedAt: now,
-        startTs: expandedStartTs,
-        endTs: expandedEndTs,
-    });
-
-    return outcomes;
+    try {
+        return await request;
+    } finally {
+        pendingOutcomeRequests.delete(requestKey);
+    }
 }

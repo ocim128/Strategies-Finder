@@ -8,7 +8,6 @@ import {
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import {
     computeDatasetFlags,
-    deriveStrategySeed,
     buildFinderEvaluationData,
     type ParamJob,
     type StrategyPlan,
@@ -16,7 +15,6 @@ import {
 import { runSingleTimeframe } from "./finder-runner-single";
 import { runMultiTimeframe } from "./finder-runner-multi";
 import { runGeneticFinder } from "./finder-runner-genetic";
-import { runRobustRandomWalkForward } from "./finder-runner-robust-wf";
 import { runPolymarketFinder } from "./finder-runner-polymarket";
 import {
     buildFinderSearchBaseParams,
@@ -92,11 +90,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     let totalRuns = 0;
     for (const selection of selectedStrategies) {
         const extendedDefaults = buildFinderSearchBaseParams(selection.strategy, settings, options);
-
-        const generationOptions = options.mode === "robust_random_wf"
-            ? { ...options, robustSeed: deriveStrategySeed(options.robustSeed, selection.key) }
-            : options;
-        const paramSets = input.generateParamSets(extendedDefaults, generationOptions);
+        const paramSets = input.generateParamSets(extendedDefaults, options);
         if (paramSets.length === 0) continue;
         totalRuns += paramSets.length;
         strategyPlans.push({
@@ -110,15 +104,6 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     if (totalRuns === 0) {
         callbacks.setStatus("No valid parameter combinations generated.");
         return { results: [] };
-    }
-
-    if (options.mode === "robust_random_wf") {
-        return runRobustRandomWalkForward({
-            input,
-            callbacks,
-            strategyPlans,
-            runTimeframes,
-        });
     }
 
     let planIndex = 0;

@@ -1,7 +1,11 @@
-import { parseTimeToUnixSeconds } from './time-normalization';
 import { applySignalPolarity, precomputeIndicators, runBacktest } from './strategies/index';
 import { CAPITAL_DEFAULTS } from './backtest-settings-resolver';
-import { evaluatePolymarketBacktestTrades, evaluatePolymarketBacktestTrades1mBridge } from './polymarket-trade-annotations';
+import {
+    createPolymarketBridgeEvaluationContext,
+    createPolymarketTradeEvaluationContext,
+    evaluatePolymarketBacktestTrades,
+    evaluatePolymarketBacktestTrades1mBridge,
+} from './polymarket-trade-annotations';
 import { resolveCapitalSettingsFromRaw } from './backtest-capital-settings';
 import type { CapitalSettings } from './types/backtest';
 import type { BacktestSettings, OHLCVData, Strategy, StrategyParams } from './types/strategies';
@@ -10,10 +14,6 @@ import type {
     PolymarketEvalResult,
     PolymarketOutcomeRow,
 } from './types/polymarket-outcomes';
-
-function barTimeToSec(bar: OHLCVData): number | null {
-    return parseTimeToUnixSeconds(bar.time);
-}
 
 function resolvePolymarketCapitalSettings(
     capitalSettings?: Partial<CapitalSettings>
@@ -89,23 +89,11 @@ export function evaluatePolymarketOutcomes(
         precomputed
     );
 
-    const barTimes = chartData.map(barTimeToSec);
-    const validTargetTs = new Set<number>();
-    for (let i = 1; i < barTimes.length; i++) {
-        const ts = barTimes[i];
-        if (ts !== null) validTargetTs.add(ts);
-    }
-
-    let evaluatedEvents = 0;
-    let resolvedUpCount = 0;
-    for (const row of outcomes) {
-        if (!validTargetTs.has(row.event_start_ts)) continue;
-        evaluatedEvents++;
-        resolvedUpCount += row.resolved_outcome_up;
-    }
-
     // Check if 1m bridge evaluation is requested
     const bridgeOptions = options as PolymarketEvalOptions1mBridge;
+    const tradeContext = bridgeOptions.entryOffset !== undefined
+        ? createPolymarketBridgeEvaluationContext(chartData, outcomes)
+        : createPolymarketTradeEvaluationContext(chartData, outcomes);
     const tradeEval = bridgeOptions.entryOffset !== undefined
         ? evaluatePolymarketBacktestTrades1mBridge({
             chartData,
@@ -114,6 +102,7 @@ export function evaluatePolymarketOutcomes(
             strategyKey,
             selectedOffset: bridgeOptions.entryOffset,
             includeRows: true,
+            context: tradeContext,
         })
         : evaluatePolymarketBacktestTrades({
             chartData,
@@ -121,15 +110,16 @@ export function evaluatePolymarketOutcomes(
             outcomes,
             strategyKey,
             includeRows: true,
+            context: tradeContext,
         });
 
     const ignoredSignals = Math.max(0, signals.length - backtestResult.totalTrades);
 
     return {
         ...tradeEval,
-        evaluatedEvents,
-        alwaysYesBaselineWinRate: evaluatedEvents > 0 ? resolvedUpCount / evaluatedEvents : 0,
-        alwaysNoBaselineWinRate: evaluatedEvents > 0 ? (evaluatedEvents - resolvedUpCount) / evaluatedEvents : 0,
+        evaluatedEvents: tradeContext.evaluatedEvents,
+        alwaysYesBaselineWinRate: tradeContext.evaluatedEvents > 0 ? tradeContext.resolvedUpCount / tradeContext.evaluatedEvents : 0,
+        alwaysNoBaselineWinRate: tradeContext.evaluatedEvents > 0 ? (tradeContext.evaluatedEvents - tradeContext.resolvedUpCount) / tradeContext.evaluatedEvents : 0,
         ignoredSignals,
     };
 }

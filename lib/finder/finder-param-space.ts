@@ -32,10 +32,6 @@ export class FinderParamSpace {
             return this.sampleGridCombos(keys, valuesByKey, defaultParams, options.maxRuns, this.resolveRandom(options));
         }
 
-        if (options.mode === "robust_random_wf") {
-            return this.generateRandomCombos(keys, defaultParams, options, this.resolveRandom(options));
-        }
-
         return this.generateRandomCombos(keys, defaultParams, options, this.resolveRandom(options));
     }
 
@@ -303,10 +299,6 @@ export class FinderParamSpace {
     }
 
     private resolveRandom(options: FinderOptions): () => number {
-        if (options.mode === "robust_random_wf") {
-            const seedValue = Number.isFinite(options.robustSeed) ? Number(options.robustSeed) : 1337;
-            return createSeededRandom(seedValue);
-        }
         if (options.mode === "random" && Number.isFinite(options.randomSeed)) {
             return createSeededRandom(Number(options.randomSeed));
         }

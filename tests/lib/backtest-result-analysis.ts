@@ -1,5 +1,8 @@
 import type {
+    BacktestExpectancyBreakdown,
     BacktestResult,
+    ExpectancyBreakdownRow,
+    ExpectancyBreakdownSection,
     ExitReasonBreakdown,
     ExitReasonRow,
     OHLCVData,
@@ -121,6 +124,57 @@ export function buildPostEntryPathStats(
     };
 }
 
+export function buildExpectancyBreakdown(result: BacktestResult): BacktestExpectancyBreakdown | undefined {
+    const sections: ExpectancyBreakdownSection[] = [];
+    const allTrades = result.trades;
+
+    if (allTrades.length > 0) {
+        const sideRows: ExpectancyBreakdownRow[] = [
+            buildExpectancyRow("All Trades", allTrades),
+        ];
+        const longTrades = allTrades.filter((trade) => trade.type === "long");
+        const shortTrades = allTrades.filter((trade) => trade.type === "short");
+
+        if (longTrades.length > 0) {
+            sideRows.push(buildExpectancyRow("Long Only", longTrades));
+        }
+        if (shortTrades.length > 0) {
+            sideRows.push(buildExpectancyRow("Short Only", shortTrades));
+        }
+
+        sections.push({
+            id: "side",
+            title: "By Side",
+            hint: "Expectancy is net PnL per trade. A high win rate can still lose if average losses are larger than average wins.",
+            rows: sideRows,
+        });
+    }
+
+    if (result.marketContext?.interval === "1m") {
+        const minuteRows = buildFiveMinuteSessionMinuteRows(allTrades);
+        if (minuteRows.length > 0) {
+            sections.push({
+                id: "session_minute",
+                title: "By 5m Session Minute",
+                hint: "For 1m execution, this shows whether minute 0-4 inside each rolling 5m block is helping or hurting expectancy.",
+                rows: minuteRows,
+            });
+        }
+    }
+
+    const rangeRows = buildPriceRangePositionRows(allTrades);
+    if (rangeRows.length > 0) {
+        sections.push({
+            id: "price_range_position",
+            title: "By Entry Range Position",
+            hint: "Higher buckets mean the entry fired closer to the top of the recent range. If expectancy dies there, that is late-chase behavior.",
+            rows: rangeRows,
+        });
+    }
+
+    return sections.length > 0 ? { sections } : undefined;
+}
+
 function collectTradeDuration(
     trade: Trade,
     timeIndex: Map<string, number>,
@@ -155,6 +209,86 @@ function collectTradeDuration(
     } else {
         loseDurationMinutes.push(durationMinutes);
     }
+}
+
+function buildExpectancyRow(label: string, trades: Trade[]): ExpectancyBreakdownRow {
+    const winningTrades = trades.filter((trade) => trade.pnl > 0);
+    const totalProfit = winningTrades.reduce((sum, trade) => sum + trade.pnl, 0);
+    const losingTrades = trades.filter((trade) => trade.pnl <= 0);
+    const totalLoss = Math.abs(losingTrades.reduce((sum, trade) => sum + trade.pnl, 0));
+    const netProfit = totalProfit - totalLoss;
+    const tradeCount = trades.length;
+    const winRate = tradeCount > 0 ? (winningTrades.length / tradeCount) * 100 : 0;
+    const expectancy = tradeCount > 0 ? netProfit / tradeCount : 0;
+    const avgWin = winningTrades.length > 0 ? totalProfit / winningTrades.length : 0;
+    const avgLoss = losingTrades.length > 0 ? totalLoss / losingTrades.length : 0;
+    const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
+
+    const entryPrices = trades
+        .map((trade) => trade.polymarketOutcome?.marketEntryPrice)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    const avgEntryPrice = entryPrices.length > 0 ? average(entryPrices) : null;
+    const breakEvenWinRate = avgEntryPrice === null ? null : avgEntryPrice * 100;
+    const edgeVsBreakEven = breakEvenWinRate === null ? null : winRate - breakEvenWinRate;
+
+    return {
+        label,
+        tradeCount,
+        winRate,
+        netProfit,
+        expectancy,
+        avgWin,
+        avgLoss,
+        profitFactor,
+        avgEntryPrice,
+        breakEvenWinRate,
+        edgeVsBreakEven,
+    };
+}
+
+function buildFiveMinuteSessionMinuteRows(trades: Trade[]): ExpectancyBreakdownRow[] {
+    const buckets = Array.from({ length: 5 }, (_, minute) => ({
+        label: `Minute ${minute}`,
+        trades: [] as Trade[],
+    }));
+
+    for (const trade of trades) {
+        const entryTs = parseTimeToUnixSeconds(trade.entryTime);
+        if (entryTs === null) continue;
+        const minuteOffset = Math.floor((((entryTs % 300) + 300) % 300) / 60);
+        const bucket = buckets[minuteOffset];
+        if (bucket) {
+            bucket.trades.push(trade);
+        }
+    }
+
+    return buckets
+        .filter((bucket) => bucket.trades.length > 0)
+        .map((bucket) => buildExpectancyRow(bucket.label, bucket.trades));
+}
+
+function buildPriceRangePositionRows(trades: Trade[]): ExpectancyBreakdownRow[] {
+    const buckets: Array<{ label: string; min: number; max: number; trades: Trade[] }> = [
+        { label: "0-20%", min: 0, max: 0.2, trades: [] },
+        { label: "20-40%", min: 0.2, max: 0.4, trades: [] },
+        { label: "40-60%", min: 0.4, max: 0.6, trades: [] },
+        { label: "60-80%", min: 0.6, max: 0.8, trades: [] },
+        { label: "80-100%", min: 0.8, max: 1.0000001, trades: [] },
+    ];
+
+    for (const trade of trades) {
+        const position = trade.entrySnapshot?.priceRangePos;
+        if (typeof position !== "number" || !Number.isFinite(position)) continue;
+        const clamped = Math.max(0, Math.min(1, position));
+        const bucket = buckets.find((entry) => clamped >= entry.min && clamped < entry.max);
+        if (bucket) {
+            bucket.trades.push(trade);
+        }
+    }
+
+    return buckets
+        .filter((bucket) => bucket.trades.length > 0)
+        .map((bucket) => buildExpectancyRow(bucket.label, bucket.trades));
 }
 
 function finalizePostEntryBucket(

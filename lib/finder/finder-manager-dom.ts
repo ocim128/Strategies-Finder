@@ -3,7 +3,6 @@ import { getRequiredElement } from "../dom-utils";
 export const FINDER_MANAGER_REQUIRED_IDS = [
     "runFinder",
     "finderCopyTopResults",
-    "finderSaveSeedAudit",
     "finderList",
     "finderStrategiesToggleAll",
     "finderStrategySearch",
@@ -33,7 +32,6 @@ export const FINDER_MANAGER_REQUIRED_IDS = [
     "finderMode",
     "finderTopN",
     "finderSteps",
-    "finderRobustSeed",
     "finderRange",
     "finderMaxRuns",
     "finderTradesToggle",
@@ -50,7 +48,6 @@ export function createFinderManagerDom() {
     return {
         runFinder: getRequiredElement<HTMLButtonElement>("runFinder"),
         finderCopyTopResults: getRequiredElement<HTMLButtonElement>("finderCopyTopResults"),
-        finderSaveSeedAudit: getRequiredElement<HTMLButtonElement>("finderSaveSeedAudit"),
         finderList: getRequiredElement("finderList"),
         finderStrategiesToggleAll: getRequiredElement<HTMLInputElement>("finderStrategiesToggleAll"),
         finderStrategySearch: getRequiredElement<HTMLInputElement>("finderStrategySearch"),
@@ -80,7 +77,6 @@ export function createFinderManagerDom() {
         finderMode: getRequiredElement<HTMLSelectElement>("finderMode"),
         finderTopN: getRequiredElement<HTMLInputElement>("finderTopN"),
         finderSteps: getRequiredElement<HTMLInputElement>("finderSteps"),
-        finderRobustSeed: getRequiredElement<HTMLInputElement>("finderRobustSeed"),
         finderRange: getRequiredElement<HTMLInputElement>("finderRange"),
         finderMaxRuns: getRequiredElement<HTMLInputElement>("finderMaxRuns"),
         finderTradesToggle: getRequiredElement<HTMLInputElement>("finderTradesToggle"),

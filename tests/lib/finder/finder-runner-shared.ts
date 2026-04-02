@@ -153,7 +153,6 @@ export function buildFinderResult(args: {
     compositeEdgeRatio?: number;
     endpointAdjusted?: boolean;
     endpointRemovedTrades?: number;
-    robustMetrics?: FinderResult["robustMetrics"];
 }): FinderResult {
     const {
         key,
@@ -167,7 +166,6 @@ export function buildFinderResult(args: {
         compositeEdgeRatio,
         endpointAdjusted,
         endpointRemovedTrades,
-        robustMetrics,
     } = args;
     return {
         key,
@@ -181,7 +179,6 @@ export function buildFinderResult(args: {
         compositeEdgeRatio,
         endpointAdjusted: endpointAdjusted ?? false,
         endpointRemovedTrades: endpointRemovedTrades ?? 0,
-        robustMetrics,
     };
 }
 

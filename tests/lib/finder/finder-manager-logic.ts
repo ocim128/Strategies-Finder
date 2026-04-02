@@ -13,7 +13,6 @@ export interface FinderOptionsInput {
     maxMultiTimeframes: number;
     topN: number;
     steps: number;
-    robustSeed: number;
     rangePercent: number;
     maxRuns: number;
     tradeFilterEnabled: boolean;
@@ -71,7 +70,6 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         mode: input.mode,
         sortPriority: resolveFinderSortPriority(input),
         useAdvancedSort: input.useAdvancedSort,
-        robustSeed: input.robustSeed,
         multiTimeframeEnabled,
         timeframes: multiTimeframeEnabled
             ? input.selectedTimeframes.slice(0, input.maxMultiTimeframes)

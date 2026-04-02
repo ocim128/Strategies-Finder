@@ -14,9 +14,10 @@ It combines:
 - Run backtests with realistic execution settings, risk controls, and snapshot filters
 - Switch between fixed, percent, Kelly, volatility-targeted, risk-parity, martingale, and Optimal f sizing models from the settings panel
 - Compare strategies, inspect trades, and review backtest result diagnostics
-- Search parameter spaces with Finder, including random, genetic, and `robust_random_wf`
+- Search parameter spaces with Finder, including random and genetic modes
 - Validate robustness with walk-forward analysis and latest-OOS checks
 - Stress trade-path robustness with Monte Carlo sequence randomization and bootstrap resampling
+- Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics such as timing buckets, break-even win rate, and expectancy without leaving the chart
 - Audit parameter usefulness and redundancy with `Parameter Audit`
 - Run Portfolio Lab across multiple pairs for context, ranking, and sizing decisions
 - Build live or scheduled alert subscriptions through the Worker API
@@ -320,7 +321,6 @@ Useful extras:
 ```bash
 ..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts
 ..\..\..\node_modules\.bin\esno tests\pairCombiner.spec.ts
-npm run robust:summary -- run-seed-1337.txt run-seed-7331.txt
 ```
 
 ## Specialized Project Docs
