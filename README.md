@@ -267,6 +267,8 @@ For the Polymarket bot bridge, use the `Polymarket` tab with a saved configurati
 - `signals/bridge/<config>.refresh.ps1`
 - `signals/bridge/<config>.bot.env`
 
+The exported `latest-entry-signal.json` preserves the selected `polymarketEntryOffset` when the bridge config carries a 1m Polymarket offset, so downstream `external_signal` consumers can read the minute alignment directly from the payload.
+
 The generated `<config>.refresh.ps1` is intended for unattended refresh. Point the bot's `EXTERNAL_SIGNAL_REFRESH_SCRIPT` at that file and it can regenerate the latest signal automatically on each new 5-minute bucket.
 
 ### Change UI safely

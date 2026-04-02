@@ -46,6 +46,7 @@ type ExportPayload = {
     directionOverride: EnsembleRecipeReplayDirectionOverride;
     rawSignalCount: number;
     preparedSignalCount: number;
+    polymarketEntryOffset?: number;
     latestEntry: null | ExportEntry;
     latestEntryCandidate?: null | ExportEntry;
     latestEntryState?:
@@ -188,6 +189,17 @@ function toExportEntry(
     };
 }
 
+function resolvePolymarketEntryOffset(backtestSettings: unknown): number | undefined {
+    if (!backtestSettings || typeof backtestSettings !== "object") {
+        return undefined;
+    }
+    const value = Number((backtestSettings as Record<string, unknown>).polymarketEntryOffset);
+    if (!Number.isFinite(value)) {
+        return undefined;
+    }
+    return Math.max(0, Math.min(4, Math.floor(value)));
+}
+
 function resolveLatestEntryExport(args: {
     latestEntry: ExportEntry | null;
     latestTrade: ExportPayload["latestTrade"];
@@ -318,6 +330,7 @@ async function main(): Promise<void> {
         directionOverride: config.directionOverride,
         rawSignalCount: result.rawSignalCount,
         preparedSignalCount: result.preparedSignalCount,
+        polymarketEntryOffset: resolvePolymarketEntryOffset(resolved.anchorConfig.backtestSettings),
         latestEntry: latestEntryExport.latestEntry,
         latestEntryCandidate,
         latestEntryState: latestEntryExport.latestEntryState,

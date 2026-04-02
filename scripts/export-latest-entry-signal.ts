@@ -40,6 +40,7 @@ type ExportPayload = {
     strategyName: string;
     rawSignalCount: number;
     preparedSignalCount: number;
+    polymarketEntryOffset?: number;
     latestEntry: null | ExportEntry;
     latestEntryCandidate?: null | ExportEntry;
     latestEntryState?:
@@ -110,6 +111,14 @@ function normalizeNumberRecord(input: Record<string, unknown>): Record<string, n
         }
     }
     return out;
+}
+
+function resolvePolymarketEntryOffset(backtestSettings: Record<string, unknown>): number | undefined {
+    const value = Number(backtestSettings.polymarketEntryOffset);
+    if (!Number.isFinite(value)) {
+        return undefined;
+    }
+    return Math.max(0, Math.min(4, Math.floor(value)));
 }
 
 async function parseArgs(argv: string[]): Promise<CliConfig | null> {
@@ -378,6 +387,7 @@ async function main(): Promise<void> {
         strategyName: strategy.name,
         rawSignalCount: result.rawSignalCount,
         preparedSignalCount: result.preparedSignalCount,
+        polymarketEntryOffset: resolvePolymarketEntryOffset(config.backtestSettings),
         latestEntry: latestEntryExport.latestEntry,
         latestEntryCandidate,
         latestEntryState: latestEntryExport.latestEntryState,

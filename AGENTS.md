@@ -115,6 +115,7 @@ See `README.md` under `Architecture Map` for the canonical subsystem and file ma
 - Check UI load/save path in `lib/settings-manager.ts`
 - If persisted JSON shape changes, add a migration in the relevant `readPersistedJson(...)` callsite instead of silently breaking old payloads
 - Check any resolver/sanitizer path that mirrors those settings
+- If you change the Polymarket bridge `external_signal` payload or `polymarketEntryOffset` contract, keep `scripts/export-latest-entry-signal.ts` and `scripts/export-latest-ensemble-entry-signal.ts` aligned
 
 ### Any worker-facing change
 - Check `lib/alert-service.ts`
