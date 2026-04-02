@@ -42,7 +42,11 @@ class StrategyPanelController {
     private pendingWidthPx: number | null = null;
     private initialized = false;
     private handlePointerMove: ((event: PointerEvent) => void) | null = null;
-    private handleStopResizing: (() => void) | null = null;
+    private handleStopResizing: ((event?: PointerEvent) => void) | null = null;
+    private tabClickListeners = new Map<string, () => void>();
+    private tabKeydownListeners = new Map<string, (event: KeyboardEvent) => void>();
+    private togglePanelClickListener: (() => void) | null = null;
+    private panelResizeHandlePointerDownListener: ((event: PointerEvent) => void) | null = null;
 
     public init(): void {
         if (this.initialized) {
@@ -57,13 +61,42 @@ class StrategyPanelController {
     }
 
     public destroy(): void {
+        const dom = this.dom;
+
+        if (dom) {
+            this.tabButtons.forEach((tab, tabId) => {
+                const clickListener = this.tabClickListeners.get(tabId);
+                const keydownListener = this.tabKeydownListeners.get(tabId);
+                
+                if (clickListener) {
+                    tab.removeEventListener("click", clickListener);
+                }
+                if (keydownListener) {
+                    tab.removeEventListener("keydown", keydownListener as EventListener);
+                }
+            });
+
+            if (this.togglePanelClickListener) {
+                dom.togglePanel.removeEventListener("click", this.togglePanelClickListener);
+            }
+
+            if (this.panelResizeHandlePointerDownListener) {
+                dom.panelResizeHandle.removeEventListener("pointerdown", this.panelResizeHandlePointerDownListener as EventListener);
+            }
+        }
+
+        this.tabClickListeners.clear();
+        this.tabKeydownListeners.clear();
+        this.togglePanelClickListener = null;
+        this.panelResizeHandlePointerDownListener = null;
+
         if (this.handlePointerMove) {
-            window.removeEventListener("pointermove", this.handlePointerMove);
+            window.removeEventListener("pointermove", this.handlePointerMove as EventListener);
             this.handlePointerMove = null;
         }
         if (this.handleStopResizing) {
-            window.removeEventListener("pointerup", this.handleStopResizing);
-            window.removeEventListener("pointercancel", this.handleStopResizing);
+            window.removeEventListener("pointerup", this.handleStopResizing as EventListener);
+            window.removeEventListener("pointercancel", this.handleStopResizing as EventListener);
             this.handleStopResizing = null;
         }
 
@@ -231,11 +264,13 @@ class StrategyPanelController {
         if (!dom) return;
 
         this.tabButtons.forEach((tab, tabId) => {
-            tab.addEventListener("click", () => {
+            const clickListener = () => {
                 this.switchTab(tabId);
-            });
+            };
+            this.tabClickListeners.set(tabId, clickListener);
+            tab.addEventListener("click", clickListener);
 
-            tab.addEventListener("keydown", (event) => {
+            const keydownListener = (event: KeyboardEvent) => {
                 const tabs = this.getVisibleTabs();
                 const currentIndex = tabs.indexOf(tab);
                 if (currentIndex === -1) {
@@ -270,14 +305,17 @@ class StrategyPanelController {
                     event.preventDefault();
                     this.switchTab(tabId, { focus: true });
                 }
-            });
+            };
+            this.tabKeydownListeners.set(tabId, keydownListener);
+            tab.addEventListener("keydown", keydownListener);
         });
 
-        dom.togglePanel.addEventListener("click", () => {
+        this.togglePanelClickListener = () => {
             this.toggleCollapsed();
-        });
+        };
+        dom.togglePanel.addEventListener("click", this.togglePanelClickListener);
 
-        dom.panelResizeHandle.addEventListener("pointerdown", (event) => {
+        this.panelResizeHandlePointerDownListener = (event: PointerEvent) => {
             if (this.isMobileLayout()) {
                 return;
             }
@@ -291,10 +329,16 @@ class StrategyPanelController {
             dom.panelResizeHandle.classList.add("is-resizing");
             dom.panelResizeHandle.setPointerCapture(event.pointerId);
             event.preventDefault();
-        });
+        };
+        dom.panelResizeHandle.addEventListener("pointerdown", this.panelResizeHandlePointerDownListener);
 
         this.handlePointerMove = (event: PointerEvent) => {
             if (!this.isResizing || !this.dom) {
+                return;
+            }
+
+            if (this.isMobileLayout()) {
+                this.handleStopResizing?.(event);
                 return;
             }
 
@@ -304,7 +348,7 @@ class StrategyPanelController {
             this.syncCharts(false);
         };
 
-        this.handleStopResizing = () => {
+        this.handleStopResizing = (event?: PointerEvent) => {
             if (!this.isResizing || !this.dom) {
                 return;
             }
@@ -312,6 +356,10 @@ class StrategyPanelController {
             this.isResizing = false;
             document.body.classList.remove("is-resizing");
             this.dom.panelResizeHandle.classList.remove("is-resizing");
+            
+            if (event && dom.panelResizeHandle.hasPointerCapture(event.pointerId)) {
+                dom.panelResizeHandle.releasePointerCapture(event.pointerId);
+            }
 
             if (this.pendingWidthPx !== null) {
                 this.dom.strategyPanel.style.setProperty("--strategy-panel-width", `${this.pendingWidthPx}px`);

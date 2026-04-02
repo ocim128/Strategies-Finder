@@ -52,10 +52,18 @@ export function findContainingEvent(
     entryTs: number,
     outcomes: readonly PolymarketOutcomeRow[]
 ): PolymarketOutcomeRow | null {
-    // Linear scan is acceptable for typical outcome array sizes (< 1000 rows)
-    // If performance becomes an issue, build a sorted index with binary search
-    for (const outcome of outcomes) {
-        if (entryTs >= outcome.event_start_ts && entryTs < outcome.event_end_ts) {
+    let left = 0;
+    let right = outcomes.length - 1;
+
+    while (left <= right) {
+        const mid = (left + right) >>> 1;
+        const outcome = outcomes[mid];
+
+        if (entryTs < outcome.event_start_ts) {
+            right = mid - 1;
+        } else if (entryTs >= outcome.event_end_ts) {
+            left = mid + 1;
+        } else {
             return outcome;
         }
     }

@@ -193,8 +193,18 @@ export function findContainingSuperEvent(
     outcomes: PolymarketOutcomeRow[];
     subEventCount: number;
 } | null {
-    for (const se of superEvents) {
-        if (entryTs >= se.superEventStartTs && entryTs < se.superEventEndTs) {
+    let left = 0;
+    let right = superEvents.length - 1;
+
+    while (left <= right) {
+        const mid = (left + right) >>> 1;
+        const se = superEvents[mid];
+
+        if (entryTs < se.superEventStartTs) {
+            right = mid - 1;
+        } else if (entryTs >= se.superEventEndTs) {
+            left = mid + 1;
+        } else {
             return se;
         }
     }

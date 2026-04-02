@@ -368,7 +368,7 @@ export async function runPolymarketFinder(
                             callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
                         }
 
-                        if (processedCount % 64 === 0 || processedCount === totalRuns) {
+                        if (processedCount % 1024 === 0 || processedCount === totalRuns) {
                             await callbacks.yieldControl();
                         }
                         continue;
@@ -396,7 +396,7 @@ export async function runPolymarketFinder(
                         callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
                     }
 
-                    if (processedCount % 64 === 0 || processedCount === totalRuns) {
+                    if (processedCount % 1024 === 0 || processedCount === totalRuns) {
                         await callbacks.yieldControl();
                     }
                 }

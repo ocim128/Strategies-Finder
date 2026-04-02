@@ -110,6 +110,7 @@ async function loadPolymarketOutcomesForExpandedRange(
         seriesId,
         startTs,
         endTs,
+        limit: 100000, // Explicitly request max rows to prevent default 10k truncation on long charts
     });
     pendingOutcomeRequests.set(requestKey, request);
 
