@@ -66,7 +66,14 @@ export class ChartManager {
     private readonly jakartaTimeFormatter = (time: Time): string => (
         formatJakartaTime(
             time,
-            { month: 'short', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }
+            {
+                month: 'short',
+                day: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+            }
         )
     );
     private readonly jakartaTickMarkFormatter = (time: Time, tickMarkType: TickMarkType, locale: string): string | null => (

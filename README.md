@@ -242,6 +242,8 @@ Automate the inspection of executed BTCUSDT, ETHUSDT, SOLUSDT, and XRPUSDT 5m `n
 4. The supported Polymarket 5m chart paths are `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, and `XRPUSDT`.
 5. Use `npm run poly:sync-outcomes:all` to backfill every supported 5m outcome series, or `..\..\..\node_modules\.bin\esno scripts\polymarket-sync-outcomes.ts --symbol <BTCUSDT|ETHUSDT|SOLUSDT|XRPUSDT>` for a single series.
 6. Use the `Polymarket` strategy-panel tab to estimate historical YES/NO fillability for the current supported 5m backtest at a custom entry price in cents.
+7. The symbol search accepts custom Polymarket event URLs or slugs. Append `:yes` or `:no`, or use the URL `outcome` / `side` query param, to choose the side.
+8. The `PM` control in the timeframe bar prompts for a Polymarket slug or URL when needed, then opens the market at the supported `1m` chart resolution.
 
 ### Export Latest Entry Signal
 Use the CLI exporter to produce a small local JSON contract for downstream consumers such as the Polymarket bot `external_signal` mode.

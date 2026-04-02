@@ -17,6 +17,7 @@ import { isTwoHourInterval } from "../interval-utils";
 import { strategyPanelController } from "../strategy-panel-controller";
 import { STRATEGY_PANEL_SETTINGS_SECTIONS } from "../strategy-panel-settings-registry";
 import { parseInputNumber } from "../dom-input-readers";
+import { parsePolymarketEventInput } from "../dataProviders/polymarket";
 import { ADVANCED_SIZING_SUBSECTION_IDS } from "../advanced-sizing-dom";
 import { TAKE_PROFIT_MODE_PANEL_IDS } from "../take-profit-dom";
 import { getBinanceMarketTypeForProvider, isBinanceDataProvider, type BinanceMarketType } from "../binance-market";
@@ -503,7 +504,38 @@ export function setupEventHandlers() {
     // Timeframe tabs
     document.querySelectorAll('.timeframe-tab').forEach(tab => {
         tab.addEventListener('click', async (e) => {
-            const interval = (e.currentTarget as HTMLElement).dataset.interval;
+            const currentTarget = e.currentTarget as HTMLElement;
+            const interval = currentTarget.dataset.interval;
+            const action = currentTarget.dataset.action;
+            if (action === "polymarket") {
+                if (dataManager.getProvider(state.currentSymbol) === "polymarket") {
+                    debugLogger.event("ui.polymarket_picker.open", {
+                        symbol: state.currentSymbol,
+                        interval: state.currentInterval,
+                    });
+                    setCurrentInterval("1m");
+                    return;
+                }
+
+                const rawInput = window.prompt("Enter a Polymarket event URL or slug to open the market.");
+                if (rawInput === null) {
+                    return;
+                }
+
+                const parsed = parsePolymarketEventInput(rawInput);
+                if (!parsed) {
+                    uiManager.showToast("Enter a valid Polymarket slug or event URL.", "error");
+                    return;
+                }
+
+                debugLogger.event("ui.polymarket_picker.open", {
+                    symbol: parsed.canonicalSymbol,
+                });
+                setCurrentSymbol(parsed.canonicalSymbol);
+                setCurrentInterval("1m");
+                return;
+            }
+
             if (!interval) return;
             debugLogger.event('ui.interval.select', { interval });
             setCurrentInterval(interval);

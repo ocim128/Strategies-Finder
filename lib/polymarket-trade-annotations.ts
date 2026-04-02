@@ -63,6 +63,20 @@ export function getTradeMarketEntryPrice(
         : clampProbability(1 - yesPrice);
 }
 
+function getTradeMarketSidePrices(
+    outcome: PolymarketOutcomeRow,
+    entryOffset = 0
+): {
+    marketYesPrice: number | null;
+    marketNoPrice: number | null;
+} {
+    const yesPrice = clampProbability(getYesPriceForOffset(outcome, entryOffset));
+    return {
+        marketYesPrice: yesPrice,
+        marketNoPrice: yesPrice === null ? null : clampProbability(1 - yesPrice),
+    };
+}
+
 function getTradePayoutFromPrice(
     marketEntryPrice: number | null,
     isWin: boolean
@@ -185,6 +199,7 @@ function buildAnnotatedTrade(
             prediction,
             actualOutcomeUp: outcome.resolved_outcome_up,
             isWin,
+            ...getTradeMarketSidePrices(outcome),
             marketEntryPrice: getTradeMarketEntryPrice(outcome, prediction),
         },
     };
@@ -234,6 +249,7 @@ function buildAnnotatedTradeForBridge(
             prediction,
             actualOutcomeUp: outcome.resolved_outcome_up,
             isWin,
+            ...getTradeMarketSidePrices(outcome, entryOffset),
             marketEntryPrice: getTradeMarketEntryPrice(outcome, prediction, entryOffset),
             entryOffset,
         },

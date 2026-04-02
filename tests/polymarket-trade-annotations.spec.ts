@@ -167,6 +167,7 @@ describe("Polymarket backtest trade annotations", () => {
             (time) => String(time)
         );
         expect(html).to.include("Poly Win");
+        expect(html).to.include("YES 50.0c / NO 50.0c");
         expect(html).to.include('data-polymarket-url="https://polymarket.com/event/btc-1"');
     });
 

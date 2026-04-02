@@ -43,6 +43,10 @@ export interface TradePolymarketOutcome {
     prediction: 'yes' | 'no';
     actualOutcomeUp: 0 | 1;
     isWin: boolean;
+    /** Raw YES checkpoint price for the selected entry offset. */
+    marketYesPrice?: number | null;
+    /** Raw NO checkpoint price for the selected entry offset. */
+    marketNoPrice?: number | null;
     /** Entry probability paid for this trade (YES for longs, NO for shorts). */
     marketEntryPrice?: number | null;
     /** Entry offset minute within 5m event (0..4), only populated for 1m runs */

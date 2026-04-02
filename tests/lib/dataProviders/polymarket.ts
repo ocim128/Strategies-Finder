@@ -257,7 +257,7 @@ function normalizeHistoryPoints(response: PolymarketHistoryResponse | null): Pol
 function toCandles(points: PolymarketHistoryPoint[], interval: string): OHLCVData[] {
     if (points.length === 0) return [];
 
-    const intervalSeconds = Math.max(60, getIntervalSeconds(interval) || getIntervalSeconds(DEFAULT_POLYMARKET_INTERVAL) || 300);
+    const intervalSeconds = Math.max(1, getIntervalSeconds(interval) || getIntervalSeconds(DEFAULT_POLYMARKET_INTERVAL) || 300);
     const candles: OHLCVData[] = [];
     let currentBucket = -1;
     let current: OHLCVData | null = null;

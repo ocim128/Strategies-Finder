@@ -12,6 +12,7 @@ import type { BacktestResult, ExpectancyBreakdownRow, ExpectancyBreakdownSection
 import { Time } from "lightweight-charts";
 import { formatDisplayPrice } from "./price-format";
 import type { BacktestPolymarketTimingProfileEntry } from "./types/polymarket-outcomes";
+import { isPolymarketEventSymbol } from "./dataProviders/polymarket";
 import {
     getPolymarket5mSeriesIdForSymbol,
     loadPolymarket5mOutcomesForTimeRange,
@@ -668,9 +669,18 @@ class QuickViewManager {
         empty.style.display = 'none';
         content.style.display = 'block';
 
+        const resultContext = resolveBacktestResultMarketContext(result);
+        const isPolymarketMarket = Boolean(resultContext && isPolymarketEventSymbol(resultContext.symbol));
+        const polymarketPayoutSummary = isPolymarketMarket ? summarizePolymarketPayoutDiagnostics(result.trades) : null;
+        const performanceExpectancyLabel = polymarketPayoutSummary ? 'Polymarket Exp / Trade' : 'Expectancy';
+        const performanceExpectancyValue = polymarketPayoutSummary
+            ? this.formatPolymarketCents(polymarketPayoutSummary.expectancy)
+            : `${result.expectancy >= 0 ? '+' : ''}$${result.expectancy.toFixed(2)}`;
+        const performanceExpectancyTone = polymarketPayoutSummary
+            ? polymarketPayoutSummary.expectancy
+            : result.expectancy;
         const isPositive = result.netProfit >= 0;
         const pfText = result.profitFactor === Infinity ? '∞' : result.profitFactor.toFixed(2);
-        const expectancySign = result.expectancy >= 0 ? '+' : '';
         const diagnosticsSection = this.buildExecutionDiagnosticsSection(result);
         const polymarketSection = this.buildPolymarketSection(result);
 
@@ -698,9 +708,9 @@ class QuickViewManager {
                     <div class="qv-stat-value">${pfText}</div>
                 </div>
                 <div class="qv-stat-card">
-                    <div class="qv-stat-label">Expectancy</div>
-                    <div class="qv-stat-value ${result.expectancy >= 0 ? 'positive' : 'negative'}">
-                        ${expectancySign}$${result.expectancy.toFixed(2)}
+                    <div class="qv-stat-label">${performanceExpectancyLabel}</div>
+                    <div class="qv-stat-value ${performanceExpectancyTone >= 0 ? 'positive' : 'negative'}">
+                        ${performanceExpectancyValue}
                     </div>
                 </div>
                 <div class="qv-stat-card">
@@ -1052,7 +1062,7 @@ class QuickViewManager {
         return `
             <div class="qv-stat-card full-width qv-diagnostic-card">
                 <div class="qv-stat-label">Payout Summary</div>
-                <div class="qv-diagnostic-hint">Polymarket is a binary payout. Win pays 1 minus entry price, loss pays minus entry price. Exp is shown in cents per $1 share.</div>
+                <div class="qv-diagnostic-hint">Polymarket is a binary payout. Long trades buy YES, short trades buy NO. A short entered at 90c is a 90c NO entry and pays 10c on a win. Exp is shown in cents per $1 share.</div>
                 <div class="qv-diagnostic-grid qv-diagnostic-grid--summary">
                     ${tradeRows}
                     ${this.renderSummaryDiagnosticRow('Avg Entry Price', this.formatPolymarketPrice(summary.avgEntryPrice))}

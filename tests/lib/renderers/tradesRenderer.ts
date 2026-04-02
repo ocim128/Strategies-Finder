@@ -286,9 +286,23 @@ export class TradesRenderer {
             : 'exit-reason-badge--polymarket-lose';
         const actual = outcome.actualOutcomeUp === 1 ? 'UP' : 'DOWN';
         const prediction = outcome.prediction.toUpperCase();
+        const yesPrice = typeof outcome.marketYesPrice === 'number' && Number.isFinite(outcome.marketYesPrice)
+            ? this.formatPolymarketEntryPrice(outcome.marketYesPrice)
+            : 'n/a';
+        const noPrice = typeof outcome.marketNoPrice === 'number' && Number.isFinite(outcome.marketNoPrice)
+            ? this.formatPolymarketEntryPrice(outcome.marketNoPrice)
+            : 'n/a';
+        const paidPrice = typeof outcome.marketEntryPrice === 'number' && Number.isFinite(outcome.marketEntryPrice)
+            ? this.formatPolymarketEntryPrice(outcome.marketEntryPrice)
+            : 'n/a';
+        const priceLabel = `${prediction} ${paidPrice} (YES ${yesPrice} / NO ${noPrice})`;
         const marketSlug = this.escapeHtml(outcome.marketSlug);
         const marketUrl = this.escapeHtml(this.buildPolymarketMarketUrl(outcome.marketSlug));
-        return `<span class="exit-reason-badge trade-polymarket-link ${className}" role="button" tabindex="0" data-polymarket-url="${marketUrl}" title="Polymarket ${label}. Predicted ${prediction}, resolved ${actual}. Click to copy ${marketSlug}.">${label}</span>`;
+        return `<span class="exit-reason-badge trade-polymarket-link ${className}" role="button" tabindex="0" data-polymarket-url="${marketUrl}" title="Polymarket ${label}. Predicted ${prediction}, resolved ${actual}, paid ${priceLabel}. Click to copy ${marketSlug}.">${label} ${priceLabel}</span>`;
+    }
+
+    private formatPolymarketEntryPrice(price: number): string {
+        return `${(price * 100).toFixed(1)}c`;
     }
 
     private encodeTradeEntryTime(time: Time): string {

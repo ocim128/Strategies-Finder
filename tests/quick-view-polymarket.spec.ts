@@ -203,6 +203,32 @@ describe("Quick View Polymarket streak summary", () => {
         expect(summary?.expectancy).to.equal(0.6);
     });
 
+    it("keeps short NO entries at the paid NO price in payout summaries", () => {
+        const summary = summarizePolymarketPayoutDiagnostics([
+            makeTrade(1, true, {
+                type: "short",
+                polymarketOutcome: {
+                    eventStartTs: 1_700_000_300,
+                    eventEndTs: 1_700_000_600,
+                    eventSlug: "event-1",
+                    marketSlug: "market-1",
+                    prediction: "no",
+                    actualOutcomeUp: 0,
+                    isWin: true,
+                    marketEntryPrice: 0.9,
+                },
+            }),
+        ]);
+
+        expect(summary).to.not.equal(null);
+        expect(summary?.pricedTrades).to.equal(1);
+        expect(summary?.avgEntryPrice).to.equal(0.9);
+        expect(summary?.breakEvenWinRate).to.equal(0.9);
+        expect(summary?.winRate).to.equal(1);
+        expect(summary?.expectancy).to.be.closeTo(0.1, 1e-12);
+        expect(summary?.edgeVsBreakEven).to.be.closeTo(0.1, 1e-12);
+    });
+
     it("builds quick view sections from polymarket payout instead of binance pnl when priced trades exist", () => {
         const result = {
             trades: [
