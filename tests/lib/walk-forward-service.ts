@@ -45,11 +45,13 @@ import {
     FixedParamWalkForwardConfig,
     WalkForwardProgress
 } from "./strategies/walk-forward";
+import { withWalkForwardDecayMonitoring } from "./strategies/walk-forward-decay";
 import {
     createWalkForwardServiceDom,
     type WalkForwardServiceDom
 } from "./walk-forward-dom";
 import {
+    renderWalkForwardDecayPanel,
     renderWalkForwardCandidateValidationSummary,
     renderWalkForwardPermutationSummary,
     setWalkForwardLoading,
@@ -606,6 +608,7 @@ class WalkForwardService {
             if (!result) {
                 throw new Error('Walk-forward did not produce a result.');
             }
+            result = withWalkForwardDecayMonitoring(result, useFixedParam ? [] : parameterRanges);
 
             const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
             debugLogger.info(`Walk-forward analysis completed in ${elapsed}s`);
@@ -707,6 +710,7 @@ class WalkForwardService {
             if (!result) {
                 throw new Error('Walk-forward did not produce a result.');
             }
+            result = withWalkForwardDecayMonitoring(result, useFixedParam ? [] : parameterRanges);
 
             this.lastResult = result;
             this.displayResults(result);
@@ -1247,6 +1251,9 @@ class WalkForwardService {
         // Update summary panel
         this.updateSummaryPanel(result);
 
+        // Update decay-monitoring panel
+        this.updateDecayPanel(result);
+
         // Update window breakdown table
         this.updateWindowTable(result);
 
@@ -1261,6 +1268,10 @@ class WalkForwardService {
 
     private updateSummaryPanel(result: WalkForwardResult): void {
         updateWalkForwardSummaryPanel(this.getDom(), this.uiHost, result);
+    }
+
+    private updateDecayPanel(result: WalkForwardResult): void {
+        renderWalkForwardDecayPanel(this.getDom(), this.uiHost, result);
     }
 
     private updateWindowTable(result: WalkForwardResult): void {

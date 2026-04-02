@@ -6,6 +6,8 @@ import { sanitizeSharpeRatio } from './performance-metrics';
 import { deriveAutoWalkForwardRange, shouldTreatParamAsWholeNumber } from '../walk-forward-range-utils';
 import { createSeededRandom, roundRangeValue, snapValueToStepRange } from '../param-math-utils';
 import type { TradeSizingMode } from '../types/backtest';
+import type { WalkForwardDecayMonitoring } from './walk-forward-decay';
+import { withWalkForwardDecayMonitoring } from './walk-forward-decay';
 
 // ============================================================================
 // Walk-Forward Analysis (WFA) Module
@@ -102,6 +104,8 @@ export interface WalkForwardResult {
     optimizationTimeMs: number;
     /** Parameter stability score (how consistent are optimal params) */
     parameterStability: number;
+    /** Optional decay-monitoring diagnostics derived from the window series */
+    decayMonitoring?: WalkForwardDecayMonitoring;
 }
 
 export type WalkForwardProgressPhase = 'optimize' | 'test' | 'window' | 'complete';
@@ -960,7 +964,7 @@ export async function runWalkForwardAnalysis(
         totalWindows
     });
 
-    return {
+    return withWalkForwardDecayMonitoring({
         windows,
         combinedOOSTrades,
         avgInSampleSharpe,
@@ -970,7 +974,7 @@ export async function runWalkForwardAnalysis(
         totalWindows: windows.length,
         optimizationTimeMs: endTime - startTime,
         parameterStability
-    };
+    }, parameterRanges);
 }
 
 export async function quickWalkForward(
@@ -1284,7 +1288,7 @@ export async function runFixedParamWalkForward(
         totalWindows
     });
 
-    return {
+    return withWalkForwardDecayMonitoring({
         windows,
         combinedOOSTrades,
         avgInSampleSharpe,
@@ -1294,7 +1298,7 @@ export async function runFixedParamWalkForward(
         totalWindows: windows.length,
         optimizationTimeMs: endTime - startTime,
         parameterStability
-    };
+    }, []);
 }
 
 export function formatWalkForwardSummary(result: WalkForwardResult): string {
