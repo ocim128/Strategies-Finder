@@ -1,8 +1,110 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { Trade, Time } from './lib/strategies/index';
-import { analyzeTradePatterns, runAnalysisFilterFinder } from './lib/strategies/backtest/trade-analyzer';
+import {
+    analyzeTradePatterns,
+    runAnalysisFilterFinder,
+    simulateComboFilter,
+    simulateFilter,
+} from './lib/strategies/backtest/trade-analyzer';
 describe('Trade Analyzer', () => {
+    it('treats missing snapshot values as failing active single-feature filters', () => {
+        const trades: Trade[] = [
+            {
+                id: 1,
+                type: 'long',
+                entryTime: 1 as unknown as Time,
+                entryPrice: 100,
+                exitTime: 2 as unknown as Time,
+                exitPrice: 101,
+                pnl: 10,
+                pnlPercent: 10,
+                size: 1,
+                entrySnapshot: { volumeRatio: 1.8 }
+            },
+            {
+                id: 2,
+                type: 'long',
+                entryTime: 2 as unknown as Time,
+                entryPrice: 100,
+                exitTime: 3 as unknown as Time,
+                exitPrice: 99,
+                pnl: -8,
+                pnlPercent: -8,
+                size: 1,
+                entrySnapshot: { volumeRatio: null }
+            },
+            {
+                id: 3,
+                type: 'long',
+                entryTime: 3 as unknown as Time,
+                entryPrice: 100,
+                exitTime: 4 as unknown as Time,
+                exitPrice: 102,
+                pnl: 6,
+                pnlPercent: 6,
+                size: 1,
+                entrySnapshot: { volumeRatio: 1.3 }
+            },
+        ];
+
+        const simulation = simulateFilter(trades, 'volumeRatio', 'above', 1.0);
+
+        expect(simulation.remainingTrades).to.equal(2);
+        expect(simulation.removedTrades).to.equal(1);
+        expect(simulation.filteredWinRate).to.equal(100);
+    });
+
+    it('treats missing snapshot values as failing active combo filters', () => {
+        const trades: Trade[] = [
+            {
+                id: 1,
+                type: 'long',
+                entryTime: 1 as unknown as Time,
+                entryPrice: 100,
+                exitTime: 2 as unknown as Time,
+                exitPrice: 101,
+                pnl: 12,
+                pnlPercent: 12,
+                size: 1,
+                entrySnapshot: { volumeRatio: 1.6, priceRangePos: 0.2 }
+            },
+            {
+                id: 2,
+                type: 'long',
+                entryTime: 2 as unknown as Time,
+                entryPrice: 100,
+                exitTime: 3 as unknown as Time,
+                exitPrice: 99,
+                pnl: -7,
+                pnlPercent: -7,
+                size: 1,
+                entrySnapshot: { volumeRatio: 1.7, priceRangePos: null }
+            },
+            {
+                id: 3,
+                type: 'long',
+                entryTime: 3 as unknown as Time,
+                entryPrice: 100,
+                exitTime: 4 as unknown as Time,
+                exitPrice: 100.5,
+                pnl: 5,
+                pnlPercent: 5,
+                size: 1,
+                entrySnapshot: { volumeRatio: 1.4, priceRangePos: 0.3 }
+            },
+        ];
+
+        const simulation = simulateComboFilter(trades, [
+            { feature: 'volumeRatio', label: 'Volume Ratio', direction: 'above', threshold: 1.0 },
+            { feature: 'priceRangePos', label: 'Price Range Pos', direction: 'below', threshold: 0.5 },
+        ]);
+
+        expect(simulation.remainingTrades).to.equal(2);
+        expect(simulation.removedTrades).to.equal(1);
+        expect(simulation.filteredWinRate).to.equal(100);
+    });
+
     it('relax-aware mode should honor max removal cap', () => {
         const trades: Trade[] = [];
 

@@ -17,6 +17,7 @@ function makeTrade(
         entryTime?: number;
         priceRangePos?: number;
         volumeRatio?: number;
+        rangeAtrMultiple?: number;
         polymarketIsWin?: boolean;
     }
 ): Trade {
@@ -49,10 +50,21 @@ function makeTrade(
                 atrRegimeRatio: null,
                 bodyPercent: null,
                 wickSkew: null,
+                closeLocation: null,
+                oppositeWickPercent: null,
+                rangeAtrMultiple: options?.rangeAtrMultiple ?? null,
+                momentumConsistency: null,
+                breakQuality: null,
+                entryQualityScore: null,
                 volumeTrend: null,
                 volumeBurst: null,
                 volumePriceDivergence: null,
                 volumeConsistency: null,
+                tf60Perf: null,
+                tf90Perf: null,
+                tf120Perf: null,
+                tf480Perf: null,
+                tfConfluencePerf: null,
             },
         polymarketOutcome: marketEntryPrice === undefined
             ? undefined
@@ -216,7 +228,36 @@ describe("backtest result expectancy breakdown", () => {
         expect(suggestions?.sampleCounts.scoredTrades).to.equal(11);
         expect(suggestions?.sampleCounts.pricedTrades).to.equal(10);
         expect(suggestions?.baselineExpectancy).to.be.closeTo(-0.05, 1e-12);
+        expect(suggestions?.scoredWinRate).to.be.closeTo(6 / 11, 1e-12);
+        expect(suggestions?.scoredBestBaselineWinRate).to.be.closeTo(6 / 11, 1e-12);
+        expect(suggestions?.scoredBaselineDelta).to.be.closeTo(0, 1e-12);
         expect(suggestions?.featureAnalyses.length).to.be.greaterThan(0);
+    });
+
+    it("projects filtered baseline delta using the same scored subset semantics as the post-apply summary", () => {
+        const trades = [
+            makeTrade(1, "long", 4, 0.42, { priceRangePos: 0.3, volumeRatio: 1.4, rangeAtrMultiple: 0.8, polymarketIsWin: true }),
+            makeTrade(2, "long", 4, 0.43, { priceRangePos: 0.31, volumeRatio: 1.45, rangeAtrMultiple: 0.82, polymarketIsWin: true }),
+            makeTrade(3, "long", 4, 0.41, { priceRangePos: 0.29, volumeRatio: 1.35, rangeAtrMultiple: 0.84, polymarketIsWin: true }),
+            makeTrade(4, "long", 4, 0.44, { priceRangePos: 0.32, volumeRatio: 1.5, rangeAtrMultiple: 0.86, polymarketIsWin: true }),
+            makeTrade(5, "long", 4, 0.45, { priceRangePos: 0.33, volumeRatio: 1.55, rangeAtrMultiple: 0.88, polymarketIsWin: true }),
+            makeTrade(6, "short", 4, 0.38, { priceRangePos: 0.34, volumeRatio: 1.6, rangeAtrMultiple: 0.83, polymarketIsWin: true }),
+            makeTrade(7, "short", 4, 0.39, { priceRangePos: 0.35, volumeRatio: 1.58, rangeAtrMultiple: 0.87, polymarketIsWin: true }),
+            makeTrade(8, "long", -4, 0.62, { priceRangePos: 0.7, volumeRatio: 0.9, rangeAtrMultiple: 0.9, polymarketIsWin: false }),
+            makeTrade(9, "long", -4, 0.7, { priceRangePos: 0.82, volumeRatio: 0.7, rangeAtrMultiple: 1.8, polymarketIsWin: false }),
+            makeTrade(10, "short", -4, 0.68, { priceRangePos: 0.8, volumeRatio: 0.75, rangeAtrMultiple: 1.9, polymarketIsWin: false }),
+        ];
+
+        const suggestions = buildPolymarketFilterSuggestions(trades);
+        const rangeAtrAnalysis = suggestions?.featureAnalyses.find((analysis) => analysis.feature === "rangeAtrMultiple");
+
+        expect(rangeAtrAnalysis?.suggestedFilter).to.not.equal(null);
+        expect(rangeAtrAnalysis?.suggestedFilter?.direction).to.equal("below");
+        expect(rangeAtrAnalysis?.scoredProjection).to.not.equal(null);
+        expect(rangeAtrAnalysis?.scoredProjection?.filteredTrades).to.equal(8);
+        expect(rangeAtrAnalysis?.scoredProjection?.filteredWinRate).to.be.closeTo(0.875, 1e-12);
+        expect(rangeAtrAnalysis?.scoredProjection?.bestBaselineWinRate).to.be.closeTo(0.625, 1e-12);
+        expect(rangeAtrAnalysis?.scoredProjection?.baselineDelta).to.be.closeTo(0.25, 1e-12);
     });
 
     it("enriches a backtest result with cached polymarket analysis fields", () => {

@@ -937,6 +937,25 @@ export function setupEventHandlers() {
     tradeFilterModeSelect.addEventListener('change', applyTradeFilterMode);
     applyTradeFilterMode();
 
+    // Snapshot entry filter toggle → enable/disable sibling min/max inputs
+    const snapshotFiltersBody = document.getElementById('snapshotFiltersBody');
+    if (snapshotFiltersBody) {
+        const applySnapshotToggleState = (toggle: HTMLInputElement) => {
+            const row = toggle.closest('.snapshot-filter-row');
+            if (!row) return;
+            const inputs = row.querySelectorAll<HTMLInputElement>('input[type="number"]');
+            for (let i = 0; i < inputs.length; i++) {
+                inputs[i].disabled = !toggle.checked;
+            }
+        };
+
+        const snapshotToggles = snapshotFiltersBody.querySelectorAll<HTMLInputElement>('.snapshot-filter-toggle');
+        snapshotToggles.forEach((toggle) => {
+            toggle.addEventListener('change', () => applySnapshotToggleState(toggle));
+            applySnapshotToggleState(toggle);
+        });
+    }
+
     const strategyTimeframeToggle = dom.strategyTimeframeToggle;
     const strategyTimeframeMinutes = dom.strategyTimeframeMinutes;
     const strategyTimeframeMinutesGroup = dom.strategyTimeframeMinutesGroup;

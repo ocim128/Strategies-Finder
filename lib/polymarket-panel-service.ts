@@ -33,11 +33,30 @@ import {
     getQuickViewDiagnosticSections,
     summarizePolymarketPayoutDiagnostics,
 } from "./quick-view";
+import {
+    rankPolymarketFeatureSuggestions,
+    resolvePolymarketSelectedEntryOffset,
+} from "./polymarket-diagnostics-utils";
+import { strategyPanelController } from "./strategy-panel-controller";
+import { backtestService } from "./backtest-service";
 
 type SnapshotFilterBinding = {
     toggleKey: string;
     minKey?: string;
     maxKey?: string;
+};
+
+type SnapshotFilterSuggestion = {
+    feature: keyof TradeSnapshot;
+    direction: "above" | "below";
+    threshold: number;
+};
+
+type ValidatedSuggestionMetrics = {
+    projectedWinRate: number;
+    projectedBaselineDelta: number;
+    projectedExpectancy: number | null;
+    removedPercent: number;
 };
 
 const SNAPSHOT_FILTER_BINDINGS: Record<keyof TradeSnapshot, SnapshotFilterBinding> = {
@@ -88,6 +107,10 @@ class PolymarketPanelService {
     private renderTimeoutId: number | null = null;
     private deployabilityCacheKey = "";
     private deployabilityCache: ReturnType<typeof analyzePolymarketDeployability> | null = null;
+    private validatedSuggestionCacheKey = "";
+    private validatedFeatureSuggestions = new Map<string, ValidatedSuggestionMetrics>();
+    private validatedComboSuggestion: ValidatedSuggestionMetrics | null = null;
+    private isValidatingSuggestions = false;
 
     public init(): void {
         if (this.initialized) {
@@ -124,6 +147,28 @@ class PolymarketPanelService {
         });
         dom.polymarketBridgeCopyEnv.addEventListener("click", () => {
             void this.handleCopyBotEnv();
+        });
+        dom.polymarketDiagnosticsContent.addEventListener("click", (event: MouseEvent) => {
+            const target = event.target as HTMLElement | null;
+            const applyButton = target?.closest<HTMLButtonElement>("[data-polymarket-apply-feature], [data-polymarket-apply-combo]");
+            if (!applyButton) {
+                return;
+            }
+
+            if (applyButton.dataset.polymarketApplyCombo === "best") {
+                this.applyBestComboSuggestion();
+                return;
+            }
+
+            const feature = applyButton.dataset.polymarketApplyFeature;
+            const direction = applyButton.dataset.polymarketApplyDirection;
+            const threshold = Number.parseFloat(applyButton.dataset.polymarketApplyThreshold ?? "");
+            if (!this.isSnapshotFeature(feature) || (direction !== "above" && direction !== "below") || !Number.isFinite(threshold)) {
+                uiManager.showToast("That filter suggestion is unavailable.", "error");
+                return;
+            }
+
+            this.applySnapshotSuggestions([{ feature, direction, threshold }], "Applied suggestion to Snapshot Entry Filters.");
         });
         window.addEventListener("strategy-panel:tab-change", ((event: CustomEvent<{ tabId?: string }>) => {
             if (event.detail?.tabId !== "polymarket") {
@@ -274,11 +319,16 @@ class PolymarketPanelService {
     }
 
     private resolveSelectedPolymarketEntryOffset(result: BacktestResult): number {
-        const summaryOffset = result.polymarketTradeSummary?.entryOffset;
-        if (typeof summaryOffset === "number" && Number.isFinite(summaryOffset)) {
-            return Math.max(0, Math.min(4, Math.floor(summaryOffset)));
+        return resolvePolymarketSelectedEntryOffset(result, this.readCurrentPolymarketEntryOffset());
+    }
+
+    private readCurrentPolymarketEntryOffset(): number | null {
+        const element = document.getElementById("polymarketEntryOffset");
+        if (!(element instanceof HTMLSelectElement)) {
+            return null;
         }
-        return 0;
+        const value = Number(element.value);
+        return Number.isFinite(value) ? value : null;
     }
 
     private async enrichHistoryInBackground(requestId: number, rows: PolymarketOutcomeRow[]): Promise<void> {
@@ -369,6 +419,7 @@ class PolymarketPanelService {
         const summary = this.getPolymarketSummary(result);
         const sections = getQuickViewDiagnosticSections(result);
         const snapshotSection = this.buildPolymarketSnapshotSection(result);
+        void this.ensureValidatedFilterSuggestions(result);
         const filterSection = this.buildPolymarketFilterSection(result);
 
         if (!summary && !payoutSummary && sections.length === 0 && !snapshotSection && !filterSection) {
@@ -567,20 +618,60 @@ class PolymarketPanelService {
             return "";
         }
 
-        const topFeatures = suggestions.featureAnalyses
-            .filter((analysis) => analysis.suggestedFilter !== null)
+        const candidateFeatures = rankPolymarketFeatureSuggestions(suggestions.featureAnalyses).slice(0, 8);
+        if (candidateFeatures.length === 0) {
+            return "";
+        }
+
+        const validationKey = this.getValidatedSuggestionCacheKey(result, suggestions);
+        if (this.validatedSuggestionCacheKey !== validationKey) {
+            return `
+                <div class="deployability-section">
+                    <div class="section-subtitle">PM Filter Suggestions</div>
+                    <div class="entry-stats-hint polymarket-diagnostics__hint">Validating live reruns for the current top snapshot filters so projected PM metrics match the actual post-apply backtest.</div>
+                </div>
+            `;
+        }
+
+        const topFeatures = candidateFeatures
+            .map((analysis) => ({
+                analysis,
+                metrics: this.validatedFeatureSuggestions.get(this.getSuggestionCacheEntryKey(
+                    analysis.feature,
+                    analysis.suggestedFilter!.direction,
+                    analysis.suggestedFilter!.threshold
+                )) ?? null,
+            }))
+            .filter((entry): entry is { analysis: typeof candidateFeatures[number]; metrics: ValidatedSuggestionMetrics } => entry.metrics !== null)
+            .sort((left, right) => {
+                if (right.metrics.projectedBaselineDelta !== left.metrics.projectedBaselineDelta) {
+                    return right.metrics.projectedBaselineDelta - left.metrics.projectedBaselineDelta;
+                }
+                const rightExpectancy = right.metrics.projectedExpectancy ?? Number.NEGATIVE_INFINITY;
+                const leftExpectancy = left.metrics.projectedExpectancy ?? Number.NEGATIVE_INFINITY;
+                if (rightExpectancy !== leftExpectancy) {
+                    return rightExpectancy - leftExpectancy;
+                }
+                if (left.metrics.removedPercent !== right.metrics.removedPercent) {
+                    return left.metrics.removedPercent - right.metrics.removedPercent;
+                }
+                return left.analysis.label.localeCompare(right.analysis.label);
+            })
             .slice(0, 5);
+
         if (topFeatures.length === 0) {
             return "";
         }
 
-        const rows = topFeatures.map((analysis) => `
+        const rows = topFeatures.map(({ analysis, metrics }) => `
             <tr>
                 <td>${analysis.label}</td>
                 <td>${this.formatSnapshotSettingSuggestion(analysis.feature, analysis.suggestedFilter!.direction, analysis.suggestedFilter!.threshold)}</td>
-                <td class="${(analysis.winRateIfFiltered - suggestions.baselineWinRate * 100) >= 0 ? "positive" : "negative"}">${analysis.winRateIfFiltered.toFixed(1)}%</td>
-                <td class="${analysis.expectancyIfFiltered >= 0 ? "positive" : "negative"}">${this.formatPolymarketCents(analysis.expectancyIfFiltered)}</td>
-                <td>${analysis.tradesRemovedPercent.toFixed(0)}%</td>
+                <td class="${((metrics.projectedWinRate - suggestions.scoredWinRate) * 100) >= 0 ? "positive" : "negative"}">${(metrics.projectedWinRate * 100).toFixed(1)}%</td>
+                <td class="${metrics.projectedBaselineDelta >= 0 ? "positive" : "negative"}">${metrics.projectedBaselineDelta >= 0 ? "+" : ""}${(metrics.projectedBaselineDelta * 100).toFixed(1)}pp</td>
+                <td class="${(metrics.projectedExpectancy ?? 0) >= 0 ? "positive" : "negative"}">${metrics.projectedExpectancy !== null ? this.formatPolymarketCents(metrics.projectedExpectancy) : "—"}</td>
+                <td>${metrics.removedPercent.toFixed(0)}%</td>
+                <td><button class="btn btn-secondary btn-compact" type="button" data-polymarket-apply-feature="${analysis.feature}" data-polymarket-apply-direction="${analysis.suggestedFilter!.direction}" data-polymarket-apply-threshold="${analysis.suggestedFilter!.threshold}">Apply</button></td>
             </tr>
         `).join("");
 
@@ -589,7 +680,7 @@ class PolymarketPanelService {
         return `
             <div class="deployability-section">
                 <div class="section-subtitle">PM Filter Suggestions</div>
-                <div class="entry-stats-hint polymarket-diagnostics__hint">Single-feature filters on the priced snapshot subset. ${suggestions.sampleCounts.pricedTrades} priced trades out of ${suggestions.sampleCounts.scoredTrades} scored snapshot trades. Baseline: ${this.formatPercent(suggestions.baselineWinRate)}, ${this.formatPolymarketCents(suggestions.baselineExpectancy)} exp/trade.</div>
+                <div class="entry-stats-hint polymarket-diagnostics__hint">Validated against live reruns of the current backtest settings. Current scored baseline delta: ${suggestions.scoredBaselineDelta >= 0 ? "+" : ""}${(suggestions.scoredBaselineDelta * 100).toFixed(1)}pp vs best YES/NO base at ${this.formatPercent(suggestions.scoredBestBaselineWinRate)}. Expectancy stays priced-only: ${suggestions.sampleCounts.pricedTrades} priced trades out of ${suggestions.sampleCounts.scoredTrades} scored snapshot trades, ${this.formatPolymarketCents(suggestions.baselineExpectancy)} exp/trade.</div>
                 <div class="analysis-finder-table-wrap">
                     <table class="analysis-finder-table polymarket-panel__table polymarket-diagnostics__table">
                         <thead>
@@ -597,8 +688,10 @@ class PolymarketPanelService {
                                 <th>Metric</th>
                                 <th>Setting</th>
                                 <th>PM Win%</th>
+                                <th>Base Delta</th>
                                 <th>PM Exp</th>
                                 <th>Removed</th>
+                                <th>Apply</th>
                             </tr>
                         </thead>
                         <tbody>${rows}</tbody>
@@ -611,31 +704,176 @@ class PolymarketPanelService {
 
     private buildPolymarketComboCard(suggestions: NonNullable<BacktestResult["polymarketFilterSuggestions"]>): string {
         const bestCandidate = suggestions.finderResult.bestCandidate;
-        if (!bestCandidate) {
+        if (!bestCandidate || !this.validatedComboSuggestion) {
             return "";
         }
 
         const filters = bestCandidate.filters.map((filter) => `
             <div class="polymarket-diagnostics__combo-chip">${this.formatSnapshotSettingSuggestion(filter.feature, filter.direction, filter.threshold)}</div>
         `).join("");
-        const simulation = bestCandidate.simulation;
+        const validated = this.validatedComboSuggestion;
 
         return `
             <div class="deployability-section">
                 <div class="section-subtitle">Best Combo Filter</div>
                 <div class="entry-stats-hint polymarket-diagnostics__hint">Highest objective score across ${suggestions.finderResult.attemptedCount} evaluated combo candidates.</div>
+                <div class="polymarket-diagnostics__actions">
+                    <button class="btn btn-primary btn-compact" type="button" data-polymarket-apply-combo="best">Apply Combo</button>
+                </div>
                 <div class="polymarket-diagnostics__combo-list">${filters}</div>
                 <div class="stats-grid polymarket-panel__stats">
-                    ${this.renderStatCard("Projected PM Win Rate", `${simulation.filteredWinRate.toFixed(1)}%`, simulation.winRateImprovement)}
-                    ${this.renderStatCard("Projected PM Exp", this.formatPolymarketCents(simulation.filteredExpectancy), simulation.expectancyImprovement)}
-                    ${this.renderStatCard("Trades Kept", `${simulation.remainingTrades}/${simulation.originalTrades}`)}
-                    ${this.renderStatCard("Trades Removed", `${simulation.removedPercent.toFixed(0)}%`)}
+                    ${this.renderStatCard("Projected PM Win Rate", `${(validated.projectedWinRate * 100).toFixed(1)}%`, ((validated.projectedWinRate - suggestions.scoredWinRate) * 100))}
+                    ${this.renderStatCard("Projected Base Delta", `${validated.projectedBaselineDelta >= 0 ? "+" : ""}${(validated.projectedBaselineDelta * 100).toFixed(1)}pp`, validated.projectedBaselineDelta)}
+                    ${this.renderStatCard("Projected PM Exp", validated.projectedExpectancy !== null ? this.formatPolymarketCents(validated.projectedExpectancy) : "—", validated.projectedExpectancy ?? undefined)}
+                    ${this.renderStatCard("Trades Kept", `${Math.round(suggestions.sampleCounts.scoredTrades * (1 - (validated.removedPercent / 100)))}/${suggestions.sampleCounts.scoredTrades}`)}
+                    ${this.renderStatCard("Trades Removed", `${validated.removedPercent.toFixed(0)}%`)}
                     ${this.renderStatCard("Bad Trades Removed", `${bestCandidate.badTradesRemovedPct.toFixed(0)}%`, bestCandidate.badTradesRemovedPct)}
                     ${this.renderStatCard("Good Trades Removed", `${bestCandidate.goodTradesRemovedPct.toFixed(0)}%`, -bestCandidate.goodTradesRemovedPct)}
                     ${this.renderStatCard("Objective Score", bestCandidate.objectiveScore.toFixed(3), bestCandidate.objectiveScore)}
                 </div>
             </div>
         `;
+    }
+
+    private async ensureValidatedFilterSuggestions(result: BacktestResult): Promise<void> {
+        const suggestions = result.polymarketFilterSuggestions;
+        if (!suggestions || this.loadedOutcomeRows.length === 0) {
+            return;
+        }
+
+        const validationKey = this.getValidatedSuggestionCacheKey(result, suggestions);
+        if (this.validatedSuggestionCacheKey === validationKey || this.isValidatingSuggestions) {
+            return;
+        }
+
+        this.isValidatingSuggestions = true;
+        const featureCandidates = rankPolymarketFeatureSuggestions(suggestions.featureAnalyses).slice(0, 8);
+        const comboCandidate = suggestions.finderResult.bestCandidate;
+        const originalSummary = this.getPolymarketSummary(result);
+        const originalScoredTrades = originalSummary?.scoredTrades ?? suggestions.sampleCounts.scoredTrades;
+        const nextFeatureSuggestions = new Map<string, ValidatedSuggestionMetrics>();
+        let nextComboSuggestion: ValidatedSuggestionMetrics | null = null;
+
+        try {
+            for (const analysis of featureCandidates) {
+                const filter = analysis.suggestedFilter;
+                if (!filter) {
+                    continue;
+                }
+
+                const metrics = await this.previewValidatedSuggestionMetrics(
+                    [{ feature: analysis.feature, direction: filter.direction, threshold: filter.threshold }],
+                    originalScoredTrades
+                );
+                if (metrics) {
+                    nextFeatureSuggestions.set(
+                        this.getSuggestionCacheEntryKey(analysis.feature, filter.direction, filter.threshold),
+                        metrics
+                    );
+                }
+            }
+
+            if (comboCandidate) {
+                nextComboSuggestion = await this.previewValidatedSuggestionMetrics(comboCandidate.filters, originalScoredTrades);
+            }
+
+            if (this.lastResult === result) {
+                this.validatedSuggestionCacheKey = validationKey;
+                this.validatedFeatureSuggestions = nextFeatureSuggestions;
+                this.validatedComboSuggestion = nextComboSuggestion;
+                this.scheduleRender();
+            }
+        } finally {
+            this.isValidatingSuggestions = false;
+        }
+    }
+
+    private async previewValidatedSuggestionMetrics(
+        filters: readonly SnapshotFilterSuggestion[],
+        originalScoredTrades: number
+    ): Promise<ValidatedSuggestionMetrics | null> {
+        const previewResult = await backtestService.previewCurrentBacktestWithSettings(this.buildSnapshotFilterSettingsOverride(filters));
+        if (!previewResult) {
+            return null;
+        }
+
+        const annotatedPreview = this.attachLoadedPolymarketOutcomes(previewResult, this.loadedOutcomeRows);
+        const summary = this.getPolymarketSummary(annotatedPreview);
+        if (!summary) {
+            return null;
+        }
+
+        const payoutSummary = summarizePolymarketPayoutDiagnostics(annotatedPreview.trades);
+        return {
+            projectedWinRate: summary.winRate,
+            projectedBaselineDelta: summary.baselineDelta,
+            projectedExpectancy: payoutSummary?.expectancy ?? null,
+            removedPercent: originalScoredTrades > 0
+                ? Math.max(0, ((originalScoredTrades - summary.scoredTrades) / originalScoredTrades) * 100)
+                : 0,
+        };
+    }
+
+    private buildSnapshotFilterSettingsOverride(filters: readonly SnapshotFilterSuggestion[]): Partial<Record<string, number | boolean>> {
+        const override: Partial<Record<string, number | boolean>> = {};
+        for (const binding of Object.values(SNAPSHOT_FILTER_BINDINGS)) {
+            if (binding.minKey) {
+                override[binding.minKey] = 0;
+            }
+            if (binding.maxKey) {
+                override[binding.maxKey] = 0;
+            }
+        }
+
+        for (const filter of filters) {
+            const binding = SNAPSHOT_FILTER_BINDINGS[filter.feature];
+            if (!binding) {
+                continue;
+            }
+
+            const targetKey = filter.direction === "above"
+                ? (binding.minKey ?? binding.maxKey)
+                : (binding.maxKey ?? binding.minKey);
+            const oppositeKey = filter.direction === "above"
+                ? (binding.minKey && binding.maxKey ? binding.maxKey : undefined)
+                : (binding.minKey && binding.maxKey ? binding.minKey : undefined);
+
+            if (oppositeKey) {
+                override[oppositeKey] = 0;
+            }
+            if (targetKey) {
+                override[targetKey] = filter.threshold;
+            }
+        }
+
+        return override;
+    }
+
+    private getValidatedSuggestionCacheKey(
+        result: BacktestResult,
+        suggestions: NonNullable<BacktestResult["polymarketFilterSuggestions"]>
+    ): string {
+        const featureKey = rankPolymarketFeatureSuggestions(suggestions.featureAnalyses)
+            .slice(0, 8)
+            .map((analysis) => {
+                const filter = analysis.suggestedFilter;
+                return filter ? this.getSuggestionCacheEntryKey(analysis.feature, filter.direction, filter.threshold) : "";
+            })
+            .join("|");
+        const comboKey = suggestions.finderResult.bestCandidate
+            ? suggestions.finderResult.bestCandidate.filters
+                .map((filter) => this.getSuggestionCacheEntryKey(filter.feature, filter.direction, filter.threshold))
+                .join("&")
+            : "none";
+        return `${this.getResultSignature(result)}::${this.loadedOutcomeRows.length}::${featureKey}::${comboKey}`;
+    }
+
+    private getSuggestionCacheEntryKey(
+        feature: keyof TradeSnapshot,
+        direction: "above" | "below",
+        threshold: number
+    ): string {
+        return `${feature}:${direction}:${threshold}`;
     }
 
     private renderStatCard(label: string, value: string, numericValue?: number): string {
@@ -839,6 +1077,10 @@ class PolymarketPanelService {
         this.loadedResultSignature = "";
         this.deployabilityCacheKey = "";
         this.deployabilityCache = null;
+        this.validatedSuggestionCacheKey = "";
+        this.validatedFeatureSuggestions.clear();
+        this.validatedComboSuggestion = null;
+        this.isValidatingSuggestions = false;
         if (clearResult) {
             this.lastResult = null;
         }
@@ -1420,6 +1662,150 @@ class PolymarketPanelService {
         if (abs >= 0.1) return value.toFixed(4);
         if (abs >= 0.01) return value.toFixed(5);
         return value.toFixed(6);
+    }
+
+    private isSnapshotFeature(value: string | undefined): value is keyof TradeSnapshot {
+        return typeof value === "string" && value in SNAPSHOT_FILTER_BINDINGS;
+    }
+
+    private applyBestComboSuggestion(): void {
+        const bestCandidate = this.lastResult?.polymarketFilterSuggestions?.finderResult.bestCandidate;
+        if (!bestCandidate || bestCandidate.filters.length === 0) {
+            uiManager.showToast("No combo suggestion is available to apply.", "error");
+            return;
+        }
+
+        this.applySnapshotSuggestions(
+            bestCandidate.filters,
+            `Applied ${bestCandidate.filters.length}-filter combo to Snapshot Entry Filters.`,
+            { replaceExisting: true }
+        );
+    }
+
+    private applySnapshotSuggestions(
+        filters: readonly SnapshotFilterSuggestion[],
+        successMessage: string,
+        options: { replaceExisting?: boolean } = {}
+    ): void {
+        const touchedToggleIds = new Set<string>();
+        const touchedValueIds = new Set<string>();
+        const replaceExisting = options.replaceExisting === true;
+
+        if (replaceExisting) {
+            Object.values(SNAPSHOT_FILTER_BINDINGS).forEach((binding) => {
+                if (this.writeSettingValue(binding.toggleKey, false)) {
+                    touchedToggleIds.add(binding.toggleKey);
+                }
+                if (binding.minKey && this.writeSettingValue(binding.minKey, 0)) {
+                    touchedValueIds.add(binding.minKey);
+                }
+                if (binding.maxKey && this.writeSettingValue(binding.maxKey, 0)) {
+                    touchedValueIds.add(binding.maxKey);
+                }
+            });
+        }
+
+        let appliedCount = 0;
+        filters.forEach((filter) => {
+            const binding = SNAPSHOT_FILTER_BINDINGS[filter.feature];
+            if (!binding) {
+                return;
+            }
+
+            if (!replaceExisting) {
+                if (this.writeSettingValue(binding.toggleKey, false)) {
+                    touchedToggleIds.add(binding.toggleKey);
+                }
+                if (binding.minKey && this.writeSettingValue(binding.minKey, 0)) {
+                    touchedValueIds.add(binding.minKey);
+                }
+                if (binding.maxKey && this.writeSettingValue(binding.maxKey, 0)) {
+                    touchedValueIds.add(binding.maxKey);
+                }
+            }
+
+            if (this.writeSettingValue(binding.toggleKey, true)) {
+                touchedToggleIds.add(binding.toggleKey);
+            }
+
+            const targetKey = filter.direction === "above"
+                ? (binding.minKey ?? binding.maxKey)
+                : (binding.maxKey ?? binding.minKey);
+            const oppositeKey = filter.direction === "above"
+                ? (binding.minKey && binding.maxKey ? binding.maxKey : undefined)
+                : (binding.minKey && binding.maxKey ? binding.minKey : undefined);
+
+            if (oppositeKey && this.writeSettingValue(oppositeKey, 0)) {
+                touchedValueIds.add(oppositeKey);
+            }
+            if (targetKey && this.writeSettingValue(targetKey, filter.threshold)) {
+                touchedValueIds.add(targetKey);
+                appliedCount++;
+            }
+        });
+
+        if (appliedCount === 0) {
+            uiManager.showToast("Snapshot filter controls are unavailable.", "error");
+            return;
+        }
+
+        touchedToggleIds.forEach((id) => this.dispatchSettingEvents(id));
+        touchedValueIds.forEach((id) => this.dispatchSettingEvents(id));
+        settingsManager.saveSettingsDebounced();
+        this.revealSnapshotFiltersInSettings();
+        uiManager.showToast(successMessage, "success");
+    }
+
+    private writeSettingValue(id: string, value: boolean | number): boolean {
+        const element = document.getElementById(id);
+        if (!element) {
+            return false;
+        }
+
+        if (element instanceof HTMLInputElement) {
+            if (element.type === "checkbox") {
+                element.checked = Boolean(value);
+                return true;
+            }
+            element.value = String(value);
+            return true;
+        }
+
+        if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) {
+            element.value = String(value);
+            return true;
+        }
+
+        return false;
+    }
+
+    private dispatchSettingEvents(id: string): void {
+        const element = document.getElementById(id);
+        if (!element) {
+            return;
+        }
+
+        if (element instanceof HTMLInputElement && element.type === "checkbox") {
+            element.dispatchEvent(new Event("change", { bubbles: true }));
+            return;
+        }
+
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    private revealSnapshotFiltersInSettings(): void {
+        strategyPanelController.switchTab("settings");
+
+        const standardPresetButton = document.querySelector<HTMLButtonElement>('#settingsPresetBar .settings-preset-btn[data-preset="standard"]');
+        if (standardPresetButton && !standardPresetButton.classList.contains("active")) {
+            standardPresetButton.click();
+        }
+
+        const sectionHeader = document.querySelector<HTMLElement>('#settingsTab .settings-section[data-section="snapshotFilters"] .section-header.collapsible');
+        if (sectionHeader?.classList.contains("collapsed")) {
+            sectionHeader.click();
+        }
     }
 
     private getDom(): PolymarketPanelDom {

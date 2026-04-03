@@ -218,6 +218,44 @@ export class BacktestService {
         }
     }
 
+    public async previewCurrentBacktestWithSettings(settingsOverride: Partial<BacktestSettings>): Promise<BacktestResult | null> {
+        const strategy = strategyRegistry.get(state.currentStrategyKey);
+        if (!strategy) {
+            return null;
+        }
+
+        const params = paramManager.getValues(strategy);
+        const capitalSettings = this.getCapitalSettings();
+        const mergedSettings = resolveBacktestSettingsFromRaw(
+            {
+                ...this.getBacktestSettings(),
+                ...settingsOverride,
+            } as BacktestSettings,
+            {
+                captureSnapshots: true,
+                coerceWithoutUiToggles: true,
+            }
+        );
+
+        mergedSettings.tradeDirection = mergedSettings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
+        mergedSettings.executionModel = mergedSettings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
+
+        const requiresTsEngine = this.requiresTypescriptEngine(mergedSettings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
+        const parityMode = this.getTwoHourCloseParityMode();
+        const activeParity = parityMode === 'both' ? this.inferBaselineParity(state.ohlcvData) : parityMode;
+        const run = await this.withTemporaryTwoHourParity(activeParity, async () => this.runBacktestForData(
+            state.ohlcvData,
+            state.currentInterval,
+            strategy,
+            params,
+            mergedSettings,
+            capitalSettings,
+            requiresTsEngine
+        ));
+
+        return run.result;
+    }
+
     private getTwoHourCloseParityMode(): 'odd' | 'even' | 'both' {
         if (getIntervalSeconds(state.currentInterval) !== 7200) {
             return 'odd';

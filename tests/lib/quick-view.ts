@@ -25,6 +25,12 @@ import {
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { enrichPolymarketBacktestResult } from "./backtest-result-analysis";
+import {
+    clampPolymarketEntryOffset,
+    inferPolymarketEntryOffsetFromTrades,
+    rankPolymarketFeatureSuggestions,
+    resolvePolymarketSelectedEntryOffset as resolvePolymarketSelectedEntryOffsetWithFallback,
+} from "./polymarket-diagnostics-utils";
 
 type QuickViewPolymarketSummary = {
     wins: number;
@@ -195,22 +201,9 @@ export function getQuickViewDiagnosticSections(result: BacktestResult): Expectan
 function resolvePolymarketSelectedEntryOffset(result: BacktestResult, trades: readonly Trade[]): number | null {
     const summaryOffset = result.polymarketTradeSummary?.entryOffset;
     if (typeof summaryOffset === "number" && Number.isFinite(summaryOffset)) {
-        return Math.max(0, Math.min(4, Math.floor(summaryOffset)));
+        return clampPolymarketEntryOffset(summaryOffset);
     }
-
-    const offsets = new Set<number>();
-    for (const trade of trades) {
-        const entryOffset = trade.polymarketOutcome?.entryOffset;
-        if (typeof entryOffset !== "number" || !Number.isFinite(entryOffset)) {
-            return null;
-        }
-        offsets.add(Math.max(0, Math.min(4, Math.floor(entryOffset))));
-        if (offsets.size > 1) {
-            return null;
-        }
-    }
-
-    return offsets.size === 1 ? [...offsets][0]! : null;
+    return inferPolymarketEntryOffsetFromTrades(trades);
 }
 
 function getPolymarketPricedTrades(trades: readonly Trade[]): Trade[] {
@@ -564,20 +557,9 @@ class QuickViewManager {
     }
 
     private resolveSelectedPolymarketEntryOffset(result: BacktestResult): number {
-        const summaryOffset = result.polymarketTradeSummary?.entryOffset;
-        if (typeof summaryOffset === "number" && Number.isFinite(summaryOffset)) {
-            return Math.max(0, Math.min(4, Math.floor(summaryOffset)));
-        }
-
         const element = document.getElementById("polymarketEntryOffset");
-        if (element instanceof HTMLSelectElement) {
-            const value = Number(element.value);
-            if (Number.isFinite(value)) {
-                return Math.max(0, Math.min(4, Math.floor(value)));
-            }
-        }
-
-        return 0;
+        const fallbackOffset = element instanceof HTMLSelectElement ? Number(element.value) : null;
+        return resolvePolymarketSelectedEntryOffsetWithFallback(result, fallbackOffset);
     }
 
     private async ensurePolymarketOutcomes(result: BacktestResult): Promise<BacktestResult> {
@@ -1250,9 +1232,7 @@ class QuickViewManager {
         const suggestions = result.polymarketFilterSuggestions;
         if (!suggestions) return '';
 
-        const topFeatures = suggestions.featureAnalyses
-            .filter(a => a.suggestedFilter !== null)
-            .slice(0, 5);
+        const topFeatures = rankPolymarketFeatureSuggestions(suggestions.featureAnalyses).slice(0, 5);
         if (topFeatures.length === 0) return '';
 
         const featureRows = topFeatures.map(a => {
@@ -1265,9 +1245,10 @@ class QuickViewManager {
                 <div class="qv-pm-filter-row">
                     <div class="qv-pm-profile-cell qv-pm-profile-cell--label">${a.label}</div>
                     <div class="qv-pm-profile-cell">${filterText}</div>
-                    <div class="qv-pm-profile-cell ${(a.winRateIfFiltered - suggestions.baselineWinRate * 100) >= 0 ? 'positive' : 'negative'}">${a.winRateIfFiltered.toFixed(1)}%</div>
+                    <div class="qv-pm-profile-cell ${((((a.scoredProjection?.filteredWinRate ?? null) ?? (a.winRateIfFiltered / 100)) - suggestions.scoredWinRate) * 100) >= 0 ? 'positive' : 'negative'}">${((((a.scoredProjection?.filteredWinRate ?? null) ?? (a.winRateIfFiltered / 100)) * 100)).toFixed(1)}%</div>
+                    <div class="qv-pm-profile-cell ${(a.scoredProjection?.baselineDelta ?? 0) >= 0 ? 'positive' : 'negative'}">${a.scoredProjection ? `${a.scoredProjection.baselineDelta >= 0 ? '+' : ''}${(a.scoredProjection.baselineDelta * 100).toFixed(1)}pp` : '—'}</div>
                     <div class="qv-pm-profile-cell ${(a.expectancyIfFiltered) >= 0 ? 'positive' : 'negative'}">${this.formatPolymarketCents(a.expectancyIfFiltered)}</div>
-                    <div class="qv-pm-profile-cell">${a.tradesRemovedPercent.toFixed(0)}%</div>
+                    <div class="qv-pm-profile-cell">${(a.scoredProjection?.removedPercent ?? a.tradesRemovedPercent).toFixed(0)}%</div>
                 </div>
             `;
         }).join('');
@@ -1279,12 +1260,13 @@ class QuickViewManager {
         return `
             <div class="qv-section-title">PM Filter Suggestions</div>
             <div class="qv-stat-card full-width qv-diagnostic-card">
-                <div class="qv-diagnostic-hint">Single-feature filters on the priced snapshot subset. ${suggestions.sampleCounts.pricedTrades} priced trades out of ${suggestions.sampleCounts.scoredTrades} scored snapshot trades. Baseline: ${(suggestions.baselineWinRate * 100).toFixed(1)}% win rate, ${this.formatPolymarketCents(suggestions.baselineExpectancy)} exp/trade.</div>
+                <div class="qv-diagnostic-hint">Single-feature filters on the scored snapshot subset. Current scored baseline delta: ${suggestions.scoredBaselineDelta >= 0 ? '+' : ''}${(suggestions.scoredBaselineDelta * 100).toFixed(1)}pp vs best YES/NO base at ${(suggestions.scoredBestBaselineWinRate * 100).toFixed(1)}%. Expectancy stays priced-only: ${suggestions.sampleCounts.pricedTrades} priced trades out of ${suggestions.sampleCounts.scoredTrades} scored snapshot trades, ${this.formatPolymarketCents(suggestions.baselineExpectancy)} exp/trade.</div>
                 <div class="qv-diagnostic-grid">
                     <div class="qv-pm-filter-row qv-pm-filter-row--header">
                         <div class="qv-pm-profile-cell qv-pm-profile-cell--label">Metric</div>
                         <div class="qv-pm-profile-cell">Setting</div>
                         <div class="qv-pm-profile-cell">PM Win%</div>
+                        <div class="qv-pm-profile-cell">Base Delta</div>
                         <div class="qv-pm-profile-cell">PM Exp</div>
                         <div class="qv-pm-profile-cell">Removed</div>
                     </div>
@@ -1310,9 +1292,10 @@ class QuickViewManager {
                 <div class="qv-diagnostic-hint">Multi-feature combo with highest objective score. ${suggestions.finderResult.attemptedCount} candidates evaluated.</div>
                 <div class="qv-diagnostic-grid qv-diagnostic-grid--summary">
                     ${this.renderSummaryDiagnosticRow('Filters', filterLabels)}
-                    ${this.renderSummaryDiagnosticRow('Projected PM Win Rate', `${sim.filteredWinRate.toFixed(1)}% (was ${sim.originalWinRate.toFixed(1)}%)`, sim.winRateImprovement)}
+                    ${this.renderSummaryDiagnosticRow('Projected PM Win Rate', `${(((best.scoredProjection?.filteredWinRate ?? null) ?? (sim.filteredWinRate / 100)) * 100).toFixed(1)}% (was ${(suggestions.scoredWinRate * 100).toFixed(1)}%)`, ((((best.scoredProjection?.filteredWinRate ?? null) ?? (sim.filteredWinRate / 100)) - suggestions.scoredWinRate) * 100))}
+                    ${this.renderSummaryDiagnosticRow('Projected Base Delta', best.scoredProjection ? `${best.scoredProjection.baselineDelta >= 0 ? '+' : ''}${(best.scoredProjection.baselineDelta * 100).toFixed(1)}pp` : '—', best.scoredProjection?.baselineDelta)}
                     ${this.renderSummaryDiagnosticRow('Projected PM Exp', `${this.formatPolymarketCents(sim.filteredExpectancy)} (was ${this.formatPolymarketCents(sim.originalExpectancy)})`, sim.expectancyImprovement)}
-                    ${this.renderSummaryDiagnosticRow('Trades Kept', `${sim.remainingTrades}/${sim.originalTrades} (${(100 - sim.removedPercent).toFixed(0)}%)`)}
+                    ${this.renderSummaryDiagnosticRow('Trades Kept', `${best.scoredProjection?.filteredTrades ?? sim.remainingTrades}/${best.scoredProjection?.originalTrades ?? sim.originalTrades} (${(100 - (best.scoredProjection?.removedPercent ?? sim.removedPercent)).toFixed(0)}%)`)}
                     ${this.renderSummaryDiagnosticRow('Bad Trades Removed', `${best.badTradesRemoved}/${sim.originalLosingTrades} (${best.badTradesRemovedPct.toFixed(0)}%)`, best.badTradesRemovedPct)}
                     ${this.renderSummaryDiagnosticRow('Good Trades Removed', `${best.goodTradesRemoved}/${sim.originalWinningTrades} (${best.goodTradesRemovedPct.toFixed(0)}%)`, -best.goodTradesRemovedPct)}
                     ${this.renderSummaryDiagnosticRow('Objective Score', best.objectiveScore.toFixed(3), best.objectiveScore)}

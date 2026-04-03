@@ -344,9 +344,7 @@ export function simulateFilter(
         
         // Filter check
         const val = t.entrySnapshot[feature] as number | null;
-        const passesFilter = val === null || val === undefined 
-            ? true 
-            : direction === 'above' ? val >= threshold : val <= threshold;
+        const passesFilter = passesAnalysisFilterValue(val, direction, threshold);
         
         if (passesFilter) {
             remainingCount++;
@@ -412,6 +410,17 @@ function extractFeatureValues(trades: Trade[], feature: keyof TradeSnapshot): nu
         }
     }
     return values;
+}
+
+function passesAnalysisFilterValue(
+    value: number | null | undefined,
+    direction: 'above' | 'below',
+    threshold: number
+): boolean {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+        return false;
+    }
+    return direction === 'above' ? value >= threshold : value <= threshold;
 }
 
 function computeStats(values: number[]): FeatureStats {
@@ -650,12 +659,7 @@ export function simulateComboFilter(
         for (let i = 0; i < filters.length; i++) {
             const f = filters[i];
             const val = t.entrySnapshot![f.feature] as number | null;
-            if (val === null || val === undefined) continue;
-            if (f.direction === 'above' && val < f.threshold) {
-                passesFilter = false;
-                break;
-            }
-            if (f.direction === 'below' && val > f.threshold) {
+            if (!passesAnalysisFilterValue(val, f.direction, f.threshold)) {
                 passesFilter = false;
                 break;
             }

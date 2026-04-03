@@ -453,6 +453,9 @@ describe("Quick View Polymarket streak summary", () => {
             polymarketFilterSuggestions: {
                 baselineWinRate: 0.48,
                 baselineExpectancy: -0.03,
+                scoredWinRate: 0.5,
+                scoredBestBaselineWinRate: 0.38,
+                scoredBaselineDelta: 0.12,
                 sampleCounts: {
                     scoredTrades: 14,
                     pricedTrades: 12,
@@ -462,11 +465,37 @@ describe("Quick View Polymarket streak summary", () => {
                     label: "RSI (14)",
                     winStats: { mean: 60, median: 60, stddev: 5, count: 6 },
                     lossStats: { mean: 45, median: 45, stddev: 5, count: 6 },
-                    separationScore: 0.8,
+                    separationScore: 0.95,
                     suggestedFilter: { direction: "above", threshold: 55.5 },
+                    winRateIfFiltered: 61.2,
+                    expectancyIfFiltered: 0.03,
+                    tradesRemovedPercent: 25,
+                    scoredProjection: {
+                        originalTrades: 14,
+                        filteredTrades: 10,
+                        removedPercent: 28.5714285714,
+                        filteredWinRate: 0.6,
+                        bestBaselineWinRate: 0.45,
+                        baselineDelta: 0.15,
+                    },
+                }, {
+                    feature: "volumeRatio",
+                    label: "Volume Ratio",
+                    winStats: { mean: 1.8, median: 1.8, stddev: 0.2, count: 6 },
+                    lossStats: { mean: 0.8, median: 0.8, stddev: 0.2, count: 6 },
+                    separationScore: 0.4,
+                    suggestedFilter: { direction: "above", threshold: 1.25 },
                     winRateIfFiltered: 66.7,
                     expectancyIfFiltered: 0.08,
-                    tradesRemovedPercent: 25,
+                    tradesRemovedPercent: 18,
+                    scoredProjection: {
+                        originalTrades: 14,
+                        filteredTrades: 11,
+                        removedPercent: 21.4285714286,
+                        filteredWinRate: 0.698,
+                        bestBaselineWinRate: 0.568,
+                        baselineDelta: 0.13,
+                    },
                 }],
                 finderResult: {
                     featureRanges: [],
@@ -481,7 +510,12 @@ describe("Quick View Polymarket streak summary", () => {
 
         expect(html).to.contain("PM Filter Suggestions");
         expect(html).to.contain("snapshotRsiMin = 55.500");
-        expect(html).to.contain("12 priced trades out of 14 scored snapshot trades");
+        expect(html).to.contain("snapshotVolumeRatioMin = 1.250");
+        expect(html).to.contain("Current scored baseline delta: +12.0pp");
+        expect(html).to.contain("69.8%");
+        expect(html).to.contain("Base Delta");
+        expect(html).to.contain("+13.0pp");
+        expect(html.indexOf("Volume Ratio")).to.be.lessThan(html.indexOf("RSI (14)"));
     });
 
     it("renders a Quick View handoff to the Polymarket tab instead of selected offset n/a", () => {

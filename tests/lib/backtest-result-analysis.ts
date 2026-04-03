@@ -14,7 +14,13 @@ import type {
     Trade,
     TradeSnapshot,
 } from "./strategies/index";
-import type { PolymarketFilterSuggestions } from "./types/polymarket-outcomes";
+import type {
+    PolymarketFeatureAnalysis,
+    PolymarketFilterProjection,
+    PolymarketFilterSuggestions,
+    PolymarketFilterFinderResult,
+    PolymarketFinderCandidate,
+} from "./types/polymarket-outcomes";
 import { timeKey } from "./strategies/index";
 import { getTimeIndex } from "./strategies/backtest/backtest-utils";
 import {
@@ -66,6 +72,14 @@ const EXIT_REASON_LABELS: Record<string, string> = {
 
 const MIN_POLYMARKET_SNAPSHOT_PROFILE_TRADES = 10;
 const MIN_POLYMARKET_FILTER_TRADES = 10;
+
+type SnapshotFilterDirection = "above" | "below";
+
+type SnapshotFilterRule = {
+    feature: keyof TradeSnapshot;
+    direction: SnapshotFilterDirection;
+    threshold: number;
+};
 
 export function buildPostEntryPathStats(
     result: BacktestResult,
@@ -625,17 +639,47 @@ export function buildPolymarketFilterSuggestions(
     const featureAnalyses = analyzeTradePatterns(pricedTrades, {
         isWin: isPolymarketWinTrade,
         payout: getRequiredPolymarketTradePayout,
-    });
+    }) as PolymarketFeatureAnalysis[];
     const finderResult = runAnalysisFilterFinder(pricedTrades, featureAnalyses, {
         isWin: isPolymarketWinTrade,
         payout: getRequiredPolymarketTradePayout,
     });
 
+    for (const analysis of featureAnalyses) {
+        analysis.scoredProjection = analysis.suggestedFilter
+            ? buildPolymarketFilterProjection(scoredTrades, [{
+                feature: analysis.feature,
+                direction: analysis.suggestedFilter.direction,
+                threshold: analysis.suggestedFilter.threshold,
+            }])
+            : null;
+    }
+
+    const enrichedFinderResult: PolymarketFilterFinderResult = {
+        ...finderResult,
+        bestCandidate: finderResult.bestCandidate
+            ? {
+                ...finderResult.bestCandidate,
+                scoredProjection: buildPolymarketFilterProjection(scoredTrades, finderResult.bestCandidate.filters),
+            }
+            : null,
+        topCandidates: finderResult.topCandidates.map<PolymarketFinderCandidate>((candidate) => ({
+            ...candidate,
+            scoredProjection: buildPolymarketFilterProjection(scoredTrades, candidate.filters),
+        })),
+    };
+
+    const scoredWinRate = winsAndLossesWinRate(scoredTrades);
+    const scoredBestBaselineWinRate = computePolymarketBestBaselineWinRate(scoredTrades);
+
     return {
         featureAnalyses,
-        finderResult,
+        finderResult: enrichedFinderResult,
         baselineWinRate: wins.length / pricedTrades.length,
         baselineExpectancy: average(pricedTrades.map(getRequiredPolymarketTradePayout)) ?? 0,
+        scoredWinRate,
+        scoredBestBaselineWinRate,
+        scoredBaselineDelta: scoredWinRate - scoredBestBaselineWinRate,
         sampleCounts: {
             scoredTrades: scoredTrades.length,
             pricedTrades: pricedTrades.length,
@@ -667,6 +711,69 @@ function isPolymarketPricedTradeWithSnapshot(trade: Trade): boolean {
 
 function isPolymarketWinTrade(trade: Trade): boolean {
     return trade.polymarketOutcome?.isWin === true;
+}
+
+function winsAndLossesWinRate(trades: readonly Trade[]): number {
+    if (trades.length === 0) {
+        return 0;
+    }
+    const wins = trades.filter(isPolymarketWinTrade).length;
+    return wins / trades.length;
+}
+
+function computePolymarketBestBaselineWinRate(trades: readonly Trade[]): number {
+    if (trades.length === 0) {
+        return 0;
+    }
+
+    const alwaysYesWins = trades.filter((trade) => trade.polymarketOutcome?.actualOutcomeUp === 1).length;
+    const alwaysYesWinRate = alwaysYesWins / trades.length;
+    return Math.max(alwaysYesWinRate, 1 - alwaysYesWinRate);
+}
+
+function buildPolymarketFilterProjection(
+    trades: readonly Trade[],
+    filters: readonly SnapshotFilterRule[]
+): PolymarketFilterProjection {
+    const keptTrades = trades.filter((trade) => passesAllSnapshotFilters(trade, filters));
+    const filteredWinRate = winsAndLossesWinRate(keptTrades);
+    const bestBaselineWinRate = computePolymarketBestBaselineWinRate(keptTrades);
+
+    return {
+        originalTrades: trades.length,
+        filteredTrades: keptTrades.length,
+        removedPercent: trades.length > 0 ? ((trades.length - keptTrades.length) / trades.length) * 100 : 0,
+        filteredWinRate,
+        bestBaselineWinRate,
+        baselineDelta: filteredWinRate - bestBaselineWinRate,
+    };
+}
+
+function passesAllSnapshotFilters(trade: Trade, filters: readonly SnapshotFilterRule[]): boolean {
+    const snapshot = trade.entrySnapshot;
+    if (!snapshot) {
+        return false;
+    }
+
+    for (const filter of filters) {
+        const value = snapshot[filter.feature];
+        if (!passesSnapshotFilterValue(value, filter.direction, filter.threshold)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function passesSnapshotFilterValue(
+    value: number | null | undefined,
+    direction: SnapshotFilterDirection,
+    threshold: number
+): boolean {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+        return false;
+    }
+    return direction === "above" ? value >= threshold : value <= threshold;
 }
 
 function getPolymarketTradePayout(trade: Trade): number | null {

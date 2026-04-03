@@ -122,15 +122,31 @@ export interface PolymarketEvalOptions {
     capitalSettings?: Partial<CapitalSettings>;
 }
 
-export type PolymarketFeatureAnalysis = FeatureAnalysis;
+export interface PolymarketFilterProjection {
+    originalTrades: number;
+    filteredTrades: number;
+    removedPercent: number;
+    filteredWinRate: number;
+    bestBaselineWinRate: number;
+    baselineDelta: number;
+}
+
+export interface PolymarketFeatureAnalysis extends FeatureAnalysis {
+    scoredProjection?: PolymarketFilterProjection | null;
+}
 
 export type PolymarketComboFilterEntry = ComboFilterEntry;
 
 export type PolymarketComboFilterResult = ComboFilterResult;
 
-export type PolymarketFinderCandidate = AnalysisFinderCandidate;
+export interface PolymarketFinderCandidate extends AnalysisFinderCandidate {
+    scoredProjection?: PolymarketFilterProjection | null;
+}
 
-export type PolymarketFilterFinderResult = AnalysisFilterFinderResult;
+export interface PolymarketFilterFinderResult extends Omit<AnalysisFilterFinderResult, "bestCandidate" | "topCandidates"> {
+    bestCandidate: PolymarketFinderCandidate | null;
+    topCandidates: PolymarketFinderCandidate[];
+}
 
 export interface PolymarketFilterSampleCounts {
     scoredTrades: number;
@@ -143,5 +159,8 @@ export interface PolymarketFilterSuggestions {
     finderResult: PolymarketFilterFinderResult;
     baselineWinRate: number;
     baselineExpectancy: number;
+    scoredWinRate: number;
+    scoredBestBaselineWinRate: number;
+    scoredBaselineDelta: number;
     sampleCounts: PolymarketFilterSampleCounts;
 }

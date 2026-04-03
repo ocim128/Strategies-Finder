@@ -29,6 +29,12 @@
     margin-bottom: var(--space-3);
 }
 
+.polymarket-diagnostics__actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: var(--space-3);
+}
+
 .polymarket-diagnostics__table th:nth-child(n + 2),
 .polymarket-diagnostics__table td:nth-child(n + 2) {
     text-align: right;
