@@ -14,8 +14,13 @@ import type {
     Trade,
     TradeSnapshot,
 } from "./strategies/index";
+import type { PolymarketFilterSuggestions } from "./types/polymarket-outcomes";
 import { timeKey } from "./strategies/index";
 import { getTimeIndex } from "./strategies/backtest/backtest-utils";
+import {
+    analyzeTradePatterns,
+    runAnalysisFilterFinder,
+} from "./strategies/backtest/trade-analyzer";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 
 const SNAPSHOT_METRIC_DEFS: Array<{ key: keyof TradeSnapshot; label: string }> = [
@@ -58,6 +63,9 @@ const EXIT_REASON_LABELS: Record<string, string> = {
     probation_fail: "Weak-Start Guard",
     end_of_data: "End of Data",
 };
+
+const MIN_POLYMARKET_SNAPSHOT_PROFILE_TRADES = 10;
+const MIN_POLYMARKET_FILTER_TRADES = 10;
 
 export function buildPostEntryPathStats(
     result: BacktestResult,
@@ -471,10 +479,18 @@ function minimum(values: number[]): number | null {
 function buildSnapshotProfile(trades: Trade[]): SnapshotProfileStats | undefined {
     const withSnapshots = trades.filter((trade) => trade.entrySnapshot);
     if (withSnapshots.length === 0) return undefined;
+    return buildSnapshotProfileStats(
+        withSnapshots,
+        withSnapshots.filter((trade) => trade.pnl > 0),
+        withSnapshots.filter((trade) => trade.pnl <= 0)
+    );
+}
 
-    const winTrades = withSnapshots.filter((trade) => trade.pnl > 0);
-    const loseTrades = withSnapshots.filter((trade) => trade.pnl <= 0);
-
+function buildSnapshotProfileStats(
+    withSnapshots: Trade[],
+    winTrades: Trade[],
+    loseTrades: Trade[]
+): SnapshotProfileStats {
     const rows: SnapshotProfileRow[] = [];
 
     for (const def of SNAPSHOT_METRIC_DEFS) {
@@ -577,6 +593,94 @@ function buildExitReasonBreakdown(trades: Trade[]): ExitReasonBreakdown | undefi
     return { rows, totalWins, totalLosses };
 }
 
+/**
+ * Build a snapshot profile that compares Polymarket wins vs Polymarket losses
+ * using trade.polymarketOutcome.isWin as the win criterion.
+ * Returns undefined if fewer than 10 scored trades with snapshots exist.
+ */
+export function buildPolymarketSnapshotProfile(trades: Trade[]): SnapshotProfileStats | undefined {
+    const scoredTrades = trades.filter(isPolymarketScoredTradeWithSnapshot);
+    if (scoredTrades.length < MIN_POLYMARKET_SNAPSHOT_PROFILE_TRADES) return undefined;
+
+    const winTrades = scoredTrades.filter(isPolymarketWinTrade);
+    const loseTrades = scoredTrades.filter((trade) => !isPolymarketWinTrade(trade));
+    if (winTrades.length < 2 || loseTrades.length < 2) return undefined;
+
+    return buildSnapshotProfileStats(scoredTrades, winTrades, loseTrades);
+}
+
+export function buildPolymarketFilterSuggestions(
+    trades: Trade[]
+): PolymarketFilterSuggestions | undefined {
+    const scoredTrades = trades.filter(isPolymarketScoredTradeWithSnapshot);
+    if (scoredTrades.length < MIN_POLYMARKET_FILTER_TRADES) return undefined;
+
+    const pricedTrades = trades.filter(isPolymarketPricedTradeWithSnapshot);
+    if (pricedTrades.length < MIN_POLYMARKET_FILTER_TRADES) return undefined;
+
+    const wins = pricedTrades.filter(isPolymarketWinTrade);
+    const losses = pricedTrades.filter((trade) => !isPolymarketWinTrade(trade));
+    if (wins.length < 2 || losses.length < 2) return undefined;
+
+    const featureAnalyses = analyzeTradePatterns(pricedTrades, {
+        isWin: isPolymarketWinTrade,
+        payout: getRequiredPolymarketTradePayout,
+    });
+    const finderResult = runAnalysisFilterFinder(pricedTrades, featureAnalyses, {
+        isWin: isPolymarketWinTrade,
+        payout: getRequiredPolymarketTradePayout,
+    });
+
+    return {
+        featureAnalyses,
+        finderResult,
+        baselineWinRate: wins.length / pricedTrades.length,
+        baselineExpectancy: average(pricedTrades.map(getRequiredPolymarketTradePayout)) ?? 0,
+        sampleCounts: {
+            scoredTrades: scoredTrades.length,
+            pricedTrades: pricedTrades.length,
+        },
+    };
+}
+
+export function enrichPolymarketBacktestResult(result: BacktestResult): BacktestResult {
+    return {
+        ...result,
+        polymarketSnapshotProfile: buildPolymarketSnapshotProfile(result.trades),
+        polymarketFilterSuggestions: buildPolymarketFilterSuggestions(result.trades),
+    };
+}
+
+function isPolymarketScoredTradeWithSnapshot(trade: Trade): boolean {
+    return Boolean(trade.entrySnapshot && trade.polymarketOutcome);
+}
+
+function isPolymarketPricedTradeWithSnapshot(trade: Trade): boolean {
+    const price = trade.polymarketOutcome?.marketEntryPrice;
+    return Boolean(
+        trade.entrySnapshot
+        && trade.polymarketOutcome
+        && typeof price === "number"
+        && Number.isFinite(price)
+    );
+}
+
+function isPolymarketWinTrade(trade: Trade): boolean {
+    return trade.polymarketOutcome?.isWin === true;
+}
+
+function getPolymarketTradePayout(trade: Trade): number | null {
+    const price = trade.polymarketOutcome?.marketEntryPrice;
+    const isWin = trade.polymarketOutcome?.isWin;
+    if (typeof price !== "number" || !Number.isFinite(price) || typeof isWin !== "boolean") {
+        return null;
+    }
+    return isWin ? (1 - price) : -price;
+}
+
+function getRequiredPolymarketTradePayout(trade: Trade): number {
+    return getPolymarketTradePayout(trade) ?? 0;
+}
 function toEpochMs(time: Trade["entryTime"]): number | null {
     const unixSeconds = parseTimeToUnixSeconds(time);
     return unixSeconds === null ? null : unixSeconds * 1000;

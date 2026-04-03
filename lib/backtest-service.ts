@@ -68,6 +68,7 @@ import { resolveTwoHourParityFromTime } from "./two-hour-parity";
 import {
     buildExpectancyBreakdown,
     buildPostEntryPathStats as analyzeBacktestResult,
+    enrichPolymarketBacktestResult,
 } from "./backtest-result-analysis";
 
 type CurrentBacktestExecution = {
@@ -149,12 +150,18 @@ export class BacktestService {
             // Only annotate Polymarket outcomes when explicitly enabled
             const annotatePolymarket = settings.polymarketAnnotationEnabled ?? false;
             if (annotatePolymarket) {
-                result = await this.annotatePolymarketResult(result, settings, state.ohlcvData);
+                result = enrichPolymarketBacktestResult(
+                    await this.annotatePolymarketResult(result, settings, state.ohlcvData)
+                );
                 if (parityComparison) {
                     parityComparison = {
                         ...parityComparison,
-                        odd: await this.annotatePolymarketResult(parityComparison.odd, settings, state.ohlcvData),
-                        even: await this.annotatePolymarketResult(parityComparison.even, settings, state.ohlcvData),
+                        odd: enrichPolymarketBacktestResult(
+                            await this.annotatePolymarketResult(parityComparison.odd, settings, state.ohlcvData)
+                        ),
+                        even: enrichPolymarketBacktestResult(
+                            await this.annotatePolymarketResult(parityComparison.even, settings, state.ohlcvData)
+                        ),
                     };
                 }
             }

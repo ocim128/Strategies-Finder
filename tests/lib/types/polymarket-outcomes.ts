@@ -1,5 +1,12 @@
 import type { CapitalSettings } from "./backtest";
 import type { BacktestSettings } from "./strategies";
+import type {
+    AnalysisFilterFinderResult,
+    AnalysisFinderCandidate,
+    ComboFilterEntry,
+    ComboFilterResult,
+    FeatureAnalysis,
+} from "../strategies/backtest/trade-analyzer";
 
 export interface PolymarketOutcomeRow {
     series_id: string;
@@ -113,4 +120,28 @@ export interface PolymarketEvalOptions {
     strategyKey?: string;
     backtestSettings?: BacktestSettings;
     capitalSettings?: Partial<CapitalSettings>;
+}
+
+export type PolymarketFeatureAnalysis = FeatureAnalysis;
+
+export type PolymarketComboFilterEntry = ComboFilterEntry;
+
+export type PolymarketComboFilterResult = ComboFilterResult;
+
+export type PolymarketFinderCandidate = AnalysisFinderCandidate;
+
+export type PolymarketFilterFinderResult = AnalysisFilterFinderResult;
+
+export interface PolymarketFilterSampleCounts {
+    scoredTrades: number;
+    pricedTrades: number;
+}
+
+/** Full filter suggestions for Polymarket: single-feature + combo finder */
+export interface PolymarketFilterSuggestions {
+    featureAnalyses: PolymarketFeatureAnalysis[];
+    finderResult: PolymarketFilterFinderResult;
+    baselineWinRate: number;
+    baselineExpectancy: number;
+    sampleCounts: PolymarketFilterSampleCounts;
 }

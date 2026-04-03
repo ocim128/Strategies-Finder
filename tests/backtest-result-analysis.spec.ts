@@ -1,19 +1,27 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { buildExpectancyBreakdown } from "../lib/backtest-result-analysis";
+import {
+    buildExpectancyBreakdown,
+    buildPolymarketFilterSuggestions,
+    buildPolymarketSnapshotProfile,
+    enrichPolymarketBacktestResult,
+} from "../lib/backtest-result-analysis";
 import type { BacktestResult, Trade } from "../lib/types/strategies";
 
 function makeTrade(
     id: number,
     type: Trade["type"],
     pnl: number,
-    marketEntryPrice?: number,
+    marketEntryPrice?: number | null,
     options?: {
         entryTime?: number;
         priceRangePos?: number;
+        volumeRatio?: number;
+        polymarketIsWin?: boolean;
     }
 ): Trade {
     const isWin = pnl > 0;
+    const polymarketIsWin = options?.polymarketIsWin ?? isWin;
     const prediction = type === "long" ? "yes" : "no";
     return {
         id,
@@ -33,7 +41,7 @@ function makeTrade(
                 adx: null,
                 atrPercent: null,
                 emaDistance: null,
-                volumeRatio: null,
+                volumeRatio: options?.volumeRatio ?? null,
                 priceRangePos: options.priceRangePos,
                 barsFromHigh: null,
                 barsFromLow: null,
@@ -55,9 +63,9 @@ function makeTrade(
                 marketSlug: `market-${id}`,
                 prediction,
                 actualOutcomeUp: prediction === "yes"
-                    ? (isWin ? 1 : 0)
-                    : (isWin ? 0 : 1),
-                isWin,
+                    ? (polymarketIsWin ? 1 : 0)
+                    : (polymarketIsWin ? 0 : 1),
+                isWin: polymarketIsWin,
                 marketEntryPrice,
             },
     };
@@ -153,5 +161,82 @@ describe("backtest result expectancy breakdown", () => {
         expect(highBucket?.tradeCount).to.equal(2);
         expect(highBucket?.winRate).to.equal(50);
         expect(highBucket?.expectancy).to.equal(-15);
+    });
+
+    it("builds a polymarket snapshot profile from scored trades with snapshots", () => {
+        const trades = Array.from({ length: 12 }, (_, index) => {
+            const isPmWin = index >= 6;
+            return makeTrade(
+                index + 1,
+                "long",
+                isPmWin ? 5 : -5,
+                isPmWin ? 0.4 : 0.7,
+                {
+                    priceRangePos: isPmWin ? 0.2 : 0.85,
+                    volumeRatio: isPmWin ? 1.8 : 0.7,
+                }
+            );
+        });
+
+        const profile = buildPolymarketSnapshotProfile(trades);
+        const priceRangeRow = profile?.rows.find((row) => row.key === "priceRangePos");
+
+        expect(profile).to.not.equal(undefined);
+        expect(profile?.winSampleSize).to.equal(6);
+        expect(profile?.loseSampleSize).to.equal(6);
+        expect(priceRangeRow?.delta).to.be.lessThan(0);
+        expect(priceRangeRow?.significance).to.be.greaterThan(0);
+    });
+
+    it("uses only priced polymarket trades for filter suggestions and reports sample counts", () => {
+        const trades = [
+            ...Array.from({ length: 10 }, (_, index) => {
+                const isPmWin = index >= 5;
+                return makeTrade(
+                    index + 1,
+                    "long",
+                    isPmWin ? 4 : -4,
+                    isPmWin ? 0.4 : 0.7,
+                    {
+                        priceRangePos: isPmWin ? 0.25 : 0.8,
+                        volumeRatio: isPmWin ? 1.7 : 0.75,
+                    }
+                );
+            }),
+            makeTrade(99, "long", 3, null, {
+                priceRangePos: 0.4,
+                volumeRatio: 1.1,
+                polymarketIsWin: true,
+            }),
+        ];
+
+        const suggestions = buildPolymarketFilterSuggestions(trades);
+
+        expect(suggestions).to.not.equal(undefined);
+        expect(suggestions?.sampleCounts.scoredTrades).to.equal(11);
+        expect(suggestions?.sampleCounts.pricedTrades).to.equal(10);
+        expect(suggestions?.baselineExpectancy).to.be.closeTo(-0.05, 1e-12);
+        expect(suggestions?.featureAnalyses.length).to.be.greaterThan(0);
+    });
+
+    it("enriches a backtest result with cached polymarket analysis fields", () => {
+        const trades = Array.from({ length: 10 }, (_, index) => {
+            const isPmWin = index >= 5;
+            return makeTrade(
+                index + 1,
+                "long",
+                isPmWin ? 5 : -5,
+                isPmWin ? 0.42 : 0.68,
+                {
+                    priceRangePos: isPmWin ? 0.3 : 0.78,
+                    volumeRatio: isPmWin ? 1.6 : 0.85,
+                }
+            );
+        });
+
+        const enriched = enrichPolymarketBacktestResult(makeResult(trades));
+
+        expect(enriched.polymarketSnapshotProfile?.rows.length).to.be.greaterThan(0);
+        expect(enriched.polymarketFilterSuggestions?.sampleCounts.pricedTrades).to.equal(10);
     });
 });

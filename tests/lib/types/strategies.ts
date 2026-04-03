@@ -1,5 +1,5 @@
 import type { Time } from "lightweight-charts";
-import type { BacktestPolymarketTradeSummary, TradePolymarketOutcome } from "./polymarket-outcomes";
+import type { BacktestPolymarketTradeSummary, PolymarketFilterSuggestions, TradePolymarketOutcome } from "./polymarket-outcomes";
 export type { Time };
 export type { EdgeStatistics, EdgeRatioHorizon, TTestResult, StreakAnalysis } from '../strategies/backtest/edge-statistics';
 
@@ -175,6 +175,10 @@ export interface BacktestResult {
     postEntryPath?: PostEntryPathStats;
     edgeStatistics?: import('../strategies/backtest/edge-statistics').EdgeStatistics;
     polymarketTradeSummary?: BacktestPolymarketTradeSummary;
+    /** Snapshot profile built using Polymarket win/loss as the win criterion */
+    polymarketSnapshotProfile?: SnapshotProfileStats;
+    /** Single-feature filter suggestions for Polymarket outcomes */
+    polymarketFilterSuggestions?: PolymarketFilterSuggestions;
     marketContext?: BacktestResultMarketContext;
 }
 

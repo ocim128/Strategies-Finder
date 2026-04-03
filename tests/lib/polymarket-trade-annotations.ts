@@ -33,19 +33,17 @@ function clampProbability(value: number | null): number | null {
 }
 
 function getYesPriceForOffset(outcome: PolymarketOutcomeRow, entryOffset: number): number | null {
-    // #COMPLETION_DRIVE: Assuming yes_entry_minute_X_price is 1-indexed for the minute of the event
-    // #SUGGEST_VERIFY: Verify the Polymarket dataset schema specifically on what X means in yes_entry_minute_X_price
     switch (entryOffset) {
         case 0:
             return outcome.yes_open_price;
         case 1:
-            return outcome.yes_entry_minute_2_price;
+            return outcome.yes_entry_minute_1_price;
         case 2:
-            return outcome.yes_entry_minute_3_price;
+            return outcome.yes_entry_minute_2_price;
         case 3:
-            return outcome.yes_entry_minute_4_price;
+            return outcome.yes_entry_minute_3_price;
         case 4:
-            return null;
+            return outcome.yes_entry_minute_4_price;
         default:
             return null;
     }

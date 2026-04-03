@@ -2,25 +2,73 @@ import { createPolymarketPanelDom, type PolymarketPanelDom } from "./polymarket-
 import type { PolymarketFillHistorySummary } from "./polymarket-fill-history";
 import { loadPolymarketFillHistorySummary } from "./polymarket-fill-history";
 import {
+    getPolymarket5mSeriesIdForSymbol,
     getSupportedPolymarket5mSymbolsLabel,
     isSupportedPolymarket5mRun,
     loadPolymarket5mOutcomesForTimeRange,
     supportsPolymarketOutcomeBridgeRun,
 } from "./polymarket-btc5m";
-import { analyzePolymarketFillability, type PolymarketFillScope } from "./polymarket-fill-analysis";
+import type { PolymarketFillScope } from "./polymarket-fill-analysis";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { state } from "./state";
 import { setVisible } from "./dom-utils";
-import type { BacktestResult } from "./types/strategies";
+import type { BacktestResult, ExpectancyBreakdownSection, TradeSnapshot } from "./types/strategies";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { uiManager } from "./ui-manager";
 import { strategyRegistry } from "../strategyRegistry";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
+import { enrichPolymarketBacktestResult } from "./backtest-result-analysis";
+import {
+    annotateTradesWithPolymarketOutcomesForRun,
+    summarizePolymarketTradesForRun,
+} from "./polymarket-trade-annotations";
 import {
     analyzePolymarketDeployability,
     extractScoredTrades,
 } from "./polymarket-deployability-analysis";
+import {
+    computePolymarketBestBaselineWinRate,
+    countDistinctPolymarketOutcomeRows,
+    getQuickViewDiagnosticSections,
+    summarizePolymarketPayoutDiagnostics,
+} from "./quick-view";
+
+type SnapshotFilterBinding = {
+    toggleKey: string;
+    minKey?: string;
+    maxKey?: string;
+};
+
+const SNAPSHOT_FILTER_BINDINGS: Record<keyof TradeSnapshot, SnapshotFilterBinding> = {
+    rsi: { toggleKey: "snapshotRsiFilterToggle", minKey: "snapshotRsiMin", maxKey: "snapshotRsiMax" },
+    adx: { toggleKey: "snapshotAdxFilterToggle", minKey: "snapshotAdxMin", maxKey: "snapshotAdxMax" },
+    atrPercent: { toggleKey: "snapshotAtrFilterToggle", minKey: "snapshotAtrPercentMin", maxKey: "snapshotAtrPercentMax" },
+    emaDistance: { toggleKey: "snapshotEmaFilterToggle", minKey: "snapshotEmaDistanceMin", maxKey: "snapshotEmaDistanceMax" },
+    volumeRatio: { toggleKey: "snapshotVolumeFilterToggle", minKey: "snapshotVolumeRatioMin", maxKey: "snapshotVolumeRatioMax" },
+    priceRangePos: { toggleKey: "snapshotPriceRangePosFilterToggle", minKey: "snapshotPriceRangePosMin", maxKey: "snapshotPriceRangePosMax" },
+    barsFromHigh: { toggleKey: "snapshotBarsFromHighFilterToggle", maxKey: "snapshotBarsFromHighMax" },
+    barsFromLow: { toggleKey: "snapshotBarsFromLowFilterToggle", maxKey: "snapshotBarsFromLowMax" },
+    trendEfficiency: { toggleKey: "snapshotTrendEfficiencyFilterToggle", minKey: "snapshotTrendEfficiencyMin", maxKey: "snapshotTrendEfficiencyMax" },
+    atrRegimeRatio: { toggleKey: "snapshotAtrRegimeFilterToggle", minKey: "snapshotAtrRegimeRatioMin", maxKey: "snapshotAtrRegimeRatioMax" },
+    bodyPercent: { toggleKey: "snapshotBodyPercentFilterToggle", minKey: "snapshotBodyPercentMin", maxKey: "snapshotBodyPercentMax" },
+    wickSkew: { toggleKey: "snapshotWickSkewFilterToggle", minKey: "snapshotWickSkewMin", maxKey: "snapshotWickSkewMax" },
+    closeLocation: { toggleKey: "snapshotCloseLocationFilterToggle", minKey: "snapshotCloseLocationMin", maxKey: "snapshotCloseLocationMax" },
+    oppositeWickPercent: { toggleKey: "snapshotOppositeWickFilterToggle", minKey: "snapshotOppositeWickMin", maxKey: "snapshotOppositeWickMax" },
+    rangeAtrMultiple: { toggleKey: "snapshotRangeAtrFilterToggle", minKey: "snapshotRangeAtrMultipleMin", maxKey: "snapshotRangeAtrMultipleMax" },
+    momentumConsistency: { toggleKey: "snapshotMomentumFilterToggle", minKey: "snapshotMomentumConsistencyMin", maxKey: "snapshotMomentumConsistencyMax" },
+    breakQuality: { toggleKey: "snapshotBreakQualityFilterToggle", minKey: "snapshotBreakQualityMin", maxKey: "snapshotBreakQualityMax" },
+    entryQualityScore: { toggleKey: "snapshotEntryQualityScoreFilterToggle", minKey: "snapshotEntryQualityScoreMin", maxKey: "snapshotEntryQualityScoreMax" },
+    volumeTrend: { toggleKey: "snapshotVolumeTrendFilterToggle", minKey: "snapshotVolumeTrendMin", maxKey: "snapshotVolumeTrendMax" },
+    volumeBurst: { toggleKey: "snapshotVolumeBurstFilterToggle", minKey: "snapshotVolumeBurstMin", maxKey: "snapshotVolumeBurstMax" },
+    volumePriceDivergence: { toggleKey: "snapshotVolumePriceDivergenceFilterToggle", minKey: "snapshotVolumePriceDivergenceMin", maxKey: "snapshotVolumePriceDivergenceMax" },
+    volumeConsistency: { toggleKey: "snapshotVolumeConsistencyFilterToggle", minKey: "snapshotVolumeConsistencyMin", maxKey: "snapshotVolumeConsistencyMax" },
+    tf60Perf: { toggleKey: "snapshotTf60PerfFilterToggle", minKey: "snapshotTf60PerfMin", maxKey: "snapshotTf60PerfMax" },
+    tf90Perf: { toggleKey: "snapshotTf90PerfFilterToggle", minKey: "snapshotTf90PerfMin", maxKey: "snapshotTf90PerfMax" },
+    tf120Perf: { toggleKey: "snapshotTf120PerfFilterToggle", minKey: "snapshotTf120PerfMin", maxKey: "snapshotTf120PerfMax" },
+    tf480Perf: { toggleKey: "snapshotTf480PerfFilterToggle", minKey: "snapshotTf480PerfMin", maxKey: "snapshotTf480PerfMax" },
+    tfConfluencePerf: { toggleKey: "snapshotTfConfluencePerfFilterToggle", minKey: "snapshotTfConfluencePerfMin", maxKey: "snapshotTfConfluencePerfMax" },
+};
 
 class PolymarketPanelService {
     private dom: PolymarketPanelDom | null = null;
@@ -47,6 +95,11 @@ class PolymarketPanelService {
         }
 
         this.dom = createPolymarketPanelDom();
+        this.lastResult = state.currentBacktestResult ? enrichPolymarketBacktestResult(state.currentBacktestResult) : null;
+        void this.isEnrichingHistory;
+        void this.enrichHistoryInBackground;
+        void this.renderDeployabilityAnalysis;
+        void this.formatScopeLabel;
         this.bindEvents();
         this.bindState();
         this.render();
@@ -58,14 +111,6 @@ class PolymarketPanelService {
 
     private bindEvents(): void {
         const dom = this.getDom();
-        dom.polymarketEntryPriceCents.addEventListener("input", () => {
-            this.deployabilityCacheKey = "";
-            this.scheduleRender();
-        });
-        dom.polymarketScope.addEventListener("change", () => {
-            this.deployabilityCacheKey = "";
-            this.scheduleRender();
-        });
         dom.polymarketBridgeConfig.addEventListener("focus", () => {
             this.ensureBridgeConfigOptions(true);
             this.renderBridgeControls();
@@ -106,9 +151,8 @@ class PolymarketPanelService {
     }
 
     private async handleBacktestResultChange(result: BacktestResult | null): Promise<void> {
-        this.lastResult = result;
+        this.lastResult = result ? enrichPolymarketBacktestResult(result) : null;
         this.loadError = null;
-        this.deployabilityCacheKey = "";
         const resultContext = resolveBacktestResultMarketContext(result);
 
         if (!result || !resultContext || !supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval) || result.trades.length === 0) {
@@ -167,32 +211,74 @@ class PolymarketPanelService {
             if (requestId !== this.loadNonce) {
                 return;
             }
-
-            const targetSet = new Set(targetTimes);
-            const matchedRows = rows.filter((row) => targetSet.has(row.event_start_ts));
-
+            this.lastResult = this.attachLoadedPolymarketOutcomes(result, rows);
             this.loadedOutcomeRows = rows;
-            this.outcomeByStartTs = new Map(matchedRows.map((row) => [row.event_start_ts, row] as const));
-            this.historySummaryByStartTs.clear();
             this.isLoading = false;
             this.loadedResultSignature = resultSignature;
-            this.deployabilityCacheKey = "";
             this.scheduleRender();
-            void this.enrichHistoryInBackground(requestId, matchedRows);
         } catch (error) {
             if (requestId !== this.loadNonce) {
                 return;
             }
 
             this.loadedOutcomeRows = [];
-            this.outcomeByStartTs.clear();
-            this.historySummaryByStartTs.clear();
             this.isLoading = false;
-            this.isEnrichingHistory = false;
             this.loadError = error instanceof Error ? error.message : String(error);
             this.loadedResultSignature = resultSignature;
             this.scheduleRender();
         }
+    }
+
+    private attachLoadedPolymarketOutcomes(result: BacktestResult, outcomes: readonly PolymarketOutcomeRow[]): BacktestResult {
+        const resultContext = resolveBacktestResultMarketContext(result);
+        if (!resultContext || outcomes.length === 0) {
+            return enrichPolymarketBacktestResult(result);
+        }
+
+        const existingSummary = result.polymarketTradeSummary;
+        const selectedOffset = resultContext.interval === "1m"
+            ? this.resolveSelectedPolymarketEntryOffset(result)
+            : undefined;
+        const annotatedTrades = annotateTradesWithPolymarketOutcomesForRun(
+            result.trades,
+            outcomes,
+            resultContext.interval,
+            selectedOffset
+        );
+        const summary = summarizePolymarketTradesForRun({
+            trades: result.trades,
+            outcomes,
+            interval: resultContext.interval,
+            selectedOffset,
+            timingProfile: existingSummary?.timingProfile,
+        });
+        const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
+        const seriesId = existingSummary?.seriesId || getPolymarket5mSeriesIdForSymbol(resultContext.symbol) || outcomes[0]?.series_id || "";
+
+        return enrichPolymarketBacktestResult({
+            ...result,
+            trades: annotatedTrades,
+            polymarketTradeSummary: {
+                seriesId,
+                outcomeRowsLoaded: existingSummary?.outcomeRowsLoaded && existingSummary.outcomeRowsLoaded > 0
+                    ? existingSummary.outcomeRowsLoaded
+                    : outcomes.length,
+                scoredTrades: existingSummary?.scoredTrades ?? summary.scoredTrades,
+                missingOutcomeTrades: existingSummary?.missingOutcomeTrades ?? summary.missingOutcomeTrades,
+                unscoredTrades: existingSummary?.unscoredTrades ?? summary.unscoredTrades ?? Math.max(0, totalTrades - summary.scoredTrades),
+                duplicateTradesIgnored: existingSummary?.duplicateTradesIgnored ?? summary.duplicateTradesIgnored,
+                entryOffset: existingSummary?.entryOffset ?? selectedOffset,
+                timingProfile: existingSummary?.timingProfile ?? summary.timingProfile,
+            },
+        });
+    }
+
+    private resolveSelectedPolymarketEntryOffset(result: BacktestResult): number {
+        const summaryOffset = result.polymarketTradeSummary?.entryOffset;
+        if (typeof summaryOffset === "number" && Number.isFinite(summaryOffset)) {
+            return Math.max(0, Math.min(4, Math.floor(summaryOffset)));
+        }
+        return 0;
     }
 
     private async enrichHistoryInBackground(requestId: number, rows: PolymarketOutcomeRow[]): Promise<void> {
@@ -244,14 +330,13 @@ class PolymarketPanelService {
             return;
         }
 
-        const dom = this.getDom();
         const result = this.lastResult;
         const supportedRun = supportsPolymarketOutcomeBridgeRun(state.currentSymbol, state.currentInterval);
 
         this.renderBridgeControls();
 
         if (!result) {
-            this.showEmpty("Run a backtest first, then this tab will estimate Polymarket fills for the executed trades.");
+            this.showEmpty("Run a backtest first to see Polymarket payout diagnostics and snapshot filter suggestions.");
             return;
         }
 
@@ -275,53 +360,294 @@ class PolymarketPanelService {
             return;
         }
 
-        const scope = this.readScope();
-        const targetPriceCents = this.readEntryPriceCents();
-        const analysis = analyzePolymarketFillability({
-            trades: result.trades,
-            outcomeByStartTs: this.outcomeByStartTs,
-            historySummaryByStartTs: this.historySummaryByStartTs,
-            targetPriceCents,
-            scope,
-        });
+        this.renderPolymarketDiagnostics(result);
+    }
 
-        const finalWindow = analysis.windows.at(-1);
-        const filledByLastWindow = finalWindow?.filledTrades ?? 0;
-        const filledWinRate = finalWindow?.filledWinRate ?? 0;
-        const missingPriceByLastWindow = finalWindow?.missingPriceTrades ?? 0;
+    private renderPolymarketDiagnostics(result: BacktestResult): void {
+        const dom = this.getDom();
+        const payoutSummary = summarizePolymarketPayoutDiagnostics(result.trades);
+        const summary = this.getPolymarketSummary(result);
+        const sections = getQuickViewDiagnosticSections(result);
+        const snapshotSection = this.buildPolymarketSnapshotSection(result);
+        const filterSection = this.buildPolymarketFilterSection(result);
 
-        dom.polymarketEligibleTrades.textContent = String(analysis.eligibleTrades);
-        dom.polymarketEnrichedTrades.textContent = String(analysis.enrichedEligibleTrades);
-        dom.polymarketFilledTrades.textContent = String(filledByLastWindow);
-        dom.polymarketFillRate.textContent = this.formatPercent(finalWindow?.fillRate ?? 0);
-        dom.polymarketFilledWinRate.textContent = this.formatPercent(filledWinRate);
+        if (!summary && !payoutSummary && sections.length === 0 && !snapshotSection && !filterSection) {
+            this.showEmpty("No scored Polymarket trades are available for the current result yet.");
+            return;
+        }
 
-        dom.polymarketStatus.textContent = [
-            `${this.formatScopeLabel(scope)} touch estimate at ${analysis.targetPriceCents.toFixed(1).replace(/\.0$/, "")}c.`,
-            `${analysis.selectedTrades} selected trade${analysis.selectedTrades === 1 ? "" : "s"}, ${analysis.eligibleTrades} matched Polymarket row${analysis.eligibleTrades === 1 ? "" : "s"}.`,
-            analysis.eligibleTrades > 0
-                ? `${analysis.enrichedEligibleTrades} matched trade${analysis.enrichedEligibleTrades === 1 ? "" : "s"} use raw prices-history extrema, ${analysis.fallbackEligibleTrades} use synced checkpoint fallback.`
-                : "No matched Polymarket rows to estimate fills from.",
-            this.isEnrichingHistory ? "Raw history enrichment is still running in the background." : "",
-            analysis.missingOutcomeTrades > 0 ? `${analysis.missingOutcomeTrades} trade${analysis.missingOutcomeTrades === 1 ? "" : "s"} missing outcome rows.` : "",
-            missingPriceByLastWindow > 0 ? `${missingPriceByLastWindow} trade${missingPriceByLastWindow === 1 ? "" : "s"} missing fill history through +4m.` : "",
-        ].filter(Boolean).join(" ");
+        dom.polymarketDiagnosticsContent.innerHTML = [
+            payoutSummary ? this.buildPayoutSummarySection(payoutSummary) : "",
+            summary ? this.buildPolymarketSummarySection(summary) : "",
+            ...sections.map((section) => this.buildDiagnosticBucketSection(section)),
+            snapshotSection,
+            filterSection,
+        ].filter(Boolean).join("");
 
-        dom.polymarketTableBody.innerHTML = analysis.windows.map((window) => `
+        setVisible(dom.polymarketDiagnosticsEmpty, false);
+        setVisible(dom.polymarketDiagnosticsContent, true);
+    }
+
+    private getPolymarketSummary(result: BacktestResult): {
+        wins: number;
+        losses: number;
+        scoredTrades: number;
+        missingTrades: number;
+        unscoredTrades: number;
+        coverage: number;
+        winRate: number;
+        outcomeRowsLoaded: number;
+        baselineDelta: number;
+        entryOffset?: number;
+        bestTimingProfile?: NonNullable<NonNullable<BacktestResult["polymarketTradeSummary"]>["timingProfile"]>[number] | null;
+    } | null {
+        const wins = result.trades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
+        const losses = result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
+        const scoredTrades = wins + losses;
+        const summary = result.polymarketTradeSummary;
+
+        if (!summary && scoredTrades === 0) {
+            return null;
+        }
+
+        const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
+        const missingTrades = summary?.missingOutcomeTrades ?? Math.max(0, totalTrades - scoredTrades);
+        const unscoredTrades = summary?.unscoredTrades ?? Math.max(0, totalTrades - scoredTrades);
+        const coverageBase = Math.max(0, scoredTrades + unscoredTrades);
+        const coverage = coverageBase > 0 ? scoredTrades / coverageBase : 0;
+        const baselineWinRate = computePolymarketBestBaselineWinRate(result.trades);
+        const timingProfile = summary?.timingProfile ?? [];
+        const bestTimingProfile = timingProfile.length > 0
+            ? [...timingProfile]
+                .filter((entry) => entry.scoredTrades > 0)
+                .sort((left, right) => {
+                    if (right.winRate !== left.winRate) return right.winRate - left.winRate;
+                    if (right.scoredTrades !== left.scoredTrades) return right.scoredTrades - left.scoredTrades;
+                    return left.entryOffset - right.entryOffset;
+                })[0] ?? null
+            : null;
+
+        return {
+            wins,
+            losses,
+            scoredTrades,
+            missingTrades,
+            unscoredTrades,
+            coverage,
+            winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
+            outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
+            baselineDelta: (scoredTrades > 0 ? wins / scoredTrades : 0) - baselineWinRate,
+            entryOffset: summary?.entryOffset,
+            bestTimingProfile,
+        };
+    }
+
+    private buildPayoutSummarySection(summary: NonNullable<ReturnType<typeof summarizePolymarketPayoutDiagnostics>>): string {
+        return `
+            <div class="deployability-section">
+                <div class="section-subtitle">Payout Summary</div>
+                <div class="entry-stats-hint polymarket-diagnostics__hint">Polymarket is a binary payout. Long trades buy YES, short trades buy NO. A short entered at 90c is a 90c NO entry and pays 10c on a win. Exp is shown in cents per $1 share.</div>
+                <div class="stats-grid polymarket-panel__stats">
+                    ${this.renderStatCard("Priced Trades", String(summary.pricedTrades))}
+                    ${summary.unpricedScoredTrades > 0 ? this.renderStatCard("Unpriced Scored Trades", String(summary.unpricedScoredTrades)) : ""}
+                    ${this.renderStatCard("Avg Entry Price", this.formatProbability(summary.avgEntryPrice))}
+                    ${this.renderStatCard("Break-even Win", this.formatPercent(summary.breakEvenWinRate))}
+                    ${this.renderStatCard("Poly Win Rate", this.formatPercent(summary.winRate), summary.edgeVsBreakEven)}
+                    ${this.renderStatCard("Poly Exp / Trade", this.formatPolymarketCents(summary.expectancy), summary.expectancy)}
+                    ${this.renderStatCard("Edge Vs Break-even", `${summary.edgeVsBreakEven >= 0 ? "+" : ""}${(summary.edgeVsBreakEven * 100).toFixed(1)}pp`, summary.edgeVsBreakEven)}
+                </div>
+            </div>
+        `;
+    }
+
+    private buildPolymarketSummarySection(summary: NonNullable<ReturnType<PolymarketPanelService["getPolymarketSummary"]>>): string {
+        const runModeLabel = typeof summary.entryOffset === "number" ? "Selected Offset" : "Run Mode";
+        const runModeValue = typeof summary.entryOffset === "number" ? `Minute ${summary.entryOffset}` : "Native 5m scoring";
+        const timingContext = summary.bestTimingProfile
+            ? `Best minute ${summary.bestTimingProfile.entryOffset} at ${this.formatPercent(summary.bestTimingProfile.winRate)}`
+            : "Full timing profile is available in 1m bridge runs.";
+
+        return `
+            <div class="deployability-section">
+                <div class="section-subtitle">Polymarket Summary</div>
+                <div class="entry-stats-hint polymarket-diagnostics__hint">${timingContext}</div>
+                <div class="stats-grid polymarket-panel__stats">
+                    ${this.renderStatCard(runModeLabel, runModeValue)}
+                    ${this.renderStatCard("Poly Win Rate", this.formatPercent(summary.winRate), summary.winRate - 0.5)}
+                    ${this.renderStatCard("Scored Trade Share", this.formatPercent(summary.coverage))}
+                    ${this.renderStatCard("Poly Wins", String(summary.wins), summary.wins > 0 ? 1 : 0)}
+                    ${this.renderStatCard("Poly Losses", String(summary.losses), summary.losses > 0 ? -1 : 0)}
+                    ${this.renderStatCard("Baseline Delta", `${summary.baselineDelta >= 0 ? "+" : ""}${(summary.baselineDelta * 100).toFixed(1)}pp`, summary.baselineDelta)}
+                    ${this.renderStatCard("Scored Trades", String(summary.scoredTrades))}
+                    ${this.renderStatCard("Unscored Trades", String(summary.unscoredTrades))}
+                    ${summary.missingTrades > 0 ? this.renderStatCard("Missing Outcome Rows", String(summary.missingTrades)) : ""}
+                    ${this.renderStatCard("Outcome Rows Fetched", String(summary.outcomeRowsLoaded))}
+                </div>
+            </div>
+        `;
+    }
+
+    private buildDiagnosticBucketSection(section: ExpectancyBreakdownSection): string {
+        const rows = section.rows.map((row) => `
             <tr>
-                <td>${window.label}</td>
-                <td>${window.filledTrades}</td>
-                <td>${this.formatPercent(window.fillRate)}</td>
-                <td>${this.formatPercent(window.filledWinRate)}</td>
-                <td>${window.missingPriceTrades}</td>
+                <td>${row.label}</td>
+                <td>${row.tradeCount}t</td>
+                <td class="${(row.edgeVsBreakEven ?? (row.winRate - 50)) >= 0 ? "positive" : "negative"}">${row.winRate.toFixed(1)}%</td>
+                <td class="${row.expectancy >= 0 ? "positive" : "negative"}">${row.avgEntryPrice !== undefined && row.avgEntryPrice !== null ? this.formatPolymarketCents(row.expectancy) : this.formatSignedUsd(row.expectancy)}</td>
             </tr>
         `).join("");
 
-        // Render deployability analysis
-        this.renderDeployabilityAnalysis(result);
+        return `
+            <div class="deployability-section">
+                <div class="section-subtitle">${section.title}</div>
+                <div class="entry-stats-hint polymarket-diagnostics__hint">${section.hint}</div>
+                <div class="analysis-finder-table-wrap">
+                    <table class="analysis-finder-table polymarket-panel__table polymarket-diagnostics__table">
+                        <thead>
+                            <tr>
+                                <th>Bucket</th>
+                                <th>Trades</th>
+                                <th>Win</th>
+                                <th>Exp</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
 
-        setVisible(dom.polymarketEmpty, false);
-        setVisible(dom.polymarketContent, true);
+    private buildPolymarketSnapshotSection(result: BacktestResult): string {
+        const profile = result.polymarketSnapshotProfile;
+        if (!profile || profile.rows.length === 0) {
+            return "";
+        }
+
+        const significantRows = profile.rows.filter((row) => row.significance !== null && row.significance >= 0.15);
+        if (significantRows.length === 0) {
+            return "";
+        }
+
+        const rows = significantRows.map((row) => `
+            <tr class="${(row.significance ?? 0) >= 0.5 ? "strong-discriminator" : ""}">
+                <td>${row.label}</td>
+                <td>${row.winAvg !== null ? row.winAvg.toFixed(2) : "—"}</td>
+                <td>${row.loseAvg !== null ? row.loseAvg.toFixed(2) : "—"}</td>
+                <td class="${(row.delta ?? 0) > 0 ? "positive" : (row.delta ?? 0) < 0 ? "negative" : ""}">${row.delta !== null ? `${row.delta > 0 ? "+" : ""}${row.delta.toFixed(3)}` : "—"}</td>
+                <td>${row.significance !== null ? row.significance.toFixed(2) : "—"}</td>
+            </tr>
+        `).join("");
+
+        return `
+            <div class="deployability-section">
+                <div class="section-subtitle">PM Snapshot Profile (Win vs Lose)</div>
+                <div class="entry-stats-hint polymarket-diagnostics__hint">Snapshot metrics at entry time that differ between Polymarket wins and losses. Significance = effect size in stddevs. ${profile.winSampleSize} wins, ${profile.loseSampleSize} losses.</div>
+                <div class="analysis-finder-table-wrap">
+                    <table class="analysis-finder-table polymarket-panel__table polymarket-diagnostics__table">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>PM Win Avg</th>
+                                <th>PM Lose Avg</th>
+                                <th>Delta</th>
+                                <th>Sig</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+
+    private buildPolymarketFilterSection(result: BacktestResult): string {
+        const suggestions = result.polymarketFilterSuggestions;
+        if (!suggestions) {
+            return "";
+        }
+
+        const topFeatures = suggestions.featureAnalyses
+            .filter((analysis) => analysis.suggestedFilter !== null)
+            .slice(0, 5);
+        if (topFeatures.length === 0) {
+            return "";
+        }
+
+        const rows = topFeatures.map((analysis) => `
+            <tr>
+                <td>${analysis.label}</td>
+                <td>${this.formatSnapshotSettingSuggestion(analysis.feature, analysis.suggestedFilter!.direction, analysis.suggestedFilter!.threshold)}</td>
+                <td class="${(analysis.winRateIfFiltered - suggestions.baselineWinRate * 100) >= 0 ? "positive" : "negative"}">${analysis.winRateIfFiltered.toFixed(1)}%</td>
+                <td class="${analysis.expectancyIfFiltered >= 0 ? "positive" : "negative"}">${this.formatPolymarketCents(analysis.expectancyIfFiltered)}</td>
+                <td>${analysis.tradesRemovedPercent.toFixed(0)}%</td>
+            </tr>
+        `).join("");
+
+        const comboCard = suggestions.finderResult.bestCandidate ? this.buildPolymarketComboCard(suggestions) : "";
+
+        return `
+            <div class="deployability-section">
+                <div class="section-subtitle">PM Filter Suggestions</div>
+                <div class="entry-stats-hint polymarket-diagnostics__hint">Single-feature filters on the priced snapshot subset. ${suggestions.sampleCounts.pricedTrades} priced trades out of ${suggestions.sampleCounts.scoredTrades} scored snapshot trades. Baseline: ${this.formatPercent(suggestions.baselineWinRate)}, ${this.formatPolymarketCents(suggestions.baselineExpectancy)} exp/trade.</div>
+                <div class="analysis-finder-table-wrap">
+                    <table class="analysis-finder-table polymarket-panel__table polymarket-diagnostics__table">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>Setting</th>
+                                <th>PM Win%</th>
+                                <th>PM Exp</th>
+                                <th>Removed</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </div>
+            ${comboCard}
+        `;
+    }
+
+    private buildPolymarketComboCard(suggestions: NonNullable<BacktestResult["polymarketFilterSuggestions"]>): string {
+        const bestCandidate = suggestions.finderResult.bestCandidate;
+        if (!bestCandidate) {
+            return "";
+        }
+
+        const filters = bestCandidate.filters.map((filter) => `
+            <div class="polymarket-diagnostics__combo-chip">${this.formatSnapshotSettingSuggestion(filter.feature, filter.direction, filter.threshold)}</div>
+        `).join("");
+        const simulation = bestCandidate.simulation;
+
+        return `
+            <div class="deployability-section">
+                <div class="section-subtitle">Best Combo Filter</div>
+                <div class="entry-stats-hint polymarket-diagnostics__hint">Highest objective score across ${suggestions.finderResult.attemptedCount} evaluated combo candidates.</div>
+                <div class="polymarket-diagnostics__combo-list">${filters}</div>
+                <div class="stats-grid polymarket-panel__stats">
+                    ${this.renderStatCard("Projected PM Win Rate", `${simulation.filteredWinRate.toFixed(1)}%`, simulation.winRateImprovement)}
+                    ${this.renderStatCard("Projected PM Exp", this.formatPolymarketCents(simulation.filteredExpectancy), simulation.expectancyImprovement)}
+                    ${this.renderStatCard("Trades Kept", `${simulation.remainingTrades}/${simulation.originalTrades}`)}
+                    ${this.renderStatCard("Trades Removed", `${simulation.removedPercent.toFixed(0)}%`)}
+                    ${this.renderStatCard("Bad Trades Removed", `${bestCandidate.badTradesRemovedPct.toFixed(0)}%`, bestCandidate.badTradesRemovedPct)}
+                    ${this.renderStatCard("Good Trades Removed", `${bestCandidate.goodTradesRemovedPct.toFixed(0)}%`, -bestCandidate.goodTradesRemovedPct)}
+                    ${this.renderStatCard("Objective Score", bestCandidate.objectiveScore.toFixed(3), bestCandidate.objectiveScore)}
+                </div>
+            </div>
+        `;
+    }
+
+    private renderStatCard(label: string, value: string, numericValue?: number): string {
+        const toneClass = typeof numericValue === "number"
+            ? (numericValue > 0 ? "positive" : numericValue < 0 ? "negative" : "")
+            : "";
+        return `
+            <div class="stat-card">
+                <div class="stat-label">${label}</div>
+                <div class="stat-value ${toneClass}">${value}</div>
+            </div>
+        `;
     }
 
     private renderDeployabilityAnalysis(result: BacktestResult): void {
@@ -496,38 +822,10 @@ class PolymarketPanelService {
 
     private showEmpty(message: string): void {
         const dom = this.getDom();
-        dom.polymarketSupport.textContent = message;
-        dom.deployabilitySupport.textContent = message;
-        setVisible(dom.polymarketEmpty, true);
-        setVisible(dom.polymarketContent, false);
-        setVisible(dom.deployabilityEmpty, true);
-        setVisible(dom.deployabilityContent, false);
-        dom.polymarketStatus.textContent = "";
-        dom.polymarketTableBody.innerHTML = "";
-        dom.polymarketEligibleTrades.textContent = "0";
-        dom.polymarketEnrichedTrades.textContent = "0";
-        dom.polymarketFilledTrades.textContent = "0";
-        dom.polymarketFillRate.textContent = "0.0%";
-        dom.polymarketFilledWinRate.textContent = "0.0%";
-        dom.deployShuffleHint.textContent = "Mixed-side strategies use a shuffle placebo test. One-sided strategies use a baseline significance test instead.";
-        dom.deployShuffleSims.textContent = "Unavailable";
-        dom.deployShuffleObserved.textContent = "0.0%";
-        dom.deployShuffleExceed.textContent = "N/A";
-        dom.deployShufflePValue.textContent = "1.000";
-        dom.deployShuffleMean.textContent = "0.0%";
-        dom.deployShuffleP95.textContent = "N/A";
-        dom.deployFillScored.textContent = "0";
-        dom.deployFillWins.textContent = "0";
-        dom.deployFillLosses.textContent = "0";
-        dom.deployFillWinRate.textContent = "0.0%";
-        dom.deployFillWilsonLB.textContent = "0.000";
-        dom.deployFillRate.textContent = "0.0%";
-        dom.deployFillBestBaselineLabel.textContent = "Fill-Subset Best Base";
-        dom.deployFillBestBaseline.textContent = "N/A";
-        dom.deployFillDeltaBaselineLabel.textContent = "Delta vs Best Base";
-        dom.deployFillDeltaBaseline.textContent = "+0.0%";
-        dom.deployFillBreakEven.textContent = "0.0%";
-        dom.deployFillEdgeBreakEven.textContent = "+0.0%";
+        dom.polymarketDiagnosticsSupport.textContent = message;
+        dom.polymarketDiagnosticsContent.innerHTML = "";
+        setVisible(dom.polymarketDiagnosticsEmpty, true);
+        setVisible(dom.polymarketDiagnosticsContent, false);
     }
 
     private resetLoadedRows(clearResult = true): void {
@@ -1080,6 +1378,48 @@ class PolymarketPanelService {
 
     private formatPercent(value: number): string {
         return `${(value * 100).toFixed(1)}%`;
+    }
+
+    private formatProbability(value: number): string {
+        return `${(Math.abs(value) * 100).toFixed(1)}c`;
+    }
+
+    private formatPolymarketCents(value: number): string {
+        const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
+        return `${prefix}${(Math.abs(value) * 100).toFixed(1)}c`;
+    }
+
+    private formatSignedUsd(value: number): string {
+        const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
+        return `${prefix}$${Math.abs(value).toFixed(2)}`;
+    }
+
+    private formatSnapshotSettingSuggestion(
+        feature: keyof TradeSnapshot,
+        direction: "above" | "below",
+        threshold: number
+    ): string {
+        const binding = SNAPSHOT_FILTER_BINDINGS[feature];
+        if (!binding) {
+            return `${direction === "above" ? ">=" : "<="} ${this.formatFilterThreshold(threshold)}`;
+        }
+
+        const settingKey = direction === "above"
+            ? (binding.minKey ?? binding.maxKey ?? binding.toggleKey)
+            : (binding.maxKey ?? binding.minKey ?? binding.toggleKey);
+        return `${settingKey} = ${this.formatFilterThreshold(threshold)}`;
+    }
+
+    private formatFilterThreshold(value: number): string {
+        if (!Number.isFinite(value)) {
+            return "0";
+        }
+        const abs = Math.abs(value);
+        if (abs >= 100) return value.toFixed(2);
+        if (abs >= 1) return value.toFixed(3);
+        if (abs >= 0.1) return value.toFixed(4);
+        if (abs >= 0.01) return value.toFixed(5);
+        return value.toFixed(6);
     }
 
     private getDom(): PolymarketPanelDom {

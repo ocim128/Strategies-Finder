@@ -219,5 +219,136 @@ describe('Trade Analyzer', () => {
         expect(finderResult.featureRanges.length).to.equal(1);
         expect(finderResult.featureRanges[0].suggestedThreshold).to.not.equal(0);
     });
+
+    it('supports custom win and payout semantics for polymarket-style analysis', () => {
+        const trades: Trade[] = [];
+
+        for (let i = 0; i < 14; i++) {
+            const isWin = i >= 4;
+            trades.push({
+                id: i + 1,
+                type: 'long',
+                entryTime: (i + 1) as unknown as Time,
+                entryPrice: 100,
+                exitTime: (i + 2) as unknown as Time,
+                exitPrice: 100,
+                pnl: -5,
+                pnlPercent: -0.5,
+                size: 1,
+                entrySnapshot: {
+                    rsi: 45 + i,
+                    adx: 20,
+                    atrPercent: 1.2,
+                    emaDistance: 0,
+                    volumeRatio: isWin ? 1.8 + (i * 0.01) : 0.55 + (i * 0.01),
+                    priceRangePos: isWin ? 0.25 : 0.88,
+                    barsFromHigh: isWin ? 1 : 11,
+                    barsFromLow: isWin ? 2 : 9,
+                    trendEfficiency: isWin ? 0.75 : 0.18,
+                    atrRegimeRatio: 1.0,
+                    bodyPercent: 55,
+                    wickSkew: 0,
+                    volumeTrend: 1.0,
+                    volumeBurst: isWin ? 0.7 : -0.6,
+                    volumePriceDivergence: isWin ? 0.35 : -0.35,
+                    volumeConsistency: 0.6
+                },
+                polymarketOutcome: {
+                    eventStartTs: 1_700_000_000 + i * 300,
+                    eventEndTs: 1_700_000_300 + i * 300,
+                    eventSlug: `event-${i}`,
+                    marketSlug: `market-${i}`,
+                    prediction: 'yes',
+                    actualOutcomeUp: isWin ? 1 : 0,
+                    isWin,
+                    marketEntryPrice: isWin ? 0.35 : 0.65
+                }
+            });
+        }
+
+        const analyses = analyzeTradePatterns(trades, {
+            isWin: (trade) => trade.polymarketOutcome?.isWin === true,
+            payout: (trade) => {
+                const price = trade.polymarketOutcome?.marketEntryPrice ?? 0;
+                return trade.polymarketOutcome?.isWin ? (1 - price) : -price;
+            }
+        });
+
+        expect(analyses.length).to.be.greaterThan(0);
+        const volumeRatio = analyses.find((analysis) => analysis.feature === 'volumeRatio');
+        expect(volumeRatio).to.not.be.undefined;
+        expect(volumeRatio?.suggestedFilter).to.not.be.null;
+        expect(volumeRatio?.winRateIfFiltered).to.be.greaterThan(70);
+        expect(volumeRatio?.expectancyIfFiltered).to.be.greaterThan(0);
+    });
+
+    it('finder uses custom win and payout semantics for combo candidates', () => {
+        const trades: Trade[] = [];
+
+        for (let i = 0; i < 16; i++) {
+            const isWin = i >= 5;
+            trades.push({
+                id: i + 1,
+                type: 'long',
+                entryTime: (i + 1) as unknown as Time,
+                entryPrice: 100,
+                exitTime: (i + 2) as unknown as Time,
+                exitPrice: 100,
+                pnl: -4,
+                pnlPercent: -0.4,
+                size: 1,
+                entrySnapshot: {
+                    rsi: isWin ? 64 : 36,
+                    adx: 24,
+                    atrPercent: 1.1,
+                    emaDistance: 0.2,
+                    volumeRatio: isWin ? 1.7 + (i * 0.01) : 0.7 + (i * 0.01),
+                    priceRangePos: isWin ? 0.28 : 0.82,
+                    barsFromHigh: isWin ? 2 : 9,
+                    barsFromLow: isWin ? 3 : 8,
+                    trendEfficiency: isWin ? 0.74 : 0.22,
+                    atrRegimeRatio: 1.0,
+                    bodyPercent: 58,
+                    wickSkew: 0,
+                    volumeTrend: 1.0,
+                    volumeBurst: isWin ? 0.6 : -0.6,
+                    volumePriceDivergence: isWin ? 0.25 : -0.25,
+                    volumeConsistency: 0.7
+                },
+                polymarketOutcome: {
+                    eventStartTs: 1_700_010_000 + i * 300,
+                    eventEndTs: 1_700_010_300 + i * 300,
+                    eventSlug: `combo-${i}`,
+                    marketSlug: `combo-market-${i}`,
+                    prediction: 'yes',
+                    actualOutcomeUp: isWin ? 1 : 0,
+                    isWin,
+                    marketEntryPrice: isWin ? 0.4 : 0.7
+                }
+            });
+        }
+
+        const semantics = {
+            isWin: (trade: Trade) => trade.polymarketOutcome?.isWin === true,
+            payout: (trade: Trade) => {
+                const price = trade.polymarketOutcome?.marketEntryPrice ?? 0;
+                return trade.polymarketOutcome?.isWin ? (1 - price) : -price;
+            }
+        };
+        const analyses = analyzeTradePatterns(trades, semantics);
+        const finderResult = runAnalysisFilterFinder(trades, analyses, {
+            randomTrials: 16,
+            refineTrials: 8,
+            minBadRemovedPct: 10,
+            maxGoodRemovedPct: 25,
+            maxTotalRemovedPct: 60,
+            ...semantics
+        });
+
+        expect(finderResult.bestCandidate).to.not.equal(null);
+        expect(finderResult.bestCandidate?.simulation.filteredExpectancy).to.be.greaterThan(
+            finderResult.bestCandidate?.simulation.originalExpectancy ?? 0
+        );
+    });
 });
 

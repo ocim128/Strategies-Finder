@@ -35,6 +35,8 @@ export interface AnalysisOptions {
     mode?: 'quality' | 'relax_aware';
     maxSingleRemoval?: number;
     relaxExpectancyTolerancePct?: number;
+    isWin?: (trade: Trade) => boolean;
+    payout?: (trade: Trade) => number;
 }
 
 export interface FilterSimulationResult {
@@ -77,6 +79,13 @@ export interface AnalysisFinderOptions {
     minBadRemovedPct?: number;
     maxGoodRemovedPct?: number;
     maxTotalRemovedPct?: number;
+    isWin?: (trade: Trade) => boolean;
+    payout?: (trade: Trade) => number;
+}
+
+interface AnalysisSemantics {
+    isWin: (trade: Trade) => boolean;
+    payout: (trade: Trade) => number;
 }
 
 export interface FinderFeatureRange {
@@ -210,11 +219,12 @@ const FEATURE_DIRECTIONS: Record<keyof TradeSnapshot, ('above' | 'below')[]> = {
  * Returns features sorted by how well they discriminate wins from losses.
  */
 export function analyzeTradePatterns(trades: Trade[], options: AnalysisOptions = {}): FeatureAnalysis[] {
+    const semantics = resolveAnalysisSemantics(options);
     const tradesWithSnapshots = trades.filter(t => t.entrySnapshot);
     if (tradesWithSnapshots.length < 4) return []; // Need minimum sample
 
-    const wins = tradesWithSnapshots.filter(t => t.pnl > 0);
-    const losses = tradesWithSnapshots.filter(t => t.pnl <= 0);
+    const wins = tradesWithSnapshots.filter(t => semantics.isWin(t));
+    const losses = tradesWithSnapshots.filter(t => !semantics.isWin(t));
 
     if (wins.length < 2 || losses.length < 2) return []; // Need both sides
 
@@ -243,7 +253,7 @@ export function analyzeTradePatterns(trades: Trade[], options: AnalysisOptions =
             : 0;
 
         // Determine suggested filter (now optimized for expectancy)
-        const suggestedFilter = findBestThreshold(tradesWithSnapshots, feature, winStats, lossStats, options);
+        const suggestedFilter = findBestThreshold(tradesWithSnapshots, feature, winStats, lossStats, options, semantics);
 
         // Simulate the filter to get projected metrics
         let winRateIfFiltered = 0;
@@ -251,7 +261,13 @@ export function analyzeTradePatterns(trades: Trade[], options: AnalysisOptions =
         let tradesRemovedPercent = 0;
 
         if (suggestedFilter) {
-            const sim = simulateFilter(tradesWithSnapshots, feature, suggestedFilter.direction, suggestedFilter.threshold);
+            const sim = simulateFilter(
+                tradesWithSnapshots,
+                feature,
+                suggestedFilter.direction,
+                suggestedFilter.threshold,
+                semantics
+            );
             winRateIfFiltered = sim.filteredWinRate;
             expectancyIfFiltered = sim.filteredExpectancy;
             tradesRemovedPercent = sim.removedPercent;
@@ -287,10 +303,13 @@ export function simulateFilter(
     trades: Trade[],
     feature: keyof TradeSnapshot,
     direction: 'above' | 'below',
-    threshold: number
+    threshold: number,
+    options: Pick<AnalysisOptions, 'isWin' | 'payout'> = {}
 ): FilterSimulationResult {
+    const semantics = resolveAnalysisSemantics(options);
     // Single pass to compute original stats AND filter in one go
     let originalWins = 0;
+    let originalLosses = 0;
     let originalNetPnl = 0;
     let originalEquity = 0;
     let originalPeak = 0;
@@ -310,10 +329,15 @@ export function simulateFilter(
         if (!t.entrySnapshot) continue;
         
         // Original stats computation
-        const pnl = t.pnl;
-        originalNetPnl += pnl;
-        if (pnl > 0) originalWins++;
-        originalEquity += pnl;
+        const payout = semantics.payout(t);
+        const isWinningTrade = semantics.isWin(t);
+        originalNetPnl += payout;
+        if (isWinningTrade) {
+            originalWins++;
+        } else {
+            originalLosses++;
+        }
+        originalEquity += payout;
         if (originalEquity > originalPeak) originalPeak = originalEquity;
         const originalDD = originalPeak - originalEquity;
         if (originalDD > originalMaxDrawdown) originalMaxDrawdown = originalDD;
@@ -326,23 +350,22 @@ export function simulateFilter(
         
         if (passesFilter) {
             remainingCount++;
-            filteredNetPnl += pnl;
-            if (pnl > 0) {
+            filteredNetPnl += payout;
+            if (isWinningTrade) {
                 filteredWins++;
-                filteredGrossProfit += pnl;
+                filteredGrossProfit += Math.max(0, payout);
             } else {
                 filteredLosses++;
-                filteredGrossLoss += Math.abs(pnl);
+                filteredGrossLoss += Math.abs(Math.min(0, payout));
             }
-            filteredEquity += pnl;
+            filteredEquity += payout;
             if (filteredEquity > filteredPeak) filteredPeak = filteredEquity;
             const filteredDD = filteredPeak - filteredEquity;
             if (filteredDD > filteredMaxDrawdown) filteredMaxDrawdown = filteredDD;
         }
     }
     
-    const totalWithSnapshots = originalWins + (trades.filter(t => t.entrySnapshot && t.pnl <= 0).length);
-    const originalTrades = totalWithSnapshots;
+    const originalTrades = originalWins + originalLosses;
     const removedCount = originalTrades - remainingCount;
     
     const originalWinRate = originalTrades > 0 ? (originalWins / originalTrades) * 100 : 0;
@@ -426,7 +449,8 @@ function findBestThreshold(
     feature: keyof TradeSnapshot,
     _winStats: FeatureStats,
     _lossStats: FeatureStats,
-    options: AnalysisOptions
+    options: AnalysisOptions,
+    semantics: AnalysisSemantics
 ): { direction: 'above' | 'below'; threshold: number } | null {
     // Collect all feature values to build percentile-based candidates
     const allValues = extractFeatureValues(trades, feature);
@@ -453,7 +477,7 @@ function findBestThreshold(
 
     for (const dir of directions) {
         for (const candidate of uniqueCandidates) {
-            const sim = simulateFilter(trades, feature, dir, candidate);
+            const sim = simulateFilter(trades, feature, dir, candidate, semantics);
 
             if (sim.remainingTrades < MIN_TRADES_FOR_FILTER) continue;
             if (sim.removedPercent > maxRemoval) continue;
@@ -494,7 +518,7 @@ function findBestThreshold(
 
     if (bestScore <= 0) return null;
 
-    const finalSim = simulateFilter(trades, feature, bestDirection, bestThreshold);
+    const finalSim = simulateFilter(trades, feature, bestDirection, bestThreshold, semantics);
     if (mode === 'quality' && finalSim.expectancyImprovement <= 0) return null;
     if (finalSim.remainingTrades < MIN_TRADES_FOR_FILTER) return null;
     if (finalSim.removedPercent > maxRemoval) return null;
@@ -582,8 +606,10 @@ export interface ComboFilterResult {
  */
 export function simulateComboFilter(
     trades: Trade[],
-    filters: ComboFilterEntry[]
+    filters: ComboFilterEntry[],
+    options: Pick<AnalysisOptions, 'isWin' | 'payout'> = {}
 ): ComboFilterResult {
+    const semantics = resolveAnalysisSemantics(options);
     // Single pass to compute original stats AND filter in one go
     let originalWins = 0;
     let originalLosses = 0;
@@ -606,14 +632,15 @@ export function simulateComboFilter(
         if (!t.entrySnapshot) continue;
         
         // Original stats computation
-        const pnl = t.pnl;
-        originalNetPnl += pnl;
-        if (pnl > 0) {
+        const payout = semantics.payout(t);
+        const isWinningTrade = semantics.isWin(t);
+        originalNetPnl += payout;
+        if (isWinningTrade) {
             originalWins++;
         } else {
             originalLosses++;
         }
-        originalEquity += pnl;
+        originalEquity += payout;
         if (originalEquity > originalPeak) originalPeak = originalEquity;
         const originalDD = originalPeak - originalEquity;
         if (originalDD > originalMaxDrawdown) originalMaxDrawdown = originalDD;
@@ -636,15 +663,15 @@ export function simulateComboFilter(
         
         if (passesFilter) {
             remainingCount++;
-            filteredNetPnl += pnl;
-            if (pnl > 0) {
+            filteredNetPnl += payout;
+            if (isWinningTrade) {
                 filteredWins++;
-                filteredGrossProfit += pnl;
+                filteredGrossProfit += Math.max(0, payout);
             } else {
                 filteredLosses++;
-                filteredGrossLoss += Math.abs(pnl);
+                filteredGrossLoss += Math.abs(Math.min(0, payout));
             }
-            filteredEquity += pnl;
+            filteredEquity += payout;
             if (filteredEquity > filteredPeak) filteredPeak = filteredEquity;
             const filteredDD = filteredPeak - filteredEquity;
             if (filteredDD > filteredMaxDrawdown) filteredMaxDrawdown = filteredDD;
@@ -698,7 +725,8 @@ export function simulateComboFilter(
 export function findBestComboFilter(
     trades: Trade[],
     analyses: FeatureAnalysis[],
-    maxRemovalPercent: number = MAX_COMBO_REMOVAL
+    maxRemovalPercent: number = MAX_COMBO_REMOVAL,
+    options: Pick<AnalysisOptions, 'isWin' | 'payout'> = {}
 ): ComboFilterResult | null {
     const withFilters = analyses.filter(a => a.suggestedFilter !== null);
     if (withFilters.length < 2) return null;
@@ -712,7 +740,7 @@ export function findBestComboFilter(
                 { feature: withFilters[i].feature, label: withFilters[i].label, ...withFilters[i].suggestedFilter! },
                 { feature: withFilters[j].feature, label: withFilters[j].label, ...withFilters[j].suggestedFilter! }
             ];
-            const result = simulateComboFilter(trades, filters);
+            const result = simulateComboFilter(trades, filters, options);
             if (result.removedPercent <= maxRemovalPercent
                 && result.remainingTrades >= MIN_TRADES_FOR_FILTER
                 && result.expectancyImprovement > 0) {
@@ -731,7 +759,7 @@ export function findBestComboFilter(
                         { feature: withFilters[j].feature, label: withFilters[j].label, ...withFilters[j].suggestedFilter! },
                         { feature: withFilters[k].feature, label: withFilters[k].label, ...withFilters[k].suggestedFilter! }
                     ];
-                    const result = simulateComboFilter(trades, filters);
+                    const result = simulateComboFilter(trades, filters, options);
                     if (result.removedPercent <= maxRemovalPercent
                         && result.remainingTrades >= MIN_TRADES_FOR_FILTER
                         && result.expectancyImprovement > 0) {
@@ -772,6 +800,7 @@ export function runAnalysisFilterFinder(
     analyses: FeatureAnalysis[],
     options: AnalysisFinderOptions = {}
 ): AnalysisFilterFinderResult {
+    const semantics = resolveAnalysisSemantics(options);
     const tradesWithSnapshots = trades.filter(t => t.entrySnapshot);
     if (tradesWithSnapshots.length < MIN_TRADES_FOR_FILTER || analyses.length === 0) {
         return {
@@ -822,7 +851,7 @@ export function runAnalysisFilterFinder(
         seenCandidateKeys.add(key);
         attemptedCount++;
 
-        const candidate = evaluateFinderCandidate(tradesWithSnapshots, [filter], normalized);
+        const candidate = evaluateFinderCandidate(tradesWithSnapshots, [filter], normalized, semantics);
         if (!candidate) {
             rejectedByConstraints++;
             continue;
@@ -837,7 +866,7 @@ export function runAnalysisFilterFinder(
         seenCandidateKeys.add(key);
         attemptedCount++;
 
-        const candidate = evaluateFinderCandidate(tradesWithSnapshots, filters, normalized);
+        const candidate = evaluateFinderCandidate(tradesWithSnapshots, filters, normalized, semantics);
         if (!candidate) {
             rejectedByConstraints++;
             continue;
@@ -858,7 +887,7 @@ export function runAnalysisFilterFinder(
             seenCandidateKeys.add(key);
             attemptedCount++;
 
-            const candidate = evaluateFinderCandidate(tradesWithSnapshots, filters, normalized);
+            const candidate = evaluateFinderCandidate(tradesWithSnapshots, filters, normalized, semantics);
             if (!candidate) {
                 rejectedByConstraints++;
                 continue;
@@ -1036,9 +1065,10 @@ function randomThresholdBetween(min: number, max: number): number {
 function evaluateFinderCandidate(
     trades: Trade[],
     filters: ComboFilterEntry[],
-    options: NormalizedFinderOptions
+    options: NormalizedFinderOptions,
+    semantics: AnalysisSemantics
 ): AnalysisFinderCandidate | null {
-    const simulation = simulateComboFilter(trades, filters);
+    const simulation = simulateComboFilter(trades, filters, semantics);
     if (simulation.remainingTrades < MIN_TRADES_FOR_FILTER) return null;
     if (simulation.expectancyImprovement <= 0) return null;
     if (simulation.removedPercent > options.maxTotalRemovedPct) return null;
@@ -1106,5 +1136,14 @@ function percentileFromSorted(sortedValues: number[], percentile: number): numbe
     if (lower === upper) return sortedValues[lower];
     const weight = scaledIndex - lower;
     return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * weight;
+}
+
+function resolveAnalysisSemantics(
+    options: Pick<AnalysisOptions, 'isWin' | 'payout'> = {}
+): AnalysisSemantics {
+    return {
+        isWin: options.isWin ?? ((trade) => trade.pnl > 0),
+        payout: options.payout ?? ((trade) => trade.pnl),
+    };
 }
 

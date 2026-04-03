@@ -4,6 +4,7 @@ import {
     countDistinctPolymarketOutcomeRows,
     computePolymarketBestBaselineWinRate,
     getQuickViewDiagnosticSections,
+    quickViewManager,
     summarizePolymarketExecutionGap,
     summarizePolymarketPayoutDiagnostics,
     summarizePolymarketStreaks,
@@ -283,6 +284,53 @@ describe("Quick View Polymarket streak summary", () => {
         expect(minute1?.expectancy).to.equal(-0.2);
     });
 
+    it("labels native 5m runs as observed minute buckets instead of selected offsets", () => {
+        const result = {
+            trades: [
+                makeTrade(1, true, {
+                    entryTime: 1_700_000_000,
+                    polymarketOutcome: {
+                        ...makeTrade(1, true).polymarketOutcome!,
+                        marketEntryPrice: 0.45,
+                    },
+                }),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            expectancyBreakdown: {
+                sections: [
+                    { id: "session_minute", title: "By 5m Session Minute", hint: "", rows: [] },
+                    { id: "price_range_position", title: "By Entry Range Position", hint: "", rows: [] },
+                ],
+            },
+            polymarketTradeSummary: {
+                seriesId: "btc-5m",
+                outcomeRowsLoaded: 1,
+                scoredTrades: 1,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 0,
+            },
+        } satisfies BacktestResult;
+
+        const [minuteSection] = getQuickViewDiagnosticSections(result);
+
+        expect(minuteSection?.title).to.equal("Observed 5m Session Minute");
+        expect(minuteSection?.hint).to.contain("native 5m chart");
+    });
+
     it("compares polymarket payout against realized binance execution", () => {
         const summary = summarizePolymarketExecutionGap([
             makeTrade(1, true, {
@@ -344,5 +392,134 @@ describe("Quick View Polymarket streak summary", () => {
         expect(summary?.polymarketWinRate).to.equal(1);
         expect(summary?.realizedWinRate).to.equal(1);
         expect(summary?.realizedExpectancy).to.equal(5);
+    });
+
+    it("renders the snapshot profile section from cached result fields", () => {
+        const html = (quickViewManager as any).buildPolymarketSnapshotSection({
+            trades: [],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            polymarketSnapshotProfile: {
+                winSampleSize: 7,
+                loseSampleSize: 5,
+                rows: [{
+                    key: "rsi",
+                    label: "RSI",
+                    winAvg: 62,
+                    loseAvg: 48,
+                    allAvg: 56,
+                    delta: 14,
+                    significance: 0.9,
+                }],
+            },
+        } satisfies BacktestResult);
+
+        expect(html).to.contain("PM Snapshot Profile");
+        expect(html).to.contain("RSI");
+        expect(html).to.contain("7 wins, 5 losses");
+    });
+
+    it("renders filter suggestions from cached result fields with actionable setting keys", () => {
+        const html = (quickViewManager as any).buildPolymarketFilterSection({
+            trades: [],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            polymarketFilterSuggestions: {
+                baselineWinRate: 0.48,
+                baselineExpectancy: -0.03,
+                sampleCounts: {
+                    scoredTrades: 14,
+                    pricedTrades: 12,
+                },
+                featureAnalyses: [{
+                    feature: "rsi",
+                    label: "RSI (14)",
+                    winStats: { mean: 60, median: 60, stddev: 5, count: 6 },
+                    lossStats: { mean: 45, median: 45, stddev: 5, count: 6 },
+                    separationScore: 0.8,
+                    suggestedFilter: { direction: "above", threshold: 55.5 },
+                    winRateIfFiltered: 66.7,
+                    expectancyIfFiltered: 0.08,
+                    tradesRemovedPercent: 25,
+                }],
+                finderResult: {
+                    featureRanges: [],
+                    attemptedCount: 4,
+                    feasibleCount: 1,
+                    rejectedByConstraints: 3,
+                    bestCandidate: null,
+                    topCandidates: [],
+                },
+            },
+        } satisfies BacktestResult);
+
+        expect(html).to.contain("PM Filter Suggestions");
+        expect(html).to.contain("snapshotRsiMin = 55.500");
+        expect(html).to.contain("12 priced trades out of 14 scored snapshot trades");
+    });
+
+    it("renders a Quick View handoff to the Polymarket tab instead of selected offset n/a", () => {
+        const html = (quickViewManager as any).buildPolymarketSection({
+            trades: [
+                makeTrade(1, true, {
+                    polymarketOutcome: {
+                        ...makeTrade(1, true).polymarketOutcome!,
+                        marketEntryPrice: 0.48,
+                    },
+                }),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            polymarketTradeSummary: {
+                seriesId: "btc-5m",
+                outcomeRowsLoaded: 1,
+                scoredTrades: 1,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 0,
+            },
+        } satisfies BacktestResult);
+
+        expect(html).to.contain("Run Mode: Native 5m scoring");
+        expect(html).to.contain("Polymarket tab");
+        expect(html).to.not.contain("Selected Offset: n/a");
     });
 });
