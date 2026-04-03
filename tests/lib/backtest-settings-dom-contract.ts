@@ -262,10 +262,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("htfBiasEmaPeriod"),
     createField("executionTrendEmaPeriod", { rustSupport: "unsupported" }),
     createField("confirmLookback"),
-    createField("trendPersistenceWindow", { rustSupport: "unsupported" }),
-    createField("trendPersistenceMinBars", { rustSupport: "unsupported" }),
-    createField("trendSlopeLookback", { rustSupport: "unsupported" }),
-    createField("trendSlopeMinPercent", { rustSupport: "unsupported" }),
     createField("volumeSmaPeriod"),
     createField("volumeMultiplier"),
     createField("confirmRsiPeriod", {

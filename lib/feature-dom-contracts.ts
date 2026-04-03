@@ -12,7 +12,6 @@ export * from "./live-positions-dom";
 export * from "./finder/finder-manager-dom";
 export * from "./pairCombiner/pair-combiner-bridge-dom";
 export * from "./walk-forward-dom";
-export * from "./parameter-audit-dom";
 export * from "./strategy-ensemble-dom";
 export * from "./preview-tab-dom";
 export * from "./advanced-sizing-dom";

@@ -16,7 +16,6 @@ import { initDebugPanel } from "./debug-panel";
 import { walkForwardService } from "./walk-forward-service";
 import { settingsManager } from "./settings-manager";
 import { injectLayout } from "./layout-manager";
-import { parameterAuditService } from "./parameter-audit-service";
 import { dataMiningManager } from "./data-mining-manager";
 import { portfolioLabService } from "./portfolio-lab-service";
 import { strategyEnsembleService } from "./strategy-ensemble-service";
@@ -182,12 +181,6 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         stage: "pre_restore",
         dependsOn: ["ui-events"],
         init: () => walkForwardService.initUI(),
-    },
-    {
-        id: "parameter-audit",
-        stage: "pre_restore",
-        dependsOn: ["ui-events"],
-        init: () => parameterAuditService.init(),
     },
     {
         id: "portfolio-lab",

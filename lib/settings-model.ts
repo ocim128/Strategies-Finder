@@ -105,10 +105,6 @@ export interface BacktestSettingsData extends SnapshotFilterFields {
     htfBiasEmaPeriod: number;
     executionTrendEmaPeriod: number;
     confirmLookback: number;
-    trendPersistenceWindow: number;
-    trendPersistenceMinBars: number;
-    trendSlopeLookback: number;
-    trendSlopeMinPercent: number;
     volumeSmaPeriod: number;
     volumeMultiplier: number;
     confirmRsiPeriod: number;
@@ -592,11 +588,6 @@ export function resolveTradeFilterModeValue(
         || value === "htf_drift"
         || value === "trend_htf_bias"
         || value === "trend_exec_alignment"
-        || value === "trend_persistence"
-        || value === "trend_slope_strength"
-        || value === "trend_no_chase"
-        || value === "trend_hysteresis"
-        || value === "trend_mtf_stack"
     ) {
         return value;
     }

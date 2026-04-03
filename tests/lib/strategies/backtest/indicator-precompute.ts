@@ -45,21 +45,14 @@ function precomputeIndicatorsFromConfig(
     const atr = calculateATR(highs, lows, closes, config.atrPeriod);
     const trendPeriod = resolveTrendPeriod(config);
     const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
-    const useFastTrendFilter = config.tradeFilterMode === 'trend_exec_alignment'
-        || config.tradeFilterMode === 'trend_persistence'
-        || config.tradeFilterMode === 'trend_slope_strength'
-        || config.tradeFilterMode === 'trend_no_chase'
-        || config.tradeFilterMode === 'trend_hysteresis'
-        || config.tradeFilterMode === 'trend_mtf_stack';
-    const useSlowTrendFilter = config.tradeFilterMode === 'trend_htf_bias'
-        || config.tradeFilterMode === 'trend_mtf_stack';
+    const useFastTrendFilter = config.tradeFilterMode === 'trend_exec_alignment';
+    const useSlowTrendFilter = config.tradeFilterMode === 'trend_htf_bias';
     const htfBiasPeriod = resolveHtfBiasPeriod(config);
     const executionTrendPeriod = resolveExecutionTrendPeriod(config);
     const emaFast = useFastTrendFilter ? calculateEMA(closes, executionTrendPeriod) : [];
     const emaSlow = useSlowTrendFilter ? calculateEMA(closes, htfBiasPeriod) : [];
 
     const useAdx = config.tradeFilterMode === 'adx'
-        || config.tradeFilterMode === 'trend_mtf_stack'
         || config.adxMin > 0
         || config.adxMax > 0;
     const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;

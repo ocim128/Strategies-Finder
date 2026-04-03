@@ -166,11 +166,6 @@
                         <option value="htf_drift">HTF Drift Alignment</option>
                         <option value="trend_htf_bias">HTF Bias (EMA)</option>
                         <option value="trend_exec_alignment">Execution Alignment (EMA)</option>
-                        <option value="trend_persistence">Trend Persistence (X of Y EMA Closes)</option>
-                        <option value="trend_slope_strength">Trend Slope Strength (EMA)</option>
-                        <option value="trend_no_chase">No-Chase Band (EMA Distance)</option>
-                        <option value="trend_hysteresis">Hysteresis (2x EMA Closes)</option>
-                        <option value="trend_mtf_stack">Trend Stack (HTF+Exec+Band+ADX+Hysteresis)</option>
                     </select>
                     <div class="param-hint">Simple trade-quality filter applied before opening positions.</div>
                 </div>
@@ -189,26 +184,8 @@
                         <label class="param-label">Filter Lookback (bars)</label>
                         <input type="number" class="param-input" id="confirmLookback" value="1" min="1">
                     </div>
-                    <div class="param-group">
-                        <label class="param-label">Persistence Window</label>
-                        <input type="number" class="param-input" id="trendPersistenceWindow" value="5" min="1">
-                    </div>
                 </div>
                 <div class="param-row">
-                    <div class="param-group">
-                        <label class="param-label">Persistence Min Bars</label>
-                        <input type="number" class="param-input" id="trendPersistenceMinBars" value="4" min="1">
-                    </div>
-                    <div class="param-group">
-                        <label class="param-label">Slope Lookback</label>
-                        <input type="number" class="param-input" id="trendSlopeLookback" value="5" min="1">
-                    </div>
-                </div>
-                <div class="param-row">
-                    <div class="param-group">
-                        <label class="param-label">Slope Min (%)</label>
-                        <input type="number" class="param-input" id="trendSlopeMinPercent" value="0.2" min="0" step="0.1">
-                    </div>
                     <div class="param-group">
                         <label class="param-label">Volume SMA Period</label>
                         <input type="number" class="param-input" id="volumeSmaPeriod" value="20" min="1">

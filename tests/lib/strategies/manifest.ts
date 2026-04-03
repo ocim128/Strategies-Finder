@@ -71,6 +71,10 @@ import { deadzone_orb_asymmetric_short_exact } from "./lib/deadzone_orb_asymmetr
 import { poly_5m_cumulative_decay_momentum } from "./lib/poly_5m_cumulative_decay_momentum";
 import { poly_5m_pivot_breakout_entry } from "./lib/poly_5m_pivot_breakout_entry";
 import { midpoint_streak_breakout } from "./lib/midpoint_streak_breakout";
+import { close_location_oscillator_extremes } from "./lib/close_location_oscillator_extremes";
+import { efficiency_ratio_implosion } from "./lib/efficiency_ratio_implosion";
+import { single_bar_roc_snapback } from "./lib/single_bar_roc_snapback";
+import { volume_thrust_zscore_continuation } from "./lib/volume_thrust_zscore_continuation";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -147,6 +151,10 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "poly_5m_cumulative_decay_momentum", strategy: poly_5m_cumulative_decay_momentum },
     { key: "poly_5m_pivot_breakout_entry", strategy: poly_5m_pivot_breakout_entry },
     { key: "midpoint_streak_breakout", strategy: midpoint_streak_breakout },
+    { key: "close_location_oscillator_extremes", strategy: close_location_oscillator_extremes },
+    { key: "efficiency_ratio_implosion", strategy: efficiency_ratio_implosion },
+    { key: "single_bar_roc_snapback", strategy: single_bar_roc_snapback },
+    { key: "volume_thrust_zscore_continuation", strategy: volume_thrust_zscore_continuation },
 ];
 
 export function createStrategiesRecordFromManifest(

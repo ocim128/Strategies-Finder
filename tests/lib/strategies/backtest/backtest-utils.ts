@@ -1,5 +1,5 @@
 
-import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../../types/index';
+import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection, type TradeFilterMode } from '../../types/index';
 import { NormalizedSettings } from '../../types/backtest';
 import { toTimeKey } from '../../time-key';
 import { ADAPTIVE_TAKE_PROFIT_DEFAULTS, resolveTakeProfitMode } from '../../take-profit-settings';
@@ -12,8 +12,30 @@ export function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
 }
 
+const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>([
+    'none',
+    'close',
+    'volume',
+    'rsi',
+    'trend',
+    'adx',
+    'htf_drift',
+    'trend_htf_bias',
+    'trend_exec_alignment',
+]);
+
+function resolveTradeFilterMode(value: unknown): TradeFilterMode {
+    if (typeof value === 'string') {
+        const mode = value.trim().toLowerCase() as TradeFilterMode;
+        if (VALID_TRADE_FILTER_MODES.has(mode)) {
+            return mode;
+        }
+    }
+    return 'none';
+}
+
 export function normalizeBacktestSettings(settings?: BacktestSettings): NormalizedSettings {
-    const tradeFilterMode = settings?.tradeFilterMode ?? 'none';
+    const tradeFilterMode = resolveTradeFilterMode(settings?.tradeFilterMode);
     const rawExecutionModel = settings?.executionModel;
     const executionModel = rawExecutionModel === 'next_open' || rawExecutionModel === 'next_close' || rawExecutionModel === 'signal_close'
         ? rawExecutionModel
@@ -56,10 +78,6 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         trendEmaPeriod: Math.max(0, toNumberOr(settings?.trendEmaPeriod, 0)),
         htfBiasEmaPeriod: Math.max(1, Math.round(toNumberOr(settings?.htfBiasEmaPeriod, 200))),
         executionTrendEmaPeriod: Math.max(1, Math.round(toNumberOr(settings?.executionTrendEmaPeriod, 50))),
-        trendPersistenceWindow: Math.max(1, Math.round(toNumberOr(settings?.trendPersistenceWindow, 5))),
-        trendPersistenceMinBars: Math.max(1, Math.round(toNumberOr(settings?.trendPersistenceMinBars, 4))),
-        trendSlopeLookback: Math.max(1, Math.round(toNumberOr(settings?.trendSlopeLookback, 5))),
-        trendSlopeMinPercent: Math.max(0, toNumberOr(settings?.trendSlopeMinPercent, 0.2)),
         trendEmaSlopeBars: Math.max(0, toNumberOr(settings?.trendEmaSlopeBars, 0)),
         atrPercentMin: Math.max(0, toNumberOr(settings?.atrPercentMin, 0)),
         atrPercentMax: Math.max(0, toNumberOr(settings?.atrPercentMax, 0)),

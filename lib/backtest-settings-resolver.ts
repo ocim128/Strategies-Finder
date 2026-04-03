@@ -55,10 +55,6 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     tradeFilterMode: "none" as TradeFilterMode,
     htfBiasEmaPeriod: 200,
     executionTrendEmaPeriod: 50,
-    trendPersistenceWindow: 5,
-    trendPersistenceMinBars: 4,
-    trendSlopeLookback: 5,
-    trendSlopeMinPercent: 0.2,
     confirmLookback: 1,
     volumeSmaPeriod: 20,
     volumeMultiplier: 1.5,
@@ -153,10 +149,6 @@ type NumericResolverKey =
     | "htfBiasEmaPeriod"
     | "executionTrendEmaPeriod"
     | "confirmLookback"
-    | "trendPersistenceWindow"
-    | "trendPersistenceMinBars"
-    | "trendSlopeLookback"
-    | "trendSlopeMinPercent"
     | "volumeSmaPeriod"
     | "volumeMultiplier"
     | "rsiPeriod"
@@ -264,10 +256,6 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
     { key: "htfBiasEmaPeriod", guard: "tradeFilterEnabled" },
     { key: "executionTrendEmaPeriod", guard: "tradeFilterEnabled" },
     { key: "confirmLookback", guard: "tradeFilterEnabled" },
-    { key: "trendPersistenceWindow", guard: "tradeFilterEnabled" },
-    { key: "trendPersistenceMinBars", guard: "tradeFilterEnabled" },
-    { key: "trendSlopeLookback", guard: "tradeFilterEnabled" },
-    { key: "trendSlopeMinPercent", guard: "tradeFilterEnabled" },
     { key: "volumeSmaPeriod", guard: "tradeFilterEnabled" },
     { key: "volumeMultiplier", guard: "tradeFilterEnabled" },
     {
@@ -386,10 +374,6 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "htfBiasEmaPeriod",
     "executionTrendEmaPeriod",
     "confirmLookback",
-    "trendPersistenceWindow",
-    "trendPersistenceMinBars",
-    "trendSlopeLookback",
-    "trendSlopeMinPercent",
     "volumeSmaPeriod",
     "volumeMultiplier",
     "confirmRsiPeriod",
@@ -430,11 +414,6 @@ const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>([
     "htf_drift",
     "trend_htf_bias",
     "trend_exec_alignment",
-    "trend_persistence",
-    "trend_slope_strength",
-    "trend_no_chase",
-    "trend_hysteresis",
-    "trend_mtf_stack",
 ]);
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_flip_loss_2", "combined"]);
 function coerceScalar(rawValue: unknown): unknown {

@@ -132,34 +132,18 @@ describe('Backtest settings compatibility', () => {
         expect(requiresTypescriptEngine({ tradeDirection: 'combined' })).to.equal(true);
     });
 
-    it('preserves new trend filter modes and keeps them on TS engine', () => {
+    it('normalizes removed trend-only filter modes back to none', () => {
         const resolved = resolveBacktestSettingsFromRaw({
             tradeFilterSettingsToggle: true,
             tradeFilterMode: 'trend_mtf_stack',
         } as unknown as BacktestSettings);
-
-        expect(resolved.tradeFilterMode).to.equal('trend_mtf_stack');
-        expect(requiresTypescriptEngine(resolved)).to.equal(true);
-    });
-
-    it('preserves configurable trend filter settings for new trend modes', () => {
-        const resolved = resolveBacktestSettingsFromRaw({
+        const normalized = normalizeStoredBacktestSettings({
             tradeFilterSettingsToggle: true,
             tradeFilterMode: 'trend_persistence',
-            executionTrendEmaPeriod: 34,
-            trendPersistenceWindow: 7,
-            trendPersistenceMinBars: 5,
-            trendSlopeLookback: 6,
-            trendSlopeMinPercent: 0.35,
-        } as unknown as BacktestSettings);
+        });
 
-        expect(resolved.tradeFilterMode).to.equal('trend_persistence');
-        expect(resolved.executionTrendEmaPeriod).to.equal(34);
-        expect(resolved.trendPersistenceWindow).to.equal(7);
-        expect(resolved.trendPersistenceMinBars).to.equal(5);
-        expect(resolved.trendSlopeLookback).to.equal(6);
-        expect(resolved.trendSlopeMinPercent).to.equal(0.35);
-        expect(requiresTypescriptEngine(resolved)).to.equal(true);
+        expect(resolved.tradeFilterMode).to.equal('none');
+        expect(normalized.tradeFilterMode).to.equal('none');
     });
 
     it('preserves guarded resolver semantics across schema-driven numeric and boolean fields', () => {

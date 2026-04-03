@@ -882,13 +882,9 @@ export function setupEventHandlers() {
 
     const tradeFilterModeSelect = dom.tradeFilterMode;
     const tradeFilterFieldConfig: Array<{ inputId: string; modes: string[] }> = [
-        { inputId: 'htfBiasEmaPeriod', modes: ['trend_htf_bias', 'trend_mtf_stack'] },
-        { inputId: 'executionTrendEmaPeriod', modes: ['trend_exec_alignment', 'trend_persistence', 'trend_slope_strength', 'trend_no_chase', 'trend_hysteresis', 'trend_mtf_stack'] },
+        { inputId: 'htfBiasEmaPeriod', modes: ['trend_htf_bias'] },
+        { inputId: 'executionTrendEmaPeriod', modes: ['trend_exec_alignment'] },
         { inputId: 'confirmLookback', modes: ['close', 'trend', 'htf_drift'] },
-        { inputId: 'trendPersistenceWindow', modes: ['trend_persistence'] },
-        { inputId: 'trendPersistenceMinBars', modes: ['trend_persistence'] },
-        { inputId: 'trendSlopeLookback', modes: ['trend_slope_strength'] },
-        { inputId: 'trendSlopeMinPercent', modes: ['trend_slope_strength'] },
         { inputId: 'volumeSmaPeriod', modes: ['volume'] },
         { inputId: 'volumeMultiplier', modes: ['volume'] },
         { inputId: 'confirmRsiPeriod', modes: ['rsi'] },
@@ -900,10 +896,6 @@ export function setupEventHandlers() {
             htfBiasEmaPeriod: dom.htfBiasEmaPeriod,
             executionTrendEmaPeriod: dom.executionTrendEmaPeriod,
             confirmLookback: dom.confirmLookback,
-            trendPersistenceWindow: dom.trendPersistenceWindow,
-            trendPersistenceMinBars: dom.trendPersistenceMinBars,
-            trendSlopeLookback: dom.trendSlopeLookback,
-            trendSlopeMinPercent: dom.trendSlopeMinPercent,
             volumeSmaPeriod: dom.volumeSmaPeriod,
             volumeMultiplier: dom.volumeMultiplier,
             confirmRsiPeriod: dom.confirmRsiPeriod,

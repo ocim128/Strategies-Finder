@@ -76,7 +76,6 @@ const TEST_FILES = [
     "tests/edge-statistics.spec.ts",
     "tests/statistics-utils.spec.ts",
     "tests/walk-forward-thresholds.spec.ts",
-    "tests/parameter-audit.spec.ts",
     "tests/feature-dom-contracts.spec.ts",
     "tests/portfolio-lab.spec.ts",
     "tests/strategy-ensemble.spec.ts",

@@ -18,7 +18,6 @@ It combines:
 - Validate robustness with walk-forward analysis and latest-OOS checks
 - Stress trade-path robustness with Monte Carlo sequence randomization and bootstrap resampling
 - Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics such as timing buckets, break-even win rate, and expectancy without leaving the chart
-- Audit parameter usefulness and redundancy with `Parameter Audit`
 - Run Portfolio Lab across multiple pairs for context, ranking, and sizing decisions
 - Build live or scheduled alert subscriptions through the Worker API
 

@@ -13,7 +13,8 @@ import { isTwoHourInterval } from "./interval-utils";
 import { getLegacyCompatibleTradeFilterModeValue } from "./legacy-settings-compat";
 import { createAccessibleModal, type AccessibleModalController } from "./modal-accessibility";
 import { toFiniteNumber } from "./settings-parse-utils";
-import { BacktestSettings, OHLCVData, Time, Trade } from "./strategies/index";
+import { resolveTradeFilterMode } from "./settings-model";
+import { BacktestSettings, OHLCVData, Time, Trade, type TradeFilterMode } from "./strategies/index";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { formatJakartaTime, isBusinessDayTime } from "./timezone-utils";
 
@@ -449,13 +450,9 @@ export function openSubscriptionInfoModal(
 
     appendModalSection(bodyEl, "Trade Filter", [
         `Filter Enabled: ${settings.tradeFilterSettingsToggle === true ? "on" : "off"}`,
-        `Filter Mode: ${formatValue(getLegacyCompatibleTradeFilterModeValue(settings))}`,
+        `Filter Mode: ${formatValue(resolveTradeFilterMode({ tradeFilterMode: getLegacyCompatibleTradeFilterModeValue(settings) as TradeFilterMode }))}`,
         `Execution EMA Period: ${formatValue(settings.executionTrendEmaPeriod)}`,
         `Confirm Lookback: ${formatValue(settings.confirmLookback)}`,
-        `Trend Persistence Window: ${formatValue(settings.trendPersistenceWindow)}`,
-        `Trend Persistence Min Bars: ${formatValue(settings.trendPersistenceMinBars)}`,
-        `Trend Slope Lookback: ${formatValue(settings.trendSlopeLookback)}`,
-        `Trend Slope Min (%): ${formatValue(settings.trendSlopeMinPercent)}`,
         `Volume SMA Period: ${formatValue(settings.volumeSmaPeriod)}`,
         `Volume Multiplier: ${formatValue(settings.volumeMultiplier)}`,
         `RSI Period: ${formatValue(settings.confirmRsiPeriod)}`,

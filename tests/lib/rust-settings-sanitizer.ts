@@ -3,11 +3,6 @@ import type { BacktestSettings } from "./types/strategies";
 const RUST_UNSUPPORTED_TRADE_FILTER_MODES = new Set([
     "trend_htf_bias",
     "trend_exec_alignment",
-    "trend_persistence",
-    "trend_slope_strength",
-    "trend_no_chase",
-    "trend_hysteresis",
-    "trend_mtf_stack",
 ]);
 
 /**
@@ -140,10 +135,6 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "allowSameBarExit",
     "slippageBps",
     "executionTrendEmaPeriod",
-    "trendPersistenceWindow",
-    "trendPersistenceMinBars",
-    "trendSlopeLookback",
-    "trendSlopeMinPercent",
     "maxOpenTrades",
     "warmUpEntryEnabled",
     "marketMode",
