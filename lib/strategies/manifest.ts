@@ -75,6 +75,85 @@ import { close_location_oscillator_extremes } from "./lib/close_location_oscilla
 import { efficiency_ratio_implosion } from "./lib/efficiency_ratio_implosion";
 import { single_bar_roc_snapback } from "./lib/single_bar_roc_snapback";
 import { volume_thrust_zscore_continuation } from "./lib/volume_thrust_zscore_continuation";
+import { asymmetric_close_location_compression } from "./lib/asymmetric_close_location_compression";
+import { asymmetric_micro_efficiency_burst } from "./lib/asymmetric_micro_efficiency_burst";
+import { asymmetric_typical_price_crossover } from "./lib/asymmetric_typical_price_crossover";
+import { asymmetric_typical_price_rejection } from "./lib/asymmetric_typical_price_rejection";
+import { asymmetric_wick_body_footprint } from "./lib/asymmetric_wick_body_footprint";
+import { golden_median_whipsaw_escape } from "./lib/golden_median_whipsaw_escape";
+import { golden_micro_gap_reversal } from "./lib/golden_micro_gap_reversal";
+import { golden_micro_volatility_spike } from "./lib/golden_micro_volatility_spike";
+import { golden_momentum_snapback } from "./lib/golden_momentum_snapback";
+import { golden_open_drive_failure } from "./lib/golden_open_drive_failure";
+import { asymmetric_body_expansion } from "./lib/asymmetric_body_expansion";
+import { asymmetric_close_location_trend } from "./lib/asymmetric_close_location_trend";
+import { asymmetric_trailing_pullback } from "./lib/asymmetric_trailing_pullback";
+import { asymmetric_wick_barrier } from "./lib/asymmetric_wick_barrier";
+import { asymmetric_wick_to_body } from "./lib/asymmetric_wick_to_body";
+import { donchian_distance_skew_reversion } from "./lib/donchian_distance_skew_reversion";
+import { ema_distance_efficiency_snapback } from "./lib/ema_distance_efficiency_snapback";
+import { golden_gap_fade } from "./lib/golden_gap_fade";
+import { golden_momentum_exhaustion } from "./lib/golden_momentum_exhaustion";
+import { golden_range_breakout } from "./lib/golden_range_breakout";
+import { golden_rsi_asymmetry } from "./lib/golden_rsi_asymmetry";
+import { golden_volume_asymmetry } from "./lib/golden_volume_asymmetry";
+import { keltner_distance_crossover_trend } from "./lib/keltner_distance_crossover_trend";
+import { sar_distance_zscore_exhaustion } from "./lib/sar_distance_zscore_exhaustion";
+import { session_vwap_distance_percentile } from "./lib/session_vwap_distance_percentile";
+import { sma_distance_autocorrelation_fade } from "./lib/sma_distance_autocorrelation_fade";
+import { supertrend_distance_decay_reversion } from "./lib/supertrend_distance_decay_reversion";
+import { supertrend_distance_roc_ignition } from "./lib/supertrend_distance_roc_ignition";
+import { typical_price_vwap_distance_zscore } from "./lib/typical_price_vwap_distance_zscore";
+import { vwap_distance_zscore_fade } from "./lib/vwap_distance_zscore_fade";
+import { asymmetric_fibonacci_pullback } from "./lib/asymmetric_fibonacci_pullback";
+import { asymmetric_keltner_pinch } from "./lib/asymmetric_keltner_pinch";
+import { asymmetric_pivot_retracement } from "./lib/asymmetric_pivot_retracement";
+import { asymmetric_rate_of_change_burst } from "./lib/asymmetric_rate_of_change_burst";
+import { asymmetric_wick_decay_imbalance } from "./lib/asymmetric_wick_decay_imbalance";
+import { asymmetric_zscore_capitulation } from "./lib/asymmetric_zscore_capitulation";
+import { close_location_exhaustion } from "./lib/close_location_exhaustion";
+import { dual_median_crossover } from "./lib/dual_median_crossover";
+import { efficiency_ratio_snapback } from "./lib/efficiency_ratio_snapback";
+import { golden_body_squeeze } from "./lib/golden_body_squeeze";
+import { golden_efficiency_ratio_trend } from "./lib/golden_efficiency_ratio_trend";
+import { golden_entropy_polarization } from "./lib/golden_entropy_polarization";
+import { golden_range_expansion } from "./lib/golden_range_expansion";
+import { kurtosis_range_expansion } from "./lib/kurtosis_range_expansion";
+import { serial_correlation_momentum } from "./lib/serial_correlation_momentum";
+import { skewness_stabilization_fade } from "./lib/skewness_stabilization_fade";
+import { trailing_extremes_breakout } from "./lib/trailing_extremes_breakout";
+import { trend_aligned_pivot_dip } from "./lib/trend_aligned_pivot_dip";
+import { typical_price_zscore_reversion } from "./lib/typical_price_zscore_reversion";
+import { wick_rejection_streak } from "./lib/wick_rejection_streak";
+import { body_to_wick_inversion } from "./lib/body_to_wick_inversion";
+import { clustered_extreme_breakout } from "./lib/clustered_extreme_breakout";
+import { expanding_body_climax } from "./lib/expanding_body_climax";
+import { micro_gap_exhaustion_fade } from "./lib/micro_gap_exhaustion_fade";
+import { micro_wedge_pivot_squeeze } from "./lib/micro_wedge_pivot_squeeze";
+import { nested_inside_bar_coil } from "./lib/nested_inside_bar_coil";
+import { outside_bar_sweep_trap } from "./lib/outside_bar_sweep_trap";
+import { sequential_open_drive_failure } from "./lib/sequential_open_drive_failure";
+import { triple_range_expansion_rejection } from "./lib/triple_range_expansion_rejection";
+import { wick_wall_absorption_breakout } from "./lib/wick_wall_absorption_breakout";
+import { autocorrelation_momentum_shift } from "./lib/autocorrelation_momentum_shift";
+import { close_location_streak_break } from "./lib/close_location_streak_break";
+import { efficiency_ratio_burst } from "./lib/efficiency_ratio_burst";
+import { entropy_compression_breakout } from "./lib/entropy_compression_breakout";
+import { keltner_wick_rejection } from "./lib/keltner_wick_rejection";
+import { median_crossing_compression_breakout } from "./lib/median_crossing_compression_breakout";
+import { range_percentile_momentum } from "./lib/range_percentile_momentum";
+import { session_vwap_zscore_exhaustion } from "./lib/session_vwap_zscore_exhaustion";
+import { wick_polarization_reversion } from "./lib/wick_polarization_reversion";
+import { atr_blowoff_reversal } from "./lib/atr_blowoff_reversal";
+import { decay_sum_momentum_kick } from "./lib/decay_sum_momentum_kick";
+import { entropy_compression_ignition } from "./lib/entropy_compression_ignition";
+import { range_body_decoupling } from "./lib/range_body_decoupling";
+import { roc_percentile_exhaustion } from "./lib/roc_percentile_exhaustion";
+import { skew_roc_divergence } from "./lib/skew_roc_divergence";
+import { volatility_floor_breakaway } from "./lib/volatility_floor_breakaway";
+import { volume_climax_rejection } from "./lib/volume_climax_rejection";
+import { vwap_friction_breakaway } from "./lib/vwap_friction_breakaway";
+import { wick_absorption_imbalance } from "./lib/wick_absorption_imbalance";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -155,6 +234,85 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "efficiency_ratio_implosion", strategy: efficiency_ratio_implosion },
     { key: "single_bar_roc_snapback", strategy: single_bar_roc_snapback },
     { key: "volume_thrust_zscore_continuation", strategy: volume_thrust_zscore_continuation },
+    { key: "asymmetric_close_location_compression", strategy: asymmetric_close_location_compression },
+    { key: "asymmetric_micro_efficiency_burst", strategy: asymmetric_micro_efficiency_burst },
+    { key: "asymmetric_typical_price_crossover", strategy: asymmetric_typical_price_crossover },
+    { key: "asymmetric_typical_price_rejection", strategy: asymmetric_typical_price_rejection },
+    { key: "asymmetric_wick_body_footprint", strategy: asymmetric_wick_body_footprint },
+    { key: "golden_median_whipsaw_escape", strategy: golden_median_whipsaw_escape },
+    { key: "golden_micro_gap_reversal", strategy: golden_micro_gap_reversal },
+    { key: "golden_micro_volatility_spike", strategy: golden_micro_volatility_spike },
+    { key: "golden_momentum_snapback", strategy: golden_momentum_snapback },
+    { key: "golden_open_drive_failure", strategy: golden_open_drive_failure },
+    { key: "asymmetric_body_expansion", strategy: asymmetric_body_expansion },
+    { key: "asymmetric_close_location_trend", strategy: asymmetric_close_location_trend },
+    { key: "asymmetric_trailing_pullback", strategy: asymmetric_trailing_pullback },
+    { key: "asymmetric_wick_barrier", strategy: asymmetric_wick_barrier },
+    { key: "asymmetric_wick_to_body", strategy: asymmetric_wick_to_body },
+    { key: "donchian_distance_skew_reversion", strategy: donchian_distance_skew_reversion },
+    { key: "ema_distance_efficiency_snapback", strategy: ema_distance_efficiency_snapback },
+    { key: "golden_gap_fade", strategy: golden_gap_fade },
+    { key: "golden_momentum_exhaustion", strategy: golden_momentum_exhaustion },
+    { key: "golden_range_breakout", strategy: golden_range_breakout },
+    { key: "golden_rsi_asymmetry", strategy: golden_rsi_asymmetry },
+    { key: "golden_volume_asymmetry", strategy: golden_volume_asymmetry },
+    { key: "keltner_distance_crossover_trend", strategy: keltner_distance_crossover_trend },
+    { key: "sar_distance_zscore_exhaustion", strategy: sar_distance_zscore_exhaustion },
+    { key: "session_vwap_distance_percentile", strategy: session_vwap_distance_percentile },
+    { key: "sma_distance_autocorrelation_fade", strategy: sma_distance_autocorrelation_fade },
+    { key: "supertrend_distance_decay_reversion", strategy: supertrend_distance_decay_reversion },
+    { key: "supertrend_distance_roc_ignition", strategy: supertrend_distance_roc_ignition },
+    { key: "typical_price_vwap_distance_zscore", strategy: typical_price_vwap_distance_zscore },
+    { key: "vwap_distance_zscore_fade", strategy: vwap_distance_zscore_fade },
+    { key: "asymmetric_fibonacci_pullback", strategy: asymmetric_fibonacci_pullback },
+    { key: "asymmetric_keltner_pinch", strategy: asymmetric_keltner_pinch },
+    { key: "asymmetric_pivot_retracement", strategy: asymmetric_pivot_retracement },
+    { key: "asymmetric_rate_of_change_burst", strategy: asymmetric_rate_of_change_burst },
+    { key: "asymmetric_wick_decay_imbalance", strategy: asymmetric_wick_decay_imbalance },
+    { key: "asymmetric_zscore_capitulation", strategy: asymmetric_zscore_capitulation },
+    { key: "close_location_exhaustion", strategy: close_location_exhaustion },
+    { key: "dual_median_crossover", strategy: dual_median_crossover },
+    { key: "efficiency_ratio_snapback", strategy: efficiency_ratio_snapback },
+    { key: "golden_body_squeeze", strategy: golden_body_squeeze },
+    { key: "golden_efficiency_ratio_trend", strategy: golden_efficiency_ratio_trend },
+    { key: "golden_entropy_polarization", strategy: golden_entropy_polarization },
+    { key: "golden_range_expansion", strategy: golden_range_expansion },
+    { key: "kurtosis_range_expansion", strategy: kurtosis_range_expansion },
+    { key: "serial_correlation_momentum", strategy: serial_correlation_momentum },
+    { key: "skewness_stabilization_fade", strategy: skewness_stabilization_fade },
+    { key: "trailing_extremes_breakout", strategy: trailing_extremes_breakout },
+    { key: "trend_aligned_pivot_dip", strategy: trend_aligned_pivot_dip },
+    { key: "typical_price_zscore_reversion", strategy: typical_price_zscore_reversion },
+    { key: "wick_rejection_streak", strategy: wick_rejection_streak },
+    { key: "body_to_wick_inversion", strategy: body_to_wick_inversion },
+    { key: "clustered_extreme_breakout", strategy: clustered_extreme_breakout },
+    { key: "expanding_body_climax", strategy: expanding_body_climax },
+    { key: "micro_gap_exhaustion_fade", strategy: micro_gap_exhaustion_fade },
+    { key: "micro_wedge_pivot_squeeze", strategy: micro_wedge_pivot_squeeze },
+    { key: "nested_inside_bar_coil", strategy: nested_inside_bar_coil },
+    { key: "outside_bar_sweep_trap", strategy: outside_bar_sweep_trap },
+    { key: "sequential_open_drive_failure", strategy: sequential_open_drive_failure },
+    { key: "triple_range_expansion_rejection", strategy: triple_range_expansion_rejection },
+    { key: "wick_wall_absorption_breakout", strategy: wick_wall_absorption_breakout },
+    { key: "autocorrelation_momentum_shift", strategy: autocorrelation_momentum_shift },
+    { key: "close_location_streak_break", strategy: close_location_streak_break },
+    { key: "efficiency_ratio_burst", strategy: efficiency_ratio_burst },
+    { key: "entropy_compression_breakout", strategy: entropy_compression_breakout },
+    { key: "keltner_wick_rejection", strategy: keltner_wick_rejection },
+    { key: "median_crossing_compression_breakout", strategy: median_crossing_compression_breakout },
+    { key: "range_percentile_momentum", strategy: range_percentile_momentum },
+    { key: "session_vwap_zscore_exhaustion", strategy: session_vwap_zscore_exhaustion },
+    { key: "wick_polarization_reversion", strategy: wick_polarization_reversion },
+    { key: "atr_blowoff_reversal", strategy: atr_blowoff_reversal },
+    { key: "decay_sum_momentum_kick", strategy: decay_sum_momentum_kick },
+    { key: "entropy_compression_ignition", strategy: entropy_compression_ignition },
+    { key: "range_body_decoupling", strategy: range_body_decoupling },
+    { key: "roc_percentile_exhaustion", strategy: roc_percentile_exhaustion },
+    { key: "skew_roc_divergence", strategy: skew_roc_divergence },
+    { key: "volatility_floor_breakaway", strategy: volatility_floor_breakaway },
+    { key: "volume_climax_rejection", strategy: volume_climax_rejection },
+    { key: "vwap_friction_breakaway", strategy: vwap_friction_breakaway },
+    { key: "wick_absorption_imbalance", strategy: wick_absorption_imbalance },
 ];
 
 export function createStrategiesRecordFromManifest(
