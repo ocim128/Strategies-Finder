@@ -201,12 +201,36 @@
                 <h4 class="analysis-finder-title">Ensemble Polymarket</h4>
             </div>
             <div class="analysis-finder-status" id="ensemblePolymarketStatus">
-                Run Ensemble Polymarket to compare individual config edge, event-level conflict overlay quality, executable conflict backtest quality, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, the majority-vote overlay, and asymmetric veto pairs against matched 5m Polymarket outcomes.
+                Run Ensemble Polymarket to compare executable config edge, policy recipes, conflict overlays, asymmetric veto pairs, and secondary overrides against matched 5m Polymarket outcomes.
+            </div>
+            <div class="portfolio-lab__control-block ensemble-lab__panel" style="margin-top: 12px;">
+                <div class="portfolio-lab__control-grid ensemble-lab__control-grid">
+                    <label class="analysis-control ensemble-lab__field" for="ensemblePolymarketConflictPolicy">
+                        Conflict Policy
+                        <select class="param-input" id="ensemblePolymarketConflictPolicy">
+                            <option value="skip_conflicts">Skip Conflicts</option>
+                            <option value="primary_veto">Primary + Secondary Veto</option>
+                            <option value="secondary_override">Secondary Override</option>
+                            <option value="best_side_owner">Best-Side Owner</option>
+                        </select>
+                    </label>
+                    <label class="analysis-control ensemble-lab__field" for="ensemblePolymarketDirectionSlice">
+                        Direction Slice
+                        <select class="param-input" id="ensemblePolymarketDirectionSlice">
+                            <option value="all">All</option>
+                            <option value="long_only">Long Only</option>
+                            <option value="short_only">Short Only</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="ensemble-lab__helper">
+                    The selected policy controls the main replayable recipe. Direction Slice helps expose configs that only carry edge on one side.
+                </div>
             </div>
             <div class="finder-strategy-actions ensemble-lab__actions" role="group" aria-label="Ensemble Polymarket tradable recipe actions">
-                <button class="btn btn-secondary btn-compact" id="ensembleLoadConflictBacktestBtn" type="button">Load Conflict Backtest</button>
+                <button class="btn btn-secondary btn-compact" id="ensembleLoadConflictBacktestBtn" type="button">Load Selected Policy Backtest</button>
                 <button class="btn btn-secondary btn-compact" id="ensembleLoadBestVetoBacktestBtn" type="button">Load Best Veto Backtest</button>
-                <button class="btn btn-secondary btn-compact" id="ensembleSaveConflictRecipeBtn" type="button">Save Conflict Recipe</button>
+                <button class="btn btn-secondary btn-compact" id="ensembleSaveConflictRecipeBtn" type="button">Save Selected Policy Recipe</button>
                 <button class="btn btn-secondary btn-compact" id="ensembleSaveBestVetoRecipeBtn" type="button">Save Best Veto Recipe</button>
             </div>
             <div class="portfolio-lab__control-block ensemble-lab__panel" style="margin-top: 12px;">
@@ -233,7 +257,7 @@
                     <button class="btn btn-secondary btn-compact" id="ensembleSignalRecipeDeleteBtn" type="button">Delete Recipe</button>
                 </div>
                 <div class="ensemble-lab__helper" id="ensembleSignalRecipeStatus">
-                    Save a tradable conflict-filter or best-veto recipe from the current run to export it later as an external signal.
+                    Save a tradable selected-policy or best-veto recipe from the current run to export it later as an external signal.
                 </div>
             </div>
             <div class="empty-state empty-state-compact ensemble-lab__polymarket-empty" id="ensemblePolymarketEmpty" style="display: none;">
@@ -243,7 +267,7 @@
             <div class="portfolio-lab__insights ensemble-lab__polymarket-agreement" id="ensemblePolymarketAgreement"></div>
             <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
                 <div class="portfolio-lab__table-caption">
-                    Each selected config is backtested independently, then its executed trades are scored against matched Polymarket YES/NO outcomes. The conflict block above now separates event-level conflict overlay quality from the executable conflict backtest result, alongside aligned-signal coverage, true mixed-direction conflicts, and no-signal gaps. The majority-vote block appears only when it adds information, the veto scan tests "trade A, let B veto only opposite signals", and the pooled config stats are not a tradable ensemble rule.
+                    Each selected config is backtested independently, then its executed trades are scored against matched Polymarket YES/NO outcomes. Rows are ranked by executable edge for the selected direction slice, using Wilson confidence and baseline-relative lift rather than raw pooled win rate.
                 </div>
                 <table class="analysis-table portfolio-lab__table">
                     <thead>
@@ -265,7 +289,7 @@
                     <tbody id="ensemblePolymarketTableBody">
                         <tr>
                             <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                                Run Ensemble Polymarket to compare individual config edge and the majority-vote overlay against Polymarket outcomes.
+                                Run Ensemble Polymarket to compare executable config edge against Polymarket outcomes.
                             </td>
                         </tr>
                     </tbody>
@@ -301,6 +325,42 @@
                             <tr>
                                 <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
                                     Run Ensemble Polymarket to rank asymmetric veto pairs.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="analysis-finder-section portfolio-lab__section">
+                <div class="analysis-finder-header">
+                    <h4 class="analysis-finder-title">Secondary Override Scan</h4>
+                </div>
+                <div class="simulation-grid" id="ensemblePolymarketOverrideSummary"></div>
+                <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
+                    <div class="portfolio-lab__table-caption">
+                        Ordered pairs ranked as "trade the Primary config, but when the Secondary fires the opposite Polymarket side on the same event, force the Secondary side instead." This is useful when one saved config has better one-sided edge than the anchor.
+                    </div>
+                    <table class="analysis-table portfolio-lab__table">
+                        <thead>
+                            <tr>
+                                <th>Primary</th>
+                                <th>Secondary</th>
+                                <th>Kept</th>
+                                <th>Wins</th>
+                                <th>Losses</th>
+                                <th>Overrides</th>
+                                <th>Retention</th>
+                                <th>Overlap</th>
+                                <th>Post-Override WR</th>
+                                <th>Lift vs Primary</th>
+                                <th>Wilson Lift</th>
+                                <th>Verdict</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ensemblePolymarketOverrideTableBody">
+                            <tr>
+                                <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                    Run Ensemble Polymarket to rank secondary-override pairs.
                                 </td>
                             </tr>
                         </tbody>

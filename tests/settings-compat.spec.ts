@@ -562,6 +562,7 @@ describe('Backtest settings compatibility', () => {
             symbol: 'XRPUSDT',
             interval: '5m',
             mode: 'target_conflict_filter',
+            directionSlice: 'long_only',
             anchorConfigName: 'Target Config',
             anchorConfig: {
                 name: 'Target Config',
@@ -606,6 +607,7 @@ describe('Backtest settings compatibility', () => {
 
         expect(normalized).to.not.equal(null);
         expect(normalized?.source).to.equal('ensemble_polymarket');
+        expect(normalized?.directionSlice).to.equal('long_only');
         expect(normalized?.anchorConfig.strategyParams).to.deep.equal({ threshold: 12 });
         expect(normalized?.componentConfigs).to.have.length(2);
         expect(normalized?.metrics.keptTrades).to.equal(42);
@@ -629,6 +631,7 @@ describe('Backtest settings compatibility', () => {
             symbol: 'XRPUSDT',
             interval: '5m',
             mode: 'target_conflict_filter',
+            directionSlice: 'all',
             anchorConfigName: 'Anchor',
             anchorConfig: {
                 name: 'Anchor',

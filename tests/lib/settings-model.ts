@@ -133,7 +133,13 @@ export interface StrategyConfig {
     backtestSettings: BacktestSettingsData;
 }
 
-export type EnsembleSignalRecipeMode = "target_conflict_filter" | "primary_veto";
+export type EnsembleSignalRecipeMode =
+    | "target_conflict_filter"
+    | "primary_veto"
+    | "secondary_override"
+    | "best_side_owner";
+
+export type EnsembleSignalRecipeDirectionSlice = "all" | "long_only" | "short_only";
 
 export interface EnsembleSignalRecipeMetrics {
     keptTrades: number;
@@ -155,11 +161,15 @@ export interface EnsembleSignalRecipe {
     symbol: string;
     interval: string;
     mode: EnsembleSignalRecipeMode;
+    directionSlice: EnsembleSignalRecipeDirectionSlice;
     anchorConfigName: string;
     anchorConfig: StrategyConfig;
     componentConfigs: StrategyConfig[];
     primaryConfigName?: string;
+    secondaryConfigName?: string;
     vetoConfigName?: string;
+    longOwnerConfigName?: string;
+    shortOwnerConfigName?: string;
     notes: string;
     metrics: EnsembleSignalRecipeMetrics;
 }
@@ -466,7 +476,17 @@ export function normalizeStoredEnsembleSignalRecipe(raw: unknown): EnsembleSigna
         return null;
     }
 
-    const mode = source.mode === "primary_veto" ? "primary_veto" : "target_conflict_filter";
+    const mode = source.mode === "primary_veto"
+        || source.mode === "secondary_override"
+        || source.mode === "best_side_owner"
+        || source.mode === "target_conflict_filter"
+        ? source.mode
+        : "target_conflict_filter";
+    const directionSlice = source.directionSlice === "long_only"
+        || source.directionSlice === "short_only"
+        || source.directionSlice === "all"
+        ? source.directionSlice
+        : "all";
     const metricsSource = toRecord(source.metrics) ?? {};
     const nowIso = new Date().toISOString();
 
@@ -478,11 +498,15 @@ export function normalizeStoredEnsembleSignalRecipe(raw: unknown): EnsembleSigna
         symbol: readString(source.symbol, DEFAULT_APP_SETTINGS.currentSymbol),
         interval: readString(source.interval, DEFAULT_APP_SETTINGS.currentInterval),
         mode,
+        directionSlice,
         anchorConfigName: readString(source.anchorConfigName, anchorConfig.name),
         anchorConfig,
         componentConfigs,
         primaryConfigName: readString(source.primaryConfigName, ""),
+        secondaryConfigName: readString(source.secondaryConfigName, ""),
         vetoConfigName: readString(source.vetoConfigName, ""),
+        longOwnerConfigName: readString(source.longOwnerConfigName, ""),
+        shortOwnerConfigName: readString(source.shortOwnerConfigName, ""),
         notes: readString(source.notes, ""),
         metrics: {
             keptTrades: Math.max(0, Math.floor(readNumber(metricsSource.keptTrades, 0))),

@@ -78,6 +78,91 @@ export function buildPrimaryVetoPreparedSignals<TArtifact extends EnsembleSignal
         .sort(compareSignalsByBarIndexThenTime);
 }
 
+export function buildPrimarySecondaryOverridePreparedSignals<TArtifact extends EnsembleSignalFilterArtifact>(
+    primaryArtifact: TArtifact,
+    secondaryArtifact: TArtifact
+): Signal[] {
+    const secondarySignalByEventSide = buildSignalLookupByEventSide(secondaryArtifact.preparedSignals);
+    const deduped = new Map<string, Signal>();
+
+    for (const signal of primaryArtifact.preparedSignals) {
+        if (!isEntrySignalForTradeDirection(signal, primaryArtifact.tradeDirection)) {
+            deduped.set(buildEventSideKey(signal.time, signal.type), signal);
+            continue;
+        }
+
+        const direction = signal.type === "buy" ? "long" : "short";
+        const vote = resolveContextVote(direction, secondaryArtifact.entryPresenceByTime.get(timeKey(signal.time)));
+        if (vote === "oppose" || vote === "conflict") {
+            const replacementType: Signal["type"] = signal.type === "buy" ? "sell" : "buy";
+            const replacement = secondarySignalByEventSide.get(buildEventSideKey(signal.time, replacementType));
+            if (replacement) {
+                deduped.set(buildEventSideKey(replacement.time, replacement.type), replacement);
+            }
+            continue;
+        }
+
+        deduped.set(buildEventSideKey(signal.time, signal.type), signal);
+    }
+
+    return Array.from(deduped.values()).sort(compareSignalsByBarIndexThenTime);
+}
+
+export function buildBestSideOwnerPreparedSignals<TArtifact extends EnsembleSignalFilterArtifact>(args: {
+    longArtifact?: TArtifact | null;
+    shortArtifact?: TArtifact | null;
+}): Signal[] {
+    const byTime = new Map<string, { buy?: Signal; sell?: Signal }>();
+
+    for (const signal of args.longArtifact?.preparedSignals ?? []) {
+        if (signal.type !== "buy") {
+            continue;
+        }
+        const bucket = byTime.get(timeKey(signal.time)) ?? {};
+        bucket.buy ??= signal;
+        byTime.set(timeKey(signal.time), bucket);
+    }
+
+    for (const signal of args.shortArtifact?.preparedSignals ?? []) {
+        if (signal.type !== "sell") {
+            continue;
+        }
+        const bucket = byTime.get(timeKey(signal.time)) ?? {};
+        bucket.sell ??= signal;
+        byTime.set(timeKey(signal.time), bucket);
+    }
+
+    const merged: Signal[] = [];
+    for (const bucket of byTime.values()) {
+        if (bucket.buy && bucket.sell) {
+            continue;
+        }
+        if (bucket.buy) {
+            merged.push(bucket.buy);
+        }
+        if (bucket.sell) {
+            merged.push(bucket.sell);
+        }
+    }
+
+    return merged.sort(compareSignalsByBarIndexThenTime);
+}
+
+function buildSignalLookupByEventSide(signals: readonly Signal[]): Map<string, Signal> {
+    const lookup = new Map<string, Signal>();
+    for (const signal of signals) {
+        const key = buildEventSideKey(signal.time, signal.type);
+        if (!lookup.has(key)) {
+            lookup.set(key, signal);
+        }
+    }
+    return lookup;
+}
+
+function buildEventSideKey(time: Signal["time"], type: Signal["type"]): string {
+    return `${timeKey(time)}:${type}`;
+}
+
 function compareSignalsByBarIndexThenTime(left: Signal, right: Signal): number {
     const leftBarIndex = Number.isFinite(left.barIndex as number) ? Math.trunc(left.barIndex as number) : null;
     const rightBarIndex = Number.isFinite(right.barIndex as number) ? Math.trunc(right.barIndex as number) : null;

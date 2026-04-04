@@ -2,6 +2,9 @@ import { setVisible } from "./dom-utils";
 import type { EnsembleLabDom } from "./strategy-ensemble-dom";
 import type {
     EnsemblePolymarketConfigResult,
+    EnsemblePolymarketConflictPolicy,
+    EnsemblePolymarketDirectionSlice,
+    EnsemblePolymarketOverridePairResult,
     EnsemblePolymarketRunResult,
     EnsemblePolymarketVetoPairResult,
     EnsemblePolymarketVerdict,
@@ -11,7 +14,7 @@ import { escapeHtml } from "./strategy-ensemble-renderer";
 const EMPTY_TABLE_ROW = `
     <tr>
         <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
-            Run Ensemble Polymarket to compare individual config edge and the majority-vote overlay against Polymarket outcomes.
+            Run Ensemble Polymarket to compare executable config edge against Polymarket outcomes.
         </td>
     </tr>
 `;
@@ -24,12 +27,22 @@ const EMPTY_VETO_TABLE_ROW = `
     </tr>
 `;
 
+const EMPTY_OVERRIDE_TABLE_ROW = `
+    <tr>
+        <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+            Run Ensemble Polymarket to rank secondary-override pairs.
+        </td>
+    </tr>
+`;
+
 export function renderEnsemblePolymarketResults(
     dom: EnsembleLabDom,
     result: EnsemblePolymarketRunResult
 ): void {
     dom.ensemblePolymarketSection.style.display = "";
     setVisible(dom.ensemblePolymarketEmpty, false);
+
+    const selectedPolicyResult = result.selectedPolicyResult;
     const showMajorityVote = result.ensembleSummary.configsScored > 2;
     const executableConflict = result.conflictExecutableOverlay ?? null;
     const conflictFilteredConflictRate = result.conflictFilteredOverlay.evaluatedEvents > 0
@@ -40,92 +53,106 @@ export function renderEnsemblePolymarketResults(
         : 0;
 
     const summaryCards = [
+        card("Selected Policy", describeConflictPolicy(result.selectedPolicy)),
+        card("Direction Slice", describeDirectionSlice(result.directionSlice)),
+        card("Policy Win Rate", selectedPolicyResult ? formatPercent(selectedPolicyResult.winRate) : "-"),
+        card("Policy Scored Trades", selectedPolicyResult ? String(selectedPolicyResult.scoredTrades) : "-"),
+        card("Policy Wilson LB", selectedPolicyResult ? selectedPolicyResult.wilsonLowerBound.toFixed(3) : "-"),
+        card("Policy Δ vs Baseline", selectedPolicyResult ? formatSignedPercent(selectedPolicyResult.deltaVsBaseline) : "-"),
+        card(
+            "Policy Retention",
+            selectedPolicyResult?.retentionRate != null ? formatPercent(selectedPolicyResult.retentionRate) : "-"
+        ),
         card("Configs Scored", String(result.ensembleSummary.configsScored)),
         card("Total Scored Trades", String(result.ensembleSummary.totalScoredTrades)),
         card("Event-Level Conflict WR", formatPercent(result.conflictFilteredOverlay.winRate)),
         card("Executable Conflict WR", executableConflict ? formatPercent(executableConflict.winRate) : "-"),
-        card("Executable Conflict Trades", executableConflict ? String(executableConflict.totalTrades) : "-"),
-        card("Executable Retention", executableConflict ? formatPercent(executableConflict.retentionRate) : "-"),
-        card("Aligned-Signal Coverage", formatPercent(result.conflictFilteredOverlay.coverage)),
-        card("Overlap With Signal", formatPercent(overlapWithSignalRate)),
         card("Conflict Rate", formatPercent(conflictFilteredConflictRate)),
         card("No-Signal Rate", formatPercent(result.conflictFilteredOverlay.noSignalRate)),
-        card("Pooled Config Win Rate", formatPercent(result.ensembleSummary.ensembleWinRate)),
+        card("Overlap With Signal", formatPercent(overlapWithSignalRate)),
         card(
-            "Best Config Win Rate",
+            "Best Config",
             `${formatPercent(result.ensembleSummary.bestConfigWinRate)} (${result.ensembleSummary.bestConfigName})`
         ),
-        card("Always YES Baseline", formatPercent(result.ensembleSummary.alwaysYesBaseline)),
-        card("Always NO Baseline", formatPercent(result.ensembleSummary.alwaysNoBaseline)),
         card("Best Baseline", formatPercent(result.ensembleSummary.bestBaseline)),
-        card(
-            "Pooled Delta vs Best Baseline",
-            formatSignedPercent(result.ensembleSummary.ensembleDeltaVsBestBaseline)
-        ),
     ];
 
     if (showMajorityVote) {
-        summaryCards.splice(6, 0, card("Majority Vote Win Rate", formatPercent(result.majorityVoteOverlay.winRate)));
+        summaryCards.push(card("Majority Vote WR", formatPercent(result.majorityVoteOverlay.winRate)));
     }
 
     dom.ensemblePolymarketSummary.innerHTML = summaryCards.join("");
 
     const agreementInsights = [
+        selectedPolicyResult
+            ? insight(
+                "Selected Policy",
+                `${selectedPolicyResult.label}: ${selectedPolicyResult.description} It produced ${selectedPolicyResult.scoredTrades} scored trades, ${selectedPolicyResult.wins} wins, ${selectedPolicyResult.losses} losses, ${formatPercent(selectedPolicyResult.winRate)} win rate, Wilson ${selectedPolicyResult.wilsonLowerBound.toFixed(3)}, and ${formatSignedPercent(selectedPolicyResult.deltaVsBaseline)} versus the baseline.`
+            )
+            : insight(
+                "Selected Policy",
+                `No executable result is available for ${describeConflictPolicy(result.selectedPolicy)} on the current ${describeDirectionSlice(result.directionSlice)} slice. Try another policy or widen the context set.`
+            ),
         insight(
-            "Event-Level Conflict Overlay",
-            `${result.conflictFilteredOverlay.scoredEvents} scored events, ${result.conflictFilteredOverlay.wins} wins, ${result.conflictFilteredOverlay.losses} losses, ${formatPercent(result.conflictFilteredOverlay.winRate)} win rate. This is the pre-execution signal-quality read for "skip mixed-direction conflicts".`
+            "Direction Slice",
+            result.directionSlice === "all"
+                ? "Both long and short trades are included in this run."
+                : `Only ${describeDirectionSlice(result.directionSlice).toLowerCase()} trades are included in this run. This helps expose configs that only carry edge on one side.`
         ),
         insight(
-            "Executable Conflict Backtest",
+            "Conflict Overlay",
+            `${result.conflictFilteredOverlay.scoredEvents} scored overlay events, ${result.conflictFilteredOverlay.wins} wins, ${result.conflictFilteredOverlay.losses} losses, ${formatPercent(result.conflictFilteredOverlay.winRate)} win rate, ${formatPercent(result.conflictFilteredOverlay.coverage)} coverage, and ${result.conflictFilteredOverlay.mixedDirectionEvents} mixed-direction conflicts skipped before execution.`
+        ),
+        insight(
+            "Executable Conflict Replay",
             executableConflict
-                ? `${executableConflict.totalTrades} executed trades, ${executableConflict.wins} wins, ${executableConflict.losses} losses, ${formatPercent(executableConflict.winRate)} win rate. This is the tradable target-anchored conflict recipe backtest after execution rules are applied.`
-                : "Executable conflict backtest metrics are unavailable for this run."
-        ),
-        insight(
-            "Execution Gap",
-            executableConflict
-                ? `${executableConflict.skippedByExecution} event-level overlay signals did not become scored executable trades, leaving ${formatPercent(executableConflict.retentionRate)} executable retention and ${formatPercent(executableConflict.coverage)} evaluated-event coverage after execution.`
-                : "Executable retention is unavailable for this run."
-        ),
-        insight(
-            "Conflict Skips",
-            `${result.conflictFilteredOverlay.mixedDirectionEvents} mixed-direction events were skipped because selected configs disagreed. ${result.conflictFilteredOverlay.noSignalEvents} additional evaluated events had no overlay signal from the selected configs, leaving ${formatPercent(result.conflictFilteredOverlay.coverage)} coverage.`
-        ),
-        insight(
-            "Vote Shape",
-            `${result.conflictFilteredOverlay.unanimousEvents} unanimous one-side events, ${result.conflictFilteredOverlay.mixedDirectionEvents} mixed-direction events, ${result.majorityVoteOverlay.conflictedEvents} tied-majority skips.`
-        ),
-        insight(
-            "Interpretation",
-            `If the question is "short config X plus long config Y, but ignore trades when they conflict", compare Event-Level Conflict WR with Executable Conflict WR. The first measures Polymarket vote quality, the second measures the actual target-anchored recipe you can preview and export as an external signal. Pooled Config Win Rate is not a tradable ensemble rule.`
+                ? `${executableConflict.totalTrades} executed trades, ${formatPercent(executableConflict.winRate)} win rate, ${formatPercent(executableConflict.retentionRate)} retention from event-level conflict signals, and ${executableConflict.skippedByExecution} overlay signals lost in execution.`
+                : "Executable conflict replay metrics are unavailable for this run."
         ),
     ];
 
     if (showMajorityVote) {
-        agreementInsights.splice(2, 0, insight(
+        agreementInsights.push(insight(
             "Majority Vote Overlay",
-            `${result.majorityVoteOverlay.scoredEvents} scored events, ${result.majorityVoteOverlay.wins} wins, ${result.majorityVoteOverlay.losses} losses, ${formatPercent(result.majorityVoteOverlay.winRate)} win rate. This variant still scores non-tied mixed votes.`
+            `${result.majorityVoteOverlay.scoredEvents} scored events, ${result.majorityVoteOverlay.wins} wins, ${result.majorityVoteOverlay.losses} losses, and ${formatPercent(result.majorityVoteOverlay.winRate)} win rate.`
         ));
     } else {
-        agreementInsights.splice(2, 0, insight(
+        agreementInsights.push(insight(
             "Two-Config Note",
-            "With exactly 2 scored configs, majority vote adds no information because every disagreement is a tie. Read the conflict-filtered overlay as the practical ensemble result."
+            "With exactly 2 scored configs, majority vote adds no information because every disagreement becomes a tie."
+        ));
+    }
+
+    if (result.policyResults.bestSideOwner) {
+        const policy = result.policyResults.bestSideOwner;
+        const ownerLabel = [
+            policy.longOwnerConfigName ? `long ${policy.longOwnerConfigName}` : "",
+            policy.shortOwnerConfigName ? `short ${policy.shortOwnerConfigName}` : "",
+        ].filter((part) => part.length > 0).join(" + ");
+        agreementInsights.push(insight(
+            "Best-Side Owner",
+            `${ownerLabel || "No owner pair"} produced ${policy.scoredTrades} scored trades at ${formatPercent(policy.winRate)} win rate with ${formatSignedPercent(policy.deltaVsBaseline)} versus the baseline.`
         ));
     }
 
     if (result.vetoScan.bestPair) {
         agreementInsights.push(insight(
             "Best Veto Pair",
-            `${result.vetoScan.bestPair.primaryConfigName} improved to ${formatPercent(result.vetoScan.bestPair.postVetoWinRate)} when ${result.vetoScan.bestPair.vetoConfigName} vetoed opposite-side events, leaving ${result.vetoScan.bestPair.keptEvents} kept trades, ${result.vetoScan.bestPair.keptWins} wins, ${result.vetoScan.bestPair.keptLosses} losses, ${formatPercent(result.vetoScan.bestPair.retentionRate)} retention, and ${formatSignedPercent(result.vetoScan.bestPair.winRateLift)} win-rate lift.`
+            `${result.vetoScan.bestPair.primaryConfigName} improved to ${formatPercent(result.vetoScan.bestPair.postVetoWinRate)} when ${result.vetoScan.bestPair.vetoConfigName} vetoed opposite-side events, leaving ${result.vetoScan.bestPair.keptEvents} kept trades and ${formatSignedPercent(result.vetoScan.bestPair.winRateLift)} win-rate lift.`
+        ));
+    }
+
+    if (result.overrideScan.bestPair) {
+        agreementInsights.push(insight(
+            "Best Override Pair",
+            `${result.overrideScan.bestPair.primaryConfigName} improved to ${formatPercent(result.overrideScan.bestPair.postOverrideWinRate)} when ${result.overrideScan.bestPair.secondaryConfigName} overrode opposite-side conflicts, leaving ${result.overrideScan.bestPair.keptEvents} kept trades and ${formatSignedPercent(result.overrideScan.bestPair.winRateLift)} win-rate lift.`
         ));
     }
 
     dom.ensemblePolymarketAgreement.innerHTML = agreementInsights.join("");
 
     dom.ensemblePolymarketTableBody.innerHTML = result.configResults.length > 0
-        ? result.configResults
-            .map((configResult) => renderConfigRow(configResult))
-            .join("")
+        ? result.configResults.map((configResult) => renderConfigRow(configResult)).join("")
         : EMPTY_TABLE_ROW;
 
     const bestVetoPair = result.vetoScan.bestPair;
@@ -145,17 +172,37 @@ export function renderEnsemblePolymarketResults(
     dom.ensemblePolymarketVetoTableBody.innerHTML = result.vetoScan.pairResults.length > 0
         ? result.vetoScan.pairResults.map((pairResult) => renderVetoPairRow(pairResult)).join("")
         : EMPTY_VETO_TABLE_ROW;
+
+    const bestOverridePair = result.overrideScan.bestPair;
+    dom.ensemblePolymarketOverrideSummary.innerHTML = bestOverridePair
+        ? [
+            card("Best Override Pair", `${bestOverridePair.primaryConfigName} -> ${bestOverridePair.secondaryConfigName}`),
+            card("Best Kept Trades", String(bestOverridePair.keptEvents)),
+            card("Best Wins", String(bestOverridePair.keptWins)),
+            card("Best Losses", String(bestOverridePair.keptLosses)),
+            card("Best Post-Override WR", formatPercent(bestOverridePair.postOverrideWinRate)),
+            card("Best WR Lift", formatSignedPercent(bestOverridePair.winRateLift)),
+            card("Best Retention", formatPercent(bestOverridePair.retentionRate)),
+            card("Positive Pairs", String(result.overrideScan.positivePairCount)),
+        ].join("")
+        : "";
+
+    dom.ensemblePolymarketOverrideTableBody.innerHTML = result.overrideScan.pairResults.length > 0
+        ? result.overrideScan.pairResults.map((pairResult) => renderOverridePairRow(pairResult)).join("")
+        : EMPTY_OVERRIDE_TABLE_ROW;
 }
 
 export function resetEnsemblePolymarketPanel(dom: EnsembleLabDom): void {
     dom.ensemblePolymarketSection.style.display = "";
     setVisible(dom.ensemblePolymarketEmpty, false);
-    dom.ensemblePolymarketStatus.textContent = "Run Ensemble Polymarket to compare individual config edge, event-level conflict overlay quality, the executable target-anchored conflict recipe backtest, aligned-signal coverage, true mixed-direction conflict skips, no-signal gaps, the majority-vote overlay, and asymmetric veto pairs against matched 5m Polymarket outcomes.";
+    dom.ensemblePolymarketStatus.textContent = "Run Ensemble Polymarket to compare executable config edge, policy recipes, veto pairs, and override pairs against matched 5m Polymarket outcomes.";
     dom.ensemblePolymarketSummary.innerHTML = "";
     dom.ensemblePolymarketAgreement.innerHTML = "";
     dom.ensemblePolymarketTableBody.innerHTML = EMPTY_TABLE_ROW;
     dom.ensemblePolymarketVetoSummary.innerHTML = "";
     dom.ensemblePolymarketVetoTableBody.innerHTML = EMPTY_VETO_TABLE_ROW;
+    dom.ensemblePolymarketOverrideSummary.innerHTML = "";
+    dom.ensemblePolymarketOverrideTableBody.innerHTML = EMPTY_OVERRIDE_TABLE_ROW;
 }
 
 function renderConfigRow(result: EnsemblePolymarketConfigResult): string {
@@ -189,29 +236,82 @@ function renderConfigRow(result: EnsemblePolymarketConfigResult): string {
 }
 
 function renderVetoPairRow(result: EnsemblePolymarketVetoPairResult): string {
-    const verdictClass = `ensemble-lab__polymarket-verdict ${formatVetoVerdictClass(result.verdict)}`;
-    const rowStyle = result.verdict === "interesting"
+    return renderPairRow({
+        primaryConfigName: result.primaryConfigName,
+        primaryFamilyLabel: result.primaryFamilyLabel,
+        secondaryConfigName: result.vetoConfigName,
+        secondaryFamilyLabel: result.vetoFamilyLabel,
+        keptEvents: result.keptEvents,
+        keptWins: result.keptWins,
+        keptLosses: result.keptLosses,
+        changedEvents: result.vetoedEvents,
+        retentionRate: result.retentionRate,
+        overlapRate: result.overlapRate,
+        postWinRate: result.postVetoWinRate,
+        winRateLift: result.winRateLift,
+        wilsonLift: result.wilsonLift,
+        verdict: result.verdict,
+    });
+}
+
+function renderOverridePairRow(result: EnsemblePolymarketOverridePairResult): string {
+    return renderPairRow({
+        primaryConfigName: result.primaryConfigName,
+        primaryFamilyLabel: result.primaryFamilyLabel,
+        secondaryConfigName: result.secondaryConfigName,
+        secondaryFamilyLabel: result.secondaryFamilyLabel,
+        keptEvents: result.keptEvents,
+        keptWins: result.keptWins,
+        keptLosses: result.keptLosses,
+        changedEvents: result.overriddenEvents,
+        retentionRate: result.retentionRate,
+        overlapRate: result.overlapRate,
+        postWinRate: result.postOverrideWinRate,
+        winRateLift: result.winRateLift,
+        wilsonLift: result.wilsonLift,
+        verdict: result.verdict,
+    });
+}
+
+function renderPairRow(args: {
+    primaryConfigName: string;
+    primaryFamilyLabel: string;
+    secondaryConfigName: string;
+    secondaryFamilyLabel: string;
+    keptEvents: number;
+    keptWins: number;
+    keptLosses: number;
+    changedEvents: number;
+    retentionRate: number;
+    overlapRate: number;
+    postWinRate: number;
+    winRateLift: number;
+    wilsonLift: number;
+    verdict: EnsemblePolymarketVetoPairResult["verdict"];
+}): string {
+    const verdictClass = `ensemble-lab__polymarket-verdict ${formatVetoVerdictClass(args.verdict)}`;
+    const rowStyle = args.verdict === "interesting"
         ? ' style="background:var(--bg-success-subtle,rgba(0,200,100,0.08));"'
-        : result.verdict === "marginal"
+        : args.verdict === "marginal"
             ? ' style="background:var(--bg-info-subtle,rgba(0,120,255,0.08));"'
-            : result.verdict === "neutral"
+            : args.verdict === "neutral"
                 ? ' style="background:var(--bg-danger-subtle,rgba(220,80,80,0.08));"'
                 : "";
 
     return `
         <tr${rowStyle}>
-            <td>${escapeHtml(result.primaryConfigName)}<br><span class="ensemble-lab__config-strategy">${escapeHtml(result.primaryFamilyLabel)}</span></td>
-            <td>${escapeHtml(result.vetoConfigName)}<br><span class="ensemble-lab__config-strategy">${escapeHtml(result.vetoFamilyLabel)}</span></td>
-            <td>${result.keptEvents}</td>
-            <td>${result.keptWins}</td>
-            <td>${result.keptLosses}</td>
-            <td>${result.vetoedEvents}</td>
-            <td>${formatPercent(result.retentionRate)}</td>
-            <td>${formatPercent(result.overlapRate)}</td>
-            <td>${formatPercent(result.postVetoWinRate)}</td>
-            <td>${formatSignedPercent(result.winRateLift)}</td>
-            <td>${formatSignedFixed(result.wilsonLift)}</td>
-            <td><span class="${verdictClass}">${escapeHtml(formatVetoVerdictLabel(result.verdict))}</span></td>
+            <td>${escapeHtml(args.primaryConfigName)}<br><span class="ensemble-lab__config-strategy">${escapeHtml(args.primaryFamilyLabel)}</span></td>
+            <td>${escapeHtml(args.secondaryConfigName)}<br><span class="ensemble-lab__config-strategy">${escapeHtml(args.secondaryFamilyLabel)}</span></td>
+            <td>${args.keptEvents}</td>
+            <td>${args.keptWins}</td>
+            <td>${args.keptLosses}</td>
+            <td>${args.changedEvents}</td>
+            <td>${formatPercent(args.retentionRate)}</td>
+            <td>${formatPercent(args.overlapRate)}</td>
+            <td>${formatPercent(args.postWinRate)}</td>
+            <td>${formatSignedPercent(args.winRateLift)}</td>
+            <td>${formatSignedFixed(args.wilsonLift)}</td>
+            <td><span class="${verdictClass}">${escapeHtml(formatVetoVerdictLabel(args.verdict))}</span></td>
         </tr>
     `;
 }
@@ -245,6 +345,32 @@ function formatSignedPercent(value: number): string {
 function formatSignedFixed(value: number): string {
     const sign = value >= 0 ? "+" : "-";
     return `${sign}${Math.abs(value).toFixed(3)}`;
+}
+
+function describeConflictPolicy(policy: EnsemblePolymarketConflictPolicy): string {
+    switch (policy) {
+        case "primary_veto":
+            return "Primary + Secondary Veto";
+        case "secondary_override":
+            return "Secondary Override";
+        case "best_side_owner":
+            return "Best-Side Owner";
+        case "skip_conflicts":
+        default:
+            return "Skip Conflicts";
+    }
+}
+
+function describeDirectionSlice(directionSlice: EnsemblePolymarketDirectionSlice): string {
+    switch (directionSlice) {
+        case "long_only":
+            return "Long Only";
+        case "short_only":
+            return "Short Only";
+        case "all":
+        default:
+            return "All";
+    }
 }
 
 function formatVerdictLabel(verdict: EnsemblePolymarketVerdict): string {

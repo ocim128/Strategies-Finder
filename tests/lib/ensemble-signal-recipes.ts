@@ -26,11 +26,15 @@ import {
 import type { EnsembleEntryPresence } from "./strategy-ensemble-types";
 import {
     buildPrimaryVetoPreparedSignals,
+    buildPrimarySecondaryOverridePreparedSignals,
+    buildBestSideOwnerPreparedSignals,
     buildTargetConflictFilterPreparedSignals,
 } from "./strategy-ensemble-signal-filters";
 
 export {
+    buildBestSideOwnerPreparedSignals,
     buildPrimaryVetoPreparedSignals,
+    buildPrimarySecondaryOverridePreparedSignals,
     buildTargetConflictFilterPreparedSignals,
 } from "./strategy-ensemble-signal-filters";
 
@@ -103,6 +107,14 @@ export function buildPreparedSignalsForEnsembleRecipe(args: {
         artifactByName.set(config.name, buildEnsembleRecipeSignalArtifact(config, strategy, candles));
     }
 
+    const getRequiredArtifact = (configName: string, role: string): EnsembleRecipeSignalArtifact => {
+        const artifact = artifactByName.get(configName);
+        if (!artifact) {
+            throw new Error(`Recipe ${role} config "${configName}" is missing.`);
+        }
+        return artifact;
+    };
+
     const anchorArtifact = artifactByName.get(recipe.anchorConfigName);
     if (!anchorArtifact) {
         throw new Error(`Recipe anchor config "${recipe.anchorConfigName}" is missing.`);
@@ -114,10 +126,7 @@ export function buildPreparedSignalsForEnsembleRecipe(args: {
             throw new Error("Primary-veto recipe is missing the veto config name.");
         }
 
-        const vetoArtifact = artifactByName.get(vetoName);
-        if (!vetoArtifact) {
-            throw new Error(`Recipe veto config "${vetoName}" is missing.`);
-        }
+        const vetoArtifact = getRequiredArtifact(vetoName, "veto");
 
         const preparedSignals = applyEnsembleRecipeReplayDirectionOverride(
             buildPrimaryVetoPreparedSignals(anchorArtifact, vetoArtifact),
@@ -136,6 +145,61 @@ export function buildPreparedSignalsForEnsembleRecipe(args: {
                 directionOverride
             ),
             description: `${anchorArtifact.config.name} vetoed by ${vetoArtifact.config.name} (${directionOverride === "auto" ? "auto" : `${directionOverride} override`})`,
+        };
+    }
+
+    if (recipe.mode === "secondary_override") {
+        const secondaryName = recipe.secondaryConfigName?.trim();
+        if (!secondaryName) {
+            throw new Error("Secondary-override recipe is missing the secondary config name.");
+        }
+
+        const secondaryArtifact = getRequiredArtifact(secondaryName, "secondary");
+        const preparedSignals = applyEnsembleRecipeReplayDirectionOverride(
+            buildPrimarySecondaryOverridePreparedSignals(anchorArtifact, secondaryArtifact),
+            directionOverride
+        );
+        return {
+            preparedSignals,
+            anchorConfig: buildRecipeReplayConfig(
+                anchorArtifact.config,
+                preparedSignals,
+                directionOverride
+            ),
+            anchorBacktestSettings: buildRecipeReplayBacktestSettings(
+                anchorArtifact.backtestSettings,
+                preparedSignals,
+                directionOverride
+            ),
+            description: `${anchorArtifact.config.name} overridden by ${secondaryArtifact.config.name} on opposite-side conflicts (${directionOverride === "auto" ? "auto" : `${directionOverride} override`})`,
+        };
+    }
+
+    if (recipe.mode === "best_side_owner") {
+        const longOwnerName = recipe.longOwnerConfigName?.trim() || "";
+        const shortOwnerName = recipe.shortOwnerConfigName?.trim() || "";
+        const longArtifact = longOwnerName ? getRequiredArtifact(longOwnerName, "long-owner") : null;
+        const shortArtifact = shortOwnerName ? getRequiredArtifact(shortOwnerName, "short-owner") : null;
+        if (!longArtifact && !shortArtifact) {
+            throw new Error("Best-side-owner recipe is missing both owner configs.");
+        }
+
+        const preparedSignals = applyEnsembleRecipeReplayDirectionOverride(
+            buildBestSideOwnerPreparedSignals({
+                longArtifact,
+                shortArtifact,
+            }),
+            directionOverride
+        );
+        const ownerParts = [
+            longArtifact ? `long ${longArtifact.config.name}` : "",
+            shortArtifact ? `short ${shortArtifact.config.name}` : "",
+        ].filter((part) => part.length > 0);
+        return {
+            preparedSignals,
+            anchorConfig: buildRecipeReplayConfig(anchorArtifact.config, preparedSignals, directionOverride),
+            anchorBacktestSettings: buildRecipeReplayBacktestSettings(anchorArtifact.backtestSettings, preparedSignals, directionOverride),
+            description: `best-side-owner replay using ${ownerParts.join(" + ")} (${directionOverride === "auto" ? "auto" : `${directionOverride} override`})`,
         };
     }
 

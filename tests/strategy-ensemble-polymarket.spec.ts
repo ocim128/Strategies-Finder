@@ -138,8 +138,12 @@ function createDeps(
             result: createBacktestResult(tradesByStrategyKey.get(strategy.name) ?? []),
             engineUsed: "typescript",
         }),
-        evaluateSignalsOnData: async () => ({
-            result: createBacktestResult([]),
+        evaluateSignalsOnData: async (_candles, _interval, signals) => ({
+            result: createBacktestResult(
+                signals
+                    .filter((signal) => signal.type === "buy" || signal.type === "sell")
+                    .map((signal) => createTrade(Number(signal.time), signal.type === "buy" ? "long" : "short"))
+            ),
             engineUsed: "typescript",
         }),
         warn: () => {},
@@ -155,6 +159,8 @@ function buildFixture(input: {
     tradesByStrategyKey: ReadonlyMap<string, Trade[]>;
     outcomes: readonly PolymarketOutcomeRow[];
     candles?: OHLCVData[];
+    conflictPolicy?: Parameters<typeof runEnsemblePolymarket>[0]["conflictPolicy"];
+    directionSlice?: Parameters<typeof runEnsemblePolymarket>[0]["directionSlice"];
 }): {
     candles: OHLCVData[];
     resultPromise: Promise<EnsemblePolymarketRunResult>;
@@ -180,6 +186,8 @@ function buildFixture(input: {
             interval: input.interval ?? "5m",
             outcomes: [...input.outcomes],
             deps: createDeps(configs, input.tradesByStrategyKey),
+            conflictPolicy: input.conflictPolicy,
+            directionSlice: input.directionSlice,
         }),
     };
 }
@@ -429,7 +437,7 @@ describe("Strategy Ensemble Polymarket engine", () => {
         });
         const result = await resultPromise;
 
-        expect(result.vetoScan.pairResults).to.have.length(2);
+        expect(result.vetoScan.pairResults).to.have.length(1);
         expect(result.vetoScan.positivePairCount).to.equal(1);
         expect(result.vetoScan.bestPair?.primaryConfigName).to.equal("Primary Long");
         expect(result.vetoScan.bestPair?.vetoConfigName).to.equal("Short Veto");
@@ -439,5 +447,112 @@ describe("Strategy Ensemble Polymarket engine", () => {
         expect(result.vetoScan.bestPair?.postVetoWinRate).to.equal(1);
         expect(result.vetoScan.bestPair?.winRateLift).to.equal(0.5);
         expect(result.vetoScan.bestPair?.verdict).to.equal("interesting");
+    });
+
+    it("supports long-only directional slicing for selected policies", async () => {
+        const configs = [
+            createConfig("Long Bias", "long_bias"),
+            createConfig("Mixed Context", "mixed_context"),
+        ];
+        const tradesByStrategyKey = new Map<string, Trade[]>([
+            ["long_bias", [createTrade(300, "long"), createTrade(600, "short"), createTrade(900, "long")]],
+            ["mixed_context", [createTrade(300, "short"), createTrade(600, "short"), createTrade(900, "long")]],
+        ]);
+        const outcomes = [
+            createOutcome(300, 1),
+            createOutcome(600, 0),
+            createOutcome(900, 1),
+        ];
+
+        const { resultPromise } = buildFixture({
+            configs,
+            targetName: "Long Bias",
+            contextNames: ["Mixed Context"],
+            tradesByStrategyKey,
+            outcomes,
+            directionSlice: "long_only",
+            conflictPolicy: "skip_conflicts",
+        });
+        const result = await resultPromise;
+
+        expect(result.directionSlice).to.equal("long_only");
+        expect(result.ensembleSummary.bestBaseline).to.equal(result.ensembleSummary.alwaysYesBaseline);
+        expect(result.configResults[0]?.evalResult.shortPredictions).to.equal(0);
+        expect(result.selectedPolicyResult?.policy).to.equal("skip_conflicts");
+    });
+
+    it("ranks executable secondary-override pairs and exposes the selected policy result", async () => {
+        const eventCount = 60;
+        const candles = Array.from({ length: eventCount + 1 }, (_, index) => createCandle(index * 300));
+        const entries = candles.slice(1).map((candle) => Number(candle.time));
+        const configs = [
+            createConfig("Primary Long", "primary_long"),
+            createConfig("Short Override", "short_override"),
+        ];
+        const tradesByStrategyKey = new Map<string, Trade[]>([
+            ["primary_long", entries.map((entryTime) => createTrade(entryTime, "long"))],
+            ["short_override", entries.slice(0, 30).map((entryTime) => createTrade(entryTime, "short"))],
+        ]);
+        const outcomes = entries.map((entryTime, index) => createOutcome(entryTime, index < 30 ? 0 : 1));
+
+        const { resultPromise } = buildFixture({
+            candles,
+            configs,
+            targetName: "Primary Long",
+            contextNames: ["Short Override"],
+            tradesByStrategyKey,
+            outcomes,
+            conflictPolicy: "secondary_override",
+        });
+        const result = await resultPromise;
+
+        expect(result.overrideScan.bestPair?.primaryConfigName).to.equal("Primary Long");
+        expect(result.overrideScan.bestPair?.secondaryConfigName).to.equal("Short Override");
+        expect(result.overrideScan.bestPair?.overriddenEvents).to.equal(30);
+        expect(result.selectedPolicyResult?.policy).to.equal("secondary_override");
+        expect(result.selectedPolicyResult?.winRate).to.equal(1);
+        expect(result.selectedPolicyResult?.retentionRate).to.equal(1);
+    });
+
+    it("builds a best-side-owner policy from the strongest long and short specialists", async () => {
+        const configs = [
+            createConfig("Long Specialist", "long_specialist"),
+            createConfig("Short Specialist", "short_specialist"),
+            createConfig("Weak Mixed", "weak_mixed"),
+        ];
+        const tradesByStrategyKey = new Map<string, Trade[]>([
+            ["long_specialist", [createTrade(300, "long"), createTrade(900, "long")]],
+            ["short_specialist", [createTrade(600, "short"), createTrade(1200, "short")]],
+            ["weak_mixed", [createTrade(300, "long"), createTrade(600, "short"), createTrade(900, "short"), createTrade(1200, "long")]],
+        ]);
+        const outcomes = [
+            createOutcome(300, 1),
+            createOutcome(600, 0),
+            createOutcome(900, 1),
+            createOutcome(1200, 0),
+        ];
+        const candles = [
+            createCandle(0),
+            createCandle(300),
+            createCandle(600),
+            createCandle(900),
+            createCandle(1200),
+        ];
+
+        const { resultPromise } = buildFixture({
+            candles,
+            configs,
+            targetName: "Weak Mixed",
+            contextNames: ["Long Specialist", "Short Specialist"],
+            tradesByStrategyKey,
+            outcomes,
+            conflictPolicy: "best_side_owner",
+        });
+        const result = await resultPromise;
+
+        expect(result.policyResults.bestSideOwner?.longOwnerConfigName).to.equal("Long Specialist");
+        expect(result.policyResults.bestSideOwner?.shortOwnerConfigName).to.equal("Short Specialist");
+        expect(result.selectedPolicyResult?.policy).to.equal("best_side_owner");
+        expect(result.selectedPolicyResult?.winRate).to.equal(1);
     });
 });
