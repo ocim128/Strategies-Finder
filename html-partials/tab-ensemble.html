@@ -228,8 +228,8 @@
                 </div>
             </div>
             <div class="finder-strategy-actions ensemble-lab__actions" role="group" aria-label="Ensemble Polymarket tradable recipe actions">
-                <button class="btn btn-secondary btn-compact" id="ensembleLoadConflictBacktestBtn" type="button">Load Selected Policy Backtest</button>
-                <button class="btn btn-secondary btn-compact" id="ensembleLoadBestVetoBacktestBtn" type="button">Load Best Veto Backtest</button>
+                <button class="btn btn-secondary btn-compact" id="ensembleLoadConflictBacktestBtn" type="button">View Selected Policy Backtest</button>
+                <button class="btn btn-secondary btn-compact" id="ensembleLoadBestVetoBacktestBtn" type="button">View Best Veto Backtest</button>
                 <button class="btn btn-secondary btn-compact" id="ensembleSaveConflictRecipeBtn" type="button">Save Selected Policy Recipe</button>
                 <button class="btn btn-secondary btn-compact" id="ensembleSaveBestVetoRecipeBtn" type="button">Save Best Veto Recipe</button>
             </div>
@@ -278,17 +278,19 @@
                             <th>Wins</th>
                             <th>Losses</th>
                             <th>Win %</th>
+                            <th>Exp / Trade</th>
                             <th>Coverage</th>
                             <th>Wilson LB</th>
                             <th>Long WR %</th>
                             <th>Short WR %</th>
                             <th>&Delta; vs Baseline</th>
                             <th>Verdict</th>
+                            <th>Action</th>
                         </tr>
                     </thead>
                     <tbody id="ensemblePolymarketTableBody">
                         <tr>
-                            <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                            <td colspan="14" style="text-align:center;color:var(--text-secondary);padding:16px;">
                                 Run Ensemble Polymarket to compare executable config edge against Polymarket outcomes.
                             </td>
                         </tr>
@@ -312,6 +314,7 @@
                                 <th>Kept</th>
                                 <th>Wins</th>
                                 <th>Losses</th>
+                                <th>Exp / Trade</th>
                                 <th>Vetoed</th>
                                 <th>Retention</th>
                                 <th>Overlap</th>
@@ -319,11 +322,12 @@
                                 <th>Lift vs Primary</th>
                                 <th>Wilson Lift</th>
                                 <th>Verdict</th>
+                                <th>Action</th>
                             </tr>
                         </thead>
                         <tbody id="ensemblePolymarketVetoTableBody">
                             <tr>
-                                <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                <td colspan="14" style="text-align:center;color:var(--text-secondary);padding:16px;">
                                     Run Ensemble Polymarket to rank asymmetric veto pairs.
                                 </td>
                             </tr>
@@ -348,6 +352,7 @@
                                 <th>Kept</th>
                                 <th>Wins</th>
                                 <th>Losses</th>
+                                <th>Exp / Trade</th>
                                 <th>Overrides</th>
                                 <th>Retention</th>
                                 <th>Overlap</th>
@@ -355,11 +360,12 @@
                                 <th>Lift vs Primary</th>
                                 <th>Wilson Lift</th>
                                 <th>Verdict</th>
+                                <th>Action</th>
                             </tr>
                         </thead>
                         <tbody id="ensemblePolymarketOverrideTableBody">
                             <tr>
-                                <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                <td colspan="14" style="text-align:center;color:var(--text-secondary);padding:16px;">
                                     Run Ensemble Polymarket to rank secondary-override pairs.
                                 </td>
                             </tr>

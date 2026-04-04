@@ -241,6 +241,7 @@ describe("Strategy Ensemble Polymarket engine", () => {
         expect(result.configResults[0]?.evalResult.wins).to.equal(2);
         expect(result.configResults[0]?.evalResult.losses).to.equal(1);
         expect(result.configResults[0]?.evalResult.coverage).to.equal(1);
+        expect(result.configResults[0]?.evalResult.expectancy).to.be.closeTo(1 / 6, 1e-12);
         expect(result.configResults[1]?.evalResult.wins).to.equal(1);
         expect(result.ensembleSummary.bestBaseline).to.equal(2 / 3);
     });
@@ -442,9 +443,11 @@ describe("Strategy Ensemble Polymarket engine", () => {
         expect(result.vetoScan.bestPair?.primaryConfigName).to.equal("Primary Long");
         expect(result.vetoScan.bestPair?.vetoConfigName).to.equal("Short Veto");
         expect(result.vetoScan.bestPair?.keptEvents).to.equal(30);
+        expect(result.vetoScan.bestPair?.pricedTrades).to.equal(30);
         expect(result.vetoScan.bestPair?.vetoedEvents).to.equal(30);
         expect(result.vetoScan.bestPair?.retentionRate).to.equal(0.5);
         expect(result.vetoScan.bestPair?.postVetoWinRate).to.equal(1);
+        expect(result.vetoScan.bestPair?.expectancy).to.equal(0.5);
         expect(result.vetoScan.bestPair?.winRateLift).to.equal(0.5);
         expect(result.vetoScan.bestPair?.verdict).to.equal("interesting");
     });
@@ -510,6 +513,7 @@ describe("Strategy Ensemble Polymarket engine", () => {
         expect(result.overrideScan.bestPair?.secondaryConfigName).to.equal("Short Override");
         expect(result.overrideScan.bestPair?.overriddenEvents).to.equal(30);
         expect(result.selectedPolicyResult?.policy).to.equal("secondary_override");
+        expect(result.selectedPolicyResult?.expectancy).to.equal(0.5);
         expect(result.selectedPolicyResult?.winRate).to.equal(1);
         expect(result.selectedPolicyResult?.retentionRate).to.equal(1);
     });

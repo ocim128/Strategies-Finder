@@ -104,9 +104,11 @@ export interface EnsemblePolymarketPolicyResult {
     shortOwnerConfigName?: string;
     totalTrades: number;
     scoredTrades: number;
+    pricedTrades: number;
     wins: number;
     losses: number;
     winRate: number;
+    expectancy: number | null;
     coverage: number;
     retentionRate: number | null;
     missingOutcomeTrades: number;
@@ -124,8 +126,10 @@ export interface EnsemblePolymarketVetoPairResult {
     overlapEvents: number;
     vetoedEvents: number;
     keptEvents: number;
+    pricedTrades: number;
     keptWins: number;
     keptLosses: number;
+    expectancy: number | null;
     primaryWinRate: number;
     postVetoWinRate: number;
     winRateLift: number;
@@ -146,8 +150,10 @@ export interface EnsemblePolymarketOverridePairResult {
     overlapEvents: number;
     overriddenEvents: number;
     keptEvents: number;
+    pricedTrades: number;
     keptWins: number;
     keptLosses: number;
+    expectancy: number | null;
     primaryWinRate: number;
     postOverrideWinRate: number;
     winRateLift: number;
@@ -766,9 +772,11 @@ async function evaluatePolicyRecipe(args: {
         shortOwnerConfigName: args.shortOwnerConfigName,
         totalTrades: replay.result.totalTrades,
         scoredTrades: evalResult.scoredPredictions,
+        pricedTrades: evalResult.pricedPredictions ?? 0,
         wins: evalResult.wins,
         losses: evalResult.losses,
         winRate: evalResult.winRate,
+        expectancy: (evalResult.pricedPredictions ?? 0) > 0 ? (evalResult.expectancy ?? 0) : null,
         coverage: evalResult.coverage,
         retentionRate: args.retentionBase != null && args.retentionBase > 0
             ? evalResult.scoredPredictions / args.retentionBase
@@ -876,8 +884,10 @@ async function buildEnsemblePolymarketVetoScan(args: {
                 overlapEvents,
                 vetoedEvents,
                 keptEvents: evaluated.scoredTrades,
+                pricedTrades: evaluated.pricedTrades,
                 keptWins: evaluated.wins,
                 keptLosses: evaluated.losses,
+                expectancy: evaluated.expectancy,
                 primaryWinRate: primaryResult.evalResult.winRate,
                 postVetoWinRate: evaluated.winRate,
                 winRateLift,
@@ -1009,8 +1019,10 @@ async function buildEnsemblePolymarketOverrideScan(args: {
                 overlapEvents,
                 overriddenEvents,
                 keptEvents: evaluated.scoredTrades,
+                pricedTrades: evaluated.pricedTrades,
                 keptWins: evaluated.wins,
                 keptLosses: evaluated.losses,
+                expectancy: evaluated.expectancy,
                 primaryWinRate: primaryResult.evalResult.winRate,
                 postOverrideWinRate: evaluated.winRate,
                 winRateLift,

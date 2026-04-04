@@ -13,7 +13,7 @@ import { escapeHtml } from "./strategy-ensemble-renderer";
 
 const EMPTY_TABLE_ROW = `
     <tr>
-        <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+        <td colspan="14" style="text-align:center;color:var(--text-secondary);padding:16px;">
             Run Ensemble Polymarket to compare executable config edge against Polymarket outcomes.
         </td>
     </tr>
@@ -21,7 +21,7 @@ const EMPTY_TABLE_ROW = `
 
 const EMPTY_VETO_TABLE_ROW = `
     <tr>
-        <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+        <td colspan="14" style="text-align:center;color:var(--text-secondary);padding:16px;">
             Run Ensemble Polymarket to rank asymmetric veto pairs.
         </td>
     </tr>
@@ -29,7 +29,7 @@ const EMPTY_VETO_TABLE_ROW = `
 
 const EMPTY_OVERRIDE_TABLE_ROW = `
     <tr>
-        <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
+        <td colspan="14" style="text-align:center;color:var(--text-secondary);padding:16px;">
             Run Ensemble Polymarket to rank secondary-override pairs.
         </td>
     </tr>
@@ -51,11 +51,19 @@ export function renderEnsemblePolymarketResults(
     const overlapWithSignalRate = result.conflictFilteredOverlay.evaluatedEvents > 0
         ? result.conflictFilteredOverlay.eventsWithVotes / result.conflictFilteredOverlay.evaluatedEvents
         : 0;
+    const skipConflictReplayLabel = result.selectedPolicy === "skip_conflicts"
+        ? "Selected Policy Replay WR"
+        : "Skip-Conflicts WR";
+    const skipConflictInsightLabel = result.selectedPolicy === "skip_conflicts"
+        ? "Selected Policy Replay"
+        : "Skip-Conflicts Replay Reference";
 
     const summaryCards = [
         card("Selected Policy", describeConflictPolicy(result.selectedPolicy)),
         card("Direction Slice", describeDirectionSlice(result.directionSlice)),
         card("Policy Win Rate", selectedPolicyResult ? formatPercent(selectedPolicyResult.winRate) : "-"),
+        card("Policy Exp / Trade", formatPolymarketExpectancy(selectedPolicyResult?.expectancy, selectedPolicyResult?.pricedTrades)),
+        card("Policy Backtest Trades", selectedPolicyResult ? String(selectedPolicyResult.totalTrades) : "-"),
         card("Policy Scored Trades", selectedPolicyResult ? String(selectedPolicyResult.scoredTrades) : "-"),
         card("Policy Wilson LB", selectedPolicyResult ? selectedPolicyResult.wilsonLowerBound.toFixed(3) : "-"),
         card("Policy Δ vs Baseline", selectedPolicyResult ? formatSignedPercent(selectedPolicyResult.deltaVsBaseline) : "-"),
@@ -66,7 +74,7 @@ export function renderEnsemblePolymarketResults(
         card("Configs Scored", String(result.ensembleSummary.configsScored)),
         card("Total Scored Trades", String(result.ensembleSummary.totalScoredTrades)),
         card("Event-Level Conflict WR", formatPercent(result.conflictFilteredOverlay.winRate)),
-        card("Executable Conflict WR", executableConflict ? formatPercent(executableConflict.winRate) : "-"),
+        card(skipConflictReplayLabel, executableConflict ? formatPercent(executableConflict.winRate) : "-"),
         card("Conflict Rate", formatPercent(conflictFilteredConflictRate)),
         card("No-Signal Rate", formatPercent(result.conflictFilteredOverlay.noSignalRate)),
         card("Overlap With Signal", formatPercent(overlapWithSignalRate)),
@@ -87,7 +95,7 @@ export function renderEnsemblePolymarketResults(
         selectedPolicyResult
             ? insight(
                 "Selected Policy",
-                `${selectedPolicyResult.label}: ${selectedPolicyResult.description} It produced ${selectedPolicyResult.scoredTrades} scored trades, ${selectedPolicyResult.wins} wins, ${selectedPolicyResult.losses} losses, ${formatPercent(selectedPolicyResult.winRate)} win rate, Wilson ${selectedPolicyResult.wilsonLowerBound.toFixed(3)}, and ${formatSignedPercent(selectedPolicyResult.deltaVsBaseline)} versus the baseline.`
+                `${selectedPolicyResult.label}: ${selectedPolicyResult.description} It produced ${formatTradeVsScoreSummary(selectedPolicyResult.totalTrades, selectedPolicyResult.scoredTrades)}, ${selectedPolicyResult.wins} wins, ${selectedPolicyResult.losses} losses, ${formatPercent(selectedPolicyResult.winRate)} win rate, ${formatPolymarketExpectancy(selectedPolicyResult.expectancy, selectedPolicyResult.pricedTrades)} expectancy, Wilson ${selectedPolicyResult.wilsonLowerBound.toFixed(3)}, and ${formatSignedPercent(selectedPolicyResult.deltaVsBaseline)} versus the baseline.`
             )
             : insight(
                 "Selected Policy",
@@ -104,9 +112,11 @@ export function renderEnsemblePolymarketResults(
             `${result.conflictFilteredOverlay.scoredEvents} scored overlay events, ${result.conflictFilteredOverlay.wins} wins, ${result.conflictFilteredOverlay.losses} losses, ${formatPercent(result.conflictFilteredOverlay.winRate)} win rate, ${formatPercent(result.conflictFilteredOverlay.coverage)} coverage, and ${result.conflictFilteredOverlay.mixedDirectionEvents} mixed-direction conflicts skipped before execution.`
         ),
         insight(
-            "Executable Conflict Replay",
+            skipConflictInsightLabel,
             executableConflict
-                ? `${executableConflict.totalTrades} executed trades, ${formatPercent(executableConflict.winRate)} win rate, ${formatPercent(executableConflict.retentionRate)} retention from event-level conflict signals, and ${executableConflict.skippedByExecution} overlay signals lost in execution.`
+                ? result.selectedPolicy === "skip_conflicts"
+                    ? `${executableConflict.totalTrades} executed trades, ${formatPercent(executableConflict.winRate)} win rate, ${formatPercent(executableConflict.retentionRate)} retention from event-level conflict signals, and ${executableConflict.skippedByExecution} overlay signals lost in execution.`
+                    : `${executableConflict.totalTrades} executed trades, ${formatPercent(executableConflict.winRate)} win rate, ${formatPercent(executableConflict.retentionRate)} retention from event-level conflict signals, and ${executableConflict.skippedByExecution} overlay signals lost in execution. This remains the skip-conflicts reference, not the selected ${describeConflictPolicy(result.selectedPolicy).toLowerCase()} replay.`
                 : "Executable conflict replay metrics are unavailable for this run."
         ),
     ];
@@ -131,25 +141,25 @@ export function renderEnsemblePolymarketResults(
         ].filter((part) => part.length > 0).join(" + ");
         agreementInsights.push(insight(
             "Best-Side Owner",
-            `${ownerLabel || "No owner pair"} produced ${policy.scoredTrades} scored trades at ${formatPercent(policy.winRate)} win rate with ${formatSignedPercent(policy.deltaVsBaseline)} versus the baseline.`
+            `${ownerLabel || "No owner pair"} produced ${policy.scoredTrades} scored trades at ${formatPercent(policy.winRate)} win rate, ${formatPolymarketExpectancy(policy.expectancy, policy.pricedTrades)} expectancy, and ${formatSignedPercent(policy.deltaVsBaseline)} versus the baseline.`
         ));
     }
 
     if (result.vetoScan.bestPair) {
         agreementInsights.push(insight(
             "Best Veto Pair",
-            `${result.vetoScan.bestPair.primaryConfigName} improved to ${formatPercent(result.vetoScan.bestPair.postVetoWinRate)} when ${result.vetoScan.bestPair.vetoConfigName} vetoed opposite-side events, leaving ${result.vetoScan.bestPair.keptEvents} kept trades and ${formatSignedPercent(result.vetoScan.bestPair.winRateLift)} win-rate lift.`
+            `${result.vetoScan.bestPair.primaryConfigName} improved to ${formatPercent(result.vetoScan.bestPair.postVetoWinRate)} when ${result.vetoScan.bestPair.vetoConfigName} vetoed opposite-side events, leaving ${result.vetoScan.bestPair.keptEvents} kept trades, ${formatPolymarketExpectancy(result.vetoScan.bestPair.expectancy, result.vetoScan.bestPair.pricedTrades)} expectancy, and ${formatSignedPercent(result.vetoScan.bestPair.winRateLift)} win-rate lift.`
         ));
     }
 
     if (result.overrideScan.bestPair) {
         agreementInsights.push(insight(
             "Best Override Pair",
-            `${result.overrideScan.bestPair.primaryConfigName} improved to ${formatPercent(result.overrideScan.bestPair.postOverrideWinRate)} when ${result.overrideScan.bestPair.secondaryConfigName} overrode opposite-side conflicts, leaving ${result.overrideScan.bestPair.keptEvents} kept trades and ${formatSignedPercent(result.overrideScan.bestPair.winRateLift)} win-rate lift.`
+            `${result.overrideScan.bestPair.primaryConfigName} improved to ${formatPercent(result.overrideScan.bestPair.postOverrideWinRate)} when ${result.overrideScan.bestPair.secondaryConfigName} overrode opposite-side conflicts, leaving ${result.overrideScan.bestPair.keptEvents} kept trades, ${formatPolymarketExpectancy(result.overrideScan.bestPair.expectancy, result.overrideScan.bestPair.pricedTrades)} expectancy, and ${formatSignedPercent(result.overrideScan.bestPair.winRateLift)} win-rate lift.`
         ));
     }
 
-    dom.ensemblePolymarketAgreement.innerHTML = agreementInsights.join("");
+    dom.ensemblePolymarketAgreement.innerHTML = agreementInsights.join("") + renderSelectedActionBar(result);
 
     dom.ensemblePolymarketTableBody.innerHTML = result.configResults.length > 0
         ? result.configResults.map((configResult) => renderConfigRow(configResult)).join("")
@@ -163,6 +173,7 @@ export function renderEnsemblePolymarketResults(
             card("Best Wins", String(bestVetoPair.keptWins)),
             card("Best Losses", String(bestVetoPair.keptLosses)),
             card("Best Post-Veto WR", formatPercent(bestVetoPair.postVetoWinRate)),
+            card("Best Exp / Trade", formatPolymarketExpectancy(bestVetoPair.expectancy, bestVetoPair.pricedTrades)),
             card("Best WR Lift", formatSignedPercent(bestVetoPair.winRateLift)),
             card("Best Retention", formatPercent(bestVetoPair.retentionRate)),
             card("Positive Pairs", String(result.vetoScan.positivePairCount)),
@@ -181,6 +192,7 @@ export function renderEnsemblePolymarketResults(
             card("Best Wins", String(bestOverridePair.keptWins)),
             card("Best Losses", String(bestOverridePair.keptLosses)),
             card("Best Post-Override WR", formatPercent(bestOverridePair.postOverrideWinRate)),
+            card("Best Exp / Trade", formatPolymarketExpectancy(bestOverridePair.expectancy, bestOverridePair.pricedTrades)),
             card("Best WR Lift", formatSignedPercent(bestOverridePair.winRateLift)),
             card("Best Retention", formatPercent(bestOverridePair.retentionRate)),
             card("Positive Pairs", String(result.overrideScan.positivePairCount)),
@@ -225,12 +237,14 @@ function renderConfigRow(result: EnsemblePolymarketConfigResult): string {
             <td>${result.evalResult.wins}</td>
             <td>${result.evalResult.losses}</td>
             <td>${formatPercent(result.evalResult.winRate)}</td>
+            <td>${formatPolymarketExpectancy(result.evalResult.expectancy, result.evalResult.pricedPredictions)}</td>
             <td>${formatPercent(result.evalResult.coverage)}</td>
             <td>${result.wilsonLowerBound.toFixed(3)}</td>
             <td>${formatOptionalPercent(result.evalResult.longWinRate, scoredLongPredictions)}</td>
             <td>${formatOptionalPercent(result.evalResult.shortWinRate, scoredShortPredictions)}</td>
             <td>${formatSignedPercent(result.deltaVsBestBaseline)}</td>
             <td><span class="${verdictClass}">${escapeHtml(formatVerdictLabel(result.verdict))}</span></td>
+            <td><button class="btn btn-secondary btn-compact" type="button" data-ensemble-polymarket-config-backtest="${escapeHtml(result.configName)}">View Backtest</button></td>
         </tr>
     `;
 }
@@ -244,6 +258,8 @@ function renderVetoPairRow(result: EnsemblePolymarketVetoPairResult): string {
         keptEvents: result.keptEvents,
         keptWins: result.keptWins,
         keptLosses: result.keptLosses,
+        expectancy: result.expectancy,
+        pricedTrades: result.pricedTrades,
         changedEvents: result.vetoedEvents,
         retentionRate: result.retentionRate,
         overlapRate: result.overlapRate,
@@ -251,6 +267,7 @@ function renderVetoPairRow(result: EnsemblePolymarketVetoPairResult): string {
         winRateLift: result.winRateLift,
         wilsonLift: result.wilsonLift,
         verdict: result.verdict,
+        actionDataset: `data-ensemble-polymarket-veto-backtest="${escapeHtml(result.primaryConfigName)}" data-ensemble-polymarket-veto-config="${escapeHtml(result.vetoConfigName)}"`,
     });
 }
 
@@ -263,6 +280,8 @@ function renderOverridePairRow(result: EnsemblePolymarketOverridePairResult): st
         keptEvents: result.keptEvents,
         keptWins: result.keptWins,
         keptLosses: result.keptLosses,
+        expectancy: result.expectancy,
+        pricedTrades: result.pricedTrades,
         changedEvents: result.overriddenEvents,
         retentionRate: result.retentionRate,
         overlapRate: result.overlapRate,
@@ -270,6 +289,7 @@ function renderOverridePairRow(result: EnsemblePolymarketOverridePairResult): st
         winRateLift: result.winRateLift,
         wilsonLift: result.wilsonLift,
         verdict: result.verdict,
+        actionDataset: `data-ensemble-polymarket-override-backtest="${escapeHtml(result.primaryConfigName)}" data-ensemble-polymarket-secondary-config="${escapeHtml(result.secondaryConfigName)}"`,
     });
 }
 
@@ -281,6 +301,8 @@ function renderPairRow(args: {
     keptEvents: number;
     keptWins: number;
     keptLosses: number;
+    expectancy: number | null;
+    pricedTrades: number;
     changedEvents: number;
     retentionRate: number;
     overlapRate: number;
@@ -288,6 +310,7 @@ function renderPairRow(args: {
     winRateLift: number;
     wilsonLift: number;
     verdict: EnsemblePolymarketVetoPairResult["verdict"];
+    actionDataset: string;
 }): string {
     const verdictClass = `ensemble-lab__polymarket-verdict ${formatVetoVerdictClass(args.verdict)}`;
     const rowStyle = args.verdict === "interesting"
@@ -305,6 +328,7 @@ function renderPairRow(args: {
             <td>${args.keptEvents}</td>
             <td>${args.keptWins}</td>
             <td>${args.keptLosses}</td>
+            <td>${formatPolymarketExpectancy(args.expectancy, args.pricedTrades)}</td>
             <td>${args.changedEvents}</td>
             <td>${formatPercent(args.retentionRate)}</td>
             <td>${formatPercent(args.overlapRate)}</td>
@@ -312,8 +336,29 @@ function renderPairRow(args: {
             <td>${formatSignedPercent(args.winRateLift)}</td>
             <td>${formatSignedFixed(args.wilsonLift)}</td>
             <td><span class="${verdictClass}">${escapeHtml(formatVetoVerdictLabel(args.verdict))}</span></td>
+            <td><button class="btn btn-secondary btn-compact" type="button" ${args.actionDataset}>View Backtest</button></td>
         </tr>
     `;
+}
+
+function renderSelectedActionBar(result: EnsemblePolymarketRunResult): string {
+    const buttons: string[] = [];
+
+    if (result.selectedPolicyResult) {
+        buttons.push(
+            '<button class="btn btn-secondary btn-compact" type="button" data-ensemble-polymarket-selected-policy-backtest="true">View Selected Policy Backtest</button>'
+        );
+    }
+
+    if (result.vetoScan.bestPair) {
+        buttons.push(
+            '<button class="btn btn-secondary btn-compact" type="button" data-ensemble-polymarket-best-veto-backtest="true">View Best Veto Backtest</button>'
+        );
+    }
+
+    return buttons.length > 0
+        ? `<div class="finder-strategy-actions ensemble-lab__actions" role="group" aria-label="Selected Polymarket replay actions">${buttons.join("")}</div>`
+        : "";
 }
 
 function card(label: string, value: string): string {
@@ -345,6 +390,24 @@ function formatSignedPercent(value: number): string {
 function formatSignedFixed(value: number): string {
     const sign = value >= 0 ? "+" : "-";
     return `${sign}${Math.abs(value).toFixed(3)}`;
+}
+
+function formatTradeVsScoreSummary(totalTrades: number, scoredTrades: number): string {
+    if (totalTrades === scoredTrades) {
+        return `${scoredTrades} scored trades`;
+    }
+
+    return `${totalTrades} executed backtest trades with ${scoredTrades} scored against Polymarket outcomes`;
+}
+
+function formatPolymarketExpectancy(value: number | null | undefined, pricedTrades: number | null | undefined): string {
+    if (!Number.isFinite(value as number) || (pricedTrades ?? 0) <= 0) {
+        return "-";
+    }
+
+    const expectancy = value as number;
+    const sign = expectancy > 0 ? "+" : expectancy < 0 ? "-" : "";
+    return `${sign}${(Math.abs(expectancy) * 100).toFixed(1)}c`;
 }
 
 function describeConflictPolicy(policy: EnsemblePolymarketConflictPolicy): string {
