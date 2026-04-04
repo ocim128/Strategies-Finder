@@ -162,3 +162,71 @@ export function buildTrailingWindowSpan(
 
 	return result;
 }
+
+export type BarMetricType = 'gapPct' | 'closeReturn' | 'bodyDirection' | 'bodyPct' | 'wickImbalance' | 'bodyMidDelta' | 'closeMidpointDev' | 'trueRange';
+
+export function extractBarMetricSeries(data: OHLCVData[], metricType: BarMetricType): number[] {
+	const result = new Array(data.length).fill(0);
+	for (let i = 0; i < data.length; i++) {
+		const bar = data[i];
+		const prev = i > 0 ? data[i - 1] : bar;
+		
+		switch (metricType) {
+			case 'gapPct':
+				result[i] = i > 0 ? (bar.open - prev.close) / prev.close : 0;
+				break;
+			case 'closeReturn':
+				result[i] = i > 0 ? (bar.close - prev.close) / prev.close : 0;
+				break;
+			case 'bodyDirection':
+				result[i] = bar.close > bar.open ? 1 : (bar.close < bar.open ? -1 : 0);
+				break;
+			case 'bodyPct': {
+				const range = bar.high - bar.low;
+				result[i] = range === 0 ? 0 : Math.abs(bar.close - bar.open) / range;
+				break;
+			}
+			case 'wickImbalance': {
+				const range = bar.high - bar.low;
+				if (range === 0) {
+					result[i] = 0;
+				} else {
+					const bodyHigh = Math.max(bar.open, bar.close);
+					const bodyLow = Math.min(bar.open, bar.close);
+					const upperWick = bar.high - bodyHigh;
+					const lowerWick = bodyLow - bar.low;
+					result[i] = (lowerWick - upperWick) / range;
+				}
+				break;
+			}
+			case 'bodyMidDelta': {
+				if (i === 0) {
+					result[i] = 0;
+				} else {
+					const curMid = (Math.max(bar.open, bar.close) + Math.min(bar.open, bar.close)) / 2;
+					const prevMid = (Math.max(prev.open, prev.close) + Math.min(prev.open, prev.close)) / 2;
+					result[i] = curMid - prevMid;
+				}
+				break;
+			}
+			case 'closeMidpointDev': {
+				const range = bar.high - bar.low;
+				const midpoint = (bar.high + bar.low) / 2;
+				result[i] = range === 0 ? 0 : (bar.close - midpoint) / range;
+				break;
+			}
+			case 'trueRange':
+				if (i === 0) {
+					result[i] = bar.high - bar.low;
+				} else {
+					result[i] = Math.max(
+						bar.high - bar.low,
+						Math.abs(bar.high - prev.close),
+						Math.abs(bar.low - prev.close)
+					);
+				}
+				break;
+		}
+	}
+	return result;
+}

@@ -83,6 +83,15 @@ describe("Finder manager logic", () => {
             polymarketScoringEnabled: true,
             polymarketRankMode: "expectancy",
         })).to.deep.equal(["polyExpectancy", "polyWinRate", "polyPredictions"]);
+
+        expect(resolveFinderSortPriority({
+            useAdvancedSort: false,
+            advancedSortValues: [],
+            primarySort: "expectancy",
+            secondarySort: "profitFactor",
+            polymarketScoringEnabled: true,
+            polymarketRankMode: "expectancyTrades",
+        })).to.deep.equal(["polyExpectancyBalance", "polyExpectancy", "totalTrades", "polyPredictions", "polyWinRate"]);
     });
 
     it("returns structured outcomes for timeframe selection", () => {

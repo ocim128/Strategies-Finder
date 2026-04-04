@@ -443,6 +443,74 @@ describe('Finder Polymarket runner', () => {
         expect(output.results[1]?.polymarketEval?.expectancy).to.be.closeTo(0.2, 1e-12);
     });
 
+    it('supports expectancy plus trades polymarket ranking', async () => {
+        const bars = makeBars(6);
+        installOutcomeFetch([
+            makeOutcomeRow(Number(bars[1].time), 0, '10684', { yes_open_price: 0.6 }),
+            makeOutcomeRow(Number(bars[2].time), 1, '10684', { yes_open_price: 0.4 }),
+            makeOutcomeRow(Number(bars[3].time), 0, '10684', { yes_open_price: 0.6 }),
+            makeOutcomeRow(Number(bars[4].time), 1, '10684', { yes_open_price: 0.1 }),
+        ]);
+
+        const sparseHighExpectancyStrategy: Strategy = {
+            name: 'Sparse High Expectancy',
+            description: 'One expensive edge',
+            defaultParams: {},
+            paramLabels: {},
+            execute(data: OHLCVData[]): Signal[] {
+                return [{ time: data[3].time, type: 'buy', price: data[3].close, barIndex: 3 }];
+            },
+        };
+        const steadierStrategy: Strategy = {
+            name: 'Steadier Expectancy',
+            description: 'More trades with solid expectancy',
+            defaultParams: {},
+            paramLabels: {},
+            execute(data: OHLCVData[]): Signal[] {
+                return [
+                    { time: data[0].time, type: 'sell', price: data[0].close, barIndex: 0 },
+                    { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                    { time: data[2].time, type: 'sell', price: data[2].close, barIndex: 2 },
+                ];
+            },
+        };
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            {
+                ...makeInput(
+                    bars,
+                    [{}],
+                    {
+                        sortPriority: ['polyExpectancyBalance', 'polyExpectancy', 'totalTrades', 'polyPredictions', 'polyWinRate'],
+                        polymarketRankMode: 'expectancyTrades',
+                    }
+                ),
+                selectedStrategies: [
+                    {
+                        key: 'sparse_high_expectancy',
+                        name: sparseHighExpectancyStrategy.name,
+                        strategy: sparseHighExpectancyStrategy,
+                    },
+                    {
+                        key: 'steadier_expectancy',
+                        name: steadierStrategy.name,
+                        strategy: steadierStrategy,
+                    },
+                ],
+            },
+            callbacks
+        );
+
+        expect(output.results).to.have.length(2);
+        expect(output.results[0]?.key).to.equal('steadier_expectancy');
+        expect(output.results[0]?.selectionResult.totalTrades).to.equal(3);
+        expect(output.results[0]?.polymarketEval?.expectancy).to.be.closeTo(0.6, 1e-12);
+        expect(output.results[1]?.key).to.equal('sparse_high_expectancy');
+        expect(output.results[1]?.selectionResult.totalTrades).to.equal(1);
+        expect(output.results[1]?.polymarketEval?.expectancy).to.be.closeTo(0.9, 1e-12);
+    });
+
     it('rejects non-1m/5m/15m/1h/4h intervals before touching the outcome loader', async () => {
         globalThis.fetch = (async () => {
             throw new Error('fetch should not be called for invalid interval');

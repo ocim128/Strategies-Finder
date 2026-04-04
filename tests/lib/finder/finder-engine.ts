@@ -23,6 +23,20 @@ function computeWilsonLowerBound(successes: number, trials: number, z = 1.96): n
     return Math.max(0, (center - margin) / denominator);
 }
 
+function computePolymarketExpectancyBalance(expectancy: number, totalTrades: number): number {
+    if (!Number.isFinite(expectancy)) {
+        return 0;
+    }
+
+    const normalizedTrades = Math.max(0, totalTrades);
+    if (normalizedTrades === 0 || expectancy === 0) {
+        return 0;
+    }
+
+    // Treat this as aggregate expected edge so both expectancy and trade count must be meaningful.
+    return expectancy * normalizedTrades;
+}
+
 export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): number {
     // Polymarket metrics take priority when available
     if (item.polymarketEval) {
@@ -39,6 +53,11 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
                 return item.polymarketEval.scoredPredictions;
             case "polyExpectancy":
                 return item.polymarketEval.expectancy ?? 0;
+            case "polyExpectancyBalance":
+                return computePolymarketExpectancyBalance(
+                    item.polymarketEval.expectancy ?? 0,
+                    item.selectionResult.totalTrades
+                );
         }
     }
     const result = getFinderSelectionResult(item);
@@ -72,6 +91,7 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
         case "polyCoverage":
         case "polyPredictions":
         case "polyExpectancy":
+        case "polyExpectancyBalance":
             return 0; // No polymarketEval present
         default:
             return 0;
