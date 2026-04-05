@@ -150,7 +150,12 @@
                 <label class="param-label" for="finderPolymarketLockOffset">Lock Offset in Random 1m</label>
                 <input type="checkbox" id="finderPolymarketLockOffset">
             </div>
+            <div class="param-group">
+                <label class="param-label" for="finderPolymarketAfterTakeProfitOnly">After TP Only</label>
+                <input type="checkbox" id="finderPolymarketAfterTakeProfitOnly">
+            </div>
         </div>
+        <div class="param-hint">After TP Only scores only entries whose previous closed trade exited via take profit.</div>
         <div class="param-hint">Classification-only · 5m BTC/ETH/SOL/XRP · next-open alignment. Balanced mode uses a confidence-weighted score so tiny-sample win rates do not dominate. Lock Offset limits random 1m Polymarket Finder to the currently selected backtest offset instead of testing all 5 offsets.</div>
     </div>
 

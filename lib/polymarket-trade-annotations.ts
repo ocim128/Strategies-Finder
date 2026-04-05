@@ -115,6 +115,29 @@ export type PolymarketBridgeEvaluationContext = {
     resolvedUpCount: number;
 };
 
+export function filterTradesByPreviousClosedTradeExitReason(
+    trades: readonly Trade[],
+    previousExitReason: NonNullable<Trade["exitReason"]>
+): Trade[] {
+    const filteredTrades: Trade[] = [];
+
+    for (let index = 1; index < trades.length; index += 1) {
+        const currentTrade = trades[index];
+        const priorTrade = trades[index - 1];
+        const resolvedPreviousExitReason = priorTrade?.exitReason ?? "signal";
+
+        if (resolvedPreviousExitReason === "end_of_data") {
+            continue;
+        }
+
+        if (resolvedPreviousExitReason === previousExitReason) {
+            filteredTrades.push(currentTrade);
+        }
+    }
+
+    return filteredTrades;
+}
+
 function buildPolymarketEvaluationIndexContext(
     chartData: OHLCVData[],
     outcomes: PolymarketOutcomeRow[]

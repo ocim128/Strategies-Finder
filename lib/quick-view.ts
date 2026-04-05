@@ -20,6 +20,7 @@ import {
 } from "./polymarket-btc5m";
 import {
     annotateTradesWithPolymarketOutcomesForRun,
+    filterTradesByPreviousClosedTradeExitReason,
     summarizePolymarketTradesForRun,
 } from "./polymarket-trade-annotations";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
@@ -225,56 +226,20 @@ export function summarizeRecentPolymarketForm(
     };
 }
 
-function groupTradesByPreviousClosedTradeExitReason(
-    trades: readonly Trade[]
-): Record<"time_stop" | "take_profit" | "signal", Trade[]> {
-    const groupedTrades: Record<"time_stop" | "take_profit" | "signal", Trade[]> = {
-        time_stop: [],
-        take_profit: [],
-        signal: [],
-    };
-
-    for (let index = 1; index < trades.length; index += 1) {
-        const currentTrade = trades[index];
-        const previousTrade = trades[index - 1];
-
-        if (currentTrade?.polymarketOutcome === null || currentTrade?.polymarketOutcome === undefined) {
-            continue;
-        }
-
-        if (typeof currentTrade.polymarketOutcome.isWin !== "boolean") {
-            continue;
-        }
-
-        if (previousTrade?.exitReason === "end_of_data") {
-            continue;
-        }
-
-        const previousExitReason = previousTrade?.exitReason ?? "signal";
-        if (previousExitReason === "time_stop" || previousExitReason === "take_profit" || previousExitReason === "signal") {
-            groupedTrades[previousExitReason].push(currentTrade);
-        }
-    }
-
-    return groupedTrades;
-}
-
 export function summarizePolymarketExitReasonWinRates(
     trades: readonly Trade[]
 ): QuickViewPolymarketExitReasonWinRates {
-    const groupedTrades = groupTradesByPreviousClosedTradeExitReason(trades);
-
     return {
-        maxHold: buildPolymarketWinRateSummary(groupedTrades.time_stop),
-        takeProfit: buildPolymarketWinRateSummary(groupedTrades.take_profit),
-        signal: buildPolymarketWinRateSummary(groupedTrades.signal),
+        maxHold: buildPolymarketWinRateSummary(filterTradesByPreviousClosedTradeExitReason(trades, "time_stop")),
+        takeProfit: buildPolymarketWinRateSummary(filterTradesByPreviousClosedTradeExitReason(trades, "take_profit")),
+        signal: buildPolymarketWinRateSummary(filterTradesByPreviousClosedTradeExitReason(trades, "signal")),
     };
 }
 
 export function summarizePolymarketExpectancyAfterTakeProfit(
     trades: readonly Trade[]
 ): QuickViewPolymarketExpectancySummary {
-    const afterTakeProfitTrades = groupTradesByPreviousClosedTradeExitReason(trades).take_profit;
+    const afterTakeProfitTrades = filterTradesByPreviousClosedTradeExitReason(trades, "take_profit");
     const pricedTrades = getPolymarketPricedTrades(afterTakeProfitTrades);
     if (pricedTrades.length === 0) {
         return {

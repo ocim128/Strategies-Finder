@@ -71,6 +71,7 @@ const TEST_FILES = [
     "tests/settings-compat.spec.ts",
     "tests/strategy-panel-settings-registry.spec.ts",
     "tests/finder-cache-decision.spec.ts",
+    "tests/finder-engine.spec.ts",
     "tests/finder-manager-logic.spec.ts",
     "tests/backtest-result-analysis.spec.ts",
     "tests/polymarket-diagnostics-utils.spec.ts",

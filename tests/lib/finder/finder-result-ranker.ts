@@ -1,4 +1,4 @@
-import { compareFinderResults } from "./finder-engine";
+import { compareFinderResults, sortFinderResults } from "./finder-engine";
 import type { FinderMetric, FinderResult } from "../types/finder";
 
 export class FinderResultRanker {
@@ -28,8 +28,7 @@ export class FinderResultRanker {
     }
 
     public toSortedArray(limit: number): FinderResult[] {
-        return [...this.heap]
-            .sort((a, b) => compareFinderResults(a, b, this.sortPriority))
+        return sortFinderResults(this.heap, this.sortPriority)
             .slice(0, Math.max(1, limit));
     }
 

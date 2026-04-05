@@ -25,6 +25,7 @@ import {
     createPolymarketTradeEvaluationContext,
     evaluatePolymarketBacktestTrades,
     evaluateMappedPolymarketBacktestTrades1mBridge,
+    filterTradesByPreviousClosedTradeExitReason,
     getTradeMarketEntryPrice,
 } from "../polymarket-trade-annotations";
 import { mapTradesToEvents as mapTradesToLegacyEvents, type MappedPolymarketTrade as LegacyMappedPolymarketTrade } from "../polymarket-1m-5m-bridge";
@@ -322,11 +323,14 @@ export async function runPolymarketFinder(
                     precomputed,
                 });
                 signals.length = 0;
+                const tradesForPolymarketEvaluation = options.polymarketAfterTakeProfitOnly
+                    ? filterTradesByPreviousClosedTradeExitReason(backtestResult.trades, "take_profit")
+                    : backtestResult.trades;
                 const legacyMappedTrades: readonly LegacyMappedPolymarketTrade[] | undefined = isMultiSubEventRun && interval === "1m"
-                    ? mapTradesToLegacyEvents(backtestResult.trades, outcomes)
+                    ? mapTradesToLegacyEvents(tradesForPolymarketEvaluation, outcomes)
                     : undefined;
                 const superMappedTrades: readonly MappedPolymarketTrade[] | undefined = isMultiSubEventRun && interval !== "1m"
-                    ? mapTradesToSuperEvents(backtestResult.trades, outcomes, interval)
+                    ? mapTradesToSuperEvents(tradesForPolymarketEvaluation, outcomes, interval)
                     : undefined;
 
                 // Evaluate trades based on interval type
@@ -341,7 +345,7 @@ export async function runPolymarketFinder(
                                 strategyKey: plan.key,
                                 selectedOffset: offset,
                                 includeRows: false,
-                                predictionsTaken: backtestResult.trades.length,
+                                predictionsTaken: tradesForPolymarketEvaluation.length,
                                 context: polymarketBridgeContext,
                             })
                             : evaluateMultiIntervalPolymarketTrades({
@@ -349,7 +353,7 @@ export async function runPolymarketFinder(
                                 strategyKey: plan.key,
                                 selectedOffset: offset,
                                 includeRows: false,
-                                predictionsTaken: backtestResult.trades.length,
+                                predictionsTaken: tradesForPolymarketEvaluation.length,
                                 context: polymarketBridgeContext!,
                             }),
                     }))
@@ -357,7 +361,7 @@ export async function runPolymarketFinder(
                         offset: undefined,
                         evalResult: evaluatePolymarketBacktestTrades({
                             chartData: closedData,
-                            trades: backtestResult.trades,
+                            trades: tradesForPolymarketEvaluation,
                             outcomes,
                             strategyKey: plan.key,
                             context: polymarketContext,

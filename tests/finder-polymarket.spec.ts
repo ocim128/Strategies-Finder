@@ -129,6 +129,7 @@ function makeOptions(overrides: Partial<FinderOptions> = {}): FinderOptions {
         polymarketRankMode: 'balanced',
         polymarketMinScoredPredictions: 0,
         polymarketLockOffset: false,
+        polymarketAfterTakeProfitOnly: false,
         ...overrides,
     };
 }
@@ -313,6 +314,73 @@ describe('Finder Polymarket runner', () => {
         );
 
         expect(output.results.length).to.be.greaterThan(0);
+    });
+
+    it('can score only entries that follow a take-profit exit', async () => {
+        const bars: OHLCVData[] = [
+            { time: 1_700_000_000, open: 100, high: 100, low: 100, close: 100, volume: 100 },
+            { time: 1_700_000_300, open: 100, high: 102, low: 99.5, close: 101.5, volume: 100 },
+            { time: 1_700_000_600, open: 101, high: 101.4, low: 99.5, close: 100, volume: 100 },
+            { time: 1_700_000_900, open: 100, high: 100.2, low: 99, close: 99.8, volume: 100 },
+        ];
+        installOutcomeFetch([
+            makeOutcomeRow(Number(bars[1].time), 1, '10684', { yes_open_price: 0.4 }),
+            makeOutcomeRow(Number(bars[2].time), 0, '10684', { yes_open_price: 0.7 }),
+        ]);
+
+        const twoLongSignalsStrategy: Strategy = {
+            name: 'Two Long Signals',
+            description: 'Creates one TP setup followed by one later entry',
+            defaultParams: {},
+            paramLabels: {},
+            execute(data: OHLCVData[]): Signal[] {
+                return [
+                    { time: data[0].time, type: 'buy', price: data[0].close, barIndex: 0 },
+                    { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                ];
+            },
+        };
+
+        const baselineInput = makeInput(bars, [{}], {}, '5m', 'BTCUSDT', twoLongSignalsStrategy);
+        baselineInput.settings = {
+            ...baselineInput.settings,
+            tradeDirection: 'long',
+            riskMode: 'percentage',
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 1,
+            allowSameBarExit: true,
+            slippageBps: 0,
+        };
+
+        const { callbacks: baselineCallbacks } = makeCallbacks();
+        const baseline = await runPolymarketFinder(baselineInput, baselineCallbacks);
+
+        const filteredInput = makeInput(
+            bars,
+            [{}],
+            { polymarketAfterTakeProfitOnly: true },
+            '5m',
+            'BTCUSDT',
+            twoLongSignalsStrategy
+        );
+        filteredInput.settings = { ...baselineInput.settings };
+
+        const { callbacks: filteredCallbacks } = makeCallbacks();
+        const filtered = await runPolymarketFinder(filteredInput, filteredCallbacks);
+
+        expect(baseline.results).to.have.length(1);
+        expect(filtered.results).to.have.length(1);
+        expect(baseline.results[0]?.result.trades).to.have.length(2);
+        expect(baseline.results[0]?.result.trades[0]?.exitReason).to.equal('take_profit');
+        expect(baseline.results[0]?.polymarketEval?.predictionsTaken).to.equal(2);
+        expect(baseline.results[0]?.polymarketEval?.scoredPredictions).to.equal(2);
+        expect(baseline.results[0]?.polymarketEval?.winRate).to.equal(0.5);
+        expect(baseline.results[0]?.polymarketEval?.expectancy).to.be.closeTo(-0.05, 1e-12);
+        expect(filtered.results[0]?.polymarketEval?.predictionsTaken).to.equal(1);
+        expect(filtered.results[0]?.polymarketEval?.scoredPredictions).to.equal(1);
+        expect(filtered.results[0]?.polymarketEval?.winRate).to.equal(0);
+        expect(filtered.results[0]?.polymarketEval?.expectancy).to.be.closeTo(-0.7, 1e-12);
     });
 
     it('filters out candidates below the polymarket minimum scored threshold', async () => {

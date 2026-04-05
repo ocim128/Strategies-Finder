@@ -45,6 +45,7 @@ describe("Finder manager logic", () => {
             polymarketRankMode: "balanced",
             polymarketMinScoredPredictions: -5,
             polymarketLockOffset: true,
+            polymarketAfterTakeProfitOnly: true,
         });
 
         expect(options.sortPriority).to.deep.equal(["polyScore", "polyWinRate", "polyPredictions"]);
@@ -54,6 +55,7 @@ describe("Finder manager logic", () => {
         expect(options.freezeRiskManagement).to.equal(true);
         expect(options.polymarketMinScoredPredictions).to.equal(0);
         expect(options.polymarketLockOffset).to.equal(true);
+        expect(options.polymarketAfterTakeProfitOnly).to.equal(true);
     });
 
     it("switches polymarket sort priority by selected rank mode", () => {

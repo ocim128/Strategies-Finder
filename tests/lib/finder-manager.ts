@@ -19,6 +19,7 @@ import {
 	addFinderTimeframeSelection,
 	removeFinderTimeframeSelection,
 } from "./finder/finder-manager-logic";
+import { sortFinderResults } from "./finder/finder-engine";
 import { mergeFinderRiskParamsIntoBacktestSettings } from "./finder/finder-runner-core";
 import { debugLogger } from "./debug-logger";
 import { parseInputNumber } from "./dom-input-readers";
@@ -313,6 +314,7 @@ export class FinderManager {
 		dom.finderPolymarketRankMode.disabled = !enabled;
 		dom.finderPolymarketMinScored.disabled = !enabled;
 		dom.finderPolymarketLockOffset.disabled = !enabled;
+		dom.finderPolymarketAfterTakeProfitOnly.disabled = !enabled;
 	}
 
 	public clearTimeframeCache(): void {
@@ -757,8 +759,9 @@ export class FinderManager {
 					}
 				);
 
-				this.displayResults = output.results;
-				this.renderResults(output.results, options.sortPriority[0]);
+				const sortedResults = sortFinderResults(output.results, options.sortPriority);
+				this.displayResults = sortedResults;
+				this.renderResults(sortedResults, options.sortPriority[0]);
 				this.ui.renderRandomBenchmark(options.mode, output.randomBenchmark);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -803,6 +806,7 @@ export class FinderManager {
 			? Math.round(this.readFinderNumberInput(dom.finderPolymarketMinScored, 0, 0))
 			: 0;
 		const polymarketLockOffset = polymarketScoringEnabled && dom.finderPolymarketLockOffset.checked;
+		const polymarketAfterTakeProfitOnly = polymarketScoringEnabled && dom.finderPolymarketAfterTakeProfitOnly.checked;
 
 		return buildFinderOptions({
 			mode,
@@ -828,6 +832,7 @@ export class FinderManager {
 			polymarketRankMode,
 			polymarketMinScoredPredictions,
 			polymarketLockOffset,
+			polymarketAfterTakeProfitOnly,
 		});
 	}
 

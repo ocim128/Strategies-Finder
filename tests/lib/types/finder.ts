@@ -43,6 +43,7 @@ export interface FinderOptions {
     polymarketRankMode?: PolymarketFinderRankMode;
     polymarketMinScoredPredictions?: number;
     polymarketLockOffset?: boolean;
+    polymarketAfterTakeProfitOnly?: boolean;
 }
 
 export interface EndpointSelectionAdjustment {
