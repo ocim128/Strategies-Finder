@@ -252,8 +252,9 @@ export async function runPolymarketFinder(
         return { results: [] };
     }
 
-    callbacks.setStatus(`Loaded ${outcomes.length} outcome rows. Preparing strategies...`);
+    callbacks.setStatus(`Loaded ${outcomes.length} outcome rows. Preparing parameter sets...`);
     callbacks.setProgress(10, "Preparing parameter sets...");
+    await callbacks.yieldControl();
 
     // Build strategy plans from selections
     const baseStrategyPlans: StrategyPlan[] = [];
@@ -278,6 +279,10 @@ export async function runPolymarketFinder(
         return { results: [] };
     }
 
+    callbacks.setStatus(`Loaded ${outcomes.length} outcome rows. Precomputing indicators...`);
+    callbacks.setProgress(12, "Precomputing indicators...");
+    await callbacks.yieldControl();
+
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
     const precomputed = precomputeIndicators(closedData, settings);
     const polymarketContext = createPolymarketTradeEvaluationContext(closedData, outcomes);
@@ -289,6 +294,10 @@ export async function runPolymarketFinder(
     let filteredCount = 0;
     let failedCount = 0;
     let lastUiUpdateAt = 0;
+
+    callbacks.setStatus(`Running ${totalRuns} Polymarket evaluations...`);
+    callbacks.setProgress(14, `${processedCount}/${totalRuns} evaluations`);
+    await callbacks.yieldControl();
 
     for (const plan of baseStrategyPlans) {
         for (const params of plan.paramSets) {

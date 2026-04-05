@@ -11,6 +11,8 @@
  *   ..\..\..\node_modules\.bin\esno scripts/polymarket-sync-outcomes.ts [options]
  *   npm run poly:sync-outcomes   (default BTC sync only)
  *   npm run poly:sync-outcomes:all
+ *   npm run poly:sync-outcomes:repair
+ *   npm run poly:sync-outcomes:repair:all
  *
  * Options:
  *   --symbol <symbol>      Resolve series id from symbol (BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT)
@@ -198,6 +200,8 @@ function printUsage(): void {
         "Usage:",
         "  npm run poly:sync-outcomes",
         "  npm run poly:sync-outcomes:all",
+        "  npm run poly:sync-outcomes:repair",
+        "  npm run poly:sync-outcomes:repair:all",
         "  ..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-sync-outcomes.ts [options]",
         "",
         "Options:",
@@ -217,6 +221,7 @@ function printUsage(): void {
         "Notes:",
         "  Requires the Vite dev server to be running (`npm run dev`) unless --dry-run is used.",
         "  Use the direct `esno` command above when you need named flags like --symbol.",
+        "  Existing rows are skipped by default. Use `--refresh-recent <n>` or the `:repair` scripts to rewrite recent checkpoints after sync logic changes.",
         "  event_start_ts = event_end_ts - 300 (5 minutes).",
         "  YES prices are sampled at: open, +1m, +2m, +3m, +4m.",
         "  resolved_outcome_up = 1 if outcomePrices[YES] >= 0.5 (hard settlement).",
@@ -503,16 +508,48 @@ function priceAtOrBefore(points: HistoryPoint[], ts: number): number | undefined
     return idx >= 0 ? points[idx].p : undefined;
 }
 
+/** First price in [startTs, endTs) using binary search. */
+function firstPriceInWindow(points: HistoryPoint[], startTs: number, endTs: number): number | undefined {
+    let lo = 0;
+    let hi = points.length - 1;
+    let idx = points.length;
+
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (points[mid].t >= startTs) {
+            idx = mid;
+            hi = mid - 1;
+        } else {
+            lo = mid + 1;
+        }
+    }
+
+    if (idx < points.length) {
+        const point = points[idx];
+        if (point.t < endTs) {
+            return point.p;
+        }
+    }
+    return undefined;
+}
+
+function resolveCheckpointPrice(points: HistoryPoint[], checkpointTs: number): number | undefined {
+    return firstPriceInWindow(points, checkpointTs, checkpointTs + 60)
+        ?? priceAtOrBefore(points, checkpointTs);
+}
+
 // ─── Row builder ──────────────────────────────────────────────────────────
 
-function buildOutcomeRow(ev: SeriesEvent, points: HistoryPoint[], seriesId: string): OutcomeRow | null {
+export function buildOutcomeRow(ev: SeriesEvent, points: HistoryPoint[], seriesId: string): OutcomeRow | null {
     const eventStartTs = ev.endTs - EVENT_DURATION_SEC;
 
-    const open   = priceAtOrBefore(points, eventStartTs);
-    const min1   = priceAtOrBefore(points, eventStartTs + 60);
-    const min2   = priceAtOrBefore(points, eventStartTs + 120);
-    const min3   = priceAtOrBefore(points, eventStartTs + 180);
-    const min4   = priceAtOrBefore(points, eventStartTs + 240);
+    // Match bucketed chart/open-entry semantics by preferring the first trade inside
+    // each minute window instead of the last trade before the window starts.
+    const open   = resolveCheckpointPrice(points, eventStartTs);
+    const min1   = resolveCheckpointPrice(points, eventStartTs + 60);
+    const min2   = resolveCheckpointPrice(points, eventStartTs + 120);
+    const min3   = resolveCheckpointPrice(points, eventStartTs + 180);
+    const min4   = resolveCheckpointPrice(points, eventStartTs + 240);
 
     if (open === undefined && min1 === undefined && min2 === undefined && min3 === undefined && min4 === undefined) {
         return null; // Skip if no history points matched

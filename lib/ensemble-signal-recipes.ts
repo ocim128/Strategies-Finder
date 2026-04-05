@@ -281,7 +281,7 @@ function buildRecipeReplayBacktestSettings(
 
     return {
         ...anchorBacktestSettings,
-        executionModel: "signal_close",
+        executionModel: "next_open",
         tradeDirection,
         tradeFilterMode: "none",
         entrySettingsToggle: false,
@@ -299,7 +299,7 @@ function buildRecipeReplayConfig(
         strategyParams: { ...anchorConfig.strategyParams },
         backtestSettings: {
             ...anchorConfig.backtestSettings,
-            executionModel: "signal_close",
+            executionModel: "next_open",
             tradeDirection: resolveReplayTradeDirection(preparedSignals, directionOverride),
             tradeFilterMode: "none",
             tradeFilterSettingsToggle: false,

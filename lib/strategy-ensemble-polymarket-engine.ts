@@ -583,7 +583,7 @@ function buildReplayBacktestSettings(
 ): BacktestSettings {
     return {
         ...backtestSettings,
-        executionModel: "signal_close",
+        executionModel: "next_open",
         tradeDirection: inferReplayTradeDirection(preparedSignals, directionSlice, fallbackDirection),
         tradeFilterMode: "none",
         entrySettingsToggle: false,

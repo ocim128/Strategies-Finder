@@ -115,7 +115,8 @@ function createBacktestResult(trades: Trade[]): BacktestResult {
 
 function createDeps(
     configs: readonly StrategyConfig[],
-    tradesByStrategyKey: ReadonlyMap<string, Trade[]>
+    tradesByStrategyKey: ReadonlyMap<string, Trade[]>,
+    capturedSignalExecutionModels?: string[]
 ): StrategyEnsembleEngineDeps {
     const configByName = new Map(configs.map((config) => [config.name, config] as const));
     const strategyByKey = new Map(
@@ -138,14 +139,20 @@ function createDeps(
             result: createBacktestResult(tradesByStrategyKey.get(strategy.name) ?? []),
             engineUsed: "typescript",
         }),
-        evaluateSignalsOnData: async (_candles, _interval, signals) => ({
-            result: createBacktestResult(
-                signals
-                    .filter((signal) => signal.type === "buy" || signal.type === "sell")
-                    .map((signal) => createTrade(Number(signal.time), signal.type === "buy" ? "long" : "short"))
-            ),
-            engineUsed: "typescript",
-        }),
+        evaluateSignalsOnData: async (_candles, _interval, signals, settings) => {
+            if (capturedSignalExecutionModels) {
+                capturedSignalExecutionModels.push(settings.executionModel);
+            }
+
+            return {
+                result: createBacktestResult(
+                    signals
+                        .filter((signal) => signal.type === "buy" || signal.type === "sell")
+                        .map((signal) => createTrade(Number(signal.time), signal.type === "buy" ? "long" : "short"))
+                ),
+                engineUsed: "typescript",
+            };
+        },
         warn: () => {},
     };
 }
@@ -161,6 +168,7 @@ function buildFixture(input: {
     candles?: OHLCVData[];
     conflictPolicy?: Parameters<typeof runEnsemblePolymarket>[0]["conflictPolicy"];
     directionSlice?: Parameters<typeof runEnsemblePolymarket>[0]["directionSlice"];
+    capturedSignalExecutionModels?: string[];
 }): {
     candles: OHLCVData[];
     resultPromise: Promise<EnsemblePolymarketRunResult>;
@@ -185,7 +193,7 @@ function buildFixture(input: {
             symbol: input.symbol ?? "BTCUSDT",
             interval: input.interval ?? "5m",
             outcomes: [...input.outcomes],
-            deps: createDeps(configs, input.tradesByStrategyKey),
+            deps: createDeps(configs, input.tradesByStrategyKey, input.capturedSignalExecutionModels),
             conflictPolicy: input.conflictPolicy,
             directionSlice: input.directionSlice,
         }),
@@ -516,6 +524,42 @@ describe("Strategy Ensemble Polymarket engine", () => {
         expect(result.selectedPolicyResult?.expectancy).to.equal(0.5);
         expect(result.selectedPolicyResult?.winRate).to.equal(1);
         expect(result.selectedPolicyResult?.retentionRate).to.equal(1);
+    });
+
+    it("replays ensemble polymarket policies on next-open execution", async () => {
+        const capturedSignalExecutionModels: string[] = [];
+        const configs = [
+            createConfig("Primary Long", "primary_long"),
+            createConfig("Short Override", "short_override"),
+        ];
+        const tradesByStrategyKey = new Map<string, Trade[]>([
+            ["primary_long", [createTrade(300, "long"), createTrade(600, "long")]],
+            ["short_override", [createTrade(300, "short")]],
+        ]);
+        const outcomes = [
+            createOutcome(300, 0),
+            createOutcome(600, 1),
+        ];
+        const candles = [
+            createCandle(0),
+            createCandle(300),
+            createCandle(600),
+        ];
+
+        const { resultPromise } = buildFixture({
+            candles,
+            configs,
+            targetName: "Primary Long",
+            contextNames: ["Short Override"],
+            tradesByStrategyKey,
+            outcomes,
+            conflictPolicy: "secondary_override",
+            capturedSignalExecutionModels,
+        });
+        await resultPromise;
+
+        expect(capturedSignalExecutionModels.length).to.be.greaterThan(0);
+        expect(new Set(capturedSignalExecutionModels)).to.deep.equal(new Set(["next_open"]));
     });
 
     it("builds a best-side-owner policy from the strongest long and short specialists", async () => {

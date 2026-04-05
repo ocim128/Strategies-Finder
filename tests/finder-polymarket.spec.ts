@@ -166,16 +166,20 @@ function makeInput(
     };
 }
 
-function makeCallbacks(): { callbacks: FinderRunCallbacks; statuses: string[] } {
+function makeCallbacks(): { callbacks: FinderRunCallbacks; statuses: string[]; getYieldCount: () => number } {
     const statuses: string[] = [];
+    let yieldCount = 0;
     return {
         statuses,
+        getYieldCount: () => yieldCount,
         callbacks: {
             setProgress: () => undefined,
             setStatus: (text: string) => {
                 statuses.push(text);
             },
-            yieldControl: async () => undefined,
+            yieldControl: async () => {
+                yieldCount++;
+            },
         },
     };
 }
@@ -244,6 +248,23 @@ describe('Finder Polymarket runner', () => {
         expect(output.results[0]?.polymarketEval?.wins).to.be.at.most(output.results[0]?.result.totalTrades ?? 0);
         expect(prepareFinderCalls).to.equal(1);
         expect(statuses.some((status) => status.includes('Loaded 2 outcome rows'))).to.equal(true);
+    });
+
+    it('yields control during Polymarket preparation so the UI can repaint between phases', async () => {
+        const bars = makeBars(4);
+        installOutcomeFetch([
+            makeOutcomeRow(Number(bars[1].time), 1),
+            makeOutcomeRow(Number(bars[2].time), 1),
+        ]);
+
+        const { callbacks, getYieldCount } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(bars, [{ variant: 1 }]),
+            callbacks
+        );
+
+        expect(output.results).to.have.length(1);
+        expect(getYieldCount()).to.be.greaterThanOrEqual(3);
     });
 
     it('loads the ETH 5m outcome series for supported alt symbols', async () => {

@@ -2,13 +2,15 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
     applyEnsembleRecipeReplayDirectionOverride,
+    buildPreparedSignalsForEnsembleRecipe,
     buildPrimaryVetoPreparedSignals,
     buildTargetConflictFilterPreparedSignals,
     type EnsembleRecipeSignalArtifact,
 } from "./lib/ensemble-signal-recipes";
-import { DEFAULT_BACKTEST_SETTINGS, type StrategyConfig } from "./lib/settings-model";
+import { DEFAULT_BACKTEST_SETTINGS, type EnsembleSignalRecipe, type StrategyConfig } from "./lib/settings-model";
 import { timeKey, type Signal, type Strategy } from "./lib/strategies";
 import type { EnsembleEntryPresence } from "./lib/strategy-ensemble-types";
+import type { OHLCVData } from "./lib/strategies";
 
 function createSignal(time: number, type: Signal["type"], barIndex: number): Signal {
     return {
@@ -16,6 +18,17 @@ function createSignal(time: number, type: Signal["type"], barIndex: number): Sig
         type,
         price: 100,
         barIndex,
+    };
+}
+
+function createCandle(time: number): OHLCVData {
+    return {
+        time,
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100,
+        volume: 1000,
     };
 }
 
@@ -158,5 +171,48 @@ describe("Ensemble signal recipes", () => {
             "sell@600",
             "buy@900",
         ]);
+    });
+
+    it("replays ensemble recipes on next-open execution instead of signal-close", () => {
+        const anchorConfig = createConfig("Anchor");
+        const recipe: EnsembleSignalRecipe = {
+            name: "anchor-only",
+            createdAt: "2026-04-05T00:00:00.000Z",
+            updatedAt: "2026-04-05T00:00:00.000Z",
+            source: "ensemble_polymarket",
+            symbol: "XRPUSDT",
+            interval: "5m",
+            mode: "target_conflict_filter",
+            directionSlice: "all",
+            anchorConfigName: anchorConfig.name,
+            anchorConfig,
+            componentConfigs: [anchorConfig],
+            notes: "test",
+            metrics: {
+                keptTrades: 1,
+                wins: 1,
+                losses: 0,
+                winRate: 1,
+                retentionRate: 1,
+                coverage: 1,
+                overlapRate: 0,
+                winRateLift: 0.1,
+                wilsonLift: null,
+            },
+        };
+        const candles = [createCandle(0), createCandle(300), createCandle(600)];
+        const strategy = {
+            ...createStrategy("Anchor"),
+            execute: () => [createSignal(300, "buy", 1)],
+        } satisfies Strategy;
+
+        const resolved = buildPreparedSignalsForEnsembleRecipe({
+            recipe,
+            candles,
+            getStrategy: () => strategy,
+        });
+
+        expect(resolved.anchorBacktestSettings.executionModel).to.equal("next_open");
+        expect(resolved.anchorConfig.backtestSettings.executionModel).to.equal("next_open");
     });
 });

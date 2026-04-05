@@ -82,6 +82,7 @@ const TEST_FILES = [
     "tests/portfolio-lab.spec.ts",
     "tests/strategy-ensemble.spec.ts",
     "tests/quick-view-polymarket.spec.ts",
+    "tests/polymarket-sync-outcomes-cli.spec.ts",
     "tests/polymarket-sync-utils.spec.ts",
     "tests/polymarket-outcome-evaluator.spec.ts",
     "tests/polymarket-fill-analysis.spec.ts",
