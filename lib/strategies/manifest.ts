@@ -60,6 +60,10 @@ import { supertrend_extreme_overextension_fade } from "./lib/supertrend_extreme_
 import { true_range_ratio_pop_chase } from "./lib/true_range_ratio_pop_chase";
 import { ema_touch_continuation } from "./lib/ema_touch_continuation";
 import { sma_slope_micro_chase } from "./lib/sma_slope_micro_chase";
+import { algorithmic_liquidity_spoof } from "./lib/algorithmic_liquidity_spoof";
+import { algorithmic_elder_ray } from "./lib/algorithmic_elder_ray";
+import { probability_boundary_eigen_shift } from "./lib/probability_boundary_eigen_shift";
+import { second_derivative_momentum_ignition } from "./lib/second_derivative_momentum_ignition";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -125,6 +129,10 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "true_range_ratio_pop_chase", strategy: true_range_ratio_pop_chase },
     { key: "ema_touch_continuation", strategy: ema_touch_continuation },
     { key: "sma_slope_micro_chase", strategy: sma_slope_micro_chase },
+    { key: "algorithmic_liquidity_spoof", strategy: algorithmic_liquidity_spoof },
+    { key: "algorithmic_elder_ray", strategy: algorithmic_elder_ray },
+    { key: "probability_boundary_eigen_shift", strategy: probability_boundary_eigen_shift },
+    { key: "second_derivative_momentum_ignition", strategy: second_derivative_momentum_ignition },
 ];
 
 export function createStrategiesRecordFromManifest(

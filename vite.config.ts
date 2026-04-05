@@ -9,6 +9,10 @@ const POLYMARKET_GAMMA_EVENT_SLUG_URL = 'https://gamma-api.polymarket.com/events
 const POLYMARKET_CLOB_HISTORY_URL = 'https://clob.polymarket.com/prices-history';
 const SQLITE_DB_PATH = resolve(process.cwd(), 'price-data', 'market-data.sqlite');
 const SQLITE_MAX_BODY_BYTES = 80 * 1024 * 1024;
+const WATCH_IGNORED_GLOBS = [
+    // Generated artifacts are rewritten in place and can trip Vite's watcher on Windows.
+    '**/artifacts/**',
+];
 
 let sqliteDb: DatabaseSync | null = null;
 
@@ -624,6 +628,9 @@ export default defineConfig({
     server: {
         fs: {
             allow: ['../../..']
-        }
+        },
+        watch: {
+            ignored: WATCH_IGNORED_GLOBS,
+        },
     }
 });
