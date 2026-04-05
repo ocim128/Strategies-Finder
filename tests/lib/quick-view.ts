@@ -40,9 +40,40 @@ type QuickViewPolymarketSummary = {
     unscoredTrades: number;
     coverage: number;
     winRate: number;
+    expectancy: number | null;
     outcomeRowsLoaded: number;
     bestBaselineWinRate: number;
     baselineDelta: number;
+    longestWinStreak: number;
+    longestLossStreak: number;
+    recentFormTrades: number;
+    recentFormWins: number;
+    recentFormLosses: number;
+    recentFormWinRate: number;
+    exitReasonWinRates: {
+        maxHold: {
+            trades: number;
+            wins: number;
+            losses: number;
+            winRate: number;
+        };
+        takeProfit: {
+            trades: number;
+            wins: number;
+            losses: number;
+            winRate: number;
+        };
+        signal: {
+            trades: number;
+            wins: number;
+            losses: number;
+            winRate: number;
+        };
+    };
+    afterTakeProfitExpectancy: {
+        pricedTrades: number;
+        expectancy: number | null;
+    };
     entryOffset?: number;
     timingProfile?: BacktestPolymarketTimingProfileEntry[];
     bestTimingProfile?: BacktestPolymarketTimingProfileEntry | null;
@@ -67,6 +98,24 @@ type QuickViewPolymarketExecutionGap = {
     breakEvenWinRate: number;
     realizedWinRate: number;
     realizedExpectancy: number;
+};
+
+type QuickViewPolymarketExitReasonSummary = {
+    trades: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+};
+
+type QuickViewPolymarketExpectancySummary = {
+    pricedTrades: number;
+    expectancy: number | null;
+};
+
+type QuickViewPolymarketExitReasonWinRates = {
+    maxHold: QuickViewPolymarketExitReasonSummary;
+    takeProfit: QuickViewPolymarketExitReasonSummary;
+    signal: QuickViewPolymarketExitReasonSummary;
 };
 
 type SnapshotFilterBinding = {
@@ -140,6 +189,19 @@ export function summarizePolymarketStreaks(trades: Trade[]): {
     };
 }
 
+function buildPolymarketWinRateSummary(trades: readonly Trade[]): QuickViewPolymarketExitReasonSummary {
+    const wins = trades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
+    const losses = trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
+    const tradeCount = wins + losses;
+
+    return {
+        trades: tradeCount,
+        wins,
+        losses,
+        winRate: tradeCount > 0 ? wins / tradeCount : 0,
+    };
+}
+
 export function summarizeRecentPolymarketForm(
     trades: Trade[],
     windowSize = 20
@@ -160,6 +222,71 @@ export function summarizeRecentPolymarketForm(
         recentFormWins,
         recentFormLosses,
         recentFormWinRate: recentFormTrades > 0 ? recentFormWins / recentFormTrades : 0,
+    };
+}
+
+function groupTradesByPreviousClosedTradeExitReason(
+    trades: readonly Trade[]
+): Record<"time_stop" | "take_profit" | "signal", Trade[]> {
+    const groupedTrades: Record<"time_stop" | "take_profit" | "signal", Trade[]> = {
+        time_stop: [],
+        take_profit: [],
+        signal: [],
+    };
+
+    for (let index = 1; index < trades.length; index += 1) {
+        const currentTrade = trades[index];
+        const previousTrade = trades[index - 1];
+
+        if (currentTrade?.polymarketOutcome === null || currentTrade?.polymarketOutcome === undefined) {
+            continue;
+        }
+
+        if (typeof currentTrade.polymarketOutcome.isWin !== "boolean") {
+            continue;
+        }
+
+        if (previousTrade?.exitReason === "end_of_data") {
+            continue;
+        }
+
+        const previousExitReason = previousTrade?.exitReason ?? "signal";
+        if (previousExitReason === "time_stop" || previousExitReason === "take_profit" || previousExitReason === "signal") {
+            groupedTrades[previousExitReason].push(currentTrade);
+        }
+    }
+
+    return groupedTrades;
+}
+
+export function summarizePolymarketExitReasonWinRates(
+    trades: readonly Trade[]
+): QuickViewPolymarketExitReasonWinRates {
+    const groupedTrades = groupTradesByPreviousClosedTradeExitReason(trades);
+
+    return {
+        maxHold: buildPolymarketWinRateSummary(groupedTrades.time_stop),
+        takeProfit: buildPolymarketWinRateSummary(groupedTrades.take_profit),
+        signal: buildPolymarketWinRateSummary(groupedTrades.signal),
+    };
+}
+
+export function summarizePolymarketExpectancyAfterTakeProfit(
+    trades: readonly Trade[]
+): QuickViewPolymarketExpectancySummary {
+    const afterTakeProfitTrades = groupTradesByPreviousClosedTradeExitReason(trades).take_profit;
+    const pricedTrades = getPolymarketPricedTrades(afterTakeProfitTrades);
+    if (pricedTrades.length === 0) {
+        return {
+            pricedTrades: 0,
+            expectancy: null,
+        };
+    }
+
+    const summaryRow = buildPolymarketExpectancyRow("After TP", pricedTrades);
+    return {
+        pricedTrades: summaryRow.tradeCount,
+        expectancy: summaryRow.expectancy,
     };
 }
 
@@ -1043,6 +1170,12 @@ class QuickViewManager {
                     </div>
                 </div>
                 <div class="qv-stat-card">
+                    <div class="qv-stat-label">Poly Exp / Trade</div>
+                    <div class="qv-stat-value ${summary.expectancy === null ? '' : (summary.expectancy >= 0 ? 'positive' : 'negative')}">
+                        ${summary.expectancy === null ? 'n/a' : this.formatPolymarketCents(summary.expectancy)}
+                    </div>
+                </div>
+                <div class="qv-stat-card">
                     <div class="qv-stat-label">Scored Trade Share</div>
                     <div class="qv-stat-value">${(summary.coverage * 100).toFixed(1)}%</div>
                 </div>
@@ -1060,6 +1193,24 @@ class QuickViewManager {
                         ${summary.baselineDelta >= 0 ? '+' : ''}${(summary.baselineDelta * 100).toFixed(1)}pp
                     </div>
                 </div>
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Max Win Streak</div>
+                    <div class="qv-stat-value positive">${summary.longestWinStreak}</div>
+                </div>
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Max Loss Streak</div>
+                    <div class="qv-stat-value negative">${summary.longestLossStreak}</div>
+                </div>
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Last 50 W/L</div>
+                    <div class="qv-stat-value ${summary.recentFormTrades === 0 ? '' : (summary.recentFormWinRate >= 0.5 ? 'positive' : 'negative')}">
+                        ${summary.recentFormTrades === 0 ? 'n/a' : `${summary.recentFormWins} win - ${summary.recentFormLosses} lose`}
+                    </div>
+                </div>
+                ${this.renderPolymarketExitReasonWinRateCard('Entry Win % | After Max Hold', summary.exitReasonWinRates.maxHold)}
+                ${this.renderPolymarketExitReasonWinRateCard('Entry Win % | After TP', summary.exitReasonWinRates.takeProfit)}
+                ${this.renderPolymarketExpectancyCard('Entry Exp / Trade | After TP', summary.afterTakeProfitExpectancy)}
+                ${this.renderPolymarketExitReasonWinRateCard('Entry Win % | After Signal', summary.exitReasonWinRates.signal)}
                 <div class="qv-stat-card">
                     <div class="qv-stat-label">Scored Trades</div>
                     <div class="qv-stat-value">${summary.scoredTrades}</div>
@@ -1080,6 +1231,46 @@ class QuickViewManager {
                 </div>
                 ${diagnosticsNote}
                 ${timingProfileSection}
+            </div>
+        `;
+    }
+
+    private renderPolymarketExitReasonWinRateCard(
+        label: string,
+        summary: QuickViewPolymarketExitReasonSummary
+    ): string {
+        const value = summary.trades > 0
+            ? `${(summary.winRate * 100).toFixed(1)}% | ${summary.trades}t`
+            : 'n/a';
+        const toneClass = summary.trades > 0
+            ? (summary.winRate >= 0.5 ? 'positive' : 'negative')
+            : '';
+
+        return `
+            <div class="qv-stat-card">
+                <div class="qv-stat-label">${label}</div>
+                <div class="qv-stat-value ${toneClass}">${value}</div>
+            </div>
+        `;
+    }
+
+    private renderPolymarketExpectancyCard(
+        label: string,
+        summary: QuickViewPolymarketExpectancySummary
+    ): string {
+        const expectancyValue = summary.expectancy;
+        const hasData = summary.pricedTrades > 0 && expectancyValue !== null;
+        const value = hasData
+            ? `${this.formatPolymarketCents(expectancyValue)} | ${summary.pricedTrades}t`
+            : "n/a";
+        const toneClass = hasData
+            ? (expectancyValue >= 0 ? "positive" : "negative")
+            : "";
+
+        return `
+            <div class="qv-stat-card">
+                <div class="qv-stat-label">${label}</div>
+                <div class="qv-stat-value ${toneClass}">${value}</div>
             </div>
         `;
     }
@@ -1171,6 +1362,11 @@ class QuickViewManager {
         const bestBaselineWinRate = computePolymarketBestBaselineWinRate(result.trades);
         const timingProfile = summary?.timingProfile;
         const bestTimingProfile = timingProfile ? this.getBestTimingProfileEntry(timingProfile) : null;
+        const payoutSummary = summarizePolymarketPayoutDiagnostics(result.trades);
+        const streakSummary = summarizePolymarketStreaks(result.trades);
+        const recentFormSummary = summarizeRecentPolymarketForm(result.trades, 50);
+        const exitReasonWinRates = summarizePolymarketExitReasonWinRates(result.trades);
+        const afterTakeProfitExpectancy = summarizePolymarketExpectancyAfterTakeProfit(result.trades);
 
         return {
             wins,
@@ -1180,9 +1376,18 @@ class QuickViewManager {
             unscoredTrades,
             coverage,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
+            expectancy: payoutSummary?.expectancy ?? null,
             outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
             bestBaselineWinRate,
             baselineDelta: (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
+            longestWinStreak: streakSummary.longestWinStreak,
+            longestLossStreak: streakSummary.longestLossStreak,
+            recentFormTrades: recentFormSummary.recentFormTrades,
+            recentFormWins: recentFormSummary.recentFormWins,
+            recentFormLosses: recentFormSummary.recentFormLosses,
+            recentFormWinRate: recentFormSummary.recentFormWinRate,
+            exitReasonWinRates,
+            afterTakeProfitExpectancy,
             entryOffset: summary?.entryOffset,
             timingProfile,
             bestTimingProfile,

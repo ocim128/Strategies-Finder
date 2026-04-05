@@ -6,6 +6,8 @@ import {
     getQuickViewDiagnosticSections,
     quickViewManager,
     summarizePolymarketExecutionGap,
+    summarizePolymarketExpectancyAfterTakeProfit,
+    summarizePolymarketExitReasonWinRates,
     summarizePolymarketPayoutDiagnostics,
     summarizePolymarketStreaks,
     summarizeRecentPolymarketForm,
@@ -75,6 +77,76 @@ describe("Quick View Polymarket streak summary", () => {
         expect(summary.recentFormWins).to.equal(2);
         expect(summary.recentFormLosses).to.equal(2);
         expect(summary.recentFormWinRate).to.equal(0.5);
+    });
+
+    it("summarizes entry win rate by the previous closed trade exit reason", () => {
+        const summary = summarizePolymarketExitReasonWinRates([
+            makeTrade(1, true, { exitReason: "time_stop" }),
+            makeTrade(2, false, { exitReason: "take_profit" }),
+            makeTrade(3, true, { exitReason: "signal" }),
+            makeTrade(4, false, { exitReason: "time_stop" }),
+            makeTrade(5, true, { exitReason: "time_stop" }),
+            makeTrade(6, null, { exitReason: "signal" }),
+            makeTrade(7, true, { exitReason: "end_of_data" }),
+        ]);
+
+        expect(summary.maxHold.trades).to.equal(2);
+        expect(summary.maxHold.wins).to.equal(1);
+        expect(summary.maxHold.losses).to.equal(1);
+        expect(summary.maxHold.winRate).to.equal(0.5);
+
+        expect(summary.takeProfit.trades).to.equal(1);
+        expect(summary.takeProfit.wins).to.equal(1);
+        expect(summary.takeProfit.losses).to.equal(0);
+        expect(summary.takeProfit.winRate).to.equal(1);
+
+        expect(summary.signal.trades).to.equal(2);
+        expect(summary.signal.wins).to.equal(1);
+        expect(summary.signal.losses).to.equal(1);
+        expect(summary.signal.winRate).to.equal(0.5);
+    });
+
+    it("summarizes entry expectancy after the previous trade exited by tp", () => {
+        const summary = summarizePolymarketExpectancyAfterTakeProfit([
+            makeTrade(1, true, {
+                exitReason: "take_profit",
+                polymarketOutcome: {
+                    ...makeTrade(1, true).polymarketOutcome!,
+                    marketEntryPrice: 0.45,
+                },
+            }),
+            makeTrade(2, true, {
+                exitReason: "signal",
+                polymarketOutcome: {
+                    ...makeTrade(2, true).polymarketOutcome!,
+                    marketEntryPrice: 0.30,
+                },
+            }),
+            makeTrade(3, false, {
+                exitReason: "take_profit",
+                polymarketOutcome: {
+                    ...makeTrade(3, false).polymarketOutcome!,
+                    marketEntryPrice: 0.60,
+                },
+            }),
+            makeTrade(4, false, {
+                exitReason: "signal",
+                polymarketOutcome: {
+                    ...makeTrade(4, false).polymarketOutcome!,
+                    marketEntryPrice: 0.70,
+                },
+            }),
+            makeTrade(5, true, {
+                exitReason: "signal",
+                polymarketOutcome: {
+                    ...makeTrade(5, true).polymarketOutcome!,
+                    marketEntryPrice: null,
+                },
+            }),
+        ]);
+
+        expect(summary.pricedTrades).to.equal(2);
+        expect(summary.expectancy).to.be.closeTo(0, 1e-12);
     });
 
     it("computes the best naive baseline from scored trade outcomes", () => {
@@ -555,5 +627,84 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.contain("Run Mode: Native 5m scoring");
         expect(html).to.contain("Polymarket tab");
         expect(html).to.not.contain("Selected Offset: n/a");
+    });
+
+    it("renders the new quick-view polymarket summary cards", () => {
+        const html = (quickViewManager as any).buildPolymarketSection({
+            trades: [
+                makeTrade(1, true, {
+                    exitReason: "signal",
+                    polymarketOutcome: {
+                        ...makeTrade(1, true).polymarketOutcome!,
+                        marketEntryPrice: 0.3,
+                    },
+                }),
+                makeTrade(2, true, {
+                    exitReason: "take_profit",
+                    polymarketOutcome: {
+                        ...makeTrade(2, true).polymarketOutcome!,
+                        marketEntryPrice: 0.3,
+                    },
+                }),
+                makeTrade(3, false, {
+                    exitReason: "time_stop",
+                    polymarketOutcome: {
+                        ...makeTrade(3, false).polymarketOutcome!,
+                        marketEntryPrice: 0.6,
+                    },
+                }),
+                makeTrade(4, true, {
+                    exitReason: "time_stop",
+                    polymarketOutcome: {
+                        ...makeTrade(4, true).polymarketOutcome!,
+                        marketEntryPrice: 0.4,
+                    },
+                }),
+                makeTrade(5, false, {
+                    exitReason: "signal",
+                    polymarketOutcome: {
+                        ...makeTrade(5, false).polymarketOutcome!,
+                        marketEntryPrice: 0.4,
+                    },
+                }),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 4,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            polymarketTradeSummary: {
+                seriesId: "btc-5m",
+                outcomeRowsLoaded: 5,
+                scoredTrades: 5,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 0,
+            },
+        } satisfies BacktestResult);
+
+        expect(html).to.contain("Poly Exp / Trade");
+        expect(html).to.contain("+20.0c");
+        expect(html).to.contain("Max Win Streak");
+        expect(html).to.contain("Max Loss Streak");
+        expect(html).to.contain("Last 50 W/L");
+        expect(html).to.contain("3 win - 2 lose");
+        expect(html).to.contain("Entry Win % | After Max Hold");
+        expect(html).to.contain("50.0% | 2t");
+        expect(html).to.contain("Entry Win % | After TP");
+        expect(html).to.contain("0.0% | 1t");
+        expect(html).to.contain("Entry Exp / Trade | After TP");
+        expect(html).to.contain("-60.0c | 1t");
+        expect(html).to.contain("Entry Win % | After Signal");
+        expect(html).to.contain("100.0% | 1t");
     });
 });
