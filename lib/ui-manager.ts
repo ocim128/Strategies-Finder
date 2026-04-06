@@ -120,6 +120,8 @@ export class UIManager {
         const source = state.currentBacktestResultSource;
         const sourcePrefix = source === 'finder_selection'
             ? 'Finder Adj '
+            : source === 'endpoint_preview'
+                ? 'Endpoint '
             : source === 'walk_forward_oos'
                     ? 'WFO OOS '
                     : source === 'ensemble_preview'
@@ -129,6 +131,8 @@ export class UIManager {
         badge.className = `stat-badge ${isPositive ? 'positive' : 'negative'}`;
         badge.title = source === 'finder_selection'
             ? 'Showing Finder selection snapshot with endpoint-bias trade removed. Run Backtest for the raw result.'
+            : source === 'endpoint_preview'
+                ? 'Showing a local preview of the exact HTTP backtest endpoint contract.'
             : source === 'walk_forward_oos'
                     ? 'Showing walk-forward out-of-sample result snapshot.'
                     : source === 'ensemble_preview'

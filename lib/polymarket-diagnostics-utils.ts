@@ -1,4 +1,5 @@
-import type { BacktestResult, Trade } from "./types/strategies";
+import type { BacktestPolymarketTradeSummary } from "./types/polymarket-outcomes";
+import type { BacktestResult, ExpectancyBreakdownRow, Trade } from "./types/strategies";
 import type { PolymarketFeatureAnalysis } from "./types/polymarket-outcomes";
 
 export function clampPolymarketEntryOffset(value: number): number {
@@ -63,4 +64,234 @@ export function rankPolymarketFeatureSuggestions(
             }
             return left.label.localeCompare(right.label);
         });
+}
+
+export interface PolymarketPayoutDiagnosticsSummary {
+    pricedTrades: number;
+    unpricedScoredTrades: number;
+    winRate: number;
+    expectancy: number;
+    avgEntryPrice: number;
+    breakEvenWinRate: number;
+    edgeVsBreakEven: number;
+}
+
+export interface BacktestPolymarketPerformanceSummary {
+    wins: number;
+    losses: number;
+    scoredTrades: number;
+    unscoredTrades: number;
+    missingOutcomeTrades: number;
+    scoredTradeShare: number;
+    winRate: number;
+    expectancy: number | null;
+    pricedTrades: number;
+    unpricedScoredTrades: number;
+    outcomeRowsLoaded: number;
+    bestBaselineWinRate: number;
+    baselineDelta: number;
+    longestWinStreak: number;
+    longestLossStreak: number;
+    entryOffset?: number;
+}
+
+function getPolymarketPricedTrades(trades: readonly Trade[]): Trade[] {
+    return trades.filter((trade) => (
+        trade.polymarketOutcome !== null
+        && trade.polymarketOutcome !== undefined
+        && typeof trade.polymarketOutcome.marketEntryPrice === "number"
+        && Number.isFinite(trade.polymarketOutcome.marketEntryPrice)
+    ));
+}
+
+function getScoredPolymarketTrades(trades: readonly Trade[]): Trade[] {
+    return trades.filter((trade) => (
+        trade.polymarketOutcome !== null
+        && trade.polymarketOutcome !== undefined
+    ));
+}
+
+function getPolymarketTradePayout(trade: Trade): number | null {
+    const price = trade.polymarketOutcome?.marketEntryPrice;
+    const isWin = trade.polymarketOutcome?.isWin;
+    if (typeof price !== "number" || !Number.isFinite(price) || typeof isWin !== "boolean") {
+        return null;
+    }
+    return isWin ? (1 - price) : -price;
+}
+
+function average(values: readonly number[]): number {
+    if (values.length === 0) {
+        return 0;
+    }
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function buildPolymarketExpectancyRow(label: string, trades: readonly Trade[]): ExpectancyBreakdownRow {
+    const payouts = trades
+        .map((trade) => getPolymarketTradePayout(trade))
+        .filter((value): value is number => value !== null);
+    const entryPrices = trades
+        .map((trade) => trade.polymarketOutcome?.marketEntryPrice)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    const wins = trades.filter((trade) => trade.polymarketOutcome?.isWin === true);
+    const losses = trades.filter((trade) => trade.polymarketOutcome?.isWin === false);
+    const totalProfit = wins.reduce((sum, trade) => sum + Math.max(0, getPolymarketTradePayout(trade) ?? 0), 0);
+    const totalLoss = Math.abs(losses.reduce((sum, trade) => sum + Math.min(0, getPolymarketTradePayout(trade) ?? 0), 0));
+    const netProfit = payouts.reduce((sum, value) => sum + value, 0);
+    const tradeCount = payouts.length;
+    const avgEntryPrice = entryPrices.length > 0 ? average(entryPrices) : 0;
+    const breakEvenWinRate = avgEntryPrice * 100;
+    const winRate = tradeCount > 0 ? (wins.length / tradeCount) * 100 : 0;
+
+    return {
+        label,
+        tradeCount,
+        winRate,
+        netProfit,
+        expectancy: tradeCount > 0 ? netProfit / tradeCount : 0,
+        avgWin: wins.length > 0 ? totalProfit / wins.length : 0,
+        avgLoss: losses.length > 0 ? totalLoss / losses.length : 0,
+        profitFactor: totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0,
+        avgEntryPrice,
+        breakEvenWinRate,
+        edgeVsBreakEven: winRate - breakEvenWinRate,
+    };
+}
+
+export function summarizePolymarketPayoutDiagnostics(
+    trades: readonly Trade[]
+): PolymarketPayoutDiagnosticsSummary | null {
+    const scoredTrades = getScoredPolymarketTrades(trades);
+    const pricedTrades = getPolymarketPricedTrades(trades);
+    if (pricedTrades.length === 0) {
+        return null;
+    }
+
+    const summaryRow = buildPolymarketExpectancyRow("All", pricedTrades);
+    return {
+        pricedTrades: summaryRow.tradeCount,
+        unpricedScoredTrades: Math.max(0, scoredTrades.length - pricedTrades.length),
+        winRate: summaryRow.winRate / 100,
+        expectancy: summaryRow.expectancy,
+        avgEntryPrice: summaryRow.avgEntryPrice ?? 0,
+        breakEvenWinRate: (summaryRow.breakEvenWinRate ?? 0) / 100,
+        edgeVsBreakEven: (summaryRow.edgeVsBreakEven ?? 0) / 100,
+    };
+}
+
+export function summarizePolymarketStreaks(trades: readonly Trade[]): {
+    longestWinStreak: number;
+    longestLossStreak: number;
+} {
+    let currentWinStreak = 0;
+    let currentLossStreak = 0;
+    let longestWinStreak = 0;
+    let longestLossStreak = 0;
+
+    for (const trade of trades) {
+        const isWin = trade.polymarketOutcome?.isWin;
+        if (isWin === true) {
+            currentWinStreak++;
+            currentLossStreak = 0;
+            longestWinStreak = Math.max(longestWinStreak, currentWinStreak);
+            continue;
+        }
+
+        if (isWin === false) {
+            currentLossStreak++;
+            currentWinStreak = 0;
+            longestLossStreak = Math.max(longestLossStreak, currentLossStreak);
+            continue;
+        }
+
+        currentWinStreak = 0;
+        currentLossStreak = 0;
+    }
+
+    return {
+        longestWinStreak,
+        longestLossStreak,
+    };
+}
+
+export function computePolymarketBestBaselineWinRate(trades: readonly Trade[]): number {
+    const scoredTrades = getScoredPolymarketTrades(trades);
+    if (scoredTrades.length === 0) {
+        return 0;
+    }
+
+    const alwaysYesWins = scoredTrades.filter((trade) => trade.polymarketOutcome?.actualOutcomeUp === 1).length;
+    const alwaysYesWinRate = alwaysYesWins / scoredTrades.length;
+    const alwaysNoWinRate = 1 - alwaysYesWinRate;
+    return Math.max(alwaysYesWinRate, alwaysNoWinRate);
+}
+
+export function countDistinctPolymarketOutcomeRows(trades: readonly Trade[]): number {
+    const distinctEventStartTs = new Set<number>();
+    for (const trade of trades) {
+        const eventStartTs = trade.polymarketOutcome?.eventStartTs;
+        if (typeof eventStartTs === "number" && Number.isFinite(eventStartTs)) {
+            distinctEventStartTs.add(eventStartTs);
+        }
+    }
+    return distinctEventStartTs.size;
+}
+
+function resolvePolymarketCoverageSummary(
+    result: BacktestResult,
+    summary: BacktestPolymarketTradeSummary | undefined,
+    scoredTrades: number
+): {
+    unscoredTrades: number;
+    missingOutcomeTrades: number;
+    scoredTradeShare: number;
+} {
+    const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
+    const missingOutcomeTrades = summary?.missingOutcomeTrades ?? Math.max(0, totalTrades - scoredTrades);
+    const unscoredTrades = summary?.unscoredTrades ?? Math.max(0, totalTrades - scoredTrades);
+    const coverageBase = Math.max(0, scoredTrades + unscoredTrades);
+
+    return {
+        unscoredTrades,
+        missingOutcomeTrades,
+        scoredTradeShare: coverageBase > 0 ? scoredTrades / coverageBase : 0,
+    };
+}
+
+export function buildBacktestPolymarketPerformanceSummary(
+    result: BacktestResult
+): BacktestPolymarketPerformanceSummary | undefined {
+    const wins = result.trades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
+    const losses = result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
+    const scoredTrades = wins + losses;
+    const summary = result.polymarketTradeSummary;
+
+    if (!summary && scoredTrades === 0) {
+        return undefined;
+    }
+
+    const payoutSummary = summarizePolymarketPayoutDiagnostics(result.trades);
+    const streakSummary = summarizePolymarketStreaks(result.trades);
+    const bestBaselineWinRate = computePolymarketBestBaselineWinRate(result.trades);
+    const coverageSummary = resolvePolymarketCoverageSummary(result, summary, scoredTrades);
+
+    return {
+        wins,
+        losses,
+        scoredTrades,
+        unscoredTrades: coverageSummary.unscoredTrades,
+        missingOutcomeTrades: coverageSummary.missingOutcomeTrades,
+        scoredTradeShare: coverageSummary.scoredTradeShare,
+        winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
+        expectancy: payoutSummary?.expectancy ?? null,
+        pricedTrades: payoutSummary?.pricedTrades ?? 0,
+        unpricedScoredTrades: payoutSummary?.unpricedScoredTrades ?? 0,
+        outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
+        bestBaselineWinRate,
+        baselineDelta: (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
+        longestWinStreak: streakSummary.longestWinStreak,
+        longestLossStreak: streakSummary.longestLossStreak,
+        entryOffset: summary?.entryOffset,
+    };
 }

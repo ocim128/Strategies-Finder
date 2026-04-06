@@ -13,6 +13,10 @@ import type {
     BacktestResult,
 } from "./types/strategies";
 import type { CapitalSettings } from "./types/backtest";
+import {
+    buildBacktestPolymarketPerformanceSummary,
+    type BacktestPolymarketPerformanceSummary,
+} from "./polymarket-diagnostics-utils";
 
 // ============================================================================
 // Engine mode
@@ -246,8 +250,6 @@ export interface BacktestRandomSearchRequest {
 export interface StrategyManifestFingerprint {
     /** Number of strategies registered in the manifest. */
     strategyCount: number;
-    /** Sorted list of all strategy keys for external drift detection. */
-    strategyKeys: string[];
     /** Simple hash over the sorted key list for quick equality checks. */
     hash: string;
 }
@@ -256,7 +258,7 @@ export interface BacktestSingleResponse {
     ok: true;
     strategyKey: string;
     engineUsed: "rust" | "typescript";
-    result: BacktestResult;
+    result: SlimBacktestSingleResult;
     /** Hex hash of the effective inputs (symbol + interval + dataset + params + settings + fixed endpoint capital profile + context). */
     requestFingerprint: string;
     strategyManifestFingerprint: StrategyManifestFingerprint;
@@ -305,6 +307,12 @@ export interface CompactBacktestMetrics {
     avgTrade: number;
     avgWin: number;
     avgLoss: number;
+}
+
+export interface SlimBacktestSingleResult extends CompactBacktestMetrics {
+    marketContext?: BacktestResult["marketContext"];
+    polymarketTradeSummary?: BacktestResult["polymarketTradeSummary"];
+    polymarketPerformance?: BacktestPolymarketPerformanceSummary;
 }
 
 export interface BacktestRandomSearchResponse {
@@ -365,5 +373,14 @@ export function toCompactMetrics(result: BacktestResult): CompactBacktestMetrics
         avgTrade: result.avgTrade,
         avgWin: result.avgWin,
         avgLoss: result.avgLoss,
+    };
+}
+
+export function toSlimSingleResult(result: BacktestResult): SlimBacktestSingleResult {
+    return {
+        ...toCompactMetrics(result),
+        marketContext: result.marketContext,
+        polymarketTradeSummary: result.polymarketTradeSummary,
+        polymarketPerformance: buildBacktestPolymarketPerformanceSummary(result),
     };
 }

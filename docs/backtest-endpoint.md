@@ -6,7 +6,7 @@ Use the local backtest endpoint when you want an external runner such as `Flux.N
 
 The endpoint is intended for:
 
-- exact single-run parity checks
+- lean single-run metric checks
 - fast local batch evaluation
 - randomized parameter search
 - `1m` and `5m` Polymarket research
@@ -62,6 +62,8 @@ Important notes:
 - Use `engineMode: "typescript"` when you are validating parity against the UI.
 - `annotatePolymarket` is opt-in because it adds extra work.
 - `2h` execution now uses the single repo-wide close alignment. There is no parity selector in the request contract.
+- The endpoint intentionally ignores `captureSnapshots` and all `snapshot*` entry-filter settings.
+- Single-run responses return slim performance metrics only, not full trade history.
 
 ## Endpoint Capital Profile
 
@@ -77,6 +79,8 @@ Every endpoint run uses:
 This is intentional to keep the endpoint contract smaller and reduce orchestration complexity. If you see the endpoint always sizing trades at `$1000` with `0.1%` commission, that is expected behavior, not a bug.
 
 If you want a UI run to match an endpoint run, set the UI capital inputs to the same fixed profile before comparing results. Legacy caller-supplied `capitalSettings` payloads are ignored by the endpoint.
+
+The UI now has a `Preview Endpoint` button and a `Copy Endpoint` button in the strategy panel header. `Preview Endpoint` reruns the latest regular UI backtest through the exact HTTP endpoint contract locally, so the visible UI result can match the endpoint before you compare anything. `Copy Endpoint` uploads the exact candle set used by that backtest to `/api/backtest/datasets` and copies only the JSON POST body for `/api/backtest/<strategyKey>`, already filled with a real `datasetRef`, instead of embedding the full candle array. The copied payload still includes the latest UI backtest snapshot for strategy params, backtest settings, block range, and deterministic `nowSec`, but it intentionally omits `captureSnapshots` and all `snapshot*` entry-filter settings because the endpoint ignores them. For supported Polymarket runs, `Preview Endpoint` and `Copy Endpoint` automatically set Polymarket annotation on in the endpoint contract so the single-run endpoint can return `polymarketPerformance` without requiring a separate manual toggle in the copied JSON. The UI warns you if the previous UI result differed from the endpoint contract. If you switch symbol or timeframe after the backtest ran, switch back or rerun before previewing or copying so the endpoint request still matches the visible UI result. If the local endpoint is down, the button still copies the JSON body with a placeholder `dataset.ref` and shows the exact `/api/backtest/health` URL to verify before you upload candles manually.
 
 ## Dataset Cache
 
@@ -115,7 +119,6 @@ Response shape:
   "version": "1.0.0",
   "manifest": {
     "strategyCount": 123,
-    "strategyKeys": ["median_deviation_streak"],
     "hash": "abcd1234"
   },
   "enginePreference": {
@@ -125,7 +128,7 @@ Response shape:
 }
 ```
 
-Use `manifest.hash` or the full strategy key list to detect drift between your external runner and the current repo state.
+Use `manifest.hash` to detect drift between your external runner and the current repo state.
 
 ## Upload Dataset
 
@@ -231,7 +234,8 @@ Invoke-RestMethod `
 Single-run response includes:
 
 - `engineUsed`
-- full `result`
+- slim `result` metrics only
+- compact `result.polymarketPerformance` when `annotatePolymarket` is enabled and scoring data exists
 - `requestFingerprint`
 - `strategyManifestFingerprint`
 - `timingMs`

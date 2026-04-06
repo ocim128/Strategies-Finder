@@ -63,11 +63,28 @@ import {
     buildPostEntryPathStats as analyzeBacktestResult,
     enrichPolymarketBacktestResult,
 } from "./backtest-result-analysis";
+import {
+    buildBacktestEndpointCopyBundleFromSnapshot,
+    computeBacktestEndpointDatasetFingerprint,
+    getCurrentUiBacktestEndpointCandles,
+    getCurrentUiBacktestEndpointSnapshot,
+    hasCurrentUiBacktestEndpointCandles,
+    hasCurrentUiBacktestEndpointSnapshot,
+    matchesEndpointCapitalProfile,
+    prepareBacktestEndpointCopyBundleFromSnapshot,
+    type UiBacktestEndpointSnapshot,
+} from "./backtest-endpoint-copy";
+import { buildBacktestEndpointExecutorRequestFromSnapshot } from "./backtest-endpoint-execution";
+import { toCompactMetrics } from "./backtest-endpoint-contract";
 import { executeBacktest, executeBacktestFromSignals } from "./backtest-executor";
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
     engineUsed: 'rust' | 'typescript';
+    requestContext: {
+        nowSec: number;
+        blockRange: { from: number; to: number } | null;
+    };
 };
 
 export class BacktestService {
@@ -123,7 +140,7 @@ export class BacktestService {
             const requiresTsEngine = this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
             await updateDomBacktestRunProgress(runUi, '40%', 'Generating signals...', 100);
 
-            let { result, engineUsed } = await this.executeBacktest(
+            let { result, engineUsed, requestContext } = await this.executeBacktest(
                 runUi,
                 strategy,
                 params,
@@ -151,6 +168,16 @@ export class BacktestService {
 
             commitBacktestResult(result, 'backtest', {
                 reason: 'manual_backtest',
+                endpointCopySnapshot: this.createEndpointCopySnapshot(
+                    params,
+                    settings,
+                    capitalSettings,
+                    engineUsed,
+                    requestContext.nowSec,
+                    requestContext.blockRange,
+                    annotatePolymarket
+                ),
+                endpointCopyCandles: state.ohlcvData,
             });
 
             await updateDomBacktestRunProgress(runUi, '100%', 'Complete!');
@@ -248,6 +275,7 @@ export class BacktestService {
         return {
             result: singleRun.result,
             engineUsed: singleRun.engineUsed,
+            requestContext: singleRun.requestContext,
         };
     }
 
@@ -406,7 +434,14 @@ export class BacktestService {
         settings: BacktestSettings,
         capitalSettings: CapitalSettings,
         requiresTsEngine: boolean
-    ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
+    ): Promise<{
+        result: BacktestResult;
+        engineUsed: 'rust' | 'typescript';
+        requestContext: {
+            nowSec: number;
+            blockRange: { from: number; to: number } | null;
+        };
+    }> {
         const captureTiming = this.shouldCaptureTimingBreakdown();
         const runStart = captureTiming ? performance.now() : 0;
         if (requiresTsEngine && shouldUseRustEngine() && !this.warnedStrictEngine) {
@@ -414,6 +449,8 @@ export class BacktestService {
             uiManager.showToast('Current sizing or realism settings require TypeScript engine (Rust skipped).', 'info');
         }
 
+        const nowSec = Math.floor(Date.now() / 1000);
+        const blockRange = state.blockRange ? { ...state.blockRange } : null;
         const run = await executeBacktest({
             ohlcvData,
             interval,
@@ -427,8 +464,8 @@ export class BacktestService {
             },
             capitalSettings,
             context: {
-                nowSec: Math.floor(Date.now() / 1000),
-                blockRange: state.blockRange,
+                nowSec,
+                blockRange,
                 annotatePolymarket: false,
                 engineMode: requiresTsEngine ? 'typescript' : 'auto',
             },
@@ -444,7 +481,13 @@ export class BacktestService {
             });
         }
 
-        return run;
+        return {
+            ...run,
+            requestContext: {
+                nowSec,
+                blockRange,
+            },
+        };
     }
 
     private async runBacktestForPreparedSignals(
@@ -714,6 +757,108 @@ export class BacktestService {
         return requiresTsEngine(settings);
     }
 
+    private canUseCurrentChartForEndpointCopy(snapshot: UiBacktestEndpointSnapshot): boolean {
+        return hasCurrentUiBacktestEndpointCandles()
+            && snapshot.symbol === state.currentSymbol
+            && snapshot.interval === state.currentInterval;
+    }
+
+    private compactMetricResultsMatch(left: BacktestResult, right: BacktestResult): boolean {
+        const leftMetrics = toCompactMetrics(left);
+        const rightMetrics = toCompactMetrics(right);
+        const epsilon = 1e-9;
+        const metricKeys = Object.keys(leftMetrics) as Array<keyof typeof leftMetrics>;
+
+        return metricKeys.every((key) => {
+            const leftValue = leftMetrics[key];
+            const rightValue = rightMetrics[key];
+            if (typeof leftValue === "number" && typeof rightValue === "number") {
+                if (!Number.isFinite(leftValue) || !Number.isFinite(rightValue)) {
+                    return leftValue === rightValue;
+                }
+                return Math.abs(leftValue - rightValue) <= epsilon;
+            }
+            return leftValue === rightValue;
+        });
+    }
+
+    public canCopyLatestUiBacktestEndpointRequest(): boolean {
+        const snapshot = getCurrentUiBacktestEndpointSnapshot();
+        if (!hasCurrentUiBacktestEndpointSnapshot() || !snapshot || !state.currentBacktestResult) {
+            return false;
+        }
+
+        return this.canUseCurrentChartForEndpointCopy(snapshot);
+    }
+
+    public canRunLatestUiBacktestEndpointPreview(): boolean {
+        return this.canCopyLatestUiBacktestEndpointRequest();
+    }
+
+    public async runLatestUiBacktestEndpointPreview(): Promise<{
+        strategyKey: string;
+        result: BacktestResult;
+        engineUsed: "rust" | "typescript";
+        matchesCurrentUiResult: boolean;
+        previousUiMetrics: ReturnType<typeof toCompactMetrics>;
+        endpointMetrics: ReturnType<typeof toCompactMetrics>;
+    } | null> {
+        const snapshot = getCurrentUiBacktestEndpointSnapshot();
+        const candles = getCurrentUiBacktestEndpointCandles();
+        const currentResult = state.currentBacktestResult;
+        if (!snapshot || !candles || !currentResult || !this.canUseCurrentChartForEndpointCopy(snapshot)) {
+            return null;
+        }
+
+        const endpointRun = await executeBacktest(
+            buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles)
+        );
+        const matchesCurrentUiResult = this.compactMetricResultsMatch(currentResult, endpointRun.result);
+
+        commitBacktestResult(endpointRun.result, "endpoint_preview", {
+            reason: "endpoint_preview",
+            endpointCopySnapshot: snapshot,
+            endpointCopyCandles: candles,
+        });
+
+        return {
+            strategyKey: snapshot.strategyKey,
+            result: endpointRun.result,
+            engineUsed: endpointRun.engineUsed,
+            matchesCurrentUiResult,
+            previousUiMetrics: toCompactMetrics(currentResult),
+            endpointMetrics: toCompactMetrics(endpointRun.result),
+        };
+    }
+
+    public async buildLatestUiBacktestEndpointCopyBundle(baseUrl: string): Promise<{
+        strategyKey: string;
+        bundle: ReturnType<typeof buildBacktestEndpointCopyBundleFromSnapshot>;
+        uiCapitalMatchesEndpoint: boolean;
+        datasetRef: string;
+        candleCount: number;
+        datasetUploaded: boolean;
+        datasetUploadError: string | null;
+    } | null> {
+        const snapshot = getCurrentUiBacktestEndpointSnapshot();
+        const candles = getCurrentUiBacktestEndpointCandles();
+        if (!snapshot || !candles || !state.currentBacktestResult || !this.canUseCurrentChartForEndpointCopy(snapshot)) {
+            return null;
+        }
+
+        const preparedCopy = await prepareBacktestEndpointCopyBundleFromSnapshot(snapshot, baseUrl, candles);
+
+        return {
+            strategyKey: snapshot.strategyKey,
+            bundle: preparedCopy.bundle,
+            uiCapitalMatchesEndpoint: matchesEndpointCapitalProfile(snapshot.capitalSettings),
+            datasetRef: preparedCopy.datasetRef,
+            candleCount: preparedCopy.candleCount,
+            datasetUploaded: preparedCopy.datasetUploaded,
+            datasetUploadError: preparedCopy.datasetUploadError,
+        };
+    }
+
     public async evaluateStrategyOnData(
         ohlcvData: OHLCVData[],
         interval: string,
@@ -825,6 +970,33 @@ export class BacktestService {
         );
 
         return runResult.result;
+    }
+
+    private createEndpointCopySnapshot(
+        strategyParams: StrategyParams,
+        backtestSettings: BacktestSettings,
+        capitalSettings: CapitalSettings,
+        engineUsed: 'rust' | 'typescript',
+        nowSec: number,
+        blockRange: { from: number; to: number } | null,
+        annotatePolymarket: boolean
+    ): UiBacktestEndpointSnapshot {
+        return {
+            symbol: state.currentSymbol,
+            interval: state.currentInterval,
+            strategyKey: state.currentStrategyKey,
+            strategyParams: { ...strategyParams },
+            backtestSettings: { ...backtestSettings },
+            capitalSettings: {
+                ...capitalSettings,
+                advancedSizing: capitalSettings.advancedSizing ? { ...capitalSettings.advancedSizing } : undefined,
+            },
+            nowSec,
+            blockRange: blockRange ? { ...blockRange } : null,
+            annotatePolymarket,
+            engineUsed,
+            datasetFingerprint: computeBacktestEndpointDatasetFingerprint(state.ohlcvData),
+        };
     }
 }
 

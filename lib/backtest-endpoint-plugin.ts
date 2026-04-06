@@ -15,7 +15,6 @@ import { createHash } from "node:crypto";
 import {
     executeBacktest,
     getManifestFingerprint,
-    type BacktestExecutorRequest,
 } from "./backtest-executor";
 import type {
     BacktestSingleRequest,
@@ -32,7 +31,9 @@ import type {
     CompactBacktestMetrics,
     EngineMode,
 } from "./backtest-endpoint-contract";
-import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS, toCompactMetrics } from "./backtest-endpoint-contract";
+import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS, toCompactMetrics, toSlimSingleResult } from "./backtest-endpoint-contract";
+import { stripEndpointIgnoredBacktestSettings } from "./backtest-endpoint-settings";
+import { buildBacktestEndpointExecutorRequest } from "./backtest-endpoint-execution";
 import type { OHLCVData, BacktestResult, StrategyParams } from "./types/strategies";
 
 // ============================================================================
@@ -194,33 +195,6 @@ function extractDatasetCandles(
     return { error: "Invalid dataset: provide either candles array or cached ref", status: 400 };
 }
 
-function buildExecutorRequest(
-    strategyKey: string,
-    candles: OHLCVData[],
-    interval: string,
-    strategyParams: StrategyParams,
-    backtestSettings: Record<string, unknown>,
-    engineMode: EngineMode,
-    nowSec: number,
-    blockRange: { from: number; to: number } | null,
-    annotatePolymarket: boolean
-): BacktestExecutorRequest {
-    return {
-        ohlcvData: candles,
-        interval,
-        strategyKey,
-        strategyParams,
-        backtestSettings,
-        capitalSettings: { ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS },
-        context: {
-            nowSec,
-            blockRange,
-            annotatePolymarket,
-            engineMode,
-        },
-    };
-}
-
 // ============================================================================
 // Random parameter generator
 // ============================================================================
@@ -331,7 +305,7 @@ async function handleSingleBacktest(
     try {
         const startTs = Date.now();
 
-        const result = await executeBacktest(buildExecutorRequest(
+        const result = await executeBacktest(buildBacktestEndpointExecutorRequest(
             strategyKey,
             candles,
             req.interval,
@@ -351,11 +325,10 @@ async function handleSingleBacktest(
             ok: true,
             strategyKey,
             engineUsed: result.engineUsed,
-            result: result.result,
+            result: toSlimSingleResult(result.result),
             requestFingerprint: computeRequestFingerprint(req),
             strategyManifestFingerprint: {
                 strategyCount: manifest.strategyCount,
-                strategyKeys: manifest.strategyKeys,
                 hash: manifest.hash,
             },
             timingMs: Date.now() - startTs,
@@ -412,7 +385,7 @@ async function handleBatchBacktest(
                 : settingsRaw;
             const itemCtx = item.context ?? {};
 
-            const result = await executeBacktest(buildExecutorRequest(
+            const result = await executeBacktest(buildBacktestEndpointExecutorRequest(
                 strategyKey,
                 candles,
                 req.interval,
@@ -517,7 +490,7 @@ async function handleRandomSearch(
 
     for (const params of paramsList) {
         try {
-            const executorResult = await executeBacktest(buildExecutorRequest(
+            const executorResult = await executeBacktest(buildBacktestEndpointExecutorRequest(
                 strategyKey,
                 candles,
                 req.interval,
@@ -598,7 +571,7 @@ function computeRequestFingerprint(req: BacktestSingleRequest): string {
     }
 
     h.update(`|params:${JSON.stringify(req.strategyParams)}`);
-    h.update(`|settings:${JSON.stringify(req.backtestSettings)}`);
+    h.update(`|settings:${JSON.stringify(stripEndpointIgnoredBacktestSettings(req.backtestSettings))}`);
     h.update(`|capital:${JSON.stringify(BACKTEST_ENDPOINT_CAPITAL_SETTINGS)}`);
     h.update(`|context:${JSON.stringify(req.context)}`);
 
@@ -627,7 +600,6 @@ export function backtestEndpointPlugin(): Plugin {
                         version: "1.0.0",
                         manifest: {
                             strategyCount: manifest.strategyCount,
-                            strategyKeys: manifest.strategyKeys,
                             hash: manifest.hash,
                         },
                         enginePreference: {

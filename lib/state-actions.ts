@@ -1,4 +1,10 @@
 import { debugLogger } from "./debug-logger";
+import {
+    clearCurrentUiBacktestEndpointSnapshot,
+    setCurrentUiBacktestEndpointCandles,
+    setCurrentUiBacktestEndpointSnapshot,
+    type UiBacktestEndpointSnapshot,
+} from "./backtest-endpoint-copy";
 import { clearActiveBacktestRerunContext } from "./backtest-rerun-context";
 import { state, type BacktestResultSource, type ChartMode, type MockChartModel } from "./state";
 import type { BinanceMarketType } from "./binance-market";
@@ -97,6 +103,7 @@ export function setStrategyTimeframeSettings(settings: {
 export function clearBacktestResults(reason?: string): void {
     debugLogger.event('state.clear.backtest_result', { reason });
     clearActiveBacktestRerunContext();
+    clearCurrentUiBacktestEndpointSnapshot();
     state.set('currentBacktestResult', null);
     state.set('currentBacktestResultSource', 'backtest');
 }
@@ -106,6 +113,8 @@ export function commitBacktestResult(
     source: BacktestResultSource,
     options?: {
         reason?: string;
+        endpointCopySnapshot?: UiBacktestEndpointSnapshot | null;
+        endpointCopyCandles?: OHLCVData[] | null;
     }
 ): void {
     debugLogger.event('state.commit.backtest_result', {
@@ -113,6 +122,12 @@ export function commitBacktestResult(
         trades: result.totalTrades,
         reason: options?.reason,
     });
+    if (options?.endpointCopySnapshot) {
+        setCurrentUiBacktestEndpointSnapshot(options.endpointCopySnapshot);
+        setCurrentUiBacktestEndpointCandles(options.endpointCopyCandles ?? null);
+    } else {
+        clearCurrentUiBacktestEndpointSnapshot();
+    }
     state.set('currentBacktestResultSource', source);
     state.set('currentBacktestResult', result);
 }

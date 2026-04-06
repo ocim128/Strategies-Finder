@@ -110,6 +110,7 @@ describe("backtest endpoint plugin", () => {
         assert.strictEqual(response.json.ok, true);
         assert.ok(response.json.manifest.strategyCount > 0);
         assert.ok(typeof response.json.manifest.hash === "string");
+        assert.ok(!("strategyKeys" in response.json.manifest));
     });
 
     it("accepts inline candle datasets for single-run backtests", async () => {
@@ -127,6 +128,9 @@ describe("backtest endpoint plugin", () => {
         assert.strictEqual(response.json.strategyKey, "median_deviation_streak");
         assert.ok(typeof response.json.requestFingerprint === "string");
         assert.ok(response.json.result.marketContext.candleCount > 0);
+        assert.ok(!("trades" in response.json.result));
+        assert.ok(!("equityCurve" in response.json.result));
+        assert.ok(!("strategyKeys" in response.json.strategyManifestFingerprint));
     });
 
     it("supports cached dataset refs for single-run backtests", async () => {
@@ -188,5 +192,44 @@ describe("backtest endpoint plugin", () => {
         assert.strictEqual(withIgnoredCapital.json.requestFingerprint, baseline.json.requestFingerprint);
         assert.strictEqual(withIgnoredCapital.json.result.totalTrades, baseline.json.result.totalTrades);
         assert.strictEqual(withIgnoredCapital.json.result.netProfit, baseline.json.result.netProfit);
+    });
+
+    it("ignores snapshot entry filters and snapshot capture settings", async () => {
+        const handler = createHandler();
+        const candles = buildCandles();
+        const payload = buildSinglePayload({ candles });
+
+        const baseline = await invoke(
+            handler,
+            "/median_deviation_streak",
+            "POST",
+            payload
+        );
+
+        const withSnapshotPayload = {
+            ...payload,
+            backtestSettings: {
+                ...payload.backtestSettings,
+                captureSnapshots: true,
+                snapshotRsiMin: 55,
+                snapshotRsiMax: 70,
+                snapshotTf60PerfMin: 1.1,
+            },
+        };
+
+        const withIgnoredSnapshots = await invoke(
+            handler,
+            "/median_deviation_streak",
+            "POST",
+            withSnapshotPayload
+        );
+
+        assert.strictEqual(baseline.statusCode, 200);
+        assert.strictEqual(withIgnoredSnapshots.statusCode, 200);
+        assert.strictEqual(baseline.json.ok, true);
+        assert.strictEqual(withIgnoredSnapshots.json.ok, true);
+        assert.strictEqual(withIgnoredSnapshots.json.requestFingerprint, baseline.json.requestFingerprint);
+        assert.strictEqual(withIgnoredSnapshots.json.result.totalTrades, baseline.json.result.totalTrades);
+        assert.strictEqual(withIgnoredSnapshots.json.result.netProfit, baseline.json.result.netProfit);
     });
 });

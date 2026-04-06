@@ -30,6 +30,28 @@ import {
     setStrategyTimeframeSettings,
 } from "../state-actions";
 
+async function copyTextToClipboard(text: string): Promise<boolean> {
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch {
+        // Fall through to execCommand fallback.
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return copied;
+}
+
 export function setupEventHandlers() {
     const dom = createUiEventHandlersDom();
 
@@ -630,6 +652,144 @@ export function setupEventHandlers() {
         setCurrentStrategyKey(strategySelect.value);
     });
 
+    let runBacktestEndpointPreviewBusy = false;
+    let copyBacktestEndpointBusy = false;
+    const syncBacktestEndpointState = () => {
+        const canPreviewEndpoint = backtestService.canRunLatestUiBacktestEndpointPreview();
+        const canCopyEndpoint = backtestService.canCopyLatestUiBacktestEndpointRequest();
+        dom.runBacktestEndpointPreview.disabled = runBacktestEndpointPreviewBusy
+            || copyBacktestEndpointBusy
+            || !canPreviewEndpoint;
+        dom.copyBacktestEndpoint.disabled = copyBacktestEndpointBusy
+            || runBacktestEndpointPreviewBusy
+            || !canCopyEndpoint;
+    };
+
+    dom.runBacktestEndpointPreview.addEventListener('click', async () => {
+        runBacktestEndpointPreviewBusy = true;
+        syncBacktestEndpointState();
+
+        try {
+            const preview = await backtestService.runLatestUiBacktestEndpointPreview();
+            if (!preview) {
+                uiManager.showToast(
+                    'Run a regular backtest first, or switch back to the symbol/timeframe used by that backtest, before previewing the endpoint result.',
+                    'error'
+                );
+                return;
+            }
+
+            debugLogger.event('ui.backtest_endpoint.preview', {
+                strategy: preview.strategyKey,
+                engineUsed: preview.engineUsed,
+                matchesCurrentUiResult: preview.matchesCurrentUiResult,
+                previousNetProfitPercent: preview.previousUiMetrics.netProfitPercent,
+                endpointNetProfitPercent: preview.endpointMetrics.netProfitPercent,
+                previousWinRate: preview.previousUiMetrics.winRate,
+                endpointWinRate: preview.endpointMetrics.winRate,
+            });
+
+            const engineLabel = preview.engineUsed === 'rust' ? 'rust' : 'typescript';
+            if (preview.matchesCurrentUiResult) {
+                uiManager.showToast(
+                    `Endpoint preview loaded (${engineLabel}) and matches the previous UI result.`,
+                    'success'
+                );
+                return;
+            }
+
+            uiManager.showToast(
+                `Endpoint preview loaded (${engineLabel}). Previous UI result differed: ${preview.previousUiMetrics.netProfitPercent.toFixed(2)}% / ${preview.previousUiMetrics.winRate.toFixed(1)}% vs endpoint ${preview.endpointMetrics.netProfitPercent.toFixed(2)}% / ${preview.endpointMetrics.winRate.toFixed(1)}%.`,
+                'warning'
+            );
+        } catch (error) {
+            debugLogger.error('ui.backtest_endpoint.preview_failed', {
+                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+            });
+            uiManager.showToast(
+                error instanceof Error ? error.message : 'Failed to preview endpoint backtest.',
+                'error'
+            );
+        } finally {
+            runBacktestEndpointPreviewBusy = false;
+            syncBacktestEndpointState();
+        }
+    });
+
+    dom.copyBacktestEndpoint.addEventListener('click', async () => {
+        copyBacktestEndpointBusy = true;
+        syncBacktestEndpointState();
+
+        try {
+            const payload = await backtestService.buildLatestUiBacktestEndpointCopyBundle(window.location.origin);
+            if (!payload) {
+                uiManager.showToast(
+                    'Run a regular backtest first, or switch back to the symbol/timeframe used by that backtest, before copying an endpoint request.',
+                    'error'
+                );
+                return;
+            }
+
+            const copied = await copyTextToClipboard(JSON.stringify(payload.bundle.payload, null, 2));
+            if (!copied) {
+                uiManager.showToast('Failed to copy endpoint request.', 'error');
+                return;
+            }
+
+            const engineModeLabel = payload.bundle.payload.context.engineMode === 'rust_preferred'
+                ? 'rust_preferred'
+                : 'typescript';
+            const copyMode = payload.datasetUploaded
+                ? 'payload_only_uploaded_dataset_ref'
+                : 'payload_only_placeholder_dataset_ref';
+
+            debugLogger.event('ui.backtest_endpoint.copy', {
+                strategy: payload.strategyKey,
+                symbol: payload.bundle.payload.symbol,
+                interval: payload.bundle.payload.interval,
+                engineMode: payload.bundle.payload.context.engineMode,
+                uiCapitalMatchesEndpoint: payload.uiCapitalMatchesEndpoint,
+                datasetRef: payload.datasetRef,
+                candleCount: payload.candleCount,
+                datasetUploaded: payload.datasetUploaded,
+                datasetUploadError: payload.datasetUploadError,
+                copyMode,
+            });
+
+            if (!payload.datasetUploaded) {
+                uiManager.showToast(
+                    `Endpoint JSON body copied with placeholder dataset.ref. ${payload.datasetUploadError ?? 'Start the Vite dev server and upload candles before running it.'}`,
+                    'warning'
+                );
+                return;
+            }
+
+            if (payload.uiCapitalMatchesEndpoint) {
+                uiManager.showToast(
+                    `Endpoint JSON body copied (${engineModeLabel}) for POST /api/backtest/${payload.strategyKey}. datasetRef ${payload.datasetRef}.`,
+                    'success'
+                );
+                return;
+            }
+
+            uiManager.showToast(
+                `Endpoint JSON body copied for POST /api/backtest/${payload.strategyKey}. datasetRef ${payload.datasetRef}. UI capital still differs from the endpoint fixed $1000 / 0.1% profile.`,
+                'info'
+            );
+        } catch (error) {
+            debugLogger.error('ui.backtest_endpoint.copy_failed', {
+                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+            });
+            uiManager.showToast(
+                error instanceof Error ? error.message : 'Failed to prepare endpoint request.',
+                'error'
+            );
+        } finally {
+            copyBacktestEndpointBusy = false;
+            syncBacktestEndpointState();
+        }
+    });
+
     // Run backtest button
     dom.runBacktest.addEventListener('click', () => backtestService.runCurrentBacktest());
 
@@ -1003,6 +1163,11 @@ export function setupEventHandlers() {
 
     finderTradesToggle.addEventListener('change', applyFinderTradeFilterState);
     applyFinderTradeFilterState();
+    state.subscribe('currentBacktestResult', syncBacktestEndpointState);
+    state.subscribe('currentSymbol', syncBacktestEndpointState);
+    state.subscribe('currentInterval', syncBacktestEndpointState);
+    state.subscribe('ohlcvData', syncBacktestEndpointState);
+    syncBacktestEndpointState();
 
     // Trade sizing mode toggle
     const fixedTradeToggle = dom.fixedTradeToggle;
