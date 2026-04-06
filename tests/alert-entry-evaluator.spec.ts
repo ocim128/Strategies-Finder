@@ -169,6 +169,7 @@ describe('Alert Entry Evaluator', () => {
                     tradeDirection: 'long',
                     executionModel: 'next_open',
                     maxOpenTrades: 1,
+                    warmUpEntryEnabled: true,
                 },
                 freshnessBars: 20
             });
@@ -185,6 +186,54 @@ describe('Alert Entry Evaluator', () => {
             expect(result.pendingEntry?.entryTimeSec).to.equal(Number(candles[4].time));
             expect(result.pendingEntry?.signal.price).to.equal(candles[3].close);
             expect(result.pendingEntry?.entryPrice).to.equal(candles[4].open);
+        } finally {
+            if (previous) {
+                registry[strategyKey] = previous;
+            } else {
+                delete registry[strategyKey];
+            }
+        }
+    });
+
+    it('should not expose pending entries when warm-up entries are disabled', () => {
+        const strategyKey = '__test_eval_pending_next_open_disabled__';
+        const registry = strategies as Record<string, Strategy>;
+        const previous = registry[strategyKey];
+
+        const testStrategy: Strategy = {
+            name: 'Evaluator Pending Entry Disabled Test',
+            description: 'Pending entries should stay hidden unless warm-up mode is enabled.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => {
+                if (data.length < 6) return [];
+                return [
+                    { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                    { time: data[2].time, type: 'buy', price: data[2].close, barIndex: 2 },
+                    { time: data[3].time, type: 'buy', price: data[3].close, barIndex: 3 },
+                ];
+            }
+        };
+
+        registry[strategyKey] = testStrategy;
+        try {
+            const candles = buildCandles(6);
+            const result = evaluateLatestEntrySignal({
+                strategyKey,
+                candles,
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'next_open',
+                    maxOpenTrades: 1,
+                    warmUpEntryEnabled: false,
+                },
+                freshnessBars: 20
+            });
+
+            expect(result.ok).to.equal(true);
+            expect(result.latestEntry).to.not.equal(null);
+            expect(result.latestTrade?.isOpen).to.equal(true);
+            expect(result.pendingEntry).to.equal(null);
         } finally {
             if (previous) {
                 registry[strategyKey] = previous;

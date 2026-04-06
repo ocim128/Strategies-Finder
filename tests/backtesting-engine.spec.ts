@@ -756,6 +756,78 @@ describe('Backtesting Engine', () => {
         expect(result.netProfit).to.be.closeTo(-500, 1e-9);
     });
 
+    it('should not retroactively allow a next_open entry after a later same-bar take profit frees capacity', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 106, low: 100, close: 105, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 105, high: 105, low: 105, close: 105, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'buy', price: 100, barIndex: 0 },
+            { time: '2023-01-02' as Time, type: 'buy', price: 101, barIndex: 1 },
+        ];
+
+        const settings = {
+            tradeDirection: 'long' as const,
+            executionModel: 'next_open' as const,
+            allowSameBarExit: false,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 5,
+        };
+
+        const full = runBacktest(data, signals, 10000, 100, 0, settings);
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings);
+
+        expect(full.totalTrades).to.equal(1);
+        expect(full.trades).to.have.length(1);
+        expect(full.trades[0].entryTime).to.equal('2023-01-02' as Time);
+        expect(full.trades[0].exitTime).to.equal('2023-01-03' as Time);
+        expect(full.trades[0].exitReason).to.equal('take_profit');
+        expect(full.trades.some((trade) => trade.entryTime === ('2023-01-03' as Time))).to.equal(false);
+        expect(compact.totalTrades).to.equal(full.totalTrades);
+        expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-9);
+    });
+
+    it('should allow a next_open entry when the previous trade already gapped through take profit at the bar open', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 106, high: 107, low: 105, close: 106, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 106, high: 106, low: 106, close: 106, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'buy', price: 100, barIndex: 0 },
+            { time: '2023-01-02' as Time, type: 'buy', price: 101, barIndex: 1 },
+        ];
+
+        const settings = {
+            tradeDirection: 'long' as const,
+            executionModel: 'next_open' as const,
+            allowSameBarExit: false,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 5,
+        };
+
+        const full = runBacktest(data, signals, 10000, 100, 0, settings);
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings);
+
+        expect(full.totalTrades).to.equal(2);
+        expect(full.trades[0].entryTime).to.equal('2023-01-02' as Time);
+        expect(full.trades[0].exitTime).to.equal('2023-01-03' as Time);
+        expect(full.trades[0].exitReason).to.equal('take_profit');
+        expect(full.trades[1].entryTime).to.equal('2023-01-03' as Time);
+        expect(full.trades[1].exitReason).to.equal('end_of_data');
+        expect(compact.totalTrades).to.equal(full.totalTrades);
+        expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-9);
+    });
+
     it('should resolve next_open ATR targets from the prior closed bar for alert parity', () => {
         const candles: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },

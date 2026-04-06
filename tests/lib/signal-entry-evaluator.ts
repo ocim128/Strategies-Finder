@@ -647,11 +647,11 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
         entryPrice: latestTrade.entryPrice,
     });
 
-    // Detect pending (skipped) entry signal when the latest trade is still open.
-    // A "pending" signal fired while the backtest position was occupied — in live
-    // trading this means there is a potential entry once the current position closes.
+    // Detect pending warm-up entries only when warm-up mode is explicitly enabled.
+    // Signals that fired while the position was occupied are only retained when
+    // warm-up entry mode intentionally queues them for the next eligible bar.
     let pendingEntry: EvaluatedEntrySignal | null = null;
-    if (latestTrade.exitReason === 'end_of_data') {
+    if (settings.warmUpEntryEnabled === true && latestTrade.exitReason === 'end_of_data') {
         for (const signal of entrySignals) {
             const sigTimeSec = toUnixSeconds(signal.time);
             if (sigTimeSec === null || sigTimeSec <= signalTimeSec) continue;

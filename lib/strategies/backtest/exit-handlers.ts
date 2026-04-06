@@ -11,6 +11,7 @@ export interface PositionExitTrigger {
 
 export interface PositionExitOptions {
     stopLossOnly?: boolean;
+    openOnly?: boolean;
 }
 
 function comparisonTolerance(left: number, right: number): number {
@@ -51,6 +52,34 @@ function resolveTakeProfitExitPrice(takeProfit: number): number {
     return takeProfit;
 }
 
+function isStopLossHitAtOpen(
+    candle: OHLCVData,
+    stopLoss: number,
+    isShortPosition: boolean
+): boolean {
+    if (!Number.isFinite(candle.open)) {
+        return false;
+    }
+
+    return isShortPosition
+        ? greaterThanOrNearlyEqual(candle.open, stopLoss)
+        : lessThanOrNearlyEqual(candle.open, stopLoss);
+}
+
+function isTakeProfitHitAtOpen(
+    candle: OHLCVData,
+    takeProfit: number,
+    isShortPosition: boolean
+): boolean {
+    if (!Number.isFinite(candle.open)) {
+        return false;
+    }
+
+    return isShortPosition
+        ? lessThanOrNearlyEqual(candle.open, takeProfit)
+        : greaterThanOrNearlyEqual(candle.open, takeProfit);
+}
+
 /**
  * Checks and processes various exit conditions for a position.
  * Returns the first exit trigger for this bar, if any.
@@ -68,9 +97,11 @@ export function processPositionExits(
     // Check stop loss
     const stopLoss = position.stopLossPrice;
     if (stopLoss !== null) {
-        const stopHit = isShortPosition
-            ? greaterThanOrNearlyEqual(candle.high, stopLoss)
-            : lessThanOrNearlyEqual(candle.low, stopLoss);
+        const stopHit = options.openOnly
+            ? isStopLossHitAtOpen(candle, stopLoss, isShortPosition)
+            : isShortPosition
+                ? greaterThanOrNearlyEqual(candle.high, stopLoss)
+                : lessThanOrNearlyEqual(candle.low, stopLoss);
         if (stopHit) {
             const stopExitPrice = resolveStopLossExitPrice(candle, stopLoss, isShortPosition);
             return {
@@ -87,9 +118,11 @@ export function processPositionExits(
 
     // Check take profit (independent of stop loss)
     if (position.takeProfitPrice !== null) {
-        const takeHit = isShortPosition
-            ? lessThanOrNearlyEqual(candle.low, position.takeProfitPrice)
-            : greaterThanOrNearlyEqual(candle.high, position.takeProfitPrice);
+        const takeHit = options.openOnly
+            ? isTakeProfitHitAtOpen(candle, position.takeProfitPrice, isShortPosition)
+            : isShortPosition
+                ? lessThanOrNearlyEqual(candle.low, position.takeProfitPrice)
+                : greaterThanOrNearlyEqual(candle.high, position.takeProfitPrice);
         if (takeHit) {
             const takeProfitExitPrice = resolveTakeProfitExitPrice(position.takeProfitPrice);
             return {
@@ -98,6 +131,10 @@ export function processPositionExits(
                 exitReason: 'take_profit',
             };
         }
+    }
+
+    if (options.openOnly) {
+        return null;
     }
 
     // Check partial take profit
