@@ -13,6 +13,5 @@ export * from "./finder/finder-manager-dom";
 export * from "./pairCombiner/pair-combiner-bridge-dom";
 export * from "./walk-forward-dom";
 export * from "./strategy-ensemble-dom";
-export * from "./preview-tab-dom";
 export * from "./advanced-sizing-dom";
 export { MONTE_CARLO_REQUIRED_IDS } from "./monte-carlo-dom";

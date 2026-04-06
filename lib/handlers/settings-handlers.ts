@@ -19,7 +19,8 @@ import {
 import { strategyPanelController } from "../strategy-panel-controller";
 import { parseInputNumber } from "../dom-input-readers";
 import { createSettingsHandlersDom } from "./settings-handlers-dom";
-import { STRATEGY_CONFIGS_CHANGED_EVENT } from "../preview-tab-service";
+
+const STRATEGY_CONFIGS_CHANGED_EVENT = "strategy-configs:changed";
 
 const SHARED_DEFAULT_SYMBOL = 'ETHUSDT';
 const SHARED_DEFAULT_INTERVAL = '120m';

@@ -1,5 +1,5 @@
 ﻿import { Time } from "lightweight-charts";
-import { OHLCVData, BacktestResult, Trade, EntryPreview } from "./strategies/index";
+import { OHLCVData, BacktestResult, Trade } from "./strategies/index";
 import { state } from "./state";
 import { setCurrentStrategyKey } from "./state-actions";
 import type { TwoHourParityBacktestResults } from "./state";
@@ -261,7 +261,6 @@ export class UIManager {
         this.clearParityComparisonUI();
         this.updateTradeBadge(0);
         dom.strategyStatus.textContent = 'Ready';
-        this.updateEntryPreview(null);
     }
 
     public showToast(message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') {
@@ -290,103 +289,6 @@ export class UIManager {
         }, 3000);
     }
 
-    public updateEntryPreview(preview: EntryPreview | null) {
-        const dom = this.getDom();
-        const panel = dom.strategyEntryPreviewPanel;
-        const emptyState = dom.strategyEntryPreviewEmpty;
-
-        if (!preview) {
-            panel.hidden = true;
-            emptyState.hidden = false;
-            return;
-        }
-
-        panel.hidden = false;
-        emptyState.hidden = true;
-
-        dom.entryPreviewTitle.textContent = preview.title ?? 'Next Potential Entry';
-        dom.entryPreviewStatus.textContent = this.formatPreviewStatus(preview.status);
-        dom.entryPreviewStatus.className = `entry-preview-status ${preview.status}`;
-        dom.entryPreviewSummary.className = `strategy-live-preview-summary strategy-live-preview-summary--${preview.summary?.tone ?? 'neutral'}`;
-        dom.entryPreviewSummaryEyebrow.textContent = preview.summary?.eyebrow ?? 'Preview';
-        dom.entryPreviewSummaryHeadline.textContent = preview.summary?.headline ?? 'No preview summary';
-        dom.entryPreviewSummaryDetail.textContent = preview.summary?.detail ?? '';
-
-        const hasStructuredRows = Array.isArray(preview.rows) && preview.rows.length > 0;
-        dom.entryPreviewLegacyRows.hidden = hasStructuredRows;
-        dom.entryPreviewRows.hidden = !hasStructuredRows;
-        dom.entryPreviewRows.replaceChildren();
-
-        if (hasStructuredRows) {
-            let currentSection: string | null = null;
-
-            for (const row of preview.rows ?? []) {
-                if (row.section && row.section !== currentSection) {
-                    const sectionEl = document.createElement('div');
-                    sectionEl.className = 'strategy-live-preview-section';
-
-                    const headingEl = document.createElement('div');
-                    headingEl.className = 'strategy-live-preview-section-heading';
-                    headingEl.textContent = row.section;
-
-                    sectionEl.appendChild(headingEl);
-                    dom.entryPreviewRows.appendChild(sectionEl);
-                    currentSection = row.section;
-                }
-
-                const sectionHost = row.section && currentSection
-                    ? dom.entryPreviewRows.lastElementChild
-                    : dom.entryPreviewRows;
-                const rowEl = document.createElement('div');
-                rowEl.className = 'entry-preview-row';
-
-                const labelEl = document.createElement('span');
-                labelEl.textContent = row.label;
-
-                const valueEl = document.createElement('span');
-                valueEl.textContent = row.value;
-
-                rowEl.append(labelEl, valueEl);
-                sectionHost?.appendChild(rowEl);
-            }
-        }
-
-        if (!hasStructuredRows) {
-            dom.entryPreviewMode.textContent = this.formatEntryMode(preview.mode);
-            dom.entryPreviewDirection.textContent = preview.direction;
-            dom.entryPreviewLevel.textContent = preview.level.toFixed(3).replace(/\.?0+$/, '');
-            dom.entryPreviewPrice.textContent = preview.fanPrice !== null ? this.formatPrice(preview.fanPrice) : '-';
-
-            if (preview.distance === null || preview.distancePct === null || preview.lastClose === null) {
-                dom.entryPreviewDistance.textContent = '-';
-            } else {
-                const sign = preview.distance >= 0 ? '+' : '-';
-                const diff = Math.abs(preview.distance);
-                const pct = Math.abs(preview.distancePct);
-                dom.entryPreviewDistance.textContent = `${sign}${this.formatPrice(diff)} (${sign}${pct.toFixed(2)}%)`;
-            }
-        } else {
-            dom.entryPreviewMode.textContent = '-';
-            dom.entryPreviewDirection.textContent = '-';
-            dom.entryPreviewLevel.textContent = '-';
-            dom.entryPreviewPrice.textContent = '-';
-            dom.entryPreviewDistance.textContent = '-';
-        }
-
-        dom.entryPreviewNote.textContent = preview.note ?? '';
-    }
-
-    private formatPreviewStatus(status: EntryPreview['status']): string {
-        if (status === 'triggered') return 'Triggered';
-        if (status === 'waiting') return 'Watching';
-        return 'Unavailable';
-    }
-
-    private formatEntryMode(mode: number): string {
-        if (mode === 0) return 'cross';
-        if (mode === 1) return 'close';
-        return 'touch';
-    }
 }
 
 export const uiManager = new UIManager();

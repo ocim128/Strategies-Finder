@@ -1,6 +1,5 @@
 import { state } from "./state";
 import { uiManager } from "./ui-manager";
-import { previewTabService } from "./preview-tab-service";
 import { chartManager } from "./chart-manager";
 import { dataManager } from "./data-manager";
 import { clearActiveBacktestRerunContext, getActiveBacktestRerunContext } from "./backtest-rerun-context";
@@ -968,7 +967,6 @@ export class BacktestService {
 
         const strategy = strategyRegistry.get(state.currentStrategyKey);
         if (!strategy) {
-            previewTabService.refreshPreview();
             return;
         }
 
@@ -982,8 +980,6 @@ export class BacktestService {
                 this.addIndicatorToChart(ind.name, values, times, color, ind.type);
             }
         });
-
-        previewTabService.refreshPreview();
     }
 
     private addIndicatorToChart(

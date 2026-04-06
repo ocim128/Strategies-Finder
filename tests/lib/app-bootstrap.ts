@@ -35,7 +35,6 @@ import { bindFormAccessibility } from "./form-accessibility";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { getOptionalElement } from "./dom-utils";
 import { polymarketPanelService } from "./polymarket-panel-service";
-import { previewTabService } from "./preview-tab-service";
 import { initMonteCarloService } from "./monte-carlo-service";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
 import {
@@ -199,12 +198,6 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         stage: "pre_restore",
         dependsOn: ["ui-events"],
         init: () => polymarketPanelService.init(),
-    },
-    {
-        id: "preview-tab",
-        stage: "pre_restore",
-        dependsOn: ["ui-events"],
-        init: () => previewTabService.init(),
     },
     {
         id: "monte-carlo",
