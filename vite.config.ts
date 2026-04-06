@@ -623,8 +623,10 @@ function localSqlitePlugin(): Plugin {
     };
 }
 
+import { backtestEndpointPlugin } from './lib/backtest-endpoint-plugin';
+
 export default defineConfig({
-    plugins: [tradFiKlineProxyPlugin(), polymarketProxyPlugin(), localSqlitePlugin()],
+    plugins: [tradFiKlineProxyPlugin(), polymarketProxyPlugin(), localSqlitePlugin(), backtestEndpointPlugin()],
     server: {
         fs: {
             allow: ['../../..']

@@ -195,6 +195,7 @@ Built-in strategy authoring has enough contract surface to deserve its own guide
 
 Use:
 - [`docs/strategy-authoring.md`](docs/strategy-authoring.md) for the template, normalization rules, and common failure modes
+- [`docs/backtest-endpoint.md`](docs/backtest-endpoint.md) for local HTTP backtest usage, payload examples, and parity rules
 - [`AGENTS.md`](AGENTS.md) for the operational checklist and validation habits
 
 The short version:
@@ -330,6 +331,7 @@ Useful extras:
 
 These are intentionally narrower than the repo itself:
 - `AGENTS.md`: safe-change handbook for coding agents
+- `docs/backtest-endpoint.md`: local backtest endpoint usage and request contract
 - `docs/strategy-authoring.md`: built-in strategy authoring guide
 - `workers/README.md`: Worker endpoints, cron behavior, D1 setup, Telegram
 - `DEPLOY_TO_VERCEL.md`: deployment notes

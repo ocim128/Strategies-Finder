@@ -1,0 +1,161 @@
+import assert from "node:assert";
+import { describe, it } from "node:test";
+import { Readable } from "node:stream";
+import type { OHLCVData, Time } from "../lib/types/strategies";
+import { backtestEndpointPlugin } from "../lib/backtest-endpoint-plugin";
+
+type MockHandler = (req: NodeJS.ReadableStream & { method?: string; url?: string }, res: {
+    statusCode: number;
+    setHeader(name: string, value: string): void;
+    end(body?: string): void;
+}) => void | Promise<void>;
+
+function createHandler(): MockHandler {
+    let handler: MockHandler | null = null;
+    const plugin = backtestEndpointPlugin();
+    plugin.configurePreviewServer?.({
+        middlewares: {
+            use(prefix: string, registered: MockHandler) {
+                if (prefix === "/api/backtest") {
+                    handler = registered;
+                }
+            },
+        },
+    } as never);
+
+    assert.ok(handler, "Expected backtest endpoint middleware to register");
+    return handler;
+}
+
+function makeRequest(path: string, method: string, body?: unknown) {
+    const payload = body === undefined ? [] : [JSON.stringify(body)];
+    const request = Readable.from(payload) as NodeJS.ReadableStream & { method?: string; url?: string };
+    request.method = method;
+    request.url = path;
+    return request;
+}
+
+async function invoke(handler: MockHandler, path: string, method: string, body?: unknown): Promise<{
+    statusCode: number;
+    json: any;
+}> {
+    return await new Promise((resolve, reject) => {
+        const headers = new Map<string, string>();
+        const response = {
+            statusCode: 200,
+            setHeader(name: string, value: string) {
+                headers.set(name, value);
+            },
+            end(rawBody?: string) {
+                try {
+                    resolve({
+                        statusCode: response.statusCode,
+                        json: rawBody ? JSON.parse(rawBody) : null,
+                    });
+                } catch (error) {
+                    reject(error);
+                }
+            },
+        };
+
+        Promise.resolve(handler(makeRequest(path, method, body), response)).catch(reject);
+    });
+}
+
+function buildCandles(): OHLCVData[] {
+    return Array.from({ length: 240 }, (_, index) => ({
+        time: (1700000000 + index * 300) as Time,
+        open: 100 + Math.sin(index * 0.1) * 2,
+        high: 101 + Math.sin(index * 0.1) * 2,
+        low: 99 + Math.sin(index * 0.1) * 2,
+        close: 100 + Math.sin(index * 0.1) * 2 + (index % 5) * 0.05,
+        volume: 1000 + index,
+    }));
+}
+
+function buildSinglePayload(dataset: { candles: OHLCVData[] } | { ref: string }) {
+    const candles = "candles" in dataset ? dataset.candles : buildCandles();
+    const lastTime = Number(candles[candles.length - 1]?.time ?? 0);
+
+    return {
+        symbol: "BTCUSDT",
+        interval: "5m",
+        dataset,
+        strategyParams: {
+            lookback: 20,
+            threshold: 1.5,
+        },
+        backtestSettings: {
+            executionModel: "next_open",
+            tradeDirection: "short",
+            allowSameBarExit: true,
+            slippageBps: 0,
+            marketMode: "all",
+        },
+        capitalSettings: {
+            initialCapital: 10000,
+            positionSize: 100,
+            commission: 0.1,
+            sizingMode: "percent",
+            fixedTradeAmount: 1000,
+        },
+        context: {
+            nowSec: lastTime + 600,
+            blockRange: null,
+            twoHourCloseParity: "odd",
+            annotatePolymarket: false,
+            engineMode: "typescript",
+        },
+    };
+}
+
+describe("backtest endpoint plugin", () => {
+    it("serves health from mounted middleware paths", async () => {
+        const handler = createHandler();
+        const response = await invoke(handler, "/health", "GET");
+
+        assert.strictEqual(response.statusCode, 200);
+        assert.strictEqual(response.json.ok, true);
+        assert.ok(response.json.manifest.strategyCount > 0);
+        assert.ok(typeof response.json.manifest.hash === "string");
+    });
+
+    it("accepts inline candle datasets for single-run backtests", async () => {
+        const handler = createHandler();
+        const candles = buildCandles();
+        const response = await invoke(
+            handler,
+            "/median_deviation_streak",
+            "POST",
+            buildSinglePayload({ candles })
+        );
+
+        assert.strictEqual(response.statusCode, 200);
+        assert.strictEqual(response.json.ok, true);
+        assert.strictEqual(response.json.strategyKey, "median_deviation_streak");
+        assert.ok(typeof response.json.requestFingerprint === "string");
+        assert.ok(response.json.result.marketContext.candleCount > 0);
+    });
+
+    it("supports cached dataset refs for single-run backtests", async () => {
+        const handler = createHandler();
+        const candles = buildCandles();
+        const upload = await invoke(handler, "/datasets", "POST", { candles });
+
+        assert.strictEqual(upload.statusCode, 200);
+        assert.strictEqual(upload.json.ok, true);
+        assert.ok(typeof upload.json.datasetRef === "string");
+
+        const response = await invoke(
+            handler,
+            "/median_deviation_streak",
+            "POST",
+            buildSinglePayload({ ref: upload.json.datasetRef })
+        );
+
+        assert.strictEqual(response.statusCode, 200);
+        assert.strictEqual(response.json.ok, true);
+        assert.strictEqual(response.json.strategyKey, "median_deviation_streak");
+        assert.ok(response.json.result.totalTrades >= 0);
+    });
+});

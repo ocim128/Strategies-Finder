@@ -1,0 +1,729 @@
+/**
+ * Vite plugin that registers the backtest HTTP API routes.
+ *
+ * This plugin exposes:
+ * - GET  /api/backtest/health               - health + manifest fingerprint
+ * - POST /api/backtest/:strategyKey          - single-run backtest
+ * - POST /api/backtest/datasets             - cache dataset, return ref
+ * - POST /api/backtest/:strategyKey/batch    - batch backtest
+ * - POST /api/backtest/:strategyKey/search/random - random parameter search
+ */
+
+import type { Plugin } from "vite";
+import type { IncomingMessage } from "node:http";
+import { createHash } from "node:crypto";
+import {
+    executeBacktest,
+    getManifestFingerprint,
+    type BacktestExecutorRequest,
+} from "./backtest-executor";
+import type {
+    BacktestSingleRequest,
+    BacktestBatchRequest,
+    BacktestRandomSearchRequest,
+    DatasetUploadRequest,
+    BacktestSingleResponse,
+    BacktestBatchResponse,
+    BacktestBatchItemResult,
+    BacktestRandomSearchResponse,
+    BacktestHealthResponse,
+    BacktestErrorResponse,
+    DatasetUploadResponse,
+    CompactBacktestMetrics,
+    EngineMode,
+} from "./backtest-endpoint-contract";
+import { toCompactMetrics } from "./backtest-endpoint-contract";
+import type { OHLCVData, BacktestResult, StrategyParams } from "./types/strategies";
+
+// ============================================================================
+// Dataset cache
+// ============================================================================
+
+interface CachedDataset {
+    ref: string;
+    candles: OHLCVData[];
+    hash: string;
+    firstTime: number;
+    lastTime: number;
+    createdAt: number;
+}
+
+const datasetCache = new Map<string, CachedDataset>();
+const DATASET_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const DATASET_CACHE_MAX_ENTRIES = 200;
+
+function cacheDataset(candles: OHLCVData[], keyHint?: string): CachedDataset {
+    // Evict stale entries periodically
+    if (datasetCache.size > DATASET_CACHE_MAX_ENTRIES) {
+        evictStaleDatasets();
+    }
+
+    const hash = computeCandleHash(candles);
+    const ref = keyHint ?? `cache_${hash.slice(0, 12)}`;
+
+    // If already cached with same ref, return existing
+    const existing = datasetCache.get(ref);
+    if (existing && existing.hash === hash) return existing;
+
+    const firstTime = toUnixSeconds(candles[0]?.time) ?? 0;
+    const lastTime = toUnixSeconds(candles[candles.length - 1]?.time) ?? 0;
+
+    const entry: CachedDataset = {
+        ref,
+        candles,
+        hash,
+        firstTime,
+        lastTime,
+        createdAt: Date.now(),
+    };
+    datasetCache.set(ref, entry);
+    return entry;
+}
+
+function getDataset(ref: string): CachedDataset | null {
+    const entry = datasetCache.get(ref);
+    if (!entry) return null;
+    if (Date.now() - entry.createdAt > DATASET_CACHE_TTL_MS) {
+        datasetCache.delete(ref);
+        return null;
+    }
+    return entry;
+}
+
+function evictStaleDatasets(): void {
+    const now = Date.now();
+    for (const [ref, entry] of datasetCache) {
+        if (now - entry.createdAt > DATASET_CACHE_TTL_MS) {
+            datasetCache.delete(ref);
+        }
+    }
+    if (datasetCache.size > DATASET_CACHE_MAX_ENTRIES) {
+        // Still too many after TTL cleanup - evict oldest
+        const entries = Array.from(datasetCache.entries())
+            .sort((a, b) => a[1].createdAt - b[1].createdAt);
+        const toDelete = entries.slice(0, entries.length - DATASET_CACHE_MAX_ENTRIES / 2);
+        for (const [ref] of toDelete) datasetCache.delete(ref);
+    }
+}
+
+function computeCandleHash(candles: OHLCVData[]): string {
+    const h = createHash("md5");
+    h.update(String(candles.length));
+    if (candles.length === 0) {
+        return h.digest("hex");
+    }
+
+    const stride = Math.max(1, Math.floor(candles.length / 1024));
+    for (let i = 0; i < candles.length; i += stride) {
+        const candle = candles[i];
+        h.update(
+            `${toUnixSeconds(candle.time) ?? 0}|${candle.open}|${candle.high}|${candle.low}|${candle.close}|${candle.volume};`
+        );
+    }
+
+    const last = candles[candles.length - 1];
+    h.update(
+        `last:${toUnixSeconds(last.time) ?? 0}|${last.open}|${last.high}|${last.low}|${last.close}|${last.volume}`
+    );
+    return h.digest("hex");
+}
+
+function toUnixSeconds(t: OHLCVData["time"]): number | null {
+    if (typeof t === "number") return t > 1e12 ? Math.floor(t / 1000) : t;
+    if (typeof t === "string") {
+        const parsed = Date.parse(t);
+        return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
+    }
+    if (t && typeof t === "object" && "year" in t) {
+        const day = t as { year: number; month: number; day: number };
+        return Math.floor(Date.UTC(day.year, day.month - 1, day.day) / 1000);
+    }
+    return null;
+}
+
+// ============================================================================
+// JSON helpers
+// ============================================================================
+
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    const MAX_BODY = 100 * 1024 * 1024; // 100 MB
+    for await (const chunk of req) {
+        const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+        total += bytes.length;
+        if (total > MAX_BODY) throw new Error("Request body too large");
+        chunks.push(bytes);
+    }
+    const text = Buffer.concat(chunks).toString("utf8").trim();
+    if (!text) return {};
+    const parsed = JSON.parse(text);
+    return (parsed && typeof parsed === "object") ? parsed as Record<string, unknown> : {};
+}
+
+function sendJson(res: any, status: number, payload: unknown): void {
+    res.statusCode = status;
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Cache-Control", "no-store");
+    res.end(JSON.stringify(payload));
+}
+
+function errorResponse(res: any, status: number, message: string, code?: string): void {
+    sendJson(res, status, { ok: false, error: message, code } satisfies BacktestErrorResponse);
+}
+
+// ============================================================================
+// Request helpers
+// ============================================================================
+
+function extractDatasetCandles(
+    req: BacktestSingleRequest | BacktestBatchRequest | BacktestRandomSearchRequest,
+    overrideRef?: string
+): OHLCVData[] | { error: string; status: number } {
+    const dataset = req.dataset;
+    if (Array.isArray((dataset as any)?.candles)) {
+        return (dataset as { candles: OHLCVData[] }).candles;
+    }
+    const ds = dataset as { ref?: string };
+    const ref = overrideRef ?? ds?.ref;
+    if (ref) {
+        const cached = getDataset(ref);
+        if (!cached) return { error: `Cached dataset not found: ${ref}`, status: 404 };
+        return cached.candles;
+    }
+    return { error: "Invalid dataset: provide either candles array or cached ref", status: 400 };
+}
+
+function buildExecutorRequest(
+    strategyKey: string,
+    candles: OHLCVData[],
+    interval: string,
+    strategyParams: StrategyParams,
+    backtestSettings: Record<string, unknown>,
+    capitalSettings: Record<string, unknown>,
+    engineMode: EngineMode,
+    nowSec: number,
+    blockRange: { from: number; to: number } | null,
+    twoHourCloseParity: "odd" | "even",
+    annotatePolymarket: boolean
+): BacktestExecutorRequest {
+    return {
+        ohlcvData: candles,
+        interval,
+        strategyKey,
+        strategyParams,
+        backtestSettings,
+        capitalSettings,
+        context: {
+            nowSec,
+            blockRange,
+            twoHourCloseParity,
+            annotatePolymarket,
+            engineMode,
+        },
+    };
+}
+
+// ============================================================================
+// Random parameter generator
+// ============================================================================
+
+/**
+ * Seeded PRNG (mulberry32) so that random search is deterministic for
+ * external reproducibility.
+ */
+function seededRandom(seed: number): () => number {
+    let s = seed | 0;
+    return () => {
+        s = (s + 0x6d2b79f5) | 0;
+        let t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+function generateRandomParams(
+    baseParams: StrategyParams,
+    count: number,
+    rangePercent: number,
+    seed: number,
+    freezeKeys: string[],
+    paramSpecs: Record<string, number | [number, number] | [number, number, number]> | undefined
+): StrategyParams[] {
+    const rng = seededRandom(seed);
+    const freezeSet = new Set(freezeKeys ?? []);
+    const results: StrategyParams[] = [];
+
+    for (let i = 0; i < count; i++) {
+        const gen: StrategyParams = {};
+
+        // Generate randomized params for known keys
+        const allKeys = new Set([
+            ...Object.keys(baseParams),
+            ...(paramSpecs ? Object.keys(paramSpecs) : []),
+        ]);
+
+        for (const key of allKeys) {
+            if (freezeSet.has(key)) {
+                gen[key] = baseParams[key] ?? 0;
+                continue;
+            }
+
+            const spec = paramSpecs?.[key];
+            if (typeof spec === "number") {
+                // Fixed override
+                gen[key] = spec;
+            } else if (Array.isArray(spec)) {
+                const [min, max, step] = spec;
+                gen[key] = steppedRandom(min, max, step ?? 1, rng);
+            } else {
+                // Default: rangePercent around base
+                const base = baseParams[key] ?? 0;
+                const halfRange = (base * rangePercent) / 100;
+                gen[key] = base + (rng() - 0.5) * 2 * halfRange;
+            }
+        }
+
+        results.push(gen);
+    }
+
+    return results;
+}
+
+function steppedRandom(min: number, max: number, step: number, rng: () => number): number {
+    if (step <= 0) return min + rng() * (max - min);
+    const steps = Math.floor((max - min) / step);
+    return min + Math.floor(rng() * (steps + 1)) * step;
+}
+
+// ============================================================================
+// Endpoint handlers
+// ============================================================================
+
+async function handleSingleBacktest(
+    strategyKey: string,
+    body: Record<string, unknown>
+): Promise<BacktestSingleResponse | BacktestErrorResponse> {
+    const req = body as unknown as BacktestSingleRequest;
+
+    if (!req.symbol || !req.interval) {
+        return { ok: false, error: "symbol and interval are required" };
+    }
+    if (!req.strategyParams || typeof req.strategyParams !== "object") {
+        return { ok: false, error: "strategyParams is required" };
+    }
+
+    const candlesOrError = extractDatasetCandles(req);
+    if ("error" in candlesOrError) {
+        return { ok: false, error: candlesOrError.error as string, code: "DATASET_ERROR" };
+    }
+    const candles = candlesOrError as OHLCVData[];
+
+    // Resolve context
+    const ctx = req.context ?? {};
+    const nowSec = ctx.nowSec ?? Math.floor(Date.now() / 1000);
+    const blockRange = ctx.blockRange ?? null;
+    const twoHourCloseParity = ctx.twoHourCloseParity ?? "odd";
+    const annotatePolymarket = ctx.annotatePolymarket ?? false;
+    const engineMode = ctx.engineMode ?? "auto";
+
+    // Merge symbol/interval into settings so the executor can use them
+    const settingsRaw = { ...req.backtestSettings } as Record<string, unknown>;
+    settingsRaw.symbol = req.symbol;
+    settingsRaw.interval = req.interval;
+
+    try {
+        const startTs = Date.now();
+
+        const result = await executeBacktest(buildExecutorRequest(
+            strategyKey,
+            candles,
+            req.interval,
+            req.strategyParams,
+            settingsRaw,
+            req.capitalSettings as Record<string, unknown> ?? {},
+            engineMode,
+            nowSec,
+            blockRange,
+            twoHourCloseParity,
+            annotatePolymarket
+        ));
+
+        // If the strategy is entry-only, we may need to use the parity-specific path
+        // for 120m data, but executeBacktest already handles this.
+
+        const manifest = getManifestFingerprint();
+        return {
+            ok: true,
+            strategyKey,
+            engineUsed: result.engineUsed,
+            result: result.result,
+            requestFingerprint: computeRequestFingerprint(req),
+            strategyManifestFingerprint: {
+                strategyCount: manifest.strategyCount,
+                strategyKeys: manifest.strategyKeys,
+                hash: manifest.hash,
+            },
+            timingMs: Date.now() - startTs,
+        };
+    } catch (err) {
+        return {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+            code: "EXECUTION_ERROR",
+        };
+    }
+}
+
+async function handleBatchBacktest(
+    strategyKey: string,
+    body: Record<string, unknown>
+): Promise<BacktestBatchResponse | BacktestErrorResponse> {
+    const req = body as unknown as BacktestBatchRequest;
+
+    const candlesOrError = extractDatasetCandles(req);
+    if ("error" in candlesOrError) {
+        return { ok: false, error: candlesOrError.error as string, code: "DATASET_ERROR" };
+    }
+    const candles = candlesOrError as OHLCVData[];
+
+    if (!Array.isArray(req.items) || req.items.length === 0) {
+        return { ok: false, error: "items array is required and must not be empty" };
+    }
+    if (!req.symbol || !req.interval) {
+        return { ok: false, error: "symbol and interval are required" };
+    }
+
+    const ctx = req.context ?? {} as NonNullable<typeof req.context>;
+    const nowSec = ctx?.nowSec ?? Math.floor(Date.now() / 1000);
+    const blockRange = ctx?.blockRange ?? null;
+    const twoHourCloseParity = ctx?.twoHourCloseParity ?? "odd";
+    const annotatePolymarket = ctx?.annotatePolymarket ?? false;
+    const engineMode = ctx?.engineMode ?? "auto";
+    const compact = req.compact ?? false;
+
+    const settingsRaw = { ...req.backtestSettings } as Record<string, unknown>;
+    settingsRaw.symbol = req.symbol;
+    settingsRaw.interval = req.interval;
+
+    const capitalSettings = req.capitalSettings as Record<string, unknown> ?? {};
+
+    const startTs = Date.now();
+    const results: BacktestBatchItemResult[] = [];
+
+    for (const item of req.items) {
+        try {
+            const itemStart = Date.now();
+
+            // Merge per-item overrides
+            const itemSettings = item.backtestSettings
+                ? { ...settingsRaw, ...item.backtestSettings } as Record<string, unknown>
+                : settingsRaw;
+            const itemCapital = item.capitalSettings
+                ? { ...capitalSettings, ...item.capitalSettings } as Record<string, unknown>
+                : capitalSettings;
+            const itemCtx = item.context ?? {};
+
+            const result = await executeBacktest(buildExecutorRequest(
+                strategyKey,
+                candles,
+                req.interval,
+                item.strategyParams,
+                itemSettings,
+                itemCapital,
+                itemCtx.engineMode as EngineMode ?? engineMode,
+                itemCtx.nowSec ?? nowSec,
+                itemCtx.blockRange ?? blockRange,
+                itemCtx.twoHourCloseParity ?? twoHourCloseParity,
+                itemCtx.annotatePolymarket ?? annotatePolymarket
+            ));
+
+            results.push({
+                id: item.id,
+                ok: true,
+                strategyKey,
+                engineUsed: result.engineUsed,
+                result: compact ? toCompactMetrics(result.result) : result.result,
+                timingMs: Date.now() - itemStart,
+            });
+        } catch (err) {
+            results.push({
+                id: item.id,
+                ok: false,
+                error: err instanceof Error ? err.message : String(err),
+                strategyKey,
+                engineUsed: "typescript",
+                result: {} as BacktestResult | CompactBacktestMetrics,
+                timingMs: 0,
+            });
+        }
+    }
+
+    const datasetRef = typeof (req.dataset as { ref?: string })?.ref === "string"
+        ? (req.dataset as { ref: string }).ref
+        : undefined;
+
+    return {
+        ok: true,
+        strategyKey,
+        datasetRef,
+        processed: req.items.length,
+        returned: results.length,
+        topN: results.length,
+        results,
+        totalTimingMs: Date.now() - startTs,
+    };
+}
+
+async function handleRandomSearch(
+    strategyKey: string,
+    body: Record<string, unknown>
+): Promise<BacktestRandomSearchResponse | BacktestErrorResponse> {
+    const req = body as unknown as BacktestRandomSearchRequest;
+
+    if (!req.baseParams || typeof req.baseParams !== "object") {
+        return { ok: false, error: "baseParams is required" };
+    }
+    if (!req.randomization?.count || req.randomization.count < 1) {
+        return { ok: false, error: "randomization.count must be >= 1" };
+    }
+
+    const candlesOrError = extractDatasetCandles(req);
+    if ("error" in candlesOrError) {
+        return { ok: false, error: candlesOrError.error as string };
+    }
+    const candles = candlesOrError as OHLCVData[];
+
+    if (!req.symbol || !req.interval) {
+        return { ok: false, error: "symbol and interval are required" };
+    }
+
+    const ctx = req.context ?? {} as NonNullable<typeof req.context>;
+    const nowSec = ctx?.nowSec ?? Math.floor(Date.now() / 1000);
+    const engineMode = ctx?.engineMode ?? "auto";
+    const blockRange = ctx?.blockRange ?? null;
+    const twoHourCloseParity = ctx?.twoHourCloseParity ?? "odd";
+    const annotatePolymarket = ctx?.annotatePolymarket ?? false;
+
+    const settingsRaw = { ...req.backtestSettings } as Record<string, unknown>;
+    settingsRaw.symbol = req.symbol;
+    settingsRaw.interval = req.interval;
+    const capitalSettings = req.capitalSettings as Record<string, unknown> ?? {};
+
+    const rng = req.randomization.seed ?? Date.now();
+    const paramsList = generateRandomParams(
+        req.baseParams,
+        req.randomization.count,
+        req.randomization.rangePercent,
+        rng,
+        req.randomization.freezeKeys ?? [],
+        req.randomization.paramSpecs
+    );
+
+    const ranking = req.ranking ?? { topN: 100, sortPriority: ["netProfitPercent"] };
+    const compact = req.compact ?? false;
+    const startTs = Date.now();
+
+    // Execute all runs
+    const allResults: Array<{
+        params: StrategyParams;
+        metrics: CompactBacktestMetrics;
+        result: BacktestResult;
+    }> = [];
+
+    for (const params of paramsList) {
+        try {
+            const executorResult = await executeBacktest(buildExecutorRequest(
+                strategyKey,
+                candles,
+                req.interval,
+                params,
+                settingsRaw,
+                capitalSettings,
+                engineMode,
+                nowSec,
+                blockRange,
+                twoHourCloseParity,
+                annotatePolymarket
+            ));
+
+            allResults.push({
+                params,
+                metrics: toCompactMetrics(executorResult.result),
+                result: executorResult.result,
+            });
+        } catch {
+            // Skip failed runs silently
+        }
+    }
+
+    // Filter by min/max trades
+    const minTrades = ranking.minTrades ?? 0;
+    const maxTrades = ranking.maxTrades ?? Infinity;
+    const filtered = allResults.filter(r =>
+        r.metrics.totalTrades >= minTrades && r.metrics.totalTrades <= maxTrades
+    );
+
+    // Sort
+    const priority = ranking.sortPriority?.length
+        ? ranking.sortPriority
+        : ["netProfitPercent"] as typeof ranking.sortPriority;
+
+    filtered.sort((a, b) => {
+        for (const key of priority) {
+            const va = (a.metrics as any)[key] ?? 0;
+            const vb = (b.metrics as any)[key] ?? 0;
+            if (vb !== va) return vb - va; // descending
+        }
+        return 0;
+    });
+
+    // Take top N
+    const topN = ranking.topN ?? 100;
+    const top = filtered.slice(0, topN);
+
+    const datasetRef = typeof (req.dataset as { ref?: string })?.ref === "string"
+        ? (req.dataset as { ref: string }).ref
+        : undefined;
+
+    return {
+        ok: true,
+        strategyKey,
+        datasetRef,
+        processed: paramsList.length,
+        returned: top.length,
+        topN,
+        results: top.map((r, i) => ({
+            rank: i + 1,
+            params: r.params,
+            metrics: r.metrics,
+            ...(compact ? {} : { result: r.result }),
+        })),
+        totalTimingMs: Date.now() - startTs,
+        seed: rng,
+    };
+}
+
+function computeRequestFingerprint(req: BacktestSingleRequest): string {
+    const h = createHash("md5");
+    h.update(`${req.symbol}|${req.interval}|`);
+
+    const ds = req.dataset;
+    if (Array.isArray((ds as any)?.candles)) {
+        h.update(`inline:${computeCandleHash((ds as { candles: OHLCVData[] }).candles)}`);
+    } else {
+        h.update(`ref:${(ds as { ref: string })?.ref ?? ""}`);
+    }
+
+    h.update(`|params:${JSON.stringify(req.strategyParams)}`);
+    h.update(`|settings:${JSON.stringify(req.backtestSettings)}`);
+    h.update(`|capital:${JSON.stringify(req.capitalSettings)}`);
+    h.update(`|context:${JSON.stringify(req.context)}`);
+
+    return h.digest("hex");
+}
+
+// ============================================================================
+// Plugin
+// ============================================================================
+
+export function backtestEndpointPlugin(): Plugin {
+    const register = (middlewares: any) => {
+        middlewares.use("/api/backtest", async (req: any, res: any) => {
+            const method = req.method || "GET";
+            const requestUrl = new URL(req.url || "/", "http://localhost");
+            const pathParts = requestUrl.pathname.split("/").filter(Boolean);
+
+            try {
+                // GET /api/backtest/health
+                if (method === "GET" && pathParts.length === 1 && pathParts[0] === "health") {
+                    const manifest = getManifestFingerprint();
+                    const { rustEngine } = await import("./rust-engine-client");
+
+                    const healthResp: BacktestHealthResponse = {
+                        ok: true,
+                        version: "1.0.0",
+                        manifest: {
+                            strategyCount: manifest.strategyCount,
+                            strategyKeys: manifest.strategyKeys,
+                            hash: manifest.hash,
+                        },
+                        enginePreference: {
+                            rustPreferred: false,
+                            rustAvailable: await rustEngine.checkHealth(),
+                        },
+                    };
+                    sendJson(res, 200, healthResp);
+                    return;
+                }
+
+                // POST /api/backtest/datasets
+                if (method === "POST" && pathParts.length === 1 && pathParts[0] === "datasets") {
+                    const body = await readJsonBody(req as IncomingMessage);
+                    const uploadReq = body as unknown as DatasetUploadRequest;
+                    if (!Array.isArray(uploadReq.candles) || uploadReq.candles.length === 0) {
+                        errorResponse(res, 400, "candles array is required");
+                        return;
+                    }
+
+                    const entry = cacheDataset(uploadReq.candles, uploadReq.keyHint);
+                    const resp: DatasetUploadResponse = {
+                        ok: true,
+                        datasetRef: entry.ref,
+                        hash: entry.hash,
+                        candleCount: entry.candles.length,
+                        firstTime: entry.firstTime,
+                        lastTime: entry.lastTime,
+                    };
+                    sendJson(res, 200, resp);
+                    return;
+                }
+
+                // POST /api/backtest/:strategyKey
+                if (method === "POST" && pathParts.length === 1) {
+                    const strategyKey = pathParts[0];
+                    const body = await readJsonBody(req as IncomingMessage);
+                    const result = await handleSingleBacktest(strategyKey, body);
+                    const status = result.ok ? 200 : (result as BacktestErrorResponse).code === "EXECUTION_ERROR" ? 500 : 400;
+                    sendJson(res, status, result);
+                    return;
+                }
+
+                // POST /api/backtest/:strategyKey/batch
+                if (method === "POST" && pathParts.length === 2 && pathParts[1] === "batch") {
+                    const strategyKey = pathParts[0];
+                    const body = await readJsonBody(req as IncomingMessage);
+                    const result = await handleBatchBacktest(strategyKey, body);
+                    const status = result.ok ? 200 : 400;
+                    sendJson(res, status, result);
+                    return;
+                }
+
+                // POST /api/backtest/:strategyKey/search/random
+                if (method === "POST" && pathParts.length === 3 && pathParts[1] === "search" && pathParts[2] === "random") {
+                    const strategyKey = pathParts[0];
+                    const body = await readJsonBody(req as IncomingMessage);
+                    const result = await handleRandomSearch(strategyKey, body);
+                    const status = result.ok ? 200 : 400;
+                    sendJson(res, status, result);
+                    return;
+                }
+
+                sendJson(res, 404, { ok: false, error: "Not found" });
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                sendJson(res, 500, { ok: false, error: message });
+            }
+        });
+    };
+
+    return {
+        name: "backtest-endpoint",
+        configureServer(server) {
+            register(server.middlewares);
+        },
+        configurePreviewServer(server) {
+            register(server.middlewares);
+        },
+    };
+}

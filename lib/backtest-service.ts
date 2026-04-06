@@ -8,7 +8,6 @@ import {
     runBacktest,
     StrategyParams,
     BacktestSettings,
-    buildEntryBacktestResult,
     BacktestResult,
     PostEntryPathStats,
     Signal,
@@ -69,6 +68,7 @@ import {
     buildPostEntryPathStats as analyzeBacktestResult,
     enrichPolymarketBacktestResult,
 } from "./backtest-result-analysis";
+import { executeBacktest, executeBacktestFromSignals } from "./backtest-executor";
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
@@ -555,119 +555,45 @@ export class BacktestService {
         capitalSettings: CapitalSettings,
         requiresTsEngine: boolean
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
-        const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = capitalSettings;
         const captureTiming = this.shouldCaptureTimingBreakdown();
-        const timing = captureTiming
-            ? {
-                selectClosedCandleData: 0,
-                strategyExecute: 0,
-                rustRequest: 0,
-                tsBacktest: 0,
-                postProcessing: 0,
-                total: 0,
-            }
-            : null;
         const runStart = captureTiming ? performance.now() : 0;
-
-        let backtestData: OHLCVData[];
-        if (timing) {
-            const t1 = performance.now();
-            backtestData = this.selectClosedCandleData(ohlcvData, interval, settings);
-            timing.selectClosedCandleData = performance.now() - t1;
-        } else {
-            backtestData = this.selectClosedCandleData(ohlcvData, interval, settings);
+        if (requiresTsEngine && shouldUseRustEngine() && !this.warnedStrictEngine) {
+            this.warnedStrictEngine = true;
+            uiManager.showToast('Current sizing or realism settings require TypeScript engine (Rust skipped).', 'info');
         }
 
-        let signals: Signal[];
-        if (timing) {
-            const t2 = performance.now();
-            signals = applySignalPolarity(strategy.execute(backtestData, params), settings);
-            timing.strategyExecute = performance.now() - t2;
-        } else {
-            signals = applySignalPolarity(strategy.execute(backtestData, params), settings);
-        }
+        const run = await executeBacktest({
+            ohlcvData,
+            interval,
+            strategyKey: state.currentStrategyKey,
+            strategy,
+            strategyParams: params,
+            backtestSettings: {
+                ...settings,
+                symbol: state.currentSymbol,
+                interval,
+            },
+            capitalSettings,
+            context: {
+                nowSec: Math.floor(Date.now() / 1000),
+                blockRange: state.blockRange,
+                twoHourCloseParity: state.twoHourCloseParity === 'even' ? 'even' : 'odd',
+                annotatePolymarket: false,
+                engineMode: requiresTsEngine ? 'typescript' : 'auto',
+            },
+        });
 
-        const filteredSignals = signals;
-
-        // Block range signal filter (defensive): selectClosedCandleData already slices data.
-        // Keep this to guard against any non-sliced signals when data sources change.
-        const blockFilteredSignals = this.filterSignalsByBlockRange(filteredSignals);
-
-        let result: BacktestResult | undefined;
-        let engineUsed: 'rust' | 'typescript' = 'typescript';
-
-        const evaluation = strategy.evaluate?.(backtestData, params, blockFilteredSignals);
-        const entryStats = evaluation?.entryStats;
-
-        if (strategy.metadata?.role === 'entry' && entryStats) {
-            result = buildEntryBacktestResult(entryStats);
-            engineUsed = 'typescript';
-        }
-
-        if (!result && shouldUseRustEngine() && !requiresTsEngine) {
-            const tRust = timing ? performance.now() : 0;
-            const rustResult = await rustEngine.runBacktest(
-                backtestData,
-                blockFilteredSignals,
-                initialCapital,
-                positionSize,
-                commission,
-                sanitizeBacktestSettingsForRust(settings),
-                { mode: sizingMode, fixedTradeAmount, advancedSizing: capitalSettings.advancedSizing }
-            );
-            if (timing) {
-                timing.rustRequest = performance.now() - tRust;
-            }
-
-            if (rustResult) {
-                if (this.isResultConsistent(rustResult)) {
-                    result = rustResult;
-                    engineUsed = 'rust';
-                    debugLogger.event('backtest.rust_used', { bars: backtestData.length });
-                } else {
-                    debugLogger.warn('[Backtest] Rust result failed consistency checks, falling back to TypeScript');
-                    uiManager.showToast('Rust backtest result inconsistent, rerunning in TypeScript', 'info');
-                }
-            }
-        }
-
-        if (!result) {
-            const tTs = timing ? performance.now() : 0;
-            if (requiresTsEngine && shouldUseRustEngine() && !this.warnedStrictEngine) {
-                this.warnedStrictEngine = true;
-                uiManager.showToast('Current sizing or realism settings require TypeScript engine (Rust skipped).', 'info');
-            }
-            result = runBacktest(
-                backtestData,
-                blockFilteredSignals,
-                initialCapital,
-                positionSize,
-                commission,
-                settings,
-                { mode: sizingMode, fixedTradeAmount, advancedSizing: capitalSettings.advancedSizing }
-            );
-            engineUsed = 'typescript';
-            if (timing) {
-                timing.tsBacktest = performance.now() - tTs;
-            }
-        }
-
-        const tPost = timing ? performance.now() : 0;
-        this.finalizeBacktestResult(result, initialCapital, backtestData);
-        if (timing) {
-            timing.postProcessing = performance.now() - tPost;
-            timing.total = performance.now() - runStart;
-
+        if (captureTiming) {
             debugLogger.event('backtest.timing_breakdown', {
-                engineUsed,
-                bars: backtestData.length,
-                signalsCount: signals.length,
-                filteredSignalsCount: filteredSignals.length,
-                durations: timing,
+                engineUsed: run.engineUsed,
+                bars: run.result.marketContext?.candleCount ?? 0,
+                durations: {
+                    total: performance.now() - runStart,
+                },
             });
         }
 
-        return { result, engineUsed };
+        return run;
     }
 
     private async runBacktestForPreparedSignals(
@@ -678,15 +604,29 @@ export class BacktestService {
         capitalSettings: CapitalSettings,
         requiresTsEngine: boolean
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
-        const backtestData = this.selectClosedCandleData(ohlcvData, interval, settings);
-        const { result, engineUsed } = await this.runBacktestForPreparedData(
-            backtestData,
+        if (requiresTsEngine && shouldUseRustEngine() && !this.warnedStrictEngine) {
+            this.warnedStrictEngine = true;
+            uiManager.showToast('Current sizing or realism settings require TypeScript engine (Rust skipped).', 'info');
+        }
+
+        return executeBacktestFromSignals(
+            ohlcvData,
+            interval,
             signals,
-            settings,
+            {
+                ...settings,
+                symbol: state.currentSymbol,
+                interval,
+            },
             capitalSettings,
-            requiresTsEngine
+            {
+                nowSec: Math.floor(Date.now() / 1000),
+                blockRange: state.blockRange,
+                twoHourCloseParity: state.twoHourCloseParity === 'even' ? 'even' : 'odd',
+                annotatePolymarket: false,
+                engineMode: requiresTsEngine ? 'typescript' : 'auto',
+            }
         );
-        return { result, engineUsed };
     }
 
     private async runBacktestForPreparedData(

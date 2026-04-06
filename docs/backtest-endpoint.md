@@ -1,0 +1,401 @@
+# Backtest Endpoint Usage
+
+## Purpose
+
+Use the local backtest endpoint when you want an external runner such as `Flux.Native` to call this repo as a backtest engine instead of driving the browser UI.
+
+The endpoint is intended for:
+
+- exact single-run parity checks
+- fast local batch evaluation
+- randomized parameter search
+- `1m` and `5m` Polymarket research
+- direct-trade research on higher timeframes such as `4h`
+
+## How It Runs
+
+The endpoint is mounted by the Vite plugin in [`vite.config.ts`](../vite.config.ts). It is available when you run either:
+
+```bash
+npm run dev
+```
+
+or:
+
+```bash
+npm run build
+npm run preview
+```
+
+Default local base URL:
+
+```text
+http://localhost:5173/api/backtest
+```
+
+There is no separate standalone backtest server in the current implementation.
+
+## Endpoint List
+
+| Route | Method | Purpose |
+| --- | --- | --- |
+| `/api/backtest/health` | `GET` | health check + strategy manifest fingerprint |
+| `/api/backtest/datasets` | `POST` | upload candles once and receive a reusable `datasetRef` |
+| `/api/backtest/:strategyKey` | `POST` | single backtest run |
+| `/api/backtest/:strategyKey/batch` | `POST` | many runs over one dataset |
+| `/api/backtest/:strategyKey/search/random` | `POST` | seeded randomized parameter search |
+
+## Parity Rules
+
+If you want the endpoint to match the UI, keep these inputs identical:
+
+- candle array
+- `interval`
+- `strategyKey`
+- `strategyParams`
+- `backtestSettings`
+- `capitalSettings`
+- `context.nowSec`
+- `context.blockRange`
+- `context.twoHourCloseParity`
+
+Important notes:
+
+- Use `engineMode: "typescript"` when you are validating parity against the UI.
+- `annotatePolymarket` is opt-in because it adds extra work.
+- `twoHourCloseParity` only accepts `"odd"` or `"even"`. If you want the UI-style `both` comparison for `120m`, call the endpoint twice and compare the two runs yourself.
+
+## Dataset Cache
+
+`POST /api/backtest/datasets` stores candles in the local Vite process and returns a reusable `datasetRef`.
+
+Current behavior from the implementation:
+
+- cache is in memory only
+- refs disappear on server restart
+- entries expire after about 30 minutes
+- cache is capped to 200 entries
+- request body limit is 100 MB
+
+Use cached datasets for batch and random search. Sending huge candle arrays on every request wastes most of the speed benefit.
+
+## Minimal Flow
+
+1. Start the Vite server.
+2. Call `/api/backtest/health`.
+3. Upload candles to `/api/backtest/datasets`.
+4. Reuse the returned `datasetRef` for single, batch, or random-search requests.
+
+## Health Check
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri "http://localhost:5173/api/backtest/health"
+```
+
+Response shape:
+
+```json
+{
+  "ok": true,
+  "version": "1.0.0",
+  "manifest": {
+    "strategyCount": 123,
+    "strategyKeys": ["median_deviation_streak"],
+    "hash": "abcd1234"
+  },
+  "enginePreference": {
+    "rustAvailable": true,
+    "rustPreferred": false
+  }
+}
+```
+
+Use `manifest.hash` or the full strategy key list to detect drift between your external runner and the current repo state.
+
+## Upload Dataset
+
+PowerShell:
+
+```powershell
+$body = @{
+  candles = @(
+    @{ time = 1700000000; open = 100; high = 101; low = 99; close = 100.5; volume = 10 },
+    @{ time = 1700000300; open = 100.5; high = 102; low = 100; close = 101.5; volume = 12 }
+  )
+  keyHint = "btc_5m_sample"
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:5173/api/backtest/datasets" `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "datasetRef": "btc_5m_sample",
+  "hash": "2fd0...",
+  "candleCount": 2,
+  "firstTime": 1700000000,
+  "lastTime": 1700000300
+}
+```
+
+## Single Backtest
+
+Route:
+
+```text
+POST /api/backtest/:strategyKey
+```
+
+Example with cached dataset:
+
+```json
+{
+  "symbol": "BTCUSDT",
+  "interval": "5m",
+  "dataset": { "ref": "btc_5m_sample" },
+  "strategyParams": {
+    "lookback": 20,
+    "threshold": 1.5
+  },
+  "backtestSettings": {
+    "executionModel": "next_open",
+    "tradeDirection": "short",
+    "allowSameBarExit": true,
+    "slippageBps": 0,
+    "marketMode": "all"
+  },
+  "capitalSettings": {
+    "initialCapital": 10000,
+    "positionSize": 100,
+    "commission": 0.1,
+    "sizingMode": "percent",
+    "fixedTradeAmount": 1000
+  },
+  "context": {
+    "nowSec": 1775400000,
+    "blockRange": null,
+    "twoHourCloseParity": "odd",
+    "annotatePolymarket": false,
+    "engineMode": "typescript"
+  }
+}
+```
+
+PowerShell:
+
+```powershell
+$body = @{
+  symbol = "BTCUSDT"
+  interval = "5m"
+  dataset = @{ ref = "btc_5m_sample" }
+  strategyParams = @{
+    lookback = 20
+    threshold = 1.5
+  }
+  backtestSettings = @{
+    executionModel = "next_open"
+    tradeDirection = "short"
+    allowSameBarExit = $true
+    slippageBps = 0
+    marketMode = "all"
+  }
+  capitalSettings = @{
+    initialCapital = 10000
+    positionSize = 100
+    commission = 0.1
+    sizingMode = "percent"
+    fixedTradeAmount = 1000
+  }
+  context = @{
+    nowSec = 1775400000
+    blockRange = $null
+    twoHourCloseParity = "odd"
+    annotatePolymarket = $false
+    engineMode = "typescript"
+  }
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:5173/api/backtest/median_deviation_streak" `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+Single-run response includes:
+
+- `engineUsed`
+- full `result`
+- `requestFingerprint`
+- `strategyManifestFingerprint`
+- `timingMs`
+
+## Direct Trade On 4H
+
+Nothing special is required for `4h`. Change only the `interval`, candle dataset, and strategy/settings.
+
+Example:
+
+```json
+{
+  "symbol": "BTCUSDT",
+  "interval": "4h",
+  "dataset": { "ref": "btc_4h_dataset" },
+  "strategyParams": {
+    "fastLength": 10,
+    "slowLength": 40
+  },
+  "backtestSettings": {
+    "executionModel": "next_open",
+    "tradeDirection": "long",
+    "marketMode": "all"
+  },
+  "capitalSettings": {
+    "initialCapital": 10000,
+    "positionSize": 100,
+    "commission": 0.1,
+    "sizingMode": "percent"
+  },
+  "context": {
+    "nowSec": 1775400000,
+    "blockRange": null,
+    "twoHourCloseParity": "odd",
+    "annotatePolymarket": false,
+    "engineMode": "typescript"
+  }
+}
+```
+
+## Batch Backtest
+
+Route:
+
+```text
+POST /api/backtest/:strategyKey/batch
+```
+
+Use this when one dataset is shared across many parameter sets.
+
+Example:
+
+```json
+{
+  "symbol": "BTCUSDT",
+  "interval": "5m",
+  "dataset": { "ref": "btc_5m_sample" },
+  "backtestSettings": {
+    "executionModel": "next_open",
+    "tradeDirection": "short"
+  },
+  "capitalSettings": {
+    "initialCapital": 10000,
+    "positionSize": 100,
+    "commission": 0.1,
+    "sizingMode": "percent"
+  },
+  "context": {
+    "nowSec": 1775400000,
+    "blockRange": null,
+    "twoHourCloseParity": "odd",
+    "annotatePolymarket": false,
+    "engineMode": "auto"
+  },
+  "compact": true,
+  "items": [
+    {
+      "id": "run_1",
+      "strategyParams": { "lookback": 12, "threshold": 1.1 }
+    },
+    {
+      "id": "run_2",
+      "strategyParams": { "lookback": 18, "threshold": 1.6 }
+    }
+  ]
+}
+```
+
+If `compact` is `true`, each batch item returns only ranking metrics instead of the full `BacktestResult`.
+
+## Random Search
+
+Route:
+
+```text
+POST /api/backtest/:strategyKey/search/random
+```
+
+Example:
+
+```json
+{
+  "symbol": "BTCUSDT",
+  "interval": "1m",
+  "dataset": { "ref": "btc_1m_dataset" },
+  "baseParams": {
+    "lookback": 20,
+    "threshold": 1.5
+  },
+  "randomization": {
+    "rangePercent": 35,
+    "count": 1000,
+    "seed": 42,
+    "freezeKeys": ["stopLossAtr", "takeProfitAtr"]
+  },
+  "backtestSettings": {
+    "executionModel": "next_open",
+    "tradeDirection": "short"
+  },
+  "capitalSettings": {
+    "initialCapital": 10000,
+    "positionSize": 100,
+    "commission": 0.1,
+    "sizingMode": "percent"
+  },
+  "context": {
+    "nowSec": 1775400000,
+    "blockRange": null,
+    "twoHourCloseParity": "odd",
+    "annotatePolymarket": false,
+    "engineMode": "auto"
+  },
+  "ranking": {
+    "topN": 100,
+    "sortPriority": ["expectancy", "profitFactor", "netProfitPercent"],
+    "minTrades": 40,
+    "maxTrades": 100000
+  },
+  "compact": true
+}
+```
+
+Notes:
+
+- random search is deterministic when `seed` is fixed
+- `paramSpecs` can override the default percent-range generation per key
+- results are filtered by `minTrades` and `maxTrades` before ranking
+
+## Recommended Flux.Native Flow
+
+1. Call `/health` when your runner starts and store `manifest.hash`.
+2. Upload each candle dataset once with `/datasets`.
+3. Use `engineMode: "typescript"` first to verify parity with UI runs.
+4. Switch to `/batch` or `/search/random` after the request contract is stable.
+5. Keep the same `nowSec` for all runs in one search job so closed-candle trimming stays deterministic.
+6. Re-upload datasets when the Vite server restarts or the ref expires.
+
+## Current Limitations
+
+- built-in strategies only
+- no HTTP route for uploading custom strategy code
+- dataset cache is process-local and temporary
+- no dataset delete endpoint
+- no single request mode for `twoHourCloseParity: "both"`

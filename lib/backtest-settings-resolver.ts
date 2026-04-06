@@ -417,6 +417,8 @@ const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>([
 ]);
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_flip_loss_2", "combined"]);
 function coerceScalar(rawValue: unknown): unknown {
+    if (typeof rawValue === "boolean") return rawValue;
+    if (typeof rawValue === "number") return Number.isFinite(rawValue) ? rawValue : rawValue;
     const asBoolean = toBooleanLike(rawValue);
     if (asBoolean !== null) return asBoolean;
     const asNumber = toFiniteNumber(rawValue);
