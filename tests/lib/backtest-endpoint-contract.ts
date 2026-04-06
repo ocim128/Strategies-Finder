@@ -259,6 +259,8 @@ export interface BacktestSingleResponse {
     strategyKey: string;
     engineUsed: "rust" | "typescript";
     result: SlimBacktestSingleResult;
+    /** Output only if randomized via random-parameter-range header */
+    strategyParams?: StrategyParams;
     /** Hex hash of the effective inputs (symbol + interval + dataset + params + settings + fixed endpoint capital profile + context). */
     requestFingerprint: string;
     strategyManifestFingerprint: StrategyManifestFingerprint;

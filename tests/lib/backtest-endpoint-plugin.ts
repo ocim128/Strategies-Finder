@@ -35,6 +35,7 @@ import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS, toCompactMetrics, toSlimSingleResul
 import { stripEndpointIgnoredBacktestSettings } from "./backtest-endpoint-settings";
 import { buildBacktestEndpointExecutorRequest } from "./backtest-endpoint-execution";
 import type { OHLCVData, BacktestResult, StrategyParams } from "./types/strategies";
+import { strategies as builtInStrategies } from "./strategies/library";
 
 // ============================================================================
 // Dataset cache
@@ -273,7 +274,8 @@ function steppedRandom(min: number, max: number, step: number, rng: () => number
 
 async function handleSingleBacktest(
     strategyKey: string,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    httpRequest?: import("http").IncomingMessage
 ): Promise<BacktestSingleResponse | BacktestErrorResponse> {
     const req = body as unknown as BacktestSingleRequest;
 
@@ -297,6 +299,40 @@ async function handleSingleBacktest(
     const annotatePolymarket = ctx.annotatePolymarket ?? false;
     const engineMode = ctx.engineMode ?? "auto";
 
+    let actualStrategyParams = req.strategyParams;
+    let didRandomize = false;
+
+    // Fix: Merge requested params with the specific strategy's defaults
+    // because standard backtest endpoint payloads might be copied from other strategies.
+    // If random-parameter-range is used, we must randomize based on the TARGET strategy's defaults
+    // not the potentially unrelated JSON payload parameters!
+    const targetStrategy = builtInStrategies[strategyKey];
+    if (targetStrategy) {
+        const defaultTargetParams = targetStrategy.defaultParams ?? {};
+        actualStrategyParams = { ...defaultTargetParams, ...req.strategyParams };
+        
+        // Remove keys that don't belong to the target strategy to avoid randomizing irrelevant params
+        for (const key of Object.keys(actualStrategyParams)) {
+            if (!(key in defaultTargetParams)) {
+                delete actualStrategyParams[key];
+            }
+        }
+    }
+
+    if (httpRequest && httpRequest.headers["random-parameter-range"]) {
+        const rangeStr = httpRequest.headers["random-parameter-range"] as string;
+        const rangePercent = parseFloat(rangeStr);
+        if (!Number.isNaN(rangePercent)) {
+            const seed = Math.floor(Math.random() * 2147483647);
+            const baseForRandom = targetStrategy ? targetStrategy.defaultParams : actualStrategyParams;
+            const randomizedParams = generateRandomParams(baseForRandom, 1, rangePercent, seed, [], undefined)[0];
+            if (randomizedParams) {
+                actualStrategyParams = randomizedParams;
+                didRandomize = true;
+            }
+        }
+    }
+
     // Merge symbol/interval into settings so the executor can use them
     const settingsRaw = { ...req.backtestSettings } as Record<string, unknown>;
     settingsRaw.symbol = req.symbol;
@@ -309,7 +345,7 @@ async function handleSingleBacktest(
             strategyKey,
             candles,
             req.interval,
-            req.strategyParams,
+            actualStrategyParams,
             settingsRaw,
             engineMode,
             nowSec,
@@ -326,6 +362,7 @@ async function handleSingleBacktest(
             strategyKey,
             engineUsed: result.engineUsed,
             result: toSlimSingleResult(result.result),
+            ...(didRandomize ? { strategyParams: actualStrategyParams } : {}),
             requestFingerprint: computeRequestFingerprint(req),
             strategyManifestFingerprint: {
                 strategyCount: manifest.strategyCount,
@@ -637,7 +674,7 @@ export function backtestEndpointPlugin(): Plugin {
                 if (method === "POST" && pathParts.length === 1) {
                     const strategyKey = pathParts[0];
                     const body = await readJsonBody(req as IncomingMessage);
-                    const result = await handleSingleBacktest(strategyKey, body);
+                    const result = await handleSingleBacktest(strategyKey, body, req as IncomingMessage);
                     const status = result.ok ? 200 : (result as BacktestErrorResponse).code === "EXECUTION_ERROR" ? 500 : 400;
                     sendJson(res, status, result);
                     return;

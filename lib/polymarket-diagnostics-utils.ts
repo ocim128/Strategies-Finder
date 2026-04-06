@@ -83,8 +83,8 @@ export interface BacktestPolymarketPerformanceSummary {
     unscoredTrades: number;
     missingOutcomeTrades: number;
     scoredTradeShare: number;
-    winRate: number;
-    expectancy: number | null;
+    polymarketWinRate: number;
+    polymarketExpectancy: number | null;
     pricedTrades: number;
     unpricedScoredTrades: number;
     outcomeRowsLoaded: number;
@@ -283,8 +283,8 @@ export function buildBacktestPolymarketPerformanceSummary(
         unscoredTrades: coverageSummary.unscoredTrades,
         missingOutcomeTrades: coverageSummary.missingOutcomeTrades,
         scoredTradeShare: coverageSummary.scoredTradeShare,
-        winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
-        expectancy: payoutSummary?.expectancy ?? null,
+        polymarketWinRate: scoredTrades > 0 ? wins / scoredTrades : 0,
+        polymarketExpectancy: payoutSummary?.expectancy ?? null,
         pricedTrades: payoutSummary?.pricedTrades ?? 0,
         unpricedScoredTrades: payoutSummary?.unpricedScoredTrades ?? 0,
         outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
