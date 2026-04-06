@@ -35,6 +35,10 @@ function createRequestTimeoutSignal(): AbortSignal {
     return AbortSignal.timeout(SQLITE_REQUEST_TIMEOUT_MS);
 }
 
+function getBaseUrl(): string {
+    return typeof window === 'undefined' ? 'http://localhost:5173' : '';
+}
+
 async function checkSqliteApiAvailable(force = false): Promise<boolean> {
     const now = Date.now();
     if (!force && sqliteApiAvailable !== null && now - sqliteApiCheckedAt < AVAILABILITY_CACHE_MS) {
@@ -42,7 +46,7 @@ async function checkSqliteApiAvailable(force = false): Promise<boolean> {
     }
 
     try {
-        const response = await fetch('/api/sqlite/status', {
+        const response = await fetch(getBaseUrl() + '/api/sqlite/status', {
             method: 'GET',
             signal: createRequestTimeoutSignal(),
         });
@@ -69,7 +73,7 @@ export async function loadPolymarketOutcomes(
     if (options.endTs != null) params.set('endTs', String(Math.floor(options.endTs)));
     if (options.limit != null) params.set('limit', String(Math.max(1, Math.floor(options.limit))));
 
-    const url = `/api/sqlite/load-polymarket-outcomes${params.size ? `?${params.toString()}` : ''}`;
+    const url = `${getBaseUrl()}/api/sqlite/load-polymarket-outcomes${params.size ? `?${params.toString()}` : ''}`;
     let res: Response;
     try {
         res = await fetch(url, {
@@ -119,7 +123,7 @@ export async function storePolymarketOutcomes(
 
     let res: Response;
     try {
-        res = await fetch('/api/sqlite/store-polymarket-outcomes', {
+        res = await fetch(`${getBaseUrl()}/api/sqlite/store-polymarket-outcomes`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ rows }),

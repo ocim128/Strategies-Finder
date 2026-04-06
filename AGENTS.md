@@ -333,6 +333,7 @@ Treat unrelated pre-existing failures carefully. Do not assume your change cause
 
 If you change behavior substantially, update the docs that actually carry that contract:
 - `README.md` for repo-level usage and architecture
+- `docs/backtest-endpoint.md` for local HTTP backtest request/response behavior, fixed endpoint sizing, and Preview/Copy Endpoint parity rules
 - `AGENTS.md` for safe-change guidance
 - `workers/README.md` for worker API and cron behavior
 
