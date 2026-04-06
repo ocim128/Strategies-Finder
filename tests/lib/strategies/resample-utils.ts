@@ -2,11 +2,7 @@
 import { OHLCVData, Time } from '../types/strategies';
 import { getIntervalSecondsOrDefault } from '../interval-utils';
 
-export type TwoHourCloseParity = 'odd' | 'even';
-
-export interface ResampleOptions {
-    twoHourCloseParity?: TwoHourCloseParity;
-}
+export interface ResampleOptions {}
 
 /**
  * Gets the number of seconds for a given interval string (e.g., '1m', '1h', '1d').
@@ -15,24 +11,17 @@ export function getIntervalSeconds(interval: string): number {
     return getIntervalSecondsOrDefault(interval, 0);
 }
 
-function normalizeTwoHourCloseParity(options?: ResampleOptions): TwoHourCloseParity {
-    return options?.twoHourCloseParity === 'even' ? 'even' : 'odd';
-}
-
 export function getResampleBucketStart(
     time: number,
     targetInterval: string,
-    options?: ResampleOptions
+    _options?: ResampleOptions
 ): number {
     const intervalSeconds = getIntervalSeconds(targetInterval);
     if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
         return Math.floor(time);
     }
 
-    // 2H can be bucketed into odd/even close-hour universes by shifting 1 hour.
-    const parity = normalizeTwoHourCloseParity(options);
-    const phaseOffsetSeconds = intervalSeconds === 7200 && parity === 'even' ? 3600 : 0;
-    return Math.floor((time - phaseOffsetSeconds) / intervalSeconds) * intervalSeconds + phaseOffsetSeconds;
+    return Math.floor(time / intervalSeconds) * intervalSeconds;
 }
 
 /**

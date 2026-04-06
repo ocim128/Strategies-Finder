@@ -63,7 +63,6 @@ describe('Backtest settings compatibility', () => {
             flipAfterConsecutiveLosses: 3,
             flipCooldownTrades: 2,
             minTradesBeforeFirstFlip: 10,
-            twoHourCloseParity: 'even',
             snapshotRsiMin: 40,
         };
 
@@ -75,7 +74,6 @@ describe('Backtest settings compatibility', () => {
         expect('flipAfterConsecutiveLosses' in sanitized).to.equal(false);
         expect('flipCooldownTrades' in sanitized).to.equal(false);
         expect('minTradesBeforeFirstFlip' in sanitized).to.equal(false);
-        expect('twoHourCloseParity' in sanitized).to.equal(false);
         expect('snapshotRsiMin' in sanitized).to.equal(false);
     });
 
@@ -94,18 +92,6 @@ describe('Backtest settings compatibility', () => {
         expect(requiresTypescriptEngine({ marketMode: 'uptrend' })).to.equal(true);
         expect(requiresTypescriptEngine({ marketMode: 'downtrend' })).to.equal(true);
         expect(requiresTypescriptEngine({ marketMode: 'sideway' })).to.equal(true);
-    });
-
-    it('enforces sanitizer contract for twoHourCloseParity', () => {
-        const settings: BacktestSettings = {
-            atrPeriod: 14,
-            twoHourCloseParity: 'even',
-        };
-
-        const sanitized = sanitizeBacktestSettingsForRust(settings);
-
-        // twoHourCloseParity must be removed by sanitizer
-        expect('twoHourCloseParity' in sanitized).to.equal(false);
     });
 
     it('requires TS engine for realism constraints', () => {

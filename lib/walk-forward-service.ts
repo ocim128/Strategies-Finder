@@ -857,7 +857,6 @@ class WalkForwardService {
 
         // Route OOS output through shared backtest state so Results and Trades stay in sync.
         commitBacktestResult(oos, 'walk_forward_oos', {
-            parityResults: null,
             reason: 'walk_forward_oos_plot',
         });
     }

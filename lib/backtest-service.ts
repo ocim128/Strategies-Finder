@@ -1,7 +1,6 @@
 import { state } from "./state";
 import { uiManager } from "./ui-manager";
 import { chartManager } from "./chart-manager";
-import { dataManager } from "./data-manager";
 import { clearActiveBacktestRerunContext, getActiveBacktestRerunContext } from "./backtest-rerun-context";
 
 import {
@@ -26,7 +25,6 @@ import {
     calculateSharpeRatioFromReturns,
 } from "./strategies/performance-metrics";
 import { computeEdgeStatistics } from "./strategies/backtest/edge-statistics";
-import { getIntervalSeconds } from "./dataProviders/utils";
 import { getOptionalElement } from "./dom-utils";
 import { sanitizeBacktestSettingsForRust, requiresTypescriptEngine as requiresTsEngine } from "./rust-settings-sanitizer";
 import { sliceOhlcvByBlock } from "./block-selector";
@@ -57,12 +55,9 @@ import {
     setReplayStartButtonDisabled,
     updateDomBacktestRunProgress,
     type BacktestRunHandle,
-    type BacktestParityComparison,
 } from "./backtest-run-presenter";
-import { commitBacktestResult, commitParityBacktestResults, setTwoHourCloseParity } from "./state-actions";
+import { commitBacktestResult } from "./state-actions";
 import { annotateBacktestResultWithPolymarketOutcomes } from "./polymarket-trade-annotations";
-
-import { resolveTwoHourParityFromTime } from "./two-hour-parity";
 import {
     buildExpectancyBreakdown,
     buildPostEntryPathStats as analyzeBacktestResult,
@@ -73,7 +68,6 @@ import { executeBacktest, executeBacktestFromSignals } from "./backtest-executor
 type CurrentBacktestExecution = {
     result: BacktestResult;
     engineUsed: 'rust' | 'typescript';
-    parityComparison: BacktestParityComparison | null;
 };
 
 export class BacktestService {
@@ -127,23 +121,15 @@ export class BacktestService {
             const capitalSettings = this.getCapitalSettings();
             const settings = this.getBacktestSettings();
             const requiresTsEngine = this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
-            const parityMode = this.getTwoHourCloseParityMode();
+            await updateDomBacktestRunProgress(runUi, '40%', 'Generating signals...', 100);
 
-            await updateDomBacktestRunProgress(
-                runUi,
-                '40%',
-                parityMode === 'both' ? 'Preparing parity runs...' : 'Generating signals...',
-                100
-            );
-
-            let { result, engineUsed, parityComparison } = await this.executeBacktestForParityMode(
+            let { result, engineUsed } = await this.executeBacktest(
                 runUi,
                 strategy,
                 params,
                 settings,
                 capitalSettings,
-                requiresTsEngine,
-                parityMode
+                requiresTsEngine
             );
 
             // Only annotate Polymarket outcomes when explicitly enabled
@@ -152,17 +138,6 @@ export class BacktestService {
                 result = enrichPolymarketBacktestResult(
                     await this.annotatePolymarketResult(result, settings, state.ohlcvData)
                 );
-                if (parityComparison) {
-                    parityComparison = {
-                        ...parityComparison,
-                        odd: enrichPolymarketBacktestResult(
-                            await this.annotatePolymarketResult(parityComparison.odd, settings, state.ohlcvData)
-                        ),
-                        even: enrichPolymarketBacktestResult(
-                            await this.annotatePolymarketResult(parityComparison.even, settings, state.ohlcvData)
-                        ),
-                    };
-                }
             }
 
             if (!this.isLatestInteractiveRun(runId)) {
@@ -175,19 +150,17 @@ export class BacktestService {
             }
 
             commitBacktestResult(result, 'backtest', {
-                parityResults: parityComparison,
                 reason: 'manual_backtest',
             });
 
             await updateDomBacktestRunProgress(runUi, '100%', 'Complete!');
-            runUi.setStatus(formatCompletedBacktestStatus(result, engineUsed, parityComparison));
+            runUi.setStatus(formatCompletedBacktestStatus(result, engineUsed));
             shouldDelayHide = true;
             debugLogger.event('backtest.success', {
                 strategy: state.currentStrategyKey,
                 trades: result.totalTrades,
                 durationMs: Date.now() - startedAt,
                 engine: engineUsed,
-                parityMode,
             });
             // Enable replay button if there are results
             setReplayStartButtonDisabled(result.totalTrades === 0);
@@ -240,9 +213,7 @@ export class BacktestService {
         mergedSettings.executionModel = mergedSettings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
 
         const requiresTsEngine = this.requiresTypescriptEngine(mergedSettings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
-        const parityMode = this.getTwoHourCloseParityMode();
-        const activeParity = parityMode === 'both' ? this.inferBaselineParity(state.ohlcvData) : parityMode;
-        const run = await this.withTemporaryTwoHourParity(activeParity, async () => this.runBacktestForData(
+        const run = await this.runBacktestForData(
             state.ohlcvData,
             state.currentInterval,
             strategy,
@@ -250,152 +221,34 @@ export class BacktestService {
             mergedSettings,
             capitalSettings,
             requiresTsEngine
-        ));
+        );
 
         return run.result;
     }
 
-    private getTwoHourCloseParityMode(): 'odd' | 'even' | 'both' {
-        if (getIntervalSeconds(state.currentInterval) !== 7200) {
-            return 'odd';
-        }
-        if (state.twoHourCloseParity === 'even' || state.twoHourCloseParity === 'both') {
-            return state.twoHourCloseParity;
-        }
-        return 'odd';
-    }
-
-    private inferBaselineParity(data: OHLCVData[]): 'odd' | 'even' {
-        if (getIntervalSeconds(state.currentInterval) !== 7200 || data.length === 0) {
-            return 'odd';
-        }
-        return resolveTwoHourParityFromTime(data[0].time) ?? 'odd';
-    }
-
-    private async withTemporaryTwoHourParity<T>(parity: 'odd' | 'even', run: () => Promise<T>): Promise<T> {
-        const previous = state.twoHourCloseParity;
-        if (previous === parity) return run();
-
-        setTwoHourCloseParity(parity);
-        try {
-            return await run();
-        } finally {
-            setTwoHourCloseParity(previous);
-        }
-    }
-
-    private async executeBacktestForParityMode(
+    private async executeBacktest(
         runUi: BacktestRunHandle,
-        strategy: Strategy,
-        params: StrategyParams,
-        settings: BacktestSettings,
-        capitalSettings: CapitalSettings,
-        requiresTsEngine: boolean,
-        parityMode: 'odd' | 'even' | 'both'
-    ): Promise<CurrentBacktestExecution> {
-        commitParityBacktestResults(null, 'backtest_run_start');
-        const baseData = state.ohlcvData;
-
-        if (parityMode === 'both') {
-            return this.executeParityComparison(
-                runUi,
-                baseData,
-                strategy,
-                params,
-                settings,
-                capitalSettings,
-                requiresTsEngine
-            );
-        }
-
-        await updateDomBacktestRunProgress(runUi, '60%', 'Running backtest...', 100);
-        const singleRun = await this.withTemporaryTwoHourParity(parityMode, async () => this.runBacktestForData(
-            baseData,
-            state.currentInterval,
-            strategy,
-            params,
-            settings,
-            capitalSettings,
-            requiresTsEngine
-        ));
-
-        return {
-            result: singleRun.result,
-            engineUsed: singleRun.engineUsed,
-            parityComparison: null,
-        };
-    }
-
-    private async executeParityComparison(
-        runUi: BacktestRunHandle,
-        baseData: OHLCVData[],
         strategy: Strategy,
         params: StrategyParams,
         settings: BacktestSettings,
         capitalSettings: CapitalSettings,
         requiresTsEngine: boolean
     ): Promise<CurrentBacktestExecution> {
-        const baselineParity = this.inferBaselineParity(baseData);
-        const oddData = await this.getBacktestDataForParity('odd', baseData);
-        const evenData = await this.getBacktestDataForParity('even', baseData);
-
-        await updateDomBacktestRunProgress(runUi, '65%', 'Running odd + even backtests...', 80);
-
-        const oddRun = await this.withTemporaryTwoHourParity('odd', async () => this.runBacktestForData(
-            oddData,
+        await updateDomBacktestRunProgress(runUi, '60%', 'Running backtest...', 100);
+        const singleRun = await this.runBacktestForData(
+            state.ohlcvData,
             state.currentInterval,
             strategy,
             params,
             settings,
             capitalSettings,
             requiresTsEngine
-        ));
-        const evenRun = await this.withTemporaryTwoHourParity('even', async () => this.runBacktestForData(
-            evenData,
-            state.currentInterval,
-            strategy,
-            params,
-            settings,
-            capitalSettings,
-            requiresTsEngine
-        ));
+        );
 
-        const parityComparison = { odd: oddRun.result, even: evenRun.result, baseline: baselineParity };
-
-        debugLogger.event('backtest.parity_compare', {
-            strategy: state.currentStrategyKey,
-            oddTrades: oddRun.result.totalTrades,
-            evenTrades: evenRun.result.totalTrades,
-            baseline: baselineParity,
-        });
-
-        const baselineRun = baselineParity === 'even' ? evenRun : oddRun;
         return {
-            result: baselineRun.result,
-            engineUsed: baselineRun.engineUsed,
-            parityComparison,
+            result: singleRun.result,
+            engineUsed: singleRun.engineUsed,
         };
-    }
-
-    private async getBacktestDataForParity(parity: 'odd' | 'even', baseData?: OHLCVData[]): Promise<OHLCVData[]> {
-        if (getIntervalSeconds(state.currentInterval) !== 7200) {
-            return baseData ?? state.ohlcvData;
-        }
-        return this.withTemporaryTwoHourParity(parity, async () => {
-            try {
-                const fetched = await dataManager.fetchData(state.currentSymbol, state.currentInterval);
-                // Return full fetched data; normalization/slicing is applied in runBacktestForData.
-                return fetched.length > 0 ? fetched : state.ohlcvData;
-            } catch (error) {
-                debugLogger.warn('[Backtest] Failed to fetch parity data, falling back to current chart candles', {
-                    parity,
-                    symbol: state.currentSymbol,
-                    interval: state.currentInterval,
-                    error: error instanceof Error ? error.message : String(error),
-                });
-                return baseData ?? state.ohlcvData;
-            }
-        });
     }
 
     // ========================================================================
@@ -504,7 +357,6 @@ export class BacktestService {
 
             // --- 6. Update state and UI ---
             commitBacktestResult(result, 'backtest', {
-                parityResults: null,
                 reason: 'combined_strategy_backtest',
             });
 
@@ -577,7 +429,6 @@ export class BacktestService {
             context: {
                 nowSec: Math.floor(Date.now() / 1000),
                 blockRange: state.blockRange,
-                twoHourCloseParity: state.twoHourCloseParity === 'even' ? 'even' : 'odd',
                 annotatePolymarket: false,
                 engineMode: requiresTsEngine ? 'typescript' : 'auto',
             },
@@ -622,7 +473,6 @@ export class BacktestService {
             {
                 nowSec: Math.floor(Date.now() / 1000),
                 blockRange: state.blockRange,
-                twoHourCloseParity: state.twoHourCloseParity === 'even' ? 'even' : 'odd',
                 annotatePolymarket: false,
                 engineMode: requiresTsEngine ? 'typescript' : 'auto',
             }

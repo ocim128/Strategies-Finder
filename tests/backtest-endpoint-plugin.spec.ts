@@ -92,17 +92,9 @@ function buildSinglePayload(dataset: { candles: OHLCVData[] } | { ref: string })
             slippageBps: 0,
             marketMode: "all",
         },
-        capitalSettings: {
-            initialCapital: 10000,
-            positionSize: 100,
-            commission: 0.1,
-            sizingMode: "percent",
-            fixedTradeAmount: 1000,
-        },
         context: {
             nowSec: lastTime + 600,
             blockRange: null,
-            twoHourCloseParity: "odd",
             annotatePolymarket: false,
             engineMode: "typescript",
         },
@@ -157,5 +149,44 @@ describe("backtest endpoint plugin", () => {
         assert.strictEqual(response.json.ok, true);
         assert.strictEqual(response.json.strategyKey, "median_deviation_streak");
         assert.ok(response.json.result.totalTrades >= 0);
+    });
+
+    it("ignores caller-supplied capital settings and uses the fixed endpoint profile", async () => {
+        const handler = createHandler();
+        const candles = buildCandles();
+        const payload = buildSinglePayload({ candles });
+
+        const baseline = await invoke(
+            handler,
+            "/median_deviation_streak",
+            "POST",
+            payload
+        );
+
+        const legacyCapitalPayload = {
+            ...payload,
+            capitalSettings: {
+                initialCapital: 500,
+                positionSize: 5,
+                commission: 4,
+                sizingMode: "percent",
+                fixedTradeAmount: 25,
+            },
+        };
+
+        const withIgnoredCapital = await invoke(
+            handler,
+            "/median_deviation_streak",
+            "POST",
+            legacyCapitalPayload
+        );
+
+        assert.strictEqual(baseline.statusCode, 200);
+        assert.strictEqual(withIgnoredCapital.statusCode, 200);
+        assert.strictEqual(baseline.json.ok, true);
+        assert.strictEqual(withIgnoredCapital.json.ok, true);
+        assert.strictEqual(withIgnoredCapital.json.requestFingerprint, baseline.json.requestFingerprint);
+        assert.strictEqual(withIgnoredCapital.json.result.totalTrades, baseline.json.result.totalTrades);
+        assert.strictEqual(withIgnoredCapital.json.result.netProfit, baseline.json.result.netProfit);
     });
 });

@@ -5,9 +5,7 @@
 import {
     alertService,
     AlertSubscription,
-    AlertTwoHourCloseParity,
     buildAlertStreamId,
-    parseAlertTwoHourParityFromStreamId,
 } from '../alert-service';
 import {
     closeAlertConfigModal,
@@ -18,8 +16,6 @@ import {
 } from '../alert-modals';
 import { resolveCurrentConfigName, resolveSubscriptionConfigName, safeJsonParse } from '../alert-config-resolver';
 import { renderSignalHistory, renderSubscriptions } from '../alert-subscription-renderer';
-import { isTwoHourInterval } from '../interval-utils';
-import { replaceTwoHourParityInStreamId, stripTwoHourParityFromStreamId } from '../alert-stream-id';
 import { uiManager } from '../ui-manager';
 import { state } from '../state';
 import { backtestService } from '../backtest-service';
@@ -40,95 +36,6 @@ import { getBinanceProviderForMarketType, isBinanceDataProvider, resolveBinanceM
 
 let subscriptionsByStreamId: Map<string, AlertSubscription> = new Map();
 const localWorkerStrategySupport = getWorkerStrategySupportSnapshot();
-
-function resolveParityModeFromUi(): 'odd' | 'even' | 'both' {
-    const select = getOptionalElement<HTMLSelectElement>('twoHourCloseParity');
-    if (select?.value === 'even' || select?.value === 'both') return select.value;
-    return 'odd';
-}
-
-function normalizeSubscriptionParity(value: unknown): AlertTwoHourCloseParity | null {
-    if (value === 'even') return 'even';
-    if (value === 'odd') return 'odd';
-    return null;
-}
-
-function resolveSubscriptionParity(sub: AlertSubscription): AlertTwoHourCloseParity | null {
-    const parsedFromStream = parseAlertTwoHourParityFromStreamId(sub.stream_id);
-    if (parsedFromStream) return parsedFromStream;
-    const settings = safeJsonParse<Record<string, unknown>>(sub.backtest_settings_json, {});
-    return normalizeSubscriptionParity(settings.twoHourCloseParity);
-}
-
-function resolveEffectiveTwoHourParity(
-    sub: AlertSubscription
-): { parity: AlertTwoHourCloseParity; source: 'stream' | 'settings' | 'default' } | null {
-    if (!isTwoHourInterval(sub.interval)) return null;
-    const fromStream = parseAlertTwoHourParityFromStreamId(sub.stream_id);
-    if (fromStream) return { parity: fromStream, source: 'stream' };
-    const settings = safeJsonParse<Record<string, unknown>>(sub.backtest_settings_json, {});
-    const fromSettings = normalizeSubscriptionParity(settings.twoHourCloseParity);
-    if (fromSettings) return { parity: fromSettings, source: 'settings' };
-    return { parity: 'odd', source: 'default' };
-}
-
-function resolvePairedTwoHourParity(sub: AlertSubscription): AlertTwoHourCloseParity | null {
-    if (!isTwoHourInterval(sub.interval)) return null;
-    const baseKey = stripTwoHourParityFromStreamId(sub.stream_id);
-    let hasOdd = false;
-    let hasEven = false;
-
-    for (const item of subscriptionsByStreamId.values()) {
-        if (!isTwoHourInterval(item.interval)) continue;
-        if (stripTwoHourParityFromStreamId(item.stream_id) !== baseKey) continue;
-        const parity = resolveSubscriptionParity(item);
-        if (parity === 'odd') hasOdd = true;
-        if (parity === 'even') hasEven = true;
-    }
-
-    if (!hasOdd || !hasEven) return null;
-    const current = resolveSubscriptionParity(sub);
-    if (current === 'odd') return 'even';
-    if (current === 'even') return 'odd';
-    return null;
-}
-
-async function withTemporaryTwoHourParitySelection<T>(
-    parity: AlertTwoHourCloseParity | null,
-    task: () => Promise<T>
-): Promise<T> {
-    if (!parity) {
-        return task();
-    }
-
-    const select = getOptionalElement<HTMLSelectElement>('twoHourCloseParity');
-    if (!select) {
-        return task();
-    }
-
-    const previous = select.value;
-    select.value = parity;
-    try {
-        return await task();
-    } finally {
-        select.value = previous;
-    }
-}
-
-function applyTwoHourParityToBacktestSettings(
-    settings: unknown,
-    parity: AlertTwoHourCloseParity | null
-): Record<string, unknown> {
-    const cloned = (settings && typeof settings === 'object')
-        ? { ...(settings as Record<string, unknown>) }
-        : {};
-    if (parity) {
-        cloned.twoHourCloseParity = parity;
-    } else {
-        delete cloned.twoHourCloseParity;
-    }
-    return cloned;
-}
 
 function collectCurrentStrategyParams(): Record<string, number> {
     const strategyParams: Record<string, number> = {};
@@ -269,7 +176,7 @@ async function refreshSubscriptions() {
     try {
         const subs = await alertService.listSubscriptions();
         subscriptionsByStreamId = new Map(subs.map((sub) => [sub.stream_id, sub]));
-        renderSubscriptions(subs, resolveSubscriptionParity);
+        renderSubscriptions(subs);
     } catch (err) {
         uiManager.showToast('Failed to load subscriptions: ' + (err instanceof Error ? err.message : String(err)), 'error');
     }
@@ -301,10 +208,6 @@ async function quickSubscribe() {
     const strategyParams = collectCurrentStrategyParams();
     const rawBacktestSettings = collectCurrentSubscriptionBacktestSettings();
     const configName = resolveCurrentConfigName(strategyKey, strategyParams, rawBacktestSettings);
-    const parityMode = resolveParityModeFromUi();
-    const parityTargets: AlertTwoHourCloseParity[] = isTwoHourInterval(interval)
-        ? (parityMode === 'both' ? ['odd', 'even'] : [parityMode === 'even' ? 'even' : 'odd'])
-        : [];
 
     try {
         const parsedFreshness = Number.parseInt(freshnessBarsInput?.value ?? '1', 10);
@@ -321,27 +224,12 @@ async function quickSubscribe() {
             freshnessBars: Number.isFinite(parsedFreshness) ? Math.max(0, parsedFreshness) : 1,
             candleLimit,
         };
-
-        if (parityTargets.length === 0) {
-            const result = await alertService.upsertSubscription({
-                ...basePayload,
-                streamId: buildAlertStreamId(symbol, interval, strategyKey, configName ?? undefined),
-                backtestSettings: applyTwoHourParityToBacktestSettings(rawBacktestSettings, null),
-            });
-            uiManager.showToast(`Subscribed: ${result.streamId}`, 'success');
-        } else {
-            const results: string[] = [];
-            for (const parity of parityTargets) {
-                const streamId = buildAlertStreamId(symbol, interval, strategyKey, configName ?? undefined, parity);
-                const upsert = await alertService.upsertSubscription({
-                    ...basePayload,
-                    streamId,
-                    backtestSettings: applyTwoHourParityToBacktestSettings(rawBacktestSettings, parity),
-                });
-                results.push(upsert.streamId);
-            }
-            uiManager.showToast(`Subscribed ${results.length} streams (${parityTargets.join(' + ')})`, 'success');
-        }
+        const result = await alertService.upsertSubscription({
+            ...basePayload,
+            streamId: buildAlertStreamId(symbol, interval, strategyKey, configName ?? undefined),
+            backtestSettings: rawBacktestSettings,
+        });
+        uiManager.showToast(`Subscribed: ${result.streamId}`, 'success');
         await refreshSubscriptions();
     } catch (err) {
         uiManager.showToast('Subscribe failed: ' + formatAlertActionError(err), 'error');
@@ -357,10 +245,7 @@ async function handleTableAction(action: string, streamId: string) {
                 return;
             }
             const configName = resolveSubscriptionConfigName(sub, settingsManager.loadAllStrategyConfigs());
-            openSubscriptionInfoModal(sub, configName, {
-                resolveEffectiveTwoHourParity,
-                resolvePairedTwoHourParity,
-            });
+            openSubscriptionInfoModal(sub, configName);
             return;
         }
 
@@ -397,61 +282,19 @@ async function handleTableAction(action: string, streamId: string) {
                 uiManager.showToast(providerError, 'error');
                 return;
             }
-
-            const streamParity = sub ? resolveSubscriptionParity(sub) : parseAlertTwoHourParityFromStreamId(streamId);
             const currentSettings = collectCurrentSubscriptionBacktestSettings();
             const syncedCandleLimit = Math.max(
                 200,
                 Math.min(50000, state.ohlcvData.length || sub?.candle_limit || 350)
             );
-            const subscriptionIsTwoHour = isTwoHourInterval(sub?.interval ?? state.currentInterval);
-            const currentParity = normalizeSubscriptionParity(currentSettings.twoHourCloseParity);
-            const currentWantsBoth = currentSettings.twoHourCloseParity === 'both';
-            const streamIdHasParity = parseAlertTwoHourParityFromStreamId(streamId) !== null;
-
-            if (subscriptionIsTwoHour && currentWantsBoth && !streamIdHasParity) {
-                uiManager.showToast(
-                    'This 2H alert has no parity tag in its ID. "both" requires separate tagged subscriptions; re-subscribe from Alerts.',
-                    'error'
-                );
-                return;
-            }
-
-            const syncParity: AlertTwoHourCloseParity | null = subscriptionIsTwoHour
-                ? (streamParity ?? currentParity ?? 'odd')
-                : null;
-
-            if (subscriptionIsTwoHour && currentWantsBoth && syncParity) {
-                const otherParity = syncParity === 'odd' ? 'even' : 'odd';
-                const otherStreamId = replaceTwoHourParityInStreamId(streamId, otherParity);
-
-                await alertService.upsertSubscription({
-                    streamId,
-                    strategyKey,
-                    strategyParams: collectCurrentStrategyParams(),
-                    backtestSettings: applyTwoHourParityToBacktestSettings(currentSettings, syncParity),
-                    candleLimit: syncedCandleLimit,
-                });
-
-                await alertService.upsertSubscription({
-                    streamId: otherStreamId,
-                    strategyKey,
-                    strategyParams: collectCurrentStrategyParams(),
-                    backtestSettings: applyTwoHourParityToBacktestSettings(currentSettings, otherParity),
-                    candleLimit: syncedCandleLimit,
-                });
-
-                uiManager.showToast(`Updated ${streamId} and synced pair ${otherStreamId}.`, 'success');
-            } else {
-                await alertService.upsertSubscription({
-                    streamId,
-                    strategyKey,
-                    strategyParams: collectCurrentStrategyParams(),
-                    backtestSettings: applyTwoHourParityToBacktestSettings(currentSettings, syncParity),
-                    candleLimit: syncedCandleLimit,
-                });
-                uiManager.showToast(`Updated ${streamId} to current strategy (${strategyKey}).`, 'success');
-            }
+            await alertService.upsertSubscription({
+                streamId,
+                strategyKey,
+                strategyParams: collectCurrentStrategyParams(),
+                backtestSettings: currentSettings,
+                candleLimit: syncedCandleLimit,
+            });
+            uiManager.showToast(`Updated ${streamId} to current strategy (${strategyKey}).`, 'success');
 
             await refreshSubscriptions();
             return;
@@ -472,9 +315,6 @@ async function handleTableAction(action: string, streamId: string) {
             }
             await handleLastTradeAction(streamId, sub, {
                 getProviderCompatibilityError: getAlertWorkerProviderCompatibilityError,
-                resolveSubscriptionParity,
-                withTemporaryTwoHourParitySelection,
-                applyTwoHourParityToBacktestSettings,
             });
         }
     } catch (err) {

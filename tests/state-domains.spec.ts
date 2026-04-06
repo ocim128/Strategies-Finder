@@ -16,7 +16,6 @@ import {
     setMockChartBars,
     setMockChartModel,
     setStrategyTimeframeSettings,
-    setTwoHourCloseParity,
 } from "./lib/state-actions";
 
 describe("State domains", () => {
@@ -26,7 +25,6 @@ describe("State domains", () => {
         localState.currentInterval = "4h";
         localState.binanceMarketType = "futures";
         localState.ohlcvData = [{ time: 1, open: 1, high: 2, low: 0.5, close: 1.5, volume: 10 }];
-        localState.twoHourCloseParity = "both";
         localState.mockChartModel = "v5";
         localState.mockChartBars = 1234;
         localState.chartMode = "heikin-ashi";
@@ -42,7 +40,6 @@ describe("State domains", () => {
             currentInterval: "4h",
             binanceMarketType: "futures",
             ohlcvData: localState.ohlcvData,
-            twoHourCloseParity: "both",
         });
         expect(selectChartState(localState).mockChartModel).to.equal("v5");
         expect(selectChartState(localState).chartMode).to.equal("heikin-ashi");
@@ -63,7 +60,6 @@ describe("State domains", () => {
             currentSymbol: state.currentSymbol,
             currentInterval: state.currentInterval,
             binanceMarketType: state.binanceMarketType,
-            twoHourCloseParity: state.twoHourCloseParity,
             currentStrategyKey: state.currentStrategyKey,
             isDarkTheme: state.isDarkTheme,
             blockRange: state.blockRange,
@@ -76,7 +72,6 @@ describe("State domains", () => {
 
         try {
             setMarketSelection({ symbol: "SOLUSDT", interval: "2h", binanceMarketType: "futures" });
-            setTwoHourCloseParity("even");
             setCurrentStrategyKey("test_strategy");
             setDarkTheme(false);
             setBlockRange({ from: 100, to: 200 });
@@ -89,7 +84,6 @@ describe("State domains", () => {
                 currentSymbol: "SOLUSDT",
                 currentInterval: "2h",
                 binanceMarketType: "futures",
-                twoHourCloseParity: "even",
             });
             expect(selectLayoutState()).to.deep.equal({
                 currentStrategyKey: "test_strategy",
@@ -111,7 +105,6 @@ describe("State domains", () => {
                 interval: previous.currentInterval,
                 binanceMarketType: previous.binanceMarketType,
             });
-            setTwoHourCloseParity(previous.twoHourCloseParity);
             setCurrentStrategyKey(previous.currentStrategyKey);
             setDarkTheme(previous.isDarkTheme);
             setBlockRange(previous.blockRange);

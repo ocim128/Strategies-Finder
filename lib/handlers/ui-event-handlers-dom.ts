@@ -163,7 +163,6 @@ export function createUiEventHandlersDom() {
         strategyTimeframeToggle: getRequiredElement<HTMLInputElement>("strategyTimeframeToggle"),
         strategyTimeframeMinutes: getRequiredElement<HTMLInputElement>("strategyTimeframeMinutes"),
         strategyTimeframeMinutesGroup: getOptionalElement("strategyTimeframeMinutesGroup"),
-        twoHourCloseParity: getOptionalElement<HTMLSelectElement>("twoHourCloseParity"),
         finderTradesToggle: getRequiredElement<HTMLInputElement>("finderTradesToggle"),
         finderTradeFilters: getRequiredElement("finderTradeFilters"),
         fixedTradeToggle: getRequiredElement<HTMLInputElement>("fixedTradeToggle"),

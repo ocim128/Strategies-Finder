@@ -52,7 +52,6 @@ Important constraint:
 - capital input
 - symbol and interval
 - block slicing
-- two-hour parity
 - current time used by closed-candle trimming
 - optional Polymarket annotation context
 
@@ -108,7 +107,6 @@ The endpoint request contract must include or derive:
 - raw or resolved `capitalSettings`
 - `blockRange` if chart-block slicing should apply
 - `nowSec` so closed-candle trimming is deterministic
-- `twoHourCloseParity` when `120m` parity behavior matters
 - whether Polymarket annotation is requested
 - engine mode preference
 
@@ -157,7 +155,6 @@ Request sketch:
   "context": {
     "nowSec": 1775400000,
     "blockRange": null,
-    "twoHourCloseParity": "odd",
     "annotatePolymarket": false,
     "engineMode": "auto"
   }

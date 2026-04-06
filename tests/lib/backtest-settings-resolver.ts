@@ -73,7 +73,6 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     warmUpEntryEnabled: false,
     strategyTimeframeEnabled: false,
     strategyTimeframeMinutes: 120,
-    twoHourCloseParity: "odd" as const,
     polymarketAnnotationEnabled: false,
     polymarketEntryOffset: 0,
 });
@@ -391,7 +390,6 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "warmUpEntryEnabled",
     "strategyTimeframeToggle",
     "strategyTimeframeMinutes",
-    "twoHourCloseParity",
     "polymarketAnnotationEnabled",
     "polymarketEntryOffset",
     ...SNAPSHOT_CONFIGS.flatMap((snapshot) => {
@@ -591,8 +589,6 @@ export function resolveBacktestSettingsFromRaw(
         marketModeRaw === "uptrend" || marketModeRaw === "downtrend" || marketModeRaw === "sideway"
             ? marketModeRaw
             : EFFECTIVE_BACKTEST_DEFAULTS.marketMode;
-    const parityRaw = raw["twoHourCloseParity"];
-    const twoHourCloseParity = parityRaw === "even" || parityRaw === "both" ? parityRaw : "odd";
     const guards: ResolverGuardState = {
         useAtrRisk,
         usePercentRisk,
@@ -624,7 +620,6 @@ export function resolveBacktestSettingsFromRaw(
         tradeDirection,
         executionModel,
         captureSnapshots: options?.captureSnapshots ?? false,
-        twoHourCloseParity,
         polymarketAnnotationEnabled: readBoolean(raw, "polymarketAnnotationEnabled", EFFECTIVE_BACKTEST_DEFAULTS.polymarketAnnotationEnabled),
         polymarketEntryOffset: readNumber(raw, "polymarketEntryOffset", EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryOffset),
     };

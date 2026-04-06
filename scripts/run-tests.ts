@@ -43,7 +43,6 @@ const TEST_FILES = [
     "tests/advanced-sizing.spec.ts",
     "tests/backtest-capital-settings.spec.ts",
     "tests/strategy-calculations.spec.ts",
-    "tests/time-parity.spec.ts",
     "tests/data-interval-utils.spec.ts",
     "tests/signal-stability.spec.ts",
     "tests/walk-forward-engine.spec.ts",

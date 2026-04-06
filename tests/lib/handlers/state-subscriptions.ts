@@ -81,12 +81,6 @@ export function setupStateSubscriptions() {
             return;
         }
 
-        const parityResults = state.twoHourParityBacktestResults;
-        if (parityResults) {
-            await uiManager.updateParityTradesList(parityResults.odd.trades, parityResults.even.trades, jumpToTrade);
-            return;
-        }
-
         await uiManager.updateTradesList(result.trades, jumpToTrade);
     };
     const scheduleDataReload = () => {
@@ -167,20 +161,10 @@ export function setupStateSubscriptions() {
             backtestService.addStrategyIndicators(params);
             chartManager.displayEquityCurve(result.equityCurve);
             uiManager.updateResultsUI(result);
-
-            const parityResults = state.twoHourParityBacktestResults;
-            if (parityResults) {
-                if (isPanelVisible('trades')) {
-                    void uiManager.updateParityTradesList(parityResults.odd.trades, parityResults.even.trades, jumpToTrade);
-                } else {
-                    uiManager.updateTradeBadge(parityResults.odd.trades.length + parityResults.even.trades.length);
-                }
+            if (isPanelVisible('trades')) {
+                void uiManager.updateTradesList(result.trades, jumpToTrade);
             } else {
-                if (isPanelVisible('trades')) {
-                    void uiManager.updateTradesList(result.trades, jumpToTrade);
-                } else {
-                    uiManager.updateTradeBadge(result.trades.length);
-                }
+                uiManager.updateTradeBadge(result.trades.length);
             }
 
             deferredBacktestUiFrame = requestAnimationFrame(() => {
@@ -193,27 +177,6 @@ export function setupStateSubscriptions() {
                 quickViewManager.setJumpToTrade(jumpToTrade);
                 quickViewManager.onBacktestComplete(result);
             });
-        }
-    });
-
-    state.subscribe('twoHourParityBacktestResults', (results) => {
-
-        if (results) {
-            uiManager.updateParityComparisonUI(results);
-            if (isPanelVisible('trades')) {
-                void uiManager.updateParityTradesList(results.odd.trades, results.even.trades, jumpToTrade);
-            } else {
-                uiManager.updateTradeBadge(results.odd.trades.length + results.even.trades.length);
-            }
-        } else {
-            uiManager.clearParityComparisonUI();
-            if (state.currentBacktestResult) {
-                if (isPanelVisible('trades')) {
-                    void uiManager.updateTradesList(state.currentBacktestResult.trades, jumpToTrade);
-                } else {
-                    uiManager.updateTradeBadge(state.currentBacktestResult.trades.length);
-                }
-            }
         }
     });
 

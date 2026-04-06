@@ -6,12 +6,10 @@
 import {
     buildStreamId,
     parseConfigNameFromStreamId,
-    parseTwoHourParityFromStreamId,
 } from "./alert-stream-id";
 
 const WORKER_URL_KEY = 'alert_worker_url';
 export const ALERT_WORKER_URL_CHANGED_EVENT = 'alert-worker-url-changed';
-export type AlertTwoHourCloseParity = 'odd' | 'even';
 const API_FETCH_TIMEOUT_MS = 10_000;
 
 export interface AlertWorkerHealth {
@@ -124,10 +122,9 @@ export function buildAlertStreamId(
     symbol: string,
     interval: string,
     strategyKey: string,
-    configName?: string,
-    twoHourCloseParity?: AlertTwoHourCloseParity
+    configName?: string
 ): string {
-    return buildStreamId(symbol, interval, strategyKey, configName, twoHourCloseParity);
+    return buildStreamId(symbol, interval, strategyKey, configName);
 }
 
 /**
@@ -135,10 +132,6 @@ export function buildAlertStreamId(
  */
 export function parseAlertConfigNameFromStreamId(streamId: string): string | null {
     return parseConfigNameFromStreamId(streamId);
-}
-
-export function parseAlertTwoHourParityFromStreamId(streamId: string): AlertTwoHourCloseParity | null {
-    return parseTwoHourParityFromStreamId(streamId);
 }
 
 // Helpers

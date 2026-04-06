@@ -49,8 +49,7 @@ import {
     loadSqliteCandles,
     storeSqliteCandles,
 } from "./local-sqlite-api";
-import type { ResampleOptions, TwoHourCloseParity } from "./strategies/resample-utils";
-import { isTwoHourParityAligned as isTwoHourParityAlignedFromTime } from "./two-hour-parity";
+import type { ResampleOptions } from "./strategies/resample-utils";
 import {
     DATA_CACHE_SYNC_MIN_MS,
     DATA_CHART_TOTAL_LIMIT,
@@ -616,7 +615,7 @@ export class DataManager {
             debugLogger.info('data.stream.skip_interval', { symbol, interval, provider });
             return;
         }
-        const useBinanceAlignedPolling = isBinanceDataProvider(provider) && this.shouldUseBinanceAlignedPolling(interval);
+        const useBinanceAlignedPolling = isBinanceDataProvider(provider) && this.shouldUseBinanceAlignedPolling();
 
         if (this.isStreaming && this.streamSymbol === symbol && this.streamInterval === interval && this.streamProvider === provider) {
             return;
@@ -856,20 +855,14 @@ export class DataManager {
         }
     }
 
-    private getTwoHourCloseParity(): TwoHourCloseParity {
-        return state.twoHourCloseParity === 'even' ? 'even' : 'odd';
-    }
-
     private getResampleOptions(interval: string): ResampleOptions | undefined {
         const normalized = interval.trim().toLowerCase();
         const intervalSeconds = getIntervalSeconds(normalized);
-        return intervalSeconds === 7200
-            ? { twoHourCloseParity: this.getTwoHourCloseParity() }
-            : undefined;
+        return intervalSeconds === 7200 ? {} : undefined;
     }
 
     private getStorageInterval(interval: string): string {
-        return resolveStorageInterval(interval, this.getTwoHourCloseParity());
+        return resolveStorageInterval(interval);
     }
 
     private takeLastCandles(candles: OHLCVData[], limit: number): OHLCVData[] {
@@ -911,12 +904,8 @@ export class DataManager {
         }
     }
 
-    private shouldUseBinanceAlignedPolling(interval: string): boolean {
-        return getIntervalSeconds(interval.trim().toLowerCase()) === 7200 && this.getTwoHourCloseParity() === 'even';
-    }
-
-    private isTwoHourParityAligned(candles: OHLCVData[], parity: TwoHourCloseParity): boolean {
-        return isTwoHourParityAlignedFromTime(candles, parity);
+    private shouldUseBinanceAlignedPolling(): boolean {
+        return false;
     }
 
     private isIntervalAlignedTime(timeSec: number, interval: string): boolean {
@@ -1062,9 +1051,6 @@ export class DataManager {
         const effectiveMaxBars = hasMaxBars
             ? Math.max(1, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(requestedMaxBars)))
             : DATA_CHART_TOTAL_LIMIT;
-        const normalizedInterval = interval.trim().toLowerCase();
-        const twoHourCloseParity = this.getTwoHourCloseParity();
-        const requiresEven2hAlignment = getIntervalSeconds(normalizedInterval) === 7200 && twoHourCloseParity === 'even';
         const storageInterval = this.getStorageInterval(interval);
         const resampleOptions = this.getResampleOptions(interval);
         const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
@@ -1084,9 +1070,7 @@ export class DataManager {
             ? this.sanitizeBinanceCandles(symbol, storageInterval, sqliteRaw, 'sqlite')
             : null;
         const sqliteSanitized = Boolean(sqliteRaw && sqliteLoadedCandles && sqliteLoadedCandles.length < sqliteRaw.length);
-        const sqliteCachedCandles = (requiresEven2hAlignment && sqliteLoadedCandles && !this.isTwoHourParityAligned(sqliteLoadedCandles, 'even'))
-            ? null
-            : sqliteLoadedCandles;
+        const sqliteCachedCandles = sqliteLoadedCandles;
         const hasSqliteBase = Boolean(sqliteCachedCandles && sqliteCachedCandles.length > 0);
 
         let cached: { candles: OHLCVData[]; updatedAt: number; source: string } | null = hasSqliteBase
@@ -1105,12 +1089,8 @@ export class DataManager {
             }
         }
 
-        if (requiresEven2hAlignment && cached && !this.isTwoHourParityAligned(cached.candles, 'even')) {
-            cached = null;
-        }
-
         if (!cached || cached.candles.length === 0) {
-            const seedCandles = requiresEven2hAlignment || marketType === "futures"
+            const seedCandles = marketType === "futures"
                 ? null
                 : await loadSeedCandlesFromPriceData(symbol, interval, signal);
             if (seedCandles && seedCandles.length > 0) {
@@ -1485,7 +1465,7 @@ export class DataManager {
 
             if (this.streamProvider === 'bybit-tradfi') {
                 candle = await fetchBybitTradFiLatest(symbol, interval, abort.signal, resampleOptions);
-            } else if (isBinanceDataProvider(this.streamProvider) && this.shouldUseBinanceAlignedPolling(interval)) {
+            } else if (isBinanceDataProvider(this.streamProvider) && this.shouldUseBinanceAlignedPolling()) {
                 const latestSeries = await fetchBinanceDataWithLimit(symbol, interval, 2, {
                     signal: abort.signal,
                     maxRequests: 2,

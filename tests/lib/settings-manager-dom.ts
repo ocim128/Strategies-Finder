@@ -1,4 +1,4 @@
-import { getOptionalElement, getRequiredElement } from "./dom-utils";
+import { getRequiredElement } from "./dom-utils";
 
 export const SETTINGS_MANAGER_REQUIRED_IDS = [
     "strategySelect",
@@ -7,7 +7,6 @@ export const SETTINGS_MANAGER_REQUIRED_IDS = [
     "takeProfitMode",
     "tradeFilterMode",
     "tradeDirection",
-    "twoHourCloseParity",
 ] as const;
 
 export function createSettingsManagerDom() {
@@ -18,7 +17,6 @@ export function createSettingsManagerDom() {
         takeProfitMode: getRequiredElement("takeProfitMode"),
         tradeFilterMode: getRequiredElement("tradeFilterMode"),
         tradeDirection: getRequiredElement("tradeDirection"),
-        twoHourCloseParity: getOptionalElement("twoHourCloseParity"),
     };
 }
 

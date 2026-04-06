@@ -119,7 +119,6 @@ export interface BacktestSettingsData extends SnapshotFilterFields {
     warmUpEntryEnabled: boolean;
     strategyTimeframeEnabled: boolean;
     strategyTimeframeMinutes: number;
-    twoHourCloseParity: 'odd' | 'even' | 'both';
     polymarketAnnotationEnabled: boolean;
     polymarketEntryOffset: number;
 }
@@ -633,16 +632,6 @@ export function resolveTradeFilterMode(
     defaults: BacktestSettingsData = DEFAULT_BACKTEST_SETTINGS
 ): TradeFilterMode {
     return resolveTradeFilterModeValue(getLegacyCompatibleTradeFilterModeValue(settings), defaults);
-}
-
-export function resolveTwoHourCloseParity(
-    value: unknown,
-    defaults: BacktestSettingsData = DEFAULT_BACKTEST_SETTINGS
-): "odd" | "even" | "both" {
-    if (value === "even" || value === "both" || value === "odd") {
-        return value;
-    }
-    return defaults.twoHourCloseParity;
 }
 
 export function resolveTradeFilterToggle(

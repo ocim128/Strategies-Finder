@@ -1,11 +1,8 @@
 import { resolveAlertSignalEntryPrice, parseAlertSignalPayload } from "./alert-signal-utils";
 import { buildConfigIndex, resolveSubscriptionConfigNameFromIndex } from "./alert-config-resolver";
-import { AlertSubscription, AlertSignalRecord, AlertTwoHourCloseParity } from "./alert-service";
+import { AlertSubscription, AlertSignalRecord } from "./alert-service";
 import { getOptionalElement } from "./dom-utils";
-import { isTwoHourInterval } from "./interval-utils";
 import { settingsManager } from "./settings-manager";
-
-type SubscriptionParityResolver = (sub: AlertSubscription) => AlertTwoHourCloseParity | null;
 
 function appendTextCell(
     row: HTMLTableRowElement,
@@ -35,10 +32,7 @@ function createActionButton(
     return btn;
 }
 
-export function renderSubscriptions(
-    subs: AlertSubscription[],
-    resolveSubscriptionParity: SubscriptionParityResolver
-): void {
+export function renderSubscriptions(subs: AlertSubscription[]): void {
     const emptyState = getOptionalElement("alertEmptyState");
     const tableWrapper = getOptionalElement("alertTableWrapper");
     const tbody = getOptionalElement<HTMLTableSectionElement>("alertTableBody");
@@ -65,9 +59,7 @@ export function renderSubscriptions(
         const exitTag = sub.notify_exit ? "EXIT" : "--";
         const lastStatus = sub.last_status ?? "--";
         const configName = resolveSubscriptionConfigNameFromIndex(sub, configIndex);
-        const parity = resolveSubscriptionParity(sub);
-        const paritySuffix = isTwoHourInterval(sub.interval) && parity ? ` [2H-${parity}]` : "";
-        const strategyDisplay = `${configName ?? sub.strategy_key}${paritySuffix}`;
+        const strategyDisplay = configName ?? sub.strategy_key;
         const statusClass = lastStatus.startsWith("new_entry")
             ? "alert-status-new"
             : lastStatus.startsWith("error")
@@ -110,9 +102,7 @@ export function renderSubscriptions(
         const opt = document.createElement("option");
         opt.value = sub.stream_id;
         const configName = resolveSubscriptionConfigNameFromIndex(sub, configIndex);
-        const parity = resolveSubscriptionParity(sub);
-        const paritySuffix = isTwoHourInterval(sub.interval) && parity ? ` | 2H-${parity}` : "";
-        opt.textContent = `${sub.symbol} | ${sub.interval}${paritySuffix} | ${configName ?? sub.strategy_key}`;
+        opt.textContent = `${sub.symbol} | ${sub.interval} | ${configName ?? sub.strategy_key}`;
         historySelect.appendChild(opt);
     });
     if (prevValue) {

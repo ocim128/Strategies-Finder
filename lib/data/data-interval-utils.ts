@@ -1,27 +1,17 @@
 import { getIntervalSeconds } from "../dataProviders/utils";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { OHLCVData } from "../types/index";
-import type { TwoHourCloseParity } from "../strategies/resample-utils";
 
-export function getImportStorageIntervals(interval: string): string[] {
-    if (interval.includes("@close-")) {
-        return [interval];
-    }
-    if (getIntervalSeconds(interval) === 7200) {
-        return [`${interval}@close-odd`, `${interval}@close-even`];
-    }
-    return [interval];
+function normalizeStorageInterval(interval: string): string {
+    return interval.trim().toLowerCase().replace(/@close-(odd|even)$/, "");
 }
 
-export function getStorageInterval(interval: string, parity: TwoHourCloseParity): string {
-    const normalized = interval.trim().toLowerCase();
-    if (normalized.includes("@close-")) {
-        return normalized;
-    }
-    if (getIntervalSeconds(normalized) === 7200) {
-        return `${normalized}@close-${parity}`;
-    }
-    return normalized;
+export function getImportStorageIntervals(interval: string): string[] {
+    return [normalizeStorageInterval(interval)];
+}
+
+export function getStorageInterval(interval: string): string {
+    return normalizeStorageInterval(interval);
 }
 
 export function takeLastCandles(candles: OHLCVData[], limit: number): OHLCVData[] {
@@ -59,7 +49,7 @@ export function estimateBybitSeedOverlayBars(
 }
 
 export function getIntervalAlignment(interval: string): { intervalSeconds: number; phaseOffsetSeconds: number } | null {
-    const normalized = interval.trim().toLowerCase();
+    const normalized = normalizeStorageInterval(interval);
     const baseInterval = normalized.split("@")[0];
     const intervalSeconds = getIntervalSeconds(baseInterval);
     if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
@@ -69,11 +59,7 @@ export function getIntervalAlignment(interval: string): { intervalSeconds: numbe
     if (intervalSeconds > 86400) {
         return null;
     }
-
-    const phaseOffsetSeconds = intervalSeconds === 7200 && normalized.includes("@close-even")
-        ? 3600
-        : 0;
-    return { intervalSeconds, phaseOffsetSeconds };
+    return { intervalSeconds, phaseOffsetSeconds: 0 };
 }
 
 export function isIntervalAlignedTime(timeSec: number, interval: string): boolean {

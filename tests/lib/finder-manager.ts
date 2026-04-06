@@ -25,7 +25,7 @@ import { debugLogger } from "./debug-logger";
 import { parseInputNumber } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { strategyPanelController } from "./strategy-panel-controller";
-import { commitParityBacktestResults, setCurrentStrategyKey } from "./state-actions";
+import { setCurrentStrategyKey } from "./state-actions";
 import {
 	createFinderManagerDom,
 	type FinderManagerDom,
@@ -995,8 +995,6 @@ export class FinderManager {
 
 		this.applyFinderBacktestSettings(result);
 		strategyPanelController.switchTab('trades');
-
-		commitParityBacktestResults(null, 'finder_row_apply');
 
 		if (result.endpointAdjusted) {
 			uiManager.showToast(

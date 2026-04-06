@@ -93,9 +93,6 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
         ?? EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeEnabled;
     merged.strategyTimeframeMinutes = toFiniteNumber(merged.strategyTimeframeMinutes)
         ?? EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeMinutes;
-    merged.twoHourCloseParity = merged.twoHourCloseParity === "even" || merged.twoHourCloseParity === "both"
-        ? merged.twoHourCloseParity
-        : EFFECTIVE_BACKTEST_DEFAULTS.twoHourCloseParity;
     merged.takeProfitMfeBootstrapPercentile = Math.max(
         1,
         Math.min(

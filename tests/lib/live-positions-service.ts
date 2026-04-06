@@ -11,7 +11,6 @@ import {
     AlertSubscription,
     AlertSubscriptionState,
     parseAlertConfigNameFromStreamId,
-    parseAlertTwoHourParityFromStreamId,
 } from './alert-service';
 import {
     getLatestActionableAlertSignal,
@@ -623,13 +622,7 @@ class LivePositionsService {
         if (parseIntervalSeconds(sub.interval) !== 7200) {
             return parsed;
         }
-
-        const parity = parseAlertTwoHourParityFromStreamId(sub.stream_id);
-        if (!parity) return parsed;
-        return {
-            ...parsed,
-            twoHourCloseParity: parity,
-        };
+        return parsed;
     }
 
     private resolveProviderForSymbol(symbol: string, backtestSettings?: BacktestSettings): ReturnType<typeof dataManager.getProvider> {
@@ -657,20 +650,15 @@ class LivePositionsService {
             String(sub.candle_limit || 350),
             sub.strategy_params_json,
             sub.backtest_settings_json,
-            parseAlertTwoHourParityFromStreamId(sub.stream_id) ?? '',
             sub.updated_at,
         ].join('::');
     }
 
     private getLocalBacktestCacheExpiry(sub: AlertSubscription, nowMs = Date.now()): number {
         const intervalSec = parseIntervalSeconds(sub.interval) ?? 60;
-        const parity = parseIntervalSeconds(sub.interval) === 7200
-            ? parseAlertTwoHourParityFromStreamId(sub.stream_id)
-            : null;
-        const phaseOffsetSec = parity === 'even' ? 3600 : 0;
         const nowSec = Math.floor(nowMs / 1000);
-        const alignedCursor = Math.floor((nowSec - phaseOffsetSec) / intervalSec);
-        const nextCloseSec = (alignedCursor + 1) * intervalSec + phaseOffsetSec;
+        const alignedCursor = Math.floor(nowSec / intervalSec);
+        const nextCloseSec = (alignedCursor + 1) * intervalSec;
         return nextCloseSec * 1000 + LOCAL_BACKTEST_CACHE_GRACE_MS;
     }
 

@@ -44,7 +44,6 @@ function createExecutorRequest(
         context: {
             nowSec: Math.floor(Date.now() / 1000) + 600,
             blockRange: null,
-            twoHourCloseParity: "odd" as const,
             annotatePolymarket: false,
             engineMode: "typescript" as const,
         },
@@ -111,7 +110,6 @@ describe("backtest batch execution (multi-run parity)", () => {
             context: {
                 nowSec: 9999999999,
                 blockRange: null,
-                twoHourCloseParity: "odd",
                 annotatePolymarket: false,
                 engineMode: "typescript",
             },
@@ -122,7 +120,6 @@ describe("backtest batch execution (multi-run parity)", () => {
             context: {
                 nowSec: 9999999999,
                 blockRange: narrowRange,
-                twoHourCloseParity: "odd",
                 annotatePolymarket: false,
                 engineMode: "typescript",
             },
@@ -180,7 +177,6 @@ describe("backtest batch execution (multi-run parity)", () => {
             context: {
                 nowSec: 9999999999,
                 blockRange: null,
-                twoHourCloseParity: "odd",
                 annotatePolymarket: false,
                 engineMode: "typescript",
             },
@@ -200,7 +196,6 @@ describe("backtest batch execution (multi-run parity)", () => {
             {
                 nowSec: 9999999999,
                 blockRange: null,
-                twoHourCloseParity: "odd",
                 annotatePolymarket: false,
                 engineMode: "typescript",
             }
@@ -253,7 +248,6 @@ describe("backtest batch execution (multi-run parity)", () => {
             context: {
                 nowSec: 9999999999,
                 blockRange: null,
-                twoHourCloseParity: "odd",
                 annotatePolymarket: false,
                 engineMode: "typescript",
             },
@@ -274,7 +268,6 @@ describe("backtest batch execution (multi-run parity)", () => {
             context: {
                 nowSec: 9999999999,
                 blockRange: null,
-                twoHourCloseParity: "odd",
                 annotatePolymarket: false,
                 engineMode: "typescript",
             },

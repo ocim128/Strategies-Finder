@@ -45,7 +45,7 @@ There is no separate standalone backtest server in the current implementation.
 | `/api/backtest/:strategyKey/batch` | `POST` | many runs over one dataset |
 | `/api/backtest/:strategyKey/search/random` | `POST` | seeded randomized parameter search |
 
-## Parity Rules
+## Execution Match Rules
 
 If you want the endpoint to match the UI, keep these inputs identical:
 
@@ -54,16 +54,29 @@ If you want the endpoint to match the UI, keep these inputs identical:
 - `strategyKey`
 - `strategyParams`
 - `backtestSettings`
-- `capitalSettings`
 - `context.nowSec`
 - `context.blockRange`
-- `context.twoHourCloseParity`
 
 Important notes:
 
 - Use `engineMode: "typescript"` when you are validating parity against the UI.
 - `annotatePolymarket` is opt-in because it adds extra work.
-- `twoHourCloseParity` only accepts `"odd"` or `"even"`. If you want the UI-style `both` comparison for `120m`, call the endpoint twice and compare the two runs yourself.
+- `2h` execution now uses the single repo-wide close alignment. There is no parity selector in the request contract.
+
+## Endpoint Capital Profile
+
+The HTTP endpoint intentionally does not expose capital or sizing controls.
+
+Every endpoint run uses:
+
+- `initialCapital: 10000`
+- `sizingMode: "fixed"`
+- `fixedTradeAmount: 1000`
+- `commission: 0.1`
+
+This is intentional to keep the endpoint contract smaller and reduce orchestration complexity. If you see the endpoint always sizing trades at `$1000` with `0.1%` commission, that is expected behavior, not a bug.
+
+If you want a UI run to match an endpoint run, set the UI capital inputs to the same fixed profile before comparing results. Legacy caller-supplied `capitalSettings` payloads are ignored by the endpoint.
 
 ## Dataset Cache
 
@@ -173,17 +186,9 @@ Example with cached dataset:
     "slippageBps": 0,
     "marketMode": "all"
   },
-  "capitalSettings": {
-    "initialCapital": 10000,
-    "positionSize": 100,
-    "commission": 0.1,
-    "sizingMode": "percent",
-    "fixedTradeAmount": 1000
-  },
   "context": {
     "nowSec": 1775400000,
     "blockRange": null,
-    "twoHourCloseParity": "odd",
     "annotatePolymarket": false,
     "engineMode": "typescript"
   }
@@ -208,17 +213,9 @@ $body = @{
     slippageBps = 0
     marketMode = "all"
   }
-  capitalSettings = @{
-    initialCapital = 10000
-    positionSize = 100
-    commission = 0.1
-    sizingMode = "percent"
-    fixedTradeAmount = 1000
-  }
   context = @{
     nowSec = 1775400000
     blockRange = $null
-    twoHourCloseParity = "odd"
     annotatePolymarket = $false
     engineMode = "typescript"
   }
@@ -259,16 +256,9 @@ Example:
     "tradeDirection": "long",
     "marketMode": "all"
   },
-  "capitalSettings": {
-    "initialCapital": 10000,
-    "positionSize": 100,
-    "commission": 0.1,
-    "sizingMode": "percent"
-  },
   "context": {
     "nowSec": 1775400000,
     "blockRange": null,
-    "twoHourCloseParity": "odd",
     "annotatePolymarket": false,
     "engineMode": "typescript"
   }
@@ -296,16 +286,9 @@ Example:
     "executionModel": "next_open",
     "tradeDirection": "short"
   },
-  "capitalSettings": {
-    "initialCapital": 10000,
-    "positionSize": 100,
-    "commission": 0.1,
-    "sizingMode": "percent"
-  },
   "context": {
     "nowSec": 1775400000,
     "blockRange": null,
-    "twoHourCloseParity": "odd",
     "annotatePolymarket": false,
     "engineMode": "auto"
   },
@@ -354,16 +337,9 @@ Example:
     "executionModel": "next_open",
     "tradeDirection": "short"
   },
-  "capitalSettings": {
-    "initialCapital": 10000,
-    "positionSize": 100,
-    "commission": 0.1,
-    "sizingMode": "percent"
-  },
   "context": {
     "nowSec": 1775400000,
     "blockRange": null,
-    "twoHourCloseParity": "odd",
     "annotatePolymarket": false,
     "engineMode": "auto"
   },
@@ -398,4 +374,3 @@ Notes:
 - no HTTP route for uploading custom strategy code
 - dataset cache is process-local and temporary
 - no dataset delete endpoint
-- no single request mode for `twoHourCloseParity: "both"`

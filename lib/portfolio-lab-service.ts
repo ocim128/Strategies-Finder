@@ -528,7 +528,6 @@ class PortfolioLabService {
         }
 
         commitBacktestResult(filterRun.result, "backtest", {
-            parityResults: null,
             reason: "portfolio_execution_filter",
         });
         strategyPanelController.switchTab("results");

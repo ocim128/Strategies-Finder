@@ -4,12 +4,11 @@ import {
     getDefaultAlertMinClosedCandles,
     selectExecutionAwareClosedCandles,
 } from "./alert-evaluation-window";
-import { alertService, AlertSubscription, AlertTwoHourCloseParity } from "./alert-service";
+import { alertService, AlertSubscription } from "./alert-service";
 import { backtestService } from "./backtest-service";
 import { dataManager } from "./data-manager";
 import { getOptionalElement } from "./dom-utils";
 import { resolveEntryRiskTargets } from "./entry-risk-targets";
-import { isTwoHourInterval } from "./interval-utils";
 import { getLegacyCompatibleTradeFilterModeValue } from "./legacy-settings-compat";
 import { createAccessibleModal, type AccessibleModalController } from "./modal-accessibility";
 import { toFiniteNumber } from "./settings-parse-utils";
@@ -18,24 +17,8 @@ import { BacktestSettings, OHLCVData, Time, Trade, type TradeFilterMode } from "
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { formatJakartaTime, isBusinessDayTime } from "./timezone-utils";
 
-type EffectiveTwoHourParity = { parity: AlertTwoHourCloseParity; source: "stream" | "settings" | "default" } | null;
-
-export interface AlertInfoModalOptions {
-    resolveEffectiveTwoHourParity(sub: AlertSubscription): EffectiveTwoHourParity;
-    resolvePairedTwoHourParity(sub: AlertSubscription): AlertTwoHourCloseParity | null;
-}
-
 export interface AlertLastTradeModalOptions {
     getProviderCompatibilityError(symbol: string): string | null;
-    resolveSubscriptionParity(sub: AlertSubscription): AlertTwoHourCloseParity | null;
-    withTemporaryTwoHourParitySelection<T>(
-        parity: AlertTwoHourCloseParity | null,
-        task: () => Promise<T>
-    ): Promise<T>;
-    applyTwoHourParityToBacktestSettings(
-        settings: unknown,
-        parity: AlertTwoHourCloseParity | null
-    ): Record<string, unknown>;
 }
 
 let alertConfigModalController: AccessibleModalController | null = null;
@@ -400,8 +383,7 @@ export function closeLastTradeModal(): void {
 
 export function openSubscriptionInfoModal(
     sub: AlertSubscription,
-    configName: string | null,
-    options: AlertInfoModalOptions
+    configName: string | null
 ): void {
     const overlay = getOptionalElement<HTMLElement>("alertConfigModal");
     const titleEl = getOptionalElement<HTMLElement>("alertConfigModalTitle");
@@ -410,16 +392,6 @@ export function openSubscriptionInfoModal(
 
     const settings = safeJsonParse<Record<string, unknown>>(sub.backtest_settings_json, {});
     const strategyParams = safeJsonParse<Record<string, unknown>>(sub.strategy_params_json, {});
-    const effectiveTwoHourParity = options.resolveEffectiveTwoHourParity(sub);
-    const pairedTwoHourParity = options.resolvePairedTwoHourParity(sub);
-    const twoHourParityText = !effectiveTwoHourParity
-        ? formatValue(settings.twoHourCloseParity)
-        : effectiveTwoHourParity.source === "default"
-            ? `${effectiveTwoHourParity.parity} (default)`
-            : effectiveTwoHourParity.parity;
-    const twoHourParityWithPairText = pairedTwoHourParity
-        ? `${twoHourParityText} (paired with ${pairedTwoHourParity})`
-        : twoHourParityText;
 
     titleEl.textContent = `Alert Config: ${sub.symbol} ${sub.interval}`;
     bodyEl.innerHTML = "";
@@ -468,7 +440,6 @@ export function openSubscriptionInfoModal(
         `Slippage Bps: ${formatValue(settings.slippageBps)}`,
         `Strategy Timeframe Enabled: ${formatValue(settings.strategyTimeframeEnabled)}`,
         `Strategy Timeframe Minutes: ${formatValue(settings.strategyTimeframeMinutes)}`,
-        `2H Close Parity: ${twoHourParityWithPairText}`,
     ]);
 
     appendModalSection(bodyEl, "Snapshot Filters (Enabled)", collectEnabledSnapshotFilterLines(settings));
@@ -505,23 +476,14 @@ export async function handleLastTradeAction(
 
         const strategyParams = safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
         const backtestSettings = safeJsonParse<BacktestSettings>(sub.backtest_settings_json, {});
-
-        const parityOverride = isTwoHourInterval(sub.interval)
-            ? options.resolveSubscriptionParity(sub)
-            : null;
-        const effectiveBacktestSettings = options.applyTwoHourParityToBacktestSettings(
-            backtestSettings,
-            parityOverride
-        ) as BacktestSettings;
+        const effectiveBacktestSettings = backtestSettings;
         const subscriptionCandleLimit = Number.isFinite(sub.candle_limit) && sub.candle_limit > 0
             ? Math.floor(sub.candle_limit)
             : null;
 
-        const ohlcvData = await options.withTemporaryTwoHourParitySelection(parityOverride, async () =>
-            subscriptionCandleLimit !== null
-                ? dataManager.fetchDataWithLimit(sub.symbol, sub.interval, subscriptionCandleLimit)
-                : dataManager.fetchData(sub.symbol, sub.interval)
-        );
+        const ohlcvData = subscriptionCandleLimit !== null
+            ? await dataManager.fetchDataWithLimit(sub.symbol, sub.interval, subscriptionCandleLimit)
+            : await dataManager.fetchData(sub.symbol, sub.interval);
 
         if (ohlcvData.length === 0) {
             throw new Error(`No data available for ${sub.symbol} ${sub.interval}`);

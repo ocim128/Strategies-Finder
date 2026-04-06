@@ -157,7 +157,6 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "minTradesBeforeFirstFlip",
     "strategyTimeframeEnabled",
     "strategyTimeframeMinutes",
-    "twoHourCloseParity",
     "captureSnapshots",
     ...SNAPSHOT_FILTER_SETTING_KEYS,
 ] as const satisfies readonly (keyof BacktestSettings)[];

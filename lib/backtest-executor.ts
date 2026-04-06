@@ -81,8 +81,8 @@ export interface BacktestExecutorResult {
 /**
  * Execute a backtest given explicit inputs.
  *
- * This function does NOT read from DOM or global state. Every parity-sensitive
- * decision (closed-candle trimming, 2H parity, Rust eligibility, entry-only
+ * This function does NOT read from DOM or global state. Every execution-sensitive
+ * decision (closed-candle trimming, Rust eligibility, entry-only
  * shortcut, post-processing) flows through shared helpers.
  */
 export async function executeBacktest(req: BacktestExecutorRequest): Promise<BacktestExecutorResult> {
@@ -102,7 +102,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     const settingsWithMeta = {
         ...(backtestSettings as Record<string, unknown>),
         interval,
-        twoHourCloseParity: req.context.twoHourCloseParity ?? (backtestSettings as BacktestSettings | undefined)?.twoHourCloseParity,
     } as BacktestSettings;
     const resolvedSettings = resolveBacktestSettingsFromRaw(settingsWithMeta, {
         captureSnapshots: true,
@@ -110,11 +109,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     });
     resolvedSettings.tradeDirection = resolvedSettings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
     resolvedSettings.executionModel = resolvedSettings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
-    resolvedSettings.twoHourCloseParity = req.context.twoHourCloseParity ?? (
-        resolvedSettings.twoHourCloseParity === "even" || resolvedSettings.twoHourCloseParity === "both"
-            ? resolvedSettings.twoHourCloseParity
-            : "odd"
-    );
 
     const resolvedCapital = resolveCapitalSettingsFromRaw(capitalSettings as Record<string, unknown>);
     const backtestData = selectClosedCandleData(ohlcvData, interval, resolvedSettings, nowSec, blockRange);
@@ -173,25 +167,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
 }
 
 /**
- * Run the backtest on the same data but with a specific parity value for 2H
- * intervals. Callers must still provide data aligned to that parity when they
- * need true odd/even 120m comparisons.
- */
-export async function executeBacktestWithParity(
-    req: BacktestExecutorRequest,
-    parityOverride: "odd" | "even"
-): Promise<BacktestExecutorResult> {
-    const parityReq: BacktestExecutorRequest = {
-        ...req,
-        context: {
-            ...req.context,
-            twoHourCloseParity: parityOverride,
-        },
-    };
-    return executeBacktest(parityReq);
-}
-
-/**
  * Execute a backtest from pre-generated signals. Useful for combined
  * strategy backtests, alert replay, and external signal sources.
  */
@@ -210,17 +185,11 @@ export async function executeBacktestFromSignals(
         {
             ...(settings as Record<string, unknown>),
             interval,
-            twoHourCloseParity: context.twoHourCloseParity ?? (settings as BacktestSettings | undefined)?.twoHourCloseParity,
         } as BacktestSettings,
         { captureSnapshots: true, coerceWithoutUiToggles: true }
     );
     resolvedSettings.tradeDirection = resolvedSettings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
     resolvedSettings.executionModel = resolvedSettings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
-    resolvedSettings.twoHourCloseParity = context.twoHourCloseParity ?? (
-        resolvedSettings.twoHourCloseParity === "even" || resolvedSettings.twoHourCloseParity === "both"
-            ? resolvedSettings.twoHourCloseParity
-            : "odd"
-    );
 
     const resolvedCapital = resolveCapitalSettingsFromRaw(
         capitalSettings as Record<string, unknown>
@@ -446,11 +415,8 @@ function readStrategyTimeframeConfig(settings: BacktestSettings): {
     const minutes = Number.isFinite(parsedMinutes) && parsedMinutes > 0
         ? Math.max(1, Math.floor(parsedMinutes))
         : 120;
-    const parity = settings.twoHourCloseParity === "even" ? "even" : "odd";
     const interval = `${minutes}m`;
-    const resampleOptions: ResampleOptions | undefined = minutes === 120
-        ? { twoHourCloseParity: parity }
-        : undefined;
+    const resampleOptions: ResampleOptions | undefined = undefined;
     return { enabled, interval, resampleOptions };
 }
 

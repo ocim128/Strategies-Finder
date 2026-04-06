@@ -10,11 +10,6 @@ export type BacktestRunHandle = {
 };
 
 export type BacktestRunEngine = "rust" | "typescript";
-export type BacktestParityComparison = {
-    odd: BacktestResult;
-    even: BacktestResult;
-    baseline: "odd" | "even";
-};
 
 function setBacktestButtonLoading(buttonId: string, loading: boolean, manageAriaBusy = false): void {
     const button = getOptionalElement<HTMLButtonElement>(buttonId);
@@ -76,13 +71,8 @@ export async function updateDomBacktestRunProgress(
 
 export function formatCompletedBacktestStatus(
     result: BacktestResult,
-    engineUsed: BacktestRunEngine,
-    parityComparison: BacktestParityComparison | null
+    engineUsed: BacktestRunEngine
 ): string {
-    if (parityComparison && !result.entryStats) {
-        return `2H compare | Odd ${parityComparison.odd.netProfitPercent.toFixed(2)}% | Even ${parityComparison.even.netProfitPercent.toFixed(2)}%`;
-    }
-
     if (result.entryStats) {
         const entryWin = result.entryStats.winRate.toFixed(1);
         const useTarget = result.entryStats.winDefinition === "target" && (result.entryStats.targetPct ?? 0) > 0;

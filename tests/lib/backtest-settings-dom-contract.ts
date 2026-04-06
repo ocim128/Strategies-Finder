@@ -19,7 +19,6 @@ import {
     resolveTradeFilterModeValue,
     resolveTradeFilterToggle,
     resolveTradeSizingModeValue,
-    resolveTwoHourCloseParity,
     type BacktestSettingsData,
 } from "./settings-model";
 import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "./rust-settings-sanitizer";
@@ -38,7 +37,6 @@ export type BacktestDomSettingParser =
     | "marketMode"
     | "executionModel"
     | "tradeSizingMode"
-    | "twoHourCloseParity"
     | "kellyFraction"
     | "volScalingMethod"
     | "riskParityMethod"
@@ -90,8 +88,6 @@ function inferParser(settingKey: BacktestDomSettingKey): BacktestDomSettingParse
             return "executionModel";
         case "sizingMode":
             return "tradeSizingMode";
-        case "twoHourCloseParity":
-            return "twoHourCloseParity";
         case "kellyFraction":
             return "kellyFraction";
         case "volScalingMethod":
@@ -315,11 +311,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         rustSupport: "unsupported",
     }),
     createField("strategyTimeframeMinutes", { rustSupport: "unsupported" }),
-    createField("twoHourCloseParity", {
-        parser: "twoHourCloseParity",
-        rustSupport: "unsupported",
-        readFromSettings: (settings) => resolveTwoHourCloseParity(settings.twoHourCloseParity, DEFAULT_BACKTEST_SETTINGS),
-    }),
     createField("polymarketAnnotationEnabled", { rustSupport: "unsupported" }),
     createField("polymarketEntryOffset", { rustSupport: "unsupported" }),
 ];
@@ -377,8 +368,6 @@ export function coerceBacktestDomSettingValue(
             return resolveMarketMode({ marketMode: value as BacktestSettingsData["marketMode"] }, DEFAULT_BACKTEST_SETTINGS);
         case "executionModel":
             return resolveExecutionModelValue(value, DEFAULT_BACKTEST_SETTINGS);
-        case "twoHourCloseParity":
-            return resolveTwoHourCloseParity(value, DEFAULT_BACKTEST_SETTINGS);
         case "kellyFraction":
             return resolveKellyFraction(value);
         case "volScalingMethod":

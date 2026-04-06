@@ -11,9 +11,6 @@ import { chartManager } from "../chart-manager";
 import { dataManager } from "../data-manager";
 import { assetSearchService, Asset } from "../asset-search-service";
 import { getLocalSp500Assets } from "../local-sp500-catalog";
-import { finderManager } from "../finder-manager";
-import { scannerManager } from "../scanner/scanner-manager";
-import { isTwoHourInterval } from "../interval-utils";
 import { strategyPanelController } from "../strategy-panel-controller";
 import { STRATEGY_PANEL_SETTINGS_SECTIONS } from "../strategy-panel-settings-registry";
 import { parseInputNumber } from "../dom-input-readers";
@@ -31,7 +28,6 @@ import {
     setMockChartBars,
     setMockChartModel,
     setStrategyTimeframeSettings,
-    setTwoHourCloseParity,
 } from "../state-actions";
 
 export function setupEventHandlers() {
@@ -982,71 +978,6 @@ export function setupEventHandlers() {
     strategyTimeframeMinutes.addEventListener('input', syncStrategyTimeframeState);
     strategyTimeframeMinutes.addEventListener('change', syncStrategyTimeframeState);
     applyStrategyTimeframeMode();
-
-    const twoHourCloseParity = dom.twoHourCloseParity;
-    if (twoHourCloseParity) {
-        const parityHint = twoHourCloseParity.parentElement?.querySelector('.param-hint') as HTMLElement | null;
-        const defaultParityHint = parityHint?.textContent ?? '';
-        const applyParityAvailability = () => {
-            const currentIntervalIsTwoHour = isTwoHourInterval(state.currentInterval);
-            twoHourCloseParity.disabled = !currentIntervalIsTwoHour;
-            twoHourCloseParity.parentElement?.classList.toggle('is-disabled', !currentIntervalIsTwoHour);
-            if (parityHint) {
-                parityHint.textContent = currentIntervalIsTwoHour
-                    ? defaultParityHint
-                    : 'Available only on 2H interval.';
-            }
-        };
-
-        const resolveParityMode = (value: string): 'odd' | 'even' | 'both' => {
-            if (value === 'even' || value === 'both') return value;
-            return 'odd';
-        };
-        const syncParityState = () => {
-            setTwoHourCloseParity(resolveParityMode(twoHourCloseParity.value));
-        };
-
-        let lastAppliedParity: 'odd' | 'even' | 'both' = resolveParityMode(twoHourCloseParity.value);
-        twoHourCloseParity.addEventListener('change', () => {
-            const nextParity: 'odd' | 'even' | 'both' = resolveParityMode(twoHourCloseParity.value);
-            syncParityState();
-            if (!isTwoHourInterval(state.currentInterval)) {
-                lastAppliedParity = nextParity;
-                return;
-            }
-            if (nextParity === lastAppliedParity) {
-                return;
-            }
-
-            lastAppliedParity = nextParity;
-            finderManager.clearTimeframeCache();
-            scannerManager.clearCache();
-            debugLogger.event('ui.settings.2h_close_parity', { parity: nextParity });
-
-            // During startup/config bootstrap, settings can be applied before data is loaded.
-            if (state.ohlcvData.length === 0) {
-                return;
-            }
-
-            if (nextParity === 'both') {
-                uiManager.showToast('2H parity compare mode enabled (odd + even). Run backtest to view both results.', 'info');
-                return;
-            }
-
-            void dataManager.loadData(state.currentSymbol, state.currentInterval).then(() => {
-                uiManager.showToast(`2H close parity set to ${nextParity}. Data reloaded.`, 'info');
-            }).catch((error) => {
-                debugLogger.error('ui.parity_reload_failed', { error: error instanceof Error ? error.message : String(error) });
-                uiManager.showToast('Failed to reload data for new 2H parity.', 'error');
-            });
-        });
-
-        state.subscribe('currentInterval', () => {
-            applyParityAvailability();
-        });
-        applyParityAvailability();
-        syncParityState();
-    }
 
     if (localSp500Select) {
         state.subscribe('currentSymbol', () => {

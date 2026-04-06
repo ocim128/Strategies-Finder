@@ -587,7 +587,6 @@ class SettingsManager {
         dom.takeProfitMode.dispatchEvent(new Event('change', { bubbles: true }));
         dom.tradeFilterMode.dispatchEvent(new Event('change', { bubbles: true }));
         dom.tradeDirection.dispatchEvent(new Event('change', { bubbles: true }));
-        dom.twoHourCloseParity?.dispatchEvent(new Event('change', { bubbles: true }));
     }
 }
 

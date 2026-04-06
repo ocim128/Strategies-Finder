@@ -32,7 +32,7 @@ import type {
     CompactBacktestMetrics,
     EngineMode,
 } from "./backtest-endpoint-contract";
-import { toCompactMetrics } from "./backtest-endpoint-contract";
+import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS, toCompactMetrics } from "./backtest-endpoint-contract";
 import type { OHLCVData, BacktestResult, StrategyParams } from "./types/strategies";
 
 // ============================================================================
@@ -200,11 +200,9 @@ function buildExecutorRequest(
     interval: string,
     strategyParams: StrategyParams,
     backtestSettings: Record<string, unknown>,
-    capitalSettings: Record<string, unknown>,
     engineMode: EngineMode,
     nowSec: number,
     blockRange: { from: number; to: number } | null,
-    twoHourCloseParity: "odd" | "even",
     annotatePolymarket: boolean
 ): BacktestExecutorRequest {
     return {
@@ -213,11 +211,10 @@ function buildExecutorRequest(
         strategyKey,
         strategyParams,
         backtestSettings,
-        capitalSettings,
+        capitalSettings: { ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS },
         context: {
             nowSec,
             blockRange,
-            twoHourCloseParity,
             annotatePolymarket,
             engineMode,
         },
@@ -323,7 +320,6 @@ async function handleSingleBacktest(
     const ctx = req.context ?? {};
     const nowSec = ctx.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = ctx.blockRange ?? null;
-    const twoHourCloseParity = ctx.twoHourCloseParity ?? "odd";
     const annotatePolymarket = ctx.annotatePolymarket ?? false;
     const engineMode = ctx.engineMode ?? "auto";
 
@@ -341,11 +337,9 @@ async function handleSingleBacktest(
             req.interval,
             req.strategyParams,
             settingsRaw,
-            req.capitalSettings as Record<string, unknown> ?? {},
             engineMode,
             nowSec,
             blockRange,
-            twoHourCloseParity,
             annotatePolymarket
         ));
 
@@ -397,7 +391,6 @@ async function handleBatchBacktest(
     const ctx = req.context ?? {} as NonNullable<typeof req.context>;
     const nowSec = ctx?.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = ctx?.blockRange ?? null;
-    const twoHourCloseParity = ctx?.twoHourCloseParity ?? "odd";
     const annotatePolymarket = ctx?.annotatePolymarket ?? false;
     const engineMode = ctx?.engineMode ?? "auto";
     const compact = req.compact ?? false;
@@ -405,8 +398,6 @@ async function handleBatchBacktest(
     const settingsRaw = { ...req.backtestSettings } as Record<string, unknown>;
     settingsRaw.symbol = req.symbol;
     settingsRaw.interval = req.interval;
-
-    const capitalSettings = req.capitalSettings as Record<string, unknown> ?? {};
 
     const startTs = Date.now();
     const results: BacktestBatchItemResult[] = [];
@@ -419,9 +410,6 @@ async function handleBatchBacktest(
             const itemSettings = item.backtestSettings
                 ? { ...settingsRaw, ...item.backtestSettings } as Record<string, unknown>
                 : settingsRaw;
-            const itemCapital = item.capitalSettings
-                ? { ...capitalSettings, ...item.capitalSettings } as Record<string, unknown>
-                : capitalSettings;
             const itemCtx = item.context ?? {};
 
             const result = await executeBacktest(buildExecutorRequest(
@@ -430,11 +418,9 @@ async function handleBatchBacktest(
                 req.interval,
                 item.strategyParams,
                 itemSettings,
-                itemCapital,
                 itemCtx.engineMode as EngineMode ?? engineMode,
                 itemCtx.nowSec ?? nowSec,
                 itemCtx.blockRange ?? blockRange,
-                itemCtx.twoHourCloseParity ?? twoHourCloseParity,
                 itemCtx.annotatePolymarket ?? annotatePolymarket
             ));
 
@@ -502,13 +488,11 @@ async function handleRandomSearch(
     const nowSec = ctx?.nowSec ?? Math.floor(Date.now() / 1000);
     const engineMode = ctx?.engineMode ?? "auto";
     const blockRange = ctx?.blockRange ?? null;
-    const twoHourCloseParity = ctx?.twoHourCloseParity ?? "odd";
     const annotatePolymarket = ctx?.annotatePolymarket ?? false;
 
     const settingsRaw = { ...req.backtestSettings } as Record<string, unknown>;
     settingsRaw.symbol = req.symbol;
     settingsRaw.interval = req.interval;
-    const capitalSettings = req.capitalSettings as Record<string, unknown> ?? {};
 
     const rng = req.randomization.seed ?? Date.now();
     const paramsList = generateRandomParams(
@@ -539,11 +523,9 @@ async function handleRandomSearch(
                 req.interval,
                 params,
                 settingsRaw,
-                capitalSettings,
                 engineMode,
                 nowSec,
                 blockRange,
-                twoHourCloseParity,
                 annotatePolymarket
             ));
 
@@ -617,7 +599,7 @@ function computeRequestFingerprint(req: BacktestSingleRequest): string {
 
     h.update(`|params:${JSON.stringify(req.strategyParams)}`);
     h.update(`|settings:${JSON.stringify(req.backtestSettings)}`);
-    h.update(`|capital:${JSON.stringify(req.capitalSettings)}`);
+    h.update(`|capital:${JSON.stringify(BACKTEST_ENDPOINT_CAPITAL_SETTINGS)}`);
     h.update(`|context:${JSON.stringify(req.context)}`);
 
     return h.digest("hex");

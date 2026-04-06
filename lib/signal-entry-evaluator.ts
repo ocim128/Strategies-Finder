@@ -161,11 +161,8 @@ function readStrategyTimeframeConfig(settings: BacktestSettings): {
     const minutes = Number.isFinite(parsedMinutes) && parsedMinutes > 0
         ? Math.max(1, Math.floor(parsedMinutes))
         : 120;
-    const parity = settings.twoHourCloseParity === "even" ? "even" : "odd";
     const interval = `${minutes}m`;
-    const resampleOptions: ResampleOptions | undefined = minutes === 120
-        ? { twoHourCloseParity: parity }
-        : undefined;
+    const resampleOptions: ResampleOptions | undefined = undefined;
     return { enabled, interval, resampleOptions };
 }
 

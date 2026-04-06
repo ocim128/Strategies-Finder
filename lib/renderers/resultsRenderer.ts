@@ -1,7 +1,6 @@
 import { BacktestResult, PostEntryPathStats, SnapshotProfileStats, ExitReasonBreakdown } from "../strategies/index";
 import type { EdgeStatistics } from "../types/strategies";
 import { getRequiredElement, updateTextContent, setVisible } from "../dom-utils";
-import type { TwoHourParityBacktestResults } from "../state";
 import { createResultsRendererDom, type ResultsRendererDom } from "./results-renderer-dom";
 
 export class ResultsRenderer {
@@ -118,64 +117,6 @@ export class ResultsRenderer {
                 levelsBody.innerHTML = '';
             }
         }
-    }
-
-    public renderParityComparison(results: TwoHourParityBacktestResults): void {
-        const dom = this.getDom();
-
-        const renderCard = (label: 'odd' | 'even', result: BacktestResult): string => {
-            const pnlClass = result.netProfit >= 0 ? 'positive' : 'negative';
-            const pfText = result.profitFactor === Infinity ? 'INF' : result.profitFactor.toFixed(2);
-            return `
-                <div class="parity-compare-card ${pnlClass}">
-                    <div class="parity-compare-card-title">${label.toUpperCase()} Close-Hour Universe</div>
-                    <div class="parity-compare-row">
-                        <span>Net Profit</span>
-                        <span class="parity-compare-row-value ${pnlClass}">${result.netProfit >= 0 ? '+' : ''}$${result.netProfit.toFixed(2)}</span>
-                    </div>
-                    <div class="parity-compare-row">
-                        <span>ROI</span>
-                        <span class="parity-compare-row-value ${pnlClass}">${result.netProfitPercent >= 0 ? '+' : ''}${result.netProfitPercent.toFixed(2)}%</span>
-                    </div>
-                    <div class="parity-compare-row">
-                        <span>Win Rate</span>
-                        <span class="parity-compare-row-value">${result.winRate.toFixed(1)}%</span>
-                    </div>
-                    <div class="parity-compare-row">
-                        <span>Profit Factor</span>
-                        <span class="parity-compare-row-value">${pfText}</span>
-                    </div>
-                    <div class="parity-compare-row">
-                        <span>Total Trades</span>
-                        <span class="parity-compare-row-value">${result.totalTrades}</span>
-                    </div>
-                    <div class="parity-compare-row">
-                        <span>Max Drawdown</span>
-                        <span class="parity-compare-row-value">${result.maxDrawdownPercent.toFixed(2)}%</span>
-                    </div>
-                </div>
-            `;
-        };
-
-        dom.parityCompareGrid.innerHTML = `${renderCard('odd', results.odd)}${renderCard('even', results.even)}`;
-
-        const delta = results.even.netProfitPercent - results.odd.netProfitPercent;
-        const better = delta > 0 ? 'even' : delta < 0 ? 'odd' : 'tie';
-        const baselineLabel = results.baseline.toUpperCase();
-        if (better === 'tie') {
-            dom.parityCompareHint.textContent = `Baseline: ${baselineLabel}. Odd and even produced the same ROI (${results.odd.netProfitPercent.toFixed(2)}%).`;
-        } else {
-            const betterLabel = better.toUpperCase();
-            dom.parityCompareHint.textContent = `Baseline: ${baselineLabel}. ${betterLabel} outperformed by ${Math.abs(delta).toFixed(2)}% ROI.`;
-        }
-        dom.parityComparePanel.style.display = 'block';
-    }
-
-    public clearParityComparison(): void {
-        setVisible('parityComparePanel', false);
-        const dom = this.getDom();
-        dom.parityCompareGrid.innerHTML = '';
-        dom.parityCompareHint.textContent = '';
     }
 
     private formatEntryMode(mode: number): string {
@@ -598,7 +539,6 @@ export class ResultsRenderer {
         const dom = this.getDom();
         setVisible('emptyResults', true);
         setVisible('resultsContent', false);
-        this.clearParityComparison();
         setVisible('advancedAnalyticsTitle', false);
         setVisible('advancedAnalyticsContainer', false);
         setVisible('advancedAnalyticsHint', false);

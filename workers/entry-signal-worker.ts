@@ -10,7 +10,6 @@ import {
 import {
     buildStreamId as buildAlertStreamId,
     parseConfigNameFromStreamId as parseConfigNameFromAlertStreamId,
-    parseTwoHourParityFromStreamId as parseTwoHourParityFromAlertStreamId,
 } from "../lib/alert-stream-id";
 import {
     getWorkerStrategySupportSnapshot,
@@ -488,40 +487,13 @@ function translateIntervalForApiBase(base: string, interval: string): string | n
     return mexcMap[interval] ?? null;
 }
 
-function normalizeTwoHourCloseParity(value: unknown): "odd" | "even" | null {
-    if (value === "even") return "even";
-    if (value === "odd") return "odd";
-    return null;
-}
-
-function resolveTwoHourCloseParity(
-    interval: string,
-    backtestSettings: BacktestSettings,
-    streamId: string
-): "odd" | "even" {
-    const intervalSeconds = intervalToSeconds(interval);
-    if (intervalSeconds !== 7200) return "odd";
-
-    const fromSettings = normalizeTwoHourCloseParity(
-        (backtestSettings as BacktestSettings & { twoHourCloseParity?: unknown }).twoHourCloseParity
-    );
-    if (fromSettings) return fromSettings;
-
-    const fromStream = parseTwoHourParityFromAlertStreamId(streamId);
-    if (fromStream) return fromStream;
-
-    return "odd";
-}
-
-function getResampleBucketStart(timeSec: number, intervalSec: number, parity: "odd" | "even"): number {
-    const phaseOffsetSec = intervalSec === 7200 && parity === "even" ? 3600 : 0;
-    return Math.floor((timeSec - phaseOffsetSec) / intervalSec) * intervalSec + phaseOffsetSec;
+function getResampleBucketStart(timeSec: number, intervalSec: number): number {
+    return Math.floor(timeSec / intervalSec) * intervalSec;
 }
 
 function resampleCandles(
     candles: OHLCVData[],
     targetInterval: string,
-    parity: "odd" | "even",
     sourceIntervalSec?: number
 ): OHLCVData[] {
     if (candles.length === 0) return [];
@@ -543,7 +515,7 @@ function resampleCandles(
     for (const row of candles) {
         const t = Number(row.time);
         if (!Number.isFinite(t)) continue;
-        const nextBucket = getResampleBucketStart(t, targetSec, parity);
+        const nextBucket = getResampleBucketStart(t, targetSec);
         if (!current || nextBucket !== bucketStart) {
             if (current) out.push(current);
             current = {
@@ -618,8 +590,7 @@ async function fetchBinanceCandles(
     symbol: string,
     interval: string,
     limit: number,
-    env: Env,
-    twoHourCloseParity: "odd" | "even" = "odd"
+    env: Env
 ): Promise<OHLCVData[]> {
     const minClosedCandles = readMinClosedCandles(env);
     const requestedIntervalSec = intervalToSeconds(interval);
@@ -703,7 +674,7 @@ async function fetchBinanceCandles(
             if (!useTwoHourResample) {
                 return sourceCandles.slice(-targetBarsWithSpare);
             }
-            return resampleCandles(sourceCandles, interval, twoHourCloseParity, 3600).slice(-targetBarsWithSpare);
+            return resampleCandles(sourceCandles, interval, 3600).slice(-targetBarsWithSpare);
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             const normalized = detail.startsWith(`${base} ->`)
@@ -721,10 +692,9 @@ async function fetchMarketCandles(
     symbol: string,
     interval: string,
     limit: number,
-    env: Env,
-    twoHourCloseParity: "odd" | "even" = "odd"
+    env: Env
 ): Promise<OHLCVData[]> {
-    return fetchBinanceCandles(symbol, interval, limit, env, twoHourCloseParity);
+    return fetchBinanceCandles(symbol, interval, limit, env);
 }
 
 function formatPercent(value: number): string {
@@ -1524,11 +1494,6 @@ async function runSubscription(
     const parsedBacktestSettings = resolveSubscriptionExecutionBacktestSettings(
         safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings)
     );
-    const twoHourCloseParity = resolveTwoHourCloseParity(
-        subscription.interval,
-        parsedBacktestSettings,
-        streamId
-    );
     const minClosedCandles = readMinClosedCandles(env);
     const subscriptionFreshnessBars = Math.max(0, subscription.freshness_bars ?? 1);
     const effectiveFreshnessBars = force
@@ -1542,8 +1507,7 @@ async function runSubscription(
             subscription.symbol,
             subscription.interval,
             subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT,
-            env,
-            twoHourCloseParity
+            env
         );
 
         const nowSec = Math.floor(Date.now() / 1000);
@@ -1729,11 +1693,6 @@ async function evaluateSubscriptionState(
     const parsedBacktestSettings = resolveSubscriptionExecutionBacktestSettings(
         safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings)
     );
-    const twoHourCloseParity = resolveTwoHourCloseParity(
-        subscription.interval,
-        parsedBacktestSettings,
-        streamId
-    );
     const minClosedCandles = readMinClosedCandles(env);
 
     const base: Omit<SubscriptionStateResult, "ok" | "reason" | "closedCandleTimeSec" | "latestTrade" | "latestEntry" | "pendingEntry"> = {
@@ -1748,8 +1707,7 @@ async function evaluateSubscriptionState(
         subscription.symbol,
         subscription.interval,
         subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT,
-        env,
-        twoHourCloseParity
+        env
     );
 
     const nowSec = Math.floor(Date.now() / 1000);

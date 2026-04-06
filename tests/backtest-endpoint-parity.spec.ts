@@ -48,7 +48,6 @@ describe("backtest executor", () => {
             context: {
                 nowSec: Math.floor(Date.now() / 1000) + 600, // simulate time past last candle
                 blockRange: null,
-                twoHourCloseParity: "odd",
                 annotatePolymarket: false,
                 engineMode: "typescript",
             },
@@ -70,7 +69,6 @@ describe("backtest executor", () => {
             context: {
                 nowSec: 1700003000,
                 blockRange: null,
-                twoHourCloseParity: "odd",
                 annotatePolymarket: false,
                 engineMode: "typescript",
             },
@@ -86,7 +84,6 @@ describe("backtest executor", () => {
             context: {
                 nowSec: 1700003000,
                 blockRange: null,
-                twoHourCloseParity: "odd",
                 annotatePolymarket: false,
                 engineMode: "typescript",
             },
@@ -110,7 +107,6 @@ describe("backtest executor", () => {
                 context: {
                     nowSec: 1700003000,
                     blockRange: null,
-                    twoHourCloseParity: "odd",
                     annotatePolymarket: false,
                     engineMode: "typescript",
                 },
@@ -132,7 +128,6 @@ describe("backtest executor", () => {
             context: {
                 nowSec: Math.floor(Date.now() / 1000) + 600,
                 blockRange: null, // no block filter
-                twoHourCloseParity: "odd",
                 annotatePolymarket: false,
                 engineMode: "typescript",
             },
@@ -148,7 +143,6 @@ describe("backtest executor", () => {
             context: {
                 nowSec: Math.floor(Date.now() / 1000) + 600,
                 blockRange: { from: midTime - 1000, to: midTime + 1000 },
-                twoHourCloseParity: "odd",
                 annotatePolymarket: false,
                 engineMode: "typescript",
             },
@@ -180,7 +174,6 @@ describe("backtest executor", () => {
             context: {
                 nowSec: Math.floor(Date.now() / 1000) + 120,
                 blockRange: null,
-                twoHourCloseParity: "odd",
                 annotatePolymarket: false,
                 engineMode: "typescript",
             },
@@ -209,7 +202,6 @@ describe("backtest executor", () => {
             context: {
                 nowSec: Math.floor(Date.now() / 1000) + 15000,
                 blockRange: null,
-                twoHourCloseParity: "odd",
                 annotatePolymarket: false,
                 engineMode: "typescript",
             },

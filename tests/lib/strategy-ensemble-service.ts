@@ -1148,7 +1148,6 @@ class StrategyEnsembleService {
         clearBacktestResults("ensemble_preview_reset");
         await settingsManager.applyStrategyConfig(targetArtifact.config);
         commitBacktestResult(preview.result, "ensemble_preview", {
-            parityResults: null,
             reason: "ensemble_preview",
         });
         const frozenPreviewResult = preview.result;
@@ -1162,7 +1161,6 @@ class StrategyEnsembleService {
                 clearBacktestResults("ensemble_preview_rerun_reset");
                 await settingsManager.applyStrategyConfig(frozenTargetConfig);
                 commitBacktestResult(frozenPreviewResult, "ensemble_preview", {
-                    parityResults: null,
                     reason: "ensemble_preview_rerun",
                 });
                 this.updateStatus(`Refreshed frozen ensemble preview: ${frozenRuleLabel} | ${previewExecutionLabel}.`);
@@ -1533,7 +1531,6 @@ class StrategyEnsembleService {
             recipe.interval
         );
         commitBacktestResult(previewResult, "ensemble_preview", {
-            parityResults: null,
             reason: "ensemble_signal_recipe_preview",
         });
         const snapshotStatus = this.buildPreviewSnapshotStatus({
@@ -1554,7 +1551,6 @@ class StrategyEnsembleService {
                     clearBacktestResults("ensemble_recipe_preview_rerun_reset");
                     await settingsManager.applyStrategyConfig(frozenAnchorConfig);
                     commitBacktestResult(frozenPreviewResult, "ensemble_preview", {
-                        parityResults: null,
                         reason: "ensemble_signal_recipe_preview_rerun",
                     });
                     this.updateStatus(`Refreshed frozen ensemble preview: ${recipe.name}.`);
@@ -1680,7 +1676,6 @@ class StrategyEnsembleService {
             clearBacktestResults("ensemble_polymarket_config_preview_reset");
             await settingsManager.applyStrategyConfig(artifact.config);
             commitBacktestResult(previewResult, "ensemble_preview", {
-                parityResults: null,
                 reason: "ensemble_polymarket_config_preview",
             });
             const frozenPreviewResult = previewResult;
@@ -1692,7 +1687,6 @@ class StrategyEnsembleService {
                     clearBacktestResults("ensemble_polymarket_config_preview_rerun_reset");
                     await settingsManager.applyStrategyConfig(frozenConfig);
                     commitBacktestResult(frozenPreviewResult, "ensemble_preview", {
-                        parityResults: null,
                         reason: "ensemble_polymarket_config_preview_rerun",
                     });
                     this.updatePolymarketStatus(`Refreshed frozen config preview: ${configName}.`);

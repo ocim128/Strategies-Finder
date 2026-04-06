@@ -1,6 +1,6 @@
 import { debugLogger } from "./debug-logger";
 import { clearActiveBacktestRerunContext } from "./backtest-rerun-context";
-import { state, type BacktestResultSource, type ChartMode, type MockChartModel, type TwoHourCloseParityMode, type TwoHourParityBacktestResults } from "./state";
+import { state, type BacktestResultSource, type ChartMode, type MockChartModel } from "./state";
 import type { BinanceMarketType } from "./binance-market";
 import type { Indicator } from "./types/index";
 import type { BacktestResult, OHLCVData } from "./strategies/index";
@@ -44,10 +44,6 @@ export function setMarketSelection(selection: {
     if (selection.binanceMarketType !== undefined) {
         state.set('binanceMarketType', selection.binanceMarketType);
     }
-}
-
-export function setTwoHourCloseParity(parity: TwoHourCloseParityMode): void {
-    state.set('twoHourCloseParity', parity);
 }
 
 export function setChartMode(mode: ChartMode): void {
@@ -103,39 +99,22 @@ export function clearBacktestResults(reason?: string): void {
     clearActiveBacktestRerunContext();
     state.set('currentBacktestResult', null);
     state.set('currentBacktestResultSource', 'backtest');
-    state.set('twoHourParityBacktestResults', null);
 }
 
 export function commitBacktestResult(
     result: BacktestResult,
     source: BacktestResultSource,
     options?: {
-        parityResults?: TwoHourParityBacktestResults | null;
         reason?: string;
     }
 ): void {
-    const parityResults = options?.parityResults ?? null;
     debugLogger.event('state.commit.backtest_result', {
         source,
         trades: result.totalTrades,
-        parity: Boolean(parityResults),
         reason: options?.reason,
     });
-    state.set('twoHourParityBacktestResults', parityResults);
     state.set('currentBacktestResultSource', source);
     state.set('currentBacktestResult', result);
-}
-
-export function commitParityBacktestResults(
-    parityResults: TwoHourParityBacktestResults | null,
-    reason?: string
-): void {
-    debugLogger.event('state.commit.parity_results', {
-        parity: Boolean(parityResults),
-        baseline: parityResults?.baseline ?? null,
-        reason,
-    });
-    state.set('twoHourParityBacktestResults', parityResults);
 }
 
 export function commitOhlcvData(

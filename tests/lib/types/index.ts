@@ -1,6 +1,6 @@
 import { ISeriesApi, Time, ISeriesMarkersPluginApi, IChartApi } from "lightweight-charts";
 import { BacktestResult, OHLCVData } from "./strategies";
-import type { BacktestResultSource, TwoHourParityBacktestResults } from "../state";
+import type { BacktestResultSource } from "../state";
 import type { BinanceMarketType } from "../binance-market";
 
 export * from './strategies';
@@ -33,6 +33,5 @@ export interface AppState {
     indicators: Indicator[];
     currentBacktestResult: BacktestResult | null;
     currentBacktestResultSource: BacktestResultSource;
-    twoHourParityBacktestResults: TwoHourParityBacktestResults | null;
     currentStrategyKey: string;
 }

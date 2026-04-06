@@ -11,7 +11,6 @@ import type { CapitalSettings } from "./types/backtest";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { selectExecutionAwareClosedCandles } from "./alert-evaluation-window";
 import { getIntervalSeconds } from "./dataProviders/utils";
-import { resolveTwoHourParityFromTime } from "./two-hour-parity";
 import type { BacktestExecutionContext } from "./backtest-endpoint-contract";
 
 // ============================================================================
@@ -21,7 +20,6 @@ import type { BacktestExecutionContext } from "./backtest-endpoint-contract";
 export type ResolvedBacktestContext = {
     nowSec: number;
     blockRange: { from: number; to: number } | null;
-    twoHourCloseParity: "odd" | "even";
     annotatePolymarket: boolean;
     engineMode: "auto" | "typescript" | "rust_preferred";
     intervalSeconds: number;
@@ -33,13 +31,11 @@ export function resolveContext(
     defaults?: {
         defaultNowSec?: number;
         blockRange?: { from: number; to: number } | null;
-        twoHourCloseParity?: "odd" | "even";
         annotatePolymarket?: boolean;
         engineMode?: "auto" | "typescript" | "rust_preferred";
     }
 ): ResolvedBacktestContext {
     const nowSec = partialCtx.nowSec ?? defaults?.defaultNowSec ?? Math.floor(Date.now() / 1000);
-    const parity = partialCtx.twoHourCloseParity ?? defaults?.twoHourCloseParity ?? "odd";
     const blockRange = partialCtx.blockRange ?? defaults?.blockRange ?? null;
     const annotatePolymarket = partialCtx.annotatePolymarket ?? defaults?.annotatePolymarket ?? false;
     const engineMode = partialCtx.engineMode ?? defaults?.engineMode ?? "auto";
@@ -47,7 +43,6 @@ export function resolveContext(
     return {
         nowSec,
         blockRange,
-        twoHourCloseParity: parity,
         annotatePolymarket,
         engineMode,
         intervalSeconds: getIntervalSeconds(interval),
@@ -84,18 +79,6 @@ export function selectClosedCandleData(
 
     const base = executionAware ?? ohlcvData;
     return sliceOhlcvByBlock(base, ctx.blockRange);
-}
-
-// ============================================================================
-// Two-hour parity helpers (pure)
-// ============================================================================
-
-/**
- * Infer the natural 2H parity (odd/even) from the first bar in a dataset.
- */
-export function inferParityFromData(data: OHLCVData[], intervalSeconds: number): "odd" | "even" {
-    if (intervalSeconds !== 7200 || data.length === 0) return "odd";
-    return resolveTwoHourParityFromTime(data[0].time) ?? "odd";
 }
 
 // ============================================================================

@@ -1,6 +1,6 @@
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, Time } from "lightweight-charts";
 import type { Indicator } from "./types/index";
-import { state, type BacktestResultSource, type MockChartModel, type State, type TwoHourCloseParityMode, type TwoHourParityBacktestResults, type ChartMode } from "./state";
+import { state, type BacktestResultSource, type MockChartModel, type State, type ChartMode } from "./state";
 import type { BinanceMarketType } from "./binance-market";
 import type { BacktestResult, OHLCVData } from "./strategies/index";
 
@@ -9,7 +9,6 @@ export interface MarketState {
     currentInterval: string;
     binanceMarketType: BinanceMarketType;
     ohlcvData: OHLCVData[];
-    twoHourCloseParity: TwoHourCloseParityMode;
 }
 
 export interface ChartState {
@@ -27,7 +26,6 @@ export interface ChartState {
 export interface BacktestState {
     currentBacktestResult: BacktestResult | null;
     currentBacktestResultSource: BacktestResultSource;
-    twoHourParityBacktestResults: TwoHourParityBacktestResults | null;
     strategyTimeframeEnabled: boolean;
     strategyTimeframeMinutes: number;
 }
@@ -44,7 +42,6 @@ export function selectMarketState(source: State = state): Readonly<MarketState> 
         currentInterval: source.currentInterval,
         binanceMarketType: source.binanceMarketType,
         ohlcvData: source.ohlcvData,
-        twoHourCloseParity: source.twoHourCloseParity,
     };
 }
 
@@ -66,7 +63,6 @@ export function selectBacktestState(source: State = state): Readonly<BacktestSta
     return {
         currentBacktestResult: source.currentBacktestResult,
         currentBacktestResultSource: source.currentBacktestResultSource,
-        twoHourParityBacktestResults: source.twoHourParityBacktestResults,
         strategyTimeframeEnabled: source.strategyTimeframeEnabled,
         strategyTimeframeMinutes: source.strategyTimeframeMinutes,
     };

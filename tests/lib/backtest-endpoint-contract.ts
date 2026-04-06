@@ -1,7 +1,7 @@
 /**
  * Shared request/response types for the backtest HTTP endpoint.
  *
- * These types define the parity contract: any caller (UI, Flux.Native, batch,
+ * These types define the execution contract: any caller (UI, Flux.Native, batch,
  * or random search) that supplies the same explicit inputs must receive the
  * same result because both paths use the same shared executor.
  */
@@ -20,6 +20,19 @@ import type { CapitalSettings } from "./types/backtest";
 
 export type EngineMode = "auto" | "typescript" | "rust_preferred";
 
+/**
+ * Intentional endpoint simplification: every HTTP backtest uses the same
+ * fixed-dollar sizing profile. This removes endpoint-side capital knobs and is
+ * not a bug.
+ */
+export const BACKTEST_ENDPOINT_CAPITAL_SETTINGS = Object.freeze({
+    initialCapital: 10000,
+    positionSize: 100,
+    commission: 0.1,
+    sizingMode: "fixed",
+    fixedTradeAmount: 1000,
+} satisfies CapitalSettings);
+
 // ============================================================================
 // Execution context
 // ============================================================================
@@ -36,12 +49,6 @@ export interface BacktestExecutionContext {
      * Both values are unix seconds.
      */
     blockRange: { from: number; to: number } | null;
-
-    /**
-     * 2H close-hour parity mode when the interval is 120m.
-     * "odd" or "even" determines which bars are considered valid.
-     */
-    twoHourCloseParity: "odd" | "even";
 
     /**
      * When true, annotate the result with Polymarket outcome data if the
@@ -86,9 +93,6 @@ export interface BacktestSingleRequest {
      */
     backtestSettings: BacktestSettings | Record<string, unknown>;
 
-    /** Capital configuration for position sizing, commission, etc. */
-    capitalSettings: CapitalSettings | Record<string, unknown>;
-
     /** Execution-time context that replaces implicit DOM / global reads. */
     context: BacktestExecutionContext;
 }
@@ -103,7 +107,6 @@ export interface BacktestBatchItem {
     strategyParams: StrategyParams;
     /** Per-item overrides; when omitted the top-level settings are used. */
     backtestSettings?: BacktestSettings | Record<string, unknown>;
-    capitalSettings?: CapitalSettings | Record<string, unknown>;
     context?: Partial<BacktestExecutionContext>;
 }
 
@@ -125,7 +128,6 @@ export interface BacktestBatchRequest {
     items: BacktestBatchItem[];
 
     backtestSettings?: BacktestSettings | Record<string, unknown>;
-    capitalSettings?: CapitalSettings | Record<string, unknown>;
     context?: BacktestExecutionContext;
 
     /**
@@ -228,7 +230,6 @@ export interface BacktestRandomSearchRequest {
     randomization: BacktestRandomizationSpec;
 
     backtestSettings?: BacktestSettings | Record<string, unknown>;
-    capitalSettings?: CapitalSettings | Record<string, unknown>;
     context?: BacktestExecutionContext;
 
     /** Ranking and filtering applied after all runs complete. */
@@ -256,7 +257,7 @@ export interface BacktestSingleResponse {
     strategyKey: string;
     engineUsed: "rust" | "typescript";
     result: BacktestResult;
-    /** Hex hash of the effective inputs (symbol + interval + dataset + params + settings + capital + context). */
+    /** Hex hash of the effective inputs (symbol + interval + dataset + params + settings + fixed endpoint capital profile + context). */
     requestFingerprint: string;
     strategyManifestFingerprint: StrategyManifestFingerprint;
     /** Execution wall-clock duration in milliseconds. */

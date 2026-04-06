@@ -17,7 +17,6 @@ import {
     getResampleBucketStart,
     resampleOHLCV,
     type ResampleOptions,
-    type TwoHourCloseParity,
 } from "./lib/strategies/resample-utils";
 import { readPersistedJson, writePersistedJson } from "./lib/persisted-json";
 export type { Strategy, OHLCVData, Signal, StrategyParams };
@@ -96,12 +95,11 @@ class StrategyRegistryImpl implements StrategyRegistry {
         return mapped;
     }
 
-    private readGlobalStrategyTfSettings(): { enabled: boolean; minutes: number; twoHourCloseParity: TwoHourCloseParity } {
+    private readGlobalStrategyTfSettings(): { enabled: boolean; minutes: number } {
         const enabled = state.strategyTimeframeEnabled === true;
         const parsedMinutes = Number(state.strategyTimeframeMinutes);
         const minutes = Number.isFinite(parsedMinutes) ? Math.max(1, Math.floor(parsedMinutes)) : 120;
-        const twoHourCloseParity: TwoHourCloseParity = state.twoHourCloseParity === 'even' ? 'even' : 'odd';
-        return { enabled, minutes, twoHourCloseParity };
+        return { enabled, minutes };
     }
 
     private mapSignalsFromHigherTimeframe(
@@ -168,7 +166,7 @@ class StrategyRegistryImpl implements StrategyRegistry {
         const wrapped: Strategy = {
             ...strategy,
             execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
-                const { enabled, minutes, twoHourCloseParity } = this.readGlobalStrategyTfSettings();
+                const { enabled, minutes } = this.readGlobalStrategyTfSettings();
                 if (!enabled || data.length === 0) {
                     return originalExecute(data, params);
                 }
@@ -179,9 +177,7 @@ class StrategyRegistryImpl implements StrategyRegistry {
                 }
 
                 const interval = `${minutes}m`;
-                const resampleOptions: ResampleOptions | undefined = minutes === 120
-                    ? { twoHourCloseParity }
-                    : undefined;
+                const resampleOptions: ResampleOptions | undefined = undefined;
                 const higherData = resampleOHLCV(numericData, interval, resampleOptions);
                 if (higherData.length === 0) {
                     return [];

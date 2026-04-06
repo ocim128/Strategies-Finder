@@ -12,15 +12,7 @@ type NonFunctionPropertyKeys<T> = {
 export type StateKey = NonFunctionPropertyKeys<State>;
 export type MockChartModel = 'simple' | 'hard' | 'v3' | 'v4' | 'v5' | 'v6';
 export type ChartMode = 'candlestick' | 'heikin-ashi';
-export type TwoHourCloseParity = 'odd' | 'even';
-export type TwoHourCloseParityMode = TwoHourCloseParity | 'both';
 export type BacktestResultSource = 'backtest' | 'ensemble_preview' | 'finder_selection' | 'walk_forward_oos';
-
-export interface TwoHourParityBacktestResults {
-    odd: BacktestResult;
-    even: BacktestResult;
-    baseline: TwoHourCloseParity;
-}
 
 export class State {
     public chart!: IChartApi;
@@ -42,11 +34,9 @@ export class State {
     public indicators: Indicator[] = [];
     public currentBacktestResult: BacktestResult | null = null;
     public currentBacktestResultSource: BacktestResultSource = 'backtest';
-    public twoHourParityBacktestResults: TwoHourParityBacktestResults | null = null;
     public currentStrategyKey = DEFAULT_BUILT_IN_STRATEGY_KEY;
     public strategyTimeframeEnabled = false;
     public strategyTimeframeMinutes = 120;
-    public twoHourCloseParity: TwoHourCloseParityMode = 'odd';
 
     // Pair Combiner state
     private listeners = new Map<StateKey, Set<(value: unknown) => void>>();
@@ -76,7 +66,6 @@ export class State {
     public clearTradeResults() {
         this.set('currentBacktestResult', null);
         this.set('currentBacktestResultSource', 'backtest');
-        this.set('twoHourParityBacktestResults', null);
         this.set('indicators', []);
         this.set('markersPlugin', null);
     }

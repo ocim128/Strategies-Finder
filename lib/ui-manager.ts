@@ -2,7 +2,6 @@
 import { OHLCVData, BacktestResult, Trade } from "./strategies/index";
 import { state } from "./state";
 import { setCurrentStrategyKey } from "./state-actions";
-import type { TwoHourParityBacktestResults } from "./state";
 import { strategyRegistry, getStrategyList } from "../strategyRegistry";
 import { getOptionalElement, getRequiredElement } from "./dom-utils";
 import { resultsRenderer } from "./renderers/resultsRenderer";
@@ -138,25 +137,10 @@ export class UIManager {
         badge.classList.remove('is-hidden');
     }
 
-    public updateParityComparisonUI(results: TwoHourParityBacktestResults): void {
-        resultsRenderer.renderParityComparison(results);
-    }
-
-    public clearParityComparisonUI(): void {
-        resultsRenderer.clearParityComparison();
-    }
-
     public async updateTradesList(trades: Trade[], jumpToTrade: (time: Time) => void) {
         const didRender = await tradesRenderer.render(trades, jumpToTrade, this.formatPrice, this.formatDate);
         if (didRender) {
             this.updateTradeBadge(trades.length);
-        }
-    }
-
-    public async updateParityTradesList(oddTrades: Trade[], evenTrades: Trade[], jumpToTrade: (time: Time) => void): Promise<void> {
-        const didRender = await tradesRenderer.renderParity(oddTrades, evenTrades, jumpToTrade, this.formatPrice, this.formatDate);
-        if (didRender) {
-            this.updateTradeBadge(oddTrades.length + evenTrades.length);
         }
     }
 
@@ -258,7 +242,6 @@ export class UIManager {
         dom.indicatorsPanel.innerHTML = '';
         resultsRenderer.clear();
         tradesRenderer.clear();
-        this.clearParityComparisonUI();
         this.updateTradeBadge(0);
         dom.strategyStatus.textContent = 'Ready';
     }

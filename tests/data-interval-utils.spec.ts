@@ -9,15 +9,15 @@ import {
 } from "./lib/data/data-interval-utils";
 
 describe("Data interval utils", () => {
-    it("derives 2h storage variants and parity-aware cache keys", () => {
-        expect(getImportStorageIntervals("2h")).to.deep.equal(["2h@close-odd", "2h@close-even"]);
-        expect(getImportStorageIntervals("2h@close-even")).to.deep.equal(["2h@close-even"]);
-        expect(getStorageInterval("2H", "even")).to.equal("2h@close-even");
+    it("normalizes 2h storage keys to the single supported interval", () => {
+        expect(getImportStorageIntervals("2h")).to.deep.equal(["2h"]);
+        expect(getImportStorageIntervals("2H")).to.deep.equal(["2h"]);
+        expect(getStorageInterval("2H")).to.equal("2h");
     });
 
     it("keeps interval alignment logic outside the manager", () => {
-        expect(isIntervalAlignedTime(3600, "2h@close-even")).to.equal(true);
-        expect(isIntervalAlignedTime(0, "2h@close-even")).to.equal(false);
+        expect(isIntervalAlignedTime(0, "2h")).to.equal(true);
+        expect(isIntervalAlignedTime(3600, "2h")).to.equal(false);
         expect(isIntervalAlignedTime(86400, "1d")).to.equal(true);
     });
 
