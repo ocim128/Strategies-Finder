@@ -3,8 +3,7 @@ import { calculateStochastic } from "../indicators";
 import { createBuySignal, createSellSignal, createSignalLoop } from "../strategy-helpers";
 import {
     CPPS_MIN_BODY_PCT_HARDCODED,
-    computeCandlePatternPersistenceState,
-} from "./candle-pattern-persistence-core";
+    computeCandlePatternPersistenceState } from "./candle-pattern-persistence-core";
 
 function normalizeCandlePatternPersistenceScoreStochMidParams(params: StrategyParams): StrategyParams {
     const scoreLookback = Math.max(2, Math.round(params.scoreLookback ?? 5));
@@ -16,8 +15,7 @@ function normalizeCandlePatternPersistenceScoreStochMidParams(params: StrategyPa
         ...params,
         scoreLookback,
         scoreThreshold,
-        stochLen,
-    };
+        stochLen };
 }
 
 export const candle_pattern_persistence_score_stoch_mid: Strategy = {
@@ -26,13 +24,11 @@ export const candle_pattern_persistence_score_stoch_mid: Strategy = {
     defaultParams: {
         scoreLookback: 5,
         scoreThreshold: 0.6,
-        stochLen: 14,
-    },
+        stochLen: 14 },
     paramLabels: {
         scoreLookback: "Score Window (bars)",
         scoreThreshold: "Persistence Threshold",
-        stochLen: "Stochastic %K Period",
-    },
+        stochLen: "Stochastic %K Period" },
     normalizeParams: normalizeCandlePatternPersistenceScoreStochMidParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const normalizedParams = normalizeCandlePatternPersistenceScoreStochMidParams(params);
@@ -64,6 +60,4 @@ export const candle_pattern_persistence_score_stoch_mid: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["scoreLookback", "scoreThreshold", "stochLen"],
-    },
-};
+        walkForwardParams: ["scoreLookback", "scoreThreshold", "stochLen"] } };

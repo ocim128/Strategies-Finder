@@ -14,12 +14,10 @@ export const keltner_channel_streak_squeeze: Strategy = {
 	description: "Sequential strong closes riding cleanly outside a basic Keltner Channel implies an unstoppable trend impulse.",
 	defaultParams: {
 		kc_period: 20,
-		streak_threshold: 4,
-	},
+		streak_threshold: 4 },
 	paramLabels: {
 		kc_period: "KC Period",
-		streak_threshold: "Streak Threshold",
-	},
+		streak_threshold: "Streak Threshold" },
 	normalizeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -61,6 +59,4 @@ export const keltner_channel_streak_squeeze: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["kc_period", "streak_threshold"],
-	},
-};
+		walkForwardParams: ["kc_period", "streak_threshold"] } };

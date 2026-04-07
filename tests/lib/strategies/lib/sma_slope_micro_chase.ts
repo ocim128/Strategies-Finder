@@ -6,11 +6,9 @@ export const sma_slope_micro_chase: Strategy = {
 	name: "SMA Slope Micro Chase",
 	description: "Enter in the direction of the SMA slope.",
 	defaultParams: {
-		smaPeriod: 5,
-	},
+		smaPeriod: 5 },
 	paramLabels: {
-		smaPeriod: "SMA Period",
-	},
+		smaPeriod: "SMA Period" },
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		const closes = getCloses(cleanData);
@@ -34,6 +32,4 @@ export const sma_slope_micro_chase: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["smaPeriod"],
-	},
-};
+		walkForwardParams: ["smaPeriod"] } };

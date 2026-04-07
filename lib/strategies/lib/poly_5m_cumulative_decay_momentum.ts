@@ -11,8 +11,7 @@ function normalizePoly5mCumulativeDecayMomentumParams(params: StrategyParams): S
 		...params,
 		lookback,
 		decayFactor,
-		stdMultiplier,
-	};
+		stdMultiplier };
 }
 
 export const poly_5m_cumulative_decay_momentum: Strategy = {
@@ -21,13 +20,11 @@ export const poly_5m_cumulative_decay_momentum: Strategy = {
 	defaultParams: {
 		lookback: 8,
 		decayFactor: 0.85,
-		stdMultiplier: 1.5,
-	},
+		stdMultiplier: 1.5 },
 	paramLabels: {
 		lookback: "Lookback",
 		decayFactor: "Decay Factor",
-		stdMultiplier: "Std Multiplier",
-	},
+		stdMultiplier: "Std Multiplier" },
 	normalizeParams: normalizePoly5mCumulativeDecayMomentumParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -80,6 +77,4 @@ export const poly_5m_cumulative_decay_momentum: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["lookback", "decayFactor", "stdMultiplier"],
-	},
-};
+		walkForwardParams: ["lookback", "decayFactor", "stdMultiplier"] } };

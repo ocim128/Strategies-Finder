@@ -13,8 +13,7 @@ function normalizeClosePercentileRangeEntryParams(params: StrategyParams): Strat
 		...params,
 		rangeWindow,
 		entryPercentile,
-		confirmationBars,
-	};
+		confirmationBars };
 }
 
 export const close_percentile_range_entry: Strategy = {
@@ -23,13 +22,11 @@ export const close_percentile_range_entry: Strategy = {
 	defaultParams: {
 		rangeWindow: 20,
 		entryPercentile: 10,
-		confirmationBars: 1,
-	},
+		confirmationBars: 1 },
 	paramLabels: {
 		rangeWindow: "Range Window",
 		entryPercentile: "Entry Percentile",
-		confirmationBars: "Confirmation Bars",
-	},
+		confirmationBars: "Confirmation Bars" },
 	normalizeParams: normalizeClosePercentileRangeEntryParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -121,6 +118,4 @@ export const close_percentile_range_entry: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["rangeWindow", "entryPercentile", "confirmationBars"],
-	},
-};
+		walkForwardParams: ["rangeWindow", "entryPercentile", "confirmationBars"] } };

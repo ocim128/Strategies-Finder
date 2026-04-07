@@ -7,8 +7,7 @@ function normalizeZscoreFalseBreakParams(params: StrategyParams): StrategyParams
 		...params,
 		zscorePeriod: Math.max(2, Math.round(params.zscorePeriod ?? 20)),
 		extremeLevel: Number(params.extremeLevel ?? 2.5),
-		reversalDepth: Number(params.reversalDepth ?? 0.5),
-	};
+		reversalDepth: Number(params.reversalDepth ?? 0.5) };
 }
 
 export const zscore_false_break: Strategy = {
@@ -17,13 +16,11 @@ export const zscore_false_break: Strategy = {
 	defaultParams: {
 		zscorePeriod: 20,
 		extremeLevel: 2.5,
-		reversalDepth: 0.5,
-	},
+		reversalDepth: 0.5 },
 	paramLabels: {
 		zscorePeriod: "ZScore Period",
 		extremeLevel: "Extreme Level",
-		reversalDepth: "Reversal Depth",
-	},
+		reversalDepth: "Reversal Depth" },
 	normalizeParams: normalizeZscoreFalseBreakParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -84,6 +81,4 @@ export const zscore_false_break: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["zscorePeriod", "extremeLevel", "reversalDepth"],
-	},
-};
+		walkForwardParams: ["zscorePeriod", "extremeLevel", "reversalDepth"] } };

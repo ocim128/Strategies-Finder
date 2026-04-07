@@ -8,8 +8,7 @@ function normalizeAdxSkewnessDriftParams(params: StrategyParams): StrategyParams
         ...params,
         adxPeriod: Math.max(2, Math.round(params.adxPeriod ?? 14)),
         adxThresh: Math.max(0, Number(params.adxThresh ?? 25)),
-        skewThreshold: Math.max(0, Math.abs(Number(params.skewThreshold ?? 0.5))),
-    };
+        skewThreshold: Math.max(0, Math.abs(Number(params.skewThreshold ?? 0.5))) };
 }
 
 export const adx_skewness_drift: Strategy = {
@@ -18,13 +17,11 @@ export const adx_skewness_drift: Strategy = {
     defaultParams: {
         adxPeriod: 14,
         adxThresh: 25,
-        skewThreshold: 0.5,
-    },
+        skewThreshold: 0.5 },
     paramLabels: {
         adxPeriod: "ADX Period",
         adxThresh: "Trend Strength Level",
-        skewThreshold: "Asymmetry Boundary",
-    },
+        skewThreshold: "Asymmetry Boundary" },
     normalizeParams: normalizeAdxSkewnessDriftParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
@@ -62,6 +59,4 @@ export const adx_skewness_drift: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["adxPeriod", "adxThresh", "skewThreshold"],
-    },
-};
+        walkForwardParams: ["adxPeriod", "adxThresh", "skewThreshold"] } };

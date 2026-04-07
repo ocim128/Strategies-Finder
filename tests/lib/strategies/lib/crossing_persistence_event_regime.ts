@@ -8,8 +8,7 @@ function normalizeCrossingPersistenceEventRegimeParams(params: StrategyParams): 
 		...params,
 		lookback: Math.max(2, Math.round(params.lookback ?? 30)),
 		maxCrossings: Math.max(0, Math.round(params.maxCrossings ?? 2)),
-		maPeriod: Math.max(2, Math.round(params.maPeriod ?? 20)),
-	};
+		maPeriod: Math.max(2, Math.round(params.maPeriod ?? 20)) };
 }
 
 export const crossing_persistence_event_regime: Strategy = {
@@ -18,13 +17,11 @@ export const crossing_persistence_event_regime: Strategy = {
 	defaultParams: {
 		lookback: 30,
 		maxCrossings: 2,
-		maPeriod: 20,
-	},
+		maPeriod: 20 },
 	paramLabels: {
 		lookback: "Regime Window",
 		maxCrossings: "Max Crossings",
-		maPeriod: "Rolling Average Period",
-	},
+		maPeriod: "Rolling Average Period" },
 	normalizeParams: normalizeCrossingPersistenceEventRegimeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -57,6 +54,4 @@ export const crossing_persistence_event_regime: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["lookback", "maxCrossings", "maPeriod"],
-	},
-};
+		walkForwardParams: ["lookback", "maxCrossings", "maPeriod"] } };

@@ -21,8 +21,7 @@ function normalizeSupertrendFrictionPinchParams(params: StrategyParams): Strateg
         ...params,
         stPeriod: 1,
         pinchLookback: 1,
-        rocTarget: Number.isFinite(rawRocTarget) ? rawRocTarget : 1.5,
-    };
+        rocTarget: Number.isFinite(rawRocTarget) ? rawRocTarget : 1.5 };
 }
 
 function prepareSupertrendFrictionPinchData(data: OHLCVData[]): SupertrendFrictionPinchPrepared {
@@ -36,8 +35,7 @@ function prepareSupertrendFrictionPinchData(data: OHLCVData[]): SupertrendFricti
         supertrendByPeriod: new Map<number, ReturnType<typeof calculateSupertrend>>(),
         safeDistancesByPeriod: new Map<number, number[]>(),
         distanceLimitsByKey: new Map<string, ReturnType<typeof buildRollingMinMax>>(),
-        rocSeries: buildRateOfChange(closes, 1),
-    };
+        rocSeries: buildRateOfChange(closes, 1) };
 }
 
 function getPreparedSupertrendFrictionPinchData(
@@ -54,11 +52,9 @@ export const supertrend_friction_pinch: Strategy = {
     name: "Supertrend Friction Pinch",
     description: "Quantifies localized stall-points precisely at major trend structure lines. Computes the absolute distance between Close and Supertrend, seeking instances where this distance collapses to a rolling minimum deadzone prior to breaking away.",
     defaultParams: {
-        rocTarget: 1.5,
-    },
+        rocTarget: 1.5 },
     paramLabels: {
-        rocTarget: "Minimum Breakaway Threshold",
-    },
+        rocTarget: "Minimum Breakaway Threshold" },
     normalizeParams: normalizeSupertrendFrictionPinchParams,
     prepareFinderData: (data) => prepareSupertrendFrictionPinchData(data),
     executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
@@ -124,6 +120,4 @@ export const supertrend_friction_pinch: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["rocTarget"],
-    },
-};
+        walkForwardParams: ["rocTarget"] } };

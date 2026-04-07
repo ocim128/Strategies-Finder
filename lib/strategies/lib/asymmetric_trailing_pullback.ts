@@ -5,19 +5,16 @@ import { buildTrailingHighLow } from "./price-action-frequency-core";
 function normalizeParams(params: StrategyParams): StrategyParams {
 	return {
 		...params,
-		trailWindow: Math.max(2, Math.round(params.trailWindow ?? 21)),
-	};
+		trailWindow: Math.max(2, Math.round(params.trailWindow ?? 21)) };
 }
 
 export const asymmetric_trailing_pullback: Strategy = {
 	name: "Asymmetric Trailing Pullback",
 	description: "In a local window, price dropping 61.8% from the high is a value buy, but bouncing just 38.2% from the low is a short entry.",
 	defaultParams: {
-		trailWindow: 21,
-	},
+		trailWindow: 21 },
 	paramLabels: {
-		trailWindow: "Trail Window",
-	},
+		trailWindow: "Trail Window" },
 	normalizeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -49,6 +46,4 @@ export const asymmetric_trailing_pullback: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["trailWindow"],
-	},
-};
+		walkForwardParams: ["trailWindow"] } };

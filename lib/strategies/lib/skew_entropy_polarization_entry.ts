@@ -10,8 +10,7 @@ function normalizeSkewEntropyPolarizationEntryParams(params: StrategyParams): St
         ...params,
         lookback: Math.max(3, Math.round(params.lookback ?? 30)),
         entropyCeiling: Number.isFinite(rawEntropyCeiling) ? rawEntropyCeiling : 1,
-        skewThreshold: Math.max(0, Math.abs(Number.isFinite(rawSkewThreshold) ? rawSkewThreshold : 0.35)),
-    };
+        skewThreshold: Math.max(0, Math.abs(Number.isFinite(rawSkewThreshold) ? rawSkewThreshold : 0.35)) };
 }
 
 function buildReturns(series: number[]): number[] {
@@ -45,8 +44,7 @@ function prepareSkewEntropyData(data: OHLCVData[]): SkewEntropyPrepared {
         returns: buildReturns(closes),
         skewByLookback: new Map<number, number[]>(),
         entropyByLookback: new Map<number, number[]>(),
-        medianByLookback: new Map<number, number[]>(),
-    };
+        medianByLookback: new Map<number, number[]>() };
 }
 
 function getPreparedSkewEntropyData(preparedData: unknown, data: OHLCVData[]): SkewEntropyPrepared {
@@ -62,13 +60,11 @@ export const skew_entropy_polarization_entry: Strategy = {
     defaultParams: {
         lookback: 30,
         entropyCeiling: 1,
-        skewThreshold: 0.35,
-    },
+        skewThreshold: 0.35 },
     paramLabels: {
         lookback: "Regime Lookback",
         entropyCeiling: "Entropy Ceiling",
-        skewThreshold: "Abs Skew Threshold",
-    },
+        skewThreshold: "Abs Skew Threshold" },
     normalizeParams: normalizeSkewEntropyPolarizationEntryParams,
     prepareFinderData: (data) => prepareSkewEntropyData(data),
     executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
@@ -116,6 +112,4 @@ export const skew_entropy_polarization_entry: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["lookback", "entropyCeiling", "skewThreshold"],
-    },
-};
+        walkForwardParams: ["lookback", "entropyCeiling", "skewThreshold"] } };

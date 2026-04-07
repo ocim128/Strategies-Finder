@@ -6,8 +6,7 @@ function normalizeParams(params: StrategyParams): StrategyParams {
 	return {
 		...params,
 		valueWindow: Math.max(2, Math.round(params.valueWindow ?? 15)),
-		shiftThresholdPct: Math.max(0.01, Number(params.shiftThresholdPct ?? 0.5)),
-	};
+		shiftThresholdPct: Math.max(0.01, Number(params.shiftThresholdPct ?? 0.5)) };
 }
 
 export const value_area_median_shift: Strategy = {
@@ -15,12 +14,10 @@ export const value_area_median_shift: Strategy = {
 	description: "A raw, sudden shift in the robust rolling median indicates that entire trading zones have migrated.",
 	defaultParams: {
 		valueWindow: 15,
-		shiftThresholdPct: 0.5,
-	},
+		shiftThresholdPct: 0.5 },
 	paramLabels: {
 		valueWindow: "Value Window",
-		shiftThresholdPct: "Shift Threshold (%)",
-	},
+		shiftThresholdPct: "Shift Threshold (%)" },
 	normalizeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -52,6 +49,4 @@ export const value_area_median_shift: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["valueWindow", "shiftThresholdPct"],
-	},
-};
+		walkForwardParams: ["valueWindow", "shiftThresholdPct"] } };

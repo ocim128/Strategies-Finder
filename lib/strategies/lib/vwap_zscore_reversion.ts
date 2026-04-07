@@ -15,8 +15,7 @@ function normalizeVwapZscoreReversionParams(params: StrategyParams): StrategyPar
     return {
         ...params,
         zscoreLookback: Math.max(2, Math.round(params.zscoreLookback ?? 50)),
-        zscoreThreshold: Math.max(0, Math.abs(Number(params.zscoreThreshold ?? 2.5))),
-    };
+        zscoreThreshold: Math.max(0, Math.abs(Number(params.zscoreThreshold ?? 2.5))) };
 }
 
 function resolveSessionDay(time: OHLCVData["time"]): number {
@@ -52,8 +51,7 @@ function prepareVwapZscoreReversionData(data: OHLCVData[]): VwapZscoreReversionP
         sessionVwap,
         barsInSession,
         distanceByLookback: new Map<number, number[]>(),
-        zscoreByLookback: new Map<number, (number | null)[]>(),
-    };
+        zscoreByLookback: new Map<number, (number | null)[]>() };
 }
 
 function getPreparedVwapZscoreReversionData(
@@ -71,12 +69,10 @@ export const vwap_zscore_reversion: Strategy = {
     description: "Computes the rolling z-score of the distance between price and the Session VWAP. Trades extreme statistical deviations from the volume-weighted mean, banking on intra-session mean reversion.",
     defaultParams: {
         zscoreLookback: 50,
-        zscoreThreshold: 2.5,
-    },
+        zscoreThreshold: 2.5 },
     paramLabels: {
         zscoreLookback: "Z-Score Lookback",
-        zscoreThreshold: "Z-Score Threshold",
-    },
+        zscoreThreshold: "Z-Score Threshold" },
     normalizeParams: normalizeVwapZscoreReversionParams,
     prepareFinderData: (data) => prepareVwapZscoreReversionData(data),
     executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
@@ -127,6 +123,4 @@ export const vwap_zscore_reversion: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["zscoreLookback", "zscoreThreshold"],
-    },
-};
+        walkForwardParams: ["zscoreLookback", "zscoreThreshold"] } };

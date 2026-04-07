@@ -7,8 +7,7 @@ function normalizeSkewnessDeadzoneBreakParams(params: StrategyParams): StrategyP
         ...params,
         skewLookback: Math.max(3, Math.round(params.skewLookback ?? 20)),
         maxSkewAbs: Math.max(0, params.maxSkewAbs ?? 0.3),
-        rocBreakout: Math.max(0, params.rocBreakout ?? 1.5),
-    };
+        rocBreakout: Math.max(0, params.rocBreakout ?? 1.5) };
 }
 
 export const skewness_deadzone_break: Strategy = {
@@ -17,13 +16,11 @@ export const skewness_deadzone_break: Strategy = {
     defaultParams: {
         skewLookback: 20,
         maxSkewAbs: 0.3,
-        rocBreakout: 1.5,
-    },
+        rocBreakout: 1.5 },
     paramLabels: {
         skewLookback: "Skewness Lookback",
         maxSkewAbs: "Max |Skewness|",
-        rocBreakout: "ROC Breakout (%)",
-    },
+        rocBreakout: "ROC Breakout (%)" },
     normalizeParams: normalizeSkewnessDeadzoneBreakParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
@@ -57,6 +54,4 @@ export const skewness_deadzone_break: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["skewLookback", "maxSkewAbs", "rocBreakout"],
-    },
-};
+        walkForwardParams: ["skewLookback", "maxSkewAbs", "rocBreakout"] } };

@@ -25,8 +25,7 @@ function normalizePatternRegimeAlignmentParams(params: StrategyParams): Strategy
     return {
         scoreLookback,
         medianLookback,
-        slowWindow,
-    };
+        slowWindow };
 }
 
 function preparePatternRegimeAlignmentData(data: OHLCVData[]): PatternRegimeAlignmentPrepared {
@@ -65,8 +64,7 @@ function preparePatternRegimeAlignmentData(data: OHLCVData[]): PatternRegimeAlig
         avgScoreByLookback: new Map<number, (number | null)[]>(),
         avgBodyPctByLookback: new Map<number, (number | null)[]>(),
         medianByLookback: new Map<number, (number | null)[]>(),
-        streakByLookback: new Map<number, number[]>(),
-    };
+        streakByLookback: new Map<number, number[]>() };
 }
 
 function getPreparedPatternRegimeAlignmentData(
@@ -151,13 +149,11 @@ export const pattern_regime_alignment: Strategy = {
     defaultParams: {
         scoreLookback: 5,
         medianLookback: 20,
-        slowWindow: 30,
-    },
+        slowWindow: 30 },
     paramLabels: {
         scoreLookback: "Score Window (bars)",
         medianLookback: "Median Streak Window",
-        slowWindow: "Slow Regime Window",
-    },
+        slowWindow: "Slow Regime Window" },
     normalizeParams: normalizePatternRegimeAlignmentParams,
     prepareFinderData: (data) => preparePatternRegimeAlignmentData(data),
     executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
@@ -208,6 +204,4 @@ export const pattern_regime_alignment: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["scoreLookback", "medianLookback", "slowWindow"],
-    },
-};
+        walkForwardParams: ["scoreLookback", "medianLookback", "slowWindow"] } };

@@ -10,8 +10,7 @@ function normalizeParams(params: StrategyParams): StrategyParams {
 		...params,
 		boundary_lookback: boundaryLookback,
 		test_threshold: testThreshold,
-		retest_tolerance: retestTolerance,
-	};
+		retest_tolerance: retestTolerance };
 }
 
 export const wick_responsive_boundary_retest: Strategy = {
@@ -20,13 +19,11 @@ export const wick_responsive_boundary_retest: Strategy = {
 	defaultParams: {
 		boundary_lookback: 15,
 		test_threshold: 3,
-		retest_tolerance: 0.01,
-	},
+		retest_tolerance: 0.01 },
 	paramLabels: {
 		boundary_lookback: "Boundary Lookback",
 		test_threshold: "Test Threshold",
-		retest_tolerance: "Retest Tolerance",
-	},
+		retest_tolerance: "Retest Tolerance" },
 	normalizeParams: normalizeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -85,6 +82,4 @@ export const wick_responsive_boundary_retest: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["boundary_lookback", "test_threshold", "retest_tolerance"],
-	},
-};
+		walkForwardParams: ["boundary_lookback", "test_threshold", "retest_tolerance"] } };

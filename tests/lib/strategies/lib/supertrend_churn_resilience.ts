@@ -25,8 +25,7 @@ function prepareSupertrendChurnResilienceData(data: OHLCVData[]): SupertrendChur
         midpoints: cleanData.map((candle) => getPriceActionBarMetrics(candle).midpoint),
         supertrendByKey: new Map<string, ReturnType<typeof calculateSupertrend>>(),
         midpointByKey: new Map<string, number[]>(),
-        crossingsByKey: new Map<string, (number | null)[]>(),
-    };
+        crossingsByKey: new Map<string, (number | null)[]>() };
 }
 
 function getPreparedSupertrendChurnResilienceData(
@@ -45,13 +44,11 @@ export const supertrend_churn_resilience: Strategy = {
     defaultParams: {
         stPeriod: 10,
         stMultiplier: 3,
-        maxCrossings: 1,
-    },
+        maxCrossings: 1 },
     paramLabels: {
         stPeriod: "Supertrend Period",
         stMultiplier: "Supertrend Multiplier",
-        maxCrossings: "Max Allowed Crossings (20b)",
-    },
+        maxCrossings: "Max Allowed Crossings (20b)" },
     prepareFinderData: (data) => prepareSupertrendChurnResilienceData(data),
     executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
         const prepared = getPreparedSupertrendChurnResilienceData(preparedData, data);
@@ -109,6 +106,4 @@ export const supertrend_churn_resilience: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["stPeriod", "stMultiplier", "maxCrossings"],
-    },
-};
+        walkForwardParams: ["stPeriod", "stMultiplier", "maxCrossings"] } };

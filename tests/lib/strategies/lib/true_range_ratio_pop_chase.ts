@@ -7,12 +7,10 @@ export const true_range_ratio_pop_chase: Strategy = {
 	description: "When the current bar's true range is more than a multiple of the prior bar's true range, enter in the close direction.",
 	defaultParams: {
 		trMult: 1.2,
-		minCloseReturn: 0.001,
-	},
+		minCloseReturn: 0.001 },
 	paramLabels: {
 		trMult: "True Range Multiplier",
-		minCloseReturn: "Min Close Return",
-	},
+		minCloseReturn: "Min Close Return" },
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		const trMult = Number(params.trMult ?? 1.2);
@@ -39,6 +37,4 @@ export const true_range_ratio_pop_chase: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["trMult", "minCloseReturn"],
-	},
-};
+		walkForwardParams: ["trMult", "minCloseReturn"] } };

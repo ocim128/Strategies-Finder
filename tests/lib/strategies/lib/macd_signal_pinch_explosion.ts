@@ -9,13 +9,11 @@ export const macd_signal_pinch_explosion: Strategy = {
     defaultParams: {
         macdFast: 12,
         lookbackMin: 40,
-        rocTrigger: 1.5,
-    },
+        rocTrigger: 1.5 },
     paramLabels: {
         macdFast: "MACD Fast Period",
         lookbackMin: "Pinch Depth Horizon",
-        rocTrigger: "ROC Escape Magnitude",
-    },
+        rocTrigger: "ROC Escape Magnitude" },
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
         const lMin = params.lookbackMin as number;
@@ -63,6 +61,4 @@ export const macd_signal_pinch_explosion: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["macdFast", "lookbackMin", "rocTrigger"],
-    },
-};
+        walkForwardParams: ["macdFast", "lookbackMin", "rocTrigger"] } };

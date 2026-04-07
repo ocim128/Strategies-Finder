@@ -8,8 +8,7 @@ function normalizeEfficiencyPinchRocBreakoutParams(params: StrategyParams): Stra
 		...params,
 		lookback: Math.max(2, Math.round(params.lookback ?? 14)),
 		compressionMax: clamp(params.compressionMax ?? 0.25, 0, 1),
-		rocExpansionTarget: Math.max(0, params.rocExpansionTarget ?? 1.5),
-	};
+		rocExpansionTarget: Math.max(0, params.rocExpansionTarget ?? 1.5) };
 }
 
 export const efficiency_pinch_roc_breakout: Strategy = {
@@ -18,13 +17,11 @@ export const efficiency_pinch_roc_breakout: Strategy = {
 	defaultParams: {
 		lookback: 14,
 		compressionMax: 0.25,
-		rocExpansionTarget: 1.5,
-	},
+		rocExpansionTarget: 1.5 },
 	paramLabels: {
 		lookback: "Lookback",
 		compressionMax: "Compression Max",
-		rocExpansionTarget: "ROC Expansion Target (%)",
-	},
+		rocExpansionTarget: "ROC Expansion Target (%)" },
 	normalizeParams: normalizeEfficiencyPinchRocBreakoutParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -57,6 +54,4 @@ export const efficiency_pinch_roc_breakout: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["lookback", "compressionMax", "rocExpansionTarget"],
-	},
-};
+		walkForwardParams: ["lookback", "compressionMax", "rocExpansionTarget"] } };

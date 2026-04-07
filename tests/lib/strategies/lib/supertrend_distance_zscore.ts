@@ -22,8 +22,7 @@ function prepareSupertrendDistanceZscoreData(data: OHLCVData[]): SupertrendDista
 		closes: getCloses(cleanData),
 		supertrendByPeriod: new Map<number, ReturnType<typeof calculateSupertrend>>(),
 		distancesByPeriod: new Map<number, number[]>(),
-		zscoreByKey: new Map<string, (number | null)[]>(),
-	};
+		zscoreByKey: new Map<string, (number | null)[]>() };
 }
 
 function getPreparedSupertrendDistanceZscoreData(
@@ -42,13 +41,11 @@ export const supertrend_distance_zscore: Strategy = {
 	defaultParams: {
 		stPeriod: 10,
 		zscoreLookback: 50,
-		zscoreTrigger: 2.5,
-	},
+		zscoreTrigger: 2.5 },
 	paramLabels: {
 		stPeriod: "Supertrend ATR Baseline",
 		zscoreLookback: "Distance Distribution Window",
-		zscoreTrigger: "Elastic Snap Threshold",
-	},
+		zscoreTrigger: "Elastic Snap Threshold" },
 	prepareFinderData: (data) => prepareSupertrendDistanceZscoreData(data),
 	executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
 		const prepared = getPreparedSupertrendDistanceZscoreData(preparedData, data);
@@ -105,6 +102,4 @@ export const supertrend_distance_zscore: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["stPeriod", "zscoreLookback", "zscoreTrigger"],
-	},
-};
+		walkForwardParams: ["stPeriod", "zscoreLookback", "zscoreTrigger"] } };

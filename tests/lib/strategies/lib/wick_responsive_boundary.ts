@@ -8,8 +8,7 @@ function normalizeParams(params: StrategyParams): StrategyParams {
 	return {
 		...params,
 		boundary_lookback: boundaryLookback,
-		test_threshold: testThreshold,
-	};
+		test_threshold: testThreshold };
 }
 
 export const wick_responsive_boundary: Strategy = {
@@ -17,12 +16,10 @@ export const wick_responsive_boundary: Strategy = {
 	description: "A boundary forms where price repeatedly tests but fails to break through wicks. The boundary strength equals test count; break of strong boundary triggers entry.",
 	defaultParams: {
 		boundary_lookback: 15,
-		test_threshold: 3,
-	},
+		test_threshold: 3 },
 	paramLabels: {
 		boundary_lookback: "Boundary Lookback",
-		test_threshold: "Test Threshold",
-	},
+		test_threshold: "Test Threshold" },
 	normalizeParams: normalizeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -80,6 +77,4 @@ export const wick_responsive_boundary: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["boundary_lookback", "test_threshold"],
-	},
-};
+		walkForwardParams: ["boundary_lookback", "test_threshold"] } };

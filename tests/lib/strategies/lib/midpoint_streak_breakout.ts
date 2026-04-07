@@ -1,5 +1,5 @@
 import { Strategy, StrategyParams, OHLCVData } from "../../types/strategies";
-import { createSignalLoop, ensureCleanData } from "../strategy-helpers";
+import { createSignalLoop,  ensureCleanData } from "../strategy-helpers";
 import { buildRollingAverage } from "./price-action-frequency-core";
 
 interface MidpointStreakBreakoutParams extends StrategyParams {
@@ -11,8 +11,7 @@ function normalizeMidpointStreakBreakoutParams(params: StrategyParams): Strategy
 	const p = params as MidpointStreakBreakoutParams;
 	return {
 		maLookback: Math.max(5, Math.round(p.maLookback ?? 20)),
-		streakThreshold: Math.max(1, Math.round(p.streakThreshold ?? 3)),
-	};
+		streakThreshold: Math.max(1, Math.round(p.streakThreshold ?? 3)) };
 }
 
 export const midpoint_streak_breakout: Strategy = {
@@ -20,17 +19,14 @@ export const midpoint_streak_breakout: Strategy = {
 	description: "When bar midpoints cross a threshold with directional persistence, momentum is established. Enter in direction.",
 	defaultParams: {
 		maLookback: 20,
-		streakThreshold: 3,
-	},
+		streakThreshold: 3 },
 	paramLabels: {
 		maLookback: "MA Lookback",
-		streakThreshold: "Streak Threshold",
-	},
+		streakThreshold: "Streak Threshold" },
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["maLookback", "streakThreshold"],
-	},
+		walkForwardParams: ["maLookback", "streakThreshold"] },
 	normalizeParams: normalizeMidpointStreakBreakoutParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const p = normalizeMidpointStreakBreakoutParams(params) as MidpointStreakBreakoutParams;
@@ -103,5 +99,4 @@ export const midpoint_streak_breakout: Strategy = {
 
 			return null;
 		});
-	},
-};
+	} };

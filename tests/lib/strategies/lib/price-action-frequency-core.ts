@@ -38,8 +38,7 @@ export function getPriceActionBarMetrics(bar: OHLCVData): PriceActionBarMetrics 
 			midpoint,
 			bodyHigh,
 			bodyLow,
-			bodyMid,
-		};
+			bodyMid };
 	}
 
 	return {
@@ -52,8 +51,7 @@ export function getPriceActionBarMetrics(bar: OHLCVData): PriceActionBarMetrics 
 		midpoint,
 		bodyHigh,
 		bodyLow,
-		bodyMid,
-	};
+		bodyMid };
 }
 
 function buildMetricSeries(

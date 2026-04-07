@@ -6,8 +6,7 @@ function normalizeParams(params: StrategyParams): StrategyParams {
 	return {
 		keltnerPeriod: Math.max(5, Math.round(params.keltnerPeriod ?? 20)),
 		keltnerMultiplier: Math.max(0.1, Number(params.keltnerMultiplier ?? 1.5)),
-		channelWidthMaxRatio: Math.max(0, Number(params.channelWidthMaxRatio ?? 0.005)),
-	};
+		channelWidthMaxRatio: Math.max(0, Number(params.channelWidthMaxRatio ?? 0.005)) };
 }
 
 export const keltner_pinch_momentum_break: Strategy = {
@@ -16,13 +15,11 @@ export const keltner_pinch_momentum_break: Strategy = {
 	defaultParams: {
 		keltnerPeriod: 20,
 		keltnerMultiplier: 1.5,
-		channelWidthMaxRatio: 0.005,
-	},
+		channelWidthMaxRatio: 0.005 },
 	paramLabels: {
 		keltnerPeriod: "Keltner Period",
 		keltnerMultiplier: "Channel Multiplier",
-		channelWidthMaxRatio: "Max Width Ratio",
-	},
+		channelWidthMaxRatio: "Max Width Ratio" },
 	normalizeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -67,6 +64,4 @@ export const keltner_pinch_momentum_break: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["keltnerPeriod", "keltnerMultiplier", "channelWidthMaxRatio"],
-	},
-};
+		walkForwardParams: ["keltnerPeriod", "keltnerMultiplier", "channelWidthMaxRatio"] } };

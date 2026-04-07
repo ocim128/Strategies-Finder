@@ -7,8 +7,7 @@ function normalizeEfficiencyRatioPinchTriggerParams(params: StrategyParams): Str
 		...params,
 		erLookback: Math.max(2, Math.round(params.erLookback ?? 14)),
 		compressionThreshold: Math.max(0, params.compressionThreshold ?? 0.3),
-		rocTrigger: Math.max(0, params.rocTrigger ?? 1.5),
-	};
+		rocTrigger: Math.max(0, params.rocTrigger ?? 1.5) };
 }
 
 export const efficiency_ratio_pinch_trigger: Strategy = {
@@ -17,13 +16,11 @@ export const efficiency_ratio_pinch_trigger: Strategy = {
 	defaultParams: {
 		erLookback: 14,
 		compressionThreshold: 0.3,
-		rocTrigger: 1.5,
-	},
+		rocTrigger: 1.5 },
 	paramLabels: {
 		erLookback: "ER Lookback",
 		compressionThreshold: "Compression Threshold",
-		rocTrigger: "ROC Trigger (%)",
-	},
+		rocTrigger: "ROC Trigger (%)" },
 	normalizeParams: normalizeEfficiencyRatioPinchTriggerParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -54,6 +51,4 @@ export const efficiency_ratio_pinch_trigger: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["erLookback", "compressionThreshold", "rocTrigger"],
-	},
-};
+		walkForwardParams: ["erLookback", "compressionThreshold", "rocTrigger"] } };

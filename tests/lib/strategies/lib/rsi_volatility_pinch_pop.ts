@@ -9,13 +9,11 @@ export const rsi_volatility_pinch_pop: Strategy = {
 	defaultParams: {
 		rsiPeriod: 14,
 		pinchLookback: 30,
-		rocTarget: 10.0,
-	},
+		rocTarget: 10.0 },
 	paramLabels: {
 		rsiPeriod: "RSI Base Period",
 		pinchLookback: "RSI-ROC Rolling Minimum Window",
-		rocTarget: "Absolute RSI Velocity Trigger",
-	},
+		rocTarget: "Absolute RSI Velocity Trigger" },
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		const rPeriod = params.rsiPeriod as number;
@@ -62,6 +60,4 @@ export const rsi_volatility_pinch_pop: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["rsiPeriod", "pinchLookback", "rocTarget"],
-	},
-};
+		walkForwardParams: ["rsiPeriod", "pinchLookback", "rocTarget"] } };

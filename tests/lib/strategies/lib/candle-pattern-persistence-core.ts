@@ -68,8 +68,7 @@ export function computeCandlePatternPersistenceState(
         lows,
         closes,
         avgScore,
-        avgBodyPct,
-    };
+        avgBodyPct };
 }
 
 export function calculateCCI(

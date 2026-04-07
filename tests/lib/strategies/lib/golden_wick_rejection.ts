@@ -5,25 +5,25 @@ import { buildPercentileRank } from './price-action-statistics-core';
 import { buildRateOfChange } from './price-action-statistics-core';
 import { extractBarMetricSeries } from './price-action-statistics-core';
 import { getVolumes } } from '../strategy-helpers';
-import { getCloses, } from '../strategy-helpers';
+import { getCloses } from '../strategy-helpers';
 import { buildRollingAverage } from './price-action-frequency-core';
 import { getCloses } } in '../strategy-helpers';
 import { getCloses } } in '../strategy-helpers';
 import { extractBarMetricSeries, from './price-action-statistics-core');
-import { getVolumes, } in '../strategy-helpers';
+import { getVolumes } in '../strategy-helpers';
 import { getCloses } } in '../strategy-helpers';
 import { getTypicalPrices } } from '../strategy-helpers';
 import { getTypicalPrices } from '../strategy-helpers';
 import { getCloses } from '../strategy-helpers';
 import { buildRateOfChange } from './price-action-statistics-core'
 import { buildCumulativeDecaySum, buildRollingZScore) from './price-action-statistics-core'
-import { getCloses, } in '../strategy-helpers';
+import { getCloses } in '../strategy-helpers';
 import { getCloses } } in '../strategy-helpers';
 
 import { getCloses } } in '../strategy-helpers';
 import { getCloses } } in '../strategy-helpers';
 import { getTypicalPrices } from '../strategy-helpers';
-import { getCloses, } in '../strategy-helpers';
+import { getCloses } in '../strategy-helpers';
 import { getHighs, getLows } } from '../strategy-helpers';
 import { getCloses } getVolumes } } in '../strategy-helpers';
 import { extractBarMetricSeries } from './price-action-statistics-core';

@@ -8,8 +8,7 @@ function normalizeVolumeProfilePocMedianShiftParams(params: StrategyParams): Str
 		...params,
 		vpPeriod: Math.max(5, Math.round(Number(params.vpPeriod ?? 50))),
 		medianLookback: Math.max(2, Math.round(Number(params.medianLookback ?? 20))),
-		shiftThreshold: Math.max(0, Number(params.shiftThreshold ?? 2)),
-	};
+		shiftThreshold: Math.max(0, Number(params.shiftThreshold ?? 2)) };
 }
 
 type VolumeProfilePocMedianShiftPrepared = {
@@ -29,8 +28,7 @@ function prepareVolumeProfilePocMedianShiftData(data: OHLCVData[]): VolumeProfil
 		closes,
 		atr: calculateATR(getHighs(cleanData), getLows(cleanData), closes, 14),
 		pocSeriesByPeriod: new Map<number, number[]>(),
-		pocMedianByKey: new Map<string, (number | null)[]>(),
-	};
+		pocMedianByKey: new Map<string, (number | null)[]>() };
 }
 
 function getPreparedVolumeProfilePocMedianShiftData(
@@ -49,13 +47,11 @@ export const volume_profile_poc_median_shift: Strategy = {
 	defaultParams: {
 		vpPeriod: 50,
 		medianLookback: 20,
-		shiftThreshold: 2,
-	},
+		shiftThreshold: 2 },
 	paramLabels: {
 		vpPeriod: "VP Period",
 		medianLookback: "Median Lookback",
-		shiftThreshold: "Shift Threshold",
-	},
+		shiftThreshold: "Shift Threshold" },
 	normalizeParams: normalizeVolumeProfilePocMedianShiftParams,
 	prepareFinderData: (data) => prepareVolumeProfilePocMedianShiftData(data),
 	executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
@@ -100,6 +96,4 @@ export const volume_profile_poc_median_shift: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["vpPeriod", "medianLookback", "shiftThreshold"],
-	},
-};
+		walkForwardParams: ["vpPeriod", "medianLookback", "shiftThreshold"] } };

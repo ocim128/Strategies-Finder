@@ -12,11 +12,9 @@ export const median_deviation_streak_v7: Strategy = {
 	description:
 		"Simplified: fires directly when close is above or below the rolling median. No streak counting — just pure median position.",
 	defaultParams: {
-		medianLookback: 117,
-	},
+		medianLookback: 117 },
 	paramLabels: {
-		medianLookback: "Median Lookback",
-	},
+		medianLookback: "Median Lookback" },
 	normalizeParams: normalizeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -45,6 +43,4 @@ export const median_deviation_streak_v7: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["medianLookback"],
-	},
-};
+		walkForwardParams: ["medianLookback"] } };

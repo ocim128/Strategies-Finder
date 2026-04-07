@@ -6,8 +6,7 @@ function normalizeParams(params: StrategyParams): StrategyParams {
 	return {
 		...params,
 		lookback: Math.max(2, Math.round(params.lookback ?? 20)),
-		z_thresh: Number(params.z_thresh ?? 2.5),
-	};
+		z_thresh: Number(params.z_thresh ?? 2.5) };
 }
 
 export const typical_price_zscore_reversion: Strategy = {
@@ -15,12 +14,10 @@ export const typical_price_zscore_reversion: Strategy = {
 	description: "Typical price (H+L+C)/3 captures true bar gravity; extreme z-score deviations from its own mean revert sharply.",
 	defaultParams: {
 		lookback: 20,
-		z_thresh: 2.5,
-	},
+		z_thresh: 2.5 },
 	paramLabels: {
 		lookback: "Z-Score Lookback",
-		z_thresh: "Z-Score Threshold",
-	},
+		z_thresh: "Z-Score Threshold" },
 	normalizeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -47,6 +44,4 @@ export const typical_price_zscore_reversion: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["lookback", "z_thresh"],
-	},
-};
+		walkForwardParams: ["lookback", "z_thresh"] } };

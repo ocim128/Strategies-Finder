@@ -7,8 +7,7 @@ function normalizeParams(params: StrategyParams): StrategyParams {
 		...params,
 		rankLookback: Math.max(2, Math.round(params.rankLookback ?? 30)),
 		deadzoneWidth: Math.max(0, Math.min(50, Number(params.deadzoneWidth ?? 15))),
-		launchThreshold: Math.max(50, Math.min(100, Number(params.launchThreshold ?? 90))),
-	};
+		launchThreshold: Math.max(50, Math.min(100, Number(params.launchThreshold ?? 90))) };
 }
 
 export const percentile_rank_deadzone_launch: Strategy = {
@@ -17,13 +16,11 @@ export const percentile_rank_deadzone_launch: Strategy = {
 	defaultParams: {
 		rankLookback: 30,
 		deadzoneWidth: 15,
-		launchThreshold: 90,
-	},
+		launchThreshold: 90 },
 	paramLabels: {
 		rankLookback: "Rank Lookback",
 		deadzoneWidth: "Deadzone +/-",
-		launchThreshold: "Launch Threshold",
-	},
+		launchThreshold: "Launch Threshold" },
 	normalizeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -71,6 +68,4 @@ export const percentile_rank_deadzone_launch: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["rankLookback", "deadzoneWidth", "launchThreshold"],
-	},
-};
+		walkForwardParams: ["rankLookback", "deadzoneWidth", "launchThreshold"] } };

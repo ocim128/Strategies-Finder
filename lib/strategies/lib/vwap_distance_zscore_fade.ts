@@ -7,8 +7,7 @@ function normalizeParams(params: StrategyParams): StrategyParams {
 	return {
 		...params,
 		z_lookback: Math.max(2, Math.round(params.z_lookback ?? 50)),
-		z_thresh: Number(params.z_thresh ?? 3.0),
-	};
+		z_thresh: Number(params.z_thresh ?? 3.0) };
 }
 
 export const vwap_distance_zscore_fade: Strategy = {
@@ -16,12 +15,10 @@ export const vwap_distance_zscore_fade: Strategy = {
 	description: "Continuous VWAP acts as the true market mean. When the absolute distance from price to VWAP reaches a statistical extreme, it snaps back.",
 	defaultParams: {
 		z_lookback: 50,
-		z_thresh: 3.0,
-	},
+		z_thresh: 3.0 },
 	paramLabels: {
 		z_lookback: "Z-Score Lookback",
-		z_thresh: "Z-Score Threshold",
-	},
+		z_thresh: "Z-Score Threshold" },
 	normalizeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -56,6 +53,4 @@ export const vwap_distance_zscore_fade: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["z_lookback", "z_thresh"],
-	},
-};
+		walkForwardParams: ["z_lookback", "z_thresh"] } };

@@ -12,8 +12,7 @@ function normalizeZscoreKurtosisRegimeParams(params: StrategyParams): StrategyPa
 		...params,
 		zscorePeriod,
 		kurtosisLookback,
-		kurtosisThreshold,
-	};
+		kurtosisThreshold };
 }
 
 export const zscore_kurtosis_regime: Strategy = {
@@ -22,13 +21,11 @@ export const zscore_kurtosis_regime: Strategy = {
 	defaultParams: {
 		zscorePeriod: 20,
 		kurtosisLookback: 30,
-		kurtosisThreshold: 3.0,
-	},
+		kurtosisThreshold: 3.0 },
 	paramLabels: {
 		zscorePeriod: "ZScore Period",
 		kurtosisLookback: "Kurtosis Lookback",
-		kurtosisThreshold: "Kurtosis Threshold",
-	},
+		kurtosisThreshold: "Kurtosis Threshold" },
 	normalizeParams: normalizeZscoreKurtosisRegimeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -95,6 +92,4 @@ export const zscore_kurtosis_regime: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["zscorePeriod", "kurtosisLookback", "kurtosisThreshold"],
-	},
-};
+		walkForwardParams: ["zscorePeriod", "kurtosisLookback", "kurtosisThreshold"] } };

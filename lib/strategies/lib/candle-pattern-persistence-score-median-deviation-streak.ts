@@ -1,8 +1,7 @@
 import { Strategy, StrategyParams, OHLCVData } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import {
-    CPPS_MIN_BODY_PCT_HARDCODED,
-} from "./candle-pattern-persistence-core";
+    CPPS_MIN_BODY_PCT_HARDCODED } from "./candle-pattern-persistence-core";
 import { buildRollingMedian, buildStreakCount } from "./price-action-statistics-core";
 
 function normalizeCandlePatternPersistenceScoreMedianDeviationStreakParams(params: StrategyParams): StrategyParams {
@@ -12,8 +11,7 @@ function normalizeCandlePatternPersistenceScoreMedianDeviationStreakParams(param
     return {
         ...params,
         scoreLookback,
-        medianLookback,
-    };
+        medianLookback };
 }
 
 type CandlePatternPersistenceMedianDeviationPrepared = {
@@ -66,8 +64,7 @@ function prepareCandlePatternPersistenceMedianDeviationData(
         avgScoreByLookback: new Map<number, (number | null)[]>(),
         avgBodyPctByLookback: new Map<number, (number | null)[]>(),
         medianByLookback: new Map<number, (number | null)[]>(),
-        streakByLookback: new Map<number, number[]>(),
-    };
+        streakByLookback: new Map<number, number[]>() };
 }
 
 function getPreparedCandlePatternPersistenceMedianDeviationData(
@@ -143,12 +140,10 @@ export const candle_pattern_persistence_score_median_deviation_streak: Strategy 
     description: "CPPS entries filtered by same-direction rolling median streak persistence, with Min Avg Body % disabled.",
     defaultParams: {
         scoreLookback: 5,
-        medianLookback: 20,
-    },
+        medianLookback: 20 },
     paramLabels: {
         scoreLookback: "Score Window (bars)",
-        medianLookback: "Median Lookback",
-    },
+        medianLookback: "Median Lookback" },
     normalizeParams: normalizeCandlePatternPersistenceScoreMedianDeviationStreakParams,
     prepareFinderData: (data) => prepareCandlePatternPersistenceMedianDeviationData(data),
     executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
@@ -195,6 +190,4 @@ export const candle_pattern_persistence_score_median_deviation_streak: Strategy 
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["scoreLookback", "medianLookback"],
-    },
-};
+        walkForwardParams: ["scoreLookback", "medianLookback"] } };

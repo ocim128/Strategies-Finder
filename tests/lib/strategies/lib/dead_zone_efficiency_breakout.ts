@@ -8,8 +8,7 @@ function normalizeDeadZoneEfficiencyBreakoutParams(params: StrategyParams): Stra
 		...params,
 		window: Math.max(2, Math.round(params.window ?? 14)),
 		max_er_threshold: clamp(params.max_er_threshold ?? 0.2, 0, 1),
-		roc_trigger: Math.max(0, params.roc_trigger ?? 1.5),
-	};
+		roc_trigger: Math.max(0, params.roc_trigger ?? 1.5) };
 }
 
 export const dead_zone_efficiency_breakout: Strategy = {
@@ -18,13 +17,11 @@ export const dead_zone_efficiency_breakout: Strategy = {
 	defaultParams: {
 		window: 14,
 		max_er_threshold: 0.2,
-		roc_trigger: 1.5,
-	},
+		roc_trigger: 1.5 },
 	paramLabels: {
 		window: "Window",
 		max_er_threshold: "Max ER Threshold",
-		roc_trigger: "ROC Trigger (%)",
-	},
+		roc_trigger: "ROC Trigger (%)" },
 	normalizeParams: normalizeDeadZoneEfficiencyBreakoutParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -55,6 +52,4 @@ export const dead_zone_efficiency_breakout: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["window", "max_er_threshold", "roc_trigger"],
-	},
-};
+		walkForwardParams: ["window", "max_er_threshold", "roc_trigger"] } };

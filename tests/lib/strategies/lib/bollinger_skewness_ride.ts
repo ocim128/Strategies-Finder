@@ -9,13 +9,11 @@ export const bollinger_skewness_ride: Strategy = {
     defaultParams: {
         bbPeriod: 20,
         bbMult: 2.0,
-        skewThreshold: 0.4,
-    },
+        skewThreshold: 0.4 },
     paramLabels: {
         bbPeriod: "Bollinger Trailing Base",
         bbMult: "Envelope Width Reach",
-        skewThreshold: "Required Path Distribution Bias",
-    },
+        skewThreshold: "Required Path Distribution Bias" },
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
         const bPeriod = params.bbPeriod as number;
@@ -66,6 +64,4 @@ export const bollinger_skewness_ride: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["bbPeriod", "bbMult", "skewThreshold"],
-    },
-};
+        walkForwardParams: ["bbPeriod", "bbMult", "skewThreshold"] } };

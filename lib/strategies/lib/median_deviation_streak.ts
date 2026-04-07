@@ -10,8 +10,7 @@ function normalizeMedianDeviationStreakParams(params: StrategyParams): StrategyP
 	return {
 		...params,
 		medianLookback,
-		streakThreshold,
-	};
+		streakThreshold };
 }
 
 export const median_deviation_streak: Strategy = {
@@ -19,12 +18,10 @@ export const median_deviation_streak: Strategy = {
 	description: "Tracks consecutive bars where the close remains above or below its rolling median, and enters when the streak reaches a persistence threshold.",
 	defaultParams: {
 		medianLookback: 20,
-		streakThreshold: 5,
-	},
+		streakThreshold: 5 },
 	paramLabels: {
 		medianLookback: "Median Lookback",
-		streakThreshold: "Streak Threshold",
-	},
+		streakThreshold: "Streak Threshold" },
 	normalizeParams: normalizeMedianDeviationStreakParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -60,6 +57,4 @@ export const median_deviation_streak: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["medianLookback", "streakThreshold"],
-	},
-};
+		walkForwardParams: ["medianLookback", "streakThreshold"] } };

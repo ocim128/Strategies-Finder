@@ -11,8 +11,7 @@ function normalizePoly5mPivotBreakoutEntryParams(params: StrategyParams): Strate
 		...params,
 		pivotLookback,
 		breakoutBars,
-		minRoc,
-	};
+		minRoc };
 }
 
 export const poly_5m_pivot_breakout_entry: Strategy = {
@@ -21,13 +20,11 @@ export const poly_5m_pivot_breakout_entry: Strategy = {
 	defaultParams: {
 		pivotLookback: 12,
 		breakoutBars: 2,
-		minRoc: 0.15,
-	},
+		minRoc: 0.15 },
 	paramLabels: {
 		pivotLookback: "Pivot Lookback",
 		breakoutBars: "Breakout Bars",
-		minRoc: "Min ROC",
-	},
+		minRoc: "Min ROC" },
 	normalizeParams: normalizePoly5mPivotBreakoutEntryParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -114,6 +111,4 @@ export const poly_5m_pivot_breakout_entry: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["pivotLookback", "breakoutBars", "minRoc"],
-	},
-};
+		walkForwardParams: ["pivotLookback", "breakoutBars", "minRoc"] } };

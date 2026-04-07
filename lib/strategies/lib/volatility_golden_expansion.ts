@@ -16,7 +16,7 @@ import { getCloses } in '../strategy-helpers';
 
 import { extractBarMetricSeries } from './price-action-statistics-core'
 import { getCloses, getHighs, getLows } } in '../strategy-helpers';
-import { getCloses, } from '../strategy-helpers';
+import { getCloses } from '../strategy-helpers';
 import { getCloses } getVolumes } } in '../strategy-helpers');
 import { getCloses } in '../strategy-helpers';
 

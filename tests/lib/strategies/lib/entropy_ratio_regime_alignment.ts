@@ -21,8 +21,7 @@ function prepareEntropyRatioData(data: OHLCVData[]): EntropyRatioPrepared {
     return {
         cleanData,
         closes,
-        medianByWindow: new Map<number, number[]>(),
-    };
+        medianByWindow: new Map<number, number[]>() };
 }
 
 function getPreparedEntropyRatioData(preparedData: unknown, data: OHLCVData[]): EntropyRatioPrepared {
@@ -37,19 +36,16 @@ function normalizeEntropyRatioParams(params: StrategyParams): StrategyParams {
     const slowWindow = Math.max(2, Math.round(Number.isFinite(rawSlowWindow) ? rawSlowWindow : 30));
 
     return {
-        slowWindow,
-    };
+        slowWindow };
 }
 
 export const entropy_ratio_regime_alignment: Strategy = {
     name: "Entropy Ratio Regime Alignment",
     description: `Trendable regimes are filtered by a fixed entropy-ratio gate (fast=${FIXED_FAST_ENTROPY_WINDOW}, threshold=${FIXED_ENTROPY_RATIO_THRESHOLD}) and enter when price aligns with its slow rolling median.`,
     defaultParams: {
-        slowWindow: 30,
-    },
+        slowWindow: 30 },
     paramLabels: {
-        slowWindow: "Slow Entropy & Median Window",
-    },
+        slowWindow: "Slow Entropy & Median Window" },
     normalizeParams: normalizeEntropyRatioParams,
     prepareFinderData: (data) => prepareEntropyRatioData(data),
     executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
@@ -88,6 +84,4 @@ export const entropy_ratio_regime_alignment: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["slowWindow"],
-    },
-};
+        walkForwardParams: ["slowWindow"] } };

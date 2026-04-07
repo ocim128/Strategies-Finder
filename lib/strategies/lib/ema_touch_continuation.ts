@@ -7,12 +7,10 @@ export const ema_touch_continuation: Strategy = {
 	description: "When close touches a short EMA and closes on the same side, enter in the close direction. Tests micro-bounces.",
 	defaultParams: {
 		emaPeriod: 8,
-		touchPct: 0.001,
-	},
+		touchPct: 0.001 },
 	paramLabels: {
 		emaPeriod: "EMA Period",
-		touchPct: "Max Distance from EMA",
-	},
+		touchPct: "Max Distance from EMA" },
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		const closes = getCloses(cleanData);
@@ -42,6 +40,4 @@ export const ema_touch_continuation: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["emaPeriod", "touchPct"],
-	},
-};
+		walkForwardParams: ["emaPeriod", "touchPct"] } };

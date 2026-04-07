@@ -8,12 +8,10 @@ export const crossing_churn_suppression: Strategy = {
 	description: "Identifies low-churn directional regimes by requiring that price stays on one side of a rolling average with minimal crossing events.",
 	defaultParams: {
 		maPeriod: 20,
-		maxCrossings: 2,
-	},
+		maxCrossings: 2 },
 	paramLabels: {
 		maPeriod: "MA Period",
-		maxCrossings: "Max Crossings",
-	},
+		maxCrossings: "Max Crossings" },
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		if (cleanData.length < params.maPeriod * 2) return [];
@@ -56,6 +54,4 @@ export const crossing_churn_suppression: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["maPeriod", "maxCrossings"],
-	},
-};
+		walkForwardParams: ["maPeriod", "maxCrossings"] } };

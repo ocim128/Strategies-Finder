@@ -8,8 +8,7 @@ function normalizeParams(params: StrategyParams): StrategyParams {
 		...params,
 		ema_period: Math.max(2, Math.round(params.ema_period ?? 50)),
 		er_lookback: Math.max(2, Math.round(params.er_lookback ?? 10)),
-		er_thresh: Number(params.er_thresh ?? 0.8),
-	};
+		er_thresh: Number(params.er_thresh ?? 0.8) };
 }
 
 export const ema_distance_efficiency_snapback: Strategy = {
@@ -18,13 +17,11 @@ export const ema_distance_efficiency_snapback: Strategy = {
 	defaultParams: {
 		ema_period: 50,
 		er_lookback: 10,
-		er_thresh: 0.8,
-	},
+		er_thresh: 0.8 },
 	paramLabels: {
 		ema_period: "EMA Period",
 		er_lookback: "ER Lookback",
-		er_thresh: "ER Threshold",
-	},
+		er_thresh: "ER Threshold" },
 	normalizeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -66,6 +63,4 @@ export const ema_distance_efficiency_snapback: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["ema_period", "er_lookback", "er_thresh"],
-	},
-};
+		walkForwardParams: ["ema_period", "er_lookback", "er_thresh"] } };

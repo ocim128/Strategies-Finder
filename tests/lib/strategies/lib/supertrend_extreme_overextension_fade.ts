@@ -10,14 +10,12 @@ export const supertrend_extreme_overextension_fade: Strategy = {
         stPeriod: 10,
         stFactor: 3.0,
 		zLookback: 50,
-		zThresh: 2.5,
-	},
+		zThresh: 2.5 },
 	paramLabels: {
         stPeriod: "Supertrend Period",
         stFactor: "Supertrend Factor",
 		zLookback: "Distance Z-Score Lookback",
-		zThresh: "Z-Score Threshold",
-	},
+		zThresh: "Z-Score Threshold" },
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
 		const closes = getCloses(cleanData);
@@ -57,6 +55,4 @@ export const supertrend_extreme_overextension_fade: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["stPeriod", "stFactor", "zLookback", "zThresh"],
-	},
-};
+		walkForwardParams: ["stPeriod", "stFactor", "zLookback", "zThresh"] } };

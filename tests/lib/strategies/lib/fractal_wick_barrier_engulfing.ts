@@ -12,12 +12,10 @@ export const fractal_wick_barrier_engulfing: Strategy = {
 	description: "Multiple nearly identical price extrusions forming a tight cluster creates a liquidity wall; a clean break immediately beyond it guarantees a liquidation cascade.",
 	defaultParams: {
 		barrier_lookback: 8,
-		touch_count: 3,
-	},
+		touch_count: 3 },
 	paramLabels: {
 		barrier_lookback: "Barrier Lookback",
-		touch_count: "Touch Count",
-	},
+		touch_count: "Touch Count" },
 	normalizeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -78,6 +76,4 @@ export const fractal_wick_barrier_engulfing: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["barrier_lookback", "touch_count"],
-	},
-};
+		walkForwardParams: ["barrier_lookback", "touch_count"] } };

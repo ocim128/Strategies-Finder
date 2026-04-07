@@ -45,14 +45,12 @@ function resolveSecondsToNextClose(
 	if (nowSec < baseCloseSec) {
 		return {
 			secondsToClose: baseCloseSec - nowSec,
-			stale: false,
-		};
+			stale: false };
 	}
 
 	return {
 		secondsToClose: null,
-		stale: true,
-	};
+		stale: true };
 }
 
 function buildUnavailablePreview(note: string): EntryPreview {
@@ -70,17 +68,14 @@ function buildUnavailablePreview(note: string): EntryPreview {
 			eyebrow: "Forming Bar",
 			headline: "Preview unavailable",
 			detail: note,
-			tone: "neutral",
-		},
+			tone: "neutral" },
 		meta: {
 			nearestSide: "none",
 			secondsToClose: null,
 			isClosedBarPreview: false,
-			isStaleData: false,
-		},
+			isStaleData: false },
 		rows: [],
-		note,
-	};
+		note };
 }
 
 function formatThresholdState(gap: number, triggerLabel: string): string {
@@ -99,8 +94,7 @@ export function buildDeadzoneOrbAsymmetricLivePreview(
 		deadzoneLookback: Math.max(3, Math.round(params.deadzoneLookback ?? 20)),
 		efficiencyCeiling: Number(params.efficiencyCeiling ?? 0.15),
 		longBreakoutZscore: Number(params.longBreakoutZscore ?? 2),
-		shortBreakoutZscore: Number(params.shortBreakoutZscore ?? 3),
-	};
+		shortBreakoutZscore: Number(params.shortBreakoutZscore ?? 3) };
 
 	// Validate params are finite numbers to prevent downstream NaN propagation
 	if (
@@ -184,27 +178,23 @@ export function buildDeadzoneOrbAsymmetricLivePreview(
 				eyebrow: "Forming Bar",
 				headline: "Would confirm long now",
 				detail: `ER gate is active and z-score is ${Math.abs(zValue).toFixed(3)} on the long side.`,
-				tone: "positive" as const,
-			}
+				tone: "positive" as const }
 			: direction === "short"
 				? {
 					eyebrow: "Forming Bar",
 					headline: "Would confirm short now",
 					detail: `ER gate is active and z-score is ${Math.abs(zValue).toFixed(3)} on the short side.`,
-					tone: "negative" as const,
-				}
+					tone: "negative" as const }
 				: {
 					eyebrow: "Forming Bar",
 					headline: "No breakout confirm yet",
 					detail: `${nearestSide} side is closest with ${Math.abs(nearestGap).toFixed(3)} left before trigger.`,
-					tone: "waiting" as const,
-				}
+					tone: "waiting" as const }
 		: {
 			eyebrow: "Forming Bar",
 			headline: "Deadzone gate not active",
 			detail: `Efficiency ratio is still above the ${p.efficiencyCeiling.toFixed(3)} ceiling.`,
-			tone: "neutral" as const,
-		};
+			tone: "neutral" as const };
 
 	return {
 		mode: 0,
@@ -224,13 +214,11 @@ export function buildDeadzoneOrbAsymmetricLivePreview(
 			deadzoneActive,
 			secondsToClose,
 			isClosedBarPreview: false,
-			isStaleData,
-		},
+			isStaleData },
 		rows,
 		note: isStaleData
 			? "Latest candle is stale relative to your local clock. Running backtest again does not fetch new candles; use Refresh Data or a live feed to update the forming-bar preview."
 			: deadzoneActive
 				? "Preview only. It uses the forming bar and can disappear before the candle closes."
-				: "Deadzone gate is not active on the forming bar yet. Wait for ER to compress before trusting the breakout preview.",
-	};
+				: "Deadzone gate is not active on the forming bar yet. Wait for ER to compress before trusting the breakout preview." };
 }

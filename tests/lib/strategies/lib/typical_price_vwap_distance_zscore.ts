@@ -7,8 +7,7 @@ function normalizeParams(params: StrategyParams): StrategyParams {
 	return {
 		...params,
 		z_lookback: Math.max(2, Math.round(params.z_lookback ?? 40)),
-		z_thresh: Number(params.z_thresh ?? 2.5),
-	};
+		z_thresh: Number(params.z_thresh ?? 2.5) };
 }
 
 export const typical_price_vwap_distance_zscore: Strategy = {
@@ -16,12 +15,10 @@ export const typical_price_vwap_distance_zscore: Strategy = {
 	description: "Using Typical Price instead of Close removes end-of-bar gaming. A Z-score of the distance between Typical Price and VWAP catches pure intraday overextensions.",
 	defaultParams: {
 		z_lookback: 40,
-		z_thresh: 2.5,
-	},
+		z_thresh: 2.5 },
 	paramLabels: {
 		z_lookback: "Z-Score Lookback",
-		z_thresh: "Z-Score Threshold",
-	},
+		z_thresh: "Z-Score Threshold" },
 	normalizeParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -56,6 +53,4 @@ export const typical_price_vwap_distance_zscore: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["z_lookback", "z_thresh"],
-	},
-};
+		walkForwardParams: ["z_lookback", "z_thresh"] } };

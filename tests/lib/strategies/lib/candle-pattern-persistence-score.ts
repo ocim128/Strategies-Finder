@@ -5,8 +5,7 @@ function normalizeCandlePatternPersistenceScoreParams(params: StrategyParams): S
     const normalized: StrategyParams = {
         ...params,
         scoreLookback: Math.max(2, Math.round(params.scoreLookback ?? 5)),
-        scoreThreshold: 0,
-    };
+        scoreThreshold: 0 };
 
     if ('minBodyPct' in params) {
         normalized.minBodyPct = 0;
@@ -19,11 +18,9 @@ export const candle_pattern_persistence_score: Strategy = {
     name: "Candle Pattern Persistence Score",
     description: "Builds a rolling directional candle-structure score and triggers entries when persistence crosses zero, with Persistence Threshold and Min Avg Body % disabled.",
     defaultParams: {
-        scoreLookback: 5,
-    },
+        scoreLookback: 5 },
     paramLabels: {
-        scoreLookback: "Score Window (bars)",
-    },
+        scoreLookback: "Score Window (bars)" },
     normalizeParams: normalizeCandlePatternPersistenceScoreParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
@@ -81,7 +78,5 @@ export const candle_pattern_persistence_score: Strategy = {
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["scoreLookback"],
-    },
-};
+        walkForwardParams: ["scoreLookback"] } };
 

@@ -51,6 +51,4 @@ export const velocity_percentile_phi_snap: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["velocityWindow", "erLookback", "phiInefficiency"],
-	},
-};
+		walkForwardParams: ["velocityWindow", "erLookback", "phiInefficiency"] } };

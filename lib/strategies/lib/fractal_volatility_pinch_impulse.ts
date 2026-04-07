@@ -11,8 +11,7 @@ function normalizeFractalVolatilityPinchImpulseParams(params: StrategyParams): S
 			Math.round(params.slow_std_window ?? 50)
 		),
 		pinch_ratio: Math.max(0, params.pinch_ratio ?? 0.5),
-		roc_trigger: Math.max(0, params.roc_trigger ?? 1.5),
-	};
+		roc_trigger: Math.max(0, params.roc_trigger ?? 1.5) };
 }
 
 export const fractal_volatility_pinch_impulse: Strategy = {
@@ -22,14 +21,12 @@ export const fractal_volatility_pinch_impulse: Strategy = {
 		fast_std_window: 10,
 		slow_std_window: 50,
 		pinch_ratio: 0.5,
-		roc_trigger: 1.5,
-	},
+		roc_trigger: 1.5 },
 	paramLabels: {
 		fast_std_window: "Fast StdDev Window",
 		slow_std_window: "Slow StdDev Window",
 		pinch_ratio: "Pinch Ratio",
-		roc_trigger: "ROC Trigger (%)",
-	},
+		roc_trigger: "ROC Trigger (%)" },
 	normalizeParams: normalizeFractalVolatilityPinchImpulseParams,
 	execute: (data: OHLCVData[], params: StrategyParams) => {
 		const cleanData = ensureCleanData(data);
@@ -78,6 +75,4 @@ export const fractal_volatility_pinch_impulse: Strategy = {
 	metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["fast_std_window", "slow_std_window", "pinch_ratio", "roc_trigger"],
-	},
-};
+		walkForwardParams: ["fast_std_window", "slow_std_window", "pinch_ratio", "roc_trigger"] } };

@@ -6,8 +6,7 @@ function normalizeWickImbalanceDecayFadeParams(params: StrategyParams): Strategy
 	return {
 		...params,
 		decayRate: Math.max(0.01, Math.min(0.999, Number(params.decayRate ?? 0.75))),
-		zscoreExtreme: Math.max(0.5, Number(params.zscoreExtreme ?? 2.5)),
-	};
+		zscoreExtreme: Math.max(0.5, Number(params.zscoreExtreme ?? 2.5)) };
 }
 
 export const wick_imbalance_decay_fade: Strategy = {
@@ -15,12 +14,10 @@ export const wick_imbalance_decay_fade: Strategy = {
 	description: 'Models sequential wick rejections as a coiled spring using a cumulative decay sum. When the decayed sum reaches a statistical extreme, the rejection is exhausted.',
 	defaultParams: {
 		decayRate: 0.75,
-		zscoreExtreme: 2.5,
-	},
+		zscoreExtreme: 2.5 },
 	paramLabels: {
 		decayRate: 'Decay Rate',
-		zscoreExtreme: 'Z-Score Extreme',
-	},
+		zscoreExtreme: 'Z-Score Extreme' },
 	normalizeParams: normalizeWickImbalanceDecayFadeParams,
 	execute: (data, params) => {
 		const cleanData = ensureCleanData(data);
@@ -51,6 +48,4 @@ export const wick_imbalance_decay_fade: Strategy = {
 	metadata: {
 		role: 'entry',
 		direction: 'both',
-		walkForwardParams: ['decayRate', 'zscoreExtreme'],
-	},
-};
+		walkForwardParams: ['decayRate', 'zscoreExtreme'] } };
