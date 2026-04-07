@@ -66,7 +66,7 @@ export async function loadSqliteCandles(
     symbol: string,
     interval: string,
     limit = 50000
-): Promise<OHLCVData[] | null> {
+): Promise<{ candles: OHLCVData[]; trusted: boolean } | null> {
     const available = await checkSqliteApiAvailable();
     if (!available) return null;
 
@@ -113,7 +113,7 @@ export async function loadSqliteCandles(
             });
         }
 
-        return candles;
+        return { candles, trusted: true };
     } catch {
         sqliteApiAvailable = false;
         sqliteApiCheckedAt = Date.now();

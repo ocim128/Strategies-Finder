@@ -794,9 +794,9 @@ export class DataManager {
         }
 
         const sqliteRaw = await loadSqliteCandles(storageSymbol, storageInterval, normalizedLimit);
-        if (sqliteRaw && sqliteRaw.length > 0) {
+        if (sqliteRaw && sqliteRaw.candles.length > 0) {
             candidates.push({
-                candles: this.takeLastCandles(this.normalizeExternalCandles(sqliteRaw), normalizedLimit),
+                candles: this.takeLastCandles(this.normalizeExternalCandles(sqliteRaw.candles), normalizedLimit),
                 source: 'sqlite',
             });
         }
@@ -1164,9 +1164,9 @@ export class DataManager {
 
         const sqliteRaw = await loadSqliteCandles(storageSymbol, storageInterval, effectiveMaxBars);
         const sqliteLoadedCandles = sqliteRaw
-            ? this.sanitizeBinanceCandles(symbol, storageInterval, sqliteRaw, 'sqlite')
+            ? this.sanitizeBinanceCandles(symbol, storageInterval, sqliteRaw.candles, 'sqlite')
             : null;
-        const sqliteSanitized = Boolean(sqliteRaw && sqliteLoadedCandles && sqliteLoadedCandles.length < sqliteRaw.length);
+        const sqliteSanitized = Boolean(sqliteRaw && sqliteLoadedCandles && sqliteLoadedCandles.length < sqliteRaw.candles.length);
         const sqliteCachedCandles = sqliteLoadedCandles;
         const hasSqliteBase = Boolean(sqliteCachedCandles && sqliteCachedCandles.length > 0);
 

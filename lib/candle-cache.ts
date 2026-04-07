@@ -28,6 +28,7 @@ export type CachedCandles = {
     candles: OHLCVData[];
     updatedAt: number;
     source: CandleCacheSource | string;
+    trusted?: boolean;
 };
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
@@ -304,7 +305,14 @@ async function loadSp500IndividualAnalysisCandles(
     return null;
 }
 
-function sortAndDedupeCandles(candles: OHLCVData[]): OHLCVData[] {
+function sortAndDedupeCandles(candles: OHLCVData[], trusted = false): OHLCVData[] {
+    if (trusted) {
+        if (candles.length > MAX_CANDLES_PER_SERIES) {
+            return candles.slice(-MAX_CANDLES_PER_SERIES);
+        }
+        return candles;
+    }
+
     const normalized = candles
         .filter((bar): bar is OHLCVData => isParsedCandle(bar))
         .slice()
@@ -322,7 +330,10 @@ function sortAndDedupeCandles(candles: OHLCVData[]): OHLCVData[] {
     return deduped.slice(-MAX_CANDLES_PER_SERIES);
 }
 
-function sanitizeCandles(candles: unknown[]): OHLCVData[] {
+function sanitizeCandles(candles: unknown[], trusted = false): OHLCVData[] {
+    if (trusted) {
+        return sortAndDedupeCandles(candles as OHLCVData[], true);
+    }
     const normalized = candles
         .map((row) => parseRawCandle(row))
         .filter((bar): bar is OHLCVData => !!bar);
@@ -332,13 +343,15 @@ function sanitizeCandles(candles: unknown[]): OHLCVData[] {
 
 export function mergeCandles(
     existingCandles: OHLCVData[],
-    incomingCandles: OHLCVData[]
+    incomingCandles: OHLCVData[],
+    trustedIncoming = false,
+    trustedExisting = false
 ): OHLCVData[] {
-    if (existingCandles.length === 0) return sortAndDedupeCandles(incomingCandles);
-    if (incomingCandles.length === 0) return existingCandles.slice(-MAX_CANDLES_PER_SERIES);
+    if (existingCandles.length === 0) return sortAndDedupeCandles(incomingCandles, trustedIncoming);
+    if (incomingCandles.length === 0) return sortAndDedupeCandles(existingCandles, trustedExisting);
 
-    const incoming = sortAndDedupeCandles(incomingCandles);
-    if (incoming.length === 0) return existingCandles.slice(-MAX_CANDLES_PER_SERIES);
+    const incoming = sortAndDedupeCandles(incomingCandles, trustedIncoming);
+    if (incoming.length === 0) return sortAndDedupeCandles(existingCandles, trustedExisting);
 
     // Fast path for incremental append/replace of the latest candle(s).
     const firstIncomingTime = Number(incoming[0].time);
@@ -397,21 +410,26 @@ export async function loadCachedCandles(symbol: string, interval: string): Promi
     const db = await openDb();
     if (!db) return null;
 
-    const key = toCacheKey(symbol, interval);
+    const normalizedSymbol = symbol.trim().toUpperCase();
+    const normalizedInterval = interval.trim().toLowerCase();
+    const key = toCacheKey(normalizedSymbol, normalizedInterval);
+
     return new Promise((resolve) => {
-        const tx = db.transaction(STORE_NAME, 'readonly');
-        const store = tx.objectStore(STORE_NAME);
+        const transaction = db.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
         const request = store.get(key);
+
         request.onsuccess = () => {
-            const raw = request.result as CandleSeriesRecord | undefined;
-            if (!raw || !Array.isArray(raw.candles)) {
+            const record = request.result as CandleSeriesRecord | undefined;
+            if (!record || !Array.isArray(record.candles)) {
                 resolve(null);
                 return;
             }
             resolve({
-                candles: raw.candles,
-                updatedAt: Number(raw.updatedAt) || 0,
-                source: raw.source ?? 'manual',
+                candles: record.candles,
+                updatedAt: Number(record.updatedAt) || 0,
+                source: record.source || 'manual',
+                trusted: true
             });
         };
         request.onerror = () => resolve(null);
@@ -422,7 +440,8 @@ export async function saveCachedCandles(
     symbol: string,
     interval: string,
     candles: OHLCVData[],
-    source: CandleCacheSource | string
+    source: CandleCacheSource | string,
+    trusted = false
 ): Promise<void> {
     const db = await openDb();
     if (!db) return;
@@ -433,7 +452,7 @@ export async function saveCachedCandles(
         key: toCacheKey(normalizedSymbol, normalizedInterval),
         symbol: normalizedSymbol,
         interval: normalizedInterval,
-        candles: sanitizeCandles(candles),
+        candles: trusted ? sortAndDedupeCandles(candles, true) : sanitizeCandles(candles),
         updatedAt: Date.now(),
         source,
     };

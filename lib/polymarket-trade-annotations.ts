@@ -177,7 +177,7 @@ export function createPolymarketTradeEvaluationContext(
 ): PolymarketTradeEvaluationContext {
     const shared = buildPolymarketEvaluationIndexContext(chartData, outcomes);
     return {
-        outcomeByStartTs: new Map(outcomes.map((row) => [row.event_start_ts, row] as const)),
+        outcomeByStartTs: new Map(outcomes.map((row) => [Number(row.event_start_ts), row] as const)),
         ...shared,
     };
 }
@@ -283,7 +283,7 @@ export function annotateTradesWithPolymarketOutcomes(
     trades: readonly Trade[],
     outcomes: readonly PolymarketOutcomeRow[]
 ): Trade[] {
-    const outcomeByStartTs = new Map(outcomes.map((row) => [row.event_start_ts, row] as const));
+    const outcomeByStartTs = new Map(outcomes.map((row) => [Number(row.event_start_ts), row] as const));
     return trades.map((trade) => buildAnnotatedTrade(trade, outcomeByStartTs));
 }
 
