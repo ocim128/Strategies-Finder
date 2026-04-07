@@ -75,6 +75,12 @@ type ProviderFallbackChain = {
     localNonBinance: NonBinanceLocalData | null;
 };
 
+type CacheEntry = {
+    candles: OHLCVData[];
+    lastAccessedAt: number;
+    source: string;
+};
+
 export class DataManager {
     private static readonly PRICE_JUMP_GUARD_RATIO = 8;
     private providerOverrideBySymbol: Map<string, Exclude<DataProvider, BinanceDataProvider>> = new Map();
@@ -103,6 +109,8 @@ export class DataManager {
     private lastUiUpdateTime: number = 0;
     private chartLookbackBars: number | null = null;
     private readonly STREAM_PERSIST_DELAY_MS = 1200;
+    private readonly MAX_CACHE_ENTRIES = 15;
+    private lruCache: Map<string, CacheEntry> = new Map();
     private cacheSyncAtByKey: Map<string, number> = new Map();
     private cachePersistTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private cachePersistPendingByKey: Map<string, { symbol: string; storageInterval: string; candles: OHLCVData[] }> = new Map();
@@ -149,10 +157,14 @@ export class DataManager {
             const cacheKey = this.buildCacheKey(normalizedSymbol, storageInterval, provider);
             this.importedDataByKey.set(cacheKey, candles);
             this.cacheSyncAtByKey.set(cacheKey, now);
+            this.setCachedCandles(cacheKey, candles, 'imported');
         }
     }
 
     public clearImportedData(): void {
+        for (const key of this.importedDataByKey.keys()) {
+            this.lruCache.delete(key);
+        }
         this.importedDataByKey.clear();
     }
 
@@ -206,6 +218,15 @@ export class DataManager {
     }
 
     public async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
+        const provider = this.getProvider(symbol);
+        const cacheKey = this.buildCacheKey(symbol, this.getStorageInterval(interval), provider);
+        
+        const imported = this.importedDataByKey.get(cacheKey);
+        if (imported) return imported;
+        
+        const cached = this.getCachedCandles(cacheKey);
+        if (cached) return cached.candles;
+
         const chain = await this.resolveProviderFallbackChain(symbol, interval, signal);
         return this.fetchDataFromProviderChain(chain, symbol, interval, signal);
     }
@@ -481,6 +502,17 @@ export class DataManager {
             : 1000;
         const resampleOptions = this.getResampleOptions(interval);
 
+        const cacheKey = this.buildCacheKey(symbol, this.getStorageInterval(interval), provider);
+        const imported = this.importedDataByKey.get(cacheKey);
+        if (imported && imported.length > 0) {
+            return { data: this.takeLastCandles(imported, maxBars), source: 'local' };
+        }
+
+        const cached = this.getCachedCandles(cacheKey);
+        if (cached) {
+            return { data: this.takeLastCandles(cached.candles, maxBars), source: 'local' };
+        }
+
         if (!isBinanceDataProvider(provider)) {
             const localData = await this.loadNonBinanceLocalData(symbol, interval, maxBars, signal);
             if (localData) {
@@ -527,6 +559,18 @@ export class DataManager {
         }
 
         const provider = this.getProvider(symbol);
+        const cacheKey = this.buildCacheKey(symbol, this.getStorageInterval(interval), provider);
+
+        const imported = this.importedDataByKey.get(cacheKey);
+        if (imported && imported.length >= limit) {
+            return this.takeLastCandles(imported, limit);
+        }
+
+        const cached = this.getCachedCandles(cacheKey);
+        if (cached && cached.candles.length >= limit) {
+            return this.takeLastCandles(cached.candles, limit);
+        }
+
         const resampleOptions = this.getResampleOptions(interval);
         const localNonBinance = !isBinanceDataProvider(provider)
             ? await this.loadNonBinanceLocalData(symbol, interval, limit, options?.signal)
@@ -791,7 +835,11 @@ export class DataManager {
             return priority[b.source] - priority[a.source];
         });
 
-        return candidates[0];
+        const best = candidates[0];
+        if (best) {
+            this.setCachedCandles(cacheKey, best.candles, best.source);
+        }
+        return best;
     }
 
     private async persistNonBinanceData(
@@ -852,6 +900,9 @@ export class DataManager {
 
         if (updateSyncTime && cacheKey) {
             this.cacheSyncAtByKey.set(cacheKey, Date.now());
+            if (cacheCandles) {
+                this.setCachedCandles(cacheKey, cacheCandles, sourceTrait);
+            }
         }
     }
 
@@ -1011,6 +1062,52 @@ export class DataManager {
     private buildCacheKey(symbol: string, interval: string, provider?: DataProvider): string {
         const resolvedProvider = provider ?? this.getProvider(symbol);
         return `${this.getStorageSymbol(symbol, resolvedProvider)}::${this.getStorageInterval(interval)}`;
+    }
+
+    public invalidateCacheEntry(symbol: string, interval: string, provider?: DataProvider): void {
+        const cacheKey = this.buildCacheKey(symbol, interval, provider);
+        this.lruCache.delete(cacheKey);
+    }
+
+    public updateCacheEntryFor(symbol: string, interval: string, candles: OHLCVData[]): void {
+        const provider = this.getProvider(symbol);
+        const cacheKey = this.buildCacheKey(symbol, this.getStorageInterval(interval), provider);
+        const entry = this.lruCache.get(cacheKey);
+        if (entry) {
+            entry.candles = candles;
+        }
+    }
+
+    private getCachedCandles(cacheKey: string): CacheEntry | undefined {
+        const entry = this.lruCache.get(cacheKey);
+        if (entry) {
+            entry.lastAccessedAt = Date.now();
+        }
+        return entry;
+    }
+
+    private setCachedCandles(cacheKey: string, candles: OHLCVData[], source: string): void {
+        this.lruCache.set(cacheKey, {
+            candles,
+            lastAccessedAt: Date.now(),
+            source
+        });
+        
+        if (this.lruCache.size > this.MAX_CACHE_ENTRIES) {
+            let oldestKey: string | null = null;
+            let oldestAccess = Infinity;
+            
+            for (const [key, entry] of this.lruCache.entries()) {
+                if (entry.lastAccessedAt < oldestAccess) {
+                    oldestAccess = entry.lastAccessedAt;
+                    oldestKey = key;
+                }
+            }
+            
+            if (oldestKey) {
+                this.lruCache.delete(oldestKey);
+            }
+        }
     }
 
     /**
@@ -1202,6 +1299,7 @@ export class DataManager {
                     cacheKey,
                     updateSyncTime: true,
                 });
+                this.setCachedCandles(cacheKey, fresh, 'network');
             }
             return { data: fresh, source: 'network', cached, hasSqliteBase, cacheKey, storageInterval, effectiveMaxBars };
         }
@@ -1209,8 +1307,10 @@ export class DataManager {
         // Have cached data, network returned nothing new
         if (remoteData.length === 0) {
             this.cacheSyncAtByKey.set(cacheKey, Date.now());
+            const finalData = this.takeLastCandles(cached!.candles, effectiveMaxBars);
+            this.setCachedCandles(cacheKey, finalData, 'network');
             return {
-                data: this.takeLastCandles(cached!.candles, effectiveMaxBars),
+                data: finalData,
                 source: 'network',
                 cached,
                 hasSqliteBase,
@@ -1239,8 +1339,10 @@ export class DataManager {
                 updateSyncTime: true,
             });
         }
+        const finalData = merged.length > 0 ? merged : this.takeLastCandles(cached!.candles, effectiveMaxBars);
+        this.setCachedCandles(cacheKey, finalData, 'network');
         return {
-            data: merged.length > 0 ? merged : this.takeLastCandles(cached!.candles, effectiveMaxBars),
+            data: finalData,
             source: 'network',
             cached,
             hasSqliteBase,

@@ -7,6 +7,7 @@ import {
 } from "./backtest-endpoint-copy";
 import { clearActiveBacktestRerunContext } from "./backtest-rerun-context";
 import { state, type BacktestResultSource, type ChartMode, type MockChartModel } from "./state";
+import { dataManager } from "./data-manager";
 import type { BinanceMarketType } from "./binance-market";
 import type { Indicator } from "./types/index";
 import type { BacktestResult, OHLCVData } from "./strategies/index";
@@ -143,4 +144,5 @@ export function commitOhlcvData(
         reason,
     });
     state.set('ohlcvData', data);
+    dataManager.updateCacheEntryFor(state.currentSymbol, state.currentInterval, data);
 }

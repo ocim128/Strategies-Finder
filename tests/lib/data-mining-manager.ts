@@ -327,6 +327,7 @@ export class DataMiningManager {
                 'success'
             );
             uiManager.showToast(`Stored to SQLite: ${payload.dbPath}`, 'success');
+            dataManager.invalidateCacheEntry(symbol, interval);
         } catch (error) {
             debugLogger.error('data_mining.sqlite_sync_failed', {
                 error: error instanceof Error ? error.message : String(error),
