@@ -161,7 +161,14 @@ function sendJson(res: any, status: number, payload: unknown): void {
     res.end(JSON.stringify(payload));
 }
 
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+function sendBinary(res: any, status: number, payload: Buffer): void {
+    res.statusCode = status;
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(payload);
+}
+
+async function readBodyBuffer(req: IncomingMessage): Promise<Buffer> {
     const chunks: Uint8Array[] = [];
     let total = 0;
     for await (const chunk of req) {
@@ -172,7 +179,12 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
         }
         chunks.push(bytes);
     }
-    const text = Buffer.concat(chunks).toString('utf8').trim();
+    return Buffer.concat(chunks);
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+    const buffer = await readBodyBuffer(req);
+    const text = buffer.toString('utf8').trim();
     if (!text) return {};
     const parsed = JSON.parse(text);
     return (parsed && typeof parsed === 'object') ? parsed as Record<string, unknown> : {};
@@ -342,6 +354,32 @@ function localSqlitePlugin(): Plugin {
                         ORDER BY time DESC
                         LIMIT ?
                     `).all(symbol, interval, limit) as SqliteCandleRow[];
+
+                    const accept = req.headers.accept || '';
+                    if (accept.includes('application/octet-stream')) {
+                        const N = rows.length;
+                        const F = 6;
+                        const buffer = Buffer.alloc(16 + F * N * 8);
+                        
+                        buffer.writeUInt32LE(0x4F484C56, 0);
+                        buffer.writeUInt32LE(1, 4);
+                        buffer.writeUInt32LE(N, 8);
+                        buffer.writeUInt32LE(F, 12);
+                        
+                        for (let i = 0; i < N; i++) {
+                            const row = rows[N - 1 - i];
+                            buffer.writeDoubleLE(row.time, 16 + i * 8);
+                            buffer.writeDoubleLE(row.open, 16 + N * 8 + i * 8);
+                            buffer.writeDoubleLE(row.high, 16 + 2 * N * 8 + i * 8);
+                            buffer.writeDoubleLE(row.low, 16 + 3 * N * 8 + i * 8);
+                            buffer.writeDoubleLE(row.close, 16 + 4 * N * 8 + i * 8);
+                            buffer.writeDoubleLE(row.volume, 16 + 5 * N * 8 + i * 8);
+                        }
+                        
+                        sendBinary(res, 200, buffer);
+                        return;
+                    }
+
                     rows.reverse();
 
                     sendJson(res, 200, {
@@ -354,25 +392,64 @@ function localSqlitePlugin(): Plugin {
                 }
 
                 if (method === 'POST' && path === '/store-ohlcv') {
-                    const payload = await readJsonBody(req as IncomingMessage);
-                    const symbol = String(payload.symbol || '').trim().toUpperCase();
-                    const interval = String(payload.interval || '').trim().toLowerCase();
-                    const provider = String(payload.provider || 'unknown');
-                    const source = String(payload.source || 'manual');
-                    const rawCandles = Array.isArray(payload.candles) ? payload.candles : [];
+                    const contentType = req.headers['content-type'] || '';
+                    const isBinary = contentType.includes('application/octet-stream');
+                    
+                    let symbol = '';
+                    let interval = '';
+                    let provider = 'unknown';
+                    let source = 'manual';
+                    let candles: SqliteCandleRow[] = [];
+
+                    if (isBinary) {
+                        symbol = (requestUrl.searchParams.get('symbol') || '').trim().toUpperCase();
+                        interval = (requestUrl.searchParams.get('interval') || '').trim().toLowerCase();
+                        provider = requestUrl.searchParams.get('provider') || 'unknown';
+                        source = requestUrl.searchParams.get('source') || 'manual';
+
+                        const buffer = await readBodyBuffer(req as IncomingMessage);
+                        if (buffer.length >= 16) {
+                            const magic = buffer.readUInt32LE(0);
+                            const version = buffer.readUInt32LE(4);
+                            const N = buffer.readUInt32LE(8);
+                            const F = buffer.readUInt32LE(12);
+                            
+                            if (magic === 0x4F484C56 && version === 1 && F === 6 && buffer.length >= 16 + N * F * 8) {
+                                for (let i = 0; i < N; i++) {
+                                    candles.push({
+                                        time: buffer.readDoubleLE(16 + i * 8),
+                                        open: buffer.readDoubleLE(16 + N * 8 + i * 8),
+                                        high: buffer.readDoubleLE(16 + 2 * N * 8 + i * 8),
+                                        low: buffer.readDoubleLE(16 + 3 * N * 8 + i * 8),
+                                        close: buffer.readDoubleLE(16 + 4 * N * 8 + i * 8),
+                                        volume: buffer.readDoubleLE(16 + 5 * N * 8 + i * 8)
+                                    });
+                                }
+                            } else {
+                                sendJson(res, 400, { ok: false, error: 'Invalid binary payload' });
+                                return;
+                            }
+                        } else {
+                            sendJson(res, 400, { ok: false, error: 'Binary payload too small' });
+                            return;
+                        }
+                    } else {
+                        const payload = await readJsonBody(req as IncomingMessage);
+                        symbol = String(payload.symbol || '').trim().toUpperCase();
+                        interval = String(payload.interval || '').trim().toLowerCase();
+                        provider = String(payload.provider || 'unknown');
+                        source = String(payload.source || 'manual');
+                        const rawCandles = Array.isArray(payload.candles) ? payload.candles : [];
+
+                        candles = rawCandles
+                            .map(normalizeSqliteCandle)
+                            .filter((row): row is SqliteCandleRow => !!row);
+                    }
 
                     if (!symbol || !interval) {
                         sendJson(res, 400, { ok: false, error: 'symbol and interval are required' });
                         return;
                     }
-                    if (rawCandles.length === 0) {
-                        sendJson(res, 400, { ok: false, error: 'candles array is required' });
-                        return;
-                    }
-
-                    const candles = rawCandles
-                        .map(normalizeSqliteCandle)
-                        .filter((row): row is SqliteCandleRow => !!row);
                     if (candles.length === 0) {
                         sendJson(res, 400, { ok: false, error: 'No valid candles found in request.' });
                         return;
