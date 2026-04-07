@@ -100,6 +100,8 @@ export interface FinderRunCallbacks {
     setProgress: (percent: number, text: string) => void;
     setStatus: (text: string) => void;
     yieldControl: () => Promise<void>;
+    isCancelled: () => boolean;
+    onResultsUpdate: (results: FinderResult[]) => void;
 }
 
 export interface FinderRunOutput {
@@ -362,6 +364,13 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
     const timeframeLabels = activeDatasets.map((dataset) => dataset.interval);
 
     while (processedCount < totalRuns) {
+        if (callbacks.isCancelled()) {
+            callbacks.setStatus("Finder stopped by user.");
+            const trimmed = ranker.toSortedArray(input.options.topN);
+            callbacks.onResultsUpdate(trimmed);
+            return { results: trimmed };
+        }
+
         const batchJobs = nextJobBatch(flags.batchSize);
         if (batchJobs.length === 0) break;
 
@@ -444,10 +453,12 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
 
             processedCount++;
             if (processedCount % 16 === 0 || processedCount === totalRuns) {
-                if (shouldUpdateUi(processedCount === totalRuns)) {
+                const updateUi = shouldUpdateUi(processedCount === totalRuns);
+                if (updateUi) {
                     const progress = 12 + (processedCount / totalRuns) * 84;
                     callbacks.setProgress(progress, `${processedCount}/${totalRuns} runs (${activeDatasets.length} TF)`);
                     callbacks.setStatus(`Processing ${processedCount}/${totalRuns} runs across ${activeDatasets.length} timeframes...`);
+                    callbacks.onResultsUpdate(ranker.toSortedArray(input.options.topN));
                 }
             }
             await maybeYieldByBudget(processedCount === totalRuns);
@@ -949,6 +960,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
     let processedCount = 0;
     let filteredCount = 0;
     let endpointAdjustedCount = 0;
+    let lastResultsUpdateAt = 0;
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
 
     const comboActive = !!input.comboPrimarySignals;
@@ -1374,6 +1386,13 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
     const backtestFn = usingCompactBacktest ? runBacktestCompact : runBacktest;
 
     while (processedCount < totalRuns) {
+        if (callbacks.isCancelled()) {
+            callbacks.setStatus("Finder stopped by user.");
+            const trimmed = ranker.toSortedArray(input.options.topN);
+            callbacks.onResultsUpdate(trimmed);
+            return { results: trimmed };
+        }
+
         const batchJobs = nextJobBatch(flags.batchSize);
         if (batchJobs.length === 0) break;
         batchNum++;
@@ -1406,17 +1425,22 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 await maybeYieldByBudget(false);
             }
 
-            processedCount += batchJobs.length;
-            if (shouldUpdateUi(processedCount === totalRuns)) {
-                const progress = 10 + (processedCount / totalRuns) * 85;
-                callbacks.setProgress(progress, `Batch ${batchNum}/${totalBatches} (${processedCount}/${totalRuns})`);
-                if (flags.isExtremeDataset) {
-                    callbacks.setStatus(`Processing ${batchNum}/${totalBatches} (ultra-memory mode)...`);
-                } else {
-                    callbacks.setStatus(`Processing batch ${batchNum}/${totalBatches}...`);
-                }
+        processedCount += batchJobs.length;
+        if (shouldUpdateUi(processedCount === totalRuns)) {
+            const progress = 10 + (processedCount / totalRuns) * 85;
+            callbacks.setProgress(progress, `Batch ${batchNum}/${totalBatches} (${processedCount}/${totalRuns})`);
+            if (flags.isExtremeDataset) {
+                callbacks.setStatus(`Processing ${batchNum}/${totalBatches} (ultra-memory mode)...`);
+            } else {
+                callbacks.setStatus(`Processing batch ${batchNum}/${totalBatches}...`);
             }
-            await maybeYieldByBudget(true);
+            const resultsNow = performance.now();
+            if (resultsNow - lastResultsUpdateAt > 750 || processedCount === totalRuns) {
+                lastResultsUpdateAt = resultsNow;
+                callbacks.onResultsUpdate(ranker.toSortedArray(input.options.topN));
+            }
+        }
+        await maybeYieldByBudget(true);
             continue;
         }
 
@@ -1502,8 +1526,12 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             } else {
                 callbacks.setStatus(`Processing batch ${batchNum}/${totalBatches}...`);
             }
+            const resultsNow = performance.now();
+            if (resultsNow - lastResultsUpdateAt > 750 || processedCount === totalRuns) {
+                lastResultsUpdateAt = resultsNow;
+                callbacks.onResultsUpdate(ranker.toSortedArray(input.options.topN));
+            }
         }
-
         await maybeYieldByBudget(true);
     }
 

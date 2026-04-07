@@ -226,12 +226,20 @@
         Block Mode Active — Finder will use selected date range only
     </div>
 
-    <button class="btn btn-primary run-btn" id="runFinder">
-        <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M8 5v14l11-7z" />
-        </svg>
-        Run Finder
-    </button>
+    <div class="finder-actions">
+        <button class="btn btn-primary run-btn" id="runFinder">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8 5v14l11-7z" />
+            </svg>
+            Run Finder
+        </button>
+        <button class="btn btn-danger stop-btn" id="stopFinder" style="display:none" type="button">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 6h12v12H6z" />
+            </svg>
+            Stop
+        </button>
+    </div>
 
     <div class="progress-container" id="finderProgress">
         <div class="progress-bar">

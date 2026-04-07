@@ -51,6 +51,7 @@ export class FinderManager {
 		'15m', '30m', '1h', '4h', '1d', '1w', '1M'
 	];
 	private isRunning = false;
+	private isCancelled = false;
 	private displayResults: FinderResult[] = [];
 	private lastFinderRunBacktestSettings: ReturnType<typeof settingsManager.getBacktestSettings> | null = null;
 	private lastFinderOptions: FinderOptions | null = null;
@@ -79,6 +80,10 @@ export class FinderManager {
 		const dom = this.getDom();
 		dom.runFinder.addEventListener('click', () => {
 			void this.runFinder();
+		});
+
+		dom.stopFinder.addEventListener('click', () => {
+			this.isCancelled = true;
 		});
 
 		const copyTopButton = dom.finderCopyTopResults;
@@ -633,7 +638,9 @@ export class FinderManager {
 			}
 		}
 
+		this.isCancelled = false;
 		this.isRunning = true;
+		const startTime = performance.now();
 		this.lastFinderRunBacktestSettings = null;
 		this.lastFinderOptions = null;
 		const options = this.readOptions();
@@ -642,14 +649,17 @@ export class FinderManager {
 			sortPriority: [...options.sortPriority],
 			timeframes: [...(options.timeframes ?? [])],
 		};
-		const runButton = this.getDom().runFinder;
-		const setLoading = (loading: boolean) => {
-			runButton.disabled = loading;
-			runButton.classList.toggle('is-loading', loading);
-			runButton.setAttribute('aria-busy', loading ? 'true' : 'false');
+		const dom = this.getDom();
+		const runButton = dom.runFinder;
+		const stopButton = dom.stopFinder;
+		const setRunningUI = (running: boolean) => {
+			runButton.disabled = running;
+			runButton.classList.toggle('is-loading', running);
+			runButton.setAttribute('aria-busy', running ? 'true' : 'false');
+			stopButton.style.display = running ? '' : 'none';
 		};
 
-		setLoading(true);
+		setRunningUI(true);
 		this.setProgress(true, 0, 'Preparing...');
 		this.setStatus('Running strategy finder...');
 		this.ui.renderRandomBenchmark(options.mode);
@@ -755,7 +765,13 @@ export class FinderManager {
 					{
 						setProgress: (percent, text) => this.setProgress(true, percent, text),
 						setStatus: (text) => this.setStatus(text),
-						yieldControl: () => this.yieldControl()
+						yieldControl: () => this.yieldControl(),
+						isCancelled: () => this.isCancelled,
+						onResultsUpdate: (results: FinderResult[]) => {
+							const sorted = sortFinderResults(results, options.sortPriority);
+							this.displayResults = sorted;
+							this.renderResults(sorted, options.sortPriority[0]);
+						},
 					}
 				);
 
@@ -763,20 +779,34 @@ export class FinderManager {
 				this.displayResults = sortedResults;
 				this.renderResults(sortedResults, options.sortPriority[0]);
 				this.ui.renderRandomBenchmark(options.mode, output.randomBenchmark);
+
+				if (this.isCancelled) {
+					this.setProgress(false, 0, "");
+					this.setStatus(`Finder stopped by user after ${Math.round(performance.now() - startTime)}ms.`);
+				} else {
+					this.setStatus(`Finder completed in ${Math.round(performance.now() - startTime)}ms.`);
+					this.setProgress(false, 100, "");
+				}
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
-				debugLogger.error('finder.run_failed', {
-					symbol: state.currentSymbol,
-					interval: state.currentInterval,
-					mode: options.mode,
-					polymarketScoringEnabled: options.polymarketScoringEnabled,
-					error: message,
-				});
-				this.setStatus(`Finder failed. ${message}`);
-				uiManager.showToast('Finder run failed. Check the status panel for details.', 'error');
+				if (this.isCancelled && (message.includes('stopped') || message.includes('cancel'))) {
+					this.setStatus('Finder stopped by user.');
+					uiManager.showToast('Finder stopped.', 'info');
+				} else {
+					debugLogger.error('finder.run_failed', {
+						symbol: state.currentSymbol,
+						interval: state.currentInterval,
+						mode: options.mode,
+						polymarketScoringEnabled: options.polymarketScoringEnabled,
+						error: message,
+					});
+					this.setStatus(`Finder failed. ${message}`);
+					uiManager.showToast('Finder run failed. Check the status panel for details.', 'error');
+				}
 			}
 		} finally {
-			setLoading(false);
+			this.isCancelled = false;
+			setRunningUI(false);
 			this.isRunning = false;
 		}
 	}

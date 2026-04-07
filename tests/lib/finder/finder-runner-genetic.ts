@@ -48,6 +48,13 @@ export async function runGeneticFinder(params: GeneticFinderRunParams): Promise<
     const generations = Math.max(2, Math.floor(Math.max(1, input.options.maxRuns) / populationSize));
 
     for (let index = 0; index < input.selectedStrategies.length; index++) {
+        if (callbacks.isCancelled()) {
+            callbacks.setStatus("Finder stopped by user.");
+            const results = ranker.toSortedArray(input.options.topN);
+            callbacks.onResultsUpdate(results);
+            return { results };
+        }
+
         const selection = input.selectedStrategies[index];
         const progressBase = (index / Math.max(1, input.selectedStrategies.length)) * 90;
         callbacks.setProgress(progressBase, `Genetic ${selection.name}: preparing...`);

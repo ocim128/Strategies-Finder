@@ -295,6 +295,7 @@ export async function runPolymarketFinder(
     let filteredCount = 0;
     let failedCount = 0;
     let lastUiUpdateAt = 0;
+    let lastResultsUpdateAt = 0;
 
     callbacks.setStatus(`Running ${totalRuns} Polymarket evaluations...`);
     callbacks.setProgress(14, `${processedCount}/${totalRuns} evaluations`);
@@ -302,6 +303,13 @@ export async function runPolymarketFinder(
 
     for (const plan of baseStrategyPlans) {
         for (const params of plan.paramSets) {
+            if (callbacks.isCancelled()) {
+                callbacks.setStatus("Finder stopped by user.");
+                const results = ranker.toSortedArray(options.topN);
+                callbacks.onResultsUpdate(results);
+                return { results };
+            }
+
             try {
                 const normalizedParams = plan.strategy.normalizeParams ? plan.strategy.normalizeParams(params) : { ...params };
                 const rawSignals = plan.strategy.executePrepared
@@ -407,6 +415,11 @@ export async function runPolymarketFinder(
                         const progress = 10 + (processedCount / totalRuns) * 85;
                         callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
                         callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
+                    }
+
+                    if (now - lastResultsUpdateAt > 750 || processedCount === totalRuns) {
+                        lastResultsUpdateAt = now;
+                        callbacks.onResultsUpdate(ranker.toSortedArray(options.topN));
                     }
 
                     if (processedCount % 1024 === 0 || processedCount === totalRuns) {

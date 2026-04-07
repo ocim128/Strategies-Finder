@@ -181,6 +181,8 @@ function makeCallbacks(): { callbacks: FinderRunCallbacks; statuses: string[]; g
             yieldControl: async () => {
                 yieldCount++;
             },
+            isCancelled: () => false,
+            onResultsUpdate: () => {},
         },
     };
 }

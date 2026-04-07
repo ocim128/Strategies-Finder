@@ -2,6 +2,7 @@ import { getRequiredElement } from "../dom-utils";
 
 export const FINDER_MANAGER_REQUIRED_IDS = [
     "runFinder",
+    "stopFinder",
     "finderCopyTopResults",
     "finderList",
     "finderStrategiesToggleAll",
@@ -48,6 +49,7 @@ export const FINDER_MANAGER_REQUIRED_IDS = [
 export function createFinderManagerDom() {
     return {
         runFinder: getRequiredElement<HTMLButtonElement>("runFinder"),
+        stopFinder: getRequiredElement<HTMLButtonElement>("stopFinder"),
         finderCopyTopResults: getRequiredElement<HTMLButtonElement>("finderCopyTopResults"),
         finderList: getRequiredElement("finderList"),
         finderStrategiesToggleAll: getRequiredElement<HTMLInputElement>("finderStrategiesToggleAll"),

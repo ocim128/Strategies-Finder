@@ -56,6 +56,8 @@ export interface FinderRunCallbacks {
     setProgress: (percent: number, text: string) => void;
     setStatus: (text: string) => void;
     yieldControl: () => Promise<void>;
+    isCancelled: () => boolean;
+    onResultsUpdate: (results: FinderResult[]) => void;
 }
 
 export interface FinderRunOutput {

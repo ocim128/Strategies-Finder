@@ -125,9 +125,17 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
     let processedCount = 0;
     let filteredCount = 0;
     let endpointAdjustedCount = 0;
+    let lastResultsUpdateAt = 0;
     const timeframeLabels = activeDatasets.map((dataset) => dataset.interval);
 
     while (processedCount < totalRuns) {
+        if (callbacks.isCancelled()) {
+            callbacks.setStatus("Finder stopped by user.");
+            const trimmed = ranker.toSortedArray(input.options.topN);
+            callbacks.onResultsUpdate(trimmed);
+            return { results: trimmed };
+        }
+
         const batchJobs = nextJobBatch(flags.batchSize);
         if (batchJobs.length === 0) break;
 
@@ -209,10 +217,15 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
 
             processedCount++;
             if (processedCount % 16 === 0 || processedCount === totalRuns) {
+                const now = performance.now();
                 if (shouldUpdateUi(processedCount === totalRuns)) {
                     const progress = 12 + (processedCount / totalRuns) * 84;
                     callbacks.setProgress(progress, `${processedCount}/${totalRuns} runs (${activeDatasets.length} TF)`);
                     callbacks.setStatus(`Processing ${processedCount}/${totalRuns} runs across ${activeDatasets.length} timeframes...`);
+                }
+                if (now - lastResultsUpdateAt > 750 || processedCount === totalRuns) {
+                    lastResultsUpdateAt = now;
+                    callbacks.onResultsUpdate(ranker.toSortedArray(input.options.topN));
                 }
             }
             await maybeYieldByBudget(processedCount === totalRuns);
