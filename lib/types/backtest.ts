@@ -61,60 +61,6 @@ export interface NormalizedSettings {
     maxOpenTrades: number;
     /** When true, queue skipped same-direction signals and execute on next bar if a position closes */
     warmUpEntryEnabled: boolean;
-
-    // Snapshot-based trade filters
-    snapshotAtrPercentMin: number;
-    snapshotAtrPercentMax: number;
-    snapshotVolumeRatioMin: number;
-    snapshotVolumeRatioMax: number;
-    snapshotAdxMin: number;
-    snapshotAdxMax: number;
-    snapshotEmaDistanceMin: number;
-    snapshotEmaDistanceMax: number;
-    snapshotRsiMin: number;
-    snapshotRsiMax: number;
-    snapshotPriceRangePosMin: number;
-    snapshotPriceRangePosMax: number;
-    snapshotBarsFromHighMax: number;
-    snapshotBarsFromLowMax: number;
-    snapshotTrendEfficiencyMin: number;
-    snapshotTrendEfficiencyMax: number;
-    snapshotAtrRegimeRatioMin: number;
-    snapshotAtrRegimeRatioMax: number;
-    snapshotBodyPercentMin: number;
-    snapshotBodyPercentMax: number;
-    snapshotWickSkewMin: number;
-    snapshotWickSkewMax: number;
-    snapshotVolumeTrendMin: number;
-    snapshotVolumeTrendMax: number;
-    snapshotVolumeBurstMin: number;
-    snapshotVolumeBurstMax: number;
-    snapshotVolumePriceDivergenceMin: number;
-    snapshotVolumePriceDivergenceMax: number;
-    snapshotVolumeConsistencyMin: number;
-    snapshotVolumeConsistencyMax: number;
-    snapshotCloseLocationMin: number;
-    snapshotCloseLocationMax: number;
-    snapshotOppositeWickMin: number;
-    snapshotOppositeWickMax: number;
-    snapshotRangeAtrMultipleMin: number;
-    snapshotRangeAtrMultipleMax: number;
-    snapshotMomentumConsistencyMin: number;
-    snapshotMomentumConsistencyMax: number;
-    snapshotBreakQualityMin: number;
-    snapshotBreakQualityMax: number;
-    snapshotTf60PerfMin: number;
-    snapshotTf60PerfMax: number;
-    snapshotTf90PerfMin: number;
-    snapshotTf90PerfMax: number;
-    snapshotTf120PerfMin: number;
-    snapshotTf120PerfMax: number;
-    snapshotTf480PerfMin: number;
-    snapshotTf480PerfMax: number;
-    snapshotTfConfluencePerfMin: number;
-    snapshotTfConfluencePerfMax: number;
-    snapshotEntryQualityScoreMin: number;
-    snapshotEntryQualityScoreMax: number;
 }
 
 export interface IndicatorSeries {

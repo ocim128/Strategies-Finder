@@ -65,7 +65,7 @@ export async function buildSignalArtifact(
     const params = config.strategyParams ?? strategy.defaultParams;
     const backtestSettings = resolveBacktestSettingsFromRaw(
         config.backtestSettings as unknown as BacktestSettings,
-        { captureSnapshots: false, coerceWithoutUiToggles: true }
+        { coerceWithoutUiToggles: true }
     );
     const tradeDirection = normalizeTradeDirection(backtestSettings);
 

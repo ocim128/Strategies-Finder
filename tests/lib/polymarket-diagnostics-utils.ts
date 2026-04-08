@@ -1,6 +1,25 @@
 import type { BacktestPolymarketTradeSummary } from "./types/polymarket-outcomes";
 import type { BacktestResult, ExpectancyBreakdownRow, Trade } from "./types/strategies";
-import type { PolymarketFeatureAnalysis } from "./types/polymarket-outcomes";
+
+interface PolymarketFeatureAnalysis {
+    feature: string;
+    label: string;
+    suggestedFilter: {
+        direction: "above" | "below";
+        threshold: number;
+    } | null;
+    winRateIfFiltered: number;
+    expectancyIfFiltered: number;
+    tradesRemovedPercent: number;
+    separationScore: number;
+    scoredProjection?: {
+        filteredWinRate: number;
+        filteredTrades: number;
+        originalTrades: number;
+        removedPercent: number;
+        baselineDelta: number;
+    } | null;
+}
 
 export function clampPolymarketEntryOffset(value: number): number {
     return Math.max(0, Math.min(4, Math.floor(value)));

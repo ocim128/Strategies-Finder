@@ -20,17 +20,11 @@ import { selectExecutionAwareClosedCandles } from "./alert-evaluation-window";
 import { resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
 import type { BacktestExecutionContext } from "./backtest-endpoint-contract";
 import {
-    buildExpectancyBreakdown,
-    buildPostEntryPathStats,
-    enrichPolymarketBacktestResult,
-} from "./backtest-result-analysis";
-import {
     EFFECTIVE_BACKTEST_DEFAULTS,
     resolveBacktestSettingsFromRaw,
 } from "./backtest-settings-resolver";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { shouldUseRustEngine } from "./engine-preferences";
-import { annotateBacktestResultWithPolymarketOutcomes } from "./polymarket-trade-annotations";
 import { rustEngine } from "./rust-engine-client";
 import { sanitizeBacktestSettingsForRust, requiresTypescriptEngine } from "./rust-settings-sanitizer";
 import {
@@ -104,7 +98,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         interval,
     } as BacktestSettings;
     const resolvedSettings = resolveBacktestSettingsFromRaw(settingsWithMeta, {
-        captureSnapshots: true,
         coerceWithoutUiToggles: true,
     });
     resolvedSettings.tradeDirection = resolvedSettings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
@@ -186,7 +179,7 @@ export async function executeBacktestFromSignals(
             ...(settings as Record<string, unknown>),
             interval,
         } as BacktestSettings,
-        { captureSnapshots: true, coerceWithoutUiToggles: true }
+        { coerceWithoutUiToggles: true }
     );
     resolvedSettings.tradeDirection = resolvedSettings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
     resolvedSettings.executionModel = resolvedSettings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
@@ -310,8 +303,8 @@ function finalizeResult(
         result.sharpeRatio = recomputeSharpeRatio(result);
         result.performanceAnalytics = recomputePerformanceAnalytics(result);
     }
-    result.expectancyBreakdown = buildExpectancyBreakdown(result);
-    result.postEntryPath = buildPostEntryPathStats(result, 5, backtestData);
+    
+    
     if (result.trades.length >= 3) {
         result.edgeStatistics = computeEdgeStatistics(result, backtestData);
     }
@@ -329,18 +322,13 @@ async function annotatePolymarketResult(
     }
 
     try {
-        return enrichPolymarketBacktestResult(
-            await annotateBacktestResultWithPolymarketOutcomes(
-                result,
-                {
-                    symbol,
-                    interval,
-                    executionModel: settings.executionModel,
-                    chartData,
-                },
-                settings.polymarketEntryOffset
-            )
-        );
+        const { annotateBacktestResultWithPolymarketOutcomes } = await import("./polymarket-trade-annotations");
+        return await annotateBacktestResultWithPolymarketOutcomes(result, {
+            symbol,
+            interval,
+            executionModel: settings.executionModel,
+            chartData,
+        });
     } catch {
         return result;
     }

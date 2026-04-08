@@ -100,59 +100,6 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         slippageBps: Math.max(0, toNumberOr(settings?.slippageBps, 0)),
         maxOpenTrades: clamp(Math.round(toNumberOr(settings?.maxOpenTrades, 1)), 1, 2),
         warmUpEntryEnabled: settings?.warmUpEntryEnabled === true,
-
-        snapshotAtrPercentMin: Math.max(0, toNumberOr(settings?.snapshotAtrPercentMin, 0)),
-        snapshotAtrPercentMax: Math.max(0, toNumberOr(settings?.snapshotAtrPercentMax, 0)),
-        snapshotVolumeRatioMin: Math.max(0, toNumberOr(settings?.snapshotVolumeRatioMin, 0)),
-        snapshotVolumeRatioMax: Math.max(0, toNumberOr(settings?.snapshotVolumeRatioMax, 0)),
-        snapshotAdxMin: Math.max(0, toNumberOr(settings?.snapshotAdxMin, 0)),
-        snapshotAdxMax: Math.max(0, toNumberOr(settings?.snapshotAdxMax, 0)),
-        snapshotEmaDistanceMin: toNumberOr(settings?.snapshotEmaDistanceMin, 0),
-        snapshotEmaDistanceMax: toNumberOr(settings?.snapshotEmaDistanceMax, 0),
-        snapshotRsiMin: Math.max(0, toNumberOr(settings?.snapshotRsiMin, 0)),
-        snapshotRsiMax: Math.max(0, toNumberOr(settings?.snapshotRsiMax, 0)),
-        snapshotPriceRangePosMin: Math.max(0, toNumberOr(settings?.snapshotPriceRangePosMin, 0)),
-        snapshotPriceRangePosMax: Math.max(0, toNumberOr(settings?.snapshotPriceRangePosMax, 0)),
-        snapshotBarsFromHighMax: Math.max(0, toNumberOr(settings?.snapshotBarsFromHighMax, 0)),
-        snapshotBarsFromLowMax: Math.max(0, toNumberOr(settings?.snapshotBarsFromLowMax, 0)),
-        snapshotTrendEfficiencyMin: clamp(toNumberOr(settings?.snapshotTrendEfficiencyMin, 0), 0, 1),
-        snapshotTrendEfficiencyMax: clamp(toNumberOr(settings?.snapshotTrendEfficiencyMax, 0), 0, 1),
-        snapshotAtrRegimeRatioMin: Math.max(0, toNumberOr(settings?.snapshotAtrRegimeRatioMin, 0)),
-        snapshotAtrRegimeRatioMax: Math.max(0, toNumberOr(settings?.snapshotAtrRegimeRatioMax, 0)),
-        snapshotBodyPercentMin: clamp(toNumberOr(settings?.snapshotBodyPercentMin, 0), 0, 100),
-        snapshotBodyPercentMax: clamp(toNumberOr(settings?.snapshotBodyPercentMax, 0), 0, 100),
-        snapshotWickSkewMin: clamp(toNumberOr(settings?.snapshotWickSkewMin, 0), -100, 100),
-        snapshotWickSkewMax: clamp(toNumberOr(settings?.snapshotWickSkewMax, 0), -100, 100),
-        snapshotVolumeTrendMin: Math.max(0, toNumberOr(settings?.snapshotVolumeTrendMin, 0)),
-        snapshotVolumeTrendMax: Math.max(0, toNumberOr(settings?.snapshotVolumeTrendMax, 0)),
-        snapshotVolumeBurstMin: toNumberOr(settings?.snapshotVolumeBurstMin, 0),
-        snapshotVolumeBurstMax: toNumberOr(settings?.snapshotVolumeBurstMax, 0),
-        snapshotVolumePriceDivergenceMin: clamp(toNumberOr(settings?.snapshotVolumePriceDivergenceMin, 0), -1, 1),
-        snapshotVolumePriceDivergenceMax: clamp(toNumberOr(settings?.snapshotVolumePriceDivergenceMax, 0), -1, 1),
-        snapshotVolumeConsistencyMin: Math.max(0, toNumberOr(settings?.snapshotVolumeConsistencyMin, 0)),
-        snapshotVolumeConsistencyMax: Math.max(0, toNumberOr(settings?.snapshotVolumeConsistencyMax, 0)),
-        snapshotCloseLocationMin: clamp(toNumberOr(settings?.snapshotCloseLocationMin, 0), 0, 100),
-        snapshotCloseLocationMax: clamp(toNumberOr(settings?.snapshotCloseLocationMax, 0), 0, 100),
-        snapshotOppositeWickMin: clamp(toNumberOr(settings?.snapshotOppositeWickMin, 0), 0, 100),
-        snapshotOppositeWickMax: clamp(toNumberOr(settings?.snapshotOppositeWickMax, 0), 0, 100),
-        snapshotRangeAtrMultipleMin: Math.max(0, toNumberOr(settings?.snapshotRangeAtrMultipleMin, 0)),
-        snapshotRangeAtrMultipleMax: Math.max(0, toNumberOr(settings?.snapshotRangeAtrMultipleMax, 0)),
-        snapshotMomentumConsistencyMin: clamp(toNumberOr(settings?.snapshotMomentumConsistencyMin, 0), 0, 100),
-        snapshotMomentumConsistencyMax: clamp(toNumberOr(settings?.snapshotMomentumConsistencyMax, 0), 0, 100),
-        snapshotBreakQualityMin: clamp(toNumberOr(settings?.snapshotBreakQualityMin, 0), 0, 100),
-        snapshotBreakQualityMax: clamp(toNumberOr(settings?.snapshotBreakQualityMax, 0), 0, 100),
-        snapshotTf60PerfMin: toNumberOr(settings?.snapshotTf60PerfMin, 0),
-        snapshotTf60PerfMax: toNumberOr(settings?.snapshotTf60PerfMax, 0),
-        snapshotTf90PerfMin: toNumberOr(settings?.snapshotTf90PerfMin, 0),
-        snapshotTf90PerfMax: toNumberOr(settings?.snapshotTf90PerfMax, 0),
-        snapshotTf120PerfMin: toNumberOr(settings?.snapshotTf120PerfMin, 0),
-        snapshotTf120PerfMax: toNumberOr(settings?.snapshotTf120PerfMax, 0),
-        snapshotTf480PerfMin: toNumberOr(settings?.snapshotTf480PerfMin, 0),
-        snapshotTf480PerfMax: toNumberOr(settings?.snapshotTf480PerfMax, 0),
-        snapshotTfConfluencePerfMin: toNumberOr(settings?.snapshotTfConfluencePerfMin, 0),
-        snapshotTfConfluencePerfMax: toNumberOr(settings?.snapshotTfConfluencePerfMax, 0),
-        snapshotEntryQualityScoreMin: clamp(toNumberOr(settings?.snapshotEntryQualityScoreMin, 0), 0, 100),
-        snapshotEntryQualityScoreMax: clamp(toNumberOr(settings?.snapshotEntryQualityScoreMax, 0), 0, 100),
     };
 }
 
@@ -288,34 +235,6 @@ export function getTimeIndex(data: OHLCVData[]): Map<string, number> {
     return cached;
 }
 
-export function needsSnapshotIndicators(config: NormalizedSettings, captureSnapshots = false): boolean {
-    return captureSnapshots ||
-        config.snapshotAtrPercentMin > 0 || config.snapshotAtrPercentMax > 0 ||
-        config.snapshotVolumeRatioMin > 0 || config.snapshotVolumeRatioMax > 0 ||
-        config.snapshotAdxMin > 0 || config.snapshotAdxMax > 0 ||
-        config.snapshotEmaDistanceMin !== 0 || config.snapshotEmaDistanceMax !== 0 ||
-        config.snapshotRsiMin > 0 || config.snapshotRsiMax > 0 ||
-        config.snapshotPriceRangePosMin > 0 || config.snapshotPriceRangePosMax > 0 ||
-        config.snapshotBarsFromHighMax > 0 || config.snapshotBarsFromLowMax > 0 ||
-        config.snapshotTrendEfficiencyMin > 0 || config.snapshotTrendEfficiencyMax > 0 ||
-        config.snapshotAtrRegimeRatioMin > 0 || config.snapshotAtrRegimeRatioMax > 0 ||
-        config.snapshotBodyPercentMin > 0 || config.snapshotBodyPercentMax > 0 ||
-        config.snapshotWickSkewMin !== 0 || config.snapshotWickSkewMax !== 0 ||
-        config.snapshotVolumeTrendMin > 0 || config.snapshotVolumeTrendMax > 0 ||
-        config.snapshotVolumeBurstMin !== 0 || config.snapshotVolumeBurstMax !== 0 ||
-        config.snapshotVolumePriceDivergenceMin !== 0 || config.snapshotVolumePriceDivergenceMax !== 0 ||
-        config.snapshotVolumeConsistencyMin > 0 || config.snapshotVolumeConsistencyMax > 0 ||
-        config.snapshotCloseLocationMin > 0 || config.snapshotCloseLocationMax > 0 ||
-        config.snapshotOppositeWickMin > 0 || config.snapshotOppositeWickMax > 0 ||
-        config.snapshotRangeAtrMultipleMin > 0 || config.snapshotRangeAtrMultipleMax > 0 ||
-        config.snapshotMomentumConsistencyMin > 0 || config.snapshotMomentumConsistencyMax > 0 ||
-        config.snapshotBreakQualityMin > 0 || config.snapshotBreakQualityMax > 0 ||
-        config.snapshotTf60PerfMin !== 0 || config.snapshotTf60PerfMax !== 0 ||
-        config.snapshotTf90PerfMin !== 0 || config.snapshotTf90PerfMax !== 0 ||
-        config.snapshotTf120PerfMin !== 0 || config.snapshotTf120PerfMax !== 0 ||
-        config.snapshotTf480PerfMin !== 0 || config.snapshotTf480PerfMax !== 0 ||
-        config.snapshotTfConfluencePerfMin !== 0 || config.snapshotTfConfluencePerfMax !== 0 ||
-        config.snapshotEntryQualityScoreMin > 0 || config.snapshotEntryQualityScoreMax > 0;
-}
+
 
 

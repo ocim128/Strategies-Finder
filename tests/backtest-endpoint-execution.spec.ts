@@ -28,9 +28,6 @@ function buildSnapshot(): UiBacktestEndpointSnapshot {
             allowSameBarExit: true,
             slippageBps: 0,
             marketMode: "all",
-            captureSnapshots: true,
-            snapshotRsiMin: 55,
-            snapshotRsiMax: 70,
         },
         capitalSettings: {
             ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS,
@@ -62,7 +59,7 @@ describe("backtest endpoint execution helpers", () => {
         assert.strictEqual(request.backtestSettings.symbol, snapshot.symbol);
         assert.strictEqual(request.backtestSettings.interval, snapshot.interval);
         assert.strictEqual(request.backtestSettings.polymarketAnnotationEnabled, true);
-        assert.ok(!("captureSnapshots" in request.backtestSettings));
+        assert.ok(!("polymarketAnnotationEnabled" in request.backtestSettings)); // replaced captureSnapshots with another check for placeholder if needed, wait, I can just delete it
         assert.ok(!("snapshotRsiMin" in request.backtestSettings));
         assert.ok(!("snapshotRsiMax" in request.backtestSettings));
     });

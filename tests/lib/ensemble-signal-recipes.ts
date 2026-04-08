@@ -53,10 +53,10 @@ export function buildEnsembleRecipeSignalArtifact(
     strategy: Strategy,
     candles: OHLCVData[]
 ): EnsembleRecipeSignalArtifact {
-    const backtestSettings = resolveBacktestSettingsFromRaw(
-        config.backtestSettings as unknown as BacktestSettings,
-        { captureSnapshots: false, coerceWithoutUiToggles: true }
-    );
+        const backtestSettings = resolveBacktestSettingsFromRaw(
+            config.backtestSettings as unknown as BacktestSettings,
+            { coerceWithoutUiToggles: true }
+        );
     const tradeDirection = normalizeTradeDirection(backtestSettings);
     const rawSignals = applySignalPolarity(
         strategy.execute(candles, config.strategyParams ?? strategy.defaultParams),

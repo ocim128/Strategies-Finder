@@ -8,10 +8,9 @@
  */
 
 import { state } from "./state";
-import type { BacktestResult, ExpectancyBreakdownRow, ExpectancyBreakdownSection, Trade, TradeSnapshot } from "./strategies/index";
+import type { BacktestResult, ExpectancyBreakdownRow, ExpectancyBreakdownSection, Trade } from "./strategies/index";
 import { Time } from "lightweight-charts";
 import { formatDisplayPrice } from "./price-format";
-import type { BacktestPolymarketTimingProfileEntry } from "./types/polymarket-outcomes";
 import { isPolymarketEventSymbol } from "./dataProviders/polymarket";
 import {
     getPolymarket5mSeriesIdForSymbol,
@@ -25,13 +24,7 @@ import {
 } from "./polymarket-trade-annotations";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
 import { parseTimeToUnixSeconds } from "./time-normalization";
-import { enrichPolymarketBacktestResult } from "./backtest-result-analysis";
-import {
-    clampPolymarketEntryOffset,
-    inferPolymarketEntryOffsetFromTrades,
-    rankPolymarketFeatureSuggestions,
-    resolvePolymarketSelectedEntryOffset as resolvePolymarketSelectedEntryOffsetWithFallback,
-} from "./polymarket-diagnostics-utils";
+
 
 type QuickViewPolymarketSummary = {
     wins: number;
@@ -52,32 +45,17 @@ type QuickViewPolymarketSummary = {
     recentFormLosses: number;
     recentFormWinRate: number;
     exitReasonWinRates: {
-        maxHold: {
-            trades: number;
-            wins: number;
-            losses: number;
-            winRate: number;
-        };
-        takeProfit: {
-            trades: number;
-            wins: number;
-            losses: number;
-            winRate: number;
-        };
-        signal: {
-            trades: number;
-            wins: number;
-            losses: number;
-            winRate: number;
-        };
+        maxHold: { trades: number; wins: number; losses: number; winRate: number; };
+        takeProfit: { trades: number; wins: number; losses: number; winRate: number; };
+        signal: { trades: number; wins: number; losses: number; winRate: number; };
     };
     afterTakeProfitExpectancy: {
         pricedTrades: number;
         expectancy: number | null;
     };
     entryOffset?: number;
-    timingProfile?: BacktestPolymarketTimingProfileEntry[];
-    bestTimingProfile?: BacktestPolymarketTimingProfileEntry | null;
+    timingProfile?: import("./types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry[];
+    bestTimingProfile?: import("./types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry | null;
 };
 
 type QuickViewPolymarketPayoutSummary = {
@@ -117,42 +95,6 @@ type QuickViewPolymarketExitReasonWinRates = {
     maxHold: QuickViewPolymarketExitReasonSummary;
     takeProfit: QuickViewPolymarketExitReasonSummary;
     signal: QuickViewPolymarketExitReasonSummary;
-};
-
-type SnapshotFilterBinding = {
-    toggleKey: string;
-    minKey?: string;
-    maxKey?: string;
-};
-
-const SNAPSHOT_FILTER_BINDINGS: Record<keyof TradeSnapshot, SnapshotFilterBinding> = {
-    rsi: { toggleKey: "snapshotRsiFilterToggle", minKey: "snapshotRsiMin", maxKey: "snapshotRsiMax" },
-    adx: { toggleKey: "snapshotAdxFilterToggle", minKey: "snapshotAdxMin", maxKey: "snapshotAdxMax" },
-    atrPercent: { toggleKey: "snapshotAtrFilterToggle", minKey: "snapshotAtrPercentMin", maxKey: "snapshotAtrPercentMax" },
-    emaDistance: { toggleKey: "snapshotEmaFilterToggle", minKey: "snapshotEmaDistanceMin", maxKey: "snapshotEmaDistanceMax" },
-    volumeRatio: { toggleKey: "snapshotVolumeFilterToggle", minKey: "snapshotVolumeRatioMin", maxKey: "snapshotVolumeRatioMax" },
-    priceRangePos: { toggleKey: "snapshotPriceRangePosFilterToggle", minKey: "snapshotPriceRangePosMin", maxKey: "snapshotPriceRangePosMax" },
-    barsFromHigh: { toggleKey: "snapshotBarsFromHighFilterToggle", maxKey: "snapshotBarsFromHighMax" },
-    barsFromLow: { toggleKey: "snapshotBarsFromLowFilterToggle", maxKey: "snapshotBarsFromLowMax" },
-    trendEfficiency: { toggleKey: "snapshotTrendEfficiencyFilterToggle", minKey: "snapshotTrendEfficiencyMin", maxKey: "snapshotTrendEfficiencyMax" },
-    atrRegimeRatio: { toggleKey: "snapshotAtrRegimeFilterToggle", minKey: "snapshotAtrRegimeRatioMin", maxKey: "snapshotAtrRegimeRatioMax" },
-    bodyPercent: { toggleKey: "snapshotBodyPercentFilterToggle", minKey: "snapshotBodyPercentMin", maxKey: "snapshotBodyPercentMax" },
-    wickSkew: { toggleKey: "snapshotWickSkewFilterToggle", minKey: "snapshotWickSkewMin", maxKey: "snapshotWickSkewMax" },
-    closeLocation: { toggleKey: "snapshotCloseLocationFilterToggle", minKey: "snapshotCloseLocationMin", maxKey: "snapshotCloseLocationMax" },
-    oppositeWickPercent: { toggleKey: "snapshotOppositeWickFilterToggle", minKey: "snapshotOppositeWickMin", maxKey: "snapshotOppositeWickMax" },
-    rangeAtrMultiple: { toggleKey: "snapshotRangeAtrFilterToggle", minKey: "snapshotRangeAtrMultipleMin", maxKey: "snapshotRangeAtrMultipleMax" },
-    momentumConsistency: { toggleKey: "snapshotMomentumFilterToggle", minKey: "snapshotMomentumConsistencyMin", maxKey: "snapshotMomentumConsistencyMax" },
-    breakQuality: { toggleKey: "snapshotBreakQualityFilterToggle", minKey: "snapshotBreakQualityMin", maxKey: "snapshotBreakQualityMax" },
-    entryQualityScore: { toggleKey: "snapshotEntryQualityScoreFilterToggle", minKey: "snapshotEntryQualityScoreMin", maxKey: "snapshotEntryQualityScoreMax" },
-    volumeTrend: { toggleKey: "snapshotVolumeTrendFilterToggle", minKey: "snapshotVolumeTrendMin", maxKey: "snapshotVolumeTrendMax" },
-    volumeBurst: { toggleKey: "snapshotVolumeBurstFilterToggle", minKey: "snapshotVolumeBurstMin", maxKey: "snapshotVolumeBurstMax" },
-    volumePriceDivergence: { toggleKey: "snapshotVolumePriceDivergenceFilterToggle", minKey: "snapshotVolumePriceDivergenceMin", maxKey: "snapshotVolumePriceDivergenceMax" },
-    volumeConsistency: { toggleKey: "snapshotVolumeConsistencyFilterToggle", minKey: "snapshotVolumeConsistencyMin", maxKey: "snapshotVolumeConsistencyMax" },
-    tf60Perf: { toggleKey: "snapshotTf60PerfFilterToggle", minKey: "snapshotTf60PerfMin", maxKey: "snapshotTf60PerfMax" },
-    tf90Perf: { toggleKey: "snapshotTf90PerfFilterToggle", minKey: "snapshotTf90PerfMin", maxKey: "snapshotTf90PerfMax" },
-    tf120Perf: { toggleKey: "snapshotTf120PerfFilterToggle", minKey: "snapshotTf120PerfMin", maxKey: "snapshotTf120PerfMax" },
-    tf480Perf: { toggleKey: "snapshotTf480PerfFilterToggle", minKey: "snapshotTf480PerfMin", maxKey: "snapshotTf480PerfMax" },
-    tfConfluencePerf: { toggleKey: "snapshotTfConfluencePerfFilterToggle", minKey: "snapshotTfConfluencePerfMin", maxKey: "snapshotTfConfluencePerfMax" },
 };
 
 export function summarizePolymarketStreaks(trades: Trade[]): {
@@ -290,12 +232,12 @@ export function getQuickViewDiagnosticSections(result: BacktestResult): Expectan
     ));
 }
 
-function resolvePolymarketSelectedEntryOffset(result: BacktestResult, trades: readonly Trade[]): number | null {
+function resolvePolymarketSelectedEntryOffset(result: BacktestResult, _trades: readonly Trade[]): number | null {
     const summaryOffset = result.polymarketTradeSummary?.entryOffset;
     if (typeof summaryOffset === "number" && Number.isFinite(summaryOffset)) {
-        return clampPolymarketEntryOffset(summaryOffset);
+        return Math.max(0, Math.min(4, Math.round(summaryOffset)));
     }
-    return inferPolymarketEntryOffsetFromTrades(trades);
+    return null;
 }
 
 function getPolymarketPricedTrades(trades: readonly Trade[]): Trade[] {
@@ -382,7 +324,7 @@ function buildPolymarketDiagnosticSections(result: BacktestResult, trades: reado
             minuteBuckets[minuteOffset]?.trades.push(trade);
         }
 
-        const rangePosition = trade.entrySnapshot?.priceRangePos;
+        const rangePosition = null; // trade.entrySnapshot?.priceRangePos;
         if (typeof rangePosition === "number" && Number.isFinite(rangePosition)) {
             const clamped = Math.max(0, Math.min(1, rangePosition));
             rangeBuckets.find((bucket) => clamped >= bucket.min && clamped < bucket.max)?.trades.push(trade);
@@ -630,7 +572,7 @@ class QuickViewManager {
         const fallbackOutcomeRowsLoaded = options.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(trades);
         const existingSummary = result.polymarketTradeSummary;
 
-        return enrichPolymarketBacktestResult({
+        return {
             ...result,
             trades,
             polymarketTradeSummary: {
@@ -645,13 +587,13 @@ class QuickViewManager {
                 entryOffset: existingSummary?.entryOffset ?? options.selectedOffset,
                 timingProfile: existingSummary?.timingProfile,
             },
-        });
+        };
     }
 
-    private resolveSelectedPolymarketEntryOffset(result: BacktestResult): number {
+    private resolveSelectedPolymarketEntryOffset(_result: BacktestResult): number {
         const element = document.getElementById("polymarketEntryOffset");
         const fallbackOffset = element instanceof HTMLSelectElement ? Number(element.value) : null;
-        return resolvePolymarketSelectedEntryOffsetWithFallback(result, fallbackOffset);
+        return fallbackOffset ?? 0;
     }
 
     private async ensurePolymarketOutcomes(result: BacktestResult): Promise<BacktestResult> {
@@ -819,10 +761,6 @@ class QuickViewManager {
         const isPositive = result.netProfit >= 0;
         const pfText = result.profitFactor === Infinity ? '∞' : result.profitFactor.toFixed(2);
         const polymarketSection = this.buildPolymarketSection(result);
-        void this.buildPolymarketSnapshotSection;
-        void this.buildPolymarketFilterSection;
-        void this.formatSignedCurrency;
-        void this.formatPolymarketPrice;
 
         content.innerHTML = `
             <div class="qv-section-title">Performance</div>
@@ -1105,6 +1043,134 @@ class QuickViewManager {
         this.pendingDeferredRenderIds = [];
     }
 
+    
+
+    private buildPolymarketTimingProfileSection(summary: QuickViewPolymarketSummary): string {
+        const timingProfile = summary.timingProfile ?? [];
+        if (timingProfile.length === 0) return '';
+        const bestOffset = summary.bestTimingProfile?.entryOffset;
+        const rows = timingProfile.map((entry) => `
+            <div class="qv-poly-profile-row ${entry.entryOffset === bestOffset ? 'is-best' : ''} ${entry.entryOffset === summary.entryOffset ? 'is-selected' : ''}">
+                <div class="qv-poly-profile-cell qv-poly-profile-cell--offset">Minute ${entry.entryOffset}</div>
+                <div class="qv-poly-profile-cell">${(entry.winRate * 100).toFixed(1)}%</div>
+                <div class="qv-poly-profile-cell">${entry.scoredTrades}</div>
+                <div class="qv-poly-profile-cell">${(entry.coverage * 100).toFixed(1)}%</div>
+                <div class="qv-poly-profile-cell">${entry.duplicateTradesIgnored}</div>
+            </div>
+        `).join('');
+        return `
+            <div class="qv-stat-card full-width qv-poly-meta-card">
+                <div class="qv-stat-label">Entry Timing Profile (1m -> 5m)</div>
+                <div class="qv-poly-profile-grid">
+                    <div class="qv-poly-profile-row qv-poly-profile-row--header">
+                        <div class="qv-poly-profile-cell qv-poly-profile-cell--offset">Offset</div>
+                        <div class="qv-poly-profile-cell">Win Rate</div>
+                        <div class="qv-poly-profile-cell">Scored</div>
+                        <div class="qv-poly-profile-cell">Coverage</div>
+                        <div class="qv-poly-profile-cell">Dupes</div>
+                    </div>
+                    ${rows}
+                </div>
+            </div>
+        `;
+    }
+
+    private getBestTimingProfileEntry(
+        timingProfile: readonly import("./types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry[]
+    ): import("./types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry | null {
+        if (timingProfile.length === 0) return null;
+        const scoredEntries = timingProfile.filter((entry) => entry.scoredTrades > 0);
+        if (scoredEntries.length === 0) return null;
+        return [...scoredEntries].sort((left, right) => {
+            if (right.winRate !== left.winRate) return right.winRate - left.winRate;
+            if (right.scoredTrades !== left.scoredTrades) return right.scoredTrades - left.scoredTrades;
+            return left.entryOffset - right.entryOffset;
+        })[0] ?? null;
+    }
+
+    private getPolymarketSummary(result: BacktestResult): QuickViewPolymarketSummary | null {
+        const wins = result.trades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
+        const losses = result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
+        const scoredTrades = wins + losses;
+        const summary = result.polymarketTradeSummary;
+
+        if (!summary && scoredTrades === 0) return null;
+
+        const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
+        const missingTrades = summary?.missingOutcomeTrades ?? Math.max(0, totalTrades - scoredTrades);
+        const unscoredTrades = summary?.unscoredTrades ?? Math.max(0, totalTrades - scoredTrades);
+        const coverageBase = Math.max(0, scoredTrades + unscoredTrades);
+        const coverage = coverageBase > 0 ? scoredTrades / coverageBase : 0;
+        const bestBaselineWinRate = computePolymarketBestBaselineWinRate(result.trades);
+        const timingProfile = summary?.timingProfile;
+        const bestTimingProfile = timingProfile ? this.getBestTimingProfileEntry(timingProfile) : null;
+        const payoutSummary = summarizePolymarketPayoutDiagnostics(result.trades);
+        const streakSummary = summarizePolymarketStreaks(result.trades);
+        const recentFormSummary = summarizeRecentPolymarketForm(result.trades, 50);
+        const exitReasonWinRates = summarizePolymarketExitReasonWinRates(result.trades);
+        const afterTakeProfitExpectancy = summarizePolymarketExpectancyAfterTakeProfit(result.trades);
+
+        return {
+            wins, losses, scoredTrades, missingTrades, unscoredTrades, coverage,
+            winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
+            expectancy: payoutSummary?.expectancy ?? null,
+            outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
+            bestBaselineWinRate,
+            baselineDelta: (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
+            longestWinStreak: streakSummary.longestWinStreak,
+            longestLossStreak: streakSummary.longestLossStreak,
+            recentFormTrades: recentFormSummary.recentFormTrades,
+            recentFormWins: recentFormSummary.recentFormWins,
+            recentFormLosses: recentFormSummary.recentFormLosses,
+            recentFormWinRate: recentFormSummary.recentFormWinRate,
+            exitReasonWinRates, afterTakeProfitExpectancy,
+            entryOffset: summary?.entryOffset,
+            timingProfile, bestTimingProfile,
+        };
+    }
+
+
+
+    private renderPolymarketExitReasonWinRateCard(
+        label: string,
+        summary: QuickViewPolymarketExitReasonSummary
+    ): string {
+        const value = summary.trades > 0
+            ? `${(summary.winRate * 100).toFixed(1)}% | ${summary.trades}t`
+            : 'n/a';
+        const toneClass = summary.trades > 0
+            ? (summary.winRate >= 0.5 ? 'positive' : 'negative')
+            : '';
+
+        return `
+            <div class="qv-stat-card">
+                <div class="qv-stat-label">${label}</div>
+                <div class="qv-stat-value ${toneClass}">${value}</div>
+            </div>
+        `;
+    }
+
+    private renderPolymarketExpectancyCard(
+        label: string,
+        summary: QuickViewPolymarketExpectancySummary
+    ): string {
+        const expectancyValue = summary.expectancy;
+        const hasData = summary.pricedTrades > 0 && expectancyValue !== null;
+        const value = hasData
+            ? `${this.formatPolymarketCents(expectancyValue)} | ${summary.pricedTrades}t`
+            : "n/a";
+        const toneClass = hasData
+            ? (expectancyValue >= 0 ? "positive" : "negative")
+            : "";
+
+        return `
+            <div class="qv-stat-card">
+                <div class="qv-stat-label">${label}</div>
+                <div class="qv-stat-value ${toneClass}">${value}</div>
+            </div>
+        `;
+    }
+
     private buildPolymarketSection(result: BacktestResult): string {
         const summary = this.getPolymarketSummary(result);
         if (!summary) return '';
@@ -1200,323 +1266,13 @@ class QuickViewManager {
         `;
     }
 
-    private renderPolymarketExitReasonWinRateCard(
-        label: string,
-        summary: QuickViewPolymarketExitReasonSummary
-    ): string {
-        const value = summary.trades > 0
-            ? `${(summary.winRate * 100).toFixed(1)}% | ${summary.trades}t`
-            : 'n/a';
-        const toneClass = summary.trades > 0
-            ? (summary.winRate >= 0.5 ? 'positive' : 'negative')
-            : '';
-
-        return `
-            <div class="qv-stat-card">
-                <div class="qv-stat-label">${label}</div>
-                <div class="qv-stat-value ${toneClass}">${value}</div>
-            </div>
-        `;
-    }
-
-    private renderPolymarketExpectancyCard(
-        label: string,
-        summary: QuickViewPolymarketExpectancySummary
-    ): string {
-        const expectancyValue = summary.expectancy;
-        const hasData = summary.pricedTrades > 0 && expectancyValue !== null;
-        const value = hasData
-            ? `${this.formatPolymarketCents(expectancyValue)} | ${summary.pricedTrades}t`
-            : "n/a";
-        const toneClass = hasData
-            ? (expectancyValue >= 0 ? "positive" : "negative")
-            : "";
-
-        return `
-            <div class="qv-stat-card">
-                <div class="qv-stat-label">${label}</div>
-                <div class="qv-stat-value ${toneClass}">${value}</div>
-            </div>
-        `;
-    }
-
-    private renderSummaryDiagnosticRow(label: string, value: string, numericValue?: number): string {
-        const toneClass = typeof numericValue === 'number'
-            ? (numericValue > 0 ? 'positive' : numericValue < 0 ? 'negative' : '')
-            : '';
-        return `
-            <div class="qv-diagnostic-row qv-diagnostic-row--summary">
-                <div class="qv-diagnostic-cell qv-diagnostic-cell--label">${label}</div>
-                <div class="qv-diagnostic-cell ${toneClass}">${value}</div>
-            </div>
-        `;
-    }
-
-    private buildPolymarketTimingProfileSection(summary: QuickViewPolymarketSummary): string {
-        const timingProfile = summary.timingProfile ?? [];
-        if (timingProfile.length === 0) {
-            return '';
-        }
-
-        const bestOffset = summary.bestTimingProfile?.entryOffset;
-        const rows = timingProfile.map((entry) => `
-            <div class="qv-poly-profile-row ${entry.entryOffset === bestOffset ? 'is-best' : ''} ${entry.entryOffset === summary.entryOffset ? 'is-selected' : ''}">
-                <div class="qv-poly-profile-cell qv-poly-profile-cell--offset">Minute ${entry.entryOffset}</div>
-                <div class="qv-poly-profile-cell">${(entry.winRate * 100).toFixed(1)}%</div>
-                <div class="qv-poly-profile-cell">${entry.scoredTrades}</div>
-                <div class="qv-poly-profile-cell">${(entry.coverage * 100).toFixed(1)}%</div>
-                <div class="qv-poly-profile-cell">${entry.duplicateTradesIgnored}</div>
-            </div>
-        `).join('');
-
-        return `
-            <div class="qv-stat-card full-width qv-poly-meta-card">
-                <div class="qv-stat-label">Entry Timing Profile (1m -> 5m)</div>
-                <div class="qv-poly-profile-grid">
-                    <div class="qv-poly-profile-row qv-poly-profile-row--header">
-                        <div class="qv-poly-profile-cell qv-poly-profile-cell--offset">Offset</div>
-                        <div class="qv-poly-profile-cell">Win Rate</div>
-                        <div class="qv-poly-profile-cell">Scored</div>
-                        <div class="qv-poly-profile-cell">Coverage</div>
-                        <div class="qv-poly-profile-cell">Dupes</div>
-                    </div>
-                    ${rows}
-                </div>
-            </div>
-        `;
-    }
-
-    private getBestTimingProfileEntry(
-        timingProfile: readonly BacktestPolymarketTimingProfileEntry[]
-    ): BacktestPolymarketTimingProfileEntry | null {
-        if (timingProfile.length === 0) {
-            return null;
-        }
-
-        const scoredEntries = timingProfile.filter((entry) => entry.scoredTrades > 0);
-        if (scoredEntries.length === 0) {
-            return null;
-        }
-
-        return [...scoredEntries].sort((left, right) => {
-            if (right.winRate !== left.winRate) {
-                return right.winRate - left.winRate;
-            }
-            if (right.scoredTrades !== left.scoredTrades) {
-                return right.scoredTrades - left.scoredTrades;
-            }
-            return left.entryOffset - right.entryOffset;
-        })[0] ?? null;
-    }
-
-    private getPolymarketSummary(result: BacktestResult): QuickViewPolymarketSummary | null {
-        const wins = result.trades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
-        const losses = result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
-        const scoredTrades = wins + losses;
-        const summary = result.polymarketTradeSummary;
-
-        if (!summary && scoredTrades === 0) {
-            return null;
-        }
-
-        const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
-        const missingTrades = summary?.missingOutcomeTrades ?? Math.max(0, totalTrades - scoredTrades);
-        const unscoredTrades = summary?.unscoredTrades ?? Math.max(0, totalTrades - scoredTrades);
-        const coverageBase = Math.max(0, scoredTrades + unscoredTrades);
-        const coverage = coverageBase > 0 ? scoredTrades / coverageBase : 0;
-        const bestBaselineWinRate = computePolymarketBestBaselineWinRate(result.trades);
-        const timingProfile = summary?.timingProfile;
-        const bestTimingProfile = timingProfile ? this.getBestTimingProfileEntry(timingProfile) : null;
-        const payoutSummary = summarizePolymarketPayoutDiagnostics(result.trades);
-        const streakSummary = summarizePolymarketStreaks(result.trades);
-        const recentFormSummary = summarizeRecentPolymarketForm(result.trades, 50);
-        const exitReasonWinRates = summarizePolymarketExitReasonWinRates(result.trades);
-        const afterTakeProfitExpectancy = summarizePolymarketExpectancyAfterTakeProfit(result.trades);
-
-        return {
-            wins,
-            losses,
-            scoredTrades,
-            missingTrades,
-            unscoredTrades,
-            coverage,
-            winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
-            expectancy: payoutSummary?.expectancy ?? null,
-            outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
-            bestBaselineWinRate,
-            baselineDelta: (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
-            longestWinStreak: streakSummary.longestWinStreak,
-            longestLossStreak: streakSummary.longestLossStreak,
-            recentFormTrades: recentFormSummary.recentFormTrades,
-            recentFormWins: recentFormSummary.recentFormWins,
-            recentFormLosses: recentFormSummary.recentFormLosses,
-            recentFormWinRate: recentFormSummary.recentFormWinRate,
-            exitReasonWinRates,
-            afterTakeProfitExpectancy,
-            entryOffset: summary?.entryOffset,
-            timingProfile,
-            bestTimingProfile,
-        };
-    }
-
-    private buildPolymarketSnapshotSection(result: BacktestResult): string {
-        const profile = result.polymarketSnapshotProfile;
-        if (!profile || profile.rows.length === 0) return '';
-
-        const significantRows = profile.rows.filter(r => r.significance !== null && r.significance >= 0.15);
-        if (significantRows.length === 0) return '';
-
-        const rows = significantRows.map(r => {
-            const highlight = (r.significance ?? 0) > 0.5 ? 'qv-pm-profile-row--strong' : '';
-            const dim = (r.significance ?? 0) < 0.2 ? 'qv-pm-profile-row--dim' : '';
-            return `
-                <div class="qv-pm-profile-row ${highlight} ${dim}">
-                    <div class="qv-pm-profile-cell qv-pm-profile-cell--label">${r.label}</div>
-                    <div class="qv-pm-profile-cell">${r.winAvg !== null ? r.winAvg.toFixed(2) : '—'}</div>
-                    <div class="qv-pm-profile-cell">${r.loseAvg !== null ? r.loseAvg.toFixed(2) : '—'}</div>
-                    <div class="qv-pm-profile-cell ${(r.delta ?? 0) > 0 ? 'positive' : (r.delta ?? 0) < 0 ? 'negative' : ''}">${r.delta !== null ? (r.delta > 0 ? '+' : '') + r.delta.toFixed(3) : '—'}</div>
-                    <div class="qv-pm-profile-cell">${r.significance !== null ? r.significance.toFixed(2) : '—'}</div>
-                </div>
-            `;
-        }).join('');
-
-        return `
-            <div class="qv-section-title">PM Snapshot Profile (Win vs Lose)</div>
-            <div class="qv-stat-card full-width qv-diagnostic-card">
-                <div class="qv-diagnostic-hint">Snapshot metrics at entry time that differ between Polymarket wins and losses. Significance = effect size in stddevs. ${profile.winSampleSize} wins, ${profile.loseSampleSize} losses.</div>
-                <div class="qv-diagnostic-grid">
-                    <div class="qv-pm-profile-row qv-pm-profile-row--header">
-                        <div class="qv-pm-profile-cell qv-pm-profile-cell--label">Metric</div>
-                        <div class="qv-pm-profile-cell">PM Win Avg</div>
-                        <div class="qv-pm-profile-cell">PM Lose Avg</div>
-                        <div class="qv-pm-profile-cell">Delta</div>
-                        <div class="qv-pm-profile-cell">Sig</div>
-                    </div>
-                    ${rows}
-                </div>
-            </div>
-        `;
-    }
-
-    private buildPolymarketFilterSection(result: BacktestResult): string {
-        const suggestions = result.polymarketFilterSuggestions;
-        if (!suggestions) return '';
-
-        const topFeatures = rankPolymarketFeatureSuggestions(suggestions.featureAnalyses).slice(0, 5);
-        if (topFeatures.length === 0) return '';
-
-        const featureRows = topFeatures.map(a => {
-            const filterText = this.formatSnapshotSettingSuggestion(
-                a.feature,
-                a.suggestedFilter!.direction,
-                a.suggestedFilter!.threshold
-            );
-            return `
-                <div class="qv-pm-filter-row">
-                    <div class="qv-pm-profile-cell qv-pm-profile-cell--label">${a.label}</div>
-                    <div class="qv-pm-profile-cell">${filterText}</div>
-                    <div class="qv-pm-profile-cell ${((((a.scoredProjection?.filteredWinRate ?? null) ?? (a.winRateIfFiltered / 100)) - suggestions.scoredWinRate) * 100) >= 0 ? 'positive' : 'negative'}">${((((a.scoredProjection?.filteredWinRate ?? null) ?? (a.winRateIfFiltered / 100)) * 100)).toFixed(1)}%</div>
-                    <div class="qv-pm-profile-cell ${(a.scoredProjection?.baselineDelta ?? 0) >= 0 ? 'positive' : 'negative'}">${a.scoredProjection ? `${a.scoredProjection.baselineDelta >= 0 ? '+' : ''}${(a.scoredProjection.baselineDelta * 100).toFixed(1)}pp` : '—'}</div>
-                    <div class="qv-pm-profile-cell ${(a.expectancyIfFiltered) >= 0 ? 'positive' : 'negative'}">${this.formatPolymarketCents(a.expectancyIfFiltered)}</div>
-                    <div class="qv-pm-profile-cell">${(a.scoredProjection?.removedPercent ?? a.tradesRemovedPercent).toFixed(0)}%</div>
-                </div>
-            `;
-        }).join('');
-
-        const comboSection = suggestions.finderResult.bestCandidate
-            ? this.renderPmComboCard(suggestions)
-            : '';
-
-        return `
-            <div class="qv-section-title">PM Filter Suggestions</div>
-            <div class="qv-stat-card full-width qv-diagnostic-card">
-                <div class="qv-diagnostic-hint">Single-feature filters on the scored snapshot subset. Current scored baseline delta: ${suggestions.scoredBaselineDelta >= 0 ? '+' : ''}${(suggestions.scoredBaselineDelta * 100).toFixed(1)}pp vs best YES/NO base at ${(suggestions.scoredBestBaselineWinRate * 100).toFixed(1)}%. Expectancy stays priced-only: ${suggestions.sampleCounts.pricedTrades} priced trades out of ${suggestions.sampleCounts.scoredTrades} scored snapshot trades, ${this.formatPolymarketCents(suggestions.baselineExpectancy)} exp/trade.</div>
-                <div class="qv-diagnostic-grid">
-                    <div class="qv-pm-filter-row qv-pm-filter-row--header">
-                        <div class="qv-pm-profile-cell qv-pm-profile-cell--label">Metric</div>
-                        <div class="qv-pm-profile-cell">Setting</div>
-                        <div class="qv-pm-profile-cell">PM Win%</div>
-                        <div class="qv-pm-profile-cell">Base Delta</div>
-                        <div class="qv-pm-profile-cell">PM Exp</div>
-                        <div class="qv-pm-profile-cell">Removed</div>
-                    </div>
-                    ${featureRows}
-                </div>
-            </div>
-            ${comboSection}
-        `;
-    }
-
-    private renderPmComboCard(suggestions: NonNullable<BacktestResult['polymarketFilterSuggestions']>): string {
-        const best = suggestions.finderResult.bestCandidate;
-        if (!best) return '';
-
-        const filterLabels = best.filters
-            .map((filter) => this.formatSnapshotSettingSuggestion(filter.feature, filter.direction, filter.threshold))
-            .join(' + ');
-        const sim = best.simulation;
-
-        return `
-            <div class="qv-stat-card full-width qv-diagnostic-card">
-                <div class="qv-stat-label">Best Combo Filter</div>
-                <div class="qv-diagnostic-hint">Multi-feature combo with highest objective score. ${suggestions.finderResult.attemptedCount} candidates evaluated.</div>
-                <div class="qv-diagnostic-grid qv-diagnostic-grid--summary">
-                    ${this.renderSummaryDiagnosticRow('Filters', filterLabels)}
-                    ${this.renderSummaryDiagnosticRow('Projected PM Win Rate', `${(((best.scoredProjection?.filteredWinRate ?? null) ?? (sim.filteredWinRate / 100)) * 100).toFixed(1)}% (was ${(suggestions.scoredWinRate * 100).toFixed(1)}%)`, ((((best.scoredProjection?.filteredWinRate ?? null) ?? (sim.filteredWinRate / 100)) - suggestions.scoredWinRate) * 100))}
-                    ${this.renderSummaryDiagnosticRow('Projected Base Delta', best.scoredProjection ? `${best.scoredProjection.baselineDelta >= 0 ? '+' : ''}${(best.scoredProjection.baselineDelta * 100).toFixed(1)}pp` : '—', best.scoredProjection?.baselineDelta)}
-                    ${this.renderSummaryDiagnosticRow('Projected PM Exp', `${this.formatPolymarketCents(sim.filteredExpectancy)} (was ${this.formatPolymarketCents(sim.originalExpectancy)})`, sim.expectancyImprovement)}
-                    ${this.renderSummaryDiagnosticRow('Trades Kept', `${best.scoredProjection?.filteredTrades ?? sim.remainingTrades}/${best.scoredProjection?.originalTrades ?? sim.originalTrades} (${(100 - (best.scoredProjection?.removedPercent ?? sim.removedPercent)).toFixed(0)}%)`)}
-                    ${this.renderSummaryDiagnosticRow('Bad Trades Removed', `${best.badTradesRemoved}/${sim.originalLosingTrades} (${best.badTradesRemovedPct.toFixed(0)}%)`, best.badTradesRemovedPct)}
-                    ${this.renderSummaryDiagnosticRow('Good Trades Removed', `${best.goodTradesRemoved}/${sim.originalWinningTrades} (${best.goodTradesRemovedPct.toFixed(0)}%)`, -best.goodTradesRemovedPct)}
-                    ${this.renderSummaryDiagnosticRow('Objective Score', best.objectiveScore.toFixed(3), best.objectiveScore)}
-                </div>
-            </div>
-        `;
-    }
-
-    private formatSnapshotSettingSuggestion(
-        feature: keyof TradeSnapshot,
-        direction: 'above' | 'below',
-        threshold: number
-    ): string {
-        const binding = SNAPSHOT_FILTER_BINDINGS[feature];
-        if (!binding) {
-            return `${direction === 'above' ? '>=' : '<='} ${this.formatFilterThreshold(threshold)}`;
-        }
-
-        const settingKey = direction === 'above'
-            ? (binding.minKey ?? binding.maxKey ?? binding.toggleKey)
-            : (binding.maxKey ?? binding.minKey ?? binding.toggleKey);
-        return `${settingKey} = ${this.formatFilterThreshold(threshold)}`;
-    }
-
-    private formatFilterThreshold(value: number): string {
-        if (!Number.isFinite(value)) {
-            return '0';
-        }
-        const abs = Math.abs(value);
-        if (abs >= 100) return value.toFixed(2);
-        if (abs >= 1) return value.toFixed(3);
-        if (abs >= 0.1) return value.toFixed(4);
-        if (abs >= 0.01) return value.toFixed(5);
-        return value.toFixed(6);
-    }
     private fmtPrice(price: number): string {
         return formatDisplayPrice(price);
-    }
-
-    private formatSignedCurrency(value: number): string {
-        const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
-        return `${prefix}$${Math.abs(value).toFixed(2)}`;
     }
 
     private formatPolymarketCents(value: number): string {
         const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
         return `${prefix}${(Math.abs(value) * 100).toFixed(1)}c`;
-    }
-
-    private formatPolymarketPrice(value: number): string {
-        return `${(Math.abs(value) * 100).toFixed(1)}c`;
     }
 
     private formatTradeTime(time: Time): string {

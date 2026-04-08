@@ -416,7 +416,6 @@ async function main(): Promise<void> {
         allowSameBarExit: parsed.allowSameBarExit,
         slippageBps: parsed.slippageBps,
     } as BacktestSettings, {
-        captureSnapshots: false,
         coerceWithoutUiToggles: true,
     });
 

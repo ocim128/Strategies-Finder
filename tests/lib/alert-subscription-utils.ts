@@ -60,7 +60,6 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
         : {};
     const resolved = hasUiToggleSettings(raw)
         ? resolveBacktestSettingsFromRaw(raw as BacktestSettings, {
-            captureSnapshots: false,
             coerceWithoutUiToggles: true,
         }) as Record<string, unknown>
         : {};
@@ -136,10 +135,6 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
     const advancedSizingRaw = extractAdvancedSizingRaw(raw);
     if (Object.keys(advancedSizingRaw).length > 0) {
         writeAdvancedSizingIntoRecord(merged, advancedSizingRaw as any);
-    }
-
-    if (raw.captureSnapshots === true) {
-        merged.captureSnapshots = true;
     }
 
     return merged as BacktestSettings;

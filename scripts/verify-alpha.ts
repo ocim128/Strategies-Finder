@@ -546,7 +546,6 @@ async function validateCandidate(
         allowSameBarExit: options.allowSameBarExit,
         slippageBps: 0,
     } as BacktestSettings, {
-        captureSnapshots: false,
         coerceWithoutUiToggles: true,
     });
 
@@ -554,7 +553,6 @@ async function validateCandidate(
         ...baselineSettings,
         slippageBps: options.tortureSlippageBps,
     } as BacktestSettings, {
-        captureSnapshots: false,
         coerceWithoutUiToggles: true,
     });
 

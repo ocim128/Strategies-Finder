@@ -712,7 +712,7 @@ export class FinderManager {
 				this.setStatus('Combo mode: generating primary signals...');
 				comboPrimarySettings = resolveBacktestSettingsFromRaw(
 					primaryConfig.backtestSettings as unknown as typeof settings,
-					{ captureSnapshots: false, coerceWithoutUiToggles: true }
+					{ coerceWithoutUiToggles: true }
 				);
 				try {
 					comboPrimarySignals = applySignalPolarity(

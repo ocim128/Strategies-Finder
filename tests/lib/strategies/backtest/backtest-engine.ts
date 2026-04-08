@@ -2,7 +2,7 @@
 import { BacktestResult, BacktestSettings, OHLCVData, Signal, Time, Trade } from '../../types/index';
 import { ensureCleanData } from '../strategy-helpers';
 import { NormalizedSettings, PositionState, PrecomputedIndicators, TradeSizingConfig, TradeSizingMode } from '../../types/backtest';
-import { applySlippage, compareTime, directionFactorFor, exitSideForDirection, getExecutionShift, getTimeIndex, isLossStreakFlipTradeDirection, needsSnapshotIndicators, normalizeBacktestSettings, normalizeTradeDirection, signalToPositionDirection, timeKey } from './backtest-utils';
+import { applySlippage, compareTime, directionFactorFor, exitSideForDirection, getTimeIndex, isLossStreakFlipTradeDirection, normalizeBacktestSettings, normalizeTradeDirection, signalToPositionDirection, timeKey } from './backtest-utils';
 import { calculateSharpeRatioFromEquitySamples } from '../performance-metrics';
 
 import { prepareSignals } from './signal-preparation';
@@ -10,7 +10,6 @@ import { calculateTradeExitDetails, createEmptyBacktestResult, finalizeBacktestM
 import { precomputeIndicators, resolveIndicators } from './indicator-precompute';
 import { buildPositionFromSignal, type SmartSizingState } from './position-builder';
 import { processPositionExits, updatePositionState } from './exit-handlers';
-import { captureTradeSnapshot, computeSnapshotIndicators, SnapshotIndicators } from './snapshot-capture';
 import {
     createAdaptiveTakeProfitState,
     registerAdaptiveTakeProfitPosition,
@@ -21,7 +20,6 @@ import {
 import { createKellySizingState, updateKellyState } from '../sizing/kelly-criterion';
 import { createMartingaleState, updateMartingaleState } from '../sizing/martingale';
 import { createOptimalFState, updateOptimalFState } from '../sizing/optimal-f';
-import { TradeSnapshot } from '../../types/index';
 
 type AdaptiveTakeProfitHistoryUpdate = {
     position: PositionState;
@@ -645,11 +643,7 @@ export function runBacktestCompact(
     const advancedSizing = sizing?.advancedSizing;
     const indicatorSeries = resolveIndicators(data, settings, precomputed);
 
-    const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators(config)
-        ? computeSnapshotIndicators(data, indicatorSeries)
-        : null;
-
-    const preparedSignals = prepareSignals(data, signals, config, indicatorSeries, tradeDirection, snapshotIndicators);
+    const preparedSignals = prepareSignals(data, signals, config, indicatorSeries, tradeDirection);
     const preparedSignalBarIndexes = resolvePreparedSignalBarIndexes(data, preparedSignals);
 
     let capital = initialCapital;
@@ -1106,19 +1100,11 @@ export function runBacktest(
     const advancedSizing = sizing?.advancedSizing;
     const indicatorSeries = resolveIndicators(data, settings, precomputed);
 
-    const snapshotIndicators: SnapshotIndicators | null = needsSnapshotIndicators(config, !!settings.captureSnapshots)
-        ? computeSnapshotIndicators(data, indicatorSeries)
-        : null;
-
-    const preparedSignals = prepareSignals(data, signals, config, indicatorSeries, tradeDirection, snapshotIndicators);
+    const preparedSignals = prepareSignals(data, signals, config, indicatorSeries, tradeDirection);
     const preparedSignalBarIndexes = resolvePreparedSignalBarIndexes(data, preparedSignals);
-
-    const doSnapshot = !!settings.captureSnapshots;
-    const executionShift = getExecutionShift(config);
 
     let capital = initialCapital, tradeId = 0, signalIdx = 0;
     const positions: PositionState[] = [];
-    const snapshots = new Map<PositionState, TradeSnapshot | null>();
     const maxOpenTrades = config.maxOpenTrades;
     const trades: Trade[] = [];
     const equityCurve: { time: Time; value: number }[] = [];
@@ -1214,7 +1200,6 @@ export function runBacktest(
     const recordExitFull = (pos: PositionState, candle: OHLCVData, exitPrice: number, exitSize: number, reason: Trade['exitReason']) => {
         const d = calculateTradeExitDetails(pos, exitPrice, exitSize, commissionRate);
         capital += d.rawPnl - d.commission;
-        const snap = snapshots.get(pos) ?? null;
         const trade: Trade = {
             id: ++tradeId,
             type: pos.direction,
@@ -1231,7 +1216,6 @@ export function runBacktest(
             takeProfitPrice: pos.takeProfitPrice,
         };
         if (pos.warmUpEntry) trade.entryMode = 'warm_up';
-        if (snap) trade.entrySnapshot = snap;
         trades.push(trade);
         pos.realizedPnl += d.totalPnl;
         pos.size -= d.size;
@@ -1239,18 +1223,10 @@ export function runBacktest(
         if (pos.size <= 0) {
             const idx = positions.indexOf(pos);
             if (idx >= 0) positions.splice(idx, 1);
-            snapshots.delete(pos);
             pendingAdaptiveTakeProfitExits.delete(pos);
             fullyClosed = true;
         }
         return { details: d, fullyClosed };
-    };
-
-    const captureSnapshotForPosition = (pos: PositionState, barIndex: number, signal: Signal) => {
-        if (doSnapshot && snapshotIndicators) {
-            const snapshotBarIndex = Math.max(0, barIndex - executionShift);
-            snapshots.set(pos, captureTradeSnapshot(data, snapshotBarIndex, indicatorSeries, snapshotIndicators, pos.direction, signal.triggerPrice ?? signal.price));
-        }
     };
 
     const tryProcessExitsAfterEntryFull = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
@@ -1330,7 +1306,6 @@ export function runBacktest(
                             flipLossDirection.activeDirection = opened.nextPosition.direction;
                         }
                         capital -= opened.entryCommission;
-                        captureSnapshotForPosition(opened.nextPosition, i, warmUpSignal);
                     }
                 }
                 pendingEntry = null;
@@ -1364,7 +1339,6 @@ export function runBacktest(
                             flipLossDirection.activeDirection = opened.nextPosition.direction;
                         }
                         capital -= opened.entryCommission;
-                        captureSnapshotForPosition(opened.nextPosition, i, signal);
                     }
                 } else if (!exitTarget && positions.length >= maxOpenTrades && warmUpEnabled) {
                     pendingEntry = signal;
@@ -1397,10 +1371,9 @@ export function runBacktest(
                             if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                                 flipLossDirection.activeDirection = opened.nextPosition.direction;
                             }
-                            capital -= opened.entryCommission;
-                            captureSnapshotForPosition(opened.nextPosition, i, signal);
-                        }
+                        capital -= opened.entryCommission;
                     }
+                }
                 }
             }
         }
@@ -1454,7 +1427,6 @@ export function runBacktest(
                             flipLossDirection.activeDirection = opened.nextPosition.direction;
                         }
                         capital -= opened.entryCommission;
-                        captureSnapshotForPosition(opened.nextPosition, i, warmUpSignal);
                         finalizeEntryBarStateFull(opened.nextPosition, candle, i);
                     }
                 }
@@ -1485,7 +1457,6 @@ export function runBacktest(
                                 flipLossDirection.activeDirection = opened.nextPosition.direction;
                             }
                             capital -= opened.entryCommission;
-                            captureSnapshotForPosition(opened.nextPosition, i, signal);
                             finalizeEntryBarStateFull(opened.nextPosition, candle, i);
                         }
                     } else if (!exitTarget && positions.length >= maxOpenTrades && warmUpEnabled) {
@@ -1518,11 +1489,10 @@ export function runBacktest(
                                 if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
                                     flipLossDirection.activeDirection = opened.nextPosition.direction;
                                 }
-                                capital -= opened.entryCommission;
-                                captureSnapshotForPosition(opened.nextPosition, i, signal);
-                                finalizeEntryBarStateFull(opened.nextPosition, candle, i);
-                            }
-                        }
+                        capital -= opened.entryCommission;
+                        finalizeEntryBarStateFull(opened.nextPosition, candle, i);
+                    }
+                }
                     }
                 }
             }
@@ -1543,13 +1513,10 @@ export function runBacktest(
             const pos = positions[0];
             const d = calculateTradeExitDetails(pos, candle.close, pos.size, commissionRate);
             capital += d.rawPnl - d.commission;
-            const snap = snapshots.get(pos) ?? null;
             const eodTrade: Trade = { id: ++tradeId, type: pos.direction, entryTime: pos.entryTime, entryPrice: pos.entryPrice, exitTime: candle.time, exitPrice: candle.close, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: 'end_of_data', stopLossPrice: pos.stopLossPrice, takeProfitPrice: pos.takeProfitPrice };
             if (pos.warmUpEntry) eodTrade.entryMode = 'warm_up';
-            if (snap) eodTrade.entrySnapshot = snap;
             trades.push(eodTrade);
             positions.splice(0, 1);
-            snapshots.delete(pos);
         }
         if (equityCurve.length > 0) {
             equityCurve[equityCurve.length - 1] = { time: candle.time, value: capital };

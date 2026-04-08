@@ -13,10 +13,7 @@ import type {
     BacktestResult,
 } from "./types/strategies";
 import type { CapitalSettings } from "./types/backtest";
-import {
-    buildBacktestPolymarketPerformanceSummary,
-    type BacktestPolymarketPerformanceSummary,
-} from "./polymarket-diagnostics-utils";
+import { buildBacktestPolymarketPerformanceSummary, type BacktestPolymarketPerformanceSummary } from "./polymarket-diagnostics-utils";
 
 // ============================================================================
 // Engine mode
@@ -317,6 +314,15 @@ export interface SlimBacktestSingleResult extends CompactBacktestMetrics {
     polymarketPerformance?: BacktestPolymarketPerformanceSummary;
 }
 
+export function toSlimSingleResult(result: BacktestResult): SlimBacktestSingleResult {
+    return {
+        ...toCompactMetrics(result),
+        marketContext: result.marketContext,
+        polymarketTradeSummary: result.polymarketTradeSummary,
+        polymarketPerformance: buildBacktestPolymarketPerformanceSummary(result),
+    };
+}
+
 export interface BacktestRandomSearchResponse {
     ok: true;
     strategyKey: string;
@@ -375,14 +381,5 @@ export function toCompactMetrics(result: BacktestResult): CompactBacktestMetrics
         avgTrade: result.avgTrade,
         avgWin: result.avgWin,
         avgLoss: result.avgLoss,
-    };
-}
-
-export function toSlimSingleResult(result: BacktestResult): SlimBacktestSingleResult {
-    return {
-        ...toCompactMetrics(result),
-        marketContext: result.marketContext,
-        polymarketTradeSummary: result.polymarketTradeSummary,
-        polymarketPerformance: buildBacktestPolymarketPerformanceSummary(result),
     };
 }

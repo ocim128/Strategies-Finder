@@ -8,7 +8,6 @@ import {
     StrategyParams,
     BacktestSettings,
     BacktestResult,
-    PostEntryPathStats,
     Signal,
     applySignalPolarity,
 } from "./strategies/index";
@@ -58,11 +57,6 @@ import {
 } from "./backtest-run-presenter";
 import { commitBacktestResult } from "./state-actions";
 import { annotateBacktestResultWithPolymarketOutcomes } from "./polymarket-trade-annotations";
-import {
-    buildExpectancyBreakdown,
-    buildPostEntryPathStats as analyzeBacktestResult,
-    enrichPolymarketBacktestResult,
-} from "./backtest-result-analysis";
 import {
     buildBacktestEndpointCopyBundleFromSnapshot,
     computeBacktestEndpointDatasetFingerprint,
@@ -152,9 +146,7 @@ export class BacktestService {
             // Only annotate Polymarket outcomes when explicitly enabled
             const annotatePolymarket = settings.polymarketAnnotationEnabled ?? false;
             if (annotatePolymarket) {
-                result = enrichPolymarketBacktestResult(
-                    await this.annotatePolymarketResult(result, settings, state.ohlcvData)
-                );
+                result = await this.annotatePolymarketResult(result, settings, state.ohlcvData);
             }
 
             if (!this.isLatestInteractiveRun(runId)) {
@@ -230,9 +222,7 @@ export class BacktestService {
                 ...this.getBacktestSettings(),
                 ...settingsOverride,
             } as BacktestSettings,
-            {
-                captureSnapshots: true,
-                coerceWithoutUiToggles: true,
+            { coerceWithoutUiToggles: false,
             }
         );
 
@@ -329,11 +319,11 @@ export class BacktestService {
 
             const primarySettings = resolveBacktestSettingsFromRaw(
                 primaryConfig.backtestSettings as unknown as BacktestSettings,
-                { captureSnapshots: true, coerceWithoutUiToggles: true }
+                { coerceWithoutUiToggles: true }
             );
             const secondarySettings = resolveBacktestSettingsFromRaw(
                 secondaryConfig.backtestSettings as unknown as BacktestSettings,
-                { captureSnapshots: false, coerceWithoutUiToggles: true }
+                { coerceWithoutUiToggles: true }
             );
             const backtestData = this.selectClosedCandleData(
                 state.ohlcvData,
@@ -596,8 +586,8 @@ export class BacktestService {
             result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
             result.performanceAnalytics = this.recomputePerformanceAnalytics(result);
         }
-        result.expectancyBreakdown = buildExpectancyBreakdown(result);
-        result.postEntryPath = this.buildPostEntryPathStats(result, 5, backtestData);
+        
+        
         if (result.trades.length >= 3) {
             result.edgeStatistics = computeEdgeStatistics(result, backtestData);
         }
@@ -679,7 +669,6 @@ export class BacktestService {
         }
 
         const settings = resolveBacktestSettingsFromRaw(raw as BacktestSettings, {
-            captureSnapshots: true,
             coerceWithoutUiToggles: false,
         });
 
@@ -746,11 +735,6 @@ export class BacktestService {
 
         return undefined;
     }
-
-    private buildPostEntryPathStats(result: BacktestResult, horizonMaxBars: number, ohlcvData: OHLCVData[]): PostEntryPathStats {
-        return analyzeBacktestResult(result, horizonMaxBars, ohlcvData);
-    }
-
 
     public requiresTypescriptEngine(settings: BacktestSettings): boolean {
         // Use shared helper for single-source-of-truth Rust eligibility

@@ -1,4 +1,4 @@
-import assert from "node:assert";
+﻿import assert from "node:assert";
 import { describe, it } from "node:test";
 import { Readable } from "node:stream";
 import type { OHLCVData, Time } from "../lib/types/strategies";
@@ -192,5 +192,44 @@ describe("backtest endpoint plugin", () => {
         assert.strictEqual(withIgnoredCapital.json.requestFingerprint, baseline.json.requestFingerprint);
         assert.strictEqual(withIgnoredCapital.json.result.totalTrades, baseline.json.result.totalTrades);
         assert.strictEqual(withIgnoredCapital.json.result.netProfit, baseline.json.result.netProfit);
+    });
+
+    it("ignores snapshot entry filters and snapshot capture settings", async () => {
+        const handler = createHandler();
+        const candles = buildCandles();
+        const payload = buildSinglePayload({ candles });
+
+        const baseline = await invoke(
+            handler,
+            "/median_deviation_streak",
+            "POST",
+            payload
+        );
+
+        const withSnapshotPayload = {
+            ...payload,
+            backtestSettings: {
+                ...payload.backtestSettings,
+                captureSnapshots: true,
+                snapshotRsiMin: 55,
+                snapshotRsiMax: 70,
+                snapshotTf60PerfMin: 1.1,
+            },
+        };
+
+        const withIgnoredSnapshots = await invoke(
+            handler,
+            "/median_deviation_streak",
+            "POST",
+            withSnapshotPayload
+        );
+
+        assert.strictEqual(baseline.statusCode, 200);
+        assert.strictEqual(withIgnoredSnapshots.statusCode, 200);
+        assert.strictEqual(baseline.json.ok, true);
+        assert.strictEqual(withIgnoredSnapshots.json.ok, true);
+        assert.strictEqual(withIgnoredSnapshots.json.requestFingerprint, baseline.json.requestFingerprint);
+        assert.strictEqual(withIgnoredSnapshots.json.result.totalTrades, baseline.json.result.totalTrades);
+        assert.strictEqual(withIgnoredSnapshots.json.result.netProfit, baseline.json.result.netProfit);
     });
 });

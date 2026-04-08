@@ -22,7 +22,6 @@ import {
     type BacktestSettingsData,
 } from "./settings-model";
 import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "./rust-settings-sanitizer";
-import { SNAPSHOT_CONFIGS } from "./backtest-settings-resolver";
 import { resolveTakeProfitMode } from "./take-profit-settings";
 import type { BacktestSettings } from "./types/strategies";
 
@@ -315,18 +314,8 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("polymarketEntryOffset", { rustSupport: "unsupported" }),
 ];
 
-const SNAPSHOT_BACKTEST_DOM_CONTRACTS = SNAPSHOT_CONFIGS.flatMap((snapshot) => {
-    const minKey = "minKey" in snapshot ? snapshot.minKey : undefined;
-    return [
-        createField(snapshot.toggleKey, { parser: "boolean" }),
-        ...(minKey ? [createField(minKey)] : []),
-        createField(snapshot.maxKey),
-    ];
-});
-
 export const BACKTEST_SETTINGS_DOM_CONTRACTS: readonly BacktestDomSettingContract[] = Object.freeze([
     ...BASE_BACKTEST_DOM_CONTRACTS,
-    ...SNAPSHOT_BACKTEST_DOM_CONTRACTS,
 ]);
 
 export const BACKTEST_SETTINGS_DOM_IDS: readonly string[] = Object.freeze(
@@ -363,9 +352,9 @@ export function coerceBacktestDomSettingValue(
         case "tradeFilterMode":
             return resolveTradeFilterModeValue(value, DEFAULT_BACKTEST_SETTINGS);
         case "tradeDirection":
-            return resolveTradeDirection({ tradeDirection: value as BacktestSettingsData["tradeDirection"] }, DEFAULT_BACKTEST_SETTINGS);
+            return resolveTradeDirection({ tradeDirection: value as any }, DEFAULT_BACKTEST_SETTINGS);
         case "marketMode":
-            return resolveMarketMode({ marketMode: value as BacktestSettingsData["marketMode"] }, DEFAULT_BACKTEST_SETTINGS);
+            return resolveMarketMode({ marketMode: value as any }, DEFAULT_BACKTEST_SETTINGS);
         case "executionModel":
             return resolveExecutionModelValue(value, DEFAULT_BACKTEST_SETTINGS);
         case "kellyFraction":

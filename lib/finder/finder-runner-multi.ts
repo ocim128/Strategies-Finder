@@ -92,7 +92,7 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
                 if (primaryStrategy) {
                     const primarySettings = resolveBacktestSettingsFromRaw(
                         primaryConfig.backtestSettings,
-                        { captureSnapshots: false, coerceWithoutUiToggles: true }
+                        { coerceWithoutUiToggles: true }
                     );
                     for (const dataset of activeDatasets) {
                         let primarySigs: Signal[];

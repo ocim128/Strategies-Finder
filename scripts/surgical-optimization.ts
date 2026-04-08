@@ -299,7 +299,7 @@ async function main(): Promise<void> {
     const settings = resolveBacktestSettingsFromRaw({
       tradeDirection: inferDirection(s.strategy), executionModel: cfg.executionModel, tradeFilterMode: cfg.tradeFilterMode,
       allowSameBarExit: cfg.allowSameBarExit, slippageBps: cfg.slippageBps,
-    } as BacktestSettings, { captureSnapshots: false, coerceWithoutUiToggles: true });
+    } as BacktestSettings, { coerceWithoutUiToggles: true });
 
     const seeds = runSeeds(cfg.seed, cfg.symbol, s.key, cfg.runs);
     const runs: SeedRun[] = [];

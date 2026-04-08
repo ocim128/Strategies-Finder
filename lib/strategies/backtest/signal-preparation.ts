@@ -1,9 +1,8 @@
 
 import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../../types/index';
 import { IndicatorSeries, NormalizedSettings, PreparedSignal } from '../../types/backtest';
-import { getTimeIndex, getExecutionShift, resolveExecutionPrice, compareTime, isBothLikeTradeDirection, needsSnapshotIndicators as checkSnapshotNeeded, normalizeBacktestSettings, normalizeTradeDirection, timeToNumber, timeKey, signalToPositionDirection } from './backtest-utils';
-import { passesTradeFilter, passesRegimeFilters, passesSnapshotFilters } from './trade-filters';
-import { SnapshotIndicators, computeSnapshotIndicators } from './snapshot-capture';
+import { getTimeIndex, getExecutionShift, resolveExecutionPrice, compareTime, isBothLikeTradeDirection, normalizeBacktestSettings, normalizeTradeDirection, timeToNumber, timeKey, signalToPositionDirection } from './backtest-utils';
+import { passesTradeFilter, passesRegimeFilters } from './trade-filters';
 import { resolveIndicators } from './indicator-precompute';
 import { runBacktest } from './backtest-engine';
 import { resolveEntryRiskTargets } from '../../entry-risk-targets';
@@ -13,8 +12,7 @@ export function prepareSignals(
     signals: Signal[],
     config: NormalizedSettings,
     indicators: IndicatorSeries,
-    tradeDirection: TradeDirection,
-    snapshotIndicators?: SnapshotIndicators | null
+    tradeDirection: TradeDirection
 ): Signal[] {
     if (signals.length === 0) return [];
     const timeIndex = getTimeIndex(data);
@@ -61,9 +59,6 @@ export function prepareSignals(
 
             if (!passesTradeFilter(data, decisionIndex, config, indicators, tradeDirection)) return;
             if (!passesRegimeFilters(data, decisionIndex, config, indicators, tradeDirection)) return;
-            // Snapshot filters use decisionIndex (the signal bar) so they never peek at
-            // execution-bar OHLCV that isn't available yet under next_open.
-            if (!passesSnapshotFilters(data, decisionIndex, config, snapshotIndicators ?? null, tradeDirection, signal.price)) return;
 
             const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
 
@@ -93,9 +88,6 @@ export function prepareSignals(
         const signalDirection = signalToPositionDirection(signal.type);
         if (!passesTradeFilter(data, decisionIndex, config, indicators, signalDirection)) return;
         if (!passesRegimeFilters(data, decisionIndex, config, indicators, signalDirection)) return;
-        // Snapshot filters use decisionIndex (the signal bar) so they never peek at
-        // execution-bar OHLCV that isn't available yet under next_open.
-        if (!passesSnapshotFilters(data, decisionIndex, config, snapshotIndicators ?? null, signalDirection, signal.price)) return;
 
         const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
 
@@ -138,11 +130,7 @@ export function prepareSignalsForScanner(
     const tradeDirection = normalizeTradeDirection(settings);
     const indicators = resolveIndicators(data, settings);
 
-    const snapshotIndicators = checkSnapshotNeeded(config)
-        ? computeSnapshotIndicators(data, indicators)
-        : null;
-
-    return prepareSignals(data, signals, config, indicators, tradeDirection, snapshotIndicators);
+    return prepareSignals(data, signals, config, indicators, tradeDirection);
 }
 
 /**

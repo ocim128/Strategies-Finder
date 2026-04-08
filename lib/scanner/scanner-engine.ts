@@ -61,7 +61,6 @@ function normalizeStrategyParams(defaultParams: StrategyParams, rawParams: unkno
  */
 export function resolveScannerBacktestSettings(settings?: BacktestSettings): BacktestSettings {
     return resolveBacktestSettingsFromRaw(settings, {
-        captureSnapshots: false,
         coerceWithoutUiToggles: true,
     });
 }

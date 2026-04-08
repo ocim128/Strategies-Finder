@@ -13,23 +13,14 @@ import { coerceAdaptiveTakeProfitFieldValue, resolveTakeProfitMode } from "./tak
 
 import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, TradeDirection, TradeFilterMode } from "./types/strategies";
 import { isTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from "./types/backtest";
-import { CAPITAL_DEFAULTS, EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw, SNAPSHOT_CONFIGS } from "./backtest-settings-resolver";
+import { CAPITAL_DEFAULTS, EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
 import { getLegacyCompatibleTradeFilterModeValue, getLegacyCompatibleTradeFilterToggleValue } from "./legacy-settings-compat";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-type SnapshotConfigEntry = typeof SNAPSHOT_CONFIGS[number];
-type SnapshotConfigProp<T, K extends PropertyKey> = T extends Record<K, infer V> ? V : never;
-type SnapshotToggleKey = Extract<SnapshotConfigProp<SnapshotConfigEntry, "toggleKey">, string>;
-type SnapshotMinKey = Extract<SnapshotConfigProp<SnapshotConfigEntry, "minKey">, string>;
-type SnapshotMaxKey = Extract<SnapshotConfigProp<SnapshotConfigEntry, "maxKey">, string>;
-type SnapshotFilterFields = Record<SnapshotToggleKey, boolean>
-    & Record<SnapshotMinKey, number>
-    & Record<SnapshotMaxKey, number>;
-
-export interface BacktestSettingsData extends SnapshotFilterFields {
+export interface BacktestSettingsData {
     // Capital settings
     initialCapital: number;
     positionSize: number;
@@ -187,17 +178,6 @@ export interface AppSettings {
 // Default Values
 // ============================================================================
 
-const SNAPSHOT_DEFAULTS = Object.fromEntries(
-    SNAPSHOT_CONFIGS.flatMap((snapshot) => {
-        const minKey = "minKey" in snapshot ? snapshot.minKey : undefined;
-        return [
-            [snapshot.toggleKey, false] as const,
-            ...(minKey ? [[minKey, 0] as const] : []),
-            [snapshot.maxKey, 0] as const,
-        ];
-    })
-) as SnapshotFilterFields;
-
 const {
     rsiPeriod: DEFAULT_CONFIRM_RSI_PERIOD,
     rsiBullish: DEFAULT_CONFIRM_RSI_BULLISH,
@@ -207,7 +187,6 @@ const {
 
 export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     ...DEFAULT_SHARED_BACKTEST_SETTINGS,
-    ...SNAPSHOT_DEFAULTS,
 
     // Capital settings
     initialCapital: CAPITAL_DEFAULTS.initialCapital,
@@ -272,22 +251,6 @@ function normalizeStrategyParams(raw: unknown): Record<string, number> {
         }
     });
     return normalized;
-}
-
-function resolveSnapshotToggle(
-    raw: Record<string, unknown>,
-    toggleKey: SnapshotToggleKey,
-    minKey: SnapshotMinKey | null,
-    maxKey: SnapshotMaxKey
-): boolean {
-    const explicit = raw[toggleKey as string];
-    if (explicit !== undefined) {
-        return readBoolean(explicit, false);
-    }
-
-    const minValue = minKey ? readNumber(raw[minKey as string], 0) : 0;
-    const maxValue = readNumber(raw[maxKey as string], 0);
-    return minValue !== 0 || maxValue !== 0;
 }
 
 const UI_ONLY_BACKTEST_SETTING_KEYS = new Set<keyof BacktestSettingsData>([
@@ -407,16 +370,6 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
     normalized.entrySettingsToggle = source.entrySettingsToggle === undefined
         ? undefined
         : readBoolean(source.entrySettingsToggle, false);
-
-    for (const snapshot of SNAPSHOT_CONFIGS) {
-        const minKey: SnapshotMinKey | null = "minKey" in snapshot ? snapshot.minKey : null;
-        normalizedRecord[snapshot.toggleKey] = resolveSnapshotToggle(
-            source,
-            snapshot.toggleKey,
-            minKey,
-            snapshot.maxKey
-        );
-    }
 
     return normalized;
 }

@@ -1,12 +1,5 @@
 import type { CapitalSettings } from "./backtest";
 import type { BacktestSettings } from "./strategies";
-import type {
-    AnalysisFilterFinderResult,
-    AnalysisFinderCandidate,
-    ComboFilterEntry,
-    ComboFilterResult,
-    FeatureAnalysis,
-} from "../strategies/backtest/trade-analyzer";
 
 export interface PolymarketOutcomeRow {
     series_id: string;
@@ -129,38 +122,4 @@ export interface PolymarketFilterProjection {
     filteredWinRate: number;
     bestBaselineWinRate: number;
     baselineDelta: number;
-}
-
-export interface PolymarketFeatureAnalysis extends FeatureAnalysis {
-    scoredProjection?: PolymarketFilterProjection | null;
-}
-
-export type PolymarketComboFilterEntry = ComboFilterEntry;
-
-export type PolymarketComboFilterResult = ComboFilterResult;
-
-export interface PolymarketFinderCandidate extends AnalysisFinderCandidate {
-    scoredProjection?: PolymarketFilterProjection | null;
-}
-
-export interface PolymarketFilterFinderResult extends Omit<AnalysisFilterFinderResult, "bestCandidate" | "topCandidates"> {
-    bestCandidate: PolymarketFinderCandidate | null;
-    topCandidates: PolymarketFinderCandidate[];
-}
-
-export interface PolymarketFilterSampleCounts {
-    scoredTrades: number;
-    pricedTrades: number;
-}
-
-/** Full filter suggestions for Polymarket: single-feature + combo finder */
-export interface PolymarketFilterSuggestions {
-    featureAnalyses: PolymarketFeatureAnalysis[];
-    finderResult: PolymarketFilterFinderResult;
-    baselineWinRate: number;
-    baselineExpectancy: number;
-    scoredWinRate: number;
-    scoredBestBaselineWinRate: number;
-    scoredBaselineDelta: number;
-    sampleCounts: PolymarketFilterSampleCounts;
 }

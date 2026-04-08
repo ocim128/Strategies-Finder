@@ -1,13 +1,8 @@
-import { SNAPSHOT_CONFIGS } from "./backtest-settings-resolver";
-import { SNAPSHOT_FILTER_SETTING_KEYS } from "./rust-settings-sanitizer";
-import type { BacktestSettings } from "./types/strategies";
-
-const ENDPOINT_IGNORED_SNAPSHOT_TOGGLE_KEYS = SNAPSHOT_CONFIGS.map((snapshot) => snapshot.toggleKey);
+import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "./rust-settings-sanitizer";
+import { BacktestSettings } from "./types/strategies";
 
 export const ENDPOINT_IGNORED_BACKTEST_SETTING_KEYS = [
-    "captureSnapshots",
-    ...ENDPOINT_IGNORED_SNAPSHOT_TOGGLE_KEYS,
-    ...SNAPSHOT_FILTER_SETTING_KEYS,
+    ...RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS,
 ] as const;
 
 const ENDPOINT_IGNORED_BACKTEST_SETTING_KEY_SET = new Set<string>(ENDPOINT_IGNORED_BACKTEST_SETTING_KEYS);

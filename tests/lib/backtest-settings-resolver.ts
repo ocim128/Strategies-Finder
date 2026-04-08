@@ -77,42 +77,6 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     polymarketEntryOffset: 0,
 });
 
-export type SnapshotConfig = {
-    toggleKey: string;
-    minKey?: keyof BacktestSettings;
-    maxKey: keyof BacktestSettings;
-};
-
-export const SNAPSHOT_CONFIGS = [
-    { toggleKey: "snapshotAtrFilterToggle", minKey: "snapshotAtrPercentMin", maxKey: "snapshotAtrPercentMax" },
-    { toggleKey: "snapshotVolumeFilterToggle", minKey: "snapshotVolumeRatioMin", maxKey: "snapshotVolumeRatioMax" },
-    { toggleKey: "snapshotAdxFilterToggle", minKey: "snapshotAdxMin", maxKey: "snapshotAdxMax" },
-    { toggleKey: "snapshotEmaFilterToggle", minKey: "snapshotEmaDistanceMin", maxKey: "snapshotEmaDistanceMax" },
-    { toggleKey: "snapshotRsiFilterToggle", minKey: "snapshotRsiMin", maxKey: "snapshotRsiMax" },
-    { toggleKey: "snapshotPriceRangePosFilterToggle", minKey: "snapshotPriceRangePosMin", maxKey: "snapshotPriceRangePosMax" },
-    { toggleKey: "snapshotBarsFromHighFilterToggle", maxKey: "snapshotBarsFromHighMax" },
-    { toggleKey: "snapshotBarsFromLowFilterToggle", maxKey: "snapshotBarsFromLowMax" },
-    { toggleKey: "snapshotTrendEfficiencyFilterToggle", minKey: "snapshotTrendEfficiencyMin", maxKey: "snapshotTrendEfficiencyMax" },
-    { toggleKey: "snapshotAtrRegimeFilterToggle", minKey: "snapshotAtrRegimeRatioMin", maxKey: "snapshotAtrRegimeRatioMax" },
-    { toggleKey: "snapshotBodyPercentFilterToggle", minKey: "snapshotBodyPercentMin", maxKey: "snapshotBodyPercentMax" },
-    { toggleKey: "snapshotWickSkewFilterToggle", minKey: "snapshotWickSkewMin", maxKey: "snapshotWickSkewMax" },
-    { toggleKey: "snapshotVolumeTrendFilterToggle", minKey: "snapshotVolumeTrendMin", maxKey: "snapshotVolumeTrendMax" },
-    { toggleKey: "snapshotVolumeBurstFilterToggle", minKey: "snapshotVolumeBurstMin", maxKey: "snapshotVolumeBurstMax" },
-    { toggleKey: "snapshotVolumePriceDivergenceFilterToggle", minKey: "snapshotVolumePriceDivergenceMin", maxKey: "snapshotVolumePriceDivergenceMax" },
-    { toggleKey: "snapshotVolumeConsistencyFilterToggle", minKey: "snapshotVolumeConsistencyMin", maxKey: "snapshotVolumeConsistencyMax" },
-    { toggleKey: "snapshotCloseLocationFilterToggle", minKey: "snapshotCloseLocationMin", maxKey: "snapshotCloseLocationMax" },
-    { toggleKey: "snapshotOppositeWickFilterToggle", minKey: "snapshotOppositeWickMin", maxKey: "snapshotOppositeWickMax" },
-    { toggleKey: "snapshotRangeAtrFilterToggle", minKey: "snapshotRangeAtrMultipleMin", maxKey: "snapshotRangeAtrMultipleMax" },
-    { toggleKey: "snapshotMomentumFilterToggle", minKey: "snapshotMomentumConsistencyMin", maxKey: "snapshotMomentumConsistencyMax" },
-    { toggleKey: "snapshotBreakQualityFilterToggle", minKey: "snapshotBreakQualityMin", maxKey: "snapshotBreakQualityMax" },
-    { toggleKey: "snapshotTf60PerfFilterToggle", minKey: "snapshotTf60PerfMin", maxKey: "snapshotTf60PerfMax" },
-    { toggleKey: "snapshotTf90PerfFilterToggle", minKey: "snapshotTf90PerfMin", maxKey: "snapshotTf90PerfMax" },
-    { toggleKey: "snapshotTf120PerfFilterToggle", minKey: "snapshotTf120PerfMin", maxKey: "snapshotTf120PerfMax" },
-    { toggleKey: "snapshotTf480PerfFilterToggle", minKey: "snapshotTf480PerfMin", maxKey: "snapshotTf480PerfMax" },
-    { toggleKey: "snapshotTfConfluencePerfFilterToggle", minKey: "snapshotTfConfluencePerfMin", maxKey: "snapshotTfConfluencePerfMax" },
-    { toggleKey: "snapshotEntryQualityScoreFilterToggle", minKey: "snapshotEntryQualityScoreMin", maxKey: "snapshotEntryQualityScoreMax" },
-] as const satisfies readonly SnapshotConfig[];
-
 type ResolverGuardName =
     | "useAtrRisk"
     | "usePercentRisk"
@@ -392,14 +356,6 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "strategyTimeframeMinutes",
     "polymarketAnnotationEnabled",
     "polymarketEntryOffset",
-    ...SNAPSHOT_CONFIGS.flatMap((snapshot) => {
-        const keys: string[] = [snapshot.toggleKey];
-        if ("minKey" in snapshot) {
-            keys.push(snapshot.minKey);
-        }
-        keys.push(snapshot.maxKey);
-        return keys;
-    }),
 ]);
 
 const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>([
@@ -517,10 +473,6 @@ function readConfirmationStrategyParams(
     return result;
 }
 
-function resolveSnapshotValue(raw: Record<string, unknown>, toggleKey: string, valueKey: string): number {
-    return readBoolean(raw, toggleKey, false) ? readNumber(raw, valueKey, 0) : 0;
-}
-
 export function hasUiToggleSettings(raw: Record<string, unknown>): boolean {
     return [
         "riskSettingsToggle",
@@ -528,14 +480,12 @@ export function hasUiToggleSettings(raw: Record<string, unknown>): boolean {
         "entrySettingsToggle",
         "riskWinStreakStopLossToggle",
         "invertSignalsToggle",
-        ...SNAPSHOT_CONFIGS.map((snapshot) => snapshot.toggleKey),
     ].some((key) => key in raw);
 }
 
 export function resolveBacktestSettingsFromRaw(
     settings?: BacktestSettings,
     options?: {
-        captureSnapshots?: boolean;
         coerceWithoutUiToggles?: boolean;
     }
 ): BacktestSettings {
@@ -619,20 +569,9 @@ export function resolveBacktestSettingsFromRaw(
         confirmationStrategyParams,
         tradeDirection,
         executionModel,
-        captureSnapshots: options?.captureSnapshots ?? false,
         polymarketAnnotationEnabled: readBoolean(raw, "polymarketAnnotationEnabled", EFFECTIVE_BACKTEST_DEFAULTS.polymarketAnnotationEnabled),
         polymarketEntryOffset: readNumber(raw, "polymarketEntryOffset", EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryOffset),
     };
-
-    for (const snapshot of SNAPSHOT_CONFIGS) {
-        const minKey = "minKey" in snapshot ? snapshot.minKey : undefined;
-        if (minKey) {
-            (resolved as Record<string, number>)[minKey] = resolveSnapshotValue(raw, snapshot.toggleKey, minKey);
-        }
-        if (snapshot.maxKey) {
-            (resolved as Record<string, number>)[snapshot.maxKey] = resolveSnapshotValue(raw, snapshot.toggleKey, snapshot.maxKey);
-        }
-    }
 
     return resolved;
 }

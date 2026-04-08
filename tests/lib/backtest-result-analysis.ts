@@ -9,55 +9,11 @@ import type {
     PostEntryPathBucketStats,
     PostEntryPathOpenTradeProbability,
     PostEntryPathStats,
-    SnapshotProfileRow,
-    SnapshotProfileStats,
-    Trade,
-    TradeSnapshot,
 } from "./strategies/index";
-import type {
-    PolymarketFeatureAnalysis,
-    PolymarketFilterProjection,
-    PolymarketFilterSuggestions,
-    PolymarketFilterFinderResult,
-    PolymarketFinderCandidate,
-} from "./types/polymarket-outcomes";
+import type { Trade } from "./types/strategies";
 import { timeKey } from "./strategies/index";
 import { getTimeIndex } from "./strategies/backtest/backtest-utils";
-import {
-    analyzeTradePatterns,
-    runAnalysisFilterFinder,
-} from "./strategies/backtest/trade-analyzer";
 import { parseTimeToUnixSeconds } from "./time-normalization";
-
-const SNAPSHOT_METRIC_DEFS: Array<{ key: keyof TradeSnapshot; label: string }> = [
-    { key: "rsi", label: "RSI" },
-    { key: "adx", label: "ADX" },
-    { key: "atrPercent", label: "ATR %" },
-    { key: "emaDistance", label: "EMA Distance %" },
-    { key: "volumeRatio", label: "Volume Ratio" },
-    { key: "priceRangePos", label: "Price Range Pos" },
-    { key: "barsFromHigh", label: "Bars From High" },
-    { key: "barsFromLow", label: "Bars From Low" },
-    { key: "trendEfficiency", label: "Trend Efficiency" },
-    { key: "atrRegimeRatio", label: "ATR Regime Ratio" },
-    { key: "bodyPercent", label: "Body %" },
-    { key: "wickSkew", label: "Wick Skew" },
-    { key: "closeLocation", label: "Close Location" },
-    { key: "oppositeWickPercent", label: "Opposite Wick %" },
-    { key: "rangeAtrMultiple", label: "Range/ATR Multiple" },
-    { key: "momentumConsistency", label: "Momentum Consistency" },
-    { key: "breakQuality", label: "Break Quality" },
-    { key: "entryQualityScore", label: "Entry Quality Score" },
-    { key: "volumeTrend", label: "Volume Trend" },
-    { key: "volumeBurst", label: "Volume Burst" },
-    { key: "volumePriceDivergence", label: "Vol-Price Divergence" },
-    { key: "volumeConsistency", label: "Volume Consistency" },
-    { key: "tf60Perf", label: "60m Perf %" },
-    { key: "tf90Perf", label: "90m Perf %" },
-    { key: "tf120Perf", label: "120m Perf %" },
-    { key: "tf480Perf", label: "480m Perf %" },
-    { key: "tfConfluencePerf", label: "TF Confluence %" },
-];
 
 const EXIT_REASON_LABELS: Record<string, string> = {
     signal: "Signal",
@@ -68,17 +24,6 @@ const EXIT_REASON_LABELS: Record<string, string> = {
     partial: "Partial",
     probation_fail: "Weak-Start Guard",
     end_of_data: "End of Data",
-};
-
-const MIN_POLYMARKET_SNAPSHOT_PROFILE_TRADES = 10;
-const MIN_POLYMARKET_FILTER_TRADES = 10;
-
-type SnapshotFilterDirection = "above" | "below";
-
-type SnapshotFilterRule = {
-    feature: keyof TradeSnapshot;
-    direction: SnapshotFilterDirection;
-    threshold: number;
 };
 
 export function buildPostEntryPathStats(
@@ -141,7 +86,6 @@ export function buildPostEntryPathStats(
         lose: finalizePostEntryBucket(loseMoves, loseDurationBars, loseDurationMinutes),
         all: finalizePostEntryBucket(allMoves, allDurationBars, allDurationMinutes),
         openTradeProbability: estimateOpenTradeProbability(result.trades, timeIndex, horizonMaxBars, ohlcvData),
-        snapshotProfile: buildSnapshotProfile(result.trades),
         exitReasonBreakdown: buildExitReasonBreakdown(result.trades),
     };
 }
@@ -299,7 +243,7 @@ function buildPriceRangePositionRows(trades: Trade[]): ExpectancyBreakdownRow[] 
     ];
 
     for (const trade of trades) {
-        const position = trade.entrySnapshot?.priceRangePos;
+        const position = (trade as any).entrySnapshot?.priceRangePos;
         if (typeof position !== "number" || !Number.isFinite(position)) continue;
         const clamped = Math.max(0, Math.min(1, position));
         const bucket = buckets.find((entry) => clamped >= entry.min && clamped < entry.max);
@@ -490,82 +434,6 @@ function minimum(values: number[]): number | null {
     return values.reduce((min, value) => (value < min ? value : min), values[0]);
 }
 
-function buildSnapshotProfile(trades: Trade[]): SnapshotProfileStats | undefined {
-    const withSnapshots = trades.filter((trade) => trade.entrySnapshot);
-    if (withSnapshots.length === 0) return undefined;
-    return buildSnapshotProfileStats(
-        withSnapshots,
-        withSnapshots.filter((trade) => trade.pnl > 0),
-        withSnapshots.filter((trade) => trade.pnl <= 0)
-    );
-}
-
-function buildSnapshotProfileStats(
-    withSnapshots: Trade[],
-    winTrades: Trade[],
-    loseTrades: Trade[]
-): SnapshotProfileStats {
-    const rows: SnapshotProfileRow[] = [];
-
-    for (const def of SNAPSHOT_METRIC_DEFS) {
-        const winValues = extractSnapshotValues(winTrades, def.key);
-        const loseValues = extractSnapshotValues(loseTrades, def.key);
-        const allValues = extractSnapshotValues(withSnapshots, def.key);
-        if (allValues.length === 0) continue;
-
-        const winAvg = average(winValues);
-        const loseAvg = average(loseValues);
-        const allAvg = average(allValues);
-        const delta = winAvg !== null && loseAvg !== null ? winAvg - loseAvg : null;
-
-        let significance: number | null = null;
-        if (delta !== null && allValues.length >= 3) {
-            const computedStddev = stddev(allValues);
-            if (computedStddev !== null && computedStddev > 0) {
-                significance = Math.abs(delta) / computedStddev;
-            }
-        }
-
-        rows.push({
-            key: def.key,
-            label: def.label,
-            winAvg,
-            loseAvg,
-            allAvg,
-            delta,
-            significance,
-        });
-    }
-
-    rows.sort((a, b) => (b.significance ?? -1) - (a.significance ?? -1));
-
-    return {
-        rows,
-        winSampleSize: winTrades.length,
-        loseSampleSize: loseTrades.length,
-    };
-}
-
-function extractSnapshotValues(trades: Trade[], key: keyof TradeSnapshot): number[] {
-    const values: number[] = [];
-    for (const trade of trades) {
-        const snapshot = trade.entrySnapshot;
-        if (!snapshot) continue;
-        const value = snapshot[key];
-        if (typeof value === "number" && Number.isFinite(value)) {
-            values.push(value);
-        }
-    }
-    return values;
-}
-
-function stddev(values: number[]): number | null {
-    if (values.length < 2) return null;
-    const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
-    const variance = values.reduce((sum, value) => sum + (value - avg) ** 2, 0) / values.length;
-    return Math.sqrt(variance);
-}
-
 function buildExitReasonBreakdown(trades: Trade[]): ExitReasonBreakdown | undefined {
     if (trades.length === 0) return undefined;
 
@@ -607,187 +475,6 @@ function buildExitReasonBreakdown(trades: Trade[]): ExitReasonBreakdown | undefi
     return { rows, totalWins, totalLosses };
 }
 
-/**
- * Build a snapshot profile that compares Polymarket wins vs Polymarket losses
- * using trade.polymarketOutcome.isWin as the win criterion.
- * Returns undefined if fewer than 10 scored trades with snapshots exist.
- */
-export function buildPolymarketSnapshotProfile(trades: Trade[]): SnapshotProfileStats | undefined {
-    const scoredTrades = trades.filter(isPolymarketScoredTradeWithSnapshot);
-    if (scoredTrades.length < MIN_POLYMARKET_SNAPSHOT_PROFILE_TRADES) return undefined;
-
-    const winTrades = scoredTrades.filter(isPolymarketWinTrade);
-    const loseTrades = scoredTrades.filter((trade) => !isPolymarketWinTrade(trade));
-    if (winTrades.length < 2 || loseTrades.length < 2) return undefined;
-
-    return buildSnapshotProfileStats(scoredTrades, winTrades, loseTrades);
-}
-
-export function buildPolymarketFilterSuggestions(
-    trades: Trade[]
-): PolymarketFilterSuggestions | undefined {
-    const scoredTrades = trades.filter(isPolymarketScoredTradeWithSnapshot);
-    if (scoredTrades.length < MIN_POLYMARKET_FILTER_TRADES) return undefined;
-
-    const pricedTrades = trades.filter(isPolymarketPricedTradeWithSnapshot);
-    if (pricedTrades.length < MIN_POLYMARKET_FILTER_TRADES) return undefined;
-
-    const wins = pricedTrades.filter(isPolymarketWinTrade);
-    const losses = pricedTrades.filter((trade) => !isPolymarketWinTrade(trade));
-    if (wins.length < 2 || losses.length < 2) return undefined;
-
-    const featureAnalyses = analyzeTradePatterns(pricedTrades, {
-        isWin: isPolymarketWinTrade,
-        payout: getRequiredPolymarketTradePayout,
-    }) as PolymarketFeatureAnalysis[];
-    const finderResult = runAnalysisFilterFinder(pricedTrades, featureAnalyses, {
-        isWin: isPolymarketWinTrade,
-        payout: getRequiredPolymarketTradePayout,
-    });
-
-    for (const analysis of featureAnalyses) {
-        analysis.scoredProjection = analysis.suggestedFilter
-            ? buildPolymarketFilterProjection(scoredTrades, [{
-                feature: analysis.feature,
-                direction: analysis.suggestedFilter.direction,
-                threshold: analysis.suggestedFilter.threshold,
-            }])
-            : null;
-    }
-
-    const enrichedFinderResult: PolymarketFilterFinderResult = {
-        ...finderResult,
-        bestCandidate: finderResult.bestCandidate
-            ? {
-                ...finderResult.bestCandidate,
-                scoredProjection: buildPolymarketFilterProjection(scoredTrades, finderResult.bestCandidate.filters),
-            }
-            : null,
-        topCandidates: finderResult.topCandidates.map<PolymarketFinderCandidate>((candidate) => ({
-            ...candidate,
-            scoredProjection: buildPolymarketFilterProjection(scoredTrades, candidate.filters),
-        })),
-    };
-
-    const scoredWinRate = winsAndLossesWinRate(scoredTrades);
-    const scoredBestBaselineWinRate = computePolymarketBestBaselineWinRate(scoredTrades);
-
-    return {
-        featureAnalyses,
-        finderResult: enrichedFinderResult,
-        baselineWinRate: wins.length / pricedTrades.length,
-        baselineExpectancy: average(pricedTrades.map(getRequiredPolymarketTradePayout)) ?? 0,
-        scoredWinRate,
-        scoredBestBaselineWinRate,
-        scoredBaselineDelta: scoredWinRate - scoredBestBaselineWinRate,
-        sampleCounts: {
-            scoredTrades: scoredTrades.length,
-            pricedTrades: pricedTrades.length,
-        },
-    };
-}
-
-export function enrichPolymarketBacktestResult(result: BacktestResult): BacktestResult {
-    return {
-        ...result,
-        polymarketSnapshotProfile: buildPolymarketSnapshotProfile(result.trades),
-        polymarketFilterSuggestions: buildPolymarketFilterSuggestions(result.trades),
-    };
-}
-
-function isPolymarketScoredTradeWithSnapshot(trade: Trade): boolean {
-    return Boolean(trade.entrySnapshot && trade.polymarketOutcome);
-}
-
-function isPolymarketPricedTradeWithSnapshot(trade: Trade): boolean {
-    const price = trade.polymarketOutcome?.marketEntryPrice;
-    return Boolean(
-        trade.entrySnapshot
-        && trade.polymarketOutcome
-        && typeof price === "number"
-        && Number.isFinite(price)
-    );
-}
-
-function isPolymarketWinTrade(trade: Trade): boolean {
-    return trade.polymarketOutcome?.isWin === true;
-}
-
-function winsAndLossesWinRate(trades: readonly Trade[]): number {
-    if (trades.length === 0) {
-        return 0;
-    }
-    const wins = trades.filter(isPolymarketWinTrade).length;
-    return wins / trades.length;
-}
-
-function computePolymarketBestBaselineWinRate(trades: readonly Trade[]): number {
-    if (trades.length === 0) {
-        return 0;
-    }
-
-    const alwaysYesWins = trades.filter((trade) => trade.polymarketOutcome?.actualOutcomeUp === 1).length;
-    const alwaysYesWinRate = alwaysYesWins / trades.length;
-    return Math.max(alwaysYesWinRate, 1 - alwaysYesWinRate);
-}
-
-function buildPolymarketFilterProjection(
-    trades: readonly Trade[],
-    filters: readonly SnapshotFilterRule[]
-): PolymarketFilterProjection {
-    const keptTrades = trades.filter((trade) => passesAllSnapshotFilters(trade, filters));
-    const filteredWinRate = winsAndLossesWinRate(keptTrades);
-    const bestBaselineWinRate = computePolymarketBestBaselineWinRate(keptTrades);
-
-    return {
-        originalTrades: trades.length,
-        filteredTrades: keptTrades.length,
-        removedPercent: trades.length > 0 ? ((trades.length - keptTrades.length) / trades.length) * 100 : 0,
-        filteredWinRate,
-        bestBaselineWinRate,
-        baselineDelta: filteredWinRate - bestBaselineWinRate,
-    };
-}
-
-function passesAllSnapshotFilters(trade: Trade, filters: readonly SnapshotFilterRule[]): boolean {
-    const snapshot = trade.entrySnapshot;
-    if (!snapshot) {
-        return false;
-    }
-
-    for (const filter of filters) {
-        const value = snapshot[filter.feature];
-        if (!passesSnapshotFilterValue(value, filter.direction, filter.threshold)) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-function passesSnapshotFilterValue(
-    value: number | null | undefined,
-    direction: SnapshotFilterDirection,
-    threshold: number
-): boolean {
-    if (value === null || value === undefined || !Number.isFinite(value)) {
-        return false;
-    }
-    return direction === "above" ? value >= threshold : value <= threshold;
-}
-
-function getPolymarketTradePayout(trade: Trade): number | null {
-    const price = trade.polymarketOutcome?.marketEntryPrice;
-    const isWin = trade.polymarketOutcome?.isWin;
-    if (typeof price !== "number" || !Number.isFinite(price) || typeof isWin !== "boolean") {
-        return null;
-    }
-    return isWin ? (1 - price) : -price;
-}
-
-function getRequiredPolymarketTradePayout(trade: Trade): number {
-    return getPolymarketTradePayout(trade) ?? 0;
-}
 function toEpochMs(time: Trade["entryTime"]): number | null {
     const unixSeconds = parseTimeToUnixSeconds(time);
     return unixSeconds === null ? null : unixSeconds * 1000;

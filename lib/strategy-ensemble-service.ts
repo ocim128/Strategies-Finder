@@ -45,6 +45,7 @@ import {
     type EnsemblePolymarketRunResult,
     type EnsemblePolymarketVetoPairResult,
 } from "./strategy-ensemble-polymarket-engine";
+import { getPolymarket5mSeriesIdForSymbol } from "./polymarket-btc5m";
 import {
     renderEnsemblePolymarketResults,
     resetEnsemblePolymarketPanel,
@@ -78,7 +79,6 @@ import { formatJakartaTime } from "./timezone-utils";
 import { strategyPanelController } from "./strategy-panel-controller";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import { annotateTradesWithPolymarketOutcomesForRun, summarizePolymarketTradesForRun } from "./polymarket-trade-annotations";
-import { enrichPolymarketBacktestResult } from "./backtest-result-analysis";
 import type { BacktestResult } from "./types/strategies";
 
 class StrategyEnsembleService {
@@ -1624,7 +1624,7 @@ class StrategyEnsembleService {
         interval = state.currentInterval
     ): BacktestResult {
         if (outcomes.length === 0) {
-            return enrichPolymarketBacktestResult(result);
+            return result;
         }
 
         const annotatedTrades = annotateTradesWithPolymarketOutcomesForRun(
@@ -1638,20 +1638,25 @@ class StrategyEnsembleService {
             interval,
         });
         const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
+        const existingSummary = result.polymarketTradeSummary;
+        const symbol = state.currentSymbol;
 
-        return enrichPolymarketBacktestResult({
+        return {
             ...result,
             trades: annotatedTrades,
             polymarketTradeSummary: {
-                seriesId: outcomes[0]?.series_id ?? "",
-                outcomeRowsLoaded: outcomes.length,
-                scoredTrades: summary.scoredTrades,
-                missingOutcomeTrades: summary.missingOutcomeTrades,
-                unscoredTrades: summary.unscoredTrades ?? Math.max(0, totalTrades - summary.scoredTrades),
-                duplicateTradesIgnored: summary.duplicateTradesIgnored,
-                timingProfile: summary.timingProfile,
+                seriesId: getPolymarket5mSeriesIdForSymbol(symbol) || outcomes[0]?.series_id || "",
+                outcomeRowsLoaded: existingSummary?.outcomeRowsLoaded && existingSummary.outcomeRowsLoaded > 0
+                    ? existingSummary.outcomeRowsLoaded
+                    : outcomes.length,
+                scoredTrades: existingSummary?.scoredTrades ?? summary.scoredTrades,
+                missingOutcomeTrades: existingSummary?.missingOutcomeTrades ?? summary.missingOutcomeTrades,
+                unscoredTrades: existingSummary?.unscoredTrades ?? summary.unscoredTrades ?? Math.max(0, totalTrades - summary.scoredTrades),
+                duplicateTradesIgnored: existingSummary?.duplicateTradesIgnored ?? summary.duplicateTradesIgnored,
+                entryOffset: existingSummary?.entryOffset ?? undefined,
+                timingProfile: existingSummary?.timingProfile ?? summary.timingProfile,
             },
-        });
+        };
     }
 
     private async loadPolymarketConfigBacktest(configName: string): Promise<void> {

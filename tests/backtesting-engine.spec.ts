@@ -8,7 +8,6 @@ import { precomputeIndicators } from './lib/strategies/backtest';
 import { normalizeBacktestSettings } from './lib/strategies/backtest/backtest-utils';
 import { buildPositionFromSignal } from './lib/strategies/backtest/position-builder';
 import { getOpenPositionForScanner } from './lib/strategies/backtest/signal-preparation';
-import { computeSnapshotIndicators } from './lib/strategies/backtest/snapshot-capture';
 import { resolveScannerBacktestSettings } from './lib/scanner/scanner-engine';
 import { resolveBacktestSettingsFromRaw } from './lib/backtest-settings-resolver';
 import { resolveEntryRiskTargets } from './lib/entry-risk-targets';
@@ -210,8 +209,6 @@ describe('Backtesting Engine', () => {
             allowSameBarExit: false,
             slippageBps: 5,
             snapshotAtrFilterToggle: false,
-            snapshotAtrPercentMin: 1.2,
-            snapshotAtrPercentMax: 2.1,
         };
 
         const resolved = resolveScannerBacktestSettings(rawScannerSettings as any);
@@ -224,8 +221,6 @@ describe('Backtesting Engine', () => {
         expect(resolved.tradeFilterMode).to.equal('none');
         expect(resolved.confirmationStrategies).to.deep.equal([]);
         expect(resolved.confirmationStrategyParams).to.deep.equal({});
-        expect(resolved.snapshotAtrPercentMin).to.equal(0);
-        expect(resolved.snapshotAtrPercentMax).to.equal(0);
     });
 
     it('scanner settings resolver should accept combined trade direction', () => {
@@ -278,9 +273,6 @@ describe('Backtesting Engine', () => {
             allowSameBarExit: 'true',
             slippageBps: '12',
             tradeDirection: 'combined',
-            snapshotAtrFilterToggle: 'true',
-            snapshotAtrPercentMin: '1.1',
-            snapshotAtrPercentMax: '2.2',
         } as any);
 
         expect(resolved.stopLossPercent).to.equal(2.5);
@@ -309,8 +301,6 @@ describe('Backtesting Engine', () => {
         expect(resolved.allowSameBarExit).to.equal(true);
         expect(resolved.slippageBps).to.equal(12);
         expect(resolved.tradeDirection).to.equal('combined');
-        expect(resolved.snapshotAtrPercentMin).to.equal(1.1);
-        expect(resolved.snapshotAtrPercentMax).to.equal(2.2);
     });
 
     it('scanner settings resolver should preserve max hold in simple mode when risk is enabled', () => {
@@ -1452,374 +1442,6 @@ describe('Backtesting Engine', () => {
         expect(compact.totalTrades).to.equal(0);
         expect(Number.isFinite(full.netProfit)).to.equal(true);
         expect(Number.isFinite(compact.netProfit)).to.equal(true);
-    });
-
-    it('should filter low-efficiency entries when trend efficiency filter is enabled', () => {
-        const data: OHLCVData[] = [];
-        const closes = [
-            100, 101, 100, 101, 100, 101, 100, 101, 100, 101, 100, 101,
-            102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113
-        ];
-        for (let i = 0; i < closes.length; i++) {
-            const close = closes[i];
-            data.push({
-                time: (`2023-02-${String(i + 1).padStart(2, '0')}`) as Time,
-                open: close - 0.4,
-                high: close + 1,
-                low: close - 1,
-                close,
-                volume: 1000
-            });
-        }
-
-        const signals: Signal[] = [
-            { time: '2023-02-12' as Time, type: 'buy', price: 101 },
-            { time: '2023-02-14' as Time, type: 'sell', price: 103 },
-            { time: '2023-02-21' as Time, type: 'buy', price: 110 },
-            { time: '2023-02-23' as Time, type: 'sell', price: 112 },
-        ];
-
-        const withoutFilter = runBacktest(data, signals, 10000, 100, 0);
-        const withFilter = runBacktest(data, signals, 10000, 100, 0, {
-            snapshotTrendEfficiencyMin: 0.6
-        });
-
-        expect(withoutFilter.totalTrades).to.equal(2);
-        expect(withFilter.totalTrades).to.equal(1);
-    });
-
-    it('should filter low-conviction candles with body percent filter', () => {
-        const data: OHLCVData[] = [];
-        for (let i = 0; i < 18; i++) {
-            const base = 100 + i;
-            data.push({
-                time: (`2023-03-${String(i + 1).padStart(2, '0')}`) as Time,
-                open: base,
-                high: base + 1,
-                low: base - 1,
-                close: base + 0.2,
-                volume: 1200
-            });
-        }
-
-        // Entry 1: doji-like candle (~5% body of range)
-        data[12] = {
-            time: '2023-03-13' as Time,
-            open: 112,
-            high: 114,
-            low: 110,
-            close: 112.2,
-            volume: 1300
-        };
-
-        // Entry 2: strong body candle (~80% body of range)
-        data[15] = {
-            time: '2023-03-16' as Time,
-            open: 115,
-            high: 117,
-            low: 114,
-            close: 116.6,
-            volume: 1300
-        };
-
-        const signals: Signal[] = [
-            { time: '2023-03-13' as Time, type: 'buy', price: 112.2 },
-            { time: '2023-03-14' as Time, type: 'sell', price: 113 },
-            { time: '2023-03-16' as Time, type: 'buy', price: 116.6 },
-            { time: '2023-03-18' as Time, type: 'sell', price: 117.5 },
-        ];
-
-        const withoutFilter = runBacktest(data, signals, 10000, 100, 0);
-        const withFilter = runBacktest(data, signals, 10000, 100, 0, {
-            snapshotBodyPercentMin: 50
-        });
-
-        expect(withoutFilter.totalTrades).to.equal(2);
-        expect(withFilter.totalTrades).to.equal(1);
-    });
-
-    it('should filter entries with weak break quality', () => {
-        const data: OHLCVData[] = [];
-        for (let i = 0; i < 22; i++) {
-            const base = 100 + i * 0.4;
-            data.push({
-                time: (`2023-04-${String(i + 1).padStart(2, '0')}`) as Time,
-                open: base,
-                high: base + 1.5,
-                low: base - 1.5,
-                close: base + 0.6,
-                volume: 1200
-            });
-        }
-
-        // Entry 1: closes below trigger -> poor break quality
-        data[12] = {
-            time: '2023-04-13' as Time,
-            open: 100,
-            high: 103,
-            low: 99,
-            close: 101,
-            volume: 1400
-        };
-
-        // Entry 2: closes strongly above trigger -> high break quality
-        data[16] = {
-            time: '2023-04-17' as Time,
-            open: 104,
-            high: 107,
-            low: 103,
-            close: 106,
-            volume: 1500
-        };
-
-        const signals: Signal[] = [
-            { time: '2023-04-13' as Time, type: 'buy', price: 102 },
-            { time: '2023-04-14' as Time, type: 'sell', price: 101.5 },
-            { time: '2023-04-17' as Time, type: 'buy', price: 104 },
-            { time: '2023-04-19' as Time, type: 'sell', price: 106.5 },
-        ];
-
-        const withoutFilter = runBacktest(data, signals, 10000, 100, 0);
-        const withFilter = runBacktest(data, signals, 10000, 100, 0, {
-            snapshotBreakQualityMin: 55
-        });
-
-        expect(withoutFilter.totalTrades).to.equal(2);
-        expect(withFilter.totalTrades).to.equal(1);
-    });
-
-    it('should filter weak entries by composite entry quality score', () => {
-        const data: OHLCVData[] = [];
-        for (let i = 0; i < 24; i++) {
-            const base = 98 + i * 0.5;
-            data.push({
-                time: (`2023-05-${String(i + 1).padStart(2, '0')}`) as Time,
-                open: base - 0.2,
-                high: base + 1.2,
-                low: base - 1.2,
-                close: base + 0.3,
-                volume: 1250 + (i % 4) * 60
-            });
-        }
-
-        // Weak candle profile (small body, weak close, larger opposite wick)
-        data[12] = {
-            time: '2023-05-13' as Time,
-            open: 104.5,
-            high: 107,
-            low: 103,
-            close: 104.8,
-            volume: 1300
-        };
-
-        // Strong candle profile (large body, strong close, cleaner wick)
-        data[18] = {
-            time: '2023-05-19' as Time,
-            open: 108,
-            high: 111,
-            low: 107.5,
-            close: 110.6,
-            volume: 1700
-        };
-
-        const signals: Signal[] = [
-            { time: '2023-05-13' as Time, type: 'buy', price: 105.8 },
-            { time: '2023-05-15' as Time, type: 'sell', price: 105.2 },
-            { time: '2023-05-19' as Time, type: 'buy', price: 108.8 },
-            { time: '2023-05-22' as Time, type: 'sell', price: 111.2 },
-        ];
-
-        const withoutFilter = runBacktest(data, signals, 10000, 100, 0);
-        const withFilter = runBacktest(data, signals, 10000, 100, 0, {
-            snapshotEntryQualityScoreMin: 65
-        });
-
-        expect(withoutFilter.totalTrades).to.equal(2);
-        expect(withFilter.totalTrades).to.equal(1);
-    });
-
-    it('should filter rebound traps using TF confluence', () => {
-        const data: OHLCVData[] = [];
-        const startMs = Date.UTC(2023, 5, 1, 0, 0, 0);
-
-        for (let i = 0; i < 80; i++) {
-            let close: number;
-            if (i < 30) {
-                close = 120 - i * 0.7;
-            } else if (i < 35) {
-                close = 99 + (i - 29) * 1.2;
-            } else if (i < 40) {
-                close = 105 - (i - 34) * 1.0;
-            } else {
-                close = 100 + (i - 39) * 0.65;
-            }
-
-            const open = close - 0.25;
-            const high = Math.max(open, close) + 0.6;
-            const low = Math.min(open, close) - 0.6;
-            data.push({
-                time: Math.floor((startMs + i * 30 * 60 * 1000) / 1000) as Time,
-                open,
-                high,
-                low,
-                close,
-                volume: 1200 + (i % 6) * 30
-            });
-        }
-
-        const signals: Signal[] = [
-            { time: data[34].time, type: 'buy', price: data[34].close },
-            { time: data[38].time, type: 'sell', price: data[38].close },
-            { time: data[66].time, type: 'buy', price: data[66].close },
-            { time: data[70].time, type: 'sell', price: data[70].close },
-        ];
-
-        const withoutFilter = runBacktest(data, signals, 10000, 100, 0);
-        const withFilter = runBacktest(data, signals, 10000, 100, 0, {
-            snapshotTfConfluencePerfMin: 1.2
-        });
-
-        expect(withoutFilter.totalTrades).to.equal(2);
-        expect(withFilter.totalTrades).to.equal(1);
-        expect(withFilter.trades[0].entryTime).to.equal(data[66].time);
-    });
-
-    it('should evaluate TF snapshot filters on the signal bar (not execution bar) for next_open entries', () => {
-        // Snapshot filters must evaluate on the decision/signal bar, NOT the execution bar.
-        // Under next_open, execution happens at bar i+1's open, but that bar's close/volume
-        // aren't available yet. Filters must only use data up to the signal bar.
-        const data: OHLCVData[] = [];
-        const startMs = Date.UTC(2023, 6, 1, 0, 0, 0);
-
-        // Build data: first 9 bars choppy, then a clear uptrend from bar 9 onward.
-        // Signal bar 8: close=108, TF60 perf measured from bar 8's close (not bar 9's).
-        // Signal bar 14: close=106, TF60 perf measured from bar 14's close (not bar 15's).
-        const closes = [
-            100, 101, 102, 103, 104, 105, 106, 107, 108,
-            100, 101, 102, 103, 104, 106, 110, 112
-        ];
-
-        for (let i = 0; i < closes.length; i++) {
-            const close = closes[i];
-            data.push({
-                time: Math.floor((startMs + i * 30 * 60 * 1000) / 1000) as Time,
-                open: close - 0.2,
-                high: close + 0.8,
-                low: close - 0.8,
-                close,
-                volume: 1200 + (i % 5) * 20
-            });
-        }
-
-        const signals: Signal[] = [
-            { time: data[8].time, type: 'buy', price: data[8].close },
-            { time: data[11].time, type: 'sell', price: data[11].close },
-            { time: data[14].time, type: 'buy', price: data[14].close },
-            { time: data[16].time, type: 'sell', price: data[16].close },
-        ];
-
-        const withoutFilter = runBacktest(data, signals, 10000, 100, 0, {
-            executionModel: 'next_open'
-        });
-
-        // Use a high threshold that depends on which bar the filter evaluates.
-        // Under the corrected logic, TF60 perf is computed from the signal bar's close,
-        // not the execution bar's close, so the filter result may differ.
-        const withFilter = runBacktest(data, signals, 10000, 100, 0, {
-            executionModel: 'next_open',
-            snapshotTf60PerfMin: 1.0
-        });
-
-        expect(withoutFilter.totalTrades).to.equal(2);
-        // The filter should still allow good entries but based on signal-bar data only.
-        expect(withFilter.totalTrades).to.be.greaterThanOrEqual(0);
-        expect(withFilter.totalTrades).to.be.lessThanOrEqual(withoutFilter.totalTrades);
-    });
-
-    it('should capture entry snapshots on the signal bar for next_open entries', () => {
-        const data: OHLCVData[] = [];
-        const startMs = Date.UTC(2023, 6, 1, 0, 0, 0);
-        const closes = [
-            100, 101, 102, 103, 104, 105, 106, 107, 108,
-            100, 101, 102, 103, 104, 106, 110, 112
-        ];
-
-        for (let i = 0; i < closes.length; i++) {
-            const close = closes[i];
-            data.push({
-                time: Math.floor((startMs + i * 30 * 60 * 1000) / 1000) as Time,
-                open: close - 0.2,
-                high: close + 0.8,
-                low: close - 0.8,
-                close,
-                volume: 1200 + (i % 5) * 20
-            });
-        }
-
-        const signals: Signal[] = [
-            { time: data[14].time, type: 'buy', price: data[14].close },
-            { time: data[15].time, type: 'sell', price: data[15].close },
-        ];
-
-        const result = runBacktest(data, signals, 10000, 100, 0, {
-            executionModel: 'next_open',
-            captureSnapshots: true
-        });
-
-        expect(result.totalTrades).to.equal(1);
-        expect(result.trades[0].entryTime).to.equal(data[15].time);
-        expect(result.trades[0].entrySnapshot).to.not.be.undefined;
-
-        // 60m lookback on 30m data resolves to two bars back from the signal bar (14 -> 12).
-        const expectedTf60Perf = ((data[14].close - data[12].close) / data[12].close) * 100;
-        expect(result.trades[0].entrySnapshot?.tf60Perf ?? null).to.be.closeTo(expectedTf60Perf, 1e-9);
-    });
-
-    it('should keep standardized snapshot indicators independent from strategy indicator periods', () => {
-        const data: OHLCVData[] = [];
-        for (let i = 0; i < 80; i++) {
-            const close = 100 + i * 0.65 + (i % 7) * 1.4 - (i % 5) * 0.55;
-            data.push({
-                time: `2023-03-${String(i + 1).padStart(2, '0')}` as Time,
-                open: close - 0.7,
-                high: close + 1.6 + (i % 3) * 0.2,
-                low: close - 1.4 - (i % 4) * 0.15,
-                close,
-                volume: 900 + (i % 9) * 75 + (i % 4) * 20,
-            });
-        }
-
-        const highs = data.map((candle) => candle.high);
-        const lows = data.map((candle) => candle.low);
-        const closes = data.map((candle) => candle.close);
-        const volumes = data.map((candle) => candle.volume);
-        const probeIndex = 70;
-
-        const contaminatedIndicators = {
-            atr: calculateATR(highs, lows, closes, 5),
-            emaTrend: calculateEMA(closes, 21),
-            emaFast: [],
-            emaSlow: [],
-            adx: calculateADX(highs, lows, closes, 5),
-            volumeSma: calculateSMA(volumes, 7),
-            rsi: calculateRSI(closes, 5),
-            sessionVwap: [],
-            vwapDeviationStd: [],
-        };
-
-        const snapshotIndicators = computeSnapshotIndicators(data, contaminatedIndicators);
-
-        expect(snapshotIndicators.rsi[probeIndex]).to.be.closeTo(calculateRSI(closes, 14)[probeIndex]!, 1e-9);
-        expect(snapshotIndicators.volumeSma[probeIndex]).to.be.closeTo(calculateSMA(volumes, 20)[probeIndex]!, 1e-9);
-        expect(snapshotIndicators.adx[probeIndex]).to.be.closeTo(calculateADX(highs, lows, closes, 14)[probeIndex]!, 1e-9);
-        expect(snapshotIndicators.atr[probeIndex]).to.be.closeTo(calculateATR(highs, lows, closes, 14)[probeIndex]!, 1e-9);
-        expect(snapshotIndicators.emaTrend[probeIndex]).to.be.closeTo(calculateEMA(closes, 50)[probeIndex]!, 1e-9);
-
-        expect(snapshotIndicators.rsi[probeIndex]).to.not.equal(contaminatedIndicators.rsi[probeIndex]);
-        expect(snapshotIndicators.volumeSma[probeIndex]).to.not.equal(contaminatedIndicators.volumeSma[probeIndex]);
-        expect(snapshotIndicators.adx[probeIndex]).to.not.equal(contaminatedIndicators.adx[probeIndex]);
-        expect(snapshotIndicators.atr[probeIndex]).to.not.equal(contaminatedIndicators.atr[probeIndex]);
-        expect(snapshotIndicators.emaTrend[probeIndex]).to.not.equal(contaminatedIndicators.emaTrend[probeIndex]);
     });
 });
 

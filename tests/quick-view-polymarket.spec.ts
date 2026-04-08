@@ -351,7 +351,7 @@ describe("Quick View Polymarket streak summary", () => {
         const minute0 = sections[0]?.rows.find((row) => row.label === "Minute 0");
         const minute1 = sections[0]?.rows.find((row) => row.label === "Minute 1");
 
-        expect(sections.map((section) => section.id)).to.deep.equal(["session_minute", "price_range_position"]);
+        expect(sections.map((section) => section.id)).to.deep.equal(["session_minute"]);
         expect(minute0?.expectancy).to.equal(0.6);
         expect(minute1?.expectancy).to.equal(-0.2);
     });
@@ -464,130 +464,6 @@ describe("Quick View Polymarket streak summary", () => {
         expect(summary?.polymarketWinRate).to.equal(1);
         expect(summary?.realizedWinRate).to.equal(1);
         expect(summary?.realizedExpectancy).to.equal(5);
-    });
-
-    it("renders the snapshot profile section from cached result fields", () => {
-        const html = (quickViewManager as any).buildPolymarketSnapshotSection({
-            trades: [],
-            netProfit: 0,
-            netProfitPercent: 0,
-            winRate: 0,
-            expectancy: 0,
-            avgTrade: 0,
-            profitFactor: 0,
-            maxDrawdown: 0,
-            maxDrawdownPercent: 0,
-            totalTrades: 0,
-            winningTrades: 0,
-            losingTrades: 0,
-            avgWin: 0,
-            avgLoss: 0,
-            sharpeRatio: 0,
-            equityCurve: [],
-            polymarketSnapshotProfile: {
-                winSampleSize: 7,
-                loseSampleSize: 5,
-                rows: [{
-                    key: "rsi",
-                    label: "RSI",
-                    winAvg: 62,
-                    loseAvg: 48,
-                    allAvg: 56,
-                    delta: 14,
-                    significance: 0.9,
-                }],
-            },
-        } satisfies BacktestResult);
-
-        expect(html).to.contain("PM Snapshot Profile");
-        expect(html).to.contain("RSI");
-        expect(html).to.contain("7 wins, 5 losses");
-    });
-
-    it("renders filter suggestions from cached result fields with actionable setting keys", () => {
-        const html = (quickViewManager as any).buildPolymarketFilterSection({
-            trades: [],
-            netProfit: 0,
-            netProfitPercent: 0,
-            winRate: 0,
-            expectancy: 0,
-            avgTrade: 0,
-            profitFactor: 0,
-            maxDrawdown: 0,
-            maxDrawdownPercent: 0,
-            totalTrades: 0,
-            winningTrades: 0,
-            losingTrades: 0,
-            avgWin: 0,
-            avgLoss: 0,
-            sharpeRatio: 0,
-            equityCurve: [],
-            polymarketFilterSuggestions: {
-                baselineWinRate: 0.48,
-                baselineExpectancy: -0.03,
-                scoredWinRate: 0.5,
-                scoredBestBaselineWinRate: 0.38,
-                scoredBaselineDelta: 0.12,
-                sampleCounts: {
-                    scoredTrades: 14,
-                    pricedTrades: 12,
-                },
-                featureAnalyses: [{
-                    feature: "rsi",
-                    label: "RSI (14)",
-                    winStats: { mean: 60, median: 60, stddev: 5, count: 6 },
-                    lossStats: { mean: 45, median: 45, stddev: 5, count: 6 },
-                    separationScore: 0.95,
-                    suggestedFilter: { direction: "above", threshold: 55.5 },
-                    winRateIfFiltered: 61.2,
-                    expectancyIfFiltered: 0.03,
-                    tradesRemovedPercent: 25,
-                    scoredProjection: {
-                        originalTrades: 14,
-                        filteredTrades: 10,
-                        removedPercent: 28.5714285714,
-                        filteredWinRate: 0.6,
-                        bestBaselineWinRate: 0.45,
-                        baselineDelta: 0.15,
-                    },
-                }, {
-                    feature: "volumeRatio",
-                    label: "Volume Ratio",
-                    winStats: { mean: 1.8, median: 1.8, stddev: 0.2, count: 6 },
-                    lossStats: { mean: 0.8, median: 0.8, stddev: 0.2, count: 6 },
-                    separationScore: 0.4,
-                    suggestedFilter: { direction: "above", threshold: 1.25 },
-                    winRateIfFiltered: 66.7,
-                    expectancyIfFiltered: 0.08,
-                    tradesRemovedPercent: 18,
-                    scoredProjection: {
-                        originalTrades: 14,
-                        filteredTrades: 11,
-                        removedPercent: 21.4285714286,
-                        filteredWinRate: 0.698,
-                        bestBaselineWinRate: 0.568,
-                        baselineDelta: 0.13,
-                    },
-                }],
-                finderResult: {
-                    featureRanges: [],
-                    attemptedCount: 4,
-                    feasibleCount: 1,
-                    rejectedByConstraints: 3,
-                    bestCandidate: null,
-                    topCandidates: [],
-                },
-            },
-        } satisfies BacktestResult);
-
-        expect(html).to.contain("PM Filter Suggestions");
-        expect(html).to.contain("snapshotRsiMin = 55.500");
-        expect(html).to.contain("snapshotVolumeRatioMin = 1.250");
-        expect(html).to.contain("Current scored baseline delta: +12.0pp");
-        expect(html).to.contain("69.8%");
-        expect(html).to.contain("Base Delta");
-        expect(html).to.contain("+13.0pp");
-        expect(html.indexOf("Volume Ratio")).to.be.lessThan(html.indexOf("RSI (14)"));
     });
 
     it("renders a Quick View handoff to the Polymarket tab instead of selected offset n/a", () => {

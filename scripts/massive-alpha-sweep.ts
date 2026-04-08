@@ -584,7 +584,6 @@ async function runMassiveSweep(options: CliOptions): Promise<void> {
                 allowSameBarExit: options.allowSameBarExit,
                 slippageBps: options.slippageBps,
             } as BacktestSettings, {
-                captureSnapshots: false,
                 coerceWithoutUiToggles: true,
             });
 

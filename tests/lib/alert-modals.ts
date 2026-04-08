@@ -13,7 +13,7 @@ import { getLegacyCompatibleTradeFilterModeValue } from "./legacy-settings-compa
 import { createAccessibleModal, type AccessibleModalController } from "./modal-accessibility";
 import { toFiniteNumber } from "./settings-parse-utils";
 import { resolveTradeFilterMode } from "./settings-model";
-import { BacktestSettings, OHLCVData, Time, Trade, type TradeFilterMode } from "./strategies/index";
+import { BacktestSettings, OHLCVData, Time, Trade } from "./strategies/index";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { formatJakartaTime, isBusinessDayTime } from "./timezone-utils";
 
@@ -23,15 +23,6 @@ export interface AlertLastTradeModalOptions {
 
 let alertConfigModalController: AccessibleModalController | null = null;
 let lastTradeModalController: AccessibleModalController | null = null;
-
-function humanizeKey(input: string): string {
-    if (!input) return input;
-    const spaced = input
-        .replace(/_/g, " ")
-        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-        .trim();
-    return spaced.replace(/\b\w/g, (ch) => ch.toUpperCase());
-}
 
 function formatValue(value: unknown): string {
     if (typeof value === "number") return Number.isFinite(value) ? String(value) : "NaN";
@@ -74,32 +65,7 @@ function appendModalSection(container: HTMLElement, title: string, lines: string
     container.appendChild(section);
 }
 
-function collectEnabledSnapshotFilterLines(settings: Record<string, unknown>): string[] {
-    const toggleKeys = Object.keys(settings)
-        .filter((key) => key.startsWith("snapshot") && key.endsWith("FilterToggle") && settings[key] === true)
-        .sort((a, b) => a.localeCompare(b));
 
-    return toggleKeys.map((toggleKey) => {
-        const base = toggleKey.slice(0, -"FilterToggle".length);
-        const label = humanizeKey(base.replace(/^snapshot/, ""));
-        const valueKeys = Object.keys(settings)
-            .filter((key) => key.startsWith(base) && key !== toggleKey)
-            .sort((a, b) => a.localeCompare(b));
-
-        if (valueKeys.length === 0) {
-            return `${label}: enabled`;
-        }
-
-        const valueText = valueKeys
-            .map((key) => {
-                const suffix = key.slice(base.length);
-                const suffixLabel = humanizeKey(suffix || key);
-                return `${suffixLabel}=${formatValue(settings[key])}`;
-            })
-            .join(", ");
-        return `${label}: ${valueText}`;
-    });
-}
 
 function openLastTradeModal(title: string): void {
     const overlay = getOptionalElement<HTMLElement>("lastTradeModal");
@@ -422,7 +388,7 @@ export function openSubscriptionInfoModal(
 
     appendModalSection(bodyEl, "Trade Filter", [
         `Filter Enabled: ${settings.tradeFilterSettingsToggle === true ? "on" : "off"}`,
-        `Filter Mode: ${formatValue(resolveTradeFilterMode({ tradeFilterMode: getLegacyCompatibleTradeFilterModeValue(settings) as TradeFilterMode }))}`,
+        `Filter Mode: ${formatValue(resolveTradeFilterMode({ tradeFilterMode: getLegacyCompatibleTradeFilterModeValue(settings) as any }))}`,
         `Execution EMA Period: ${formatValue(settings.executionTrendEmaPeriod)}`,
         `Confirm Lookback: ${formatValue(settings.confirmLookback)}`,
         `Volume SMA Period: ${formatValue(settings.volumeSmaPeriod)}`,
@@ -442,20 +408,10 @@ export function openSubscriptionInfoModal(
         `Strategy Timeframe Minutes: ${formatValue(settings.strategyTimeframeMinutes)}`,
     ]);
 
-    appendModalSection(bodyEl, "Snapshot Filters (Enabled)", collectEnabledSnapshotFilterLines(settings));
-
     const paramsLines = Object.keys(strategyParams)
         .sort((a, b) => a.localeCompare(b))
         .map((key) => `${key}: ${formatValue(strategyParams[key])}`);
     appendModalSection(bodyEl, "Strategy Params", paramsLines);
-
-    const inferredSnapshotLines = Object.keys(settings)
-        .filter((key) => key.startsWith("snapshot") && !key.endsWith("FilterToggle"))
-        .sort((a, b) => a.localeCompare(b))
-        .map((key) => ({ key, value: toFiniteNumber(settings[key]) }))
-        .filter((row) => row.value !== null && row.value !== 0)
-        .map((row) => `${humanizeKey(row.key.replace(/^snapshot/, ""))}: ${row.value}`);
-    appendModalSection(bodyEl, "Snapshot Values (Non-zero)", inferredSnapshotLines);
 
     alertConfigModalController?.open();
 }

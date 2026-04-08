@@ -340,7 +340,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                 if (primaryStrategy) {
                     const primarySettings = resolveBacktestSettingsFromRaw(
                         primaryConfig.backtestSettings,
-                        { captureSnapshots: false, coerceWithoutUiToggles: true }
+                        { coerceWithoutUiToggles: true }
                     );
                     for (const dataset of activeDatasets) {
                         const primarySigs = applySignalPolarity(

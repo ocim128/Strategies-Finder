@@ -12,13 +12,12 @@ import type { PolymarketFillScope } from "./polymarket-fill-analysis";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { state } from "./state";
 import { setVisible } from "./dom-utils";
-import type { BacktestResult, ExpectancyBreakdownSection, TradeSnapshot } from "./types/strategies";
+import type { BacktestResult, ExpectancyBreakdownSection } from "./types/strategies";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { uiManager } from "./ui-manager";
 import { strategyRegistry } from "../strategyRegistry";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
-import { enrichPolymarketBacktestResult } from "./backtest-result-analysis";
 import {
     annotateTradesWithPolymarketOutcomesForRun,
     summarizePolymarketTradesForRun,
@@ -33,61 +32,6 @@ import {
     getQuickViewDiagnosticSections,
     summarizePolymarketPayoutDiagnostics,
 } from "./quick-view";
-import {
-    rankPolymarketFeatureSuggestions,
-    resolvePolymarketSelectedEntryOffset,
-} from "./polymarket-diagnostics-utils";
-import { strategyPanelController } from "./strategy-panel-controller";
-import { backtestService } from "./backtest-service";
-
-type SnapshotFilterBinding = {
-    toggleKey: string;
-    minKey?: string;
-    maxKey?: string;
-};
-
-type SnapshotFilterSuggestion = {
-    feature: keyof TradeSnapshot;
-    direction: "above" | "below";
-    threshold: number;
-};
-
-type ValidatedSuggestionMetrics = {
-    projectedWinRate: number;
-    projectedBaselineDelta: number;
-    projectedExpectancy: number | null;
-    removedPercent: number;
-};
-
-const SNAPSHOT_FILTER_BINDINGS: Record<keyof TradeSnapshot, SnapshotFilterBinding> = {
-    rsi: { toggleKey: "snapshotRsiFilterToggle", minKey: "snapshotRsiMin", maxKey: "snapshotRsiMax" },
-    adx: { toggleKey: "snapshotAdxFilterToggle", minKey: "snapshotAdxMin", maxKey: "snapshotAdxMax" },
-    atrPercent: { toggleKey: "snapshotAtrFilterToggle", minKey: "snapshotAtrPercentMin", maxKey: "snapshotAtrPercentMax" },
-    emaDistance: { toggleKey: "snapshotEmaFilterToggle", minKey: "snapshotEmaDistanceMin", maxKey: "snapshotEmaDistanceMax" },
-    volumeRatio: { toggleKey: "snapshotVolumeFilterToggle", minKey: "snapshotVolumeRatioMin", maxKey: "snapshotVolumeRatioMax" },
-    priceRangePos: { toggleKey: "snapshotPriceRangePosFilterToggle", minKey: "snapshotPriceRangePosMin", maxKey: "snapshotPriceRangePosMax" },
-    barsFromHigh: { toggleKey: "snapshotBarsFromHighFilterToggle", maxKey: "snapshotBarsFromHighMax" },
-    barsFromLow: { toggleKey: "snapshotBarsFromLowFilterToggle", maxKey: "snapshotBarsFromLowMax" },
-    trendEfficiency: { toggleKey: "snapshotTrendEfficiencyFilterToggle", minKey: "snapshotTrendEfficiencyMin", maxKey: "snapshotTrendEfficiencyMax" },
-    atrRegimeRatio: { toggleKey: "snapshotAtrRegimeFilterToggle", minKey: "snapshotAtrRegimeRatioMin", maxKey: "snapshotAtrRegimeRatioMax" },
-    bodyPercent: { toggleKey: "snapshotBodyPercentFilterToggle", minKey: "snapshotBodyPercentMin", maxKey: "snapshotBodyPercentMax" },
-    wickSkew: { toggleKey: "snapshotWickSkewFilterToggle", minKey: "snapshotWickSkewMin", maxKey: "snapshotWickSkewMax" },
-    closeLocation: { toggleKey: "snapshotCloseLocationFilterToggle", minKey: "snapshotCloseLocationMin", maxKey: "snapshotCloseLocationMax" },
-    oppositeWickPercent: { toggleKey: "snapshotOppositeWickFilterToggle", minKey: "snapshotOppositeWickMin", maxKey: "snapshotOppositeWickMax" },
-    rangeAtrMultiple: { toggleKey: "snapshotRangeAtrFilterToggle", minKey: "snapshotRangeAtrMultipleMin", maxKey: "snapshotRangeAtrMultipleMax" },
-    momentumConsistency: { toggleKey: "snapshotMomentumFilterToggle", minKey: "snapshotMomentumConsistencyMin", maxKey: "snapshotMomentumConsistencyMax" },
-    breakQuality: { toggleKey: "snapshotBreakQualityFilterToggle", minKey: "snapshotBreakQualityMin", maxKey: "snapshotBreakQualityMax" },
-    entryQualityScore: { toggleKey: "snapshotEntryQualityScoreFilterToggle", minKey: "snapshotEntryQualityScoreMin", maxKey: "snapshotEntryQualityScoreMax" },
-    volumeTrend: { toggleKey: "snapshotVolumeTrendFilterToggle", minKey: "snapshotVolumeTrendMin", maxKey: "snapshotVolumeTrendMax" },
-    volumeBurst: { toggleKey: "snapshotVolumeBurstFilterToggle", minKey: "snapshotVolumeBurstMin", maxKey: "snapshotVolumeBurstMax" },
-    volumePriceDivergence: { toggleKey: "snapshotVolumePriceDivergenceFilterToggle", minKey: "snapshotVolumePriceDivergenceMin", maxKey: "snapshotVolumePriceDivergenceMax" },
-    volumeConsistency: { toggleKey: "snapshotVolumeConsistencyFilterToggle", minKey: "snapshotVolumeConsistencyMin", maxKey: "snapshotVolumeConsistencyMax" },
-    tf60Perf: { toggleKey: "snapshotTf60PerfFilterToggle", minKey: "snapshotTf60PerfMin", maxKey: "snapshotTf60PerfMax" },
-    tf90Perf: { toggleKey: "snapshotTf90PerfFilterToggle", minKey: "snapshotTf90PerfMin", maxKey: "snapshotTf90PerfMax" },
-    tf120Perf: { toggleKey: "snapshotTf120PerfFilterToggle", minKey: "snapshotTf120PerfMin", maxKey: "snapshotTf120PerfMax" },
-    tf480Perf: { toggleKey: "snapshotTf480PerfFilterToggle", minKey: "snapshotTf480PerfMin", maxKey: "snapshotTf480PerfMax" },
-    tfConfluencePerf: { toggleKey: "snapshotTfConfluencePerfFilterToggle", minKey: "snapshotTfConfluencePerfMin", maxKey: "snapshotTfConfluencePerfMax" },
-};
 
 class PolymarketPanelService {
     private dom: PolymarketPanelDom | null = null;
@@ -107,10 +51,6 @@ class PolymarketPanelService {
     private renderTimeoutId: number | null = null;
     private deployabilityCacheKey = "";
     private deployabilityCache: ReturnType<typeof analyzePolymarketDeployability> | null = null;
-    private validatedSuggestionCacheKey = "";
-    private validatedFeatureSuggestions = new Map<string, ValidatedSuggestionMetrics>();
-    private validatedComboSuggestion: ValidatedSuggestionMetrics | null = null;
-    private isValidatingSuggestions = false;
 
     public init(): void {
         if (this.initialized) {
@@ -118,7 +58,7 @@ class PolymarketPanelService {
         }
 
         this.dom = createPolymarketPanelDom();
-        this.lastResult = state.currentBacktestResult ? enrichPolymarketBacktestResult(state.currentBacktestResult) : null;
+        this.lastResult = state.currentBacktestResult;
         void this.isEnrichingHistory;
         void this.enrichHistoryInBackground;
         void this.renderDeployabilityAnalysis;
@@ -148,28 +88,6 @@ class PolymarketPanelService {
         dom.polymarketBridgeCopyEnv.addEventListener("click", () => {
             void this.handleCopyBotEnv();
         });
-        dom.polymarketDiagnosticsContent.addEventListener("click", (event: MouseEvent) => {
-            const target = event.target as HTMLElement | null;
-            const applyButton = target?.closest<HTMLButtonElement>("[data-polymarket-apply-feature], [data-polymarket-apply-combo]");
-            if (!applyButton) {
-                return;
-            }
-
-            if (applyButton.dataset.polymarketApplyCombo === "best") {
-                this.applyBestComboSuggestion();
-                return;
-            }
-
-            const feature = applyButton.dataset.polymarketApplyFeature;
-            const direction = applyButton.dataset.polymarketApplyDirection;
-            const threshold = Number.parseFloat(applyButton.dataset.polymarketApplyThreshold ?? "");
-            if (!this.isSnapshotFeature(feature) || (direction !== "above" && direction !== "below") || !Number.isFinite(threshold)) {
-                uiManager.showToast("That filter suggestion is unavailable.", "error");
-                return;
-            }
-
-            this.applySnapshotSuggestions([{ feature, direction, threshold }], "Applied suggestion to Snapshot Entry Filters.");
-        });
         window.addEventListener("strategy-panel:tab-change", ((event: CustomEvent<{ tabId?: string }>) => {
             if (event.detail?.tabId !== "polymarket") {
                 return;
@@ -196,7 +114,7 @@ class PolymarketPanelService {
     }
 
     private async handleBacktestResultChange(result: BacktestResult | null): Promise<void> {
-        this.lastResult = result ? enrichPolymarketBacktestResult(result) : null;
+        this.lastResult = result;
         this.loadError = null;
         const resultContext = resolveBacktestResultMarketContext(result);
 
@@ -277,7 +195,7 @@ class PolymarketPanelService {
     private attachLoadedPolymarketOutcomes(result: BacktestResult, outcomes: readonly PolymarketOutcomeRow[]): BacktestResult {
         const resultContext = resolveBacktestResultMarketContext(result);
         if (!resultContext || outcomes.length === 0) {
-            return enrichPolymarketBacktestResult(result);
+            return result;
         }
 
         const existingSummary = result.polymarketTradeSummary;
@@ -300,7 +218,7 @@ class PolymarketPanelService {
         const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
         const seriesId = existingSummary?.seriesId || getPolymarket5mSeriesIdForSymbol(resultContext.symbol) || outcomes[0]?.series_id || "";
 
-        return enrichPolymarketBacktestResult({
+        return {
             ...result,
             trades: annotatedTrades,
             polymarketTradeSummary: {
@@ -315,11 +233,11 @@ class PolymarketPanelService {
                 entryOffset: existingSummary?.entryOffset ?? selectedOffset,
                 timingProfile: existingSummary?.timingProfile ?? summary.timingProfile,
             },
-        });
+        };
     }
 
-    private resolveSelectedPolymarketEntryOffset(result: BacktestResult): number {
-        return resolvePolymarketSelectedEntryOffset(result, this.readCurrentPolymarketEntryOffset());
+    private resolveSelectedPolymarketEntryOffset(_result: BacktestResult): number {
+        return this.readCurrentPolymarketEntryOffset() ?? 0;
     }
 
     private readCurrentPolymarketEntryOffset(): number | null {
@@ -418,11 +336,8 @@ class PolymarketPanelService {
         const payoutSummary = summarizePolymarketPayoutDiagnostics(result.trades);
         const summary = this.getPolymarketSummary(result);
         const sections = getQuickViewDiagnosticSections(result);
-        const snapshotSection = this.buildPolymarketSnapshotSection(result);
-        void this.ensureValidatedFilterSuggestions(result);
-        const filterSection = this.buildPolymarketFilterSection(result);
 
-        if (!summary && !payoutSummary && sections.length === 0 && !snapshotSection && !filterSection) {
+        if (!summary && !payoutSummary && sections.length === 0) {
             this.showEmpty("No scored Polymarket trades are available for the current result yet.");
             return;
         }
@@ -431,8 +346,6 @@ class PolymarketPanelService {
             payoutSummary ? this.buildPayoutSummarySection(payoutSummary) : "",
             summary ? this.buildPolymarketSummarySection(summary) : "",
             ...sections.map((section) => this.buildDiagnosticBucketSection(section)),
-            snapshotSection,
-            filterSection,
         ].filter(Boolean).join("");
 
         setVisible(dom.polymarketDiagnosticsEmpty, false);
@@ -567,313 +480,6 @@ class PolymarketPanelService {
                 </div>
             </div>
         `;
-    }
-
-    private buildPolymarketSnapshotSection(result: BacktestResult): string {
-        const profile = result.polymarketSnapshotProfile;
-        if (!profile || profile.rows.length === 0) {
-            return "";
-        }
-
-        const significantRows = profile.rows.filter((row) => row.significance !== null && row.significance >= 0.15);
-        if (significantRows.length === 0) {
-            return "";
-        }
-
-        const rows = significantRows.map((row) => `
-            <tr class="${(row.significance ?? 0) >= 0.5 ? "strong-discriminator" : ""}">
-                <td>${row.label}</td>
-                <td>${row.winAvg !== null ? row.winAvg.toFixed(2) : "—"}</td>
-                <td>${row.loseAvg !== null ? row.loseAvg.toFixed(2) : "—"}</td>
-                <td class="${(row.delta ?? 0) > 0 ? "positive" : (row.delta ?? 0) < 0 ? "negative" : ""}">${row.delta !== null ? `${row.delta > 0 ? "+" : ""}${row.delta.toFixed(3)}` : "—"}</td>
-                <td>${row.significance !== null ? row.significance.toFixed(2) : "—"}</td>
-            </tr>
-        `).join("");
-
-        return `
-            <div class="deployability-section">
-                <div class="section-subtitle">PM Snapshot Profile (Win vs Lose)</div>
-                <div class="entry-stats-hint polymarket-diagnostics__hint">Snapshot metrics at entry time that differ between Polymarket wins and losses. Significance = effect size in stddevs. ${profile.winSampleSize} wins, ${profile.loseSampleSize} losses.</div>
-                <div class="analysis-finder-table-wrap">
-                    <table class="analysis-finder-table polymarket-panel__table polymarket-diagnostics__table">
-                        <thead>
-                            <tr>
-                                <th>Metric</th>
-                                <th>PM Win Avg</th>
-                                <th>PM Lose Avg</th>
-                                <th>Delta</th>
-                                <th>Sig</th>
-                            </tr>
-                        </thead>
-                        <tbody>${rows}</tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-    }
-
-    private buildPolymarketFilterSection(result: BacktestResult): string {
-        const suggestions = result.polymarketFilterSuggestions;
-        if (!suggestions) {
-            return "";
-        }
-
-        const candidateFeatures = rankPolymarketFeatureSuggestions(suggestions.featureAnalyses).slice(0, 8);
-        if (candidateFeatures.length === 0) {
-            return "";
-        }
-
-        const validationKey = this.getValidatedSuggestionCacheKey(result, suggestions);
-        if (this.validatedSuggestionCacheKey !== validationKey) {
-            return `
-                <div class="deployability-section">
-                    <div class="section-subtitle">PM Filter Suggestions</div>
-                    <div class="entry-stats-hint polymarket-diagnostics__hint">Validating live reruns for the current top snapshot filters so projected PM metrics match the actual post-apply backtest.</div>
-                </div>
-            `;
-        }
-
-        const topFeatures = candidateFeatures
-            .map((analysis) => ({
-                analysis,
-                metrics: this.validatedFeatureSuggestions.get(this.getSuggestionCacheEntryKey(
-                    analysis.feature,
-                    analysis.suggestedFilter!.direction,
-                    analysis.suggestedFilter!.threshold
-                )) ?? null,
-            }))
-            .filter((entry): entry is { analysis: typeof candidateFeatures[number]; metrics: ValidatedSuggestionMetrics } => entry.metrics !== null)
-            .sort((left, right) => {
-                if (right.metrics.projectedBaselineDelta !== left.metrics.projectedBaselineDelta) {
-                    return right.metrics.projectedBaselineDelta - left.metrics.projectedBaselineDelta;
-                }
-                const rightExpectancy = right.metrics.projectedExpectancy ?? Number.NEGATIVE_INFINITY;
-                const leftExpectancy = left.metrics.projectedExpectancy ?? Number.NEGATIVE_INFINITY;
-                if (rightExpectancy !== leftExpectancy) {
-                    return rightExpectancy - leftExpectancy;
-                }
-                if (left.metrics.removedPercent !== right.metrics.removedPercent) {
-                    return left.metrics.removedPercent - right.metrics.removedPercent;
-                }
-                return left.analysis.label.localeCompare(right.analysis.label);
-            })
-            .slice(0, 5);
-
-        if (topFeatures.length === 0) {
-            return "";
-        }
-
-        const rows = topFeatures.map(({ analysis, metrics }) => `
-            <tr>
-                <td>${analysis.label}</td>
-                <td>${this.formatSnapshotSettingSuggestion(analysis.feature, analysis.suggestedFilter!.direction, analysis.suggestedFilter!.threshold)}</td>
-                <td class="${((metrics.projectedWinRate - suggestions.scoredWinRate) * 100) >= 0 ? "positive" : "negative"}">${(metrics.projectedWinRate * 100).toFixed(1)}%</td>
-                <td class="${metrics.projectedBaselineDelta >= 0 ? "positive" : "negative"}">${metrics.projectedBaselineDelta >= 0 ? "+" : ""}${(metrics.projectedBaselineDelta * 100).toFixed(1)}pp</td>
-                <td class="${(metrics.projectedExpectancy ?? 0) >= 0 ? "positive" : "negative"}">${metrics.projectedExpectancy !== null ? this.formatPolymarketCents(metrics.projectedExpectancy) : "—"}</td>
-                <td>${metrics.removedPercent.toFixed(0)}%</td>
-                <td><button class="btn btn-secondary btn-compact" type="button" data-polymarket-apply-feature="${analysis.feature}" data-polymarket-apply-direction="${analysis.suggestedFilter!.direction}" data-polymarket-apply-threshold="${analysis.suggestedFilter!.threshold}">Apply</button></td>
-            </tr>
-        `).join("");
-
-        const comboCard = suggestions.finderResult.bestCandidate ? this.buildPolymarketComboCard(suggestions) : "";
-
-        return `
-            <div class="deployability-section">
-                <div class="section-subtitle">PM Filter Suggestions</div>
-                <div class="entry-stats-hint polymarket-diagnostics__hint">Validated against live reruns of the current backtest settings. Current scored baseline delta: ${suggestions.scoredBaselineDelta >= 0 ? "+" : ""}${(suggestions.scoredBaselineDelta * 100).toFixed(1)}pp vs best YES/NO base at ${this.formatPercent(suggestions.scoredBestBaselineWinRate)}. Expectancy stays priced-only: ${suggestions.sampleCounts.pricedTrades} priced trades out of ${suggestions.sampleCounts.scoredTrades} scored snapshot trades, ${this.formatPolymarketCents(suggestions.baselineExpectancy)} exp/trade.</div>
-                <div class="analysis-finder-table-wrap">
-                    <table class="analysis-finder-table polymarket-panel__table polymarket-diagnostics__table">
-                        <thead>
-                            <tr>
-                                <th>Metric</th>
-                                <th>Setting</th>
-                                <th>PM Win%</th>
-                                <th>Base Delta</th>
-                                <th>PM Exp</th>
-                                <th>Removed</th>
-                                <th>Apply</th>
-                            </tr>
-                        </thead>
-                        <tbody>${rows}</tbody>
-                    </table>
-                </div>
-            </div>
-            ${comboCard}
-        `;
-    }
-
-    private buildPolymarketComboCard(suggestions: NonNullable<BacktestResult["polymarketFilterSuggestions"]>): string {
-        const bestCandidate = suggestions.finderResult.bestCandidate;
-        if (!bestCandidate || !this.validatedComboSuggestion) {
-            return "";
-        }
-
-        const filters = bestCandidate.filters.map((filter) => `
-            <div class="polymarket-diagnostics__combo-chip">${this.formatSnapshotSettingSuggestion(filter.feature, filter.direction, filter.threshold)}</div>
-        `).join("");
-        const validated = this.validatedComboSuggestion;
-
-        return `
-            <div class="deployability-section">
-                <div class="section-subtitle">Best Combo Filter</div>
-                <div class="entry-stats-hint polymarket-diagnostics__hint">Highest objective score across ${suggestions.finderResult.attemptedCount} evaluated combo candidates.</div>
-                <div class="polymarket-diagnostics__actions">
-                    <button class="btn btn-primary btn-compact" type="button" data-polymarket-apply-combo="best">Apply Combo</button>
-                </div>
-                <div class="polymarket-diagnostics__combo-list">${filters}</div>
-                <div class="stats-grid polymarket-panel__stats">
-                    ${this.renderStatCard("Projected PM Win Rate", `${(validated.projectedWinRate * 100).toFixed(1)}%`, ((validated.projectedWinRate - suggestions.scoredWinRate) * 100))}
-                    ${this.renderStatCard("Projected Base Delta", `${validated.projectedBaselineDelta >= 0 ? "+" : ""}${(validated.projectedBaselineDelta * 100).toFixed(1)}pp`, validated.projectedBaselineDelta)}
-                    ${this.renderStatCard("Projected PM Exp", validated.projectedExpectancy !== null ? this.formatPolymarketCents(validated.projectedExpectancy) : "—", validated.projectedExpectancy ?? undefined)}
-                    ${this.renderStatCard("Trades Kept", `${Math.round(suggestions.sampleCounts.scoredTrades * (1 - (validated.removedPercent / 100)))}/${suggestions.sampleCounts.scoredTrades}`)}
-                    ${this.renderStatCard("Trades Removed", `${validated.removedPercent.toFixed(0)}%`)}
-                    ${this.renderStatCard("Bad Trades Removed", `${bestCandidate.badTradesRemovedPct.toFixed(0)}%`, bestCandidate.badTradesRemovedPct)}
-                    ${this.renderStatCard("Good Trades Removed", `${bestCandidate.goodTradesRemovedPct.toFixed(0)}%`, -bestCandidate.goodTradesRemovedPct)}
-                    ${this.renderStatCard("Objective Score", bestCandidate.objectiveScore.toFixed(3), bestCandidate.objectiveScore)}
-                </div>
-            </div>
-        `;
-    }
-
-    private async ensureValidatedFilterSuggestions(result: BacktestResult): Promise<void> {
-        const suggestions = result.polymarketFilterSuggestions;
-        if (!suggestions || this.loadedOutcomeRows.length === 0) {
-            return;
-        }
-
-        const validationKey = this.getValidatedSuggestionCacheKey(result, suggestions);
-        if (this.validatedSuggestionCacheKey === validationKey || this.isValidatingSuggestions) {
-            return;
-        }
-
-        this.isValidatingSuggestions = true;
-        const featureCandidates = rankPolymarketFeatureSuggestions(suggestions.featureAnalyses).slice(0, 8);
-        const comboCandidate = suggestions.finderResult.bestCandidate;
-        const originalSummary = this.getPolymarketSummary(result);
-        const originalScoredTrades = originalSummary?.scoredTrades ?? suggestions.sampleCounts.scoredTrades;
-        const nextFeatureSuggestions = new Map<string, ValidatedSuggestionMetrics>();
-        let nextComboSuggestion: ValidatedSuggestionMetrics | null = null;
-
-        try {
-            for (const analysis of featureCandidates) {
-                const filter = analysis.suggestedFilter;
-                if (!filter) {
-                    continue;
-                }
-
-                const metrics = await this.previewValidatedSuggestionMetrics(
-                    [{ feature: analysis.feature, direction: filter.direction, threshold: filter.threshold }],
-                    originalScoredTrades
-                );
-                if (metrics) {
-                    nextFeatureSuggestions.set(
-                        this.getSuggestionCacheEntryKey(analysis.feature, filter.direction, filter.threshold),
-                        metrics
-                    );
-                }
-            }
-
-            if (comboCandidate) {
-                nextComboSuggestion = await this.previewValidatedSuggestionMetrics(comboCandidate.filters, originalScoredTrades);
-            }
-
-            if (this.lastResult === result) {
-                this.validatedSuggestionCacheKey = validationKey;
-                this.validatedFeatureSuggestions = nextFeatureSuggestions;
-                this.validatedComboSuggestion = nextComboSuggestion;
-                this.scheduleRender();
-            }
-        } finally {
-            this.isValidatingSuggestions = false;
-        }
-    }
-
-    private async previewValidatedSuggestionMetrics(
-        filters: readonly SnapshotFilterSuggestion[],
-        originalScoredTrades: number
-    ): Promise<ValidatedSuggestionMetrics | null> {
-        const previewResult = await backtestService.previewCurrentBacktestWithSettings(this.buildSnapshotFilterSettingsOverride(filters));
-        if (!previewResult) {
-            return null;
-        }
-
-        const annotatedPreview = this.attachLoadedPolymarketOutcomes(previewResult, this.loadedOutcomeRows);
-        const summary = this.getPolymarketSummary(annotatedPreview);
-        if (!summary) {
-            return null;
-        }
-
-        const payoutSummary = summarizePolymarketPayoutDiagnostics(annotatedPreview.trades);
-        return {
-            projectedWinRate: summary.winRate,
-            projectedBaselineDelta: summary.baselineDelta,
-            projectedExpectancy: payoutSummary?.expectancy ?? null,
-            removedPercent: originalScoredTrades > 0
-                ? Math.max(0, ((originalScoredTrades - summary.scoredTrades) / originalScoredTrades) * 100)
-                : 0,
-        };
-    }
-
-    private buildSnapshotFilterSettingsOverride(filters: readonly SnapshotFilterSuggestion[]): Partial<Record<string, number | boolean>> {
-        const override: Partial<Record<string, number | boolean>> = {};
-        for (const binding of Object.values(SNAPSHOT_FILTER_BINDINGS)) {
-            if (binding.minKey) {
-                override[binding.minKey] = 0;
-            }
-            if (binding.maxKey) {
-                override[binding.maxKey] = 0;
-            }
-        }
-
-        for (const filter of filters) {
-            const binding = SNAPSHOT_FILTER_BINDINGS[filter.feature];
-            if (!binding) {
-                continue;
-            }
-
-            const targetKey = filter.direction === "above"
-                ? (binding.minKey ?? binding.maxKey)
-                : (binding.maxKey ?? binding.minKey);
-            const oppositeKey = filter.direction === "above"
-                ? (binding.minKey && binding.maxKey ? binding.maxKey : undefined)
-                : (binding.minKey && binding.maxKey ? binding.minKey : undefined);
-
-            if (oppositeKey) {
-                override[oppositeKey] = 0;
-            }
-            if (targetKey) {
-                override[targetKey] = filter.threshold;
-            }
-        }
-
-        return override;
-    }
-
-    private getValidatedSuggestionCacheKey(
-        result: BacktestResult,
-        suggestions: NonNullable<BacktestResult["polymarketFilterSuggestions"]>
-    ): string {
-        const featureKey = rankPolymarketFeatureSuggestions(suggestions.featureAnalyses)
-            .slice(0, 8)
-            .map((analysis) => {
-                const filter = analysis.suggestedFilter;
-                return filter ? this.getSuggestionCacheEntryKey(analysis.feature, filter.direction, filter.threshold) : "";
-            })
-            .join("|");
-        const comboKey = suggestions.finderResult.bestCandidate
-            ? suggestions.finderResult.bestCandidate.filters
-                .map((filter) => this.getSuggestionCacheEntryKey(filter.feature, filter.direction, filter.threshold))
-                .join("&")
-            : "none";
-        return `${this.getResultSignature(result)}::${this.loadedOutcomeRows.length}::${featureKey}::${comboKey}`;
-    }
-
-    private getSuggestionCacheEntryKey(
-        feature: keyof TradeSnapshot,
-        direction: "above" | "below",
-        threshold: number
-    ): string {
-        return `${feature}:${direction}:${threshold}`;
     }
 
     private renderStatCard(label: string, value: string, numericValue?: number): string {
@@ -1077,10 +683,6 @@ class PolymarketPanelService {
         this.loadedResultSignature = "";
         this.deployabilityCacheKey = "";
         this.deployabilityCache = null;
-        this.validatedSuggestionCacheKey = "";
-        this.validatedFeatureSuggestions.clear();
-        this.validatedComboSuggestion = null;
-        this.isValidatingSuggestions = false;
         if (clearResult) {
             this.lastResult = null;
         }
@@ -1634,178 +1236,6 @@ class PolymarketPanelService {
     private formatSignedUsd(value: number): string {
         const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
         return `${prefix}$${Math.abs(value).toFixed(2)}`;
-    }
-
-    private formatSnapshotSettingSuggestion(
-        feature: keyof TradeSnapshot,
-        direction: "above" | "below",
-        threshold: number
-    ): string {
-        const binding = SNAPSHOT_FILTER_BINDINGS[feature];
-        if (!binding) {
-            return `${direction === "above" ? ">=" : "<="} ${this.formatFilterThreshold(threshold)}`;
-        }
-
-        const settingKey = direction === "above"
-            ? (binding.minKey ?? binding.maxKey ?? binding.toggleKey)
-            : (binding.maxKey ?? binding.minKey ?? binding.toggleKey);
-        return `${settingKey} = ${this.formatFilterThreshold(threshold)}`;
-    }
-
-    private formatFilterThreshold(value: number): string {
-        if (!Number.isFinite(value)) {
-            return "0";
-        }
-        const abs = Math.abs(value);
-        if (abs >= 100) return value.toFixed(2);
-        if (abs >= 1) return value.toFixed(3);
-        if (abs >= 0.1) return value.toFixed(4);
-        if (abs >= 0.01) return value.toFixed(5);
-        return value.toFixed(6);
-    }
-
-    private isSnapshotFeature(value: string | undefined): value is keyof TradeSnapshot {
-        return typeof value === "string" && value in SNAPSHOT_FILTER_BINDINGS;
-    }
-
-    private applyBestComboSuggestion(): void {
-        const bestCandidate = this.lastResult?.polymarketFilterSuggestions?.finderResult.bestCandidate;
-        if (!bestCandidate || bestCandidate.filters.length === 0) {
-            uiManager.showToast("No combo suggestion is available to apply.", "error");
-            return;
-        }
-
-        this.applySnapshotSuggestions(
-            bestCandidate.filters,
-            `Applied ${bestCandidate.filters.length}-filter combo to Snapshot Entry Filters.`,
-            { replaceExisting: true }
-        );
-    }
-
-    private applySnapshotSuggestions(
-        filters: readonly SnapshotFilterSuggestion[],
-        successMessage: string,
-        options: { replaceExisting?: boolean } = {}
-    ): void {
-        const touchedToggleIds = new Set<string>();
-        const touchedValueIds = new Set<string>();
-        const replaceExisting = options.replaceExisting === true;
-
-        if (replaceExisting) {
-            Object.values(SNAPSHOT_FILTER_BINDINGS).forEach((binding) => {
-                if (this.writeSettingValue(binding.toggleKey, false)) {
-                    touchedToggleIds.add(binding.toggleKey);
-                }
-                if (binding.minKey && this.writeSettingValue(binding.minKey, 0)) {
-                    touchedValueIds.add(binding.minKey);
-                }
-                if (binding.maxKey && this.writeSettingValue(binding.maxKey, 0)) {
-                    touchedValueIds.add(binding.maxKey);
-                }
-            });
-        }
-
-        let appliedCount = 0;
-        filters.forEach((filter) => {
-            const binding = SNAPSHOT_FILTER_BINDINGS[filter.feature];
-            if (!binding) {
-                return;
-            }
-
-            if (!replaceExisting) {
-                if (this.writeSettingValue(binding.toggleKey, false)) {
-                    touchedToggleIds.add(binding.toggleKey);
-                }
-                if (binding.minKey && this.writeSettingValue(binding.minKey, 0)) {
-                    touchedValueIds.add(binding.minKey);
-                }
-                if (binding.maxKey && this.writeSettingValue(binding.maxKey, 0)) {
-                    touchedValueIds.add(binding.maxKey);
-                }
-            }
-
-            if (this.writeSettingValue(binding.toggleKey, true)) {
-                touchedToggleIds.add(binding.toggleKey);
-            }
-
-            const targetKey = filter.direction === "above"
-                ? (binding.minKey ?? binding.maxKey)
-                : (binding.maxKey ?? binding.minKey);
-            const oppositeKey = filter.direction === "above"
-                ? (binding.minKey && binding.maxKey ? binding.maxKey : undefined)
-                : (binding.minKey && binding.maxKey ? binding.minKey : undefined);
-
-            if (oppositeKey && this.writeSettingValue(oppositeKey, 0)) {
-                touchedValueIds.add(oppositeKey);
-            }
-            if (targetKey && this.writeSettingValue(targetKey, filter.threshold)) {
-                touchedValueIds.add(targetKey);
-                appliedCount++;
-            }
-        });
-
-        if (appliedCount === 0) {
-            uiManager.showToast("Snapshot filter controls are unavailable.", "error");
-            return;
-        }
-
-        touchedToggleIds.forEach((id) => this.dispatchSettingEvents(id));
-        touchedValueIds.forEach((id) => this.dispatchSettingEvents(id));
-        settingsManager.saveSettingsDebounced();
-        this.revealSnapshotFiltersInSettings();
-        uiManager.showToast(successMessage, "success");
-    }
-
-    private writeSettingValue(id: string, value: boolean | number): boolean {
-        const element = document.getElementById(id);
-        if (!element) {
-            return false;
-        }
-
-        if (element instanceof HTMLInputElement) {
-            if (element.type === "checkbox") {
-                element.checked = Boolean(value);
-                return true;
-            }
-            element.value = String(value);
-            return true;
-        }
-
-        if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) {
-            element.value = String(value);
-            return true;
-        }
-
-        return false;
-    }
-
-    private dispatchSettingEvents(id: string): void {
-        const element = document.getElementById(id);
-        if (!element) {
-            return;
-        }
-
-        if (element instanceof HTMLInputElement && element.type === "checkbox") {
-            element.dispatchEvent(new Event("change", { bubbles: true }));
-            return;
-        }
-
-        element.dispatchEvent(new Event("input", { bubbles: true }));
-        element.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-
-    private revealSnapshotFiltersInSettings(): void {
-        strategyPanelController.switchTab("settings");
-
-        const standardPresetButton = document.querySelector<HTMLButtonElement>('#settingsPresetBar .settings-preset-btn[data-preset="standard"]');
-        if (standardPresetButton && !standardPresetButton.classList.contains("active")) {
-            standardPresetButton.click();
-        }
-
-        const sectionHeader = document.querySelector<HTMLElement>('#settingsTab .settings-section[data-section="snapshotFilters"] .section-header.collapsible');
-        if (sectionHeader?.classList.contains("collapsed")) {
-            sectionHeader.click();
-        }
     }
 
     private getDom(): PolymarketPanelDom {

@@ -33,9 +33,6 @@ function buildSnapshot(engineUsed: "rust" | "typescript"): UiBacktestEndpointSna
             allowSameBarExit: true,
             slippageBps: 0,
             marketMode: "all",
-            captureSnapshots: true,
-            snapshotRsiMin: 55,
-            snapshotRsiMax: 70,
         },
         capitalSettings: {
             ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS,
@@ -70,7 +67,7 @@ describe("backtest endpoint copy helpers", () => {
         assert.strictEqual(request.backtestSettings.allowSameBarExit, snapshot.backtestSettings.allowSameBarExit);
         assert.strictEqual(request.backtestSettings.slippageBps, snapshot.backtestSettings.slippageBps);
         assert.strictEqual(request.backtestSettings.marketMode, snapshot.backtestSettings.marketMode);
-        assert.ok(!("captureSnapshots" in request.backtestSettings));
+        assert.ok(!("polymarketAnnotationEnabled" in request.backtestSettings));
         assert.ok(!("snapshotRsiMin" in request.backtestSettings));
         assert.ok(!("snapshotRsiMax" in request.backtestSettings));
         assert.strictEqual(request.backtestSettings.polymarketAnnotationEnabled, true);
@@ -102,7 +99,6 @@ describe("backtest endpoint copy helpers", () => {
         assert.strictEqual(bundle.datasetUploadUrl, "http://localhost:5173/api/backtest/datasets");
         assert.strictEqual(bundle.payload.dataset.ref, BACKTEST_ENDPOINT_DATASET_REF_PLACEHOLDER);
         assert.deepStrictEqual(bundle.payload.strategyParams, snapshot.strategyParams);
-        assert.ok(!("captureSnapshots" in bundle.payload.backtestSettings));
         assert.ok(!("snapshotRsiMin" in bundle.payload.backtestSettings));
         assert.ok(!("snapshotRsiMax" in bundle.payload.backtestSettings));
         assert.strictEqual(bundle.payload.backtestSettings.polymarketAnnotationEnabled, true);

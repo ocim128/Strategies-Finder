@@ -10,7 +10,7 @@ import {
     computeOppositeWickPercent,
     computeRangeAtrMultiple,
     computeTrendEfficiency,
-} from "./snapshot-derived-metrics";
+} from "./bar-metrics";
 
 export interface AdaptiveTakeProfitOverrides {
     takeProfitPercent: number | null;
