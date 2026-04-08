@@ -13,7 +13,6 @@ import {
     type StrategyPlan,
 } from "./finder-runner-shared";
 import { runSingleTimeframe } from "./finder-runner-single";
-import { runMultiTimeframe } from "./finder-runner-multi";
 import { runGeneticFinder } from "./finder-runner-genetic";
 import { runPolymarketFinder } from "./finder-runner-polymarket";
 import {
@@ -68,8 +67,6 @@ export interface FinderRunOutput {
 export async function runFinderExecution(input: FinderRunInput, callbacks: FinderRunCallbacks): Promise<FinderRunOutput> {
     const { options, settings, selectedStrategies, capitalSettings } = input;
     const rustSettings = sanitizeBacktestSettingsForRust(settings);
-    const runTimeframes = input.getFinderTimeframesForRun(options);
-    const usingMultiTimeframe = options.multiTimeframeEnabled === true;
 
     const flags = computeDatasetFlags(input.ohlcvData.length, settings, options, false);
 
@@ -153,19 +150,6 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
         await callbacks.yieldControl();
         sliceStart = performance.now();
     };
-
-    if (usingMultiTimeframe) {
-        return runMultiTimeframe({
-            input,
-            callbacks,
-            flags,
-            totalRuns,
-            nextJobBatch,
-            shouldUpdateUi,
-            maybeYieldByBudget,
-            runTimeframes,
-        });
-    }
 
     return runSingleTimeframe({
         input,

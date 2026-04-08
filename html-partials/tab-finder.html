@@ -68,60 +68,6 @@
     </div>
 
     <div class="section-header">
-        <div class="section-title">Multi Timeframe</div>
-        <label class="section-toggle" aria-label="Toggle multi timeframe mode">
-            <input type="checkbox" id="finderMultiTimeframeToggle">
-            <span class="section-toggle-track"></span>
-        </label>
-    </div>
-    <div class="section-body" id="finderMultiTimeframeSettings">
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">Preset Timeframe</label>
-                <select class="param-input" id="finderMultiTimeframeSelect"></select>
-            </div>
-            <div class="param-group">
-                <label class="param-label">&nbsp;</label>
-                <button class="btn btn-secondary btn-compact" id="finderMultiTimeframeAdd" type="button">Add</button>
-            </div>
-        </div>
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">Custom Timeframe</label>
-                <input type="text" class="param-input" id="finderMultiTimeframeCustom" placeholder="e.g. 2m, 4m, 7m">
-            </div>
-            <div class="param-group">
-                <label class="param-label">&nbsp;</label>
-                <button class="btn btn-secondary btn-compact" id="finderMultiTimeframeCustomAdd"
-                    type="button">Add</button>
-            </div>
-        </div>
-        <div class="finder-timeframe-selected" id="finderMultiTimeframeSelected"></div>
-        <div class="finder-timeframe-note" id="finderMultiTimeframeNote">Select up to 10 timeframes.</div>
-    </div>
-
-    <div class="section-header">
-        <div class="section-title">Combo Mode</div>
-        <label class="section-toggle" aria-label="Toggle combo mode">
-            <input type="checkbox" id="finderComboToggle">
-            <span class="section-toggle-track"></span>
-        </label>
-    </div>
-    <div class="section-body" id="finderComboSettings">
-        <div class="param-row">
-            <div class="param-group" style="flex: 1;">
-                <label class="param-label">Primary Config (Locked)</label>
-                <select class="param-input" id="finderComboPrimarySelect">
-                    <option value="">-- Select primary config --</option>
-                </select>
-            </div>
-        </div>
-        <div class="finder-combo-note" id="finderComboNote">
-            Lock a primary config. Finder searches secondary strategy params ranked by combined (AND) backtest.
-        </div>
-    </div>
-
-    <div class="section-header">
         <div class="section-title">Polymarket Scoring</div>
         <label class="section-toggle" aria-label="Toggle Polymarket outcome scoring">
             <input type="checkbox" id="finderPolymarketToggle">

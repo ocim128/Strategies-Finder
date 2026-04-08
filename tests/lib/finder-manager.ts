@@ -1,4 +1,4 @@
-import { StrategyParams, applySignalPolarity } from "./strategies/index";
+import { StrategyParams } from "./strategies/index";
 import { strategyRegistry } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtest-service";
@@ -6,19 +6,13 @@ import { paramManager } from "./param-manager";
 import { uiManager } from "./ui-manager";
 import { setVisible } from "./dom-utils";
 import { dataManager } from "./data-manager";
-import { settingsManager, type StrategyConfig } from "./settings-manager";
-import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
+import { settingsManager } from "./settings-manager";
 
 import { DEFAULT_SORT_PRIORITY, METRIC_FULL_LABELS } from "./finder/constants";
 import { runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
 import { FinderParamSpace } from "./finder/finder-param-space";
-import { FinderTimeframeLoader, type FinderDataset } from "./finder/finder-timeframe-loader";
 import { FinderUI } from "./finder/finder-ui";
-import {
-	buildFinderOptions,
-	addFinderTimeframeSelection,
-	removeFinderTimeframeSelection,
-} from "./finder/finder-manager-logic";
+import { buildFinderOptions } from "./finder/finder-manager-logic";
 import { sortFinderResults } from "./finder/finder-engine";
 import { mergeFinderRiskParamsIntoBacktestSettings } from "./finder/finder-runner-core";
 import { debugLogger } from "./debug-logger";
@@ -30,10 +24,6 @@ import {
 	createFinderManagerDom,
 	type FinderManagerDom,
 } from "./finder/finder-manager-dom";
-import {
-	createPairCombinerBridgeDom,
-	type PairCombinerBridgeDom
-} from "./pairCombiner/pair-combiner-bridge-dom";
 import type {
 	FinderMetric,
 	FinderMode,
@@ -41,15 +31,9 @@ import type {
 	PolymarketFinderRankMode,
 	FinderResult
 } from './types/finder';
-import { isSmartTradeSizingMode, type CapitalSettings } from "./types/backtest";
+import { isSmartTradeSizingMode } from "./types/backtest";
 
 export class FinderManager {
-	private static readonly MAX_MULTI_TIMEFRAMES = 10;
-	private static readonly MULTI_TIMEFRAME_DEFAULTS = ['1m', '2m', '3m', '4m', '5m', '6m', '7m', '8m', '9m', '10m'];
-	private static readonly MULTI_TIMEFRAME_PRESETS = [
-		...FinderManager.MULTI_TIMEFRAME_DEFAULTS,
-		'15m', '30m', '1h', '4h', '1d', '1w', '1M'
-	];
 	private isRunning = false;
 	private isCancelled = false;
 	private displayResults: FinderResult[] = [];
@@ -59,21 +43,14 @@ export class FinderManager {
 	private strategyItems: Map<string, HTMLDivElement> = new Map();
 	private strategyOrder: string[] = [];
 	private lastStrategyToggleKey: string | null = null;
-	private selectedFinderTimeframes: string[] = [];
 	private readonly ui = new FinderUI();
 	private readonly paramSpace = new FinderParamSpace();
-	private readonly timeframeLoader = new FinderTimeframeLoader(FinderManager.MAX_MULTI_TIMEFRAMES);
 	private dom: FinderManagerDom | null = null;
-	private pairCombinerDom: PairCombinerBridgeDom | null = null;
 	private yieldChannel: MessageChannel | null = null;
 	private pendingYieldResolvers: Array<() => void> = [];
 
 	private getDom(): FinderManagerDom {
 		return this.dom ??= createFinderManagerDom();
-	}
-
-	private getPairCombinerDom(): PairCombinerBridgeDom {
-		return this.pairCombinerDom ??= createPairCombinerBridgeDom();
 	}
 
 	public init() {
@@ -107,18 +84,7 @@ export class FinderManager {
 		this.initStrategySelectionUI();
 
 		this.initSortingUI();
-		this.initMultiTimeframeUI();
-		this.initComboUI();
 		this.initPolymarketUI();
-
-
-		state.subscribe('currentInterval', () => {
-			this.populateMultiTimeframePresets();
-		});
-		state.subscribe('currentSymbol', () => {
-			this.timeframeLoader.clearCache();
-			this.applyMockRestrictionToMultiTimeframe();
-		});
 	}
 
 	private initSortingUI(): void {
@@ -191,55 +157,6 @@ export class FinderManager {
 		});
 	}
 
-	private initMultiTimeframeUI(): void {
-		const dom = this.getDom();
-		const toggle = dom.finderMultiTimeframeToggle;
-		const addPresetBtn = dom.finderMultiTimeframeAdd;
-		const addCustomBtn = dom.finderMultiTimeframeCustomAdd;
-		const customInput = dom.finderMultiTimeframeCustom;
-
-		this.populateMultiTimeframePresets();
-		this.renderSelectedFinderTimeframes();
-
-		toggle.addEventListener('change', () => {
-			if (toggle.checked) {
-				this.applyDefaultFinderTimeframes();
-			}
-			this.applyMockRestrictionToMultiTimeframe();
-		});
-
-		addPresetBtn.addEventListener('click', () => {
-			const select = this.getDom().finderMultiTimeframeSelect;
-			this.addFinderTimeframe(select.value, false);
-		});
-
-		const submitCustom = () => {
-			const value = customInput.value.trim();
-			if (!value) return;
-			this.addFinderTimeframe(value, false);
-			customInput.value = '';
-		};
-
-		addCustomBtn.addEventListener('click', submitCustom);
-		customInput.addEventListener('keydown', (event) => {
-			if (event.key === 'Enter') {
-				event.preventDefault();
-				submitCustom();
-			}
-		});
-
-		dom.finderMultiTimeframeSelected.addEventListener('click', (event) => {
-			const target = event.target as HTMLElement | null;
-			const removeBtn = target?.closest<HTMLButtonElement>('.finder-timeframe-chip-remove');
-			if (!removeBtn) return;
-			const interval = removeBtn.dataset.interval;
-			if (!interval) return;
-			this.removeFinderTimeframe(interval);
-		});
-
-		this.applyMockRestrictionToMultiTimeframe();
-	}
-
 	private initStrategySelectionUI(): void {
 		const dom = this.getDom();
 
@@ -268,17 +185,6 @@ export class FinderManager {
 		});
 	}
 
-	private initComboUI(): void {
-		const { finderComboToggle: toggle } = this.getDom();
-
-		this.populateComboDropdown();
-		this.setComboControlsEnabled(toggle.checked);
-
-		toggle.addEventListener('change', () => {
-			this.setComboControlsEnabled(toggle.checked);
-		});
-	}
-
 	private initPolymarketUI(): void {
 		const { finderPolymarketToggle: toggle } = this.getDom();
 
@@ -288,31 +194,6 @@ export class FinderManager {
 		});
 	}
 
-	public populateComboDropdown(): void {
-		const select = this.getDom().finderComboPrimarySelect;
-
-		const configs = settingsManager.loadAllStrategyConfigs();
-		const currentValue = select.value;
-
-		select.innerHTML = '<option value="">-- Select primary config --</option>';
-		configs.forEach(config => {
-			const option = document.createElement('option');
-			option.value = config.name;
-			option.textContent = `${config.name} (${config.strategyKey})`;
-			select.appendChild(option);
-		});
-
-		if (currentValue && configs.some(c => c.name === currentValue)) {
-			select.value = currentValue;
-		}
-	}
-
-	private setComboControlsEnabled(enabled: boolean): void {
-		const { finderComboSettings: settings, finderComboPrimarySelect: select } = this.getDom();
-		settings.classList.toggle('is-disabled', !enabled);
-		select.disabled = !enabled;
-	}
-
 	private setPolymarketControlsEnabled(enabled: boolean): void {
 		const dom = this.getDom();
 		dom.finderPolymarketSettings.classList.toggle('is-disabled', !enabled);
@@ -320,145 +201,6 @@ export class FinderManager {
 		dom.finderPolymarketMinScored.disabled = !enabled;
 		dom.finderPolymarketLockOffset.disabled = !enabled;
 		dom.finderPolymarketAfterTakeProfitOnly.disabled = !enabled;
-	}
-
-	public clearTimeframeCache(): void {
-		this.timeframeLoader.clearCache();
-	}
-
-	private populateMultiTimeframePresets(): void {
-		const select = this.getDom().finderMultiTimeframeSelect;
-
-		const intervals = [...FinderManager.MULTI_TIMEFRAME_PRESETS];
-		if (!intervals.includes(state.currentInterval)) {
-			intervals.push(state.currentInterval);
-		}
-
-		select.innerHTML = '';
-		intervals.forEach(interval => {
-			const option = document.createElement('option');
-			option.value = interval;
-			option.textContent = interval;
-			select.appendChild(option);
-		});
-
-		if (intervals.includes(state.currentInterval)) {
-			select.value = state.currentInterval;
-		}
-	}
-
-	private applyMockRestrictionToMultiTimeframe(): void {
-		const { finderMultiTimeframeToggle: toggle, finderMultiTimeframeNote: note } = this.getDom();
-		const isMock = dataManager.isMockSymbol(state.currentSymbol);
-		const enabled = !isMock;
-
-		if (isMock) {
-			toggle.checked = false;
-			note.textContent = 'Multi timeframe is disabled for mock chart symbols.';
-		} else {
-			note.textContent = `Select up to ${FinderManager.MAX_MULTI_TIMEFRAMES} timeframes.`;
-		}
-
-		toggle.disabled = !enabled;
-		this.setMultiTimeframeControlsEnabled(enabled && toggle.checked);
-	}
-
-	private setMultiTimeframeControlsEnabled(enabled: boolean): void {
-		const dom = this.getDom();
-		const settings = dom.finderMultiTimeframeSettings;
-		const select = dom.finderMultiTimeframeSelect;
-		const addPresetBtn = dom.finderMultiTimeframeAdd;
-		const customInput = dom.finderMultiTimeframeCustom;
-		const addCustomBtn = dom.finderMultiTimeframeCustomAdd;
-
-		settings.classList.toggle('is-disabled', !enabled);
-		select.disabled = !enabled;
-		addPresetBtn.disabled = !enabled;
-		customInput.disabled = !enabled;
-		addCustomBtn.disabled = !enabled;
-	}
-
-	private applyDefaultFinderTimeframes(): void {
-		this.selectedFinderTimeframes = [...FinderManager.MULTI_TIMEFRAME_DEFAULTS];
-		this.renderSelectedFinderTimeframes();
-	}
-
-	private async loadMultiTimeframeDatasets(symbol: string, intervals: string[]): Promise<FinderDataset[]> {
-		return this.timeframeLoader.loadMultiTimeframeDatasets(symbol, intervals, {
-			currentSymbol: state.currentSymbol,
-			currentInterval: state.currentInterval,
-			currentData: state.ohlcvData
-		});
-	}
-
-	private normalizeFinderInterval(rawInterval: string): string | null {
-		return this.timeframeLoader.normalizeInterval(rawInterval);
-	}
-
-	private addFinderTimeframe(interval: string, silent: boolean): void {
-		const result = addFinderTimeframeSelection(
-			this.selectedFinderTimeframes,
-			interval,
-			FinderManager.MAX_MULTI_TIMEFRAMES,
-			(rawInterval) => this.normalizeFinderInterval(rawInterval)
-		);
-		if (result.status === 'invalid') {
-			if (!silent) {
-				uiManager.showToast('Invalid timeframe. Use format like 2m, 4m, 7m, 1h, 1d.', 'error');
-			}
-			return;
-		}
-		if (result.status === 'duplicate') {
-			if (!silent) {
-				uiManager.showToast(`${result.normalized} is already selected.`, 'info');
-			}
-			return;
-		}
-		if (result.status === 'limit_reached') {
-			uiManager.showToast(`Max ${FinderManager.MAX_MULTI_TIMEFRAMES} timeframes allowed.`, 'error');
-			return;
-		}
-
-		this.selectedFinderTimeframes = result.selected;
-		this.renderSelectedFinderTimeframes();
-	}
-
-	private removeFinderTimeframe(interval: string): void {
-		this.selectedFinderTimeframes = removeFinderTimeframeSelection(this.selectedFinderTimeframes, interval).selected;
-		this.renderSelectedFinderTimeframes();
-	}
-
-	private renderSelectedFinderTimeframes(): void {
-		const container = this.getDom().finderMultiTimeframeSelected;
-		container.innerHTML = '';
-
-		if (this.selectedFinderTimeframes.length === 0) {
-			const empty = document.createElement('span');
-			empty.className = 'finder-timeframe-empty';
-			empty.textContent = 'No timeframe selected.';
-			container.appendChild(empty);
-			return;
-		}
-
-		this.selectedFinderTimeframes.forEach(interval => {
-			const chip = document.createElement('span');
-			chip.className = 'finder-timeframe-chip';
-			chip.textContent = interval;
-
-			const remove = document.createElement('button');
-			remove.type = 'button';
-			remove.className = 'finder-timeframe-chip-remove';
-			remove.dataset.interval = interval;
-			remove.textContent = 'x';
-			remove.title = `Remove ${interval}`;
-
-			chip.appendChild(remove);
-			container.appendChild(chip);
-		});
-	}
-
-	private getFinderTimeframesForRun(options: FinderOptions): string[] {
-		return this.timeframeLoader.getFinderTimeframesForRun(options, state.currentInterval);
 	}
 
 	private renderStrategySelection(): void {
@@ -647,16 +389,20 @@ export class FinderManager {
 		this.lastFinderOptions = {
 			...options,
 			sortPriority: [...options.sortPriority],
-			timeframes: [...(options.timeframes ?? [])],
 		};
 		const dom = this.getDom();
 		const runButton = dom.runFinder;
 		const stopButton = dom.stopFinder;
+		let progressFinalized = false;
 		const setRunningUI = (running: boolean) => {
 			runButton.disabled = running;
 			runButton.classList.toggle('is-loading', running);
 			runButton.setAttribute('aria-busy', running ? 'true' : 'false');
 			stopButton.style.display = running ? '' : 'none';
+		};
+		const finalizeProgress = (percent: number, text: string) => {
+			this.setProgress(false, percent, text);
+			progressFinalized = true;
 		};
 
 		setRunningUI(true);
@@ -667,12 +413,6 @@ export class FinderManager {
 		this.renderResults([], options.sortPriority[0]);
 
 		try {
-			if (options.multiTimeframeEnabled && dataManager.isMockSymbol(state.currentSymbol)) {
-				uiManager.showToast('Multi timeframe finder is not available for mock chart symbols.', 'error');
-				this.setStatus('Multi timeframe finder is disabled for mock chart symbols.');
-				return;
-			}
-
 			const selectedStrategies = this.getSelectedStrategies();
 			if (selectedStrategies.length === 0) {
 				this.setStatus('No strategies selected.');
@@ -692,57 +432,6 @@ export class FinderManager {
 				return;
 			}
 
-			// --- Combo Mode: resolve primary config, generate primary signals once ---
-			let comboPrimarySignals: undefined | ReturnType<typeof applySignalPolarity>;
-			let comboPrimarySettings: undefined | typeof settings;
-			let comboPrimaryCapital: undefined | CapitalSettings;
-
-			if (options.comboEnabled && options.comboPrimaryConfigName) {
-				const primaryConfig = settingsManager.loadStrategyConfig(options.comboPrimaryConfigName);
-				if (!primaryConfig) {
-					this.setStatus(`Primary config "${options.comboPrimaryConfigName}" not found.`);
-					return;
-				}
-				const primaryStrategy = strategyRegistry.get(primaryConfig.strategyKey);
-				if (!primaryStrategy) {
-					this.setStatus(`Primary strategy "${primaryConfig.strategyKey}" not found in registry.`);
-					return;
-				}
-
-				this.setStatus('Combo mode: generating primary signals...');
-				comboPrimarySettings = resolveBacktestSettingsFromRaw(
-					primaryConfig.backtestSettings as unknown as typeof settings,
-					{ coerceWithoutUiToggles: true }
-				);
-				try {
-					comboPrimarySignals = applySignalPolarity(
-						primaryStrategy.execute(ohlcvData, primaryConfig.strategyParams),
-						comboPrimarySettings
-					);
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					debugLogger.error('finder.combo.primary_failed', {
-						primaryConfig: options.comboPrimaryConfigName,
-						primaryStrategy: primaryConfig.strategyKey,
-						error: message,
-					});
-					this.setStatus(`Combo primary strategy failed. ${message}`);
-					uiManager.showToast('Combo primary strategy failed. Check the status panel for details.', 'error');
-					return;
-				}
-				comboPrimaryCapital = settingsManager.resolveCapitalFromConfig(primaryConfig);
-
-				debugLogger.event('finder.combo.primary_resolved', {
-					primaryConfig: options.comboPrimaryConfigName,
-					primaryStrategy: primaryConfig.strategyKey,
-					primarySignals: comboPrimarySignals.length,
-				});
-			} else if (options.comboEnabled && !options.comboPrimaryConfigName) {
-				uiManager.showToast('Combo mode enabled but no primary config selected.', 'error');
-				this.setStatus('Select a primary config for combo mode.');
-				return;
-			}
-
 			try {
 				const output = await runFinderExecution(
 					{
@@ -754,13 +443,10 @@ export class FinderManager {
 						requiresTsEngine,
 						selectedStrategies,
 						capitalSettings,
-						getFinderTimeframesForRun: (finderOptions) => this.getFinderTimeframesForRun(finderOptions),
-						loadMultiTimeframeDatasets: (symbol, intervals) => this.loadMultiTimeframeDatasets(symbol, intervals),
+						getFinderTimeframesForRun: () => [state.currentInterval],
+						loadMultiTimeframeDatasets: async () => [],
 						generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
 						buildRandomConfirmationParams: (strategyKeys, finderOptions) => this.buildRandomConfirmationParams(strategyKeys, finderOptions),
-						comboPrimarySignals,
-						comboPrimarySettings,
-						comboPrimaryCapital,
 					},
 					{
 						setProgress: (percent, text) => this.setProgress(true, percent, text),
@@ -781,11 +467,11 @@ export class FinderManager {
 				this.ui.renderRandomBenchmark(options.mode, output.randomBenchmark);
 
 				if (this.isCancelled) {
-					this.setProgress(false, 0, "");
+					finalizeProgress(0, "");
 					this.setStatus(`Finder stopped by user after ${Math.round(performance.now() - startTime)}ms.`);
 				} else {
 					this.setStatus(`Finder completed in ${Math.round(performance.now() - startTime)}ms.`);
-					this.setProgress(false, 100, "");
+					finalizeProgress(100, "");
 				}
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -805,6 +491,9 @@ export class FinderManager {
 				}
 			}
 		} finally {
+			if (!progressFinalized) {
+				finalizeProgress(0, '');
+			}
 			this.isCancelled = false;
 			setRunningUI(false);
 			this.isRunning = false;
@@ -828,8 +517,6 @@ export class FinderManager {
 			? Math.round(this.readFinderNumberInput(dom.finderTradesMax, Number.POSITIVE_INFINITY, 0))
 			: Number.POSITIVE_INFINITY;
 		const freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
-		const comboEnabled = dom.finderComboToggle.checked;
-		const comboPrimaryConfigName = comboEnabled ? (dom.finderComboPrimarySelect.value || undefined) : undefined;
 		const polymarketScoringEnabled = dom.finderPolymarketToggle.checked;
 		const polymarketRankMode = (dom.finderPolymarketRankMode.value as PolymarketFinderRankMode) || 'balanced';
 		const polymarketMinScoredPredictions = polymarketScoringEnabled
@@ -844,10 +531,6 @@ export class FinderManager {
 			advancedSortValues,
 			primarySort: dom.finderSort.value as FinderMetric,
 			secondarySort: dom.finderSortSecondary.value as FinderMetric,
-			multiTimeframeRequested: dom.finderMultiTimeframeToggle.checked,
-			isMockSymbol: dataManager.isMockSymbol(state.currentSymbol),
-			selectedTimeframes: this.selectedFinderTimeframes,
-			maxMultiTimeframes: FinderManager.MAX_MULTI_TIMEFRAMES,
 			topN,
 			steps,
 			rangePercent,
@@ -856,8 +539,6 @@ export class FinderManager {
 			minTrades,
 			maxTrades,
 			freezeRiskManagement,
-			comboEnabled,
-			comboPrimaryConfigName,
 			polymarketScoringEnabled,
 			polymarketRankMode,
 			polymarketMinScoredPredictions,
@@ -959,69 +640,12 @@ export class FinderManager {
 	private async applyResult(result: FinderResult): Promise<void> {
 		const isPolymarketResult = Boolean(result.polymarketEval);
 
-		if (Array.isArray(result.timeframes) && result.timeframes.length > 1) {
-			uiManager.showToast(
-				'Applied params from a multi-timeframe aggregate result. The backtest run below uses current chart timeframe only.',
-				'info'
-			);
-		}
-
 		setCurrentStrategyKey(result.key);
 		uiManager.updateStrategyDropdown(result.key);
 		const strategy = strategyRegistry.get(result.key);
 		if (!strategy) return;
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, result.params);
-
-		if (result.comboMode) {
-			const primaryConfigName = result.comboPrimaryConfigName || this.getDom().finderComboPrimarySelect.value || '';
-			if (!primaryConfigName) {
-				uiManager.showToast('Combo result needs a primary config. Re-select it in Finder Combo Mode.', 'error');
-				return;
-			}
-
-			const primaryConfig = settingsManager.loadStrategyConfig(primaryConfigName);
-			if (!primaryConfig) {
-				uiManager.showToast(`Primary config "${primaryConfigName}" not found.`, 'error');
-				return;
-			}
-
-			const now = new Date().toISOString();
-			const secondaryBacktestSettings: StrategyConfig['backtestSettings'] = this.lastFinderRunBacktestSettings
-				? this.cloneBacktestSettings(this.lastFinderRunBacktestSettings) as StrategyConfig['backtestSettings']
-				: settingsManager.getBacktestSettings();
-			const secondaryConfig: StrategyConfig = {
-				name: `finder_combo_secondary_${result.key}`,
-				createdAt: now,
-				updatedAt: now,
-				strategyKey: result.key,
-				strategyParams: { ...result.params },
-				backtestSettings: secondaryBacktestSettings,
-			};
-
-			const pairCombinerDom = this.getPairCombinerDom();
-			pairCombinerDom.combinerPrimarySelect.value = primaryConfigName;
-			pairCombinerDom.combinerSecondarySelect.value = '';
-			pairCombinerDom.combinerMode.value = 'and';
-
-			strategyPanelController.switchTab('trades');
-
-			setTimeout(() => {
-				backtestService.runCombinedStrategyBacktest(primaryConfig, secondaryConfig, 'and')
-					.then(() => {
-						uiManager.showToast(`Applied combo result with primary "${primaryConfigName}" (AND).`, 'success');
-					})
-					.catch(err => {
-						debugLogger.error('finder.apply_combo_result_backtest_failed', {
-							primaryConfigName,
-							secondaryStrategy: result.key,
-							error: err instanceof Error ? err.message : String(err)
-						});
-						uiManager.showToast('Combined backtest failed for combo result.', 'error');
-					});
-			}, 0);
-			return;
-		}
 
 		this.applyFinderBacktestSettings(result);
 		strategyPanelController.switchTab('trades');
