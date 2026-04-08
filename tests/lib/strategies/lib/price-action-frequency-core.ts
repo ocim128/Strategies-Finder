@@ -92,6 +92,15 @@ export function buildCloseLocationSeries(data: OHLCVData[]): number[] {
 	return buildMetricSeries(data, (_bar, metrics) => metrics.closeLocation);
 }
 
+export function buildCloseAcceptanceSeries(data: OHLCVData[]): number[] {
+	return buildMetricSeries(data, (bar, metrics) => {
+		if (metrics.range <= 0) return 0;
+		const closeBias = metrics.closeLocation * 2 - 1;
+		const directionalBody = (bar.close - bar.open) / metrics.range;
+		return clamp((closeBias + directionalBody) / 2, -1, 1);
+	});
+}
+
 export function buildRollingAverage(
 	values: number[],
 	lookbackInput: number
@@ -108,6 +117,25 @@ export function buildRollingAverage(
 		if (i >= lookback - 1) {
 			result[i] = sum / lookback;
 		}
+	}
+
+	return result;
+}
+
+export function buildInitiativePressureSeries(
+	data: OHLCVData[],
+	lookbackInput: number
+): (number | null)[] {
+	const lookback = Math.max(2, Math.round(lookbackInput));
+	const result: (number | null)[] = new Array(data.length).fill(null);
+	const closeAcceptance = buildCloseAcceptanceSeries(data);
+	const avgVolumes = buildRollingAverage(data.map((bar) => Math.max(0, bar.volume)), lookback);
+
+	for (let i = 0; i < data.length; i++) {
+		const avgVolume = avgVolumes[i];
+		if (avgVolume === null || avgVolume <= 0) continue;
+		const relativeVolume = clamp(data[i].volume / avgVolume, 0, 3);
+		result[i] = closeAcceptance[i] * relativeVolume;
 	}
 
 	return result;
@@ -141,6 +169,41 @@ export function buildTrailingHighLow(
 	}
 
 	return { highest, lowest };
+}
+
+export function buildSweepReclaimSeries(
+	data: OHLCVData[],
+	lookbackInput: number
+): (number | null)[] {
+	const lookback = Math.max(2, Math.round(lookbackInput));
+	const result: (number | null)[] = new Array(data.length).fill(null);
+	const closeAcceptance = buildCloseAcceptanceSeries(data);
+	const { highest, lowest } = buildTrailingHighLow(data, lookback);
+
+	for (let i = 0; i < data.length; i++) {
+		const priorHigh = highest[i];
+		const priorLow = lowest[i];
+		if (priorHigh === null || priorLow === null) continue;
+
+		const bar = data[i];
+		const range = Math.max(0, bar.high - bar.low);
+		if (range <= 0) {
+			result[i] = 0;
+			continue;
+		}
+
+		const bullishSweepDepth = bar.low < priorLow ? clamp((priorLow - bar.low) / range, 0, 1) : 0;
+		const bearishSweepDepth = bar.high > priorHigh ? clamp((bar.high - priorHigh) / range, 0, 1) : 0;
+		const bullishReclaim = bullishSweepDepth > 0 ? clamp((bar.close - priorLow) / range, 0, 1) : 0;
+		const bearishReclaim = bearishSweepDepth > 0 ? clamp((priorHigh - bar.close) / range, 0, 1) : 0;
+		const acceptance = closeAcceptance[i];
+
+		const bullishScore = bullishSweepDepth * bullishReclaim * (0.5 + 0.5 * Math.max(0, acceptance));
+		const bearishScore = bearishSweepDepth * bearishReclaim * (0.5 + 0.5 * Math.max(0, -acceptance));
+		result[i] = bullishScore - bearishScore;
+	}
+
+	return result;
 }
 
 export function buildTrailingWindowSpan(

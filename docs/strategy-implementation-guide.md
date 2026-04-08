@@ -1,149 +1,292 @@
 # Strategy Implementation Guide for AI Agents
 
-This guide provides the exact context and rules required to implement a new built-in strategy correctly in this repository. 
+This guide is for turning a strategy idea into a valid built-in strategy under `lib/strategies/lib/*`.
 
-Often, strategies generated from `archive/prompt.txt` or general AI knowledge lack the specific type safety, null-handling, and execution loop requirements of this engine. **Read and follow these rules strictly to avoid compilation and runtime errors.**
+If the idea came from `archive/prompt.txt`, treat that prompt as idea-generation input only. It does not guarantee a compilable implementation. Before writing code, confirm every helper, indicator, and type assumption against the real codebase.
 
-## 1. File Structure and Syncing
+For repo-level orientation, read [`README.md`](../README.md) first. For the operational checklist, use [`AGENTS.md`](../AGENTS.md). For the higher-level authoring workflow, use [`strategy-authoring.md`](./strategy-authoring.md).
 
-1. **Location:** All built-in strategies live in `lib/strategies/lib/`.
-2. **Naming:** Pick a descriptive snake_case or camelCase key (e.g., `median_deviation_streak.ts`).
-3. **Export:** Export a `const` matching the strategy key. 
-   ```typescript
-   export const median_deviation_streak: Strategy = { ... };
-   ```
-4. **Manifest:** **DO NOT** manually edit `lib/strategies/strategyRegistry.ts`. After creating the file, run `npm run strategies:sync-manifest`. The strategy is automatically loaded.
+## Non-Negotiable Contracts
 
-## 2. The Strategy Interface
+- Built-in strategies live in `lib/strategies/lib/<strategy-key>.ts`.
+- The exported `const` should match the strategy key.
+- Built-ins are loaded from the generated manifest. Do not manually wire `strategyRegistry.ts`.
+- After adding or renaming a built-in strategy, run `npm run strategies:sync-manifest`.
+- Entry logic must be causal and non-repainting. Bar `i` may only use information available in `data[0..i]`.
+- If `execute(...)` rounds, clamps, coerces sign, or otherwise sanitizes params, expose the same behavior through `normalizeParams(...)`.
+- If you add `prepareFinderData(...)`, `executePrepared(...)` must stay behaviorally identical to `execute(...)`.
 
-Your strategy object must implement the `Strategy` interface and include:
+## Build Order
 
-- `name`: Human-readable name.
-- `description`: Clear explanation of the logic.
-- `defaultParams`: Object containing the base parameter values.
-- `paramLabels`: Object mapping the parameter keys to UI-friendly labels.
-- `metadata`: Needs `role` (usually `'entry'`), `direction` (e.g., `'both'`, `'long'`, `'short'`), and `walkForwardParams` (array of parameter keys that Walk Forward Analysis is allowed to optimize).
-- `execute(data: OHLCVData[], params: StrategyParams)`: The core logic function.
-- `normalizeParams(params)`: (Optional but highly recommended) If execution rounds, clamps, or coerces signs, you must expose those normalized values back to the engine.
+1. Pick a stable key and keep the file name and exported const aligned.
+2. Start from a nearby example:
+   - `lib/strategies/lib/median_deviation_streak.ts`
+   - `lib/strategies/lib/vwap_zscore_reversion.ts`
+3. Write `normalizeParams(...)` first if params need any coercion.
+4. Clean the dataset with `ensureCleanData(...)`.
+5. Build your base arrays once outside the signal loop.
+6. Use `createSignalLoop(...)` and return `createBuySignal(...)`, `createSellSignal(...)`, or `null`.
+7. Add `metadata.walkForwardParams` only for params that genuinely affect entries.
+8. Run `npm run strategies:sync-manifest` and `npm run typecheck`.
 
-### Example Skeleton
+## Minimal Template
 
-```typescript
-import { Strategy, StrategyParams } from "../../types/strategies";
-import { 
-    createSignalLoop, 
-    createBuySignal, 
-    createSellSignal, 
-    ensureCleanData, 
-    getCloses 
+```ts
+import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+import {
+  createBuySignal,
+  createSellSignal,
+  createSignalLoop,
+  ensureCleanData,
 } from "../strategy-helpers";
-import { calculateRSI } from "../indicators";
+import {
+  buildCloseAcceptanceSeries,
+  buildRollingAverage,
+} from "./price-action-frequency-core";
 
-export const my_new_strategy: Strategy = {
-    name: 'My New Strategy',
-    description: 'An example strategy that triggers on RSI.',
-    defaultParams: { rsiPeriod: 14, overbought: 70, oversold: 30 },
-    paramLabels: { rsiPeriod: 'RSI Period', overbought: 'Overbought Level', oversold: 'Oversold Level' },
-    metadata: { 
-        role: 'entry', 
-        direction: 'both', 
-        walkForwardParams: ['rsiPeriod', 'overbought', 'oversold'] 
-    },
-    execute: (data, params) => {
-        const p = params as { rsiPeriod: number, overbought: number, oversold: number };
-        const cleanData = ensureCleanData(data);
-        const closes = getCloses(cleanData);
-        
-        const rsi = calculateRSI(closes, p.rsiPeriod);
+function normalizeMyStrategyParams(params: StrategyParams): StrategyParams {
+  return {
+    ...params,
+    lookback: Math.max(2, Math.round(params.lookback ?? 20)),
+    threshold: Math.max(0, Number(params.threshold ?? 0.4)),
+  };
+}
 
-        return createSignalLoop(cleanData, [rsi], (i) => {
-            const currentRsi = rsi[i];
-            const prevRsi = rsi[i-1];
+export const my_strategy_key: Strategy = {
+  name: "My Strategy Name",
+  description: "One-line thesis.",
+  defaultParams: {
+    lookback: 20,
+    threshold: 0.4,
+  },
+  paramLabels: {
+    lookback: "Lookback",
+    threshold: "Threshold",
+  },
+  normalizeParams: normalizeMyStrategyParams,
+  execute: (data: OHLCVData[], params: StrategyParams) => {
+    const cleanData = ensureCleanData(data);
+    const p = normalizeMyStrategyParams(params);
+    if (cleanData.length < p.lookback) return [];
 
-            // Always check for nulls
-            if (currentRsi === null || prevRsi === null) return null;
+    const acceptance = buildCloseAcceptanceSeries(cleanData);
+    const smoothed = buildRollingAverage(acceptance, p.lookback);
 
-            if (prevRsi > p.oversold && currentRsi <= p.oversold) {
-                return createBuySignal(cleanData, i, 'my_strategy_buy');
-            }
-            if (prevRsi < p.overbought && currentRsi >= p.overbought) {
-                return createSellSignal(cleanData, i, 'my_strategy_sell');
-            }
+    return createSignalLoop(cleanData, [smoothed], (i) => {
+      if (i < p.lookback) return null;
+      const score = smoothed[i];
+      if (score === null) return null;
 
-            return null; // No signal
-        });
-    }
+      if (score > p.threshold) {
+        return createBuySignal(cleanData, i, "Acceptance turns strongly positive");
+      }
+      if (score < -p.threshold) {
+        return createSellSignal(cleanData, i, "Acceptance turns strongly negative");
+      }
+      return null;
+    });
+  },
+  metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "threshold"],
+  },
 };
 ```
 
-## 3. The Signal Loop (CRITICAL AI FIXES)
+## Signal Loop Rules
 
-AIs frequently fail to construct the execution loop properly. You **MUST** use `createSignalLoop`.
+`createSignalLoop(...)` is the required execution pattern for most built-in entry strategies.
 
-### 🚫 Anti-Patterns (DO NOT DO THIS)
-```typescript
-// WRONG: AIs often try to return 1 or -1 directly
-return createSignalLoop(cleanData, [], (i) => {
-    if (bullish) return 1;
-    if (bearish) return -1;
-    return 0;
+Correct:
+
+```ts
+return createSignalLoop(cleanData, [indicatorA, indicatorB], (i) => {
+  if (bullish) return createBuySignal(cleanData, i, "reason_buy");
+  if (bearish) return createSellSignal(cleanData, i, "reason_sell");
+  return null;
 });
 ```
 
-### ✅ Correct Pattern
-```typescript
-// CORRECT: You must return a full Signal object or null
+Wrong:
+
+```ts
 return createSignalLoop(cleanData, [], (i) => {
-    if (bullish) return createBuySignal(cleanData, i, 'reason_buy');
-    if (bearish) return createSellSignal(cleanData, i, 'reason_sell');
-    return null;
+  if (bullish) return 1;
+  if (bearish) return -1;
+  return 0;
 });
 ```
 
-The callback passed to `createSignalLoop` must return `Signal | null | undefined`.
+Rules that matter:
+- Return `Signal | null | undefined`, not numeric flags.
+- Use `null`, not `0`, when no entry triggers.
+- `createSignalLoop(...)` only guards the indicator arrays you pass into it. If you access extra arrays or object members inside the callback, guard those yourself.
+- Keep reason strings stable and descriptive. They become part of downstream debugging.
 
-## 4. Types and Null Handling
+## Helper Surface You Should Prefer
 
-Indicators usually return arrays padded with `null` for the warmup period. 
-- Types are strictly enforced as `(number | null)[]`. 
-- **DO NOT** assign a `(number | null)[]` to a `number[]`. 
-- If you need to strip nulls for a sub-calculation (like percentile ranks), do so explicitly (e.g., `rsi.map(x => x ?? 50) as number[]`).
+Before reaching for a named indicator, check whether a shared strategy-layer helper already expresses the idea more directly.
 
-### Checking for Nulls inside the Loop
-Always check the current index and any lookback indices before doing math:
+- `lib/strategies/strategy-helpers.ts`
+  Core signal creation, data extraction, pivot detection, and clean-data guards.
+- `lib/strategies/lib/price-action-frequency-core.ts`
+  Candle geometry and microstructure primitives such as:
+  - `buildRangeSeries(...)`
+  - `buildBodySeries(...)`
+  - `buildCloseLocationSeries(...)`
+  - `buildCloseAcceptanceSeries(...)`
+  - `buildInitiativePressureSeries(...)`
+  - `buildSweepReclaimSeries(...)`
+- `lib/strategies/lib/price-action-statistics-core.ts`
+  Rolling and regime helpers such as:
+  - `buildRollingMedian(...)`
+  - `buildRollingZScore(...)`
+  - `buildRollingEntropy(...)`
+  - `buildRollingKurtosis(...)`
+  - `buildEfficiencyRatio(...)`
+  - `buildRollingMinMax(...)`
+  - `buildStreakCount(...)`
 
-```typescript
-const currentMACD = macd.histogram[i];
-if (currentMACD === null) return null;
+If a prompt or draft strategy references a helper that does not exist in these modules or `strategy-helpers.ts`, do not invent the import path and hope it works. Either map the idea onto existing helpers or add the missing helper first.
+
+## Type Rules That Cause Most Failures
+
+### Array shape matters
+
+- Many helpers return `number[]`.
+- Many indicators and rolling helpers return `(number | null)[]`.
+- Some indicators return objects containing arrays.
+
+Do not assign `(number | null)[]` to `number[]`.
+
+### Input type matters
+
+- `buildRollingZScore(...)` expects `number[]`.
+- `buildEfficiencyRatio(...)` expects `OHLCVData[]`.
+- `buildTrailingHighLow(...)` expects `OHLCVData[]`.
+- `buildRollingMinMax(...)` expects `number[]`.
+
+### Output shape matters
+
+- `calculateATR(...)` and `calculateADX(...)` return flat arrays.
+- `calculateMACD(...)` returns `{ macd, signal, histogram }`.
+- `calculateKeltnerChannels(...)` returns `{ upper, middle, lower }`.
+- `calculateDonchianChannels(...)` returns `{ upper, lower, middle }`.
+- `calculateSupertrend(...)` returns `{ supertrend, direction }`.
+- `calculateVolumeProfile(...)` returns `{ poc, vah, val }`.
+
+### Access compound helper results correctly
+
+Correct:
+
+```ts
+const bands = buildRollingMinMax(values, lookback);
+const upper = bands.max[i];
+const lower = bands.min[i];
 ```
 
-### Indicator Return Shapes
-Pay attention to indicator outputs:
-- **Flat Arrays:** `calculateRSI`, `calculateATR`, `calculateADX` return `(number | null)[]`.
-- **Object Arrays:** `calculateMACD` returns `{ macd: (number|null)[], signal: (number|null)[], histogram: (number|null)[] }`.
-- **Supertrend:** Returns `{ trendLine: (number|null)[], direction: (number|null)[] }`.
+Wrong:
 
-## 5. Parameter Normalization
-If your strategy inherently alters a parameter (e.g., snapping a period to an integer, or forcing a threshold to be negative internally), you **must** implement `normalizeParams`. Otherwise, the Walk Forward Analysis engine and the UI will drift out of sync with the execution engine.
-
-```typescript
-function normalizeParams(params: StrategyParams): StrategyParams {
-    return {
-        ...params,
-        period: Math.round(params.period),
-        threshold: Math.abs(params.threshold) // e.g. enforcing positive input
-    };
-}
+```ts
+const upper = bands[i].max;
 ```
 
-## 6. Common AI Pitfalls Checklist
+### Guard nulls and warmup periods explicitly
 
-Before completing your implementation, verify:
-1. [ ] Did I export a `const` matching the file name?
-2. [ ] Did I include `defaultParams`, `paramLabels`, and `metadata.walkForwardParams`?
-3. [ ] Are all keys in `defaultParams` perfectly matching the keys used in `execute()`?
-4. [ ] Did I use `createBuySignal()` and `createSellSignal()` instead of returning `1` and `-1`?
-5. [ ] Did I return `null` (not `0`) inside the `createSignalLoop` when no signal triggers?
-6. [ ] Did I typecast array math correctly when using `.map()` on `(number | null)[]`?
-7. [ ] Have I handled `BarMetricType` literals exactly? (e.g. `'closeMidpointDev'` not `'closeLocation'`)
-8. [ ] Did I run `npm run strategies:sync-manifest` and `npm run typecheck`?
+```ts
+if (i < lookback) return null;
+const z = zscore[i];
+if (z === null) return null;
+```
+
+## Causality and Repainting Rules
+
+Do not introduce hidden look-ahead.
+
+- Safe: current bar values, prior bar values, trailing windows ending at `i`, previously confirmed pivots.
+- Unsafe unless carefully confirmed: centered windows, future bars, pivot logic that treats an unconfirmed swing as already known.
+
+If you use `detectPivots(...)` or `detectPivotsWithDeviation(...)`, be explicit about confirmation timing. A pivot candidate is not automatically a causal signal source unless the confirmation point is already known at the decision bar.
+
+## Parameter Normalization and Finder / WFA Parity
+
+If execution changes parameter meaning, the rest of the engine must see the same canonical meaning.
+
+Use `normalizeParams(...)` when you:
+- round integer-like periods
+- clamp thresholds
+- force positive-only params
+- snap to a grid
+- coerce signs or absolute values
+
+Required parity rules:
+- `defaultParams` must already be valid after normalization.
+- Every optimized param must exist in:
+  - `defaultParams`
+  - `paramLabels`
+  - `metadata.walkForwardParams`
+  - the execution logic
+- If you sanitize a param inside `execute(...)` but not in `normalizeParams(...)`, Finder and Walk Forward will optimize a different strategy than the UI is showing.
+
+## `prepareFinderData(...)` Guidance
+
+Only add `prepareFinderData(...)` when dataset-derived precompute materially reduces Finder cost.
+
+Good candidates:
+- session VWAP arrays
+- distance series reused across many param combinations
+- cached rolling transforms keyed by lookback
+
+Bad candidates:
+- cheap one-pass arrays that are already trivial
+- precompute added only for symmetry
+
+When you do add prepared execution:
+- keep `executePrepared(...)` behavior identical to `execute(...)`
+- validate prepared payload shape defensively
+- cache by real param dimension when multiple lookbacks are possible
+
+## Common AI Failure Modes
+
+- inventing a helper or import path that does not exist
+- manually editing registry wiring instead of syncing the manifest
+- returning `1`, `-1`, or `0` instead of `Signal` objects and `null`
+- using mismatched param keys across `defaultParams`, `paramLabels`, and logic
+- sanitizing params inside `execute(...)` only
+- forgetting null checks on padded arrays
+- passing `OHLCVData[]` to a helper that expects `number[]`
+- accessing compound helper results with the wrong shape
+- adding expensive per-bar allocations inside Finder hot loops
+- changing semantics in `executePrepared(...)` versus `execute(...)`
+- using unconfirmed pivots or future bars in a supposedly causal signal
+
+## Validation Before You Stop
+
+Run from the repo root for this playground:
+
+```bash
+npm run strategies:sync-manifest
+npm run typecheck
+```
+
+Then add focused validation as needed:
+
+- add or update a strategy spec under `tests/strategies-lib/*` when normalization or behavior is non-trivial
+- use `npm run test -- <relevant-fragment>` for targeted coverage
+- manually confirm the strategy appears in the dropdown if UI behavior changed
+
+## Fast Checklist
+
+- file exists in `lib/strategies/lib/*`
+- exported const matches the strategy key
+- imports come from real repo modules
+- `defaultParams` keys match `paramLabels` keys
+- `defaultParams` are already valid after normalization
+- `metadata.walkForwardParams` references only real params
+- `execute(...)` is causal and non-repainting
+- signal loop returns `createBuySignal(...)`, `createSellSignal(...)`, or `null`
+- null and warmup handling is explicit
+- `prepareFinderData(...)` and `executePrepared(...)` remain in parity when present
+- `npm run strategies:sync-manifest` was run
+- `npm run typecheck` passes

@@ -99,7 +99,7 @@ Add `normalizeParams(...)` when execution rounds, clamps, coerces sign, snaps to
 - `lib/strategies/strategy-helpers.ts`
   Core signal creation, loop helpers, clean-data guards, and base OHLCV extractors.
 - `lib/strategies/lib/price-action-frequency-core.ts`
-  Candle geometry helpers such as wick, body, and range metrics.
+  Candle geometry helpers plus microstructure-oriented primitives such as close acceptance, initiative pressure, and sweep-reclaim scoring.
 - `lib/strategies/lib/price-action-statistics-core.ts`
   Rolling entropy, efficiency ratio, rolling medians, z-scores, kurtosis, min/max bands, and streak counters.
 
