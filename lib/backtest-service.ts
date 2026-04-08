@@ -604,6 +604,7 @@ export class BacktestService {
                 interval: state.currentInterval,
                 executionModel: settings.executionModel,
                 chartData,
+                outcomeSymbol: settings.polymarketOutcomeSymbol,
             }, settings.polymarketEntryOffset);
         } catch (error) {
             debugLogger.error("backtest.polymarket_annotation_failed", {

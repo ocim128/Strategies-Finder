@@ -66,6 +66,7 @@ export interface BacktestPolymarketTimingProfileEntry {
 
 export interface BacktestPolymarketTradeSummary {
     seriesId: string;
+    outcomeSymbol?: string;
     outcomeRowsLoaded: number;
     scoredTrades: number;
     missingOutcomeTrades: number;

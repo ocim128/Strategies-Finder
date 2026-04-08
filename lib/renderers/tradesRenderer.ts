@@ -5,7 +5,7 @@ import { state } from "../state";
 import { resolveOpenTradeDisplayMetrics } from "../open-trade-display";
 import { createTradesRendererDom, type TradesRendererDom } from "./trades-renderer-dom";
 import {
-    getPolymarket5mSeriesIdForSymbol,
+    getEffectivePolymarket5mSeriesId,
     loadPolymarket5mOutcomesForTimeRange,
     supportsPolymarketOutcomeBridgeRun,
 } from "../polymarket-btc5m";
@@ -98,11 +98,13 @@ export class TradesRenderer {
 
         const resultContext = resolveBacktestResultMarketContext(state.currentBacktestResult);
         const summaryOffset = state.currentBacktestResult?.polymarketTradeSummary?.entryOffset;
+        const outcomeSymbol = this.resolveActivePolymarketOutcomeSymbol();
         const firstTrade = trades[0];
         const lastTrade = trades[trades.length - 1];
         return [
             resultContext?.symbol ?? state.currentSymbol,
             resultContext?.interval ?? state.currentInterval,
+            outcomeSymbol ?? "same",
             typeof summaryOffset === 'number' ? summaryOffset : 'na',
             trades.length,
             parseTimeToUnixSeconds(firstTrade.entryTime) ?? 'na',
@@ -127,6 +129,23 @@ export class TradesRenderer {
         return 0;
     }
 
+    private readCurrentPolymarketOutcomeSymbol(): string | null {
+        const element = document.getElementById('polymarketOutcomeSymbol');
+        if (!(element instanceof HTMLSelectElement)) {
+            return null;
+        }
+        const value = element.value.trim().toUpperCase();
+        return value.length > 0 ? value : null;
+    }
+
+    private resolveActivePolymarketOutcomeSymbol(): string | null {
+        const summarySymbol = state.currentBacktestResult?.polymarketTradeSummary?.outcomeSymbol;
+        if (typeof summarySymbol === 'string' && summarySymbol.trim().length > 0) {
+            return summarySymbol.trim().toUpperCase();
+        }
+        return this.readCurrentPolymarketOutcomeSymbol();
+    }
+
     private async loadPolymarketOutcomesForTrades(trades: Trade[]): Promise<Trade[]> {
         if (trades.length === 0) {
             return trades;
@@ -137,11 +156,12 @@ export class TradesRenderer {
             return trades;
         }
 
-        if (!supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval)) {
+        const outcomeSymbol = this.resolveActivePolymarketOutcomeSymbol();
+        if (!supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval, outcomeSymbol)) {
             return trades;
         }
 
-        const seriesId = getPolymarket5mSeriesIdForSymbol(resultContext.symbol);
+        const seriesId = getEffectivePolymarket5mSeriesId(resultContext.symbol, outcomeSymbol);
         if (!seriesId) {
             return trades;
         }
@@ -158,7 +178,7 @@ export class TradesRenderer {
         const endTs = Math.max(...targetTimes);
 
         // Load outcomes from SQLite (uses in-memory cache)
-        const outcomes = await loadPolymarket5mOutcomesForTimeRange(resultContext.symbol, startTs, endTs);
+        const outcomes = await loadPolymarket5mOutcomesForTimeRange(resultContext.symbol, startTs, endTs, outcomeSymbol);
         if (outcomes.length === 0) {
             return trades;
         }

@@ -86,8 +86,6 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
         ?? EFFECTIVE_BACKTEST_DEFAULTS.slippageBps;
     merged.maxOpenTrades = toFiniteNumber(merged.maxOpenTrades)
         ?? EFFECTIVE_BACKTEST_DEFAULTS.maxOpenTrades;
-    merged.warmUpEntryEnabled = toBooleanLike(merged.warmUpEntryEnabled)
-        ?? EFFECTIVE_BACKTEST_DEFAULTS.warmUpEntryEnabled;
     merged.strategyTimeframeEnabled = toBooleanLike(merged.strategyTimeframeEnabled)
         ?? EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeEnabled;
     merged.strategyTimeframeMinutes = toFiniteNumber(merged.strategyTimeframeMinutes)

@@ -55,7 +55,6 @@ type ExportPayload = {
         | "signal_not_fresh"
         | "entry_delay_exceeded"
         | "source_trade_still_open";
-    pendingEntry?: null | ExportEntry;
     latestTrade: null | {
         entryTimeSec: number;
         entryPrice: number;
@@ -309,9 +308,6 @@ async function main(): Promise<void> {
     const latestEntryCandidate = result.latestEntry
         ? toExportEntry(result.latestEntry, result.latestTrade?.entryPrice ?? null)
         : null;
-    const pendingEntry = result.pendingEntry
-        ? toExportEntry(result.pendingEntry, null)
-        : null;
     const latestEntryExport = resolveLatestEntryExport({
         latestEntry: latestEntryCandidate,
         latestTrade,
@@ -334,7 +330,6 @@ async function main(): Promise<void> {
         latestEntry: latestEntryExport.latestEntry,
         latestEntryCandidate,
         latestEntryState: latestEntryExport.latestEntryState,
-        pendingEntry,
         latestTrade,
     };
 

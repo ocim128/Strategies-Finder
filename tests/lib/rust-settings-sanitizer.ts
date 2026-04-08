@@ -61,7 +61,6 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
 
     // Multi-position constraint
     const usesMultiPosition = (settings.maxOpenTrades ?? 1) > 1;
-    const usesWarmUpEntry = settings.warmUpEntryEnabled === true;
 
     return usesRealismConstraints
         || usesCombinedDirection
@@ -71,8 +70,7 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         || usesPercentageWinStreakStopLoss
         || usesAdaptivePercentageTakeProfit
         || hasSnapshotFilters
-        || usesMultiPosition
-        || usesWarmUpEntry;
+        || usesMultiPosition;
 }
 
 export const SNAPSHOT_FILTER_SETTING_KEYS = [] as const satisfies readonly (keyof BacktestSettings)[];
@@ -83,7 +81,6 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "slippageBps",
     "executionTrendEmaPeriod",
     "maxOpenTrades",
-    "warmUpEntryEnabled",
     "marketMode",
     "riskMaxHoldBars",
     "riskMaxHoldEnabled",
@@ -104,6 +101,7 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "minTradesBeforeFirstFlip",
     "strategyTimeframeEnabled",
     "strategyTimeframeMinutes",
+    "polymarketOutcomeSymbol",
     ...SNAPSHOT_FILTER_SETTING_KEYS,
 ] as const satisfies readonly (keyof BacktestSettings)[];
 

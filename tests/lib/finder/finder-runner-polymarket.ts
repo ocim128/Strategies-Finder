@@ -15,10 +15,11 @@ import { applySignalPolarity, precomputeIndicators, runBacktest } from "../strat
 import { debugLogger } from "../debug-logger";
 import type { FinderResult } from "../types/finder";
 import {
-    getPolymarket5mSeriesIdForSymbol,
+    getEffectivePolymarket5mSeriesId,
     getSupportedPolymarket5mSymbolsLabel,
     isSupportedPolymarketMultiIntervalRun,
     loadPolymarket5mOutcomesForChart,
+    resolvePolymarketOutcomeSymbol,
 } from "../polymarket-btc5m";
 import {
     createPolymarketBridgeEvaluationContext,
@@ -173,6 +174,7 @@ export async function runPolymarketFinder(
     const { options, settings, selectedStrategies } = input;
     const interval = input.interval as PolymarketInterval;
     const intervalConfig = getIntervalConfig(interval);
+    const outcomeSymbol = resolvePolymarketOutcomeSymbol(input.symbol, settings.polymarketOutcomeSymbol);
 
     // Validate interval
     if (!intervalConfig) {
@@ -181,7 +183,7 @@ export async function runPolymarketFinder(
     }
 
     // Validate symbol support
-    if (!isSupportedPolymarketMultiIntervalRun(input.symbol, interval)) {
+    if (!isSupportedPolymarketMultiIntervalRun(input.symbol, interval, outcomeSymbol)) {
         callbacks.setStatus(`Polymarket scoring currently supports ${getSupportedPolymarket5mSymbolsLabel()} on 1m, 5m, 15m, 1h, 4h.`);
         return { results: [] };
     }
@@ -233,7 +235,7 @@ export async function runPolymarketFinder(
         return { results: [] };
     }
 
-    const seriesId = getPolymarket5mSeriesIdForSymbol(input.symbol);
+    const seriesId = getEffectivePolymarket5mSeriesId(input.symbol, outcomeSymbol);
     if (!seriesId) {
         callbacks.setStatus(`Polymarket scoring currently supports ${getSupportedPolymarket5mSymbolsLabel()} on 5m.`);
         return { results: [] };
@@ -241,7 +243,7 @@ export async function runPolymarketFinder(
 
     let outcomes: Awaited<ReturnType<typeof loadPolymarket5mOutcomesForChart>>;
     try {
-        outcomes = await loadPolymarket5mOutcomesForChart(input.symbol, closedData);
+        outcomes = await loadPolymarket5mOutcomesForChart(input.symbol, closedData, outcomeSymbol);
     } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         callbacks.setStatus(`Failed to load Polymarket outcomes from SQLite. ${detail}`);

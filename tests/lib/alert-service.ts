@@ -112,7 +112,6 @@ export interface AlertSubscriptionState {
     reason: string | null;
     latestTrade: AlertEvaluatedTradeContext | null;
     latestEntry: AlertEvaluatedEntrySignal | null;
-    pendingEntry: AlertEvaluatedEntrySignal | null;
 }
 
 /**

@@ -42,7 +42,6 @@ function resolvePolymarketBacktestSettings(options: PolymarketEvalOptions): Back
         slippageBps: 0,
         invertSignals: false,
         maxOpenTrades: 1,
-        warmUpEntryEnabled: false,
         ...(options.backtestSettings ?? {}),
     };
 }

@@ -107,10 +107,10 @@ export interface BacktestSettingsData {
     allowSameBarExit: boolean;
     slippageBps: number;
     maxOpenTrades: number;
-    warmUpEntryEnabled: boolean;
     strategyTimeframeEnabled: boolean;
     strategyTimeframeMinutes: number;
     polymarketAnnotationEnabled: boolean;
+    polymarketOutcomeSymbol: string;
     polymarketEntryOffset: number;
 }
 

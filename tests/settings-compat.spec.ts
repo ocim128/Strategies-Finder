@@ -146,7 +146,6 @@ describe('Backtest settings compatibility', () => {
             confirmRsiPeriod: 23,
             confirmRsiBullish: 61,
             confirmRsiBearish: 39,
-            warmUpEntryToggle: 'true',
             maxOpenTrades: 7,
         } as unknown as BacktestSettings);
 
@@ -159,7 +158,6 @@ describe('Backtest settings compatibility', () => {
         expect(resolved.rsiPeriod).to.equal(23);
         expect(resolved.rsiBullish).to.equal(61);
         expect(resolved.rsiBearish).to.equal(39);
-        expect(resolved.warmUpEntryEnabled).to.equal(true);
         expect(resolved.maxOpenTrades).to.equal(2);
 
         const disabled = resolveBacktestSettingsFromRaw({
@@ -425,11 +423,11 @@ describe('Backtest settings compatibility', () => {
         expect(new Set(BACKTEST_SETTINGS_DOM_CONTRACTS.map((contract) => contract.domId)).size)
             .to.equal(BACKTEST_SETTINGS_DOM_CONTRACTS.length);
 
-        expect(getBacktestDomSettingContract('warmUpEntryToggle')?.legacyAliases).to.deep.equal(['warmUpEntryEnabled']);
         expect(getBacktestDomSettingContract('confirmRsiPeriod')?.legacyAliases).to.deep.equal(['rsiPeriod']);
         expect(getBacktestDomSettingContract('tradeFilterMode')?.legacyAliases).to.deep.equal(['entryConfirmation']);
         expect(getBacktestDomSettingContract('tradeFilterSettingsToggle')?.legacyAliases).to.deep.equal(['entrySettingsToggle']);
         expect(getBacktestDomSettingContract('polymarketAnnotationEnabled')).to.not.equal(undefined);
+        expect(getBacktestDomSettingContract('polymarketOutcomeSymbol')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketEntryOffset')).to.not.equal(undefined);
     });
 
@@ -499,6 +497,7 @@ describe('Backtest settings compatibility', () => {
                 initialCapital: '25000',
                 tradeFilterMode: 'rsi',
                 tradeFilterSettingsToggle: true,
+                polymarketOutcomeSymbol: 'ethusdt',
             },
         });
 
@@ -508,6 +507,7 @@ describe('Backtest settings compatibility', () => {
         expect(normalized?.backtestSettings.initialCapital).to.equal(25000);
         expect(normalized?.backtestSettings.tradeFilterMode).to.equal('rsi');
         expect(normalized?.backtestSettings.tradeFilterSettingsToggle).to.equal(true);
+        expect(normalized?.backtestSettings.polymarketOutcomeSymbol).to.equal('ETHUSDT');
         expect(normalizeStoredStrategyConfig({ strategyKey: 'missing-name' })).to.equal(null);
     });
 

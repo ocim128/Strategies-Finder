@@ -29,6 +29,7 @@ export type BacktestDomSettingKey = keyof BacktestSettingsData | "entrySettingsT
 export type BacktestDomSettingParser =
     | "number"
     | "boolean"
+    | "string"
     | "riskMode"
     | "takeProfitMode"
     | "tradeFilterMode"
@@ -101,7 +102,13 @@ function inferParser(settingKey: BacktestDomSettingKey): BacktestDomSettingParse
             return "boolean";
         default: {
             const fallback = (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[settingKey];
-            return typeof fallback === "number" ? "number" : "boolean";
+            if (typeof fallback === "number") {
+                return "number";
+            }
+            if (typeof fallback === "string") {
+                return "string";
+            }
+            return "boolean";
         }
     }
 }
@@ -297,12 +304,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     }),
     createField("slippageBps", { rustSupport: "unsupported" }),
     createField("maxOpenTrades", { rustSupport: "unsupported" }),
-    createField("warmUpEntryToggle", {
-        settingKey: "warmUpEntryEnabled",
-        parser: "boolean",
-        legacyAliases: ["warmUpEntryEnabled"],
-        rustSupport: "unsupported",
-    }),
     createField("strategyTimeframeToggle", {
         settingKey: "strategyTimeframeEnabled",
         parser: "boolean",
@@ -311,6 +312,7 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     }),
     createField("strategyTimeframeMinutes", { rustSupport: "unsupported" }),
     createField("polymarketAnnotationEnabled", { rustSupport: "unsupported" }),
+    createField("polymarketOutcomeSymbol", { rustSupport: "unsupported", parser: "string" }),
     createField("polymarketEntryOffset", { rustSupport: "unsupported" }),
 ];
 
@@ -369,6 +371,13 @@ export function coerceBacktestDomSettingValue(
             return resolveSecureFMethod(value);
         case "boolean":
             return readBooleanValue(value, Boolean(contract.fallbackValue ?? (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[contract.settingKey] ?? false));
+        case "string": {
+            if (typeof value === "string") {
+                return value.trim().toUpperCase();
+            }
+            const fallback = contract.fallbackValue ?? (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[contract.settingKey];
+            return typeof fallback === "string" ? fallback : "";
+        }
         case "number": {
             const fallback = contract.fallbackValue ?? (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[contract.settingKey];
             return readNumericValue(value, typeof fallback === "number" ? fallback : 0);

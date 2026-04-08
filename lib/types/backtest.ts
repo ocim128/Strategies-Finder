@@ -59,8 +59,6 @@ export interface NormalizedSettings {
 
     /** Maximum number of concurrently open positions (1 = classic, 2 = allow overlap) */
     maxOpenTrades: number;
-    /** When true, queue skipped same-direction signals and execute on next bar if a position closes */
-    warmUpEntryEnabled: boolean;
 }
 
 export interface IndicatorSeries {
@@ -101,8 +99,6 @@ export interface PositionState {
     partialTaken: boolean;
     breakEvenApplied: boolean;
     realizedPnl: number;
-    /** True when this position was opened from a warm-up pending entry queue */
-    warmUpEntry?: boolean;
 }
 
 export type KellyFraction = 'full' | 'half' | 'quarter';

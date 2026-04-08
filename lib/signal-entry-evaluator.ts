@@ -86,7 +86,6 @@ export interface EntrySignalEvaluationResult {
     preparedSignalCount: number;
     latestEntry: EvaluatedEntrySignal | null;
     latestTrade: EvaluatedLatestTradeContext | null;
-    pendingEntry?: EvaluatedEntrySignal | null;
 }
 
 const EVALUATION_CAPITAL_DEFAULTS = Object.freeze({
@@ -644,46 +643,6 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
         entryPrice: latestTrade.entryPrice,
     });
 
-    // Detect pending warm-up entries only when warm-up mode is explicitly enabled.
-    // Signals that fired while the position was occupied are only retained when
-    // warm-up entry mode intentionally queues them for the next eligible bar.
-    let pendingEntry: EvaluatedEntrySignal | null = null;
-    if (settings.warmUpEntryEnabled === true && latestTrade.exitReason === 'end_of_data') {
-        for (const signal of entrySignals) {
-            const sigTimeSec = toUnixSeconds(signal.time);
-            if (sigTimeSec === null || sigTimeSec <= signalTimeSec) continue;
-
-            const pendingDirection: "long" | "short" = signal.type === "buy" ? "long" : "short";
-            const pendingSignalIndex = candleTimeToLastIndex.get(sigTimeSec);
-            if (pendingSignalIndex === undefined) continue;
-
-            const pendingSourceSignal = findSourceSignalForTradeEntry(
-                request.candles,
-                request.sourceEntrySignals,
-                signal,
-                pendingDirection,
-                settings
-            ) ?? signal;
-            const pendingSourceTimeSec = toUnixSeconds(pendingSourceSignal.time) ?? sigTimeSec;
-            const pendingAgeBars = request.candles.length - 1 - pendingSignalIndex;
-
-            // Keep the NEWEST pending signal
-            if (!pendingEntry || sigTimeSec > (pendingEntry.entryTimeSec ?? pendingEntry.signalTimeSec)) {
-                pendingEntry = buildEvaluatedEntrySignal({
-                    strategyKey: request.strategyKey,
-                    strategyName: request.strategyName,
-                    sourceSignal: pendingSourceSignal,
-                    direction: pendingDirection,
-                    signalTimeSec: pendingSourceTimeSec,
-                    signalAgeBars: pendingAgeBars,
-                    maxAge,
-                    entryTimeSec: sigTimeSec,
-                    entryPrice: signal.price,
-                });
-            }
-        }
-    }
-
     return {
         ok: true,
         rawSignalCount: request.rawSignalCount ?? request.preparedSignals.length,
@@ -699,6 +658,5 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
             takeProfitPercent: toTargetPercent(latestTrade.entryPrice, latestTrade.takeProfitPrice),
             stopLossPercent: toTargetPercent(latestTrade.entryPrice, latestTrade.stopLossPrice),
         },
-        pendingEntry,
     };
 }

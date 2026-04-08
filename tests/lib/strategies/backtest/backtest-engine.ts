@@ -660,8 +660,6 @@ export function runBacktestCompact(
     const flipLossDirection = createFlipLossDirectionState();
     const smartSizingState = createSmartSizingState(initialCapital);
     const smartSizingPositionState = createSmartSizingPositionState();
-    const warmUpEnabled = config.warmUpEntryEnabled;
-    let pendingEntry: Signal | null = null;
     const adaptiveTakeProfitState = createAdaptiveTakeProfitState(data, config, indicatorSeries, initialCapital);
     const entryBuildContext: EntryBuildContext = {
         initialCapital,
@@ -823,26 +821,6 @@ export function runBacktestCompact(
                 }
             }
 
-            if (warmUpEnabled && pendingEntry && positions.length < maxOpenTrades) {
-                const warmUpSignal: Signal = Object.assign({}, pendingEntry, { price: candle.open, time: candle.time });
-                if (canEnterLossFlipDirection(tradeDirection, flipLossDirection, warmUpSignal)) {
-                    const opened = buildEntryPosition(entryBuildContext, warmUpSignal, i, capital);
-                    if (opened) {
-                        positions.push(opened.nextPosition);
-                        currentBarOpenedPositions.add(opened.nextPosition);
-                        registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
-                        registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
-                        if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
-                            flipLossDirection.activeDirection = opened.nextPosition.direction;
-                        }
-                        capital -= opened.entryCommission;
-                    }
-                }
-                pendingEntry = null;
-            } else if (warmUpEnabled) {
-                pendingEntry = null; // Expire after 1 bar even if not used
-            }
-
             while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
                 const signal = preparedSignals[signalIdx++];
@@ -869,8 +847,6 @@ export function runBacktestCompact(
                         }
                         capital -= opened.entryCommission;
                     }
-                } else if (!exitTarget && positions.length >= maxOpenTrades && warmUpEnabled) {
-                    pendingEntry = signal;
                 } else if (exitTarget) {
                     const exitFractionRaw = Number.isFinite(signal.sizeFraction as number) ? Number(signal.sizeFraction) : 1;
                     const exitFraction = Math.max(0, Math.min(1, exitFractionRaw));
@@ -943,27 +919,6 @@ export function runBacktestCompact(
         }
 
         if (config.executionModel !== 'next_open') {
-            // Warm-up: if a position just closed and we have a pending entry, execute it now
-            if (warmUpEnabled && pendingEntry && positions.length < maxOpenTrades) {
-                const warmUpSignal: Signal = Object.assign({}, pendingEntry, { price: candle.open, time: candle.time });
-                if (canEnterLossFlipDirection(tradeDirection, flipLossDirection, warmUpSignal)) {
-                    const opened = buildEntryPosition(entryBuildContext, warmUpSignal, i, capital);
-                    if (opened) {
-                        positions.push(opened.nextPosition);
-                        registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
-                        registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
-                        if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
-                            flipLossDirection.activeDirection = opened.nextPosition.direction;
-                        }
-                        capital -= opened.entryCommission;
-                        finalizeEntryBarState(opened.nextPosition, candle, i);
-                    }
-                }
-                pendingEntry = null;
-            } else if (warmUpEnabled) {
-                pendingEntry = null; // Expire after 1 bar even if not used
-            }
-
             while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
                 const signal = preparedSignals[signalIdx++];
@@ -989,9 +944,6 @@ export function runBacktestCompact(
                             capital -= opened.entryCommission;
                             finalizeEntryBarState(opened.nextPosition, candle, i);
                         }
-                    } else if (!exitTarget && positions.length >= maxOpenTrades && warmUpEnabled) {
-                        // Capacity full and no exit target — queue as pending warm-up entry
-                        pendingEntry = signal;
                     } else if (exitTarget) {
                         // Signal exit: close the opposite-direction position
                         const exitFractionRaw = Number.isFinite(signal.sizeFraction as number) ? Number(signal.sizeFraction) : 1;
@@ -1114,8 +1066,6 @@ export function runBacktest(
     const flipLossDirection = createFlipLossDirectionState();
     const smartSizingState = createSmartSizingState(initialCapital);
     const smartSizingPositionState = createSmartSizingPositionState();
-    const warmUpEnabled = config.warmUpEntryEnabled;
-    let pendingEntry: Signal | null = null;
     const adaptiveTakeProfitState = createAdaptiveTakeProfitState(data, config, indicatorSeries, initialCapital);
     const entryBuildContext: EntryBuildContext = {
         initialCapital,
@@ -1215,7 +1165,6 @@ export function runBacktest(
             stopLossPrice: pos.stopLossPrice,
             takeProfitPrice: pos.takeProfitPrice,
         };
-        if (pos.warmUpEntry) trade.entryMode = 'warm_up';
         trades.push(trade);
         pos.realizedPnl += d.totalPnl;
         pos.size -= d.size;
@@ -1292,27 +1241,6 @@ export function runBacktest(
                 }
             }
 
-            if (warmUpEnabled && pendingEntry && positions.length < maxOpenTrades) {
-                const warmUpSignal: Signal = Object.assign({}, pendingEntry, { price: candle.open, time: candle.time });
-                if (canEnterLossFlipDirection(tradeDirection, flipLossDirection, warmUpSignal)) {
-                    const opened = buildEntryPosition(entryBuildContext, warmUpSignal, i, capital);
-                    if (opened) {
-                        positions.push(opened.nextPosition);
-                        currentBarOpenedPositions.add(opened.nextPosition);
-                        registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
-                        registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
-                        opened.nextPosition.warmUpEntry = true;
-                        if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
-                            flipLossDirection.activeDirection = opened.nextPosition.direction;
-                        }
-                        capital -= opened.entryCommission;
-                    }
-                }
-                pendingEntry = null;
-            } else if (warmUpEnabled) {
-                pendingEntry = null;
-            }
-
             while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
                 const signal = preparedSignals[signalIdx++];
@@ -1340,8 +1268,6 @@ export function runBacktest(
                         }
                         capital -= opened.entryCommission;
                     }
-                } else if (!exitTarget && positions.length >= maxOpenTrades && warmUpEnabled) {
-                    pendingEntry = signal;
                 } else if (exitTarget) {
                     // Signal exit
                     const exitFractionRaw = Number.isFinite(signal.sizeFraction as number) ? Number(signal.sizeFraction) : 1;
@@ -1413,28 +1339,6 @@ export function runBacktest(
         }
 
         if (config.executionModel !== 'next_open') {
-            // Warm-up: if a position just closed and we have a pending entry, execute it now
-            if (warmUpEnabled && pendingEntry && positions.length < maxOpenTrades) {
-                const warmUpSignal: Signal = Object.assign({}, pendingEntry, { price: candle.open, time: candle.time });
-                if (canEnterLossFlipDirection(tradeDirection, flipLossDirection, warmUpSignal)) {
-                    const opened = buildEntryPosition(entryBuildContext, warmUpSignal, i, capital);
-                    if (opened) {
-                        positions.push(opened.nextPosition);
-                        registerSmartSizingPosition(smartSizingPositionState, opened.nextPosition);
-                        registerAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, opened.nextPosition, i);
-                        opened.nextPosition.warmUpEntry = true;
-                        if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
-                            flipLossDirection.activeDirection = opened.nextPosition.direction;
-                        }
-                        capital -= opened.entryCommission;
-                        finalizeEntryBarStateFull(opened.nextPosition, candle, i);
-                    }
-                }
-                pendingEntry = null;
-            } else if (warmUpEnabled) {
-                pendingEntry = null;
-            }
-
             while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
                 const signal = preparedSignals[signalIdx++];
@@ -1459,8 +1363,6 @@ export function runBacktest(
                             capital -= opened.entryCommission;
                             finalizeEntryBarStateFull(opened.nextPosition, candle, i);
                         }
-                    } else if (!exitTarget && positions.length >= maxOpenTrades && warmUpEnabled) {
-                        pendingEntry = signal;
                     } else if (exitTarget) {
                         // Signal exit
                         const exitFractionRaw = Number.isFinite(signal.sizeFraction as number) ? Number(signal.sizeFraction) : 1;
@@ -1514,7 +1416,6 @@ export function runBacktest(
             const d = calculateTradeExitDetails(pos, candle.close, pos.size, commissionRate);
             capital += d.rawPnl - d.commission;
             const eodTrade: Trade = { id: ++tradeId, type: pos.direction, entryTime: pos.entryTime, entryPrice: pos.entryPrice, exitTime: candle.time, exitPrice: candle.close, pnl: d.totalPnl, pnlPercent: d.pnlPercent, size: d.size, fees: d.fees, exitReason: 'end_of_data', stopLossPrice: pos.stopLossPrice, takeProfitPrice: pos.takeProfitPrice };
-            if (pos.warmUpEntry) eodTrade.entryMode = 'warm_up';
             trades.push(eodTrade);
             positions.splice(0, 1);
         }

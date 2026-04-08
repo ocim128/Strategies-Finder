@@ -180,14 +180,6 @@ interface ProcessSignalResult {
         fingerprint: string;
         signal: { price: number };
     } | null;
-    /** A pending entry signal that was skipped because the backtest position was occupied */
-    pendingEvaluatedEntry?: {
-        direction: "long" | "short";
-        signalTimeSec: number;
-        signalPrice: number;
-        fingerprint: string;
-        isFresh: boolean;
-    } | null;
 }
 
 interface SubscriptionStateResult {
@@ -214,14 +206,6 @@ interface SubscriptionStateResult {
         signalTimeSec: number;
         signalPrice: number;
         entryPrice?: number | null;
-        signalAgeBars: number;
-        isFresh: boolean;
-        fingerprint: string;
-    } | null;
-    pendingEntry: {
-        direction: "long" | "short";
-        signalTimeSec: number;
-        signalPrice: number;
         signalAgeBars: number;
         isFresh: boolean;
         fingerprint: string;
@@ -751,31 +735,6 @@ function buildExitTelegramMessage(
     ].join("\n");
 }
 
-function buildPendingEntryTelegramMessage(
-    symbol: string,
-    interval: string,
-    strategyKey: string,
-    configName: string | null,
-    direction: "long" | "short",
-    price: number,
-    timeSec: number
-): string {
-    const icon = direction === "long" ? "\u{1F7E2}" : "\u{1F534}";
-    const configLabel = configName ?? strategyKey;
-    const lines = [
-        `\u{23F3} ${icon} Pending Entry Signal`,
-        `Symbol: ${symbol}`,
-        `Interval: ${interval}`,
-        `Configuration: ${configLabel}`,
-        `Strategy: ${strategyKey}`,
-        `Direction: ${direction.toUpperCase()}`,
-        `Price: ${price}`,
-        `Note: Current position is still open. Pending entries do not include TP/SL because the eventual fill price is not known yet.`,
-    ];
-    lines.push(`Time (UTC): ${new Date(timeSec * 1000).toISOString()}`);
-    return lines.join("\n");
-}
-
 async function sendTelegramText(env: Env, text: string): Promise<void> {
     const token = env.TELEGRAM_BOT_TOKEN;
     const chatId = env.TELEGRAM_CHAT_ID;
@@ -864,15 +823,6 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                     fingerprint: evaluation.latestEntry.fingerprint,
                     signal: { price: evaluation.latestEntry.signal.price },
                 },
-                pendingEvaluatedEntry: evaluation.pendingEntry
-                    ? {
-                        direction: evaluation.pendingEntry.direction,
-                        signalTimeSec: evaluation.pendingEntry.signalTimeSec,
-                        signalPrice: evaluation.pendingEntry.signal.price,
-                        fingerprint: evaluation.pendingEntry.fingerprint,
-                        isFresh: evaluation.pendingEntry.isFresh,
-                    }
-                    : null,
             };
         }
 
@@ -900,15 +850,6 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                     fingerprint: evaluation.latestEntry.fingerprint,
                     signal: { price: evaluation.latestEntry.signal.price },
                 },
-                pendingEvaluatedEntry: evaluation.pendingEntry
-                    ? {
-                        direction: evaluation.pendingEntry.direction,
-                        signalTimeSec: evaluation.pendingEntry.signalTimeSec,
-                        signalPrice: evaluation.pendingEntry.signal.price,
-                        fingerprint: evaluation.pendingEntry.fingerprint,
-                        isFresh: evaluation.pendingEntry.isFresh,
-                    }
-                    : null,
                 latestEntry: evaluation.latestEntry,
             };
         }
@@ -1041,15 +982,6 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                 entryPrice: evaluatedEntryPrice,
                 fingerprint: evaluation.latestEntry.fingerprint,
                 signal: { price: evaluation.latestEntry.signal.price },
-            }
-            : null,
-        pendingEvaluatedEntry: evaluation.pendingEntry
-            ? {
-                direction: evaluation.pendingEntry.direction,
-                signalTimeSec: evaluation.pendingEntry.signalTimeSec,
-                signalPrice: evaluation.pendingEntry.signal.price,
-                fingerprint: evaluation.pendingEntry.fingerprint,
-                isFresh: evaluation.pendingEntry.isFresh,
             }
             : null,
     };
@@ -1594,53 +1526,6 @@ async function runSubscription(
             } catch { /* exit alerts are best effort */ }
         }
 
-        // Pending entry alert: a signal fired while the backtest position was occupied.
-        // Send a heads-up so the user can manually enter when their current position closes.
-        if (
-            result.ok &&
-            !result.newEntry &&
-            result.pendingEvaluatedEntry?.isFresh &&
-            subscription.notify_telegram === 1 &&
-            !telegramRetriesExhausted
-        ) {
-            try {
-                const pe = result.pendingEvaluatedEntry;
-                const pendingDedupeKey = `pending:${streamId.toLowerCase()}:${pe.fingerprint}`;
-                const pendingInsert = await env.SIGNALS_DB.prepare(
-                    `INSERT INTO entry_signals (channel_key, dedupe_key, stream_id, symbol, interval, strategy_key, direction, signal_time, signal_price, signal_reason, payload_json)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                     ON CONFLICT(dedupe_key) DO NOTHING`
-                ).bind(
-                    streamId.toLowerCase(),
-                    pendingDedupeKey,
-                    streamId,
-                    subscription.symbol,
-                    subscription.interval,
-                    subscription.strategy_key,
-                    pe.direction,
-                    pe.signalTimeSec,
-                    pe.signalPrice,
-                    'pending_entry',
-                    JSON.stringify({ pending: true, direction: pe.direction, signalTimeSec: pe.signalTimeSec, signalPrice: pe.signalPrice, fingerprint: pe.fingerprint })
-                ).run();
-
-                if ((pendingInsert.meta?.changes ?? 0) > 0) {
-                    const pendingMsg = buildPendingEntryTelegramMessage(
-                        subscription.symbol,
-                        subscription.interval,
-                        subscription.strategy_key,
-                        parseConfigNameFromStreamId(streamId),
-                        pe.direction,
-                        pe.signalPrice,
-                        pe.signalTimeSec
-                    );
-                    try {
-                        await sendTelegramText(env, pendingMsg);
-                    } catch { /* pending alerts are best effort */ }
-                }
-            } catch { /* pending entry alerts are best effort */ }
-        }
-
         if (result.ok && result.newEntry) {
             // New entry starts a fresh cycle; clear prior exit alert dedupe key.
             persistedExitAlertKey = null;
@@ -1695,7 +1580,7 @@ async function evaluateSubscriptionState(
     );
     const minClosedCandles = readMinClosedCandles(env);
 
-    const base: Omit<SubscriptionStateResult, "ok" | "reason" | "closedCandleTimeSec" | "latestTrade" | "latestEntry" | "pendingEntry"> = {
+    const base: Omit<SubscriptionStateResult, "ok" | "reason" | "closedCandleTimeSec" | "latestTrade" | "latestEntry"> = {
         streamId,
         symbol: subscription.symbol,
         interval: subscription.interval,
@@ -1721,7 +1606,6 @@ async function evaluateSubscriptionState(
             closedCandleTimeSec: null,
             latestTrade: null,
             latestEntry: null,
-            pendingEntry: null,
         };
     }
 
@@ -1751,17 +1635,6 @@ async function evaluateSubscriptionState(
         }
         : null;
 
-    const pendingEntry = evaluation.pendingEntry
-        ? {
-            direction: evaluation.pendingEntry.direction,
-            signalTimeSec: evaluation.pendingEntry.signalTimeSec,
-            signalPrice: evaluation.pendingEntry.signal.price,
-            signalAgeBars: evaluation.pendingEntry.signalAgeBars,
-            isFresh: evaluation.pendingEntry.isFresh,
-            fingerprint: evaluation.pendingEntry.fingerprint,
-        }
-        : null;
-
     return {
         ...base,
         ok: evaluation.ok,
@@ -1769,7 +1642,6 @@ async function evaluateSubscriptionState(
         closedCandleTimeSec: closed.closedCandleTimeSec,
         latestTrade: evaluation.latestTrade ?? null,
         latestEntry,
-        pendingEntry,
     };
 }
 
@@ -1814,7 +1686,6 @@ async function handleSubscriptionState(request: Request, env: Env): Promise<Resp
                     reason: "evaluation_failed",
                     latestTrade: null,
                     latestEntry: null,
-                    pendingEntry: null,
                 } as SubscriptionStateResult,
             },
             500

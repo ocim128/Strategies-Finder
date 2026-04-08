@@ -70,10 +70,10 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     allowSameBarExit: false,
     slippageBps: 5,
     maxOpenTrades: 1,
-    warmUpEntryEnabled: false,
     strategyTimeframeEnabled: false,
     strategyTimeframeMinutes: 120,
     polymarketAnnotationEnabled: false,
+    polymarketOutcomeSymbol: "",
     polymarketEntryOffset: 0,
 });
 
@@ -131,7 +131,6 @@ type BooleanResolverKey =
     | "riskWinStreakStopLossEnabled"
     | "invertSignals"
     | "allowSameBarExit"
-    | "warmUpEntryEnabled"
     | "strategyTimeframeEnabled";
 
 type NumericResolverRule = {
@@ -259,7 +258,6 @@ const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
     },
     { key: "invertSignals", keys: ["invertSignals", "invertSignalsToggle"] },
     { key: "allowSameBarExit", keys: ["allowSameBarExit", "allowSameBarExitToggle"] },
-    { key: "warmUpEntryEnabled", keys: ["warmUpEntryEnabled", "warmUpEntryToggle"] },
     { key: "strategyTimeframeEnabled", keys: ["strategyTimeframeEnabled", "strategyTimeframeToggle"] },
 ] as const;
 
@@ -351,10 +349,10 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "allowSameBarExitToggle",
     "slippageBps",
     "maxOpenTrades",
-    "warmUpEntryEnabled",
     "strategyTimeframeToggle",
     "strategyTimeframeMinutes",
     "polymarketAnnotationEnabled",
+    "polymarketOutcomeSymbol",
     "polymarketEntryOffset",
 ]);
 
@@ -401,6 +399,14 @@ function readNumber(raw: Record<string, unknown>, key: string, fallback: number)
 
 function readBoolean(raw: Record<string, unknown>, key: string, fallback: boolean): boolean {
     return readBooleanValue(raw[key], fallback);
+}
+
+function readString(raw: Record<string, unknown>, key: string, fallback: string): string {
+    const value = raw[key];
+    if (typeof value !== "string") {
+        return fallback;
+    }
+    return value.trim().toUpperCase();
 }
 
 function readBooleanAny(raw: Record<string, unknown>, keys: string[], fallback: boolean): boolean {
@@ -493,7 +499,16 @@ export function resolveBacktestSettingsFromRaw(
 
     const raw = settings as Record<string, unknown>;
     if (options?.coerceWithoutUiToggles !== false && !hasUiToggleSettings(raw)) {
-        return coerceDeepValue(settings) as BacktestSettings;
+        const coerced = coerceDeepValue(settings) as BacktestSettings & {
+            warmUpEntryEnabled?: unknown;
+            warmUpEntryToggle?: unknown;
+        };
+        delete coerced.warmUpEntryEnabled;
+        delete coerced.warmUpEntryToggle;
+        if (typeof coerced.polymarketOutcomeSymbol === "string") {
+            coerced.polymarketOutcomeSymbol = coerced.polymarketOutcomeSymbol.trim().toUpperCase();
+        }
+        return coerced;
     }
 
     const riskEnabled = readBoolean(raw, "riskSettingsToggle", false);
@@ -570,6 +585,7 @@ export function resolveBacktestSettingsFromRaw(
         tradeDirection,
         executionModel,
         polymarketAnnotationEnabled: readBoolean(raw, "polymarketAnnotationEnabled", EFFECTIVE_BACKTEST_DEFAULTS.polymarketAnnotationEnabled),
+        polymarketOutcomeSymbol: readString(raw, "polymarketOutcomeSymbol", EFFECTIVE_BACKTEST_DEFAULTS.polymarketOutcomeSymbol),
         polymarketEntryOffset: readNumber(raw, "polymarketEntryOffset", EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryOffset),
     };
 

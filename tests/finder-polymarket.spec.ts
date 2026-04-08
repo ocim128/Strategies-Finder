@@ -294,6 +294,33 @@ describe('Finder Polymarket runner', () => {
         expect(output.results[0]?.polymarketEval?.scoredPredictions).to.equal(1);
     });
 
+    it('can score an unsupported chart symbol against an overridden Polymarket outcome symbol', async () => {
+        const bars = makeBars(4);
+        const requestedSeriesIds: string[] = [];
+        installOutcomeFetch(
+            [
+                makeOutcomeRow(Number(bars[1].time), 1, '10683'),
+                makeOutcomeRow(Number(bars[2].time), 0, '10683'),
+            ],
+            (url) => {
+                requestedSeriesIds.push(url.searchParams.get('seriesId') ?? '');
+            }
+        );
+
+        const input = makeInput(bars, [{ variant: 1 }], {}, '5m', 'NEARUSDT');
+        input.settings = {
+            ...input.settings,
+            polymarketOutcomeSymbol: 'ETHUSDT',
+        };
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(input, callbacks);
+
+        expect(requestedSeriesIds).to.deep.equal(['10683']);
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]?.polymarketEval?.scoredPredictions).to.equal(1);
+    });
+
     it('does not let the normal trade-count filter suppress Polymarket results', async () => {
         const bars = makeBars(4);
         installOutcomeFetch([

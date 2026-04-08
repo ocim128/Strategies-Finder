@@ -215,6 +215,52 @@ describe("Polymarket backtest trade annotations", () => {
         expect(result.trades[0]?.polymarketOutcome?.marketSlug).to.equal("eth-1");
     });
 
+    it("annotates cross-symbol 5m runs with the selected Polymarket outcome symbol", async () => {
+        const bars = makeBars(4);
+        const firstEventTs = Number(bars[1]!.time);
+        const requestedSeriesIds: string[] = [];
+        installOutcomeFetch([
+            {
+                series_id: "10683",
+                event_slug: "eth-override-1",
+                market_slug: "eth-override-1",
+                interval: "5m",
+                event_start_ts: firstEventTs,
+                event_end_ts: firstEventTs + 300,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.48,
+                yes_entry_minute_1_price: 0.49,
+                yes_entry_minute_2_price: 0.5,
+                yes_entry_minute_3_price: 0.51,
+                yes_entry_minute_4_price: 0.52,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ], (url) => {
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                requestedSeriesIds.push(url.searchParams.get("seriesId") ?? "");
+            }
+        });
+
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([makeTrade(1, "long", firstEventTs, 10)]),
+            {
+                symbol: "NEARUSDT",
+                interval: "5m",
+                executionModel: "next_open",
+                chartData: bars,
+                outcomeSymbol: "ETHUSDT",
+            }
+        );
+
+        expect(requestedSeriesIds).to.deep.equal(["10683"]);
+        expect(result.polymarketTradeSummary?.seriesId).to.equal("10683");
+        expect(result.polymarketTradeSummary?.outcomeSymbol).to.equal("ETHUSDT");
+        expect(result.trades[0]?.polymarketOutcome?.marketSlug).to.equal("eth-override-1");
+    });
+
     it("annotates 1m bridge runs using the selected offset and ignores same-event duplicates", async () => {
         const bars = makeMinuteBars(12);
         const eventStartTs = 1_700_000_300;

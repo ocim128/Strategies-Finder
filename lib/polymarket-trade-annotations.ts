@@ -1,6 +1,7 @@
 import {
-    getPolymarket5mSeriesIdForSymbol,
+    getEffectivePolymarket5mSeriesId,
     loadPolymarket5mOutcomesForTimeRange,
+    resolvePolymarketOutcomeSymbol,
     supportsPolymarketOutcomeBridgeRun,
     isSupportedPolymarketMultiIntervalRun,
 } from "./polymarket-btc5m";
@@ -92,6 +93,7 @@ type AnnotationContext = {
     interval: string;
     executionModel?: string;
     chartData: OHLCVData[];
+    outcomeSymbol?: string;
 };
 
 export type PolymarketTradeEvaluationContext = {
@@ -700,6 +702,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
     const is1mRun = context.interval === "1m";
     const is5mRun = context.interval === "5m";
     const isMultiIntervalRun = ["15m", "1h", "4h"].includes(context.interval);
+    const resolvedOutcomeSymbol = resolvePolymarketOutcomeSymbol(context.symbol, context.outcomeSymbol);
 
     // Support 5m (legacy), 1m (bridge), and multi-interval runs (15m, 1h, 4h)
     if (
@@ -713,14 +716,14 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
 
     // Check symbol support - use multi-interval check for 15m/1h/4h, legacy check for 1m/5m
     const isValidInterval = isMultiIntervalRun
-        ? isSupportedPolymarketMultiIntervalRun(context.symbol, context.interval)
-        : supportsPolymarketOutcomeBridgeRun(context.symbol, context.interval);
+        ? isSupportedPolymarketMultiIntervalRun(context.symbol, context.interval, resolvedOutcomeSymbol)
+        : supportsPolymarketOutcomeBridgeRun(context.symbol, context.interval, resolvedOutcomeSymbol);
     
     if (!isValidInterval) {
         return result;
     }
 
-    const seriesId = getPolymarket5mSeriesIdForSymbol(context.symbol);
+    const seriesId = getEffectivePolymarket5mSeriesId(context.symbol, resolvedOutcomeSymbol);
     if (!seriesId) {
         return result;
     }
@@ -734,7 +737,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
 
     const startTs = Math.min(...targetTimes);
     const endTs = Math.max(...targetTimes);
-    const outcomes = await loadPolymarket5mOutcomesForTimeRange(context.symbol, startTs, endTs);
+    const outcomes = await loadPolymarket5mOutcomesForTimeRange(context.symbol, startTs, endTs, resolvedOutcomeSymbol);
 
     const trades = annotateTradesWithPolymarketOutcomesForRun(
         result.trades,
@@ -762,6 +765,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         trades,
         polymarketTradeSummary: {
             seriesId,
+            outcomeSymbol: resolvedOutcomeSymbol ?? undefined,
             outcomeRowsLoaded: outcomes.length,
             ...summary,
         },

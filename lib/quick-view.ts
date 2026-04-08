@@ -13,8 +13,9 @@ import { Time } from "lightweight-charts";
 import { formatDisplayPrice } from "./price-format";
 import { isPolymarketEventSymbol } from "./dataProviders/polymarket";
 import {
-    getPolymarket5mSeriesIdForSymbol,
+    getEffectivePolymarket5mSeriesId,
     loadPolymarket5mOutcomesForTimeRange,
+    resolvePolymarketOutcomeSymbol,
     supportsPolymarketOutcomeBridgeRun,
 } from "./polymarket-btc5m";
 import {
@@ -563,6 +564,7 @@ class QuickViewManager {
         options: {
             outcomeRowsLoaded?: number;
             selectedOffset?: number;
+            outcomeSymbol?: string;
             missingOutcomeTrades?: number;
             unscoredTrades?: number;
         } = {}
@@ -577,6 +579,7 @@ class QuickViewManager {
             trades,
             polymarketTradeSummary: {
                 seriesId: existingSummary?.seriesId || seriesId || "",
+                outcomeSymbol: existingSummary?.outcomeSymbol ?? options.outcomeSymbol,
                 outcomeRowsLoaded: existingSummary?.outcomeRowsLoaded && existingSummary.outcomeRowsLoaded > 0
                     ? existingSummary.outcomeRowsLoaded
                     : fallbackOutcomeRowsLoaded,
@@ -596,6 +599,23 @@ class QuickViewManager {
         return fallbackOffset ?? 0;
     }
 
+    private readCurrentPolymarketOutcomeSymbol(): string | null {
+        const element = document.getElementById("polymarketOutcomeSymbol");
+        if (!(element instanceof HTMLSelectElement)) {
+            return null;
+        }
+        const value = element.value.trim().toUpperCase();
+        return value.length > 0 ? value : null;
+    }
+
+    private resolveActivePolymarketOutcomeSymbol(result: BacktestResult): string | null {
+        const summarySymbol = result.polymarketTradeSummary?.outcomeSymbol;
+        if (typeof summarySymbol === "string" && summarySymbol.trim().length > 0) {
+            return summarySymbol.trim().toUpperCase();
+        }
+        return this.readCurrentPolymarketOutcomeSymbol();
+    }
+
     private async ensurePolymarketOutcomes(result: BacktestResult): Promise<BacktestResult> {
         const resultContext = resolveBacktestResultMarketContext(result);
         if (!resultContext) {
@@ -603,14 +623,17 @@ class QuickViewManager {
         }
 
         const hasOutcomes = result.trades.some((trade) => trade.polymarketOutcome !== undefined && trade.polymarketOutcome !== null);
-        const seriesId = getPolymarket5mSeriesIdForSymbol(resultContext.symbol);
+        const outcomeSymbol = this.resolveActivePolymarketOutcomeSymbol(result);
+        const resolvedOutcomeSymbol = resolvePolymarketOutcomeSymbol(resultContext.symbol, outcomeSymbol);
+        const seriesId = getEffectivePolymarket5mSeriesId(resultContext.symbol, outcomeSymbol);
         if (result.polymarketTradeSummary) {
             return this.withPolymarketTradeSummary(result, result.trades, seriesId, {
                 selectedOffset: result.polymarketTradeSummary.entryOffset,
+                outcomeSymbol: result.polymarketTradeSummary.outcomeSymbol ?? resolvedOutcomeSymbol ?? undefined,
             });
         }
 
-        if (!supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval)) {
+        if (!supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval, outcomeSymbol)) {
             return result;
         }
 
@@ -630,10 +653,12 @@ class QuickViewManager {
         const endTs = Math.max(...targetTimes);
 
         // Load outcomes from SQLite (uses in-memory cache)
-        const outcomes = await loadPolymarket5mOutcomesForTimeRange(resultContext.symbol, startTs, endTs);
+        const outcomes = await loadPolymarket5mOutcomesForTimeRange(resultContext.symbol, startTs, endTs, outcomeSymbol);
         if (outcomes.length === 0) {
             return hasOutcomes
-                ? this.withPolymarketTradeSummary(result, result.trades, seriesId)
+                ? this.withPolymarketTradeSummary(result, result.trades, seriesId, {
+                    outcomeSymbol: resolvedOutcomeSymbol ?? undefined,
+                })
                 : result;
         }
 
@@ -658,6 +683,7 @@ class QuickViewManager {
         return this.withPolymarketTradeSummary(result, trades, seriesId, {
             outcomeRowsLoaded: outcomes.length,
             selectedOffset,
+            outcomeSymbol: resolvedOutcomeSymbol ?? undefined,
             missingOutcomeTrades: summary.missingOutcomeTrades,
             unscoredTrades: summary.unscoredTrades,
         });

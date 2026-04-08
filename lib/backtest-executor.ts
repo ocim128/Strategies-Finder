@@ -328,6 +328,7 @@ async function annotatePolymarketResult(
             interval,
             executionModel: settings.executionModel,
             chartData,
+            outcomeSymbol: settings.polymarketOutcomeSymbol,
         });
     } catch {
         return result;

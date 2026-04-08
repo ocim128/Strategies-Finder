@@ -18,12 +18,16 @@ import type { Time } from "lightweight-charts";
 
 function updatePolymarketEntryOffsetVisibility(interval: string = state.currentInterval): void {
     const offsetRow = document.getElementById('polymarketEntryOffsetRow');
+    const outcomeSymbolRow = document.getElementById('polymarketOutcomeSymbolRow');
     const annotationToggle = document.getElementById('polymarketAnnotationEnabled');
+    const annotationEnabled = annotationToggle instanceof HTMLInputElement
+        ? annotationToggle.checked
+        : false;
     if (offsetRow) {
-        const annotationEnabled = annotationToggle instanceof HTMLInputElement
-            ? annotationToggle.checked
-            : false;
         offsetRow.style.display = interval === '1m' && annotationEnabled ? 'block' : 'none';
+    }
+    if (outcomeSymbolRow) {
+        outcomeSymbolRow.style.display = annotationEnabled ? 'block' : 'none';
     }
 }
 

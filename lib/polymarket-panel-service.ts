@@ -2,10 +2,11 @@ import { createPolymarketPanelDom, type PolymarketPanelDom } from "./polymarket-
 import type { PolymarketFillHistorySummary } from "./polymarket-fill-history";
 import { loadPolymarketFillHistorySummary } from "./polymarket-fill-history";
 import {
-    getPolymarket5mSeriesIdForSymbol,
+    getEffectivePolymarket5mSeriesId,
     getSupportedPolymarket5mSymbolsLabel,
     isSupportedPolymarket5mRun,
     loadPolymarket5mOutcomesForTimeRange,
+    resolvePolymarketOutcomeSymbol,
     supportsPolymarketOutcomeBridgeRun,
 } from "./polymarket-btc5m";
 import type { PolymarketFillScope } from "./polymarket-fill-analysis";
@@ -117,8 +118,9 @@ class PolymarketPanelService {
         this.lastResult = result;
         this.loadError = null;
         const resultContext = resolveBacktestResultMarketContext(result);
+        const outcomeSymbol = result ? this.resolveActivePolymarketOutcomeSymbol(result) : this.readCurrentPolymarketOutcomeSymbol();
 
-        if (!result || !resultContext || !supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval) || result.trades.length === 0) {
+        if (!result || !resultContext || !supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval, outcomeSymbol) || result.trades.length === 0) {
             this.resetLoadedRows(false);
             this.scheduleRender();
             return;
@@ -135,7 +137,8 @@ class PolymarketPanelService {
     private async ensureOutcomeRowsForCurrentResult(): Promise<void> {
         const result = this.lastResult;
         const resultContext = resolveBacktestResultMarketContext(result);
-        if (!result || !resultContext || !supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval) || result.trades.length === 0) {
+        const outcomeSymbol = result ? this.resolveActivePolymarketOutcomeSymbol(result) : this.readCurrentPolymarketOutcomeSymbol();
+        if (!result || !resultContext || !supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval, outcomeSymbol) || result.trades.length === 0) {
             this.resetLoadedRows(false);
             this.scheduleRender();
             return;
@@ -169,7 +172,8 @@ class PolymarketPanelService {
             const rows = await loadPolymarket5mOutcomesForTimeRange(
                 resultContext.symbol,
                 Math.min(...targetTimes),
-                Math.max(...targetTimes)
+                Math.max(...targetTimes),
+                outcomeSymbol
             );
             if (requestId !== this.loadNonce) {
                 return;
@@ -199,6 +203,10 @@ class PolymarketPanelService {
         }
 
         const existingSummary = result.polymarketTradeSummary;
+        const resolvedOutcomeSymbol = resolvePolymarketOutcomeSymbol(
+            resultContext.symbol,
+            existingSummary?.outcomeSymbol ?? this.readCurrentPolymarketOutcomeSymbol()
+        );
         const selectedOffset = resultContext.interval === "1m"
             ? this.resolveSelectedPolymarketEntryOffset(result)
             : undefined;
@@ -216,13 +224,14 @@ class PolymarketPanelService {
             timingProfile: existingSummary?.timingProfile,
         });
         const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
-        const seriesId = existingSummary?.seriesId || getPolymarket5mSeriesIdForSymbol(resultContext.symbol) || outcomes[0]?.series_id || "";
+        const seriesId = existingSummary?.seriesId || getEffectivePolymarket5mSeriesId(resultContext.symbol, resolvedOutcomeSymbol) || outcomes[0]?.series_id || "";
 
         return {
             ...result,
             trades: annotatedTrades,
             polymarketTradeSummary: {
                 seriesId,
+                outcomeSymbol: existingSummary?.outcomeSymbol ?? resolvedOutcomeSymbol ?? undefined,
                 outcomeRowsLoaded: existingSummary?.outcomeRowsLoaded && existingSummary.outcomeRowsLoaded > 0
                     ? existingSummary.outcomeRowsLoaded
                     : outcomes.length,
@@ -247,6 +256,23 @@ class PolymarketPanelService {
         }
         const value = Number(element.value);
         return Number.isFinite(value) ? value : null;
+    }
+
+    private readCurrentPolymarketOutcomeSymbol(): string | null {
+        const element = document.getElementById("polymarketOutcomeSymbol");
+        if (!(element instanceof HTMLSelectElement)) {
+            return null;
+        }
+        const value = element.value.trim().toUpperCase();
+        return value.length > 0 ? value : null;
+    }
+
+    private resolveActivePolymarketOutcomeSymbol(result: BacktestResult): string | null {
+        const summarySymbol = result.polymarketTradeSummary?.outcomeSymbol;
+        if (typeof summarySymbol === "string" && summarySymbol.trim().length > 0) {
+            return summarySymbol.trim().toUpperCase();
+        }
+        return this.readCurrentPolymarketOutcomeSymbol();
     }
 
     private async enrichHistoryInBackground(requestId: number, rows: PolymarketOutcomeRow[]): Promise<void> {
@@ -299,7 +325,14 @@ class PolymarketPanelService {
         }
 
         const result = this.lastResult;
-        const supportedRun = supportsPolymarketOutcomeBridgeRun(state.currentSymbol, state.currentInterval);
+        const resultContext = resolveBacktestResultMarketContext(result);
+        const supportedRun = resultContext
+            ? supportsPolymarketOutcomeBridgeRun(
+                resultContext.symbol,
+                resultContext.interval,
+                result ? this.resolveActivePolymarketOutcomeSymbol(result) : this.readCurrentPolymarketOutcomeSymbol()
+            )
+            : supportsPolymarketOutcomeBridgeRun(state.currentSymbol, state.currentInterval, this.readCurrentPolymarketOutcomeSymbol());
 
         this.renderBridgeControls();
 
@@ -725,11 +758,13 @@ class PolymarketPanelService {
 
     private getResultSignature(result: BacktestResult): string {
         const resultContext = resolveBacktestResultMarketContext(result);
+        const outcomeSymbol = this.resolveActivePolymarketOutcomeSymbol(result);
         const firstTrade = result.trades[0];
         const lastTrade = result.trades[result.trades.length - 1];
         return [
             resultContext?.symbol ?? state.currentSymbol,
             resultContext?.interval ?? state.currentInterval,
+            outcomeSymbol ?? "same",
             result.trades.length,
             parseTimeToUnixSeconds(firstTrade?.entryTime) ?? "na",
             parseTimeToUnixSeconds(lastTrade?.entryTime) ?? "na",
