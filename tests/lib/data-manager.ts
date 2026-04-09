@@ -65,6 +65,11 @@ import {
 } from "./data/data-interval-utils";
 import { commitOhlcvData, setMarketSelection } from "./state-actions";
 
+export type DataLoadReporter = {
+    updateSymbolDataSource?: (label: string, tone: 'live' | 'seed' | 'warning' | 'loading', title?: string) => void;
+    showToast?: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void;
+};
+
 type NonBinanceLocalSource = 'imported' | 'sqlite' | 'cache' | 'seed';
 type NonBinanceLocalData = { candles: OHLCVData[]; source: NonBinanceLocalSource };
 type ProviderFallbackChain = {
@@ -118,6 +123,11 @@ export class DataManager {
     private loadedSymbol: string | null = null;
     private loadedInterval: string | null = null;
     private loadedBinanceMarketType = state.binanceMarketType;
+
+    private reporter: DataLoadReporter = {
+        updateSymbolDataSource: (label, tone, title) => uiManager.updateSymbolDataSource(label, tone, title),
+        showToast: (message, tone) => uiManager.showToast(message, tone),
+    };
 
     // ============================================================================
     // Public API
@@ -231,6 +241,16 @@ export class DataManager {
         return this.fetchDataFromProviderChain(chain, symbol, interval, signal);
     }
 
+    public async fetchDataDetached(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
+        const saved = this.reporter;
+        this.reporter = {};
+        try {
+            return await this.fetchData(symbol, interval, signal);
+        } finally {
+            this.reporter = saved;
+        }
+    }
+
     private async resolveProviderFallbackChain(
         symbol: string,
         interval: string,
@@ -287,7 +307,7 @@ export class DataManager {
         }
 
         const fallback = await this.fetchNonBinanceData(symbol, interval, signal);
-        uiManager.updateSymbolDataSource(
+        this.reporter.updateSymbolDataSource?.(
             'Fallback',
             'warning',
             'Primary data source was unavailable, so fallback data is being used.'
@@ -306,7 +326,7 @@ export class DataManager {
         }
         if (signal?.aborted) return [];
         const mockData = generateMockData(symbol, interval);
-        uiManager.updateSymbolDataSource('Mock data', 'seed', 'Chart is using generated mock candles.');
+        this.reporter.updateSymbolDataSource?.('Mock data', 'seed', 'Chart is using generated mock candles.');
         return sliceCandlesToLookback(mockData, lookbackBars);
     }
 
@@ -323,7 +343,7 @@ export class DataManager {
         const result = await this.fetchBinanceDataHybridWithMeta(symbol, interval, signal, {
             maxBars: lookbackBars ?? undefined,
         });
-        uiManager.updateSymbolDataSource(
+        this.reporter.updateSymbolDataSource?.(
             `Live: ${getBinanceMarketLabel(getBinanceMarketTypeForProvider(provider))}`,
             'live',
             `Chart data is loaded from ${getBinanceMarketLabel(getBinanceMarketTypeForProvider(provider))}.`
@@ -355,7 +375,7 @@ export class DataManager {
                     seededWithLatest.candles,
                     `local-${localNonBinance.source}-overlay`
                 );
-                uiManager.updateSymbolDataSource(
+                this.reporter.updateSymbolDataSource?.(
                     localNonBinance.source === 'seed' ? 'CSV + Bybit' : 'Local + Bybit',
                     'live',
                     localNonBinance.source === 'seed'
@@ -366,7 +386,7 @@ export class DataManager {
             }
 
             const localSourceMeta = this.describeLocalSource(localNonBinance.source);
-            uiManager.updateSymbolDataSource(
+            this.reporter.updateSymbolDataSource?.(
                 localSourceMeta.label,
                 localNonBinance.source === 'seed' ? 'warning' : 'seed',
                 `${localSourceMeta.title} Latest refresh from Bybit did not return a candle.`
@@ -385,7 +405,7 @@ export class DataManager {
                 ? mergeCandles(localNonBinance.candles, data)
                 : data;
             void this.persistNonBinanceData(symbol, interval, 'bybit-tradfi', merged, 'network');
-            uiManager.updateSymbolDataSource(
+            this.reporter.updateSymbolDataSource?.(
                 'Live: Bybit',
                 'live',
                 'Chart data is loaded directly from Bybit TradFi.'
@@ -394,15 +414,15 @@ export class DataManager {
         }
         if (localNonBinance && localNonBinance.candles.length > 0) {
             const localSourceMeta = this.describeLocalSource(localNonBinance.source);
-            uiManager.updateSymbolDataSource(
+            this.reporter.updateSymbolDataSource?.(
                 localSourceMeta.label,
                 'warning',
                 `${localSourceMeta.title} Bybit TradFi did not return fresh intraday chart data, so local data is being used.`
             );
             return sliceCandlesToLookback(localNonBinance.candles, lookbackBars);
         }
-        uiManager.showToast('Bybit TradFi returned no data.', 'error');
-        uiManager.updateSymbolDataSource(
+        this.reporter.showToast?.('Bybit TradFi returned no data.', 'error');
+        this.reporter.updateSymbolDataSource?.(
             'Bybit unavailable',
             'warning',
             'Bybit TradFi did not return chart data for this symbol and timeframe.'
@@ -420,7 +440,7 @@ export class DataManager {
 
         if (localNonBinance) {
             const localSourceMeta = this.describeLocalSource(localNonBinance.source);
-            uiManager.updateSymbolDataSource(localSourceMeta.label, 'seed', localSourceMeta.title);
+            this.reporter.updateSymbolDataSource?.(localSourceMeta.label, 'seed', localSourceMeta.title);
             return sliceCandlesToLookback(localNonBinance.candles, lookbackBars);
         }
 
@@ -429,15 +449,15 @@ export class DataManager {
             : await fetchPolymarketData(symbol, interval, signal);
         if (data.length > 0) {
             void this.persistNonBinanceData(symbol, interval, 'polymarket', data, 'network');
-            uiManager.updateSymbolDataSource(
+            this.reporter.updateSymbolDataSource?.(
                 'Live: Polymarket',
                 'live',
                 'Chart data is loaded from Polymarket.'
             );
             return data;
         }
-        uiManager.showToast('Polymarket returned no data for this market.', 'error');
-        uiManager.updateSymbolDataSource(
+        this.reporter.showToast?.('Polymarket returned no data for this market.', 'error');
+        this.reporter.updateSymbolDataSource?.(
             'Polymarket unavailable',
             'warning',
             'Polymarket did not return chart data for this market.'
@@ -1407,7 +1427,7 @@ export class DataManager {
     }
 
     private notifyDataFallback(symbol: string, interval: string): void {
-        uiManager.showToast(`Data unavailable for ${symbol} (${interval}). Using mock data.`, 'warning');
+        this.reporter.showToast?.(`Data unavailable for ${symbol} (${interval}). Using mock data.`, 'warning');
     }
 
     private connectBinanceStream(): void {

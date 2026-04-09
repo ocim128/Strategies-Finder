@@ -38,6 +38,7 @@ export type QuickFunnelCandidate = {
         strategy: Strategy;
     };
     result: BacktestResult;
+    comparable: FinderResult;
 };
 
 export type RandomBenchmarkMeta = {

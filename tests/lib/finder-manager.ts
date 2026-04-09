@@ -20,6 +20,7 @@ import { parseInputNumber } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { setCurrentStrategyKey } from "./state-actions";
+import { createTaskYielder } from "./task-yield";
 import {
 	createFinderManagerDom,
 	type FinderManagerDom,
@@ -45,9 +46,8 @@ export class FinderManager {
 	private lastStrategyToggleKey: string | null = null;
 	private readonly ui = new FinderUI();
 	private readonly paramSpace = new FinderParamSpace();
+	private readonly taskYielder = createTaskYielder();
 	private dom: FinderManagerDom | null = null;
-	private yieldChannel: MessageChannel | null = null;
-	private pendingYieldResolvers: Array<() => void> = [];
 
 	private getDom(): FinderManagerDom {
 		return this.dom ??= createFinderManagerDom();
@@ -451,7 +451,7 @@ export class FinderManager {
 					{
 						setProgress: (percent, text) => this.setProgress(true, percent, text),
 						setStatus: (text) => this.setStatus(text),
-						yieldControl: () => this.yieldControl(),
+						yieldControl: () => this.taskYielder.yieldControl(),
 						isCancelled: () => this.isCancelled,
 						onResultsUpdate: (results: FinderResult[]) => {
 							const sorted = sortFinderResults(results, options.sortPriority);
@@ -695,38 +695,6 @@ export class FinderManager {
 
 	private setStatus(text: string): void {
 		this.ui.setStatus(text);
-	}
-
-	private lastRealYieldAt = 0;
-
-	private getYieldChannel(): MessageChannel {
-		if (!this.yieldChannel) {
-			this.yieldChannel = new MessageChannel();
-			this.yieldChannel.port1.onmessage = () => {
-				const resolve = this.pendingYieldResolvers.shift();
-				resolve?.();
-			};
-		}
-		return this.yieldChannel;
-	}
-
-	private async yieldControl(): Promise<void> {
-		if (document.hidden) {
-			// Skip most yields for near-100% CPU speed when backgrounded.
-			// But every ~4s do a real macrotask yield so the browser can update
-			// document.hidden when the tab becomes visible again.
-			const now = performance.now();
-			if (now - this.lastRealYieldAt < 4_000) return;
-			this.lastRealYieldAt = now;
-			await new Promise<void>(resolve => setTimeout(resolve, 0));
-			return;
-		}
-
-		const channel = this.getYieldChannel();
-		await new Promise<void>(resolve => {
-			this.pendingYieldResolvers.push(resolve);
-			channel.port2.postMessage(undefined);
-		});
 	}
 
 	private cloneBacktestSettings<T>(settings: T): T {

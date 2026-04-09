@@ -1028,7 +1028,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 input,
                 closedData,
                 effectiveCapitalSettings,
-                maybeYieldByBudget
+                maybeYieldByBudget,
+                singleTfPrecomputed,
+                preparedDataCache
             );
         }
 
@@ -1218,7 +1220,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     signals.length = 0;
                     continue;
                 }
-                quickCandidates.push({ job, result: quickResult });
+                quickCandidates.push({ job, result: quickResult, comparable: buildComparableFinderResult(job.key, job.name, job.params, quickResult) });
                 signals.length = 0;
             } catch (error) {
                 console.warn(`[Finder] Random funnel prescreen failed for ${job.key}:`, error);
@@ -1234,8 +1236,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         }
 
         quickCandidates.sort((a, b) => compareFinderResults(
-            buildComparableFinderResult(a.job.key, a.job.name, a.job.params, a.result),
-            buildComparableFinderResult(b.job.key, b.job.name, b.job.params, b.result),
+            a.comparable,
+            b.comparable,
             input.options.sortPriority
         ));
         const shortlisted = quickCandidates.slice(0, shortlistCount);
@@ -1556,7 +1558,9 @@ async function reconcileSingleTimeframeTopResults(
     input: FinderRunInput,
     closedData: OHLCVData[],
     capitalSettings: CapitalSettings,
-    maybeYieldByBudget: (force?: boolean) => Promise<void>
+    maybeYieldByBudget: (force?: boolean) => Promise<void>,
+    existingPrecomputed?: ReturnType<typeof precomputeIndicators>,
+    existingPreparedDataCache?: FinderPreparedDataCache
 ): Promise<FinderResult[]> {
     const { initialCapital } = capitalSettings;
     const strategyByKey = new Map(input.selectedStrategies.map((item) => [item.key, item.strategy]));
@@ -1565,8 +1569,8 @@ async function reconcileSingleTimeframeTopResults(
     const rustSettings = sanitizeBacktestSettingsForRust(input.settings);
     const comboActive = Boolean(input.comboPrimarySignals);
     const comboBacktestSettings = input.comboPrimarySettings ?? input.settings;
-    const precomputed = precomputeIndicators(closedData, comboBacktestSettings);
-    const preparedDataCache: FinderPreparedDataCache = new WeakMap();
+    const precomputed = existingPrecomputed ?? precomputeIndicators(closedData, comboBacktestSettings);
+    const preparedDataCache = existingPreparedDataCache ?? new WeakMap();
     const reconciled: FinderResult[] = [];
 
     for (const candidate of candidates) {

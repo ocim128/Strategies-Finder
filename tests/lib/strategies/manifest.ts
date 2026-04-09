@@ -81,26 +81,8 @@ import { entropy_collapse_directional_push } from "./lib/entropy_collapse_direct
 import { kurtosis_efficiency_regime_shift } from "./lib/kurtosis_efficiency_regime_shift";
 import { macro_micro_efficiency_sync } from "./lib/macro_micro_efficiency_sync";
 import { price_volume_divergence_exhaustion } from "./lib/price_volume_divergence_exhaustion";
-import { volume_compression_absorption_fade } from "./lib/volume_compression_absorption_fade";
-import { body_mid_delta_phi_snap } from "./lib/body_mid_delta_phi_snap";
-import { close_acceptance_phi_pivot } from "./lib/close_acceptance_phi_pivot";
-import { cumulative_decay_sweep_phi } from "./lib/cumulative_decay_sweep_phi";
 import { efficiency_phi_micro_streak } from "./lib/efficiency_phi_micro_streak";
-import { initiative_entropy_phi_freeze } from "./lib/initiative_entropy_phi_freeze";
-import { trailing_phi_compression_ignition } from "./lib/trailing_phi_compression_ignition";
-import { volume_profile_phi_escape } from "./lib/volume_profile_phi_escape";
-import { volume_thrust_phi_decay } from "./lib/volume_thrust_phi_decay";
-import { vwap_phi_distance_reversion } from "./lib/vwap_phi_distance_reversion";
-import { wick_imbalance_phi_absorption } from "./lib/wick_imbalance_phi_absorption";
-import { asymmetric_wick_phi_rejection } from "./lib/asymmetric_wick_phi_rejection";
 import { body_proportion_phi_implosion } from "./lib/body_proportion_phi_implosion";
-import { cumulative_decay_phi_expansion } from "./lib/cumulative_decay_phi_expansion";
-import { dual_roc_phi_divergence } from "./lib/dual_roc_phi_divergence";
-import { efficiency_ratio_phi_trap } from "./lib/efficiency_ratio_phi_trap";
-import { entropy_phi_consolidation_break } from "./lib/entropy_phi_consolidation_break";
-import { initiative_pressure_phi_exhaustion } from "./lib/initiative_pressure_phi_exhaustion";
-import { kurtosis_phi_regime_launch } from "./lib/kurtosis_phi_regime_launch";
-import { skewness_phi_polarization_reversal } from "./lib/skewness_phi_polarization_reversal";
 import { volume_thrust_phi_correlation } from "./lib/volume_thrust_phi_correlation";
 
 export interface StrategyManifestEntry {
@@ -188,26 +170,8 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "kurtosis_efficiency_regime_shift", strategy: kurtosis_efficiency_regime_shift },
     { key: "macro_micro_efficiency_sync", strategy: macro_micro_efficiency_sync },
     { key: "price_volume_divergence_exhaustion", strategy: price_volume_divergence_exhaustion },
-    { key: "volume_compression_absorption_fade", strategy: volume_compression_absorption_fade },
-    { key: "body_mid_delta_phi_snap", strategy: body_mid_delta_phi_snap },
-    { key: "close_acceptance_phi_pivot", strategy: close_acceptance_phi_pivot },
-    { key: "cumulative_decay_sweep_phi", strategy: cumulative_decay_sweep_phi },
     { key: "efficiency_phi_micro_streak", strategy: efficiency_phi_micro_streak },
-    { key: "initiative_entropy_phi_freeze", strategy: initiative_entropy_phi_freeze },
-    { key: "trailing_phi_compression_ignition", strategy: trailing_phi_compression_ignition },
-    { key: "volume_profile_phi_escape", strategy: volume_profile_phi_escape },
-    { key: "volume_thrust_phi_decay", strategy: volume_thrust_phi_decay },
-    { key: "vwap_phi_distance_reversion", strategy: vwap_phi_distance_reversion },
-    { key: "wick_imbalance_phi_absorption", strategy: wick_imbalance_phi_absorption },
-    { key: "asymmetric_wick_phi_rejection", strategy: asymmetric_wick_phi_rejection },
     { key: "body_proportion_phi_implosion", strategy: body_proportion_phi_implosion },
-    { key: "cumulative_decay_phi_expansion", strategy: cumulative_decay_phi_expansion },
-    { key: "dual_roc_phi_divergence", strategy: dual_roc_phi_divergence },
-    { key: "efficiency_ratio_phi_trap", strategy: efficiency_ratio_phi_trap },
-    { key: "entropy_phi_consolidation_break", strategy: entropy_phi_consolidation_break },
-    { key: "initiative_pressure_phi_exhaustion", strategy: initiative_pressure_phi_exhaustion },
-    { key: "kurtosis_phi_regime_launch", strategy: kurtosis_phi_regime_launch },
-    { key: "skewness_phi_polarization_reversal", strategy: skewness_phi_polarization_reversal },
     { key: "volume_thrust_phi_correlation", strategy: volume_thrust_phi_correlation },
 ];
 
