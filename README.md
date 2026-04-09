@@ -213,6 +213,12 @@ The short version:
 3. Run `npm run strategies:sync-manifest`.
 4. Keep `normalizeParams(...)` aligned with `execute(...)`.
 5. Run `npm run typecheck` and confirm the strategy appears in the UI.
+6. To remove built-in strategies from disk, use `Library Tools` in the Settings tab. It can delete the current strategy or a pasted bulk list of keys, archives each file to `archive/strategy/*`, and re-syncs `lib/strategies/manifest.ts` automatically.
+
+Dev note:
+- `npm run dev` ignores `lib/strategies/**` changes by default so Finder/Hunt work is not interrupted while you author or edit strategies.
+- After strategy edits, run `npm run strategies:sync-manifest` if needed and do a manual browser refresh when you are ready to load the new code.
+- Set `WATCH_STRATEGIES=1` before starting Vite if you want live reload for `lib/strategies/**` again.
 
 For strategy-idea generation via [`archive/prompt.txt`](c:\Users\user\Documents\Repo\Experimental\lightweight-charts\debug\playground\Strategies-Finder\archive\prompt.txt), keep the allowed helper surface aligned with helpers that are either already used by manifest-backed built-ins or explicitly approved low-complexity primitives from the shared strategy helper modules. Favor simple price extractors and bar-geometry helpers such as `getOpens`, `getMidpoints`, `getTypicalPrices`, `buildRangeSeries`, `buildBodySeries`, and `buildCloseLocationSeries` before reaching for heavier transforms. Do not add prompt-only helper names that do not exist in the codebase. The prompt now also rejects Tier 1 to Tier 3 retail-pattern or overcrowded ideas and only allows Tier 4 to Tier 5 market-mechanics concepts such as liquidity sweeps, failed auctions, regime shifts, and imbalance-driven state changes. For indicators, the prompt treats the codebase indicator list as an implementation surface only, not an approval list: oscillator-first or overcrowded ideas built around RSI, stochastic, CCI, MACD, Bollinger, MA crossovers, ATR, or similar retail defaults are rejected, while VWAP, Volume Profile, Keltner, Donchian, ADX-context, and structure/liquidity concepts are preferred. The prompt also now rejects overfit ideas that depend on magic-number thresholds, narrow confirmation stacks, exact pattern geometry, or filters whose main job is just to make the backtest look cleaner in hindsight.
 

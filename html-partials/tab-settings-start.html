@@ -24,6 +24,33 @@
                         <option value="">Loading strategies...</option>
                     </select>
 
+                    <details class="strategy-library-menu" id="strategyLibraryMenu">
+                        <summary class="btn btn-secondary btn-compact strategy-library-menu-summary">
+                            Library Tools
+                        </summary>
+                        <div class="strategy-library-menu-panel">
+                            <div class="strategy-library-menu-status" id="strategyLibraryMenuStatus">
+                                Only manifest-backed built-in strategies can be deleted here.
+                            </div>
+                            <button class="btn btn-danger btn-compact" id="deleteBuiltInStrategyBtn" type="button">
+                                Archive + Delete Current Strategy
+                            </button>
+                            <label class="param-label strategy-library-bulk-label" for="strategyLibraryBulkKeys">
+                                Bulk Delete Keys
+                            </label>
+                            <textarea class="param-input strategy-library-bulk-input" id="strategyLibraryBulkKeys" rows="4"
+                                placeholder="Paste strategy keys, one per line or comma-separated"></textarea>
+                            <div class="strategy-library-menu-actions">
+                                <button class="btn btn-secondary btn-compact" id="useCurrentStrategyKeyBtn" type="button">
+                                    Add Current Key
+                                </button>
+                                <button class="btn btn-danger btn-compact" id="deleteBulkBuiltInStrategiesBtn" type="button">
+                                    Archive + Delete Listed Strategies
+                                </button>
+                            </div>
+                        </div>
+                    </details>
+
                     <div id="strategyParams">
                         <!-- Parameters will be injected here -->
                     </div>

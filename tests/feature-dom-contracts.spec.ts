@@ -17,6 +17,7 @@ import { PAIR_COMBINER_BRIDGE_REQUIRED_IDS } from "./lib/pairCombiner/pair-combi
 import { WALK_FORWARD_SERVICE_REQUIRED_IDS } from "./lib/walk-forward-dom";
 import { ENSEMBLE_LAB_REQUIRED_IDS } from "./lib/strategy-ensemble-dom";
 import { MONTE_CARLO_REQUIRED_IDS } from "../lib/monte-carlo-dom";
+import { STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS } from "../lib/strategy-library-admin-dom";
 
 const PARTIALS_DIR = path.join(process.cwd(), "html-partials");
 
@@ -61,6 +62,7 @@ describe("Feature DOM contracts", () => {
         pairCombinerBridge: [...PAIR_COMBINER_BRIDGE_REQUIRED_IDS],
         walkForwardService: [...WALK_FORWARD_SERVICE_REQUIRED_IDS],
         monteCarlo: [...MONTE_CARLO_REQUIRED_IDS],
+        strategyLibraryAdmin: [...STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS],
     } as const;
 
     for (const [groupName, ids] of Object.entries(contractGroups)) {

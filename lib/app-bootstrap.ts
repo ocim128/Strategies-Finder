@@ -37,6 +37,7 @@ import { getOptionalElement } from "./dom-utils";
 import { polymarketPanelService } from "./polymarket-panel-service";
 import { initMonteCarloService } from "./monte-carlo-service";
 import { huntService } from "./hunt/hunt-service";
+import { strategyLibraryAdminService } from "./strategy-library-admin-service";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
 import {
     runBootstrapFeatureStage,
@@ -290,6 +291,12 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         stage: "pre_restore",
         dependsOn: ["initial-ui-sync", "strategy-library"],
         restore: async (context) => restoreSavedSettings(context),
+    },
+    {
+        id: "strategy-library-admin",
+        stage: "post_restore",
+        dependsOn: ["settings-state"],
+        init: () => strategyLibraryAdminService.init(),
     },
     {
         id: "settings-handlers",

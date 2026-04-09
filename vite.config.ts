@@ -3,15 +3,21 @@ import { dirname, resolve } from 'node:path';
 import type { IncomingMessage } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { defineConfig, type Plugin } from 'vite';
+import { backtestEndpointPlugin } from './lib/backtest-endpoint-plugin';
+import { strategyLibraryAdminPlugin } from './lib/strategy-library-admin-plugin';
 
 const BYBIT_TRADFI_KLINE_URL = 'https://www.bybit.com/x-api/fapi/copymt5/kline';
 const POLYMARKET_GAMMA_EVENT_SLUG_URL = 'https://gamma-api.polymarket.com/events/slug';
 const POLYMARKET_CLOB_HISTORY_URL = 'https://clob.polymarket.com/prices-history';
 const SQLITE_DB_PATH = resolve(process.cwd(), 'price-data', 'market-data.sqlite');
 const SQLITE_MAX_BODY_BYTES = 80 * 1024 * 1024;
+const WATCH_STRATEGIES = process.env.WATCH_STRATEGIES === '1';
 const WATCH_IGNORED_GLOBS = [
     // Generated artifacts are rewritten in place and can trip Vite's watcher on Windows.
     '**/artifacts/**',
+    // Strategy authoring often happens during long Finder/Hunt runs. Require a manual refresh
+    // instead of interrupting the current browser session on every change under lib/strategies.
+    ...(WATCH_STRATEGIES ? [] : ['**/lib/strategies/**']),
 ];
 
 let sqliteDb: DatabaseSync | null = null;
@@ -700,10 +706,14 @@ function localSqlitePlugin(): Plugin {
     };
 }
 
-import { backtestEndpointPlugin } from './lib/backtest-endpoint-plugin';
-
 export default defineConfig({
-    plugins: [tradFiKlineProxyPlugin(), polymarketProxyPlugin(), localSqlitePlugin(), backtestEndpointPlugin()],
+    plugins: [
+        tradFiKlineProxyPlugin(),
+        polymarketProxyPlugin(),
+        localSqlitePlugin(),
+        strategyLibraryAdminPlugin(),
+        backtestEndpointPlugin(),
+    ],
     server: {
         fs: {
             allow: ['../../..']

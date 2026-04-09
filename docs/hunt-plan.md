@@ -1,5 +1,7 @@
 # Hunt Plan
 
+See also: [`docs/hunt-performance-plan.md`](./hunt-performance-plan.md) for the verified phase-based performance implementation plan. Use that document for execution sequencing and performance work; use this document for Hunt product scope and contracts.
+
 ## Goal
 
 Add a new strategy-panel feature named `Hunt`.

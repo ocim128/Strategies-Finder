@@ -651,7 +651,7 @@ class HuntService {
             const item = document.createElement("div");
             item.className = "strategy-list-item";
             item.dataset.strategyKey = key;
-            item.dataset.strategyName = strategy.name.toLowerCase();
+            item.dataset.strategyName = `${key} ${strategy.name}`.toLowerCase();
 
             const checkbox = document.createElement("input");
             checkbox.type = "checkbox";
@@ -667,7 +667,8 @@ class HuntService {
 
             const label = document.createElement("label");
             label.htmlFor = `hunt-strategy-${key}`;
-            label.textContent = strategy.name;
+            label.textContent = key;
+            label.title = strategy.name;
 
             item.appendChild(checkbox);
             item.appendChild(label);

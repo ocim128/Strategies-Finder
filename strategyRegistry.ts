@@ -63,6 +63,8 @@ export interface StrategyRegistry {
     count(): number;
 }
 
+const builtInStrategyKeys = new Set<string>();
+
 // ============================================================================
 // Strategy Registry Implementation
 // ============================================================================
@@ -276,7 +278,9 @@ export const strategyRegistry: StrategyRegistry = new StrategyRegistryImpl();
  * Register all built-in strategies from a manifest
  */
 function registerBuiltInStrategyManifest(manifest: readonly StrategyManifestEntry[]): void {
+    builtInStrategyKeys.clear();
     manifest.forEach(({ key, strategy }) => {
+        builtInStrategyKeys.add(key);
         strategyRegistry.register(key, strategy);
     });
 }
@@ -442,6 +446,10 @@ export function getStrategyList(): Array<{ key: string; name: string; descriptio
  */
 export function isValidStrategyKey(key: string): boolean {
     return /^[a-z][a-z0-9_]*$/.test(key);
+}
+
+export function isBuiltInStrategyKey(key: string): boolean {
+    return builtInStrategyKeys.has(key);
 }
 
 // Export for debugging in browser console
