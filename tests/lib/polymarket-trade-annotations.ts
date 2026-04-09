@@ -88,6 +88,16 @@ function getTradePayoutFromPrice(
     return isWin ? (1 - marketEntryPrice) : -marketEntryPrice;
 }
 
+function getProfitFactorFromPayoutTotals(grossProfit: number, grossLoss: number): number {
+    if (!Number.isFinite(grossProfit) || grossProfit <= 0) {
+        return 0;
+    }
+    if (!Number.isFinite(grossLoss) || grossLoss <= 0) {
+        return Infinity;
+    }
+    return grossProfit / grossLoss;
+}
+
 type AnnotationContext = {
     symbol: string;
     interval: string;
@@ -333,6 +343,8 @@ export function evaluatePolymarketBacktestTrades(args: {
     let pricedPredictions = 0;
     let totalEntryPrice = 0;
     let totalPayout = 0;
+    let grossProfit = 0;
+    let grossLoss = 0;
 
     for (const trade of trades) {
         if (trade.type === "long") {
@@ -378,6 +390,11 @@ export function evaluatePolymarketBacktestTrades(args: {
             pricedPredictions++;
             totalEntryPrice += marketEntryPrice;
             totalPayout += payout;
+            if (payout > 0) {
+                grossProfit += payout;
+            } else if (payout < 0) {
+                grossLoss += Math.abs(payout);
+            }
         }
 
         if (includeRows) {
@@ -412,6 +429,9 @@ export function evaluatePolymarketBacktestTrades(args: {
         predictionsTaken,
         scoredPredictions: scoredCount,
         pricedPredictions,
+        profitFactor: getProfitFactorFromPayoutTotals(grossProfit, grossLoss),
+        grossProfit,
+        grossLoss,
         wins,
         losses,
         skips: Math.max(0, context.evaluatedEvents - scoredCount),
@@ -506,6 +526,8 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
     let pricedPredictions = 0;
     let totalEntryPrice = 0;
     let totalPayout = 0;
+    let grossProfit = 0;
+    let grossLoss = 0;
 
     for (const mapped of selected) {
         const { trade, outcome, entryOffset, entryTs } = mapped;
@@ -541,6 +563,11 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
             pricedPredictions++;
             totalEntryPrice += marketEntryPrice;
             totalPayout += payout;
+            if (payout > 0) {
+                grossProfit += payout;
+            } else if (payout < 0) {
+                grossLoss += Math.abs(payout);
+            }
         }
 
         if (includeRows) {
@@ -580,6 +607,9 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
         predictionsTaken,
         scoredPredictions: scoredCount,
         pricedPredictions,
+        profitFactor: getProfitFactorFromPayoutTotals(grossProfit, grossLoss),
+        grossProfit,
+        grossLoss,
         wins,
         losses,
         skips: Math.max(0, evaluatedEvents - scoredCount),

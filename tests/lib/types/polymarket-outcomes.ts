@@ -81,6 +81,9 @@ export interface PolymarketEvalResult {
     predictionsTaken: number;
     scoredPredictions: number;
     pricedPredictions?: number;
+    profitFactor?: number;
+    grossProfit?: number;
+    grossLoss?: number;
     wins: number;
     losses: number;
     skips: number;

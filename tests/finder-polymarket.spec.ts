@@ -629,6 +629,140 @@ describe('Finder Polymarket runner', () => {
         expect(output.results[1]?.polymarketEval?.expectancy).to.be.closeTo(0.9, 1e-12);
     });
 
+    it('supports profit-factor-based polymarket ranking', async () => {
+        const bars = makeBars(6);
+        installOutcomeFetch([
+            makeOutcomeRow(Number(bars[1].time), 0, '10684', { yes_open_price: 0.8 }),
+            makeOutcomeRow(Number(bars[2].time), 0, '10684', { yes_open_price: 0.8 }),
+            makeOutcomeRow(Number(bars[3].time), 0, '10684', { yes_open_price: 0.8 }),
+            makeOutcomeRow(Number(bars[4].time), 1, '10684', { yes_open_price: 0.1 }),
+        ]);
+
+        const sparseHighProfitFactorStrategy: Strategy = {
+            name: 'Sparse High Profit Factor',
+            description: 'One cheap winning YES entry',
+            defaultParams: {},
+            paramLabels: {},
+            execute(data: OHLCVData[]): Signal[] {
+                return [{ time: data[3].time, type: 'buy', price: data[3].close, barIndex: 3 }];
+            },
+        };
+        const steadierProfitFactorStrategy: Strategy = {
+            name: 'Steadier Profit Factor',
+            description: 'Three priced trades with finite PF',
+            defaultParams: {},
+            paramLabels: {},
+            execute(data: OHLCVData[]): Signal[] {
+                return [
+                    { time: data[0].time, type: 'sell', price: data[0].close, barIndex: 0 },
+                    { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                    { time: data[2].time, type: 'sell', price: data[2].close, barIndex: 2 },
+                ];
+            },
+        };
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            {
+                ...makeInput(
+                    bars,
+                    [{}],
+                    {
+                        sortPriority: ['polyProfitFactor', 'polyPredictions', 'polyWinRate'],
+                        polymarketRankMode: 'profitFactor',
+                    }
+                ),
+                selectedStrategies: [
+                    {
+                        key: 'sparse_high_profit_factor',
+                        name: sparseHighProfitFactorStrategy.name,
+                        strategy: sparseHighProfitFactorStrategy,
+                    },
+                    {
+                        key: 'steadier_profit_factor',
+                        name: steadierProfitFactorStrategy.name,
+                        strategy: steadierProfitFactorStrategy,
+                    },
+                ],
+            },
+            callbacks
+        );
+
+        expect(output.results).to.have.length(2);
+        expect(output.results[0]?.key).to.equal('sparse_high_profit_factor');
+        expect(output.results[0]?.polymarketEval?.profitFactor).to.equal(Infinity);
+        expect(output.results[1]?.key).to.equal('steadier_profit_factor');
+        expect(output.results[1]?.polymarketEval?.profitFactor).to.equal(2);
+    });
+
+    it('supports profit factor plus trades polymarket ranking', async () => {
+        const bars = makeBars(6);
+        installOutcomeFetch([
+            makeOutcomeRow(Number(bars[1].time), 0, '10684', { yes_open_price: 0.8 }),
+            makeOutcomeRow(Number(bars[2].time), 0, '10684', { yes_open_price: 0.8 }),
+            makeOutcomeRow(Number(bars[3].time), 0, '10684', { yes_open_price: 0.8 }),
+            makeOutcomeRow(Number(bars[4].time), 1, '10684', { yes_open_price: 0.1 }),
+        ]);
+
+        const sparseHighProfitFactorStrategy: Strategy = {
+            name: 'Sparse High Profit Factor',
+            description: 'One cheap winning YES entry',
+            defaultParams: {},
+            paramLabels: {},
+            execute(data: OHLCVData[]): Signal[] {
+                return [{ time: data[3].time, type: 'buy', price: data[3].close, barIndex: 3 }];
+            },
+        };
+        const steadierProfitFactorStrategy: Strategy = {
+            name: 'Steadier Profit Factor',
+            description: 'Three priced trades with finite PF',
+            defaultParams: {},
+            paramLabels: {},
+            execute(data: OHLCVData[]): Signal[] {
+                return [
+                    { time: data[0].time, type: 'sell', price: data[0].close, barIndex: 0 },
+                    { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                    { time: data[2].time, type: 'sell', price: data[2].close, barIndex: 2 },
+                ];
+            },
+        };
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            {
+                ...makeInput(
+                    bars,
+                    [{}],
+                    {
+                        sortPriority: ['polyProfitFactorBalance', 'polyProfitFactor', 'totalTrades', 'polyPredictions', 'polyWinRate'],
+                        polymarketRankMode: 'profitFactorTrades',
+                    }
+                ),
+                selectedStrategies: [
+                    {
+                        key: 'sparse_high_profit_factor',
+                        name: sparseHighProfitFactorStrategy.name,
+                        strategy: sparseHighProfitFactorStrategy,
+                    },
+                    {
+                        key: 'steadier_profit_factor',
+                        name: steadierProfitFactorStrategy.name,
+                        strategy: steadierProfitFactorStrategy,
+                    },
+                ],
+            },
+            callbacks
+        );
+
+        expect(output.results).to.have.length(2);
+        expect(output.results[0]?.key).to.equal('steadier_profit_factor');
+        expect(output.results[0]?.selectionResult.totalTrades).to.equal(3);
+        expect(output.results[0]?.polymarketEval?.profitFactor).to.equal(2);
+        expect(output.results[1]?.key).to.equal('sparse_high_profit_factor');
+        expect(output.results[1]?.selectionResult.totalTrades).to.equal(1);
+        expect(output.results[1]?.polymarketEval?.profitFactor).to.equal(Infinity);
+    });
+
     it('rejects non-1m/5m/15m/1h/4h intervals before touching the outcome loader', async () => {
         globalThis.fetch = (async () => {
             throw new Error('fetch should not be called for invalid interval');

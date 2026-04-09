@@ -250,6 +250,7 @@ describe("Quick View Polymarket streak summary", () => {
         expect(summary?.breakEvenWinRate).to.equal(0.5);
         expect(summary?.winRate).to.equal(0.5);
         expect(summary?.expectancy).to.equal(0);
+        expect(summary?.profitFactor).to.equal(1);
         expect(summary?.edgeVsBreakEven).to.equal(0);
     });
 
@@ -274,6 +275,7 @@ describe("Quick View Polymarket streak summary", () => {
         expect(summary?.unpricedScoredTrades).to.equal(1);
         expect(summary?.winRate).to.equal(1);
         expect(summary?.expectancy).to.equal(0.6);
+        expect(summary?.profitFactor).to.equal(Infinity);
     });
 
     it("keeps short NO entries at the paid NO price in payout summaries", () => {
@@ -299,6 +301,7 @@ describe("Quick View Polymarket streak summary", () => {
         expect(summary?.breakEvenWinRate).to.equal(0.9);
         expect(summary?.winRate).to.equal(1);
         expect(summary?.expectancy).to.be.closeTo(0.1, 1e-12);
+        expect(summary?.profitFactor).to.equal(Infinity);
         expect(summary?.edgeVsBreakEven).to.be.closeTo(0.1, 1e-12);
     });
 
@@ -570,6 +573,8 @@ describe("Quick View Polymarket streak summary", () => {
 
         expect(html).to.contain("Poly Exp / Trade");
         expect(html).to.contain("+20.0c");
+        expect(html).to.contain("Poly Profit Factor");
+        expect(html).to.contain("2.00");
         expect(html).to.contain("Max Win Streak");
         expect(html).to.contain("Max Loss Streak");
         expect(html).to.contain("Last 50 W/L");

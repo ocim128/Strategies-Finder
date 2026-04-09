@@ -70,6 +70,7 @@ describe("backtest endpoint contract helpers", () => {
             scoredTradeShare: 0.75,
             polymarketWinRate: 2 / 3,
             polymarketExpectancy: 0.2333333333333333,
+            polymarketProfitFactor: 2.1666666666666665,
             pricedTrades: 3,
             unpricedScoredTrades: 0,
             outcomeRowsLoaded: 3,

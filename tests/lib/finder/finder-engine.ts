@@ -1,5 +1,6 @@
 import type { BacktestResult } from "../types/strategies";
 import type { FinderMetric, FinderResult } from "../types/finder";
+import type { PolymarketEvalResult } from "../types/polymarket-outcomes";
 
 function isAscendingMetric(metric: FinderMetric): boolean {
     return metric === "maxDrawdownPercent";
@@ -37,6 +38,56 @@ function computePolymarketExpectancyBalance(expectancy: number, totalTrades: num
     return expectancy * normalizedTrades;
 }
 
+function computeProfitFactor(grossProfit: number, grossLoss: number): number {
+    if (!Number.isFinite(grossProfit) || grossProfit <= 0) {
+        return 0;
+    }
+    if (!Number.isFinite(grossLoss) || grossLoss <= 0) {
+        return Infinity;
+    }
+    return grossProfit / grossLoss;
+}
+
+function normalizeProfitFactorForSort(value: number): number {
+    if (!Number.isFinite(value)) {
+        return value > 0 ? Number.MAX_SAFE_INTEGER : 0;
+    }
+    return Math.max(0, value);
+}
+
+function getPolymarketProfitFactor(evalResult: PolymarketEvalResult): number {
+    if (typeof evalResult.profitFactor === "number") {
+        return normalizeProfitFactorForSort(evalResult.profitFactor);
+    }
+
+    const grossProfit = typeof evalResult.grossProfit === "number" ? Math.max(0, evalResult.grossProfit) : 0;
+    const grossLoss = typeof evalResult.grossLoss === "number" ? Math.max(0, evalResult.grossLoss) : 0;
+    return normalizeProfitFactorForSort(computeProfitFactor(grossProfit, grossLoss));
+}
+
+function computePolymarketProfitFactorBalance(evalResult: PolymarketEvalResult): number {
+    const pricedPredictions = Math.max(
+        0,
+        Number.isFinite(evalResult.pricedPredictions) ? Number(evalResult.pricedPredictions) : 0
+    );
+    if (pricedPredictions === 0) {
+        return 0;
+    }
+
+    const grossProfit = typeof evalResult.grossProfit === "number" ? Math.max(0, evalResult.grossProfit) : 0;
+    const grossLoss = typeof evalResult.grossLoss === "number" ? Math.max(0, evalResult.grossLoss) : 0;
+
+    if (grossProfit > 0 || grossLoss > 0) {
+        // Shrink tiny-sample payout ratios back toward breakeven (PF=1) so
+        // weak edges with huge trade counts do not dominate stronger PF rows.
+        const smoothedProfitFactor = computeProfitFactor(grossProfit + 1, grossLoss + 1);
+        const confidence = pricedPredictions / (pricedPredictions + 50);
+        return Math.max(0, smoothedProfitFactor - 1) * confidence;
+    }
+
+    return 0;
+}
+
 export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): number {
     // Polymarket metrics take priority when available
     if (item.polymarketEval) {
@@ -58,6 +109,10 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
                     item.polymarketEval.expectancy ?? 0,
                     item.selectionResult.totalTrades
                 );
+            case "polyProfitFactor":
+                return getPolymarketProfitFactor(item.polymarketEval);
+            case "polyProfitFactorBalance":
+                return computePolymarketProfitFactorBalance(item.polymarketEval);
         }
     }
     const result = getFinderSelectionResult(item);
@@ -92,6 +147,8 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
         case "polyPredictions":
         case "polyExpectancy":
         case "polyExpectancyBalance":
+        case "polyProfitFactor":
+        case "polyProfitFactorBalance":
             return 0; // No polymarketEval present
         default:
             return 0;

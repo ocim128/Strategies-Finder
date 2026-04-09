@@ -451,6 +451,7 @@ class PolymarketPanelService {
                     ${this.renderStatCard("Break-even Win", this.formatPercent(summary.breakEvenWinRate))}
                     ${this.renderStatCard("Poly Win Rate", this.formatPercent(summary.winRate), summary.edgeVsBreakEven)}
                     ${this.renderStatCard("Poly Exp / Trade", this.formatPolymarketCents(summary.expectancy), summary.expectancy)}
+                    ${this.renderStatCard("Poly Profit Factor", this.formatProfitFactor(summary.profitFactor))}
                     ${this.renderStatCard("Edge Vs Break-even", `${summary.edgeVsBreakEven >= 0 ? "+" : ""}${(summary.edgeVsBreakEven * 100).toFixed(1)}pp`, summary.edgeVsBreakEven)}
                 </div>
             </div>
@@ -1266,6 +1267,13 @@ class PolymarketPanelService {
     private formatPolymarketCents(value: number): string {
         const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
         return `${prefix}${(Math.abs(value) * 100).toFixed(1)}c`;
+    }
+
+    private formatProfitFactor(value: number | null): string {
+        if (value === null || !Number.isFinite(value)) {
+            return value === Infinity ? "∞" : "n/a";
+        }
+        return value.toFixed(2);
     }
 
     private formatSignedUsd(value: number): string {

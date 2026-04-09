@@ -2,7 +2,7 @@ import type { BacktestResult, StrategyParams } from "../types/strategies";
 import type { PolymarketEvalResult } from "../types/polymarket-outcomes";
 
 export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
-export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'volume' | 'expectancy' | 'expectancyTrades';
+export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'volume' | 'expectancy' | 'expectancyTrades' | 'profitFactor' | 'profitFactorTrades';
 export type FinderMetric =
     | 'netProfit'
     | 'profitFactor'
@@ -20,7 +20,9 @@ export type FinderMetric =
     | 'polyCoverage'
     | 'polyPredictions'
     | 'polyExpectancy'
-    | 'polyExpectancyBalance';
+    | 'polyExpectancyBalance'
+    | 'polyProfitFactor'
+    | 'polyProfitFactorBalance';
 
 export interface FinderOptions {
     mode: FinderMode;

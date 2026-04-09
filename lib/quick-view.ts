@@ -36,6 +36,7 @@ type QuickViewPolymarketSummary = {
     coverage: number;
     winRate: number;
     expectancy: number | null;
+    profitFactor: number | null;
     outcomeRowsLoaded: number;
     bestBaselineWinRate: number;
     baselineDelta: number;
@@ -64,6 +65,7 @@ type QuickViewPolymarketPayoutSummary = {
     unpricedScoredTrades: number;
     winRate: number;
     expectancy: number;
+    profitFactor: number | null;
     avgEntryPrice: number;
     breakEvenWinRate: number;
     edgeVsBreakEven: number;
@@ -380,6 +382,7 @@ export function summarizePolymarketPayoutDiagnostics(trades: Trade[]): QuickView
         unpricedScoredTrades: Math.max(0, scoredTrades.length - pricedTrades.length),
         winRate: summaryRow.winRate / 100,
         expectancy: summaryRow.expectancy,
+        profitFactor: summaryRow.profitFactor,
         avgEntryPrice: summaryRow.avgEntryPrice ?? 0,
         breakEvenWinRate: (summaryRow.breakEvenWinRate ?? 0) / 100,
         edgeVsBreakEven: (summaryRow.edgeVsBreakEven ?? 0) / 100,
@@ -1140,6 +1143,7 @@ class QuickViewManager {
             wins, losses, scoredTrades, missingTrades, unscoredTrades, coverage,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
             expectancy: payoutSummary?.expectancy ?? null,
+            profitFactor: payoutSummary?.profitFactor ?? null,
             outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
             bestBaselineWinRate,
             baselineDelta: (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
@@ -1233,6 +1237,10 @@ class QuickViewManager {
                     </div>
                 </div>
                 <div class="qv-stat-card">
+                    <div class="qv-stat-label">Poly Profit Factor</div>
+                    <div class="qv-stat-value">${this.formatProfitFactor(summary.profitFactor)}</div>
+                </div>
+                <div class="qv-stat-card">
                     <div class="qv-stat-label">Scored Trade Share</div>
                     <div class="qv-stat-value">${(summary.coverage * 100).toFixed(1)}%</div>
                 </div>
@@ -1299,6 +1307,13 @@ class QuickViewManager {
     private formatPolymarketCents(value: number): string {
         const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
         return `${prefix}${(Math.abs(value) * 100).toFixed(1)}c`;
+    }
+
+    private formatProfitFactor(value: number | null): string {
+        if (value === null || !Number.isFinite(value)) {
+            return value === Infinity ? '∞' : 'n/a';
+        }
+        return value.toFixed(2);
     }
 
     private formatTradeTime(time: Time): string {

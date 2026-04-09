@@ -86,6 +86,8 @@ function evaluateMultiIntervalPolymarketTrades(options: {
     let pricedPredictions = 0;
     let totalEntryPrice = 0;
     let totalPayout = 0;
+    let grossProfit = 0;
+    let grossLoss = 0;
 
     for (const mt of offsetTrades) {
         const eventKey = mt.superEventStartTs;
@@ -110,7 +112,13 @@ function evaluateMultiIntervalPolymarketTrades(options: {
         if (marketEntryPrice !== null) {
             pricedPredictions++;
             totalEntryPrice += marketEntryPrice;
-            totalPayout += isWin ? (1 - marketEntryPrice) : -marketEntryPrice;
+            const payout = isWin ? (1 - marketEntryPrice) : -marketEntryPrice;
+            totalPayout += payout;
+            if (payout > 0) {
+                grossProfit += payout;
+            } else if (payout < 0) {
+                grossLoss += Math.abs(payout);
+            }
         }
 
         if (includeRows) {
@@ -143,6 +151,9 @@ function evaluateMultiIntervalPolymarketTrades(options: {
         predictionsTaken,
         scoredPredictions,
         pricedPredictions,
+        profitFactor: grossProfit > 0 ? (grossLoss > 0 ? grossProfit / grossLoss : Infinity) : 0,
+        grossProfit,
+        grossLoss,
         wins,
         losses,
         skips,

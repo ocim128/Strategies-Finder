@@ -90,6 +90,7 @@ export interface PolymarketPayoutDiagnosticsSummary {
     unpricedScoredTrades: number;
     winRate: number;
     expectancy: number;
+    profitFactor: number | null;
     avgEntryPrice: number;
     breakEvenWinRate: number;
     edgeVsBreakEven: number;
@@ -104,6 +105,7 @@ export interface BacktestPolymarketPerformanceSummary {
     scoredTradeShare: number;
     polymarketWinRate: number;
     polymarketExpectancy: number | null;
+    polymarketProfitFactor: number | null;
     pricedTrades: number;
     unpricedScoredTrades: number;
     outcomeRowsLoaded: number;
@@ -193,6 +195,7 @@ export function summarizePolymarketPayoutDiagnostics(
         unpricedScoredTrades: Math.max(0, scoredTrades.length - pricedTrades.length),
         winRate: summaryRow.winRate / 100,
         expectancy: summaryRow.expectancy,
+        profitFactor: summaryRow.profitFactor,
         avgEntryPrice: summaryRow.avgEntryPrice ?? 0,
         breakEvenWinRate: (summaryRow.breakEvenWinRate ?? 0) / 100,
         edgeVsBreakEven: (summaryRow.edgeVsBreakEven ?? 0) / 100,
@@ -304,6 +307,7 @@ export function buildBacktestPolymarketPerformanceSummary(
         scoredTradeShare: coverageSummary.scoredTradeShare,
         polymarketWinRate: scoredTrades > 0 ? wins / scoredTrades : 0,
         polymarketExpectancy: payoutSummary?.expectancy ?? null,
+        polymarketProfitFactor: payoutSummary?.profitFactor ?? null,
         pricedTrades: payoutSummary?.pricedTrades ?? 0,
         unpricedScoredTrades: payoutSummary?.unpricedScoredTrades ?? 0,
         outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),

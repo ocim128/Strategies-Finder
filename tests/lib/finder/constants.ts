@@ -31,6 +31,8 @@ export const METRIC_LABELS: Record<FinderMetric, string> = {
 	polyPredictions: 'Poly Scored',
 	polyExpectancy: 'Poly Exp',
 	polyExpectancyBalance: 'Poly Exp+Trades',
+	polyProfitFactor: 'Poly PF',
+	polyProfitFactorBalance: 'Poly PF+Trades',
 };
 
 export const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
@@ -51,6 +53,8 @@ export const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
 	polyPredictions: 'Polymarket Scored Predictions',
 	polyExpectancy: 'Polymarket Expectancy',
 	polyExpectancyBalance: 'Polymarket Expectancy + Trades Balance',
+	polyProfitFactor: 'Polymarket Profit Factor',
+	polyProfitFactorBalance: 'Polymarket Profit Factor + Trades Balance',
 };
 
 export const POLYMARKET_RANK_MODE_LABELS: Record<PolymarketFinderRankMode, string> = {
@@ -59,10 +63,16 @@ export const POLYMARKET_RANK_MODE_LABELS: Record<PolymarketFinderRankMode, strin
 	volume: 'Volume',
 	expectancy: 'Expectancy',
 	expectancyTrades: 'Expectancy + Trades',
+	profitFactor: 'Profit Factor',
+	profitFactorTrades: 'Profit Factor + Trades',
 };
 
 export function getPolymarketSortPriority(mode: PolymarketFinderRankMode = 'balanced'): FinderMetric[] {
 	switch (mode) {
+		case 'profitFactorTrades':
+			return ['polyProfitFactorBalance', 'polyProfitFactor', 'totalTrades', 'polyPredictions', 'polyWinRate'];
+		case 'profitFactor':
+			return ['polyProfitFactor', 'polyPredictions', 'polyWinRate'];
 		case 'expectancyTrades':
 			return ['polyExpectancyBalance', 'polyExpectancy', 'totalTrades', 'polyPredictions', 'polyWinRate'];
 		case 'expectancy':

@@ -85,5 +85,23 @@ describe("Finder manager logic", () => {
             polymarketScoringEnabled: true,
             polymarketRankMode: "expectancyTrades",
         })).to.deep.equal(["polyExpectancyBalance", "polyExpectancy", "totalTrades", "polyPredictions", "polyWinRate"]);
+
+        expect(resolveFinderSortPriority({
+            useAdvancedSort: false,
+            advancedSortValues: [],
+            primarySort: "expectancy",
+            secondarySort: "profitFactor",
+            polymarketScoringEnabled: true,
+            polymarketRankMode: "profitFactor",
+        })).to.deep.equal(["polyProfitFactor", "polyPredictions", "polyWinRate"]);
+
+        expect(resolveFinderSortPriority({
+            useAdvancedSort: false,
+            advancedSortValues: [],
+            primarySort: "expectancy",
+            secondarySort: "profitFactor",
+            polymarketScoringEnabled: true,
+            polymarketRankMode: "profitFactorTrades",
+        })).to.deep.equal(["polyProfitFactorBalance", "polyProfitFactor", "totalTrades", "polyPredictions", "polyWinRate"]);
     });
 });

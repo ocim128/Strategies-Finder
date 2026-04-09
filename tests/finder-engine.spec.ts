@@ -9,7 +9,8 @@ function makePolymarketResult(
     wins: number,
     scoredPredictions: number,
     expectancy: number,
-    predictionsTaken: number
+    predictionsTaken: number,
+    evalOverrides: Partial<NonNullable<FinderResult["polymarketEval"]>> = {}
 ): FinderResult {
     return {
         key,
@@ -78,6 +79,7 @@ function makePolymarketResult(
             missingOutcomeRows: 0,
             ignoredSignals: 0,
             rows: [],
+            ...evalOverrides,
         },
     };
 }
@@ -105,6 +107,48 @@ describe("Finder Polymarket sorting", () => {
             "stronger",
             "first",
             "second",
+        ]);
+    });
+
+    it("uses profit-factor balance to reward broader priced-trade coverage", () => {
+        const sortPriority: FinderMetric[] = ["polyProfitFactorBalance", "polyProfitFactor", "polyPredictions"];
+        const sparse = makePolymarketResult("sparse", 1, 1, 0.9, 1, {
+            profitFactor: Infinity,
+            grossProfit: 0.9,
+            grossLoss: 0,
+        });
+        const steadier = makePolymarketResult("steadier", 2, 3, 0.26666666666666666, 3, {
+            profitFactor: 2,
+            grossProfit: 1.6,
+            grossLoss: 0.8,
+        });
+
+        expect(compareFinderResults(steadier, sparse, sortPriority)).to.be.lessThan(0);
+        expect(sortFinderResults([sparse, steadier], sortPriority).map((result) => result.key)).to.deep.equal([
+            "steadier",
+            "sparse",
+        ]);
+    });
+
+    it("does not let near-breakeven PF dominate purely on huge trade counts", () => {
+        const sortPriority: FinderMetric[] = ["polyProfitFactorBalance", "polyProfitFactor", "totalTrades", "polyPredictions"];
+        const lowEdgeLargeSample = makePolymarketResult("low_edge_large_sample", 2094, 4126, 0.008, 4686, {
+            profitFactor: 1.03,
+            grossProfit: 2094,
+            grossLoss: 2032,
+            pricedPredictions: 4126,
+        });
+        const strongerPfModerateSample = makePolymarketResult("stronger_pf_moderate_sample", 180, 300, 0.12, 340, {
+            profitFactor: 1.35,
+            grossProfit: 270,
+            grossLoss: 200,
+            pricedPredictions: 300,
+        });
+
+        expect(compareFinderResults(strongerPfModerateSample, lowEdgeLargeSample, sortPriority)).to.be.lessThan(0);
+        expect(sortFinderResults([lowEdgeLargeSample, strongerPfModerateSample], sortPriority).map((result) => result.key)).to.deep.equal([
+            "stronger_pf_moderate_sample",
+            "low_edge_large_sample",
         ]);
     });
 });

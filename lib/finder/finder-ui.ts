@@ -129,6 +129,7 @@ export class FinderUI {
                 if (typeof poly.expectancy === "number" && Number.isFinite(poly.expectancy)) {
                     metrics.appendChild(this.createMetricChip(`Poly Exp ${this.formatPolymarketCents(poly.expectancy)}`));
                 }
+                metrics.appendChild(this.createMetricChip(`Poly PF ${this.formatOptionalProfitFactor(poly.profitFactor)}`));
                 metrics.appendChild(this.createMetricChip(`Coverage ${(poly.coverage * 100).toFixed(1)}%`));
                 metrics.appendChild(this.createMetricChip(`Wins ${poly.wins}`));
                 metrics.appendChild(this.createMetricChip(`Scored ${poly.scoredPredictions}`));
@@ -246,6 +247,13 @@ export class FinderUI {
     }
 
     private formatProfitFactor(value: number): string {
+        return value === Infinity ? "Inf" : value.toFixed(2);
+    }
+
+    private formatOptionalProfitFactor(value: number | undefined): string {
+        if (value === undefined || value === null || Number.isNaN(value)) {
+            return "n/a";
+        }
         return value === Infinity ? "Inf" : value.toFixed(2);
     }
 
