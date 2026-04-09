@@ -176,6 +176,9 @@ class SettingsManager {
     }
 
     public saveSettingsDebounced(): void {
+        if (!this.autoSaveEnabled) {
+            return;
+        }
         if (this.saveDebounceTimeout !== null) {
             clearTimeout(this.saveDebounceTimeout);
         }
@@ -183,6 +186,16 @@ class SettingsManager {
             this.saveSettings();
             this.saveDebounceTimeout = null;
         }, 500);
+    }
+
+    public async runWithoutAutoSave<T>(work: () => Promise<T> | T): Promise<T> {
+        const previous = this.autoSaveEnabled;
+        this.autoSaveEnabled = false;
+        try {
+            return await work();
+        } finally {
+            this.autoSaveEnabled = previous;
+        }
     }
 
     public loadSettings(): AppSettings | null {

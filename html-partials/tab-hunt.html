@@ -1,0 +1,185 @@
+<div id="huntTab" class="hunt-tab">
+    <div class="section-title">Strategy Hunt</div>
+
+    <div class="section-header">
+        <div class="section-title">Profiles</div>
+        <div class="finder-strategy-summary">Reusable evaluation environments</div>
+    </div>
+    <div class="section-body hunt-profile-actions">
+        <button class="btn btn-secondary btn-compact" id="huntCaptureCurrentUiBtn" type="button">Capture Current UI</button>
+        <button class="btn btn-secondary btn-compact" id="huntCreateFromSavedConfigBtn" type="button">Create From Saved Config + Current Chart</button>
+        <button class="btn btn-secondary btn-compact" id="huntImportJsonBtn" type="button">Import JSON</button>
+        <button class="btn btn-secondary btn-compact" id="huntImportFileBtn" type="button">Load File</button>
+        <button class="btn btn-secondary btn-compact" id="huntExportProfilesBtn" type="button">Export Profiles</button>
+        <input id="huntImportFileInput" type="file" accept=".json,application/json" hidden>
+    </div>
+    <div class="param-row">
+        <div class="param-group">
+            <label class="param-label" for="huntSavedConfigSelect">Saved Config</label>
+            <select class="param-input" id="huntSavedConfigSelect">
+                <option value="">-- Select configuration --</option>
+            </select>
+        </div>
+    </div>
+    <div class="section-body">
+        <div class="param-group">
+            <label class="param-label" for="huntImportJsonInput">Paste Hunt export or endpoint snapshot JSON</label>
+            <textarea class="param-input hunt-import-input" id="huntImportJsonInput"
+                placeholder='{"symbol":"BTCUSDT","interval":"5m",...}' rows="4"></textarea>
+        </div>
+        <div class="param-hint" id="huntImportStatus">Import current UI endpoint snapshots or Hunt export payloads here.</div>
+    </div>
+    <div class="hunt-profile-list" id="huntProfileList"></div>
+    <div class="empty-state empty-state-compact" id="huntProfileEmpty">
+        <div class="empty-state-icon">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-2 .89-2 2v13c0 1.11.89 2 2 2h14c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 15H5V10h14v9zm0-11H5V6h14v2z" />
+            </svg>
+        </div>
+        <div class="empty-state-title">No Hunt Profiles Yet</div>
+        <div class="empty-state-description">Capture the current chart and settings, or import endpoint-style JSON, to start building reusable Hunt environments.</div>
+    </div>
+
+    <div class="section-header">
+        <div class="section-title">Strategies</div>
+        <label class="section-toggle" aria-label="Toggle all Hunt strategies">
+            <input type="checkbox" id="huntStrategiesToggleAll">
+            <span class="section-toggle-track"></span>
+        </label>
+    </div>
+    <div class="section-body finder-strategy-toolbar">
+        <div class="param-group">
+            <label class="param-label" for="huntStrategySearch">Search</label>
+            <input type="text" class="param-input" id="huntStrategySearch" placeholder="Filter strategies by name">
+        </div>
+        <div class="finder-strategy-actions" role="group" aria-label="Bulk Hunt strategy selection actions">
+            <button class="btn btn-secondary btn-compact" id="huntStrategySelectAll" type="button">All</button>
+            <button class="btn btn-secondary btn-compact" id="huntStrategySelectNone" type="button">None</button>
+            <button class="btn btn-secondary btn-compact" id="huntStrategyInvertVisible" type="button">Invert</button>
+            <button class="btn btn-secondary btn-compact" id="huntStrategySelectVisible" type="button">Visible</button>
+        </div>
+        <div class="finder-strategy-summary" id="huntStrategySummary">0 selected</div>
+    </div>
+    <div class="section-body strategy-list-container" id="huntStrategyList"></div>
+
+    <div class="section-header">
+        <div class="section-title">Hunt Settings</div>
+        <div class="hunt-settings-actions">
+            <label class="param-label hunt-inline-toggle" for="huntPolymarketToggle">
+                <input type="checkbox" id="huntPolymarketToggle">
+                <span>Polymarket Scoring</span>
+            </label>
+            <label class="param-label hunt-inline-toggle" for="huntRunSelectedProfileOnly">
+                <input type="checkbox" id="huntRunSelectedProfileOnly">
+                <span>Run Selected Profile Only</span>
+            </label>
+            <label class="section-toggle" aria-label="Toggle advanced Hunt settings">
+                <input type="checkbox" id="huntAdvancedToggle">
+                <span class="section-toggle-track"></span>
+            </label>
+        </div>
+    </div>
+    <div class="section-body hunt-settings-fixed">
+        <div class="param-hint">Hunt v1 is fixed to random search, 120 runs per strategy, 555% range, top 50 kept per profile, and top 20 visible survivors.</div>
+    </div>
+    <div class="section-body hunt-advanced-settings" id="huntAdvancedSettings" style="display:none;">
+        <div class="param-row" id="huntPolymarketSettings">
+            <div class="param-group">
+                <label class="param-label" for="huntPolymarketRankMode">Polymarket Rank Mode</label>
+                <select class="param-input" id="huntPolymarketRankMode">
+                    <option value="balanced" selected>Balanced</option>
+                    <option value="accuracy">Accuracy</option>
+                    <option value="expectancy">Expectancy</option>
+                    <option value="expectancyTrades">Expectancy + Trades</option>
+                    <option value="profitFactor">Profit Factor</option>
+                    <option value="profitFactorTrades">Profit Factor + Trades</option>
+                    <option value="volume">Volume</option>
+                </select>
+            </div>
+            <div class="param-group">
+                <label class="param-label" for="huntPolymarketMinScored">Min Scored</label>
+                <input type="number" class="param-input" id="huntPolymarketMinScored" value="0" min="0" step="1">
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label" for="huntPolymarketLockOffset">Lock Offset in Random 1m</label>
+                <input type="checkbox" id="huntPolymarketLockOffset">
+            </div>
+            <div class="param-group">
+                <label class="param-label" for="huntPolymarketAfterTakeProfitOnly">After TP Only</label>
+                <input type="checkbox" id="huntPolymarketAfterTakeProfitOnly">
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label" for="huntFreezeRiskManagementToggle">Freeze Risk Management</label>
+                <input type="checkbox" id="huntFreezeRiskManagementToggle">
+            </div>
+            <div class="param-group">
+                <label class="param-label" for="huntTradesToggle">Trade Count Filter</label>
+                <input type="checkbox" id="huntTradesToggle" checked>
+            </div>
+        </div>
+        <div class="param-row" id="huntTradeFilters">
+            <div class="param-group">
+                <label class="param-label" for="huntTradesMin">Min Trades</label>
+                <input type="number" class="param-input" id="huntTradesMin" value="40" min="0">
+            </div>
+            <div class="param-group">
+                <label class="param-label" for="huntTradesMax">Max Trades</label>
+                <input type="number" class="param-input" id="huntTradesMax" placeholder="No max" min="0">
+            </div>
+        </div>
+    </div>
+
+    <div class="section-header">
+        <div class="section-title">Progress</div>
+        <div class="hunt-settings-actions">
+            <button class="btn btn-primary run-btn" id="huntRunBtn" type="button">Run Hunt</button>
+            <button class="btn btn-danger stop-btn" id="huntCancelBtn" type="button" style="display:none;">Cancel</button>
+        </div>
+    </div>
+    <div class="progress-container" id="huntProgress">
+        <div class="progress-bar">
+            <div class="progress-fill" id="huntProgressFill"></div>
+        </div>
+        <div class="progress-text" id="huntProgressText">Ready</div>
+    </div>
+    <div class="hunt-progress-grid">
+        <div class="hunt-progress-card">
+            <span class="hunt-progress-label">Current Profile</span>
+            <span id="huntCurrentProfileLabel">Idle</span>
+        </div>
+        <div class="hunt-progress-card">
+            <span class="hunt-progress-label">Strategy Progress</span>
+            <span id="huntCurrentStrategyLabel">0 / 0</span>
+        </div>
+        <div class="hunt-progress-card">
+            <span class="hunt-progress-label">Profile Progress</span>
+            <span id="huntProgressCounts">0 / 0</span>
+        </div>
+    </div>
+    <div class="finder-status" id="huntStatus">Idle</div>
+
+    <div class="section-header">
+        <div class="section-title">Results</div>
+        <div class="hunt-settings-actions">
+            <button class="btn btn-secondary btn-compact" id="huntViewSurvivors" type="button">Survivors</button>
+            <button class="btn btn-secondary btn-compact" id="huntViewPerProfile" type="button">Per Profile</button>
+        </div>
+    </div>
+    <div class="finder-strategy-summary" id="huntResultsSummary">No Hunt results yet.</div>
+    <div class="hunt-messages" id="huntMessages"></div>
+    <div class="empty-state empty-state-compact" id="huntResultsEmpty">
+        <div class="empty-state-icon">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M14 2H6c-1.1 0-2 .9-2 2v16l4-4h10c1.1 0 2-.9 2-2V8l-6-6zm1 7V3.5L18.5 9H15z" />
+            </svg>
+        </div>
+        <div class="empty-state-title">No Hunt Results Yet</div>
+        <div class="empty-state-description">Run Hunt across one or more profiles to group survivor candidates by normalized strategy parameters.</div>
+    </div>
+    <div class="finder-list hunt-results-list" id="huntSurvivorList"></div>
+    <div class="finder-list hunt-results-list" id="huntPerProfileList" style="display:none;"></div>
+</div>

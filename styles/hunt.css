@@ -1,0 +1,211 @@
+.hunt-tab {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.hunt-profile-actions,
+.hunt-settings-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: center;
+}
+
+.hunt-import-input {
+    min-height: 96px;
+    resize: vertical;
+    font-family: var(--font-family-mono);
+}
+
+.hunt-profile-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.hunt-profile-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-3);
+    align-items: center;
+    padding: var(--space-3);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-l);
+    background: hsl(var(--hsl-surface-3) / 0.42);
+    transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.hunt-profile-row:hover {
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-sm);
+}
+
+.hunt-profile-row.is-selected {
+    border-color: hsl(var(--hsl-accent) / 0.45);
+    box-shadow: var(--focus-ring-soft);
+}
+
+.hunt-profile-main {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-3);
+    align-items: start;
+    min-width: 0;
+}
+
+.hunt-profile-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100%;
+    padding-top: 2px;
+}
+
+.hunt-profile-toggle input {
+    margin: 0;
+}
+
+.hunt-profile-copy {
+    min-width: 0;
+}
+
+.hunt-profile-name {
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+}
+
+.hunt-profile-meta {
+    margin-top: var(--space-1);
+    font-size: var(--font-size-xs);
+    text-transform: capitalize;
+    letter-spacing: var(--tracking-medium);
+    color: var(--text-tertiary);
+}
+
+.hunt-profile-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1-5);
+    margin-top: var(--space-2);
+}
+
+.hunt-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    border: 1px solid hsl(var(--hsl-accent) / 0.2);
+    background: hsl(var(--hsl-accent) / 0.1);
+    color: var(--text-secondary);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+}
+
+.hunt-profile-actions-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-2);
+}
+
+.hunt-inline-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    cursor: pointer;
+}
+
+.hunt-inline-toggle input {
+    margin: 0;
+}
+
+.hunt-settings-fixed {
+    margin-top: calc(var(--space-2) * -1);
+}
+
+.hunt-advanced-settings {
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-l);
+    background: hsl(var(--hsl-surface-2) / 0.35);
+}
+
+.hunt-progress-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+.hunt-progress-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-3);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--glass-border);
+    background: hsl(var(--hsl-surface-3) / 0.4);
+    min-width: 0;
+}
+
+.hunt-progress-label {
+    color: var(--text-tertiary);
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+}
+
+.hunt-progress-card span:last-child {
+    color: var(--text-primary);
+    font-family: var(--font-family-mono);
+    overflow-wrap: anywhere;
+}
+
+.hunt-messages {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+.hunt-message {
+    padding: var(--space-2-5) var(--space-3);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--glass-border);
+    font-size: var(--font-size-sm);
+}
+
+.hunt-message--info {
+    background: hsl(var(--hsl-accent) / 0.1);
+    border-color: hsl(var(--hsl-accent) / 0.28);
+}
+
+.hunt-message--warning {
+    background: hsl(var(--hsl-warning) / 0.1);
+    border-color: hsl(var(--hsl-warning) / 0.28);
+}
+
+.hunt-message--error {
+    background: hsl(var(--hsl-danger) / 0.1);
+    border-color: hsl(var(--hsl-danger) / 0.28);
+}
+
+.hunt-results-list {
+    margin-top: var(--space-3);
+}
+
+@media (max-width: 900px) {
+    .hunt-profile-row {
+        grid-template-columns: 1fr;
+    }
+
+    .hunt-profile-actions-row {
+        justify-content: flex-start;
+    }
+
+    .hunt-progress-grid {
+        grid-template-columns: 1fr;
+    }
+}

@@ -6,7 +6,7 @@ It combines:
 - a browser UI assembled from HTML partials at runtime
 - a TypeScript backtest engine with optional Rust acceleration
 - a multi-source data pipeline with local caching
-- research tools such as Finder, Walk Forward, Monte Carlo, Scanner, Replay, Pair Combiner, Portfolio Lab, and Strategy Ensemble Lab
+- research tools such as Finder, Hunt, Walk Forward, Monte Carlo, Scanner, Replay, Pair Combiner, Portfolio Lab, and Strategy Ensemble Lab
 - optional Cloudflare Worker alerting and subscription execution
 
 ## What You Can Do Here
@@ -15,6 +15,7 @@ It combines:
 - Switch between fixed, percent, Kelly, volatility-targeted, risk-parity, martingale, and Optimal f sizing models from the settings panel
 - Compare strategies, inspect trades, and review backtest result diagnostics
 - Search parameter spaces with Finder, including random and genetic modes
+- Batch Finder runs across reusable Hunt profiles and compare survivor candidates across symbols, intervals, and execution settings
 - Validate robustness with walk-forward analysis and latest-OOS checks
 - Stress trade-path robustness with Monte Carlo sequence randomization and bootstrap resampling
 - Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics such as timing buckets, break-even win rate, and expectancy without leaving the chart
@@ -40,7 +41,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 1. Pick a symbol and timeframe.
 2. Select a strategy from the dropdown.
 3. Click `Run Backtest`.
-4. Open `Trades`, `Results`, `Finder`, and `Walk Forward` to verify the feature panels loaded.
+4. Open `Trades`, `Results`, `Finder`, `Hunt`, and `Walk Forward` to verify the feature panels loaded.
 5. Open `Monte Carlo` after a backtest to inspect drawdown tails and ruin probability under reshuffled paths.
 
 ## Architecture Map
@@ -80,6 +81,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 
 ### Research tools
 - Finder: `lib/finder-manager.ts`, `lib/finder/*`
+- Hunt: `lib/hunt/*`
 - Walk Forward: `lib/walk-forward-service.ts`
 - Monte Carlo: `lib/monte-carlo-service.ts`, `lib/strategies/monte-carlo/*`
 - Portfolio Lab: `lib/portfolio-lab-service.ts`
@@ -120,12 +122,14 @@ flowchart LR
     J --> G
 
     F --> M[Finder]
-    F --> N[Walk Forward]
-    F --> O[Portfolio Lab]
+    F --> N[Hunt]
+    F --> O[Walk Forward]
+    F --> P[Portfolio Lab]
 
     M --> J
     N --> J
     O --> J
+    P --> J
 ```
 
 ## How It Boots

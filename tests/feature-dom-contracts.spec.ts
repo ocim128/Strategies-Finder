@@ -12,6 +12,7 @@ import { POLYMARKET_PANEL_REQUIRED_IDS } from "./lib/polymarket-panel-dom";
 import { PORTFOLIO_LAB_REQUIRED_IDS } from "./lib/portfolio-lab-dom";
 import { LIVE_POSITIONS_REQUIRED_IDS } from "./lib/live-positions-dom";
 import { FINDER_MANAGER_REQUIRED_IDS } from "./lib/finder/finder-manager-dom";
+import { HUNT_REQUIRED_IDS } from "../lib/hunt/hunt-dom";
 import { PAIR_COMBINER_BRIDGE_REQUIRED_IDS } from "./lib/pairCombiner/pair-combiner-bridge-dom";
 import { WALK_FORWARD_SERVICE_REQUIRED_IDS } from "./lib/walk-forward-dom";
 import { ENSEMBLE_LAB_REQUIRED_IDS } from "./lib/strategy-ensemble-dom";
@@ -56,6 +57,7 @@ describe("Feature DOM contracts", () => {
         polymarketPanel: [...POLYMARKET_PANEL_REQUIRED_IDS],
         ensembleLab: [...ENSEMBLE_LAB_REQUIRED_IDS],
         finderManager: [...FINDER_MANAGER_REQUIRED_IDS],
+        hunt: [...HUNT_REQUIRED_IDS],
         pairCombinerBridge: [...PAIR_COMBINER_BRIDGE_REQUIRED_IDS],
         walkForwardService: [...WALK_FORWARD_SERVICE_REQUIRED_IDS],
         monteCarlo: [...MONTE_CARLO_REQUIRED_IDS],

@@ -57,6 +57,12 @@ export interface FinderRunCallbacks {
     yieldControl: () => Promise<void>;
     isCancelled: () => boolean;
     onResultsUpdate: (results: FinderResult[]) => void;
+    onStrategyPlanStart?: (info: {
+        index: number;
+        total: number;
+        key: string;
+        name: string;
+    }) => void;
 }
 
 export interface FinderRunOutput {
@@ -116,6 +122,15 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
                 planIndex++;
                 paramIndex = 0;
                 continue;
+            }
+
+            if (paramIndex === 0) {
+                callbacks.onStrategyPlanStart?.({
+                    index: planIndex + 1,
+                    total: strategyPlans.length,
+                    key: plan.key,
+                    name: plan.name,
+                });
             }
 
             const params = plan.paramSets[paramIndex++];

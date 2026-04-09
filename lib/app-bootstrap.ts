@@ -36,6 +36,7 @@ import { strategyPanelController } from "./strategy-panel-controller";
 import { getOptionalElement } from "./dom-utils";
 import { polymarketPanelService } from "./polymarket-panel-service";
 import { initMonteCarloService } from "./monte-carlo-service";
+import { huntService } from "./hunt/hunt-service";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
 import {
     runBootstrapFeatureStage,
@@ -168,6 +169,12 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         stage: "pre_restore",
         dependsOn: ["ui-events"],
         init: () => finderManager.init(),
+    },
+    {
+        id: "hunt",
+        stage: "pre_restore",
+        dependsOn: ["finder"],
+        init: () => huntService.init(),
     },
     {
         id: "data-mining",
