@@ -33,7 +33,7 @@ export const pivot_midpoint_anchor_fade: Strategy = {
 		return createSignalLoop(cleanData, [], (i) => {
 			let lastPivHigh = -1;
 			let lastPivLow = -1;
-			for (let j = i; j >= 0; j--) {
+			for (let j = i - swingLen; j >= 0; j--) {
 				if (lastPivHigh < 0 && pivotHighs[j]) lastPivHigh = j;
 				if (lastPivLow < 0 && pivotLows[j]) lastPivLow = j;
 				if (lastPivHigh >= 0 && lastPivLow >= 0) break;
