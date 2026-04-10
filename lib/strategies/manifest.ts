@@ -30,16 +30,16 @@ import { volatility_percentile_reversal } from "./lib/volatility_percentile_reve
 import { efficiency_phi_micro_streak } from "./lib/efficiency_phi_micro_streak";
 import { body_proportion_phi_implosion } from "./lib/body_proportion_phi_implosion";
 import { volume_thrust_phi_correlation } from "./lib/volume_thrust_phi_correlation";
-import { apathy_streak_reversal } from "./lib/apathy_streak_reversal";
-import { boredom_sweep_fade } from "./lib/boredom_sweep_fade";
-import { fomo_choke_fade } from "./lib/fomo_choke_fade";
-import { initiative_capitulation_trap } from "./lib/initiative_capitulation_trap";
-import { micro_gap_rejection } from "./lib/micro_gap_rejection";
 import { midpoint_gravity_fade } from "./lib/midpoint_gravity_fade";
-import { return_skewness_capitulation } from "./lib/return_skewness_capitulation";
-import { roc_whipsaw_trap } from "./lib/roc_whipsaw_trap";
-import { toxic_flow_decoupling } from "./lib/toxic_flow_decoupling";
 import { volume_exhaustion_decay } from "./lib/volume_exhaustion_decay";
+import { limit_wall_liquidity_vacuum } from "./lib/limit_wall_liquidity_vacuum";
+import { autocorrelation_momentum_divergence } from "./lib/autocorrelation_momentum_divergence";
+import { velocity_reversal_shock } from "./lib/velocity_reversal_shock";
+import { true_range_skewness_initiation } from "./lib/true_range_skewness_initiation";
+import { body_proportion_entropy_ignition } from "./lib/body_proportion_entropy_ignition";
+import { return_skewness_exhaustion_fade } from "./lib/return_skewness_exhaustion_fade";
+import { volume_weighted_entropy_ignition } from "./lib/volume_weighted_entropy_ignition";
+import { poc_liquidity_rejection_fade } from "./lib/poc_liquidity_rejection_fade";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -75,16 +75,16 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "efficiency_phi_micro_streak", strategy: efficiency_phi_micro_streak },
     { key: "body_proportion_phi_implosion", strategy: body_proportion_phi_implosion },
     { key: "volume_thrust_phi_correlation", strategy: volume_thrust_phi_correlation },
-    { key: "apathy_streak_reversal", strategy: apathy_streak_reversal },
-    { key: "boredom_sweep_fade", strategy: boredom_sweep_fade },
-    { key: "fomo_choke_fade", strategy: fomo_choke_fade },
-    { key: "initiative_capitulation_trap", strategy: initiative_capitulation_trap },
-    { key: "micro_gap_rejection", strategy: micro_gap_rejection },
     { key: "midpoint_gravity_fade", strategy: midpoint_gravity_fade },
-    { key: "return_skewness_capitulation", strategy: return_skewness_capitulation },
-    { key: "roc_whipsaw_trap", strategy: roc_whipsaw_trap },
-    { key: "toxic_flow_decoupling", strategy: toxic_flow_decoupling },
     { key: "volume_exhaustion_decay", strategy: volume_exhaustion_decay },
+    { key: "limit_wall_liquidity_vacuum", strategy: limit_wall_liquidity_vacuum },
+    { key: "autocorrelation_momentum_divergence", strategy: autocorrelation_momentum_divergence },
+    { key: "velocity_reversal_shock", strategy: velocity_reversal_shock },
+    { key: "true_range_skewness_initiation", strategy: true_range_skewness_initiation },
+    { key: "body_proportion_entropy_ignition", strategy: body_proportion_entropy_ignition },
+    { key: "return_skewness_exhaustion_fade", strategy: return_skewness_exhaustion_fade },
+    { key: "volume_weighted_entropy_ignition", strategy: volume_weighted_entropy_ignition },
+    { key: "poc_liquidity_rejection_fade", strategy: poc_liquidity_rejection_fade },
 ];
 
 export function createStrategiesRecordFromManifest(
