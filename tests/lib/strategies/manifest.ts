@@ -40,6 +40,7 @@ import { body_proportion_entropy_ignition } from "./lib/body_proportion_entropy_
 import { return_skewness_exhaustion_fade } from "./lib/return_skewness_exhaustion_fade";
 import { volume_weighted_entropy_ignition } from "./lib/volume_weighted_entropy_ignition";
 import { poc_liquidity_rejection_fade } from "./lib/poc_liquidity_rejection_fade";
+import { initiative_crossing_frequency_chop } from "./lib/initiative_crossing_frequency_chop";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -85,6 +86,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "return_skewness_exhaustion_fade", strategy: return_skewness_exhaustion_fade },
     { key: "volume_weighted_entropy_ignition", strategy: volume_weighted_entropy_ignition },
     { key: "poc_liquidity_rejection_fade", strategy: poc_liquidity_rejection_fade },
+    { key: "initiative_crossing_frequency_chop", strategy: initiative_crossing_frequency_chop },
 ];
 
 export function createStrategiesRecordFromManifest(

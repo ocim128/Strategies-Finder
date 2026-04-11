@@ -66,8 +66,13 @@ export const poly_5m_pivot_breakout_entry: Strategy = {
 		let lastPivotLow: number | null = null;
 
 		for (let i = 0; i < cleanData.length; i++) {
-			if (pivotHighs[i] !== null) lastPivotHigh = pivotHighs[i];
-			if (pivotLows[i] !== null) lastPivotLow = pivotLows[i];
+			const confirmedIdx = i - halfLookback;
+			if (confirmedIdx >= 0 && pivotHighs[confirmedIdx] !== null) {
+				lastPivotHigh = pivotHighs[confirmedIdx];
+			}
+			if (confirmedIdx >= 0 && pivotLows[confirmedIdx] !== null) {
+				lastPivotLow = pivotLows[confirmedIdx];
+			}
 			recentPivotHigh[i] = lastPivotHigh;
 			recentPivotLow[i] = lastPivotLow;
 		}
