@@ -2,7 +2,7 @@
 
 This guide is for turning a strategy idea into a valid built-in strategy under `lib/strategies/lib/*`.
 
-If the idea came from `archive/prompt.txt`, treat that prompt as idea-generation input only. It does not guarantee a compilable implementation. Before writing code, confirm every helper, indicator, and type assumption against the real codebase.
+If the idea came from `archive/prompt.txt` or `archive/prompt-cs.txt`, treat those prompts as idea-generation input only. They do not guarantee a compilable implementation. Before writing code, confirm every helper, indicator, and type assumption against the real codebase.
 
 For repo-level orientation, read [`README.md`](../README.md) first. For the operational checklist, use [`AGENTS.md`](../AGENTS.md). For the higher-level authoring workflow, use [`strategy-authoring.md`](./strategy-authoring.md).
 
@@ -295,6 +295,30 @@ Then add focused validation as needed:
 
 A strategy may use a secondary symbol as causal context (e.g. relative strength, pair spread, rolling correlation). The runtime provides aligned secondary data — strategies never fetch or align data themselves.
 
+### Prompt workflow
+
+Use `archive/prompt-cs.txt` when you want AI-generated cross-symbol ideas.
+
+The current prompt contract assumes:
+
+- every generated idea is truly cross-symbol, not a single-symbol idea with an optional confirmation input
+- every generated idea names a `default_secondary_symbol`
+- every generated idea uses at least one helper from `lib/strategies/lib/cross-symbol-helpers.ts`
+- the first listed helper is the dominant cross-symbol helper, not a decorative extra
+
+Translate prompt output into code like this:
+
+- `default_secondary_symbol` -> `crossSymbolConfig.defaultSymbol`
+- the cross-symbol helper listed in the idea -> import from `lib/strategies/lib/cross-symbol-helpers.ts`
+- `secondary_role` and `core_thesis` -> strategy description and implementation comments if needed
+
+Reject the generated idea before coding if:
+
+- the thesis still works after removing the secondary series
+- the cross-symbol helper is only confirmatory and not central
+- it collapses into raw ratio-z-score or spread-z-score mean reversion without a distinct state transition
+- it references helpers or indicators that do not actually exist in the repo
+
 ### Declaring the dependency
 
 Add `crossSymbolConfig` to the strategy object:
@@ -328,6 +352,8 @@ execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecution
 };
 ```
 
+The same `context` must be threaded through `prepareFinderData(...)` and `executePrepared(...)` if the strategy uses those seams. Do not keep parity in `execute(...)` only.
+
 ### Available helpers
 
 Import from `lib/strategies/lib/cross-symbol-helpers.ts`:
@@ -343,4 +369,6 @@ Import from `lib/strategies/lib/cross-symbol-helpers.ts`:
 2. `secondaryData` is already aligned via causal LOCF and trimmed — no nulls.
 3. v1 cross-symbol strategies cannot use strategy-timeframe resampling.
 4. The `prepareFinderData(...)` and `executePrepared(...)` methods receive the same context as `execute(...)`.
-5. Walk-Forward Analysis is not yet supported for cross-symbol strategies (guarded with a clear message).
+5. Walk-Forward Analysis is supported, but it runs through the TypeScript cross-symbol path rather than a Rust-native cross-symbol engine.
+6. If you need the current support matrix, endpoint parity rules, or maintenance gotchas, see [`docs/cross-symbol.md`](./cross-symbol.md).
+7. If a wrapper, decorator, or registry path calls `strategy.execute(...)`, it must preserve the third `context` argument or the strategy may silently produce zero signals.

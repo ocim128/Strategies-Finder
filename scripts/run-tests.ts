@@ -97,6 +97,7 @@ const TEST_FILES = [
     "tests/backtest-endpoint-plugin.spec.ts",
     "tests/cross-symbol-helpers.spec.ts",
     "tests/cross-symbol-runtime.spec.ts",
+    "tests/strategy-registry-cross-symbol.spec.ts",
 ] as const;
 
 const MAX_CAPTURE_BUFFER_BYTES = 64 * 1024 * 1024;

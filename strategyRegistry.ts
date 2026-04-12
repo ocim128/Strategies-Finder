@@ -10,7 +10,14 @@
  * - Type-safe strategy management
  */
 
-import type { Strategy, OHLCVData, Signal, StrategyParams, Time } from "./lib/strategies/index";
+import type {
+    Strategy,
+    OHLCVData,
+    Signal,
+    StrategyParams,
+    StrategyExecutionContext,
+    Time,
+} from "./lib/strategies/index";
 import type { StrategyManifestEntry } from "./lib/strategies/manifest";
 import { state } from "./lib/state";
 import {
@@ -167,15 +174,26 @@ class StrategyRegistryImpl implements StrategyRegistry {
         const originalExecute = strategy.execute.bind(strategy);
         const wrapped: Strategy = {
             ...strategy,
-            execute: (data: OHLCVData[], params: StrategyParams): Signal[] => {
+            execute: (
+                data: OHLCVData[],
+                params: StrategyParams,
+                context?: StrategyExecutionContext
+            ): Signal[] => {
                 const { enabled, minutes } = this.readGlobalStrategyTfSettings();
                 if (!enabled || data.length === 0) {
-                    return originalExecute(data, params);
+                    return originalExecute(data, params, context);
+                }
+
+                if (context?.crossSymbol) {
+                    throw new Error(
+                        'Cross-symbol strategies cannot be used with strategy timeframe resampling. ' +
+                        'Disable "Strategy Timeframe" before running this strategy.'
+                    );
                 }
 
                 const numericData = this.toNumericTimeData(data);
                 if (!numericData) {
-                    return originalExecute(data, params);
+                    return originalExecute(data, params, context);
                 }
 
                 const interval = `${minutes}m`;
@@ -185,7 +203,7 @@ class StrategyRegistryImpl implements StrategyRegistry {
                     return [];
                 }
 
-                const higherSignals = originalExecute(higherData, params);
+                const higherSignals = originalExecute(higherData, params, context);
                 return this.mapSignalsFromHigherTimeframe(data, numericData, higherData, higherSignals, minutes, resampleOptions);
             }
         };
