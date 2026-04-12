@@ -116,6 +116,7 @@ See `README.md` under `Architecture Map` for the canonical subsystem and file ma
 - If persisted JSON shape changes, add a migration in the relevant `readPersistedJson(...)` callsite instead of silently breaking old payloads
 - Check any resolver/sanitizer path that mirrors those settings
 - If you change the Polymarket bridge `external_signal` payload or `polymarketEntryOffset` contract, keep `scripts/export-latest-entry-signal.ts` and `scripts/export-latest-ensemble-entry-signal.ts` aligned
+- If you change `polymarketExitMode`, keep `docs/polymarket.md`, endpoint fences, Strategy Ensemble fences, and Finder/Hunt apply-result behavior aligned
 
 ### Any worker-facing change
 - Check `lib/alert-service.ts`
@@ -199,6 +200,27 @@ Strategy-lib failure modes seen repeatedly:
 - Avoid expensive per-bar allocations in hot loops
 - Preserve cache decisions and deterministic seeded behavior
 - If touching robust mode, keep explicit `PASS`/`FAIL` decision semantics
+
+### Modify Polymarket scoring
+- Keep the four Polymarket contracts separate:
+  - direct charting
+  - outcome scoring
+  - diagnostics
+  - bridge export
+- `polymarketExitMode` defaults to `resolve_hold`
+- `signal_exit_same_event` is only effective on `1m` + `next_open`; use `resolveEffectivePolymarketExitMode(...)` instead of open-coded checks
+- Signal-exit pricing depends on local `polymarket_price_points`; if you change ingestion or storage, update together:
+  - `lib/polymarket-price-points-ingest.ts`
+  - `lib/local-sqlite-polymarket-api.ts`
+  - `vite.config.ts`
+  - `docs/polymarket.md`
+- Finder and Hunt signal-exit mode must not fan out by `polymarketEntryOffset`; applying results should preserve `polymarketExitMode` and only write offset data in `resolve_hold`
+- endpoint Preview / Copy / HTTP execution and Strategy Ensemble intentionally stay on `resolve_hold`; do not silently broaden those callers
+- Validation habit after Polymarket changes:
+  - `npm run typecheck`
+  - `..\..\..\node_modules\.bin\esno tests\polymarket-signal-exit.spec.ts`
+  - `..\..\..\node_modules\.bin\esno tests\finder-polymarket.spec.ts`
+  - `..\..\..\node_modules\.bin\esno tests\quick-view-polymarket.spec.ts`
 
 ### Modify Walk Forward
 - Be careful with UI state versus backtest state handoff
@@ -323,6 +345,9 @@ Treat unrelated pre-existing failures carefully. Do not assume your change cause
 - Added a strategy file but forgot to run `npm run strategies:sync-manifest`
 - Added params in `defaultParams` but forgot matching `paramLabels` or `metadata.walkForwardParams`
 - Added a new setting but forgot Rust sanitization or finder parity
+- Changed `polymarketExitMode` semantics without keeping endpoint / ensemble fences explicit
+- Added signal-exit price logic in one Polymarket surface but not the shared evaluator, causing manual backtest / Finder / Quick View drift
+- Changed price-point loading to raw timestamp ranges and missed same-event exit quotes that occur after the latest trade entry timestamp
 - Used raw `document.getElementById(...)` for structural UI instead of a typed contract
 - Broke time handling by coercing `BusinessDay` like a number
 - Changed signal timing semantics without rechecking entry snapshots / execution model behavior
@@ -334,6 +359,7 @@ Treat unrelated pre-existing failures carefully. Do not assume your change cause
 If you change behavior substantially, update the docs that actually carry that contract:
 - `README.md` for repo-level usage and architecture
 - `docs/backtest-endpoint.md` for local HTTP backtest request/response behavior, fixed endpoint sizing, and Preview/Copy Endpoint parity rules
+- `docs/polymarket.md` for Polymarket scoring, signal-exit, diagnostics, and bridge behavior
 - `AGENTS.md` for safe-change guidance
 - `workers/README.md` for worker API and cron behavior
 

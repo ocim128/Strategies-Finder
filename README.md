@@ -18,7 +18,7 @@ It combines:
 - Batch Finder runs across reusable Hunt profiles and compare survivor candidates across symbols, intervals, and execution settings
 - Validate robustness with walk-forward analysis and latest-OOS checks
 - Stress trade-path robustness with Monte Carlo sequence randomization and bootstrap resampling
-- Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics such as timing buckets, break-even win rate, and expectancy without leaving the chart
+- Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics, including same-event signal-exit metrics on supported `1m` runs
 - Run Portfolio Lab across multiple pairs for context, ranking, and sizing decisions
 - Build live or scheduled alert subscriptions through the Worker API
 
@@ -90,7 +90,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Pair Combiner: `lib/pair-combiner-manager.ts`, `lib/pairCombiner/*`
 - Data Mining / feature export: `lib/data-mining-manager.ts`, `lib/featureLab/*`
 - Strategy Ensemble Lab: `lib/strategy-ensemble-service.ts`
-- Polymarket Evaluator: `lib/polymarket-outcome-evaluator.ts`, `scripts/polymarket-sync-outcomes.ts`
+- Polymarket research / scoring: `lib/polymarket-outcome-evaluator.ts`, `lib/polymarket-signal-exit-evaluator.ts`, `lib/polymarket-price-points-ingest.ts`, `scripts/polymarket-sync-outcomes.ts`
 
 ### Alerts / Worker
 - Worker: `workers/entry-signal-worker.ts`
@@ -254,13 +254,18 @@ Recommended workflow:
 Automate the inspection of executed `next_open` trades against historical Polymarket crypto event resolution.
 Implementation notes live in [`docs/polymarket.md`](docs/polymarket.md).
 1. Sync closed Polymarket matching events to your local SQLite database using `npm run poly:sync-outcomes:all` for every supported 5m symbol, or `npm run poly:sync-outcomes` / the direct `esno` command for a single symbol (requires the Vite server running via `npm run dev`).
-2. Pass UI strategies through `evaluatePolymarketOutcomes` in `lib/polymarket-outcome-evaluator.ts`.
-3. For chart-exact parity, pass the same backtest and capital settings you use in the UI. The helper scores executed trades, not raw signals.
-4. The supported Polymarket 5m outcome target series are `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, and `XRPUSDT`. The chart symbol can now differ if you set `Polymarket Outcome Symbol` to one of those targets.
-5. Use `npm run poly:sync-outcomes:all` to backfill every supported 5m outcome series, or `..\..\..\node_modules\.bin\esno scripts\polymarket-sync-outcomes.ts --symbol <BTCUSDT|ETHUSDT|SOLUSDT|XRPUSDT>` for a single series.
-6. Use the `Polymarket` strategy-panel tab to estimate historical YES/NO fillability for the current supported 5m backtest at a custom entry price in cents.
-7. The symbol search accepts custom Polymarket event URLs or slugs. Append `:yes` or `:no`, or use the URL `outcome` / `side` query param, to choose the side.
-8. The `PM` control in the timeframe bar prompts for a Polymarket slug or URL when needed, then opens the market at the supported `1m` chart resolution.
+2. Use the normal backtest, Finder, or Hunt surfaces for full Polymarket parity. The older headless helper `evaluatePolymarketOutcomes` in `lib/polymarket-outcome-evaluator.ts` still represents the resolve-hold outcome-only path.
+3. Choose `Polymarket Exit Mode` in Backtest Realism:
+   - `Resolve Hold` keeps the original final-outcome scoring path.
+   - `Signal Exit Same Event` is available on `1m` + `next_open` runs and prices entry or exit from locally cached Polymarket quotes inside the containing `5m` event.
+4. For chart-exact parity, pass the same backtest and capital settings you use in the UI. The helper scores executed trades, not raw signals.
+5. The supported Polymarket 5m outcome target series are `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, and `XRPUSDT`. The chart symbol can differ if you set `Polymarket Outcome Symbol` to one of those targets.
+6. Use `npm run poly:sync-outcomes:all` to backfill every supported 5m outcome series, or `..\..\..\node_modules\.bin\esno scripts\polymarket-sync-outcomes.ts --symbol <BTCUSDT|ETHUSDT|SOLUSDT|XRPUSDT>` for a single series.
+7. `1m` signal-exit runs ensure local Polymarket price points on demand through the SQLite/Vite path; outcome rows still need the normal sync step above.
+8. Use the `Polymarket` strategy-panel tab to inspect scored-run diagnostics. The same panel also has the separate bridge export workflow for `external_signal`.
+9. Endpoint Preview / Copy and Strategy Ensemble still stay on `resolve_hold`; the new signal-exit mode is a backtest, Finder, Hunt, Quick View, Trades, and Polymarket diagnostics feature.
+10. The symbol search accepts custom Polymarket event URLs or slugs. Append `:yes` or `:no`, or use the URL `outcome` / `side` query param, to choose the side.
+11. The `PM` control in the timeframe bar prompts for a Polymarket slug or URL when needed, then opens the market at the supported `1m` chart resolution.
 
 ### Export Latest Entry Signal
 Use the CLI exporter to produce a small local JSON contract for downstream consumers such as the Polymarket bot `external_signal` mode.
@@ -349,6 +354,7 @@ Useful extras:
 These are intentionally narrower than the repo itself:
 - `AGENTS.md`: safe-change handbook for coding agents
 - `docs/backtest-endpoint.md`: local backtest endpoint usage and request contract
+- `docs/polymarket.md`: Polymarket scoring, signal-exit, diagnostics, and bridge contracts
 - `docs/strategy-authoring.md`: built-in strategy authoring guide
 - `workers/README.md`: Worker endpoints, cron behavior, D1 setup, Telegram
 - `DEPLOY_TO_VERCEL.md`: deployment notes
