@@ -112,6 +112,7 @@ export interface BacktestSettingsData {
     polymarketAnnotationEnabled: boolean;
     polymarketOutcomeSymbol: string;
     polymarketEntryOffset: number;
+    polymarketExitMode: "resolve_hold" | "signal_exit_same_event";
     /** Resolved secondary symbol for cross-symbol strategies. Empty string means use strategy default. */
     crossSymbolSecondary: string;
 }

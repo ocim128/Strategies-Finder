@@ -33,6 +33,7 @@ import type {
 	FinderResult
 } from './types/finder';
 import { isSmartTradeSizingMode } from "./types/backtest";
+import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "./polymarket-exit-mode";
 
 export class FinderManager {
 	private isRunning = false;
@@ -201,6 +202,13 @@ export class FinderManager {
 		dom.finderPolymarketMinScored.disabled = !enabled;
 		dom.finderPolymarketLockOffset.disabled = !enabled;
 		dom.finderPolymarketAfterTakeProfitOnly.disabled = !enabled;
+
+		const exitModeSelect = document.getElementById('polymarketExitMode');
+		const isSignalExit = exitModeSelect instanceof HTMLSelectElement
+			&& exitModeSelect.value === 'signal_exit_same_event';
+		if (isSignalExit) {
+			dom.finderPolymarketLockOffset.disabled = true;
+		}
 	}
 
 	private renderStrategySelection(): void {
@@ -525,6 +533,13 @@ export class FinderManager {
 		const polymarketLockOffset = polymarketScoringEnabled && dom.finderPolymarketLockOffset.checked;
 		const polymarketAfterTakeProfitOnly = polymarketScoringEnabled && dom.finderPolymarketAfterTakeProfitOnly.checked;
 
+		const effectiveExitMode = resolveEffectivePolymarketExitMode({
+			requestedMode: this.lastFinderRunBacktestSettings?.polymarketExitMode,
+			interval: state.currentInterval,
+			executionModel: this.lastFinderRunBacktestSettings?.executionModel,
+			polymarketAnnotationEnabled: polymarketScoringEnabled,
+		});
+
 		return buildFinderOptions({
 			mode,
 			useAdvancedSort,
@@ -544,6 +559,7 @@ export class FinderManager {
 			polymarketMinScoredPredictions,
 			polymarketLockOffset,
 			polymarketAfterTakeProfitOnly,
+			polymarketExitMode: effectiveExitMode,
 		});
 	}
 
@@ -680,7 +696,11 @@ export class FinderManager {
 			? this.cloneBacktestSettings(this.lastFinderRunBacktestSettings)
 			: settingsManager.getBacktestSettings();
 		const mergedSettings = mergeFinderRiskParamsIntoBacktestSettings(baseSettings, result.params, this.lastFinderOptions ?? undefined);
-		if (Number.isFinite(result.params.polymarketEntryOffset)) {
+		const effectiveMode = this.lastFinderOptions?.polymarketExitMode ?? "resolve_hold";
+		if (isSignalExitSameEventMode(effectiveMode)) {
+			mergedSettings.polymarketAnnotationEnabled = true;
+			mergedSettings.polymarketExitMode = "signal_exit_same_event";
+		} else if (Number.isFinite(result.params.polymarketEntryOffset)) {
 			mergedSettings.polymarketEntryOffset = Math.max(0, Math.min(4, Math.round(Number(result.params.polymarketEntryOffset))));
 			if (result.polymarketEval) {
 				mergedSettings.polymarketAnnotationEnabled = true;

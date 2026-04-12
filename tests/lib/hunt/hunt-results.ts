@@ -96,6 +96,7 @@ export function buildHuntFinderOptions(runSettings: HuntRunSettings): FinderOpti
         polymarketMinScoredPredictions: runSettings.polymarketMinScoredPredictions,
         polymarketLockOffset: runSettings.polymarketLockOffset,
         polymarketAfterTakeProfitOnly: runSettings.polymarketAfterTakeProfitOnly,
+        polymarketExitMode: runSettings.polymarketExitMode,
     });
 }
 

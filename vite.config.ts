@@ -100,6 +100,230 @@ type PolymarketOutcomeDbRow = {
     updated_at: number;
 };
 
+type PolymarketPricePointDbRow = {
+    series_id: string;
+    event_start_ts: number;
+    event_end_ts: number;
+    market_slug: string;
+    yes_token_id: string;
+    no_token_id: string;
+    ts: number;
+    yes_price: number | null;
+    no_price: number | null;
+    updated_at: number;
+};
+
+type PolymarketHistoryResponse = {
+    history?: Array<{ t?: unknown; p?: unknown }>;
+};
+
+type PolymarketHistoryPoint = {
+    t: number;
+    p: number;
+};
+
+const POLYMARKET_PRICE_HISTORY_TIMEOUT_MS = 8000;
+const POLYMARKET_EVENT_DURATION_SEC = 300;
+// First-run signal-exit scoring can touch many distinct 5m events. Fetch in a
+// wider batch so server-side ensure can populate the local cache in one pass.
+const POLYMARKET_PRICE_POINT_BATCH_SIZE = 24;
+
+function normalizePolymarketHistoryPoints(response: PolymarketHistoryResponse | null): PolymarketHistoryPoint[] {
+    const rows = Array.isArray(response?.history) ? response.history : [];
+    const dedup = new Map<number, number>();
+
+    for (const row of rows) {
+        const t = Math.floor(Number(row?.t));
+        const p = Number(row?.p);
+        if (!Number.isFinite(t) || !Number.isFinite(p)) continue;
+        if (p < 0 || p > 1) continue;
+        dedup.set(t, p);
+    }
+
+    return Array.from(dedup.entries())
+        .sort((left, right) => left[0] - right[0])
+        .map(([t, p]) => ({ t, p }));
+}
+
+async function fetchPolymarketHistory(url: string): Promise<PolymarketHistoryResponse> {
+    const response = await fetch(url, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(POLYMARKET_PRICE_HISTORY_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${url}`);
+    }
+    return await response.json() as PolymarketHistoryResponse;
+}
+
+async function fetchPolymarketYesHistory(outcome: PolymarketOutcomeDbRow): Promise<PolymarketHistoryPoint[]> {
+    if (!outcome.yes_token_id) {
+        return [];
+    }
+
+    const nearParams = new URLSearchParams({
+        market: outcome.yes_token_id,
+        startTs: String(Math.max(0, outcome.event_start_ts - 15)),
+        endTs: String(outcome.event_start_ts + POLYMARKET_EVENT_DURATION_SEC),
+    });
+    const nearPoints = normalizePolymarketHistoryPoints(
+        await fetchPolymarketHistory(`${POLYMARKET_CLOB_HISTORY_URL}?${nearParams.toString()}`)
+    );
+    if (nearPoints.length > 0) {
+        return nearPoints;
+    }
+
+    const fallbackParams = new URLSearchParams({
+        market: outcome.yes_token_id,
+        interval: 'max',
+    });
+    return normalizePolymarketHistoryPoints(
+        await fetchPolymarketHistory(`${POLYMARKET_CLOB_HISTORY_URL}?${fallbackParams.toString()}`)
+    ).filter((point) => (
+        point.t >= outcome.event_start_ts
+        && point.t <= outcome.event_start_ts + POLYMARKET_EVENT_DURATION_SEC
+    ));
+}
+
+async function fetchPolymarketPricePointsForOutcome(
+    outcome: PolymarketOutcomeDbRow,
+    seriesId: string
+): Promise<PolymarketPricePointDbRow[]> {
+    if (!outcome.yes_token_id) {
+        return [];
+    }
+
+    const yesHistory = await fetchPolymarketYesHistory(outcome);
+    return yesHistory.map((point) => ({
+        series_id: seriesId,
+        event_start_ts: outcome.event_start_ts,
+        event_end_ts: outcome.event_end_ts,
+        market_slug: outcome.market_slug || outcome.event_slug,
+        yes_token_id: outcome.yes_token_id,
+        no_token_id: outcome.no_token_id || '',
+        ts: point.t,
+        yes_price: point.p,
+        no_price: Math.round((1 - point.p) * 10000) / 10000,
+        updated_at: Math.floor(Date.now() / 1000),
+    }));
+}
+
+function loadStoredPolymarketPricePoints(
+    db: DatabaseSync,
+    seriesId: string,
+    eventStartTs: readonly number[],
+): PolymarketPricePointDbRow[] {
+    if (eventStartTs.length === 0) {
+        return [];
+    }
+
+    const placeholders = eventStartTs.map(() => '?').join(',');
+    return db.prepare(`
+        SELECT series_id, event_start_ts, event_end_ts, market_slug,
+               yes_token_id, no_token_id, ts, yes_price, no_price, updated_at
+        FROM polymarket_price_points
+        WHERE series_id = ? AND event_start_ts IN (${placeholders})
+        ORDER BY ts ASC
+    `).all(seriesId, ...eventStartTs) as PolymarketPricePointDbRow[];
+}
+
+function storePolymarketPricePointsInDb(
+    db: DatabaseSync,
+    rows: readonly PolymarketPricePointDbRow[],
+): number {
+    if (rows.length === 0) {
+        return 0;
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const upsert = db.prepare(`
+        INSERT INTO polymarket_price_points (
+            series_id, event_start_ts, event_end_ts, market_slug,
+            yes_token_id, no_token_id, ts, yes_price, no_price, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(series_id, event_start_ts, ts) DO UPDATE SET
+            event_end_ts = excluded.event_end_ts,
+            market_slug = excluded.market_slug,
+            yes_token_id = excluded.yes_token_id,
+            no_token_id = excluded.no_token_id,
+            yes_price = excluded.yes_price,
+            no_price = excluded.no_price,
+            updated_at = excluded.updated_at
+    `);
+
+    let upserted = 0;
+    db.exec('BEGIN');
+    try {
+        for (const row of rows) {
+            upsert.run(
+                String(row.series_id),
+                Number(row.event_start_ts),
+                Number(row.event_end_ts),
+                String(row.market_slug ?? ''),
+                String(row.yes_token_id ?? ''),
+                String(row.no_token_id ?? ''),
+                Number(row.ts),
+                row.yes_price != null ? Number(row.yes_price) : null,
+                row.no_price != null ? Number(row.no_price) : null,
+                nowSec,
+            );
+            upserted++;
+        }
+        db.exec('COMMIT');
+    } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+    }
+
+    return upserted;
+}
+
+async function ensurePolymarketPricePointsInDb(args: {
+    db: DatabaseSync;
+    seriesId: string;
+    outcomes: readonly PolymarketOutcomeDbRow[];
+}): Promise<{ rows: PolymarketPricePointDbRow[]; upserted: number; fetchedEvents: number; }> {
+    const eventStartTs = Array.from(new Set(
+        args.outcomes
+            .map((outcome) => Number(outcome.event_start_ts))
+            .filter((value) => Number.isFinite(value))
+    )).sort((left, right) => left - right);
+
+    if (eventStartTs.length === 0) {
+        return { rows: [], upserted: 0, fetchedEvents: 0 };
+    }
+
+    const existingRows = loadStoredPolymarketPricePoints(args.db, args.seriesId, eventStartTs);
+    const coveredEventStarts = new Set(existingRows.map((row) => row.event_start_ts));
+    const uncoveredOutcomes = args.outcomes.filter((outcome) => !coveredEventStarts.has(outcome.event_start_ts));
+
+    if (uncoveredOutcomes.length === 0) {
+        return { rows: existingRows, upserted: 0, fetchedEvents: 0 };
+    }
+
+    const newRows: PolymarketPricePointDbRow[] = [];
+    for (let index = 0; index < uncoveredOutcomes.length; index += POLYMARKET_PRICE_POINT_BATCH_SIZE) {
+        const batch = uncoveredOutcomes.slice(index, index + POLYMARKET_PRICE_POINT_BATCH_SIZE);
+        const batchRows = await Promise.all(batch.map(async (outcome) => {
+            try {
+                return await fetchPolymarketPricePointsForOutcome(outcome, args.seriesId);
+            } catch {
+                return [];
+            }
+        }));
+        for (const rows of batchRows) {
+            newRows.push(...rows);
+        }
+    }
+
+    const upserted = storePolymarketPricePointsInDb(args.db, newRows);
+    return {
+        rows: loadStoredPolymarketPricePoints(args.db, args.seriesId, eventStartTs),
+        upserted,
+        fetchedEvents: uncoveredOutcomes.length,
+    };
+}
+
 function getSqliteDb(): DatabaseSync {
     if (sqliteDb) return sqliteDb;
 
@@ -155,6 +379,23 @@ function getSqliteDb(): DatabaseSync {
             ON polymarket_outcomes(series_id, event_start_ts);
         CREATE INDEX IF NOT EXISTS idx_pm_outcomes_interval_start
             ON polymarket_outcomes(interval, event_start_ts);
+        CREATE TABLE IF NOT EXISTS polymarket_price_points (
+            series_id TEXT NOT NULL,
+            event_start_ts INTEGER NOT NULL,
+            event_end_ts INTEGER NOT NULL,
+            market_slug TEXT NOT NULL DEFAULT '',
+            yes_token_id TEXT NOT NULL,
+            no_token_id TEXT NOT NULL DEFAULT '',
+            ts INTEGER NOT NULL,
+            yes_price REAL,
+            no_price REAL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY(series_id, event_start_ts, ts)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pm_price_points_event_time
+            ON polymarket_price_points(series_id, event_start_ts, ts);
+        CREATE INDEX IF NOT EXISTS idx_pm_price_points_series_time
+            ON polymarket_price_points(series_id, ts);
     `);
     sqliteDb = db;
     return db;
@@ -645,6 +886,160 @@ function localSqlitePlugin(): Plugin {
                                 r.yes_entry_minute_4_price != null ? Number(r.yes_entry_minute_4_price) : null,
                                 Number(r.resolved_outcome_up),
                                 String(r.resolution_source ?? ''),
+                                nowSec,
+                            );
+                            upserted++;
+                        }
+                        db.exec('COMMIT');
+                    } catch (error) {
+                        db.exec('ROLLBACK');
+                        throw error;
+                    }
+
+                    sendJson(res, 200, { ok: true, upserted });
+                    return;
+                }
+
+                if (method === 'POST' && path === '/ensure-polymarket-price-points') {
+                    const payload = await readJsonBody(req as IncomingMessage);
+                    const seriesId = typeof payload.seriesId === 'string' ? payload.seriesId.trim() : '';
+                    const rawOutcomes = Array.isArray(payload.outcomes) ? payload.outcomes : [];
+
+                    if (!seriesId) {
+                        sendJson(res, 400, { ok: false, error: 'seriesId is required' });
+                        return;
+                    }
+
+                    if (rawOutcomes.length === 0) {
+                        sendJson(res, 200, { ok: true, rows: [], upserted: 0, fetchedEvents: 0 });
+                        return;
+                    }
+
+                    const outcomes = rawOutcomes
+                        .filter((row): row is PolymarketOutcomeDbRow => Boolean(
+                            row
+                            && typeof row === 'object'
+                            && typeof (row as PolymarketOutcomeDbRow).event_start_ts === 'number'
+                            && typeof (row as PolymarketOutcomeDbRow).event_end_ts === 'number'
+                            && typeof (row as PolymarketOutcomeDbRow).yes_token_id === 'string'
+                        ))
+                        .map((row) => ({
+                            ...row,
+                            series_id: typeof row.series_id === 'string' && row.series_id.trim().length > 0
+                                ? row.series_id.trim()
+                                : seriesId,
+                        }));
+
+                    const db = getSqliteDb();
+                    const ensured = await ensurePolymarketPricePointsInDb({
+                        db,
+                        seriesId,
+                        outcomes,
+                    });
+
+                    sendJson(res, 200, {
+                        ok: true,
+                        rows: ensured.rows,
+                        upserted: ensured.upserted,
+                        fetchedEvents: ensured.fetchedEvents,
+                    });
+                    return;
+                }
+
+                if (method === 'GET' && path === '/load-polymarket-price-points') {
+                    const seriesId = (requestUrl.searchParams.get('seriesId') || '').trim();
+                    const eventStartTsRaw = requestUrl.searchParams.get('eventStartTs');
+                    const startTsRaw = requestUrl.searchParams.get('startTs');
+                    const endTsRaw = requestUrl.searchParams.get('endTs');
+                    const limitRaw = requestUrl.searchParams.get('limit');
+
+                    const startTs = startTsRaw !== null ? Number(startTsRaw) : null;
+                    const endTs = endTsRaw !== null ? Number(endTsRaw) : null;
+                    const limit = limitRaw !== null ? Math.max(1, Math.min(500000, Math.floor(Number(limitRaw) || 100000))) : 100000;
+
+                    if (!seriesId) {
+                        sendJson(res, 400, { ok: false, error: 'seriesId is required' });
+                        return;
+                    }
+
+                    const db = getSqliteDb();
+                    const conditions: string[] = ['series_id = ?'];
+                    const bindings: (string | number)[] = [seriesId];
+
+                    if (eventStartTsRaw !== null) {
+                        const parts = eventStartTsRaw.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n));
+                        if (parts.length > 0) {
+                            const placeholders = parts.map(() => '?').join(',');
+                            conditions.push(`event_start_ts IN (${placeholders})`);
+                            bindings.push(...parts);
+                        }
+                    }
+                    if (startTs !== null && Number.isFinite(startTs)) {
+                        conditions.push('ts >= ?');
+                        bindings.push(Math.floor(startTs));
+                    }
+                    if (endTs !== null && Number.isFinite(endTs)) {
+                        conditions.push('ts <= ?');
+                        bindings.push(Math.floor(endTs));
+                    }
+
+                    const where = `WHERE ${conditions.join(' AND ')}`;
+                    bindings.push(limit);
+
+                    const rows = db.prepare(`
+                        SELECT series_id, event_start_ts, event_end_ts, market_slug,
+                               yes_token_id, no_token_id, ts, yes_price, no_price, updated_at
+                        FROM polymarket_price_points
+                        ${where}
+                        ORDER BY ts ASC
+                        LIMIT ?
+                    `).all(...bindings) as any[];
+
+                    sendJson(res, 200, { ok: true, rows, count: rows.length });
+                    return;
+                }
+
+                if (method === 'POST' && path === '/store-polymarket-price-points') {
+                    const payload = await readJsonBody(req as IncomingMessage);
+                    const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
+                    if (rawRows.length === 0) {
+                        sendJson(res, 400, { ok: false, error: 'rows array is required and must not be empty' });
+                        return;
+                    }
+
+                    const db = getSqliteDb();
+                    const nowSec = Math.floor(Date.now() / 1000);
+
+                    const upsert = db.prepare(`
+                        INSERT INTO polymarket_price_points (
+                            series_id, event_start_ts, event_end_ts, market_slug,
+                            yes_token_id, no_token_id, ts, yes_price, no_price, updated_at
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                        ON CONFLICT(series_id, event_start_ts, ts) DO UPDATE SET
+                            event_end_ts = excluded.event_end_ts,
+                            market_slug = excluded.market_slug,
+                            yes_token_id = excluded.yes_token_id,
+                            no_token_id = excluded.no_token_id,
+                            yes_price = excluded.yes_price,
+                            no_price = excluded.no_price,
+                            updated_at = excluded.updated_at
+                    `);
+
+                    let upserted = 0;
+                    db.exec('BEGIN');
+                    try {
+                        for (const r of rawRows as any[]) {
+                            if (!r.series_id || r.event_start_ts == null || r.ts == null) continue;
+                            upsert.run(
+                                String(r.series_id),
+                                Number(r.event_start_ts),
+                                Number(r.event_end_ts),
+                                String(r.market_slug ?? ''),
+                                String(r.yes_token_id ?? ''),
+                                String(r.no_token_id ?? ''),
+                                Number(r.ts),
+                                r.yes_price != null ? Number(r.yes_price) : null,
+                                r.no_price != null ? Number(r.no_price) : null,
                                 nowSec,
                             );
                             upserted++;

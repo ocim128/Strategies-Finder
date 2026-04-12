@@ -1,5 +1,6 @@
 import type { BacktestResult, StrategyParams } from "../types/strategies";
 import type { PolymarketEvalResult } from "../types/polymarket-outcomes";
+import type { PolymarketExitMode } from "../polymarket-exit-mode";
 
 export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
 export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'volume' | 'expectancy' | 'expectancyTrades' | 'profitFactor' | 'profitFactorTrades';
@@ -46,6 +47,7 @@ export interface FinderOptions {
     polymarketMinScoredPredictions?: number;
     polymarketLockOffset?: boolean;
     polymarketAfterTakeProfitOnly?: boolean;
+    polymarketExitMode?: PolymarketExitMode;
 }
 
 export interface EndpointSelectionAdjustment {

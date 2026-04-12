@@ -10,8 +10,12 @@ import {
     supportsPolymarketOutcomeBridgeRun,
 } from "../polymarket-btc5m";
 import { annotateTradesWithPolymarketOutcomesForRun } from "../polymarket-trade-annotations";
+import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "../polymarket-exit-mode";
+import { evaluateSignalExitTrades, buildTradeAnnotationFromSignalExitResult } from "../polymarket-signal-exit-evaluator";
+import { ensurePricePointsForOutcomes } from "../polymarket-price-points-ingest";
 import { resolveBacktestResultMarketContext } from "../backtest-result-context";
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import { findContainingEvent } from "../polymarket-1m-5m-bridge";
 
 export class TradesRenderer {
     private static readonly MAX_TRADES = 250;
@@ -99,6 +103,7 @@ export class TradesRenderer {
         const resultContext = resolveBacktestResultMarketContext(state.currentBacktestResult);
         const summaryOffset = state.currentBacktestResult?.polymarketTradeSummary?.entryOffset;
         const outcomeSymbol = this.resolveActivePolymarketOutcomeSymbol();
+        const evaluationMode = state.currentBacktestResult?.polymarketTradeSummary?.evaluationMode ?? "resolve_hold";
         const firstTrade = trades[0];
         const lastTrade = trades[trades.length - 1];
         return [
@@ -106,6 +111,7 @@ export class TradesRenderer {
             resultContext?.interval ?? state.currentInterval,
             outcomeSymbol ?? "same",
             typeof summaryOffset === 'number' ? summaryOffset : 'na',
+            evaluationMode,
             trades.length,
             parseTimeToUnixSeconds(firstTrade.entryTime) ?? 'na',
             parseTimeToUnixSeconds(lastTrade.entryTime) ?? 'na',
@@ -136,6 +142,19 @@ export class TradesRenderer {
         }
         const value = element.value.trim().toUpperCase();
         return value.length > 0 ? value : null;
+    }
+
+    private readCurrentPolymarketExitMode(): "resolve_hold" | "signal_exit_same_event" | undefined {
+        const element = document.getElementById('polymarketExitMode');
+        if (!(element instanceof HTMLSelectElement)) {
+            return undefined;
+        }
+        return element.value === 'signal_exit_same_event' ? 'signal_exit_same_event' : 'resolve_hold';
+    }
+
+    private readCurrentExecutionModel(): string | undefined {
+        const element = document.getElementById('executionModel');
+        return element instanceof HTMLSelectElement ? element.value : undefined;
     }
 
     private resolveActivePolymarketOutcomeSymbol(): string | null {
@@ -181,6 +200,48 @@ export class TradesRenderer {
         const outcomes = await loadPolymarket5mOutcomesForTimeRange(resultContext.symbol, startTs, endTs, outcomeSymbol);
         if (outcomes.length === 0) {
             return trades;
+        }
+
+        const effectiveExitMode = state.currentBacktestResult?.polymarketTradeSummary?.evaluationMode
+            ?? resolveEffectivePolymarketExitMode({
+                requestedMode: this.readCurrentPolymarketExitMode(),
+                interval: resultContext.interval,
+                executionModel: this.readCurrentExecutionModel(),
+                polymarketAnnotationEnabled: true,
+            });
+
+        if (isSignalExitSameEventMode(effectiveExitMode) && resultContext.interval === "1m") {
+            try {
+                const relevantOutcomeByStart = new Map<number, (typeof outcomes)[number]>();
+                for (const trade of trades) {
+                    const entryTs = parseTimeToUnixSeconds(trade.entryTime);
+                    if (entryTs === null) continue;
+                    const outcome = findContainingEvent(entryTs, outcomes);
+                    if (outcome) {
+                        relevantOutcomeByStart.set(outcome.event_start_ts, outcome);
+                    }
+                }
+                const pricePoints = await ensurePricePointsForOutcomes(
+                    relevantOutcomeByStart.size > 0 ? [...relevantOutcomeByStart.values()] : outcomes,
+                    seriesId,
+                    {
+                    startTs: startTs - 300,
+                    endTs: endTs + 300,
+                    }
+                );
+                const { results: exitResults } = evaluateSignalExitTrades({
+                    trades,
+                    outcomes,
+                    pricePoints,
+                });
+                return trades.map((trade) => {
+                    const exitResult = exitResults.find((r) => r.trade === trade);
+                    if (!exitResult || exitResult.exitSource === "missing") return { ...trade, polymarketOutcome: null };
+                    return { ...trade, polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult) };
+                });
+            } catch {
+                // Fall through to resolve_hold
+            }
         }
 
         const selectedOffset = resultContext.interval === '1m'
@@ -230,6 +291,30 @@ export class TradesRenderer {
     private getPolymarketOutcomeBadge(trade: Trade): string {
         const outcome = trade.polymarketOutcome;
         if (!outcome) return '';
+
+        const isSignalExit = outcome.evaluationMode === "signal_exit_same_event";
+
+        if (isSignalExit) {
+            const isProfitable = outcome.isProfitable;
+            const label = isProfitable === true ? 'Poly Profit' : isProfitable === false ? 'Poly Loss' : 'Poly n/a';
+            const className = isProfitable === true
+                ? 'exit-reason-badge--polymarket-win'
+                : 'exit-reason-badge--polymarket-lose';
+            const prediction = outcome.prediction.toUpperCase();
+            const entryPrice = typeof outcome.marketEntryPrice === 'number' && Number.isFinite(outcome.marketEntryPrice)
+                ? this.formatPolymarketEntryPrice(outcome.marketEntryPrice)
+                : 'n/a';
+            const exitPrice = typeof outcome.marketExitPrice === 'number' && Number.isFinite(outcome.marketExitPrice)
+                ? this.formatPolymarketEntryPrice(outcome.marketExitPrice)
+                : outcome.marketExitSource ?? 'n/a';
+            const pnlLabel = typeof outcome.marketPnl === 'number' && Number.isFinite(outcome.marketPnl)
+                ? `${outcome.marketPnl >= 0 ? '+' : ''}${(outcome.marketPnl * 100).toFixed(1)}c`
+                : '';
+            const priceLabel = `${prediction} ${entryPrice}→${exitPrice}${pnlLabel ? ` (${pnlLabel})` : ''}`;
+            const marketSlug = this.escapeHtml(outcome.marketSlug);
+            const marketUrl = this.escapeHtml(this.buildPolymarketMarketUrl(outcome.marketSlug));
+            return `<span class="exit-reason-badge trade-polymarket-link ${className}" role="button" tabindex="0" data-polymarket-url="${marketUrl}" title="Signal-exit mode. ${label}. Predicted ${prediction}, entry ${entryPrice}, exit ${exitPrice}. Click to copy ${marketSlug}.">${label} ${priceLabel}</span>`;
+        }
 
         const label = outcome.isWin ? 'Poly Win' : 'Poly Lose';
         const className = outcome.isWin

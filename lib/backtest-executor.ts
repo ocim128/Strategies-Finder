@@ -421,6 +421,7 @@ async function annotatePolymarketResult(
             executionModel: settings.executionModel,
             chartData,
             outcomeSymbol: settings.polymarketOutcomeSymbol,
+            polymarketExitMode: settings.polymarketExitMode,
         });
     } catch {
         return result;

@@ -23,6 +23,9 @@ import type {
     PolymarketOutcomeRow,
     BacktestPolymarketTradeSummary,
 } from "./types/polymarket-outcomes";
+import type { PolymarketPricePoint } from "./local-sqlite-polymarket-api";
+import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "./polymarket-exit-mode";
+import { evaluateSignalExitTrades, buildTradeAnnotationFromSignalExitResult } from "./polymarket-signal-exit-evaluator";
 
 function clampProbability(value: number | null): number | null {
     if (value === null || !Number.isFinite(value)) {
@@ -104,6 +107,7 @@ type AnnotationContext = {
     executionModel?: string;
     chartData: OHLCVData[];
     outcomeSymbol?: string;
+    polymarketExitMode?: "resolve_hold" | "signal_exit_same_event";
 };
 
 export type PolymarketTradeEvaluationContext = {
@@ -727,14 +731,14 @@ export function summarizePolymarketTradesForRun(args: {
 export async function annotateBacktestResultWithPolymarketOutcomes(
     result: BacktestResult,
     context: AnnotationContext,
-    selectedOffset?: number
+    selectedOffset?: number,
+    pricePoints?: PolymarketPricePoint[]
 ): Promise<BacktestResult> {
     const is1mRun = context.interval === "1m";
     const is5mRun = context.interval === "5m";
     const isMultiIntervalRun = ["15m", "1h", "4h"].includes(context.interval);
     const resolvedOutcomeSymbol = resolvePolymarketOutcomeSymbol(context.symbol, context.outcomeSymbol);
 
-    // Support 5m (legacy), 1m (bridge), and multi-interval runs (15m, 1h, 4h)
     if (
         result.trades.length === 0 ||
         context.executionModel !== "next_open" ||
@@ -744,7 +748,6 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         return result;
     }
 
-    // Check symbol support - use multi-interval check for 15m/1h/4h, legacy check for 1m/5m
     const isValidInterval = isMultiIntervalRun
         ? isSupportedPolymarketMultiIntervalRun(context.symbol, context.interval, resolvedOutcomeSymbol)
         : supportsPolymarketOutcomeBridgeRun(context.symbol, context.interval, resolvedOutcomeSymbol);
@@ -768,6 +771,58 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
     const startTs = Math.min(...targetTimes);
     const endTs = Math.max(...targetTimes);
     const outcomes = await loadPolymarket5mOutcomesForTimeRange(context.symbol, startTs, endTs, resolvedOutcomeSymbol);
+
+    const effectiveExitMode = resolveEffectivePolymarketExitMode({
+        requestedMode: context.polymarketExitMode,
+        interval: context.interval,
+        executionModel: context.executionModel,
+        polymarketAnnotationEnabled: true,
+    });
+
+    if (isSignalExitSameEventMode(effectiveExitMode) && is1mRun && pricePoints) {
+        const { results: exitResults, summary: exitSummary } = evaluateSignalExitTrades({
+            trades: result.trades,
+            outcomes,
+            pricePoints,
+        });
+
+        const annotatedTrades = result.trades.map((trade) => {
+            const exitResult = exitResults.find((r) => r.trade === trade);
+            if (!exitResult || exitResult.exitSource === "missing") {
+                return { ...trade, polymarketOutcome: null };
+            }
+            return {
+                ...trade,
+                polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult),
+            };
+        });
+
+        return {
+            ...result,
+            trades: annotatedTrades,
+            polymarketTradeSummary: {
+                seriesId,
+                outcomeSymbol: resolvedOutcomeSymbol ?? undefined,
+                outcomeRowsLoaded: outcomes.length,
+                scoredTrades: exitSummary.scoredTrades,
+                missingOutcomeTrades: 0,
+                unscoredTrades: exitSummary.missingPriceTrades,
+                evaluationMode: "signal_exit_same_event",
+                profitableTrades: exitSummary.profitableTrades,
+                losingTrades: exitSummary.losingTrades,
+                signalExitedTrades: exitSummary.signalExitedTrades,
+                resolvedTrades: exitSummary.resolvedTrades,
+                missingPriceTrades: exitSummary.missingPriceTrades,
+                netPnl: exitSummary.netPnl,
+                grossProfit: exitSummary.grossProfit,
+                grossLoss: exitSummary.grossLoss,
+                profitFactor: exitSummary.profitFactor,
+                expectancy: exitSummary.expectancy,
+                avgEntryPrice: exitSummary.avgEntryPrice,
+                avgExitPrice: exitSummary.avgExitPrice,
+            },
+        };
+    }
 
     const trades = annotateTradesWithPolymarketOutcomesForRun(
         result.trades,
@@ -797,6 +852,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
             seriesId,
             outcomeSymbol: resolvedOutcomeSymbol ?? undefined,
             outcomeRowsLoaded: outcomes.length,
+            evaluationMode: "resolve_hold",
             ...summary,
         },
     };

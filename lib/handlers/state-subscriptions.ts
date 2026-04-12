@@ -14,20 +14,56 @@ import { formatPolymarketDisplayName } from "../dataProviders/polymarket";
 import { quickViewManager } from "../quick-view";
 import { livePositionsService } from "../live-positions-service";
 import { isBinanceDataProvider } from "../binance-market";
+import { SIGNAL_EXIT_SUPPORTED_RANK_MODES } from "../polymarket-exit-mode";
 import type { Time } from "lightweight-charts";
 
 function updatePolymarketEntryOffsetVisibility(interval: string = state.currentInterval): void {
     const offsetRow = document.getElementById('polymarketEntryOffsetRow');
+    const exitModeRow = document.getElementById('polymarketExitModeRow');
     const outcomeSymbolRow = document.getElementById('polymarketOutcomeSymbolRow');
     const annotationToggle = document.getElementById('polymarketAnnotationEnabled');
     const annotationEnabled = annotationToggle instanceof HTMLInputElement
         ? annotationToggle.checked
         : false;
+
+    const exitModeSelect = document.getElementById('polymarketExitMode');
+    const isSignalExit = exitModeSelect instanceof HTMLSelectElement
+        && exitModeSelect.value === 'signal_exit_same_event';
+
     if (offsetRow) {
-        offsetRow.style.display = interval === '1m' && annotationEnabled ? 'block' : 'none';
+        offsetRow.style.display = interval === '1m' && annotationEnabled && !isSignalExit ? 'block' : 'none';
+    }
+    if (exitModeRow) {
+        exitModeRow.style.display = annotationEnabled ? 'block' : 'none';
     }
     if (outcomeSymbolRow) {
         outcomeSymbolRow.style.display = annotationEnabled ? 'block' : 'none';
+    }
+}
+
+function updateFinderRankModeOptions(): void {
+    const exitModeSelect = document.getElementById('polymarketExitMode');
+    const isSignalExit = exitModeSelect instanceof HTMLSelectElement
+        && exitModeSelect.value === 'signal_exit_same_event';
+
+    const rankSelects = [
+        document.getElementById('finderPolymarketRankMode'),
+        document.getElementById('huntPolymarketRankMode'),
+    ];
+
+    for (const select of rankSelects) {
+        if (!(select instanceof HTMLSelectElement)) continue;
+        for (const option of Array.from(select.options)) {
+            if (!isSignalExit) {
+                option.disabled = false;
+                continue;
+            }
+            option.disabled = !SIGNAL_EXIT_SUPPORTED_RANK_MODES.has(option.value as any);
+        }
+        if (isSignalExit && select.selectedOptions[0]?.disabled) {
+            const firstValid = Array.from(select.options).find(o => !o.disabled);
+            if (firstValid) select.value = firstValid.value;
+        }
     }
 }
 
@@ -39,6 +75,16 @@ export function setupStateSubscriptions() {
             updatePolymarketEntryOffsetVisibility();
         });
     }
+
+    const polymarketExitModeSelect = document.getElementById('polymarketExitMode');
+    if (polymarketExitModeSelect instanceof HTMLSelectElement) {
+        polymarketExitModeSelect.addEventListener('change', () => {
+            updatePolymarketEntryOffsetVisibility();
+            updateFinderRankModeOptions();
+        });
+    }
+
+    updateFinderRankModeOptions();
 
     const setPriceLoading = () => {
         const priceEl = getRequiredElement('symbolPrice');

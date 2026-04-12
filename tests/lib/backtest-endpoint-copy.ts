@@ -215,8 +215,9 @@ export function resolveEndpointPolymarketAnnotation(snapshot: Pick<UiBacktestEnd
 }
 
 function buildEndpointBacktestSettings(snapshot: UiBacktestEndpointSnapshot): Record<string, unknown> {
+    const { polymarketExitMode, ...rest } = stripEndpointIgnoredBacktestSettings(snapshot.backtestSettings);
     return {
-        ...stripEndpointIgnoredBacktestSettings(snapshot.backtestSettings),
+        ...rest,
         polymarketAnnotationEnabled: resolveEndpointPolymarketAnnotation(snapshot),
     };
 }

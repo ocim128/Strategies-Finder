@@ -52,6 +52,10 @@ import type { FinderRunInput, FinderRunCallbacks, FinderRunOutput } from "./find
 import type { StrategyExecutionContext } from "../types/strategies";
 import { resolveCrossSymbolExecution, isCrossSymbolStrategy } from "../cross-symbol-runtime";
 import { dataManager } from "../data-manager";
+import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode, SIGNAL_EXIT_SUPPORTED_RANK_MODES } from "../polymarket-exit-mode";
+import { evaluateSignalExitTrades } from "../polymarket-signal-exit-evaluator";
+import type { PolymarketPricePoint } from "../local-sqlite-polymarket-api";
+import { ensurePricePointsForOutcomes } from "../polymarket-price-points-ingest";
 
 /**
  * Evaluate mapped trades for multi-interval Polymarket runs (15m, 1h, 4h).
@@ -203,7 +207,14 @@ export async function runPolymarketFinder(
     }
 
     const is5mRun = interval === "5m";
-    const isMultiSubEventRun = !is5mRun;
+    const isMultiSubEventRun = !is5mRun && !isSignalExitSameEventMode(
+        resolveEffectivePolymarketExitMode({
+            requestedMode: options.polymarketExitMode,
+            interval,
+            executionModel: settings.executionModel,
+            polymarketAnnotationEnabled: true,
+        })
+    );
 
     // Determine offsets to evaluate
     const lockedOffset = (
@@ -240,6 +251,31 @@ export async function runPolymarketFinder(
         return { results: [] };
     }
 
+    const effectiveExitMode = resolveEffectivePolymarketExitMode({
+        requestedMode: options.polymarketExitMode,
+        interval,
+        executionModel: settings.executionModel,
+        polymarketAnnotationEnabled: true,
+    });
+
+    const isSignalExitMode = isSignalExitSameEventMode(effectiveExitMode);
+
+    if (isSignalExitMode) {
+        if (interval !== "1m") {
+            callbacks.setStatus("signal_exit_same_event mode requires 1m interval.");
+            return { results: [] };
+        }
+        if (settings.executionModel !== "next_open") {
+            callbacks.setStatus("signal_exit_same_event mode requires next_open execution model.");
+            return { results: [] };
+        }
+        const rankMode = options.polymarketRankMode ?? "balanced";
+        if (!SIGNAL_EXIT_SUPPORTED_RANK_MODES.has(rankMode as any)) {
+            callbacks.setStatus(`signal_exit_same_event does not support rank mode "${rankMode}". Use expectancy or profitFactor variants.`);
+            return { results: [] };
+        }
+    }
+
     callbacks.setProgress(5, "Loading Polymarket outcome data...");
     callbacks.setStatus("Loading Polymarket outcomes from SQLite...");
 
@@ -272,6 +308,29 @@ export async function runPolymarketFinder(
     callbacks.setStatus(`Loaded ${outcomes.length} outcome rows. Preparing parameter sets...`);
     callbacks.setProgress(10, "Preparing parameter sets...");
     await callbacks.yieldControl();
+
+    let pricePoints: PolymarketPricePoint[] = [];
+    if (isSignalExitMode) {
+        try {
+            const rawFirst = closedData.length > 0 ? closedData[0].time : 0;
+            const rawLast = closedData.length > 0 ? closedData[closedData.length - 1].time : 0;
+            const firstTs = typeof rawFirst === 'number' ? rawFirst : 0;
+            const lastTs = typeof rawLast === 'number' ? rawLast : 0;
+            callbacks.setStatus(`Ensuring Polymarket price points for ${outcomes.length} events...`);
+            pricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId, {
+                startTs: firstTs > 0 ? firstTs - 300 : undefined,
+                endTs: lastTs > 0 ? lastTs + 300 : undefined,
+            });
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            callbacks.setStatus(`Failed to ensure Polymarket price points: ${detail}`);
+            return { results: [] };
+        }
+        if (pricePoints.length === 0) {
+            callbacks.setStatus(`No Polymarket price points available for series ${seriesId} after ingestion.`);
+            return { results: [] };
+        }
+    }
 
     // Build strategy plans from selections
     const baseStrategyPlans: StrategyPlan[] = [];
@@ -378,52 +437,51 @@ export async function runPolymarketFinder(
                 const tradesForPolymarketEvaluation = options.polymarketAfterTakeProfitOnly
                     ? filterTradesByPreviousClosedTradeExitReason(backtestResult.trades, "take_profit")
                     : backtestResult.trades;
-                const legacyMappedTrades: readonly LegacyMappedPolymarketTrade[] | undefined = isMultiSubEventRun && interval === "1m"
-                    ? mapTradesToLegacyEvents(tradesForPolymarketEvaluation, outcomes)
-                    : undefined;
-                const superMappedTrades: readonly MappedPolymarketTrade[] | undefined = isMultiSubEventRun && interval !== "1m"
-                    ? mapTradesToSuperEvents(tradesForPolymarketEvaluation, outcomes, interval)
-                    : undefined;
 
-                // Evaluate trades based on interval type
-                const evaluations = isMultiSubEventRun
-                    ? bridgeOffsetsToEvaluate.map((offset) => ({
-                        offset,
-                        evalResult: interval === "1m"
-                            ? evaluateMappedPolymarketBacktestTrades1mBridge({
-                                chartData: closedData,
-                                mappedTrades: legacyMappedTrades ?? [],
-                                outcomes,
-                                strategyKey: plan.key,
-                                selectedOffset: offset,
-                                includeRows: false,
-                                predictionsTaken: tradesForPolymarketEvaluation.length,
-                                context: polymarketBridgeContext,
-                            })
-                            : evaluateMultiIntervalPolymarketTrades({
-                                mappedTrades: superMappedTrades ?? [],
-                                strategyKey: plan.key,
-                                selectedOffset: offset,
-                                includeRows: false,
-                                predictionsTaken: tradesForPolymarketEvaluation.length,
-                                context: polymarketBridgeContext!,
-                            }),
-                    }))
-                    : [{
-                        offset: undefined,
-                        evalResult: evaluatePolymarketBacktestTrades({
-                            chartData: closedData,
-                            trades: tradesForPolymarketEvaluation,
-                            outcomes,
-                            strategyKey: plan.key,
-                            context: polymarketContext,
-                            includeRows: false,
-                        }),
-                    }];
+                if (isSignalExitMode) {
+                    const { summary: exitSummary } = evaluateSignalExitTrades({
+                        trades: tradesForPolymarketEvaluation,
+                        outcomes,
+                        pricePoints,
+                    });
 
-                for (const evaluation of evaluations) {
+                    const evalResult: import("../types/polymarket-outcomes").PolymarketEvalResult = {
+                        evaluatedEvents: polymarketContext.evaluatedEvents,
+                        predictionsTaken: tradesForPolymarketEvaluation.length,
+                        scoredPredictions: exitSummary.scoredTrades,
+                        pricedPredictions: exitSummary.scoredTrades,
+                        profitFactor: exitSummary.profitFactor,
+                        grossProfit: exitSummary.grossProfit,
+                        grossLoss: exitSummary.grossLoss,
+                        wins: exitSummary.profitableTrades,
+                        losses: exitSummary.losingTrades,
+                        skips: 0,
+                        winRate: exitSummary.scoredTrades > 0 ? exitSummary.profitableTrades / exitSummary.scoredTrades : 0,
+                        coverage: polymarketContext.evaluatedEvents > 0 ? exitSummary.scoredTrades / polymarketContext.evaluatedEvents : 0,
+                        longPredictions: 0,
+                        shortPredictions: 0,
+                        longWins: 0,
+                        shortWins: 0,
+                        longWinRate: 0,
+                        shortWinRate: 0,
+                        alwaysYesBaselineWinRate: polymarketContext.evaluatedEvents > 0 ? polymarketContext.resolvedUpCount / polymarketContext.evaluatedEvents : 0,
+                        alwaysNoBaselineWinRate: polymarketContext.evaluatedEvents > 0 ? (polymarketContext.evaluatedEvents - polymarketContext.resolvedUpCount) / polymarketContext.evaluatedEvents : 0,
+                        avgEntryPrice: exitSummary.avgEntryPrice,
+                        breakEvenWinRate: exitSummary.avgEntryPrice,
+                        expectancy: exitSummary.expectancy,
+                        edgeVsBreakEven: 0,
+                        missingOutcomeRows: exitSummary.missingPriceTrades,
+                        ignoredSignals: 0,
+                        evaluationMode: "signal_exit_same_event",
+                        signalExitedTrades: exitSummary.signalExitedTrades,
+                        resolvedTrades: exitSummary.resolvedTrades,
+                        missingPriceTrades: exitSummary.missingPriceTrades,
+                        netPnl: exitSummary.netPnl,
+                        avgExitPrice: exitSummary.avgExitPrice,
+                        rows: [],
+                    };
+
                     processedCount++;
-                    const { offset, evalResult } = evaluation;
                     if (evalResult.scoredPredictions < (options.polymarketMinScoredPredictions ?? 0)) {
                         const now = performance.now();
                         if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
@@ -432,7 +490,6 @@ export async function runPolymarketFinder(
                             callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
                             callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
                         }
-
                         if (processedCount % 1024 === 0 || processedCount === totalRuns) {
                             await callbacks.yieldControl();
                         }
@@ -442,7 +499,7 @@ export async function runPolymarketFinder(
                     const finderResult: FinderResult = buildFinderResult({
                         key: plan.key,
                         name: plan.name,
-                        params: offset !== undefined ? { ...params, polymarketEntryOffset: offset } : params,
+                        params,
                         result: backtestResult,
                         selectionResult: backtestResult,
                         endpointAdjusted: false,
@@ -460,14 +517,104 @@ export async function runPolymarketFinder(
                         callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
                         callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
                     }
-
                     if (now - lastResultsUpdateAt > 750 || processedCount === totalRuns) {
                         lastResultsUpdateAt = now;
                         callbacks.onResultsUpdate(ranker.toSortedArray(options.topN));
                     }
-
                     if (processedCount % 1024 === 0 || processedCount === totalRuns) {
                         await callbacks.yieldControl();
+                    }
+                } else {
+                    const legacyMappedTrades: readonly LegacyMappedPolymarketTrade[] | undefined = isMultiSubEventRun && interval === "1m"
+                        ? mapTradesToLegacyEvents(tradesForPolymarketEvaluation, outcomes)
+                        : undefined;
+                    const superMappedTrades: readonly MappedPolymarketTrade[] | undefined = isMultiSubEventRun && interval !== "1m"
+                        ? mapTradesToSuperEvents(tradesForPolymarketEvaluation, outcomes, interval)
+                        : undefined;
+
+                    const evaluations = isMultiSubEventRun
+                        ? bridgeOffsetsToEvaluate.map((offset) => ({
+                            offset,
+                            evalResult: interval === "1m"
+                                ? evaluateMappedPolymarketBacktestTrades1mBridge({
+                                    chartData: closedData,
+                                    mappedTrades: legacyMappedTrades ?? [],
+                                    outcomes,
+                                    strategyKey: plan.key,
+                                    selectedOffset: offset,
+                                    includeRows: false,
+                                    predictionsTaken: tradesForPolymarketEvaluation.length,
+                                    context: polymarketBridgeContext,
+                                })
+                                : evaluateMultiIntervalPolymarketTrades({
+                                    mappedTrades: superMappedTrades ?? [],
+                                    strategyKey: plan.key,
+                                    selectedOffset: offset,
+                                    includeRows: false,
+                                    predictionsTaken: tradesForPolymarketEvaluation.length,
+                                    context: polymarketBridgeContext!,
+                                }),
+                        }))
+                        : [{
+                            offset: undefined,
+                            evalResult: evaluatePolymarketBacktestTrades({
+                                chartData: closedData,
+                                trades: tradesForPolymarketEvaluation,
+                                outcomes,
+                                strategyKey: plan.key,
+                                context: polymarketContext,
+                                includeRows: false,
+                            }),
+                        }];
+
+                    for (const evaluation of evaluations) {
+                        processedCount++;
+                        const { offset, evalResult } = evaluation;
+                        if (evalResult.scoredPredictions < (options.polymarketMinScoredPredictions ?? 0)) {
+                            const now = performance.now();
+                            if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
+                                lastUiUpdateAt = now;
+                                const progress = 10 + (processedCount / totalRuns) * 85;
+                                callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
+                                callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
+                            }
+
+                            if (processedCount % 1024 === 0 || processedCount === totalRuns) {
+                                await callbacks.yieldControl();
+                            }
+                            continue;
+                        }
+
+                        const finderResult: FinderResult = buildFinderResult({
+                            key: plan.key,
+                            name: plan.name,
+                            params: offset !== undefined ? { ...params, polymarketEntryOffset: offset } : params,
+                            result: backtestResult,
+                            selectionResult: backtestResult,
+                            endpointAdjusted: false,
+                            endpointRemovedTrades: 0,
+                        });
+                        finderResult.polymarketEval = evalResult;
+
+                        filteredCount++;
+                        ranker.offer(finderResult);
+
+                        const now = performance.now();
+                        if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
+                            lastUiUpdateAt = now;
+                            const progress = 10 + (processedCount / totalRuns) * 85;
+                            callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
+                            callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
+                        }
+
+                        if (now - lastResultsUpdateAt > 750 || processedCount === totalRuns) {
+                            lastResultsUpdateAt = now;
+                            callbacks.onResultsUpdate(ranker.toSortedArray(options.topN));
+                        }
+
+                        if (processedCount % 1024 === 0 || processedCount === totalRuns) {
+                            await callbacks.yieldControl();
+                        }
                     }
                 }
             } catch (error) {

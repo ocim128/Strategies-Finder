@@ -296,6 +296,8 @@ export interface BacktestSettings {
     polymarketOutcomeSymbol?: string;
     /** Entry offset minute (0..4) for 1m -> 5m Polymarket bridge scoring */
     polymarketEntryOffset?: number;
+    /** Polymarket exit evaluation mode: resolve_hold scores at final binary outcome, signal_exit_same_event exits on chart sell signal inside the mapped 5m event */
+    polymarketExitMode?: "resolve_hold" | "signal_exit_same_event";
     /** Resolved secondary symbol for cross-symbol strategies. */
     crossSymbolSecondary?: string;
 }

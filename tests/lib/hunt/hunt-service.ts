@@ -841,6 +841,7 @@ class HuntService {
             polymarketMinScoredPredictions: Math.max(0, Math.round(this.readNumber(dom.huntPolymarketMinScored.value, 0))),
             polymarketLockOffset: dom.huntPolymarketLockOffset.checked,
             polymarketAfterTakeProfitOnly: dom.huntPolymarketAfterTakeProfitOnly.checked,
+            polymarketExitMode: this.uiState.runSettings.polymarketExitMode,
             freezeRiskManagement: dom.huntFreezeRiskManagementToggle.checked,
             tradeCountFilterEnabled,
             minTrades,
@@ -861,6 +862,12 @@ class HuntService {
         dom.huntPolymarketMinScored.disabled = !dom.huntPolymarketToggle.checked;
         dom.huntPolymarketLockOffset.disabled = !dom.huntPolymarketToggle.checked;
         dom.huntPolymarketAfterTakeProfitOnly.disabled = !dom.huntPolymarketToggle.checked;
+
+        const exitMode = this.uiState.runSettings.polymarketExitMode;
+        if (exitMode === "signal_exit_same_event") {
+            dom.huntPolymarketLockOffset.disabled = true;
+        }
+
         dom.huntTradesMin.disabled = !dom.huntTradesToggle.checked;
         dom.huntTradesMax.disabled = !dom.huntTradesToggle.checked;
         dom.huntTradeFilters.classList.toggle("is-disabled", !dom.huntTradesToggle.checked);
@@ -1148,7 +1155,11 @@ class HuntService {
             tagged.result.params,
             this.runOutput?.finderOptions
         );
-        if (Number.isFinite(tagged.result.params.polymarketEntryOffset)) {
+        const effectiveExitMode = this.runOutput?.finderOptions?.polymarketExitMode ?? "resolve_hold";
+        if (effectiveExitMode === "signal_exit_same_event") {
+            mergedBacktestSettings.polymarketAnnotationEnabled = true;
+            mergedBacktestSettings.polymarketExitMode = "signal_exit_same_event";
+        } else if (Number.isFinite(tagged.result.params.polymarketEntryOffset)) {
             mergedBacktestSettings.polymarketEntryOffset = Math.max(
                 0,
                 Math.min(4, Math.round(Number(tagged.result.params.polymarketEntryOffset)))

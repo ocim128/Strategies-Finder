@@ -51,6 +51,18 @@ export interface TradePolymarketOutcome {
     marketEntryPrice?: number | null;
     /** Entry offset minute within 5m event (0..4), only populated for 1m runs */
     entryOffset?: number;
+    /** Which evaluation mode produced this outcome annotation */
+    evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+    /** Whether the Polymarket trade was profitable (signal-exit aware, not binary outcome) */
+    isProfitable?: boolean | null;
+    /** Exit price from the Polymarket contract */
+    marketExitPrice?: number | null;
+    /** Exit timestamp for the Polymarket leg */
+    marketExitTs?: number | null;
+    /** How the Polymarket leg exited: signal (same-event) or resolution (final outcome) */
+    marketExitSource?: "signal" | "resolution";
+    /** PnL for the Polymarket leg: marketExitPrice - marketEntryPrice */
+    marketPnl?: number | null;
 }
 
 export interface BacktestPolymarketTimingProfileEntry {
@@ -74,6 +86,19 @@ export interface BacktestPolymarketTradeSummary {
     entryOffset?: number;
     duplicateTradesIgnored?: number;
     timingProfile?: BacktestPolymarketTimingProfileEntry[];
+    evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+    profitableTrades?: number;
+    losingTrades?: number;
+    signalExitedTrades?: number;
+    resolvedTrades?: number;
+    missingPriceTrades?: number;
+    netPnl?: number;
+    grossProfit?: number;
+    grossLoss?: number;
+    profitFactor?: number;
+    expectancy?: number;
+    avgEntryPrice?: number;
+    avgExitPrice?: number;
 }
 
 export interface PolymarketEvalResult {
@@ -107,6 +132,12 @@ export interface PolymarketEvalResult {
     entryOffset?: number;
     /** Number of duplicate trades ignored due to same-event deduplication */
     duplicateTradesIgnored?: number;
+    evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+    signalExitedTrades?: number;
+    resolvedTrades?: number;
+    missingPriceTrades?: number;
+    netPnl?: number;
+    avgExitPrice?: number;
     rows: PolymarketEvalRow[];
 }
 

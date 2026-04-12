@@ -1655,6 +1655,7 @@ class StrategyEnsembleService {
                 duplicateTradesIgnored: existingSummary?.duplicateTradesIgnored ?? summary.duplicateTradesIgnored,
                 entryOffset: existingSummary?.entryOffset ?? undefined,
                 timingProfile: existingSummary?.timingProfile ?? summary.timingProfile,
+                evaluationMode: "resolve_hold",
             },
         };
     }

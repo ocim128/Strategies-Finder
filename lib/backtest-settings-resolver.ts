@@ -75,6 +75,7 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     polymarketAnnotationEnabled: false,
     polymarketOutcomeSymbol: "",
     polymarketEntryOffset: 0,
+    polymarketExitMode: "resolve_hold" as const,
     crossSymbolSecondary: "",
 });
 
@@ -355,6 +356,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "polymarketAnnotationEnabled",
     "polymarketOutcomeSymbol",
     "polymarketEntryOffset",
+    "polymarketExitMode",
     "crossSymbolSecondary",
 ]);
 
@@ -589,6 +591,10 @@ export function resolveBacktestSettingsFromRaw(
         polymarketAnnotationEnabled: readBoolean(raw, "polymarketAnnotationEnabled", EFFECTIVE_BACKTEST_DEFAULTS.polymarketAnnotationEnabled),
         polymarketOutcomeSymbol: readString(raw, "polymarketOutcomeSymbol", EFFECTIVE_BACKTEST_DEFAULTS.polymarketOutcomeSymbol),
         polymarketEntryOffset: readNumber(raw, "polymarketEntryOffset", EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryOffset),
+        polymarketExitMode: typeof raw["polymarketExitMode"] === "string"
+            && raw["polymarketExitMode"].trim().toLowerCase() === "signal_exit_same_event"
+            ? "signal_exit_same_event"
+            : EFFECTIVE_BACKTEST_DEFAULTS.polymarketExitMode,
         crossSymbolSecondary: readString(raw, "crossSymbolSecondary", EFFECTIVE_BACKTEST_DEFAULTS.crossSymbolSecondary),
     };
 

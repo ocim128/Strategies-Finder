@@ -62,6 +62,8 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     // Multi-position constraint
     const usesMultiPosition = (settings.maxOpenTrades ?? 1) > 1;
 
+    const usesSignalExitMode = settings.polymarketExitMode === "signal_exit_same_event";
+
     return usesRealismConstraints
         || usesCombinedDirection
         || usesNonAllMarketMode
@@ -70,7 +72,8 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         || usesPercentageWinStreakStopLoss
         || usesAdaptivePercentageTakeProfit
         || hasSnapshotFilters
-        || usesMultiPosition;
+        || usesMultiPosition
+        || usesSignalExitMode;
 }
 
 export const SNAPSHOT_FILTER_SETTING_KEYS = [] as const satisfies readonly (keyof BacktestSettings)[];
@@ -102,6 +105,7 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "strategyTimeframeEnabled",
     "strategyTimeframeMinutes",
     "polymarketOutcomeSymbol",
+    "polymarketExitMode",
     "crossSymbolSecondary",
     ...SNAPSHOT_FILTER_SETTING_KEYS,
 ] as const satisfies readonly (keyof BacktestSettings)[];

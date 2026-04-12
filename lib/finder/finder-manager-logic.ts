@@ -1,5 +1,6 @@
 import { DEFAULT_SORT_PRIORITY, getPolymarketSortPriority } from "./constants";
 import type { FinderMetric, FinderMode, FinderOptions, PolymarketFinderRankMode } from "../types/finder";
+import type { PolymarketExitMode } from "../polymarket-exit-mode";
 
 export interface FinderOptionsInput {
     useAdvancedSort: boolean;
@@ -20,6 +21,7 @@ export interface FinderOptionsInput {
     polymarketMinScoredPredictions: number;
     polymarketLockOffset: boolean;
     polymarketAfterTakeProfitOnly: boolean;
+    polymarketExitMode: PolymarketExitMode;
 }
 
 export function resolveFinderSortPriority(input: {
@@ -70,5 +72,6 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         polymarketMinScoredPredictions: Math.max(0, input.polymarketMinScoredPredictions),
         polymarketLockOffset: input.polymarketScoringEnabled && input.polymarketLockOffset,
         polymarketAfterTakeProfitOnly: input.polymarketScoringEnabled && input.polymarketAfterTakeProfitOnly,
+        polymarketExitMode: input.polymarketExitMode,
     };
 }

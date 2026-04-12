@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { afterEach, describe, it } from "node:test";
 import { annotateBacktestResultWithPolymarketOutcomes } from "../lib/polymarket-trade-annotations";
 import { TradesRenderer } from "../lib/renderers/tradesRenderer";
+import { ensurePricePointsForOutcomes } from "../lib/polymarket-price-points-ingest";
 import type { BacktestResult, OHLCVData, Trade } from "../lib/types/strategies";
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -312,6 +313,321 @@ describe("Polymarket backtest trade annotations", () => {
         expect(result.trades[0]?.polymarketOutcome?.entryOffset).to.equal(1);
         expect(result.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.52);
         expect(result.trades[1]?.polymarketOutcome).to.equal(null);
+    });
+
+    it("annotates 1m signal-exit runs with entry and exit prices from stored price points", async () => {
+        const bars = makeMinuteBars(12);
+        const eventStartTs = 1_700_000_300;
+        installOutcomeFetch([
+            {
+                series_id: "10684",
+                event_slug: "btc-signal-exit-1",
+                market_slug: "btc-signal-exit-1",
+                interval: "5m",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.52,
+                yes_entry_minute_2_price: 0.54,
+                yes_entry_minute_3_price: 0.56,
+                yes_entry_minute_4_price: 0.58,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ]);
+
+        const entryTs = eventStartTs + 60;
+        const exitTs = eventStartTs + 180;
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([
+                {
+                    ...makeTrade(1, "long", entryTs, 10),
+                    exitTime: exitTs,
+                    exitReason: "signal",
+                },
+            ]),
+            {
+                symbol: "BTCUSDT",
+                interval: "1m",
+                executionModel: "next_open",
+                chartData: bars,
+                polymarketExitMode: "signal_exit_same_event",
+            },
+            undefined,
+            [
+                {
+                    series_id: "10684",
+                    event_start_ts: eventStartTs,
+                    event_end_ts: eventStartTs + 300,
+                    market_slug: "btc-signal-exit-1",
+                    yes_token_id: "yes-1",
+                    no_token_id: "no-1",
+                    ts: entryTs,
+                    yes_price: 0.52,
+                    no_price: 0.48,
+                    updated_at: 1,
+                },
+                {
+                    series_id: "10684",
+                    event_start_ts: eventStartTs,
+                    event_end_ts: eventStartTs + 300,
+                    market_slug: "btc-signal-exit-1",
+                    yes_token_id: "yes-1",
+                    no_token_id: "no-1",
+                    ts: exitTs,
+                    yes_price: 0.64,
+                    no_price: 0.36,
+                    updated_at: 1,
+                },
+            ]
+        );
+
+        expect(result.polymarketTradeSummary?.evaluationMode).to.equal("signal_exit_same_event");
+        expect(result.polymarketTradeSummary?.scoredTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.signalExitedTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.resolvedTrades).to.equal(0);
+        expect(result.polymarketTradeSummary?.expectancy).to.be.closeTo(0.12, 1e-12);
+        expect(result.polymarketTradeSummary?.profitFactor).to.equal(Infinity);
+        expect(result.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.52);
+        expect(result.trades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.64);
+        expect(result.trades[0]?.polymarketOutcome?.marketPnl).to.be.closeTo(0.12, 1e-12);
+        expect(result.trades[0]?.polymarketOutcome?.marketExitSource).to.equal("signal");
+    });
+
+    it("keeps missing signal-exit price trades unscored instead of rendering a fake resolution badge", async () => {
+        const bars = makeMinuteBars(12);
+        const eventStartTs = 1_700_000_300;
+        installOutcomeFetch([
+            {
+                series_id: "10684",
+                event_slug: "btc-missing-price-1",
+                market_slug: "btc-missing-price-1",
+                interval: "5m",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.52,
+                yes_entry_minute_2_price: 0.54,
+                yes_entry_minute_3_price: 0.56,
+                yes_entry_minute_4_price: 0.58,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ]);
+
+        const entryTs = eventStartTs + 60;
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([
+                {
+                    ...makeTrade(1, "long", entryTs, 10),
+                    exitTime: entryTs + 120,
+                    exitReason: "signal",
+                },
+            ]),
+            {
+                symbol: "BTCUSDT",
+                interval: "1m",
+                executionModel: "next_open",
+                chartData: bars,
+                polymarketExitMode: "signal_exit_same_event",
+            },
+            undefined,
+            [
+                {
+                    series_id: "10684",
+                    event_start_ts: eventStartTs,
+                    event_end_ts: eventStartTs + 300,
+                    market_slug: "btc-missing-price-1",
+                    yes_token_id: "yes-1",
+                    no_token_id: "no-1",
+                    ts: entryTs,
+                    yes_price: 0.52,
+                    no_price: 0.48,
+                    updated_at: 1,
+                },
+            ]
+        );
+
+        expect(result.polymarketTradeSummary?.evaluationMode).to.equal("signal_exit_same_event");
+        expect(result.polymarketTradeSummary?.scoredTrades).to.equal(0);
+        expect(result.polymarketTradeSummary?.missingPriceTrades).to.equal(1);
+        expect(result.trades[0]?.polymarketOutcome).to.equal(null);
+    });
+
+    it("loads stored price points by event key so same-event exit quotes are not missed", async () => {
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-price-points") {
+                expect(url.searchParams.get("eventStartTs")).to.equal("1700000300");
+                expect(url.searchParams.get("startTs")).to.equal(null);
+                expect(url.searchParams.get("endTs")).to.equal(null);
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [
+                        {
+                            series_id: "10684",
+                            event_start_ts: 1_700_000_300,
+                            event_end_ts: 1_700_000_600,
+                            market_slug: "btc-event",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            ts: 1_700_000_580,
+                            yes_price: 0.61,
+                            no_price: 0.39,
+                            updated_at: 1,
+                        },
+                    ],
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/polymarket-history" || url.pathname === "/prices-history") {
+                throw new Error("history fetch should not run when the event already has stored price points");
+            }
+
+            if (url.pathname === "/api/sqlite/store-polymarket-price-points") {
+                return new Response(JSON.stringify({ ok: true, upserted: 0 }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            throw new Error(`Unexpected fetch: ${url.pathname}`);
+        }) as typeof fetch;
+
+        const points = await ensurePricePointsForOutcomes([
+            {
+                series_id: "10684",
+                event_slug: "btc-event",
+                market_slug: "btc-event",
+                interval: "5m",
+                event_start_ts: 1_700_000_300,
+                event_end_ts: 1_700_000_600,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.51,
+                yes_entry_minute_2_price: 0.52,
+                yes_entry_minute_3_price: 0.53,
+                yes_entry_minute_4_price: 0.54,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ], "10684", {
+            startTs: 1_700_000_300,
+            endTs: 1_700_000_360,
+        });
+
+        expect(points).to.have.length(1);
+        expect(points[0]?.ts).to.equal(1_700_000_580);
+    });
+
+    it("chunks large stored price-point lookups so signal-exit runs do not drop coverage", async () => {
+        const requestedChunks: string[] = [];
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-price-points") {
+                const chunk = url.searchParams.get("eventStartTs") ?? "";
+                requestedChunks.push(chunk);
+                const rows = chunk
+                    .split(",")
+                    .map((value) => Number(value.trim()))
+                    .filter((value) => Number.isFinite(value))
+                    .map((eventStartTs) => ({
+                        series_id: "10684",
+                        event_start_ts: eventStartTs,
+                        event_end_ts: eventStartTs + 300,
+                        market_slug: `btc-${eventStartTs}`,
+                        yes_token_id: `yes-${eventStartTs}`,
+                        no_token_id: `no-${eventStartTs}`,
+                        ts: eventStartTs + 60,
+                        yes_price: 0.55,
+                        no_price: 0.45,
+                        updated_at: 1,
+                    }));
+
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows,
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/ensure-polymarket-price-points") {
+                throw new Error("ensure route should not run when stored chunks already cover every event");
+            }
+
+            throw new Error(`Unexpected fetch: ${url.pathname}`);
+        }) as typeof fetch;
+
+        const outcomes = Array.from({ length: 205 }, (_, index) => {
+            const eventStartTs = 1_700_100_000 + index * 300;
+            return {
+                series_id: "10684",
+                event_slug: `btc-${eventStartTs}`,
+                market_slug: `btc-${eventStartTs}`,
+                interval: "5m",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                yes_token_id: `yes-${eventStartTs}`,
+                no_token_id: `no-${eventStartTs}`,
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.51,
+                yes_entry_minute_2_price: 0.52,
+                yes_entry_minute_3_price: 0.53,
+                yes_entry_minute_4_price: 0.54,
+                resolved_outcome_up: 1 as const,
+                resolution_source: "test",
+                updated_at: 1,
+            };
+        });
+
+        const points = await ensurePricePointsForOutcomes(outcomes, "10684");
+
+        expect(points).to.have.length(205);
+        expect(requestedChunks).to.have.length(3);
+        expect(requestedChunks.map((chunk) => chunk.split(",").filter(Boolean).length)).to.deep.equal([100, 100, 5]);
     });
 
     it("skips annotation for unsupported runs", async () => {

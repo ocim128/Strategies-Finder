@@ -314,6 +314,7 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("polymarketAnnotationEnabled", { rustSupport: "unsupported" }),
     createField("polymarketOutcomeSymbol", { rustSupport: "unsupported", parser: "string" }),
     createField("polymarketEntryOffset", { rustSupport: "unsupported" }),
+    createField("polymarketExitMode", { rustSupport: "unsupported", parser: "string" }),
     createField("crossSymbolSecondary", {
         parser: "string",
         rustSupport: "unsupported",

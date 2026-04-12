@@ -6,6 +6,7 @@ import {
 } from "../settings-model";
 import type { CapitalSettings } from "../types/backtest";
 import type { FinderMetric, FinderResult, PolymarketFinderRankMode } from "../types/finder";
+import type { PolymarketExitMode } from "../polymarket-exit-mode";
 import type { StrategyParams } from "../types/strategies";
 
 export type HuntProfileSource = "current_ui" | "endpoint_snapshot" | "saved_config_plus_chart";
@@ -37,6 +38,7 @@ export interface HuntRunSettings {
     polymarketMinScoredPredictions: number;
     polymarketLockOffset: boolean;
     polymarketAfterTakeProfitOnly: boolean;
+    polymarketExitMode: PolymarketExitMode;
     freezeRiskManagement: boolean;
     tradeCountFilterEnabled: boolean;
     minTrades: number;
@@ -103,6 +105,7 @@ export const DEFAULT_HUNT_RUN_SETTINGS: Readonly<HuntRunSettings> = Object.freez
     polymarketMinScoredPredictions: 0,
     polymarketLockOffset: false,
     polymarketAfterTakeProfitOnly: false,
+    polymarketExitMode: "resolve_hold" as PolymarketExitMode,
     freezeRiskManagement: false,
     tradeCountFilterEnabled: true,
     minTrades: 40,
@@ -341,6 +344,10 @@ export function normalizeStoredHuntRunSettings(raw: unknown): HuntRunSettings {
             source.polymarketAfterTakeProfitOnly,
             DEFAULT_HUNT_RUN_SETTINGS.polymarketAfterTakeProfitOnly
         ),
+        polymarketExitMode: typeof source.polymarketExitMode === "string"
+            && source.polymarketExitMode.trim().toLowerCase() === "signal_exit_same_event"
+            ? "signal_exit_same_event"
+            : "resolve_hold",
         freezeRiskManagement: readBoolean(
             source.freezeRiskManagement,
             DEFAULT_HUNT_RUN_SETTINGS.freezeRiskManagement

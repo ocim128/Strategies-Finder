@@ -588,4 +588,103 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.contain("Entry Win % | After Signal");
         expect(html).to.contain("100.0% | 1t");
     });
+
+    it("renders signal-exit same-event summaries from stored polymarket pricing", () => {
+        const html = (quickViewManager as any).buildPolymarketSection({
+            trades: [
+                makeTrade(1, true, {
+                    polymarketOutcome: {
+                        ...makeTrade(1, true).polymarketOutcome!,
+                        evaluationMode: "signal_exit_same_event",
+                        isProfitable: true,
+                        marketEntryPrice: 0.42,
+                        marketExitPrice: 0.60,
+                        marketPnl: 0.18,
+                        marketExitSource: "signal",
+                    },
+                }),
+                makeTrade(2, false, {
+                    polymarketOutcome: {
+                        ...makeTrade(2, false).polymarketOutcome!,
+                        evaluationMode: "signal_exit_same_event",
+                        isProfitable: false,
+                        marketEntryPrice: 0.58,
+                        marketExitPrice: 0.48,
+                        marketPnl: -0.10,
+                        marketExitSource: "resolution",
+                    },
+                }),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 2,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            polymarketTradeSummary: {
+                seriesId: "btc-5m",
+                outcomeRowsLoaded: 2,
+                scoredTrades: 2,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 0,
+                evaluationMode: "signal_exit_same_event",
+                profitableTrades: 1,
+                losingTrades: 1,
+                signalExitedTrades: 1,
+                resolvedTrades: 1,
+                expectancy: 0.04,
+                profitFactor: 1.8,
+            },
+        } satisfies BacktestResult);
+
+        expect(html).to.contain("Signal Exit (same event)");
+        expect(html).to.contain("Poly Profitable");
+        expect(html).to.contain("+4.0c");
+        expect(html).to.contain("1.80");
+        expect(html).to.contain("Signal Exited");
+        expect(html).to.contain("Resolved (Held)");
+    });
+
+    it("does not render an empty signal-exit section when no trades were actually priced", () => {
+        const html = (quickViewManager as any).buildPolymarketSection({
+            trades: [
+                makeTrade(1, null),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            polymarketTradeSummary: {
+                seriesId: "btc-5m",
+                outcomeRowsLoaded: 1,
+                scoredTrades: 0,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 1,
+                evaluationMode: "signal_exit_same_event",
+                missingPriceTrades: 1,
+            },
+        } satisfies BacktestResult);
+
+        expect(html).to.equal("");
+    });
 });

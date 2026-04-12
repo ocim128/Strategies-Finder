@@ -11,6 +11,13 @@ import {
 import { stripEndpointIgnoredBacktestSettings } from "./backtest-endpoint-settings";
 import type { OHLCVData, StrategyParams } from "./types/strategies";
 
+function stripSignalExitMode(
+    settings: Record<string, unknown>
+): Record<string, unknown> {
+    const { polymarketExitMode, ...rest } = settings;
+    return rest;
+}
+
 function cloneBlockRange(
     blockRange: { from: number; to: number } | null
 ): { from: number; to: number } | null {
@@ -38,7 +45,7 @@ export function buildBacktestEndpointExecutorRequest(
         primarySymbol: String(backtestSettings.symbol ?? ""),
         strategyKey,
         strategyParams,
-        backtestSettings: stripEndpointIgnoredBacktestSettings(backtestSettings),
+        backtestSettings: stripSignalExitMode(stripEndpointIgnoredBacktestSettings(backtestSettings)),
         capitalSettings: { ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS },
         crossSymbolInput: crossSymbolInput
             ? {
@@ -70,7 +77,7 @@ export function buildBacktestEndpointExecutorRequestFromSnapshot(
         snapshot.interval,
         snapshot.strategyParams,
         {
-            ...snapshot.backtestSettings,
+            ...stripSignalExitMode({ ...snapshot.backtestSettings }),
             polymarketAnnotationEnabled: annotatePolymarket,
             symbol: snapshot.symbol,
             interval: snapshot.interval,

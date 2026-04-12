@@ -5,8 +5,8 @@
 Add a new Polymarket evaluation mode for `1m` chart runs that:
 
 - uses the normal chart backtest to decide entry and exit timestamps
-- enters at a locally captured Polymarket YES/NO price inside the mapped `5m` event
-- exits at a locally captured Polymarket YES/NO price when the chart trade closes by `signal` inside that same event
+- enters at a locally captured Polymarket YES or NO price inside the mapped `5m` event
+- exits at a locally captured Polymarket YES or NO price when the chart trade closes by `signal` inside that same event
 - falls back to final binary outcome settlement when no same-event signal exit happens
 - keeps the current hold-to-resolution Polymarket mode unchanged
 - works consistently in manual backtest, Finder Polymarket mode, and Hunt runs that delegate to Finder
@@ -15,7 +15,7 @@ This is a Polymarket scoring extension, not a replacement backtest engine.
 
 ## Purpose
 
-The current Polymarket path only answers one question:
+The current Polymarket path mainly answers:
 
 - "Was the trade direction correct by final outcome?"
 
@@ -25,9 +25,22 @@ That is useful, but too coarse for `1m` research. It does not reward trades that
 - take profit early
 - avoid a late reversal before event resolution
 
-The new mode should answer a more practical question:
+The new mode should answer:
 
 - "If I trade the Polymarket contract itself, using my chart strategy for timing, what happens if I exit on the chart sell signal before final resolution?"
+
+## Audit Outcome
+
+The original idea is sound, but the first draft was too narrow for this repo.
+
+The corrected plan must account for these repo facts:
+
+- `signal_exit_same_event` must stay `next_open`-only in v1. Current Polymarket research already depends on `next_open`, and widening execution semantics here would create parity drift.
+- `signal_exit_same_event` is a payout-style evaluation mode, not a binary classification mode. Existing helpers that infer payout from `marketEntryPrice + isWin` cannot be reused unchanged.
+- Quick View, Trades, and the Polymarket diagnostics tab can lazily reload and rebuild Polymarket annotations. They are active consumers, not just passive renderers of stored data.
+- Finder and Hunt currently feed `polymarketEntryOffset` back into backtest settings when applying ranked results. That must become mode-aware because signal-exit mode does not use offset fan-out.
+- endpoint Preview / Copy / HTTP execution and Strategy Ensemble already share the same Polymarket annotation helpers. Even if signal-exit support is out of scope there, those callers must be explicitly fenced so they do not silently inherit half-implemented behavior.
+- local price-point loading must be event-keyed. Loading only by raw quote timestamp range can miss valid same-event exit quotes that occur after the latest trade entry timestamp in the batch.
 
 ## Why This Must Stay Event-Based
 
@@ -46,13 +59,14 @@ The safe rule is:
 Support only:
 
 - `1m` chart interval
+- `executionModel = next_open`
 - manual backtest UI
-- existing backtest result annotation flow
 - Finder Polymarket mode
 - Hunt runs that call Finder Polymarket mode
-- Quick View
-- Trades panel
-- Polymarket diagnostics tab
+- result rehydration paths used by:
+  - Quick View
+  - Trades panel
+  - Polymarket diagnostics tab
 - locally stored Polymarket quote points
 
 Keep working:
@@ -60,37 +74,50 @@ Keep working:
 - current `resolve_hold` Polymarket behavior
 - `polymarketOutcomeSymbol`
 - existing `1m` event mapping logic
+- current `5m`, `15m`, `1h`, and `4h` `resolve_hold` behavior
+- Strategy Ensemble Polymarket in `resolve_hold` mode
+- endpoint Preview / Copy / HTTP execution in `resolve_hold` mode
 
 V1 assumptions:
 
 - quote data is already captured and can be loaded locally
 - a single executable price per side is enough in v1
 - use normalized prices in `0..1`
+- if an old saved config requests `signal_exit_same_event` outside supported conditions, the effective mode is downgraded to `resolve_hold` with an explicit message instead of silently changing chart backtest behavior
 
 ## Non-Goals For V1
 
 - Worker or alert changes
-- endpoint changes
 - bridge export changes
+- endpoint signal-exit support
+- Strategy Ensemble signal-exit support
 - continuous Polymarket chart stitching
 - carrying a position into the next `5m` event
 - full orderbook replay
-- bid/ask microstructure modeling
+- bid or ask microstructure modeling
 - replacing the app-wide main ROI badge with Polymarket ROI
 - `5m`, `15m`, `1h`, or `4h` signal-exit support
 
 ## Current Repo Facts
 
-These existing seams should be reused:
+Existing seams to reuse:
 
 - `lib/backtest-service.ts` already runs the normal backtest, then optionally annotates Polymarket results
 - `lib/polymarket-trade-annotations.ts` already maps backtest trades to Polymarket events
 - `lib/polymarket-outcome-evaluator.ts` already builds Polymarket summaries from trades
 - `lib/polymarket-1m-5m-bridge.ts` already has event containment and dedupe helpers
 - `lib/types/polymarket-outcomes.ts` already carries trade-level and summary-level Polymarket fields
-- `lib/local-sqlite-polymarket-api.ts` and `vite.config.ts` already expose local SQLite load/store paths for Polymarket outcomes
+- `lib/local-sqlite-polymarket-api.ts` and `vite.config.ts` already expose local SQLite load or store paths for Polymarket outcomes
 - `lib/finder/finder-runner-polymarket.ts` is the dedicated Polymarket Finder execution path
 - `lib/hunt/hunt-runner.ts` is a thin orchestrator on top of Finder, not a second evaluation engine
+
+Existing consumers that must be handled explicitly:
+
+- `lib/quick-view.ts`, `lib/renderers/tradesRenderer.ts`, and `lib/polymarket-panel-service.ts` can lazily reload outcome data and rebuild annotations after the original backtest finished
+- `lib/polymarket-diagnostics-utils.ts` and `lib/backtest-endpoint-contract.ts` currently derive compact Polymarket performance from trade-level `marketEntryPrice` and `isWin`
+- `lib/finder-manager.ts` and `lib/hunt/hunt-service.ts` currently write `polymarketEntryOffset` back into settings when applying a ranked result
+- `lib/strategy-ensemble-service.ts` already reuses the shared annotation helpers for Ensemble Polymarket previews
+- `lib/backtest-executor.ts`, `lib/backtest-endpoint-copy.ts`, and `lib/backtest-endpoint-execution.ts` already reuse the same annotation path for endpoint parity
 
 Important limitation today:
 
@@ -98,40 +125,55 @@ Important limitation today:
 - that is enough for entry scoring and final-outcome scoring
 - that is not enough for arbitrary signal exits inside the event
 
+Important semantic limitation today:
+
+- current payout diagnostics assume `resolve_hold`, where payout can be derived from `marketEntryPrice` and final `isWin`
+- that assumption breaks for signal exits because profitable early exits can diverge from final binary outcome resolution
+
 Important non-solution:
 
 - `lib/polymarket-fill-history.ts` is for diagnostics and remote history summaries
 - do not use it as the core backtest fill source
 - the new mode must stay deterministic against local data
 
-Important audit correction:
-
-- the first draft treated manual backtest as the primary implementation surface
-- that is too narrow if Finder and Hunt must support the feature
-- the shared Polymarket signal-exit evaluator must be the primary execution core
-- manual backtest and Finder should both call that core
-- Hunt should inherit behavior through Finder instead of adding a second implementation
-
 ## Architecture Direction
 
-Build one shared pure evaluator for Polymarket signal-exit pricing and reuse it in all supported surfaces.
+Build one shared pure evaluator for Polymarket signal-exit pricing and reuse it in all supported execution surfaces.
 
 Recommended shape:
 
 - normal chart backtest still produces `Trade[]`
-- a shared Polymarket evaluator turns those trades into Polymarket-scored trades and summary
+- a shared Polymarket evaluator turns those trades into Polymarket-scored trades and a summary
 - manual backtest annotation calls that evaluator
 - Finder Polymarket mode calls that evaluator
-- Hunt gets the behavior automatically because it already delegates to Finder
+- Hunt inherits behavior through Finder
+- Quick View, Trades, and the Polymarket tab reuse the same evaluator when they lazily rebuild Polymarket annotations
 
 Do not implement separate pricing logic in:
 
 - `lib/polymarket-trade-annotations.ts`
 - `lib/finder/finder-runner-polymarket.ts`
+- `lib/quick-view.ts`
+- `lib/renderers/tradesRenderer.ts`
+- `lib/polymarket-panel-service.ts`
 
-If those two paths drift, manual backtest, Finder, and Hunt will rank the same candidate differently.
+If those paths drift, the same candidate will score differently depending on which surface produced the result.
 
 ## Product Rules
+
+### Execution gating
+
+The requested mode is only valid when all of these are true:
+
+- chart interval is `1m`
+- chart execution model is `next_open`
+- Polymarket annotation is enabled
+
+Implementation rule:
+
+- add one shared `resolveEffectivePolymarketExitMode(...)` helper
+- if a saved config or imported profile requests `signal_exit_same_event` outside those conditions, downgrade to `resolve_hold`
+- the downgrade must be explicit in UI or status text
 
 ### Trade selection
 
@@ -175,6 +217,25 @@ If there is a same-event signal exit but no usable local quote before that exit:
 
 This keeps "no sell logic" separate from "data missing".
 
+### Supported chart exits
+
+Only signal exits should close the Polymarket leg early in v1.
+
+Treat these as final-outcome holds:
+
+- `stop_loss`
+- `take_profit`
+- `trailing_stop`
+- `time_stop`
+- `partial`
+- `probation_fail`
+- `end_of_data`
+
+Reason:
+
+- the requested mode is explicitly "exit when sell logic triggered"
+- this keeps the first implementation simple and predictable
+
 ### PnL model
 
 Use side-native prices.
@@ -204,24 +265,18 @@ V1 unit:
 - normalized dollars per one share contract
 - UI may display the same values in cents for readability
 
-### Supported chart exits
+Important semantic rule:
 
-Only signal exits should close the Polymarket leg early in v1.
+- keep final-outcome classification data available on the trade for compatibility and debugging
+- add separate payout fields for signal-exit behavior instead of overloading old payout helpers
+- `resolve_hold` can keep using the existing binary-style payout math
+- `signal_exit_same_event` must use `marketPnl`-derived metrics in Finder ranking, Quick View, Trades badges, and diagnostics
 
-Treat these as final-outcome holds:
+Recommended compatibility shape:
 
-- `stop_loss`
-- `take_profit`
-- `trailing_stop`
-- `time_stop`
-- `partial`
-- `probation_fail`
-- `end_of_data`
-
-Reason:
-
-- the requested mode is explicitly "exit when sell logic triggered"
-- this keeps the first implementation simple and predictable
+- keep `actualOutcomeUp` on every scored trade
+- add `isProfitable` for the realized Polymarket trade result
+- do not use `alwaysYesBaselineWinRate`, `alwaysNoBaselineWinRate`, or baseline-delta-style cards as primary signal-exit metrics
 
 ## New Data Contract
 
@@ -244,11 +299,11 @@ CREATE TABLE IF NOT EXISTS polymarket_price_points (
     PRIMARY KEY(series_id, event_start_ts, ts)
 );
 
-CREATE INDEX IF NOT EXISTS idx_pm_price_points_series_time
-    ON polymarket_price_points(series_id, ts);
-
 CREATE INDEX IF NOT EXISTS idx_pm_price_points_event_time
     ON polymarket_price_points(series_id, event_start_ts, ts);
+
+CREATE INDEX IF NOT EXISTS idx_pm_price_points_series_time
+    ON polymarket_price_points(series_id, ts);
 ```
 
 Use a simple row type in v1:
@@ -274,6 +329,12 @@ Why this shape:
 - keyed by timestamp, because exits are time-based
 - stores both YES and NO directly, so v1 does not have to infer one from the other
 
+Loading rule:
+
+- the primary browser API must load price points by `series_id + event_start_ts` range, or by an explicit set of event starts
+- do not make raw point timestamp range the primary fetch contract
+- the evaluator needs the full same-event quote window even when the exit quote occurs after the latest trade entry timestamp in the batch
+
 ## Settings Contract
 
 Add one new Polymarket setting:
@@ -286,7 +347,7 @@ Rules:
 
 - default is `"resolve_hold"`
 - only show this control when `polymarketAnnotationEnabled` is on
-- only show the non-default mode on `1m`
+- only allow the non-default mode when interval is `1m` and execution model is `next_open`
 - when `signal_exit_same_event` is selected, hide `polymarketEntryOffset`
 - mark the new setting Rust-unsupported
 - preserve the field in settings capture, saved configs, endpoint-style snapshots, and Hunt profiles
@@ -298,23 +359,35 @@ Important compatibility rule:
 - `polymarketEntryOffset` must remain persisted for old profiles and old runs
 - when `polymarketExitMode = signal_exit_same_event`, `polymarketEntryOffset` is ignored rather than deleted
 
+Required type and storage surfaces:
+
+- `lib/types/strategies.ts`
+- `lib/settings-model.ts`
+- `lib/backtest-settings-resolver.ts`
+- `lib/backtest-settings-dom-contract.ts`
+- `BACKTEST_DOM_SETTING_IDS`
+
+Containment rule for non-v1 callers:
+
+- endpoint preview or copy or executor must either strip or explicitly downgrade `signal_exit_same_event` to `resolve_hold`
+- Strategy Ensemble Polymarket must stay on `resolve_hold` until a separate plan expands it
+
 ## Finder And Hunt Contract
 
-This section is required for a correct implementation.
+### Finder is a primary execution surface
 
-### Finder is the primary research surface
+For this feature, Finder is not optional follow-up work. It is one of the main execution surfaces.
 
-For this feature, Finder is not an optional follow-up. It is one of the main execution surfaces.
-
-When `options.polymarketScoringEnabled` is on and `settings.polymarketExitMode = signal_exit_same_event`:
+When `options.polymarketScoringEnabled` is on and the effective exit mode is `signal_exit_same_event`:
 
 - Finder must still use `lib/finder/finder-runner-polymarket.ts`
 - Finder must load local price points once per run, not once per candidate
 - Finder must reuse one shared signal-exit evaluator across all candidates
+- Finder must resolve the effective exit mode once per run and fail early if the caller requested signal-exit on an unsupported interval
 
-### Do not fan out 1m candidates by offset in the new mode
+### Do not fan out `1m` candidates by offset in the new mode
 
-Current `1m` Polymarket Finder behavior expands one candidate into five offset variants using `polymarketEntryOffset`.
+Current `1m` Finder behavior expands one candidate into five offset variants using `polymarketEntryOffset`.
 
 That must not happen in `signal_exit_same_event`.
 
@@ -325,21 +398,29 @@ Rules:
 - Finder must not multiply `totalRuns` by five
 - Hunt survivor grouping must therefore stay stable and not split one candidate into five pseudo-candidates
 
+Apply-result rule:
+
+- `lib/finder-manager.ts` must stop treating `result.params.polymarketEntryOffset` as required metadata for signal-exit runs
+- applying a Finder result must preserve `polymarketExitMode`, not fabricate a fake offset back into current settings
+
 ### Rank-mode restrictions for the new mode
 
 The old Polymarket rank modes were designed for binary final-outcome scoring.
 
-For `signal_exit_same_event`, keep the first cut simple:
+For `signal_exit_same_event`, keep the first cut simple.
 
-- supported rank modes:
-  - `expectancy`
-  - `expectancyTrades`
-  - `profitFactor`
-  - `profitFactorTrades`
-- unsupported rank modes:
-  - `balanced`
-  - `accuracy`
-  - `volume`
+Supported rank modes:
+
+- `expectancy`
+- `expectancyTrades`
+- `profitFactor`
+- `profitFactorTrades`
+
+Unsupported rank modes:
+
+- `balanced`
+- `accuracy`
+- `volume`
 
 Why:
 
@@ -348,7 +429,8 @@ Why:
 
 Finder behavior:
 
-- if a blocked rank mode is selected while `signal_exit_same_event` is active, fail early with a clear status message
+- if a blocked rank mode is selected while signal-exit mode is active, fail early with a clear status message
+- UI may additionally disable those options when the new mode is active, but the runner-level guard is still required
 
 ### Hunt behavior
 
@@ -356,7 +438,7 @@ Hunt should not get new execution logic of its own.
 
 Required behavior:
 
-- Hunt profile capture/import/export must preserve `polymarketExitMode`
+- Hunt profile capture or import or export must preserve `polymarketExitMode`
 - Hunt runs inherit the feature automatically through Finder
 - one enabled profile with matching UI context should produce the same results as Finder for the same strategies and run settings
 
@@ -364,8 +446,12 @@ Hunt-specific rule:
 
 - `polymarketLockOffset` becomes irrelevant in `signal_exit_same_event`
 - keep it persisted for backward compatibility, but ignore or disable it in Hunt UI when the profile uses the new mode
+- `polymarketAfterTakeProfitOnly` may remain available because it filters chart trades before Polymarket evaluation and does not depend on offset fan-out
 
-`polymarketAfterTakeProfitOnly` may remain available because it filters chart trades before Polymarket evaluation and does not depend on offset fan-out.
+Apply-result rule:
+
+- `lib/hunt/hunt-service.ts` must stop writing `polymarketEntryOffset` back into settings when applying a signal-exit result
+- applying a Hunt survivor must preserve `polymarketExitMode` and only write offset data when the effective mode is still `resolve_hold`
 
 ## Result Contract
 
@@ -375,6 +461,7 @@ Suggested additions to `TradePolymarketOutcome`:
 
 ```ts
 evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+isProfitable?: boolean | null;
 marketExitPrice?: number | null;
 marketExitTs?: number | null;
 marketExitSource?: "signal" | "resolution";
@@ -385,6 +472,8 @@ Suggested additions to `BacktestPolymarketTradeSummary`:
 
 ```ts
 evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+profitableTrades?: number;
+losingTrades?: number;
 signalExitedTrades?: number;
 resolvedTrades?: number;
 missingPriceTrades?: number;
@@ -397,14 +486,7 @@ avgEntryPrice?: number;
 avgExitPrice?: number;
 ```
 
-Important V1 rule:
-
-- do not overwrite `BacktestResult.netProfit`, `equityCurve`, or other core chart metrics
-- keep Polymarket signal-exit performance as a separate Polymarket summary
-
-That is the safest first implementation.
-
-Suggested additions to `PolymarketEvalResult` for Finder/Hunt parity:
+Suggested additions to `PolymarketEvalResult` for Finder and Hunt parity:
 
 ```ts
 evaluationMode?: "resolve_hold" | "signal_exit_same_event";
@@ -415,7 +497,34 @@ netPnl?: number;
 avgExitPrice?: number;
 ```
 
-This keeps Finder/Hunt ranking and rendering aligned with the manual summary contract.
+Important V1 rule:
+
+- do not overwrite `BacktestResult.netProfit`, `equityCurve`, or other core chart metrics
+- keep Polymarket signal-exit performance as a separate Polymarket summary
+
+Important compatibility rule:
+
+- Quick View, Trades, Polymarket diagnostics, and endpoint compact summaries must not recompute signal-exit payout from `marketEntryPrice + isWin`
+- add one shared payout-summary helper that branches on `evaluationMode`
+- lazy re-annotation paths must be able to rebuild the same trade annotations and summary from:
+  - outcome rows
+  - price points
+  - interval
+  - effective exit mode
+  - persisted summary context such as outcome symbol
+
+Metric semantics rule:
+
+- `resolve_hold` may keep showing win-rate or baseline-style classification metrics
+- `signal_exit_same_event` should prioritize:
+  - priced trades
+  - missing-price trades
+  - signal-exited trades
+  - resolution-settled trades
+  - net PnL
+  - expectancy
+  - profit factor
+- if a win-rate-style stat is still shown for signal-exit mode, it must be explicitly labeled as profitable-trade rate rather than prediction-accuracy rate
 
 ## Minimal Runtime Flow
 
@@ -426,10 +535,14 @@ Then run a Polymarket post-pass:
 ```text
 1. run normal chart backtest
 2. if Polymarket annotation is disabled, stop
-3. if polymarketExitMode = resolve_hold, use current path
-4. if polymarketExitMode = signal_exit_same_event:
+3. resolve the effective Polymarket exit mode from:
+   - requested setting
+   - interval
+   - execution model
+4. if effective mode = resolve_hold, use current path
+5. if effective mode = signal_exit_same_event:
    - load outcome rows
-   - load local price points
+   - load local price points by event range
    - map trades to events
    - dedupe to one scored trade per event
    - compute entry fill
@@ -437,7 +550,7 @@ Then run a Polymarket post-pass:
    - else settle to final outcome
    - attach trade annotations
    - build Polymarket summary
-5. commit annotated result
+6. commit annotated result
 ```
 
 Finder and Hunt should use the same core, with a different caller shape:
@@ -445,7 +558,7 @@ Finder and Hunt should use the same core, with a different caller shape:
 ```text
 1. load chart data once
 2. load Polymarket outcomes once
-3. load local price points once
+3. load local price points once by event range
 4. run each strategy candidate to produce chart trades
 5. call the shared Polymarket signal-exit evaluator
 6. rank candidates by supported Polymarket metrics
@@ -454,10 +567,43 @@ Finder and Hunt should use the same core, with a different caller shape:
 
 Performance rule:
 
-- local price point loading and event indexing must be amortized across the run
+- local price-point loading and event indexing must be amortized across the run
 - per-candidate work should only evaluate trades against already indexed local data
 
+Containment rule for shared non-v1 callers:
+
+- endpoint Preview or Copy or executor must explicitly stay on `resolve_hold`
+- Strategy Ensemble Polymarket must explicitly stay on `resolve_hold`
+- these callers must not accidentally enter signal-exit mode just because shared helper signatures expanded
+
 ## Implementation Phases
+
+### Phase 0. Contract fences
+
+Purpose:
+
+- prevent shared callers from silently drifting into unsupported signal-exit behavior
+
+Files:
+
+- `lib/backtest-endpoint-copy.ts`
+- `lib/backtest-endpoint-execution.ts`
+- `lib/backtest-endpoint-contract.ts`
+- `lib/strategy-ensemble-service.ts`
+- `lib/types/strategies.ts`
+- `lib/settings-model.ts`
+
+Tasks:
+
+- add `polymarketExitMode` to the typed settings surfaces
+- add a shared `resolveEffectivePolymarketExitMode(...)` helper
+- keep endpoint preview or copy or executor on `resolve_hold` in v1
+- keep Strategy Ensemble Polymarket on `resolve_hold` in v1
+- make the fallback or downgrade explicit in status or copied metadata where relevant
+
+Exit condition:
+
+- unsupported shared callers cannot silently claim signal-exit parity
 
 ### Phase 1. Local data surface
 
@@ -475,12 +621,12 @@ Tasks:
 
 - add `polymarket_price_points` SQLite table and indexes
 - add `PolymarketPricePoint` type
-- add `loadPolymarketPricePoints(...)`
+- add `loadPolymarketPricePoints(...)` with event-range loading semantics
 - add `storePolymarketPricePoints(...)` only if the repo needs a repo-owned ingestor path
 
 Exit condition:
 
-- browser code can load local price points by time range without remote fetches
+- browser code can load the full same-event quote window without remote fetches
 
 ### Phase 2. Evaluation helpers
 
@@ -489,7 +635,7 @@ Purpose:
 - build the smallest possible deterministic pricing layer for entry and same-event signal exits
 - make that layer reusable by manual backtest and Finder
 
-Suggested new helper file:
+Suggested new helper files:
 
 - `lib/polymarket-price-points.ts`
 - `lib/polymarket-signal-exit-evaluator.ts`
@@ -500,6 +646,7 @@ Tasks:
 - add helper to find entry fill at or after `entryTs`
 - add helper to find signal exit fill at or before `exitTs`
 - keep lookup logic isolated from rendering code
+- keep payout-metric derivation isolated from legacy classification helpers
 - expose one pure evaluator that accepts:
   - `trades`
   - `outcomes`
@@ -512,7 +659,7 @@ Do not add a broad quote-engine abstraction in v1.
 
 Exit condition:
 
-- one pure helper can turn `(trade, outcomeRow, eventPoints)` into Polymarket entry/exit prices
+- one pure helper can turn `(trade, outcomeRow, eventPoints)` into Polymarket entry or exit prices
 - the same helper is suitable for both manual annotation and Finder ranking
 
 ### Phase 3. Annotation mode
@@ -526,16 +673,19 @@ Files:
 - `lib/polymarket-trade-annotations.ts`
 - `lib/polymarket-outcome-evaluator.ts`
 - `lib/backtest-service.ts`
+- `lib/backtest-executor.ts`
 - `lib/types/polymarket-outcomes.ts`
 
 Tasks:
 
 - add `polymarketExitMode`
+- resolve the effective mode once per annotation call
 - keep `resolve_hold` as the existing default path
 - add a new `signal_exit_same_event` evaluation path
 - reuse current event mapping and dedupe logic for `1m`
 - annotate each scored trade with entry price, exit price, exit source, and PnL
 - build a separate Polymarket summary for the new mode
+- stop reusing `marketEntryPrice + isWin` as the only payout contract
 
 Important behavior:
 
@@ -558,6 +708,7 @@ Files:
 - `lib/finder/finder-runner-polymarket.ts`
 - `lib/finder/finder-engine.ts`
 - `lib/types/finder.ts`
+- `lib/finder-manager.ts`
 
 Tasks:
 
@@ -567,10 +718,11 @@ Tasks:
 - do not inject `polymarketEntryOffset` into candidate params
 - block unsupported rank modes with a clear status message
 - reuse existing expectancy and profit-factor metric families
+- keep Finder result application mode-aware so applying a candidate does not fabricate offset metadata
 
 Exit condition:
 
-- Finder Polymarket mode ranks `signal_exit_same_event` candidates without offset fan-out
+- Finder Polymarket mode ranks signal-exit candidates without offset fan-out
 - the same candidate scores the same way in manual backtest and Finder
 
 ### Phase 5. Hunt pass-through support
@@ -585,13 +737,15 @@ Files:
 - `lib/hunt/hunt-profile-capture.ts`
 - `lib/hunt/hunt-runner.ts`
 - `lib/hunt/hunt-results.ts`
+- `lib/hunt/hunt-service.ts`
 
 Tasks:
 
-- preserve `polymarketExitMode` in profile capture/import/export
+- preserve `polymarketExitMode` in profile capture or import or export
 - keep Hunt profile parity with current UI
 - ignore or disable offset-lock controls when the profile uses signal-exit mode
 - confirm survivor grouping is not split by fake offset params
+- keep Hunt result application mode-aware so it does not write `polymarketEntryOffset` for signal-exit survivors
 
 Exit condition:
 
@@ -609,6 +763,7 @@ Files:
 - `html-partials/tab-settings-section-execution.html`
 - `lib/backtest-settings-resolver.ts`
 - `lib/backtest-settings-dom-contract.ts`
+- `lib/settings-model.ts`
 - `lib/handlers/state-subscriptions.ts`
 - `lib/rust-settings-sanitizer.ts`
 
@@ -616,9 +771,10 @@ Tasks:
 
 - add `Polymarket Exit Mode` control
 - show it only when Polymarket annotation is enabled
-- keep it effectively `1m`-only
+- keep it effectively `1m` plus `next_open` only
 - hide `polymarketEntryOffset` when signal-exit mode is selected
-- hide or disable offset-lock controls in Finder/Hunt when signal-exit mode is selected
+- hide or disable offset-lock controls in Finder or Hunt when signal-exit mode is selected
+- disable or clearly label unsupported Finder rank modes in this mode when possible
 - force TypeScript engine when the new mode is active
 
 Exit condition:
@@ -636,13 +792,16 @@ Files:
 - `lib/quick-view.ts`
 - `lib/renderers/tradesRenderer.ts`
 - `lib/polymarket-panel-service.ts`
+- `lib/polymarket-diagnostics-utils.ts`
 
 Tasks:
 
 - show which Polymarket mode produced the summary
-- show signal-exit counts vs resolution-settled counts
+- show signal-exit counts versus resolution-settled counts
 - show entry and exit price for scored trades
-- show PnL/expectancy/profit factor from the Polymarket summary
+- show PnL or expectancy or profit factor from the Polymarket summary
+- make lazy reload paths rebuild the same mode-aware summary from outcomes and price points
+- avoid baseline-delta or classification-first cards for signal-exit mode
 
 V1 rendering rule:
 
@@ -653,7 +812,7 @@ Exit condition:
 
 - a user can tell, from the UI alone, whether a trade exited by signal or by final outcome
 
-## File Map For The Later Implementation Pass
+## File Map For Later Implementation
 
 Primary files:
 
@@ -661,18 +820,26 @@ Primary files:
 - `vite.config.ts`
 - `lib/local-sqlite-polymarket-api.ts`
 - `lib/types/polymarket-outcomes.ts`
+- `lib/types/strategies.ts`
+- `lib/settings-model.ts`
 - `lib/polymarket-price-points.ts`
 - `lib/polymarket-signal-exit-evaluator.ts`
 - `lib/polymarket-trade-annotations.ts`
 - `lib/polymarket-outcome-evaluator.ts`
 - `lib/backtest-service.ts`
+- `lib/backtest-executor.ts`
+- `lib/backtest-endpoint-copy.ts`
+- `lib/backtest-endpoint-execution.ts`
+- `lib/backtest-endpoint-contract.ts`
 - `lib/finder/finder-runner-polymarket.ts`
 - `lib/finder/finder-engine.ts`
 - `lib/types/finder.ts`
+- `lib/finder-manager.ts`
 - `lib/hunt/hunt-model.ts`
 - `lib/hunt/hunt-profile-capture.ts`
 - `lib/hunt/hunt-runner.ts`
 - `lib/hunt/hunt-results.ts`
+- `lib/hunt/hunt-service.ts`
 - `html-partials/tab-settings-section-execution.html`
 - `lib/backtest-settings-resolver.ts`
 - `lib/backtest-settings-dom-contract.ts`
@@ -681,6 +848,8 @@ Primary files:
 - `lib/quick-view.ts`
 - `lib/renderers/tradesRenderer.ts`
 - `lib/polymarket-panel-service.ts`
+- `lib/polymarket-diagnostics-utils.ts`
+- `lib/strategy-ensemble-service.ts`
 
 ## Test Plan
 
@@ -690,7 +859,7 @@ Suggested new spec:
 
 - `tests/polymarket-signal-exit.spec.ts`
 
-Required cases:
+Required evaluator cases:
 
 - long trade enters and exits by signal inside one event
 - short trade enters and exits by signal inside one event
@@ -700,20 +869,35 @@ Required cases:
 - missing entry quote leaves trade unscored
 - missing same-event exit quote leaves trade unscored
 - event reset between consecutive `5m` markets does not affect scoring
+- signal-exit payout summaries use `marketPnl`, not legacy `marketEntryPrice + isWin` payout math
+- unsupported execution model or interval downgrades or blocks signal-exit mode explicitly
 
 Required Finder cases:
 
 - `1m` signal-exit Finder mode evaluates one result per parameter set, not five offsets
 - Finder does not inject `polymarketEntryOffset` into params in the new mode
 - blocked rank modes fail early with a clear status message
-- supported expectancy/profit-factor rank modes work with signal-exit eval data
+- supported expectancy or profit-factor rank modes work with signal-exit eval data
 - local price points load once per run, not once per candidate
+- applying a Finder result in signal-exit mode does not write a fake offset back into settings
 
 Required Hunt cases:
 
-- Hunt profile capture/import/export preserves `polymarketExitMode`
+- Hunt profile capture or import or export preserves `polymarketExitMode`
 - one-profile Hunt run matches Finder output for the same profile
 - survivor grouping is not split by offset-only param drift
+- applying a Hunt survivor in signal-exit mode does not write a fake offset back into settings
+
+Required display-surface cases:
+
+- Quick View lazy reload rebuilds signal-exit annotations and summary correctly
+- Trades panel lazy reload shows signal exit versus resolution exit details correctly
+- Polymarket diagnostics tab shows signal-exit counts and PnL metrics without reusing classification-only baseline cards
+
+Required containment cases:
+
+- endpoint Preview or Copy or HTTP executor stays on `resolve_hold` when signal-exit support is out of scope
+- Strategy Ensemble Polymarket stays on `resolve_hold` when signal-exit support is out of scope
 
 Also update or recheck:
 
@@ -722,6 +906,8 @@ Also update or recheck:
 - `tests/finder-polymarket.spec.ts`
 - `tests/hunt-results.spec.ts`
 - `tests/quick-view-polymarket.spec.ts`
+- `tests/polymarket-diagnostics-utils.spec.ts`
+- `tests/backtest-endpoint-contract.spec.ts`
 - `tests/settings-compat.spec.ts`
 - `tests/feature-dom-contracts.spec.ts`
 
@@ -734,10 +920,13 @@ The feature is done when all of the following are true:
 3. If no same-event signal exit exists, the trade settles to final outcome.
 4. No trade is carried into the next event.
 5. Missing quote data is explicit in the summary instead of silently converted into a win or loss.
-6. The UI clearly shows which trades exited by signal and which settled by resolution.
-7. The main chart backtest metrics remain untouched in v1.
-8. Finder `1m` signal-exit mode does not fan out into five offset variants.
-9. Hunt profiles preserve the new setting and one-profile Hunt matches Finder for the same context.
+6. Signal-exit summaries use payout-derived metrics instead of legacy binary-outcome payout shortcuts.
+7. The UI clearly shows which trades exited by signal and which settled by resolution.
+8. The main chart backtest metrics remain untouched in v1.
+9. Finder `1m` signal-exit mode does not fan out into five offset variants.
+10. Hunt profiles preserve the new setting and one-profile Hunt matches Finder for the same context.
+11. Quick View, Trades, and the Polymarket diagnostics tab can lazily rebuild the same signal-exit result.
+12. endpoint Preview or Copy or execution and Strategy Ensemble do not silently drift into unsupported signal-exit behavior in v1.
 
 ## Validation Commands
 
@@ -757,4 +946,4 @@ npm run test -- polymarket
 
 ## One-Line Rule For The Implementer
 
-Use the chart strategy only for timing. Use Polymarket event prices only for Polymarket entry/exit PnL. Never stitch one `5m` event market into the next.
+Use the chart strategy only for timing. Use Polymarket event prices only for Polymarket entry or exit PnL. Never stitch one `5m` event market into the next.

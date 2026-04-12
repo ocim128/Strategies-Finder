@@ -117,12 +117,7 @@ export interface BacktestPolymarketPerformanceSummary {
 }
 
 function getPolymarketPricedTrades(trades: readonly Trade[]): Trade[] {
-    return trades.filter((trade) => (
-        trade.polymarketOutcome !== null
-        && trade.polymarketOutcome !== undefined
-        && typeof trade.polymarketOutcome.marketEntryPrice === "number"
-        && Number.isFinite(trade.polymarketOutcome.marketEntryPrice)
-    ));
+    return trades.filter((trade) => getPolymarketTradePayout(trade) !== null);
 }
 
 function getScoredPolymarketTrades(trades: readonly Trade[]): Trade[] {
@@ -133,8 +128,24 @@ function getScoredPolymarketTrades(trades: readonly Trade[]): Trade[] {
 }
 
 function getPolymarketTradePayout(trade: Trade): number | null {
-    const price = trade.polymarketOutcome?.marketEntryPrice;
-    const isWin = trade.polymarketOutcome?.isWin;
+    const pm = trade.polymarketOutcome;
+    if (!pm) return null;
+
+    if (pm.evaluationMode === "signal_exit_same_event") {
+        if (typeof pm.marketPnl === "number" && Number.isFinite(pm.marketPnl)) {
+            return pm.marketPnl;
+        }
+        if (
+            typeof pm.marketExitPrice === "number" && Number.isFinite(pm.marketExitPrice)
+            && typeof pm.marketEntryPrice === "number" && Number.isFinite(pm.marketEntryPrice)
+        ) {
+            return pm.marketExitPrice - pm.marketEntryPrice;
+        }
+        return null;
+    }
+
+    const price = pm.marketEntryPrice;
+    const isWin = pm.isWin;
     if (typeof price !== "number" || !Number.isFinite(price) || typeof isWin !== "boolean") {
         return null;
     }
@@ -284,10 +295,16 @@ function resolvePolymarketCoverageSummary(
 export function buildBacktestPolymarketPerformanceSummary(
     result: BacktestResult
 ): BacktestPolymarketPerformanceSummary | undefined {
-    const wins = result.trades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
-    const losses = result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
-    const scoredTrades = wins + losses;
     const summary = result.polymarketTradeSummary;
+    const isSignalExit = summary?.evaluationMode === "signal_exit_same_event";
+
+    const wins = isSignalExit
+        ? (summary?.profitableTrades ?? result.trades.filter((trade) => trade.polymarketOutcome?.isProfitable === true).length)
+        : result.trades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
+    const losses = isSignalExit
+        ? (summary?.losingTrades ?? result.trades.filter((trade) => trade.polymarketOutcome?.isProfitable === false).length)
+        : result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
+    const scoredTrades = isSignalExit ? (summary?.scoredTrades ?? wins + losses) : wins + losses;
 
     if (!summary && scoredTrades === 0) {
         return undefined;
@@ -295,7 +312,7 @@ export function buildBacktestPolymarketPerformanceSummary(
 
     const payoutSummary = summarizePolymarketPayoutDiagnostics(result.trades);
     const streakSummary = summarizePolymarketStreaks(result.trades);
-    const bestBaselineWinRate = computePolymarketBestBaselineWinRate(result.trades);
+    const bestBaselineWinRate = isSignalExit ? 0 : computePolymarketBestBaselineWinRate(result.trades);
     const coverageSummary = resolvePolymarketCoverageSummary(result, summary, scoredTrades);
 
     return {
@@ -306,13 +323,17 @@ export function buildBacktestPolymarketPerformanceSummary(
         missingOutcomeTrades: coverageSummary.missingOutcomeTrades,
         scoredTradeShare: coverageSummary.scoredTradeShare,
         polymarketWinRate: scoredTrades > 0 ? wins / scoredTrades : 0,
-        polymarketExpectancy: payoutSummary?.expectancy ?? null,
-        polymarketProfitFactor: payoutSummary?.profitFactor ?? null,
+        polymarketExpectancy: isSignalExit
+            ? (summary?.expectancy ?? payoutSummary?.expectancy ?? null)
+            : payoutSummary?.expectancy ?? null,
+        polymarketProfitFactor: isSignalExit
+            ? (summary?.profitFactor ?? payoutSummary?.profitFactor ?? null)
+            : payoutSummary?.profitFactor ?? null,
         pricedTrades: payoutSummary?.pricedTrades ?? 0,
         unpricedScoredTrades: payoutSummary?.unpricedScoredTrades ?? 0,
         outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
         bestBaselineWinRate,
-        baselineDelta: (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
+        baselineDelta: isSignalExit ? 0 : (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
         longestWinStreak: streakSummary.longestWinStreak,
         longestLossStreak: streakSummary.longestLossStreak,
         entryOffset: summary?.entryOffset,
