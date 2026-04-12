@@ -90,6 +90,14 @@ describe('alignSecondaryToPrimary', () => {
         const result = alignSecondaryToPrimary(primary, secondary);
         expect(result).to.have.length(primary.length);
     });
+
+    it('aligns unix-seconds primary with unix-milliseconds secondary', () => {
+        const primary = [bar(1710000000, 100), bar(1710000060, 101)];
+        const secondary = [bar(1710000000000, 200), bar(1710000060000, 201)];
+        const result = alignSecondaryToPrimary(primary, secondary);
+        expect(result[0]!.close).to.equal(200);
+        expect(result[1]!.close).to.equal(201);
+    });
 });
 
 // ============================================================================

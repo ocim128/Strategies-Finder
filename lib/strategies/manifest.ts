@@ -42,6 +42,11 @@ import { volume_weighted_entropy_ignition } from "./lib/volume_weighted_entropy_
 import { poc_liquidity_rejection_fade } from "./lib/poc_liquidity_rejection_fade";
 import { initiative_crossing_frequency_chop } from "./lib/initiative_crossing_frequency_chop";
 import { relative_strength_mean_reversion } from "./lib/relative_strength_mean_reversion";
+import { cross_pressure_initiative_inversion } from "./lib/cross_pressure_initiative_inversion";
+import { dominance_handoff_exhaustion } from "./lib/dominance_handoff_exhaustion";
+import { close_location_correlation_break } from "./lib/close_location_correlation_break";
+import { correlation_range_fragmentation } from "./lib/correlation_range_fragmentation";
+import { correlation_flash_gamma_trigger } from "./lib/correlation_flash_gamma_trigger";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -89,6 +94,11 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "poc_liquidity_rejection_fade", strategy: poc_liquidity_rejection_fade },
     { key: "initiative_crossing_frequency_chop", strategy: initiative_crossing_frequency_chop },
     { key: "relative_strength_mean_reversion", strategy: relative_strength_mean_reversion },
+    { key: "cross_pressure_initiative_inversion", strategy: cross_pressure_initiative_inversion },
+    { key: "dominance_handoff_exhaustion", strategy: dominance_handoff_exhaustion },
+    { key: "close_location_correlation_break", strategy: close_location_correlation_break },
+    { key: "correlation_range_fragmentation", strategy: correlation_range_fragmentation },
+    { key: "correlation_flash_gamma_trigger", strategy: correlation_flash_gamma_trigger },
 ];
 
 export function createStrategiesRecordFromManifest(

@@ -165,15 +165,16 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     if (alignedCrossSymbolContext?.crossSymbol && backtestData.length > 0) {
         const firstTime = backtestData[0].time;
         const lastTime = backtestData[backtestData.length - 1].time;
+        const primaryData = effectiveData;
         const secondaryData = alignedCrossSymbolContext.crossSymbol.secondaryData;
 
         const firstKey = timeKey(firstTime);
         const lastKey = timeKey(lastTime);
 
-        let startIndex = secondaryData.findIndex(d => timeKey(d.time) === firstKey);
+        let startIndex = primaryData.findIndex(d => timeKey(d.time) === firstKey);
         if (startIndex === -1) startIndex = 0;
 
-        let endIndex = secondaryData.findIndex(d => timeKey(d.time) === lastKey);
+        let endIndex = primaryData.findIndex(d => timeKey(d.time) === lastKey);
         endIndex = endIndex === -1 ? secondaryData.length : endIndex + 1;
 
         alignedCrossSymbolContext = {

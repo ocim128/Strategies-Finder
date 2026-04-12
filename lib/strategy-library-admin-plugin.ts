@@ -8,6 +8,7 @@ import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 const STRATEGY_EXPORT_PATTERN = /export\s+const\s+([a-zA-Z][a-zA-Z0-9_]*)\s*:\s*Strategy\s*=/g;
 const MANIFEST_KEY_PATTERN = /key:\s*"([^"]+)"/g;
 const VALID_STRATEGY_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
+const STRATEGY_NAME_PATTERN = /\bname\s*:\s*(['"`])(.+?)\1/;
 
 class StrategyLibraryAdminError extends Error {
     public readonly status: number;
@@ -93,6 +94,16 @@ function extractStrategyExportName(source: string, fileName: string): string | n
     }
 
     return matches[0][1];
+}
+
+function extractStrategyDisplayName(source: string): string | null {
+    const match = STRATEGY_NAME_PATTERN.exec(source);
+    if (!match) {
+        return null;
+    }
+
+    const value = match[2]?.trim();
+    return value ? value : null;
 }
 
 export function collectStrategyModuleDefinitionsForRepo(repoRoot: string): StrategyModuleDefinition[] {
@@ -197,6 +208,12 @@ interface PendingStrategyDeletion {
     backupRelativePath: string;
 }
 
+interface StrategyDeleteLookup {
+    definitionsByKey: Map<string, StrategyModuleDefinition>;
+    aliasToKey: Map<string, string>;
+    ambiguousAliases: Set<string>;
+}
+
 function resolveStrategySourcePath(repoRoot: string, definition: StrategyModuleDefinition): string {
     const paths = getStrategyLibraryPaths(repoRoot);
     const relativeImportPath = definition.importPath.replace(/^\.\//, "");
@@ -205,12 +222,106 @@ function resolveStrategySourcePath(repoRoot: string, definition: StrategyModuleD
     return sourcePath;
 }
 
-function normalizeStrategyDeleteKeys(rawKeys: readonly string[]): string[] {
+function normalizeStrategyKeyAlias(value: string): string {
+    const trimmed = value.trim().replace(/^["'`]+|["'`]+$/g, "");
+    if (!trimmed) {
+        return "";
+    }
+
+    const fileLikeValue = trimmed.replace(/\\/g, "/").split("/").pop() ?? trimmed;
+    const withoutExtension = fileLikeValue.replace(/\.ts$/i, "");
+    return withoutExtension
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "");
+}
+
+function registerStrategyDeleteAlias(
+    aliasToKey: Map<string, string>,
+    ambiguousAliases: Set<string>,
+    alias: string,
+    strategyKey: string,
+): void {
+    const normalizedAlias = normalizeStrategyKeyAlias(alias);
+    if (!normalizedAlias || ambiguousAliases.has(normalizedAlias)) {
+        return;
+    }
+
+    const existing = aliasToKey.get(normalizedAlias);
+    if (existing && existing !== strategyKey) {
+        aliasToKey.delete(normalizedAlias);
+        ambiguousAliases.add(normalizedAlias);
+        return;
+    }
+
+    aliasToKey.set(normalizedAlias, strategyKey);
+}
+
+function createStrategyDeleteLookup(repoRoot: string): StrategyDeleteLookup {
+    const definitions = collectStrategyModuleDefinitionsForRepo(repoRoot);
+    const definitionsByKey = new Map<string, StrategyModuleDefinition>();
+    const aliasToKey = new Map<string, string>();
+    const ambiguousAliases = new Set<string>();
+
+    for (const definition of definitions) {
+        definitionsByKey.set(definition.key, definition);
+
+        const importBaseName = path.posix.basename(definition.importPath);
+        const sourcePath = resolveStrategySourcePath(repoRoot, definition);
+        const source = existsSync(sourcePath) ? readFileSync(sourcePath, "utf8") : "";
+        const strategyDisplayName = source ? extractStrategyDisplayName(source) : null;
+        const aliases = [
+            definition.key,
+            definition.exportName,
+            importBaseName,
+            `${importBaseName}.ts`,
+            definition.key.replace(/_/g, "-"),
+            definition.key.replace(/_/g, " "),
+            strategyDisplayName,
+        ].filter((alias): alias is string => typeof alias === "string" && alias.length > 0);
+
+        for (const alias of aliases) {
+            registerStrategyDeleteAlias(aliasToKey, ambiguousAliases, alias, definition.key);
+        }
+    }
+
+    return {
+        definitionsByKey,
+        aliasToKey,
+        ambiguousAliases,
+    };
+}
+
+function resolveRequestedStrategyKey(rawKey: string, lookup: StrategyDeleteLookup): string {
+    const normalizedAlias = normalizeStrategyKeyAlias(rawKey);
+    if (!normalizedAlias) {
+        throw new StrategyLibraryAdminError("Provide at least one built-in strategy key.");
+    }
+
+    if (lookup.ambiguousAliases.has(normalizedAlias)) {
+        throw new StrategyLibraryAdminError(
+            `"${rawKey.trim()}" matches multiple built-in strategies. Use the exact manifest key.`,
+        );
+    }
+
+    const resolved = lookup.aliasToKey.get(normalizedAlias);
+    if (!resolved) {
+        throw new StrategyLibraryAdminError(`"${rawKey.trim()}" is not a valid strategy key.`);
+    }
+
+    return resolved;
+}
+
+function normalizeStrategyDeleteKeys(
+    rawKeys: readonly string[],
+    lookup: StrategyDeleteLookup,
+): string[] {
     const normalized: string[] = [];
     const seen = new Set<string>();
 
     for (const rawKey of rawKeys) {
-        const key = rawKey.trim();
+        const key = resolveRequestedStrategyKey(rawKey, lookup);
         if (!key || seen.has(key)) {
             continue;
         }
@@ -229,12 +340,9 @@ function preparePendingStrategyDeletion(
     repoRoot: string,
     key: string,
     backupDate: Date,
+    lookup: StrategyDeleteLookup,
 ): PendingStrategyDeletion {
     const paths = getStrategyLibraryPaths(repoRoot);
-
-    if (!VALID_STRATEGY_KEY_PATTERN.test(key)) {
-        throw new StrategyLibraryAdminError(`"${key}" is not a valid strategy key.`);
-    }
 
     if (key === DEFAULT_BUILT_IN_STRATEGY_KEY) {
         throw new StrategyLibraryAdminError(
@@ -242,7 +350,7 @@ function preparePendingStrategyDeletion(
         );
     }
 
-    const definition = collectStrategyModuleDefinitionsForRepo(repoRoot).find((entry) => entry.key === key);
+    const definition = lookup.definitionsByKey.get(key);
     if (!definition) {
         throw new StrategyLibraryAdminError(`Built-in strategy "${key}" was not found.`, 404);
     }
@@ -277,9 +385,12 @@ export function archiveAndDeleteBuiltInStrategies(
     assertPathWithin(paths.repoRoot, paths.archiveDir, "Strategy archive path");
     mkdirSync(paths.archiveDir, { recursive: true });
 
-    const normalizedKeys = normalizeStrategyDeleteKeys(strategyKeys);
+    const lookup = createStrategyDeleteLookup(repoRoot);
+    const normalizedKeys = normalizeStrategyDeleteKeys(strategyKeys, lookup);
     const backupDate = options.backupDate ?? new Date();
-    const pending = normalizedKeys.map((key) => preparePendingStrategyDeletion(repoRoot, key, backupDate));
+    const pending = normalizedKeys.map((key) =>
+        preparePendingStrategyDeletion(repoRoot, key, backupDate, lookup)
+    );
 
     for (const item of pending) {
         writeFileSync(item.backupPath, item.sourceContents, "utf8");

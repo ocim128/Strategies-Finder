@@ -58,6 +58,7 @@ const TEST_FILES = [
     "tests/strategies-lib/retained-strategy-registration.spec.ts",
     "tests/strategy-manifest-sync.spec.ts",
     "tests/strategy-library-admin-plugin.spec.ts",
+    "tests/strategy-library-admin-service.spec.ts",
     "tests/pivot-detection.spec.ts",
     "tests/backtesting-engine.spec.ts",
     "tests/trade-analyzer.spec.ts",

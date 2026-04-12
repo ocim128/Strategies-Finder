@@ -3,6 +3,7 @@ import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import { debugLogger } from "./debug-logger";
 import { createStrategyLibraryAdminDom, type StrategyLibraryAdminDom } from "./strategy-library-admin-dom";
 import { deleteBuiltInStrategyLibraryEntries, deleteBuiltInStrategyLibraryEntry } from "./strategy-library-admin-api";
+import { parseStrategyLibraryBulkEntries } from "./strategy-library-admin-utils";
 import { state } from "./state";
 import { uiManager } from "./ui-manager";
 
@@ -118,22 +119,7 @@ class StrategyLibraryAdminService {
 
     private getParsedBulkKeys(): string[] {
         const { strategyLibraryBulkKeys } = this.getDom();
-        const segments = strategyLibraryBulkKeys.value
-            .split(/[\s,]+/)
-            .map((value) => value.trim())
-            .filter((value) => value.length > 0);
-
-        const seen = new Set<string>();
-        const keys: string[] = [];
-        for (const key of segments) {
-            if (seen.has(key)) {
-                continue;
-            }
-            seen.add(key);
-            keys.push(key);
-        }
-
-        return keys;
+        return parseStrategyLibraryBulkEntries(strategyLibraryBulkKeys.value);
     }
 
     private setBulkKeys(keys: readonly string[]): void {

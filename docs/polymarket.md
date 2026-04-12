@@ -1,398 +1,428 @@
-# Polymarket Implementation
+# Polymarket Guide
 
-This repo has two separate Polymarket surfaces:
+This repo has multiple Polymarket features that look related in the UI but use different contracts in code.
 
-- Polymarket market-data/chart access
-- Polymarket crypto outcome scoring for backtests, Finder, and diagnostics
+The main split is:
 
-This document is about the implementation contracts for both, with emphasis on the crypto outcome-scoring path.
+- direct Polymarket market charting
+- Polymarket crypto outcome scoring for backtests and Finder
+- diagnostics and deployability analysis on scored runs
+- bridge export for downstream `external_signal` bots
 
-## High-Level Map
+Most breakage here comes from mixing those paths together.
+
+## Quick Answers
+
+If you want to open a Polymarket market on the chart:
+
+- use the `PM` button in the timeframe bar, or search/paste a Polymarket slug or event URL
+- this goes through the Polymarket data provider, not the outcome-scoring path
+
+If you want to score a strategy against resolved Polymarket crypto events:
+
+- enable `Polymarket Annotation`
+- use `executionModel = next_open`
+- sync local outcome rows first with `npm run poly:sync-outcomes:all`
+- optionally set `Polymarket Outcome Symbol` if the chart symbol is different from the outcome target
+
+If you want bot bridge files for `external_signal`:
+
+- use the `Polymarket` strategy-panel tab
+- select a saved config
+- stay on a supported `5m` chart for `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, or `XRPUSDT`
+
+## The Four Polymarket Contracts
+
+### 1. Direct Polymarket market charting
+
+This is the provider path for opening a real Polymarket event market as chart data.
+
+Important behavior:
+
+- accepts full Polymarket event URLs
+- accepts canonical inputs like `PM:<slug>`, `polymarket:<slug>`, or plain event slugs
+- accepts side selection via `:up`, `:down`, `:yes`, `:no`, or URL query params `outcome` / `side`
+- the `PM` button opens Polymarket markets on `1m` first
+- chart candles come from Polymarket history, not SQLite outcome rows
+
+Core files:
+
+- `lib/dataProviders/polymarket.ts`
+- `lib/asset-search-service.ts`
+- `lib/handlers/ui-event-handlers.ts`
+- `html-partials/header.html`
+
+### 2. Crypto outcome scoring
+
+This is the research path for asking whether executed trades would have predicted the resolved crypto event correctly and what price would have been paid on Polymarket.
+
+Important behavior:
+
+- scores executed trades, not raw signals
+- uses local SQLite outcome rows, not live Polymarket fetches
+- requires `next_open`
+- supports outcome-symbol override through `polymarketOutcomeSymbol`
+- stores the resolved target on `BacktestResult.polymarketTradeSummary.outcomeSymbol` so later UI reloads do not drift
 
 Core files:
 
 - `lib/polymarket-btc5m.ts`
-  Supported crypto outcome target mapping, support checks, and SQLite loaders.
 - `lib/polymarket-trade-annotations.ts`
-  Trade annotation, scoring, 1m bridge logic, timing profile generation, and summary building.
 - `lib/polymarket-outcome-evaluator.ts`
-  Headless helper for evaluating a strategy against outcome rows outside the main UI flow.
-- `lib/polymarket-panel-service.ts`
-  Strategy-panel Polymarket diagnostics tab and bridge export controls.
-- `lib/quick-view.ts`
-  On-demand Polymarket payout diagnostics in the chart overlay.
-- `lib/renderers/tradesRenderer.ts`
-  On-demand trade-level Polymarket outcome badges in the Trades panel.
+- `lib/backtest-service.ts`
+- `lib/backtest-executor.ts`
 - `lib/finder/finder-runner-polymarket.ts`
-  Finder mode that ranks parameter sets by Polymarket outcome performance.
-- `scripts/polymarket-sync-outcomes.ts`
-  Sync closed crypto outcome rows into local SQLite.
-- `lib/dataProviders/polymarket.ts`
-  Polymarket event/market data provider for direct event charting.
 
-Settings and UI wiring:
+### 3. Diagnostics and deployability analysis
 
-- `html-partials/tab-settings-section-execution.html`
-  Backtest Realism controls for Polymarket annotation, outcome target selection, and 1m entry offset.
-- `lib/backtest-settings-resolver.ts`
-  Default values, localStorage-compatible coercion, and uppercase normalization for `polymarketOutcomeSymbol`.
-- `lib/backtest-settings-dom-contract.ts`
-  Typed DOM field contract and Rust-support metadata for the Polymarket settings.
-- `lib/handlers/state-subscriptions.ts`
-  Visibility rules for showing `polymarketOutcomeSymbol` and `polymarketEntryOffset` only when they apply.
-- `lib/backtest-endpoint-settings.ts`
-  Preserves `polymarketOutcomeSymbol` in the endpoint payload even though the Rust engine does not consume it directly.
-- `lib/rust-settings-sanitizer.ts`
-  Marks Polymarket annotation fields as Rust-unsupported so they do not drift into the engine request.
+This is the read/analysis layer on top of scored trades.
 
-Storage and API glue:
+It powers:
 
-- `lib/local-sqlite-polymarket-api.ts`
-  Browser-side helpers for loading and storing synced Polymarket outcome rows through the local Vite API.
-- `/api/sqlite/load-polymarket-outcomes`
-  Reads a time-bounded slice of outcome rows by fixed series id.
-- `/api/sqlite/store-polymarket-outcomes`
-  Persists synced rows into the local SQLite-backed cache used by scoring and diagnostics.
-
-Key types:
-
-- `lib/types/polymarket-outcomes.ts`
-- `lib/types/strategies.ts`
-
-## Two Different Polymarket Features
-
-### 1. Direct Polymarket event charting
-
-This is the provider path for opening a Polymarket event or slug as chart data.
-
-Relevant surfaces:
-
-- `PM` button in the timeframe/header UI
-- symbol search accepting Polymarket slugs or URLs
-- `lib/dataProviders/polymarket.ts`
-- `lib/asset-search-service.ts`
-
-This path is about charting Polymarket market prices directly.
-
-### 2. Polymarket crypto outcome scoring
-
-This is the backtest/Finder path for asking:
-
-- did an executed trade predict the correct 5m crypto event outcome?
-- what was the Polymarket price paid for that prediction?
-- what was the payout expectancy after entry price?
-
-This path uses locally synced crypto outcome rows from SQLite, not live Polymarket chart candles.
-
-## Supported Crypto Outcome Targets
-
-The repo-level supported 5m crypto outcome target series are:
-
-- `BTCUSDT`
-- `ETHUSDT`
-- `SOLUSDT`
-- `XRPUSDT`
-
-These map to fixed SQLite series ids in `lib/polymarket-btc5m.ts`.
-
-## Outcome Symbol Override
-
-The scoring path now supports a dedicated backtest setting:
-
-- `polymarketOutcomeSymbol`
-
-Behavior:
-
-- empty string means `same as chart`
-- a non-empty value must resolve to one of the supported crypto target symbols
-- if the override is invalid, the run is treated as unsupported for Polymarket scoring
-
-This is intentionally a backtest setting, not a Finder-only setting.
-
-That keeps one shared contract across:
-
-- regular backtests
-- Finder Polymarket mode
-- Quick View
-- Trades panel
-- Polymarket diagnostics tab
-- endpoint preview/copy parity
-
-## Current Surface Behavior
-
-| Surface | Chart interval support | Outcome target support | Notes |
-| --- | --- | --- | --- |
-| Backtest annotation | `5m`, `1m`, `15m`, `1h`, `4h` | supported target series via chart symbol or `polymarketOutcomeSymbol` | requires `executionModel = next_open` |
-| Quick View | `5m`, `1m` | uses stored result summary target or current setting | on-demand load |
-| Trades panel | `5m`, `1m` | uses stored result summary target or current setting | on-demand load |
-| Polymarket diagnostics tab | `5m`, `1m` | uses stored result summary target or current setting | on-demand load |
-| Finder Polymarket mode | `1m`, `5m`, `15m`, `1h`, `4h` | supported target series via chart symbol or `polymarketOutcomeSymbol` | dedicated Polymarket ranking path |
-| Endpoint preview/copy | same as supported annotation path | preserves `polymarketOutcomeSymbol` | auto-enables annotation for supported runs |
-| Bridge export | `5m` only | still chart-symbol based | not cross-symbol aware |
-| Ensemble Polymarket | `5m` only | still chart-symbol based | separate implementation path |
-
-## Core Outcome Data Flow
-
-For crypto outcome scoring, the implementation flow is:
-
-1. Resolve the effective outcome target symbol.
-2. Convert that symbol to a fixed 5m SQLite `seriesId`.
-3. Load outcome rows for the relevant chart time range from `/api/sqlite/load-polymarket-outcomes`.
-4. Map executed trades to outcome rows.
-5. Annotate each scored trade with:
-   - predicted side
-   - actual resolved direction
-   - win/loss
-   - YES price
-   - NO price
-   - paid entry price
-   - selected entry offset when relevant
-6. Build a result summary for the run.
-
-The summary is stored on `BacktestResult.polymarketTradeSummary`.
-
-## Local Storage And API Contract
-
-The crypto outcome-scoring path is built around the local SQLite cache, not direct live API calls from the scorer.
-
-Important pieces:
-
-- the sync CLI fetches closed Polymarket event data from remote APIs
-- the sync CLI writes normalized rows through `/api/sqlite/store-polymarket-outcomes`
-- runtime scoring surfaces load rows through `/api/sqlite/load-polymarket-outcomes`
-- the load request is keyed by fixed `seriesId` plus a chart-derived time range
-- `lib/local-sqlite-polymarket-api.ts` is the shared browser helper for those calls
-
-That split matters because research-time scoring is intentionally deterministic against a local snapshot. The scorer does not query remote Polymarket APIs on demand.
-
-## Important Result Contract
-
-`BacktestPolymarketTradeSummary` is the shared summary contract for downstream UI consumers.
-
-Important fields:
-
-- `seriesId`
-- `outcomeSymbol`
-- `outcomeRowsLoaded`
-- `scoredTrades`
-- `missingOutcomeTrades`
-- `unscoredTrades`
-- `entryOffset`
-- `duplicateTradesIgnored`
-- `timingProfile`
-
-`outcomeSymbol` is important because it keeps downstream UI stable after the run is complete.
-
-Without that field, the user could:
-
-1. run a cross-symbol Polymarket backtest
-2. change the settings dropdown later
-3. accidentally make Quick View or Trades re-load a different target series for the old result
-
-The implementation now stores the resolved outcome target on the result summary to avoid that drift.
-
-## Trade Annotation Rules
-
-The Polymarket scoring path evaluates executed trades, not raw strategy signals.
-
-Important rules:
-
-- `next_open` is the required execution model for scoring
-- no trades means no annotation
-- unsupported target series means no annotation
-- scoring is timestamp-based, not correlation-based
-
-For `5m`:
-
-- trade entry timestamp is matched directly to the 5m outcome event start timestamp
-
-For `1m`:
-
-- the repo uses the 1m -> 5m bridge
-- the entry is mapped into the containing 5m event window
-- `polymarketEntryOffset` selects minute `0..4`
-- one trade per event is scored
-- duplicates in the same event are ignored
-
-For `15m`, `1h`, and `4h`:
-
-- the repo groups 5m outcome rows into higher-interval super-events for annotation and Finder scoring
-
-## Finder Polymarket Mode
-
-Finder has a dedicated Polymarket runner instead of layering Polymarket scoring onto the normal Finder sort path.
-
-Implementation details:
-
-- file: `lib/finder/finder-runner-polymarket.ts`
-- loads outcome rows once per run
-- reuses normal strategy execution and backtest machinery
-- ranks parameter sets by Polymarket-specific metrics
-- supports `1m`, `5m`, `15m`, `1h`, and `4h`
-
-Important Finder contracts:
-
-- `multiTimeframeEnabled` is blocked in Polymarket mode
-- `comboEnabled` is blocked in Polymarket mode
-- `grid` and `random` are supported
-- `polymarketLockOffset` locks the evaluated minute offset when applicable
-- `polymarketAfterTakeProfitOnly` filters the evaluated trade set before scoring
-
-Cross-symbol behavior:
-
-- the chart symbol can be unsupported for crypto Polymarket scoring
-- Finder can still score if `backtestSettings.polymarketOutcomeSymbol` is set to a supported target series
-
-Example:
-
-- chart symbol `NEARUSDT`
-- outcome target `ETHUSDT`
-
-That is now valid in Finder Polymarket mode.
-
-## UI Consumers
-
-Three UI surfaces can load or reuse Polymarket scoring after a run:
-
-- Trades panel
-- Quick View overlay
-- Polymarket diagnostics tab
-
-They follow this rule:
-
-- prefer the result's stored `polymarketTradeSummary.outcomeSymbol`
-- fall back to the current settings control if the result has no stored target yet
-
-That keeps an already-scored result internally consistent.
-
-## Settings UI
-
-Relevant controls in the Backtest Realism section:
-
-- `polymarketAnnotationEnabled`
-- `polymarketOutcomeSymbol`
-- `polymarketEntryOffset`
-
-Behavior:
-
-- `polymarketOutcomeSymbol` is only shown when annotation is enabled
-- `polymarketEntryOffset` is only shown for `1m` when annotation is enabled
-
-## Endpoint Behavior
-
-Endpoint-related files:
-
-- `lib/backtest-endpoint-copy.ts`
-- `lib/backtest-endpoint-execution.ts`
-- `lib/backtest-endpoint-settings.ts`
-- `docs/backtest-endpoint.md`
+- Quick View payout diagnostics
+- Trades panel outcome badges
+- the `Polymarket` strategy-panel diagnostics tab
+- fillability and deployability analysis in the Polymarket tab
 
 Important behavior:
 
-- endpoint preview/copy auto-enables Polymarket annotation for supported runs
-- `polymarketOutcomeSymbol` is preserved in the endpoint backtest settings contract
-- it is still treated as Rust-unsupported for sanitization
-- it is intentionally not stripped from the endpoint request payload so annotation parity can survive copy/preview
+- Quick View and Trades can reuse stored trade annotations or stored summary from an already-scored result
+- the Polymarket tab actively reloads outcome rows only for the `1m` / `5m` bridge-supported surface
+- the Polymarket tab also enriches rows with CLOB history snapshots to estimate whether a target cents price was realistically fillable during the event window
 
-## Bridge Export
+Core files:
 
-The Polymarket panel also has bridge export tools for downstream `external_signal` consumers.
+- `lib/quick-view.ts`
+- `lib/renderers/tradesRenderer.ts`
+- `lib/polymarket-panel-service.ts`
+- `lib/polymarket-fill-history.ts`
+- `lib/polymarket-deployability-analysis.ts`
 
-Relevant surfaces:
+### 4. Bridge export
+
+This is a separate contract for generating local bridge files and bot env snippets.
+
+Important behavior:
+
+- uses the current chart symbol and interval, not `polymarketOutcomeSymbol`
+- requires a saved config
+- only supports supported crypto symbols on `5m`
+- blocks cross-symbol strategies
+- exports `polymarketEntryOffset` into the signal payload when present
+
+Core files:
 
 - `html-partials/tab-polymarket.html`
 - `lib/polymarket-panel-service.ts`
 - `scripts/export-latest-entry-signal.ts`
 - `scripts/export-latest-ensemble-entry-signal.ts`
 
-Current limitation:
+## Supported Outcome Targets
 
-- bridge export remains chart-symbol based
-- it currently supports the supported crypto chart symbols on `5m`
-- it does not currently use `polymarketOutcomeSymbol` as an alternate target
+The repo-level Polymarket crypto outcome target symbols are fixed:
 
-That is intentional separation. The bridge path is not the same contract as research-time scoring.
+- `BTCUSDT`
+- `ETHUSDT`
+- `SOLUSDT`
+- `XRPUSDT`
 
-## Change Checklist
+These map to fixed SQLite `series_id` values in `lib/polymarket-btc5m.ts`.
 
-If you change Polymarket behavior, verify the correct contract instead of patching one surface in isolation.
+If you add another target, update:
 
-- If you add or rename a Polymarket settings control, update the partial, `lib/backtest-settings-resolver.ts`, `lib/backtest-settings-dom-contract.ts`, `lib/handlers/state-subscriptions.ts`, and the compatibility tests together.
-- If you add a new supported crypto outcome target, update `lib/polymarket-btc5m.ts`, the sync script input validation, support messages, and focused Polymarket tests together.
-- If you change trade annotation semantics, recheck regular backtests, Finder Polymarket mode, Quick View, Trades, and the Polymarket diagnostics tab. They all consume the same scored-trade contract.
-- If you change endpoint parity behavior, recheck `lib/backtest-endpoint-settings.ts`, `lib/backtest-endpoint-copy.ts`, `lib/backtest-endpoint-execution.ts`, and `docs/backtest-endpoint.md`.
-- If you touch bridge export, keep `lib/polymarket-panel-service.ts`, `scripts/export-latest-entry-signal.ts`, and `scripts/export-latest-ensemble-entry-signal.ts` aligned.
+- `lib/polymarket-btc5m.ts`
+- `scripts/polymarket-sync-outcomes.ts`
+- `html-partials/tab-settings-section-execution.html`
+- support messages in Finder / panel / ensemble paths
+- focused Polymarket tests
 
-## Syncing Outcome Rows
+## Current Support Matrix
 
-Before crypto outcome scoring works, the local SQLite outcome rows must exist.
+| Surface | Symbol / target rule | Interval support | Important notes |
+| --- | --- | --- | --- |
+| Direct Polymarket charting | any valid Polymarket event slug or URL | provider can aggregate to requested chart interval; PM button opens `1m` first | charting path only |
+| Backtest annotation | chart symbol must resolve to a supported target, or `polymarketOutcomeSymbol` must override to one | `1m`, `5m`, `15m`, `1h`, `4h` | requires `next_open` |
+| Headless `evaluatePolymarketOutcomes(...)` | caller supplies outcome rows directly | depends on supplied chart data and rows | still `next_open` only |
+| Finder Polymarket mode | same target-resolution rule as backtests | `1m`, `5m`, `15m`, `1h`, `4h` | `grid` and `random` only; no combo; no multi-timeframe |
+| Endpoint Preview / Copy | same target-resolution rule as backtests | same as backtest annotation | auto-enables endpoint annotation for supported runs |
+| Quick View | can reuse stored scored result; lazy reload path uses active target resolution | stored-result reuse is broad; active lazy reload is `1m` / `5m` | prefers stored summary target |
+| Trades panel | can reuse stored scored result; lazy reload path uses active target resolution | stored-result reuse is broad; active lazy reload is `1m` / `5m` | prefers stored summary target |
+| Polymarket diagnostics tab | same target-resolution rule as backtests | `1m`, `5m` | active diagnostics tab and bridge export are separate features sharing one panel |
+| Bridge export | current chart symbol only | `5m` | saved config required; no cross-symbol strategies |
+| Ensemble Polymarket | current chart symbol only | `5m` | separate implementation path |
 
-Commands:
+Two important nuances:
+
+- Backtest scoring and Finder support more intervals than the Polymarket diagnostics tab.
+- `polymarketOutcomeSymbol` helps research-time scoring, but bridge export intentionally stays chart-symbol based.
+
+## Outcome Data Model
+
+Outcome scoring is built around local SQLite rows, not live remote fetches during evaluation.
+
+Main row contract: `lib/types/polymarket-outcomes.ts`
+
+Each `PolymarketOutcomeRow` contains:
+
+- fixed `series_id`
+- event and market slug
+- `event_start_ts` and `event_end_ts`
+- YES and NO token ids
+- YES checkpoint prices at:
+  - open
+  - `+1m`
+  - `+2m`
+  - `+3m`
+  - `+4m`
+- `resolved_outcome_up`
+
+Browser-side load/store helpers:
+
+- `lib/local-sqlite-polymarket-api.ts`
+- `/api/sqlite/load-polymarket-outcomes`
+- `/api/sqlite/store-polymarket-outcomes`
+
+The outcome-scoring path is intentionally deterministic against the local snapshot. It does not query remote Polymarket APIs on demand.
+
+## Sync Workflow
+
+Outcome scoring only works after the local SQLite rows exist.
+
+Run from this repo with `npm run dev` active unless you are using `--dry-run`.
+
+Common commands:
+
+```bash
+npm run poly:sync-outcomes
+```
 
 ```bash
 npm run poly:sync-outcomes:all
 ```
 
-Single symbol:
+```bash
+npm run poly:sync-outcomes:repair
+```
+
+```bash
+npm run poly:sync-outcomes:repair:all
+```
+
+Direct single-symbol sync:
 
 ```bash
 ..\..\..\node_modules\.bin\esno scripts\polymarket-sync-outcomes.ts --symbol BTCUSDT
 ```
 
-Repair recent rows:
+Useful notes from the current script:
 
-```bash
-npm run poly:sync-outcomes:repair
-```
+- default `npm run poly:sync-outcomes` syncs the default BTC series
+- `--all` walks all supported symbols
+- existing rows are skipped by default
+- `--refresh-recent <n>` or the `:repair` scripts rewrite recent rows after sync logic changes
+- the script fetches remote Polymarket data, normalizes it, then writes through the local Vite SQLite endpoint
 
-The sync script writes outcome rows used by:
+## How Scoring Works
 
-- annotation
-- Finder Polymarket mode
-- Quick View
-- Trades panel
-- Polymarket diagnostics tab
+### 5m
 
-## Headless Evaluation Helper
+- direct event match
+- trade entry timestamp must match the 5m outcome event start
 
-`lib/polymarket-outcome-evaluator.ts` exists for code-level evaluation outside the main UI backtest path.
+### 1m
 
-Use it when you already have:
+- uses the `1m -> 5m` bridge
+- `polymarketEntryOffset` selects minute `0..4`
+- only trades entering on the selected offset score
+- duplicate trades in the same event bucket are ignored
+- the backtest summary stores `duplicateTradesIgnored` and a full `timingProfile`
 
-- chart candles
-- a strategy
-- strategy params
-- outcome rows
+### 15m, 1h, 4h
 
-Important contract:
+- groups multiple 5m rows into a larger super-event
+- `15m` uses offsets `0..2`
+- `1h` uses offsets `0..11`
+- `4h` uses offsets `0..47`
+- Finder can evaluate all valid offsets or lock one with `polymarketLockOffset`
+- the manual UI only exposes `polymarketEntryOffset` on `1m`, so ordinary UI backtests on these larger intervals effectively use the default offset unless the setting is injected another way
 
-- the evaluator itself is generic over `chartData + outcomes`
-- the repo-level support restriction mainly comes from which outcome series can be loaded from SQLite
+## Finder Polymarket Mode
 
-## Known Limitations
+Finder uses a dedicated Polymarket runner instead of bolting scoring onto the normal sort path.
 
-- supported crypto outcome target series are still fixed to `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, and `XRPUSDT`
-- bridge export is not cross-symbol aware
-- Ensemble Polymarket is still same-symbol `5m`
-- Quick View, Trades, and the Polymarket tab only do on-demand reload for `5m` and `1m`
-- direct Polymarket event charting is a different provider path than crypto outcome scoring
-- scoring says whether a timed prediction matched the resolved outcome, not whether the chart symbol is causally predictive
+Current behavior:
+
+- file: `lib/finder/finder-runner-polymarket.ts`
+- loads outcome rows once per run
+- supports cross-symbol outcome scoring through `backtestSettings.polymarketOutcomeSymbol`
+- reuses normal strategy execution and backtest machinery
+- ranks by Polymarket-specific metrics such as accuracy, expectancy, or profit factor
+
+Current restrictions:
+
+- `grid` and `random` only
+- `multiTimeframeEnabled` is blocked
+- `comboEnabled` is blocked
+
+Current offset behavior:
+
+- `1m` evaluates minute offsets `0..4`
+- `15m`, `1h`, and `4h` evaluate sub-event offsets for the grouped super-events
+- `polymarketLockOffset` only matters in random mode for multi-sub-event intervals
+
+## Settings and Persistence
+
+User-facing controls live in the Backtest Realism section:
+
+- `polymarketAnnotationEnabled`
+- `polymarketOutcomeSymbol`
+- `polymarketEntryOffset`
+
+Current UI rules:
+
+- `polymarketOutcomeSymbol` only shows when annotation is enabled
+- `polymarketEntryOffset` only shows when annotation is enabled and the chart interval is `1m`
+
+Resolver and compatibility files:
+
+- `lib/backtest-settings-resolver.ts`
+- `lib/backtest-settings-dom-contract.ts`
+- `lib/handlers/state-subscriptions.ts`
+- `lib/rust-settings-sanitizer.ts`
+
+Important compatibility points:
+
+- `polymarketOutcomeSymbol` is normalized to uppercase
+- Polymarket settings are marked Rust-unsupported
+- endpoint copy/preview preserves `polymarketOutcomeSymbol` in the request contract even though Rust does not consume it directly
+
+## Endpoint Behavior
+
+Relevant files:
+
+- `lib/backtest-endpoint-copy.ts`
+- `lib/backtest-endpoint-execution.ts`
+- `lib/backtest-endpoint-settings.ts`
+- `docs/backtest-endpoint.md`
+
+Current behavior:
+
+- Preview / Copy auto-enable endpoint annotation for supported Polymarket runs
+- the copied payload keeps the selected `polymarketOutcomeSymbol`
+- this is done for parity with the visible UI backtest snapshot
+
+Important implication:
+
+- the endpoint contract is broader than the visible toggle state because supported runs are auto-annotated for convenience and parity
+
+## Polymarket Tab: Diagnostics vs Bridge Export
+
+The `Polymarket` strategy-panel tab contains two different features:
+
+- Bridge Export
+- Polymarket Diagnostics
+
+Diagnostics focuses on scored historical trades and includes:
+
+- payout expectancy by event price
+- break-even win rate and edge versus break-even
+- timing buckets
+- snapshot filter suggestions
+- fill-adjusted deployability analysis using background Polymarket history fetches
+
+Bridge Export focuses on downstream automation and includes:
+
+- saved-config selection
+- downloadable PowerShell bridge script
+- bot env snippet copy
+- latest-entry export integration
+
+Do not treat a change to one as automatically affecting the other.
+
+## Bridge Export Contract
+
+Bridge export is intentionally narrower than research-time scoring.
+
+Current rules:
+
+- chart must be a supported `5m` crypto symbol
+- saved config must exist
+- referenced strategy must still be available in the registry
+- cross-symbol strategies are rejected
+- export uses the current chart symbol and interval
+- export keeps `polymarketEntryOffset` in the JSON signal payload when present
+- export does not switch to `polymarketOutcomeSymbol`
+
+Downstream surfaces tied to this contract:
+
+- `scripts/export-latest-entry-signal.ts`
+- `scripts/export-latest-ensemble-entry-signal.ts`
+- `workers/README.md`
+
+## Change Checklist
+
+If you touch Polymarket code, first decide which contract you are editing:
+
+- provider-side charting
+- outcome-symbol resolution
+- trade annotation semantics
+- Finder Polymarket ranking
+- diagnostics rendering
+- fillability / deployability analysis
+- endpoint parity
+- bridge export
+
+Then verify the matching files together.
+
+### If you change direct charting
+
+Update together:
+
+- `lib/dataProviders/polymarket.ts`
+- `lib/asset-search-service.ts`
+- `lib/handlers/ui-event-handlers.ts`
+
+### If you change settings or persistence
+
+Update together:
+
+- `html-partials/tab-settings-section-execution.html`
+- `lib/backtest-settings-resolver.ts`
+- `lib/backtest-settings-dom-contract.ts`
+- `lib/handlers/state-subscriptions.ts`
+- settings compatibility tests
+
+### If you change scoring semantics
+
+Recheck together:
+
+- `lib/polymarket-trade-annotations.ts`
+- `lib/backtest-service.ts`
+- `lib/backtest-executor.ts`
+- `lib/polymarket-outcome-evaluator.ts`
+- `lib/finder/finder-runner-polymarket.ts`
+- `lib/quick-view.ts`
+- `lib/renderers/tradesRenderer.ts`
+- `lib/polymarket-panel-service.ts`
+
+### If you change bridge export
+
+Keep aligned:
+
+- `lib/polymarket-panel-service.ts`
+- `scripts/export-latest-entry-signal.ts`
+- `scripts/export-latest-ensemble-entry-signal.ts`
+- `workers/README.md`
 
 ## Validation Targets
 
-Focused tests:
-
-- `tests/polymarket-trade-annotations.spec.ts`
-- `tests/finder-polymarket.spec.ts`
-- `tests/polymarket-outcome-evaluator.spec.ts`
-- `tests/quick-view-polymarket.spec.ts`
-- `tests/feature-dom-contracts.spec.ts`
-
-Useful commands:
+Core:
 
 ```bash
 npm run typecheck
 ```
+
+Focused Polymarket tests:
 
 ```bash
 ..\..\..\node_modules\.bin\esno tests\polymarket-trade-annotations.spec.ts
@@ -403,19 +433,28 @@ npm run typecheck
 ```
 
 ```bash
+..\..\..\node_modules\.bin\esno tests\polymarket-outcome-evaluator.spec.ts
+```
+
+```bash
+..\..\..\node_modules\.bin\esno tests\quick-view-polymarket.spec.ts
+```
+
+```bash
+..\..\..\node_modules\.bin\esno tests\polymarket-deployability-analysis.spec.ts
+```
+
+```bash
 ..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts
 ```
 
-## Practical Rule Of Thumb
+## Rule Of Thumb
 
-If you are changing Polymarket behavior, ask which contract you are touching:
+Use this mental shortcut:
 
-- provider-side Polymarket charting
-- crypto outcome series resolution
-- trade annotation semantics
-- Finder Polymarket ranking
-- diagnostics rendering
-- endpoint parity
-- bridge export
+- charting a market uses the Polymarket provider
+- scoring a backtest uses local SQLite outcome rows
+- diagnostics read scored results and sometimes reload missing rows
+- bridge export is a bot-facing file-generation path with tighter rules
 
-Most breakage in this area comes from mixing those contracts together instead of keeping them explicit.
+When those are kept separate, Polymarket changes stay predictable.

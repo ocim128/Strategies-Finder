@@ -150,6 +150,69 @@ describe("backtest batch execution (multi-run parity)", () => {
         );
     });
 
+    it("keeps cross-symbol context aligned after block-range slicing", async () => {
+        const primary: OHLCVData[] = [
+            { time: 10 as import("lightweight-charts").Time, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+            { time: 20 as import("lightweight-charts").Time, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+            { time: 30 as import("lightweight-charts").Time, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+        ];
+        const secondary: OHLCVData[] = [
+            { time: 10 as import("lightweight-charts").Time, open: 2, high: 2, low: 2, close: 2, volume: 1 },
+            { time: 30 as import("lightweight-charts").Time, open: 3, high: 3, low: 3, close: 3, volume: 1 },
+        ];
+        let seenPrimaryLen = -1;
+        let seenSecondaryLen = -1;
+        let seenSecondaryTimes: Array<number | string> = [];
+
+        const strategy: Strategy = {
+            name: "cross-symbol-slice-sync",
+            description: "test",
+            defaultParams: {},
+            paramLabels: {},
+            crossSymbolConfig: {
+                defaultSymbol: "ETHUSDT",
+                minBars: 1,
+            },
+            execute: (data, _params, context) => {
+                seenPrimaryLen = data.length;
+                seenSecondaryLen = context?.crossSymbol?.secondaryData.length ?? -1;
+                seenSecondaryTimes = (context?.crossSymbol?.secondaryData ?? []).map((bar) => bar.time as number | string);
+                return [];
+            },
+        };
+
+        await executeBacktest({
+            ohlcvData: primary,
+            interval: "1m",
+            primarySymbol: "BTCUSDT",
+            strategyKey: "cross-symbol-slice-sync",
+            strategy,
+            strategyParams: {},
+            backtestSettings: {
+                executionModel: "signal_close",
+                tradeDirection: "long",
+                marketMode: "all",
+                strategyTimeframeEnabled: false,
+                crossSymbolSecondary: "ETHUSDT",
+            },
+            capitalSettings: defaultCapital,
+            context: {
+                nowSec: 9999999999,
+                blockRange: { from: 20, to: 30 },
+                annotatePolymarket: false,
+                engineMode: "typescript",
+            },
+            crossSymbolInput: {
+                secondarySymbol: "ETHUSDT",
+                secondaryData: secondary,
+            },
+        });
+
+        assert.strictEqual(seenPrimaryLen, 2);
+        assert.strictEqual(seenSecondaryLen, 2);
+        assert.deepStrictEqual(seenSecondaryTimes, [10, 30]);
+    });
+
     it("provides manifest fingerprint for drift detection", () => {
         const fp = getManifestFingerprint();
         assert.ok(fp.strategyCount > 0);

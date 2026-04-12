@@ -7,7 +7,7 @@
  */
 
 import type { OHLCVData } from '../../types/strategies';
-import { timeToNumber } from '../backtest/backtest-utils';
+import { parseTimeToUnixSeconds } from '../../time-normalization';
 
 // ============================================================================
 // Alignment
@@ -22,7 +22,9 @@ import { timeToNumber } from '../backtest/backtest-utils';
  * 2. For primary time T, matched secondary bar satisfies `secondary.time <= T`.
  * 3. Never looks forward to `secondary.time > T`.
  * 4. If no prior secondary bar exists yet, output `null`.
- * 5. Uses existing repo time helpers (`timeToNumber`, `toTimeKey`).
+ * 5. Uses existing repo time normalization helpers so equivalent timestamps
+ *    stay comparable even when one series uses seconds and the other uses
+ *    milliseconds.
  */
 export function alignSecondaryToPrimary(
     primary: OHLCVData[],
@@ -31,10 +33,10 @@ export function alignSecondaryToPrimary(
     if (primary.length === 0) return [];
     if (secondary.length === 0) return new Array(primary.length).fill(null);
 
-    // Convert secondary times to numeric for comparison.
+    // Convert secondary times to shared unix-seconds for comparison.
     const secondaryNumeric: { time: number; bar: OHLCVData }[] = [];
     for (const bar of secondary) {
-        const t = timeToNumber(bar.time);
+        const t = parseTimeToUnixSeconds(bar.time);
         if (t !== null) {
             secondaryNumeric.push({ time: t, bar });
         }
@@ -47,7 +49,7 @@ export function alignSecondaryToPrimary(
     let secIdx = 0;
 
     for (let i = 0; i < primary.length; i++) {
-        const primaryTime = timeToNumber(primary[i].time);
+        const primaryTime = parseTimeToUnixSeconds(primary[i].time);
         if (primaryTime === null) {
             // Cannot compare — carry forward whatever we have.
             aligned[i] = secIdx > 0 ? secondaryNumeric[secIdx - 1].bar : null;

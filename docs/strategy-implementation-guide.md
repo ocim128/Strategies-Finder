@@ -22,6 +22,10 @@ For repo-level orientation, read [`README.md`](../README.md) first. For the oper
 2. Start from a nearby example:
    - `lib/strategies/lib/median_deviation_streak.ts`
    - `lib/strategies/lib/vwap_zscore_reversion.ts`
+   - for cross-symbol work:
+     - `lib/strategies/lib/relative_strength_mean_reversion.ts`
+     - `lib/strategies/lib/pair_spread_efficiency_break.ts`
+     - `lib/strategies/lib/correlation_volume_fragility.ts`
 3. Write `normalizeParams(...)` first if params need any coercion.
 4. Clean the dataset with `ensureCleanData(...)`.
 5. Build your base arrays once outside the signal loop.
@@ -274,6 +278,7 @@ Then add focused validation as needed:
 
 - add or update a strategy spec under `tests/strategies-lib/*` when normalization or behavior is non-trivial
 - use `npm run test -- <relevant-fragment>` for targeted coverage
+- for cross-symbol strategy work, include `npm run test -- cross-symbol`
 - manually confirm the strategy appears in the dropdown if UI behavior changed
 
 ## Fast Checklist
@@ -288,12 +293,23 @@ Then add focused validation as needed:
 - signal loop returns `createBuySignal(...)`, `createSellSignal(...)`, or `null`
 - null and warmup handling is explicit
 - `prepareFinderData(...)` and `executePrepared(...)` remain in parity when present
- - `npm run strategies:sync-manifest` was run
- - `npm run typecheck` passes
+- `npm run strategies:sync-manifest` was run
+- `npm run typecheck` passes
 
 ## Cross-Symbol Strategies
 
-A strategy may use a secondary symbol as causal context (e.g. relative strength, pair spread, rolling correlation). The runtime provides aligned secondary data — strategies never fetch or align data themselves.
+A strategy may use a secondary symbol as causal context, such as relative strength, pair spread, rolling correlation, or relative volume transfer. The runtime provides aligned secondary data - strategies never fetch or align data themselves.
+
+Current support:
+
+- supported: manual backtest, endpoint preview/copy, Finder, Walk Forward, and Polymarket evaluation
+- guarded elsewhere: worker alerts, Scanner, Portfolio Lab, Strategy Ensemble Lab, combined backtest, and Polymarket bridge export
+
+Useful real examples:
+
+- `lib/strategies/lib/relative_strength_mean_reversion.ts`
+- `lib/strategies/lib/pair_spread_efficiency_break.ts`
+- `lib/strategies/lib/correlation_volume_fragility.ts`
 
 ### Prompt workflow
 
@@ -326,11 +342,11 @@ Add `crossSymbolConfig` to the strategy object:
 ```ts
 import type { Strategy, OHLCVData, StrategyParams, StrategyExecutionContext } from "../../types/strategies";
 
-export const relative_strength_mean_reversion: Strategy = {
-  name: "Relative Strength Mean Reversion",
-  description: "Mean-reversion on the ratio of primary to secondary close.",
+export const my_cross_symbol_strategy: Strategy = {
+  name: "My Cross-Symbol Strategy",
+  description: "Example entry logic using primary vs secondary context.",
   crossSymbolConfig: {
-    defaultSymbol: "BTCUSDT",
+    defaultSymbol: "ETHUSDT",
     userSelectable: true,
     minBars: 50,
   },
@@ -358,17 +374,18 @@ The same `context` must be threaded through `prepareFinderData(...)` and `execut
 
 Import from `lib/strategies/lib/cross-symbol-helpers.ts`:
 
-- `buildRelativeStrength(primaryCloses, secondaryCloses)` — ratio series
-- `buildPairSpread(primaryCloses, secondaryCloses)` — difference series
-- `buildRollingPairCorrelation(primaryCloses, secondaryCloses, lookback)` — rolling Pearson
-- `buildRelativeVolumeStrength(primaryVolumes, secondaryVolumes, lookback)` — relative volume
+- `buildRelativeStrength(primaryCloses, secondaryCloses)` - ratio series
+- `buildPairSpread(primaryCloses, secondaryCloses)` - difference series
+- `buildRollingPairCorrelation(primaryCloses, secondaryCloses, lookback)` - rolling Pearson
+- `buildRelativeVolumeStrength(primaryVolumes, secondaryVolumes, lookback)` - relative volume
 
 ### Constraints
 
 1. Never fetch secondary data inside `execute(...)`. The runtime does it for you.
-2. `secondaryData` is already aligned via causal LOCF and trimmed — no nulls.
+2. `secondaryData` is already aligned via causal LOCF and trimmed - no nulls.
 3. v1 cross-symbol strategies cannot use strategy-timeframe resampling.
 4. The `prepareFinderData(...)` and `executePrepared(...)` methods receive the same context as `execute(...)`.
 5. Walk-Forward Analysis is supported, but it runs through the TypeScript cross-symbol path rather than a Rust-native cross-symbol engine.
-6. If you need the current support matrix, endpoint parity rules, or maintenance gotchas, see [`docs/cross-symbol.md`](./cross-symbol.md).
+6. Endpoint parity paths also support cross-symbol execution, but they only stay correct if the resolved secondary dataset is carried through snapshot and request builders.
 7. If a wrapper, decorator, or registry path calls `strategy.execute(...)`, it must preserve the third `context` argument or the strategy may silently produce zero signals.
+8. If you need the current support matrix, endpoint parity rules, or maintenance gotchas, see [`docs/cross-symbol.md`](./cross-symbol.md).

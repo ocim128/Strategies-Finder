@@ -14,7 +14,12 @@ function createTempRepo(): string {
     return mkdtempSync(path.join(os.tmpdir(), "strategy-library-admin-"));
 }
 
-function writeStrategyFile(repoRoot: string, fileName: string, exportName: string): string {
+function writeStrategyFile(
+    repoRoot: string,
+    fileName: string,
+    exportName: string,
+    strategyName = exportName,
+): string {
     const strategyDir = path.join(repoRoot, "lib", "strategies", "lib");
     mkdirSync(strategyDir, { recursive: true });
     const filePath = path.join(strategyDir, fileName);
@@ -24,7 +29,7 @@ function writeStrategyFile(repoRoot: string, fileName: string, exportName: strin
             'import type { Strategy } from "../index";',
             "",
             `export const ${exportName}: Strategy = {`,
-            `    name: "${exportName}",`,
+            `    name: "${strategyName}",`,
             '    description: "test",',
             "    defaultParams: {},",
             "    paramLabels: {},",
@@ -88,6 +93,40 @@ describe("Strategy library admin plugin", () => {
             expect(existsSync(path.join(repoRoot, result.deleted[0].backupRelativePath))).to.equal(true);
             expect(existsSync(path.join(repoRoot, result.deleted[1].backupRelativePath))).to.equal(true);
             expect(result.manifestStrategyCount).to.equal(1);
+
+            const manifestSource = readFileSync(path.join(repoRoot, "lib", "strategies", "manifest.ts"), "utf8");
+            expect(manifestSource.includes('key: "alpha_strategy"')).to.equal(false);
+            expect(manifestSource.includes('key: "beta_strategy"')).to.equal(false);
+            expect(manifestSource.includes('key: "gamma_strategy"')).to.equal(true);
+        } finally {
+            rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it("accepts filename, path, and label-style aliases when deleting built-in strategies", () => {
+        const repoRoot = createTempRepo();
+        try {
+            const alphaPath = writeStrategyFile(repoRoot, "alpha_strategy.ts", "alpha_strategy", "Alpha Strategy");
+            const betaPath = writeStrategyFile(repoRoot, "beta_strategy.ts", "beta_strategy");
+            writeStrategyFile(repoRoot, "gamma_strategy.ts", "gamma_strategy");
+
+            syncStrategyManifestForRepo(repoRoot);
+
+            const result = archiveAndDeleteBuiltInStrategies(
+                [
+                    "Alpha Strategy",
+                    "lib/strategies/lib/beta_strategy.ts",
+                    "alpha-strategy.ts",
+                ],
+                {
+                    repoRoot,
+                    backupDate: new Date("2026-04-09T12:00:00Z"),
+                }
+            );
+
+            expect(result.deleted.map((item) => item.key)).to.deep.equal(["alpha_strategy", "beta_strategy"]);
+            expect(existsSync(alphaPath)).to.equal(false);
+            expect(existsSync(betaPath)).to.equal(false);
 
             const manifestSource = readFileSync(path.join(repoRoot, "lib", "strategies", "manifest.ts"), "utf8");
             expect(manifestSource.includes('key: "alpha_strategy"')).to.equal(false);
