@@ -54,9 +54,11 @@ import type { StrategyExecutionContext } from "../types/strategies";
 import { resolveCrossSymbolExecution, isCrossSymbolStrategy } from "../cross-symbol-runtime";
 import { dataManager } from "../data-manager";
 import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode, SIGNAL_EXIT_SUPPORTED_RANK_MODES } from "../polymarket-exit-mode";
-import { evaluateSignalExitTrades } from "../polymarket-signal-exit-evaluator";
+import { evaluateSignalExitTrades, indexSignalExitOutcomesByEntryTs } from "../polymarket-signal-exit-evaluator";
 import type { PolymarketPricePoint } from "../local-sqlite-polymarket-api";
 import { ensurePricePointsForOutcomes } from "../polymarket-price-points-ingest";
+import { indexPricePointsByEvent, type EventPriceIndex } from "../polymarket-price-points";
+import { parseTimeToUnixSeconds } from "../time-normalization";
 
 /**
  * Evaluate mapped trades for multi-interval Polymarket runs (15m, 1h, 4h).
@@ -311,6 +313,8 @@ export async function runPolymarketFinder(
     await callbacks.yieldControl();
 
     let pricePoints: PolymarketPricePoint[] = [];
+    let priceIndex: EventPriceIndex | undefined;
+    let outcomeByEntryTs: ReadonlyMap<number, import("../types/polymarket-outcomes").PolymarketOutcomeRow | null> | undefined;
     if (isSignalExitMode) {
         try {
             const rawFirst = closedData.length > 0 ? closedData[0].time : 0;
@@ -331,6 +335,13 @@ export async function runPolymarketFinder(
             callbacks.setStatus(`No Polymarket price points available for series ${seriesId} after ingestion.`);
             return { results: [] };
         }
+        priceIndex = indexPricePointsByEvent(pricePoints);
+        outcomeByEntryTs = indexSignalExitOutcomesByEntryTs(
+            closedData
+                .map((bar) => parseTimeToUnixSeconds(bar.time))
+                .filter((value): value is number => value !== null),
+            outcomes
+        );
     }
 
     // Build strategy plans from selections
@@ -443,7 +454,8 @@ export async function runPolymarketFinder(
                     const { summary: exitSummary } = evaluateSignalExitTrades({
                         trades: tradesForPolymarketEvaluation,
                         outcomes,
-                        pricePoints,
+                        priceIndex,
+                        outcomeByEntryTs,
                     });
 
                     const evalResult: import("../types/polymarket-outcomes").PolymarketEvalResult = {

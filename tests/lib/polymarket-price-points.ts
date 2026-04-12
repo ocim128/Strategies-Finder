@@ -26,14 +26,59 @@ export function indexPricePointsByEvent(
     return { pointsByEventStart };
 }
 
+function getSidePrice(
+    point: PolymarketPricePoint,
+    side: "yes" | "no"
+): number | null | undefined {
+    return side === "yes" ? point.yes_price : point.no_price;
+}
+
+function lowerBoundByTimestamp(
+    eventPoints: readonly PolymarketPricePoint[],
+    targetTs: number
+): number {
+    let left = 0;
+    let right = eventPoints.length;
+
+    while (left < right) {
+        const mid = (left + right) >>> 1;
+        if (eventPoints[mid]!.ts < targetTs) {
+            left = mid + 1;
+        } else {
+            right = mid;
+        }
+    }
+
+    return left;
+}
+
+function upperBoundByTimestamp(
+    eventPoints: readonly PolymarketPricePoint[],
+    targetTs: number
+): number {
+    let left = 0;
+    let right = eventPoints.length;
+
+    while (left < right) {
+        const mid = (left + right) >>> 1;
+        if (eventPoints[mid]!.ts <= targetTs) {
+            left = mid + 1;
+        } else {
+            right = mid;
+        }
+    }
+
+    return left;
+}
+
 export function findEntryFill(
     eventPoints: readonly PolymarketPricePoint[],
     entryTs: number,
     side: "yes" | "no"
 ): { price: number; ts: number } | null {
-    for (const point of eventPoints) {
-        if (point.ts < entryTs) continue;
-        const price = side === "yes" ? point.yes_price : point.no_price;
+    for (let index = lowerBoundByTimestamp(eventPoints, entryTs); index < eventPoints.length; index++) {
+        const point = eventPoints[index]!;
+        const price = getSidePrice(point, side);
         if (price === null || price === undefined) continue;
         return { price, ts: point.ts };
     }
@@ -46,17 +91,12 @@ export function findSignalExitFill(
     exitTs: number,
     side: "yes" | "no"
 ): { price: number; ts: number } | null {
-    let best: PolymarketPricePoint | null = null;
-
-    for (const point of eventPoints) {
-        if (point.ts > exitTs) break;
-        const price = side === "yes" ? point.yes_price : point.no_price;
+    for (let index = upperBoundByTimestamp(eventPoints, exitTs) - 1; index >= 0; index--) {
+        const point = eventPoints[index]!;
+        const price = getSidePrice(point, side);
         if (price === null || price === undefined) continue;
-        best = point;
+        return { price, ts: point.ts };
     }
 
-    if (!best) return null;
-    const price = side === "yes" ? best.yes_price : best.no_price;
-    if (price === null || price === undefined) return null;
-    return { price, ts: best.ts };
+    return null;
 }

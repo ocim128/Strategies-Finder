@@ -1,4 +1,8 @@
-import { evaluateSignalExitTrades, buildTradeAnnotationFromSignalExitResult } from "../lib/polymarket-signal-exit-evaluator";
+import {
+    evaluateSignalExitTrades,
+    buildTradeAnnotationFromSignalExitResult,
+    indexSignalExitOutcomesByEntryTs,
+} from "../lib/polymarket-signal-exit-evaluator";
 import { indexPricePointsByEvent, findEntryFill, findSignalExitFill } from "../lib/polymarket-price-points";
 import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode, SIGNAL_EXIT_SUPPORTED_RANK_MODES } from "../lib/polymarket-exit-mode";
 import type { PolymarketPricePoint } from "../lib/local-sqlite-polymarket-api";
@@ -159,6 +163,7 @@ console.log("\n=== price point indexing ===");
 {
     const points = [
         makePricePoint({ ts: 1010, yes_price: 0.50, no_price: 0.50 }),
+        makePricePoint({ ts: 1015, yes_price: null, no_price: null }),
         makePricePoint({ ts: 1020, yes_price: 0.55, no_price: 0.45 }),
         makePricePoint({ ts: 1050, yes_price: 0.60, no_price: 0.40 }),
     ];
@@ -166,7 +171,7 @@ console.log("\n=== price point indexing ===");
     const index = indexPricePointsByEvent(points);
     ok(index.pointsByEventStart.has(1000), "event indexed");
     const eventPoints = index.pointsByEventStart.get(1000)!;
-    eq(eventPoints.length, 3, "three points in event");
+    eq(eventPoints.length, 4, "four points in event");
     eq(eventPoints[0].ts, 1010, "sorted by ts");
 }
 
@@ -194,6 +199,12 @@ console.log("\n=== findEntryFill ===");
 
     const nullFill = findEntryFill(points, 1100, "yes");
     eq(nullFill, null, "no fill after last point");
+
+    const gapFill = findEntryFill(points, 1011, "yes");
+    ok(gapFill !== null, "entry fill skips null-price point after lower bound");
+    if (gapFill) {
+        eq(gapFill.ts, 1020, "entry fill advances to next priced point");
+    }
 }
 
 console.log("\n=== findSignalExitFill ===");
@@ -202,6 +213,7 @@ console.log("\n=== findSignalExitFill ===");
     const points = [
         makePricePoint({ ts: 1010, yes_price: 0.50, no_price: 0.50 }),
         makePricePoint({ ts: 1020, yes_price: 0.55, no_price: 0.45 }),
+        makePricePoint({ ts: 1040, yes_price: null, no_price: null }),
         makePricePoint({ ts: 1050, yes_price: 0.60, no_price: 0.40 }),
     ];
 
@@ -214,6 +226,12 @@ console.log("\n=== findSignalExitFill ===");
 
     const nullFill = findSignalExitFill(points, 1005, "yes");
     eq(nullFill, null, "no point before exitTs");
+
+    const gapFill = findSignalExitFill(points, 1045, "yes");
+    ok(gapFill !== null, "signal exit fill skips trailing null-price point before upper bound");
+    if (gapFill) {
+        eq(gapFill.ts, 1020, "signal exit fill rewinds to last priced point");
+    }
 }
 
 console.log("\n=== evaluateSignalExitTrades: long enters and exits by signal ===");
@@ -247,6 +265,41 @@ console.log("\n=== evaluateSignalExitTrades: long enters and exits by signal ===
     eq(summary.scoredTrades, 1, "1 scored trade");
     eq(summary.signalExitedTrades, 1, "1 signal exited");
     eq(summary.resolvedTrades, 0, "0 resolved");
+}
+
+console.log("\n=== evaluateSignalExitTrades: prebuilt price index ===");
+
+{
+    const trade = makeTrade({
+        type: "long",
+        entryTime: 1020 as any,
+        exitTime: 1050 as any,
+        exitReason: "signal",
+    });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 1 });
+    const pricePoints = [
+        makePricePoint({ ts: 1020, yes_price: 0.50, no_price: 0.50 }),
+        makePricePoint({ ts: 1050, yes_price: 0.60, no_price: 0.40 }),
+    ];
+    const priceIndex = indexPricePointsByEvent(pricePoints);
+    const outcomeByEntryTs = indexSignalExitOutcomesByEntryTs([1020], [outcome]);
+
+    const fromRaw = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        pricePoints,
+    });
+    const fromIndex = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        priceIndex,
+        outcomeByEntryTs,
+    });
+
+    eq(fromIndex.results.length, fromRaw.results.length, "prebuilt index keeps result count");
+    eq(fromIndex.results[0]!.exitSource, fromRaw.results[0]!.exitSource, "prebuilt index keeps exit source");
+    approx(fromIndex.results[0]!.pnl!, fromRaw.results[0]!.pnl!, 0.000001, "prebuilt index keeps pnl");
+    approx(fromIndex.summary.netPnl, fromRaw.summary.netPnl, 0.000001, "prebuilt index keeps summary pnl");
 }
 
 console.log("\n=== evaluateSignalExitTrades: short enters and exits by signal ===");
