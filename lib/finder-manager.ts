@@ -418,7 +418,7 @@ export class FinderManager {
 		this.setStatus('Running strategy finder...');
 		this.ui.renderRandomBenchmark(options.mode);
 		this.displayResults = [];
-		this.renderResults([], options.sortPriority[0]);
+		this.renderResults([]);
 
 		try {
 			const selectedStrategies = this.getSelectedStrategies();
@@ -464,14 +464,14 @@ export class FinderManager {
 						onResultsUpdate: (results: FinderResult[]) => {
 							const sorted = sortFinderResults(results, options.sortPriority);
 							this.displayResults = sorted;
-							this.renderResults(sorted, options.sortPriority[0]);
+							this.renderResults(sorted);
 						},
 					}
 				);
 
 				const sortedResults = sortFinderResults(output.results, options.sortPriority);
 				this.displayResults = sortedResults;
-				this.renderResults(sortedResults, options.sortPriority[0]);
+				this.renderResults(sortedResults);
 				this.ui.renderRandomBenchmark(options.mode, output.randomBenchmark);
 
 				if (this.isCancelled) {
@@ -571,7 +571,7 @@ export class FinderManager {
 		return this.paramSpace.buildRandomConfirmationParams(strategyKeys, options);
 	}
 
-	private renderResults(results: FinderResult[], _sortBy: FinderMetric): void {
+	private renderResults(results: FinderResult[]): void {
 		this.ui.renderResults(results);
 	}
 

@@ -77,7 +77,7 @@ export function buildBacktestEndpointExecutorRequestFromSnapshot(
         snapshot.interval,
         snapshot.strategyParams,
         {
-            ...stripSignalExitMode({ ...snapshot.backtestSettings }),
+            ...snapshot.backtestSettings,
             polymarketAnnotationEnabled: annotatePolymarket,
             symbol: snapshot.symbol,
             interval: snapshot.interval,

@@ -1,4 +1,3 @@
-import { parseTimeToUnixSeconds } from './time-normalization';
 import type { PolymarketOutcomeRow } from './types/polymarket-outcomes';
 
 const AVAILABILITY_CACHE_MS = 60000;
@@ -336,8 +335,4 @@ export async function ensurePolymarketPricePoints(args: {
     }
 
     return payload.rows ?? [];
-}
-
-export function toPolymarketUnixSeconds(value: unknown): number | null {
-    return parseTimeToUnixSeconds(value);
 }

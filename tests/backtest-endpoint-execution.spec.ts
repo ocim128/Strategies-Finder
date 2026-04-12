@@ -64,7 +64,24 @@ describe("backtest endpoint execution helpers", () => {
         assert.strictEqual(request.backtestSettings.polymarketAnnotationEnabled, true);
         assert.ok(!("snapshotRsiMin" in request.backtestSettings));
         assert.ok(!("snapshotRsiMax" in request.backtestSettings));
+        assert.ok(!("polymarketExitMode" in request.backtestSettings));
         assert.strictEqual(request.primarySymbol, snapshot.symbol);
+    });
+
+    it("strips signal-exit mode from endpoint executor settings", () => {
+        const candles = buildCandles();
+        const snapshot = {
+            ...buildSnapshot(),
+            interval: "1m",
+            backtestSettings: {
+                ...buildSnapshot().backtestSettings,
+                polymarketExitMode: "signal_exit_same_event" as const,
+            },
+        } satisfies UiBacktestEndpointSnapshot;
+
+        const request = buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles);
+
+        assert.ok(!("polymarketExitMode" in request.backtestSettings));
     });
 
     it("forwards explicit cross-symbol snapshot input into the executor request", () => {

@@ -26,6 +26,7 @@ import { readBoolean, readNumber, toBooleanLike, toFiniteNumber } from './lib/se
 import { SNAPSHOT_CONFIGS } from './lib/backtest-settings-resolver';
 import {
     BACKTEST_SETTINGS_DOM_CONTRACTS,
+    coerceBacktestDomSettingValue,
     getBacktestDomSettingContract,
     resolveBacktestDomSettingWriteValue,
 } from './lib/backtest-settings-dom-contract';
@@ -53,6 +54,14 @@ describe('Backtest settings compatibility', () => {
         expect(resolved.tradeFilterMode).to.equal('trend');
         expect(normalized.tradeFilterMode).to.equal('trend');
         expect('entryConfirmation' in (normalized as Record<string, unknown>)).to.equal(false);
+    });
+
+    it('keeps polymarketExitMode in canonical lowercase form when read from DOM contracts', () => {
+        const contract = getBacktestDomSettingContract('polymarketExitMode');
+        expect(contract).to.not.equal(undefined);
+        expect(coerceBacktestDomSettingValue(contract!, 'signal_exit_same_event')).to.equal('signal_exit_same_event');
+        expect(coerceBacktestDomSettingValue(contract!, 'SIGNAL_EXIT_SAME_EVENT')).to.equal('signal_exit_same_event');
+        expect(coerceBacktestDomSettingValue(contract!, 'resolve_hold')).to.equal('resolve_hold');
     });
 
     it('sanitizes Rust payloads without dropping compatibility fields', () => {

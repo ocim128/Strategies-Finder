@@ -6,6 +6,7 @@
  *
  * Supports:
  * - 5m chart runs: exact timestamp matching (legacy behavior)
+ * - 1m signal-exit runs: same-event Polymarket entry/exit pricing
  * - 1m chart runs: 1m -> 5m bridge with minute entry offset (0..4) scoring
  * - 15m chart runs: groups 3x 5m events, entry offset (0..2)
  * - 1h chart runs: groups 12x 5m events, entry offset (0..11)
@@ -467,7 +468,9 @@ export async function runPolymarketFinder(
                         alwaysYesBaselineWinRate: polymarketContext.evaluatedEvents > 0 ? polymarketContext.resolvedUpCount / polymarketContext.evaluatedEvents : 0,
                         alwaysNoBaselineWinRate: polymarketContext.evaluatedEvents > 0 ? (polymarketContext.evaluatedEvents - polymarketContext.resolvedUpCount) / polymarketContext.evaluatedEvents : 0,
                         avgEntryPrice: exitSummary.avgEntryPrice,
-                        breakEvenWinRate: exitSummary.avgEntryPrice,
+                        // Break-even win rate is a resolve_hold concept; signal-exit
+                        // scoring uses realized PnL instead of binary payout odds.
+                        breakEvenWinRate: 0,
                         expectancy: exitSummary.expectancy,
                         edgeVsBreakEven: 0,
                         missingOutcomeRows: exitSummary.missingPriceTrades,

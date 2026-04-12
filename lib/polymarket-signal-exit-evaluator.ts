@@ -194,8 +194,6 @@ function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): Sign
             } else if (r.pnl < 0) {
                 losingTrades++;
                 grossLoss += Math.abs(r.pnl);
-            } else {
-                profitableTrades++;
             }
         }
     }

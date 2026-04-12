@@ -421,7 +421,9 @@ async function annotatePolymarketResult(
             executionModel: settings.executionModel,
             chartData,
             outcomeSymbol: settings.polymarketOutcomeSymbol,
-            polymarketExitMode: settings.polymarketExitMode,
+            // The shared executor does not load same-event price points, so
+            // endpoint/executor annotation stays on resolve_hold.
+            polymarketExitMode: "resolve_hold",
         });
     } catch {
         return result;
