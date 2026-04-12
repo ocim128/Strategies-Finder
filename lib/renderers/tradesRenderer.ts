@@ -234,10 +234,12 @@ export class TradesRenderer {
                     outcomes,
                     pricePoints,
                 });
+                const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
                 return trades.map((trade) => {
-                    const exitResult = exitResults.find((r) => r.trade === trade);
-                    if (!exitResult || exitResult.exitSource === "missing") return { ...trade, polymarketOutcome: null };
-                    return { ...trade, polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult) };
+                    const exitResult = exitResultMap.get(trade);
+                    if (!exitResult) return { ...trade, polymarketOutcome: null };
+                    const annotation = buildTradeAnnotationFromSignalExitResult(exitResult);
+                    return { ...trade, polymarketOutcome: annotation };
                 });
             } catch {
                 // Fall through to resolve_hold
@@ -295,6 +297,16 @@ export class TradesRenderer {
         const isSignalExit = outcome.evaluationMode === "signal_exit_same_event";
 
         if (isSignalExit) {
+            if (outcome.marketExitSource === "duplicate") {
+                return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly Dup: another trade in the same 5m event was already scored">Poly dup</span>`;
+            }
+            if (outcome.marketExitSource === "no_event") {
+                return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly No Event: no matching Polymarket 5m event found for this trade's entry time">Poly no event</span>`;
+            }
+            if (outcome.marketExitSource === "missing") {
+                return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly n/a: missing price point data for entry or exit">Poly n/a</span>`;
+            }
+
             const isProfitable = outcome.isProfitable;
             const label = isProfitable === true ? 'Poly Profit' : isProfitable === false ? 'Poly Loss' : 'Poly n/a';
             const className = isProfitable === true

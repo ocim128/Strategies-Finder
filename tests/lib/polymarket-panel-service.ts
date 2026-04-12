@@ -250,8 +250,9 @@ class PolymarketPanelService {
                         outcomes,
                         pricePoints,
                     });
+                    const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
                     const annotatedTrades = result.trades.map((trade) => {
-                        const exitResult = exitResults.find((r) => r.trade === trade);
+                        const exitResult = exitResultMap.get(trade);
                         if (!exitResult || exitResult.exitSource === "missing") return { ...trade, polymarketOutcome: null };
                         return { ...trade, polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult) };
                     });

@@ -320,8 +320,11 @@ console.log("\n=== evaluateSignalExitTrades: duplicate trades inside one event =
         pricePoints,
     });
 
-    eq(results.length, 1, "only one trade scored per event");
+    eq(results.length, 2, "two results emitted: one scored, one duplicate");
     eq(results[0]!.trade.id, 1, "first trade wins");
+    eq(results[0]!.exitSource !== "duplicate", true, "first trade is not duplicate");
+    eq(results[1]!.exitSource, "duplicate", "second trade is marked as duplicate");
+    eq(results[1]!.pnl, null, "duplicate trade has no pnl");
 }
 
 console.log("\n=== evaluateSignalExitTrades: missing entry quote → unscored ===");

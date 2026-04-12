@@ -16,16 +16,16 @@ export interface SignalExitEvalInput {
 
 export interface SignalExitTradeResult {
     trade: Trade;
-    outcome: PolymarketOutcomeRow;
-    side: "yes" | "no";
+    outcome: PolymarketOutcomeRow | null;
+    side: "yes" | "no" | null;
     entryPrice: number | null;
     exitPrice: number | null;
     exitTs: number | null;
-    exitSource: "signal" | "resolution" | "missing";
+    exitSource: "signal" | "resolution" | "missing" | "duplicate" | "no_event";
     pnl: number | null;
     isProfitable: boolean | null;
-    actualOutcomeUp: 0 | 1;
-    isWin: boolean;
+    actualOutcomeUp: 0 | 1 | null;
+    isWin: boolean | null;
 }
 
 export interface SignalExitSummary {
@@ -59,9 +59,39 @@ export function evaluateSignalExitTrades(
         if (entryTs === null) continue;
 
         const outcome = findContainingEvent(entryTs, outcomes);
-        if (!outcome) continue;
+        if (!outcome) {
+            results.push({
+                trade,
+                outcome: null,
+                side: null,
+                entryPrice: null,
+                exitPrice: null,
+                exitTs: null,
+                exitSource: "no_event",
+                pnl: null,
+                isProfitable: null,
+                actualOutcomeUp: null,
+                isWin: null,
+            });
+            continue;
+        }
 
-        if (seenEvents.has(outcome.event_start_ts)) continue;
+        if (seenEvents.has(outcome.event_start_ts)) {
+            results.push({
+                trade,
+                outcome,
+                side: trade.type === "long" ? "yes" : "no",
+                entryPrice: null,
+                exitPrice: null,
+                exitTs: null,
+                exitSource: "duplicate",
+                pnl: null,
+                isProfitable: null,
+                actualOutcomeUp: outcome.resolved_outcome_up,
+                isWin: null,
+            });
+            continue;
+        }
         seenEvents.add(outcome.event_start_ts);
 
         const side: "yes" | "no" = trade.type === "long" ? "yes" : "no";
@@ -177,6 +207,9 @@ function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): Sign
             missingPriceTrades++;
             continue;
         }
+        if (r.exitSource === "duplicate" || r.exitSource === "no_event") {
+            continue;
+        }
 
         scoredTrades++;
 
@@ -218,21 +251,59 @@ function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): Sign
 
 export function buildTradeAnnotationFromSignalExitResult(
     result: SignalExitTradeResult
-): TradePolymarketOutcome {
+): TradePolymarketOutcome | null {
+    if (result.exitSource === "no_event") {
+        return {
+            eventStartTs: 0,
+            eventEndTs: 0,
+            eventSlug: "",
+            marketSlug: "",
+            prediction: (result.side ?? "yes") as "yes" | "no",
+            actualOutcomeUp: 0,
+            isWin: false,
+            evaluationMode: "signal_exit_same_event",
+            isProfitable: null,
+            marketEntryPrice: null,
+            marketExitPrice: null,
+            marketExitTs: null,
+            marketExitSource: "no_event" as any,
+            marketPnl: null,
+        };
+    }
+
+    if (result.exitSource === "duplicate") {
+        return {
+            eventStartTs: result.outcome!.event_start_ts,
+            eventEndTs: result.outcome!.event_end_ts,
+            eventSlug: result.outcome!.event_slug,
+            marketSlug: result.outcome!.market_slug || result.outcome!.event_slug,
+            prediction: result.side as "yes" | "no",
+            actualOutcomeUp: result.outcome!.resolved_outcome_up,
+            isWin: false,
+            evaluationMode: "signal_exit_same_event",
+            isProfitable: null,
+            marketEntryPrice: null,
+            marketExitPrice: null,
+            marketExitTs: null,
+            marketExitSource: "duplicate" as any,
+            marketPnl: null,
+        };
+    }
+
     return {
-        eventStartTs: result.outcome.event_start_ts,
-        eventEndTs: result.outcome.event_end_ts,
-        eventSlug: result.outcome.event_slug,
-        marketSlug: result.outcome.market_slug || result.outcome.event_slug,
-        prediction: result.side,
-        actualOutcomeUp: result.outcome.resolved_outcome_up,
-        isWin: result.isWin,
+        eventStartTs: result.outcome!.event_start_ts,
+        eventEndTs: result.outcome!.event_end_ts,
+        eventSlug: result.outcome!.event_slug,
+        marketSlug: result.outcome!.market_slug || result.outcome!.event_slug,
+        prediction: result.side as "yes" | "no",
+        actualOutcomeUp: result.outcome!.resolved_outcome_up,
+        isWin: result.isWin ?? false,
         evaluationMode: "signal_exit_same_event",
         isProfitable: result.isProfitable,
         marketEntryPrice: result.entryPrice,
         marketExitPrice: result.exitPrice,
         marketExitTs: result.exitTs,
-        marketExitSource: result.exitSource === "missing" ? undefined : result.exitSource,
+        marketExitSource: result.exitSource as TradePolymarketOutcome["marketExitSource"],
         marketPnl: result.pnl,
     };
 }

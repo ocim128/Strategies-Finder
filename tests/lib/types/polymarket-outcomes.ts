@@ -59,8 +59,8 @@ export interface TradePolymarketOutcome {
     marketExitPrice?: number | null;
     /** Exit timestamp for the Polymarket leg */
     marketExitTs?: number | null;
-    /** How the Polymarket leg exited: signal (same-event) or resolution (final outcome) */
-    marketExitSource?: "signal" | "resolution";
+    /** How the Polymarket leg exited: signal (same-event), resolution (final outcome), duplicate (same-event already scored), no_event (no matching Polymarket event), or missing (price data unavailable) */
+    marketExitSource?: "signal" | "resolution" | "duplicate" | "no_event" | "missing";
     /** PnL for the Polymarket leg: marketExitPrice - marketEntryPrice */
     marketPnl?: number | null;
 }

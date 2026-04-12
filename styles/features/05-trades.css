@@ -788,6 +788,18 @@
 
 }
 
+.exit-reason-badge--polymarket-skip {
+
+    color: hsl(0 0% 55%);
+
+    background: hsl(0 0% 55% / 0.10);
+
+    border: 1px solid hsl(0 0% 55% / 0.22);
+
+    opacity: 0.7;
+
+}
+
 .exit-reason-badge:hover {
 
     transform: scale(1.1);
