@@ -1,5 +1,5 @@
 
-import { Time } from "lightweight-charts";
+import type { Time } from "lightweight-charts";
 import { OHLCVData } from "../strategies/index";
 import { state, type MockChartModel } from "../state";
 import { DATA_PROVIDER_TOTAL_LIMIT } from "../data/constants";

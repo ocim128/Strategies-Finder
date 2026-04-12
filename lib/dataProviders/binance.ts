@@ -1,5 +1,5 @@
 
-import { Time } from "lightweight-charts";
+import type { Time } from "lightweight-charts";
 import { OHLCVData } from "../strategies/index";
 import { resampleOHLCV, type ResampleOptions } from "../strategies/resample-utils";
 import type { BinanceMarketType } from "../binance-market";

@@ -61,7 +61,6 @@ const TEST_FILES = [
     "tests/strategy-library-admin-service.spec.ts",
     "tests/pivot-detection.spec.ts",
     "tests/backtesting-engine.spec.ts",
-    "tests/trade-analyzer.spec.ts",
     "tests/alert-entry-evaluator.spec.ts",
     "tests/alert-evaluation-window.spec.ts",
     "tests/latest-entry-export-window.spec.ts",

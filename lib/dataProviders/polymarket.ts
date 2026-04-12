@@ -1,4 +1,4 @@
-import { Time } from "lightweight-charts";
+import type { Time } from "lightweight-charts";
 import { OHLCVData } from "../strategies/index";
 import { debugLogger } from "../debug-logger";
 import { HistoricalFetchOptions } from "../types/index";

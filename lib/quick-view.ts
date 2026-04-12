@@ -9,7 +9,7 @@
 
 import { state } from "./state";
 import type { BacktestResult, ExpectancyBreakdownRow, ExpectancyBreakdownSection, Trade } from "./strategies/index";
-import { Time } from "lightweight-charts";
+import type { Time } from "lightweight-charts";
 import { formatDisplayPrice } from "./price-format";
 import { isPolymarketEventSymbol } from "./dataProviders/polymarket";
 import {

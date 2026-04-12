@@ -14,7 +14,13 @@ import type { StrategyExecutionContext } from "../types/strategies";
 import type { FinderResult } from "../types/finder";
 import type { FinderRunCallbacks, FinderRunInput, FinderRunOutput } from "./finder-runner";
 import { isCrossSymbolStrategy, resolveCrossSymbolExecution } from "../cross-symbol-runtime";
-import { dataManager } from "../data-manager";
+
+let dataManagerModulePromise: Promise<typeof import("../data-manager")> | null = null;
+
+async function getDataManager() {
+    dataManagerModulePromise ??= import("../data-manager");
+    return (await dataManagerModulePromise).dataManager;
+}
 
 export interface GeneticFinderRunParams {
     input: FinderRunInput;
@@ -67,6 +73,7 @@ export async function runGeneticFinder(params: GeneticFinderRunParams): Promise<
         let geneticCtx: StrategyExecutionContext | undefined;
         if (isCrossSymbolStrategy(selection.strategy)) {
             try {
+                const dataManager = await getDataManager();
                 const resolved = await resolveCrossSymbolExecution({
                     strategy: selection.strategy,
                     primarySymbol: input.symbol,

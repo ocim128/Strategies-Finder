@@ -52,7 +52,6 @@ import {
 import type { FinderRunInput, FinderRunCallbacks, FinderRunOutput } from "./finder-runner";
 import type { StrategyExecutionContext } from "../types/strategies";
 import { resolveCrossSymbolExecution, isCrossSymbolStrategy } from "../cross-symbol-runtime";
-import { dataManager } from "../data-manager";
 import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode, SIGNAL_EXIT_SUPPORTED_RANK_MODES } from "../polymarket-exit-mode";
 import { evaluateSignalExitTrades, indexSignalExitOutcomesByEntryTs } from "../polymarket-signal-exit-evaluator";
 import type { PolymarketPricePoint } from "../local-sqlite-polymarket-api";
@@ -394,6 +393,7 @@ export async function runPolymarketFinder(
         let crossSymbolCtx: StrategyExecutionContext | undefined;
         if (isCrossSymbolStrategy(plan.strategy)) {
             try {
+                const { dataManager } = await import("../data-manager");
                 const resolved = await resolveCrossSymbolExecution({
                     strategy: plan.strategy,
                     primarySymbol: input.symbol,

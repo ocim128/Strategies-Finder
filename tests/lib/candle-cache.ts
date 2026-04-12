@@ -1,4 +1,4 @@
-import { Time } from "lightweight-charts";
+import type { Time } from "lightweight-charts";
 import type { OHLCVData } from "./types/index";
 import { debugLogger } from "./debug-logger";
 import { parseTimeToUnixSeconds } from "./time-normalization";

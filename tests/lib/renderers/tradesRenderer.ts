@@ -1,4 +1,4 @@
-import { Time } from "lightweight-charts";
+import type { Time } from "lightweight-charts";
 import { OHLCVData, Trade } from "../strategies/index";
 import { setVisible } from "../dom-utils";
 import { state } from "../state";

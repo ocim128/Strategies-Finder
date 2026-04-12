@@ -7,11 +7,27 @@ import {
 } from "./backtest-endpoint-copy";
 import { clearActiveBacktestRerunContext } from "./backtest-rerun-context";
 import { state, type BacktestResultSource, type ChartMode, type MockChartModel } from "./state";
-import { dataManager } from "./data-manager";
 import type { BinanceMarketType } from "./binance-market";
 import type { Indicator } from "./types/index";
 import type { BacktestResult, OHLCVData } from "./strategies/index";
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, Time } from "lightweight-charts";
+
+let dataManagerModulePromise: Promise<typeof import("./data-manager")> | null = null;
+
+function syncDataManagerCache(symbol: string, interval: string, candles: OHLCVData[]): void {
+    dataManagerModulePromise ??= import("./data-manager");
+    void dataManagerModulePromise
+        .then(({ dataManager }) => {
+            dataManager.updateCacheEntryFor(symbol, interval, candles);
+        })
+        .catch((error: unknown) => {
+            debugLogger.warn("state.commit.ohlcv_cache_sync_failed", {
+                symbol,
+                interval,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        });
+}
 
 export function bindChartRuntime(runtime: {
     chart: IChartApi;
@@ -144,5 +160,5 @@ export function commitOhlcvData(
         reason,
     });
     state.set('ohlcvData', data);
-    dataManager.updateCacheEntryFor(state.currentSymbol, state.currentInterval, data);
+    syncDataManagerCache(state.currentSymbol, state.currentInterval, data);
 }

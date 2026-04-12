@@ -1,4 +1,4 @@
-import { Time } from "lightweight-charts";
+import type { Time } from "lightweight-charts";
 import { state } from "./state";
 import { setCurrentInterval, setCurrentSymbol } from "./state-actions";
 import { uiManager } from "./ui-manager";

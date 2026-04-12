@@ -12,9 +12,6 @@ import {
     type ParamJob,
     type StrategyPlan,
 } from "./finder-runner-shared";
-import { runSingleTimeframe } from "./finder-runner-single";
-import { runGeneticFinder } from "./finder-runner-genetic";
-import { runPolymarketFinder } from "./finder-runner-polymarket";
 import {
     buildFinderSearchBaseParams,
     resolveFinderCandidateBacktestSettings,
@@ -78,10 +75,12 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
 
     // Polymarket classification mode intercepts before any backtest logic
     if (options.polymarketScoringEnabled) {
+        const { runPolymarketFinder } = await import("./finder-runner-polymarket");
         return runPolymarketFinder(input, callbacks);
     }
 
     if (options.mode === "genetic") {
+        const { runGeneticFinder } = await import("./finder-runner-genetic");
         return runGeneticFinder({
             input,
             callbacks,
@@ -166,6 +165,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
         sliceStart = performance.now();
     };
 
+    const { runSingleTimeframe } = await import("./finder-runner-single");
     return runSingleTimeframe({
         input,
         callbacks,

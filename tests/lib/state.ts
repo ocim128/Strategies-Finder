@@ -1,4 +1,4 @@
-import { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, Time } from "lightweight-charts";
+import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, Time } from "lightweight-charts";
 import { BacktestResult, OHLCVData } from "./strategies/index";
 import type { BinanceMarketType } from "./binance-market";
 

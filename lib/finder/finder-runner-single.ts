@@ -18,7 +18,6 @@ import { shouldUseRustEngine } from "../engine-preferences";
 import { debugLogger } from "../debug-logger";
 import { strategies as builtInStrategies } from "../strategies/library";
 import { isCrossSymbolStrategy, resolveCrossSymbolExecution } from "../cross-symbol-runtime";
-import { dataManager } from "../data-manager";
 
 import { calculateSharpeRatioFromEquityCurve, calculateSharpeRatioFromReturns } from "../strategies/performance-metrics";
 import { buildSelectionResult } from "./endpoint";
@@ -54,6 +53,13 @@ import {
 import { buildFinderResult, runStrategyBacktest } from "./finder-runner-shared";
 
 export { resolveFinderCandidateBacktestSettings, shouldUseRustCachedMode } from "./finder-runner-core";
+
+let dataManagerModulePromise: Promise<typeof import("../data-manager")> | null = null;
+
+async function getDataManager() {
+    dataManagerModulePromise ??= import("../data-manager");
+    return (await dataManagerModulePromise).dataManager;
+}
 
 export function buildFinderEvaluationData(
     data: OHLCVData[],
@@ -542,6 +548,7 @@ async function runGeneticFinder(params: GeneticFinderRunParams): Promise<FinderR
         let geneticCtx: StrategyExecutionContext | undefined;
         if (isCrossSymbolStrategy(selection.strategy)) {
             try {
+                const dataManager = await getDataManager();
                 const resolved = await resolveCrossSymbolExecution({
                     strategy: selection.strategy,
                     primarySymbol: input.symbol,
@@ -998,6 +1005,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
     for (const selection of input.selectedStrategies) {
         if (!isCrossSymbolStrategy(selection.strategy) || crossSymbolContextMap.has(selection.key)) continue;
         try {
+            const dataManager = await getDataManager();
             const resolved = await resolveCrossSymbolExecution({
                 strategy: selection.strategy,
                 primarySymbol: input.symbol,
