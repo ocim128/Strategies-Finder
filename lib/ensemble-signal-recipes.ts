@@ -53,6 +53,9 @@ export function buildEnsembleRecipeSignalArtifact(
     strategy: Strategy,
     candles: OHLCVData[]
 ): EnsembleRecipeSignalArtifact {
+    if (strategy.crossSymbolConfig) {
+        throw new Error(`Ensemble recipes do not support cross-symbol strategy "${config.strategyKey}". Remove it from the recipe or use a non-cross-symbol strategy.`);
+    }
         const backtestSettings = resolveBacktestSettingsFromRaw(
             config.backtestSettings as unknown as BacktestSettings,
             { coerceWithoutUiToggles: true }

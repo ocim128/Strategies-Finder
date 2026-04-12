@@ -2,6 +2,7 @@ import { state } from "./state";
 import { uiManager } from "./ui-manager";
 import { chartManager } from "./chart-manager";
 import { clearActiveBacktestRerunContext, getActiveBacktestRerunContext } from "./backtest-rerun-context";
+import { dataManager } from "./data-manager";
 
 import {
     runBacktest,
@@ -71,6 +72,7 @@ import {
 import { buildBacktestEndpointExecutorRequestFromSnapshot } from "./backtest-endpoint-execution";
 import { toCompactMetrics } from "./backtest-endpoint-contract";
 import { executeBacktest, executeBacktestFromSignals } from "./backtest-executor";
+import { resolveCrossSymbolSecondaryForStrategy } from "./cross-symbol-runtime";
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
@@ -313,6 +315,14 @@ export class BacktestService {
                 runUi.setStatus(`Secondary strategy "${secondaryConfig.strategyKey}" not found`);
                 return;
             }
+            if (primaryStrategy.crossSymbolConfig) {
+                runUi.setStatus(`"${primaryStrategy.name}" is a cross-symbol strategy and is not supported in combined backtest.`);
+                return;
+            }
+            if (secondaryStrategy.crossSymbolConfig) {
+                runUi.setStatus(`"${secondaryStrategy.name}" is a cross-symbol strategy and is not supported in combined backtest.`);
+                return;
+            }
 
             // --- 2. Prepare data ---
             await updateDomBacktestRunProgress(runUi, '20%', 'Preparing data...', 50);
@@ -444,6 +454,7 @@ export class BacktestService {
         const run = await executeBacktest({
             ohlcvData,
             interval,
+            primarySymbol: state.currentSymbol,
             strategyKey: state.currentStrategyKey,
             strategy,
             strategyParams: params,
@@ -459,6 +470,7 @@ export class BacktestService {
                 annotatePolymarket: false,
                 engineMode: requiresTsEngine ? 'typescript' : 'auto',
             },
+            dataFetcher: dataManager,
         });
 
         if (captureTiming) {
@@ -795,9 +807,14 @@ export class BacktestService {
             return null;
         }
 
-        const endpointRun = await executeBacktest(
-            buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles)
-        );
+        const crossSymbolDataset = await this.resolveEndpointCrossSymbolDataset(snapshot);
+        const endpointRun = await executeBacktest({
+            ...buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles, crossSymbolDataset ? {
+                secondarySymbol: crossSymbolDataset.secondarySymbol,
+                secondaryData: crossSymbolDataset.candles,
+            } : undefined),
+            dataFetcher: dataManager,
+        });
         const matchesCurrentUiResult = this.compactMetricResultsMatch(currentResult, endpointRun.result);
 
         commitBacktestResult(endpointRun.result, "endpoint_preview", {
@@ -831,7 +848,8 @@ export class BacktestService {
             return null;
         }
 
-        const preparedCopy = await prepareBacktestEndpointCopyBundleFromSnapshot(snapshot, baseUrl, candles);
+        const crossSymbolDataset = await this.resolveEndpointCrossSymbolDataset(snapshot);
+        const preparedCopy = await prepareBacktestEndpointCopyBundleFromSnapshot(snapshot, baseUrl, candles, crossSymbolDataset);
 
         return {
             strategyKey: snapshot.strategyKey,
@@ -841,6 +859,30 @@ export class BacktestService {
             candleCount: preparedCopy.candleCount,
             datasetUploaded: preparedCopy.datasetUploaded,
             datasetUploadError: preparedCopy.datasetUploadError,
+        };
+    }
+
+    private async resolveEndpointCrossSymbolDataset(
+        snapshot: UiBacktestEndpointSnapshot
+    ): Promise<{ secondarySymbol: string; candles: OHLCVData[] } | undefined> {
+        const strategy = strategyRegistry.get(snapshot.strategyKey);
+        if (!strategy?.crossSymbolConfig) {
+            return undefined;
+        }
+
+        const secondarySymbol = resolveCrossSymbolSecondaryForStrategy(strategy, snapshot.backtestSettings);
+        if (!secondarySymbol) {
+            throw new Error(`Unable to resolve secondary symbol for cross-symbol strategy "${snapshot.strategyKey}".`);
+        }
+
+        const candles = await dataManager.fetchDataDetached(secondarySymbol, snapshot.interval);
+        if (!Array.isArray(candles) || candles.length === 0) {
+            throw new Error(`No data available for secondary symbol "${secondarySymbol}" on interval "${snapshot.interval}".`);
+        }
+
+        return {
+            secondarySymbol,
+            candles,
         };
     }
 

@@ -36,6 +36,7 @@ import { strategyPanelController } from "./strategy-panel-controller";
 import { getOptionalElement } from "./dom-utils";
 import { polymarketPanelService } from "./polymarket-panel-service";
 import { initMonteCarloService } from "./monte-carlo-service";
+import { initCrossSymbolUI } from "./cross-symbol-ui";
 import { huntService } from "./hunt/hunt-service";
 import { strategyLibraryAdminService } from "./strategy-library-admin-service";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
@@ -212,6 +213,12 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         stage: "pre_restore",
         dependsOn: ["layout"],
         init: () => initMonteCarloService(),
+    },
+    {
+        id: "cross-symbol",
+        stage: "pre_restore",
+        dependsOn: ["ui-events"],
+        init: () => initCrossSymbolUI(),
     },
     {
         id: "alert-handlers",

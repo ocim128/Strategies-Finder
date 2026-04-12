@@ -17,3 +17,4 @@ export * from "./walk-forward-dom";
 export * from "./strategy-ensemble-dom";
 export * from "./advanced-sizing-dom";
 export { MONTE_CARLO_REQUIRED_IDS } from "./monte-carlo-dom";
+export { CROSS_SYMBOL_REQUIRED_IDS } from "./cross-symbol-dom";

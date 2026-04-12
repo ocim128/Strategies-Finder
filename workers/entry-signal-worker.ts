@@ -1009,6 +1009,13 @@ async function handleStreamSignal(request: Request, env: Env): Promise<Response>
         );
     }
 
+    if (!isWorkerSupportedStrategyKey(payload.strategyKey)) {
+        return toJsonResponse(
+            { ok: false, error: `worker_strategy_not_supported:${payload.strategyKey}` },
+            400
+        );
+    }
+
     const normalizedCandles = normalizeCandles(payload.candles);
     const streamId = payload.streamId
         ? normalizeText(payload.streamId)

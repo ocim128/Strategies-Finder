@@ -79,7 +79,7 @@ This is intentional to keep the endpoint contract smaller and reduce orchestrati
 
 If you want a UI run to match an endpoint run, set the UI capital inputs to the same fixed profile before comparing results. Legacy caller-supplied `capitalSettings` payloads are ignored by the endpoint.
 
-The UI now has a `Preview Endpoint` button and a `Copy Endpoint` button in the strategy panel header. `Preview Endpoint` reruns the latest regular UI backtest through the exact HTTP endpoint contract locally, so the visible UI result can match the endpoint before you compare anything. `Copy Endpoint` uploads the exact candle set used by that backtest to `/api/backtest/datasets` and copies only the JSON POST body for `/api/backtest/<strategyKey>`, already filled with a real `datasetRef`, instead of embedding the full candle array. The copied payload still includes the latest UI backtest snapshot for strategy params, backtest settings, block range, and deterministic `nowSec`. For supported Polymarket runs, `Preview Endpoint` and `Copy Endpoint` automatically set Polymarket annotation on in the endpoint contract so the single-run endpoint can return `polymarketPerformance` without requiring a separate manual toggle in the copied JSON. The UI warns you if the previous UI result differed from the endpoint contract. If you switch symbol or timeframe after the backtest ran, switch back or rerun before previewing or copying so the endpoint request still matches the visible UI result. If the local endpoint is down, the button still copies the JSON body with a placeholder `dataset.ref` and shows the exact `/api/backtest/health` URL to verify before you upload candles manually.
+The UI now has a `Preview Endpoint` button and a `Copy Endpoint` button in the strategy panel header. `Preview Endpoint` reruns the latest regular UI backtest through the exact HTTP endpoint contract locally, so the visible UI result can match the endpoint before you compare anything. `Copy Endpoint` uploads the exact candle set used by that backtest to `/api/backtest/datasets` and copies only the JSON POST body for `/api/backtest/<strategyKey>`, already filled with a real `datasetRef`, instead of embedding the full candle array. The copied payload still includes the latest UI backtest snapshot for strategy params, backtest settings, block range, and deterministic `nowSec`. For cross-symbol strategies, `Preview Endpoint` and `Copy Endpoint` also include the resolved secondary symbol dataset under `crossSymbol`, so the endpoint does not silently refetch different data. For supported Polymarket runs, `Preview Endpoint` and `Copy Endpoint` automatically set Polymarket annotation on in the endpoint contract so the single-run endpoint can return `polymarketPerformance` without requiring a separate manual toggle in the copied JSON. The UI warns you if the previous UI result differed from the endpoint contract. If you switch symbol or timeframe after the backtest ran, switch back or rerun before previewing or copying so the endpoint request still matches the visible UI result. If the local endpoint is down, the button still copies the JSON body with a placeholder `dataset.ref` and shows the exact `/api/backtest/health` URL to verify before you upload candles manually.
 
 ## Dataset Cache
 
@@ -225,10 +225,44 @@ $body = @{
 
 Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:5173/api/backtest/median_deviation_streak" `
+  -Uri "http://localhost:5173/api/backtest/<strategyKey>" `
   -ContentType "application/json" `
   -Body $body
 ```
+
+### Cross-Symbol Request
+
+Cross-symbol endpoint runs must include the resolved secondary symbol dataset explicitly:
+
+```json
+{
+  "symbol": "XRPUSDT",
+  "interval": "5m",
+  "dataset": { "ref": "xrp_5m_primary" },
+  "strategyParams": {
+    "lookback": 30,
+    "zThreshold": 0.5
+  },
+  "backtestSettings": {
+    "executionModel": "next_open",
+    "tradeDirection": "both",
+    "marketMode": "all",
+    "crossSymbolSecondary": "DOGEUSDT"
+  },
+  "crossSymbol": {
+    "secondarySymbol": "DOGEUSDT",
+    "dataset": { "ref": "doge_5m_secondary" }
+  },
+  "context": {
+    "nowSec": 1775400000,
+    "blockRange": null,
+    "annotatePolymarket": false,
+    "engineMode": "typescript"
+  }
+}
+```
+
+If a strategy declares `crossSymbolConfig` and `crossSymbol` is omitted, the endpoint rejects the request instead of silently fetching unrelated data.
 
 Single-run response includes:
 

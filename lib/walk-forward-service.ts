@@ -58,6 +58,7 @@ type WalkForwardRunContext = {
     data: OHLCVData[];
     strategyKey: string;
     strategy: Strategy;
+    crossSymbolCtx?: import("./types/strategies").StrategyExecutionContext;
 };
 
 type WalkForwardNumberInputId =
@@ -140,7 +141,30 @@ class WalkForwardService {
                 return null;
             }
 
-            return await fn({ signal, data, strategyKey, strategy });
+            let effectiveData = data;
+            let crossSymbolCtx: import("./types/strategies").StrategyExecutionContext | undefined;
+            if (strategy.crossSymbolConfig) {
+                try {
+                    const settings = backtestService.getBacktestSettings();
+                    const { resolveCrossSymbolExecution } = await import("./cross-symbol-runtime");
+                    const resolved = await resolveCrossSymbolExecution({
+                        strategy,
+                        primarySymbol: state.currentSymbol,
+                        interval: state.currentInterval,
+                        primaryData: data,
+                        settings,
+                        dataFetcher: (await import("./data-manager")).dataManager,
+                    });
+                    effectiveData = resolved.primaryData;
+                    crossSymbolCtx = resolved.context;
+                } catch (error) {
+                    const msg = error instanceof Error ? error.message : String(error);
+                    this.updateStatus(`Cross-symbol resolution failed: ${msg}`);
+                    return null;
+                }
+            }
+
+            return await fn({ signal, data: effectiveData, strategyKey, strategy, crossSymbolCtx });
         } finally {
             this.isRunning = false;
             this.abortController = null;
@@ -388,7 +412,7 @@ class WalkForwardService {
      * Run walk-forward analysis with current strategy and data
      */
     async runAnalysis(): Promise<WalkForwardResult | null> {
-        return this.withRunGuard("analysis", "No data loaded for walk-forward analysis", async ({ signal, data, strategyKey, strategy }) => {
+        return this.withRunGuard("analysis", "No data loaded for walk-forward analysis", async ({ signal, data, strategyKey, strategy, crossSymbolCtx }) => {
             const capitalSettings = backtestService.getCapitalSettings();
             const backtestSettings = backtestService.getBacktestSettings();
             const sizing = {
@@ -432,7 +456,8 @@ class WalkForwardService {
             const baseConfig = this.getConfigFromUI(parameterRanges, tradeAwareThresholds);
 
             // Try Rust walk-forward first when compatible, then fallback to TypeScript.
-            if (!useFixedParam && shouldUseRustEngine()) {
+            // Cross-symbol strategies require TypeScript engine (Rust has no cross-symbol support).
+            if (!useFixedParam && shouldUseRustEngine() && !crossSymbolCtx) {
                 const requiresTsEngine = backtestService.requiresTypescriptEngine(backtestSettings) || isSmartTradeSizingMode(capitalSettings.sizingMode);
                 if (!requiresTsEngine && await rustEngine.checkHealth()) {
                     const rustConfig = this.toRustWalkForwardConfig(baseConfig);
@@ -491,7 +516,8 @@ class WalkForwardService {
                     capitalSettings.positionSize,
                     capitalSettings.commission,
                     backtestSettings,
-                    sizing
+                    sizing,
+                    crossSymbolCtx
                 );
             } else if (!result) {
                 // Use regular walk-forward with parameter optimization
@@ -513,7 +539,8 @@ class WalkForwardService {
                     capitalSettings.positionSize,
                     capitalSettings.commission,
                     backtestSettings,
-                    sizing
+                    sizing,
+                    crossSymbolCtx
                 );
             }
 
@@ -546,7 +573,7 @@ class WalkForwardService {
      * Quick analysis with auto-detected settings
      */
     async runQuickAnalysis(): Promise<WalkForwardResult | null> {
-        return this.withRunGuard("quick", "No data loaded for walk-forward analysis", async ({ signal, data, strategyKey, strategy }) => {
+        return this.withRunGuard("quick", "No data loaded for walk-forward analysis", async ({ signal, data, strategyKey, strategy, crossSymbolCtx }) => {
             const capitalSettings = backtestService.getCapitalSettings();
             const backtestSettings = backtestService.getBacktestSettings();
             const sizing = {
@@ -600,7 +627,8 @@ class WalkForwardService {
                     capitalSettings.positionSize,
                     capitalSettings.commission,
                     backtestSettings,
-                    sizing
+                    sizing,
+                    crossSymbolCtx
                 );
             } else {
                 // Use regular quick walk-forward with parameter optimization
@@ -615,7 +643,8 @@ class WalkForwardService {
                     backtestSettings,
                     sizing,
                     progressReporter,
-                    signal
+                    signal,
+                    crossSymbolCtx
                 );
             }
 

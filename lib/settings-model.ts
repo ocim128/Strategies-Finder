@@ -112,6 +112,8 @@ export interface BacktestSettingsData {
     polymarketAnnotationEnabled: boolean;
     polymarketOutcomeSymbol: string;
     polymarketEntryOffset: number;
+    /** Resolved secondary symbol for cross-symbol strategies. Empty string means use strategy default. */
+    crossSymbolSecondary: string;
 }
 
 export interface StrategyConfig {
@@ -208,6 +210,9 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     confirmRsiPeriod: DEFAULT_CONFIRM_RSI_PERIOD,
     confirmRsiBullish: DEFAULT_CONFIRM_RSI_BULLISH,
     confirmRsiBearish: DEFAULT_CONFIRM_RSI_BEARISH,
+
+    // Cross-symbol
+    crossSymbolSecondary: "",
 };
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -370,6 +375,11 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
     normalized.entrySettingsToggle = source.entrySettingsToggle === undefined
         ? undefined
         : readBoolean(source.entrySettingsToggle, false);
+
+    // Cross-symbol
+    if (typeof source.crossSymbolSecondary === 'string' && source.crossSymbolSecondary.trim()) {
+        normalized.crossSymbolSecondary = (source.crossSymbolSecondary as string).trim().toUpperCase();
+    }
 
     return normalized;
 }

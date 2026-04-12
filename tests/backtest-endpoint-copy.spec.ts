@@ -17,16 +17,19 @@ import {
 } from "../lib/backtest-endpoint-copy";
 import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS } from "../lib/backtest-endpoint-contract";
 import type { OHLCVData, Time } from "../lib/types/strategies";
+import { strategyManifest } from "../lib/strategies/manifest";
+
+const defaultStrategyEntry = strategyManifest.find((entry) => !entry.strategy.crossSymbolConfig);
+assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy in manifest");
+const defaultStrategyKey = defaultStrategyEntry!.key;
+const defaultStrategyParams = { ...defaultStrategyEntry!.strategy.defaultParams };
 
 function buildSnapshot(engineUsed: "rust" | "typescript"): UiBacktestEndpointSnapshot {
     return {
         symbol: "BTCUSDT",
         interval: "5m",
-        strategyKey: "median_deviation_streak",
-        strategyParams: {
-            lookback: 20,
-            threshold: 1.5,
-        },
+        strategyKey: defaultStrategyKey,
+        strategyParams: defaultStrategyParams,
         backtestSettings: {
             executionModel: "next_open",
             tradeDirection: "short",
@@ -67,7 +70,6 @@ describe("backtest endpoint copy helpers", () => {
         assert.strictEqual(request.backtestSettings.allowSameBarExit, snapshot.backtestSettings.allowSameBarExit);
         assert.strictEqual(request.backtestSettings.slippageBps, snapshot.backtestSettings.slippageBps);
         assert.strictEqual(request.backtestSettings.marketMode, snapshot.backtestSettings.marketMode);
-        assert.ok(!("polymarketAnnotationEnabled" in request.backtestSettings));
         assert.ok(!("snapshotRsiMin" in request.backtestSettings));
         assert.ok(!("snapshotRsiMax" in request.backtestSettings));
         assert.strictEqual(request.backtestSettings.polymarketAnnotationEnabled, true);
@@ -82,6 +84,26 @@ describe("backtest endpoint copy helpers", () => {
         assert.notStrictEqual(request.dataset.candles, candles);
     });
 
+    it("includes inline cross-symbol dataset payloads when provided", () => {
+        const candles = buildCandles();
+        const snapshot = {
+            ...buildSnapshot("typescript"),
+            strategyKey: "relative_strength_mean_reversion",
+            backtestSettings: {
+                ...buildSnapshot("typescript").backtestSettings,
+                crossSymbolSecondary: "DOGEUSDT",
+            },
+        } satisfies UiBacktestEndpointSnapshot;
+        const request = buildBacktestEndpointRequestFromSnapshot(snapshot, candles, {
+            secondarySymbol: "DOGEUSDT",
+            candles,
+        });
+
+        assert.strictEqual(request.crossSymbol?.secondarySymbol, "DOGEUSDT");
+        assert.ok(request.crossSymbol?.dataset && "candles" in request.crossSymbol.dataset);
+        assert.deepStrictEqual(("candles" in request.crossSymbol!.dataset ? request.crossSymbol!.dataset.candles : []), candles);
+    });
+
     it("preserves a rust UI run as rust_preferred for endpoint replay", () => {
         const snapshot = buildSnapshot("rust");
         const request = buildBacktestEndpointRequestFromSnapshot(snapshot, buildCandles());
@@ -94,7 +116,7 @@ describe("backtest endpoint copy helpers", () => {
         const snapshot = buildSnapshot("typescript");
         const bundle = buildBacktestEndpointCopyBundleFromSnapshot(snapshot, "http://localhost:5173/");
 
-        assert.strictEqual(bundle.url, "http://localhost:5173/api/backtest/median_deviation_streak");
+        assert.strictEqual(bundle.url, `http://localhost:5173/api/backtest/${defaultStrategyKey}`);
         assert.strictEqual(bundle.method, "POST");
         assert.strictEqual(bundle.datasetUploadUrl, "http://localhost:5173/api/backtest/datasets");
         assert.strictEqual(bundle.payload.dataset.ref, BACKTEST_ENDPOINT_DATASET_REF_PLACEHOLDER);
@@ -114,6 +136,30 @@ describe("backtest endpoint copy helpers", () => {
         );
 
         assert.strictEqual(bundle.payload.dataset.ref, "cache_abc123");
+    });
+
+    it("includes a cached cross-symbol dataset ref when provided", () => {
+        const snapshot = {
+            ...buildSnapshot("typescript"),
+            strategyKey: "relative_strength_mean_reversion",
+            backtestSettings: {
+                ...buildSnapshot("typescript").backtestSettings,
+                crossSymbolSecondary: "DOGEUSDT",
+            },
+        } satisfies UiBacktestEndpointSnapshot;
+        const bundle = buildBacktestEndpointCopyBundleFromSnapshot(
+            snapshot,
+            "http://localhost:5173/",
+            "cache_primary",
+            {
+                secondarySymbol: "DOGEUSDT",
+                datasetRef: "cache_secondary",
+            }
+        );
+
+        assert.strictEqual(bundle.payload.crossSymbol?.secondarySymbol, "DOGEUSDT");
+        assert.ok(bundle.payload.crossSymbol?.dataset && "ref" in bundle.payload.crossSymbol.dataset);
+        assert.strictEqual(("ref" in bundle.payload.crossSymbol!.dataset ? bundle.payload.crossSymbol!.dataset.ref : ""), "cache_secondary");
     });
 
     it("uploads candles and returns a reusable dataset ref", async () => {

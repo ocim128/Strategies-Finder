@@ -23,6 +23,7 @@ import {
 } from "./finder-runner-core";
 import type { CapitalSettings } from "../types/backtest";
 import type { EndpointSelectionAdjustment, FinderOptions, FinderResult } from "../types/finder";
+import type { StrategyExecutionContext } from "../types/strategies";
 import type { FinderRunInput } from "./finder-runner";
 
 export function buildFinderEvaluationData(
@@ -85,14 +86,15 @@ export function generateSignalsForJob(
     job: ParamJob,
     data: OHLCVData[],
     preparedDataCache?: FinderPreparedDataCache,
-    preparedSettings?: BacktestSettings
+    preparedSettings?: BacktestSettings,
+    executionContext?: StrategyExecutionContext
 ): Signal[] {
     const preparedFinderData = preparedDataCache
-        ? getPreparedFinderData(preparedDataCache, job.key, job.strategy, data, preparedSettings ?? job.backtestSettings)
+        ? getPreparedFinderData(preparedDataCache, job.key, job.strategy, data, preparedSettings ?? job.backtestSettings, executionContext)
         : undefined;
     const rawSignals = job.strategy.executePrepared
-        ? job.strategy.executePrepared(preparedFinderData, job.params, data)
-        : job.strategy.execute(data, job.params);
+        ? job.strategy.executePrepared(preparedFinderData, job.params, data, executionContext)
+        : job.strategy.execute(data, job.params, executionContext);
     return applySignalPolarity(rawSignals, job.backtestSettings);
 }
 

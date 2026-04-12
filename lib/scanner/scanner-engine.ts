@@ -304,6 +304,13 @@ export class ScannerEngine {
                 continue;
             }
 
+            if (strategy.crossSymbolConfig) {
+                debugLogger.warn('scanner.cross_symbol_unsupported', {
+                    strategyKey: stratConfig.strategyKey,
+                });
+                continue;
+            }
+
             try {
                 // Use saved params from config, fall back to defaults
                 const params = normalizeStrategyParams(strategy.defaultParams, stratConfig.strategyParams);

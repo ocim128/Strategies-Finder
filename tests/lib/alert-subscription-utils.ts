@@ -29,7 +29,10 @@ export interface WorkerStrategySupportSnapshot {
 }
 
 export function getWorkerSupportedStrategyKeys(): string[] {
-    return Object.keys(strategies).sort((a, b) => a.localeCompare(b));
+    return Object.entries(strategies)
+        .filter(([, s]) => !s.crossSymbolConfig)
+        .map(([key]) => key)
+        .sort((a, b) => a.localeCompare(b));
 }
 
 export function buildWorkerStrategyManifestFingerprint(strategyKeys: readonly string[] = getWorkerSupportedStrategyKeys()): string {
@@ -47,7 +50,10 @@ export function getWorkerStrategySupportSnapshot(): WorkerStrategySupportSnapsho
 
 export function isWorkerSupportedStrategyKey(strategyKey: string): boolean {
     const key = strategyKey.trim();
-    return key.length > 0 && Object.prototype.hasOwnProperty.call(strategies, key);
+    if (key.length === 0) return false;
+    const strategy = strategies[key];
+    if (!strategy) return false;
+    return !strategy.crossSymbolConfig;
 }
 
 /**

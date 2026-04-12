@@ -521,15 +521,19 @@ export function getPreparedFinderData(
     strategyKey: string,
     strategy: Strategy,
     data: OHLCVData[],
-    settings: BacktestSettings
+    settings: BacktestSettings,
+    executionContext?: import("../types/strategies").StrategyExecutionContext
 ): unknown {
     let byStrategy = cache.get(data);
     if (!byStrategy) {
         byStrategy = new Map<string, unknown>();
         cache.set(data, byStrategy);
     }
-    if (!byStrategy.has(strategyKey)) {
-        byStrategy.set(strategyKey, strategy.prepareFinderData?.(data, settings));
+    const cacheKey = executionContext?.crossSymbol
+        ? `${strategyKey}::${executionContext.crossSymbol.secondarySymbol}`
+        : strategyKey;
+    if (!byStrategy.has(cacheKey)) {
+        byStrategy.set(cacheKey, strategy.prepareFinderData?.(data, settings, executionContext));
     }
-    return byStrategy.get(strategyKey);
+    return byStrategy.get(cacheKey);
 }

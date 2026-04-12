@@ -102,6 +102,7 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "strategyTimeframeEnabled",
     "strategyTimeframeMinutes",
     "polymarketOutcomeSymbol",
+    "crossSymbolSecondary",
     ...SNAPSHOT_FILTER_SETTING_KEYS,
 ] as const satisfies readonly (keyof BacktestSettings)[];
 

@@ -75,6 +75,7 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     polymarketAnnotationEnabled: false,
     polymarketOutcomeSymbol: "",
     polymarketEntryOffset: 0,
+    crossSymbolSecondary: "",
 });
 
 type ResolverGuardName =
@@ -354,6 +355,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "polymarketAnnotationEnabled",
     "polymarketOutcomeSymbol",
     "polymarketEntryOffset",
+    "crossSymbolSecondary",
 ]);
 
 const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>([
@@ -587,6 +589,7 @@ export function resolveBacktestSettingsFromRaw(
         polymarketAnnotationEnabled: readBoolean(raw, "polymarketAnnotationEnabled", EFFECTIVE_BACKTEST_DEFAULTS.polymarketAnnotationEnabled),
         polymarketOutcomeSymbol: readString(raw, "polymarketOutcomeSymbol", EFFECTIVE_BACKTEST_DEFAULTS.polymarketOutcomeSymbol),
         polymarketEntryOffset: readNumber(raw, "polymarketEntryOffset", EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryOffset),
+        crossSymbolSecondary: readString(raw, "crossSymbolSecondary", EFFECTIVE_BACKTEST_DEFAULTS.crossSymbolSecondary),
     };
 
     return resolved;

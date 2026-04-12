@@ -49,6 +49,9 @@ import {
     type FinderPreparedDataCache,
 } from "./finder-runner-core";
 import type { FinderRunInput, FinderRunCallbacks, FinderRunOutput } from "./finder-runner";
+import type { StrategyExecutionContext } from "../types/strategies";
+import { resolveCrossSymbolExecution, isCrossSymbolStrategy } from "../cross-symbol-runtime";
+import { dataManager } from "../data-manager";
 
 /**
  * Evaluate mapped trades for multi-interval Polymarket runs (15m, 1h, 4h).
@@ -315,6 +318,33 @@ export async function runPolymarketFinder(
     await callbacks.yieldControl();
 
     for (const plan of baseStrategyPlans) {
+        // Resolve cross-symbol context once per strategy plan (not per candidate)
+        let strategyData = closedData;
+        let crossSymbolCtx: StrategyExecutionContext | undefined;
+        if (isCrossSymbolStrategy(plan.strategy)) {
+            try {
+                const resolved = await resolveCrossSymbolExecution({
+                    strategy: plan.strategy,
+                    primarySymbol: input.symbol,
+                    interval,
+                    primaryData: closedData,
+                    settings,
+                    dataFetcher: dataManager,
+                });
+                strategyData = resolved.primaryData;
+                crossSymbolCtx = resolved.context;
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                debugLogger.warn("[Finder][polymarket] Cross-symbol resolution failed", {
+                    strategyKey: plan.key,
+                    error: detail,
+                });
+                processedCount += plan.paramSets.length * evaluationCountPerParamSet;
+                failedCount += plan.paramSets.length * evaluationCountPerParamSet;
+                continue;
+            }
+        }
+
         for (const params of plan.paramSets) {
             if (callbacks.isCancelled()) {
                 callbacks.setStatus("Finder stopped by user.");
@@ -327,15 +357,16 @@ export async function runPolymarketFinder(
                 const normalizedParams = plan.strategy.normalizeParams ? plan.strategy.normalizeParams(params) : { ...params };
                 const rawSignals = plan.strategy.executePrepared
                     ? plan.strategy.executePrepared(
-                        getPreparedFinderData(preparedDataCache, plan.key, plan.strategy, closedData, settings),
+                        getPreparedFinderData(preparedDataCache, plan.key, plan.strategy, strategyData, settings, crossSymbolCtx),
                         normalizedParams,
-                        closedData
+                        strategyData,
+                        crossSymbolCtx
                     )
-                    : plan.strategy.execute(closedData, normalizedParams);
+                    : plan.strategy.execute(strategyData, normalizedParams, crossSymbolCtx);
                 const signals = applySignalPolarity(rawSignals, settings);
                 const backtestResult = runStrategyBacktest({
                     strategy: plan.strategy,
-                    data: closedData,
+                    data: strategyData,
                     signals,
                     params: normalizedParams,
                     capitalSettings: input.capitalSettings,

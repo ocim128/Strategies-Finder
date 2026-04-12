@@ -296,6 +296,8 @@ export interface BacktestSettings {
     polymarketOutcomeSymbol?: string;
     /** Entry offset minute (0..4) for 1m -> 5m Polymarket bridge scoring */
     polymarketEntryOffset?: number;
+    /** Resolved secondary symbol for cross-symbol strategies. */
+    crossSymbolSecondary?: string;
 }
 
 export interface Signal {
@@ -400,6 +402,34 @@ export interface StrategyIndicator {
     color?: string;
 }
 
+// ============================================================================
+// Cross-Symbol Strategy Types
+// ============================================================================
+
+/** Static configuration declaring that a strategy requires a secondary symbol. */
+export interface CrossSymbolConfig {
+    /** Default secondary symbol when no override is provided. */
+    defaultSymbol: string;
+    /** Whether the user may override the secondary symbol in the UI. */
+    userSelectable?: boolean;
+    /** Minimum aligned bars required after trimming. Defaults to 50. */
+    minBars?: number;
+}
+
+/** Runtime-resolved cross-symbol data passed to strategy execution methods. */
+export interface CrossSymbolRuntimeContext {
+    primarySymbol: string;
+    secondarySymbol: string;
+    secondaryData: OHLCVData[];
+    alignedLength: number;
+    trimmedLeadingBars: number;
+}
+
+/** Execution context bag passed as an optional argument to strategy methods. */
+export interface StrategyExecutionContext {
+    crossSymbol?: CrossSymbolRuntimeContext;
+}
+
 export interface Strategy {
     name: string;
     description: string;
@@ -407,17 +437,19 @@ export interface Strategy {
     paramLabels: { [key: string]: string };
     /** Optional parameter sanitizer used before execution/optimization. */
     normalizeParams?: (params: StrategyParams) => StrategyParams;
-    execute: (data: OHLCVData[], params: StrategyParams) => Signal[];
+    /** Optional cross-symbol configuration. When present, the runtime will provide secondary data via execution context. */
+    crossSymbolConfig?: CrossSymbolConfig;
+    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => Signal[];
     /**
      * Optional Finder/optimizer precompute seam for reusing dataset-derived state
      * across many candidate evaluations on the same bars/settings.
      */
-    prepareFinderData?: (data: OHLCVData[], settings?: BacktestSettings) => unknown;
+    prepareFinderData?: (data: OHLCVData[], settings?: BacktestSettings, context?: StrategyExecutionContext) => unknown;
     /**
      * Optional execute variant that consumes data produced by prepareFinderData.
      * The original OHLCV array is still provided so strategies can opt in gradually.
      */
-    executePrepared?: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => Signal[];
+    executePrepared?: (preparedData: unknown, params: StrategyParams, data: OHLCVData[], context?: StrategyExecutionContext) => Signal[];
     evaluate?: (data: OHLCVData[], params: StrategyParams, signals?: Signal[]) => StrategyEvaluation;
     indicators?: (data: OHLCVData[], params: StrategyParams) => StrategyIndicator[];
     /** Optional entry preview for live chart hinting */

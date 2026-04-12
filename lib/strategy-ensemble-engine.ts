@@ -62,6 +62,13 @@ export async function buildSignalArtifact(
         return null;
     }
 
+    if (strategy.crossSymbolConfig) {
+        deps.warn(
+            `[StrategyEnsembleLab] Strategy "${config.strategyKey}" from config "${configName}" is a cross-symbol strategy and is not supported in Ensemble Lab.`
+        );
+        return null;
+    }
+
     const params = config.strategyParams ?? strategy.defaultParams;
     const backtestSettings = resolveBacktestSettingsFromRaw(
         config.backtestSettings as unknown as BacktestSettings,

@@ -74,6 +74,13 @@ export interface BacktestDatasetPayload {
     candles: OHLCVData[];
 }
 
+export interface BacktestCrossSymbolDatasetRequest {
+    /** Resolved secondary symbol that the provided dataset belongs to. */
+    secondarySymbol: string;
+    /** Either the raw secondary candle array or a cached dataset ref. */
+    dataset: BacktestDatasetPayload | { ref: string };
+}
+
 // ============================================================================
 // Single-run request
 // ============================================================================
@@ -93,6 +100,13 @@ export interface BacktestSingleRequest {
      * resolver so defaults and guard rules are identical.
      */
     backtestSettings: BacktestSettings | Record<string, unknown>;
+
+    /**
+     * Optional cross-symbol dataset for strategies that require a secondary
+     * symbol. When omitted for a cross-symbol strategy, the endpoint rejects
+     * the request instead of silently fetching unrelated data.
+     */
+    crossSymbol?: BacktestCrossSymbolDatasetRequest;
 
     /** Execution-time context that replaces implicit DOM / global reads. */
     context: BacktestExecutionContext;
@@ -129,6 +143,7 @@ export interface BacktestBatchRequest {
     items: BacktestBatchItem[];
 
     backtestSettings?: BacktestSettings | Record<string, unknown>;
+    crossSymbol?: BacktestCrossSymbolDatasetRequest;
     context?: BacktestExecutionContext;
 
     /**
@@ -231,6 +246,7 @@ export interface BacktestRandomSearchRequest {
     randomization: BacktestRandomizationSpec;
 
     backtestSettings?: BacktestSettings | Record<string, unknown>;
+    crossSymbol?: BacktestCrossSymbolDatasetRequest;
     context?: BacktestExecutionContext;
 
     /** Ranking and filtering applied after all runs complete. */

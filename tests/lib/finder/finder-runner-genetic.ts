@@ -10,8 +10,11 @@ import {
 } from "./finder-runner-shared";
 import { computeFinderCompositeEdgeRatio, finderSortRequiresCompositeEdgeRatio } from "./finder-runner-core";
 import type { CapitalSettings } from "../types/backtest";
+import type { StrategyExecutionContext } from "../types/strategies";
 import type { FinderResult } from "../types/finder";
 import type { FinderRunCallbacks, FinderRunInput, FinderRunOutput } from "./finder-runner";
+import { isCrossSymbolStrategy, resolveCrossSymbolExecution } from "../cross-symbol-runtime";
+import { dataManager } from "../data-manager";
 
 export interface GeneticFinderRunParams {
     input: FinderRunInput;
@@ -59,13 +62,35 @@ export async function runGeneticFinder(params: GeneticFinderRunParams): Promise<
         const progressBase = (index / Math.max(1, input.selectedStrategies.length)) * 90;
         callbacks.setProgress(progressBase, `Genetic ${selection.name}: preparing...`);
 
+        // Resolve cross-symbol context for this strategy
+        let geneticData = closedData;
+        let geneticCtx: StrategyExecutionContext | undefined;
+        if (isCrossSymbolStrategy(selection.strategy)) {
+            try {
+                const resolved = await resolveCrossSymbolExecution({
+                    strategy: selection.strategy,
+                    primarySymbol: input.symbol,
+                    interval: input.interval,
+                    primaryData: closedData,
+                    settings: input.settings,
+                    dataFetcher: dataManager,
+                });
+                geneticData = resolved.primaryData;
+                geneticCtx = resolved.context;
+            } catch (error) {
+                debugLogger.warn(`[Finder] Genetic cross-symbol resolution failed for ${selection.key}`, error);
+                continue;
+            }
+        }
+
         let optimization;
         try {
             optimization = await runGeneticOptimization({
                 strategyKey: selection.key,
                 strategy: selection.strategy,
-                data: closedData,
+                data: geneticData,
                 backtestSettings: input.settings,
+                executionContext: geneticCtx,
                 config: {
                     populationSize,
                     generations,

@@ -314,6 +314,11 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("polymarketAnnotationEnabled", { rustSupport: "unsupported" }),
     createField("polymarketOutcomeSymbol", { rustSupport: "unsupported", parser: "string" }),
     createField("polymarketEntryOffset", { rustSupport: "unsupported" }),
+    createField("crossSymbolSecondary", {
+        parser: "string",
+        rustSupport: "unsupported",
+        workerSupport: "unsupported",
+    }),
 ];
 
 export const BACKTEST_SETTINGS_DOM_CONTRACTS: readonly BacktestDomSettingContract[] = Object.freeze([

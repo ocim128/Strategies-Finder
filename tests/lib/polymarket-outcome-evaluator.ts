@@ -8,7 +8,7 @@ import {
 } from './polymarket-trade-annotations';
 import { resolveCapitalSettingsFromRaw } from './backtest-capital-settings';
 import type { CapitalSettings } from './types/backtest';
-import type { BacktestSettings, OHLCVData, Strategy, StrategyParams } from './types/strategies';
+import type { BacktestSettings, OHLCVData, Strategy, StrategyExecutionContext, StrategyParams } from './types/strategies';
 import type {
     PolymarketEvalOptions,
     PolymarketEvalResult,
@@ -56,7 +56,8 @@ export function evaluatePolymarketOutcomes(
     strategy: Strategy,
     params: StrategyParams,
     outcomes: PolymarketOutcomeRow[],
-    options: PolymarketEvalOptions = {}
+    options: PolymarketEvalOptions = {},
+    executionContext?: StrategyExecutionContext
 ): PolymarketEvalResult {
     const executionMode = options.executionMode ?? 'next_open';
     const strategyKey = options.strategyKey;
@@ -69,8 +70,8 @@ export function evaluatePolymarketOutcomes(
     const effectiveCapital = resolvePolymarketCapitalSettings(options.capitalSettings);
     const normalizedParams = strategy.normalizeParams ? strategy.normalizeParams(params) : { ...params };
     const rawSignals = options.usePreparedData && strategy.prepareFinderData && strategy.executePrepared
-        ? strategy.executePrepared(strategy.prepareFinderData(chartData), normalizedParams, chartData)
-        : strategy.execute(chartData, normalizedParams);
+        ? strategy.executePrepared(strategy.prepareFinderData(chartData, undefined, executionContext), normalizedParams, chartData, executionContext)
+        : strategy.execute(chartData, normalizedParams, executionContext);
     const signals = applySignalPolarity(rawSignals, effectiveSettings);
     const precomputed = precomputeIndicators(chartData, effectiveSettings);
     const backtestResult = runBacktest(

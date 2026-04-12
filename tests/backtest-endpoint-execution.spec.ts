@@ -4,6 +4,12 @@ import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS } from "../lib/backtest-endpoint-con
 import { computeBacktestEndpointDatasetFingerprint, type UiBacktestEndpointSnapshot } from "../lib/backtest-endpoint-copy";
 import { buildBacktestEndpointExecutorRequestFromSnapshot } from "../lib/backtest-endpoint-execution";
 import type { OHLCVData, Time } from "../lib/types/strategies";
+import { strategyManifest } from "../lib/strategies/manifest";
+
+const defaultStrategyEntry = strategyManifest.find((entry) => !entry.strategy.crossSymbolConfig);
+assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy in manifest");
+const defaultStrategyKey = defaultStrategyEntry!.key;
+const defaultStrategyParams = { ...defaultStrategyEntry!.strategy.defaultParams };
 
 function buildCandles(): OHLCVData[] {
     return [
@@ -17,11 +23,8 @@ function buildSnapshot(): UiBacktestEndpointSnapshot {
     return {
         symbol: "BTCUSDT",
         interval: "5m",
-        strategyKey: "median_deviation_streak",
-        strategyParams: {
-            lookback: 20,
-            threshold: 1.5,
-        },
+        strategyKey: defaultStrategyKey,
+        strategyParams: defaultStrategyParams,
         backtestSettings: {
             executionModel: "next_open",
             tradeDirection: "short",
@@ -59,8 +62,28 @@ describe("backtest endpoint execution helpers", () => {
         assert.strictEqual(request.backtestSettings.symbol, snapshot.symbol);
         assert.strictEqual(request.backtestSettings.interval, snapshot.interval);
         assert.strictEqual(request.backtestSettings.polymarketAnnotationEnabled, true);
-        assert.ok(!("polymarketAnnotationEnabled" in request.backtestSettings)); // replaced captureSnapshots with another check for placeholder if needed, wait, I can just delete it
         assert.ok(!("snapshotRsiMin" in request.backtestSettings));
         assert.ok(!("snapshotRsiMax" in request.backtestSettings));
+        assert.strictEqual(request.primarySymbol, snapshot.symbol);
+    });
+
+    it("forwards explicit cross-symbol snapshot input into the executor request", () => {
+        const candles = buildCandles();
+        const snapshot = {
+            ...buildSnapshot(),
+            strategyKey: "relative_strength_mean_reversion",
+            backtestSettings: {
+                ...buildSnapshot().backtestSettings,
+                crossSymbolSecondary: "DOGEUSDT",
+            },
+        } satisfies UiBacktestEndpointSnapshot;
+
+        const request = buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles, {
+            secondarySymbol: "DOGEUSDT",
+            secondaryData: buildCandles(),
+        });
+
+        assert.deepStrictEqual(request.crossSymbolInput?.secondarySymbol, "DOGEUSDT");
+        assert.strictEqual(request.crossSymbolInput?.secondaryData.length, 2);
     });
 });

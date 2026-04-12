@@ -205,7 +205,7 @@ Use:
 Endpoint note:
 - the HTTP backtest endpoint intentionally uses one fixed sizing profile only: `$1000` per trade with `0.1%` commission
 - single-run endpoint responses are slim and expose compact `polymarketPerformance` only when Polymarket annotation is enabled and outcome data exists
-- the UI `Preview Endpoint` and `Copy Endpoint` actions are the preferred parity path because they reuse the exact latest UI backtest snapshot, upload the matching dataset, and auto-enable Polymarket annotation for supported runs
+- the UI `Preview Endpoint` and `Copy Endpoint` actions are the preferred parity path because they reuse the exact latest UI backtest snapshot, upload the matching dataset, include the resolved secondary dataset for cross-symbol runs, and auto-enable Polymarket annotation for supported runs
 
 The short version:
 1. Create `lib/strategies/lib/<strategy-key>.ts`.

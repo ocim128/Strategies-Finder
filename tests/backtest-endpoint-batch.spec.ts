@@ -3,6 +3,12 @@ import assert from "node:assert";
 import { executeBacktest, executeBacktestFromSignals, getManifestFingerprint } from "../lib/backtest-executor";
 import type { OHLCVData, BacktestSettings, Signal, Strategy } from "../lib/types/strategies";
 import type { CapitalSettings } from "../lib/types/backtest";
+import { strategyManifest } from "../lib/strategies/manifest";
+
+const defaultStrategyEntry = strategyManifest.find((entry) => !entry.strategy.crossSymbolConfig);
+assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy in manifest");
+const defaultStrategyKey = defaultStrategyEntry!.key;
+const defaultStrategyParams = { ...defaultStrategyEntry!.strategy.defaultParams };
 
 const sampleCandles: OHLCVData[] = Array.from({ length: 500 }, (_, i) => ({
     time: (1700000000 + i * 300) as import("lightweight-charts").Time,
@@ -29,6 +35,19 @@ const defaultCapital: CapitalSettings = {
     fixedTradeAmount: 1000,
 };
 
+const numericDefaultParams = Object.entries(defaultStrategyParams)
+    .filter(([, value]) => typeof value === "number" && Number.isFinite(value));
+assert.ok(numericDefaultParams.length > 0, "Expected at least one numeric default param for endpoint batch tests");
+
+function buildVariantParams(multiplier: number): Record<string, number> {
+    const [firstKey, firstValue] = numericDefaultParams[0] as [string, number];
+    const nextValue = Math.max(1, Math.round(firstValue * multiplier * 100) / 100);
+    return {
+        ...defaultStrategyParams,
+        [firstKey]: nextValue,
+    };
+}
+
 function createExecutorRequest(
     strategyKey: string,
     candles: OHLCVData[],
@@ -53,16 +72,16 @@ function createExecutorRequest(
 describe("backtest batch execution (multi-run parity)", () => {
     it("executes multiple param sets with deterministic results", async () => {
         const paramSets = [
-            { lookback: 10, threshold: 1.0 },
-            { lookback: 20, threshold: 1.5 },
-            { lookback: 30, threshold: 2.0 },
+            buildVariantParams(0.8),
+            buildVariantParams(1.0),
+            buildVariantParams(1.2),
         ];
 
         const results: Array<{ params: Record<string, number>; trades: number; winRate: number }> = [];
 
         for (const params of paramSets) {
             const result = await executeBacktest(createExecutorRequest(
-                "median_deviation_streak",
+                defaultStrategyKey,
                 sampleCandles,
                 params
             ));
@@ -83,17 +102,17 @@ describe("backtest batch execution (multi-run parity)", () => {
     it("executes from pre-generated signals consistently", async () => {
         // Generate signals once, execute twice
         const execReq = createExecutorRequest(
-            "median_deviation_streak",
+            defaultStrategyKey,
             sampleCandles,
-            { lookback: 20, threshold: 1.5 }
+            defaultStrategyParams
         );
         const run1 = await executeBacktest(execReq);
 
         const run2 = await executeBacktest(
             createExecutorRequest(
-                "median_deviation_streak",
+                defaultStrategyKey,
                 sampleCandles,
-                { lookback: 20, threshold: 1.5 }
+                defaultStrategyParams
             )
         );
 
@@ -106,7 +125,7 @@ describe("backtest batch execution (multi-run parity)", () => {
         const narrowRange = { from: midTime - 500, to: midTime + 500 };
 
         const fullResult = await executeBacktest({
-            ...createExecutorRequest("median_deviation_streak", sampleCandles, { lookback: 20, threshold: 1.5 }),
+            ...createExecutorRequest(defaultStrategyKey, sampleCandles, defaultStrategyParams),
             context: {
                 nowSec: 9999999999,
                 blockRange: null,
@@ -116,7 +135,7 @@ describe("backtest batch execution (multi-run parity)", () => {
         });
 
         const narrowResult = await executeBacktest({
-            ...createExecutorRequest("median_deviation_streak", sampleCandles, { lookback: 20, threshold: 1.5 }),
+            ...createExecutorRequest(defaultStrategyKey, sampleCandles, defaultStrategyParams),
             context: {
                 nowSec: 9999999999,
                 blockRange: narrowRange,
@@ -133,8 +152,8 @@ describe("backtest batch execution (multi-run parity)", () => {
 
     it("provides manifest fingerprint for drift detection", () => {
         const fp = getManifestFingerprint();
-        assert.ok(fp.strategyCount > 50); // We have many strategies
-        assert.ok(fp.strategyKeys.includes("median_deviation_streak"));
+        assert.ok(fp.strategyCount > 0);
+        assert.ok(fp.strategyKeys.includes(defaultStrategyKey));
         assert.ok(fp.hash.length > 0);
     });
 

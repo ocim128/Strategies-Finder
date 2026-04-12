@@ -3,6 +3,12 @@ import assert from "node:assert";
 import { executeBacktest, getManifestFingerprint } from "../lib/backtest-executor";
 import type { OHLCVData, BacktestSettings, Time } from "../lib/types/strategies";
 import type { CapitalSettings } from "../lib/types/backtest";
+import { strategyManifest } from "../lib/strategies/manifest";
+
+const defaultStrategyEntry = strategyManifest.find((entry) => !entry.strategy.crossSymbolConfig);
+assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy in manifest");
+const defaultStrategyKey = defaultStrategyEntry!.key;
+const defaultStrategyParams = { ...defaultStrategyEntry!.strategy.defaultParams };
 
 const sampleCandles: OHLCVData[] = Array.from({ length: 500 }, (_, i) => ({
     time: (1700000000 + i * 300) as Time, // 5m candles
@@ -41,8 +47,8 @@ describe("backtest executor", () => {
         const result = await executeBacktest({
             ohlcvData: sampleCandles,
             interval: "5m",
-            strategyKey: "median_deviation_streak",
-            strategyParams: { lookback: 20, threshold: 1.5 },
+            strategyKey: defaultStrategyKey,
+            strategyParams: defaultStrategyParams,
             backtestSettings: defaultSettings,
             capitalSettings: defaultCapital,
             context: {
@@ -62,8 +68,8 @@ describe("backtest executor", () => {
         const run1 = await executeBacktest({
             ohlcvData: sampleCandles,
             interval: "5m",
-            strategyKey: "median_deviation_streak",
-            strategyParams: { lookback: 20, threshold: 1.5 },
+            strategyKey: defaultStrategyKey,
+            strategyParams: defaultStrategyParams,
             backtestSettings: defaultSettings,
             capitalSettings: defaultCapital,
             context: {
@@ -77,8 +83,8 @@ describe("backtest executor", () => {
         const run2 = await executeBacktest({
             ohlcvData: sampleCandles,
             interval: "5m",
-            strategyKey: "median_deviation_streak",
-            strategyParams: { lookback: 20, threshold: 1.5 },
+            strategyKey: defaultStrategyKey,
+            strategyParams: defaultStrategyParams,
             backtestSettings: defaultSettings,
             capitalSettings: defaultCapital,
             context: {
@@ -121,8 +127,8 @@ describe("backtest executor", () => {
         const fullResult = await executeBacktest({
             ohlcvData: sampleCandles,
             interval: "5m",
-            strategyKey: "median_deviation_streak",
-            strategyParams: { lookback: 20, threshold: 1.5 },
+            strategyKey: defaultStrategyKey,
+            strategyParams: defaultStrategyParams,
             backtestSettings: defaultSettings,
             capitalSettings: defaultCapital,
             context: {
@@ -136,8 +142,8 @@ describe("backtest executor", () => {
         const narrowResult = await executeBacktest({
             ohlcvData: sampleCandles,
             interval: "5m",
-            strategyKey: "median_deviation_streak",
-            strategyParams: { lookback: 20, threshold: 1.5 },
+            strategyKey: defaultStrategyKey,
+            strategyParams: defaultStrategyParams,
             backtestSettings: defaultSettings,
             capitalSettings: defaultCapital,
             context: {
@@ -167,8 +173,8 @@ describe("backtest executor", () => {
         const result = await executeBacktest({
             ohlcvData: oneMinCandles,
             interval: "1m",
-            strategyKey: "median_deviation_streak",
-            strategyParams: { lookback: 20, threshold: 1.5 },
+            strategyKey: defaultStrategyKey,
+            strategyParams: defaultStrategyParams,
             backtestSettings: defaultSettings,
             capitalSettings: defaultCapital,
             context: {
@@ -195,8 +201,8 @@ describe("backtest executor", () => {
         const result = await executeBacktest({
             ohlcvData: fourHourCandles,
             interval: "4h",
-            strategyKey: "median_deviation_streak",
-            strategyParams: { lookback: 20, threshold: 1.5 },
+            strategyKey: defaultStrategyKey,
+            strategyParams: defaultStrategyParams,
             backtestSettings: defaultSettings,
             capitalSettings: defaultCapital,
             context: {

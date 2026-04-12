@@ -1,4 +1,5 @@
 import { OHLCVData, BacktestResult, StrategyParams, BacktestSettings, Strategy, Time, Signal } from '../types/strategies';
+import type { StrategyExecutionContext } from '../types/strategies';
 import { runBacktest, runBacktestCompact, calculateBacktestStats, calculateMaxDrawdown, compareTime, timeToNumber, applySignalPolarity } from './backtest';
 import type { AdvancedSizingSettings } from '../types/backtest';
 import { ensureCleanData } from './strategy-helpers';
@@ -307,6 +308,7 @@ type WindowBacktestContext = {
     windowEndTime: Time;
     windowStartNumericTime: number | null;
     windowEndNumericTime: number | null;
+    bufferedSecondaryData?: OHLCVData[];
 };
 
 type PreparedStrategyDataCache = WeakMap<OHLCVData[], unknown>;
@@ -318,7 +320,8 @@ function createWindowBacktestContext(
     data: OHLCVData[],
     startIndex: number,
     endIndex: number,
-    lookback: number = 250
+    lookback: number = 250,
+    secondaryData?: OHLCVData[]
 ): WindowBacktestContext {
     if (startIndex < 0 || endIndex > data.length || startIndex >= endIndex) {
         throw new Error(`Invalid window bounds [${startIndex}, ${endIndex}) for data length ${data.length}`);
@@ -331,6 +334,10 @@ function createWindowBacktestContext(
     const windowStartNumericTime = timeToNumber(windowStartTime);
     const windowEndNumericTime = timeToNumber(windowEndTime);
 
+    const bufferedSecondaryData = secondaryData
+        ? secondaryData.slice(bufferedStart, endIndex)
+        : undefined;
+
     return {
         bufferedStart,
         bufferedData,
@@ -339,7 +346,8 @@ function createWindowBacktestContext(
         windowStartTime,
         windowEndTime,
         windowStartNumericTime,
-        windowEndNumericTime
+        windowEndNumericTime,
+        bufferedSecondaryData,
     };
 }
 
@@ -384,7 +392,8 @@ function getPreparedStrategyData(
     strategy: Strategy,
     bufferedData: OHLCVData[],
     backtestSettings: BacktestSettings,
-    cache?: PreparedStrategyDataCache
+    cache?: PreparedStrategyDataCache,
+    crossSymbolCtx?: StrategyExecutionContext
 ): unknown {
     if (!strategy.executePrepared || !strategy.prepareFinderData) {
         return null;
@@ -393,7 +402,7 @@ function getPreparedStrategyData(
         return cache.get(bufferedData) ?? null;
     }
 
-    const prepared = strategy.prepareFinderData(bufferedData, backtestSettings) ?? null;
+    const prepared = strategy.prepareFinderData(bufferedData, backtestSettings, crossSymbolCtx) ?? null;
     cache?.set(bufferedData, prepared);
     return prepared;
 }
@@ -408,12 +417,16 @@ function prepareWindowBacktest(
     strategy: Strategy,
     params: StrategyParams,
     backtestSettings: BacktestSettings,
-    preparedDataCache?: PreparedStrategyDataCache
+    preparedDataCache?: PreparedStrategyDataCache,
+    crossSymbolCtx?: StrategyExecutionContext
 ): { windowSignals: Signal[] } {
-    const preparedData = getPreparedStrategyData(strategy, context.bufferedData, backtestSettings, preparedDataCache);
+    const windowCtx: StrategyExecutionContext | undefined = context.bufferedSecondaryData
+        ? { crossSymbol: { primarySymbol: crossSymbolCtx?.crossSymbol?.primarySymbol ?? "", secondarySymbol: crossSymbolCtx?.crossSymbol?.secondarySymbol ?? "", secondaryData: context.bufferedSecondaryData, alignedLength: context.bufferedSecondaryData.length, trimmedLeadingBars: 0 } }
+        : undefined;
+    const preparedData = getPreparedStrategyData(strategy, context.bufferedData, backtestSettings, preparedDataCache, windowCtx);
     const rawSignals = strategy.executePrepared
-        ? strategy.executePrepared(preparedData, params, context.bufferedData)
-        : strategy.execute(context.bufferedData, params);
+        ? strategy.executePrepared(preparedData, params, context.bufferedData, windowCtx)
+        : strategy.execute(context.bufferedData, params, windowCtx);
     const allSignals = applySignalPolarity(rawSignals, backtestSettings);
     const windowSignals = filterSignalsForWindow(allSignals, context);
     return { windowSignals };
@@ -429,10 +442,12 @@ function runBacktestFast(
     initialCapital: number, positionSizePercent: number, commissionPercent: number,
     backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250,
     context?: WindowBacktestContext,
-    preparedDataCache?: PreparedStrategyDataCache
+    preparedDataCache?: PreparedStrategyDataCache,
+    crossSymbolCtx?: StrategyExecutionContext
 ): BacktestResult {
-    const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback);
-    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache);
+    const secondaryData = crossSymbolCtx?.crossSymbol?.secondaryData;
+    const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback, secondaryData);
+    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache, crossSymbolCtx);
 
     const fullResult = runBacktest(
         windowContext.bufferedData,
@@ -458,10 +473,12 @@ function runBacktestFastCompact(
     initialCapital: number, positionSizePercent: number, commissionPercent: number,
     backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250,
     context?: WindowBacktestContext,
-    preparedDataCache?: PreparedStrategyDataCache
+    preparedDataCache?: PreparedStrategyDataCache,
+    crossSymbolCtx?: StrategyExecutionContext
 ): BacktestResult {
-    const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback);
-    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache);
+    const secondaryData = crossSymbolCtx?.crossSymbol?.secondaryData;
+    const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback, secondaryData);
+    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache, crossSymbolCtx);
     return runBacktestCompact(
         windowContext.bufferedData,
         windowSignals,
@@ -520,14 +537,15 @@ async function optimizeWindow(
     minTrades: number,
     topN: number,
     onProgress?: (processed: number, total: number) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    crossSymbolCtx?: StrategyExecutionContext
 ): Promise<OptimizationResult[]> {
     const topResults: OptimizationResult[] = [];
     const BATCH_SIZE = 64;
     const YIELD_BUDGET_MS = 32;
     const YIELD_CHECK_INTERVAL = 16;
     const topCapacity = Math.max(topN, topN * 2);
-    const windowContext = createWindowBacktestContext(data, startIndex, endIndex);
+    const windowContext = createWindowBacktestContext(data, startIndex, endIndex, 250, crossSymbolCtx?.crossSymbol?.secondaryData);
     const preparedDataCache: PreparedStrategyDataCache = new WeakMap();
 
     const tryAddTopResult = (candidate: OptimizationResult) => {
@@ -575,7 +593,8 @@ async function optimizeWindow(
                     sizing,
                     250,
                     windowContext,
-                    preparedDataCache
+                    preparedDataCache,
+                    crossSymbolCtx
                 );
 
                 const score = calculateOptimizationScore(result, minTrades);
@@ -751,7 +770,8 @@ export async function runWalkForwardAnalysis(
     positionSizePercent: number,
     commissionPercent: number,
     backtestSettings: BacktestSettings = {},
-    sizing?: TradeSizing
+    sizing?: TradeSizing,
+    crossSymbolCtx?: StrategyExecutionContext
 ): Promise<WalkForwardResult> {
     const startTime = performance.now();
     let lastYieldTime = startTime;
@@ -845,7 +865,8 @@ export async function runWalkForwardAnalysis(
                 comboIndex: processed,
                 comboTotal: total
             }),
-            signal
+            signal,
+            crossSymbolCtx
         );
 
         const optimizedParams = averageParameters(topResults, parameterRanges, strategy.defaultParams);
@@ -861,7 +882,11 @@ export async function runWalkForwardAnalysis(
             positionSizePercent,
             commissionPercent,
             backtestSettings,
-            sizing
+            sizing,
+            250,
+            undefined,
+            undefined,
+            crossSymbolCtx
         );
 
         onProgress?.({
@@ -880,7 +905,11 @@ export async function runWalkForwardAnalysis(
             positionSizePercent,
             commissionPercent,
             backtestSettings,
-            sizing
+            sizing,
+            250,
+            undefined,
+            undefined,
+            crossSymbolCtx
         );
 
         if (outOfSampleDetailed.equityCurve.length > 0) {
@@ -986,7 +1015,8 @@ export async function quickWalkForward(
     backtestSettings: BacktestSettings = {},
     sizing?: TradeSizing,
     onProgress?: (progress: WalkForwardProgress) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    crossSymbolCtx?: StrategyExecutionContext
 ): Promise<WalkForwardResult> {
     // Clean data at the entry point
     data = ensureCleanData(data);
@@ -1077,7 +1107,8 @@ export async function quickWalkForward(
         positionSizePercent,
         commissionPercent,
         backtestSettings,
-        sizing
+        sizing,
+        crossSymbolCtx
     );
 }
 
@@ -1127,7 +1158,8 @@ export async function runFixedParamWalkForward(
     positionSizePercent: number,
     commissionPercent: number,
     backtestSettings: BacktestSettings = {},
-    sizing?: TradeSizing
+    sizing?: TradeSizing,
+    crossSymbolCtx?: StrategyExecutionContext
 ): Promise<WalkForwardResult> {
     const startTime = performance.now();
     let lastYieldTime = startTime;
@@ -1183,7 +1215,11 @@ export async function runFixedParamWalkForward(
             positionSizePercent,
             commissionPercent,
             backtestSettings,
-            sizing
+            sizing,
+            250,
+            undefined,
+            undefined,
+            crossSymbolCtx
         );
 
         // Second half = "Out-of-Sample" (the forward test)
@@ -1197,7 +1233,11 @@ export async function runFixedParamWalkForward(
             positionSizePercent,
             commissionPercent,
             backtestSettings,
-            sizing
+            sizing,
+            250,
+            undefined,
+            undefined,
+            crossSymbolCtx
         );
 
         // Update running capital for next window
@@ -1303,16 +1343,16 @@ export async function runFixedParamWalkForward(
 
 export function formatWalkForwardSummary(result: WalkForwardResult): string {
     const lines: string[] = [
-        'â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•',
+        'Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â',
         '                    WALK-FORWARD ANALYSIS RESULTS              ',
-        'â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•',
+        'Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â',
         '',
         `Total Windows:            ${result.totalWindows}`,
         `Optimization Time:        ${(result.optimizationTimeMs / 1000).toFixed(2)}s`,
         '',
-        'â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€',
+        'Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬',
         '                         PERFORMANCE METRICS                    ',
-        'â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€',
+        'Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬',
         '',
         `Avg In-Sample Sharpe:     ${result.avgInSampleSharpe.toFixed(3)}`,
         `Avg Out-of-Sample Sharpe: ${result.avgOutOfSampleSharpe.toFixed(3)}`,
@@ -1324,39 +1364,39 @@ export function formatWalkForwardSummary(result: WalkForwardResult): string {
         `Combined OOS Max Drawdown: ${result.combinedOOSTrades.maxDrawdownPercent.toFixed(1)}%`,
         `Combined OOS Total Trades: ${result.combinedOOSTrades.totalTrades}`,
         '',
-        'â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€',
+        'Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬',
         '                         ROBUSTNESS ANALYSIS                    ',
-        'â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€',
+        'Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬',
         '',
         `Robustness Score:         ${result.robustnessScore}/100`,
         `Parameter Stability:      ${result.parameterStability.toFixed(1)}%`,
         '',
         getScoreInterpretation(result.robustnessScore),
         '',
-        'â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€',
+        'Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬',
         '                         WINDOW BREAKDOWN                       ',
-        'â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€',
+        'Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬',
         ''
     ];
 
     for (const window of result.windows) {
-        const isProfit = window.outOfSampleResult.netProfit >= 0 ? 'âœ“' : 'âœ—';
+        const isProfit = window.outOfSampleResult.netProfit >= 0 ? 'Ã¢Å“â€œ' : 'Ã¢Å“â€”';
         lines.push(
-            `Window ${window.windowIndex + 1}: IS: ${window.inSampleResult.netProfitPercent.toFixed(1)}% â†’ OOS: ${window.outOfSampleResult.netProfitPercent.toFixed(1)}% ${isProfit}  (Degradation: ${window.performanceDegradationPercent.toFixed(0)}%)`
+            `Window ${window.windowIndex + 1}: IS: ${window.inSampleResult.netProfitPercent.toFixed(1)}% Ã¢â€ â€™ OOS: ${window.outOfSampleResult.netProfitPercent.toFixed(1)}% ${isProfit}  (Degradation: ${window.performanceDegradationPercent.toFixed(0)}%)`
         );
     }
 
     lines.push('');
-    lines.push('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
+    lines.push('Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â');
     return lines.join('\n');
 }
 
 function getScoreInterpretation(score: number): string {
-    if (score >= 80) return 'ðŸŸ¢ EXCELLENT: Strategy shows strong robustness. Low overfitting risk.';
-    if (score >= 60) return 'ðŸŸ¡ GOOD: Strategy is reasonably robust. Monitor for degradation.';
-    if (score >= 40) return 'ðŸŸ  MODERATE: Some overfitting detected. Consider parameter constraints.';
-    if (score >= 20) return 'ðŸ”´ POOR: Significant overfitting. Strategy may not perform forward.';
-    return 'â›” CRITICAL: Severe overfitting. Strategy is curve-fitted and unreliable.';
+    if (score >= 80) return 'Ã°Å¸Å¸Â¢ EXCELLENT: Strategy shows strong robustness. Low overfitting risk.';
+    if (score >= 60) return 'Ã°Å¸Å¸Â¡ GOOD: Strategy is reasonably robust. Monitor for degradation.';
+    if (score >= 40) return 'Ã°Å¸Å¸Â  MODERATE: Some overfitting detected. Consider parameter constraints.';
+    if (score >= 20) return 'Ã°Å¸â€Â´ POOR: Significant overfitting. Strategy may not perform forward.';
+    return 'Ã¢â€ºâ€ CRITICAL: Severe overfitting. Strategy is curve-fitted and unreliable.';
 }
 
 

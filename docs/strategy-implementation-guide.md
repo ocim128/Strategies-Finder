@@ -288,5 +288,59 @@ Then add focused validation as needed:
 - signal loop returns `createBuySignal(...)`, `createSellSignal(...)`, or `null`
 - null and warmup handling is explicit
 - `prepareFinderData(...)` and `executePrepared(...)` remain in parity when present
-- `npm run strategies:sync-manifest` was run
-- `npm run typecheck` passes
+ - `npm run strategies:sync-manifest` was run
+ - `npm run typecheck` passes
+
+## Cross-Symbol Strategies
+
+A strategy may use a secondary symbol as causal context (e.g. relative strength, pair spread, rolling correlation). The runtime provides aligned secondary data — strategies never fetch or align data themselves.
+
+### Declaring the dependency
+
+Add `crossSymbolConfig` to the strategy object:
+
+```ts
+import type { Strategy, OHLCVData, StrategyParams, StrategyExecutionContext } from "../../types/strategies";
+
+export const relative_strength_mean_reversion: Strategy = {
+  name: "Relative Strength Mean Reversion",
+  description: "Mean-reversion on the ratio of primary to secondary close.",
+  crossSymbolConfig: {
+    defaultSymbol: "BTCUSDT",
+    userSelectable: true,
+    minBars: 50,
+  },
+  // ...
+};
+```
+
+### Accessing secondary data
+
+The third argument to `execute(...)` is an optional `StrategyExecutionContext`:
+
+```ts
+execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+  if (!context?.crossSymbol) return []; // or handle gracefully
+
+  const { secondaryData, secondarySymbol } = context.crossSymbol;
+  // secondaryData.length === data.length (already aligned + trimmed)
+  // secondaryData[i] corresponds to data[i] at the same time index
+};
+```
+
+### Available helpers
+
+Import from `lib/strategies/lib/cross-symbol-helpers.ts`:
+
+- `buildRelativeStrength(primaryCloses, secondaryCloses)` — ratio series
+- `buildPairSpread(primaryCloses, secondaryCloses)` — difference series
+- `buildRollingPairCorrelation(primaryCloses, secondaryCloses, lookback)` — rolling Pearson
+- `buildRelativeVolumeStrength(primaryVolumes, secondaryVolumes, lookback)` — relative volume
+
+### Constraints
+
+1. Never fetch secondary data inside `execute(...)`. The runtime does it for you.
+2. `secondaryData` is already aligned via causal LOCF and trimmed — no nulls.
+3. v1 cross-symbol strategies cannot use strategy-timeframe resampling.
+4. The `prepareFinderData(...)` and `executePrepared(...)` methods receive the same context as `execute(...)`.
+5. Walk-Forward Analysis is not yet supported for cross-symbol strategies (guarded with a clear message).

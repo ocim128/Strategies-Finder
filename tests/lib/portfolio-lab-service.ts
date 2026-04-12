@@ -572,6 +572,13 @@ class PortfolioLabService {
             return cached;
         }
 
+        if (strategy.crossSymbolConfig) {
+            throw new Error(
+                `"${strategy.name}" is a cross-symbol strategy and is not supported in Portfolio Lab. ` +
+                'Cross-symbol strategies require secondary symbol data that Portfolio Lab does not provide.'
+            );
+        }
+
         const runResult = await backtestService.evaluateStrategyOnData(data, state.currentInterval, strategy, params, settings, capitalSettings);
         const fullSignals = applySignalPolarity(strategy.execute(data, params), settings);
         const timeIndex = getTimeIndex(data);

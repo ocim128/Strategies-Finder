@@ -325,6 +325,9 @@ async function main(): Promise<void> {
     if (!strategy) {
         throw new Error(`Unknown strategy "${config.strategyKey}".`);
     }
+    if (strategy.crossSymbolConfig) {
+        throw new Error(`Cross-symbol strategy "${config.strategyKey}" is not supported by this export script. Use a non-cross-symbol strategy.`);
+    }
 
     const rawCandles = await fetchBinanceDataWithLimit(config.symbol, config.interval, config.bars);
     if (!rawCandles.length) {

@@ -3,6 +3,12 @@ import { describe, it } from "node:test";
 import { Readable } from "node:stream";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 import { backtestEndpointPlugin } from "../lib/backtest-endpoint-plugin";
+import { strategyManifest } from "../lib/strategies/manifest";
+
+const defaultStrategyEntry = strategyManifest.find((entry) => !entry.strategy.crossSymbolConfig);
+assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy in manifest");
+const defaultStrategyKey = defaultStrategyEntry!.key;
+const defaultStrategyParams = { ...defaultStrategyEntry!.strategy.defaultParams };
 
 type MockHandler = (req: NodeJS.ReadableStream & { method?: string; url?: string }, res: {
     statusCode: number;
@@ -81,10 +87,7 @@ function buildSinglePayload(dataset: { candles: OHLCVData[] } | { ref: string })
         symbol: "BTCUSDT",
         interval: "5m",
         dataset,
-        strategyParams: {
-            lookback: 20,
-            threshold: 1.5,
-        },
+        strategyParams: defaultStrategyParams,
         backtestSettings: {
             executionModel: "next_open",
             tradeDirection: "short",
@@ -118,14 +121,14 @@ describe("backtest endpoint plugin", () => {
         const candles = buildCandles();
         const response = await invoke(
             handler,
-            "/median_deviation_streak",
+            `/${defaultStrategyKey}`,
             "POST",
             buildSinglePayload({ candles })
         );
 
         assert.strictEqual(response.statusCode, 200);
         assert.strictEqual(response.json.ok, true);
-        assert.strictEqual(response.json.strategyKey, "median_deviation_streak");
+        assert.strictEqual(response.json.strategyKey, defaultStrategyKey);
         assert.ok(typeof response.json.requestFingerprint === "string");
         assert.ok(response.json.result.marketContext.candleCount > 0);
         assert.ok(!("trades" in response.json.result));
@@ -144,14 +147,14 @@ describe("backtest endpoint plugin", () => {
 
         const response = await invoke(
             handler,
-            "/median_deviation_streak",
+            `/${defaultStrategyKey}`,
             "POST",
             buildSinglePayload({ ref: upload.json.datasetRef })
         );
 
         assert.strictEqual(response.statusCode, 200);
         assert.strictEqual(response.json.ok, true);
-        assert.strictEqual(response.json.strategyKey, "median_deviation_streak");
+        assert.strictEqual(response.json.strategyKey, defaultStrategyKey);
         assert.ok(response.json.result.totalTrades >= 0);
     });
 
@@ -162,7 +165,7 @@ describe("backtest endpoint plugin", () => {
 
         const baseline = await invoke(
             handler,
-            "/median_deviation_streak",
+            `/${defaultStrategyKey}`,
             "POST",
             payload
         );
@@ -180,7 +183,7 @@ describe("backtest endpoint plugin", () => {
 
         const withIgnoredCapital = await invoke(
             handler,
-            "/median_deviation_streak",
+            `/${defaultStrategyKey}`,
             "POST",
             legacyCapitalPayload
         );
@@ -192,5 +195,89 @@ describe("backtest endpoint plugin", () => {
         assert.strictEqual(withIgnoredCapital.json.requestFingerprint, baseline.json.requestFingerprint);
         assert.strictEqual(withIgnoredCapital.json.result.totalTrades, baseline.json.result.totalTrades);
         assert.strictEqual(withIgnoredCapital.json.result.netProfit, baseline.json.result.netProfit);
+    });
+
+    it("runs a cross-symbol endpoint request when the secondary dataset is provided", async () => {
+        const handler = createHandler();
+        const candles = buildCandles();
+        const secondaryCandles: OHLCVData[] = candles.map((candle, index) => ({
+            ...candle,
+            close: candle.close * (1 + Math.sin(index * 0.18) * 0.08),
+            open: candle.open * (1 + Math.sin(index * 0.18) * 0.08),
+            high: candle.high * (1 + Math.sin(index * 0.18) * 0.08),
+            low: candle.low * (1 + Math.sin(index * 0.18) * 0.08),
+        }));
+
+        const response = await invoke(
+            handler,
+            "/relative_strength_mean_reversion",
+            "POST",
+            {
+                symbol: "XRPUSDT",
+                interval: "5m",
+                dataset: { candles },
+                strategyParams: {
+                    lookback: 30,
+                    zThreshold: 0.5,
+                },
+                backtestSettings: {
+                    executionModel: "next_open",
+                    tradeDirection: "both",
+                    marketMode: "all",
+                    crossSymbolSecondary: "DOGEUSDT",
+                },
+                crossSymbol: {
+                    secondarySymbol: "DOGEUSDT",
+                    dataset: { candles: secondaryCandles },
+                },
+                context: {
+                    nowSec: Number(candles[candles.length - 1]?.time ?? 0) + 600,
+                    blockRange: null,
+                    annotatePolymarket: false,
+                    engineMode: "typescript",
+                },
+            }
+        );
+
+        assert.strictEqual(response.statusCode, 200);
+        assert.strictEqual(response.json.ok, true);
+        assert.strictEqual(response.json.strategyKey, "relative_strength_mean_reversion");
+        assert.ok(response.json.result.totalTrades >= 0);
+    });
+
+    it("rejects cross-symbol endpoint requests that omit the secondary dataset", async () => {
+        const handler = createHandler();
+        const candles = buildCandles();
+
+        const response = await invoke(
+            handler,
+            "/relative_strength_mean_reversion",
+            "POST",
+            {
+                symbol: "XRPUSDT",
+                interval: "5m",
+                dataset: { candles },
+                strategyParams: {
+                    lookback: 30,
+                    zThreshold: 0.5,
+                },
+                backtestSettings: {
+                    executionModel: "next_open",
+                    tradeDirection: "both",
+                    marketMode: "all",
+                    crossSymbolSecondary: "DOGEUSDT",
+                },
+                context: {
+                    nowSec: Number(candles[candles.length - 1]?.time ?? 0) + 600,
+                    blockRange: null,
+                    annotatePolymarket: false,
+                    engineMode: "typescript",
+                },
+            }
+        );
+
+        assert.strictEqual(response.statusCode, 400);
+        assert.strictEqual(response.json.ok, false);
+        assert.match(String(response.json.error ?? ""), /crossSymbol/i);
     });
 });

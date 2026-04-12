@@ -26,15 +26,26 @@ export function buildBacktestEndpointExecutorRequest(
     engineMode: EngineMode,
     nowSec: number,
     blockRange: { from: number; to: number } | null,
-    annotatePolymarket: boolean
+    annotatePolymarket: boolean,
+    crossSymbolInput?: {
+        secondarySymbol: string;
+        secondaryData: OHLCVData[];
+    }
 ): BacktestExecutorRequest {
     return {
         ohlcvData: candles,
         interval,
+        primarySymbol: String(backtestSettings.symbol ?? ""),
         strategyKey,
         strategyParams,
         backtestSettings: stripEndpointIgnoredBacktestSettings(backtestSettings),
         capitalSettings: { ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS },
+        crossSymbolInput: crossSymbolInput
+            ? {
+                secondarySymbol: crossSymbolInput.secondarySymbol,
+                secondaryData: crossSymbolInput.secondaryData.map((candle) => ({ ...candle })),
+            }
+            : undefined,
         context: {
             nowSec,
             blockRange: cloneBlockRange(blockRange),
@@ -46,7 +57,11 @@ export function buildBacktestEndpointExecutorRequest(
 
 export function buildBacktestEndpointExecutorRequestFromSnapshot(
     snapshot: UiBacktestEndpointSnapshot,
-    candles: OHLCVData[]
+    candles: OHLCVData[],
+    crossSymbolInput?: {
+        secondarySymbol: string;
+        secondaryData: OHLCVData[];
+    }
 ): BacktestExecutorRequest {
     const annotatePolymarket = resolveEndpointPolymarketAnnotation(snapshot);
     return buildBacktestEndpointExecutorRequest(
@@ -63,6 +78,7 @@ export function buildBacktestEndpointExecutorRequestFromSnapshot(
         resolveEndpointCopyEngineMode(snapshot.engineUsed),
         snapshot.nowSec,
         snapshot.blockRange,
-        annotatePolymarket
+        annotatePolymarket,
+        crossSymbolInput
     );
 }

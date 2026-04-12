@@ -20,6 +20,7 @@ import type {
     BacktestSingleRequest,
     BacktestBatchRequest,
     BacktestRandomSearchRequest,
+    BacktestCrossSymbolDatasetRequest,
     DatasetUploadRequest,
     BacktestSingleResponse,
     BacktestBatchResponse,
@@ -196,6 +197,57 @@ function extractDatasetCandles(
     return { error: "Invalid dataset: provide either candles array or cached ref", status: 400 };
 }
 
+function extractDatasetFromPayload(
+    dataset: { candles: OHLCVData[] } | { ref: string } | undefined
+): OHLCVData[] | { error: string; status: number } {
+    if (Array.isArray((dataset as any)?.candles)) {
+        return (dataset as { candles: OHLCVData[] }).candles;
+    }
+    const ref = (dataset as { ref?: string } | undefined)?.ref;
+    if (typeof ref === "string" && ref.trim().length > 0) {
+        const cached = getDataset(ref);
+        if (!cached) return { error: `Cached dataset not found: ${ref}`, status: 404 };
+        return cached.candles;
+    }
+    return { error: "Invalid dataset: provide either candles array or cached ref", status: 400 };
+}
+
+function extractCrossSymbolInput(
+    request: { crossSymbol?: BacktestCrossSymbolDatasetRequest },
+    strategyKey: string
+): { secondarySymbol: string; secondaryData: OHLCVData[] } | { error: string; status: number } | null {
+    const strategy = builtInStrategies[strategyKey];
+    if (!strategy?.crossSymbolConfig) {
+        return null;
+    }
+
+    const crossSymbol = request.crossSymbol;
+    if (!crossSymbol) {
+        return {
+            error: `Strategy "${strategyKey}" requires crossSymbol.secondarySymbol and crossSymbol.dataset in the endpoint request.`,
+            status: 400,
+        };
+    }
+
+    const secondarySymbol = crossSymbol.secondarySymbol?.trim().toUpperCase();
+    if (!secondarySymbol) {
+        return {
+            error: `crossSymbol.secondarySymbol is required for strategy "${strategyKey}".`,
+            status: 400,
+        };
+    }
+
+    const secondaryDataOrError = extractDatasetFromPayload(crossSymbol.dataset);
+    if ("error" in secondaryDataOrError) {
+        return secondaryDataOrError;
+    }
+
+    return {
+        secondarySymbol,
+        secondaryData: secondaryDataOrError,
+    };
+}
+
 // ============================================================================
 // Random parameter generator
 // ============================================================================
@@ -291,6 +343,10 @@ async function handleSingleBacktest(
         return { ok: false, error: candlesOrError.error as string, code: "DATASET_ERROR" };
     }
     const candles = candlesOrError as OHLCVData[];
+    const crossSymbolInput = extractCrossSymbolInput(req, strategyKey);
+    if (crossSymbolInput && "error" in crossSymbolInput) {
+        return { ok: false, error: crossSymbolInput.error, code: "DATASET_ERROR" };
+    }
 
     // Resolve context
     const ctx = req.context ?? {};
@@ -319,8 +375,9 @@ async function handleSingleBacktest(
         }
     }
 
-    if (httpRequest && httpRequest.headers["random-parameter-range"]) {
-        const rangeStr = httpRequest.headers["random-parameter-range"] as string;
+    const randomRangeHeader = httpRequest?.headers?.["random-parameter-range"];
+    if (typeof randomRangeHeader === "string" && randomRangeHeader.trim().length > 0) {
+        const rangeStr = randomRangeHeader;
         const rangePercent = parseFloat(rangeStr);
         if (!Number.isNaN(rangePercent)) {
             const seed = Math.floor(Math.random() * 2147483647);
@@ -350,7 +407,8 @@ async function handleSingleBacktest(
             engineMode,
             nowSec,
             blockRange,
-            annotatePolymarket
+            annotatePolymarket,
+            crossSymbolInput ?? undefined
         ));
 
         // If the strategy is entry-only, we may need to use the parity-specific path
@@ -390,6 +448,10 @@ async function handleBatchBacktest(
         return { ok: false, error: candlesOrError.error as string, code: "DATASET_ERROR" };
     }
     const candles = candlesOrError as OHLCVData[];
+    const crossSymbolInput = extractCrossSymbolInput(req, strategyKey);
+    if (crossSymbolInput && "error" in crossSymbolInput) {
+        return { ok: false, error: crossSymbolInput.error };
+    }
 
     if (!Array.isArray(req.items) || req.items.length === 0) {
         return { ok: false, error: "items array is required and must not be empty" };
@@ -431,7 +493,8 @@ async function handleBatchBacktest(
                 itemCtx.engineMode as EngineMode ?? engineMode,
                 itemCtx.nowSec ?? nowSec,
                 itemCtx.blockRange ?? blockRange,
-                itemCtx.annotatePolymarket ?? annotatePolymarket
+                itemCtx.annotatePolymarket ?? annotatePolymarket,
+                crossSymbolInput ?? undefined
             ));
 
             results.push({
@@ -489,6 +552,10 @@ async function handleRandomSearch(
         return { ok: false, error: candlesOrError.error as string };
     }
     const candles = candlesOrError as OHLCVData[];
+    const crossSymbolInput = extractCrossSymbolInput(req, strategyKey);
+    if (crossSymbolInput && "error" in crossSymbolInput) {
+        return { ok: false, error: crossSymbolInput.error };
+    }
 
     if (!req.symbol || !req.interval) {
         return { ok: false, error: "symbol and interval are required" };
@@ -536,7 +603,8 @@ async function handleRandomSearch(
                 engineMode,
                 nowSec,
                 blockRange,
-                annotatePolymarket
+                annotatePolymarket,
+                crossSymbolInput ?? undefined
             ));
 
             allResults.push({
@@ -605,6 +673,16 @@ function computeRequestFingerprint(req: BacktestSingleRequest): string {
         h.update(`inline:${computeCandleHash((ds as { candles: OHLCVData[] }).candles)}`);
     } else {
         h.update(`ref:${(ds as { ref: string })?.ref ?? ""}`);
+    }
+
+    if (req.crossSymbol) {
+        h.update(`|crossSymbol:${req.crossSymbol.secondarySymbol}|`);
+        const secondaryDataset = req.crossSymbol.dataset;
+        if (Array.isArray((secondaryDataset as any)?.candles)) {
+            h.update(`inline:${computeCandleHash((secondaryDataset as { candles: OHLCVData[] }).candles)}`);
+        } else {
+            h.update(`ref:${(secondaryDataset as { ref: string })?.ref ?? ""}`);
+        }
     }
 
     h.update(`|params:${JSON.stringify(req.strategyParams)}`);

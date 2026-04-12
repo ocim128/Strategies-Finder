@@ -8,6 +8,7 @@ import {
     type Strategy,
     type StrategyParams,
 } from "../strategies/index";
+import type { StrategyExecutionContext } from "../types/strategies";
 import type { AdvancedSizingSettings, TradeSizingMode } from "../types/backtest";
 import {
     computeParamRange,
@@ -104,6 +105,8 @@ export interface GeneticOptimizerInput {
     backtestSettings: BacktestSettings;
     config: GeneticOptimizerConfig;
     onGeneration?: (stats: GeneticGenerationStats) => void;
+    /** Optional cross-symbol execution context, resolved once by the caller. */
+    executionContext?: StrategyExecutionContext;
 }
 
 function gaussian(rand: () => number): number {
@@ -266,7 +269,7 @@ function median(values: number[]): number {
 
 export async function runGeneticOptimization(input: GeneticOptimizerInput): Promise<GeneticOptimizationResult> {
     const startedAt = performance.now();
-    const { strategy, strategyKey, data, backtestSettings, onGeneration } = input;
+    const { strategy, strategyKey, data, backtestSettings, onGeneration, executionContext } = input;
     const cfg = input.config;
     const rand = createSeededRandom(cfg.seed);
     const defaultParams = { ...strategy.defaultParams };
@@ -276,7 +279,7 @@ export async function runGeneticOptimization(input: GeneticOptimizerInput): Prom
     }
 
     const precomputed = precomputeIndicators(data, backtestSettings);
-    const preparedFinderData = strategy.prepareFinderData?.(data, backtestSettings);
+    const preparedFinderData = strategy.prepareFinderData?.(data, backtestSettings, executionContext);
     const fitnessCache = new Map<string, { fitness: FitnessScore; result: BacktestResult }>();
     let nextGenomeId = 1;
 
@@ -286,8 +289,8 @@ export async function runGeneticOptimization(input: GeneticOptimizerInput): Prom
         if (cached) return cached;
 
         const rawSignals = strategy.executePrepared
-            ? strategy.executePrepared(preparedFinderData, params, data)
-            : strategy.execute(data, params);
+            ? strategy.executePrepared(preparedFinderData, params, data, executionContext)
+            : strategy.execute(data, params, executionContext);
         const signals = applySignalPolarity(rawSignals, backtestSettings);
         const result = runBacktestCompact(
             data,

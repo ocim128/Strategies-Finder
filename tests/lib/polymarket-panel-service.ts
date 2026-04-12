@@ -938,6 +938,12 @@ class PolymarketPanelService {
             return null;
         }
 
+        const strategy = strategyRegistry.get(config.strategyKey)!;
+        if (strategy.crossSymbolConfig) {
+            this.getDom().polymarketBridgeStatus.textContent = `"${config.name}" uses cross-symbol strategy "${config.strategyKey}" which is not supported by bridge export.`;
+            return null;
+        }
+
         const botSymbol = this.resolveExternalSignalSymbol(state.currentSymbol);
         if (!botSymbol) {
             return null;
@@ -1271,7 +1277,7 @@ class PolymarketPanelService {
 
     private formatProfitFactor(value: number | null): string {
         if (value === null || !Number.isFinite(value)) {
-            return value === Infinity ? "∞" : "n/a";
+            return value === Infinity ? "âˆž" : "n/a";
         }
         return value.toFixed(2);
     }

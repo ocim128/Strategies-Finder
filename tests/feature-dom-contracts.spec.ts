@@ -18,6 +18,7 @@ import { WALK_FORWARD_SERVICE_REQUIRED_IDS } from "./lib/walk-forward-dom";
 import { ENSEMBLE_LAB_REQUIRED_IDS } from "./lib/strategy-ensemble-dom";
 import { MONTE_CARLO_REQUIRED_IDS } from "../lib/monte-carlo-dom";
 import { STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS } from "../lib/strategy-library-admin-dom";
+import { CROSS_SYMBOL_REQUIRED_IDS } from "../lib/cross-symbol-dom";
 
 const PARTIALS_DIR = path.join(process.cwd(), "html-partials");
 
@@ -63,6 +64,7 @@ describe("Feature DOM contracts", () => {
         walkForwardService: [...WALK_FORWARD_SERVICE_REQUIRED_IDS],
         monteCarlo: [...MONTE_CARLO_REQUIRED_IDS],
         strategyLibraryAdmin: [...STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS],
+        crossSymbol: [...CROSS_SYMBOL_REQUIRED_IDS],
     } as const;
 
     for (const [groupName, ids] of Object.entries(contractGroups)) {

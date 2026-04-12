@@ -270,6 +270,13 @@ async function main(): Promise<void> {
         throw new Error(`Not enough closed candles returned for ${config.symbol} ${config.interval}.`);
     }
 
+    for (const componentConfig of recipe.componentConfigs) {
+        const componentStrategy = strategies[componentConfig.strategyKey];
+        if (componentStrategy?.crossSymbolConfig) {
+            throw new Error(`Ensemble recipe component "${componentConfig.name}" uses cross-symbol strategy "${componentConfig.strategyKey}" which is not supported by this export script. Remove it or use a non-cross-symbol strategy.`);
+        }
+    }
+
     const resolved = buildPreparedSignalsForEnsembleRecipe({
         recipe: {
             ...recipe,
