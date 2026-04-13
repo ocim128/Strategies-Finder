@@ -2,12 +2,15 @@ import type { EnsembleLabDom } from "./strategy-ensemble-dom";
 import { resolveLiveRecommendation } from "./strategy-ensemble-live-context";
 import { buildRadarFindings } from "./strategy-ensemble-radar";
 import { describeScenarioPrimaryRow } from "./strategy-ensemble-rules";
+import { escapeHtml } from "./html-escape";
 import type {
     EnsembleBuilderRow,
     EnsembleCurrentVoteLabel,
     EnsembleRunContext,
     EnsembleVoteProfileStats,
 } from "./strategy-ensemble-types";
+
+export { escapeHtml };
 
 export function renderStrategyEnsembleResults(dom: EnsembleLabDom, context: EnsembleRunContext): void {
     const hasTrades = context.tradeSamples.length > 0;
@@ -496,15 +499,6 @@ function card(label: string, value: string): string {
             <div class="sim-card-value">${escapeHtml(value)}</div>
         </div>
     `;
-}
-
-export function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
 }
 
 function formatSignedCurrency(value: number): string {

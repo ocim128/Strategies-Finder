@@ -35,6 +35,7 @@ import type {
 import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS, toCompactMetrics, toSlimSingleResult } from "./backtest-endpoint-contract";
 import { stripEndpointIgnoredBacktestSettings } from "./backtest-endpoint-settings";
 import { buildBacktestEndpointExecutorRequest } from "./backtest-endpoint-execution";
+import { sendJson } from "./http-response-utils";
 import type { OHLCVData, BacktestResult, StrategyParams } from "./types/strategies";
 import { strategies as builtInStrategies } from "./strategies/library";
 
@@ -162,13 +163,6 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
     if (!text) return {};
     const parsed = JSON.parse(text);
     return (parsed && typeof parsed === "object") ? parsed as Record<string, unknown> : {};
-}
-
-function sendJson(res: any, status: number, payload: unknown): void {
-    res.statusCode = status;
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Cache-Control", "no-store");
-    res.end(JSON.stringify(payload));
 }
 
 function errorResponse(res: any, status: number, message: string, code?: string): void {

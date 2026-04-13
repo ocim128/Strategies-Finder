@@ -12,6 +12,7 @@ import type {
     ScannerEventListener,
 } from '../types/scanner';
 import { INITIAL_SCANNER_STATE } from '../types/scanner';
+import { debugLogger } from '../debug-logger';
 
 // ============================================================================
 // Scanner Manager Class
@@ -43,7 +44,7 @@ export class ScannerManager {
      */
     async startScan(): Promise<void> {
         if (this.state.isScanning) {
-            console.warn('Scan already in progress');
+            debugLogger.warn('scanner.scan_already_in_progress');
             return;
         }
 
@@ -183,7 +184,9 @@ export class ScannerManager {
             try {
                 listener(event);
             } catch (err) {
-                console.error('Scanner event listener error:', err);
+                debugLogger.error('scanner.listener_error', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
             }
         });
     }

@@ -11,6 +11,7 @@ import {
     type MonteCarloMethodComparisonRow,
 } from "./monte-carlo-renderer";
 import { median } from "./statistics-utils";
+import { debugLogger } from "./debug-logger";
 
 const MAX_SIMULATION_CAP = 10_000;
 const MIN_SIMULATION_CAP = 250;
@@ -35,7 +36,7 @@ export function initMonteCarloService(): void {
 
     dom = createMonteCarloDom();
     if (!dom) {
-        console.warn("Monte Carlo service: DOM elements not found. Tab may not be loaded yet.");
+        debugLogger.warn("monte_carlo.dom_unavailable");
         return;
     }
 
@@ -152,7 +153,9 @@ async function handleRun(): Promise<void> {
             dom.statusSpan.textContent = "Monte Carlo run cancelled";
         } else {
             dom.statusSpan.textContent = `Error: ${error instanceof Error ? error.message : "Unknown error"}`;
-            console.error("Monte Carlo simulation failed:", error);
+            debugLogger.error("monte_carlo.run_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
         }
     } finally {
         isRunning = false;

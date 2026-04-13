@@ -34,6 +34,7 @@ import type {
 } from './types/finder';
 import { isSmartTradeSizingMode } from "./types/backtest";
 import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "./polymarket-exit-mode";
+import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
 
 export class FinderManager {
 	private isRunning = false;
@@ -203,9 +204,7 @@ export class FinderManager {
 		dom.finderPolymarketLockOffset.disabled = !enabled;
 		dom.finderPolymarketAfterTakeProfitOnly.disabled = !enabled;
 
-		const exitModeSelect = document.getElementById('polymarketExitMode');
-		const isSignalExit = exitModeSelect instanceof HTMLSelectElement
-			&& exitModeSelect.value === 'signal_exit_same_event';
+		const isSignalExit = resolvePolymarketDomSettings().exitMode === 'signal_exit_same_event';
 		if (isSignalExit) {
 			dom.finderPolymarketLockOffset.disabled = true;
 		}

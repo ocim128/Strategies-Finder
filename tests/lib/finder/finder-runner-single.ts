@@ -424,7 +424,9 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                     timeframeResults.push({ result, data: dataset.data });
                     signals.length = 0;
                 } catch (error) {
-                    console.warn(`[Finder] Multi timeframe run failed for ${job.key} @ ${dataset.interval}:`, error);
+                    debugLogger.warn(`[Finder] Multi timeframe run failed for ${job.key} @ ${dataset.interval}`, {
+                        error: error instanceof Error ? error.message : String(error),
+                    });
                 }
             }
 
@@ -757,7 +759,9 @@ function runBacktestAndInsert(
         });
         onInsertTiming?.(performance.now() - insertStartedAt);
     } catch (error) {
-        console.warn(`[Finder] Backtest failed for ${job.key}:`, error);
+        debugLogger.warn(`[Finder] Backtest failed for ${job.key}`, {
+            error: error instanceof Error ? error.message : String(error),
+        });
     }
 }
 
@@ -1311,7 +1315,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 quickCandidates.push({ job, result: quickResult, comparable: buildComparableFinderResult(job.key, job.name, job.params, quickResult) });
                 signals.length = 0;
             } catch (error) {
-                console.warn(`[Finder] Random funnel prescreen failed for ${job.key}:`, error);
+                debugLogger.warn(`[Finder] Random funnel prescreen failed for ${job.key}`, {
+                    error: error instanceof Error ? error.message : String(error),
+                });
             }
 
             if ((i + 1) % 20 === 0 || i + 1 === allJobs.length) {
@@ -1359,7 +1365,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     );
                     timing.tsFallback += performance.now() - tTsStart;
                 } catch (error) {
-                    console.warn(`[Finder] Random funnel full run failed for ${job.key}:`, error);
+                    debugLogger.warn(`[Finder] Random funnel full run failed for ${job.key}`, {
+                        error: error instanceof Error ? error.message : String(error),
+                    });
                 }
 
                 processedCount = i + 1;
@@ -1438,7 +1446,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                         signals,
                     });
                 } catch (error) {
-                    console.warn(`[Finder] Random funnel signal generation failed for ${job.key}:`, error);
+                    debugLogger.warn(`[Finder] Random funnel signal generation failed for ${job.key}`, {
+                        error: error instanceof Error ? error.message : String(error),
+                    });
                 }
             }
             timing.signalGeneration += performance.now() - tSignalStart;
@@ -1516,7 +1526,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     );
                     timing.tsFallback += performance.now() - tTsStart;
                 } catch (error) {
-                    console.warn(`[Finder] Backtest failed for ${job.key}:`, error);
+                    debugLogger.warn(`[Finder] Backtest failed for ${job.key}`, {
+                        error: error instanceof Error ? error.message : String(error),
+                    });
                 }
 
                 await maybeYieldByBudget(false);
@@ -1589,7 +1601,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     signals,
                 });
             } catch (error) {
-                console.warn(`[Finder] Signal generation failed for ${job.key}:`, error);
+                debugLogger.warn(`[Finder] Signal generation failed for ${job.key}`, {
+                    error: error instanceof Error ? error.message : String(error),
+                });
             }
         }
         timing.signalGeneration += performance.now() - tSignalStart;
@@ -1610,7 +1624,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             runBacktestFallback,
             timing,
             onUnknownRunId: (id) => {
-                console.warn(`[Finder] Rust batch returned unknown run id: ${id}`);
+                debugLogger.warn("[Finder] Rust batch returned unknown run id", { id });
             },
             onInconsistentResult: (run) => {
                 debugLogger.warn(`[Finder] Rust batch result inconsistent for ${run.job.key}, using TypeScript fallback.`);

@@ -1998,7 +1998,9 @@ class StrategyEnsembleService {
             this.lastPolymarketRunResult = null;
             this.lastPolymarketSelection = null;
             this.lastPolymarketOutcomes = [];
-            console.error("[StrategyEnsembleLab][Polymarket] Run failed", error);
+            debugLogger.error("[StrategyEnsembleLab][Polymarket] Run failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
             resetEnsemblePolymarketPanel(dom);
             this.syncPolymarketAvailability();
             this.syncSavedSignalRecipeControls();
@@ -2151,7 +2153,9 @@ class StrategyEnsembleService {
             uiManager.showToast("Strategy Ensemble Lab complete.", "success");
         } catch (error) {
             this.runContext = null;
-            console.error("[StrategyEnsembleLab] Run failed", error);
+            debugLogger.error("[StrategyEnsembleLab] Run failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
             uiManager.showToast(
                 `Strategy Ensemble Lab failed: ${error instanceof Error ? error.message : String(error)}`,
                 "error"

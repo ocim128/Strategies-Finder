@@ -1,3 +1,5 @@
+export { escapeHtml } from "../html-escape";
+
 export function formatCurrency(value: number | null): string {
     if (typeof value !== "number" || !Number.isFinite(value)) {
         return "-";
@@ -38,15 +40,6 @@ export function formatProfitFactor(value: number): string {
         return "Inf";
     }
     return Number.isFinite(value) ? value.toFixed(2) : "-";
-}
-
-export function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
 }
 
 export function getCorrelationCellColor(value: number | null): string {

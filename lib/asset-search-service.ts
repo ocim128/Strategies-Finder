@@ -12,6 +12,7 @@ import {
     formatPolymarketDisplayName,
     parsePolymarketEventInput,
 } from './dataProviders/polymarket';
+import { debugLogger } from './debug-logger';
 
 export type AssetType = 'crypto' | 'stock' | 'forex' | 'commodity';
 export type AssetProvider = 'binance' | 'binance-futures' | 'bybit-tradfi' | 'polymarket' | 'mock';
@@ -105,7 +106,7 @@ class AssetSearchService {
             const tradfiResults = tradfiSearchService.searchSymbols(query, Math.floor(limit / 2) + 10);
             results.push(...tradfiResults.map(symbol => this.mapTradFiAsset(symbol)));
         } catch (error) {
-            console.warn('Bybit TradFi search failed:', error);
+            debugLogger.warn('asset_search.bybit_tradfi_failed', { error: error instanceof Error ? error.message : String(error) });
         }
 
         // Search local S&P500 dataset symbols
@@ -113,7 +114,7 @@ class AssetSearchService {
             const localSp500 = await searchLocalSp500Assets(query, Math.floor(limit / 2) + 10);
             results.push(...localSp500.map(asset => this.mapLocalSp500Asset(asset)));
         } catch (error) {
-            console.warn('Local S&P500 search failed:', error);
+            debugLogger.warn('asset_search.local_sp500_failed', { error: error instanceof Error ? error.message : String(error) });
         }
 
         // Search Binance (crypto)
@@ -129,7 +130,7 @@ class AssetSearchService {
             }));
             results.push(...cryptoAssets);
         } catch (error) {
-            console.warn('Binance search failed:', error);
+            debugLogger.warn('asset_search.binance_failed', { error: error instanceof Error ? error.message : String(error) });
         }
 
         // Search popular assets (stocks, forex, commodities)

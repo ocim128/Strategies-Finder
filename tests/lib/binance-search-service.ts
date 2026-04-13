@@ -4,6 +4,7 @@
  */
 
 import type { BinanceMarketType } from "./binance-market";
+import { debugLogger } from "./debug-logger";
 
 export interface BinanceSymbol {
     symbol: string;          // e.g., "ETHUSDT"
@@ -96,7 +97,9 @@ class BinanceSearchService {
                     return a.symbol.localeCompare(b.symbol);
                 });
         } catch (error) {
-            console.error('Failed to fetch Binance exchange info:', error);
+            debugLogger.error("binance_search.exchange_info_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
             return [];
         }
     }

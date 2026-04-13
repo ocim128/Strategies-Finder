@@ -17,12 +17,14 @@ import type { BacktestResult, ExpectancyBreakdownSection } from "./types/strateg
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { uiManager } from "./ui-manager";
+import { debugLogger } from "./debug-logger";
 import { strategyRegistry } from "../strategyRegistry";
 import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "./polymarket-exit-mode";
 import { evaluateSignalExitTrades, buildTradeAnnotationFromSignalExitResult } from "./polymarket-signal-exit-evaluator";
 import { ensurePricePointsForOutcomes } from "./polymarket-price-points-ingest";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
 import { findContainingEvent } from "./polymarket-1m-5m-bridge";
+import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
 import {
     annotateTradesWithPolymarketOutcomesForRun,
     summarizePolymarketTradesForRun,
@@ -281,8 +283,10 @@ class PolymarketPanelService {
                             avgExitPrice: exitSummary.avgExitPrice,
                         },
                     };
-                } catch {
-                    // Fall through to resolve_hold
+                } catch (error) {
+                    debugLogger.warn("polymarket_panel.signal_exit_annotation_failed", {
+                        error: error instanceof Error ? error.message : String(error),
+                    });
                 }
             }
         }
@@ -330,34 +334,19 @@ class PolymarketPanelService {
     }
 
     private readCurrentPolymarketEntryOffset(): number | null {
-        const element = document.getElementById("polymarketEntryOffset");
-        if (!(element instanceof HTMLSelectElement)) {
-            return null;
-        }
-        const value = Number(element.value);
-        return Number.isFinite(value) ? value : null;
+        return resolvePolymarketDomSettings().entryOffset;
     }
 
     private readCurrentPolymarketExitMode(): "resolve_hold" | "signal_exit_same_event" | undefined {
-        const element = document.getElementById("polymarketExitMode");
-        if (!(element instanceof HTMLSelectElement)) {
-            return undefined;
-        }
-        return element.value === "signal_exit_same_event" ? "signal_exit_same_event" : "resolve_hold";
+        return resolvePolymarketDomSettings().exitMode;
     }
 
     private readCurrentExecutionModel(): string | undefined {
-        const element = document.getElementById("executionModel");
-        return element instanceof HTMLSelectElement ? element.value : undefined;
+        return resolvePolymarketDomSettings().executionModel;
     }
 
     private readCurrentPolymarketOutcomeSymbol(): string | null {
-        const element = document.getElementById("polymarketOutcomeSymbol");
-        if (!(element instanceof HTMLSelectElement)) {
-            return null;
-        }
-        const value = element.value.trim().toUpperCase();
-        return value.length > 0 ? value : null;
+        return resolvePolymarketDomSettings().outcomeSymbol;
     }
 
     private resolveActivePolymarketOutcomeSymbol(result: BacktestResult): string | null {

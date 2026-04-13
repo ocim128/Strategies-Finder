@@ -15,6 +15,7 @@ import { quickViewManager } from "../quick-view";
 import { livePositionsService } from "../live-positions-service";
 import { isBinanceDataProvider } from "../binance-market";
 import { SIGNAL_EXIT_SUPPORTED_RANK_MODES } from "../polymarket-exit-mode";
+import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
 import type { Time } from "lightweight-charts";
 
 function updatePolymarketEntryOffsetVisibility(interval: string = state.currentInterval): void {
@@ -26,9 +27,7 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
         ? annotationToggle.checked
         : false;
 
-    const exitModeSelect = document.getElementById('polymarketExitMode');
-    const isSignalExit = exitModeSelect instanceof HTMLSelectElement
-        && exitModeSelect.value === 'signal_exit_same_event';
+    const isSignalExit = resolvePolymarketDomSettings().exitMode === 'signal_exit_same_event';
 
     if (offsetRow) {
         offsetRow.style.display = interval === '1m' && annotationEnabled && !isSignalExit ? 'block' : 'none';
@@ -42,9 +41,7 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
 }
 
 function updateFinderRankModeOptions(): void {
-    const exitModeSelect = document.getElementById('polymarketExitMode');
-    const isSignalExit = exitModeSelect instanceof HTMLSelectElement
-        && exitModeSelect.value === 'signal_exit_same_event';
+    const isSignalExit = resolvePolymarketDomSettings().exitMode === 'signal_exit_same_event';
 
     const rankSelects = [
         document.getElementById('finderPolymarketRankMode'),

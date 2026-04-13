@@ -9,6 +9,7 @@ import { createSeededRandom, roundRangeValue, snapValueToStepRange } from '../pa
 import type { TradeSizingMode } from '../types/backtest';
 import type { WalkForwardDecayMonitoring } from './walk-forward-decay';
 import { withWalkForwardDecayMonitoring } from './walk-forward-decay';
+import { debugLogger } from '../debug-logger';
 
 // ============================================================================
 // Walk-Forward Analysis (WFA) Module
@@ -813,7 +814,7 @@ export async function runWalkForwardAnalysis(
         throw new Error('No parameter combinations generated. Check parameter ranges.');
     }
     if (shouldSample) {
-        console.warn(`[WalkForward] Grid estimate ${estimatedGridSize} exceeds cap ${comboCap}; using random sample of ${paramGrid.length} combinations.`);
+        debugLogger.warn(`[WalkForward] Grid estimate ${estimatedGridSize} exceeds cap ${comboCap}; using random sample of ${paramGrid.length} combinations.`);
     }
 
     const totalDataLength = data.length;

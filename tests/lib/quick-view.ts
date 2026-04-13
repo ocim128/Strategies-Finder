@@ -8,6 +8,7 @@
  */
 
 import { state } from "./state";
+import { debugLogger } from "./debug-logger";
 import type { BacktestResult, ExpectancyBreakdownRow, ExpectancyBreakdownSection, Trade } from "./strategies/index";
 import type { Time } from "lightweight-charts";
 import { formatDisplayPrice } from "./price-format";
@@ -29,6 +30,7 @@ import { ensurePricePointsForOutcomes } from "./polymarket-price-points-ingest";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { findContainingEvent } from "./polymarket-1m-5m-bridge";
+import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
 
 
 type QuickViewPolymarketSummary = {
@@ -630,31 +632,19 @@ class QuickViewManager {
     }
 
     private resolveSelectedPolymarketEntryOffset(_result: BacktestResult): number {
-        const element = document.getElementById("polymarketEntryOffset");
-        const fallbackOffset = element instanceof HTMLSelectElement ? Number(element.value) : null;
-        return fallbackOffset ?? 0;
+        return resolvePolymarketDomSettings().entryOffset ?? 0;
     }
 
     private readCurrentPolymarketOutcomeSymbol(): string | null {
-        const element = document.getElementById("polymarketOutcomeSymbol");
-        if (!(element instanceof HTMLSelectElement)) {
-            return null;
-        }
-        const value = element.value.trim().toUpperCase();
-        return value.length > 0 ? value : null;
+        return resolvePolymarketDomSettings().outcomeSymbol;
     }
 
     private readCurrentPolymarketExitMode(): "resolve_hold" | "signal_exit_same_event" | undefined {
-        const element = document.getElementById("polymarketExitMode");
-        if (!(element instanceof HTMLSelectElement)) {
-            return undefined;
-        }
-        return element.value === "signal_exit_same_event" ? "signal_exit_same_event" : "resolve_hold";
+        return resolvePolymarketDomSettings().exitMode;
     }
 
     private readCurrentExecutionModel(): string | undefined {
-        const element = document.getElementById("executionModel");
-        return element instanceof HTMLSelectElement ? element.value : undefined;
+        return resolvePolymarketDomSettings().executionModel;
     }
 
     private resolveActivePolymarketOutcomeSymbol(result: BacktestResult): string | null {
@@ -777,8 +767,10 @@ class QuickViewManager {
                         avgExitPrice: exitSummary.avgExitPrice,
                     },
                 };
-            } catch {
-                // Fall through to resolve_hold if price point loading fails
+            } catch (error) {
+                debugLogger.warn("quick_view.polymarket_signal_exit_annotation_failed", {
+                    error: error instanceof Error ? error.message : String(error),
+                });
             }
         }
 

@@ -172,7 +172,6 @@ export async function fetchBinanceData(
             interval,
             error: formatProviderError(error),
         });
-        console.error('Failed to fetch data:', error);
         return [];
     }
 }

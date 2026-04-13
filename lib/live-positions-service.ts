@@ -24,6 +24,7 @@ import { parseTimeToUnixSeconds } from './time-normalization';
 import { state } from './state';
 import type { BacktestSettings, Trade } from './strategies/index';
 import { resolveSubscriptionExecutionBacktestSettings } from './alert-subscription-utils';
+import { debugLogger } from './debug-logger';
 import {
     getDefaultAlertMinClosedCandles,
     selectExecutionAwareClosedCandles,
@@ -268,7 +269,10 @@ class LivePositionsService {
                     try {
                         return await this.analyzeSubscription(sub, force);
                     } catch (err) {
-                        console.warn(`[LivePositions] Failed to analyze ${sub.stream_id}:`, err);
+                        debugLogger.warn("[LivePositions] Failed to analyze subscription", {
+                            streamId: sub.stream_id,
+                            error: err instanceof Error ? err.message : String(err),
+                        });
                         return { openPosition: null, closedTrade: null } as AnalysisResult;
                     }
                 }
@@ -731,7 +735,10 @@ class LivePositionsService {
             });
             return trades;
         } catch (err) {
-            console.warn(`[LivePositions] Backtest failed for ${sub.stream_id}:`, err);
+            debugLogger.warn("[LivePositions] Local backtest failed", {
+                streamId: sub.stream_id,
+                error: err instanceof Error ? err.message : String(err),
+            });
             return [];
         }
     }
@@ -794,7 +801,10 @@ class LivePositionsService {
                         return price;
                     }
                 } catch {
-                    console.warn(`[LivePositions] Failed to fetch price for ${normalizedSymbol}:`, err);
+                    debugLogger.warn("[LivePositions] Failed to fetch price", {
+                        symbol: normalizedSymbol,
+                        error: err instanceof Error ? err.message : String(err),
+                    });
                 }
             }
 

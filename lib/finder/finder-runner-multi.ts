@@ -169,7 +169,9 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
                     timeframeResults.push({ result, data: dataset.data });
                     signals.length = 0;
                 } catch (error) {
-                    console.warn(`[Finder] Multi timeframe run failed for ${job.key} @ ${dataset.interval}:`, error);
+                    debugLogger.warn(`[Finder] Multi timeframe run failed for ${job.key} @ ${dataset.interval}`, {
+                        error: error instanceof Error ? error.message : String(error),
+                    });
                 }
             }
 

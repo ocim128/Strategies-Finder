@@ -9,6 +9,7 @@ import { setCurrentStrategyKey } from "./state-actions";
 import { backtestService } from "./backtest-service";
 import { StrategyExecutor } from "./strategy-executor";
 import { createEditorManagerDom, type EditorManagerDom } from "./editor-manager-dom";
+import { debugLogger } from "./debug-logger";
 
 interface MonacoEditor {
     getValue(): string;
@@ -95,7 +96,7 @@ return signals;`;
 
     private initMonacoEditor() {
         if (typeof require === "undefined") {
-            console.warn("Monaco loader not available");
+            debugLogger.warn("editor.monaco_loader_unavailable");
             return;
         }
 

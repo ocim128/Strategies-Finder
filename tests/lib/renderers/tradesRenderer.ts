@@ -2,6 +2,8 @@ import type { Time } from "lightweight-charts";
 import { OHLCVData, Trade } from "../strategies/index";
 import { setVisible } from "../dom-utils";
 import { state } from "../state";
+import { debugLogger } from "../debug-logger";
+import { escapeHtml } from "../html-escape";
 import { resolveOpenTradeDisplayMetrics } from "../open-trade-display";
 import { createTradesRendererDom, type TradesRendererDom } from "./trades-renderer-dom";
 import {
@@ -16,6 +18,7 @@ import { ensurePricePointsForOutcomes } from "../polymarket-price-points-ingest"
 import { resolveBacktestResultMarketContext } from "../backtest-result-context";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { findContainingEvent } from "../polymarket-1m-5m-bridge";
+import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
 
 export class TradesRenderer {
     private static readonly MAX_TRADES = 250;
@@ -124,37 +127,24 @@ export class TradesRenderer {
             return Math.max(0, Math.min(4, Math.floor(summaryOffset)));
         }
 
-        const element = document.getElementById('polymarketEntryOffset');
-        if (element instanceof HTMLSelectElement) {
-            const value = Number(element.value);
-            if (Number.isFinite(value)) {
-                return Math.max(0, Math.min(4, Math.floor(value)));
-            }
+        const { entryOffset } = resolvePolymarketDomSettings();
+        if (entryOffset !== null) {
+            return Math.max(0, Math.min(4, Math.floor(entryOffset)));
         }
 
         return 0;
     }
 
     private readCurrentPolymarketOutcomeSymbol(): string | null {
-        const element = document.getElementById('polymarketOutcomeSymbol');
-        if (!(element instanceof HTMLSelectElement)) {
-            return null;
-        }
-        const value = element.value.trim().toUpperCase();
-        return value.length > 0 ? value : null;
+        return resolvePolymarketDomSettings().outcomeSymbol;
     }
 
     private readCurrentPolymarketExitMode(): "resolve_hold" | "signal_exit_same_event" | undefined {
-        const element = document.getElementById('polymarketExitMode');
-        if (!(element instanceof HTMLSelectElement)) {
-            return undefined;
-        }
-        return element.value === 'signal_exit_same_event' ? 'signal_exit_same_event' : 'resolve_hold';
+        return resolvePolymarketDomSettings().exitMode;
     }
 
     private readCurrentExecutionModel(): string | undefined {
-        const element = document.getElementById('executionModel');
-        return element instanceof HTMLSelectElement ? element.value : undefined;
+        return resolvePolymarketDomSettings().executionModel;
     }
 
     private resolveActivePolymarketOutcomeSymbol(): string | null {
@@ -241,8 +231,10 @@ export class TradesRenderer {
                     const annotation = buildTradeAnnotationFromSignalExitResult(exitResult);
                     return { ...trade, polymarketOutcome: annotation };
                 });
-            } catch {
-                // Fall through to resolve_hold
+            } catch (error) {
+                debugLogger.warn("trades.polymarket_signal_exit_annotation_failed", {
+                    error: error instanceof Error ? error.message : String(error),
+                });
             }
         }
 
@@ -323,8 +315,8 @@ export class TradesRenderer {
                 ? `${outcome.marketPnl >= 0 ? '+' : ''}${(outcome.marketPnl * 100).toFixed(1)}c`
                 : '';
             const priceLabel = `${prediction} ${entryPrice}→${exitPrice}${pnlLabel ? ` (${pnlLabel})` : ''}`;
-            const marketSlug = this.escapeHtml(outcome.marketSlug);
-            const marketUrl = this.escapeHtml(this.buildPolymarketMarketUrl(outcome.marketSlug));
+            const marketSlug = escapeHtml(outcome.marketSlug);
+            const marketUrl = escapeHtml(this.buildPolymarketMarketUrl(outcome.marketSlug));
             return `<span class="exit-reason-badge trade-polymarket-link ${className}" role="button" tabindex="0" data-polymarket-url="${marketUrl}" title="Signal-exit mode. ${label}. Predicted ${prediction}, entry ${entryPrice}, exit ${exitPrice}. Click to copy ${marketSlug}.">${label} ${priceLabel}</span>`;
         }
 
@@ -344,8 +336,8 @@ export class TradesRenderer {
             ? this.formatPolymarketEntryPrice(outcome.marketEntryPrice)
             : 'n/a';
         const priceLabel = `${prediction} ${paidPrice} (YES ${yesPrice} / NO ${noPrice})`;
-        const marketSlug = this.escapeHtml(outcome.marketSlug);
-        const marketUrl = this.escapeHtml(this.buildPolymarketMarketUrl(outcome.marketSlug));
+        const marketSlug = escapeHtml(outcome.marketSlug);
+        const marketUrl = escapeHtml(this.buildPolymarketMarketUrl(outcome.marketSlug));
         return `<span class="exit-reason-badge trade-polymarket-link ${className}" role="button" tabindex="0" data-polymarket-url="${marketUrl}" title="Polymarket ${label}. Predicted ${prediction}, resolved ${actual}, paid ${priceLabel}. Click to copy ${marketSlug}.">${label} ${priceLabel}</span>`;
     }
 
@@ -630,15 +622,6 @@ export class TradesRenderer {
 
     private buildPolymarketMarketUrl(marketSlug: string): string {
         return `https://polymarket.com/event/${marketSlug}`;
-    }
-
-    private escapeHtml(value: string): string {
-        return value
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
     }
 
     private updateSummary(trades: Trade[]) {

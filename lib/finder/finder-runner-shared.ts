@@ -16,6 +16,7 @@ import { buildSelectionResult } from "./endpoint";
 import { hasNonZeroSnapshotFilter } from "../rust-settings-sanitizer";
 import { selectExecutionAwareClosedCandles } from "../alert-evaluation-window";
 import { mergeStrategySignals } from "../signal-merge";
+import { debugLogger } from "../debug-logger";
 import {
     getPreparedFinderData,
     type CandidateResult,
@@ -215,7 +216,9 @@ export function runBacktestAndInsert(
         });
         onInsertTiming?.(performance.now() - insertStartedAt);
     } catch (error) {
-        console.warn(`[Finder] Backtest failed for ${job.key}:`, error);
+        debugLogger.warn(`[Finder] Backtest failed for ${job.key}`, {
+            error: error instanceof Error ? error.message : String(error),
+        });
     }
 }
 

@@ -23,6 +23,7 @@ import tabEnsembleHtml from '../html-partials/tab-ensemble.html?raw';
 import tabAlertsHtml from '../html-partials/tab-alerts.html?raw';
 import statusBarHtml from '../html-partials/status-bar.html?raw';
 import debugPanelHtml from '../html-partials/debug-panel.html?raw';
+import { debugLogger } from './debug-logger';
 import codeEditorHtml from '../html-partials/code-editor.html?raw';
 
 const MAIN_CONTENT_PARTIALS = [
@@ -70,7 +71,7 @@ function appendMarkup(target: Element, partials: readonly string[]): void {
 export function injectLayout() {
     const root = document.getElementById('root');
     if (!root) {
-        console.error("Root element not found! Layout injection failed.");
+        debugLogger.error("layout.root_missing");
         return;
     }
 

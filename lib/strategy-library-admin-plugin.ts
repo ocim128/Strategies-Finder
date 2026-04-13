@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Plugin, ViteDevServer } from "vite";
 import { generateStrategyManifestSource, type StrategyModuleDefinition } from "../scripts/strategy-manifest-generator";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
+import { sendJson } from "./http-response-utils";
 
 const STRATEGY_EXPORT_PATTERN = /export\s+const\s+([a-zA-Z][a-zA-Z0-9_]*)\s*:\s*Strategy\s*=/g;
 const MANIFEST_KEY_PATTERN = /key:\s*"([^"]+)"/g;
@@ -480,13 +481,6 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
 
     const parsed = JSON.parse(text);
     return (parsed && typeof parsed === "object") ? parsed as Record<string, unknown> : {};
-}
-
-function sendJson(res: any, status: number, payload: unknown): void {
-    res.statusCode = status;
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Cache-Control", "no-store");
-    res.end(JSON.stringify(payload));
 }
 
 function invalidateStrategyLibraryServerState(server: ViteDevServer | null): void {

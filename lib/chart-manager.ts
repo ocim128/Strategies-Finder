@@ -14,6 +14,7 @@ import {
     TimeChartOptions,
 } from "lightweight-charts";
 import { state } from "./state";
+import { debugLogger } from "./debug-logger";
 import { darkTheme, lightTheme, ENHANCED_CANDLE_COLORS, LIGHT_CANDLE_COLORS, EQUITY_CURVE_COLORS } from "./constants";
 import { toHeikinAshi } from "./heikin-ashi-utils";
 import { formatJakartaTickMark, formatJakartaTime } from "./timezone-utils";
@@ -616,7 +617,9 @@ export class ChartManager {
             ]);
             return true;
         } catch (error) {
-            console.error('Failed to copy to clipboard:', error);
+            debugLogger.error("chart.copy_to_clipboard_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
             return false;
         }
     }

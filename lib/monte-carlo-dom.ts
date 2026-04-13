@@ -2,6 +2,8 @@
  * DOM contracts for Monte Carlo simulation tab
  */
 
+import { debugLogger } from "./debug-logger";
+
 export const MONTE_CARLO_REQUIRED_IDS = [
     // Configuration inputs
     "mc-simulations",
@@ -137,7 +139,7 @@ export function createMonteCarloDom(): MonteCarloDomElements | null {
         const el = document.getElementById(id);
         if (!el) {
             if (critical) {
-                console.error(`Monte Carlo DOM: Critical element #${id} not found`);
+                debugLogger.error("monte_carlo.dom_missing", { id });
             }
             return null;
         }
