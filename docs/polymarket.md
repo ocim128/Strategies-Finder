@@ -175,6 +175,8 @@ PnL semantics:
 - `marketPnl = marketExitPrice - marketEntryPrice`
 - `isProfitable` means realized Polymarket PnL was greater than zero
 - zero PnL is neutral, not profitable and not losing
+- Quick View and the Polymarket diagnostics tab label signal-exit rates as profitable-trade rates, not prediction-accuracy win rates
+- neutral scored trades stay visible as neutral / flat instead of being folded into losses
 - summary metrics shift to priced-trade behavior:
   - profitable trades
   - losing trades

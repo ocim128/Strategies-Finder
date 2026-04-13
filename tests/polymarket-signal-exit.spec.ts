@@ -365,9 +365,10 @@ console.log("\n=== evaluateSignalExitTrades: duplicate trades inside one event =
     const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300 });
     const pricePoints = [
         makePricePoint({ ts: 1020, yes_price: 0.50, no_price: 0.50 }),
+        makePricePoint({ ts: 1050, yes_price: 0.60, no_price: 0.40 }),
     ];
 
-    const { results } = evaluateSignalExitTrades({
+    const { results, summary } = evaluateSignalExitTrades({
         trades: [t1, t2],
         outcomes: [outcome],
         pricePoints,
@@ -378,6 +379,29 @@ console.log("\n=== evaluateSignalExitTrades: duplicate trades inside one event =
     eq(results[0]!.exitSource !== "duplicate", true, "first trade is not duplicate");
     eq(results[1]!.exitSource, "duplicate", "second trade is marked as duplicate");
     eq(results[1]!.pnl, null, "duplicate trade has no pnl");
+    eq(summary.duplicateTradesIgnored, 1, "duplicate trade counted");
+    eq(summary.unscoredTrades, 1, "duplicate trade counted as unscored");
+}
+
+console.log("\n=== evaluateSignalExitTrades: missing outcome row → unscored ===");
+
+{
+    const trade = makeTrade({ entryTime: 1500 as any });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300 });
+    const pricePoints = [
+        makePricePoint({ ts: 1020, yes_price: 0.50, no_price: 0.50 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        pricePoints,
+    });
+
+    eq(results.length, 1, "one result emitted");
+    eq(results[0]!.exitSource, "no_event", "trade is marked as no_event");
+    eq(summary.missingOutcomeTrades, 1, "missing outcome row counted");
+    eq(summary.unscoredTrades, 1, "missing outcome row counted as unscored");
 }
 
 console.log("\n=== evaluateSignalExitTrades: missing entry quote → unscored ===");
@@ -447,10 +471,11 @@ console.log("\n=== evaluateSignalExitTrades: zero pnl is neutral, not profitable
     });
 
     eq(results[0]!.pnl, 0, "trade pnl is zero");
-    eq(results[0]!.isProfitable, false, "trade-level isProfitable stays false at zero pnl");
+    eq(results[0]!.isProfitable, null, "trade-level isProfitable stays neutral at zero pnl");
     eq(summary.scoredTrades, 1, "trade is still scored");
     eq(summary.profitableTrades, 0, "zero pnl does not count as profitable");
     eq(summary.losingTrades, 0, "zero pnl does not count as losing");
+    eq(summary.neutralTrades, 1, "zero pnl counts as neutral");
     eq(summary.profitFactor, 0, "zero pnl contributes no profit factor");
 }
 

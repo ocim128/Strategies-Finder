@@ -64,6 +64,7 @@ describe("backtest endpoint contract helpers", () => {
         assert.deepStrictEqual(result.polymarketPerformance, {
             wins: 2,
             losses: 1,
+            neutralTrades: 0,
             scoredTrades: 3,
             unscoredTrades: 1,
             missingOutcomeTrades: 1,

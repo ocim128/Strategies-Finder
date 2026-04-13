@@ -460,6 +460,92 @@ describe("Polymarket backtest trade annotations", () => {
         expect(result.trades[0]?.polymarketOutcome).to.equal(null);
     });
 
+    it("renders zero-pnl signal-exit trades as flat instead of loss", async () => {
+        const bars = makeMinuteBars(12);
+        const eventStartTs = 1_700_000_300;
+        installOutcomeFetch([
+            {
+                series_id: "10684",
+                event_slug: "btc-flat-price-1",
+                market_slug: "btc-flat-price-1",
+                interval: "5m",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.52,
+                yes_entry_minute_2_price: 0.54,
+                yes_entry_minute_3_price: 0.56,
+                yes_entry_minute_4_price: 0.58,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ]);
+
+        const entryTs = eventStartTs + 60;
+        const exitTs = eventStartTs + 180;
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([
+                {
+                    ...makeTrade(1, "long", entryTs, 10),
+                    exitTime: exitTs,
+                    exitReason: "signal",
+                },
+            ]),
+            {
+                symbol: "BTCUSDT",
+                interval: "1m",
+                executionModel: "next_open",
+                chartData: bars,
+                polymarketExitMode: "signal_exit_same_event",
+            },
+            undefined,
+            [
+                {
+                    series_id: "10684",
+                    event_start_ts: eventStartTs,
+                    event_end_ts: eventStartTs + 300,
+                    market_slug: "btc-flat-price-1",
+                    yes_token_id: "yes-1",
+                    no_token_id: "no-1",
+                    ts: entryTs,
+                    yes_price: 0.52,
+                    no_price: 0.48,
+                    updated_at: 1,
+                },
+                {
+                    series_id: "10684",
+                    event_start_ts: eventStartTs,
+                    event_end_ts: eventStartTs + 300,
+                    market_slug: "btc-flat-price-1",
+                    yes_token_id: "yes-1",
+                    no_token_id: "no-1",
+                    ts: exitTs,
+                    yes_price: 0.52,
+                    no_price: 0.48,
+                    updated_at: 1,
+                },
+            ]
+        );
+
+        expect(result.trades[0]?.polymarketOutcome?.marketPnl).to.equal(0);
+        expect(result.trades[0]?.polymarketOutcome?.isProfitable).to.equal(null);
+
+        const renderer = new TradesRenderer() as unknown as {
+            renderTradeItem: (trade: Trade, formatPrice: (price: number) => string, formatDate: (time: Trade["entryTime"]) => string) => string;
+        };
+        const html = renderer.renderTradeItem(
+            result.trades[0]!,
+            (price) => price.toFixed(2),
+            (time) => String(time)
+        );
+
+        expect(html).to.include("Poly Flat");
+        expect(html).to.not.include("Poly Loss");
+    });
+
     it("loads stored price points by event key so same-event exit quotes are not missed", async () => {
         globalThis.fetch = (async (input) => {
             const url = new URL(

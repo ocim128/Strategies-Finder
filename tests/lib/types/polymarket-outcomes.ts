@@ -42,7 +42,7 @@ export interface TradePolymarketOutcome {
     marketSlug: string;
     prediction: 'yes' | 'no';
     actualOutcomeUp: 0 | 1;
-    isWin: boolean;
+    isWin: boolean | null;
     /** Raw YES checkpoint price for the selected entry offset. */
     marketYesPrice?: number | null;
     /** Raw NO checkpoint price for the selected entry offset. */
@@ -53,7 +53,7 @@ export interface TradePolymarketOutcome {
     entryOffset?: number;
     /** Which evaluation mode produced this outcome annotation */
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
-    /** Whether the Polymarket trade was profitable (signal-exit aware, not binary outcome) */
+    /** Whether the Polymarket trade was profitable (signal-exit aware, not binary outcome). Null means neutral or unscored. */
     isProfitable?: boolean | null;
     /** Exit price from the Polymarket contract */
     marketExitPrice?: number | null;
@@ -89,6 +89,7 @@ export interface BacktestPolymarketTradeSummary {
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
     profitableTrades?: number;
     losingTrades?: number;
+    neutralTrades?: number;
     signalExitedTrades?: number;
     resolvedTrades?: number;
     missingPriceTrades?: number;

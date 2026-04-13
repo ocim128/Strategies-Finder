@@ -191,7 +191,7 @@ class PolymarketPanelService {
         }
 
         dom.polymarketDiagnosticsContent.innerHTML = [
-            payoutSummary ? this.buildPayoutSummarySection(payoutSummary) : "",
+            payoutSummary ? this.buildPayoutSummarySection(payoutSummary, result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event") : "",
             summary ? this.buildPolymarketSummarySection(summary) : "",
             ...sections.map((section) => this.buildDiagnosticBucketSection(section)),
         ].filter(Boolean).join("");
@@ -203,6 +203,7 @@ class PolymarketPanelService {
     private getPolymarketSummary(result: BacktestResult): {
         wins: number;
         losses: number;
+        neutralTrades: number;
         scoredTrades: number;
         missingTrades: number;
         unscoredTrades: number;
@@ -213,6 +214,7 @@ class PolymarketPanelService {
         entryOffset?: number;
         bestTimingProfile?: NonNullable<NonNullable<BacktestResult["polymarketTradeSummary"]>["timingProfile"]>[number] | null;
         evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+        missingPriceTrades?: number;
         signalExitedTrades?: number;
         resolvedTrades?: number;
     } | null {
@@ -225,7 +227,10 @@ class PolymarketPanelService {
         const losses = isSignalExit
             ? (summary?.losingTrades ?? result.trades.filter((t) => t.polymarketOutcome?.isProfitable === false).length)
             : result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
-        const scoredTrades = isSignalExit ? (summary?.scoredTrades ?? wins + losses) : wins + losses;
+        const neutralTrades = isSignalExit
+            ? (summary?.neutralTrades ?? Math.max(0, (summary?.scoredTrades ?? wins + losses) - wins - losses))
+            : 0;
+        const scoredTrades = isSignalExit ? (summary?.scoredTrades ?? wins + losses + neutralTrades) : wins + losses;
 
         if (!summary && scoredTrades === 0) {
             return null;
@@ -251,6 +256,7 @@ class PolymarketPanelService {
         return {
             wins,
             losses,
+            neutralTrades,
             scoredTrades,
             missingTrades,
             unscoredTrades,
@@ -261,12 +267,17 @@ class PolymarketPanelService {
             entryOffset: summary?.entryOffset,
             bestTimingProfile,
             evaluationMode: isSignalExit ? "signal_exit_same_event" : undefined,
+            missingPriceTrades: isSignalExit ? (summary?.missingPriceTrades ?? 0) : undefined,
             signalExitedTrades: isSignalExit ? (summary?.signalExitedTrades ?? 0) : undefined,
             resolvedTrades: isSignalExit ? (summary?.resolvedTrades ?? 0) : undefined,
         };
     }
 
-    private buildPayoutSummarySection(summary: NonNullable<ReturnType<typeof summarizePolymarketPayoutDiagnostics>>): string {
+    private buildPayoutSummarySection(
+        summary: NonNullable<ReturnType<typeof summarizePolymarketPayoutDiagnostics>>,
+        isSignalExit = false
+    ): string {
+        const profitabilityTone = isSignalExit ? summary.expectancy : summary.edgeVsBreakEven;
         return `
             <div class="deployability-section">
                 <div class="section-subtitle">Payout Summary</div>
@@ -275,11 +286,11 @@ class PolymarketPanelService {
                     ${this.renderStatCard("Priced Trades", String(summary.pricedTrades))}
                     ${summary.unpricedScoredTrades > 0 ? this.renderStatCard("Unpriced Scored Trades", String(summary.unpricedScoredTrades)) : ""}
                     ${this.renderStatCard("Avg Entry Price", formatProbability(summary.avgEntryPrice))}
-                    ${this.renderStatCard("Break-even Win", formatPercent(summary.breakEvenWinRate))}
-                    ${this.renderStatCard("Poly Win Rate", formatPercent(summary.winRate), summary.edgeVsBreakEven)}
+                    ${isSignalExit ? "" : this.renderStatCard("Break-even Win", formatPercent(summary.breakEvenWinRate))}
+                    ${this.renderStatCard(isSignalExit ? "Poly Profit Rate" : "Poly Win Rate", formatPercent(summary.winRate), profitabilityTone)}
                     ${this.renderStatCard("Poly Exp / Trade", formatPolymarketCents(summary.expectancy), summary.expectancy)}
                     ${this.renderStatCard("Poly Profit Factor", formatProfitFactor(summary.profitFactor))}
-                    ${this.renderStatCard("Edge Vs Break-even", `${summary.edgeVsBreakEven >= 0 ? "+" : ""}${(summary.edgeVsBreakEven * 100).toFixed(1)}pp`, summary.edgeVsBreakEven)}
+                    ${isSignalExit ? "" : this.renderStatCard("Edge Vs Break-even", `${summary.edgeVsBreakEven >= 0 ? "+" : ""}${(summary.edgeVsBreakEven * 100).toFixed(1)}pp`, summary.edgeVsBreakEven)}
                 </div>
             </div>
         `;
@@ -289,6 +300,11 @@ class PolymarketPanelService {
         const isSignalExit = summary.evaluationMode === "signal_exit_same_event";
         const runModeLabel = isSignalExit ? "Exit Mode" : (typeof summary.entryOffset === "number" ? "Selected Offset" : "Run Mode");
         const runModeValue = isSignalExit ? "Signal Exit (same event)" : (typeof summary.entryOffset === "number" ? `Minute ${summary.entryOffset}` : "Native 5m scoring");
+        const winCountLabel = isSignalExit ? "Profitable Trades" : "Poly Wins";
+        const lossCountLabel = isSignalExit ? "Losing Trades" : "Poly Losses";
+        const profitabilityTone = isSignalExit && summary.wins === 0 && summary.losses === 0
+            ? 0
+            : summary.winRate - 0.5;
         const timingContext = summary.bestTimingProfile
             ? `Best minute ${summary.bestTimingProfile.entryOffset} at ${formatPercent(summary.bestTimingProfile.winRate)}`
             : isSignalExit ? "Signal-exit mode: trades exit on chart sell signal inside the same 5m event." : "Full timing profile is available in 1m bridge runs.";
@@ -296,6 +312,8 @@ class PolymarketPanelService {
         const signalExitCards = isSignalExit ? `
                     ${this.renderStatCard("Signal Exited", String(summary.signalExitedTrades ?? 0))}
                     ${this.renderStatCard("Resolved (Held)", String(summary.resolvedTrades ?? 0))}
+                    ${summary.neutralTrades > 0 ? this.renderStatCard("Neutral Trades", String(summary.neutralTrades)) : ""}
+                    ${summary.missingPriceTrades && summary.missingPriceTrades > 0 ? this.renderStatCard("Missing Price Trades", String(summary.missingPriceTrades)) : ""}
         ` : '';
 
         const baselineCard = isSignalExit ? '' : `
@@ -308,10 +326,10 @@ class PolymarketPanelService {
                 <div class="entry-stats-hint polymarket-diagnostics__hint">${timingContext}</div>
                 <div class="stats-grid polymarket-panel__stats">
                     ${this.renderStatCard(runModeLabel, runModeValue)}
-                    ${this.renderStatCard(isSignalExit ? "Poly Profitable %" : "Poly Win Rate", formatPercent(summary.winRate), summary.winRate - 0.5)}
+                    ${this.renderStatCard(isSignalExit ? "Poly Profitable %" : "Poly Win Rate", formatPercent(summary.winRate), profitabilityTone)}
                     ${this.renderStatCard("Scored Trade Share", formatPercent(summary.coverage))}
-                    ${this.renderStatCard("Poly Wins", String(summary.wins), summary.wins > 0 ? 1 : 0)}
-                    ${this.renderStatCard("Poly Losses", String(summary.losses), summary.losses > 0 ? -1 : 0)}
+                    ${this.renderStatCard(winCountLabel, String(summary.wins), summary.wins > 0 ? 1 : 0)}
+                    ${this.renderStatCard(lossCountLabel, String(summary.losses), summary.losses > 0 ? -1 : 0)}
                     ${baselineCard}
                     ${signalExitCards}
                     ${this.renderStatCard("Scored Trades", String(summary.scoredTrades))}

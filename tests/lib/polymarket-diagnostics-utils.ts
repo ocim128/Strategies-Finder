@@ -99,6 +99,7 @@ export interface PolymarketPayoutDiagnosticsSummary {
 export interface BacktestPolymarketPerformanceSummary {
     wins: number;
     losses: number;
+    neutralTrades: number;
     scoredTrades: number;
     unscoredTrades: number;
     missingOutcomeTrades: number;
@@ -116,6 +117,8 @@ export interface BacktestPolymarketPerformanceSummary {
     entryOffset?: number;
 }
 
+type PolymarketTradeOutcomeState = "positive" | "negative" | "neutral" | null;
+
 function getPolymarketPricedTrades(trades: readonly Trade[]): Trade[] {
     return trades.filter((trade) => getPolymarketTradePayout(trade) !== null);
 }
@@ -124,6 +127,9 @@ function getScoredPolymarketTrades(trades: readonly Trade[]): Trade[] {
     return trades.filter((trade) => (
         trade.polymarketOutcome !== null
         && trade.polymarketOutcome !== undefined
+        && trade.polymarketOutcome.marketExitSource !== "duplicate"
+        && trade.polymarketOutcome.marketExitSource !== "no_event"
+        && trade.polymarketOutcome.marketExitSource !== "missing"
     ));
 }
 
@@ -152,6 +158,20 @@ function getPolymarketTradePayout(trade: Trade): number | null {
     return isWin ? (1 - price) : -price;
 }
 
+function getPolymarketTradeOutcomeState(trade: Trade): PolymarketTradeOutcomeState {
+    const payout = getPolymarketTradePayout(trade);
+    if (payout === null) {
+        return null;
+    }
+    if (payout > 0) {
+        return "positive";
+    }
+    if (payout < 0) {
+        return "negative";
+    }
+    return "neutral";
+}
+
 function average(values: readonly number[]): number {
     if (values.length === 0) {
         return 0;
@@ -166,15 +186,15 @@ function buildPolymarketExpectancyRow(label: string, trades: readonly Trade[]): 
     const entryPrices = trades
         .map((trade) => trade.polymarketOutcome?.marketEntryPrice)
         .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-    const wins = trades.filter((trade) => trade.polymarketOutcome?.isWin === true);
-    const losses = trades.filter((trade) => trade.polymarketOutcome?.isWin === false);
-    const totalProfit = wins.reduce((sum, trade) => sum + Math.max(0, getPolymarketTradePayout(trade) ?? 0), 0);
-    const totalLoss = Math.abs(losses.reduce((sum, trade) => sum + Math.min(0, getPolymarketTradePayout(trade) ?? 0), 0));
+    const winningPayouts = payouts.filter((value) => value > 0);
+    const losingPayouts = payouts.filter((value) => value < 0);
+    const totalProfit = winningPayouts.reduce((sum, value) => sum + value, 0);
+    const totalLoss = Math.abs(losingPayouts.reduce((sum, value) => sum + value, 0));
     const netProfit = payouts.reduce((sum, value) => sum + value, 0);
     const tradeCount = payouts.length;
     const avgEntryPrice = entryPrices.length > 0 ? average(entryPrices) : 0;
     const breakEvenWinRate = avgEntryPrice * 100;
-    const winRate = tradeCount > 0 ? (wins.length / tradeCount) * 100 : 0;
+    const winRate = tradeCount > 0 ? (winningPayouts.length / tradeCount) * 100 : 0;
 
     return {
         label,
@@ -182,8 +202,8 @@ function buildPolymarketExpectancyRow(label: string, trades: readonly Trade[]): 
         winRate,
         netProfit,
         expectancy: tradeCount > 0 ? netProfit / tradeCount : 0,
-        avgWin: wins.length > 0 ? totalProfit / wins.length : 0,
-        avgLoss: losses.length > 0 ? totalLoss / losses.length : 0,
+        avgWin: winningPayouts.length > 0 ? totalProfit / winningPayouts.length : 0,
+        avgLoss: losingPayouts.length > 0 ? totalLoss / losingPayouts.length : 0,
         profitFactor: totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0,
         avgEntryPrice,
         breakEvenWinRate,
@@ -223,15 +243,15 @@ export function summarizePolymarketStreaks(trades: readonly Trade[]): {
     let longestLossStreak = 0;
 
     for (const trade of trades) {
-        const isWin = trade.polymarketOutcome?.isWin;
-        if (isWin === true) {
+        const outcomeState = getPolymarketTradeOutcomeState(trade);
+        if (outcomeState === "positive") {
             currentWinStreak++;
             currentLossStreak = 0;
             longestWinStreak = Math.max(longestWinStreak, currentWinStreak);
             continue;
         }
 
-        if (isWin === false) {
+        if (outcomeState === "negative") {
             currentLossStreak++;
             currentWinStreak = 0;
             longestLossStreak = Math.max(longestLossStreak, currentLossStreak);
@@ -264,7 +284,7 @@ export function countDistinctPolymarketOutcomeRows(trades: readonly Trade[]): nu
     const distinctEventStartTs = new Set<number>();
     for (const trade of trades) {
         const eventStartTs = trade.polymarketOutcome?.eventStartTs;
-        if (typeof eventStartTs === "number" && Number.isFinite(eventStartTs)) {
+        if (typeof eventStartTs === "number" && Number.isFinite(eventStartTs) && eventStartTs > 0) {
             distinctEventStartTs.add(eventStartTs);
         }
     }
@@ -304,7 +324,10 @@ export function buildBacktestPolymarketPerformanceSummary(
     const losses = isSignalExit
         ? (summary?.losingTrades ?? result.trades.filter((trade) => trade.polymarketOutcome?.isProfitable === false).length)
         : result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
-    const scoredTrades = isSignalExit ? (summary?.scoredTrades ?? wins + losses) : wins + losses;
+    const neutralTrades = isSignalExit
+        ? (summary?.neutralTrades ?? result.trades.filter((trade) => getPolymarketTradeOutcomeState(trade) === "neutral").length)
+        : 0;
+    const scoredTrades = isSignalExit ? (summary?.scoredTrades ?? wins + losses + neutralTrades) : wins + losses;
 
     if (!summary && scoredTrades === 0) {
         return undefined;
@@ -318,6 +341,7 @@ export function buildBacktestPolymarketPerformanceSummary(
     return {
         wins,
         losses,
+        neutralTrades,
         scoredTrades,
         unscoredTrades: coverageSummary.unscoredTrades,
         missingOutcomeTrades: coverageSummary.missingOutcomeTrades,

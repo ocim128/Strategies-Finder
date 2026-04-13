@@ -299,11 +299,23 @@ export class TradesRenderer {
                 return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly n/a: missing price point data for entry or exit">Poly n/a</span>`;
             }
 
-            const isProfitable = outcome.isProfitable;
-            const label = isProfitable === true ? 'Poly Profit' : isProfitable === false ? 'Poly Loss' : 'Poly n/a';
-            const className = isProfitable === true
-                ? 'exit-reason-badge--polymarket-win'
-                : 'exit-reason-badge--polymarket-lose';
+            const pnl = typeof outcome.marketPnl === 'number' && Number.isFinite(outcome.marketPnl)
+                ? outcome.marketPnl
+                : null;
+            const label = pnl === null
+                ? 'Poly n/a'
+                : pnl > 0
+                    ? 'Poly Profit'
+                    : pnl < 0
+                        ? 'Poly Loss'
+                        : 'Poly Flat';
+            const className = pnl === null
+                ? ''
+                : pnl > 0
+                    ? 'exit-reason-badge--polymarket-win'
+                    : pnl < 0
+                        ? 'exit-reason-badge--polymarket-lose'
+                        : '';
             const prediction = outcome.prediction.toUpperCase();
             const entryPrice = typeof outcome.marketEntryPrice === 'number' && Number.isFinite(outcome.marketEntryPrice)
                 ? this.formatPolymarketEntryPrice(outcome.marketEntryPrice)
@@ -311,8 +323,8 @@ export class TradesRenderer {
             const exitPrice = typeof outcome.marketExitPrice === 'number' && Number.isFinite(outcome.marketExitPrice)
                 ? this.formatPolymarketEntryPrice(outcome.marketExitPrice)
                 : outcome.marketExitSource ?? 'n/a';
-            const pnlLabel = typeof outcome.marketPnl === 'number' && Number.isFinite(outcome.marketPnl)
-                ? `${outcome.marketPnl >= 0 ? '+' : ''}${(outcome.marketPnl * 100).toFixed(1)}c`
+            const pnlLabel = pnl !== null
+                ? `${pnl >= 0 ? '+' : ''}${(pnl * 100).toFixed(1)}c`
                 : '';
             const priceLabel = `${prediction} ${entryPrice}→${exitPrice}${pnlLabel ? ` (${pnlLabel})` : ''}`;
             const marketSlug = escapeHtml(outcome.marketSlug);

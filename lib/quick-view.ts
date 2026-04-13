@@ -36,6 +36,7 @@ import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
 type QuickViewPolymarketSummary = {
     wins: number;
     losses: number;
+    neutralTrades: number;
     scoredTrades: number;
     missingTrades: number;
     unscoredTrades: number;
@@ -51,12 +52,9 @@ type QuickViewPolymarketSummary = {
     recentFormTrades: number;
     recentFormWins: number;
     recentFormLosses: number;
+    recentFormFlats: number;
     recentFormWinRate: number;
-    exitReasonWinRates: {
-        maxHold: { trades: number; wins: number; losses: number; winRate: number; };
-        takeProfit: { trades: number; wins: number; losses: number; winRate: number; };
-        signal: { trades: number; wins: number; losses: number; winRate: number; };
-    };
+    exitReasonWinRates: QuickViewPolymarketExitReasonWinRates;
     afterTakeProfitExpectancy: {
         pricedTrades: number;
         expectancy: number | null;
@@ -65,6 +63,7 @@ type QuickViewPolymarketSummary = {
     timingProfile?: import("./types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry[];
     bestTimingProfile?: import("./types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry | null;
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+    missingPriceTrades?: number;
     signalExitedTrades?: number;
     resolvedTrades?: number;
 };
@@ -95,6 +94,7 @@ type QuickViewPolymarketExitReasonSummary = {
     trades: number;
     wins: number;
     losses: number;
+    neutralTrades: number;
     winRate: number;
 };
 
@@ -109,6 +109,8 @@ type QuickViewPolymarketExitReasonWinRates = {
     signal: QuickViewPolymarketExitReasonSummary;
 };
 
+type PolymarketTradeOutcomeState = "positive" | "negative" | "neutral" | null;
+
 export function summarizePolymarketStreaks(trades: Trade[]): {
     longestWinStreak: number;
     longestLossStreak: number;
@@ -119,15 +121,15 @@ export function summarizePolymarketStreaks(trades: Trade[]): {
     let longestLossStreak = 0;
 
     for (const trade of trades) {
-        const isWin = trade.polymarketOutcome?.isWin;
-        if (isWin === true) {
+        const outcomeState = getPolymarketTradeOutcomeState(trade);
+        if (outcomeState === "positive") {
             currentWinStreak++;
             currentLossStreak = 0;
             longestWinStreak = Math.max(longestWinStreak, currentWinStreak);
             continue;
         }
 
-        if (isWin === false) {
+        if (outcomeState === "negative") {
             currentLossStreak++;
             currentWinStreak = 0;
             longestLossStreak = Math.max(longestLossStreak, currentLossStreak);
@@ -145,14 +147,19 @@ export function summarizePolymarketStreaks(trades: Trade[]): {
 }
 
 function buildPolymarketWinRateSummary(trades: readonly Trade[]): QuickViewPolymarketExitReasonSummary {
-    const wins = trades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
-    const losses = trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
-    const tradeCount = wins + losses;
+    const outcomeStates = trades
+        .map((trade) => getPolymarketTradeOutcomeState(trade))
+        .filter((state): state is NonNullable<PolymarketTradeOutcomeState> => state !== null);
+    const wins = outcomeStates.filter((state) => state === "positive").length;
+    const losses = outcomeStates.filter((state) => state === "negative").length;
+    const neutralTrades = outcomeStates.filter((state) => state === "neutral").length;
+    const tradeCount = outcomeStates.length;
 
     return {
         trades: tradeCount,
         wins,
         losses,
+        neutralTrades,
         winRate: tradeCount > 0 ? wins / tradeCount : 0,
     };
 }
@@ -164,18 +171,24 @@ export function summarizeRecentPolymarketForm(
     recentFormTrades: number;
     recentFormWins: number;
     recentFormLosses: number;
+    recentFormFlats: number;
     recentFormWinRate: number;
 } {
-    const scoredTrades = trades.filter((trade) => trade.polymarketOutcome !== null && trade.polymarketOutcome !== undefined);
+    const scoredTrades = trades.filter((trade) => getPolymarketTradeOutcomeState(trade) !== null);
     const recentTrades = scoredTrades.slice(-Math.max(0, windowSize));
-    const recentFormWins = recentTrades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
-    const recentFormLosses = recentTrades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
-    const recentFormTrades = recentTrades.length;
+    const recentFormStates = recentTrades
+        .map((trade) => getPolymarketTradeOutcomeState(trade))
+        .filter((state): state is NonNullable<PolymarketTradeOutcomeState> => state !== null);
+    const recentFormWins = recentFormStates.filter((state) => state === "positive").length;
+    const recentFormLosses = recentFormStates.filter((state) => state === "negative").length;
+    const recentFormFlats = recentFormStates.filter((state) => state === "neutral").length;
+    const recentFormTrades = recentFormStates.length;
 
     return {
         recentFormTrades,
         recentFormWins,
         recentFormLosses,
+        recentFormFlats,
         recentFormWinRate: recentFormTrades > 0 ? recentFormWins / recentFormTrades : 0,
     };
 }
@@ -210,7 +223,7 @@ export function summarizePolymarketExpectancyAfterTakeProfit(
 }
 
 export function computePolymarketBestBaselineWinRate(trades: Trade[]): number {
-    const scoredTrades = trades.filter((trade) => trade.polymarketOutcome !== null && trade.polymarketOutcome !== undefined);
+    const scoredTrades = getScoredPolymarketTrades(trades);
     if (scoredTrades.length === 0) {
         return 0;
     }
@@ -225,7 +238,7 @@ export function countDistinctPolymarketOutcomeRows(trades: Trade[]): number {
     const distinctEventStartTs = new Set<number>();
     for (const trade of trades) {
         const eventStartTs = trade.polymarketOutcome?.eventStartTs;
-        if (typeof eventStartTs === "number" && Number.isFinite(eventStartTs)) {
+        if (typeof eventStartTs === "number" && Number.isFinite(eventStartTs) && eventStartTs > 0) {
             distinctEventStartTs.add(eventStartTs);
         }
     }
@@ -260,7 +273,36 @@ function getScoredPolymarketTrades(trades: readonly Trade[]): Trade[] {
     return trades.filter((trade) => (
         trade.polymarketOutcome !== null
         && trade.polymarketOutcome !== undefined
+        && trade.polymarketOutcome.marketExitSource !== "duplicate"
+        && trade.polymarketOutcome.marketExitSource !== "no_event"
+        && trade.polymarketOutcome.marketExitSource !== "missing"
     ));
+}
+
+function inferPolymarketSummaryCounts(
+    trades: readonly Trade[],
+    totalTrades: number
+): {
+    scoredTrades: number;
+    missingOutcomeTrades: number;
+    unscoredTrades: number;
+    duplicateTradesIgnored?: number;
+} {
+    const scoredTrades = getScoredPolymarketTrades(trades).length;
+    const hasSignalExitAnnotations = trades.some((trade) => trade.polymarketOutcome?.evaluationMode === "signal_exit_same_event");
+    const duplicateTradesIgnored = hasSignalExitAnnotations
+        ? trades.filter((trade) => trade.polymarketOutcome?.marketExitSource === "duplicate").length
+        : 0;
+    const missingOutcomeTrades = hasSignalExitAnnotations
+        ? trades.filter((trade) => trade.polymarketOutcome?.marketExitSource === "no_event").length
+        : Math.max(0, totalTrades - scoredTrades);
+
+    return {
+        scoredTrades,
+        missingOutcomeTrades,
+        unscoredTrades: Math.max(0, totalTrades - scoredTrades),
+        duplicateTradesIgnored: duplicateTradesIgnored > 0 ? duplicateTradesIgnored : undefined,
+    };
 }
 
 function getPolymarketTradePayout(trade: Trade): number | null {
@@ -290,6 +332,20 @@ function getPolymarketTradePayout(trade: Trade): number | null {
     return isWin ? (1 - price) : -price;
 }
 
+function getPolymarketTradeOutcomeState(trade: Trade): PolymarketTradeOutcomeState {
+    const payout = getPolymarketTradePayout(trade);
+    if (payout === null) {
+        return null;
+    }
+    if (payout > 0) {
+        return "positive";
+    }
+    if (payout < 0) {
+        return "negative";
+    }
+    return "neutral";
+}
+
 function average(values: number[]): number {
     if (values.length === 0) {
         return 0;
@@ -304,15 +360,15 @@ function buildPolymarketExpectancyRow(label: string, trades: readonly Trade[]): 
     const entryPrices = trades
         .map((trade) => trade.polymarketOutcome?.marketEntryPrice)
         .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-    const wins = trades.filter((trade) => trade.polymarketOutcome?.isWin === true);
-    const losses = trades.filter((trade) => trade.polymarketOutcome?.isWin === false);
-    const totalProfit = wins.reduce((sum, trade) => sum + Math.max(0, getPolymarketTradePayout(trade) ?? 0), 0);
-    const totalLoss = Math.abs(losses.reduce((sum, trade) => sum + Math.min(0, getPolymarketTradePayout(trade) ?? 0), 0));
+    const winningPayouts = payouts.filter((value) => value > 0);
+    const losingPayouts = payouts.filter((value) => value < 0);
+    const totalProfit = winningPayouts.reduce((sum, value) => sum + value, 0);
+    const totalLoss = Math.abs(losingPayouts.reduce((sum, value) => sum + value, 0));
     const netProfit = payouts.reduce((sum, value) => sum + value, 0);
     const tradeCount = payouts.length;
     const avgEntryPrice = entryPrices.length > 0 ? average(entryPrices) : 0;
     const breakEvenWinRate = avgEntryPrice * 100;
-    const winRate = tradeCount > 0 ? (wins.length / tradeCount) * 100 : 0;
+    const winRate = tradeCount > 0 ? (winningPayouts.length / tradeCount) * 100 : 0;
 
     return {
         label,
@@ -320,8 +376,8 @@ function buildPolymarketExpectancyRow(label: string, trades: readonly Trade[]): 
         winRate,
         netProfit,
         expectancy: tradeCount > 0 ? netProfit / tradeCount : 0,
-        avgWin: wins.length > 0 ? totalProfit / wins.length : 0,
-        avgLoss: losses.length > 0 ? totalLoss / losses.length : 0,
+        avgWin: winningPayouts.length > 0 ? totalProfit / winningPayouts.length : 0,
+        avgLoss: losingPayouts.length > 0 ? totalLoss / losingPayouts.length : 0,
         profitFactor: totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0,
         avgEntryPrice,
         breakEvenWinRate,
@@ -594,10 +650,10 @@ class QuickViewManager {
             unscoredTrades?: number;
         } = {}
     ): BacktestResult {
-        const scoredTrades = trades.filter((trade) => trade.polymarketOutcome !== undefined && trade.polymarketOutcome !== null).length;
         const totalTrades = result.totalTrades > 0 ? result.totalTrades : trades.length;
         const fallbackOutcomeRowsLoaded = options.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(trades);
         const existingSummary = result.polymarketTradeSummary;
+        const inferredCounts = inferPolymarketSummaryCounts(trades, totalTrades);
 
         return {
             ...result,
@@ -608,15 +664,16 @@ class QuickViewManager {
                 outcomeRowsLoaded: existingSummary?.outcomeRowsLoaded && existingSummary.outcomeRowsLoaded > 0
                     ? existingSummary.outcomeRowsLoaded
                     : fallbackOutcomeRowsLoaded,
-                scoredTrades: existingSummary?.scoredTrades ?? scoredTrades,
-                missingOutcomeTrades: existingSummary?.missingOutcomeTrades ?? options.missingOutcomeTrades ?? Math.max(0, totalTrades - scoredTrades),
-                unscoredTrades: existingSummary?.unscoredTrades ?? options.unscoredTrades ?? Math.max(0, totalTrades - scoredTrades),
-                duplicateTradesIgnored: existingSummary?.duplicateTradesIgnored,
+                scoredTrades: existingSummary?.scoredTrades ?? inferredCounts.scoredTrades,
+                missingOutcomeTrades: existingSummary?.missingOutcomeTrades ?? options.missingOutcomeTrades ?? inferredCounts.missingOutcomeTrades,
+                unscoredTrades: existingSummary?.unscoredTrades ?? options.unscoredTrades ?? inferredCounts.unscoredTrades,
+                duplicateTradesIgnored: existingSummary?.duplicateTradesIgnored ?? inferredCounts.duplicateTradesIgnored,
                 entryOffset: existingSummary?.entryOffset ?? options.selectedOffset,
                 timingProfile: existingSummary?.timingProfile,
                 evaluationMode: existingSummary?.evaluationMode,
                 profitableTrades: existingSummary?.profitableTrades,
                 losingTrades: existingSummary?.losingTrades,
+                neutralTrades: existingSummary?.neutralTrades,
                 signalExitedTrades: existingSummary?.signalExitedTrades,
                 resolvedTrades: existingSummary?.resolvedTrades,
                 missingPriceTrades: existingSummary?.missingPriceTrades,
@@ -736,8 +793,9 @@ class QuickViewManager {
                     outcomes,
                     pricePoints,
                 });
+                const exitResultByTrade = new Map(exitResults.map((exitResult) => [exitResult.trade, exitResult]));
                 const annotatedTrades = result.trades.map((trade) => {
-                    const exitResult = exitResults.find((r) => r.trade === trade);
+                    const exitResult = exitResultByTrade.get(trade);
                     if (!exitResult || exitResult.exitSource === "missing") return { ...trade, polymarketOutcome: null };
                     return { ...trade, polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult) };
                 });
@@ -750,11 +808,13 @@ class QuickViewManager {
                         outcomeSymbol: resolvedOutcomeSymbol ?? undefined,
                         outcomeRowsLoaded: outcomes.length,
                         scoredTrades: exitSummary.scoredTrades,
-                        missingOutcomeTrades: 0,
-                        unscoredTrades: exitSummary.missingPriceTrades,
+                        missingOutcomeTrades: exitSummary.missingOutcomeTrades,
+                        unscoredTrades: exitSummary.unscoredTrades,
+                        duplicateTradesIgnored: exitSummary.duplicateTradesIgnored > 0 ? exitSummary.duplicateTradesIgnored : undefined,
                         evaluationMode: "signal_exit_same_event",
                         profitableTrades: exitSummary.profitableTrades,
                         losingTrades: exitSummary.losingTrades,
+                        neutralTrades: exitSummary.neutralTrades,
                         signalExitedTrades: exitSummary.signalExitedTrades,
                         resolvedTrades: exitSummary.resolvedTrades,
                         missingPriceTrades: exitSummary.missingPriceTrades,
@@ -1237,7 +1297,10 @@ class QuickViewManager {
         const losses = isSignalExit
             ? (summary?.losingTrades ?? result.trades.filter((t) => t.polymarketOutcome?.isProfitable === false).length)
             : result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
-        const scoredTrades = isSignalExit ? (summary?.scoredTrades ?? wins + losses) : wins + losses;
+        const neutralTrades = isSignalExit
+            ? (summary?.neutralTrades ?? result.trades.filter((trade) => getPolymarketTradeOutcomeState(trade) === "neutral").length)
+            : 0;
+        const scoredTrades = isSignalExit ? (summary?.scoredTrades ?? wins + losses + neutralTrades) : wins + losses;
 
         if (scoredTrades === 0) return null;
 
@@ -1256,7 +1319,7 @@ class QuickViewManager {
         const afterTakeProfitExpectancy = summarizePolymarketExpectancyAfterTakeProfit(result.trades);
 
         return {
-            wins, losses, scoredTrades, missingTrades, unscoredTrades, coverage,
+            wins, losses, neutralTrades, scoredTrades, missingTrades, unscoredTrades, coverage,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
             expectancy: isSignalExit
                 ? (summary?.expectancy ?? payoutSummary?.expectancy ?? null)
@@ -1272,11 +1335,13 @@ class QuickViewManager {
             recentFormTrades: recentFormSummary.recentFormTrades,
             recentFormWins: recentFormSummary.recentFormWins,
             recentFormLosses: recentFormSummary.recentFormLosses,
+            recentFormFlats: recentFormSummary.recentFormFlats,
             recentFormWinRate: recentFormSummary.recentFormWinRate,
             exitReasonWinRates, afterTakeProfitExpectancy,
             entryOffset: summary?.entryOffset,
             timingProfile, bestTimingProfile,
             evaluationMode: isSignalExit ? "signal_exit_same_event" : undefined,
+            missingPriceTrades: isSignalExit ? (summary?.missingPriceTrades ?? 0) : undefined,
             signalExitedTrades: isSignalExit ? (summary?.signalExitedTrades ?? 0) : undefined,
             resolvedTrades: isSignalExit ? (summary?.resolvedTrades ?? 0) : undefined,
         };
@@ -1292,7 +1357,7 @@ class QuickViewManager {
             ? `${(summary.winRate * 100).toFixed(1)}% | ${summary.trades}t`
             : 'n/a';
         const toneClass = summary.trades > 0
-            ? (summary.winRate >= 0.5 ? 'positive' : 'negative')
+            ? (summary.wins === 0 && summary.losses === 0 ? '' : (summary.winRate >= 0.5 ? 'positive' : 'negative'))
             : '';
 
         return `
@@ -1329,6 +1394,31 @@ class QuickViewManager {
         if (!summary) return '';
         const isSignalExit = summary.evaluationMode === "signal_exit_same_event";
         const modeLabel = isSignalExit ? "Signal Exit (same event)" : (typeof summary.entryOffset === 'number' ? `Selected Offset: Minute ${summary.entryOffset}` : 'Run Mode: Native 5m scoring');
+        const winCountLabel = isSignalExit ? "Profitable Trades" : "Poly Wins";
+        const lossCountLabel = isSignalExit ? "Losing Trades" : "Poly Losses";
+        const streakWinLabel = isSignalExit ? "Max Profit Streak" : "Max Win Streak";
+        const streakLossLabel = isSignalExit ? "Max Loss Streak" : "Max Loss Streak";
+        const recentFormLabel = isSignalExit ? "Last 50 P/L/F" : "Last 50 W/L";
+        const recentFormValue = summary.recentFormTrades === 0
+            ? "n/a"
+            : isSignalExit
+                ? `${summary.recentFormWins} profit - ${summary.recentFormLosses} loss${summary.recentFormFlats > 0 ? ` - ${summary.recentFormFlats} flat` : ""}`
+                : `${summary.recentFormWins} win - ${summary.recentFormLosses} lose`;
+        const recentFormToneClass = summary.recentFormTrades === 0
+            ? ""
+            : isSignalExit && summary.recentFormWins === 0 && summary.recentFormLosses === 0
+                ? ""
+                : summary.recentFormWinRate >= 0.5
+                    ? "positive"
+                    : "negative";
+        const profitabilityToneClass = isSignalExit && summary.wins === 0 && summary.losses === 0
+            ? ""
+            : summary.winRate >= 0.5
+                ? "positive"
+                : "negative";
+        const afterMaxHoldLabel = isSignalExit ? "Entry Profit % | After Max Hold" : "Entry Win % | After Max Hold";
+        const afterTakeProfitLabel = isSignalExit ? "Entry Profit % | After TP" : "Entry Win % | After TP";
+        const afterSignalLabel = isSignalExit ? "Entry Profit % | After Signal" : "Entry Win % | After Signal";
         const timingProfileSection = summary.timingProfile && summary.timingProfile.length > 0
             ? this.buildPolymarketTimingProfileSection(summary)
             : '';
@@ -1348,6 +1438,18 @@ class QuickViewManager {
                     <div class="qv-stat-label">Resolved (Held)</div>
                     <div class="qv-stat-value">${summary.resolvedTrades ?? 0}</div>
                 </div>
+                ${summary.neutralTrades > 0 ? `
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Neutral Trades</div>
+                    <div class="qv-stat-value">${summary.neutralTrades}</div>
+                </div>
+                ` : ""}
+                ${summary.missingPriceTrades && summary.missingPriceTrades > 0 ? `
+                <div class="qv-stat-card">
+                    <div class="qv-stat-label">Missing Price Trades</div>
+                    <div class="qv-stat-value">${summary.missingPriceTrades}</div>
+                </div>
+                ` : ""}
         ` : '';
 
         const baselineCard = isSignalExit ? '' : `
@@ -1368,7 +1470,7 @@ class QuickViewManager {
                 </div>
                 <div class="qv-stat-card">
                     <div class="qv-stat-label">${isSignalExit ? 'Poly Profitable' : 'Poly Win Rate'}</div>
-                    <div class="qv-stat-value ${summary.winRate >= 0.5 ? 'positive' : 'negative'}">
+                    <div class="qv-stat-value ${profitabilityToneClass}">
                         ${(summary.winRate * 100).toFixed(1)}%
                     </div>
                 </div>
@@ -1387,33 +1489,33 @@ class QuickViewManager {
                     <div class="qv-stat-value">${(summary.coverage * 100).toFixed(1)}%</div>
                 </div>
                 <div class="qv-stat-card">
-                    <div class="qv-stat-label">Poly Wins</div>
+                    <div class="qv-stat-label">${winCountLabel}</div>
                     <div class="qv-stat-value positive">${summary.wins}</div>
                 </div>
                 <div class="qv-stat-card">
-                    <div class="qv-stat-label">Poly Losses</div>
+                    <div class="qv-stat-label">${lossCountLabel}</div>
                     <div class="qv-stat-value negative">${summary.losses}</div>
                 </div>
                 ${baselineCard}
                 ${signalExitCards}
                 <div class="qv-stat-card">
-                    <div class="qv-stat-label">Max Win Streak</div>
+                    <div class="qv-stat-label">${streakWinLabel}</div>
                     <div class="qv-stat-value positive">${summary.longestWinStreak}</div>
                 </div>
                 <div class="qv-stat-card">
-                    <div class="qv-stat-label">Max Loss Streak</div>
+                    <div class="qv-stat-label">${streakLossLabel}</div>
                     <div class="qv-stat-value negative">${summary.longestLossStreak}</div>
                 </div>
                 <div class="qv-stat-card">
-                    <div class="qv-stat-label">Last 50 W/L</div>
-                    <div class="qv-stat-value ${summary.recentFormTrades === 0 ? '' : (summary.recentFormWinRate >= 0.5 ? 'positive' : 'negative')}">
-                        ${summary.recentFormTrades === 0 ? 'n/a' : `${summary.recentFormWins} win - ${summary.recentFormLosses} lose`}
+                    <div class="qv-stat-label">${recentFormLabel}</div>
+                    <div class="qv-stat-value ${recentFormToneClass}">
+                        ${recentFormValue}
                     </div>
                 </div>
-                ${this.renderPolymarketExitReasonWinRateCard('Entry Win % | After Max Hold', summary.exitReasonWinRates.maxHold)}
-                ${this.renderPolymarketExitReasonWinRateCard('Entry Win % | After TP', summary.exitReasonWinRates.takeProfit)}
+                ${this.renderPolymarketExitReasonWinRateCard(afterMaxHoldLabel, summary.exitReasonWinRates.maxHold)}
+                ${this.renderPolymarketExitReasonWinRateCard(afterTakeProfitLabel, summary.exitReasonWinRates.takeProfit)}
                 ${this.renderPolymarketExpectancyCard('Entry Exp / Trade | After TP', summary.afterTakeProfitExpectancy)}
-                ${this.renderPolymarketExitReasonWinRateCard('Entry Win % | After Signal', summary.exitReasonWinRates.signal)}
+                ${this.renderPolymarketExitReasonWinRateCard(afterSignalLabel, summary.exitReasonWinRates.signal)}
                 <div class="qv-stat-card">
                     <div class="qv-stat-label">Scored Trades</div>
                     <div class="qv-stat-value">${summary.scoredTrades}</div>

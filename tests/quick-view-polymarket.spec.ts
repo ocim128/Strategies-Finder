@@ -648,10 +648,16 @@ describe("Quick View Polymarket streak summary", () => {
 
         expect(html).to.contain("Signal Exit (same event)");
         expect(html).to.contain("Poly Profitable");
+        expect(html).to.contain("Profitable Trades");
+        expect(html).to.contain("Losing Trades");
         expect(html).to.contain("+4.0c");
         expect(html).to.contain("1.80");
         expect(html).to.contain("Signal Exited");
         expect(html).to.contain("Resolved (Held)");
+        expect(html).to.contain("Last 50 P/L/F");
+        expect(html).to.contain("Entry Profit % | After Max Hold");
+        expect(html).to.contain("Entry Profit % | After TP");
+        expect(html).to.contain("Entry Profit % | After Signal");
     });
 
     it("does not render an empty signal-exit section when no trades were actually priced", () => {
@@ -686,5 +692,185 @@ describe("Quick View Polymarket streak summary", () => {
         } satisfies BacktestResult);
 
         expect(html).to.equal("");
+    });
+
+    it("keeps signal-exit flats neutral and excludes duplicate or no-event trades from quick-view form cards", () => {
+        const html = (quickViewManager as any).buildPolymarketSection({
+            trades: [
+                makeTrade(1, true, {
+                    exitReason: "time_stop",
+                    polymarketOutcome: {
+                        ...makeTrade(1, true).polymarketOutcome!,
+                        evaluationMode: "signal_exit_same_event",
+                        isProfitable: true,
+                        marketEntryPrice: 0.40,
+                        marketExitPrice: 0.60,
+                        marketPnl: 0.20,
+                        marketExitSource: "signal",
+                    },
+                }),
+                makeTrade(2, false, {
+                    exitReason: "signal",
+                    polymarketOutcome: {
+                        ...makeTrade(2, false).polymarketOutcome!,
+                        evaluationMode: "signal_exit_same_event",
+                        isProfitable: false,
+                        marketEntryPrice: 0.55,
+                        marketExitPrice: 0.35,
+                        marketPnl: -0.20,
+                        marketExitSource: "resolution",
+                    },
+                }),
+                makeTrade(3, true, {
+                    exitReason: "take_profit",
+                    polymarketOutcome: {
+                        ...makeTrade(3, true).polymarketOutcome!,
+                        evaluationMode: "signal_exit_same_event",
+                        isProfitable: null,
+                        marketEntryPrice: 0.50,
+                        marketExitPrice: 0.50,
+                        marketPnl: 0,
+                        marketExitSource: "signal",
+                    },
+                }),
+                makeTrade(4, true, {
+                    polymarketOutcome: {
+                        ...makeTrade(4, true).polymarketOutcome!,
+                        evaluationMode: "signal_exit_same_event",
+                        isWin: null,
+                        isProfitable: null,
+                        marketEntryPrice: null,
+                        marketExitPrice: null,
+                        marketPnl: null,
+                        marketExitSource: "duplicate",
+                    },
+                }),
+                makeTrade(5, true, {
+                    polymarketOutcome: {
+                        ...makeTrade(5, true).polymarketOutcome!,
+                        eventStartTs: 0,
+                        eventEndTs: 0,
+                        eventSlug: "",
+                        marketSlug: "",
+                        actualOutcomeUp: 0,
+                        isWin: null,
+                        evaluationMode: "signal_exit_same_event",
+                        isProfitable: null,
+                        marketEntryPrice: null,
+                        marketExitPrice: null,
+                        marketPnl: null,
+                        marketExitSource: "no_event",
+                    },
+                }),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 5,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            polymarketTradeSummary: {
+                seriesId: "btc-5m",
+                outcomeRowsLoaded: 3,
+                scoredTrades: 3,
+                missingOutcomeTrades: 1,
+                unscoredTrades: 2,
+                evaluationMode: "signal_exit_same_event",
+                profitableTrades: 1,
+                losingTrades: 1,
+                neutralTrades: 1,
+                signalExitedTrades: 2,
+                resolvedTrades: 1,
+                expectancy: 0,
+                profitFactor: 1,
+            },
+        } satisfies BacktestResult);
+
+        expect(html).to.contain("Neutral Trades");
+        expect(html).to.contain("Last 50 P/L/F");
+        expect(html).to.contain("1 profit - 1 loss - 1 flat");
+        expect(html).to.contain("Entry Profit % | After Max Hold");
+        expect(html).to.contain("0.0% | 1t");
+        expect(html).to.contain("Entry Profit % | After TP");
+        expect(html).to.contain("n/a");
+        expect(html).to.contain("Entry Profit % | After Signal");
+        expect(html).to.contain("0.0% | 1t");
+        expect(html).to.not.contain("0.0% | 2t");
+    });
+
+    it("infers fallback signal-exit summary counts without scoring duplicates or no-event trades", () => {
+        const result = (quickViewManager as any).withPolymarketTradeSummary({
+            trades: [],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 3,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+        } satisfies BacktestResult, [
+            makeTrade(1, true, {
+                polymarketOutcome: {
+                    ...makeTrade(1, true).polymarketOutcome!,
+                    evaluationMode: "signal_exit_same_event",
+                    isProfitable: true,
+                    marketEntryPrice: 0.40,
+                    marketExitPrice: 0.60,
+                    marketPnl: 0.20,
+                    marketExitSource: "signal",
+                },
+            }),
+            makeTrade(2, true, {
+                polymarketOutcome: {
+                    ...makeTrade(2, true).polymarketOutcome!,
+                    evaluationMode: "signal_exit_same_event",
+                    isWin: null,
+                    isProfitable: null,
+                    marketEntryPrice: null,
+                    marketExitPrice: null,
+                    marketPnl: null,
+                    marketExitSource: "duplicate",
+                },
+            }),
+            makeTrade(3, true, {
+                polymarketOutcome: {
+                    ...makeTrade(3, true).polymarketOutcome!,
+                    eventStartTs: 0,
+                    eventEndTs: 0,
+                    eventSlug: "",
+                    marketSlug: "",
+                    actualOutcomeUp: 0,
+                    isWin: null,
+                    evaluationMode: "signal_exit_same_event",
+                    isProfitable: null,
+                    marketEntryPrice: null,
+                    marketExitPrice: null,
+                    marketPnl: null,
+                    marketExitSource: "no_event",
+                },
+            }),
+        ], "btc-5m");
+
+        expect(result.polymarketTradeSummary?.scoredTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.unscoredTrades).to.equal(2);
+        expect(result.polymarketTradeSummary?.missingOutcomeTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.duplicateTradesIgnored).to.equal(1);
     });
 });

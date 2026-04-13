@@ -38,8 +38,12 @@ export interface SignalExitTradeResult {
 export interface SignalExitSummary {
     scoredTrades: number;
     missingPriceTrades: number;
+    missingOutcomeTrades: number;
+    duplicateTradesIgnored: number;
+    unscoredTrades: number;
     profitableTrades: number;
     losingTrades: number;
+    neutralTrades: number;
     signalExitedTrades: number;
     resolvedTrades: number;
     netPnl: number;
@@ -206,7 +210,13 @@ export function evaluateSignalExitTrades(
         }
 
         const pnl = exitPrice !== null ? exitPrice - entryFill.price : null;
-        const isProfitable = pnl !== null ? pnl > 0 : null;
+        const isProfitable = pnl === null
+            ? null
+            : pnl > 0
+                ? true
+                : pnl < 0
+                    ? false
+                    : null;
 
         results.push({
             trade,
@@ -230,8 +240,11 @@ export function evaluateSignalExitTrades(
 function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): SignalExitSummary {
     let scoredTrades = 0;
     let missingPriceTrades = 0;
+    let missingOutcomeTrades = 0;
+    let duplicateTradesIgnored = 0;
     let profitableTrades = 0;
     let losingTrades = 0;
+    let neutralTrades = 0;
     let signalExitedTrades = 0;
     let resolvedTrades = 0;
     let netPnl = 0;
@@ -246,7 +259,12 @@ function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): Sign
             missingPriceTrades++;
             continue;
         }
-        if (r.exitSource === "duplicate" || r.exitSource === "no_event") {
+        if (r.exitSource === "duplicate") {
+            duplicateTradesIgnored++;
+            continue;
+        }
+        if (r.exitSource === "no_event") {
+            missingOutcomeTrades++;
             continue;
         }
 
@@ -266,6 +284,8 @@ function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): Sign
             } else if (r.pnl < 0) {
                 losingTrades++;
                 grossLoss += Math.abs(r.pnl);
+            } else {
+                neutralTrades++;
             }
         }
     }
@@ -273,8 +293,12 @@ function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): Sign
     return {
         scoredTrades,
         missingPriceTrades,
+        missingOutcomeTrades,
+        duplicateTradesIgnored,
+        unscoredTrades: missingPriceTrades + missingOutcomeTrades + duplicateTradesIgnored,
         profitableTrades,
         losingTrades,
+        neutralTrades,
         signalExitedTrades,
         resolvedTrades,
         netPnl,
@@ -299,7 +323,7 @@ export function buildTradeAnnotationFromSignalExitResult(
             marketSlug: "",
             prediction: (result.side ?? "yes") as "yes" | "no",
             actualOutcomeUp: 0,
-            isWin: false,
+            isWin: null,
             evaluationMode: "signal_exit_same_event",
             isProfitable: null,
             marketEntryPrice: null,
@@ -318,7 +342,7 @@ export function buildTradeAnnotationFromSignalExitResult(
             marketSlug: result.outcome!.market_slug || result.outcome!.event_slug,
             prediction: result.side as "yes" | "no",
             actualOutcomeUp: result.outcome!.resolved_outcome_up,
-            isWin: false,
+            isWin: null,
             evaluationMode: "signal_exit_same_event",
             isProfitable: null,
             marketEntryPrice: null,
@@ -336,7 +360,7 @@ export function buildTradeAnnotationFromSignalExitResult(
         marketSlug: result.outcome!.market_slug || result.outcome!.event_slug,
         prediction: result.side as "yes" | "no",
         actualOutcomeUp: result.outcome!.resolved_outcome_up,
-        isWin: result.isWin ?? false,
+        isWin: result.isWin,
         evaluationMode: "signal_exit_same_event",
         isProfitable: result.isProfitable,
         marketEntryPrice: result.entryPrice,
