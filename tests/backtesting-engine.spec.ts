@@ -818,6 +818,79 @@ describe('Backtesting Engine', () => {
         expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-9);
     });
 
+    it('should block same-bar next_open re-entry after a signal exit but allow re-entry on the following bar', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 101, high: 102, low: 100, close: 101, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 102, high: 103, low: 101, close: 102, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 103, high: 104, low: 102, close: 103, volume: 1000 },
+            { time: '2023-01-05' as Time, open: 104, high: 104, low: 104, close: 104, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'buy', price: 100, barIndex: 0 },
+            { time: '2023-01-02' as Time, type: 'sell', price: 101, barIndex: 1 },
+            { time: '2023-01-02' as Time, type: 'buy', price: 101, barIndex: 1 },
+            { time: '2023-01-03' as Time, type: 'buy', price: 102, barIndex: 2 },
+        ];
+
+        const settings = {
+            tradeDirection: 'long' as const,
+            executionModel: 'next_open' as const,
+            allowSameBarExit: false,
+        };
+
+        const full = runBacktest(data, signals, 10000, 100, 0, settings);
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings);
+
+        expect(full.totalTrades).to.equal(2);
+        expect(full.trades[0].entryTime).to.equal('2023-01-02' as Time);
+        expect(full.trades[0].exitTime).to.equal('2023-01-03' as Time);
+        expect(full.trades[0].exitReason).to.equal('signal');
+        expect(full.trades.some((trade) => trade.entryTime === ('2023-01-03' as Time))).to.equal(false);
+        expect(full.trades[1].entryTime).to.equal('2023-01-04' as Time);
+        expect(full.trades[1].exitReason).to.equal('end_of_data');
+        expect(compact.totalTrades).to.equal(full.totalTrades);
+        expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-9);
+    });
+
+    it('should block immediate next_open flips on the signal-exit bar and allow the next bar entry', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 99, high: 100, low: 98, close: 99, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 98, high: 99, low: 97, close: 98, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 97, high: 98, low: 96, close: 97, volume: 1000 },
+            { time: '2023-01-05' as Time, open: 96, high: 96, low: 96, close: 96, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'sell', price: 100, barIndex: 0 },
+            { time: '2023-01-02' as Time, type: 'buy', price: 99, barIndex: 1 },
+            { time: '2023-01-03' as Time, type: 'buy', price: 98, barIndex: 2 },
+        ];
+
+        const settings = {
+            tradeDirection: 'both' as const,
+            executionModel: 'next_open' as const,
+            allowSameBarExit: false,
+        };
+
+        const full = runBacktest(data, signals, 10000, 100, 0, settings);
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings);
+
+        expect(full.totalTrades).to.equal(2);
+        expect(full.trades[0].type).to.equal('short');
+        expect(full.trades[0].entryTime).to.equal('2023-01-02' as Time);
+        expect(full.trades[0].exitTime).to.equal('2023-01-03' as Time);
+        expect(full.trades[0].exitReason).to.equal('signal');
+        expect(full.trades.some((trade) => trade.entryTime === ('2023-01-03' as Time) && trade.type === 'long')).to.equal(false);
+        expect(full.trades[1].type).to.equal('long');
+        expect(full.trades[1].entryTime).to.equal('2023-01-04' as Time);
+        expect(full.trades[1].exitReason).to.equal('end_of_data');
+        expect(compact.totalTrades).to.equal(full.totalTrades);
+        expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-9);
+    });
+
     it('should resolve next_open ATR targets from the prior closed bar for alert parity', () => {
         const candles: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },

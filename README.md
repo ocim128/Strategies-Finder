@@ -190,6 +190,7 @@ Reuse existing helpers instead of inventing new conversions:
 ### Execution realism matters
 - percentage and ATR take-profit exits are capped at the configured target price once touched
 - stop-loss exits can still fill worse at the bar open when price gaps through the stop
+- `next_open` runs impose a 1-bar re-entry cooldown after a full `signal` exit, so same-bar re-entries are blocked and the earliest new entry is the next bar
 - if you need tighter execution realism than OHLC can provide, validate with lower-timeframe or tick data
 
 ## Common Workflows

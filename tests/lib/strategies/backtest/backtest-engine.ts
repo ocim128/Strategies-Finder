@@ -187,6 +187,7 @@ type SmartSizingPositionState = {
 
 const SMART_SIZING_FAST_PROGRESS_BARS = 2;
 const SMART_SIZING_PROGRESS_PERCENT = 50;
+const SIGNAL_EXIT_REENTRY_COOLDOWN_BARS = 1;
 
 function createFlipLossDirectionState(): FlipLossDirectionState {
     return {
@@ -197,6 +198,14 @@ function createFlipLossDirectionState(): FlipLossDirectionState {
         flipCooldownTradesRemaining: 0,
         hasFlipped: false,
     };
+}
+
+function armSignalExitReentryCooldown(barIndex: number): number {
+    return barIndex + SIGNAL_EXIT_REENTRY_COOLDOWN_BARS - 1;
+}
+
+function isSignalExitReentryCooldownActive(cooldownUntilBarIndex: number, barIndex: number): boolean {
+    return cooldownUntilBarIndex >= barIndex;
 }
 
 function getOppositeDirection(direction: 'long' | 'short'): 'long' | 'short' {
@@ -652,6 +661,7 @@ export function runBacktestCompact(
     let totalTrades = 0, winningTrades = 0, totalProfit = 0, totalLoss = 0;
     let peakEquity = initialCapital, maxDrawdown = 0, maxDrawdownPercent = 0;
     let signalIdx = 0;
+    let signalExitReentryCooldownUntilBarIndex = -1;
     const compactEquity = equityOut ?? new Float64Array(data.length);
 
     const commissionRate = commissionPercent / 100;
@@ -833,6 +843,9 @@ export function runBacktestCompact(
                 const exitTarget = positions.find((p) => p.direction === oppositeDir && (config.allowSameBarExit || compareTime(signal.time, p.entryTime) !== 0));
 
                 if (!exitTarget && positions.length < maxOpenTrades) {
+                    if (isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
+                        continue;
+                    }
                     if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
                         continue;
                     }
@@ -858,8 +871,12 @@ export function runBacktestCompact(
                     const { fullyClosed } = recordExit(exitTarget, signal.price, exitSize);
                     if (fullyClosed) {
                         finalizeClosedPosition(exitTarget, candle, signal.price, 'signal');
+                        if (!wasPartial) {
+                            signalExitReentryCooldownUntilBarIndex = armSignalExitReentryCooldown(i);
+                        }
                     }
-                    const immediateReentryAllowed = fullyClosed && !wasPartial && (
+                    const immediateReentryAllowed = fullyClosed && !wasPartial
+                        && !isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i) && (
                         tradeDirection === 'both'
                         || (
                             isLossStreakFlipTradeDirection(tradeDirection)
@@ -1085,6 +1102,7 @@ export function runBacktest(
     };
     const pendingAdaptiveTakeProfitUpdates: AdaptiveTakeProfitHistoryUpdate[] = [];
     const pendingAdaptiveTakeProfitExits = new Map<PositionState, NonNullable<Trade['exitReason']>>();
+    let signalExitReentryCooldownUntilBarIndex = -1;
 
     const queueAdaptiveTakeProfitUpdate = (
         position: PositionState,
@@ -1254,6 +1272,9 @@ export function runBacktest(
 
                 if (!exitTarget && positions.length < maxOpenTrades) {
                     // New entry
+                    if (isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
+                        continue;
+                    }
                     if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
                         continue;
                     }
@@ -1278,8 +1299,12 @@ export function runBacktest(
                     const { fullyClosed } = recordExitFull(exitTarget, candle, signal.price, exitSize, 'signal');
                     if (fullyClosed) {
                         finalizeClosedPositionFull(exitTarget, candle, signal.price, 'signal');
+                        if (exitFraction >= 1) {
+                            signalExitReentryCooldownUntilBarIndex = armSignalExitReentryCooldown(i);
+                        }
                     }
-                    const immediateReentryAllowed = fullyClosed && exitFraction >= 1 && (
+                    const immediateReentryAllowed = fullyClosed && exitFraction >= 1
+                        && !isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i) && (
                         tradeDirection === 'both'
                         || (
                             isLossStreakFlipTradeDirection(tradeDirection)

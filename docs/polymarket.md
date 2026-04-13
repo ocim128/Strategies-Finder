@@ -160,6 +160,7 @@ Effective gating:
 Behavior:
 
 - uses the normal chart backtest only for timing
+- because chart timing comes from the shared `next_open` engine, a full `signal` exit blocks re-entry on that same bar; the earliest new chart entry is the next `1m` bar
 - long trades buy YES; short trades buy NO
 - entry fill uses the first locally captured side price at or after the chart trade entry timestamp inside the containing `5m` event
 - if `trade.exitReason === "signal"` and the chart exit timestamp is still inside the same event, exit fill uses the latest locally captured side price at or before the chart exit timestamp
