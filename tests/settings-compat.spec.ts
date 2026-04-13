@@ -1,18 +1,17 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { normalizeBacktestSettings } from './lib/strategies/backtest/backtest-utils';
-import { EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from './lib/backtest-settings-resolver';
+import { normalizeBacktestSettings } from '../lib/strategies/backtest/backtest-utils';
+import { EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from '../lib/backtest-settings-resolver';
 import {
-    hasNonZeroSnapshotFilter,
     sanitizeBacktestSettingsForRust,
     requiresTypescriptEngine,
-} from './lib/rust-settings-sanitizer';
-import type { BacktestSettings } from './lib/types/strategies';
+} from '../lib/rust-settings-sanitizer';
+import type { BacktestSettings } from '../lib/types/strategies';
 import {
     isWorkerSupportedStrategyKey,
     resolveSubscriptionExecutionBacktestSettings,
-} from './lib/alert-subscription-utils';
-import { parseInputNumber } from './lib/dom-input-readers';
+} from '../lib/alert-subscription-utils';
+import { parseInputNumber } from '../lib/dom-input-readers';
 import {
     normalizeStoredEnsembleSignalRecipe,
     normalizeStoredAppSettings,
@@ -20,18 +19,17 @@ import {
     normalizeStoredStrategyConfig,
     sortEnsembleSignalRecipesNewestFirst,
     sortStrategyConfigsNewestFirst,
-} from './lib/settings-manager';
-import { DEFAULT_BACKTEST_SETTINGS, type EnsembleSignalRecipe } from './lib/settings-model';
-import { readBoolean, readNumber, toBooleanLike, toFiniteNumber } from './lib/settings-parse-utils';
-import { SNAPSHOT_CONFIGS } from './lib/backtest-settings-resolver';
+} from '../lib/settings-manager';
+import { DEFAULT_BACKTEST_SETTINGS, type EnsembleSignalRecipe } from '../lib/settings-model';
+import { readBoolean, readNumber, toBooleanLike, toFiniteNumber } from '../lib/settings-parse-utils';
 import {
     BACKTEST_SETTINGS_DOM_CONTRACTS,
     coerceBacktestDomSettingValue,
     getBacktestDomSettingContract,
     resolveBacktestDomSettingWriteValue,
-} from './lib/backtest-settings-dom-contract';
-import { strategyManifest } from './lib/strategies/manifest';
-import { DEFAULT_BUILT_IN_STRATEGY_KEY } from './lib/strategy-defaults';
+} from '../lib/backtest-settings-dom-contract';
+import { strategyManifest } from '../lib/strategies/manifest';
+import { DEFAULT_BUILT_IN_STRATEGY_KEY } from '../lib/strategy-defaults';
 
 describe('Backtest settings compatibility', () => {
     it('uses tradeFilterMode when provided', () => {
@@ -83,13 +81,6 @@ describe('Backtest settings compatibility', () => {
         expect('flipAfterConsecutiveLosses' in sanitized).to.equal(false);
         expect('flipCooldownTrades' in sanitized).to.equal(false);
         expect('minTradesBeforeFirstFlip' in sanitized).to.equal(false);
-        expect('snapshotRsiMin' in sanitized).to.equal(false);
-    });
-
-    it('detects non-zero snapshot filters consistently', () => {
-        expect(hasNonZeroSnapshotFilter({ snapshotRsiMin: 0 })).to.equal(false);
-        expect(hasNonZeroSnapshotFilter({ snapshotRsiMin: 42 })).to.equal(true);
-        expect(hasNonZeroSnapshotFilter({ snapshotWickSkewMin: -5 })).to.equal(true);
     });
 
     it('requires TS engine when marketMode is not "all"', () => {
@@ -370,7 +361,7 @@ describe('Backtest settings compatibility', () => {
     });
 
     it('exposes worker strategy compatibility checks for alert subscriptions', () => {
-        expect(isWorkerSupportedStrategyKey('volatility_compression_break')).to.equal(true);
+        expect(isWorkerSupportedStrategyKey(DEFAULT_BUILT_IN_STRATEGY_KEY)).to.equal(true);
         expect(isWorkerSupportedStrategyKey('definitely_not_a_worker_strategy')).to.equal(false);
     });
 

@@ -1,7 +1,9 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { OHLCVData, Signal, Time } from './lib/strategies/index';
-import { strategies } from './lib/strategies/library';
+import { strategies } from '../lib/strategies/library';
+import { DEFAULT_BUILT_IN_STRATEGY_KEY } from '../lib/strategy-defaults';
+import type { OHLCVData, Signal, Time } from '../lib/strategies/index';
+
 describe('Causal Signal Stability', () => {
     const buildSyntheticBars = (length: number): OHLCVData[] => {
         const bars: OHLCVData[] = [];
@@ -67,8 +69,7 @@ describe('Causal Signal Stability', () => {
         }
     };
 
-    it('volatility_compression_break should keep prior signals stable when candles are appended', () => {
-        expectPrefixStable('volatility_compression_break');
+    it('keeps the default built-in strategy stable when candles are appended', () => {
+        expectPrefixStable(DEFAULT_BUILT_IN_STRATEGY_KEY);
     });
 });
-

@@ -5,19 +5,6 @@ const RUST_UNSUPPORTED_TRADE_FILTER_MODES = new Set([
     "trend_exec_alignment",
 ]);
 
-/**
- * Determines if TypeScript engine is required for given backtest settings.
- * This is the single-source-of-truth for Rust eligibility decisions.
- * 
- * Returns true if any setting is incompatible with Rust backend, including:
- * - Non-default executionModel (not 'signal_close')
- * - Slippage (slippageBps > 0)
- * - Disabled same-bar exit (!allowSameBarExit)
- * - tradeDirection 'both', 'both_flip_loss_2', or 'combined'
- * - marketMode !== 'all'
- * - Any non-zero snapshot filter
- * - Risk extras unsupported by Rust (max hold, win-streak stop-loss override)
- */
 export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const executionModel = settings.executionModel ?? 'signal_close';
     const allowSameBarExit = settings.allowSameBarExit ?? true;
@@ -25,23 +12,19 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const marketMode = settings.marketMode ?? 'all';
     const tradeFilterMode = settings.tradeFilterMode ?? 'none';
 
-    // Realism constraints
     const usesRealismConstraints =
         executionModel !== 'signal_close'
         || slippageBps > 0
         || !allowSameBarExit;
 
-    // Trade direction constraints
     const usesCombinedDirection =
         settings.tradeDirection === 'both'
         || settings.tradeDirection === 'both_flip_loss_2'
         || settings.tradeDirection === 'combined';
 
-    // Market mode constraint (Rust only supports 'all')
     const usesNonAllMarketMode = marketMode !== 'all';
     const usesUnsupportedTradeFilterMode = RUST_UNSUPPORTED_TRADE_FILTER_MODES.has(tradeFilterMode);
 
-    // Percentage-based risk guards
     const usesRiskMaxHold =
         settings.riskMaxHoldEnabled === true
         && (settings.riskMaxHoldBars ?? 0) > 0;
@@ -56,10 +39,6 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         && settings.takeProfitMode !== undefined
         && settings.takeProfitMode !== 'fixed';
 
-    // Snapshot filters
-    const hasSnapshotFilters = hasNonZeroSnapshotFilter(settings);
-
-    // Multi-position constraint
     const usesMultiPosition = (settings.maxOpenTrades ?? 1) > 1;
 
     const usesSignalExitMode = settings.polymarketExitMode === "signal_exit_same_event";
@@ -71,12 +50,11 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         || usesRiskMaxHold
         || usesPercentageWinStreakStopLoss
         || usesAdaptivePercentageTakeProfit
-        || hasSnapshotFilters
         || usesMultiPosition
         || usesSignalExitMode;
 }
 
-export const SNAPSHOT_FILTER_SETTING_KEYS = [] as const satisfies readonly (keyof BacktestSettings)[];
+export const SNAPSHOT_FILTER_SETTING_KEYS = [] as const;
 
 export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "executionModel",
@@ -107,8 +85,7 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "polymarketOutcomeSymbol",
     "polymarketExitMode",
     "crossSymbolSecondary",
-    ...SNAPSHOT_FILTER_SETTING_KEYS,
-] as const satisfies readonly (keyof BacktestSettings)[];
+] as const;
 
 const UNSUPPORTED_KEYS = new Set<string>(RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS);
 
@@ -117,9 +94,6 @@ export function sanitizeBacktestSettingsForRust(settings: BacktestSettings): Bac
     return Object.fromEntries(sanitizedEntries) as BacktestSettings;
 }
 
-export function hasNonZeroSnapshotFilter(settings: BacktestSettings): boolean {
-    return SNAPSHOT_FILTER_SETTING_KEYS.some((key) => {
-        const value = settings[key];
-        return typeof value === "number" && Number.isFinite(value) && value !== 0;
-    });
+export function hasNonZeroSnapshotFilter(_settings: BacktestSettings): boolean {
+    return false;
 }

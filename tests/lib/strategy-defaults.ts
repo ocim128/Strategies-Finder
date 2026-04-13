@@ -1,1 +1,3 @@
-export const DEFAULT_BUILT_IN_STRATEGY_KEY = "volatility_compression_break";
+import { strategyManifest } from "./strategies/manifest";
+
+export const DEFAULT_BUILT_IN_STRATEGY_KEY = strategyManifest[0]?.key ?? "";

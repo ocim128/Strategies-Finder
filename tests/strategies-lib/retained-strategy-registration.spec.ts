@@ -1,24 +1,32 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { strategies } from '../lib/strategies/library';
+import { strategies } from '../../lib/strategies/library';
+import { strategyManifest } from '../../lib/strategies/manifest';
 
-describe('retained strategy library registration', () => {
-    it('keeps the retained survival strategy libs registered', () => {
-        const retainedKeys = [
-            'macd_signal_pinch_explosion',
-            'macd_histogram_volatility_squeeze',
-            'volume_profile_poc_median_shift',
-        ];
+describe('strategy library registration', () => {
+    it('keeps the generated strategy library aligned with the manifest', () => {
+        const manifestKeys = strategyManifest.map((entry) => entry.key).sort((left, right) => left.localeCompare(right));
+        const libraryKeys = Object.keys(strategies).sort((left, right) => left.localeCompare(right));
 
-        for (const key of retainedKeys) {
-            const strategy = strategies[key];
-            expect(strategy, `missing strategy ${key}`).to.not.equal(undefined);
+        expect(manifestKeys.length).to.be.greaterThan(0);
+        expect(libraryKeys).to.deep.equal(manifestKeys);
+
+        for (const { key, strategy } of strategyManifest) {
+            expect(strategies[key], `missing strategy ${key}`).to.equal(strategy);
             expect(Object.keys(strategy.paramLabels), `${key} paramLabels drift`).to.deep.equal(Object.keys(strategy.defaultParams));
+
+            for (const walkForwardParam of strategy.metadata?.walkForwardParams ?? []) {
+                expect(walkForwardParam in strategy.defaultParams, `${key} missing default param ${walkForwardParam}`).to.equal(true);
+                expect(walkForwardParam in strategy.paramLabels, `${key} missing param label ${walkForwardParam}`).to.equal(true);
+            }
 
             if (typeof strategy.normalizeParams === 'function') {
                 const normalizedDefaults = strategy.normalizeParams(strategy.defaultParams);
                 for (const paramKey of Object.keys(strategy.defaultParams)) {
-                    expect(normalizedDefaults[paramKey], `${key}.${paramKey} default should already be normalized`).to.equal(strategy.defaultParams[paramKey]);
+                    expect(
+                        normalizedDefaults[paramKey],
+                        `${key}.${paramKey} default should already be normalized`
+                    ).to.equal(strategy.defaultParams[paramKey]);
                 }
             }
         }

@@ -1,12 +1,6 @@
 import { createPolymarketPanelDom, type PolymarketPanelDom } from "./polymarket-panel-dom";
-import type { PolymarketFillHistorySummary } from "./polymarket-fill-history";
-import { loadPolymarketFillHistorySummary } from "./polymarket-fill-history";
 import {
-    getEffectivePolymarket5mSeriesId,
     getSupportedPolymarket5mSymbolsLabel,
-    isSupportedPolymarket5mRun,
-    loadPolymarket5mOutcomesForTimeRange,
-    resolvePolymarketOutcomeSymbol,
     supportsPolymarketOutcomeBridgeRun,
 } from "./polymarket-btc5m";
 import type { PolymarketFillScope } from "./polymarket-fill-analysis";
@@ -15,20 +9,8 @@ import { state } from "./state";
 import { setVisible } from "./dom-utils";
 import type { BacktestResult, ExpectancyBreakdownSection } from "./types/strategies";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
-import { settingsManager, type StrategyConfig } from "./settings-manager";
-import { uiManager } from "./ui-manager";
-import { debugLogger } from "./debug-logger";
-import { strategyRegistry } from "../strategyRegistry";
-import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "./polymarket-exit-mode";
-import { evaluateSignalExitTrades, buildTradeAnnotationFromSignalExitResult } from "./polymarket-signal-exit-evaluator";
-import { ensurePricePointsForOutcomes } from "./polymarket-price-points-ingest";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
-import { findContainingEvent } from "./polymarket-1m-5m-bridge";
 import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
-import {
-    annotateTradesWithPolymarketOutcomesForRun,
-    summarizePolymarketTradesForRun,
-} from "./polymarket-trade-annotations";
 import {
     analyzePolymarketDeployability,
     extractScoredTrades,
@@ -39,21 +21,22 @@ import {
     getQuickViewDiagnosticSections,
     summarizePolymarketPayoutDiagnostics,
 } from "./quick-view";
+import {
+    formatScopeLabel,
+    formatPercent,
+    formatProbability,
+    formatPolymarketCents,
+    formatProfitFactor,
+    formatSignedUsd,
+} from "./polymarket-formatting";
+import { PolymarketBridgeExport } from "./polymarket-bridge-export";
+import { PolymarketOutcomeLoader } from "./polymarket-outcome-loader";
 
 class PolymarketPanelService {
     private dom: PolymarketPanelDom | null = null;
     private initialized = false;
-    private loadedOutcomeRows: PolymarketOutcomeRow[] = [];
-    private outcomeByStartTs = new Map<number, PolymarketOutcomeRow>();
-    private historySummaryByStartTs = new Map<number, PolymarketFillHistorySummary>();
-    private lastResult: BacktestResult | null = null;
-    private isLoading = false;
-    private isEnrichingHistory = false;
-    private loadError: string | null = null;
-    private loadNonce = 0;
-    private bridgeConfigSignature = "";
-    private selectedBridgeConfigName = "";
-    private loadedResultSignature = "";
+    private outcomeLoader: PolymarketOutcomeLoader | null = null;
+    private bridgeExport: PolymarketBridgeExport | null = null;
     private renderFrameId: number | null = null;
     private renderTimeoutId: number | null = null;
     private deployabilityCacheKey = "";
@@ -65,16 +48,30 @@ class PolymarketPanelService {
         }
 
         this.dom = createPolymarketPanelDom();
-        this.lastResult = state.currentBacktestResult;
-        void this.isEnrichingHistory;
-        void this.enrichHistoryInBackground;
+        this.bridgeExport = new PolymarketBridgeExport(() => this.getDom());
+        this.outcomeLoader = new PolymarketOutcomeLoader({
+            getDom: () => this.getDom(),
+            readCurrentExecutionModel: () => this.readCurrentExecutionModel(),
+            readCurrentPolymarketEntryOffset: () => this.readCurrentPolymarketEntryOffset(),
+            readCurrentPolymarketExitMode: () => this.readCurrentPolymarketExitMode(),
+            readCurrentPolymarketOutcomeSymbol: () => this.readCurrentPolymarketOutcomeSymbol(),
+            isPanelVisible: () => this.isPanelVisible(),
+            scheduleRender: (delayMs?: number) => this.scheduleRender(delayMs),
+            invalidateDeployabilityCache: () => {
+                this.deployabilityCacheKey = "";
+                this.deployabilityCache = null;
+            },
+        });
+        this.outcomeLoader.lastResult = state.currentBacktestResult;
+        void this.outcomeLoader.isEnrichingHistory;
+        void this.outcomeLoader.enrichHistoryInBackground;
         void this.renderDeployabilityAnalysis;
-        void this.formatScopeLabel;
+        void formatScopeLabel;
         this.bindEvents();
         this.bindState();
         this.render();
         if (this.isPanelVisible()) {
-            void this.ensureOutcomeRowsForCurrentResult();
+            void this.outcomeLoader.ensureOutcomeRowsForCurrentResult();
         }
         this.initialized = true;
     }
@@ -82,255 +79,42 @@ class PolymarketPanelService {
     private bindEvents(): void {
         const dom = this.getDom();
         dom.polymarketBridgeConfig.addEventListener("focus", () => {
-            this.ensureBridgeConfigOptions(true);
-            this.renderBridgeControls();
+            this.bridgeExport!.ensureBridgeConfigOptions(true);
+            this.bridgeExport!.renderBridgeControls();
         });
         dom.polymarketBridgeConfig.addEventListener("change", () => {
-            this.selectedBridgeConfigName = dom.polymarketBridgeConfig.value;
-            this.renderBridgeControls();
+            this.bridgeExport!.selectedConfigName = dom.polymarketBridgeConfig.value;
+            this.bridgeExport!.renderBridgeControls();
         });
         dom.polymarketBridgeDownloadScript.addEventListener("click", () => {
-            void this.handleBridgeScriptDownload();
+            void this.bridgeExport!.handleBridgeScriptDownload();
         });
         dom.polymarketBridgeCopyEnv.addEventListener("click", () => {
-            void this.handleCopyBotEnv();
+            void this.bridgeExport!.handleCopyBotEnv();
         });
         window.addEventListener("strategy-panel:tab-change", ((event: CustomEvent<{ tabId?: string }>) => {
             if (event.detail?.tabId !== "polymarket") {
                 return;
             }
             this.scheduleRender();
-            void this.ensureOutcomeRowsForCurrentResult();
+            void this.outcomeLoader!.ensureOutcomeRowsForCurrentResult();
         }) as EventListener);
     }
 
     private bindState(): void {
         state.subscribe("currentBacktestResult", (result) => {
-            void this.handleBacktestResultChange(result);
+            void this.outcomeLoader!.handleBacktestResultChange(result);
         });
 
         state.subscribe("currentSymbol", () => {
-            this.resetLoadedRows();
+            this.outcomeLoader!.resetLoadedRows();
             this.scheduleRender();
         });
 
         state.subscribe("currentInterval", () => {
-            this.resetLoadedRows();
+            this.outcomeLoader!.resetLoadedRows();
             this.scheduleRender();
         });
-    }
-
-    private async handleBacktestResultChange(result: BacktestResult | null): Promise<void> {
-        this.lastResult = result;
-        this.loadError = null;
-        const resultContext = resolveBacktestResultMarketContext(result);
-        const outcomeSymbol = result ? this.resolveActivePolymarketOutcomeSymbol(result) : this.readCurrentPolymarketOutcomeSymbol();
-
-        if (!result || !resultContext || !supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval, outcomeSymbol) || result.trades.length === 0) {
-            this.resetLoadedRows(false);
-            this.scheduleRender();
-            return;
-        }
-
-        if (!this.isPanelVisible()) {
-            this.resetLoadedRows(false);
-            return;
-        }
-
-        await this.ensureOutcomeRowsForCurrentResult();
-    }
-
-    private async ensureOutcomeRowsForCurrentResult(): Promise<void> {
-        const result = this.lastResult;
-        const resultContext = resolveBacktestResultMarketContext(result);
-        const outcomeSymbol = result ? this.resolveActivePolymarketOutcomeSymbol(result) : this.readCurrentPolymarketOutcomeSymbol();
-        if (!result || !resultContext || !supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval, outcomeSymbol) || result.trades.length === 0) {
-            this.resetLoadedRows(false);
-            this.scheduleRender();
-            return;
-        }
-
-        const resultSignature = this.getResultSignature(result);
-        if (
-            this.loadedResultSignature === resultSignature
-            && !this.isLoading
-            && !this.loadError
-        ) {
-            this.scheduleRender();
-            return;
-        }
-
-        const targetTimes = result.trades
-            .map((trade) => trade.polymarketOutcome?.eventStartTs ?? parseTimeToUnixSeconds(trade.entryTime))
-            .filter((value): value is number => value !== null);
-
-        if (targetTimes.length === 0) {
-            this.resetLoadedRows(false);
-            this.scheduleRender();
-            return;
-        }
-
-        const requestId = ++this.loadNonce;
-        this.isLoading = true;
-        this.scheduleRender();
-
-        try {
-            const rows = await loadPolymarket5mOutcomesForTimeRange(
-                resultContext.symbol,
-                Math.min(...targetTimes),
-                Math.max(...targetTimes),
-                outcomeSymbol
-            );
-            if (requestId !== this.loadNonce) {
-                return;
-            }
-            this.lastResult = await this.attachLoadedPolymarketOutcomes(result, rows);
-            this.loadedOutcomeRows = rows;
-            this.isLoading = false;
-            this.loadedResultSignature = resultSignature;
-            this.scheduleRender();
-        } catch (error) {
-            if (requestId !== this.loadNonce) {
-                return;
-            }
-
-            this.loadedOutcomeRows = [];
-            this.isLoading = false;
-            this.loadError = error instanceof Error ? error.message : String(error);
-            this.loadedResultSignature = resultSignature;
-            this.scheduleRender();
-        }
-    }
-
-    private async attachLoadedPolymarketOutcomes(result: BacktestResult, outcomes: readonly PolymarketOutcomeRow[]): Promise<BacktestResult> {
-        const resultContext = resolveBacktestResultMarketContext(result);
-        if (!resultContext || outcomes.length === 0) {
-            return result;
-        }
-
-        const existingSummary = result.polymarketTradeSummary;
-        const resolvedOutcomeSymbol = resolvePolymarketOutcomeSymbol(
-            resultContext.symbol,
-            existingSummary?.outcomeSymbol ?? this.readCurrentPolymarketOutcomeSymbol()
-        );
-        const seriesId = existingSummary?.seriesId || getEffectivePolymarket5mSeriesId(resultContext.symbol, resolvedOutcomeSymbol) || outcomes[0]?.series_id || "";
-
-        const effectiveExitMode = existingSummary?.evaluationMode ?? resolveEffectivePolymarketExitMode({
-            requestedMode: this.readCurrentPolymarketExitMode(),
-            interval: resultContext.interval,
-            executionModel: this.readCurrentExecutionModel(),
-            polymarketAnnotationEnabled: true,
-        });
-
-        if (isSignalExitSameEventMode(effectiveExitMode) && resultContext.interval === "1m") {
-            const targetTimes = result.trades
-                .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
-                .filter((value): value is number => value !== null);
-            if (targetTimes.length > 0) {
-                const startTs = Math.min(...targetTimes);
-                const endTs = Math.max(...targetTimes);
-                try {
-                    const relevantOutcomeByStart = new Map<number, (typeof outcomes)[number]>();
-                    for (const trade of result.trades) {
-                        const entryTs = parseTimeToUnixSeconds(trade.entryTime);
-                        if (entryTs === null) continue;
-                        const outcome = findContainingEvent(entryTs, outcomes);
-                        if (outcome) {
-                            relevantOutcomeByStart.set(outcome.event_start_ts, outcome);
-                        }
-                    }
-                    const pricePoints = await ensurePricePointsForOutcomes(
-                        relevantOutcomeByStart.size > 0 ? [...relevantOutcomeByStart.values()] : outcomes,
-                        seriesId,
-                        {
-                        startTs: startTs - 300,
-                        endTs: endTs + 300,
-                        }
-                    );
-                    const { results: exitResults, summary: exitSummary } = evaluateSignalExitTrades({
-                        trades: result.trades,
-                        outcomes,
-                        pricePoints,
-                    });
-                    const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
-                    const annotatedTrades = result.trades.map((trade) => {
-                        const exitResult = exitResultMap.get(trade);
-                        if (!exitResult || exitResult.exitSource === "missing") return { ...trade, polymarketOutcome: null };
-                        return { ...trade, polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult) };
-                    });
-                    return {
-                        ...result,
-                        trades: annotatedTrades,
-                        polymarketTradeSummary: {
-                            seriesId,
-                            outcomeSymbol: existingSummary?.outcomeSymbol ?? resolvedOutcomeSymbol ?? undefined,
-                            outcomeRowsLoaded: outcomes.length,
-                            scoredTrades: exitSummary.scoredTrades,
-                            missingOutcomeTrades: 0,
-                            unscoredTrades: exitSummary.missingPriceTrades,
-                            evaluationMode: "signal_exit_same_event",
-                            profitableTrades: exitSummary.profitableTrades,
-                            losingTrades: exitSummary.losingTrades,
-                            signalExitedTrades: exitSummary.signalExitedTrades,
-                            resolvedTrades: exitSummary.resolvedTrades,
-                            missingPriceTrades: exitSummary.missingPriceTrades,
-                            netPnl: exitSummary.netPnl,
-                            grossProfit: exitSummary.grossProfit,
-                            grossLoss: exitSummary.grossLoss,
-                            profitFactor: exitSummary.profitFactor,
-                            expectancy: exitSummary.expectancy,
-                            avgEntryPrice: exitSummary.avgEntryPrice,
-                            avgExitPrice: exitSummary.avgExitPrice,
-                        },
-                    };
-                } catch (error) {
-                    debugLogger.warn("polymarket_panel.signal_exit_annotation_failed", {
-                        error: error instanceof Error ? error.message : String(error),
-                    });
-                }
-            }
-        }
-
-        const selectedOffset = resultContext.interval === "1m"
-            ? this.resolveSelectedPolymarketEntryOffset(result)
-            : undefined;
-        const annotatedTrades = annotateTradesWithPolymarketOutcomesForRun(
-            result.trades,
-            outcomes,
-            resultContext.interval,
-            selectedOffset
-        );
-        const summary = summarizePolymarketTradesForRun({
-            trades: result.trades,
-            outcomes,
-            interval: resultContext.interval,
-            selectedOffset,
-            timingProfile: existingSummary?.timingProfile,
-        });
-        const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
-
-        return {
-            ...result,
-            trades: annotatedTrades,
-            polymarketTradeSummary: {
-                seriesId,
-                outcomeSymbol: existingSummary?.outcomeSymbol ?? resolvedOutcomeSymbol ?? undefined,
-                outcomeRowsLoaded: existingSummary?.outcomeRowsLoaded && existingSummary.outcomeRowsLoaded > 0
-                    ? existingSummary.outcomeRowsLoaded
-                    : outcomes.length,
-                scoredTrades: existingSummary?.scoredTrades ?? summary.scoredTrades,
-                missingOutcomeTrades: existingSummary?.missingOutcomeTrades ?? summary.missingOutcomeTrades,
-                unscoredTrades: existingSummary?.unscoredTrades ?? summary.unscoredTrades ?? Math.max(0, totalTrades - summary.scoredTrades),
-                duplicateTradesIgnored: existingSummary?.duplicateTradesIgnored ?? summary.duplicateTradesIgnored,
-                entryOffset: existingSummary?.entryOffset ?? selectedOffset,
-                timingProfile: existingSummary?.timingProfile ?? summary.timingProfile,
-                evaluationMode: "resolve_hold",
-            },
-        };
-    }
-
-    private resolveSelectedPolymarketEntryOffset(_result: BacktestResult): number {
-        return this.readCurrentPolymarketEntryOffset() ?? 0;
     }
 
     private readCurrentPolymarketEntryOffset(): number | null {
@@ -349,74 +133,23 @@ class PolymarketPanelService {
         return resolvePolymarketDomSettings().outcomeSymbol;
     }
 
-    private resolveActivePolymarketOutcomeSymbol(result: BacktestResult): string | null {
-        const summarySymbol = result.polymarketTradeSummary?.outcomeSymbol;
-        if (typeof summarySymbol === "string" && summarySymbol.trim().length > 0) {
-            return summarySymbol.trim().toUpperCase();
-        }
-        return this.readCurrentPolymarketOutcomeSymbol();
-    }
-
-    private async enrichHistoryInBackground(requestId: number, rows: PolymarketOutcomeRow[]): Promise<void> {
-        if (rows.length === 0) {
-            this.isEnrichingHistory = false;
-            this.scheduleRender();
-            return;
-        }
-
-        this.isEnrichingHistory = true;
-        this.scheduleRender();
-
-        const pendingRows = [...rows];
-        const concurrency = 6;
-        const workers = Array.from({ length: Math.min(concurrency, pendingRows.length) }, async () => {
-            while (pendingRows.length > 0) {
-                const row = pendingRows.shift();
-                if (!row) {
-                    return;
-                }
-
-                try {
-                    const summary = await loadPolymarketFillHistorySummary(row);
-                    if (requestId !== this.loadNonce) {
-                        return;
-                    }
-                    this.historySummaryByStartTs.set(row.event_start_ts, summary);
-                    this.deployabilityCacheKey = "";
-                    this.scheduleRender(120);
-                } catch {
-                    if (requestId !== this.loadNonce) {
-                        return;
-                    }
-                }
-            }
-        });
-
-        await Promise.allSettled(workers);
-        if (requestId !== this.loadNonce) {
-            return;
-        }
-
-        this.isEnrichingHistory = false;
-        this.scheduleRender();
-    }
-
     private render(): void {
         if (!this.isPanelVisible()) {
             return;
         }
 
-        const result = this.lastResult;
+        const loader = this.outcomeLoader!;
+        const result = loader.lastResult;
         const resultContext = resolveBacktestResultMarketContext(result);
         const supportedRun = resultContext
             ? supportsPolymarketOutcomeBridgeRun(
                 resultContext.symbol,
                 resultContext.interval,
-                result ? this.resolveActivePolymarketOutcomeSymbol(result) : this.readCurrentPolymarketOutcomeSymbol()
+                result ? loader.resolveActivePolymarketOutcomeSymbol(result) : this.readCurrentPolymarketOutcomeSymbol()
             )
             : supportsPolymarketOutcomeBridgeRun(state.currentSymbol, state.currentInterval, this.readCurrentPolymarketOutcomeSymbol());
 
-        this.renderBridgeControls();
+        this.bridgeExport!.renderBridgeControls();
 
         if (!result) {
             this.showEmpty("Run a backtest first to see Polymarket payout diagnostics and snapshot filter suggestions.");
@@ -433,13 +166,13 @@ class PolymarketPanelService {
             return;
         }
 
-        if (this.isLoading) {
+        if (loader.isLoading) {
             this.showEmpty("Loading Polymarket outcome rows from local SQLite...");
             return;
         }
 
-        if (this.loadError) {
-            this.showEmpty(`Failed to load Polymarket outcomes. ${this.loadError}`);
+        if (loader.loadError) {
+            this.showEmpty(`Failed to load Polymarket outcomes. ${loader.loadError}`);
             return;
         }
 
@@ -541,11 +274,11 @@ class PolymarketPanelService {
                 <div class="stats-grid polymarket-panel__stats">
                     ${this.renderStatCard("Priced Trades", String(summary.pricedTrades))}
                     ${summary.unpricedScoredTrades > 0 ? this.renderStatCard("Unpriced Scored Trades", String(summary.unpricedScoredTrades)) : ""}
-                    ${this.renderStatCard("Avg Entry Price", this.formatProbability(summary.avgEntryPrice))}
-                    ${this.renderStatCard("Break-even Win", this.formatPercent(summary.breakEvenWinRate))}
-                    ${this.renderStatCard("Poly Win Rate", this.formatPercent(summary.winRate), summary.edgeVsBreakEven)}
-                    ${this.renderStatCard("Poly Exp / Trade", this.formatPolymarketCents(summary.expectancy), summary.expectancy)}
-                    ${this.renderStatCard("Poly Profit Factor", this.formatProfitFactor(summary.profitFactor))}
+                    ${this.renderStatCard("Avg Entry Price", formatProbability(summary.avgEntryPrice))}
+                    ${this.renderStatCard("Break-even Win", formatPercent(summary.breakEvenWinRate))}
+                    ${this.renderStatCard("Poly Win Rate", formatPercent(summary.winRate), summary.edgeVsBreakEven)}
+                    ${this.renderStatCard("Poly Exp / Trade", formatPolymarketCents(summary.expectancy), summary.expectancy)}
+                    ${this.renderStatCard("Poly Profit Factor", formatProfitFactor(summary.profitFactor))}
                     ${this.renderStatCard("Edge Vs Break-even", `${summary.edgeVsBreakEven >= 0 ? "+" : ""}${(summary.edgeVsBreakEven * 100).toFixed(1)}pp`, summary.edgeVsBreakEven)}
                 </div>
             </div>
@@ -557,7 +290,7 @@ class PolymarketPanelService {
         const runModeLabel = isSignalExit ? "Exit Mode" : (typeof summary.entryOffset === "number" ? "Selected Offset" : "Run Mode");
         const runModeValue = isSignalExit ? "Signal Exit (same event)" : (typeof summary.entryOffset === "number" ? `Minute ${summary.entryOffset}` : "Native 5m scoring");
         const timingContext = summary.bestTimingProfile
-            ? `Best minute ${summary.bestTimingProfile.entryOffset} at ${this.formatPercent(summary.bestTimingProfile.winRate)}`
+            ? `Best minute ${summary.bestTimingProfile.entryOffset} at ${formatPercent(summary.bestTimingProfile.winRate)}`
             : isSignalExit ? "Signal-exit mode: trades exit on chart sell signal inside the same 5m event." : "Full timing profile is available in 1m bridge runs.";
 
         const signalExitCards = isSignalExit ? `
@@ -575,8 +308,8 @@ class PolymarketPanelService {
                 <div class="entry-stats-hint polymarket-diagnostics__hint">${timingContext}</div>
                 <div class="stats-grid polymarket-panel__stats">
                     ${this.renderStatCard(runModeLabel, runModeValue)}
-                    ${this.renderStatCard(isSignalExit ? "Poly Profitable %" : "Poly Win Rate", this.formatPercent(summary.winRate), summary.winRate - 0.5)}
-                    ${this.renderStatCard("Scored Trade Share", this.formatPercent(summary.coverage))}
+                    ${this.renderStatCard(isSignalExit ? "Poly Profitable %" : "Poly Win Rate", formatPercent(summary.winRate), summary.winRate - 0.5)}
+                    ${this.renderStatCard("Scored Trade Share", formatPercent(summary.coverage))}
                     ${this.renderStatCard("Poly Wins", String(summary.wins), summary.wins > 0 ? 1 : 0)}
                     ${this.renderStatCard("Poly Losses", String(summary.losses), summary.losses > 0 ? -1 : 0)}
                     ${baselineCard}
@@ -596,7 +329,7 @@ class PolymarketPanelService {
                 <td>${row.label}</td>
                 <td>${row.tradeCount}t</td>
                 <td class="${(row.edgeVsBreakEven ?? (row.winRate - 50)) >= 0 ? "positive" : "negative"}">${row.winRate.toFixed(1)}%</td>
-                <td class="${row.expectancy >= 0 ? "positive" : "negative"}">${row.avgEntryPrice !== undefined && row.avgEntryPrice !== null ? this.formatPolymarketCents(row.expectancy) : this.formatSignedUsd(row.expectancy)}</td>
+                <td class="${row.expectancy >= 0 ? "positive" : "negative"}">${row.avgEntryPrice !== undefined && row.avgEntryPrice !== null ? formatPolymarketCents(row.expectancy) : formatSignedUsd(row.expectancy)}</td>
             </tr>
         `).join("");
 
@@ -635,7 +368,7 @@ class PolymarketPanelService {
 
     private renderDeployabilityAnalysis(result: BacktestResult): void {
         const dom = this.getDom();
-        const outcomeByStartTs = this.outcomeByStartTs;
+        const outcomeByStartTs = this.outcomeLoader!.outcomeByStartTs;
         const scoredTrades = extractScoredTrades(result.trades, outcomeByStartTs);
         const evaluationRows = this.getEvaluatedOutcomeRows();
 
@@ -664,19 +397,19 @@ class PolymarketPanelService {
         verdictText.textContent = this.getVerdictDescription(analysis.verdict.verdict);
 
         // Render confidence summary
-        dom.deployWinRate.textContent = this.formatPercent(analysis.confidence.winRate);
+        dom.deployWinRate.textContent = formatPercent(analysis.confidence.winRate);
         dom.deployWins.textContent = String(analysis.confidence.wins);
         dom.deployLosses.textContent = String(analysis.confidence.losses);
         dom.deployScoredTrades.textContent = String(analysis.confidence.scoredTrades);
-        dom.deployCoverage.textContent = this.formatPercent(analysis.confidence.coverage);
+        dom.deployCoverage.textContent = formatPercent(analysis.confidence.coverage);
         dom.deployWilsonLB.textContent = analysis.confidence.wilsonLowerBound.toFixed(3);
-        dom.deployAlwaysYes.textContent = this.formatPercent(analysis.confidence.alwaysYesBaseline);
-        dom.deployAlwaysNo.textContent = this.formatPercent(analysis.confidence.alwaysNoBaseline);
+        dom.deployAlwaysYes.textContent = formatPercent(analysis.confidence.alwaysYesBaseline);
+        dom.deployAlwaysNo.textContent = formatPercent(analysis.confidence.alwaysNoBaseline);
 
         const deltaYesPrefix = analysis.confidence.deltaVsAlwaysYes >= 0 ? "+" : "";
         const deltaNoPrefix = analysis.confidence.deltaVsAlwaysNo >= 0 ? "+" : "";
-        dom.deployDeltaYes.textContent = `${deltaYesPrefix}${this.formatPercent(analysis.confidence.deltaVsAlwaysYes)}`;
-        dom.deployDeltaNo.textContent = `${deltaNoPrefix}${this.formatPercent(analysis.confidence.deltaVsAlwaysNo)}`;
+        dom.deployDeltaYes.textContent = `${deltaYesPrefix}${formatPercent(analysis.confidence.deltaVsAlwaysYes)}`;
+        dom.deployDeltaNo.textContent = `${deltaNoPrefix}${formatPercent(analysis.confidence.deltaVsAlwaysNo)}`;
 
         // Render chronological blocks
         dom.deployBlocksBody.innerHTML = analysis.chronologicalBlocks.map((block) => `
@@ -685,7 +418,7 @@ class PolymarketPanelService {
                 <td>${block.scoredTrades}</td>
                 <td>${block.wins}</td>
                 <td>${block.losses}</td>
-                <td>${this.formatPercent(block.winRate)}</td>
+                <td>${formatPercent(block.winRate)}</td>
                 <td>${block.wilsonLowerBound.toFixed(3)}</td>
             </tr>
         `).join("");
@@ -697,7 +430,7 @@ class PolymarketPanelService {
                 <td>${regime.scoredTrades}</td>
                 <td>${regime.wins}</td>
                 <td>${regime.losses}</td>
-                <td>${this.formatPercent(regime.winRate)}</td>
+                <td>${formatPercent(regime.winRate)}</td>
                 <td>${regime.wilsonLowerBound.toFixed(3)}</td>
             </tr>
         `).join("");
@@ -710,7 +443,7 @@ class PolymarketPanelService {
                 <td>${regime.scoredTrades}</td>
                 <td>${regime.wins}</td>
                 <td>${regime.losses}</td>
-                <td>${this.formatPercent(regime.winRate)}</td>
+                <td>${formatPercent(regime.winRate)}</td>
                 <td>${regime.wilsonLowerBound.toFixed(3)}</td>
             </tr>
         `).join("");
@@ -721,10 +454,10 @@ class PolymarketPanelService {
         // Render shuffle test
         dom.deployShuffleHint.textContent = analysis.significanceTest.hint;
         dom.deployShuffleSims.textContent = analysis.significanceTest.methodValue;
-        dom.deployShuffleObserved.textContent = this.formatPercent(analysis.significanceTest.observedWinRate);
+        dom.deployShuffleObserved.textContent = formatPercent(analysis.significanceTest.observedWinRate);
         dom.deployShuffleExceed.textContent = analysis.significanceTest.baselineValue;
         dom.deployShufflePValue.textContent = analysis.significanceTest.pValue.toFixed(3);
-        dom.deployShuffleMean.textContent = this.formatPercent(analysis.significanceTest.expectedWinRate);
+        dom.deployShuffleMean.textContent = formatPercent(analysis.significanceTest.expectedWinRate);
         dom.deployShuffleP95.textContent = analysis.significanceTest.diagnosticValue;
 
         // Render fill-adjusted metrics
@@ -732,26 +465,26 @@ class PolymarketPanelService {
             dom.deployFillScored.textContent = String(analysis.fillAdjusted.scoredTrades);
             dom.deployFillWins.textContent = String(analysis.fillAdjusted.wins);
             dom.deployFillLosses.textContent = String(analysis.fillAdjusted.losses);
-            dom.deployFillWinRate.textContent = this.formatPercent(analysis.fillAdjusted.winRate);
+            dom.deployFillWinRate.textContent = formatPercent(analysis.fillAdjusted.winRate);
             dom.deployFillWilsonLB.textContent = analysis.fillAdjusted.wilsonLowerBound.toFixed(3);
-            dom.deployFillRate.textContent = this.formatPercent(analysis.fillAdjusted.fillRate);
+            dom.deployFillRate.textContent = formatPercent(analysis.fillAdjusted.fillRate);
             if (analysis.significanceTest.mode === "one_sided_binomial" && analysis.significanceTest.constantPrediction) {
                 const predictionLabel = analysis.significanceTest.constantPrediction.toUpperCase();
                 const predictionBaseline = analysis.significanceTest.constantPrediction === "yes"
                     ? analysis.fillAdjusted.alwaysYesBaseline
                     : analysis.fillAdjusted.alwaysNoBaseline;
                 dom.deployFillBestBaselineLabel.textContent = `Fill-Subset ${predictionLabel} Base`;
-                dom.deployFillBestBaseline.textContent = `${predictionLabel} ${this.formatPercent(predictionBaseline)}`;
+                dom.deployFillBestBaseline.textContent = `${predictionLabel} ${formatPercent(predictionBaseline)}`;
                 dom.deployFillDeltaBaselineLabel.textContent = "Base Comparison";
                 dom.deployFillDeltaBaseline.textContent = "One-sided: not informative";
             } else {
                 dom.deployFillBestBaselineLabel.textContent = "Fill-Subset Best Base";
-                dom.deployFillBestBaseline.textContent = `${analysis.fillAdjusted.bestBaselineLabel} ${this.formatPercent(analysis.fillAdjusted.bestBaseline)}`;
+                dom.deployFillBestBaseline.textContent = `${analysis.fillAdjusted.bestBaselineLabel} ${formatPercent(analysis.fillAdjusted.bestBaseline)}`;
                 dom.deployFillDeltaBaselineLabel.textContent = "Delta vs Best Base";
-                dom.deployFillDeltaBaseline.textContent = `${analysis.fillAdjusted.deltaVsBestBaseline >= 0 ? "+" : ""}${this.formatPercent(analysis.fillAdjusted.deltaVsBestBaseline)}`;
+                dom.deployFillDeltaBaseline.textContent = `${analysis.fillAdjusted.deltaVsBestBaseline >= 0 ? "+" : ""}${formatPercent(analysis.fillAdjusted.deltaVsBestBaseline)}`;
             }
-            dom.deployFillBreakEven.textContent = this.formatPercent(analysis.fillAdjusted.breakEvenWinRate);
-            dom.deployFillEdgeBreakEven.textContent = `${analysis.fillAdjusted.edgeVsBreakEven >= 0 ? "+" : ""}${this.formatPercent(analysis.fillAdjusted.edgeVsBreakEven)}`;
+            dom.deployFillBreakEven.textContent = formatPercent(analysis.fillAdjusted.breakEvenWinRate);
+            dom.deployFillEdgeBreakEven.textContent = `${analysis.fillAdjusted.edgeVsBreakEven >= 0 ? "+" : ""}${formatPercent(analysis.fillAdjusted.edgeVsBreakEven)}`;
         } else {
             dom.deployFillScored.textContent = "0";
             dom.deployFillWins.textContent = "0";
@@ -773,7 +506,8 @@ class PolymarketPanelService {
     }
 
     private getEvaluatedOutcomeRows(): PolymarketOutcomeRow[] {
-        if (this.loadedOutcomeRows.length === 0) {
+        const loader = this.outcomeLoader!;
+        if (loader.loadedOutcomeRows.length === 0) {
             return [];
         }
 
@@ -786,10 +520,10 @@ class PolymarketPanelService {
         }
 
         if (validTargetTs.size === 0) {
-            return [...this.loadedOutcomeRows];
+            return [...loader.loadedOutcomeRows];
         }
 
-        return this.loadedOutcomeRows.filter((row) => validTargetTs.has(row.event_start_ts));
+        return loader.loadedOutcomeRows.filter((row) => validTargetTs.has(row.event_start_ts));
     }
 
     private getVerdictDescription(verdict: "Robust" | "Borderline" | "Weak"): string {
@@ -809,22 +543,6 @@ class PolymarketPanelService {
         dom.polymarketDiagnosticsContent.innerHTML = "";
         setVisible(dom.polymarketDiagnosticsEmpty, true);
         setVisible(dom.polymarketDiagnosticsContent, false);
-    }
-
-    private resetLoadedRows(clearResult = true): void {
-        this.loadNonce++;
-        this.loadedOutcomeRows = [];
-        this.outcomeByStartTs.clear();
-        this.historySummaryByStartTs.clear();
-        this.isLoading = false;
-        this.isEnrichingHistory = false;
-        this.loadError = null;
-        this.loadedResultSignature = "";
-        this.deployabilityCacheKey = "";
-        this.deployabilityCache = null;
-        if (clearResult) {
-            this.lastResult = null;
-        }
     }
 
     private isPanelVisible(): boolean {
@@ -862,21 +580,6 @@ class PolymarketPanelService {
         queueFrame();
     }
 
-    private getResultSignature(result: BacktestResult): string {
-        const resultContext = resolveBacktestResultMarketContext(result);
-        const outcomeSymbol = this.resolveActivePolymarketOutcomeSymbol(result);
-        const firstTrade = result.trades[0];
-        const lastTrade = result.trades[result.trades.length - 1];
-        return [
-            resultContext?.symbol ?? state.currentSymbol,
-            resultContext?.interval ?? state.currentInterval,
-            outcomeSymbol ?? "same",
-            result.trades.length,
-            parseTimeToUnixSeconds(firstTrade?.entryTime) ?? "na",
-            parseTimeToUnixSeconds(lastTrade?.entryTime) ?? "na",
-        ].join("|");
-    }
-
     private getDeployabilityAnalysis(
         result: BacktestResult,
         scoredTrades: ReturnType<typeof extractScoredTrades>,
@@ -884,11 +587,12 @@ class PolymarketPanelService {
         fillScope: PolymarketFillScope,
         fillTargetPriceCents: number
     ): ReturnType<typeof analyzePolymarketDeployability> {
+        const loader = this.outcomeLoader!;
         const cacheKey = [
-            this.getResultSignature(result),
+            loader.getResultSignature(result),
             scoredTrades.length,
             evaluationRows.length,
-            this.historySummaryByStartTs.size,
+            loader.historySummaryByStartTs.size,
             fillScope,
             fillTargetPriceCents,
         ].join("|");
@@ -903,449 +607,11 @@ class PolymarketPanelService {
             shuffleSeed: 42,
             fillScope,
             fillTargetPriceCents,
-            historySummaryByStartTs: this.historySummaryByStartTs,
+            historySummaryByStartTs: loader.historySummaryByStartTs,
         });
         this.deployabilityCacheKey = cacheKey;
         this.deployabilityCache = analysis;
         return analysis;
-    }
-
-    private renderBridgeControls(): void {
-        const dom = this.getDom();
-        const supportedRun = isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval);
-        const configs = this.ensureBridgeConfigOptions();
-        const selectedConfig = this.getSelectedBridgeConfig(configs);
-        const botSymbol = this.resolveExternalSignalSymbol(state.currentSymbol);
-        const strategyAvailable = selectedConfig ? strategyRegistry.has(selectedConfig.strategyKey) : false;
-        const canExport = Boolean(supportedRun && botSymbol && selectedConfig && strategyAvailable);
-
-        dom.polymarketBridgeDownloadScript.disabled = !canExport;
-        dom.polymarketBridgeCopyEnv.disabled = !canExport;
-
-        if (configs.length === 0) {
-            dom.polymarketBridgeStatus.textContent = "Save a configuration in Settings first. Bridge export uses saved strategy params, backtest settings, and capital settings.";
-            return;
-        }
-
-        if (!selectedConfig) {
-            dom.polymarketBridgeStatus.textContent = "Select a saved configuration to generate the bridge bundle.";
-            return;
-        }
-
-        if (!strategyAvailable) {
-            dom.polymarketBridgeStatus.textContent = `Saved config "${selectedConfig.name}" references unavailable strategy "${selectedConfig.strategyKey}".`;
-            return;
-        }
-
-        if (!supportedRun || !botSymbol) {
-            dom.polymarketBridgeStatus.textContent = `Bridge export currently supports ${getSupportedPolymarket5mSymbolsLabel()} on the 5m chart. Current chart: ${state.currentSymbol} ${state.currentInterval}.`;
-            return;
-        }
-
-        dom.polymarketBridgeStatus.textContent = `Ready: "${selectedConfig.name}" -> ${selectedConfig.strategyKey} on ${state.currentSymbol} ${state.currentInterval}. The script writes bridge JSON files, exports the latest signal, generates a reusable refresh script, and writes a bot env snippet.`;
-    }
-
-    private ensureBridgeConfigOptions(force = false): StrategyConfig[] {
-        const dom = this.getDom();
-        const configs = [...settingsManager.loadAllStrategyConfigs()].sort((left, right) => {
-            const timeDelta = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
-            if (Number.isFinite(timeDelta) && timeDelta !== 0) {
-                return timeDelta;
-            }
-            return left.name.localeCompare(right.name);
-        });
-        const signature = configs
-            .map((config) => `${config.name}|${config.updatedAt}|${config.strategyKey}`)
-            .join("||");
-
-        if (
-            !force
-            && signature === this.bridgeConfigSignature
-            && dom.polymarketBridgeConfig.options.length > 0
-        ) {
-            return configs;
-        }
-
-        const preferredName = dom.polymarketBridgeConfig.value || this.selectedBridgeConfigName;
-        dom.polymarketBridgeConfig.innerHTML = "";
-
-        const placeholderOption = document.createElement("option");
-        placeholderOption.value = "";
-        placeholderOption.textContent = "Select saved configuration";
-        dom.polymarketBridgeConfig.appendChild(placeholderOption);
-
-        for (const config of configs) {
-            const option = document.createElement("option");
-            option.value = config.name;
-            option.textContent = `${config.name} | ${config.strategyKey}`;
-            option.title = `Updated ${config.updatedAt}`;
-            dom.polymarketBridgeConfig.appendChild(option);
-        }
-
-        const nextSelection = preferredName && configs.some((config) => config.name === preferredName)
-            ? preferredName
-            : configs[0]?.name ?? "";
-
-        dom.polymarketBridgeConfig.value = nextSelection;
-        this.selectedBridgeConfigName = nextSelection;
-        this.bridgeConfigSignature = signature;
-        return configs;
-    }
-
-    private getSelectedBridgeConfig(configs = this.ensureBridgeConfigOptions()): StrategyConfig | null {
-        const selectedName = this.getDom().polymarketBridgeConfig.value || this.selectedBridgeConfigName;
-        if (!selectedName) {
-            return null;
-        }
-        return configs.find((config) => config.name === selectedName) ?? null;
-    }
-
-    private async handleBridgeScriptDownload(): Promise<void> {
-        const context = this.getBridgeExportContext();
-        if (!context) {
-            uiManager.showToast("Select a supported 5m chart and a valid saved config first.", "error");
-            return;
-        }
-
-        const fileName = `run-polymarket-bridge-${context.slug}.ps1`;
-        const script = this.buildBridgeScript(context.config, context.slug, context.botSymbol);
-        this.downloadTextFile(fileName, script, "text/plain;charset=utf-8");
-        this.getDom().polymarketBridgeStatus.textContent = `Downloaded ${fileName}. Run it in PowerShell to write the bridge bundle, generate the refresh helper, and export the latest signal.`;
-        uiManager.showToast(`Downloaded ${fileName}`, "success");
-    }
-
-    private async handleCopyBotEnv(): Promise<void> {
-        const context = this.getBridgeExportContext();
-        if (!context) {
-            uiManager.showToast("Select a supported 5m chart and a valid saved config first.", "error");
-            return;
-        }
-
-        const snippet = this.buildBotEnvSnippet(context.slug, context.botSymbol, context.config.name);
-        const copied = await this.copyToClipboard(snippet);
-        if (!copied) {
-            uiManager.showToast("Failed to copy bot env snippet.", "error");
-            return;
-        }
-
-        this.getDom().polymarketBridgeStatus.textContent = `Copied bot env snippet for "${context.config.name}". The downloaded script will also generate a matching .env snippet file with the resolved signal and refresh-script paths.`;
-        uiManager.showToast("Copied bot env snippet", "success");
-    }
-
-    private getBridgeExportContext(): { config: StrategyConfig; slug: string; botSymbol: string } | null {
-        const supportedRun = isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval);
-        if (!supportedRun) {
-            return null;
-        }
-
-        const config = this.getSelectedBridgeConfig();
-        if (!config || !strategyRegistry.has(config.strategyKey)) {
-            return null;
-        }
-
-        const strategy = strategyRegistry.get(config.strategyKey)!;
-        if (strategy.crossSymbolConfig) {
-            this.getDom().polymarketBridgeStatus.textContent = `"${config.name}" uses cross-symbol strategy "${config.strategyKey}" which is not supported by bridge export.`;
-            return null;
-        }
-
-        const botSymbol = this.resolveExternalSignalSymbol(state.currentSymbol);
-        if (!botSymbol) {
-            return null;
-        }
-
-        return {
-            config,
-            slug: this.slugifyConfigName(config.name),
-            botSymbol,
-        };
-    }
-
-    private buildBridgeScript(config: StrategyConfig, slug: string, botSymbol: string): string {
-        const paramsJson = JSON.stringify(config.strategyParams, null, 2);
-        const backtestJson = JSON.stringify(config.backtestSettings, null, 2);
-        const capitalJson = JSON.stringify(settingsManager.resolveCapitalFromConfig(config), null, 2);
-        const configName = this.toPowerShellSingleQuoted(config.name);
-        const strategyKey = this.toPowerShellSingleQuoted(config.strategyKey);
-        const symbol = this.toPowerShellSingleQuoted(state.currentSymbol);
-        const interval = this.toPowerShellSingleQuoted(state.currentInterval);
-        const slugLiteral = this.toPowerShellSingleQuoted(slug);
-        const botSymbolLiteral = this.toPowerShellSingleQuoted(botSymbol);
-        const refreshScriptBody = [
-            "param(",
-            "    [string]$StrategyFinderRoot = '',",
-            "    [int]$Bars = 500,",
-            "    [int]$FreshnessBars = 0",
-            ")",
-            "",
-            "$ErrorActionPreference = 'Stop'",
-            "",
-            `function Test-StrategyFinderRoot {`,
-            "    param([string]$CandidatePath)",
-            "    if ([string]::IsNullOrWhiteSpace($CandidatePath)) { return $false }",
-            "    $resolved = Resolve-Path -LiteralPath $CandidatePath -ErrorAction SilentlyContinue",
-            "    if (-not $resolved) { return $false }",
-            "    $root = $resolved.Path",
-            "    return (Test-Path (Join-Path $root 'package.json')) -and (Test-Path (Join-Path $root 'scripts\\export-latest-entry-signal.ts'))",
-            "}",
-            "",
-            "function Resolve-StrategyFinderRoot {",
-            "    param([string]$ExplicitPath)",
-            "    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {",
-            "        if (Test-StrategyFinderRoot $ExplicitPath) {",
-            "            return (Resolve-Path -LiteralPath $ExplicitPath).Path",
-            "        }",
-            "        throw ('Invalid StrategyFinderRoot: ' + $ExplicitPath)",
-            "    }",
-            "    if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) {",
-            "        throw 'PSScriptRoot is empty. Pass -StrategyFinderRoot explicitly.'",
-            "    }",
-            "    $signalsDir = Split-Path -Path $PSScriptRoot -Parent",
-            "    if ([string]::IsNullOrWhiteSpace($signalsDir)) {",
-            "        throw 'Could not resolve signals directory from bridge refresh script.'",
-            "    }",
-            "    $candidateRoot = Split-Path -Path $signalsDir -Parent",
-            "    if (Test-StrategyFinderRoot $candidateRoot) {",
-            "        return (Resolve-Path -LiteralPath $candidateRoot).Path",
-            "    }",
-            "    throw ('Could not resolve Strategies-Finder root from ' + $PSScriptRoot + '. Pass -StrategyFinderRoot explicitly.')",
-            "}",
-            "",
-            `$StrategyKey = ${strategyKey}`,
-            `$Symbol = ${symbol}`,
-            `$Interval = ${interval}`,
-            `$ConfigSlug = ${slugLiteral}`,
-            "",
-            "$ResolvedRoot = Resolve-StrategyFinderRoot -ExplicitPath $StrategyFinderRoot",
-            "$BridgeDir = Join-Path $ResolvedRoot 'signals\\bridge'",
-            "$ParamsPath = Join-Path $BridgeDir ($ConfigSlug + '.params.json')",
-            "$BacktestPath = Join-Path $BridgeDir ($ConfigSlug + '.backtest.json')",
-            "$CapitalPath = Join-Path $BridgeDir ($ConfigSlug + '.capital.json')",
-            "$SignalPath = Join-Path $BridgeDir ($ConfigSlug + '.latest-entry-signal.json')",
-            "",
-            "$npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue",
-            "if (-not $npmCommand) {",
-            "    $npmCommand = Get-Command npm -ErrorAction SilentlyContinue",
-            "}",
-            "if (-not $npmCommand) {",
-            "    throw 'npm was not found on PATH.'",
-            "}",
-            "",
-            "Push-Location $ResolvedRoot",
-            "try {",
-            "    & $npmCommand.Source run signal:export -- --strategy $StrategyKey --symbol $Symbol --interval $Interval --bars $Bars --freshness-bars $FreshnessBars --params-file $ParamsPath --backtest-settings-file $BacktestPath --capital-settings-file $CapitalPath --out $SignalPath",
-            "    if ($LASTEXITCODE -ne 0) {",
-            "        throw ('signal:export exited with code ' + $LASTEXITCODE)",
-            "    }",
-            "}",
-            "finally {",
-            "    Pop-Location",
-            "}",
-            "",
-            "Write-Host ('Signal refreshed: ' + $SignalPath)",
-            "",
-        ].join("\r\n");
-
-        return [
-            "param(",
-            "    [string]$StrategyFinderRoot = '',",
-            "    [int]$Bars = 500,",
-            "    [int]$FreshnessBars = 0",
-            ")",
-            "",
-            "$ErrorActionPreference = 'Stop'",
-            "",
-            `$ConfigName = ${configName}`,
-            `$ConfigSlug = ${slugLiteral}`,
-            `$StrategyKey = ${strategyKey}`,
-            `$Symbol = ${symbol}`,
-            `$Interval = ${interval}`,
-            `$BotSymbol = ${botSymbolLiteral}`,
-            "",
-            "function Test-StrategyFinderRoot {",
-            "    param([string]$CandidatePath)",
-            "    if ([string]::IsNullOrWhiteSpace($CandidatePath)) { return $false }",
-            "    $resolved = Resolve-Path -LiteralPath $CandidatePath -ErrorAction SilentlyContinue",
-            "    if (-not $resolved) { return $false }",
-            "    $root = $resolved.Path",
-            "    return (Test-Path (Join-Path $root 'package.json')) -and (Test-Path (Join-Path $root 'scripts\\export-latest-entry-signal.ts'))",
-            "}",
-            "",
-            "function Find-StrategyFinderRootFromSeed {",
-            "    param([string]$SeedPath)",
-            "    if ([string]::IsNullOrWhiteSpace($SeedPath)) { return $null }",
-            "    $current = $SeedPath",
-            "    while (-not [string]::IsNullOrWhiteSpace($current)) {",
-            "        if (Test-StrategyFinderRoot $current) {",
-            "            return (Resolve-Path -LiteralPath $current).Path",
-            "        }",
-            "        $parent = Split-Path -Path $current -Parent",
-            "        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) {",
-            "            break",
-            "        }",
-            "        $current = $parent",
-            "    }",
-            "    return $null",
-            "}",
-            "",
-            "function Resolve-StrategyFinderRoot {",
-            "    param([string]$ExplicitPath)",
-            "    $candidates = @()",
-            "    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) { $candidates += $ExplicitPath }",
-            "    if (-not [string]::IsNullOrWhiteSpace($env:STRATEGY_FINDER_ROOT)) { $candidates += $env:STRATEGY_FINDER_ROOT }",
-            "    if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) { $candidates += $PSScriptRoot }",
-            "    $candidates += (Get-Location).Path",
-            "    $userProfile = [Environment]::GetFolderPath('UserProfile')",
-            "    if (-not [string]::IsNullOrWhiteSpace($userProfile)) {",
-            "        $candidates += (Join-Path $userProfile 'Documents\\Repo\\Experimental\\lightweight-charts\\debug\\playground\\Strategies-Finder')",
-            "        $candidates += (Join-Path $userProfile 'Documents\\Strategies-Finder')",
-            "    }",
-            "    foreach ($candidate in $candidates) {",
-            "        $resolved = Find-StrategyFinderRootFromSeed $candidate",
-            "        if (-not [string]::IsNullOrWhiteSpace($resolved)) {",
-            "            return $resolved",
-            "        }",
-            "    }",
-            "    throw 'Could not locate the Strategies-Finder repo. Run this script from the repo, pass -StrategyFinderRoot, or set STRATEGY_FINDER_ROOT.'",
-            "}",
-            "",
-            "function Write-Utf8NoBomFile {",
-            "    param(",
-            "        [string]$Path,",
-            "        [string]$Content",
-            "    )",
-            "    $encoding = New-Object System.Text.UTF8Encoding($false)",
-            "    [System.IO.File]::WriteAllText($Path, $Content, $encoding)",
-            "}",
-            "",
-            "$StrategyFinderRoot = Resolve-StrategyFinderRoot -ExplicitPath $StrategyFinderRoot",
-            "$BridgeDir = Join-Path $StrategyFinderRoot 'signals\\bridge'",
-            "$ParamsPath = Join-Path $BridgeDir ($ConfigSlug + '.params.json')",
-            "$BacktestPath = Join-Path $BridgeDir ($ConfigSlug + '.backtest.json')",
-            "$CapitalPath = Join-Path $BridgeDir ($ConfigSlug + '.capital.json')",
-            "$SignalPath = Join-Path $BridgeDir ($ConfigSlug + '.latest-entry-signal.json')",
-            "$RefreshScriptPath = Join-Path $BridgeDir ($ConfigSlug + '.refresh.ps1')",
-            "$BotEnvPath = Join-Path $BridgeDir ($ConfigSlug + '.bot.env')",
-            "$SignalPathForEnv = $SignalPath -replace '\\\\', '/'",
-            "$RefreshScriptPathForEnv = $RefreshScriptPath -replace '\\\\', '/'",
-            "New-Item -ItemType Directory -Path $BridgeDir -Force | Out-Null",
-            "",
-            "$ParamsJson = @'",
-            paramsJson,
-            "'@",
-            "",
-            "$BacktestJson = @'",
-            backtestJson,
-            "'@",
-            "",
-            "$CapitalJson = @'",
-            capitalJson,
-            "'@",
-            "",
-            "Write-Utf8NoBomFile -Path $ParamsPath -Content $ParamsJson",
-            "Write-Utf8NoBomFile -Path $BacktestPath -Content $BacktestJson",
-            "Write-Utf8NoBomFile -Path $CapitalPath -Content $CapitalJson",
-            "",
-            "$RefreshScript = @'",
-            refreshScriptBody,
-            "'@",
-            "",
-            "Write-Utf8NoBomFile -Path $RefreshScriptPath -Content $RefreshScript",
-            "",
-            '$BotEnv = @"',
-            "TRADING_MODE=external_signal",
-            "DRY_RUN=true",
-            "EXTERNAL_SIGNAL_SYMBOL=$BotSymbol",
-            "EXTERNAL_SIGNAL_FILE=$SignalPathForEnv",
-            "EXTERNAL_SIGNAL_POLL_INTERVAL_MS=2000",
-            "EXTERNAL_SIGNAL_MAX_SIGNAL_LAG_SECS=600",
-            "EXTERNAL_SIGNAL_LOG_FILE=logs/external_signal.jsonl",
-            "EXTERNAL_SIGNAL_REFRESH_SCRIPT=$RefreshScriptPathForEnv",
-            "EXTERNAL_SIGNAL_REFRESH_DELAY_SECS=2",
-            "EXTERNAL_SIGNAL_REFRESH_TIMEOUT_SECS=120",
-            "MULTI_WALLET_NON_INTERACTIVE=true",
-            "WALLET_1_STRATEGY=external_signal",
-            '"@',
-            "Write-Utf8NoBomFile -Path $BotEnvPath -Content $BotEnv",
-            "",
-            "& $RefreshScriptPath -StrategyFinderRoot $StrategyFinderRoot -Bars $Bars -FreshnessBars $FreshnessBars",
-            "",
-            "Write-Host ('Bridge ready for ' + $ConfigName)",
-            "Write-Host ('Signal file: ' + $SignalPath)",
-            "Write-Host ('Refresh script: ' + $RefreshScriptPath)",
-            "Write-Host ('Bot env snippet: ' + $BotEnvPath)",
-            "",
-        ].join("\r\n");
-    }
-
-    private buildBotEnvSnippet(slug: string, botSymbol: string, configName: string): string {
-        return [
-            `# ${configName}`,
-            "# Replace <STRATEGY_FINDER_ROOT> with your local Strategies-Finder path, using forward slashes, or run the downloaded script and use the generated .bot.env file.",
-            "TRADING_MODE=external_signal",
-            "DRY_RUN=true",
-            `EXTERNAL_SIGNAL_SYMBOL=${botSymbol}`,
-            `EXTERNAL_SIGNAL_FILE=<STRATEGY_FINDER_ROOT>/signals/bridge/${slug}.latest-entry-signal.json`,
-            "EXTERNAL_SIGNAL_POLL_INTERVAL_MS=2000",
-            "EXTERNAL_SIGNAL_MAX_SIGNAL_LAG_SECS=600",
-            "EXTERNAL_SIGNAL_LOG_FILE=logs/external_signal.jsonl",
-            `EXTERNAL_SIGNAL_REFRESH_SCRIPT=<STRATEGY_FINDER_ROOT>/signals/bridge/${slug}.refresh.ps1`,
-            "EXTERNAL_SIGNAL_REFRESH_DELAY_SECS=2",
-            "EXTERNAL_SIGNAL_REFRESH_TIMEOUT_SECS=120",
-            "MULTI_WALLET_NON_INTERACTIVE=true",
-            "WALLET_1_STRATEGY=external_signal",
-        ].join("\r\n");
-    }
-
-    private resolveExternalSignalSymbol(symbol: string): string | null {
-        const normalized = symbol.trim().toUpperCase();
-        if (normalized === "BTCUSDT") return "btc";
-        if (normalized === "ETHUSDT") return "eth";
-        if (normalized === "SOLUSDT") return "sol";
-        if (normalized === "XRPUSDT") return "xrp";
-        return null;
-    }
-
-    private slugifyConfigName(name: string): string {
-        const slug = name
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-+|-+$/g, "");
-        return slug || "saved-config";
-    }
-
-    private toPowerShellSingleQuoted(value: string): string {
-        return `'${value.replace(/'/g, "''")}'`;
-    }
-
-    private downloadTextFile(fileName: string, content: string, mime: string): void {
-        const blob = new Blob([content], { type: mime });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-    }
-
-    private async copyToClipboard(text: string): Promise<boolean> {
-        try {
-            await navigator.clipboard.writeText(text);
-            return true;
-        } catch {
-            const textarea = document.createElement("textarea");
-            textarea.value = text;
-            textarea.style.position = "fixed";
-            textarea.style.left = "-9999px";
-            document.body.appendChild(textarea);
-            textarea.select();
-            const copied = document.execCommand("copy");
-            document.body.removeChild(textarea);
-            return copied;
-        }
     }
 
     private readEntryPriceCents(): number {
@@ -1359,37 +625,6 @@ class PolymarketPanelService {
     private readScope(): PolymarketFillScope {
         const value = this.getDom().polymarketScope.value;
         return value === "long" || value === "short" ? value : "all";
-    }
-
-    private formatScopeLabel(scope: PolymarketFillScope): string {
-        if (scope === "long") return "YES-only fills";
-        if (scope === "short") return "NO-only fills";
-        return "All executed trades";
-    }
-
-    private formatPercent(value: number): string {
-        return `${(value * 100).toFixed(1)}%`;
-    }
-
-    private formatProbability(value: number): string {
-        return `${(Math.abs(value) * 100).toFixed(1)}c`;
-    }
-
-    private formatPolymarketCents(value: number): string {
-        const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
-        return `${prefix}${(Math.abs(value) * 100).toFixed(1)}c`;
-    }
-
-    private formatProfitFactor(value: number | null): string {
-        if (value === null || !Number.isFinite(value)) {
-            return value === Infinity ? "âˆž" : "n/a";
-        }
-        return value.toFixed(2);
-    }
-
-    private formatSignedUsd(value: number): string {
-        const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
-        return `${prefix}$${Math.abs(value).toFixed(2)}`;
     }
 
     private getDom(): PolymarketPanelDom {

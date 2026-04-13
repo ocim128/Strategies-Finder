@@ -13,7 +13,11 @@ import { coerceAdaptiveTakeProfitFieldValue, resolveTakeProfitMode } from "./tak
 
 import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, TradeDirection, TradeFilterMode } from "./types/strategies";
 import { isTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from "./types/backtest";
-import { CAPITAL_DEFAULTS, EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
+import {
+    CAPITAL_DEFAULTS,
+    EFFECTIVE_BACKTEST_DEFAULTS,
+    resolveBacktestSettingsFromRaw,
+} from "./backtest-settings-resolver";
 import { getLegacyCompatibleTradeFilterModeValue, getLegacyCompatibleTradeFilterToggleValue } from "./legacy-settings-compat";
 
 // ============================================================================
@@ -378,9 +382,9 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
         : readBoolean(source.entrySettingsToggle, false);
 
     // Cross-symbol
-    if (typeof source.crossSymbolSecondary === 'string' && source.crossSymbolSecondary.trim()) {
-        normalized.crossSymbolSecondary = (source.crossSymbolSecondary as string).trim().toUpperCase();
-    }
+    normalized.crossSymbolSecondary = typeof source.crossSymbolSecondary === 'string'
+        ? source.crossSymbolSecondary.trim().toUpperCase()
+        : '';
 
     return normalized;
 }

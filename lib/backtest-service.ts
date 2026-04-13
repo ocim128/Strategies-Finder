@@ -1,6 +1,5 @@
 import { state } from "./state";
 import { uiManager } from "./ui-manager";
-import { chartManager } from "./chart-manager";
 import { clearActiveBacktestRerunContext, getActiveBacktestRerunContext } from "./backtest-rerun-context";
 import { dataManager } from "./data-manager";
 
@@ -25,28 +24,19 @@ import {
     calculateSharpeRatioFromReturns,
 } from "./strategies/performance-metrics";
 import { computeEdgeStatistics } from "./strategies/backtest/edge-statistics";
-import { getOptionalElement } from "./dom-utils";
 import { sanitizeBacktestSettingsForRust, requiresTypescriptEngine as requiresTsEngine } from "./rust-settings-sanitizer";
 import { sliceOhlcvByBlock } from "./block-selector";
 import {
     selectExecutionAwareClosedCandles,
 } from "./alert-evaluation-window";
 import {
-    BACKTEST_DOM_SETTING_IDS,
-    CAPITAL_DEFAULTS,
     EFFECTIVE_BACKTEST_DEFAULTS,
     resolveBacktestSettingsFromRaw
 } from "./backtest-settings-resolver";
-import { readNumberInputValue } from "./dom-input-readers";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { mergeStrategySignals } from "./signal-merge";
 import { resolveSubscriptionExecutionBacktestSettings } from "./alert-subscription-utils";
 import { isSmartTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
-import { ADVANCED_SIZING_DOM_IDS, ADVANCED_SIZING_FIELD_IDS } from "./advanced-sizing-dom";
-import {
-    resolveCapitalSettingsFromRaw,
-    SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS,
-} from "./backtest-capital-settings";
 import {
     createDomBacktestRunHandle,
     delayBacktestUi,
@@ -61,21 +51,20 @@ import { annotateBacktestResultWithPolymarketOutcomes } from "./polymarket-trade
 import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "./polymarket-exit-mode";
 import type { PolymarketPricePoint } from "./local-sqlite-polymarket-api";
 import { ensurePricePointsForOutcomes } from "./polymarket-price-points-ingest";
-import {
-    buildBacktestEndpointCopyBundleFromSnapshot,
-    computeBacktestEndpointDatasetFingerprint,
-    getCurrentUiBacktestEndpointCandles,
-    getCurrentUiBacktestEndpointSnapshot,
-    hasCurrentUiBacktestEndpointCandles,
-    hasCurrentUiBacktestEndpointSnapshot,
-    matchesEndpointCapitalProfile,
-    prepareBacktestEndpointCopyBundleFromSnapshot,
-    type UiBacktestEndpointSnapshot,
-} from "./backtest-endpoint-copy";
-import { buildBacktestEndpointExecutorRequestFromSnapshot } from "./backtest-endpoint-execution";
-import { toCompactMetrics } from "./backtest-endpoint-contract";
 import { executeBacktest, executeBacktestFromSignals } from "./backtest-executor";
-import { resolveCrossSymbolSecondaryForStrategy } from "./cross-symbol-runtime";
+import {
+    getCapitalSettings as readCapitalSettings,
+    getBacktestSettings as readBacktestSettings,
+    resolveSubscriptionCapitalSettings as resolveSubCapitalSettings,
+} from "./backtest-settings-reader";
+import {
+    createEndpointCopySnapshot,
+    canCopyLatestUiBacktestEndpointRequest as canCopyEndpoint,
+    canRunLatestUiBacktestEndpointPreview as canPreviewEndpoint,
+    runLatestUiBacktestEndpointPreview as runEndpointPreview,
+    buildLatestUiBacktestEndpointCopyBundle as buildEndpointBundle,
+} from "./backtest-endpoint-facade";
+import { addStrategyIndicators as renderStrategyIndicators } from "./backtest-chart-renderer";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { findContainingEvent } from "./polymarket-1m-5m-bridge";
 
@@ -709,59 +698,11 @@ export class BacktestService {
     }
 
     public getCapitalSettings(): CapitalSettings {
-        const fixedTradeToggle = getOptionalElement<HTMLInputElement>('fixedTradeToggle');
-        const tradeSizingMode = getOptionalElement<HTMLSelectElement>('tradeSizingMode');
-        const raw: Record<string, unknown> = {
-            initialCapital: readNumberInputValue('initialCapital', CAPITAL_DEFAULTS.initialCapital),
-            positionSize: readNumberInputValue('positionSize', CAPITAL_DEFAULTS.positionSize),
-            commission: readNumberInputValue('commission', CAPITAL_DEFAULTS.commission),
-            fixedTradeAmount: readNumberInputValue('fixedTradeAmount', CAPITAL_DEFAULTS.fixedTradeAmount),
-            fixedTradeToggle: fixedTradeToggle?.checked,
-            sizingMode: tradeSizingMode?.value,
-        };
-
-        for (const key of ADVANCED_SIZING_FIELD_IDS) {
-            const element = getOptionalElement<HTMLInputElement | HTMLSelectElement>(ADVANCED_SIZING_DOM_IDS[key]);
-            if (!element) continue;
-            raw[key] = element instanceof HTMLInputElement && element.type === "checkbox"
-                ? element.checked
-                : element.value;
-        }
-
-        return resolveCapitalSettingsFromRaw(raw);
+        return readCapitalSettings();
     }
 
     public getBacktestSettings(): BacktestSettings {
-        const raw: Record<string, unknown> = {};
-        for (const id of BACKTEST_DOM_SETTING_IDS) {
-            const value = this.readDomSettingValue(id);
-            if (value !== undefined) {
-                raw[id] = value;
-            }
-        }
-
-        const settings = resolveBacktestSettingsFromRaw(raw as BacktestSettings, {
-            coerceWithoutUiToggles: false,
-        });
-
-        settings.tradeDirection = settings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
-        settings.executionModel = settings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
-        return settings;
-    }
-
-    private readDomSettingValue(id: string): unknown {
-        const element = getOptionalElement<HTMLElement>(id);
-        if (!element) return undefined;
-        if (element instanceof HTMLInputElement) {
-            if (element.type === 'checkbox' || element.type === 'radio') {
-                return element.checked;
-            }
-            return element.value;
-        }
-        if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) {
-            return element.value;
-        }
-        return undefined;
+        return readBacktestSettings();
     }
 
     private requiresTypescriptSizingMode(sizingMode: TradeSizingMode): boolean {
@@ -769,8 +710,7 @@ export class BacktestService {
     }
 
     private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): CapitalSettings {
-        const raw = backtestSettings as Record<string, unknown>;
-        return resolveCapitalSettingsFromRaw(raw, SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS);
+        return resolveSubCapitalSettings(backtestSettings);
     }
 
     private isResultConsistent(result: BacktestResult): boolean {
@@ -813,136 +753,20 @@ export class BacktestService {
         return requiresTsEngine(settings);
     }
 
-    private canUseCurrentChartForEndpointCopy(snapshot: UiBacktestEndpointSnapshot): boolean {
-        return hasCurrentUiBacktestEndpointCandles()
-            && snapshot.symbol === state.currentSymbol
-            && snapshot.interval === state.currentInterval;
-    }
-
-    private compactMetricResultsMatch(left: BacktestResult, right: BacktestResult): boolean {
-        const leftMetrics = toCompactMetrics(left);
-        const rightMetrics = toCompactMetrics(right);
-        const epsilon = 1e-9;
-        const metricKeys = Object.keys(leftMetrics) as Array<keyof typeof leftMetrics>;
-
-        return metricKeys.every((key) => {
-            const leftValue = leftMetrics[key];
-            const rightValue = rightMetrics[key];
-            if (typeof leftValue === "number" && typeof rightValue === "number") {
-                if (!Number.isFinite(leftValue) || !Number.isFinite(rightValue)) {
-                    return leftValue === rightValue;
-                }
-                return Math.abs(leftValue - rightValue) <= epsilon;
-            }
-            return leftValue === rightValue;
-        });
-    }
-
     public canCopyLatestUiBacktestEndpointRequest(): boolean {
-        const snapshot = getCurrentUiBacktestEndpointSnapshot();
-        if (!hasCurrentUiBacktestEndpointSnapshot() || !snapshot || !state.currentBacktestResult) {
-            return false;
-        }
-
-        return this.canUseCurrentChartForEndpointCopy(snapshot);
+        return canCopyEndpoint();
     }
 
     public canRunLatestUiBacktestEndpointPreview(): boolean {
-        return this.canCopyLatestUiBacktestEndpointRequest();
+        return canPreviewEndpoint();
     }
 
-    public async runLatestUiBacktestEndpointPreview(): Promise<{
-        strategyKey: string;
-        result: BacktestResult;
-        engineUsed: "rust" | "typescript";
-        matchesCurrentUiResult: boolean;
-        previousUiMetrics: ReturnType<typeof toCompactMetrics>;
-        endpointMetrics: ReturnType<typeof toCompactMetrics>;
-    } | null> {
-        const snapshot = getCurrentUiBacktestEndpointSnapshot();
-        const candles = getCurrentUiBacktestEndpointCandles();
-        const currentResult = state.currentBacktestResult;
-        if (!snapshot || !candles || !currentResult || !this.canUseCurrentChartForEndpointCopy(snapshot)) {
-            return null;
-        }
-
-        const crossSymbolDataset = await this.resolveEndpointCrossSymbolDataset(snapshot);
-        const endpointRun = await executeBacktest({
-            ...buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles, crossSymbolDataset ? {
-                secondarySymbol: crossSymbolDataset.secondarySymbol,
-                secondaryData: crossSymbolDataset.candles,
-            } : undefined),
-            dataFetcher: dataManager,
-        });
-        const matchesCurrentUiResult = this.compactMetricResultsMatch(currentResult, endpointRun.result);
-
-        commitBacktestResult(endpointRun.result, "endpoint_preview", {
-            reason: "endpoint_preview",
-            endpointCopySnapshot: snapshot,
-            endpointCopyCandles: candles,
-        });
-
-        return {
-            strategyKey: snapshot.strategyKey,
-            result: endpointRun.result,
-            engineUsed: endpointRun.engineUsed,
-            matchesCurrentUiResult,
-            previousUiMetrics: toCompactMetrics(currentResult),
-            endpointMetrics: toCompactMetrics(endpointRun.result),
-        };
+    public async runLatestUiBacktestEndpointPreview() {
+        return runEndpointPreview();
     }
 
-    public async buildLatestUiBacktestEndpointCopyBundle(baseUrl: string): Promise<{
-        strategyKey: string;
-        bundle: ReturnType<typeof buildBacktestEndpointCopyBundleFromSnapshot>;
-        uiCapitalMatchesEndpoint: boolean;
-        datasetRef: string;
-        candleCount: number;
-        datasetUploaded: boolean;
-        datasetUploadError: string | null;
-    } | null> {
-        const snapshot = getCurrentUiBacktestEndpointSnapshot();
-        const candles = getCurrentUiBacktestEndpointCandles();
-        if (!snapshot || !candles || !state.currentBacktestResult || !this.canUseCurrentChartForEndpointCopy(snapshot)) {
-            return null;
-        }
-
-        const crossSymbolDataset = await this.resolveEndpointCrossSymbolDataset(snapshot);
-        const preparedCopy = await prepareBacktestEndpointCopyBundleFromSnapshot(snapshot, baseUrl, candles, crossSymbolDataset);
-
-        return {
-            strategyKey: snapshot.strategyKey,
-            bundle: preparedCopy.bundle,
-            uiCapitalMatchesEndpoint: matchesEndpointCapitalProfile(snapshot.capitalSettings),
-            datasetRef: preparedCopy.datasetRef,
-            candleCount: preparedCopy.candleCount,
-            datasetUploaded: preparedCopy.datasetUploaded,
-            datasetUploadError: preparedCopy.datasetUploadError,
-        };
-    }
-
-    private async resolveEndpointCrossSymbolDataset(
-        snapshot: UiBacktestEndpointSnapshot
-    ): Promise<{ secondarySymbol: string; candles: OHLCVData[] } | undefined> {
-        const strategy = strategyRegistry.get(snapshot.strategyKey);
-        if (!strategy?.crossSymbolConfig) {
-            return undefined;
-        }
-
-        const secondarySymbol = resolveCrossSymbolSecondaryForStrategy(strategy, snapshot.backtestSettings);
-        if (!secondarySymbol) {
-            throw new Error(`Unable to resolve secondary symbol for cross-symbol strategy "${snapshot.strategyKey}".`);
-        }
-
-        const candles = await dataManager.fetchDataDetached(secondarySymbol, snapshot.interval);
-        if (!Array.isArray(candles) || candles.length === 0) {
-            throw new Error(`No data available for secondary symbol "${secondarySymbol}" on interval "${snapshot.interval}".`);
-        }
-
-        return {
-            secondarySymbol,
-            candles,
-        };
+    public async buildLatestUiBacktestEndpointCopyBundle(baseUrl: string) {
+        return buildEndpointBundle(baseUrl);
     }
 
     public async evaluateStrategyOnData(
@@ -982,45 +806,7 @@ export class BacktestService {
     }
 
     public addStrategyIndicators(params: StrategyParams) {
-        chartManager.clearIndicators();
-        const indicatorsPanel = getOptionalElement('indicatorsPanel');
-        if (indicatorsPanel) indicatorsPanel.innerHTML = '';
-
-        const strategy = strategyRegistry.get(state.currentStrategyKey);
-        if (!strategy) {
-            return;
-        }
-
-        const indicators = strategy.indicators ? strategy.indicators(state.ohlcvData, params) : [];
-        const times = state.ohlcvData.map(d => d.time);
-
-        indicators.forEach(ind => {
-            if (Array.isArray(ind.values)) {
-                const values = ind.values as (number | null)[];
-                const color = ind.color || (ind.type === 'histogram' ? '#ef5350' : '#2962ff');
-                this.addIndicatorToChart(ind.name, values, times, color, ind.type);
-            }
-        });
-    }
-
-    private addIndicatorToChart(
-        name: string,
-        values: (number | null)[],
-        times: OHLCVData['time'][],
-        color: string,
-        type: 'line' | 'band' | 'histogram'
-    ) {
-        const lineData = values
-            .map((v, i) => v !== null ? { time: times[i], value: v } : null)
-            .filter(d => d !== null) as { time: OHLCVData['time']; value: number }[];
-
-        if (type === 'histogram') {
-            const id = chartManager.addIndicatorHistogram(name, 0, lineData, color);
-            uiManager.addIndicatorBadge(id, name, 0, color);
-        } else {
-            const id = chartManager.addIndicatorLine(name, 0, lineData, color);
-            uiManager.addIndicatorBadge(id, name, 0, color);
-        }
+        renderStrategyIndicators(params);
     }
 
     /**
@@ -1066,23 +852,8 @@ export class BacktestService {
         nowSec: number,
         blockRange: { from: number; to: number } | null,
         annotatePolymarket: boolean
-    ): UiBacktestEndpointSnapshot {
-        return {
-            symbol: state.currentSymbol,
-            interval: state.currentInterval,
-            strategyKey: state.currentStrategyKey,
-            strategyParams: { ...strategyParams },
-            backtestSettings: { ...backtestSettings },
-            capitalSettings: {
-                ...capitalSettings,
-                advancedSizing: capitalSettings.advancedSizing ? { ...capitalSettings.advancedSizing } : undefined,
-            },
-            nowSec,
-            blockRange: blockRange ? { ...blockRange } : null,
-            annotatePolymarket,
-            engineUsed,
-            datasetFingerprint: computeBacktestEndpointDatasetFingerprint(state.ohlcvData),
-        };
+    ) {
+        return createEndpointCopySnapshot(strategyParams, backtestSettings, capitalSettings, engineUsed, nowSec, blockRange, annotatePolymarket);
     }
 }
 
