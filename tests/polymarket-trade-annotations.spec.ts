@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { afterEach, describe, it } from "node:test";
+import { resetLocalSqlitePolymarketApiAvailabilityForTests } from "../lib/local-sqlite-polymarket-api";
 import { annotateBacktestResultWithPolymarketOutcomes } from "../lib/polymarket-trade-annotations";
 import { TradesRenderer } from "../lib/renderers/tradesRenderer";
 import { ensurePricePointsForOutcomes } from "../lib/polymarket-price-points-ingest";
@@ -93,6 +94,7 @@ function installOutcomeFetch(rows: unknown[], onRequest?: (url: URL) => void): v
 
 afterEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;
+    resetLocalSqlitePolymarketApiAvailabilityForTests();
 });
 
 describe("Polymarket backtest trade annotations", () => {
@@ -714,6 +716,103 @@ describe("Polymarket backtest trade annotations", () => {
         expect(points).to.have.length(205);
         expect(requestedChunks).to.have.length(3);
         expect(requestedChunks.map((chunk) => chunk.split(",").filter(Boolean).length)).to.deep.equal([100, 100, 5]);
+    });
+
+    it("batches large stored price-point lookups so concurrent SQLite loads do not fail", async () => {
+        const requestedChunks: string[] = [];
+        let activeLoadRequests = 0;
+        let peakLoadRequests = 0;
+
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-price-points") {
+                const chunk = url.searchParams.get("eventStartTs") ?? "";
+                requestedChunks.push(chunk);
+                activeLoadRequests++;
+                peakLoadRequests = Math.max(peakLoadRequests, activeLoadRequests);
+                if (activeLoadRequests > 4) {
+                    activeLoadRequests--;
+                    throw new Error("Failed to fetch");
+                }
+
+                await new Promise((resolve) => setTimeout(resolve, 1));
+
+                const rows = chunk
+                    .split(",")
+                    .map((value) => Number(value.trim()))
+                    .filter((value) => Number.isFinite(value))
+                    .map((eventStartTs) => ({
+                        series_id: "10684",
+                        event_start_ts: eventStartTs,
+                        event_end_ts: eventStartTs + 300,
+                        market_slug: `btc-${eventStartTs}`,
+                        yes_token_id: `yes-${eventStartTs}`,
+                        no_token_id: `no-${eventStartTs}`,
+                        ts: eventStartTs + 60,
+                        yes_price: 0.55,
+                        no_price: 0.45,
+                        updated_at: 1,
+                    }));
+
+                activeLoadRequests--;
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows,
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/ensure-polymarket-price-points") {
+                throw new Error("ensure route should not run when stored chunks already cover every event");
+            }
+
+            throw new Error(`Unexpected fetch: ${url.pathname}`);
+        }) as typeof fetch;
+
+        const outcomes = Array.from({ length: 605 }, (_, index) => {
+            const eventStartTs = 1_700_200_000 + index * 300;
+            return {
+                series_id: "10684",
+                event_slug: `btc-${eventStartTs}`,
+                market_slug: `btc-${eventStartTs}`,
+                interval: "5m",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                yes_token_id: `yes-${eventStartTs}`,
+                no_token_id: `no-${eventStartTs}`,
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.51,
+                yes_entry_minute_2_price: 0.52,
+                yes_entry_minute_3_price: 0.53,
+                yes_entry_minute_4_price: 0.54,
+                resolved_outcome_up: 1 as const,
+                resolution_source: "test",
+                updated_at: 1,
+            };
+        });
+
+        const points = await ensurePricePointsForOutcomes(outcomes, "10684");
+
+        expect(points).to.have.length(605);
+        expect(requestedChunks).to.have.length(7);
+        expect(peakLoadRequests).to.be.at.most(4);
     });
 
     it("skips annotation for unsupported runs", async () => {

@@ -16,6 +16,10 @@ const HISTORY_REQUEST_TIMEOUT_MS = 6000;
 // client-side ensure timeout expires.
 const MAX_CONCURRENT_FETCHES = 24;
 const MAX_EVENT_STARTS_PER_LOAD_REQUEST = 100;
+// Finder can span long 1m ranges, which turns stored-price lookup into dozens
+// of local SQLite requests. Keep those batched so the browser/dev server does
+// not drop same-origin fetches under a large Promise.all fan-out.
+const MAX_CONCURRENT_LOAD_REQUESTS = 4;
 
 type HistoryResponse = {
     history?: Array<{ t?: unknown; p?: unknown }>;
@@ -159,12 +163,17 @@ async function loadExistingPricePoints(
         chunks.push(eventStartTs.slice(index, index + MAX_EVENT_STARTS_PER_LOAD_REQUEST));
     }
 
-    const rows = await Promise.all(
-        chunks.map((chunk) => loadPolymarketPricePoints({
-            seriesId,
-            eventStartTs: chunk,
-        }))
-    );
+    const rows: PolymarketPricePoint[][] = [];
+    for (let index = 0; index < chunks.length; index += MAX_CONCURRENT_LOAD_REQUESTS) {
+        const batch = chunks.slice(index, index + MAX_CONCURRENT_LOAD_REQUESTS);
+        const batchRows = await Promise.all(
+            batch.map((chunk) => loadPolymarketPricePoints({
+                seriesId,
+                eventStartTs: chunk,
+            }))
+        );
+        rows.push(...batchRows);
+    }
 
     return rows
         .flat()

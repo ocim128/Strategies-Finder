@@ -1,6 +1,6 @@
 import { DEFAULT_SORT_PRIORITY, getPolymarketSortPriority } from "./constants";
 import type { FinderMetric, FinderMode, FinderOptions, PolymarketFinderRankMode } from "../types/finder";
-import type { PolymarketExitMode } from "../polymarket-exit-mode";
+import { resolveEffectivePolymarketExitMode, type PolymarketExitMode } from "../polymarket-exit-mode";
 
 export interface FinderOptionsInput {
     useAdvancedSort: boolean;
@@ -49,6 +49,15 @@ export function resolveFinderSortPriority(input: {
         sortPriority.push("netProfit");
     }
     return sortPriority;
+}
+
+export function resolveFinderPolymarketExitMode(input: {
+    requestedMode?: PolymarketExitMode;
+    interval: string;
+    executionModel?: string;
+    polymarketAnnotationEnabled: boolean;
+}): PolymarketExitMode {
+    return resolveEffectivePolymarketExitMode(input);
 }
 
 export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {

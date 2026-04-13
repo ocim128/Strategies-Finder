@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import { afterEach, describe, it } from 'node:test';
 import { runPolymarketFinder } from '../lib/finder/finder-runner-polymarket';
+import { resetLocalSqlitePolymarketApiAvailabilityForTests } from '../lib/local-sqlite-polymarket-api';
 import type { FinderRunCallbacks, FinderRunInput } from '../lib/finder/finder-runner';
 import type { CapitalSettings } from '../lib/types/backtest';
 import type { FinderOptions } from '../lib/types/finder';
@@ -222,6 +223,7 @@ function installOutcomeFetch(
 afterEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;
     prepareFinderCalls = 0;
+    resetLocalSqlitePolymarketApiAvailabilityForTests();
 });
 
 describe('Finder Polymarket runner', () => {
@@ -878,6 +880,90 @@ describe('Finder Polymarket runner', () => {
         }
 
         expect(statuses.some((status) => status.includes('outcome rows'))).to.equal(true);
+    });
+
+    it('reuses a recent successful SQLite status check for signal-exit price points', async () => {
+        const bars = makeBars(8, 1_700_000_000, 60);
+        let statusCalls = 0;
+
+        globalThis.fetch = (async (input) => {
+            const url = toUrl(input);
+
+            if (url.pathname === '/api/sqlite/status') {
+                statusCalls++;
+                if (statusCalls === 1) {
+                    return jsonResponse({ ok: true });
+                }
+                throw new Error('transient status probe failure');
+            }
+
+            if (url.pathname === '/api/sqlite/load-polymarket-outcomes') {
+                return jsonResponse({
+                    ok: true,
+                    rows: [
+                        makeOutcomeRow(1_700_000_000, 1),
+                    ],
+                });
+            }
+
+            if (url.pathname === '/api/sqlite/load-polymarket-price-points') {
+                return jsonResponse({
+                    ok: true,
+                    rows: [
+                        {
+                            series_id: '10684',
+                            event_start_ts: 1_700_000_000,
+                            event_end_ts: 1_700_000_300,
+                            market_slug: 'btc-5m-1700000000',
+                            yes_token_id: 'yes-token',
+                            no_token_id: 'no-token',
+                            ts: 1_700_000_060,
+                            yes_price: 0.51,
+                            no_price: 0.49,
+                            updated_at: 1,
+                        },
+                        {
+                            series_id: '10684',
+                            event_start_ts: 1_700_000_000,
+                            event_end_ts: 1_700_000_300,
+                            market_slug: 'btc-5m-1700000000',
+                            yes_token_id: 'yes-token',
+                            no_token_id: 'no-token',
+                            ts: 1_700_000_180,
+                            yes_price: 0.63,
+                            no_price: 0.37,
+                            updated_at: 1,
+                        },
+                    ],
+                });
+            }
+
+            if (url.pathname === '/api/sqlite/ensure-polymarket-price-points') {
+                throw new Error('ensure route should not run when stored price points already cover the event');
+            }
+
+            throw new Error(`Unexpected fetch: ${url.pathname}`);
+        }) as typeof fetch;
+
+        const { callbacks, statuses } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(
+                bars,
+                [{ variant: 4 }],
+                {
+                    polymarketExitMode: 'signal_exit_same_event',
+                    polymarketRankMode: 'expectancy',
+                    sortPriority: ['polyExpectancy', 'polyWinRate', 'polyPredictions'],
+                },
+                '1m'
+            ),
+            callbacks
+        );
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]?.polymarketEval?.evaluationMode).to.equal('signal_exit_same_event');
+        expect(statuses.some((status) => status.includes('Failed to ensure Polymarket price points'))).to.equal(false);
+        expect(statusCalls).to.be.at.most(1);
     });
 
     it('scores non-zero offsets for multi-interval Polymarket runs', async () => {

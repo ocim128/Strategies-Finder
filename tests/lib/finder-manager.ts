@@ -12,7 +12,7 @@ import { DEFAULT_SORT_PRIORITY, METRIC_FULL_LABELS } from "./finder/constants";
 import { runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderUI } from "./finder/finder-ui";
-import { buildFinderOptions } from "./finder/finder-manager-logic";
+import { buildFinderOptions, resolveFinderPolymarketExitMode } from "./finder/finder-manager-logic";
 import { sortFinderResults } from "./finder/finder-engine";
 import { mergeFinderRiskParamsIntoBacktestSettings } from "./finder/finder-runner-core";
 import { debugLogger } from "./debug-logger";
@@ -33,7 +33,7 @@ import type {
 	FinderResult
 } from './types/finder';
 import { isSmartTradeSizingMode } from "./types/backtest";
-import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "./polymarket-exit-mode";
+import { isSignalExitSameEventMode } from "./polymarket-exit-mode";
 import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
 
 export class FinderManager {
@@ -392,7 +392,9 @@ export class FinderManager {
 		const startTime = performance.now();
 		this.lastFinderRunBacktestSettings = null;
 		this.lastFinderOptions = null;
-		const options = this.readOptions();
+		const settingsSnapshot = this.cloneBacktestSettings(settingsManager.getBacktestSettings());
+		this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settingsSnapshot);
+		const options = this.readOptions(settingsSnapshot);
 		this.lastFinderOptions = {
 			...options,
 			sortPriority: [...options.sortPriority],
@@ -428,7 +430,6 @@ export class FinderManager {
 
 			const capitalSettings = backtestService.getCapitalSettings();
 			const settings = backtestService.getBacktestSettings();
-			this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settingsManager.getBacktestSettings());
 			const requiresTsEngine = backtestService.requiresTypescriptEngine(settings) || isSmartTradeSizingMode(capitalSettings.sizingMode);
 
 			// Freeze the selected chart block; execution-aware closed-candle normalization
@@ -477,7 +478,6 @@ export class FinderManager {
 					finalizeProgress(0, "");
 					this.setStatus(`Finder stopped by user after ${Math.round(performance.now() - startTime)}ms.`);
 				} else {
-					this.setStatus(`Finder completed in ${Math.round(performance.now() - startTime)}ms.`);
 					finalizeProgress(100, "");
 				}
 			} catch (error) {
@@ -507,7 +507,7 @@ export class FinderManager {
 		}
 	}
 
-	private readOptions(): FinderOptions {
+	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, "polymarketExitMode" | "executionModel">): FinderOptions {
 		const dom = this.getDom();
 		const useAdvancedSort = dom.finderAdvancedToggle.checked;
 		const sortItems = dom.finderSortList.querySelectorAll('.finder-sort-item');
@@ -532,10 +532,10 @@ export class FinderManager {
 		const polymarketLockOffset = polymarketScoringEnabled && dom.finderPolymarketLockOffset.checked;
 		const polymarketAfterTakeProfitOnly = polymarketScoringEnabled && dom.finderPolymarketAfterTakeProfitOnly.checked;
 
-		const effectiveExitMode = resolveEffectivePolymarketExitMode({
-			requestedMode: this.lastFinderRunBacktestSettings?.polymarketExitMode,
+		const effectiveExitMode = resolveFinderPolymarketExitMode({
+			requestedMode: backtestSettings.polymarketExitMode,
 			interval: state.currentInterval,
-			executionModel: this.lastFinderRunBacktestSettings?.executionModel,
+			executionModel: backtestSettings.executionModel,
 			polymarketAnnotationEnabled: polymarketScoringEnabled,
 		});
 

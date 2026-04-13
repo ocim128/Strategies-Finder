@@ -6,6 +6,7 @@ const SQLITE_INGEST_TIMEOUT_MS = 180000;
 
 let sqliteApiAvailable: boolean | null = null;
 let sqliteApiCheckedAt = 0;
+let sqliteApiAvailabilityCheckPromise: Promise<boolean> | null = null;
 
 export interface LoadPolymarketOutcomesOptions {
     seriesId?: string;
@@ -41,22 +42,47 @@ function getBaseUrl(): string {
 
 async function checkSqliteApiAvailable(force = false): Promise<boolean> {
     const now = Date.now();
-    if (!force && sqliteApiAvailable !== null && now - sqliteApiCheckedAt < AVAILABILITY_CACHE_MS) {
-        return sqliteApiAvailable;
+    const cacheIsFresh = sqliteApiAvailable !== null && now - sqliteApiCheckedAt < AVAILABILITY_CACHE_MS;
+    // A fresh successful probe is good enough for dependent SQLite requests in
+    // the same run; re-probing here can turn a transient status hiccup into a
+    // false failure while the API is otherwise serving data.
+    if (cacheIsFresh && (!force || sqliteApiAvailable === true)) {
+        return sqliteApiAvailable ?? false;
     }
 
+    if (sqliteApiAvailabilityCheckPromise) {
+        return await sqliteApiAvailabilityCheckPromise;
+    }
+
+    const availabilityCheck = (async () => {
+        try {
+            const response = await fetch(getBaseUrl() + '/api/sqlite/status', {
+                method: 'GET',
+                signal: createRequestTimeoutSignal(),
+            });
+            sqliteApiAvailable = response.ok;
+        } catch {
+            sqliteApiAvailable = false;
+        }
+
+        sqliteApiCheckedAt = Date.now();
+        return sqliteApiAvailable ?? false;
+    })();
+
+    sqliteApiAvailabilityCheckPromise = availabilityCheck;
     try {
-        const response = await fetch(getBaseUrl() + '/api/sqlite/status', {
-            method: 'GET',
-            signal: createRequestTimeoutSignal(),
-        });
-        sqliteApiAvailable = response.ok;
-    } catch {
-        sqliteApiAvailable = false;
+        return await availabilityCheck;
+    } finally {
+        if (sqliteApiAvailabilityCheckPromise === availabilityCheck) {
+            sqliteApiAvailabilityCheckPromise = null;
+        }
     }
+}
 
-    sqliteApiCheckedAt = now;
-    return sqliteApiAvailable;
+export function resetLocalSqlitePolymarketApiAvailabilityForTests(): void {
+    sqliteApiAvailable = null;
+    sqliteApiCheckedAt = 0;
+    sqliteApiAvailabilityCheckPromise = null;
 }
 
 export async function loadPolymarketOutcomes(

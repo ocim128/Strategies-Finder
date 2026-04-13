@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
     buildFinderOptions,
+    resolveFinderPolymarketExitMode,
     resolveFinderSortPriority,
 } from "./lib/finder/finder-manager-logic";
 
@@ -103,5 +104,14 @@ describe("Finder manager logic", () => {
             polymarketScoringEnabled: true,
             polymarketRankMode: "profitFactorTrades",
         })).to.deep.equal(["polyProfitFactorBalance", "polyProfitFactor", "totalTrades", "polyPredictions", "polyWinRate"]);
+    });
+
+    it("keeps finder polymarket exit mode on signal_exit_same_event when the current run snapshot supports it", () => {
+        expect(resolveFinderPolymarketExitMode({
+            requestedMode: "signal_exit_same_event",
+            interval: "1m",
+            executionModel: "next_open",
+            polymarketAnnotationEnabled: true,
+        })).to.equal("signal_exit_same_event");
     });
 });
