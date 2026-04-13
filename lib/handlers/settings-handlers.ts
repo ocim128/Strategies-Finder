@@ -17,6 +17,7 @@ import {
 } from "../strategy-share-service";
 import { strategyPanelController } from "../strategy-panel-controller";
 import { parseInputNumber } from "../dom-input-readers";
+import { copyToClipboard } from "../browser-transfer";
 import { createSettingsHandlersDom } from "./settings-handlers-dom";
 
 const STRATEGY_CONFIGS_CHANGED_EVENT = "strategy-configs:changed";
@@ -312,26 +313,6 @@ function setupEnginePreferenceHandlers() {
     rustToggle.addEventListener('change', updateStatus);
     updateStatus();
 }
-
-
-
-async function copyToClipboard(text: string): Promise<boolean> {
-    try {
-        await navigator.clipboard.writeText(text);
-        return true;
-    } catch {
-        const textarea = document.createElement('textarea');
-        textarea.value = text;
-        textarea.style.position = 'fixed';
-        textarea.style.left = '-9999px';
-        document.body.appendChild(textarea);
-        textarea.select();
-        const copied = document.execCommand('copy');
-        document.body.removeChild(textarea);
-        return copied;
-    }
-}
-
 function normalizeSharedInterval(value: string | null): string {
     if (!value) return SHARED_DEFAULT_INTERVAL;
     const trimmed = value.trim().toLowerCase();

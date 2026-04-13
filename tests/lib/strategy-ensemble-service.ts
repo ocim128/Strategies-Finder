@@ -33,7 +33,7 @@ import {
     type EnsembleSignalRecipe,
     type StrategyConfig,
 } from "./settings-manager";
-import { state } from "./state";
+import { state, type StateKey } from "./state";
 import { clearBacktestResults, commitBacktestResult } from "./state-actions";
 import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
 import { type BacktestSettings } from "./strategies";
@@ -74,6 +74,55 @@ class StrategyEnsembleService {
     private async yieldToUi(): Promise<void> {
         await new Promise<void>((resolve) => {
             setTimeout(resolve, 0);
+        });
+    }
+
+    private bindAsyncClick(button: HTMLButtonElement, action: () => Promise<void>): void {
+        button.addEventListener("click", () => {
+            void action();
+        });
+    }
+
+    private bindDelegatedButtonClick(
+        container: HTMLElement,
+        selector: string,
+        action: (button: HTMLButtonElement) => void
+    ): void {
+        container.addEventListener("click", (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) {
+                return;
+            }
+
+            const button = target.closest<HTMLButtonElement>(selector);
+            if (!button) {
+                return;
+            }
+
+            action(button);
+        });
+    }
+
+    private bindInvalidatingEvent(
+        element: HTMLInputElement | HTMLSelectElement,
+        eventName: "change" | "input",
+        message: string,
+        beforeInvalidate?: () => void
+    ): void {
+        element.addEventListener(eventName, () => {
+            beforeInvalidate?.();
+            this.invalidateRunContext(message);
+        });
+    }
+
+    private subscribeAndInvalidate(
+        key: StateKey,
+        message: string,
+        beforeInvalidate?: () => void
+    ): void {
+        state.subscribe(key, () => {
+            beforeInvalidate?.();
+            this.invalidateRunContext(message);
         });
     }
 
@@ -172,125 +221,114 @@ class StrategyEnsembleService {
             }
         });
 
-        dom.ensembleRunBtn.addEventListener("click", () => {
-            void this.run();
-        });
-        dom.ensembleRunPolymarketBtn.addEventListener("click", () => {
-            void this.runPolymarket();
-        });
-        dom.ensemblePolymarketTableBody.addEventListener("click", (event) => {
-            const target = event.target;
-            if (!(target instanceof HTMLElement)) {
-                return;
-            }
+        this.bindAsyncClick(dom.ensembleRunBtn, () => this.run());
+        this.bindAsyncClick(dom.ensembleRunPolymarketBtn, () => this.runPolymarket());
+        this.bindDelegatedButtonClick(
+            dom.ensemblePolymarketTableBody,
+            "[data-ensemble-polymarket-config-backtest]",
+            (button) => {
+                const configName = button.dataset.ensemblePolymarketConfigBacktest?.trim();
+                if (!configName) {
+                    return;
+                }
 
-            const button = target.closest<HTMLButtonElement>("[data-ensemble-polymarket-config-backtest]");
-            const configName = button?.dataset.ensemblePolymarketConfigBacktest?.trim();
-            if (!configName) {
-                return;
+                void this.loadPolymarketConfigBacktest(configName);
             }
+        );
+        this.bindDelegatedButtonClick(
+            dom.ensemblePolymarketVetoTableBody,
+            "[data-ensemble-polymarket-veto-backtest]",
+            (button) => {
+                const primaryConfigName = button.dataset.ensemblePolymarketVetoBacktest?.trim();
+                const vetoConfigName = button.dataset.ensemblePolymarketVetoConfig?.trim();
+                if (!primaryConfigName || !vetoConfigName) {
+                    return;
+                }
 
-            void this.loadPolymarketConfigBacktest(configName);
-        });
-        dom.ensemblePolymarketVetoTableBody.addEventListener("click", (event) => {
-            const target = event.target;
-            if (!(target instanceof HTMLElement)) {
-                return;
+                void this.loadPolymarketVetoPairBacktest(primaryConfigName, vetoConfigName);
             }
+        );
+        this.bindDelegatedButtonClick(
+            dom.ensemblePolymarketOverrideTableBody,
+            "[data-ensemble-polymarket-override-backtest]",
+            (button) => {
+                const primaryConfigName = button.dataset.ensemblePolymarketOverrideBacktest?.trim();
+                const secondaryConfigName = button.dataset.ensemblePolymarketSecondaryConfig?.trim();
+                if (!primaryConfigName || !secondaryConfigName) {
+                    return;
+                }
 
-            const button = target.closest<HTMLButtonElement>("[data-ensemble-polymarket-veto-backtest]");
-            const primaryConfigName = button?.dataset.ensemblePolymarketVetoBacktest?.trim();
-            const vetoConfigName = button?.dataset.ensemblePolymarketVetoConfig?.trim();
-            if (!primaryConfigName || !vetoConfigName) {
-                return;
+                void this.loadPolymarketOverridePairBacktest(primaryConfigName, secondaryConfigName);
             }
+        );
+        this.bindDelegatedButtonClick(
+            dom.ensemblePolymarketAgreement,
+            "[data-ensemble-polymarket-selected-policy-backtest], [data-ensemble-polymarket-best-veto-backtest]",
+            (button) => {
+                if (button.matches("[data-ensemble-polymarket-selected-policy-backtest]")) {
+                    void this.loadConflictFilterBacktest();
+                    return;
+                }
 
-            void this.loadPolymarketVetoPairBacktest(primaryConfigName, vetoConfigName);
-        });
-        dom.ensemblePolymarketOverrideTableBody.addEventListener("click", (event) => {
-            const target = event.target;
-            if (!(target instanceof HTMLElement)) {
-                return;
-            }
-
-            const button = target.closest<HTMLButtonElement>("[data-ensemble-polymarket-override-backtest]");
-            const primaryConfigName = button?.dataset.ensemblePolymarketOverrideBacktest?.trim();
-            const secondaryConfigName = button?.dataset.ensemblePolymarketSecondaryConfig?.trim();
-            if (!primaryConfigName || !secondaryConfigName) {
-                return;
-            }
-
-            void this.loadPolymarketOverridePairBacktest(primaryConfigName, secondaryConfigName);
-        });
-        dom.ensemblePolymarketAgreement.addEventListener("click", (event) => {
-            const target = event.target;
-            if (!(target instanceof HTMLElement)) {
-                return;
-            }
-
-            const selectedPolicyButton = target.closest<HTMLButtonElement>("[data-ensemble-polymarket-selected-policy-backtest]");
-            if (selectedPolicyButton) {
-                void this.loadConflictFilterBacktest();
-                return;
-            }
-
-            const bestVetoButton = target.closest<HTMLButtonElement>("[data-ensemble-polymarket-best-veto-backtest]");
-            if (bestVetoButton) {
                 void this.loadBestVetoBacktest();
             }
+        );
+        [
+            {
+                element: dom.ensemblePolymarketConflictPolicy,
+                message: "Polymarket conflict policy changed. Run Ensemble Polymarket again.",
+            },
+            {
+                element: dom.ensemblePolymarketDirectionSlice,
+                message: "Polymarket direction slice changed. Run Ensemble Polymarket again.",
+            },
+        ].forEach(({ element, message }) => {
+            this.bindInvalidatingEvent(element, "change", message, () => {
+                this.syncSavedSignalRecipeControls();
+            });
         });
-        dom.ensemblePolymarketConflictPolicy.addEventListener("change", () => {
-            this.syncSavedSignalRecipeControls();
-            this.invalidateRunContext("Polymarket conflict policy changed. Run Ensemble Polymarket again.");
+        this.bindAsyncClick(dom.ensembleLoadConflictBacktestBtn, () => this.loadConflictFilterBacktest());
+        this.bindAsyncClick(dom.ensembleLoadBestVetoBacktestBtn, () => this.loadBestVetoBacktest());
+        [
+            { button: dom.ensembleSaveConflictRecipeBtn, action: () => this.saveConflictFilterRecipe() },
+            { button: dom.ensembleSaveBestVetoRecipeBtn, action: () => this.saveBestVetoRecipe() },
+            { button: dom.ensembleSignalRecipeDeleteBtn, action: () => this.exportModule!.deleteSelectedSignalRecipe() },
+        ].forEach(({ button, action }) => {
+            button.addEventListener("click", action);
         });
-        dom.ensemblePolymarketDirectionSlice.addEventListener("change", () => {
-            this.syncSavedSignalRecipeControls();
-            this.invalidateRunContext("Polymarket direction slice changed. Run Ensemble Polymarket again.");
+        [
+            dom.ensembleSignalRecipeSelect,
+            dom.ensembleSignalRecipeDirectionSelect,
+        ].forEach((element) => {
+            element.addEventListener("change", () => {
+                this.syncSavedSignalRecipeControls();
+            });
         });
-        dom.ensembleLoadConflictBacktestBtn.addEventListener("click", () => {
-            void this.loadConflictFilterBacktest();
-        });
-        dom.ensembleLoadBestVetoBacktestBtn.addEventListener("click", () => {
-            void this.loadBestVetoBacktest();
-        });
-        dom.ensembleSaveConflictRecipeBtn.addEventListener("click", () => {
-            this.saveConflictFilterRecipe();
-        });
-        dom.ensembleSaveBestVetoRecipeBtn.addEventListener("click", () => {
-            this.saveBestVetoRecipe();
-        });
-        dom.ensembleSignalRecipeSelect.addEventListener("change", () => {
-            this.syncSavedSignalRecipeControls();
-        });
-        dom.ensembleSignalRecipeDirectionSelect.addEventListener("change", () => {
-            this.syncSavedSignalRecipeControls();
-        });
-        dom.ensembleSignalRecipeDownloadScriptBtn.addEventListener("click", () => {
-            void this.exportModule!.downloadSelectedSignalRecipeBridge();
-        });
-        dom.ensembleSignalRecipeCopyEnvBtn.addEventListener("click", () => {
-            void this.exportModule!.copySelectedSignalRecipeEnv();
-        });
-        dom.ensembleSignalRecipeDeleteBtn.addEventListener("click", () => {
-            this.exportModule!.deleteSelectedSignalRecipe();
-        });
+        this.bindAsyncClick(dom.ensembleSignalRecipeDownloadScriptBtn, () => this.exportModule!.downloadSelectedSignalRecipeBridge());
+        this.bindAsyncClick(dom.ensembleSignalRecipeCopyEnvBtn, () => this.exportModule!.copySelectedSignalRecipeEnv());
 
         dom.ensembleRefreshConfigsBtn.addEventListener("click", () => {
             this.populateConfigs(dom);
             this.invalidateRunContext("Configs refreshed. Run Strategy Ensemble Lab again.");
         });
 
-        dom.ensembleTargetSelect.addEventListener("change", () => {
-            this.syncTargetPickerUi();
-            this.syncTargetContextState();
-            this.renderTargetSummary();
-            this.applyContextFilter();
-            this.invalidateRunContext("Target config changed. Run Strategy Ensemble Lab again.");
-        });
+        this.bindInvalidatingEvent(
+            dom.ensembleTargetSelect,
+            "change",
+            "Target config changed. Run Strategy Ensemble Lab again.",
+            () => {
+                this.syncTargetPickerUi();
+                this.syncTargetContextState();
+                this.renderTargetSummary();
+                this.applyContextFilter();
+            }
+        );
 
-        dom.ensembleMinSamples.addEventListener("input", () => {
-            this.invalidateRunContext("Minimum sample threshold changed. Run Strategy Ensemble Lab again.");
-        });
+        this.bindInvalidatingEvent(
+            dom.ensembleMinSamples,
+            "input",
+            "Minimum sample threshold changed. Run Strategy Ensemble Lab again."
+        );
 
         dom.ensembleContextSearch.addEventListener("input", () => {
             this.applyContextFilter();
@@ -300,41 +338,18 @@ class StrategyEnsembleService {
             this.applyContextFilter();
         });
 
-        dom.ensembleContextSelectAll.addEventListener("click", () => {
-            this.setContextSelection(this.contextOrder, true);
+        [
+            { button: dom.ensembleContextSelectAll, action: () => this.setContextSelection(this.contextOrder, true) },
+            { button: dom.ensembleContextSelectNone, action: () => this.setContextSelection(this.contextOrder, false) },
+            { button: dom.ensembleContextInvertVisible, action: () => this.invertContextSelection(this.getVisibleContextNames()) },
+            { button: dom.ensembleContextSelectVisible, action: () => this.setContextSelection(this.getVisibleContextNames(), true) },
+            { button: dom.ensembleContextSelectSameFamily, action: () => this.applyTargetFamilySelection("same") },
+            { button: dom.ensembleContextExcludeSameFamily, action: () => this.applyTargetFamilySelection("exclude") },
+        ].forEach(({ button, action }) => {
+            button.addEventListener("click", action);
         });
 
-        dom.ensembleContextSelectNone.addEventListener("click", () => {
-            this.setContextSelection(this.contextOrder, false);
-        });
-
-        dom.ensembleContextInvertVisible.addEventListener("click", () => {
-            this.invertContextSelection(this.getVisibleContextNames());
-        });
-
-        dom.ensembleContextSelectVisible.addEventListener("click", () => {
-            this.setContextSelection(this.getVisibleContextNames(), true);
-        });
-
-        dom.ensembleContextSelectSameFamily.addEventListener("click", () => {
-            this.applyTargetFamilySelection("same");
-        });
-
-        dom.ensembleContextExcludeSameFamily.addEventListener("click", () => {
-            this.applyTargetFamilySelection("exclude");
-        });
-
-        dom.ensembleBuilderTableBody.addEventListener("click", (event) => {
-            const target = event.target;
-            if (!(target instanceof HTMLElement)) {
-                return;
-            }
-
-            const button = target.closest<HTMLButtonElement>("[data-ensemble-preview-rule-id]");
-            if (!button) {
-                return;
-            }
-
+        this.bindDelegatedButtonClick(dom.ensembleBuilderTableBody, "[data-ensemble-preview-rule-id]", (button) => {
             const ruleId = button.dataset.ensemblePreviewRuleId?.trim();
             if (!ruleId) {
                 return;
@@ -343,23 +358,35 @@ class StrategyEnsembleService {
             void this.loadBuilderPreview(ruleId);
         });
 
-        state.subscribe("currentSymbol", () => {
-            this.clearActiveEnsemblePreview("Chart market changed. Frozen ensemble preview cleared.");
-            this.syncReadouts(dom);
-            this.syncPolymarketAvailability();
-            this.invalidateRunContext("Target symbol changed. Run Strategy Ensemble Lab again.");
-        });
-        state.subscribe("currentInterval", () => {
-            this.clearActiveEnsemblePreview("Chart timeframe changed. Frozen ensemble preview cleared.");
-            this.syncReadouts(dom);
-            this.syncPolymarketAvailability();
-            this.invalidateRunContext("Timeframe changed. Run Strategy Ensemble Lab again.");
-        });
-        state.subscribe("ohlcvData", () => {
-            this.invalidateRunContext("Loaded data changed. Run Strategy Ensemble Lab again.");
-        });
-        state.subscribe("blockRange", () => {
-            this.invalidateRunContext("Block selection changed. Run Strategy Ensemble Lab again.");
+        [
+            {
+                key: "currentSymbol" as const,
+                message: "Target symbol changed. Run Strategy Ensemble Lab again.",
+                beforeInvalidate: () => {
+                    this.clearActiveEnsemblePreview("Chart market changed. Frozen ensemble preview cleared.");
+                    this.syncReadouts(dom);
+                    this.syncPolymarketAvailability();
+                },
+            },
+            {
+                key: "currentInterval" as const,
+                message: "Timeframe changed. Run Strategy Ensemble Lab again.",
+                beforeInvalidate: () => {
+                    this.clearActiveEnsemblePreview("Chart timeframe changed. Frozen ensemble preview cleared.");
+                    this.syncReadouts(dom);
+                    this.syncPolymarketAvailability();
+                },
+            },
+            {
+                key: "ohlcvData" as const,
+                message: "Loaded data changed. Run Strategy Ensemble Lab again.",
+            },
+            {
+                key: "blockRange" as const,
+                message: "Block selection changed. Run Strategy Ensemble Lab again.",
+            },
+        ].forEach(({ key, message, beforeInvalidate }) => {
+            this.subscribeAndInvalidate(key, message, beforeInvalidate);
         });
 
         document.addEventListener("click", (event) => {

@@ -17,6 +17,7 @@ import { parseInputNumber } from "../dom-input-readers";
 import { parsePolymarketEventInput } from "../dataProviders/polymarket";
 import { ADVANCED_SIZING_SUBSECTION_IDS } from "../advanced-sizing-dom";
 import { TAKE_PROFIT_MODE_PANEL_IDS } from "../take-profit-dom";
+import { copyToClipboard } from "../browser-transfer";
 import { getBinanceMarketTypeForProvider, isBinanceDataProvider, type BinanceMarketType } from "../binance-market";
 import {
     setBinanceMarketType,
@@ -29,28 +30,6 @@ import {
     setMockChartModel,
     setStrategyTimeframeSettings,
 } from "../state-actions";
-
-async function copyTextToClipboard(text: string): Promise<boolean> {
-    try {
-        if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(text);
-            return true;
-        }
-    } catch {
-        // Fall through to execCommand fallback.
-    }
-
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "true");
-    textarea.style.position = "fixed";
-    textarea.style.left = "-9999px";
-    document.body.appendChild(textarea);
-    textarea.select();
-    const copied = document.execCommand("copy");
-    document.body.removeChild(textarea);
-    return copied;
-}
 
 export function setupEventHandlers() {
     const dom = createUiEventHandlersDom();
@@ -730,7 +709,7 @@ export function setupEventHandlers() {
                 return;
             }
 
-            const copied = await copyTextToClipboard(JSON.stringify(payload.bundle.payload, null, 2));
+            const copied = await copyToClipboard(JSON.stringify(payload.bundle.payload, null, 2));
             if (!copied) {
                 uiManager.showToast('Failed to copy endpoint request.', 'error');
                 return;
