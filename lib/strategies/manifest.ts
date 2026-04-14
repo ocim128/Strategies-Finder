@@ -47,6 +47,10 @@ import { dominance_handoff_exhaustion } from "./lib/dominance_handoff_exhaustion
 import { close_location_correlation_break } from "./lib/close_location_correlation_break";
 import { correlation_range_fragmentation } from "./lib/correlation_range_fragmentation";
 import { correlation_flash_gamma_trigger } from "./lib/correlation_flash_gamma_trigger";
+import { volatility_ratio_overextension } from "./lib/volatility_ratio_overextension";
+import { rolling_vwap_center } from "./lib/rolling_vwap_center";
+import { initiative_pressure_side } from "./lib/initiative_pressure_side";
+import { roc_percentile_regime } from "./lib/roc_percentile_regime";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -99,6 +103,10 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "close_location_correlation_break", strategy: close_location_correlation_break },
     { key: "correlation_range_fragmentation", strategy: correlation_range_fragmentation },
     { key: "correlation_flash_gamma_trigger", strategy: correlation_flash_gamma_trigger },
+    { key: "volatility_ratio_overextension", strategy: volatility_ratio_overextension },
+    { key: "rolling_vwap_center", strategy: rolling_vwap_center },
+    { key: "initiative_pressure_side", strategy: initiative_pressure_side },
+    { key: "roc_percentile_regime", strategy: roc_percentile_regime },
 ];
 
 export function createStrategiesRecordFromManifest(
