@@ -363,7 +363,7 @@ Important signal-exit differences versus the old `1m` bridge mode:
 
 Hunt behavior:
 
-- Hunt preserves `polymarketExitMode` in run settings and saved profiles
+- Hunt exposes its own `Polymarket Exit Mode` selector and preserves `polymarketExitMode` in run settings and saved profiles
 - Hunt inherits the actual execution logic from Finder
 - applying a Hunt survivor follows the same mode-aware rule as Finder result application
 

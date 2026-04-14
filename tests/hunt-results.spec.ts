@@ -192,4 +192,17 @@ describe("Hunt results", () => {
         expect(formatHuntMetricValue("polyCoverage", 0.257)).to.equal("25.7%");
         expect(formatHuntMetricValue("polyScore", 0.734)).to.equal("73.4%");
     });
+
+    it("normalizes unsupported Hunt signal-exit rank modes before delegating to Finder", () => {
+        const finderOptions = buildHuntFinderOptions({
+            ...DEFAULT_HUNT_RUN_SETTINGS,
+            polymarketScoringEnabled: true,
+            polymarketExitMode: "signal_exit_same_event",
+            polymarketRankMode: "balanced",
+            selectedStrategyKeys: ["hunt_test"],
+        });
+
+        expect(finderOptions.polymarketExitMode).to.equal("signal_exit_same_event");
+        expect(finderOptions.polymarketRankMode).to.equal("expectancy");
+    });
 });

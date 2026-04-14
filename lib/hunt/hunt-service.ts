@@ -29,6 +29,7 @@ import {
 import {
     cloneBlockRange,
     cloneHuntProfile,
+    normalizeHuntPolymarketRankMode,
     cloneHuntUiState,
     createHuntEntityId,
     createHuntProfileExportPayload,
@@ -220,6 +221,10 @@ class HuntService {
             this.syncAdvancedUi();
         });
         dom.huntTradesToggle.addEventListener("change", () => {
+            this.persistRunSettingsFromDom();
+            this.syncAdvancedUi();
+        });
+        dom.huntPolymarketExitMode.addEventListener("change", () => {
             this.persistRunSettingsFromDom();
             this.syncAdvancedUi();
         });
@@ -807,6 +812,7 @@ class HuntService {
         const dom = this.getDom();
         const settings = this.uiState.runSettings;
         dom.huntPolymarketToggle.checked = settings.polymarketScoringEnabled;
+        dom.huntPolymarketExitMode.value = settings.polymarketExitMode;
         dom.huntPolymarketRankMode.value = settings.polymarketRankMode;
         dom.huntPolymarketMinScored.value = String(settings.polymarketMinScoredPredictions);
         dom.huntPolymarketLockOffset.checked = settings.polymarketLockOffset;
@@ -820,6 +826,10 @@ class HuntService {
 
     private persistRunSettingsFromDom(): void {
         this.uiState.runSettings = this.readRunSettingsFromDom();
+        const dom = this.getDom();
+        if (dom.huntPolymarketRankMode.value !== this.uiState.runSettings.polymarketRankMode) {
+            dom.huntPolymarketRankMode.value = this.uiState.runSettings.polymarketRankMode;
+        }
         this.persistUiState();
         this.renderReadyStatus();
     }
@@ -832,16 +842,23 @@ class HuntService {
         const maxTrades = !tradeCountFilterEnabled || maxTradesInput === null || maxTradesInput <= 0
             ? HUNT_MAX_TRADES_UNBOUNDED
             : Math.max(minTrades, Math.round(maxTradesInput));
+        const polymarketExitMode = dom.huntPolymarketExitMode.value === "signal_exit_same_event"
+            ? "signal_exit_same_event"
+            : "resolve_hold";
+        const polymarketRankMode = normalizeHuntPolymarketRankMode(
+            dom.huntPolymarketRankMode.value as HuntRunSettings["polymarketRankMode"],
+            polymarketExitMode
+        );
 
         return {
             ...this.uiState.runSettings,
             selectedStrategyKeys: [...this.uiState.runSettings.selectedStrategyKeys],
             polymarketScoringEnabled: dom.huntPolymarketToggle.checked,
-            polymarketRankMode: dom.huntPolymarketRankMode.value as HuntRunSettings["polymarketRankMode"],
+            polymarketRankMode,
             polymarketMinScoredPredictions: Math.max(0, Math.round(this.readNumber(dom.huntPolymarketMinScored.value, 0))),
             polymarketLockOffset: dom.huntPolymarketLockOffset.checked,
             polymarketAfterTakeProfitOnly: dom.huntPolymarketAfterTakeProfitOnly.checked,
-            polymarketExitMode: this.uiState.runSettings.polymarketExitMode,
+            polymarketExitMode,
             freezeRiskManagement: dom.huntFreezeRiskManagementToggle.checked,
             tradeCountFilterEnabled,
             minTrades,
@@ -858,10 +875,12 @@ class HuntService {
         const dom = this.getDom();
         setVisible(dom.huntAdvancedSettings, dom.huntAdvancedToggle.checked);
         dom.huntPolymarketSettings.classList.toggle("is-disabled", !dom.huntPolymarketToggle.checked);
+        dom.huntPolymarketExitMode.disabled = !dom.huntPolymarketToggle.checked;
         dom.huntPolymarketRankMode.disabled = !dom.huntPolymarketToggle.checked;
         dom.huntPolymarketMinScored.disabled = !dom.huntPolymarketToggle.checked;
         dom.huntPolymarketLockOffset.disabled = !dom.huntPolymarketToggle.checked;
         dom.huntPolymarketAfterTakeProfitOnly.disabled = !dom.huntPolymarketToggle.checked;
+        this.syncPolymarketRankModeOptions();
 
         const exitMode = this.uiState.runSettings.polymarketExitMode;
         if (exitMode === "signal_exit_same_event") {
@@ -872,6 +891,24 @@ class HuntService {
         dom.huntTradesMax.disabled = !dom.huntTradesToggle.checked;
         dom.huntTradeFilters.classList.toggle("is-disabled", !dom.huntTradesToggle.checked);
         this.renderReadyStatus();
+    }
+
+    private syncPolymarketRankModeOptions(): void {
+        const dom = this.getDom();
+        const isSignalExit = this.uiState.runSettings.polymarketExitMode === "signal_exit_same_event";
+        for (const option of Array.from(dom.huntPolymarketRankMode.options)) {
+            option.disabled = isSignalExit && option.value !== normalizeHuntPolymarketRankMode(
+                option.value as HuntRunSettings["polymarketRankMode"],
+                "signal_exit_same_event"
+            );
+        }
+        const normalizedRankMode = normalizeHuntPolymarketRankMode(
+            dom.huntPolymarketRankMode.value as HuntRunSettings["polymarketRankMode"],
+            this.uiState.runSettings.polymarketExitMode
+        );
+        if (dom.huntPolymarketRankMode.value !== normalizedRankMode) {
+            dom.huntPolymarketRankMode.value = normalizedRankMode;
+        }
     }
 
     private setResultsView(view: HuntResultsView): void {

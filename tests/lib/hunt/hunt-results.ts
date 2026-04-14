@@ -7,6 +7,7 @@ import {
     buildStableParamKey,
     createTaggedProfileRunResult,
     isBetterMetricValue,
+    normalizeHuntPolymarketRankMode,
     stableNormalizeParams,
     type HuntProfile,
     type HuntProfileRunResult,
@@ -77,6 +78,11 @@ export function formatHuntMetricValue(metric: FinderMetric, value: number): stri
 }
 
 export function buildHuntFinderOptions(runSettings: HuntRunSettings): FinderOptions {
+    const normalizedRankMode = normalizeHuntPolymarketRankMode(
+        runSettings.polymarketRankMode,
+        runSettings.polymarketExitMode
+    );
+
     return buildFinderOptions({
         useAdvancedSort: false,
         advancedSortValues: [],
@@ -92,7 +98,7 @@ export function buildHuntFinderOptions(runSettings: HuntRunSettings): FinderOpti
         maxTrades: runSettings.maxTrades,
         freezeRiskManagement: runSettings.freezeRiskManagement,
         polymarketScoringEnabled: runSettings.polymarketScoringEnabled,
-        polymarketRankMode: runSettings.polymarketRankMode,
+        polymarketRankMode: normalizedRankMode,
         polymarketMinScoredPredictions: runSettings.polymarketMinScoredPredictions,
         polymarketLockOffset: runSettings.polymarketLockOffset,
         polymarketAfterTakeProfitOnly: runSettings.polymarketAfterTakeProfitOnly,

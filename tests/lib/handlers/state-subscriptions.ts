@@ -20,7 +20,7 @@ import {
     getPolymarketAnnotationToggle,
     getPolymarketExitModeSelect,
     getPolymarketSettingsRows,
-    getPolymarketRankModeSelects,
+    getFinderPolymarketRankModeSelect,
     getChartModeToggle,
     getChartModeLabel,
 } from "./state-subscriptions-dom";
@@ -47,20 +47,21 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
 function updateFinderRankModeOptions(): void {
     const isSignalExit = resolvePolymarketDomSettings().exitMode === 'signal_exit_same_event';
 
-    const rankSelects = getPolymarketRankModeSelects();
+    const select = getFinderPolymarketRankModeSelect();
+    if (!select) {
+        return;
+    }
 
-    for (const select of rankSelects) {
-        for (const option of Array.from(select.options)) {
-            if (!isSignalExit) {
-                option.disabled = false;
-                continue;
-            }
-            option.disabled = !SIGNAL_EXIT_SUPPORTED_RANK_MODES.has(option.value as any);
+    for (const option of Array.from(select.options)) {
+        if (!isSignalExit) {
+            option.disabled = false;
+            continue;
         }
-        if (isSignalExit && select.selectedOptions[0]?.disabled) {
-            const firstValid = Array.from(select.options).find(o => !o.disabled);
-            if (firstValid) select.value = firstValid.value;
-        }
+        option.disabled = !SIGNAL_EXIT_SUPPORTED_RANK_MODES.has(option.value as any);
+    }
+    if (isSignalExit && select.selectedOptions[0]?.disabled) {
+        const firstValid = Array.from(select.options).find(o => !o.disabled);
+        if (firstValid) select.value = firstValid.value;
     }
 }
 

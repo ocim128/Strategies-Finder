@@ -6,7 +6,7 @@ import {
 } from "../settings-model";
 import type { CapitalSettings } from "../types/backtest";
 import type { FinderMetric, FinderResult, PolymarketFinderRankMode } from "../types/finder";
-import type { PolymarketExitMode } from "../polymarket-exit-mode";
+import { SIGNAL_EXIT_SUPPORTED_RANK_MODES, type PolymarketExitMode } from "../polymarket-exit-mode";
 import type { StrategyParams } from "../types/strategies";
 
 export type HuntProfileSource = "current_ui" | "endpoint_snapshot" | "saved_config_plus_chart";
@@ -118,6 +118,16 @@ export const DEFAULT_HUNT_UI_STATE: Readonly<HuntUiState> = Object.freeze({
     selectedProfileId: null,
     resultsView: "survivors",
 });
+
+export function normalizeHuntPolymarketRankMode(
+    rankMode: PolymarketFinderRankMode,
+    exitMode: PolymarketExitMode
+): PolymarketFinderRankMode {
+    if (exitMode !== "signal_exit_same_event") {
+        return rankMode;
+    }
+    return SIGNAL_EXIT_SUPPORTED_RANK_MODES.has(rankMode as any) ? rankMode : "expectancy";
+}
 
 function toRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -317,6 +327,11 @@ export function normalizeStoredHuntRunSettings(raw: unknown): HuntRunSettings {
             ? polymarketRankMode
             : DEFAULT_HUNT_RUN_SETTINGS.polymarketRankMode;
 
+    const polymarketExitMode: PolymarketExitMode = typeof source.polymarketExitMode === "string"
+        && source.polymarketExitMode.trim().toLowerCase() === "signal_exit_same_event"
+        ? "signal_exit_same_event"
+        : "resolve_hold";
+
     return {
         mode: "random",
         maxRunsPerStrategy: Math.max(
@@ -331,7 +346,6 @@ export function normalizeStoredHuntRunSettings(raw: unknown): HuntRunSettings {
             source.polymarketScoringEnabled,
             DEFAULT_HUNT_RUN_SETTINGS.polymarketScoringEnabled
         ),
-        polymarketRankMode: normalizedRankMode,
         polymarketMinScoredPredictions: Math.max(
             0,
             Math.round(readNumber(source.polymarketMinScoredPredictions, DEFAULT_HUNT_RUN_SETTINGS.polymarketMinScoredPredictions))
@@ -344,10 +358,8 @@ export function normalizeStoredHuntRunSettings(raw: unknown): HuntRunSettings {
             source.polymarketAfterTakeProfitOnly,
             DEFAULT_HUNT_RUN_SETTINGS.polymarketAfterTakeProfitOnly
         ),
-        polymarketExitMode: typeof source.polymarketExitMode === "string"
-            && source.polymarketExitMode.trim().toLowerCase() === "signal_exit_same_event"
-            ? "signal_exit_same_event"
-            : "resolve_hold",
+        polymarketExitMode,
+        polymarketRankMode: normalizeHuntPolymarketRankMode(normalizedRankMode, polymarketExitMode),
         freezeRiskManagement: readBoolean(
             source.freezeRiskManagement,
             DEFAULT_HUNT_RUN_SETTINGS.freezeRiskManagement

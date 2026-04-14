@@ -75,6 +75,16 @@ describe("Hunt model", () => {
         );
     });
 
+    it("coerces Hunt rank mode to a supported option in signal-exit mode", () => {
+        const settings = normalizeStoredHuntRunSettings({
+            polymarketExitMode: "signal_exit_same_event",
+            polymarketRankMode: "balanced",
+        });
+
+        expect(settings.polymarketExitMode).to.equal("signal_exit_same_event");
+        expect(settings.polymarketRankMode).to.equal("expectancy");
+    });
+
     it("only suppresses the auto-reloads that a Hunt selection change will actually trigger", () => {
         expect(getMarketSelectionAutoReloadSuppressCount(
             { symbol: "ETHUSDT", interval: "1d" },

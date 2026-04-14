@@ -21,7 +21,6 @@ export const POLYMARKET_SETTINGS_IDS = {
 
 export const FINDER_POLYMARKET_IDS = {
   finderRankMode: 'finderPolymarketRankMode',
-  huntRankMode: 'huntPolymarketRankMode',
 } as const;
 
 export function getPolymarketAnnotationToggle(): HTMLInputElement | null {
@@ -46,14 +45,7 @@ export function getPolymarketSettingsRows(): {
   };
 }
 
-export function getPolymarketRankModeSelects(): HTMLSelectElement[] {
-  const ids = [FINDER_POLYMARKET_IDS.finderRankMode, FINDER_POLYMARKET_IDS.huntRankMode];
-  const results: HTMLSelectElement[] = [];
-  for (const id of ids) {
-    const el = document.getElementById(id);
-    if (el instanceof HTMLSelectElement) {
-      results.push(el);
-    }
-  }
-  return results;
+export function getFinderPolymarketRankModeSelect(): HTMLSelectElement | null {
+  const el = document.getElementById(FINDER_POLYMARKET_IDS.finderRankMode);
+  return el instanceof HTMLSelectElement ? el : null;
 }

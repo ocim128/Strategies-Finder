@@ -85,6 +85,13 @@
     <div class="section-body hunt-advanced-settings" id="huntAdvancedSettings" style="display:none;">
         <div class="param-row" id="huntPolymarketSettings">
             <div class="param-group">
+                <label class="param-label" for="huntPolymarketExitMode">Polymarket Exit Mode</label>
+                <select class="param-input" id="huntPolymarketExitMode">
+                    <option value="resolve_hold" selected>Resolve Hold</option>
+                    <option value="signal_exit_same_event">Signal Exit Same Event</option>
+                </select>
+            </div>
+            <div class="param-group">
                 <label class="param-label" for="huntPolymarketRankMode">Polymarket Rank Mode</label>
                 <select class="param-input" id="huntPolymarketRankMode">
                     <option value="balanced" selected>Balanced</option>
