@@ -22,10 +22,13 @@ import { formatDisplayPrice } from '../price-format';
 import { resolveAlertSignalEntryPrice } from '../alert-signal-utils';
 import { toBooleanLike, toFiniteNumber as readFiniteNumber } from '../settings-parse-utils';
 import { createLivePositionsDom } from '../live-positions-dom';
+import {
+    readLivePositionsCollapsed,
+    writeLivePositionsCollapsed,
+    readLivePositionsEnabled,
+    writeLivePositionsEnabled,
+} from '../live-positions-storage';
 
-
-const LIVE_POSITIONS_COLLAPSED_STORAGE_KEY = 'livePositionsCollapsed';
-const LIVE_POSITIONS_ENABLED_STORAGE_KEY = 'livePositionsEnabled';
 
 // DOM element references
 let panel: HTMLElement | null = null;
@@ -190,7 +193,7 @@ function syncPollingWithWorkerUrl(url: string): void {
 
 function setLiveUpdatesEnabled(enabled: boolean): void {
     isLiveUpdatesEnabled = enabled;
-    localStorage.setItem(LIVE_POSITIONS_ENABLED_STORAGE_KEY, String(enabled));
+    writeLivePositionsEnabled(enabled);
     syncPollingWithWorkerUrl(alertService.getWorkerUrl());
 }
 
@@ -385,8 +388,7 @@ function handleCollapse(): void {
         collapseIcon.style.transform = isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
     }
     
-    // Save preference
-    localStorage.setItem(LIVE_POSITIONS_COLLAPSED_STORAGE_KEY, String(isCollapsed));
+    writeLivePositionsCollapsed(isCollapsed);
 }
 
 function handlePollingToggle(): void {
@@ -612,13 +614,13 @@ export function initLivePositionsHandlers(): void {
     detailCloseBtn = dom.detailClose;
     
     // Restore collapse state
-    isCollapsed = localStorage.getItem(LIVE_POSITIONS_COLLAPSED_STORAGE_KEY) === 'true';
+    isCollapsed = readLivePositionsCollapsed();
     if (isCollapsed && panel) {
         panel.classList.add('collapsed');
         if (collapseIcon) collapseIcon.style.transform = 'rotate(-90deg)';
     }
 
-    isLiveUpdatesEnabled = localStorage.getItem(LIVE_POSITIONS_ENABLED_STORAGE_KEY) === 'true';
+    isLiveUpdatesEnabled = readLivePositionsEnabled();
     updatePollingStatusUi();
     
     // Bind event listeners

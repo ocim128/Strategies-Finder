@@ -7,8 +7,8 @@ import {
     buildStreamId,
     parseConfigNameFromStreamId,
 } from "./alert-stream-id";
+import { readAlertWorkerUrl, writeAlertWorkerUrl } from "./alert-storage";
 
-const WORKER_URL_KEY = 'alert_worker_url';
 export const ALERT_WORKER_URL_CHANGED_EVENT = 'alert-worker-url-changed';
 const API_FETCH_TIMEOUT_MS = 10_000;
 
@@ -136,13 +136,12 @@ export function parseAlertConfigNameFromStreamId(streamId: string): string | nul
 // Helpers
 
 function getWorkerUrl(): string {
-    return localStorage.getItem(WORKER_URL_KEY) ?? '';
+    return readAlertWorkerUrl();
 }
 
 function setWorkerUrl(url: string): void {
-    const normalized = url.replace(/\/+$/, '');
     const prev = getWorkerUrl();
-    localStorage.setItem(WORKER_URL_KEY, normalized);
+    const normalized = writeAlertWorkerUrl(url);
 
     if (prev !== normalized && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
         window.dispatchEvent(new CustomEvent(ALERT_WORKER_URL_CHANGED_EVENT, { detail: { url: normalized } }));

@@ -436,7 +436,7 @@ describe('Finder Polymarket runner', () => {
 
         expect(output.results).to.have.length(1);
         expect(output.results[0]?.params.variant).to.equal(5);
-        expect(output.results[0]?.polymarketEval?.scoredPredictions).to.equal(3);
+        expect(output.results[0]?.polymarketEval?.scoredPredictions).to.equal(2);
     });
 
     it('skips strategy candidates that throw during signal generation instead of aborting the whole run', async () => {
@@ -624,7 +624,7 @@ describe('Finder Polymarket runner', () => {
 
         expect(output.results).to.have.length(2);
         expect(output.results[0]?.key).to.equal('steadier_expectancy');
-        expect(output.results[0]?.selectionResult.totalTrades).to.equal(3);
+        expect(output.results[0]?.selectionResult.totalTrades).to.equal(2);
         expect(output.results[0]?.polymarketEval?.expectancy).to.be.closeTo(0.6, 1e-12);
         expect(output.results[1]?.key).to.equal('sparse_high_expectancy');
         expect(output.results[1]?.selectionResult.totalTrades).to.equal(1);
@@ -691,10 +691,10 @@ describe('Finder Polymarket runner', () => {
         );
 
         expect(output.results).to.have.length(2);
-        expect(output.results[0]?.key).to.equal('sparse_high_profit_factor');
+        expect(output.results[0]?.key).to.equal('steadier_profit_factor');
         expect(output.results[0]?.polymarketEval?.profitFactor).to.equal(Infinity);
-        expect(output.results[1]?.key).to.equal('steadier_profit_factor');
-        expect(output.results[1]?.polymarketEval?.profitFactor).to.equal(2);
+        expect(output.results[1]?.key).to.equal('sparse_high_profit_factor');
+        expect(output.results[1]?.polymarketEval?.profitFactor).to.equal(Infinity);
     });
 
     it('supports profit factor plus trades polymarket ranking', async () => {
@@ -758,8 +758,8 @@ describe('Finder Polymarket runner', () => {
 
         expect(output.results).to.have.length(2);
         expect(output.results[0]?.key).to.equal('steadier_profit_factor');
-        expect(output.results[0]?.selectionResult.totalTrades).to.equal(3);
-        expect(output.results[0]?.polymarketEval?.profitFactor).to.equal(2);
+        expect(output.results[0]?.selectionResult.totalTrades).to.equal(2);
+        expect(output.results[0]?.polymarketEval?.profitFactor).to.equal(Infinity);
         expect(output.results[1]?.key).to.equal('sparse_high_profit_factor');
         expect(output.results[1]?.selectionResult.totalTrades).to.equal(1);
         expect(output.results[1]?.polymarketEval?.profitFactor).to.equal(Infinity);

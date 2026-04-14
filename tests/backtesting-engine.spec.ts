@@ -208,7 +208,6 @@ describe('Backtesting Engine', () => {
             executionModel: 'next_open',
             allowSameBarExit: false,
             slippageBps: 5,
-            snapshotAtrFilterToggle: false,
         };
 
         const resolved = resolveScannerBacktestSettings(rawScannerSettings as any);

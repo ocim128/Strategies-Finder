@@ -485,7 +485,7 @@ class WalkForwardService {
                         debugLogger.warn('[WalkForward] Rust walk-forward unavailable or incompatible result; falling back to TypeScript.');
                     }
                 } else if (requiresTsEngine) {
-                    debugLogger.info('[WalkForward] Realism or snapshot filter settings require TypeScript engine.');
+                    debugLogger.info('[WalkForward] Realism settings require TypeScript engine.');
                 }
             }
 

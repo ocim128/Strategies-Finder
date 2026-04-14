@@ -16,16 +16,20 @@ import { livePositionsService } from "../live-positions-service";
 import { isBinanceDataProvider } from "../binance-market";
 import { SIGNAL_EXIT_SUPPORTED_RANK_MODES } from "../polymarket-exit-mode";
 import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
+import {
+    getPolymarketAnnotationToggle,
+    getPolymarketExitModeSelect,
+    getPolymarketSettingsRows,
+    getPolymarketRankModeSelects,
+    getChartModeToggle,
+    getChartModeLabel,
+} from "./state-subscriptions-dom";
 import type { Time } from "lightweight-charts";
 
 function updatePolymarketEntryOffsetVisibility(interval: string = state.currentInterval): void {
-    const offsetRow = document.getElementById('polymarketEntryOffsetRow');
-    const exitModeRow = document.getElementById('polymarketExitModeRow');
-    const outcomeSymbolRow = document.getElementById('polymarketOutcomeSymbolRow');
-    const annotationToggle = document.getElementById('polymarketAnnotationEnabled');
-    const annotationEnabled = annotationToggle instanceof HTMLInputElement
-        ? annotationToggle.checked
-        : false;
+    const { offsetRow, exitModeRow, outcomeSymbolRow } = getPolymarketSettingsRows();
+    const annotationToggle = getPolymarketAnnotationToggle();
+    const annotationEnabled = annotationToggle?.checked ?? false;
 
     const isSignalExit = resolvePolymarketDomSettings().exitMode === 'signal_exit_same_event';
 
@@ -43,13 +47,9 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
 function updateFinderRankModeOptions(): void {
     const isSignalExit = resolvePolymarketDomSettings().exitMode === 'signal_exit_same_event';
 
-    const rankSelects = [
-        document.getElementById('finderPolymarketRankMode'),
-        document.getElementById('huntPolymarketRankMode'),
-    ];
+    const rankSelects = getPolymarketRankModeSelects();
 
     for (const select of rankSelects) {
-        if (!(select instanceof HTMLSelectElement)) continue;
         for (const option of Array.from(select.options)) {
             if (!isSignalExit) {
                 option.disabled = false;
@@ -66,15 +66,15 @@ function updateFinderRankModeOptions(): void {
 
 export function setupStateSubscriptions() {
     updatePolymarketEntryOffsetVisibility();
-    const polymarketAnnotationToggle = document.getElementById('polymarketAnnotationEnabled');
-    if (polymarketAnnotationToggle instanceof HTMLInputElement) {
+    const polymarketAnnotationToggle = getPolymarketAnnotationToggle();
+    if (polymarketAnnotationToggle) {
         polymarketAnnotationToggle.addEventListener('change', () => {
             updatePolymarketEntryOffsetVisibility();
         });
     }
 
-    const polymarketExitModeSelect = document.getElementById('polymarketExitMode');
-    if (polymarketExitModeSelect instanceof HTMLSelectElement) {
+    const polymarketExitModeSelect = getPolymarketExitModeSelect();
+    if (polymarketExitModeSelect) {
         polymarketExitModeSelect.addEventListener('change', () => {
             updatePolymarketEntryOffsetVisibility();
             updateFinderRankModeOptions();
@@ -314,16 +314,14 @@ export function setupStateSubscriptions() {
     // Chart mode changes (Candlestick / Heikin Ashi)
     state.subscribe('chartMode', (chartMode) => {
         debugLogger.event('state.chartMode', { chartMode });
-        // Sync toggle button visual state
-        const toggle = document.getElementById('chartModeToggle');
-        const label = document.getElementById('chartModeLabel');
+        const toggle = getChartModeToggle();
+        const label = getChartModeLabel();
         if (toggle) {
             const isHA = chartMode === 'heikin-ashi';
             toggle.classList.toggle('active', isHA);
             toggle.title = isHA ? 'Switch to Candlestick' : 'Switch to Heikin Ashi';
             if (label) label.textContent = isHA ? 'HA' : 'Candle';
         }
-        // Re-render chart with appropriate transformation
         if (state.ohlcvData.length > 0) {
             chartManager.updateChartData();
         }

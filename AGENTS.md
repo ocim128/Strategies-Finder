@@ -158,7 +158,7 @@ See `README.md` under `Architecture Map` for the canonical subsystem and file ma
   - `signal_close`
   - `next_open`
   - `next_close` if touched
-- Recheck snapshot filters and entry timing if signals/fills moved
+- Recheck entry timing if signals/fills moved
 
 ### Any settings change
 - Keep key names stable when possible

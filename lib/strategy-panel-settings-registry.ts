@@ -48,12 +48,6 @@ export const STRATEGY_PANEL_SETTINGS_SECTIONS: readonly StrategyPanelSettingsSec
         featureToggleId: "tradeFilterSettingsToggle",
         featureContentId: "tradeFilterSettings",
     },
-    {
-        id: "snapshotFilters",
-        preset: "standard",
-        accordionBodyId: "snapshotFiltersBody",
-    },
-
 ] as const;
 
 const PRESET_RANK: Record<SettingsPresetMode, number> = {

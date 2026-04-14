@@ -11,6 +11,7 @@ import { OHLCVData, HistoricalFetchProgress } from "./types/index";
 
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { formatPolymarketDisplayName, parsePolymarketEventInput } from "./dataProviders/polymarket";
+import { queryDataMiningDom, type DataMiningDom } from "./data-mining-dom";
 
 interface NormalizedCandle {
     time: number;
@@ -25,24 +26,7 @@ interface NormalizedCandle {
 export class DataMiningManager {
     private readonly SQLITE_STORE_CHUNK_SIZE = 5000;
 
-    private pairEl: HTMLElement | null = null;
-    private intervalEl: HTMLElement | null = null;
-    private barsEl: HTMLElement | null = null;
-    private providerEl: HTMLElement | null = null;
-    private rangeStartEl: HTMLElement | null = null;
-    private rangeEndEl: HTMLElement | null = null;
-    private lastUpdateEl: HTMLElement | null = null;
-    private chartModeEl: HTMLElement | null = null;
-    private statusEl: HTMLElement | null = null;
-    private downloadCsvButton: HTMLButtonElement | null = null;
-    private downloadJsonButton: HTMLButtonElement | null = null;
-    private symbolInput: HTMLInputElement | null = null;
-    private intervalInput: HTMLInputElement | null = null;
-    private barsInput: HTMLInputElement | null = null;
-    private fetchCsvButton: HTMLButtonElement | null = null;
-    private fetchJsonButton: HTMLButtonElement | null = null;
-    private importFileInput: HTMLInputElement | null = null;
-    private importButton: HTMLButtonElement | null = null;
+    private dom: DataMiningDom | null = null;
     private lastUpdatedAt: number | null = null;
     private isFetching = false;
     private isImporting = false;
@@ -54,27 +38,9 @@ export class DataMiningManager {
     }
 
     public init(): void {
-        const tab = document.getElementById('dataminingTab');
-        if (!tab) return;
-
-        this.pairEl = document.getElementById('dataMiningPair');
-        this.intervalEl = document.getElementById('dataMiningInterval');
-        this.barsEl = document.getElementById('dataMiningBars');
-        this.providerEl = document.getElementById('dataMiningProvider');
-        this.rangeStartEl = document.getElementById('dataMiningRangeStart');
-        this.rangeEndEl = document.getElementById('dataMiningRangeEnd');
-        this.lastUpdateEl = document.getElementById('dataMiningLastUpdate');
-        this.chartModeEl = document.getElementById('dataMiningChartMode');
-        this.statusEl = document.getElementById('dataMiningStatus');
-        this.downloadCsvButton = document.getElementById('dataMiningDownloadCsv') as HTMLButtonElement | null;
-        this.downloadJsonButton = document.getElementById('dataMiningDownloadJson') as HTMLButtonElement | null;
-        this.symbolInput = document.getElementById('dataMiningSymbolInput') as HTMLInputElement | null;
-        this.intervalInput = document.getElementById('dataMiningIntervalInput') as HTMLInputElement | null;
-        this.barsInput = document.getElementById('dataMiningBarsInput') as HTMLInputElement | null;
-        this.fetchCsvButton = document.getElementById('dataMiningFetchCsv') as HTMLButtonElement | null;
-        this.fetchJsonButton = document.getElementById('dataMiningFetchJson') as HTMLButtonElement | null;
-        this.importFileInput = document.getElementById('dataMiningImportFile') as HTMLInputElement | null;
-        this.importButton = document.getElementById('dataMiningImportBtn') as HTMLButtonElement | null;
+        const dom = queryDataMiningDom();
+        if (!dom) return;
+        this.dom = dom;
 
         this.bindActions();
         this.subscribeState();
@@ -82,11 +48,11 @@ export class DataMiningManager {
     }
 
     private bindActions(): void {
-        this.downloadCsvButton?.addEventListener('click', () => this.downloadCsv());
-        this.downloadJsonButton?.addEventListener('click', () => this.downloadJson());
-        this.fetchCsvButton?.addEventListener('click', () => this.fetchAndStoreSqlite());
-        this.fetchJsonButton?.addEventListener('click', () => this.fetchHistorical('json'));
-        this.importButton?.addEventListener('click', () => this.importJsonFile());
+        this.dom?.downloadCsvButton?.addEventListener('click', () => this.downloadCsv());
+        this.dom?.downloadJsonButton?.addEventListener('click', () => this.downloadJson());
+        this.dom?.fetchCsvButton?.addEventListener('click', () => this.fetchAndStoreSqlite());
+        this.dom?.fetchJsonButton?.addEventListener('click', () => this.fetchHistorical('json'));
+        this.dom?.importButton?.addEventListener('click', () => this.importJsonFile());
     }
 
     private subscribeState(): void {
@@ -106,41 +72,47 @@ export class DataMiningManager {
     }
 
     private updateStatic(): void {
-        if (this.pairEl) {
-            this.pairEl.textContent = this.formatSymbolDisplay(state.currentSymbol);
+        const dom = this.dom;
+        if (!dom) return;
+
+        if (dom.pairEl) {
+            dom.pairEl.textContent = this.formatSymbolDisplay(state.currentSymbol);
         }
-        if (this.intervalEl) {
-            this.intervalEl.textContent = state.currentInterval.toUpperCase();
+        if (dom.intervalEl) {
+            dom.intervalEl.textContent = state.currentInterval.toUpperCase();
         }
-        if (this.providerEl) {
-            this.providerEl.textContent = this.getProviderLabel(state.currentSymbol);
+        if (dom.providerEl) {
+            dom.providerEl.textContent = this.getProviderLabel(state.currentSymbol);
         }
-        if (this.symbolInput) {
-            if (!this.symbolInput.value || this.symbolInput.value === this.lastSymbolValue) {
-                this.symbolInput.value = state.currentSymbol;
+        if (dom.symbolInput) {
+            if (!dom.symbolInput.value || dom.symbolInput.value === this.lastSymbolValue) {
+                dom.symbolInput.value = state.currentSymbol;
             }
             this.lastSymbolValue = state.currentSymbol;
         }
-        if (this.intervalInput) {
-            if (!this.intervalInput.value || this.intervalInput.value === this.lastIntervalValue) {
-                this.intervalInput.value = state.currentInterval;
+        if (dom.intervalInput) {
+            if (!dom.intervalInput.value || dom.intervalInput.value === this.lastIntervalValue) {
+                dom.intervalInput.value = state.currentInterval;
             }
             this.lastIntervalValue = state.currentInterval;
         }
     }
 
     private updateDataset(): void {
+        const dom = this.dom;
+        if (!dom) return;
+
         const data = state.ohlcvData;
         const bars = data.length;
 
-        if (this.barsEl) {
-            this.barsEl.textContent = bars.toLocaleString();
+        if (dom.barsEl) {
+            dom.barsEl.textContent = bars.toLocaleString();
         }
 
         if (bars === 0) {
-            this.setText(this.rangeStartEl, '--');
-            this.setText(this.rangeEndEl, '--');
-            this.setText(this.lastUpdateEl, '--');
+            this.setText(dom.rangeStartEl, '--');
+            this.setText(dom.rangeEndEl, '--');
+            this.setText(dom.lastUpdateEl, '--');
             this.setStatus('No data loaded.', 'warning');
             return;
         }
@@ -150,23 +122,23 @@ export class DataMiningManager {
         const startLabel = uiManager.formatDate(first.time);
         const endLabel = uiManager.formatDate(last.time);
 
-        this.setText(this.rangeStartEl, startLabel);
-        this.setText(this.rangeEndEl, endLabel);
+        this.setText(dom.rangeStartEl, startLabel);
+        this.setText(dom.rangeEndEl, endLabel);
 
         if (!this.lastUpdatedAt) {
             this.lastUpdatedAt = Date.now();
         }
-        if (this.lastUpdateEl) {
+        if (dom.lastUpdateEl) {
             const label = this.lastUpdatedAt ? new Date(this.lastUpdatedAt).toLocaleString() : 'Ready';
-            this.lastUpdateEl.textContent = label;
+            dom.lastUpdateEl.textContent = label;
         }
 
         this.setStatus(`Loaded ${bars.toLocaleString()} bars.`, 'success');
     }
 
     private updateChartMode(): void {
-        if (!this.chartModeEl) return;
-        this.chartModeEl.textContent = state.chartMode === 'heikin-ashi' ? 'Heikin Ashi' : 'Candlestick';
+        if (!this.dom?.chartModeEl) return;
+        this.dom.chartModeEl.textContent = state.chartMode === 'heikin-ashi' ? 'Heikin Ashi' : 'Candlestick';
     }
 
     private downloadCsv(): void {
@@ -532,11 +504,11 @@ export class DataMiningManager {
     }
 
     private getHistoricalRequest(): { symbol: string; interval: string; bars: number } | null {
-        const rawSymbol = this.symbolInput?.value?.trim() || state.currentSymbol;
+        const rawSymbol = this.dom?.symbolInput?.value?.trim() || state.currentSymbol;
         const parsedPolymarket = parsePolymarketEventInput(rawSymbol);
         const symbol = parsedPolymarket?.canonicalSymbol ?? rawSymbol;
-        const interval = this.intervalInput?.value?.trim() || state.currentInterval;
-        const barsRaw = this.barsInput?.value?.trim() ?? '';
+        const interval = this.dom?.intervalInput?.value?.trim() || state.currentInterval;
+        const barsRaw = this.dom?.barsInput?.value?.trim() ?? '';
         const bars = Math.floor(Number(barsRaw));
 
         if (!symbol) {
@@ -561,8 +533,8 @@ export class DataMiningManager {
     }
 
     private toggleHistoricalButtons(disabled: boolean): void {
-        if (this.fetchCsvButton) this.fetchCsvButton.disabled = disabled;
-        if (this.fetchJsonButton) this.fetchJsonButton.disabled = disabled;
+        if (this.dom?.fetchCsvButton) this.dom.fetchCsvButton.disabled = disabled;
+        if (this.dom?.fetchJsonButton) this.dom.fetchJsonButton.disabled = disabled;
     }
 
     private setText(element: HTMLElement | null, value: string): void {
@@ -570,14 +542,14 @@ export class DataMiningManager {
     }
 
     private setStatus(message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info'): void {
-        if (!this.statusEl) return;
-        this.statusEl.textContent = message;
-        this.statusEl.className = `data-mining-status ${type}`;
+        if (!this.dom?.statusEl) return;
+        this.dom.statusEl.textContent = message;
+        this.dom.statusEl.className = `data-mining-status ${type}`;
     }
 
     private async importJsonFile(): Promise<void> {
         if (this.isImporting) return;
-        const file = this.importFileInput?.files?.[0];
+        const file = this.dom?.importFileInput?.files?.[0];
         if (!file) {
             uiManager.showToast('Select a JSON file to import.', 'error');
             this.setStatus('Select a JSON file to import.', 'error');
@@ -749,7 +721,7 @@ export class DataMiningManager {
     }
 
     private toggleImportButton(disabled: boolean): void {
-        if (this.importButton) this.importButton.disabled = disabled;
+        if (this.dom?.importButton) this.dom.importButton.disabled = disabled;
     }
 }
 

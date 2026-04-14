@@ -152,7 +152,7 @@ class PolymarketPanelService {
         this.bridgeExport!.renderBridgeControls();
 
         if (!result) {
-            this.showEmpty("Run a backtest first to see Polymarket payout diagnostics and snapshot filter suggestions.");
+            this.showEmpty("Run a backtest first to see Polymarket payout diagnostics and the snapshot profile.");
             return;
         }
 

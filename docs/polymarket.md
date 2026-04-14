@@ -447,7 +447,7 @@ Diagnostics focuses on scored historical trades and includes:
 - break-even win rate and edge versus break-even in `resolve_hold`
 - signal-exit counts and realized PnL metrics in `signal_exit_same_event`
 - timing buckets
-- snapshot filter suggestions
+- snapshot profile diagnostics
 - fill-adjusted deployability analysis
 
 Bridge Export focuses on downstream automation and includes:

@@ -70,7 +70,6 @@ describe('Backtest settings compatibility', () => {
             flipAfterConsecutiveLosses: 3,
             flipCooldownTrades: 2,
             minTradesBeforeFirstFlip: 10,
-            snapshotRsiMin: 40,
         };
 
         const sanitized = sanitizeBacktestSettingsForRust(settings);
@@ -341,23 +340,16 @@ describe('Backtest settings compatibility', () => {
         expect(explicit.sizingMode).to.equal('smart_fixed_quality_x_velocity');
     });
 
-    it('infers snapshot toggles from stored values while honoring explicit disabled toggles', () => {
-        const inferred = normalizeStoredBacktestSettings({
-            snapshotAtrPercentMin: '1.1',
-            snapshotAtrPercentMax: '2.2',
-        });
-        const explicitOff = normalizeStoredBacktestSettings({
-            snapshotAtrFilterToggle: false,
+    it('ignores removed snapshot filter fields in stored settings', () => {
+        const normalized = normalizeStoredBacktestSettings({
+            snapshotAtrFilterToggle: true,
             snapshotAtrPercentMin: 1.1,
             snapshotAtrPercentMax: 2.2,
         });
 
-        expect(inferred.snapshotAtrFilterToggle).to.equal(true);
-        expect(inferred.snapshotAtrPercentMin).to.equal(1.1);
-        expect(inferred.snapshotAtrPercentMax).to.equal(2.2);
-        expect(explicitOff.snapshotAtrFilterToggle).to.equal(false);
-        expect(explicitOff.snapshotAtrPercentMin).to.equal(0);
-        expect(explicitOff.snapshotAtrPercentMax).to.equal(0);
+        expect('snapshotAtrFilterToggle' in (normalized as Record<string, unknown>)).to.equal(false);
+        expect('snapshotAtrPercentMin' in (normalized as Record<string, unknown>)).to.equal(false);
+        expect('snapshotAtrPercentMax' in (normalized as Record<string, unknown>)).to.equal(false);
     });
 
     it('exposes worker strategy compatibility checks for alert subscriptions', () => {
@@ -381,15 +373,10 @@ describe('Backtest settings compatibility', () => {
         expect(readNumber('0,78', 99, { parseString: parseInputNumber })).to.equal(0.78);
     });
 
-    it('keeps snapshot defaults aligned with the shared snapshot config list', () => {
-        for (const snapshot of SNAPSHOT_CONFIGS) {
-            const minKey = 'minKey' in snapshot ? snapshot.minKey : undefined;
-            expect((DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)[snapshot.toggleKey]).to.equal(false);
-            if (minKey) {
-                expect((DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)[minKey]).to.equal(0);
-            }
-            expect((DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)[snapshot.maxKey]).to.equal(0);
-        }
+    it('does not expose removed snapshot filter defaults', () => {
+        expect('snapshotAtrFilterToggle' in (DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)).to.equal(false);
+        expect('snapshotAtrPercentMin' in (DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)).to.equal(false);
+        expect('snapshotAtrPercentMax' in (DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)).to.equal(false);
     });
 
     it('keeps shared UI defaults aligned with engine defaults except for explicit UI overrides', () => {
@@ -429,6 +416,8 @@ describe('Backtest settings compatibility', () => {
         expect(getBacktestDomSettingContract('polymarketAnnotationEnabled')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketOutcomeSymbol')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketEntryOffset')).to.not.equal(undefined);
+        expect(getBacktestDomSettingContract('snapshotAtrFilterToggle')).to.equal(undefined);
+        expect(getBacktestDomSettingContract('snapshotAtrPercentMin')).to.equal(undefined);
     });
 
     it('derives shared write-back values for trade filter toggles from the same DOM contract', () => {

@@ -11,7 +11,7 @@ It combines:
 
 ## What You Can Do Here
 - Load market data from local SQLite, IndexedDB, bundled price files, or remote providers
-- Run backtests with realistic execution settings, risk controls, and snapshot filters
+- Run backtests with realistic execution settings and risk controls
 - Switch between fixed, percent, Kelly, volatility-targeted, risk-parity, martingale, and Optimal f sizing models from the settings panel
 - Compare strategies, inspect trades, and review backtest result diagnostics
 - Search parameter spaces with Finder, including random and genetic modes
