@@ -16,7 +16,7 @@ import { setMarketSelection } from '../state-actions';
 import { dataManager } from '../data-manager';
 import { settingsManager } from '../settings-manager';
 import { backtestService } from '../backtest-service';
-import { strategyRegistry } from '../../strategyRegistry';
+import { loadBuiltInStrategyByKey, strategyRegistry } from '../../strategyRegistry';
 import { createAccessibleModal, type AccessibleModalController } from '../modal-accessibility';
 import { formatDisplayPrice } from '../price-format';
 import { resolveAlertSignalEntryPrice } from '../alert-signal-utils';
@@ -335,7 +335,9 @@ async function handlePositionClick(position: LivePosition | ClosedTrade): Promis
         if (symbolInput) symbolInput.value = position.symbol;
         if (intervalSelect) intervalSelect.value = position.interval;
 
-        if (strategyRegistry.has(position.strategyKey)) {
+        const strategy = strategyRegistry.get(position.strategyKey)
+            ?? await loadBuiltInStrategyByKey(position.strategyKey);
+        if (strategy) {
             const backtestSettings = buildUiCompatibleBacktestSettings(position.backtestSettings);
             await settingsManager.applyStrategyConfig({
                 name: '__live_positions_nav__',

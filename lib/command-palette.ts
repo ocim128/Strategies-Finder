@@ -145,7 +145,7 @@ export class CommandPaletteManager {
             {
                 id: 'run-backtest',
                 title: 'Run Backtest',
-                subtitle: 'Execute current strategy' + (state.currentStrategyKey ? `: ${strategyRegistry.get(state.currentStrategyKey)?.name}` : ''),
+                subtitle: 'Execute current strategy' + (state.currentStrategyKey ? `: ${strategyRegistry.get(state.currentStrategyKey)?.name ?? state.currentStrategyKey}` : ''),
                 icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>',
                 category: 'Action',
                 shortcut: 'Ctrl+Enter',

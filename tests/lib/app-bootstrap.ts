@@ -1,6 +1,7 @@
 import {
     strategyRegistry,
     loadBuiltInStrategies,
+    loadBuiltInStrategyByKey,
     restoreCustomStrategies,
     type StrategyRegistryEvent,
 } from "../strategyRegistry";
@@ -30,7 +31,6 @@ import { initLivePositionsHandlers } from "./handlers/live-positions-handlers";
 import { handleCrosshairMove } from "./app-actions";
 import { initEngineStatusIndicator } from "./engine-status-indicator";
 import { blockSelectorManager } from "./block-selector-manager";
-import { quickViewManager } from "./quick-view";
 import { bindFormAccessibility } from "./form-accessibility";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { getOptionalElement } from "./dom-utils";
@@ -39,11 +39,20 @@ import { initMonteCarloService } from "./monte-carlo-service";
 import { initCrossSymbolUI } from "./cross-symbol-ui";
 import { huntService } from "./hunt/hunt-service";
 import { strategyLibraryAdminService } from "./strategy-library-admin-service";
+import { quickViewManager } from "./quick-view";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
 import {
     runBootstrapFeatureStage,
     type AppBootstrapFeature,
 } from "./bootstrap-feature-registry";
+import { markAppTiming, logAppTimingSnapshot } from "./app-timing";
+import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
+import {
+    registerLazyFeature,
+    attachLazyFeatureTrigger,
+    attachTabLazyListener,
+    isLazyFeatureInitialized,
+} from "./lazy-feature-init";
 
 export interface AppBootstrapContext {
     savedSettings: ReturnType<typeof settingsManager.loadSettings>;
@@ -55,11 +64,16 @@ async function restoreSavedSettings(context: AppBootstrapContext): Promise<void>
     context.savedSettings = savedSettings;
 
     if (savedSettings) {
-        if (savedSettings.currentStrategyKey && strategyRegistry.has(savedSettings.currentStrategyKey)) {
-            setCurrentStrategyKey(savedSettings.currentStrategyKey);
-            const strategySelect = getOptionalElement<HTMLSelectElement>("strategySelect");
-            if (strategySelect) {
-                strategySelect.value = savedSettings.currentStrategyKey;
+        if (savedSettings.currentStrategyKey) {
+            if (!strategyRegistry.has(savedSettings.currentStrategyKey)) {
+                await loadBuiltInStrategyByKey(savedSettings.currentStrategyKey);
+            }
+            if (strategyRegistry.has(savedSettings.currentStrategyKey)) {
+                setCurrentStrategyKey(savedSettings.currentStrategyKey);
+                const strategySelect = getOptionalElement<HTMLSelectElement>("strategySelect");
+                if (strategySelect) {
+                    strategySelect.value = savedSettings.currentStrategyKey;
+                }
             }
         }
 
@@ -104,7 +118,9 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         stage: "pre_restore",
         dependsOn: ["layout"],
         init: async () => {
-            await loadBuiltInStrategies();
+            markAppTiming("manifestLoadStart");
+            await loadBuiltInStrategies([DEFAULT_BUILT_IN_STRATEGY_KEY]);
+            markAppTiming("manifestLoadEnd");
             restoreCustomStrategies();
         },
     },
@@ -167,54 +183,6 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         init: () => blockSelectorManager.init(),
     },
     {
-        id: "finder",
-        stage: "pre_restore",
-        dependsOn: ["ui-events"],
-        init: () => finderManager.init(),
-    },
-    {
-        id: "hunt",
-        stage: "pre_restore",
-        dependsOn: ["finder"],
-        init: () => huntService.init(),
-    },
-    {
-        id: "data-mining",
-        stage: "pre_restore",
-        dependsOn: ["ui-events"],
-        init: () => dataMiningManager.init(),
-    },
-    {
-        id: "walk-forward",
-        stage: "pre_restore",
-        dependsOn: ["ui-events"],
-        init: () => walkForwardService.initUI(),
-    },
-    {
-        id: "portfolio-lab",
-        stage: "pre_restore",
-        dependsOn: ["ui-events"],
-        init: () => portfolioLabService.init(),
-    },
-    {
-        id: "strategy-ensemble",
-        stage: "pre_restore",
-        dependsOn: ["ui-events"],
-        init: () => strategyEnsembleService.init(),
-    },
-    {
-        id: "polymarket-panel",
-        stage: "pre_restore",
-        dependsOn: ["ui-events"],
-        init: () => polymarketPanelService.init(),
-    },
-    {
-        id: "monte-carlo",
-        stage: "pre_restore",
-        dependsOn: ["layout"],
-        init: () => initMonteCarloService(),
-    },
-    {
         id: "cross-symbol",
         stage: "pre_restore",
         dependsOn: ["ui-events"],
@@ -233,22 +201,10 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         init: () => initLivePositionsHandlers(),
     },
     {
-        id: "debug-panel",
-        stage: "pre_restore",
-        dependsOn: ["layout"],
-        init: () => initDebugPanel(),
-    },
-    {
         id: "engine-status",
         stage: "pre_restore",
         dependsOn: ["layout"],
         init: () => initEngineStatusIndicator(),
-    },
-    {
-        id: "quick-view",
-        stage: "pre_restore",
-        dependsOn: ["layout"],
-        init: () => quickViewManager.init(),
     },
     {
         id: "scanner-shortcut",
@@ -300,12 +256,6 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         restore: async (context) => restoreSavedSettings(context),
     },
     {
-        id: "strategy-library-admin",
-        stage: "post_restore",
-        dependsOn: ["settings-state"],
-        init: () => strategyLibraryAdminService.init(),
-    },
-    {
         id: "settings-handlers",
         stage: "post_restore",
         dependsOn: ["settings-state"],
@@ -335,7 +285,9 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         dependsOn: ["settings-autosave"],
         init: async (context) => {
             if (context.shouldLoadData) {
+                markAppTiming("dataLoadStart");
                 await dataManager.loadData();
+                markAppTiming("dataLoadEnd");
             }
         },
     },
@@ -347,9 +299,94 @@ export async function bootstrapApp(): Promise<void> {
         shouldLoadData: true,
     };
 
+    registerLazyFeatures();
+
+    markAppTiming("bootstrapStart");
     debugLogger.event("app.init.start");
     await runBootstrapFeatureStage(APP_BOOTSTRAP_FEATURES, "pre_restore", "init", context);
     await runBootstrapFeatureStage(APP_BOOTSTRAP_FEATURES, "pre_restore", "restore", context);
     await runBootstrapFeatureStage(APP_BOOTSTRAP_FEATURES, "post_restore", "init", context);
+    bindDirectLazyFeatureTriggers();
+    attachTabLazyListener();
+    markAppTiming("bootstrapReady");
     debugLogger.event("app.init.ready");
+    logAppTimingSnapshot();
+}
+
+function registerLazyFeatures(): void {
+    registerLazyFeature("debug-panel", () => initDebugPanel());
+    registerLazyFeature("quick-view", () => quickViewManager.init());
+    registerLazyFeature("finder", () => finderManager.init());
+    registerLazyFeature("hunt", () => huntService.init());
+    registerLazyFeature("data-mining", () => dataMiningManager.init());
+    registerLazyFeature("walk-forward", () => walkForwardService.initUI());
+    registerLazyFeature("portfolio-lab", () => portfolioLabService.init());
+    registerLazyFeature("strategy-ensemble", () => strategyEnsembleService.init());
+    registerLazyFeature("polymarket-panel", () => polymarketPanelService.init());
+    registerLazyFeature("monte-carlo", () => initMonteCarloService());
+    registerLazyFeature("strategy-library-admin", () => strategyLibraryAdminService.init());
+}
+
+function bindDirectLazyFeatureTriggers(): void {
+    const debugToggle = getOptionalElement<HTMLButtonElement>("debugToggle");
+    if (debugToggle) {
+        attachLazyFeatureTrigger<PointerEvent>({
+            featureId: "debug-panel",
+            target: debugToggle,
+            eventName: "pointerdown",
+            shouldActivate: () => !isLazyFeatureInitialized("debug-panel"),
+        });
+        attachLazyFeatureTrigger<KeyboardEvent>({
+            featureId: "debug-panel",
+            target: debugToggle,
+            eventName: "keydown",
+            shouldActivate: (event) =>
+                !isLazyFeatureInitialized("debug-panel")
+                && (event.key === "Enter" || event.key === " "),
+        });
+        attachLazyFeatureTrigger<KeyboardEvent>({
+            featureId: "debug-panel",
+            target: window,
+            eventName: "keydown",
+            shouldActivate: (event) =>
+                !isLazyFeatureInitialized("debug-panel")
+                && event.ctrlKey
+                && event.shiftKey
+                && event.key.toLowerCase() === "d",
+            afterActivate: (event) => {
+                event.preventDefault();
+                debugToggle.click();
+            },
+        });
+    }
+
+    const quickViewButton = getOptionalElement<HTMLButtonElement>("quickViewBtn");
+    if (quickViewButton) {
+        attachLazyFeatureTrigger<PointerEvent>({
+            featureId: "quick-view",
+            target: quickViewButton,
+            eventName: "pointerdown",
+            shouldActivate: () => !isLazyFeatureInitialized("quick-view"),
+        });
+        attachLazyFeatureTrigger<KeyboardEvent>({
+            featureId: "quick-view",
+            target: quickViewButton,
+            eventName: "keydown",
+            shouldActivate: (event) =>
+                !isLazyFeatureInitialized("quick-view")
+                && (event.key === "Enter" || event.key === " "),
+        });
+    }
+
+    const strategyLibraryMenu = getOptionalElement<HTMLDetailsElement>("strategyLibraryMenu");
+    if (strategyLibraryMenu) {
+        attachLazyFeatureTrigger<Event>({
+            featureId: "strategy-library-admin",
+            target: strategyLibraryMenu,
+            eventName: "toggle",
+            shouldActivate: () =>
+                strategyLibraryMenu.open
+                && !isLazyFeatureInitialized("strategy-library-admin"),
+        });
+    }
 }

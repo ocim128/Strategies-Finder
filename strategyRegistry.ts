@@ -26,7 +26,17 @@ import {
     type ResampleOptions,
 } from "./lib/strategies/resample-utils";
 import { readPersistedJson, writePersistedJson } from "./lib/persisted-json";
+import {
+    getAllBuiltInMeta,
+    getBuiltInStrategyMeta,
+    getLoadedBuiltInStrategy,
+    isBuiltInKey,
+    isBuiltInStrategyLoaded,
+    ensureBuiltInStrategyLoaded,
+    type BuiltInStrategyMeta,
+} from "./lib/strategies/built-in-catalog";
 export type { Strategy, OHLCVData, Signal, StrategyParams };
+export type { BuiltInStrategyMeta };
 
 
 // ============================================================================
@@ -304,14 +314,55 @@ function registerBuiltInStrategyManifest(manifest: readonly StrategyManifestEntr
 }
 
 /**
- * Load built-in strategies from the shared manifest
+ * Load built-in strategies from the shared manifest (eager path for worker/server).
  */
-export async function loadBuiltInStrategies(): Promise<void> {
-    // Import manifest dynamically to support HMR
+export async function loadBuiltInStrategies(keys?: string[]): Promise<void> {
+    if (keys && keys.length > 0) {
+        for (const key of keys) {
+            if (!isBuiltInKey(key)) continue;
+            if (strategyRegistry.has(key)) continue;
+            const strategy = isBuiltInStrategyLoaded(key)
+                ? getLoadedBuiltInStrategy(key)
+                : await ensureBuiltInStrategyLoaded(key);
+            if (strategy) {
+                builtInStrategyKeys.add(key);
+                strategyRegistry.register(key, strategy);
+            }
+        }
+        console.log(`[StrategyRegistry] Loaded ${keys.length} requested built-in strategies`);
+        return;
+    }
+
     const { strategyManifest } = await import("./lib/strategies/manifest");
     registerBuiltInStrategyManifest(strategyManifest);
-
     console.log(`[StrategyRegistry] Loaded ${strategyManifest.length} built-in strategies`);
+}
+
+export async function loadBuiltInStrategyByKey(key: string): Promise<Strategy | undefined> {
+    if (strategyRegistry.has(key)) {
+        return strategyRegistry.get(key);
+    }
+    if (!isBuiltInKey(key)) return undefined;
+
+    const strategy = isBuiltInStrategyLoaded(key)
+        ? getLoadedBuiltInStrategy(key)
+        : await ensureBuiltInStrategyLoaded(key);
+    if (strategy) {
+        builtInStrategyKeys.add(key);
+        strategyRegistry.register(key, strategy);
+    }
+    return strategy;
+}
+
+export async function ensureStrategyKeysLoaded(keys: Iterable<string>): Promise<void> {
+    const seen = new Set<string>();
+    for (const key of keys) {
+        if (!key || seen.has(key) || strategyRegistry.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        await loadBuiltInStrategyByKey(key);
+    }
 }
 
 // ============================================================================
@@ -449,14 +500,32 @@ export function restoreCustomStrategies(): void {
  * Get a formatted list of all strategies for display
  */
 export function getStrategyList(): Array<{ key: string; name: string; description: string }> {
-    return strategyRegistry.keys().map(key => {
+    const seen = new Set<string>();
+    const result: Array<{ key: string; name: string; description: string }> = [];
+
+    const registeredKeys = strategyRegistry.keys();
+    for (const key of registeredKeys) {
+        seen.add(key);
         const strategy = strategyRegistry.get(key)!;
-        return {
+        result.push({
             key,
             name: strategy.name,
-            description: strategy.description
-        };
-    });
+            description: strategy.description,
+        });
+    }
+
+    for (const meta of getAllBuiltInMeta()) {
+        if (!seen.has(meta.key)) {
+            seen.add(meta.key);
+            result.push({
+                key: meta.key,
+                name: meta.name,
+                description: meta.description,
+            });
+        }
+    }
+
+    return result;
 }
 
 /**
@@ -467,7 +536,11 @@ export function isValidStrategyKey(key: string): boolean {
 }
 
 export function isBuiltInStrategyKey(key: string): boolean {
-    return builtInStrategyKeys.has(key);
+    return isBuiltInKey(key);
+}
+
+export function getBuiltInMeta(key: string): BuiltInStrategyMeta | undefined {
+    return getBuiltInStrategyMeta(key);
 }
 
 // Export for debugging in browser console

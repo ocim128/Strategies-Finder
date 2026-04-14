@@ -1,4 +1,4 @@
-import { strategyRegistry } from "../../strategyRegistry";
+import { ensureStrategyKeysLoaded, strategyRegistry } from "../../strategyRegistry";
 import { backtestService } from "../backtest-service";
 import { sliceOhlcvByBlock } from "../block-selector";
 import { dataManager } from "../data-manager";
@@ -71,7 +71,8 @@ function buildDatasetCacheKey(symbol: string, interval: string): string {
     return `${symbol.trim().toUpperCase()}|${interval.trim().toLowerCase()}`;
 }
 
-function createSelectedStrategies(strategyKeys: readonly string[]): FinderSelectedStrategy[] {
+async function createSelectedStrategies(strategyKeys: readonly string[]): Promise<FinderSelectedStrategy[]> {
+    await ensureStrategyKeysLoaded(strategyKeys);
     return strategyKeys
         .map((key) => {
             const strategy = strategyRegistry.get(key);
@@ -116,7 +117,7 @@ export function createHuntRunController(
             const finderOptions = buildHuntFinderOptions(runSettings);
             const primaryMetric = getHuntPrimaryMetric(finderOptions);
             const paramSpace = new FinderParamSpace();
-            const selectedStrategies = createSelectedStrategies(runSettings.selectedStrategyKeys);
+            const selectedStrategies = await createSelectedStrategies(runSettings.selectedStrategyKeys);
             const totalProfiles = input.profiles.length;
             const totalStrategies = selectedStrategies.length;
             const messages: HuntRunMessage[] = [];

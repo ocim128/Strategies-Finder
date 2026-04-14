@@ -23,7 +23,7 @@ import type {
     EnsembleRunContext,
 } from "./strategy-ensemble-types";
 import type { OHLCVData } from "./strategies";
-import { strategyRegistry } from "../strategyRegistry";
+import { ensureStrategyKeysLoaded, strategyRegistry } from "../strategyRegistry";
 import { backtestService } from "./backtest-service";
 import { debugLogger } from "./debug-logger";
 import { sliceOhlcvByBlock } from "./block-selector";
@@ -89,6 +89,13 @@ export class EnsembleRunOrchestrator {
         };
     }
 
+    private async ensureConfigStrategiesLoaded(configNames: readonly string[]): Promise<void> {
+        const strategyKeys = configNames
+            .map((configName) => settingsManager.loadStrategyConfig(configName)?.strategyKey ?? "")
+            .filter((key) => key.length > 0);
+        await ensureStrategyKeysLoaded(strategyKeys);
+    }
+
     async run(): Promise<void> {
         const dom = this.deps.getDom();
         const targetName = this.deps.getSelectedTargetName();
@@ -119,6 +126,7 @@ export class EnsembleRunOrchestrator {
         const candidateConfigNames = allConfigs
             .map((config) => config.name)
             .filter((name) => !selectedConfigNames.includes(name));
+        await this.ensureConfigStrategiesLoaded([...selectedConfigNames, ...candidateConfigNames]);
         const artifacts = new Map<string, ConfigRunArtifact>();
         const candidateArtifacts = new Map<string, ConfigSignalArtifact>();
         const engineDeps = this.buildEngineDeps();

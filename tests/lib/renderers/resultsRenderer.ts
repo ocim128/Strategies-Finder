@@ -1,16 +1,22 @@
 import { BacktestResult, PostEntryPathStats } from "../strategies/index";
-import type { EdgeStatistics } from "../types/strategies";
 import { getRequiredElement, updateTextContent, setVisible } from "../dom-utils";
 import { createResultsRendererDom, type ResultsRendererDom } from "./results-renderer-dom";
+import {
+    canComputeBacktestEdgeAnalysis,
+    ensureBacktestEdgeAnalysis,
+} from "../backtest-edge-analysis";
 
 export class ResultsRenderer {
     private dom: ResultsRendererDom | null = null;
+    private lastRenderedResult: BacktestResult | null = null;
+    private edgeAnalysisLoadingResult: BacktestResult | null = null;
 
     private getDom(): ResultsRendererDom {
         return this.dom ??= createResultsRendererDom();
     }
 
     public render(result: BacktestResult) {
+        this.lastRenderedResult = result;
         setVisible('emptyResults', false);
         setVisible('resultsContent', true);
 
@@ -46,7 +52,7 @@ export class ResultsRenderer {
         updateTextContent('sharpeRatio', result.sharpeRatio.toFixed(2), `stat-value ${sharpeClass}`);
 
         this.renderAdvancedAnalytics(result.performanceAnalytics);
-        this.renderEdgeAnalysis(result.edgeStatistics);
+        this.renderEdgeAnalysis(result);
         this.renderPostEntryPath(result.postEntryPath);
 
         const entryStats = result.entryStats;
@@ -259,13 +265,39 @@ export class ResultsRenderer {
         }
     }
 
-    private renderEdgeAnalysis(edge: EdgeStatistics | undefined): void {
+    private renderEdgeAnalysis(result: BacktestResult): void {
+        const edge = result.edgeStatistics;
         const hasEdge = !!edge;
-        setVisible('edgeAnalysisTitle', hasEdge);
-        setVisible('edgeAnalysisContainer', hasEdge);
-        if (!hasEdge || !edge) return;
+        const canLoadEdge = canComputeBacktestEdgeAnalysis(result);
+        const isLoading = this.edgeAnalysisLoadingResult === result;
+        const shouldShow = hasEdge || canLoadEdge;
+        setVisible('edgeAnalysisTitle', shouldShow);
+        setVisible('edgeAnalysisContainer', shouldShow);
+        if (!shouldShow) {
+            this.getDom().edgeAnalysisContainer.innerHTML = '';
+            return;
+        }
 
         const container = getRequiredElement('edgeAnalysisContainer');
+        if (!hasEdge || !edge) {
+            container.innerHTML = `
+                <div class="edge-subsection">
+                    <div class="edge-subsection-title">Edge Analysis</div>
+                    <div class="edge-subsection-desc">Deferred until requested so manual backtests can finish without this extra post-processing step.</div>
+                    <button class="btn btn-secondary btn-compact" type="button" data-action="compute-edge-analysis"${isLoading ? ' disabled' : ''}>
+                        ${isLoading ? 'Computing Edge Analysis...' : 'Compute Edge Analysis'}
+                    </button>
+                </div>
+            `;
+
+            const computeButton = container.querySelector<HTMLButtonElement>('[data-action="compute-edge-analysis"]');
+            if (computeButton) {
+                computeButton.addEventListener('click', () => {
+                    void this.loadEdgeAnalysis(result);
+                }, { once: true });
+            }
+            return;
+        }
 
         // ── Verdict Badge ──
         const verdictColors: Record<string, string> = {
@@ -428,6 +460,8 @@ export class ResultsRenderer {
 
     public clear() {
         const dom = this.getDom();
+        this.lastRenderedResult = null;
+        this.edgeAnalysisLoadingResult = null;
         setVisible('emptyResults', true);
         setVisible('resultsContent', false);
         setVisible('advancedAnalyticsTitle', false);
@@ -451,6 +485,29 @@ export class ResultsRenderer {
         setVisible('edgeAnalysisTitle', false);
         setVisible('edgeAnalysisContainer', false);
         dom.edgeAnalysisContainer.innerHTML = '';
+    }
+
+    private async loadEdgeAnalysis(result: BacktestResult): Promise<void> {
+        if (this.edgeAnalysisLoadingResult === result || result.edgeStatistics) {
+            return;
+        }
+
+        this.edgeAnalysisLoadingResult = result;
+        if (this.lastRenderedResult === result) {
+            this.renderEdgeAnalysis(result);
+        }
+
+        try {
+            await ensureBacktestEdgeAnalysis(result);
+        } finally {
+            if (this.edgeAnalysisLoadingResult === result) {
+                this.edgeAnalysisLoadingResult = null;
+            }
+        }
+
+        if (this.lastRenderedResult === result) {
+            this.renderEdgeAnalysis(result);
+        }
     }
 }
 

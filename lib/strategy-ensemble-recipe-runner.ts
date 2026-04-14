@@ -1,4 +1,4 @@
-import { strategyRegistry } from "../strategyRegistry";
+import { ensureStrategyKeysLoaded, strategyRegistry } from "../strategyRegistry";
 import { backtestService } from "./backtest-service";
 import { buildPreparedSignalsForEnsembleRecipe } from "./ensemble-signal-recipes";
 import {
@@ -70,6 +70,8 @@ export class StrategyEnsembleRecipeRunner {
             throw new Error("Not enough closed candle data loaded to preview this recipe.");
         }
 
+        await this.ensureRecipeStrategiesLoaded(recipe);
+
         const resolved = buildPreparedSignalsForEnsembleRecipe({
             recipe,
             candles,
@@ -134,6 +136,14 @@ export class StrategyEnsembleRecipeRunner {
         if (!options?.silent) {
             uiManager.showToast(successMessage, "success");
         }
+    }
+
+    private async ensureRecipeStrategiesLoaded(recipe: EnsembleSignalRecipe): Promise<void> {
+        const strategyKeys = [
+            recipe.anchorConfig.strategyKey,
+            ...recipe.componentConfigs.map((config) => config.strategyKey),
+        ];
+        await ensureStrategyKeysLoaded(strategyKeys);
     }
 
     private async loadConflictFilterRecipePreview(

@@ -16,6 +16,7 @@ import { livePositionsService } from "../live-positions-service";
 import { isBinanceDataProvider } from "../binance-market";
 import { SIGNAL_EXIT_SUPPORTED_RANK_MODES } from "../polymarket-exit-mode";
 import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
+import { activateLazyFeature } from "../lazy-feature-init";
 import {
     getPolymarketAnnotationToggle,
     getPolymarketExitModeSelect,
@@ -222,8 +223,20 @@ export function setupStateSubscriptions() {
                 }
 
                 chartManager.displayTradeMarkers(result.trades, uiManager.formatPrice);
-                quickViewManager.setJumpToTrade(jumpToTrade);
-                quickViewManager.onBacktestComplete(result);
+                void activateLazyFeature("quick-view")
+                    .then(() => {
+                        if (state.currentBacktestResult !== result) {
+                            return;
+                        }
+
+                        quickViewManager.setJumpToTrade(jumpToTrade);
+                        return quickViewManager.onBacktestComplete(result);
+                    })
+                    .catch((error) => {
+                        debugLogger.warn("quick_view.lazy_init_failed", {
+                            error: error instanceof Error ? error.message : String(error),
+                        });
+                    });
             });
         }
     });

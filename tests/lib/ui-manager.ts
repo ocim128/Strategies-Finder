@@ -2,7 +2,7 @@
 import { OHLCVData, BacktestResult, Trade } from "./strategies/index";
 import { state } from "./state";
 import { setCurrentStrategyKey } from "./state-actions";
-import { strategyRegistry, getStrategyList } from "../strategyRegistry";
+import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey } from "../strategyRegistry";
 import { getOptionalElement, getRequiredElement } from "./dom-utils";
 import { resultsRenderer } from "./renderers/resultsRenderer";
 import { tradesRenderer } from "./renderers/tradesRenderer";
@@ -166,8 +166,11 @@ export class UIManager {
         panel.appendChild(badge);
     }
 
-    public updateStrategyParams(currentStrategyKey: string) {
-        const strategy = strategyRegistry.get(currentStrategyKey);
+    public async updateStrategyParams(currentStrategyKey: string) {
+        let strategy = strategyRegistry.get(currentStrategyKey);
+        if (!strategy) {
+            strategy = await loadBuiltInStrategyByKey(currentStrategyKey);
+        }
         if (strategy) {
             this.updateStrategyWorkspaceContext(currentStrategyKey, strategy.name, strategy.description, Object.keys(strategy.defaultParams).length);
             paramManager.render(strategy);
@@ -177,7 +180,7 @@ export class UIManager {
     public updateStrategyDropdown(currentStrategyKey: string) {
         const { strategySelect } = this.getDom();
         const strategies = getStrategyList();
-        const currentValue = strategyRegistry.has(currentStrategyKey)
+        const currentValue = strategies.some(s => s.key === currentStrategyKey)
             ? currentStrategyKey
             : strategySelect.value;
 
@@ -190,7 +193,8 @@ export class UIManager {
             strategySelect.appendChild(option);
         });
 
-        if (strategyRegistry.has(currentValue)) {
+        const found = strategies.some(s => s.key === currentValue);
+        if (found) {
             strategySelect.value = currentValue;
         } else if (strategies.length > 0) {
             const fallbackKey = strategies[0].key;

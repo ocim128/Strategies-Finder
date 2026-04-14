@@ -12,7 +12,7 @@ import {
     applySignalPolarity,
 } from "./strategies/index";
 import type { OHLCVData, Strategy } from "./strategies/index";
-import { strategyRegistry } from "../strategyRegistry";
+import { ensureStrategyKeysLoaded, loadBuiltInStrategyByKey, strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
 import { rustEngine } from "./rust-engine-client";
@@ -23,7 +23,6 @@ import {
     calculateSharpeRatioFromEquityCurve,
     calculateSharpeRatioFromReturns,
 } from "./strategies/performance-metrics";
-import { computeEdgeStatistics } from "./strategies/backtest/edge-statistics";
 import { sanitizeBacktestSettingsForRust, requiresTypescriptEngine as requiresTsEngine } from "./rust-settings-sanitizer";
 import { sliceOhlcvByBlock } from "./block-selector";
 import {
@@ -67,6 +66,11 @@ import {
 import { addStrategyIndicators as renderStrategyIndicators } from "./backtest-chart-renderer";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { findContainingEvent } from "./polymarket-1m-5m-bridge";
+import { markAppTiming, getMark } from "./app-timing";
+import {
+    registerBacktestEdgeAnalysisInput,
+    transferBacktestEdgeAnalysisInput,
+} from "./backtest-edge-analysis";
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
@@ -107,6 +111,9 @@ export class BacktestService {
 
         clearActiveBacktestRerunContext();
         const startedAt = Date.now();
+        if (getMark("firstBacktestStart") === undefined) {
+            markAppTiming("firstBacktestStart");
+        }
         debugLogger.event('backtest.start', {
             strategy: state.currentStrategyKey,
             candles: state.ohlcvData.length,
@@ -142,7 +149,9 @@ export class BacktestService {
             // Only annotate Polymarket outcomes when explicitly enabled
             const annotatePolymarket = settings.polymarketAnnotationEnabled ?? false;
             if (annotatePolymarket) {
-                result = await this.annotatePolymarketResult(result, settings, state.ohlcvData);
+                const annotatedResult = await this.annotatePolymarketResult(result, settings, state.ohlcvData);
+                transferBacktestEdgeAnalysisInput(result, annotatedResult);
+                result = annotatedResult;
             }
 
             if (!this.isLatestInteractiveRun(runId)) {
@@ -177,6 +186,9 @@ export class BacktestService {
                 durationMs: Date.now() - startedAt,
                 engine: engineUsed,
             });
+            if (getMark("firstBacktestEnd") === undefined) {
+                markAppTiming("firstBacktestEnd");
+            }
             // Enable replay button if there are results
             setReplayStartButtonDisabled(result.totalTrades === 0);
         } catch (error) {
@@ -297,6 +309,7 @@ export class BacktestService {
         try {
             // --- 1. Resolve both strategies from registry ---
             await updateDomBacktestRunProgress(runUi, '10%', 'Resolving strategies...', 50);
+            await ensureStrategyKeysLoaded([primaryConfig.strategyKey, secondaryConfig.strategyKey]);
 
             const primaryStrategy = strategyRegistry.get(primaryConfig.strategyKey);
             const secondaryStrategy = strategyRegistry.get(secondaryConfig.strategyKey);
@@ -592,11 +605,7 @@ export class BacktestService {
             result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
             result.performanceAnalytics = this.recomputePerformanceAnalytics(result);
         }
-        
-        
-        if (result.trades.length >= 3) {
-            result.edgeStatistics = computeEdgeStatistics(result, backtestData);
-        }
+        registerBacktestEdgeAnalysisInput(result, backtestData);
     }
 
     private async annotatePolymarketResult(
@@ -821,7 +830,7 @@ export class BacktestService {
         backtestSettings: BacktestSettings
     ): Promise<BacktestResult> {
         const effectiveBacktestSettings = resolveSubscriptionExecutionBacktestSettings(backtestSettings);
-        const strategy = strategyRegistry.get(strategyKey);
+        const strategy = strategyRegistry.get(strategyKey) ?? await loadBuiltInStrategyByKey(strategyKey);
         if (!strategy) {
             throw new Error(`Strategy not found: ${strategyKey}`);
         }

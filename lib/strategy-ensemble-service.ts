@@ -1,4 +1,4 @@
-import { strategyRegistry } from "../strategyRegistry";
+import { getBuiltInMeta, strategyRegistry } from "../strategyRegistry";
 import { createEnsembleLabDom, type EnsembleLabDom } from "./strategy-ensemble-dom";
 import {
     describeEnsembleRecipeReplayDirectionOverride,
@@ -820,7 +820,9 @@ class StrategyEnsembleService {
     }
 
     private getConfigFamilyLabel(config: StrategyConfig): string {
-        return strategyRegistry.get(config.strategyKey)?.name ?? config.strategyKey;
+        return strategyRegistry.get(config.strategyKey)?.name
+            ?? getBuiltInMeta(config.strategyKey)?.name
+            ?? config.strategyKey;
     }
 
     private populateFamilyFilter(configs: StrategyConfig[], previousValue: string): void {

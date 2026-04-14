@@ -1,5 +1,5 @@
 import { StrategyParams } from "./strategies/index";
-import { strategyRegistry } from "../strategyRegistry";
+import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtest-service";
 import { paramManager } from "./param-manager";
@@ -223,14 +223,18 @@ export class FinderManager {
 		this.strategyItems.clear();
 		this.strategyOrder = [];
 		this.lastStrategyToggleKey = null;
-		const fragment = document.createDocumentFragment();
 
 		const strategies = strategyRegistry.getAll();
-		Object.entries(strategies).forEach(([key, strategy]) => {
+		const allStrategies = getStrategyList();
+		const fragment = document.createDocumentFragment();
+
+		for (const { key, name } of allStrategies) {
+			const strategy = strategies[key];
+			const displayName = strategy?.name ?? name;
 			const item = document.createElement('div');
 			item.className = 'strategy-list-item';
 			item.dataset.strategyKey = key;
-			item.dataset.strategyName = strategy.name.toLowerCase();
+			item.dataset.strategyName = displayName.toLowerCase();
 
 			const checkbox = document.createElement('input');
 			checkbox.type = 'checkbox';
@@ -245,7 +249,7 @@ export class FinderManager {
 
 			const label = document.createElement('label');
 			label.htmlFor = `finder-strategy-${key}`;
-			label.textContent = strategy.name;
+			label.textContent = displayName;
 
 			item.appendChild(checkbox);
 			item.appendChild(label);
@@ -254,7 +258,7 @@ export class FinderManager {
 			this.strategyToggles.set(key, checkbox);
 			this.strategyItems.set(key, item);
 			this.strategyOrder.push(key);
-		});
+		}
 		container.appendChild(fragment);
 
 		this.applyStrategyFilter();
@@ -361,18 +365,22 @@ export class FinderManager {
 			: `${selectedCount} selected`;
 	}
 
-	private getSelectedStrategies(): FinderSelectedStrategy[] {
-		const strategies = strategyRegistry.getAll();
-		return Object.entries(strategies)
-			.filter(([key]) => {
-				const toggle = this.strategyToggles.get(key);
-				return toggle ? toggle.checked : false;
-			})
-			.map(([key, strategy]) => ({
-				key,
-				name: strategy.name,
-				strategy
-			}));
+	private async getSelectedStrategies(): Promise<FinderSelectedStrategy[]> {
+		const selectedKeys: string[] = [];
+		this.strategyToggles.forEach((toggle, key) => {
+			if (toggle.checked) selectedKeys.push(key);
+		});
+		const results: FinderSelectedStrategy[] = [];
+		for (const key of selectedKeys) {
+			if (!strategyRegistry.has(key)) {
+				await loadBuiltInStrategyByKey(key);
+			}
+			const strategy = strategyRegistry.get(key);
+			if (strategy) {
+				results.push({ key, name: strategy.name, strategy });
+			}
+		}
+		return results;
 	}
 
 	public async runFinder(): Promise<void> {
@@ -422,7 +430,7 @@ export class FinderManager {
 		this.renderResults([]);
 
 		try {
-			const selectedStrategies = this.getSelectedStrategies();
+			const selectedStrategies = await this.getSelectedStrategies();
 			if (selectedStrategies.length === 0) {
 				this.setStatus('No strategies selected.');
 				return;

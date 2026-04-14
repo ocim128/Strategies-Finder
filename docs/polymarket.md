@@ -167,6 +167,8 @@ Behavior:
 - the signal-exit quote must be later than the chosen entry quote
 - if no same-event signal exit applies, the Polymarket leg settles to final binary resolution at event end
 - only the first eligible trade per `5m` event is scored; later duplicates in that event are ignored
+- this is intentional: `signal_exit_same_event` is a per-event scoring model, not a literal replay of every chart trade inside that `5m` event
+- if a strategy opens multiple chart trades inside one `5m` event, the first trade claims the event and later trades are reported as duplicates instead of adding extra scored trades
 - if the entry quote is missing, the trade is unscored
 - if a same-event signal exit is required but no usable exit quote exists, the trade is unscored and counted as a missing-price trade
 - only `exitReason === "signal"` can close early in this mode; stop-loss, take-profit, trailing stop, time stop, partial, probation fail, and end-of-data all settle at final outcome
@@ -359,6 +361,7 @@ Important signal-exit differences versus the old `1m` bridge mode:
 - Finder does not fan out one parameter set into five offset variants
 - `polymarketEntryOffset` is ignored in signal-exit mode
 - `polymarketLockOffset` becomes irrelevant and the UI disables it
+- signal-exit results are still per-event, not per-chart-trade; when a config produces multiple chart trades inside one `5m` event, only the first trade is scored and the rest contribute to `duplicateTradesIgnored`
 - applying a Finder result preserves `polymarketExitMode` and only writes `polymarketEntryOffset` back when the effective mode is still `resolve_hold`
 
 Hunt behavior:

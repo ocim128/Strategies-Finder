@@ -235,12 +235,13 @@ Required parity rules:
 
 ## `prepareFinderData(...)` Guidance
 
-Only add `prepareFinderData(...)` when dataset-derived precompute materially reduces Finder cost.
+Use `prepareFinderData(...)` by default when the strategy builds reusable rolling, VWAP, percentile, entropy, skewness, or cross-symbol arrays. Skip it only when execution is already cheap enough that the extra seam would not reduce Finder cost.
 
 Good candidates:
 - session VWAP arrays
 - distance series reused across many param combinations
 - cached rolling transforms keyed by lookback
+- cross-symbol ratio, spread, or rolling-correlation series reused across many candidate evaluations
 
 Bad candidates:
 - cheap one-pass arrays that are already trivial
@@ -250,6 +251,8 @@ When you do add prepared execution:
 - keep `executePrepared(...)` behavior identical to `execute(...)`
 - validate prepared payload shape defensively
 - cache by real param dimension when multiple lookbacks are possible
+- keep the prepared payload small; store raw reusable series plus keyed caches instead of per-run duplicates
+- run `npm run strategies:audit-prepared` when the file uses heavy rolling helpers or cross-symbol state
 
 ## Common AI Failure Modes
 

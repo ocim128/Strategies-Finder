@@ -39,7 +39,6 @@ import {
     buildEntryBacktestResult,
     runBacktest,
 } from "./strategies/index";
-import { computeEdgeStatistics } from "./strategies/backtest/edge-statistics";
 import { strategies as builtInStrategies } from "./strategies/library";
 import {
     getResampleBucketStart,
@@ -53,6 +52,10 @@ import {
 } from "./strategies/performance-metrics";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { timeKey } from "./strategies/backtest/backtest-utils";
+import {
+    registerBacktestEdgeAnalysisInput,
+    transferBacktestEdgeAnalysisInput,
+} from "./backtest-edge-analysis";
 
 // ============================================================================
 // Executor request / response
@@ -213,8 +216,11 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         let result = buildEntryBacktestResult(entryStats);
         finalizeResult(result, backtestData, interval, settingsWithMeta);
         if (annotatePolymarket) {
-            result = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
+            const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
+            transferBacktestEdgeAnalysisInput(result, annotatedResult);
+            result = annotatedResult;
         }
+        registerBacktestEdgeAnalysisInput(result, backtestData);
         return { result, engineUsed: "typescript" };
     }
 
@@ -225,8 +231,11 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             let result = rustResult;
             finalizeResult(result, backtestData, interval, settingsWithMeta);
             if (annotatePolymarket) {
-                result = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
+                const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
+                transferBacktestEdgeAnalysisInput(result, annotatedResult);
+                result = annotatedResult;
             }
+            registerBacktestEdgeAnalysisInput(result, backtestData);
             return { result, engineUsed: "rust" };
         }
     }
@@ -246,8 +255,11 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     );
     finalizeResult(result, backtestData, interval, settingsWithMeta);
     if (annotatePolymarket) {
-        result = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
+        const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
+        transferBacktestEdgeAnalysisInput(result, annotatedResult);
+        result = annotatedResult;
     }
+    registerBacktestEdgeAnalysisInput(result, backtestData);
     return { result, engineUsed: "typescript" };
 }
 
@@ -298,8 +310,11 @@ export async function executeBacktestFromSignals(
             let result = rustResult;
             finalizeResult(result, backtestData, interval, settings);
             if (annotatePolymarket) {
-                result = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
+                const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
+                transferBacktestEdgeAnalysisInput(result, annotatedResult);
+                result = annotatedResult;
             }
+            registerBacktestEdgeAnalysisInput(result, backtestData);
             return { result, engineUsed: "rust" };
         }
     }
@@ -315,8 +330,11 @@ export async function executeBacktestFromSignals(
     );
     finalizeResult(result, backtestData, interval, settings);
     if (annotatePolymarket) {
-        result = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
+        const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
+        transferBacktestEdgeAnalysisInput(result, annotatedResult);
+        result = annotatedResult;
     }
+    registerBacktestEdgeAnalysisInput(result, backtestData);
     return { result, engineUsed: "typescript" };
 }
 
@@ -394,11 +412,6 @@ function finalizeResult(
     if (!result.entryStats) {
         result.sharpeRatio = recomputeSharpeRatio(result);
         result.performanceAnalytics = recomputePerformanceAnalytics(result);
-    }
-    
-    
-    if (result.trades.length >= 3) {
-        result.edgeStatistics = computeEdgeStatistics(result, backtestData);
     }
 }
 

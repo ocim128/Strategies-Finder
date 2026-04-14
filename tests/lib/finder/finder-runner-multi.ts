@@ -81,14 +81,15 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
 
     const comboPrimarySignalsByInterval = new Map<string, Signal[]>();
     if (input.comboPrimarySignals) {
-        const { strategyRegistry } = await import("../../strategyRegistry");
+        const { loadBuiltInStrategyByKey, strategyRegistry } = await import("../../strategyRegistry");
         const { settingsManager } = await import("../settings-manager");
         const { resolveBacktestSettingsFromRaw } = await import("../backtest-settings-resolver");
         const primaryConfigName = input.options.comboPrimaryConfigName;
         if (primaryConfigName) {
             const primaryConfig = settingsManager.loadStrategyConfig(primaryConfigName);
             if (primaryConfig) {
-                const primaryStrategy = strategyRegistry.get(primaryConfig.strategyKey);
+                const primaryStrategy = strategyRegistry.get(primaryConfig.strategyKey)
+                    ?? await loadBuiltInStrategyByKey(primaryConfig.strategyKey);
                 if (primaryStrategy) {
                     const primarySettings = resolveBacktestSettingsFromRaw(
                         primaryConfig.backtestSettings,

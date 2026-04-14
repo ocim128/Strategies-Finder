@@ -49,8 +49,7 @@ function detectSyntheticExit(
 
 export function resolveOpenTradeDisplayMetrics(
     trade: Trade,
-    liveCandle: OHLCVData | null,
-    nowMs: number = Date.now()
+    liveCandle: OHLCVData | null
 ): OpenTradeDisplayMetrics {
     const entryTs = getTimestampMs(trade.entryTime);
     const exitTs = getTimestampMs(trade.exitTime);
@@ -70,9 +69,14 @@ export function resolveOpenTradeDisplayMetrics(
 
     const liveCandleTsSec = parseTimeToUnixSeconds(liveCandle.time);
     const entryTsSec = parseTimeToUnixSeconds(trade.entryTime);
+    const exitTsSec = parseTimeToUnixSeconds(trade.exitTime);
+    if (liveCandleTsSec === null || exitTsSec === null || liveCandleTsSec !== exitTsSec) {
+        return base;
+    }
     if (liveCandleTsSec !== null && entryTsSec !== null && liveCandleTsSec < entryTsSec) {
         return base;
     }
+    const liveDurationMs = entryTs > 0 ? Math.max(0, getTimestampMs(liveCandle.time) - entryTs) : defaultDurationMs;
 
     const syntheticExit = detectSyntheticExit(trade, liveCandle);
     if (syntheticExit) {
@@ -81,7 +85,7 @@ export function resolveOpenTradeDisplayMetrics(
             exitPrice: syntheticExit.exitPrice,
             pnl: liveExit.pnl,
             pnlPercent: liveExit.pnlPercent,
-            durationMs: entryTs > 0 ? Math.max(0, nowMs - entryTs) : defaultDurationMs,
+            durationMs: liveDurationMs,
             displayExitReason: syntheticExit.reason,
             isSyntheticLiveExit: true,
         };
@@ -97,7 +101,7 @@ export function resolveOpenTradeDisplayMetrics(
         exitPrice: liveClose,
         pnl: liveMark.pnl,
         pnlPercent: liveMark.pnlPercent,
-        durationMs: entryTs > 0 ? Math.max(0, nowMs - entryTs) : defaultDurationMs,
+        durationMs: liveDurationMs,
         displayExitReason: trade.exitReason,
         isSyntheticLiveExit: false,
     };

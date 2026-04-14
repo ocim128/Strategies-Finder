@@ -13,7 +13,9 @@ import { copyToClipboard } from "../browser-transfer";
 import {
     setCurrentInterval,
     setDarkTheme,
+    setCurrentStrategyKey,
 } from "../state-actions";
+import { loadBuiltInStrategyByKey } from "../../strategyRegistry";
 import { setupSymbolSearch } from "./symbol-search-handler";
 import { setupSettingsSections } from "./settings-section-handlers";
 
@@ -151,8 +153,10 @@ export function setupEventHandlers() {
 
     // Strategy selector
     const strategySelect = dom.strategySelect;
-    strategySelect.addEventListener('change', () => {
-        import("../state-actions").then(({ setCurrentStrategyKey }) => setCurrentStrategyKey(strategySelect.value));
+    strategySelect.addEventListener('change', async () => {
+        const key = strategySelect.value;
+        await loadBuiltInStrategyByKey(key);
+        setCurrentStrategyKey(key);
     });
 
     let runBacktestEndpointPreviewBusy = false;

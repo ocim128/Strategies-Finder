@@ -95,7 +95,7 @@ export function setupSettingsHandlers() {
     const loadConfigBtn = dom.loadConfigBtn;
     const configSelect = dom.configSelect;
     if (loadConfigBtn && configSelect) {
-        loadConfigBtn.addEventListener('click', () => {
+        loadConfigBtn.addEventListener('click', async () => {
             const name = configSelect.value;
             if (!name) {
                 uiManager.showToast('Please select a configuration to load', 'error');
@@ -103,7 +103,7 @@ export function setupSettingsHandlers() {
             }
             const config = settingsManager.loadStrategyConfig(name);
             if (config) {
-                settingsManager.applyStrategyConfig(config);
+                await settingsManager.applyStrategyConfig(config);
                 uiManager.showToast(`Configuration "${name}" loaded`, 'success');
                 debugLogger.event('ui.config.loaded', { name });
             }
@@ -157,7 +157,7 @@ export function setupSettingsHandlers() {
         }
 
         const persisted = settingsManager.upsertStrategyConfig(parsed);
-        settingsManager.applyStrategyConfig(persisted);
+        void settingsManager.applyStrategyConfig(persisted);
         updateConfigDropdown(persisted.name);
         notifyStrategyConfigsChanged();
         debugLogger.event('ui.config.shared.loaded', { name: persisted.name, source });
@@ -235,7 +235,7 @@ export function setupSettingsHandlers() {
             state.currentInterval !== sharedChartContext.interval;
 
         const imported = settingsManager.upsertStrategyConfig(sharedConfig);
-        settingsManager.applyStrategyConfig(imported);
+        void settingsManager.applyStrategyConfig(imported);
         if (state.currentSymbol !== sharedChartContext.symbol) {
             setCurrentSymbol(sharedChartContext.symbol);
         }
@@ -410,7 +410,7 @@ function scheduleSharedAutoBacktest(options: SharedBacktestWaitOptions): void {
     const runWhenReady = () => {
         attempt += 1;
         if (attempt === 1 || attempt % 8 === 0) {
-            settingsManager.applyStrategyConfig(options.expectedConfig);
+            void settingsManager.applyStrategyConfig(options.expectedConfig);
         }
 
         const symbolReady = state.currentSymbol === options.expectedSymbol;

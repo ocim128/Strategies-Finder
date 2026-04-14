@@ -25,7 +25,7 @@ If a strategy silently clamps, rounds, or flips a parameter inside `execute(...)
 3. Write the raw signal idea first with `ensureCleanData(...)` and `createSignalLoop(...)`.
 4. Add a named parameter normalizer before wiring `metadata.walkForwardParams`.
 5. Run `npm run strategies:sync-manifest`.
-6. Add `prepareFinderData(...)` only if dataset-derived precompute materially reduces Finder cost.
+6. Default to `prepareFinderData(...)` when the strategy builds reusable rolling, VWAP, percentile, entropy, skewness, or cross-symbol arrays. Skip it only for cheap one-pass logic where the extra seam would not reduce Finder cost.
 
 ## Minimal Template
 
@@ -121,6 +121,8 @@ Add `normalizeParams(...)` when execution rounds, clamps, coerces sign, snaps to
   - `metadata.walkForwardParams`
   - the execution logic
 - If you add `prepareFinderData(...)`, keep `executePrepared(...)` behavior identical to `execute(...)`.
+- For heavy strategies, treat prepared execution as the default path rather than an optional extra.
+- Keep the prepared payload small and cache reusable arrays by the real param dimension, usually lookback.
 - Do not add Finder precompute to cheap strategies just for symmetry.
 
 ## Checklist Before You Stop
@@ -132,6 +134,7 @@ Add `normalizeParams(...)` when execution rounds, clamps, coerces sign, snaps to
 - `metadata.walkForwardParams` references only real params
 - `execute(...)` uses normalized params when behavior depends on normalized values
 - `npm run strategies:sync-manifest` was run
+- `npm run strategies:audit-prepared` was run if the strategy uses rolling statistics, VWAP, or cross-symbol state
 - `npm run typecheck` passes
 - `strategies.spec.ts` or a focused strategy spec was added/updated if behavior is non-trivial
 - the strategy appears in the UI dropdown
@@ -143,5 +146,6 @@ Add `normalizeParams(...)` when execution rounds, clamps, coerces sign, snaps to
 - exposing a WFA/Finder param that execution later ignores or renames
 - adding expensive per-bar allocations in Finder hot paths when a reusable precompute would do
 - adding `prepareFinderData(...)` without keeping `executePrepared(...)` aligned with `execute(...)`
+- adding a heavy rolling/VWAP/cross-symbol strategy without checking `npm run strategies:audit-prepared`
 - handing `OHLCVData[]` to helpers that expect `number[]`
 - indexing compound helper results incorrectly, such as reading `atrMinMax[i]!.min` instead of `atrMinMax.min[i]!`

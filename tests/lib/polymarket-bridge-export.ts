@@ -7,7 +7,11 @@ import { state } from "./state";
 import { settingsManager, type StrategyConfig } from "./settings-manager";
 import { uiManager } from "./ui-manager";
 import { copyToClipboard, downloadTextFile } from "./browser-transfer";
-import { strategyRegistry } from "../strategyRegistry";
+import {
+    isBuiltInStrategyKey,
+    loadBuiltInStrategyByKey,
+    strategyRegistry,
+} from "../strategyRegistry";
 
 export class PolymarketBridgeExport {
     private bridgeConfigSignature = "";
@@ -32,7 +36,9 @@ export class PolymarketBridgeExport {
         const configs = this.ensureBridgeConfigOptions();
         const selectedConfig = this.getSelectedBridgeConfig(configs);
         const botSymbol = resolveExternalSignalSymbol(state.currentSymbol);
-        const strategyAvailable = selectedConfig ? strategyRegistry.has(selectedConfig.strategyKey) : false;
+        const strategyAvailable = selectedConfig
+            ? strategyRegistry.has(selectedConfig.strategyKey) || isBuiltInStrategyKey(selectedConfig.strategyKey)
+            : false;
         const canExport = Boolean(supportedRun && botSymbol && selectedConfig && strategyAvailable);
 
         dom.polymarketBridgeDownloadScript.disabled = !canExport;
@@ -117,7 +123,7 @@ export class PolymarketBridgeExport {
     }
 
     async handleBridgeScriptDownload(): Promise<void> {
-        const context = this.getBridgeExportContext();
+        const context = await this.getBridgeExportContext();
         if (!context) {
             uiManager.showToast("Select a supported 5m chart and a valid saved config first.", "error");
             return;
@@ -131,7 +137,7 @@ export class PolymarketBridgeExport {
     }
 
     async handleCopyBotEnv(): Promise<void> {
-        const context = this.getBridgeExportContext();
+        const context = await this.getBridgeExportContext();
         if (!context) {
             uiManager.showToast("Select a supported 5m chart and a valid saved config first.", "error");
             return;
@@ -148,18 +154,22 @@ export class PolymarketBridgeExport {
         uiManager.showToast("Copied bot env snippet", "success");
     }
 
-    getBridgeExportContext(): { config: StrategyConfig; slug: string; botSymbol: string } | null {
+    async getBridgeExportContext(): Promise<{ config: StrategyConfig; slug: string; botSymbol: string } | null> {
         const supportedRun = isSupportedPolymarket5mRun(state.currentSymbol, state.currentInterval);
         if (!supportedRun) {
             return null;
         }
 
         const config = this.getSelectedBridgeConfig();
-        if (!config || !strategyRegistry.has(config.strategyKey)) {
+        if (!config) {
             return null;
         }
 
-        const strategy = strategyRegistry.get(config.strategyKey)!;
+        const strategy = strategyRegistry.get(config.strategyKey)
+            ?? await loadBuiltInStrategyByKey(config.strategyKey);
+        if (!strategy) {
+            return null;
+        }
         if (strategy.crossSymbolConfig) {
             this.getDom().polymarketBridgeStatus.textContent = `"${config.name}" uses cross-symbol strategy "${config.strategyKey}" which is not supported by bridge export.`;
             return null;

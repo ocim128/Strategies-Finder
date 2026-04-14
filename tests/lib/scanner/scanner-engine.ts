@@ -4,7 +4,7 @@
  */
 
 import { binanceSearchService, type BinanceSymbol } from '../binance-search-service';
-import { strategyRegistry } from '../../strategyRegistry';
+import { ensureStrategyKeysLoaded, strategyRegistry } from '../../strategyRegistry';
 import { debugLogger } from '../debug-logger';
 
 import type { BacktestSettings, Signal, StrategyParams } from '../types/strategies';
@@ -89,6 +89,8 @@ export class ScannerEngine {
         const signal = this.abortController.signal;
 
         try {
+            await ensureStrategyKeysLoaded(config.strategyConfigs.map((entry) => entry.strategyKey));
+
             // Invalidate cache if config changed since last scan
             const configFp = this.buildConfigFingerprint(config);
             if (configFp !== this.lastConfigFingerprint) {

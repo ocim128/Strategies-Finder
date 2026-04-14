@@ -40,8 +40,11 @@ type TestRunSummary = {
 
 const TEST_FILES = [
     "tests/app-bootstrap.spec.ts",
+    "tests/app-timing.spec.ts",
+    "tests/lazy-feature-init.spec.ts",
     "tests/advanced-sizing.spec.ts",
     "tests/backtest-capital-settings.spec.ts",
+    "tests/backtest-edge-analysis.spec.ts",
     "tests/strategy-calculations.spec.ts",
     "tests/data-interval-utils.spec.ts",
     "tests/signal-stability.spec.ts",
@@ -50,6 +53,7 @@ const TEST_FILES = [
     "tests/strategies-lib/retained-strategy-registration.spec.ts",
     "tests/strategies-lib/strategy-normalization-parity.spec.ts",
     "tests/strategy-manifest-sync.spec.ts",
+    "tests/strategy-registry-loading.spec.ts",
     "tests/strategy-library-admin-plugin.spec.ts",
     "tests/strategy-library-admin-service.spec.ts",
     "tests/pivot-detection.spec.ts",

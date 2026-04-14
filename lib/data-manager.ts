@@ -252,7 +252,6 @@ export class DataManager {
         this.streamProvider = provider;
         this.streamSessionId += 1;
         this.reconnectAttempts = 0;
-
         if (isBinanceDataProvider(provider) && !useBinanceAlignedPolling) {
             this.connectBinanceStream();
         } else {

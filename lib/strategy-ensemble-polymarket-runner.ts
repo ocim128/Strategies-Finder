@@ -1,4 +1,4 @@
-import { strategyRegistry } from "../strategyRegistry";
+import { ensureStrategyKeysLoaded, strategyRegistry } from "../strategyRegistry";
 import { backtestService } from "./backtest-service";
 import { type EnsembleLabDom } from "./strategy-ensemble-dom";
 import {
@@ -201,6 +201,8 @@ export class StrategyEnsemblePolymarketRunner {
                 throw new Error("Not enough closed candle data loaded to preview this config.");
             }
 
+            await this.ensureConfigStrategiesLoaded([configName]);
+
             const artifact = await runConfig(configName, candles, this.buildEngineDeps());
             if (!artifact) {
                 throw new Error(`Config "${configName}" could not be evaluated.`);
@@ -312,6 +314,7 @@ export class StrategyEnsemblePolymarketRunner {
         }
 
         const selectedConfigNames = [targetName, ...contextNames];
+        await this.ensureConfigStrategiesLoaded(selectedConfigNames);
         const engineDeps = this.buildEngineDeps();
         const conflictPolicy = this.getSelectedPolymarketConflictPolicy();
         const directionSlice = this.getSelectedPolymarketDirectionSlice();
@@ -408,5 +411,12 @@ export class StrategyEnsemblePolymarketRunner {
             default:
                 return "All";
         }
+    }
+
+    private async ensureConfigStrategiesLoaded(configNames: readonly string[]): Promise<void> {
+        const strategyKeys = configNames
+            .map((configName) => settingsManager.loadStrategyConfig(configName)?.strategyKey ?? "")
+            .filter((key) => key.length > 0);
+        await ensureStrategyKeysLoaded(strategyKeys);
     }
 }

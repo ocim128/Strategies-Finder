@@ -1,3 +1,3 @@
-import { strategyManifest } from "./strategies/manifest";
+import { builtInStrategyKeys } from "./strategies/manifest-keys";
 
-export const DEFAULT_BUILT_IN_STRATEGY_KEY = strategyManifest[0]?.key ?? "";
+export const DEFAULT_BUILT_IN_STRATEGY_KEY = builtInStrategyKeys[0] ?? "";

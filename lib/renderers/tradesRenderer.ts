@@ -302,13 +302,9 @@ export class TradesRenderer {
             const pnl = typeof outcome.marketPnl === 'number' && Number.isFinite(outcome.marketPnl)
                 ? outcome.marketPnl
                 : null;
-            const label = pnl === null
-                ? 'Poly n/a'
-                : pnl > 0
-                    ? 'Poly Profit'
-                    : pnl < 0
-                        ? 'Poly Loss'
-                        : 'Poly Flat';
+            const exitBadgeLabel = outcome.marketExitSource === 'signal'
+                ? 'Poly Exit'
+                : 'Poly Settle';
             const className = pnl === null
                 ? ''
                 : pnl > 0
@@ -323,13 +319,18 @@ export class TradesRenderer {
             const exitPrice = typeof outcome.marketExitPrice === 'number' && Number.isFinite(outcome.marketExitPrice)
                 ? this.formatPolymarketEntryPrice(outcome.marketExitPrice)
                 : outcome.marketExitSource ?? 'n/a';
+            const exitTimeLabel = this.formatPolymarketExitTime(outcome.marketExitTs);
+            const chartExitLabel = trade.exitReason ? trade.exitReason.replace(/_/g, ' ') : 'unknown';
             const pnlLabel = pnl !== null
                 ? `${pnl >= 0 ? '+' : ''}${(pnl * 100).toFixed(1)}c`
                 : '';
-            const priceLabel = `${prediction} ${entryPrice}→${exitPrice}${pnlLabel ? ` (${pnlLabel})` : ''}`;
+            const priceLabelForDisplay = `${prediction} ${entryPrice}->${exitPrice}${pnlLabel ? ` (${pnlLabel})` : ''}`;
             const marketSlug = escapeHtml(outcome.marketSlug);
             const marketUrl = escapeHtml(this.buildPolymarketMarketUrl(outcome.marketSlug));
-            return `<span class="exit-reason-badge trade-polymarket-link ${className}" role="button" tabindex="0" data-polymarket-url="${marketUrl}" title="Signal-exit mode. ${label}. Predicted ${prediction}, entry ${entryPrice}, exit ${exitPrice}. Click to copy ${marketSlug}.">${label} ${priceLabel}</span>`;
+            const title = outcome.marketExitSource === 'signal'
+                ? `Signal-exit mode. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, exited same-event at ${exitPrice} (${exitTimeLabel}). Chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`
+                : `Signal-exit mode. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, settled at event end at ${exitPrice} (${exitTimeLabel}) after chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`;
+            return `<span class="exit-reason-badge trade-polymarket-link ${className}" role="button" tabindex="0" data-polymarket-url="${marketUrl}" title="${escapeHtml(title)}">${exitBadgeLabel} ${priceLabelForDisplay}</span>`;
         }
 
         const label = outcome.isWin ? 'Poly Win' : 'Poly Lose';
@@ -355,6 +356,19 @@ export class TradesRenderer {
 
     private formatPolymarketEntryPrice(price: number): string {
         return `${(price * 100).toFixed(1)}c`;
+    }
+
+    private formatPolymarketExitTime(ts: number | null | undefined): string {
+        if (typeof ts !== 'number' || !Number.isFinite(ts)) {
+            return 'n/a';
+        }
+
+        return new Date(ts * 1000).toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+        });
     }
 
     private encodeTradeEntryTime(time: Time): string {

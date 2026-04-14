@@ -25,6 +25,7 @@
     "poly:sync-outcomes:repair:all": "..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-sync-outcomes.ts --all --refresh-recent 10000",
     "alpha:surgical": "..\\..\\..\\node_modules\\.bin\\esno scripts\\surgical-optimization.ts",
     "strategies:sync-manifest": "..\\..\\..\\node_modules\\.bin\\esno scripts\\sync-strategy-manifest.ts",
+    "strategies:audit-prepared": "..\\..\\..\\node_modules\\.bin\\esno scripts\\audit-prepared-strategies.ts",
     "build:types": "tsc -p tsconfig.types.json",
     "dev": "vite",
     "build": "vite build"

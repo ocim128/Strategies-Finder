@@ -7,6 +7,9 @@ const scriptsDir = path.dirname(currentFilePath);
 const repoRoot = path.resolve(scriptsDir, "..");
 const strategyLibDir = path.join(repoRoot, "lib", "strategies", "lib");
 const manifestPath = path.join(repoRoot, "lib", "strategies", "manifest.ts");
+const manifestMetaPath = path.join(repoRoot, "lib", "strategies", "manifest-meta.ts");
+const manifestLoadersPath = path.join(repoRoot, "lib", "strategies", "manifest-loaders.ts");
+const manifestKeysPath = path.join(repoRoot, "lib", "strategies", "manifest-keys.ts");
 
 const STRATEGY_EXPORT_PATTERN = /export\s+const\s+([a-zA-Z][a-zA-Z0-9_]*)\s*:\s*Strategy\s*=/g;
 const MANIFEST_KEY_PATTERN = /key:\s*"([^"]+)"/g;
@@ -142,9 +145,221 @@ export function getStrategyManifestPath(): string {
     return manifestPath;
 }
 
+export interface StrategyMetaEntry {
+    key: string;
+    name: string;
+    description: string;
+    defaultParams: string;
+    paramLabels: string;
+    metadata: string;
+}
+
+function extractStringProperty(source: string, propName: string): string | null {
+    const re = new RegExp(`\\b${propName}\\s*:\\s*`, "g");
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(source)) !== null) {
+        const rest = source.slice(match.index + match[0].length);
+        const trimmed = rest.trimStart();
+        if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
+            const quote = trimmed[0];
+            const end = trimmed.indexOf(quote, 1);
+            if (end !== -1) {
+                return trimmed.slice(0, end + 1);
+            }
+        }
+        if (trimmed.startsWith("`")) {
+            const end = findClosingBacktick(trimmed, 1);
+            if (end !== -1) {
+                const raw = trimmed.slice(1, end);
+                const resolved = resolveTemplateLiteral(source, raw);
+                return `"${escapeForQuotedString(resolved)}"`;
+            }
+        }
+    }
+    return null;
+}
+
+function findClosingBacktick(source: string, start: number): number {
+    for (let i = start; i < source.length; i++) {
+        if (source[i] === "\\") { i++; continue; }
+        if (source[i] === "`") return i;
+    }
+    return -1;
+}
+
+function resolveTemplateLiteral(fileSource: string, templateContent: string): string {
+    const constants = extractSimpleConstants(fileSource);
+    return templateContent.replace(/\$\{([^}]+)\}/g, (_match, expr: string) => {
+        const trimmed = expr.trim();
+        if (constants.has(trimmed)) {
+            return String(constants.get(trimmed));
+        }
+        return `[${trimmed}]`;
+    });
+}
+
+function extractSimpleConstants(source: string): Map<string, number> {
+    const constants = new Map<string, number>();
+    const re = /\bconst\s+([A-Z_][A-Z0-9_]*)\s*=\s*(-?\d+(?:\.\d+)?)\s*[;\r\n]/g;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(source)) !== null) {
+        constants.set(match[1], Number(match[2]));
+    }
+    return constants;
+}
+
+function escapeForQuotedString(value: string): string {
+    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "");
+}
+
+function extractBalancedObject(source: string, propName: string): string | null {
+    const re = new RegExp(`\\b${propName}\\s*:\\s*`, "g");
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(source)) !== null) {
+        const rest = source.slice(match.index + match[0].length);
+        const trimmed = rest.trimStart();
+        if (!trimmed.startsWith("{")) continue;
+        let depth = 0;
+        let inString: string | null = null;
+        for (let i = 0; i < trimmed.length; i++) {
+            const ch = trimmed[i];
+            if (inString) {
+                if (ch === "\\") { i++; continue; }
+                if (ch === inString) inString = null;
+                continue;
+            }
+            if (ch === '"' || ch === "'" || ch === "`") { inString = ch; continue; }
+            if (ch === "{") depth++;
+            if (ch === "}") {
+                depth--;
+                if (depth === 0) {
+                    return trimmed.slice(0, i + 1);
+                }
+            }
+        }
+    }
+    return null;
+}
+
+function extractStrategyMeta(source: string, key: string): StrategyMetaEntry {
+    const name = extractStringProperty(source, "name") ?? `"${key}"`;
+    const description = extractStringProperty(source, "description") ?? `""`;
+    const defaultParams = extractBalancedObject(source, "defaultParams") ?? "{}";
+    const paramLabels = extractBalancedObject(source, "paramLabels") ?? "{}";
+    const metadata = extractBalancedObject(source, "metadata") ?? undefined;
+    return { key, name, description, defaultParams, paramLabels, metadata: metadata ?? "undefined" };
+}
+
+function collectStrategyMeta(
+    definitions: readonly StrategyModuleDefinition[]
+): StrategyMetaEntry[] {
+    return definitions.map((def) => {
+        const fileName = def.importPath.replace("./lib/", "") + ".ts";
+        const source = readFileSync(path.join(strategyLibDir, fileName), "utf8");
+        return extractStrategyMeta(source, def.key);
+    });
+}
+
+export function generateStrategyMetaSource(
+    definitions: readonly StrategyModuleDefinition[] = collectStrategyModuleDefinitions()
+): string {
+    const metaEntries = collectStrategyMeta(definitions);
+    const entryLines = metaEntries.map(
+        (entry) => [
+            "    {",
+            `        key: "${entry.key}",`,
+            `        name: ${entry.name},`,
+            `        description: ${entry.description},`,
+            `        defaultParams: ${entry.defaultParams} as Record<string, number>,`,
+            `        paramLabels: ${entry.paramLabels} as Record<string, string>,`,
+            `        metadata: ${entry.metadata === "undefined" ? "undefined" : entry.metadata},`,
+            "    },",
+        ].join("\n")
+    );
+
+    return [
+        'import type { StrategyParams } from "../types/strategies";',
+        "",
+        "// AUTO-GENERATED by `npm run strategies:sync-manifest`.",
+        "// Do not manually edit.",
+        "",
+        "export interface BuiltInStrategyMeta {",
+        "    key: string;",
+        "    name: string;",
+        "    description: string;",
+        "    defaultParams: StrategyParams;",
+        "    paramLabels: Record<string, string>;",
+        "    metadata?: {",
+        "        role?: string;",
+        "        direction?: string;",
+        "        walkForwardParams?: string[];",
+        "    };",
+        "}",
+        "",
+        "export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [",
+        ...entryLines,
+        "];",
+        "",
+    ].join("\n");
+}
+
+export function generateStrategyLoadersSource(
+    definitions: readonly StrategyModuleDefinition[] = collectStrategyModuleDefinitions()
+): string {
+    const loaderLines = definitions.map(
+        (def) =>
+            `    "${def.key}": () => import("${def.importPath}").then(m => m.${def.exportName}),`
+    );
+
+    return [
+        'import type { Strategy } from "../types/strategies";',
+        "",
+        "// AUTO-GENERATED by `npm run strategies:sync-manifest`.",
+        "// Do not manually edit.",
+        "",
+        "export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {",
+        ...loaderLines,
+        "};",
+        "",
+    ].join("\n");
+}
+
+export function generateStrategyKeysSource(
+    definitions: readonly StrategyModuleDefinition[] = collectStrategyModuleDefinitions()
+): string {
+    const keyLines = definitions.map(
+        (def) => `    "${def.key}",`
+    );
+
+    return [
+        "// AUTO-GENERATED by `npm run strategies:sync-manifest`.",
+        "// Do not manually edit.",
+        "",
+        "export const builtInStrategyKeys: readonly string[] = [",
+        ...keyLines,
+        "];",
+        "",
+    ].join("\n");
+}
+
+export function getStrategyMetaPath(): string {
+    return manifestMetaPath;
+}
+
+export function getStrategyLoadersPath(): string {
+    return manifestLoadersPath;
+}
+
+export function getStrategyKeysPath(): string {
+    return manifestKeysPath;
+}
+
 export function syncStrategyManifest(): { path: string; count: number } {
     const definitions = collectStrategyModuleDefinitions();
     writeFileSync(manifestPath, generateStrategyManifestSource(definitions), "utf8");
+    writeFileSync(manifestMetaPath, generateStrategyMetaSource(definitions), "utf8");
+    writeFileSync(manifestLoadersPath, generateStrategyLoadersSource(definitions), "utf8");
+    writeFileSync(manifestKeysPath, generateStrategyKeysSource(definitions), "utf8");
     return {
         path: manifestPath,
         count: definitions.length,

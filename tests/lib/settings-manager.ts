@@ -9,7 +9,7 @@
  */
 
 import { state } from "./state";
-import { strategyRegistry } from "../strategyRegistry";
+import { loadBuiltInStrategyByKey, strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
 import {
@@ -336,8 +336,11 @@ class SettingsManager {
             // Apply backtest settings
             this.applyBacktestSettings(config.backtestSettings);
 
+            const targetStrategy = strategyRegistry.get(config.strategyKey)
+                ?? await loadBuiltInStrategyByKey(config.strategyKey);
+
             // Switch to the strategy if different
-            if (config.strategyKey !== state.currentStrategyKey && strategyRegistry.has(config.strategyKey)) {
+            if (targetStrategy && config.strategyKey !== state.currentStrategyKey) {
                 setCurrentStrategyKey(config.strategyKey);
                 this.getDom().strategySelect.value = config.strategyKey;
             }
@@ -346,8 +349,8 @@ class SettingsManager {
             await new Promise<void>((resolve) => {
                 setTimeout(() => {
                     const strategy = strategyRegistry.get(config.strategyKey);
-                    if (strategy) {
-                        paramManager.setValues(strategy, config.strategyParams);
+                    if (strategy ?? targetStrategy) {
+                        paramManager.setValues(strategy ?? targetStrategy!, config.strategyParams);
                     }
                     resolve();
                 }, 50);

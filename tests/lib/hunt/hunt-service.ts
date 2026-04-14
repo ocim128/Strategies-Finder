@@ -1,4 +1,9 @@
-import { strategyRegistry } from "../../strategyRegistry";
+import {
+    getStrategyList,
+    isBuiltInStrategyKey,
+    loadBuiltInStrategyByKey,
+    strategyRegistry,
+} from "../../strategyRegistry";
 import { backtestService } from "../backtest-service";
 import { dataManager } from "../data-manager";
 import { debugLogger } from "../debug-logger";
@@ -293,7 +298,7 @@ class HuntService {
     private reconcileUiState(): void {
         const profileIds = new Set(this.profiles.map((profile) => profile.id));
         this.uiState.runSettings.selectedStrategyKeys = this.uiState.runSettings.selectedStrategyKeys
-            .filter((key) => strategyRegistry.has(key));
+            .filter((key) => strategyRegistry.has(key) || isBuiltInStrategyKey(key));
         this.uiState.enabledProfileIds = this.uiState.enabledProfileIds
             .filter((id) => profileIds.has(id));
 
@@ -652,11 +657,13 @@ class HuntService {
 
         const fragment = document.createDocumentFragment();
         const strategies = strategyRegistry.getAll();
-        Object.entries(strategies).forEach(([key, strategy]) => {
+        getStrategyList().forEach(({ key, name }) => {
+            const strategy = strategies[key];
+            const displayName = strategy?.name ?? name;
             const item = document.createElement("div");
             item.className = "strategy-list-item";
             item.dataset.strategyKey = key;
-            item.dataset.strategyName = `${key} ${strategy.name}`.toLowerCase();
+            item.dataset.strategyName = `${key} ${displayName}`.toLowerCase();
 
             const checkbox = document.createElement("input");
             checkbox.type = "checkbox";
@@ -673,7 +680,7 @@ class HuntService {
             const label = document.createElement("label");
             label.htmlFor = `hunt-strategy-${key}`;
             label.textContent = key;
-            label.title = strategy.name;
+            label.title = displayName;
 
             item.appendChild(checkbox);
             item.appendChild(label);
@@ -1218,7 +1225,8 @@ class HuntService {
         setBlockRange(cloneBlockRange(profile.blockRange));
 
         setCurrentStrategyKey(tagged.result.key);
-        const strategy = strategyRegistry.get(tagged.result.key);
+        const strategy = strategyRegistry.get(tagged.result.key)
+            ?? await loadBuiltInStrategyByKey(tagged.result.key);
         if (!strategy) {
             uiManager.showToast(`Strategy "${tagged.result.key}" is no longer available.`, "error");
             return;
