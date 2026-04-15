@@ -47,6 +47,7 @@ const TEST_FILES = [
     "tests/backtest-edge-analysis.spec.ts",
     "tests/strategy-calculations.spec.ts",
     "tests/data-interval-utils.spec.ts",
+    "tests/data-fetcher.spec.ts",
     "tests/signal-stability.spec.ts",
     "tests/walk-forward-engine.spec.ts",
     "tests/strategies-lib/prepared-execution-parity.spec.ts",

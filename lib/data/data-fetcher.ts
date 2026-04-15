@@ -81,12 +81,13 @@ export class DataFetcher {
     async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
         const provider = this.providerRouter.getProvider(symbol);
         const cacheKey = this.buildCacheKey(symbol, resolveStorageInterval(interval), provider);
+        const lookbackBars = this.getChartLookbackBars();
 
         const imported = this.getImportedDataByKey().get(cacheKey);
-        if (imported) return imported;
+        if (imported) return sliceCandlesToLookback(imported, lookbackBars);
 
         const cached = this.cache.get(cacheKey);
-        if (cached) return cached.candles;
+        if (cached) return sliceCandlesToLookback(cached.candles, lookbackBars);
 
         const chain = await this.resolveProviderFallbackChain(symbol, interval, signal);
         return this.fetchDataFromProviderChain(chain, symbol, interval, signal);

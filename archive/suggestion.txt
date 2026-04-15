@@ -1,9 +1,338 @@
-
-currently I using 'portofolio'  menu to analyze what currently is best to entry or check current probability state.
-
-I need it better for predicting will gonna win or lose trade for currently opened.
+I need your idea or suggestion the highest roi to make signal-observatory is better, the ultimate purpose this exist is: to find profitable edge.
 
 
-my draft idea: lets say 'Universe' is loaded 12 different pair, most of them paired with USDT, combine each 12 of them become dedicated chart like detecting dominance for example there is two pair FETUSDT and AAVEUSDT, there will count syntetic  chart FETAAVE price, maybe specific dominance is telling something.
+more info:
+signal-observatory is implemented from
+c:/Users/user/Documents/Repo2/Polymarket-crypto-5min-arbitrage-bot/plans/rolling-vwap-center-signal-observatory-plan.md
 
-do you have better idea?
+and the plan markdown is inspired from profitable backtest strategies-finder repo.
+strategy is 'Rolling VWAP Center'. this strategy was inspired on this repo:
+C:\Users\user\Documents\Repo\Experimental\lightweight-charts\debug\playground\Strategies-Finder\lib\strategies\lib\rolling_vwap_center.ts
+
+using signal exit same event, got 80% profitability rate, its not wait until resolved but there is exit early.
+detail configuration:
+
+{
+  "symbol": "BTCUSDT",
+  "interval": "1m",
+  "dataset": {
+    "ref": "cache_cbc520eeeeb2"
+  },
+  "strategyParams": {
+    "lookback": 2
+  },
+  "backtestSettings": {
+    "atrPeriod": 0,
+    "stopLossAtr": 0,
+    "takeProfitAtr": 0,
+    "trailingAtr": 0,
+    "partialTakeProfitAtR": 0,
+    "partialTakeProfitPercent": 0,
+    "breakEvenAtR": 0,
+    "breakEvenPercent": 0,
+    "timeStopBars": 0,
+    "stopLossPercent": 0,
+    "takeProfitPercent": 0.15,
+    "takeProfitMfeBootstrapPercentile": 60,
+    "takeProfitAdaptiveLookbackTrades": 40,
+    "takeProfitAdaptiveRecentWindow": 12,
+    "takeProfitAdaptiveMinMultiplier": 0.75,
+    "takeProfitAdaptiveMaxMultiplier": 1.5,
+    "takeProfitAdaptiveGridSteps": 7,
+    "takeProfitAdaptiveRegimeBlend": 0.6,
+    "takeProfitAdaptiveIcScale": 0.5,
+    "riskMaxHoldBars": 4,
+    "riskWinStreakStopLossAfterWins": 3,
+    "riskWinStreakStopLossPercent": 0,
+    "htfBiasEmaPeriod": 200,
+    "executionTrendEmaPeriod": 50,
+    "confirmLookback": 1,
+    "volumeSmaPeriod": 20,
+    "volumeMultiplier": 1.5,
+    "rsiPeriod": 14,
+    "rsiBullish": 55,
+    "rsiBearish": 45,
+    "flipAfterConsecutiveLosses": 2,
+    "flipCooldownTrades": 0,
+    "minTradesBeforeFirstFlip": 0,
+    "slippageBps": 5,
+    "maxOpenTrades": 1,
+    "strategyTimeframeMinutes": 120,
+    "riskMode": "percentage",
+    "takeProfitMode": "fixed",
+    "stopLossEnabled": false,
+    "takeProfitEnabled": true,
+    "riskMaxHoldEnabled": true,
+    "riskWinStreakStopLossEnabled": false,
+    "invertSignals": false,
+    "allowSameBarExit": false,
+    "strategyTimeframeEnabled": false,
+    "marketMode": "all",
+    "trendEmaPeriod": 0,
+    "trendEmaSlopeBars": 0,
+    "atrPercentMin": 0,
+    "atrPercentMax": 0,
+    "adxPeriod": 14,
+    "adxMin": 0,
+    "adxMax": 0,
+    "tradeFilterMode": "none",
+    "confirmationStrategies": [],
+    "confirmationStrategyParams": {},
+    "tradeDirection": "combined",
+    "executionModel": "next_open",
+    "polymarketAnnotationEnabled": true,
+    "polymarketOutcomeSymbol": "XRPUSDT",
+    "polymarketEntryOffset": 1,
+    "crossSymbolSecondary": ""
+  },
+  "context": {
+    "nowSec": 1776174007,
+    "blockRange": null,
+    "annotatePolymarket": true,
+    "engineMode": "typescript"
+  }
+}
+
+
+more info, output from C:\Users\user\Documents\Repo2\Polymarket-crypto-5min-arbitrage-bot\scripts\windows\run_signal_observatory_profitability_analysis.bat :
+
+Rolling VWAP Center Profitability Analyzer
+Study root: C:\Users\user\Documents\Repo2\Polymarket-crypto-5min-arbitrage-bot\logs\signal_observatory\rolling_vwap_center
+Entry fill budget: 3 USD
+
+Coverage By Symbol
+------------------
+
+Symbol ActiveDays ActionableSessions SettlementEvaluable SessionOpenBaselineEvaluable RawTargetBaselineEvaluable
+------ ---------- ------------------ ------------------- ---------------------------- --------------------------
+btc             1                  9                   8                            8                          8
+eth             1                  9                   8                            8                          8
+sol             1                  9                   8                            8                          8
+xrp             1                  9                   8                            8                          8
+
+
+
+
+Strategy Candidate Leaderboard (min 2 sessions)
+-----------------------------------------------
+
+Symbol EntrySide TimingBucket EntryPriceBucket Sessions     AvgEntryPrice WinRateSettlement EdgeVsBreakevenPts AvgSettlePnlPerShare
+------ --------- ------------ ---------------- --------     ------------- ----------------- ------------------ --------------------
+eth    no        0-59s        40-59c                  3 0.456666666666667                 1   54.3333333333333    0.543333333333333
+sol    no        0-59s        40-59c                  3 0.476666666666667                 1   52.3333333333333    0.523333333333333
+xrp    no        0-59s        40-59c                  5 0.502360655737705               0.8   29.7639344262295    0.297639344262295
+btc    no        0-59s        40-59c                  3              0.48 0.666666666666667   18.6666666666667    0.186666666666667
+eth    yes       60-119s      60-79c                  2              0.69               0.5                -19                -0.19
+btc    yes       60-119s      60-79c                  2              0.68                 0                -68                -0.68
+
+
+
+
+Same-Session Replay Leaderboard (min 2 sessions, 3 USD)
+-------------------------------------------------------
+
+Symbol ReplayEntrySide TimingBucket ReplayCenterConfirmed ReplayExitSource Sessions AvgReplayEntryPrice3Usd WinRateReplay AvgReplayPnlPerShare3Usd AvgSettlePnlPerShare
+------ --------------- ------------ --------------------- ---------------- -------- ----------------------- ------------- ------------------------ --------------------
+xrp    no              0-59s                        False signal                  5       0.474360655737705           0.4       0.0676393442622951    0.325639344262295
+sol    no              0-59s                        False signal                  4                   0.425          0.25                   0.0275                0.325
+eth    yes             60-119s                      False signal                  2                    0.69           0.5      0.00500000000000006                -0.19
+eth    no              0-59s                        False signal                  4                  0.4475          0.25                    0.005               0.3025
+btc    yes             60-119s                      False signal                  2                    0.68             0                    -0.04                -0.68
+btc    no              0-59s                        False signal                  4                    0.48          0.25                   -0.055                 0.02
+
+
+
+
+Baseline Uplift Summary (Top 15, min 2 sessions)
+------------------------------------------------
+
+Symbol EntrySide TimingBucket EntryPriceBucket TriggerPath                     Sessions ObservatoryWinRate SessionOpenWinRate  RawTargetWinRate ObservatoryAvgPnlShare
+------ --------- ------------ ---------------- -----------                     -------- ------------------ ------------------  ---------------- ----------------------
+eth    no        0-59s        40-59c           started_below_target                   5                0.6                0.6               0.6                  0.152
+xrp    no        0-59s        40-59c           started_below_target                   6  0.666666666666667  0.666666666666667 0.666666666666667      0.168032786885246
+btc    no        0-59s        40-59c           started_below_target                   5                0.4                0.4               0.4    -0.0762231669827981
+sol    no        0-59s        40-59c           started_below_target                   5                0.8                0.8               0.8                   0.33
+eth    yes       60-119s      60-79c           crossed_above_target_after_open        2                0.5                0.5               0.5                  -0.19
+btc    yes       60-119s      60-79c           crossed_above_target_after_open        2                  0                  1               0.5                  -0.68
+
+
+
+
+Trigger Path Summary
+--------------------
+
+Symbol EntrySide TriggerPath                     Sessions ObservatoryWinRate SessionOpenWinRate  RawTargetWinRate ObservatoryAvgPnlShare SessionOpenAvgPnlShare RawTargetAvgPnlShare
+------ --------- -----------                     -------- ------------------ ------------------  ---------------- ---------------------- ---------------------- --------------------
+xrp    no        started_below_target                   8               0.75               0.75              0.75      0.289774590163934      0.258401639344262    0.289774590163934
+eth    no        started_below_target                   6  0.666666666666667  0.666666666666667 0.666666666666667      0.191666666666667      0.171666666666667    0.191666666666667
+sol    no        started_below_target                   7  0.857142857142857  0.857142857142857 0.857142857142857      0.407142857142857      0.388290398126464    0.407142857142857
+btc    no        started_below_target                   6                0.5                0.5               0.5     0.0164806941810016    0.00833333333333331   0.0164806941810016
+eth    yes       crossed_above_target_after_open        2                0.5                0.5               0.5                  -0.19     0.0349999999999999                -0.18
+btc    yes       crossed_above_target_after_open        2                  0                  1               0.5                  -0.68                  0.465               -0.025
+sol    yes       crossed_above_target_after_open        1                  0                  1                 0                  -0.78                   0.51                -0.79
+
+
+
+
+Budget Fill Sensitivity
+-----------------------
+
+Symbol EntrySide TimingBucket BudgetUsd Sessions     AvgEntryPrice WinRateSettlement EdgeVsBreakevenPts AvgSettlePnlPerShare
+------ --------- ------------ --------- --------     ------------- ----------------- ------------------ --------------------
+btc    no        0-59s                1        5             0.476               0.4               -7.6               -0.076
+btc    no        0-59s                3        5 0.476223166982798               0.4   -7.6223166982798  -0.0762231669827981
+btc    no        0-59s                5        5 0.476925778006248               0.4  -7.69257780062477  -0.0769257780062477
+btc    yes       60-119s              1        2              0.68                 0                -68                -0.68
+btc    yes       60-119s              3        2              0.68                 0                -68                -0.68
+btc    yes       60-119s              5        2              0.68                 0                -68                -0.68
+eth    no        0-59s                1        5             0.448               0.6               15.2                0.152
+eth    no        0-59s                3        5             0.448               0.6               15.2                0.152
+eth    no        0-59s                5        5             0.448               0.6               15.2                0.152
+eth    yes       60-119s              1        2              0.69               0.5                -19                -0.19
+eth    yes       60-119s              3        2              0.69               0.5                -19                -0.19
+eth    yes       60-119s              5        2              0.69               0.5                -19                -0.19
+sol    no        0-59s                1        6 0.451666666666667 0.833333333333333   38.1666666666667    0.381666666666667
+sol    no        0-59s                3        6 0.451666666666667 0.833333333333333   38.1666666666667    0.381666666666667
+sol    no        0-59s                5        6 0.451928104575163 0.833333333333333    38.140522875817     0.38140522875817
+xrp    no        0-59s                1        7 0.477142857142857 0.714285714285714   23.7142857142857    0.237142857142857
+xrp    no        0-59s                3        7 0.477400468384075 0.714285714285714   23.6885245901639    0.236885245901639
+xrp    no        0-59s                5        7 0.477920237401891 0.714285714285714   23.6365476883823    0.236365476883823
+
+
+
+
+Top 15 Baseline Uplift Sessions
+-------------------------------
+
+Symbol SessionId                             EntrySide TriggerPath                     TimingBucket EntryPrice SessionOpenEntryPrice RawTargetEntryPrice SettlementPnlPerShare UpliftVsSessionOpenPnlPerShare
+------ ---------                             --------- -----------                     ------------ ---------- --------------------- ------------------- --------------------- ------------------------------
+eth    eth-rolling-vwap-center-5m-1776233100 yes       crossed_above_target_after_open 60-119s            0.65                  0.44                0.62                  0.35                           0.79
+xrp    xrp-rolling-vwap-center-5m-1776233400 no        started_below_target            0-59s              0.35                  0.53                0.35                  0.65                           0.18
+sol    sol-rolling-vwap-center-5m-1776233100 no        started_below_target            0-59s              0.36                  0.48                0.36                  0.64                           0.12
+eth    eth-rolling-vwap-center-5m-1776232800 no        started_below_target            0-59s              0.42                  0.51                0.42                  0.58             0.0900000000000001
+sol    sol-rolling-vwap-center-5m-1776231900 no        started_below_target            0-59s              0.42                  0.48                0.42                  0.58             0.0600000000000001
+btc    btc-rolling-vwap-center-5m-1776232800 no        started_below_target            0-59s              0.49                  0.55                0.49                  0.51             0.0599999999999999
+eth    eth-rolling-vwap-center-5m-1776232500 no        started_below_target            0-59s              0.42                  0.46                0.42                 -0.42                           0.04
+xrp    xrp-rolling-vwap-center-5m-1776232500 no        started_below_target            0-59s              0.52     0.540983606557377                0.52                 -0.52             0.0209836065573771
+sol    sol-rolling-vwap-center-5m-1776231600 no        started_below_target            0-59s              0.46                  0.48                0.46                  0.54                           0.02
+xrp    xrp-rolling-vwap-center-5m-1776233100 no        started_below_target            0-59s              0.48                   0.5                0.48                  0.52                           0.02
+xrp    xrp-rolling-vwap-center-5m-1776232200 no        started_below_target            0-59s              0.49                  0.51                0.49                  0.51             0.0199999999999999
+eth    eth-rolling-vwap-center-5m-1776231600 no        started_below_target            0-59s              0.45                  0.47                0.45                 -0.45             0.0199999999999999
+btc    btc-rolling-vwap-center-5m-1776232500 no        started_below_target            0-59s              0.48                  0.49                0.48                 -0.48             0.0100000000000001
+xrp    xrp-rolling-vwap-center-5m-1776232800 no        started_below_target            0-59s              0.53                  0.54                0.53                  0.47                           0.01
+sol    sol-rolling-vwap-center-5m-1776232200 no        started_below_target            0-59s              0.46                  0.47                0.46                  0.54                           0.01
+
+output from C:\Users\user\Documents\Repo2\Polymarket-crypto-5min-arbitrage-bot\logs\signal_observatory\analyze_signal_observatory.bat :
+Rolling VWAP Center Observatory Analysis
+Study root: C:\Users\user\Documents\Repo2\Polymarket-crypto-5min-arbitrage-bot\logs\signal_observatory\rolling_vwap_center
+
+Coverage By Symbol
+------------------
+
+Symbol Snapshots Events SessionOutcomes ActionableSessions ActionableRate AvgFirst3mCenterCrosses
+------ --------- ------ --------------- ------------------ -------------- -----------------------
+btc         2362    204               9                  9              1                     2.5
+eth         2457    210               9                  9              1                     2.6
+sol         2440    238               9                  9              1        3.33333333333333
+xrp         2428    222               9                  9              1                     3.7
+
+
+
+
+Verdict Summary
+---------------
+
+Area               Verdict      Evidence
+----               -------      --------
+Instrumentation    healthy      4/4 symbols have snapshots and session outcomes.
+Sample Size        early_sample 36 actionable sessions. Enough for shape checks, not enough for confidence.
+Cost-Adjusted Edge not_observed No positive cost-adjusted sessions at +60s or +120s. Best net +60s = -132.65, best net +120s = -127.83 bps.
+Timing Quality     early        94.4% of actionable alignments occur before 120s, which is materially earlier.
+Alignment Balance  balanced     Actionable alignments are not dominated by a single state.
+Data Completeness  healthy      Non-null net coverage: +60s=100.0%, +120s=88.9%.
+
+
+
+
+Timing Bucket Summary
+---------------------
+
+Symbol TimingBucket Sessions       AvgDir60Bps       AvgDir120Bps       AvgNet60Bps      AvgNet120Bps         WinRate60        WinRate120
+------ ------------ --------       -----------       ------------       -----------      ------------         ---------        ----------
+btc    0-59s               6 0.594695542336007  -3.16985800052522 -186.492040300829 -190.976693305901               0.5                 0
+btc    60-119s             3  5.09874117348548   6.03645751518869 -158.739662860622 -157.801946518919 0.666666666666667 0.666666666666667
+eth    0-59s               6 0.539239467338931  -5.28978367208801  -181.11555900989 -187.239505808726               0.5                 0
+eth    60-119s             3  5.29169715657483   8.32194391975962 -194.076900732108 -191.046653968923 0.666666666666667                 1
+sol    0-59s               7  2.23520188095352  -2.81196954734812  -210.66163733683 -220.610575546077 0.714285714285714 0.166666666666667
+sol    120-179s            1  8.41346153846243   13.2211538461538 -168.577688904014 -163.769996596322                 1                 1
+sol    60-119s             1 -3.61315187281719    1.2043839576063 -132.645409937333  -127.82787410691                 0                 1
+xrp    0-59s               8  1.84200140199964 -0.948018131676824 -233.023758445668 -242.155145032413               0.5 0.428571428571429
+xrp    120-179s            1  5.89448865310869   8.10492189802445 -144.481451196516   -142.2710179516                 1                 1
+
+
+
+
+Alignment State Summary
+-----------------------
+
+Symbol AlignmentState    Sessions        AvgDir30Bps       AvgDir60Bps       AvgDir120Bps       AvgDir180Bps
+------ --------------    --------        -----------       -----------       ------------       ------------
+btc    both_above_target        3 -0.977411680186726 0.564201816060762  0.967777336647512  -3.00178959467272
+btc    both_below_target        6   1.53999054757855  2.86196522104837 0.0540879782741575  0.161423225751921
+eth    both_above_target        3 -0.186760562803514  2.87815076921301   4.09962040403217  -1.12025324758268
+eth    both_below_target        6  0.143047136300116  1.74601266101984  -1.61372123487093 -0.615779467812323
+sol    both_above_target        1                  0 -3.61315187281719    1.2043839576063  -2.40876791521089
+sol    both_below_target        8   1.05115601046948  3.00748433814213 -0.521523348276422 -0.866627775743652
+xrp    both_above_target        1                  0                 0
+xrp    both_below_target        8    1.6576154021925  2.57881248363823  0.183599372035836    1.4705041196618
+
+
+
+
+Noise Summary By Session Flip Bucket
+------------------------------------
+
+Symbol FlipBucket Sessions       AvgNoise3m       AvgDir60Bps AvgDir120Bps
+------ ---------- --------       ----------       ----------- ------------
+btc    0                 1                5  -2.1670938892412
+btc    1                 2                1  4.46389342824109 6.94337888319263
+btc    3+                6 2.66666666666667  2.01728396787192 -1.93777920390755
+eth    0                 1                5 0.560782334494192
+eth    1                 1                1   -5.221639163155 -8.54450044880212
+eth    2                 1                1  7.80142149657964 16.7665909512145
+eth    3+                6                3   2.6616606009732 -1.61752951726227
+sol    0                 1                4  3.61054278493214
+sol    2                 1                0 -4.81869654258427 -7.22804481387641
+sol    3+                7 3.57142857142857  3.09355379856743 0.683109333363965
+xrp    0                 1                5                 0
+xrp    2                 1                2  5.89448865310869 8.10492189802445
+xrp    3+                7 4.14285714285714  2.10514445942816 -0.948018131676824
+
+
+
+
+Spread And Liquidity Summary
+----------------------------
+
+Symbol SpreadBucket LiquidityClass Sessions       AvgCostBps       AvgNet60Bps      AvgNet120Bps
+------ ------------ -------------- --------       ----------       -----------      ------------
+btc    60bps+       deep                  9 179.337291906812  -177.24124782076 -178.536163260783
+eth    60bps+       deep                  9 187.559398281047 -185.436006250629   -188.6671863688
+sol    60bps+       deep                  9 199.589031447942 -197.317173355462 -201.907665497462
+xrp    60bps+       deep                  9 225.478002070107 -223.185724306873 -229.669629147311
+
+
+
+
+Top 15 Cost-Adjusted Session Combinations
+-----------------------------------------
+
+Symbol TimingBucket AlignmentState    FlipBucket SpreadBucket Sessions      AvgDir60Bps       AvgDir120Bps       AvgNet60Bps      AvgNet120Bps
+------ ------------ --------------    ---------- ------------ --------      -----------       ------------       -----------      ------------
+btc    60-119s      both_above_target 3+         60bps+              2 1.92984966871174  0.967777336647512 -146.740377741673 -147.702450073738
+eth    0-59s        both_below_target 3+         60bps+              4  1.9740734081736  -4.47610447790948 -182.728036527581 -189.178214413664
+btc    0-59s        both_below_target 3+         60bps+              4   2.061001117452  -3.39055747418508  -185.07849539522 -190.530053986857
+eth    60-119s      both_above_target 3+         60bps+              2 4.03683498657242   4.09962040403217 -212.371433747278 -212.308648329818
+sol    0-59s        both_below_target 3+         60bps+              5 3.37091338486535  -1.92875449404246 -221.290166107187 -226.589833986095
+xrp    0-59s        both_below_target 3+         60bps+              7 2.10514445942816 -0.948018131676824 -239.101982441308 -242.155145032413
+
