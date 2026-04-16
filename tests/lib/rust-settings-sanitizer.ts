@@ -83,6 +83,7 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "strategyTimeframeEnabled",
     "strategyTimeframeMinutes",
     "polymarketOutcomeSymbol",
+    "polymarketEntrySelectionMode",
     "polymarketExitMode",
     "crossSymbolSecondary",
 ] as const;

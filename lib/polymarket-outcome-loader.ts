@@ -13,6 +13,11 @@ import type { BacktestResult } from "./types/strategies";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import { debugLogger } from "./debug-logger";
 import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "./polymarket-exit-mode";
+import {
+    isActualPolymarketEntryMinuteMode,
+    resolvePolymarketEntrySelectionModeForDisplay,
+    type PolymarketEntrySelectionMode,
+} from "./polymarket-entry-selection-mode";
 import { evaluateSignalExitTrades, buildTradeAnnotationFromSignalExitResult } from "./polymarket-signal-exit-evaluator";
 import { ensurePricePointsForOutcomes } from "./polymarket-price-points-ingest";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
@@ -26,6 +31,7 @@ export interface PolymarketOutcomeLoaderDeps {
     getDom: () => PolymarketPanelDom;
     readCurrentExecutionModel: () => string | undefined;
     readCurrentPolymarketEntryOffset: () => number | null;
+    readCurrentPolymarketEntrySelectionMode: () => PolymarketEntrySelectionMode;
     readCurrentPolymarketExitMode: () => "resolve_hold" | "signal_exit_same_event" | undefined;
     readCurrentPolymarketOutcomeSymbol: () => string | null;
     isPanelVisible: () => boolean;
@@ -219,20 +225,25 @@ export class PolymarketOutcomeLoader {
             }
         }
 
-        const selectedOffset = resultContext.interval === "1m"
+        const entrySelectionMode = resultContext.interval === "1m"
+            ? this.resolveSelectedPolymarketEntrySelectionMode(result)
+            : undefined;
+        const selectedOffset = resultContext.interval === "1m" && !isActualPolymarketEntryMinuteMode(entrySelectionMode)
             ? this.resolveSelectedPolymarketEntryOffset(result)
             : undefined;
         const annotatedTrades = annotateTradesWithPolymarketOutcomesForRun(
             result.trades,
             outcomes,
             resultContext.interval,
-            selectedOffset
+            selectedOffset,
+            entrySelectionMode ?? "fixed_offset"
         );
         const summary = summarizePolymarketTradesForRun({
             trades: result.trades,
             outcomes,
             interval: resultContext.interval,
             selectedOffset,
+            entrySelectionMode,
             timingProfile: existingSummary?.timingProfile,
         });
         const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
@@ -250,7 +261,8 @@ export class PolymarketOutcomeLoader {
                 missingOutcomeTrades: existingSummary?.missingOutcomeTrades ?? summary.missingOutcomeTrades,
                 unscoredTrades: existingSummary?.unscoredTrades ?? summary.unscoredTrades ?? Math.max(0, totalTrades - summary.scoredTrades),
                 duplicateTradesIgnored: existingSummary?.duplicateTradesIgnored ?? summary.duplicateTradesIgnored,
-                entryOffset: existingSummary?.entryOffset ?? selectedOffset,
+                entrySelectionMode: existingSummary?.entrySelectionMode ?? summary.entrySelectionMode,
+                entryOffset: existingSummary?.entryOffset ?? summary.entryOffset,
                 timingProfile: existingSummary?.timingProfile ?? summary.timingProfile,
                 evaluationMode: "resolve_hold",
             },
@@ -321,10 +333,16 @@ export class PolymarketOutcomeLoader {
         const outcomeSymbol = this.resolveActivePolymarketOutcomeSymbol(result);
         const firstTrade = result.trades[0];
         const lastTrade = result.trades[result.trades.length - 1];
+        const entrySelectionMode = this.resolveSelectedPolymarketEntrySelectionMode(result);
+        const selectedOffset = isActualPolymarketEntryMinuteMode(entrySelectionMode)
+            ? "auto"
+            : (result.polymarketTradeSummary?.entryOffset ?? this.deps.readCurrentPolymarketEntryOffset() ?? "na");
         return [
             resultContext?.symbol ?? state.currentSymbol,
             resultContext?.interval ?? state.currentInterval,
             outcomeSymbol ?? "same",
+            entrySelectionMode,
+            selectedOffset,
             result.trades.length,
             parseTimeToUnixSeconds(firstTrade?.entryTime) ?? "na",
             parseTimeToUnixSeconds(lastTrade?.entryTime) ?? "na",
@@ -341,5 +359,13 @@ export class PolymarketOutcomeLoader {
 
     private resolveSelectedPolymarketEntryOffset(_result: BacktestResult): number {
         return this.deps.readCurrentPolymarketEntryOffset() ?? 0;
+    }
+
+    private resolveSelectedPolymarketEntrySelectionMode(result: BacktestResult): PolymarketEntrySelectionMode {
+        return resolvePolymarketEntrySelectionModeForDisplay(
+            result.polymarketTradeSummary?.entrySelectionMode,
+            this.deps.readCurrentPolymarketEntrySelectionMode(),
+            result.trades
+        );
     }
 }

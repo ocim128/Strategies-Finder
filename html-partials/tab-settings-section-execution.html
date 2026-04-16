@@ -108,6 +108,16 @@
                     <div class="param-hint">Choose which Polymarket crypto series to score against. Blank keeps the current chart symbol.</div>
                 </div>
             </div>
+            <div class="param-row" id="polymarketEntrySelectionModeRow" style="display: none;">
+                <div class="param-group">
+                    <label class="param-label">Polymarket Entry Selection (1m -&gt; 5m bridge)</label>
+                    <select class="param-input" id="polymarketEntrySelectionMode">
+                        <option value="fixed_offset" selected>Fixed minute offset</option>
+                        <option value="actual_entry_minute">Auto (use each trade's actual minute)</option>
+                    </select>
+                    <div class="param-hint">Auto scores the first eligible trade per 5m Polymarket event and uses that trade's real minute for entry pricing. Fixed offset keeps the existing minute 0..4 filter.</div>
+                </div>
+            </div>
             <div class="param-row" id="polymarketEntryOffsetRow" style="display: none;">
                 <div class="param-group">
                     <label class="param-label">Polymarket Entry Offset (1m -&gt; 5m bridge)</label>

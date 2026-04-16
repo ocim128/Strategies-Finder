@@ -21,6 +21,7 @@ import {
     resolveTradeSizingModeValue,
     type BacktestSettingsData,
 } from "./settings-model";
+import { resolvePolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "./rust-settings-sanitizer";
 import { resolveTakeProfitMode } from "./take-profit-settings";
 import type { BacktestSettings } from "./types/strategies";
@@ -30,6 +31,7 @@ export type BacktestDomSettingParser =
     | "number"
     | "boolean"
     | "string"
+    | "polymarketEntrySelectionMode"
     | "polymarketExitMode"
     | "riskMode"
     | "takeProfitMode"
@@ -314,6 +316,7 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("strategyTimeframeMinutes", { rustSupport: "unsupported" }),
     createField("polymarketAnnotationEnabled", { rustSupport: "unsupported" }),
     createField("polymarketOutcomeSymbol", { rustSupport: "unsupported", parser: "string" }),
+    createField("polymarketEntrySelectionMode", { rustSupport: "unsupported", parser: "polymarketEntrySelectionMode" }),
     createField("polymarketEntryOffset", { rustSupport: "unsupported" }),
     createField("polymarketExitMode", { rustSupport: "unsupported", parser: "polymarketExitMode" }),
     createField("crossSymbolSecondary", {
@@ -366,6 +369,8 @@ export function coerceBacktestDomSettingValue(
             return resolveMarketMode({ marketMode: value as any }, DEFAULT_BACKTEST_SETTINGS);
         case "executionModel":
             return resolveExecutionModelValue(value, DEFAULT_BACKTEST_SETTINGS);
+        case "polymarketEntrySelectionMode":
+            return resolvePolymarketEntrySelectionMode(value);
         case "polymarketExitMode":
             return typeof value === "string" && value.trim().toLowerCase() === "signal_exit_same_event"
                 ? "signal_exit_same_event"

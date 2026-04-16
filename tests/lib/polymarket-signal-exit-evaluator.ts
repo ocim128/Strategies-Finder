@@ -135,8 +135,6 @@ export function evaluateSignalExitTrades(
             });
             continue;
         }
-        seenEvents.add(outcome.event_start_ts);
-
         const side: "yes" | "no" = trade.type === "long" ? "yes" : "no";
         const isWin = side === "yes"
             ? outcome.resolved_outcome_up === 1
@@ -218,6 +216,9 @@ export function evaluateSignalExitTrades(
                     ? false
                     : null;
 
+        // Missing-price attempts do not consume the event; the first scorable
+        // trade in the event wins and later scored attempts become duplicates.
+        seenEvents.add(outcome.event_start_ts);
         results.push({
             trade,
             outcome,
@@ -315,6 +316,10 @@ function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): Sign
 export function buildTradeAnnotationFromSignalExitResult(
     result: SignalExitTradeResult
 ): TradePolymarketOutcome | null {
+    if (result.exitSource === "missing") {
+        return null;
+    }
+
     if (result.exitSource === "no_event") {
         return {
             eventStartTs: 0,

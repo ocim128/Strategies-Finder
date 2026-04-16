@@ -13,6 +13,7 @@ import {
     toBooleanLike,
     toFiniteNumber,
 } from "./settings-parse-utils";
+import { resolvePolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 import { ADAPTIVE_TAKE_PROFIT_DEFAULTS, resolveTakeProfitMode } from "./take-profit-settings";
 
 export const CAPITAL_DEFAULTS = Object.freeze({
@@ -74,6 +75,7 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     strategyTimeframeMinutes: 120,
     polymarketAnnotationEnabled: false,
     polymarketOutcomeSymbol: "",
+    polymarketEntrySelectionMode: "fixed_offset" as const,
     polymarketEntryOffset: 0,
     polymarketExitMode: "resolve_hold" as const,
     crossSymbolSecondary: "",
@@ -355,6 +357,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "strategyTimeframeMinutes",
     "polymarketAnnotationEnabled",
     "polymarketOutcomeSymbol",
+    "polymarketEntrySelectionMode",
     "polymarketEntryOffset",
     "polymarketExitMode",
     "crossSymbolSecondary",
@@ -590,6 +593,7 @@ export function resolveBacktestSettingsFromRaw(
         executionModel,
         polymarketAnnotationEnabled: readBoolean(raw, "polymarketAnnotationEnabled", EFFECTIVE_BACKTEST_DEFAULTS.polymarketAnnotationEnabled),
         polymarketOutcomeSymbol: readString(raw, "polymarketOutcomeSymbol", EFFECTIVE_BACKTEST_DEFAULTS.polymarketOutcomeSymbol),
+        polymarketEntrySelectionMode: resolvePolymarketEntrySelectionMode(raw["polymarketEntrySelectionMode"]),
         polymarketEntryOffset: readNumber(raw, "polymarketEntryOffset", EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryOffset),
         polymarketExitMode: typeof raw["polymarketExitMode"] === "string"
             && raw["polymarketExitMode"].trim().toLowerCase() === "signal_exit_same_event"

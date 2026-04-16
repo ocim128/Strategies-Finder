@@ -12,10 +12,12 @@ export function getChartModeLabel(): HTMLElement | null {
 }
 
 export const POLYMARKET_SETTINGS_IDS = {
+  entrySelectionModeRow: 'polymarketEntrySelectionModeRow',
   entryOffsetRow: 'polymarketEntryOffsetRow',
   exitModeRow: 'polymarketExitModeRow',
   outcomeSymbolRow: 'polymarketOutcomeSymbolRow',
   annotationToggle: 'polymarketAnnotationEnabled',
+  entrySelectionModeSelect: 'polymarketEntrySelectionMode',
   exitModeSelect: 'polymarketExitMode',
 } as const;
 
@@ -33,12 +35,19 @@ export function getPolymarketExitModeSelect(): HTMLSelectElement | null {
   return el instanceof HTMLSelectElement ? el : null;
 }
 
+export function getPolymarketEntrySelectionModeSelect(): HTMLSelectElement | null {
+  const el = document.getElementById(POLYMARKET_SETTINGS_IDS.entrySelectionModeSelect);
+  return el instanceof HTMLSelectElement ? el : null;
+}
+
 export function getPolymarketSettingsRows(): {
+  entrySelectionModeRow: HTMLElement | null;
   offsetRow: HTMLElement | null;
   exitModeRow: HTMLElement | null;
   outcomeSymbolRow: HTMLElement | null;
 } {
   return {
+    entrySelectionModeRow: document.getElementById(POLYMARKET_SETTINGS_IDS.entrySelectionModeRow),
     offsetRow: document.getElementById(POLYMARKET_SETTINGS_IDS.entryOffsetRow),
     exitModeRow: document.getElementById(POLYMARKET_SETTINGS_IDS.exitModeRow),
     outcomeSymbolRow: document.getElementById(POLYMARKET_SETTINGS_IDS.outcomeSymbolRow),

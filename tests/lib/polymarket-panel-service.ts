@@ -31,6 +31,7 @@ import {
 } from "./polymarket-formatting";
 import { PolymarketBridgeExport } from "./polymarket-bridge-export";
 import { PolymarketOutcomeLoader } from "./polymarket-outcome-loader";
+import { isActualPolymarketEntryMinuteMode, type PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 
 class PolymarketPanelService {
     private dom: PolymarketPanelDom | null = null;
@@ -53,6 +54,7 @@ class PolymarketPanelService {
             getDom: () => this.getDom(),
             readCurrentExecutionModel: () => this.readCurrentExecutionModel(),
             readCurrentPolymarketEntryOffset: () => this.readCurrentPolymarketEntryOffset(),
+            readCurrentPolymarketEntrySelectionMode: () => this.readCurrentPolymarketEntrySelectionMode(),
             readCurrentPolymarketExitMode: () => this.readCurrentPolymarketExitMode(),
             readCurrentPolymarketOutcomeSymbol: () => this.readCurrentPolymarketOutcomeSymbol(),
             isPanelVisible: () => this.isPanelVisible(),
@@ -119,6 +121,10 @@ class PolymarketPanelService {
 
     private readCurrentPolymarketEntryOffset(): number | null {
         return resolvePolymarketDomSettings().entryOffset;
+    }
+
+    private readCurrentPolymarketEntrySelectionMode(): PolymarketEntrySelectionMode {
+        return resolvePolymarketDomSettings().entrySelectionMode;
     }
 
     private readCurrentPolymarketExitMode(): "resolve_hold" | "signal_exit_same_event" | undefined {
@@ -211,6 +217,7 @@ class PolymarketPanelService {
         winRate: number;
         outcomeRowsLoaded: number;
         baselineDelta: number;
+        entrySelectionMode?: PolymarketEntrySelectionMode;
         entryOffset?: number;
         bestTimingProfile?: NonNullable<NonNullable<BacktestResult["polymarketTradeSummary"]>["timingProfile"]>[number] | null;
         evaluationMode?: "resolve_hold" | "signal_exit_same_event";
@@ -264,6 +271,7 @@ class PolymarketPanelService {
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
             outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
             baselineDelta: isSignalExit ? 0 : (scoredTrades > 0 ? wins / scoredTrades : 0) - baselineWinRate,
+            entrySelectionMode: summary?.entrySelectionMode,
             entryOffset: summary?.entryOffset,
             bestTimingProfile,
             evaluationMode: isSignalExit ? "signal_exit_same_event" : undefined,
@@ -298,8 +306,17 @@ class PolymarketPanelService {
 
     private buildPolymarketSummarySection(summary: NonNullable<ReturnType<PolymarketPanelService["getPolymarketSummary"]>>): string {
         const isSignalExit = summary.evaluationMode === "signal_exit_same_event";
-        const runModeLabel = isSignalExit ? "Exit Mode" : (typeof summary.entryOffset === "number" ? "Selected Offset" : "Run Mode");
-        const runModeValue = isSignalExit ? "Signal Exit (same event)" : (typeof summary.entryOffset === "number" ? `Minute ${summary.entryOffset}` : "Native 5m scoring");
+        const usesActualEntryMinute = isActualPolymarketEntryMinuteMode(summary.entrySelectionMode);
+        const runModeLabel = isSignalExit ? "Exit Mode" : (
+            usesActualEntryMinute
+                ? "Entry Selection"
+                : (typeof summary.entryOffset === "number" ? "Selected Offset" : "Run Mode")
+        );
+        const runModeValue = isSignalExit
+            ? "Signal Exit (same event)"
+            : usesActualEntryMinute
+                ? "Auto (actual trade minute)"
+                : (typeof summary.entryOffset === "number" ? `Minute ${summary.entryOffset}` : "Native 5m scoring");
         const winCountLabel = isSignalExit ? "Profitable Trades" : "Poly Wins";
         const lossCountLabel = isSignalExit ? "Losing Trades" : "Poly Losses";
         const profitabilityTone = isSignalExit && summary.wins === 0 && summary.losses === 0
@@ -307,7 +324,11 @@ class PolymarketPanelService {
             : summary.winRate - 0.5;
         const timingContext = summary.bestTimingProfile
             ? `Best minute ${summary.bestTimingProfile.entryOffset} at ${formatPercent(summary.bestTimingProfile.winRate)}`
-            : isSignalExit ? "Signal-exit mode: trades exit on chart sell signal inside the same 5m event." : "Full timing profile is available in 1m bridge runs.";
+            : isSignalExit
+                ? "Signal-exit mode: trades exit on chart sell signal inside the same 5m event."
+                : usesActualEntryMinute
+                    ? "Auto mode scores the first eligible trade in each 5m event and uses that trade's actual minute for entry pricing."
+                    : "Full timing profile is available in 1m bridge runs.";
 
         const signalExitCards = isSignalExit ? `
                     ${this.renderStatCard("Signal Exited", String(summary.signalExitedTrades ?? 0))}

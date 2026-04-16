@@ -170,6 +170,7 @@ describe("Polymarket backtest trade annotations", () => {
             (time) => String(time)
         );
         expect(html).to.include("Poly Win");
+        expect(html).to.include("YES 50.0c->100.0c (+50.0c)");
         expect(html).to.include("YES 50.0c / NO 50.0c");
         expect(html).to.include('data-polymarket-url="https://polymarket.com/event/btc-1"');
     });
@@ -314,7 +315,144 @@ describe("Polymarket backtest trade annotations", () => {
         expect(result.trades[0]?.polymarketOutcome?.isWin).to.equal(true);
         expect(result.trades[0]?.polymarketOutcome?.entryOffset).to.equal(1);
         expect(result.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.52);
-        expect(result.trades[1]?.polymarketOutcome).to.equal(null);
+        expect(result.trades[1]?.polymarketOutcome?.marketExitSource).to.equal("duplicate");
+    });
+
+    it("labels fixed-offset resolve-hold rows that were skipped by minute selection or same-event duplication", async () => {
+        const bars = makeMinuteBars(12);
+        const eventStartTs = 1_700_000_300;
+        installOutcomeFetch([
+            {
+                series_id: "10684",
+                event_slug: "btc-bridge-2",
+                market_slug: "btc-bridge-2",
+                interval: "5m",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.52,
+                yes_entry_minute_2_price: 0.54,
+                yes_entry_minute_3_price: 0.56,
+                yes_entry_minute_4_price: 0.58,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ]);
+
+        const filteredEntry = eventStartTs;
+        const selectedEntry = eventStartTs + 60;
+        const duplicateEntry = eventStartTs + 90;
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([
+                makeTrade(1, "long", filteredEntry, 10),
+                makeTrade(2, "long", selectedEntry, 9),
+                makeTrade(3, "long", duplicateEntry, 8),
+            ]),
+            {
+                symbol: "BTCUSDT",
+                interval: "1m",
+                executionModel: "next_open",
+                chartData: bars,
+            },
+            1
+        );
+
+        expect(result.trades[0]?.polymarketOutcome?.marketExitSource).to.equal("filtered");
+        expect(result.trades[0]?.polymarketOutcome?.entryOffset).to.equal(0);
+        expect(result.trades[1]?.polymarketOutcome?.marketExitSource).to.equal(undefined);
+        expect(result.trades[2]?.polymarketOutcome?.marketExitSource).to.equal("duplicate");
+
+        const renderer = new TradesRenderer() as unknown as {
+            renderTradeItem: (trade: Trade, formatPrice: (price: number) => string, formatDate: (time: Trade["entryTime"]) => string) => string;
+        };
+        const filteredHtml = renderer.renderTradeItem(
+            result.trades[0]!,
+            (price) => price.toFixed(2),
+            (time) => String(time)
+        );
+        const duplicateHtml = renderer.renderTradeItem(
+            result.trades[2]!,
+            (price) => price.toFixed(2),
+            (time) => String(time)
+        );
+        expect(filteredHtml).to.include("Poly skip m0");
+        expect(duplicateHtml).to.include("Poly dup");
+    });
+
+    it("annotates 1m resolve-hold runs in auto mode using each trade's actual minute and event-level deduplication", async () => {
+        const bars = makeMinuteBars(18);
+        const firstEventStartTs = 1_700_000_300;
+        const secondEventStartTs = firstEventStartTs + 300;
+        installOutcomeFetch([
+            {
+                series_id: "10684",
+                event_slug: "btc-auto-1",
+                market_slug: "btc-auto-1",
+                interval: "5m",
+                event_start_ts: firstEventStartTs,
+                event_end_ts: firstEventStartTs + 300,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.52,
+                yes_entry_minute_2_price: 0.54,
+                yes_entry_minute_3_price: 0.56,
+                yes_entry_minute_4_price: 0.58,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+            {
+                series_id: "10684",
+                event_slug: "btc-auto-2",
+                market_slug: "btc-auto-2",
+                interval: "5m",
+                event_start_ts: secondEventStartTs,
+                event_end_ts: secondEventStartTs + 300,
+                yes_token_id: "yes-2",
+                no_token_id: "no-2",
+                yes_open_price: 0.45,
+                yes_entry_minute_1_price: 0.47,
+                yes_entry_minute_2_price: 0.49,
+                yes_entry_minute_3_price: 0.51,
+                yes_entry_minute_4_price: 0.53,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ]);
+
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([
+                makeTrade(1, "long", firstEventStartTs + 120, 10),
+                makeTrade(2, "long", firstEventStartTs + 180, 9),
+                makeTrade(3, "long", secondEventStartTs + 240, 8),
+            ]),
+            {
+                symbol: "BTCUSDT",
+                interval: "1m",
+                executionModel: "next_open",
+                chartData: bars,
+            },
+            0,
+            undefined,
+            "actual_entry_minute"
+        );
+
+        expect(result.polymarketTradeSummary?.entrySelectionMode).to.equal("actual_entry_minute");
+        expect(result.polymarketTradeSummary?.entryOffset).to.equal(undefined);
+        expect(result.polymarketTradeSummary?.scoredTrades).to.equal(2);
+        expect(result.polymarketTradeSummary?.unscoredTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.duplicateTradesIgnored).to.equal(1);
+        expect(result.trades[0]?.polymarketOutcome?.entryOffset).to.equal(2);
+        expect(result.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.54);
+        expect(result.trades[1]?.polymarketOutcome?.marketExitSource).to.equal("duplicate");
+        expect(result.trades[1]?.polymarketOutcome?.entryOffset).to.equal(3);
+        expect(result.trades[2]?.polymarketOutcome?.entryOffset).to.equal(4);
+        expect(result.trades[2]?.polymarketOutcome?.marketEntryPrice).to.equal(0.53);
     });
 
     it("annotates 1m signal-exit runs with entry and exit prices from stored price points", async () => {
@@ -411,7 +549,7 @@ describe("Polymarket backtest trade annotations", () => {
         expect(html).to.include("exited same-event");
     });
 
-    it("keeps missing signal-exit price trades unscored instead of rendering a fake resolution badge", async () => {
+    it("reuses the entry quote as a flat same-event exit when no newer quote exists before exit", async () => {
         const bars = makeMinuteBars(12);
         const eventStartTs = 1_700_000_300;
         installOutcomeFetch([
@@ -469,9 +607,98 @@ describe("Polymarket backtest trade annotations", () => {
         );
 
         expect(result.polymarketTradeSummary?.evaluationMode).to.equal("signal_exit_same_event");
+        expect(result.polymarketTradeSummary?.scoredTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.missingPriceTrades).to.equal(0);
+        expect(result.trades[0]?.polymarketOutcome?.marketExitSource).to.equal("signal");
+        expect(result.trades[0]?.polymarketOutcome?.marketPnl).to.equal(0);
+
+        const renderer = new TradesRenderer() as unknown as {
+            renderTradeItem: (trade: Trade, formatPrice: (price: number) => string, formatDate: (time: Trade["entryTime"]) => string) => string;
+        };
+        const html = renderer.renderTradeItem(
+            result.trades[0]!,
+            (price) => price.toFixed(2),
+            (time) => String(time)
+        );
+
+        expect(html).to.include("Poly Exit");
+        expect(html).to.include("YES 52.0c->52.0c (+0.0c)");
+    });
+
+    it("keeps true missing same-event exit quotes unscored instead of rendering a fake resolution badge", async () => {
+        const bars = makeMinuteBars(12);
+        const eventStartTs = 1_700_000_300;
+        installOutcomeFetch([
+            {
+                series_id: "10684",
+                event_slug: "btc-missing-price-2",
+                market_slug: "btc-missing-price-2",
+                interval: "5m",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.52,
+                yes_entry_minute_2_price: 0.54,
+                yes_entry_minute_3_price: 0.56,
+                yes_entry_minute_4_price: 0.58,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ]);
+
+        const entryTs = eventStartTs + 60;
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([
+                {
+                    ...makeTrade(1, "long", entryTs, 10),
+                    exitTime: entryTs + 120,
+                    exitReason: "signal",
+                },
+            ]),
+            {
+                symbol: "BTCUSDT",
+                interval: "1m",
+                executionModel: "next_open",
+                chartData: bars,
+                polymarketExitMode: "signal_exit_same_event",
+            },
+            undefined,
+            [
+                {
+                    series_id: "10684",
+                    event_start_ts: eventStartTs,
+                    event_end_ts: eventStartTs + 300,
+                    market_slug: "btc-missing-price-2",
+                    yes_token_id: "yes-1",
+                    no_token_id: "no-1",
+                    ts: entryTs + 180,
+                    yes_price: 0.60,
+                    no_price: 0.40,
+                    updated_at: 1,
+                },
+            ]
+        );
+
+        expect(result.polymarketTradeSummary?.evaluationMode).to.equal("signal_exit_same_event");
         expect(result.polymarketTradeSummary?.scoredTrades).to.equal(0);
         expect(result.polymarketTradeSummary?.missingPriceTrades).to.equal(1);
         expect(result.trades[0]?.polymarketOutcome).to.equal(null);
+
+        const renderer = new TradesRenderer() as unknown as {
+            renderTradeItem: (trade: Trade, formatPrice: (price: number) => string, formatDate: (time: Trade["entryTime"]) => string) => string;
+        };
+        const html = renderer.renderTradeItem(
+            result.trades[0]!,
+            (price) => price.toFixed(2),
+            (time) => String(time)
+        );
+
+        expect(html).to.not.include("Poly n/a");
+        expect(html).to.not.include("Poly Settle");
+        expect(html).to.not.include("Poly Exit");
     });
 
     it("renders zero-pnl signal-exit trades as same-event Polymarket exits", async () => {

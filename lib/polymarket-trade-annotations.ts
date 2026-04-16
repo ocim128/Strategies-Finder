@@ -25,6 +25,10 @@ import type {
 } from "./types/polymarket-outcomes";
 import type { PolymarketPricePoint } from "./local-sqlite-polymarket-api";
 import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "./polymarket-exit-mode";
+import {
+    isActualPolymarketEntryMinuteMode,
+    type PolymarketEntrySelectionMode,
+} from "./polymarket-entry-selection-mode";
 import { evaluateSignalExitTrades, buildTradeAnnotationFromSignalExitResult } from "./polymarket-signal-exit-evaluator";
 
 function clampProbability(value: number | null): number | null {
@@ -107,6 +111,7 @@ type AnnotationContext = {
     executionModel?: string;
     chartData: OHLCVData[];
     outcomeSymbol?: string;
+    polymarketEntrySelectionMode?: PolymarketEntrySelectionMode;
     polymarketExitMode?: "resolve_hold" | "signal_exit_same_event";
 };
 
@@ -251,7 +256,8 @@ function buildAnnotatedTrade(
 function buildAnnotatedTradeForBridge(
     trade: Trade,
     outcomes: readonly PolymarketOutcomeRow[],
-    selectedOffset?: number
+    selectedOffset?: number,
+    entrySelectionMode: PolymarketEntrySelectionMode = "fixed_offset"
 ): Trade {
     const entryTs = parseTimeToUnixSeconds(trade.entryTime);
     if (entryTs === null) {
@@ -269,7 +275,7 @@ function buildAnnotatedTradeForBridge(
     }
 
     // Filter by selected offset if specified
-    if (selectedOffset !== undefined && entryOffset !== selectedOffset) {
+    if (!isActualPolymarketEntryMinuteMode(entrySelectionMode) && selectedOffset !== undefined && entryOffset !== selectedOffset) {
         return { ...trade, polymarketOutcome: null };
     }
 
@@ -295,6 +301,34 @@ function buildAnnotatedTradeForBridge(
     };
 }
 
+function buildSkippedAnnotatedTradeForBridge(
+    trade: Trade,
+    mappedTrade: LegacyMappedPolymarketTrade,
+    reason: "duplicate" | "filtered"
+): Trade {
+    const prediction = trade.type === "long" ? "yes" : "no";
+    return {
+        ...trade,
+        polymarketOutcome: {
+            eventStartTs: mappedTrade.outcome.event_start_ts,
+            eventEndTs: mappedTrade.outcome.event_end_ts,
+            eventSlug: mappedTrade.outcome.event_slug,
+            marketSlug: mappedTrade.outcome.market_slug || mappedTrade.outcome.event_slug,
+            prediction,
+            actualOutcomeUp: mappedTrade.outcome.resolved_outcome_up,
+            isWin: null,
+            entryOffset: mappedTrade.entryOffset,
+            evaluationMode: "resolve_hold",
+            marketExitSource: reason,
+            isProfitable: null,
+            marketEntryPrice: null,
+            marketExitPrice: null,
+            marketExitTs: null,
+            marketPnl: null,
+        },
+    };
+}
+
 export function annotateTradesWithPolymarketOutcomes(
     trades: readonly Trade[],
     outcomes: readonly PolymarketOutcomeRow[]
@@ -307,20 +341,40 @@ export function annotateTradesWithPolymarketOutcomesForRun(
     trades: readonly Trade[],
     outcomes: readonly PolymarketOutcomeRow[],
     interval: string,
-    selectedOffset?: number
+    selectedOffset?: number,
+    entrySelectionMode: PolymarketEntrySelectionMode = "fixed_offset"
 ): Trade[] {
     if (interval !== "1m") {
         return annotateTradesWithPolymarketOutcomes(trades, outcomes);
     }
 
-    const selectedTrades = selectTradesForScoringLegacy(trades, outcomes, "1m", selectedOffset);
+    const mappedTrades = mapTradesToEvents(trades, outcomes);
+    const mappedTradeByTrade = new Map(mappedTrades.map((mapped) => [mapped.trade, mapped] as const));
+    const selectedTrades = selectTradesForScoringLegacy(trades, outcomes, "1m", selectedOffset, entrySelectionMode);
     const selectedTradeSet = new Set(selectedTrades.map((mapped: LegacyMappedPolymarketTrade) => mapped.trade));
+    const isActualMinuteMode = isActualPolymarketEntryMinuteMode(entrySelectionMode);
+    const resolvedOffset = selectedOffset ?? 0;
 
-    return trades.map((trade) => (
-        selectedTradeSet.has(trade)
-            ? buildAnnotatedTradeForBridge(trade, outcomes, selectedOffset)
-            : { ...trade, polymarketOutcome: null }
-    ));
+    return trades.map((trade) => {
+        if (selectedTradeSet.has(trade)) {
+            return buildAnnotatedTradeForBridge(trade, outcomes, selectedOffset, entrySelectionMode);
+        }
+
+        const mappedTrade = mappedTradeByTrade.get(trade);
+        if (!mappedTrade) {
+            return { ...trade, polymarketOutcome: null };
+        }
+
+        if (isActualMinuteMode) {
+            return buildSkippedAnnotatedTradeForBridge(trade, mappedTrade, "duplicate");
+        }
+
+        if (mappedTrade.entryOffset !== resolvedOffset) {
+            return buildSkippedAnnotatedTradeForBridge(trade, mappedTrade, "filtered");
+        }
+
+        return buildSkippedAnnotatedTradeForBridge(trade, mappedTrade, "duplicate");
+    });
 }
 
 export function evaluatePolymarketBacktestTrades(args: {
@@ -679,28 +733,34 @@ export function summarizePolymarketTradesForRun(args: {
     outcomes: readonly PolymarketOutcomeRow[];
     interval: string;
     selectedOffset?: number;
+    entrySelectionMode?: PolymarketEntrySelectionMode;
     timingProfile?: BacktestPolymarketTimingProfileEntry[];
 }): Pick<
     BacktestPolymarketTradeSummary,
-    "scoredTrades" | "missingOutcomeTrades" | "unscoredTrades" | "duplicateTradesIgnored" | "entryOffset" | "timingProfile"
+    "scoredTrades" | "missingOutcomeTrades" | "unscoredTrades" | "duplicateTradesIgnored" | "entryOffset" | "entrySelectionMode" | "timingProfile"
 > {
     const totalTrades = args.trades.length;
 
     if (args.interval === "1m") {
+        const entrySelectionMode = args.entrySelectionMode ?? "fixed_offset";
         const selectedOffset = args.selectedOffset ?? 0;
         const mappedTrades = mapTradesToEvents(args.trades, args.outcomes);
-        const filteredForOffset = filterByEntryOffsetLegacy(mappedTrades, selectedOffset);
-        const selectedTrades = deduplicateByEventLegacy(filteredForOffset);
+        const selectedTrades = isActualPolymarketEntryMinuteMode(entrySelectionMode)
+            ? deduplicateByEventLegacy(mappedTrades)
+            : deduplicateByEventLegacy(filterByEntryOffsetLegacy(mappedTrades, selectedOffset));
         const scoredTrades = selectedTrades.length;
         const missingOutcomeTrades = Math.max(0, totalTrades - mappedTrades.length);
-        const duplicateTradesIgnored = Math.max(0, filteredForOffset.length - selectedTrades.length);
+        const duplicateTradesIgnored = isActualPolymarketEntryMinuteMode(entrySelectionMode)
+            ? Math.max(0, mappedTrades.length - selectedTrades.length)
+            : Math.max(0, filterByEntryOffsetLegacy(mappedTrades, selectedOffset).length - selectedTrades.length);
 
         return {
             scoredTrades,
             missingOutcomeTrades,
             unscoredTrades: Math.max(0, totalTrades - scoredTrades),
             duplicateTradesIgnored: duplicateTradesIgnored > 0 ? duplicateTradesIgnored : undefined,
-            entryOffset: selectedOffset,
+            entryOffset: isActualPolymarketEntryMinuteMode(entrySelectionMode) ? undefined : selectedOffset,
+            entrySelectionMode,
             timingProfile: args.timingProfile,
         };
     }
@@ -723,6 +783,7 @@ export function summarizePolymarketTradesForRun(args: {
         scoredTrades,
         missingOutcomeTrades,
         unscoredTrades: missingOutcomeTrades,
+        entrySelectionMode: undefined,
         entryOffset: undefined,
         timingProfile: args.timingProfile,
     };
@@ -732,7 +793,8 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
     result: BacktestResult,
     context: AnnotationContext,
     selectedOffset?: number,
-    pricePoints?: PolymarketPricePoint[]
+    pricePoints?: PolymarketPricePoint[],
+    entrySelectionMode: PolymarketEntrySelectionMode = "fixed_offset"
 ): Promise<BacktestResult> {
     const is1mRun = context.interval === "1m";
     const is5mRun = context.interval === "5m";
@@ -789,7 +851,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
         const annotatedTrades = result.trades.map((trade) => {
             const exitResult = exitResultMap.get(trade);
-            if (!exitResult || exitResult.exitSource === "missing") {
+            if (!exitResult) {
                 return { ...trade, polymarketOutcome: null };
             }
             return {
@@ -831,7 +893,8 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         result.trades,
         outcomes,
         context.interval,
-        selectedOffset
+        selectedOffset,
+        entrySelectionMode
     );
     const timingProfile = is1mRun
         ? buildPolymarketTimingProfileFor1mBridge({
@@ -845,6 +908,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         outcomes,
         interval: context.interval,
         selectedOffset,
+        entrySelectionMode,
         timingProfile,
     });
 

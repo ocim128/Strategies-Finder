@@ -196,7 +196,12 @@ export function renderEmptyTradesHtml(): string {
 export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary): string {
   if (!summary) return '';
   const isSignalExit = summary.evaluationMode === "signal_exit_same_event";
-  const modeLabel = isSignalExit ? "Signal Exit (same event)" : (typeof summary.entryOffset === 'number' ? `Selected Offset: Minute ${summary.entryOffset}` : 'Run Mode: Native 5m scoring');
+  const usesActualEntryMinute = summary.entrySelectionMode === "actual_entry_minute";
+  const modeLabel = isSignalExit
+    ? "Signal Exit (same event)"
+    : usesActualEntryMinute
+      ? "Entry Selection: Auto (actual trade minute)"
+      : (typeof summary.entryOffset === 'number' ? `Selected Offset: Minute ${summary.entryOffset}` : 'Run Mode: Native 5m scoring');
   const winCountLabel = isSignalExit ? "Profitable Trades" : "Poly Wins";
   const lossCountLabel = isSignalExit ? "Losing Trades" : "Poly Losses";
   const streakWinLabel = isSignalExit ? "Max Profit Streak" : "Max Win Streak";
@@ -269,7 +274,7 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
       <div class="qv-stats-grid">
           <div class="qv-stat-card full-width qv-poly-meta-card">
               <div class="qv-stat-label">${modeLabel}</div>
-              <div class="qv-stat-value">${summary.bestTimingProfile ? `Best Minute ${summary.bestTimingProfile.entryOffset} (${(summary.bestTimingProfile.winRate * 100).toFixed(1)}%)` : 'See Polymarket tab for full diagnostics'}</div>
+              <div class="qv-stat-value">${summary.bestTimingProfile ? `Best Minute ${summary.bestTimingProfile.entryOffset} (${(summary.bestTimingProfile.winRate * 100).toFixed(1)}%)` : (usesActualEntryMinute ? 'See Polymarket tab for auto-mode diagnostics' : 'See Polymarket tab for full diagnostics')}</div>
           </div>
           <div class="qv-stat-card">
               <div class="qv-stat-label">${isSignalExit ? 'Poly Profitable' : 'Poly Win Rate'}</div>
@@ -286,6 +291,24 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
           <div class="qv-stat-card">
               <div class="qv-stat-label">Poly Profit Factor</div>
               <div class="qv-stat-value">${formatProfitFactor(summary.profitFactor)}</div>
+          </div>
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Avg Win</div>
+              <div class="qv-stat-value ${summary.avgWin === null ? '' : 'positive'}">
+                  ${summary.avgWin === null ? 'n/a' : formatPolymarketCents(summary.avgWin)}
+              </div>
+          </div>
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Avg Loss</div>
+              <div class="qv-stat-value ${summary.avgLoss === null ? '' : 'negative'}">
+                  ${summary.avgLoss === null ? 'n/a' : formatPolymarketCents(-summary.avgLoss)}
+              </div>
+          </div>
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Avg Entry Price</div>
+              <div class="qv-stat-value">
+                  ${summary.avgEntryPrice === null ? 'n/a' : formatPolymarketCents(summary.avgEntryPrice)}
+              </div>
           </div>
           <div class="qv-stat-card">
               <div class="qv-stat-label">Scored Trade Share</div>

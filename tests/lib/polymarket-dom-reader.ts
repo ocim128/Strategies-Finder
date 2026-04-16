@@ -1,7 +1,9 @@
 import type { ExecutionModel } from "./types/strategies";
+import { resolvePolymarketEntrySelectionMode, type PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 
 export interface PolymarketDomSettings {
     entryOffset: number | null;
+    entrySelectionMode: PolymarketEntrySelectionMode;
     outcomeSymbol: string | null;
     exitMode: "resolve_hold" | "signal_exit_same_event" | undefined;
     executionModel: ExecutionModel | undefined;
@@ -20,6 +22,7 @@ function parseExecutionModel(value: string): ExecutionModel | undefined {
 
 export function resolvePolymarketDomSettings(doc: Document = document): PolymarketDomSettings {
     const entryOffsetSelect = readSelectElement(doc, "polymarketEntryOffset");
+    const entrySelectionModeSelect = readSelectElement(doc, "polymarketEntrySelectionMode");
     const outcomeSymbolSelect = readSelectElement(doc, "polymarketOutcomeSymbol");
     const exitModeSelect = readSelectElement(doc, "polymarketExitMode");
     const executionModelSelect = readSelectElement(doc, "executionModel");
@@ -29,6 +32,7 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
 
     return {
         entryOffset: rawEntryOffset !== null && Number.isFinite(rawEntryOffset) ? rawEntryOffset : null,
+        entrySelectionMode: resolvePolymarketEntrySelectionMode(entrySelectionModeSelect?.value),
         outcomeSymbol: outcomeSymbol.length > 0 ? outcomeSymbol : null,
         exitMode: exitModeSelect
             ? (exitModeSelect.value === "signal_exit_same_event" ? "signal_exit_same_event" : "resolve_hold")

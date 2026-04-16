@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { normalizeBacktestSettings } from '../lib/strategies/backtest/backtest-utils';
-import { EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from '../lib/backtest-settings-resolver';
+import { BACKTEST_DOM_SETTING_IDS, EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from '../lib/backtest-settings-resolver';
 import {
     sanitizeBacktestSettingsForRust,
     requiresTypescriptEngine,
@@ -30,6 +30,7 @@ import {
 } from '../lib/backtest-settings-dom-contract';
 import { strategyManifest } from '../lib/strategies/manifest';
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from '../lib/strategy-defaults';
+import { resolvePolymarketEntrySelectionModeForDisplay } from '../lib/polymarket-entry-selection-mode';
 
 describe('Backtest settings compatibility', () => {
     it('uses tradeFilterMode when provided', () => {
@@ -60,6 +61,29 @@ describe('Backtest settings compatibility', () => {
         expect(coerceBacktestDomSettingValue(contract!, 'signal_exit_same_event')).to.equal('signal_exit_same_event');
         expect(coerceBacktestDomSettingValue(contract!, 'SIGNAL_EXIT_SAME_EVENT')).to.equal('signal_exit_same_event');
         expect(coerceBacktestDomSettingValue(contract!, 'resolve_hold')).to.equal('resolve_hold');
+    });
+
+    it('keeps polymarketEntrySelectionMode in canonical lowercase form when read from DOM contracts', () => {
+        const contract = getBacktestDomSettingContract('polymarketEntrySelectionMode');
+        expect(contract).to.not.equal(undefined);
+        expect(coerceBacktestDomSettingValue(contract!, 'actual_entry_minute')).to.equal('actual_entry_minute');
+        expect(coerceBacktestDomSettingValue(contract!, 'ACTUAL_ENTRY_MINUTE')).to.equal('actual_entry_minute');
+        expect(coerceBacktestDomSettingValue(contract!, 'fixed_offset')).to.equal('fixed_offset');
+        expect(coerceBacktestDomSettingValue(contract!, 'anything-else')).to.equal('fixed_offset');
+    });
+
+    it('includes polymarketEntrySelectionMode in the shared DOM setting ids used by manual backtests', () => {
+        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketEntrySelectionMode')).to.equal(true);
+    });
+
+    it('prefers actual entry minute for display when fixed-offset annotations are stale and rows are filtered', () => {
+        const resolved = resolvePolymarketEntrySelectionModeForDisplay(
+            'fixed_offset',
+            'actual_entry_minute',
+            [{ polymarketOutcome: { marketExitSource: 'filtered' } } as any]
+        );
+
+        expect(resolved).to.equal('actual_entry_minute');
     });
 
     it('sanitizes Rust payloads without dropping compatibility fields', () => {
@@ -415,6 +439,7 @@ describe('Backtest settings compatibility', () => {
         expect(getBacktestDomSettingContract('tradeFilterSettingsToggle')?.legacyAliases).to.deep.equal(['entrySettingsToggle']);
         expect(getBacktestDomSettingContract('polymarketAnnotationEnabled')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketOutcomeSymbol')).to.not.equal(undefined);
+        expect(getBacktestDomSettingContract('polymarketEntrySelectionMode')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketEntryOffset')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('snapshotAtrFilterToggle')).to.equal(undefined);
         expect(getBacktestDomSettingContract('snapshotAtrPercentMin')).to.equal(undefined);

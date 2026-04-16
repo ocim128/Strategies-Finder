@@ -674,7 +674,7 @@ export class BacktestService {
                 chartData,
                 outcomeSymbol: settings.polymarketOutcomeSymbol,
                 polymarketExitMode: effectiveExitMode,
-            }, settings.polymarketEntryOffset, pricePoints);
+            }, settings.polymarketEntryOffset, pricePoints, settings.polymarketEntrySelectionMode);
         } catch (error) {
             debugLogger.error("backtest.polymarket_annotation_failed", {
                 symbol: state.currentSymbol,

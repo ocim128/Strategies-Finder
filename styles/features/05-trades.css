@@ -788,6 +788,16 @@
 
 }
 
+.exit-reason-badge--polymarket-open {
+
+    color: hsl(var(--hsl-accent));
+
+    background: hsl(var(--hsl-accent) / 0.16);
+
+    border: 1px solid hsl(var(--hsl-accent) / 0.32);
+
+}
+
 .exit-reason-badge--polymarket-skip {
 
     color: hsl(0 0% 55%);

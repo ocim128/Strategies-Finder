@@ -1,5 +1,6 @@
 import type { BacktestPolymarketTradeSummary } from "./types/polymarket-outcomes";
 import type { BacktestResult, ExpectancyBreakdownRow, Trade } from "./types/strategies";
+import type { PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 
 interface PolymarketFeatureAnalysis {
     feature: string;
@@ -112,6 +113,7 @@ export interface BacktestPolymarketPerformanceSummary {
     outcomeRowsLoaded: number;
     bestBaselineWinRate: number;
     baselineDelta: number;
+    entrySelectionMode?: PolymarketEntrySelectionMode;
     longestWinStreak: number;
     longestLossStreak: number;
     entryOffset?: number;
@@ -128,6 +130,7 @@ function getScoredPolymarketTrades(trades: readonly Trade[]): Trade[] {
         trade.polymarketOutcome !== null
         && trade.polymarketOutcome !== undefined
         && trade.polymarketOutcome.marketExitSource !== "duplicate"
+        && trade.polymarketOutcome.marketExitSource !== "filtered"
         && trade.polymarketOutcome.marketExitSource !== "no_event"
         && trade.polymarketOutcome.marketExitSource !== "missing"
     ));
@@ -358,6 +361,7 @@ export function buildBacktestPolymarketPerformanceSummary(
         outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
         bestBaselineWinRate,
         baselineDelta: isSignalExit ? 0 : (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
+        entrySelectionMode: summary?.entrySelectionMode,
         longestWinStreak: streakSummary.longestWinStreak,
         longestLossStreak: streakSummary.longestLossStreak,
         entryOffset: summary?.entryOffset,

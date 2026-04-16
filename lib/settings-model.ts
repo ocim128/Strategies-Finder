@@ -10,6 +10,7 @@ import { readBoolean as readBooleanValue, readNumber as readNumberValue } from "
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import { ADVANCED_SIZING_DEFAULTS, coerceAdvancedSizingFieldValue } from "./advanced-sizing-settings";
 import { coerceAdaptiveTakeProfitFieldValue, resolveTakeProfitMode } from "./take-profit-settings";
+import type { PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 
 import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, TradeDirection, TradeFilterMode } from "./types/strategies";
 import { isTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from "./types/backtest";
@@ -115,6 +116,7 @@ export interface BacktestSettingsData {
     strategyTimeframeMinutes: number;
     polymarketAnnotationEnabled: boolean;
     polymarketOutcomeSymbol: string;
+    polymarketEntrySelectionMode: PolymarketEntrySelectionMode;
     polymarketEntryOffset: number;
     polymarketExitMode: "resolve_hold" | "signal_exit_same_event";
     /** Resolved secondary symbol for cross-symbol strategies. Empty string means use strategy default. */

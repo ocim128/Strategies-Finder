@@ -19,11 +19,20 @@ import { resolveBacktestResultMarketContext } from "../backtest-result-context";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { findContainingEvent } from "../polymarket-1m-5m-bridge";
 import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
+import { resolveCurrentAlertSubscriptionContext } from "../current-alert-subscription";
+import { livePositionsService, type LivePosition } from "../live-positions-service";
+import {
+    hasFilteredPolymarketTrades,
+    isActualPolymarketEntryMinuteMode,
+    resolvePolymarketEntrySelectionModeForDisplay,
+    type PolymarketEntrySelectionMode,
+} from "../polymarket-entry-selection-mode";
 
 export class TradesRenderer {
     private static readonly MAX_TRADES = 250;
     private static readonly INITIAL_RENDER_BATCH_SIZE = 20;
     private static readonly DEFERRED_RENDER_BATCH_SIZE = 30;
+    private static readonly LIVE_POSITION_STALE_AFTER_MS = 90_000;
 
     private dom: TradesRendererDom | null = null;
     private jumpToTrade: ((time: Time) => void) | null = null;
@@ -72,9 +81,13 @@ export class TradesRenderer {
     }
 
     private async ensurePolymarketOutcomes(trades: Trade[]): Promise<Trade[]> {
+        const entrySelectionMode = this.resolveSelectedPolymarketEntrySelectionMode();
+        const shouldRepairFilteredActualMode = isActualPolymarketEntryMinuteMode(entrySelectionMode)
+            && hasFilteredPolymarketTrades(trades);
+
         // Check if already annotated
         const hasOutcomes = trades.some((trade) => trade.polymarketOutcome !== undefined && trade.polymarketOutcome !== null);
-        if (hasOutcomes) {
+        if (hasOutcomes && !shouldRepairFilteredActualMode) {
             return trades;
         }
 
@@ -105,6 +118,8 @@ export class TradesRenderer {
 
         const resultContext = resolveBacktestResultMarketContext(state.currentBacktestResult);
         const summaryOffset = state.currentBacktestResult?.polymarketTradeSummary?.entryOffset;
+        const entrySelectionMode = state.currentBacktestResult?.polymarketTradeSummary?.entrySelectionMode
+            ?? this.resolveSelectedPolymarketEntrySelectionMode();
         const outcomeSymbol = this.resolveActivePolymarketOutcomeSymbol();
         const evaluationMode = state.currentBacktestResult?.polymarketTradeSummary?.evaluationMode ?? "resolve_hold";
         const firstTrade = trades[0];
@@ -113,7 +128,8 @@ export class TradesRenderer {
             resultContext?.symbol ?? state.currentSymbol,
             resultContext?.interval ?? state.currentInterval,
             outcomeSymbol ?? "same",
-            typeof summaryOffset === 'number' ? summaryOffset : 'na',
+            entrySelectionMode,
+            typeof summaryOffset === 'number' ? summaryOffset : (isActualPolymarketEntryMinuteMode(entrySelectionMode) ? 'auto' : 'na'),
             evaluationMode,
             trades.length,
             parseTimeToUnixSeconds(firstTrade.entryTime) ?? 'na',
@@ -121,13 +137,30 @@ export class TradesRenderer {
         ].join('|');
     }
 
-    private resolveSelectedPolymarketEntryOffset(): number {
+    private resolveSelectedPolymarketEntrySelectionMode(): PolymarketEntrySelectionMode {
+        const domEntrySelectionMode = typeof document === "undefined"
+            ? undefined
+            : resolvePolymarketDomSettings().entrySelectionMode;
+        return resolvePolymarketEntrySelectionModeForDisplay(
+            state.currentBacktestResult?.polymarketTradeSummary?.entrySelectionMode,
+            domEntrySelectionMode,
+            state.currentBacktestResult?.trades
+        );
+    }
+
+    private resolveSelectedPolymarketEntryOffset(): number | undefined {
         const summaryOffset = state.currentBacktestResult?.polymarketTradeSummary?.entryOffset;
         if (typeof summaryOffset === 'number' && Number.isFinite(summaryOffset)) {
             return Math.max(0, Math.min(4, Math.floor(summaryOffset)));
         }
 
-        const { entryOffset } = resolvePolymarketDomSettings();
+        if (isActualPolymarketEntryMinuteMode(this.resolveSelectedPolymarketEntrySelectionMode())) {
+            return undefined;
+        }
+
+        const entryOffset = typeof document === "undefined"
+            ? null
+            : resolvePolymarketDomSettings().entryOffset;
         if (entryOffset !== null) {
             return Math.max(0, Math.min(4, Math.floor(entryOffset)));
         }
@@ -136,15 +169,21 @@ export class TradesRenderer {
     }
 
     private readCurrentPolymarketOutcomeSymbol(): string | null {
-        return resolvePolymarketDomSettings().outcomeSymbol;
+        return typeof document === "undefined"
+            ? null
+            : resolvePolymarketDomSettings().outcomeSymbol;
     }
 
     private readCurrentPolymarketExitMode(): "resolve_hold" | "signal_exit_same_event" | undefined {
-        return resolvePolymarketDomSettings().exitMode;
+        return typeof document === "undefined"
+            ? undefined
+            : resolvePolymarketDomSettings().exitMode;
     }
 
     private readCurrentExecutionModel(): string | undefined {
-        return resolvePolymarketDomSettings().executionModel;
+        return typeof document === "undefined"
+            ? undefined
+            : resolvePolymarketDomSettings().executionModel;
     }
 
     private resolveActivePolymarketOutcomeSymbol(): string | null {
@@ -238,6 +277,9 @@ export class TradesRenderer {
             }
         }
 
+        const entrySelectionMode = resultContext.interval === '1m'
+            ? this.resolveSelectedPolymarketEntrySelectionMode()
+            : "fixed_offset";
         const selectedOffset = resultContext.interval === '1m'
             ? this.resolveSelectedPolymarketEntryOffset()
             : undefined;
@@ -245,7 +287,8 @@ export class TradesRenderer {
             trades,
             outcomes,
             resultContext.interval,
-            selectedOffset
+            selectedOffset,
+            entrySelectionMode
         );
     }
 
@@ -283,18 +326,43 @@ export class TradesRenderer {
     }
 
     private getPolymarketOutcomeBadge(trade: Trade): string {
+        const liveOpenBadge = this.getWorkerBackedPolymarketOpenBadge(trade);
+        if (liveOpenBadge) {
+            return liveOpenBadge;
+        }
+
         const outcome = trade.polymarketOutcome;
-        if (!outcome) return '';
+        if (!outcome) {
+            return '';
+        }
+
+        if (outcome.marketExitSource === "duplicate") {
+            return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly Dup: another trade in the same 5m event was already scored">Poly dup</span>`;
+        }
+        if (outcome.marketExitSource === "filtered") {
+            const entryOffset = typeof outcome.entryOffset === "number" && Number.isFinite(outcome.entryOffset)
+                ? Math.max(0, Math.min(4, Math.floor(outcome.entryOffset)))
+                : null;
+            const entryMinute = entryOffset === null ? "a different minute" : `minute ${entryOffset}`;
+            const activeOffset = typeof document === "undefined"
+                ? state.currentBacktestResult?.polymarketTradeSummary?.entryOffset
+                : this.resolveSelectedPolymarketEntryOffset();
+            const activeMinute = typeof activeOffset === "number" && Number.isFinite(activeOffset)
+                ? `minute ${activeOffset}`
+                : "the active 1m bridge selection";
+            const badgeLabel = entryOffset === null ? "Poly skip" : `Poly skip m${entryOffset}`;
+            return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly Skip: resolve-hold scoring excluded this trade because it entered on ${escapeHtml(entryMinute)} instead of ${escapeHtml(activeMinute)}">${escapeHtml(badgeLabel)}</span>`;
+        }
+        if (outcome.marketExitSource === "no_event") {
+            if (this.isCurrentSignalExitPolymarketTradeInCurrentBucket(trade)) {
+                return '';
+            }
+            return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly No Event: no matching Polymarket 5m event found for this trade's entry time">Poly no event</span>`;
+        }
 
         const isSignalExit = outcome.evaluationMode === "signal_exit_same_event";
 
         if (isSignalExit) {
-            if (outcome.marketExitSource === "duplicate") {
-                return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly Dup: another trade in the same 5m event was already scored">Poly dup</span>`;
-            }
-            if (outcome.marketExitSource === "no_event") {
-                return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly No Event: no matching Polymarket 5m event found for this trade's entry time">Poly no event</span>`;
-            }
             if (outcome.marketExitSource === "missing") {
                 return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly n/a: missing price point data for entry or exit">Poly n/a</span>`;
             }
@@ -348,12 +416,123 @@ export class TradesRenderer {
         const paidPrice = typeof outcome.marketEntryPrice === 'number' && Number.isFinite(outcome.marketEntryPrice)
             ? this.formatPolymarketEntryPrice(outcome.marketEntryPrice)
             : 'n/a';
-        const priceLabel = `${prediction} ${paidPrice} (YES ${yesPrice} / NO ${noPrice})`;
+        const resolvedExitPrice = typeof outcome.isWin === 'boolean'
+            ? this.formatPolymarketEntryPrice(outcome.isWin ? 1 : 0)
+            : null;
+        const payout = typeof outcome.marketEntryPrice === 'number' && Number.isFinite(outcome.marketEntryPrice) && typeof outcome.isWin === 'boolean'
+            ? (outcome.isWin ? (1 - outcome.marketEntryPrice) : -outcome.marketEntryPrice)
+            : null;
+        const payoutLabel = payout !== null
+            ? `${payout >= 0 ? '+' : ''}${(payout * 100).toFixed(1)}c`
+            : null;
+        const priceLabel = resolvedExitPrice
+            ? `${prediction} ${paidPrice}->${resolvedExitPrice}${payoutLabel ? ` (${payoutLabel})` : ''}`
+            : `${prediction} ${paidPrice}`;
         const marketSlug = escapeHtml(outcome.marketSlug);
         const marketUrl = escapeHtml(this.buildPolymarketMarketUrl(outcome.marketSlug));
-        return `<span class="exit-reason-badge trade-polymarket-link ${className}" role="button" tabindex="0" data-polymarket-url="${marketUrl}" title="Polymarket ${label}. Predicted ${prediction}, resolved ${actual}, paid ${priceLabel}. Click to copy ${marketSlug}.">${label} ${priceLabel}</span>`;
+        const title = `Polymarket ${label}. Predicted ${prediction}, resolved ${actual}, paid ${paidPrice}${resolvedExitPrice ? `, settled at ${resolvedExitPrice}` : ''}${payoutLabel ? ` (${payoutLabel})` : ''}. YES ${yesPrice} / NO ${noPrice}. Click to copy ${marketSlug}.`;
+        return `<span class="exit-reason-badge trade-polymarket-link ${className}" role="button" tabindex="0" data-polymarket-url="${marketUrl}" title="${escapeHtml(title)}">${label} ${priceLabel}</span>`;
     }
 
+    private getWorkerBackedPolymarketOpenBadge(trade: Trade): string {
+        const livePosition = this.resolveWorkerBackedOpenPolymarketPosition();
+        const localOpenTrade = livePosition?.localBacktestTrade;
+        if (!livePosition || !localOpenTrade || localOpenTrade.exitReason !== "end_of_data") {
+            return '';
+        }
+
+        if (!this.tradesMatchForLiveOpenBadge(localOpenTrade, trade)) {
+            return '';
+        }
+
+        return `<span class="exit-reason-badge exit-reason-badge--polymarket-open" title="Poly open: Worker-backed live subscription confirms this trade is still open.">Poly open</span>`;
+    }
+
+    private resolveWorkerBackedOpenPolymarketPosition(): LivePosition | null {
+        if (state.currentBacktestResultSource !== "backtest") {
+            return null;
+        }
+
+        const summary = state.currentBacktestResult?.polymarketTradeSummary;
+        if (summary?.evaluationMode !== "signal_exit_same_event") {
+            return null;
+        }
+
+        if (!livePositionsService.isPolling()) {
+            return null;
+        }
+
+        const livePositionsState = livePositionsService.getState();
+        if (
+            livePositionsState.lastPollTime === null
+            || Date.now() - livePositionsState.lastPollTime > TradesRenderer.LIVE_POSITION_STALE_AFTER_MS
+        ) {
+            return null;
+        }
+
+        const currentAlertContext = resolveCurrentAlertSubscriptionContext();
+        if (!currentAlertContext) {
+            return null;
+        }
+
+        const livePosition = livePositionsState.positions.find((position) => position.streamId === currentAlertContext.streamId);
+        if (!livePosition || !livePosition.isOpen || livePosition.mismatch) {
+            return null;
+        }
+
+        return livePosition;
+    }
+
+    private tradesMatchForLiveOpenBadge(expectedOpenTrade: Trade, currentTrade: Trade): boolean {
+        if (expectedOpenTrade.type !== currentTrade.type) {
+            return false;
+        }
+
+        const expectedEntryTs = parseTimeToUnixSeconds(expectedOpenTrade.entryTime);
+        const currentEntryTs = parseTimeToUnixSeconds(currentTrade.entryTime);
+        if (expectedEntryTs !== null && currentEntryTs !== null && expectedEntryTs !== currentEntryTs) {
+            return false;
+        }
+
+        return Math.abs(expectedOpenTrade.entryPrice - currentTrade.entryPrice) < 1e-9;
+    }
+
+    private isCurrentSignalExitPolymarketTradeInCurrentBucket(trade: Trade): boolean {
+        const result = state.currentBacktestResult;
+        if (!result || result.polymarketTradeSummary?.evaluationMode !== "signal_exit_same_event") {
+            return false;
+        }
+
+        const currentBucketStart = this.resolveCurrentPolymarketEventStartTs();
+        if (currentBucketStart === null) {
+            return false;
+        }
+
+        const entryTs = parseTimeToUnixSeconds(trade.entryTime);
+        if (entryTs === null) {
+            return false;
+        }
+
+        return Math.floor(entryTs / 300) * 300 === currentBucketStart;
+    }
+
+    private resolveCurrentPolymarketEventStartTs(): number | null {
+        const latestBar = state.ohlcvData[state.ohlcvData.length - 1];
+        const latestBarTs = latestBar ? parseTimeToUnixSeconds(latestBar.time) : null;
+        if (latestBarTs !== null) {
+            return Math.floor(latestBarTs / 300) * 300;
+        }
+
+        const latestTradeTs = [...(state.currentBacktestResult?.trades ?? [])]
+            .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
+            .filter((value): value is number => value !== null)
+            .pop();
+        if (latestTradeTs === undefined) {
+            return null;
+        }
+
+        return Math.floor(latestTradeTs / 300) * 300;
+    }
     private formatPolymarketEntryPrice(price: number): string {
         return `${(price * 100).toFixed(1)}c`;
     }

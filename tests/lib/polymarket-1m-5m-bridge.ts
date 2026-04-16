@@ -19,6 +19,8 @@
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import type { Trade } from "./types/strategies";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
+import type { PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
+import { isActualPolymarketEntryMinuteMode } from "./polymarket-entry-selection-mode";
 
 const ONE_MINUTE_SECONDS = 60;
 
@@ -184,7 +186,8 @@ export function selectTradesForScoring(
     trades: readonly Trade[],
     outcomes: readonly PolymarketOutcomeRow[],
     interval: string,
-    selectedOffset?: number
+    selectedOffset?: number,
+    entrySelectionMode: PolymarketEntrySelectionMode = "fixed_offset"
 ): MappedPolymarketTrade[] {
     const is1mRun = interval === "1m";
 
@@ -192,6 +195,10 @@ export function selectTradesForScoring(
     const mapped = mapTradesToEvents(trades, outcomes);
 
     if (is1mRun) {
+        if (isActualPolymarketEntryMinuteMode(entrySelectionMode)) {
+            return deduplicateByEvent(mapped);
+        }
+
         // For 1m runs, filter by selected offset and deduplicate
         const offset = selectedOffset ?? 0;
         const filtered = filterByEntryOffset(mapped, offset);

@@ -18,16 +18,18 @@ import { resolveCurrentConfigName, resolveSubscriptionConfigName, safeJsonParse 
 import { renderSignalHistory, renderSubscriptions } from '../alert-subscription-renderer';
 import { uiManager } from '../ui-manager';
 import { state } from '../state';
-import { backtestService } from '../backtest-service';
-import { writeAdvancedSizingIntoRecord } from '../advanced-sizing-settings';
 import { settingsManager } from '../settings-manager';
 import { dataManager } from '../data-manager';
 import { getOptionalElement } from '../dom-utils';
-import { parseInputNumber } from '../dom-input-readers';
 import {
     getWorkerStrategySupportSnapshot,
     isWorkerSupportedStrategyKey,
 } from '../alert-subscription-utils';
+import {
+    collectCurrentAlertStrategyParams,
+    collectCurrentAlertSubscriptionBacktestSettings,
+    resolveCurrentAlertSubscriptionContext,
+} from '../current-alert-subscription';
 import {
     buildAlertWorkerProviderMismatchMessage,
     isAlertWorkerProviderCompatible,
@@ -36,43 +38,6 @@ import { getBinanceProviderForMarketType, isBinanceDataProvider, resolveBinanceM
 
 let subscriptionsByStreamId: Map<string, AlertSubscription> = new Map();
 const localWorkerStrategySupport = getWorkerStrategySupportSnapshot();
-
-function collectCurrentStrategyParams(): Record<string, number> {
-    const strategyParams: Record<string, number> = {};
-    document.querySelectorAll<HTMLInputElement>('#settingsTab .param-input[data-param]').forEach((input) => {
-        const key = input.dataset.param;
-        if (!key) return;
-        const parsed = parseInputNumber(input.value);
-        strategyParams[key] = parsed ?? 0;
-    });
-    return strategyParams;
-}
-
-function collectCurrentSubscriptionBacktestSettings(): Record<string, unknown> {
-    const settings = backtestService.getBacktestSettings() as Record<string, unknown>;
-    const uiSettings = settingsManager.getBacktestSettings();
-    const capital = backtestService.getCapitalSettings();
-    const uiToggleSettings = Object.fromEntries(
-        Object.entries(uiSettings).filter(
-            ([key, value]) => key.endsWith('Toggle') && typeof value === 'boolean'
-        )
-    );
-
-    const merged = {
-        ...settings,
-        ...uiToggleSettings,
-        binanceMarketType: state.binanceMarketType,
-        initialCapital: capital.initialCapital,
-        positionSize: capital.positionSize,
-        commission: capital.commission,
-        sizingMode: capital.sizingMode,
-        fixedTradeToggle: capital.sizingMode !== 'percent',
-        fixedTradeAmount: capital.fixedTradeAmount,
-    };
-
-    writeAdvancedSizingIntoRecord(merged, capital.advancedSizing);
-    return merged;
-}
 
 function resolveAlertProvider(symbol: string, backtestSettings?: Record<string, unknown>) {
     const provider = dataManager.getProvider(symbol);
@@ -205,9 +170,12 @@ async function quickSubscribe() {
         return;
     }
 
-    const strategyParams = collectCurrentStrategyParams();
-    const rawBacktestSettings = collectCurrentSubscriptionBacktestSettings();
-    const configName = resolveCurrentConfigName(strategyKey, strategyParams, rawBacktestSettings);
+    const alertContext = resolveCurrentAlertSubscriptionContext();
+    const strategyParams = alertContext?.strategyParams ?? collectCurrentAlertStrategyParams();
+    const rawBacktestSettings = alertContext?.backtestSettings ?? collectCurrentAlertSubscriptionBacktestSettings();
+    const configName = alertContext?.configName ?? resolveCurrentConfigName(strategyKey, strategyParams, rawBacktestSettings);
+    const streamId = alertContext?.streamId
+        ?? buildAlertStreamId(symbol, interval, strategyKey, configName ?? undefined);
 
     try {
         const parsedFreshness = Number.parseInt(freshnessBarsInput?.value ?? '1', 10);
@@ -226,7 +194,7 @@ async function quickSubscribe() {
         };
         const result = await alertService.upsertSubscription({
             ...basePayload,
-            streamId: buildAlertStreamId(symbol, interval, strategyKey, configName ?? undefined),
+            streamId,
             backtestSettings: rawBacktestSettings,
         });
         uiManager.showToast(`Subscribed: ${result.streamId}`, 'success');
@@ -282,7 +250,7 @@ async function handleTableAction(action: string, streamId: string) {
                 uiManager.showToast(providerError, 'error');
                 return;
             }
-            const currentSettings = collectCurrentSubscriptionBacktestSettings();
+            const currentSettings = collectCurrentAlertSubscriptionBacktestSettings();
             const syncedCandleLimit = Math.max(
                 200,
                 Math.min(50000, state.ohlcvData.length || sub?.candle_limit || 350)
@@ -290,7 +258,7 @@ async function handleTableAction(action: string, streamId: string) {
             await alertService.upsertSubscription({
                 streamId,
                 strategyKey,
-                strategyParams: collectCurrentStrategyParams(),
+                strategyParams: collectCurrentAlertStrategyParams(),
                 backtestSettings: currentSettings,
                 candleLimit: syncedCandleLimit,
             });

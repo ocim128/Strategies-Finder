@@ -28,6 +28,13 @@ If you want to score a strategy against resolved Polymarket crypto events:
   - `resolve_hold` scores at final event resolution
   - `signal_exit_same_event` is `1m` + `next_open` only and uses locally cached Polymarket price points for same-event entry and exit pricing
 
+If you want to manually paper-trade the latest still-open backtest trade:
+
+- open the `Trades` panel on a supported `1m` or `5m` Polymarket-annotatable run
+- `Poly open` is only authoritative when it is worker-backed
+- that badge now appears only when the matching alert subscription is actively polling through `Live Positions`, the worker still reports the position open, and the local backtest agrees on which trade is open
+- if worker/local state diverges, the Trades panel stays silent instead of guessing
+
 If you want bridge files for `external_signal`:
 
 - use the `Polymarket` strategy-panel tab
@@ -142,7 +149,12 @@ Behavior:
 
 - keeps the existing final-outcome scoring path
 - `5m` uses direct event matching
-- `1m` uses the `1m -> 5m` bridge plus `polymarketEntryOffset`
+- `1m` uses the `1m -> 5m` bridge with two entry-selection modes:
+  - `fixed_offset` keeps the existing `polymarketEntryOffset` filter
+  - `actual_entry_minute` scores the first eligible trade per `5m` event and uses that trade's real minute for entry pricing while still holding to final resolution
+- the Trades panel now keeps row-level skip context on `1m` resolve-hold runs:
+  - `Poly skip mN` means the trade was filtered out by the active fixed minute selection because it entered on minute `N`
+  - `Poly dup` means another trade in that same scored event already claimed the Polymarket slot
 - Finder also supports the existing `15m`, `1h`, and `4h` resolve-hold paths
 - metrics stay classification-first: wins, losses, win rate, baseline delta, break-even style payout diagnostics
 
@@ -168,9 +180,10 @@ Behavior:
 - if no same-event signal exit applies, the Polymarket leg settles to final binary resolution at event end
 - only the first eligible trade per `5m` event is scored; later duplicates in that event are ignored
 - this is intentional: `signal_exit_same_event` is a per-event scoring model, not a literal replay of every chart trade inside that `5m` event
-- if a strategy opens multiple chart trades inside one `5m` event, the first trade claims the event and later trades are reported as duplicates instead of adding extra scored trades
+- missing-price attempts do not claim the event; the first scorable trade claims it and later scored attempts in that `5m` event are reported as duplicates instead of adding extra scored trades
 - if the entry quote is missing, the trade is unscored
 - if a same-event signal exit is required but no usable exit quote exists, the trade is unscored and counted as a missing-price trade
+- in the Trades panel, worker-backed live-open rows can render `Poly open`; otherwise missing-price or current-bucket unresolved rows stay unscored / silent rather than claiming live-open state from `end_of_data`
 - only `exitReason === "signal"` can close early in this mode; stop-loss, take-profit, trailing stop, time stop, partial, probation fail, and end-of-data all settle at final outcome
 
 PnL semantics:
@@ -376,6 +389,7 @@ User-facing controls live in the Backtest Realism section:
 
 - `polymarketAnnotationEnabled`
 - `polymarketOutcomeSymbol`
+- `polymarketEntrySelectionMode`
 - `polymarketEntryOffset`
 - `polymarketExitMode`
 
@@ -383,7 +397,8 @@ Current UI rules:
 
 - `polymarketOutcomeSymbol` shows when annotation is enabled
 - `polymarketExitMode` shows when annotation is enabled
-- `polymarketEntryOffset` only shows when annotation is enabled, interval is `1m`, and the selected exit mode is not `signal_exit_same_event`
+- `polymarketEntrySelectionMode` only shows when annotation is enabled, interval is `1m`, and the selected exit mode is not `signal_exit_same_event`
+- `polymarketEntryOffset` only shows when annotation is enabled, interval is `1m`, the selected exit mode is not `signal_exit_same_event`, and entry selection is `fixed_offset`
 - Finder and Hunt rank-mode dropdowns disable unsupported rank modes when signal-exit mode is selected
 
 Persistence and compatibility:
@@ -392,6 +407,8 @@ Persistence and compatibility:
 - invalid persisted values normalize back to `resolve_hold`
 - Hunt uses the same default and normalization behavior
 - `polymarketOutcomeSymbol` is normalized to uppercase
+- `polymarketEntrySelectionMode` defaults to `fixed_offset`
+- invalid persisted values normalize back to `fixed_offset`
 - `polymarketEntryOffset` stays persisted for backward compatibility even when ignored by signal-exit mode
 - Polymarket settings are Rust-unsupported
 - `signal_exit_same_event` requires the TypeScript engine

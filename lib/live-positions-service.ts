@@ -215,6 +215,7 @@ class LivePositionsService {
         if (this.pollTimer) {
             clearInterval(this.pollTimer);
             this.pollTimer = null;
+            this.notifyListeners();
         }
     }
 

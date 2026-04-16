@@ -423,7 +423,7 @@ console.log("\n=== evaluateSignalExitTrades: missing entry quote → unscored ==
     eq(summary.scoredTrades, 0, "0 scored trades");
 }
 
-console.log("\n=== evaluateSignalExitTrades: missing same-event exit quote → unscored ===");
+console.log("\n=== evaluateSignalExitTrades: same entry quote can also serve as a flat same-event exit ===");
 
 {
     const trade = makeTrade({
@@ -444,10 +444,118 @@ console.log("\n=== evaluateSignalExitTrades: missing same-event exit quote → u
 
     const r = results[0]!;
     ok(r.entryPrice !== null, "entry fill found at 1020 >= 1015");
-    eq(r.exitSource, "missing", "exit ts=1050 but only point at 1020 is before entry; no usable exit quote → missing");
+    eq(r.exitSource, "signal", "latest quote before exit can reuse the entry quote");
+    approx(r.exitPrice!, 0.55, 0.001, "exit price reuses the entry quote");
+    eq(r.pnl, 0, "same-quote exit produces flat pnl");
+    eq(summary.missingPriceTrades, 0, "no missing price trade");
+    eq(summary.scoredTrades, 1, "trade is scored");
+    eq(summary.neutralTrades, 1, "flat same-quote exit is neutral");
+}
+
+console.log("\n=== evaluateSignalExitTrades: entry quote after the chart exit stays missing ===");
+
+{
+    const trade = makeTrade({
+        entryTime: 1015 as any,
+        exitTime: 1050 as any,
+        exitReason: "signal",
+    });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 1 });
+    const pricePoints = [
+        makePricePoint({ ts: 1080, yes_price: 0.60, no_price: 0.40 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        pricePoints,
+    });
+
+    const r = results[0]!;
+    ok(r.entryPrice !== null, "entry fill can still be found after the chart exit");
+    eq(r.exitSource, "missing", "no local quote exists at or before the chart exit after entry pricing");
     eq(r.exitPrice, null, "exit price is null for missing quote");
     eq(summary.missingPriceTrades, 1, "1 missing price trade");
     eq(summary.scoredTrades, 0, "0 scored trades");
+}
+
+console.log("\n=== evaluateSignalExitTrades: missing first trade does not block later resolution in the same event ===");
+
+{
+    const t1 = makeTrade({
+        id: 10,
+        type: "long",
+        entryTime: 1015 as any,
+        exitTime: 1050 as any,
+        exitReason: "signal",
+    });
+    const t2 = makeTrade({
+        id: 11,
+        type: "short",
+        entryTime: 1060 as any,
+        exitTime: 1090 as any,
+        exitReason: "time_stop",
+    });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 1 });
+    const pricePoints = [
+        makePricePoint({ ts: 1080, yes_price: 0.60, no_price: 0.40 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [t1, t2],
+        outcomes: [outcome],
+        pricePoints,
+    });
+
+    eq(results.length, 2, "two results emitted");
+    eq(results[0]!.exitSource, "missing", "first trade stays missing");
+    eq(results[1]!.exitSource, "resolution", "later trade scores by resolution");
+    approx(results[1]!.entryPrice!, 0.40, 0.001, "later short uses NO entry fill");
+    approx(results[1]!.exitPrice!, 0, 0.001, "outcome up resolves NO to 0");
+    eq(summary.missingPriceTrades, 1, "missing first trade counted once");
+    eq(summary.resolvedTrades, 1, "later trade counted as resolved");
+    eq(summary.scoredTrades, 1, "later trade is scored");
+    eq(summary.duplicateTradesIgnored, 0, "later scored trade is not forced into duplicate");
+}
+
+console.log("\n=== evaluateSignalExitTrades: missing first trade does not block later signal exit in the same event ===");
+
+{
+    const t1 = makeTrade({
+        id: 12,
+        type: "long",
+        entryTime: 1015 as any,
+        exitTime: 1050 as any,
+        exitReason: "signal",
+    });
+    const t2 = makeTrade({
+        id: 13,
+        type: "long",
+        entryTime: 1070 as any,
+        exitTime: 1115 as any,
+        exitReason: "signal",
+    });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 1 });
+    const pricePoints = [
+        makePricePoint({ ts: 1080, yes_price: 0.60, no_price: 0.40 }),
+        makePricePoint({ ts: 1110, yes_price: 0.66, no_price: 0.34 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [t1, t2],
+        outcomes: [outcome],
+        pricePoints,
+    });
+
+    eq(results.length, 2, "two results emitted");
+    eq(results[0]!.exitSource, "missing", "first trade stays missing");
+    eq(results[1]!.exitSource, "signal", "later trade scores by signal exit");
+    approx(results[1]!.entryPrice!, 0.60, 0.001, "later long uses later entry fill");
+    approx(results[1]!.exitPrice!, 0.66, 0.001, "later long uses later signal exit fill");
+    eq(summary.missingPriceTrades, 1, "missing first trade counted once");
+    eq(summary.signalExitedTrades, 1, "later trade counted as signal-exited");
+    eq(summary.scoredTrades, 1, "later trade is scored");
+    eq(summary.duplicateTradesIgnored, 0, "later scored trade is not forced into duplicate");
 }
 
 console.log("\n=== evaluateSignalExitTrades: zero pnl is neutral, not profitable ===");
@@ -502,6 +610,26 @@ console.log("\n=== buildTradeAnnotationFromSignalExitResult ===");
     eq(annotation.marketExitSource, "signal", "exit source is signal");
     approx(annotation.marketPnl!, 0.10, 0.001, "pnl annotated");
     ok(annotation.isProfitable === true, "isProfitable annotated");
+}
+
+{
+    const trade = makeTrade({ entryTime: 1020 as any, exitReason: "signal" });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300 });
+    const annotation = buildTradeAnnotationFromSignalExitResult({
+        trade,
+        outcome,
+        side: "yes",
+        entryPrice: 0.50,
+        exitPrice: null,
+        exitTs: null,
+        exitSource: "missing",
+        pnl: null,
+        isProfitable: null,
+        actualOutcomeUp: 1,
+        isWin: true,
+    });
+
+    eq(annotation, null, "missing-price results do not create trade annotations");
 }
 
 console.log("\n=== settings resolver: polymarketExitMode ===");

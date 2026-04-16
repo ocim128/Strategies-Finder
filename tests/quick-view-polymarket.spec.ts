@@ -508,6 +508,55 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.not.contain("Selected Offset: n/a");
     });
 
+    it("renders auto entry selection labels for 1m resolve-hold summaries", () => {
+        const html = (quickViewManager as any).buildPolymarketSection({
+            trades: [
+                makeTrade(1, true, {
+                    polymarketOutcome: {
+                        ...makeTrade(1, true).polymarketOutcome!,
+                        entryOffset: 2,
+                        marketEntryPrice: 0.54,
+                    },
+                }),
+                makeTrade(2, false, {
+                    polymarketOutcome: {
+                        ...makeTrade(2, false).polymarketOutcome!,
+                        entryOffset: 4,
+                        marketEntryPrice: 0.53,
+                    },
+                }),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 3,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            polymarketTradeSummary: {
+                seriesId: "btc-5m",
+                outcomeRowsLoaded: 3,
+                scoredTrades: 2,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 1,
+                entrySelectionMode: "actual_entry_minute",
+                timingProfile: [],
+            },
+        } satisfies BacktestResult);
+
+        expect(html).to.contain("Entry Selection: Auto (actual trade minute)");
+        expect(html).to.contain("See Polymarket tab for auto-mode diagnostics");
+        expect(html).to.not.contain("Selected Offset: Minute");
+    });
+
     it("renders the new quick-view polymarket summary cards", () => {
         const html = (quickViewManager as any).buildPolymarketSection({
             trades: [
@@ -575,6 +624,12 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.contain("+20.0c");
         expect(html).to.contain("Poly Profit Factor");
         expect(html).to.contain("2.00");
+        expect(html).to.contain("Avg Win");
+        expect(html).to.contain("+66.7c");
+        expect(html).to.contain("Avg Loss");
+        expect(html).to.contain("-50.0c");
+        expect(html).to.contain("Avg Entry Price");
+        expect(html).to.contain("40.0c");
         expect(html).to.contain("Max Win Streak");
         expect(html).to.contain("Max Loss Streak");
         expect(html).to.contain("Last 50 W/L");

@@ -19,6 +19,7 @@ import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
 import { activateLazyFeature } from "../lazy-feature-init";
 import {
     getPolymarketAnnotationToggle,
+    getPolymarketEntrySelectionModeSelect,
     getPolymarketExitModeSelect,
     getPolymarketSettingsRows,
     getFinderPolymarketRankModeSelect,
@@ -28,14 +29,20 @@ import {
 import type { Time } from "lightweight-charts";
 
 function updatePolymarketEntryOffsetVisibility(interval: string = state.currentInterval): void {
-    const { offsetRow, exitModeRow, outcomeSymbolRow } = getPolymarketSettingsRows();
+    const { entrySelectionModeRow, offsetRow, exitModeRow, outcomeSymbolRow } = getPolymarketSettingsRows();
     const annotationToggle = getPolymarketAnnotationToggle();
     const annotationEnabled = annotationToggle?.checked ?? false;
+    const polymarketSettings = resolvePolymarketDomSettings();
+    const isSignalExit = polymarketSettings.exitMode === 'signal_exit_same_event';
+    const usesActualEntryMinute = polymarketSettings.entrySelectionMode === 'actual_entry_minute';
+    const showsEntryBridgeControls = interval === '1m' && annotationEnabled && !isSignalExit;
 
-    const isSignalExit = resolvePolymarketDomSettings().exitMode === 'signal_exit_same_event';
+    if (entrySelectionModeRow) {
+        entrySelectionModeRow.style.display = showsEntryBridgeControls ? 'block' : 'none';
+    }
 
     if (offsetRow) {
-        offsetRow.style.display = interval === '1m' && annotationEnabled && !isSignalExit ? 'block' : 'none';
+        offsetRow.style.display = showsEntryBridgeControls && !usesActualEntryMinute ? 'block' : 'none';
     }
     if (exitModeRow) {
         exitModeRow.style.display = annotationEnabled ? 'block' : 'none';
@@ -80,6 +87,13 @@ export function setupStateSubscriptions() {
         polymarketExitModeSelect.addEventListener('change', () => {
             updatePolymarketEntryOffsetVisibility();
             updateFinderRankModeOptions();
+        });
+    }
+
+    const polymarketEntrySelectionModeSelect = getPolymarketEntrySelectionModeSelect();
+    if (polymarketEntrySelectionModeSelect) {
+        polymarketEntrySelectionModeSelect.addEventListener('change', () => {
+            updatePolymarketEntryOffsetVisibility();
         });
     }
 
@@ -247,6 +261,20 @@ export function setupStateSubscriptions() {
         }
         void renderTradesForCurrentState();
     }) as EventListener);
+    livePositionsService.subscribe(() => {
+        if (!state.currentBacktestResult || !isPanelVisible('trades')) {
+            return;
+        }
+
+        if (
+            state.currentBacktestResultSource !== 'backtest'
+            || state.currentBacktestResult.polymarketTradeSummary?.evaluationMode !== 'signal_exit_same_event'
+        ) {
+            return;
+        }
+
+        void renderTradesForCurrentState();
+    });
 
     // Theme changes
     state.subscribe('isDarkTheme', (isDark) => {
