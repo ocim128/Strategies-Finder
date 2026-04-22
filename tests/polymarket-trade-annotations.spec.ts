@@ -1128,6 +1128,114 @@ describe("Polymarket backtest trade annotations", () => {
         expect(peakLoadRequests).to.be.at.most(4);
     });
 
+    it("re-fetches events when the local cache only has a single stored quote", async () => {
+        let ensureCalls = 0;
+
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-price-points") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [
+                        {
+                            series_id: "10684",
+                            event_start_ts: 1_700_000_300,
+                            event_end_ts: 1_700_000_600,
+                            market_slug: "btc-event",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            ts: 1_700_000_360,
+                            yes_price: 0.55,
+                            no_price: 0.45,
+                            updated_at: 1,
+                        },
+                    ],
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/ensure-polymarket-price-points") {
+                ensureCalls++;
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [
+                        {
+                            series_id: "10684",
+                            event_start_ts: 1_700_000_300,
+                            event_end_ts: 1_700_000_600,
+                            market_slug: "btc-event",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            ts: 1_700_000_360,
+                            yes_price: 0.55,
+                            no_price: 0.45,
+                            updated_at: 1,
+                        },
+                        {
+                            series_id: "10684",
+                            event_start_ts: 1_700_000_300,
+                            event_end_ts: 1_700_000_600,
+                            market_slug: "btc-event",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            ts: 1_700_000_540,
+                            yes_price: 0.61,
+                            no_price: 0.39,
+                            updated_at: 1,
+                        },
+                    ],
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            throw new Error(`Unexpected fetch: ${url.pathname}`);
+        }) as typeof fetch;
+
+        const points = await ensurePricePointsForOutcomes([
+            {
+                series_id: "10684",
+                event_slug: "btc-event",
+                market_slug: "btc-event",
+                interval: "5m",
+                event_start_ts: 1_700_000_300,
+                event_end_ts: 1_700_000_600,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.51,
+                yes_entry_minute_2_price: 0.52,
+                yes_entry_minute_3_price: 0.53,
+                yes_entry_minute_4_price: 0.54,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ], "10684");
+
+        expect(ensureCalls).to.equal(1);
+        expect(points).to.have.length(2);
+        expect(points.map((point) => point.ts)).to.deep.equal([1_700_000_360, 1_700_000_540]);
+    });
+
     it("skips annotation for unsupported runs", async () => {
         globalThis.fetch = (async () => {
             throw new Error("fetch should not run for unsupported symbol");

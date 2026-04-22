@@ -176,7 +176,10 @@ Behavior:
 - long trades buy YES; short trades buy NO
 - entry fill uses the first locally captured side price at or after the chart trade entry timestamp inside the containing `5m` event
 - if `trade.exitReason === "signal"` and the chart exit timestamp is still inside the same event, exit fill uses the latest locally captured side price at or before the chart exit timestamp
-- the signal-exit quote must be later than the chosen entry quote
+- for `1m` + `next_open`, that exit timestamp is the modeled next bar open from the shared backtest engine, not an intraminute wall-clock guess
+- example: if the opposite chart signal is detected on the `15:02` candle, the modeled chart exit is `15:03:00`, so the Polymarket exit uses the latest local quote at or before `15:03:00`
+- the signal-exit quote must not be earlier than the chosen entry quote
+- if the latest locally captured quote before the chart exit is the same quote that was used for entry, the trade scores as a flat same-event exit instead of being dropped
 - if no same-event signal exit applies, the Polymarket leg settles to final binary resolution at event end
 - only the first eligible trade per `5m` event is scored; later duplicates in that event are ignored
 - this is intentional: `signal_exit_same_event` is a per-event scoring model, not a literal replay of every chart trade inside that `5m` event

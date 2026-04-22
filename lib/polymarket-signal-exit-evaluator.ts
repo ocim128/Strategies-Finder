@@ -170,7 +170,12 @@ export function evaluateSignalExitTrades(
             if (exitTsRaw !== null && exitTsRaw < outcome.event_end_ts) {
                 signalExitAttempted = true;
                 const exitFill = findSignalExitFill(eventPoints, exitTsRaw, side);
-                if (exitFill && exitFill.ts > entryFill.ts) {
+                // Sparse event history can legitimately leave one quote as both
+                // the first fill after entry and the latest known quote before
+                // the chart exit. Treat that as a flat same-event exit instead
+                // of dropping the first trade and letting a later trade claim
+                // the event.
+                if (exitFill && exitFill.ts >= entryFill.ts) {
                     exitPrice = exitFill.price;
                     exitTs = exitFill.ts;
                     exitSource = "signal";

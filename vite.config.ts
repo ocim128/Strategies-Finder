@@ -294,7 +294,23 @@ async function ensurePolymarketPricePointsInDb(args: {
     }
 
     const existingRows = loadStoredPolymarketPricePoints(args.db, args.seriesId, eventStartTs);
-    const coveredEventStarts = new Set(existingRows.map((row) => row.event_start_ts));
+    const distinctTimestampCountByEvent = new Map<number, Set<number>>();
+    for (const row of existingRows) {
+        let timestamps = distinctTimestampCountByEvent.get(row.event_start_ts);
+        if (!timestamps) {
+            timestamps = new Set<number>();
+            distinctTimestampCountByEvent.set(row.event_start_ts, timestamps);
+        }
+        timestamps.add(row.ts);
+    }
+
+    const coveredEventStarts = new Set<number>();
+    for (const outcome of args.outcomes) {
+        const timestamps = distinctTimestampCountByEvent.get(outcome.event_start_ts);
+        if (timestamps && timestamps.size >= 2) {
+            coveredEventStarts.add(outcome.event_start_ts);
+        }
+    }
     const uncoveredOutcomes = args.outcomes.filter((outcome) => !coveredEventStarts.has(outcome.event_start_ts));
 
     if (uncoveredOutcomes.length === 0) {

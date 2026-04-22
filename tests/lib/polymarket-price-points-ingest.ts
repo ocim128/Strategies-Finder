@@ -180,6 +180,32 @@ async function loadExistingPricePoints(
         .sort((left, right) => left.ts - right.ts);
 }
 
+function buildCoveredEventStartSet(
+    outcomes: readonly PolymarketOutcomeRow[],
+    points: readonly PolymarketPricePoint[]
+): Set<number> {
+    const distinctTimestampCountByEvent = new Map<number, Set<number>>();
+
+    for (const point of points) {
+        let timestamps = distinctTimestampCountByEvent.get(point.event_start_ts);
+        if (!timestamps) {
+            timestamps = new Set<number>();
+            distinctTimestampCountByEvent.set(point.event_start_ts, timestamps);
+        }
+        timestamps.add(point.ts);
+    }
+
+    const coveredEventStarts = new Set<number>();
+    for (const outcome of outcomes) {
+        const timestamps = distinctTimestampCountByEvent.get(outcome.event_start_ts);
+        if (timestamps && timestamps.size >= 2) {
+            coveredEventStarts.add(outcome.event_start_ts);
+        }
+    }
+
+    return coveredEventStarts;
+}
+
 export async function ensurePricePointsForOutcomes(
     outcomes: readonly PolymarketOutcomeRow[],
     seriesId: string,
@@ -199,7 +225,7 @@ export async function ensurePricePointsForOutcomes(
 
     const existingPoints = await loadExistingPricePoints(seriesId, eventStartTs);
 
-    const coveredEventStarts = new Set(existingPoints.map((p) => p.event_start_ts));
+    const coveredEventStarts = buildCoveredEventStartSet(outcomes, existingPoints);
     const uncoveredOutcomes = outcomes.filter(
         (o) => !coveredEventStarts.has(o.event_start_ts)
     );
