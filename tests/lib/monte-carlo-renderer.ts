@@ -12,6 +12,32 @@ export interface MonteCarloMethodComparisonRow {
     ruinProbability: number;
 }
 
+export function getMonteCarloSuccessRateLabel(result: Pick<MonteCarloResult, "successRateLabel">): string {
+    return result.successRateLabel ?? "Win Rate";
+}
+
+export function formatMonteCarloMetricValue(value: number, metric: string): string {
+    return formatValue(value, metric);
+}
+
+export function getMonteCarloCoverageWarnings(
+    result: Pick<MonteCarloResult, "inputSource" | "coverageSummary">
+): string[] {
+    if (result.inputSource !== "polymarket" || !result.coverageSummary) {
+        return [];
+    }
+
+    const warnings: string[] = [];
+    if (result.coverageSummary.overallCoverage < 0.25) {
+        warnings.push(`Low confidence: overall Polymarket coverage is ${(result.coverageSummary.overallCoverage * 100).toFixed(1)}%.`);
+    }
+    if (result.coverageSummary.dataCoverage < 0.6) {
+        warnings.push(`Data quality warning: scorable Polymarket data coverage is ${(result.coverageSummary.dataCoverage * 100).toFixed(1)}%.`);
+    }
+
+    return warnings;
+}
+
 export function renderMonteCarloResults(
     result: MonteCarloResult,
     dom: MonteCarloDomElements,
@@ -26,27 +52,42 @@ export function renderMonteCarloResults(
     dom.emptyState.style.display = "none";
     dom.resultsContainer.style.display = "block";
 
-    const { netProfitValues, maxDrawdownPercentValues, sharpeRatioValues } = result.metricSamples;
+    const isPolymarket = result.inputSource === "polymarket";
     const multiScenario = methodComparisons.length > 1;
+    const { netProfitValues, maxDrawdownPercentValues, sharpeRatioValues } = result.metricSamples;
+    const primaryHistogramValues = isPolymarket
+        ? netProfitValues.map((value) => result.settings.initialCapital + value)
+        : netProfitValues;
+    const primaryHistogramStats = computeDistributionStats(primaryHistogramValues);
+
+    dom.sourceBadge.textContent = buildSourceBadgeText(result);
+    dom.summaryProfitLabel.textContent = isPolymarket ? "Median Bankroll PnL" : "Median Net Profit";
+    dom.methodProfitHeader.textContent = isPolymarket ? "Median Bankroll PnL" : "Median Net Profit";
+    dom.profitDistTitle.textContent = isPolymarket ? "Final Balance Distribution" : "Net Profit Distribution";
 
     dom.simCountEl.textContent = multiScenario
         ? `${result.simulationsCompleted.toLocaleString()} / scenario`
         : result.simulationsCompleted.toLocaleString();
     dom.ruinProbEl.textContent = `${(result.ruinProbabilityMetrics.ruinProbability * 100).toFixed(1)}%`;
-    dom.medianProfitEl.textContent = formatCurrency(result.netProfitDistribution.median);
+    dom.medianProfitEl.textContent = formatSignedCurrency(result.netProfitDistribution.median);
     dom.medianSharpeEl.textContent = sharpeRatioValues.length > 0 ? median(sharpeRatioValues).toFixed(3) : "0.000";
     dom.medianDdEl.textContent = `${result.ruinProbabilityMetrics.maxDrawdownDistribution.median.toFixed(1)}%`;
     dom.execTimeEl.textContent = `${(result.executionTimeMs / 1000).toFixed(2)}s`;
 
+    renderPolymarketSummary(result, dom);
     renderRiskAssessment(result, dom);
     renderMethodComparison(dom.methodComparisonBody, methodComparisons);
-    renderConfidenceIntervals(result.confidenceIntervals, dom.ciBody);
+    renderConfidenceIntervals(result, dom.ciBody);
     renderDrawdownPercentiles(dom.ddPercentilesBody, maxDrawdownPercentValues);
-    renderHistogram(dom.profitHistogram, netProfitValues);
+    renderHistogram(dom.profitHistogram, primaryHistogramValues);
     renderHistogram(dom.ddHistogram, maxDrawdownPercentValues);
     renderHistogram(dom.sharpeHistogram, sharpeRatioValues);
 
-    renderDistributionStats(dom.profitStats, result.netProfitDistribution, formatCurrency);
+    renderDistributionStats(
+        dom.profitStats,
+        isPolymarket ? primaryHistogramStats : result.netProfitDistribution,
+        isPolymarket ? formatDollarAmount : formatSignedCurrency,
+    );
     renderDistributionStats(dom.ddStats, result.ruinProbabilityMetrics.maxDrawdownDistribution, formatPercent);
     renderDistributionStats(dom.sharpeStats, computeDistributionStats(sharpeRatioValues), formatDecimal);
 
@@ -62,16 +103,68 @@ export function renderMonteCarloResults(
     dom.sensitivitySection.style.display = "none";
 }
 
+function buildSourceBadgeText(result: MonteCarloResult): string {
+    if (result.inputSource !== "polymarket") {
+        return "Chart Monte Carlo";
+    }
+
+    const modeLabel = result.polymarketEvaluationMode === "signal_exit_same_event"
+        ? "Signal Exit"
+        : "Resolve Hold";
+    const stakePerTrade = (result.settings as { polymarketStakePerTrade?: number }).polymarketStakePerTrade;
+    const stakeLabel = typeof stakePerTrade === "number" && Number.isFinite(stakePerTrade)
+        ? `, $${stakePerTrade.toFixed(2)} / trade`
+        : "";
+    return `Polymarket Monte Carlo (${modeLabel}${stakeLabel})`;
+}
+
+function renderPolymarketSummary(result: MonteCarloResult, dom: MonteCarloDomElements): void {
+    if (result.inputSource !== "polymarket" || !result.coverageSummary) {
+        dom.polymarketSummaryHeader.style.display = "none";
+        dom.polymarketSummary.style.display = "none";
+        dom.pmSkipBreakdownEl.style.display = "none";
+        return;
+    }
+
+    const endingBankrollValues = result.metricSamples.netProfitValues.map(
+        (value) => result.settings.initialCapital + value,
+    );
+    const observedFinalBalance = result.settings.initialCapital + result.inputNetProfit;
+    const p5EndingBankroll = percentile(endingBankrollValues, 5);
+    const medianEndingBankroll = result.settings.initialCapital + result.netProfitDistribution.median;
+
+    dom.polymarketSummaryHeader.style.display = "";
+    dom.polymarketSummary.style.display = "";
+    dom.pmSkipBreakdownEl.style.display = "";
+    dom.pmScoredTradesEl.textContent = result.coverageSummary.usableTrades.toLocaleString();
+    dom.pmOverallCoverageEl.textContent = `${(result.coverageSummary.overallCoverage * 100).toFixed(1)}%`;
+    dom.pmDataCoverageEl.textContent = `${(result.coverageSummary.dataCoverage * 100).toFixed(1)}%`;
+    dom.pmObservedFinalBalanceEl.textContent = formatDollarAmount(observedFinalBalance);
+    dom.pmMedianFinalBankrollEl.textContent = formatDollarAmount(medianEndingBankroll);
+    dom.pmFinalBankrollP5El.textContent = formatDollarAmount(p5EndingBankroll);
+    dom.pmSkipBreakdownEl.textContent = [
+        `Skipped`,
+        `missing outcome ${result.coverageSummary.missingOutcomeTrades}`,
+        `missing price ${result.coverageSummary.missingPriceTrades}`,
+        `duplicate ${result.coverageSummary.duplicateTradesIgnored}`,
+        `filtered ${result.coverageSummary.filteredTradesIgnored}`,
+    ].join(" | ");
+}
+
 function renderRiskAssessment(result: MonteCarloResult, dom: MonteCarloDomElements): void {
     const observedDd = Math.max(0, result.confidenceIntervals.maxDrawdown.observed);
     const dd95 = result.ruinProbabilityMetrics.maxDrawdownDistribution.percentile95;
     const medianDd = result.ruinProbabilityMetrics.maxDrawdownDistribution.median;
     const ruinProbability = result.ruinProbabilityMetrics.ruinProbability;
     const stressMultiple = observedDd > 0 ? dd95 / observedDd : null;
+    const coverageWarnings = getMonteCarloCoverageWarnings(result);
+    const isPolymarket = result.inputSource === "polymarket";
 
     let flagLabel = "Contained";
     let flagClass = "stat-value positive";
-    let detail = "Monte Carlo drawdown stress is close to the observed backtest path.";
+    let detail = isPolymarket
+        ? "Monte Carlo bankroll stress is close to the observed Polymarket payout path."
+        : "Monte Carlo drawdown stress is close to the observed backtest path.";
 
     if (
         ruinProbability >= 0.05 ||
@@ -80,7 +173,9 @@ function renderRiskAssessment(result: MonteCarloResult, dom: MonteCarloDomElemen
     ) {
         flagLabel = "High Path Risk";
         flagClass = "stat-value negative";
-        detail = "Adverse sequencing can produce materially larger drawdowns than the observed path.";
+        detail = isPolymarket
+            ? "Adverse sequencing can produce materially larger bankroll drawdowns than the observed Polymarket payout path."
+            : "Adverse sequencing can produce materially larger drawdowns than the observed path.";
     } else if (
         ruinProbability >= 0.01 ||
         medianDd >= Math.max(observedDd * 1.5, observedDd + 2) ||
@@ -88,7 +183,13 @@ function renderRiskAssessment(result: MonteCarloResult, dom: MonteCarloDomElemen
     ) {
         flagLabel = "Moderate Path Risk";
         flagClass = "stat-value";
-        detail = "The strategy keeps its edge, but path order still meaningfully changes drawdown severity.";
+        detail = isPolymarket
+            ? "The Polymarket payout path keeps its edge, but trade order still meaningfully changes bankroll drawdown severity."
+            : "The strategy keeps its edge, but path order still meaningfully changes drawdown severity.";
+    }
+
+    if (coverageWarnings.length > 0) {
+        detail = `${detail} ${coverageWarnings.join(" ")}`;
     }
 
     dom.riskFlagEl.textContent = flagLabel;
@@ -113,7 +214,7 @@ function renderMethodComparison(
     tbody.innerHTML = rows.map((row) => `
         <tr>
             <td>${row.isPrimary ? `${row.label} (Primary)` : row.label}</td>
-            <td>${formatCurrency(row.medianNetProfit)}</td>
+            <td>${formatSignedCurrency(row.medianNetProfit)}</td>
             <td>${formatPercent(row.medianMaxDrawdown)}</td>
             <td>${formatPercent(row.maxDrawdown95)}</td>
             <td>${formatDecimal(row.medianSharpe)}</td>
@@ -123,9 +224,12 @@ function renderMethodComparison(
 }
 
 function renderConfidenceIntervals(
-    ci: MonteCarloResult["confidenceIntervals"],
+    result: MonteCarloResult,
     tbody: HTMLTableSectionElement,
 ): void {
+    const rateLabel = getMonteCarloSuccessRateLabel(result);
+    const profitLabel = result.inputSource === "polymarket" ? "Bankroll PnL" : "Net Profit";
+    const ci = result.confidenceIntervals;
     const formatMetric = (
         label: string,
         observed: number,
@@ -133,18 +237,18 @@ function renderConfidenceIntervals(
     ) => `
         <tr>
             <td>${label}</td>
-            <td>${formatValue(observed, label)}</td>
-            <td>[${formatValue(ciData.ci50Lower, label)}, ${formatValue(ciData.ci50Upper, label)}]</td>
-            <td>[${formatValue(ciData.ci90Lower, label)}, ${formatValue(ciData.ci90Upper, label)}]</td>
-            <td>[${formatValue(ciData.ci95Lower, label)}, ${formatValue(ciData.ci95Upper, label)}]</td>
+            <td>${formatMonteCarloMetricValue(observed, label)}</td>
+            <td>[${formatMonteCarloMetricValue(ciData.ci50Lower, label)}, ${formatMonteCarloMetricValue(ciData.ci50Upper, label)}]</td>
+            <td>[${formatMonteCarloMetricValue(ciData.ci90Lower, label)}, ${formatMonteCarloMetricValue(ciData.ci90Upper, label)}]</td>
+            <td>[${formatMonteCarloMetricValue(ciData.ci95Lower, label)}, ${formatMonteCarloMetricValue(ciData.ci95Upper, label)}]</td>
         </tr>
     `;
 
     tbody.innerHTML = `
-        ${formatMetric("Net Profit", ci.netProfit.observed, ci.netProfit)}
+        ${formatMetric(profitLabel, ci.netProfit.observed, ci.netProfit)}
         ${formatMetric("Max Drawdown", ci.maxDrawdown.observed, ci.maxDrawdown)}
         ${formatMetric("Sharpe Ratio", ci.sharpeRatio.observed, ci.sharpeRatio)}
-        ${formatMetric("Win Rate", ci.winRate.observed, ci.winRate)}
+        ${formatMetric(rateLabel, ci.winRate.observed, ci.winRate)}
     `;
 }
 
@@ -236,13 +340,15 @@ function renderDistributionStats(
 
 function computeDistributionStats(values: readonly number[]) {
     if (values.length === 0) {
-        return { mean: 0, median: 0, stdDev: 0 };
+        return { mean: 0, median: 0, stdDev: 0, min: 0, max: 0 };
     }
 
     return {
         mean: mean(values),
         median: median(values),
         stdDev: sampleStdDev(values),
+        min: Math.min(...values),
+        max: Math.max(...values),
     };
 }
 
@@ -358,15 +464,23 @@ function formatValue(value: number, metric: string): string {
     if (metric.includes("Rate") || metric.includes("Drawdown")) {
         return formatPercent(value);
     }
-    if (metric.includes("Profit") || metric.includes("Loss")) {
-        return formatCurrency(value);
+    if (metric.includes("Profit") || metric.includes("Loss") || metric.includes("Pnl") || metric.includes("PnL")) {
+        return formatSignedCurrency(value);
+    }
+    if (metric.includes("Bankroll")) {
+        return formatDollarAmount(value);
     }
     return formatDecimal(value);
 }
 
-function formatCurrency(value: number): string {
-    const prefix = value >= 0 ? "+" : "";
-    return `${prefix}$${value.toFixed(2)}`;
+function formatSignedCurrency(value: number): string {
+    const prefix = value >= 0 ? "+" : "-";
+    return `${prefix}$${Math.abs(value).toFixed(2)}`;
+}
+
+function formatDollarAmount(value: number): string {
+    const prefix = value < 0 ? "-" : "";
+    return `${prefix}$${Math.abs(value).toFixed(2)}`;
 }
 
 function formatPercent(value: number): string {

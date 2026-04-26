@@ -1,9 +1,12 @@
 import type { BacktestResult, StrategyParams, OHLCVData, Trade } from "../../types/strategies";
 import type {
     ConfidenceIntervals,
+    MonteCarloCoverageSummary,
     MonteCarloResult,
     MonteCarloSettings,
     MonteCarloSimulation,
+    PolymarketMonteCarloInput,
+    PolymarketMonteCarloTradeInput,
     RuinProbabilityMetrics,
 } from "./types";
 import { createSeededRandom } from "./utils";
@@ -12,6 +15,7 @@ import { mean, median, percentile, sampleStdDev } from "../../statistics-utils";
 
 export * from "./types";
 
+const MIN_TRADES_FOR_SIMULATION = 5;
 const MAX_STORED_SIMULATIONS = 48;
 const MAX_EQUITY_CURVE_POINTS = 512;
 const TARGET_WORK_UNITS_PER_CHUNK = 25_000;
@@ -39,6 +43,42 @@ interface SimulatedMetrics {
     equityCurve?: number[];
 }
 
+interface ObservedMonteCarloMetrics {
+    netProfit: number;
+    maxDrawdownPercent: number;
+    sharpeRatio: number;
+    successRate: number;
+}
+
+interface SimulationRunContext {
+    ruinThreshold: number;
+    progressChunkSize: number;
+    sampleEvery: number;
+    curveSampleIndices: number[];
+    baseSeeds: number[];
+}
+
+interface BuildResultArgs {
+    startTime: number;
+    settings: MonteCarloSettings;
+    inputTradeCount: number;
+    inputNetProfit: number;
+    inputSharpeRatio: number;
+    observedMetrics: ObservedMonteCarloMetrics;
+    netProfitValues: number[];
+    maxDrawdownPercentValues: number[];
+    sharpeRatioValues: number[];
+    successRateValues: number[];
+    timesToRuin: number[];
+    ruinCount: number;
+    sampledSimulations: MonteCarloSimulation[];
+    inputSource: "chart" | "polymarket";
+    successRateLabel: "Win Rate" | "Positive Trade Rate";
+    polymarketSizingModel?: MonteCarloResult["polymarketSizingModel"];
+    coverageSummary?: MonteCarloCoverageSummary;
+    polymarketEvaluationMode?: MonteCarloResult["polymarketEvaluationMode"];
+}
+
 export async function runMonteCarloSimulation(
     backtestResult: BacktestResult,
     settings: MonteCarloSettings,
@@ -49,30 +89,26 @@ export async function runMonteCarloSimulation(
     const startTime = Date.now();
     const trades = backtestResult.trades;
 
-    if (trades.length < 5) {
-        return createInsufficientSampleResult(backtestResult, settings, startTime);
+    if (trades.length < MIN_TRADES_FOR_SIMULATION) {
+        return createInsufficientSampleResult({
+            inputTradeCount: trades.length,
+            inputNetProfit: backtestResult.netProfit,
+            inputSharpeRatio: backtestResult.sharpeRatio,
+            settings,
+            startTime,
+            inputSource: "chart",
+            successRateLabel: "Win Rate",
+            errorMessage: `Insufficient trades for Monte Carlo simulation. Need at least ${MIN_TRADES_FOR_SIMULATION} trades, got ${trades.length}.`,
+        });
     }
 
     const tradePnls = trades.map((trade) => trade.pnl);
     const tradeExitTimes = trades.map((trade) => trade.exitTime);
-    const ruinThreshold = settings.initialCapital * (settings.ruinThresholdPercent / 100);
-    const progressChunkSize = Math.max(
-        5,
-        Math.min(
-            settings.simulations,
-            Math.max(5, Math.floor(TARGET_WORK_UNITS_PER_CHUNK / Math.max(1, trades.length))),
-        ),
-    );
-    const sampleEvery = Math.max(1, Math.ceil(settings.simulations / MAX_STORED_SIMULATIONS));
-    const curveSampleIndices = buildCurveSampleIndices(trades.length, MAX_EQUITY_CURVE_POINTS);
-
-    const random = createSeededRandom(settings.seed);
-    const baseSeeds = Array.from({ length: settings.simulations }, () => Math.floor(random() * 1_000_000));
-
+    const runContext = createSimulationRunContext(settings, trades.length);
     const netProfitValues = new Array<number>(settings.simulations);
     const maxDrawdownPercentValues = new Array<number>(settings.simulations);
     const sharpeRatioValues = new Array<number>(settings.simulations);
-    const winRateValues = new Array<number>(settings.simulations);
+    const successRateValues = new Array<number>(settings.simulations);
     const timesToRuin: number[] = [];
     const sampledSimulations: MonteCarloSimulation[] = [];
     let ruinCount = 0;
@@ -80,22 +116,22 @@ export async function runMonteCarloSimulation(
     for (let simulationId = 0; simulationId < settings.simulations; simulationId++) {
         throwIfAborted(options.signal);
 
-        const order = buildSimulationOrder(trades.length, baseSeeds[simulationId], settings);
+        const order = buildSimulationOrder(trades.length, runContext.baseSeeds[simulationId], settings);
         const shouldStoreSimulation =
-            sampledSimulations.length < MAX_STORED_SIMULATIONS && simulationId % sampleEvery === 0;
-        const metrics = simulateTradePath(
+            sampledSimulations.length < MAX_STORED_SIMULATIONS && simulationId % runContext.sampleEvery === 0;
+        const metrics = simulateFixedPnlTradePath(
             order,
             tradePnls,
             tradeExitTimes,
             settings.initialCapital,
-            ruinThreshold,
-            shouldStoreSimulation ? curveSampleIndices : null,
+            runContext.ruinThreshold,
+            shouldStoreSimulation ? runContext.curveSampleIndices : null,
         );
 
         netProfitValues[simulationId] = metrics.netProfit;
         maxDrawdownPercentValues[simulationId] = metrics.maxDrawdownPercent;
         sharpeRatioValues[simulationId] = metrics.sharpeRatio;
-        winRateValues[simulationId] = metrics.winRate;
+        successRateValues[simulationId] = metrics.winRate;
 
         if (metrics.ruinOccurred) {
             ruinCount++;
@@ -105,24 +141,12 @@ export async function runMonteCarloSimulation(
         }
 
         if (shouldStoreSimulation) {
-            sampledSimulations.push({
-                simulationId,
-                netProfit: metrics.netProfit,
-                netProfitPercent: metrics.netProfitPercent,
-                maxDrawdown: metrics.maxDrawdown,
-                maxDrawdownPercent: metrics.maxDrawdownPercent,
-                sharpeRatio: metrics.sharpeRatio,
-                winRate: metrics.winRate,
-                finalEquity: metrics.finalEquity,
-                equityCurve: metrics.equityCurve ?? [],
-                ruinOccurred: metrics.ruinOccurred,
-                timeToRuin: metrics.timeToRuin,
-            });
+            sampledSimulations.push(createStoredSimulation(simulationId, metrics));
         }
 
         if (
             options.onProgress &&
-            (simulationId + 1 === settings.simulations || (simulationId + 1) % progressChunkSize === 0)
+            (simulationId + 1 === settings.simulations || (simulationId + 1) % runContext.progressChunkSize === 0)
         ) {
             options.onProgress({
                 completed: simulationId + 1,
@@ -132,56 +156,171 @@ export async function runMonteCarloSimulation(
         }
     }
 
-    const confidenceIntervals = computeConfidenceIntervals(
-        netProfitValues,
-        maxDrawdownPercentValues,
-        sharpeRatioValues,
-        winRateValues,
-        backtestResult,
-    );
-    const netProfitDistribution = computeDistributionStatistics(netProfitValues);
-    const ruinProbabilityMetrics = computeRuinProbabilityMetrics(
-        maxDrawdownPercentValues,
-        timesToRuin,
-        ruinCount,
-        settings.simulations,
-    );
-
-    return {
-        status: "success",
+    return buildMonteCarloResult({
+        startTime,
         settings,
-        simulationsCompleted: settings.simulations,
         inputTradeCount: trades.length,
         inputNetProfit: backtestResult.netProfit,
         inputSharpeRatio: backtestResult.sharpeRatio,
-        simulations: sampledSimulations,
-        metricSamples: {
-            netProfitValues,
-            maxDrawdownPercentValues,
-            sharpeRatioValues,
-            winRateValues,
+        observedMetrics: {
+            netProfit: backtestResult.netProfit,
+            maxDrawdownPercent: backtestResult.maxDrawdownPercent,
+            sharpeRatio: backtestResult.sharpeRatio,
+            successRate: backtestResult.winRate,
         },
-        ruinProbabilityMetrics,
-        confidenceIntervals,
-        netProfitDistribution,
-        executionTimeMs: Date.now() - startTime,
-        seed: settings.seed,
-    };
+        netProfitValues,
+        maxDrawdownPercentValues,
+        sharpeRatioValues,
+        successRateValues,
+        timesToRuin,
+        ruinCount,
+        sampledSimulations,
+        inputSource: "chart",
+        successRateLabel: "Win Rate",
+    });
 }
 
-function createInsufficientSampleResult(
-    backtestResult: BacktestResult,
+export async function runPolymarketMonteCarloSimulation(
+    input: PolymarketMonteCarloInput,
     settings: MonteCarloSettings,
-    startTime: number,
-): MonteCarloResult {
+    options: RunMonteCarloOptions = {},
+): Promise<MonteCarloResult> {
+    const startTime = Date.now();
+    const trades = input.trades;
+
+    if (trades.length < MIN_TRADES_FOR_SIMULATION) {
+        return createInsufficientSampleResult({
+            inputTradeCount: trades.length,
+            inputNetProfit: 0,
+            inputSharpeRatio: 0,
+            settings,
+            startTime,
+            inputSource: "polymarket",
+            successRateLabel: "Positive Trade Rate",
+            coverageSummary: input.coverageSummary,
+            polymarketEvaluationMode: input.evaluationMode,
+            errorMessage: `Insufficient usable Polymarket trades for Monte Carlo simulation. Need at least ${MIN_TRADES_FOR_SIMULATION}, got ${trades.length}.`,
+        });
+    }
+
+    const stakePerTrade = normalizePolymarketStakePerTrade(settings.polymarketStakePerTrade);
+    const tradeExitTimes = trades.map((trade) => trade.exitTime);
+    const runContext = createSimulationRunContext(settings, trades.length);
+    const observedMetricsFromOriginalOrder = simulatePolymarketTradePath(
+        Array.from({ length: trades.length }, (_, index) => index),
+        trades,
+        tradeExitTimes,
+        settings.initialCapital,
+        runContext.ruinThreshold,
+        stakePerTrade,
+        null,
+    );
+    const netProfitValues = new Array<number>(settings.simulations);
+    const maxDrawdownPercentValues = new Array<number>(settings.simulations);
+    const sharpeRatioValues = new Array<number>(settings.simulations);
+    const successRateValues = new Array<number>(settings.simulations);
+    const timesToRuin: number[] = [];
+    const sampledSimulations: MonteCarloSimulation[] = [];
+    let ruinCount = 0;
+
+    for (let simulationId = 0; simulationId < settings.simulations; simulationId++) {
+        throwIfAborted(options.signal);
+
+        const order = buildSimulationOrder(trades.length, runContext.baseSeeds[simulationId], settings);
+        const shouldStoreSimulation =
+            sampledSimulations.length < MAX_STORED_SIMULATIONS && simulationId % runContext.sampleEvery === 0;
+        const metrics = simulatePolymarketTradePath(
+            order,
+            trades,
+            tradeExitTimes,
+            settings.initialCapital,
+            runContext.ruinThreshold,
+            stakePerTrade,
+            shouldStoreSimulation ? runContext.curveSampleIndices : null,
+        );
+
+        netProfitValues[simulationId] = metrics.netProfit;
+        maxDrawdownPercentValues[simulationId] = metrics.maxDrawdownPercent;
+        sharpeRatioValues[simulationId] = metrics.sharpeRatio;
+        successRateValues[simulationId] = metrics.winRate;
+
+        if (metrics.ruinOccurred) {
+            ruinCount++;
+            if (typeof metrics.timeToRuin === "number") {
+                timesToRuin.push(metrics.timeToRuin);
+            }
+        }
+
+        if (shouldStoreSimulation) {
+            sampledSimulations.push(createStoredSimulation(simulationId, metrics));
+        }
+
+        if (
+            options.onProgress &&
+            (simulationId + 1 === settings.simulations || (simulationId + 1) % runContext.progressChunkSize === 0)
+        ) {
+            options.onProgress({
+                completed: simulationId + 1,
+                total: settings.simulations,
+            });
+            await yieldToEventLoop();
+        }
+    }
+
+    return buildMonteCarloResult({
+        startTime,
+        settings: {
+            ...settings,
+            polymarketStakePerTrade: stakePerTrade,
+        },
+        inputTradeCount: trades.length,
+        inputNetProfit: observedMetricsFromOriginalOrder.netProfit,
+        inputSharpeRatio: observedMetricsFromOriginalOrder.sharpeRatio,
+        observedMetrics: {
+            netProfit: observedMetricsFromOriginalOrder.netProfit,
+            maxDrawdownPercent: observedMetricsFromOriginalOrder.maxDrawdownPercent,
+            sharpeRatio: observedMetricsFromOriginalOrder.sharpeRatio,
+            successRate: observedMetricsFromOriginalOrder.winRate,
+        },
+        netProfitValues,
+        maxDrawdownPercentValues,
+        sharpeRatioValues,
+        successRateValues,
+        timesToRuin,
+        ruinCount,
+        sampledSimulations,
+        inputSource: "polymarket",
+        successRateLabel: "Positive Trade Rate",
+        polymarketSizingModel: "fixed_stake",
+        coverageSummary: input.coverageSummary,
+        polymarketEvaluationMode: input.evaluationMode,
+    });
+}
+
+function createInsufficientSampleResult(args: {
+    inputTradeCount: number;
+    inputNetProfit: number;
+    inputSharpeRatio: number;
+    settings: MonteCarloSettings;
+    startTime: number;
+    inputSource: "chart" | "polymarket";
+    successRateLabel: "Win Rate" | "Positive Trade Rate";
+    errorMessage: string;
+    coverageSummary?: MonteCarloCoverageSummary;
+    polymarketEvaluationMode?: MonteCarloResult["polymarketEvaluationMode"];
+}): MonteCarloResult {
     return {
         status: "insufficient_sample",
-        errorMessage: `Insufficient trades for Monte Carlo simulation. Need at least 5 trades, got ${backtestResult.trades.length}.`,
-        settings,
+        errorMessage: args.errorMessage,
+        inputSource: args.inputSource,
+        successRateLabel: args.successRateLabel,
+        coverageSummary: args.coverageSummary,
+        polymarketEvaluationMode: args.polymarketEvaluationMode,
+        settings: args.settings,
         simulationsCompleted: 0,
-        inputTradeCount: backtestResult.trades.length,
-        inputNetProfit: backtestResult.netProfit,
-        inputSharpeRatio: backtestResult.sharpeRatio,
+        inputTradeCount: args.inputTradeCount,
+        inputNetProfit: args.inputNetProfit,
+        inputSharpeRatio: args.inputSharpeRatio,
         simulations: [],
         metricSamples: {
             netProfitValues: [],
@@ -214,8 +353,73 @@ function createInsufficientSampleResult(
             min: 0,
             max: 0,
         },
-        executionTimeMs: Date.now() - startTime,
-        seed: settings.seed,
+        executionTimeMs: Date.now() - args.startTime,
+        seed: args.settings.seed,
+    };
+}
+
+function createSimulationRunContext(settings: MonteCarloSettings, tradeCount: number): SimulationRunContext {
+    const progressChunkSize = Math.max(
+        5,
+        Math.min(
+            settings.simulations,
+            Math.max(5, Math.floor(TARGET_WORK_UNITS_PER_CHUNK / Math.max(1, tradeCount))),
+        ),
+    );
+    const sampleEvery = Math.max(1, Math.ceil(settings.simulations / MAX_STORED_SIMULATIONS));
+    const curveSampleIndices = buildCurveSampleIndices(tradeCount, MAX_EQUITY_CURVE_POINTS);
+    const random = createSeededRandom(settings.seed);
+    const baseSeeds = Array.from({ length: settings.simulations }, () => Math.floor(random() * 1_000_000));
+
+    return {
+        ruinThreshold: settings.initialCapital * (settings.ruinThresholdPercent / 100),
+        progressChunkSize,
+        sampleEvery,
+        curveSampleIndices,
+        baseSeeds,
+    };
+}
+
+function buildMonteCarloResult(args: BuildResultArgs): MonteCarloResult {
+    const confidenceIntervals = computeConfidenceIntervals(
+        args.netProfitValues,
+        args.maxDrawdownPercentValues,
+        args.sharpeRatioValues,
+        args.successRateValues,
+        args.observedMetrics,
+    );
+    const netProfitDistribution = computeDistributionStatistics(args.netProfitValues);
+    const ruinProbabilityMetrics = computeRuinProbabilityMetrics(
+        args.maxDrawdownPercentValues,
+        args.timesToRuin,
+        args.ruinCount,
+        args.settings.simulations,
+    );
+
+    return {
+        status: "success",
+        inputSource: args.inputSource,
+        successRateLabel: args.successRateLabel,
+        polymarketSizingModel: args.polymarketSizingModel,
+        coverageSummary: args.coverageSummary,
+        polymarketEvaluationMode: args.polymarketEvaluationMode,
+        settings: args.settings,
+        simulationsCompleted: args.settings.simulations,
+        inputTradeCount: args.inputTradeCount,
+        inputNetProfit: args.inputNetProfit,
+        inputSharpeRatio: args.inputSharpeRatio,
+        simulations: args.sampledSimulations,
+        metricSamples: {
+            netProfitValues: args.netProfitValues,
+            maxDrawdownPercentValues: args.maxDrawdownPercentValues,
+            sharpeRatioValues: args.sharpeRatioValues,
+            winRateValues: args.successRateValues,
+        },
+        ruinProbabilityMetrics,
+        confidenceIntervals,
+        netProfitDistribution,
+        executionTimeMs: Date.now() - args.startTime,
+        seed: args.settings.seed,
     };
 }
 
@@ -274,7 +478,7 @@ function buildCurveSampleIndices(tradeCount: number, maxPoints: number): number[
     return indices;
 }
 
-function simulateTradePath(
+function simulateFixedPnlTradePath(
     order: readonly number[],
     tradePnls: readonly number[],
     tradeExitTimes: readonly Trade["exitTime"][],
@@ -348,6 +552,106 @@ function simulateTradePath(
     };
 }
 
+function simulatePolymarketTradePath(
+    order: readonly number[],
+    trades: readonly PolymarketMonteCarloTradeInput[],
+    tradeExitTimes: readonly Trade["exitTime"][],
+    initialCapital: number,
+    ruinThreshold: number,
+    stakePerTrade: number,
+    curveSampleIndices: readonly number[] | null,
+): SimulatedMetrics {
+    let equity = initialCapital;
+    let peak = initialCapital;
+    let maxDrawdown = 0;
+    let maxDrawdownPercent = 0;
+    let ruinOccurred = false;
+    let timeToRuin: number | undefined;
+    let positiveTradeCount = 0;
+    let nextCurvePoint = 0;
+    const equitySamples = new Array<number>(order.length);
+    const equityCurve = curveSampleIndices ? new Array<number>(curveSampleIndices.length) : undefined;
+    for (let step = 0; step < order.length; step++) {
+        const trade = trades[order[step]];
+        const tradeReturn = trade && trade.entryPrice > 0 ? trade.sharePnl / trade.entryPrice : 0;
+        const allocatedCapital = Math.min(stakePerTrade, Math.max(0, equity));
+        const dollarPnl = allocatedCapital * tradeReturn;
+
+        equity += dollarPnl;
+        equitySamples[step] = equity;
+
+        if (equityCurve && curveSampleIndices && curveSampleIndices[nextCurvePoint] === step) {
+            equityCurve[nextCurvePoint] = equity;
+            nextCurvePoint++;
+        }
+
+        if (equity > peak) {
+            peak = equity;
+        }
+
+        const drawdown = peak - equity;
+        if (drawdown > maxDrawdown) {
+            maxDrawdown = drawdown;
+            maxDrawdownPercent = peak > 0 ? (drawdown / peak) * 100 : 0;
+        }
+
+        if (!ruinOccurred && equity < ruinThreshold) {
+            ruinOccurred = true;
+            timeToRuin = step;
+        }
+
+        if (dollarPnl > 0) {
+            positiveTradeCount++;
+        }
+    }
+
+    while (equityCurve && nextCurvePoint < equityCurve.length) {
+        equityCurve[nextCurvePoint] = equity;
+        nextCurvePoint++;
+    }
+
+    const sharpeRatio = calculateSharpeRatioFromEquitySamples(tradeExitTimes, equitySamples, equitySamples.length);
+    const finalEquity = equity;
+    const netProfit = finalEquity - initialCapital;
+
+    return {
+        netProfit,
+        netProfitPercent: initialCapital > 0 ? (netProfit / initialCapital) * 100 : 0,
+        maxDrawdown,
+        maxDrawdownPercent,
+        sharpeRatio,
+        winRate: order.length > 0 ? (positiveTradeCount / order.length) * 100 : 0,
+        finalEquity,
+        ruinOccurred,
+        timeToRuin,
+        equityCurve,
+    };
+}
+
+function createStoredSimulation(simulationId: number, metrics: SimulatedMetrics): MonteCarloSimulation {
+    return {
+        simulationId,
+        netProfit: metrics.netProfit,
+        netProfitPercent: metrics.netProfitPercent,
+        maxDrawdown: metrics.maxDrawdown,
+        maxDrawdownPercent: metrics.maxDrawdownPercent,
+        sharpeRatio: metrics.sharpeRatio,
+        winRate: metrics.winRate,
+        finalEquity: metrics.finalEquity,
+        equityCurve: metrics.equityCurve ?? [],
+        ruinOccurred: metrics.ruinOccurred,
+        timeToRuin: metrics.timeToRuin,
+    };
+}
+
+function normalizePolymarketStakePerTrade(value: number | undefined): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+        return 1;
+    }
+
+    return Math.max(0.01, value);
+}
+
 function computeRuinProbabilityMetrics(
     maxDrawdownPercentValues: readonly number[],
     timesToRuin: readonly number[],
@@ -376,8 +680,8 @@ function computeConfidenceIntervals(
     netProfitValues: readonly number[],
     maxDrawdownPercentValues: readonly number[],
     sharpeRatioValues: readonly number[],
-    winRateValues: readonly number[],
-    observed: BacktestResult,
+    successRateValues: readonly number[],
+    observed: ObservedMonteCarloMetrics,
 ): ConfidenceIntervals {
     return {
         netProfit: {
@@ -393,8 +697,8 @@ function computeConfidenceIntervals(
             ...computePercentiles(sharpeRatioValues),
         },
         winRate: {
-            observed: observed.winRate,
-            ...computePercentiles(winRateValues),
+            observed: observed.successRate,
+            ...computePercentiles(successRateValues),
         },
     };
 }

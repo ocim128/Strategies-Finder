@@ -1,3 +1,6 @@
+import type { Trade } from "../../types/strategies";
+import type { PolymarketExitMode } from "../../polymarket-exit-mode";
+
 // ============================================================================
 // Configuration Types
 // ============================================================================
@@ -19,6 +22,8 @@ export interface MonteCarloSettings {
     ruinThresholdPercent: number;
     /** Initial capital for simulation */
     initialCapital: number;
+    /** Fixed dollar stake per trade for Polymarket bankroll simulation */
+    polymarketStakePerTrade?: number;
 }
 
 export interface ParameterPerturbationConfig {
@@ -52,6 +57,30 @@ export interface MonteCarloMetricSamples {
     maxDrawdownPercentValues: number[];
     sharpeRatioValues: number[];
     winRateValues: number[];
+}
+
+export interface MonteCarloCoverageSummary {
+    usableTrades: number;
+    totalTrades: number;
+    overallCoverage: number;
+    dataCoverage: number;
+    missingPriceTrades: number;
+    missingOutcomeTrades: number;
+    duplicateTradesIgnored: number;
+    filteredTradesIgnored: number;
+}
+
+export interface PolymarketMonteCarloTradeInput {
+    entryPrice: number;
+    sharePnl: number;
+    exitTime: Trade["exitTime"];
+}
+
+export interface PolymarketMonteCarloInput {
+    trades: PolymarketMonteCarloTradeInput[];
+    hasTradeLevelAnnotations: boolean;
+    coverageSummary: MonteCarloCoverageSummary;
+    evaluationMode: PolymarketExitMode;
 }
 
 export interface RuinProbabilityMetrics {
@@ -131,6 +160,11 @@ export interface ParameterSensitivityReport {
 export interface MonteCarloResult {
     status: "success" | "error" | "insufficient_sample";
     errorMessage?: string;
+    inputSource?: "chart" | "polymarket";
+    successRateLabel?: "Win Rate" | "Positive Trade Rate";
+    polymarketSizingModel?: "fixed_stake";
+    coverageSummary?: MonteCarloCoverageSummary;
+    polymarketEvaluationMode?: PolymarketExitMode;
     
     // Configuration used
     settings: MonteCarloSettings;

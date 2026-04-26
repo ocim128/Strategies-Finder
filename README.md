@@ -17,7 +17,7 @@ It combines:
 - Search parameter spaces with Finder, including random and genetic modes
 - Batch Finder runs across reusable Hunt profiles and compare survivor candidates across symbols, intervals, and execution settings
 - Validate robustness with walk-forward analysis and latest-OOS checks
-- Stress trade-path robustness with Monte Carlo sequence randomization and bootstrap resampling
+- Stress trade-path robustness with Monte Carlo sequence randomization, bootstrap resampling, and Polymarket bankroll survivability on annotated runs
 - Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics, including same-event signal-exit metrics on supported `1m` runs
 - Run Portfolio Lab across multiple pairs for context, ranking, and sizing decisions
 - Build live or scheduled alert subscriptions through the Worker API
@@ -42,7 +42,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 2. Select a strategy from the dropdown.
 3. Click `Run Backtest`.
 4. Open `Trades`, `Results`, `Finder`, `Hunt`, and `Walk Forward` to verify the feature panels loaded.
-5. Open `Monte Carlo` after a backtest to inspect drawdown tails and ruin probability under reshuffled paths.
+5. Open `Monte Carlo` after a backtest to inspect drawdown tails and ruin probability under reshuffled paths, or run Polymarket Monte Carlo on annotated runs to estimate ending bankroll survivability.
 
 ## Architecture Map
 

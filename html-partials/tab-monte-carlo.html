@@ -66,27 +66,37 @@
                 <input type="number" class="param-input" id="mc-initial-capital" value="10000" min="100">
             </div>
         </div>
+
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Stake Per Trade ($)</label>
+                <input type="number" class="param-input" id="mc-polymarket-stake-per-trade" value="1" min="0.01" step="0.01">
+                <div class="param-hint">Used only by Polymarket Monte Carlo. Each trade stakes this fixed dollar amount, capped by remaining equity.</div>
+            </div>
+        </div>
     </div>
 
     <div class="mc-actions">
-        <button class="btn btn-primary run-btn" id="mc-run-btn">
+        <button class="btn btn-primary run-btn" id="mc-run-btn" type="button">
             <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M8 5v14l11-7z" />
             </svg>
             Run Monte Carlo
-            <span class="spinner" id="mc-spinner" style="display:none;"></span>
         </button>
+        <button class="btn btn-secondary run-btn" id="mc-run-polymarket-btn" type="button">Run Polymarket Monte Carlo</button>
         <button class="btn btn-secondary" id="mc-cancel-btn" style="display:none;">Cancel</button>
     </div>
 
     <div class="mc-status-bar">
         <span id="mc-status">Ready</span>
+        <span class="spinner" id="mc-spinner" style="display:none;"></span>
     </div>
 
     <div id="mc-results" style="display: none;">
         <div class="section-header">
             <div class="section-title">Simulation Summary</div>
         </div>
+        <div class="param-hint" id="mc-source-badge">Chart Monte Carlo</div>
         <div class="stats-grid" id="mc-summary-grid">
             <div class="stat-card">
                 <div class="stat-label">Simulations Completed</div>
@@ -97,7 +107,7 @@
                 <div class="stat-value" id="mc-ruin-prob">0%</div>
             </div>
             <div class="stat-card">
-                <div class="stat-label">Median Net Profit</div>
+                <div class="stat-label" id="mc-summary-profit-label">Median Net Profit</div>
                 <div class="stat-value" id="mc-median-profit">$0</div>
             </div>
             <div class="stat-card">
@@ -113,6 +123,37 @@
                 <div class="stat-value" id="mc-exec-time">0s</div>
             </div>
         </div>
+
+        <div class="section-header" id="mc-polymarket-summary-header" style="display: none;">
+            <div class="section-title">Polymarket Survivability</div>
+        </div>
+        <div class="stats-grid" id="mc-polymarket-summary" style="display: none;">
+            <div class="stat-card">
+                <div class="stat-label">Scored Trades Used</div>
+                <div class="stat-value" id="mc-pm-scored-trades">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Overall Coverage</div>
+                <div class="stat-value" id="mc-pm-overall-coverage">0%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Data Coverage</div>
+                <div class="stat-value" id="mc-pm-data-coverage">0%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Observed Final Balance</div>
+                <div class="stat-value" id="mc-pm-observed-final-balance">$0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Median Final Balance</div>
+                <div class="stat-value" id="mc-pm-median-final-bankroll">$0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">5th Percentile Final Balance</div>
+                <div class="stat-value" id="mc-pm-final-bankroll-p5">$0</div>
+            </div>
+        </div>
+        <div class="param-hint" id="mc-pm-skip-breakdown" style="display: none;">Skipped: --</div>
 
         <div class="section-header">
             <div class="section-title">Risk Assessment</div>
@@ -137,7 +178,7 @@
                 <thead>
                     <tr>
                         <th>Method</th>
-                        <th>Median Net Profit</th>
+                        <th id="mc-method-profit-header">Median Net Profit</th>
                         <th>Median Max DD</th>
                         <th>DD 95th</th>
                         <th>Median Sharpe</th>
@@ -186,7 +227,7 @@
         </div>
         <div class="dist-grid">
             <div class="dist-card">
-                <div class="dist-title">Net Profit Distribution</div>
+                <div class="dist-title" id="mc-profit-dist-title">Net Profit Distribution</div>
                 <canvas id="mc-profit-histogram"></canvas>
                 <div class="dist-stats" id="mc-profit-stats">
                     <div>Mean: --</div>
