@@ -4,10 +4,10 @@ import type { BacktestResult, ExpectancyBreakdownRow, ExpectancyBreakdownSection
 import type { Time } from "lightweight-charts";
 import { isPolymarketEventSymbol } from "../dataProviders/polymarket";
 import {
-    getEffectivePolymarket5mSeriesId,
-    loadPolymarket5mOutcomesForTimeRange,
+    getEffectivePolymarketSeriesId,
+    isSupportedPolymarketOutcomeRun,
+    loadPolymarketOutcomesForTimeRange,
     resolvePolymarketOutcomeSymbol,
-    supportsPolymarketOutcomeBridgeRun,
 } from "../polymarket-btc5m";
 import {
     annotateTradesWithPolymarketOutcomesForRun,
@@ -21,6 +21,7 @@ import { resolveBacktestResultMarketContext } from "../backtest-result-context";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { findContainingEvent } from "../polymarket-1m-5m-bridge";
 import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
+import { getPolymarketOutcomeIntervalDurationSec, resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import {
     hasFilteredPolymarketTrades,
     isActualPolymarketEntryMinuteMode,
@@ -54,6 +55,7 @@ export type QuickViewPolymarketSummary = {
     scoredTrades: number;
     missingTrades: number;
     unscoredTrades: number;
+    duplicateTradesIgnored?: number;
     coverage: number;
     winRate: number;
     expectancy: number | null;
@@ -78,6 +80,7 @@ export type QuickViewPolymarketSummary = {
     };
     entrySelectionMode?: PolymarketEntrySelectionMode;
     entryOffset?: number;
+    outcomeInterval?: PolymarketOutcomeInterval;
     timingProfile?: import("../types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry[];
     bestTimingProfile?: import("../types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry | null;
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
@@ -280,7 +283,7 @@ export function getQuickViewDiagnosticSections(result: BacktestResult): Expectan
 function resolvePolymarketSelectedEntryOffset(result: BacktestResult, _trades: readonly Trade[]): number | null {
     const summaryOffset = result.polymarketTradeSummary?.entryOffset;
     if (typeof summaryOffset === "number" && Number.isFinite(summaryOffset)) {
-        return Math.max(0, Math.min(4, Math.round(summaryOffset)));
+        return Math.max(0, Math.floor(summaryOffset));
     }
     return null;
 }
@@ -411,7 +414,9 @@ function buildPolymarketExpectancyRow(label: string, trades: readonly Trade[]): 
 }
 
 function buildPolymarketDiagnosticSections(result: BacktestResult, trades: readonly Trade[]): ExpectancyBreakdownSection[] {
-    const minuteBuckets = Array.from({ length: 5 }, (_, minute) => ({
+    const outcomeInterval = resolvePolymarketOutcomeInterval(result.polymarketTradeSummary?.outcomeInterval);
+    const durationMinutes = Math.max(1, Math.round(getPolymarketOutcomeIntervalDurationSec(outcomeInterval) / 60));
+    const minuteBuckets = Array.from({ length: durationMinutes }, (_, minute) => ({
         label: `Minute ${minute}`,
         trades: [] as Trade[],
     }));
@@ -424,10 +429,17 @@ function buildPolymarketDiagnosticSections(result: BacktestResult, trades: reado
     ];
 
     for (const trade of trades) {
-        const entryTs = parseTimeToUnixSeconds(trade.entryTime);
-        if (entryTs !== null) {
-            const minuteOffset = Math.floor((((entryTs % 300) + 300) % 300) / 60);
-            minuteBuckets[minuteOffset]?.trades.push(trade);
+        const entryOffset = typeof trade.polymarketOutcome?.entryOffset === "number" && Number.isFinite(trade.polymarketOutcome.entryOffset)
+            ? Math.max(0, Math.floor(Number(trade.polymarketOutcome.entryOffset)))
+            : null;
+        if (entryOffset !== null) {
+            minuteBuckets[entryOffset]?.trades.push(trade);
+        } else if (outcomeInterval === "5m") {
+            const entryTs = parseTimeToUnixSeconds(trade.entryTime);
+            if (entryTs !== null) {
+                const minuteOffset = Math.floor((((entryTs % 300) + 300) % 300) / 60);
+                minuteBuckets[minuteOffset]?.trades.push(trade);
+            }
         }
 
         const rangePosition = null;
@@ -444,20 +456,21 @@ function buildPolymarketDiagnosticSections(result: BacktestResult, trades: reado
     const selectedEntryOffset = resolvePolymarketSelectedEntryOffset(result, trades);
     const entrySelectionMode = resolvePolymarketSummaryEntrySelectionMode(result);
     if (minuteRows.length > 0) {
+        const sessionLabel = outcomeInterval === "5m" ? "5m" : outcomeInterval;
         sections.push({
             id: "session_minute",
             title: minuteRows.length === 1
                 ? (selectedEntryOffset !== null
-                    ? "Selected 5m Session Minute"
-                    : (entrySelectionMode === "actual_entry_minute" ? "Observed 5m Session Minute (Auto)" : "Observed 5m Session Minute"))
-                : "By 5m Session Minute",
+                    ? `Selected ${sessionLabel} Session Minute`
+                    : (entrySelectionMode === "actual_entry_minute" ? `Observed ${sessionLabel} Session Minute (Auto)` : `Observed ${sessionLabel} Session Minute`))
+                : `By ${sessionLabel} Session Minute`,
             hint: minuteRows.length === 1
                 ? (selectedEntryOffset !== null
-                    ? `This run is filtered to minute ${selectedEntryOffset} inside each rolling 5m event, so this shows the scored subset for that selected offset only. Exp is shown in cents per $1 share.`
+                    ? `This run is filtered to minute ${selectedEntryOffset} inside each ${sessionLabel} event, so this shows the scored subset for that selected offset only. Exp is shown in cents per $1 share.`
                     : (entrySelectionMode === "actual_entry_minute"
-                        ? "Auto mode scores the first eligible trade in each rolling 5m event and prices it at that trade's actual minute. Exp is shown in cents per $1 share."
-                        : "This run executes on the native 5m chart, so scored entries naturally land on minute 0 of each event. Exp is shown in cents per $1 share."))
-                : "For 1m execution, this shows Polymarket payout expectancy by minute 0-4 inside each rolling 5m event. Exp is shown in cents per $1 share.",
+                        ? `Auto mode scores the first eligible trade in each ${sessionLabel} event and prices it at that trade's actual minute. Exp is shown in cents per $1 share.`
+                        : `This run uses native ${sessionLabel} Polymarket session scoring. Exp is shown in cents per $1 share.`))
+                : `This shows Polymarket payout expectancy by minute inside each ${sessionLabel} event. Exp is shown in cents per $1 share.`,
             rows: minuteRows,
         });
     }
@@ -617,6 +630,7 @@ class QuickViewManager {
             selectedOffset?: number;
             entrySelectionMode?: PolymarketEntrySelectionMode;
             outcomeSymbol?: string;
+            outcomeInterval?: PolymarketOutcomeInterval;
             missingOutcomeTrades?: number;
             unscoredTrades?: number;
         } = {}
@@ -632,6 +646,7 @@ class QuickViewManager {
             polymarketTradeSummary: {
                 seriesId: existingSummary?.seriesId || seriesId || "",
                 outcomeSymbol: existingSummary?.outcomeSymbol ?? options.outcomeSymbol,
+                outcomeInterval: existingSummary?.outcomeInterval ?? options.outcomeInterval,
                 outcomeRowsLoaded: existingSummary?.outcomeRowsLoaded && existingSummary.outcomeRowsLoaded > 0
                     ? existingSummary.outcomeRowsLoaded
                     : fallbackOutcomeRowsLoaded,
@@ -669,6 +684,9 @@ class QuickViewManager {
     }
 
     private resolveSelectedPolymarketEntryOffset(result: BacktestResult): number | undefined {
+        if (this.resolveActivePolymarketOutcomeInterval(result) !== "5m") {
+            return undefined;
+        }
         if (isActualPolymarketEntryMinuteMode(this.resolveSelectedPolymarketEntrySelectionMode(result))) {
             return undefined;
         }
@@ -683,6 +701,10 @@ class QuickViewManager {
 
     private readCurrentPolymarketOutcomeSymbol(): string | null {
         return resolvePolymarketDomSettings().outcomeSymbol;
+    }
+
+    private readCurrentPolymarketOutcomeInterval(): PolymarketOutcomeInterval {
+        return resolvePolymarketDomSettings().outcomeInterval;
     }
 
     private readCurrentPolymarketExitMode(): "resolve_hold" | "signal_exit_same_event" | undefined {
@@ -701,6 +723,12 @@ class QuickViewManager {
         return this.readCurrentPolymarketOutcomeSymbol();
     }
 
+    private resolveActivePolymarketOutcomeInterval(result: BacktestResult): PolymarketOutcomeInterval {
+        return resolvePolymarketOutcomeInterval(
+            result.polymarketTradeSummary?.outcomeInterval ?? this.readCurrentPolymarketOutcomeInterval()
+        );
+    }
+
     private async ensurePolymarketOutcomes(result: BacktestResult): Promise<BacktestResult> {
         const resultContext = resolveBacktestResultMarketContext(result);
         if (!resultContext) {
@@ -709,23 +737,26 @@ class QuickViewManager {
 
         const hasOutcomes = result.trades.some((trade) => trade.polymarketOutcome !== undefined && trade.polymarketOutcome !== null);
         const outcomeSymbol = this.resolveActivePolymarketOutcomeSymbol(result);
+        const outcomeInterval = this.resolveActivePolymarketOutcomeInterval(result);
         const resolvedOutcomeSymbol = resolvePolymarketOutcomeSymbol(resultContext.symbol, outcomeSymbol);
-        const seriesId = getEffectivePolymarket5mSeriesId(resultContext.symbol, outcomeSymbol);
+        const seriesId = getEffectivePolymarketSeriesId(resultContext.symbol, outcomeInterval, outcomeSymbol);
         const shouldRetryEmptySignalExitSummary = result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
             && (result.polymarketTradeSummary.scoredTrades ?? 0) === 0
             && result.trades.length > 0;
         const shouldRepairFilteredActualMode = resultContext.interval === "1m"
+            && outcomeInterval === "5m"
             && isActualPolymarketEntryMinuteMode(this.resolveSelectedPolymarketEntrySelectionMode(result))
             && hasFilteredPolymarketTrades(result.trades);
-        if (result.polymarketTradeSummary && !shouldRetryEmptySignalExitSummary && !shouldRepairFilteredActualMode) {
+        if (result.polymarketTradeSummary && hasOutcomes && !shouldRetryEmptySignalExitSummary && !shouldRepairFilteredActualMode) {
             return this.withPolymarketTradeSummary(result, result.trades, seriesId, {
                 entrySelectionMode: result.polymarketTradeSummary.entrySelectionMode,
                 selectedOffset: result.polymarketTradeSummary.entryOffset,
                 outcomeSymbol: result.polymarketTradeSummary.outcomeSymbol ?? resolvedOutcomeSymbol ?? undefined,
+                outcomeInterval: result.polymarketTradeSummary.outcomeInterval ?? outcomeInterval,
             });
         }
 
-        if (!supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval, outcomeSymbol)) {
+        if (!isSupportedPolymarketOutcomeRun(resultContext.symbol, resultContext.interval, outcomeInterval, outcomeSymbol)) {
             return result;
         }
 
@@ -743,11 +774,18 @@ class QuickViewManager {
         const startTs = Math.min(...targetTimes);
         const endTs = Math.max(...targetTimes);
 
-        const outcomes = await loadPolymarket5mOutcomesForTimeRange(resultContext.symbol, startTs, endTs, outcomeSymbol);
+        const outcomes = await loadPolymarketOutcomesForTimeRange(
+            resultContext.symbol,
+            startTs,
+            endTs,
+            outcomeSymbol,
+            outcomeInterval
+        );
         if (outcomes.length === 0) {
             return hasOutcomes
                 ? this.withPolymarketTradeSummary(result, result.trades, seriesId, {
                     outcomeSymbol: resolvedOutcomeSymbol ?? undefined,
+                    outcomeInterval,
                 })
                 : result;
         }
@@ -826,9 +864,11 @@ class QuickViewManager {
         }
 
         const entrySelectionMode = resultContext.interval === "1m"
+            && outcomeInterval === "5m"
             ? this.resolveSelectedPolymarketEntrySelectionMode(result)
             : undefined;
         const selectedOffset = resultContext.interval === "1m"
+            && outcomeInterval === "5m"
             ? this.resolveSelectedPolymarketEntryOffset(result)
             : undefined;
         const trades = hasOutcomes
@@ -838,14 +878,16 @@ class QuickViewManager {
                 outcomes,
                 resultContext.interval,
                 selectedOffset,
-                entrySelectionMode ?? "fixed_offset"
+                entrySelectionMode ?? "fixed_offset",
+                { outcomeInterval }
             );
         const summary = summarizePolymarketTradesForRun({
-            trades: result.trades,
+            trades,
             outcomes,
             interval: resultContext.interval,
             selectedOffset,
             entrySelectionMode,
+            outcomeInterval,
         });
 
         return this.withPolymarketTradeSummary(result, trades, seriesId, {
@@ -853,6 +895,7 @@ class QuickViewManager {
             entrySelectionMode,
             selectedOffset,
             outcomeSymbol: resolvedOutcomeSymbol ?? undefined,
+            outcomeInterval,
             missingOutcomeTrades: summary.missingOutcomeTrades,
             unscoredTrades: summary.unscoredTrades,
         });
@@ -1097,6 +1140,11 @@ class QuickViewManager {
         const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
         const missingTrades = summary?.missingOutcomeTrades ?? Math.max(0, totalTrades - scoredTrades);
         const unscoredTrades = summary?.unscoredTrades ?? Math.max(0, totalTrades - scoredTrades);
+        const derivedDuplicateTradesIgnored = result.trades.filter(
+            (trade) => trade.polymarketOutcome?.marketExitSource === "duplicate"
+        ).length;
+        const duplicateTradesIgnored = summary?.duplicateTradesIgnored
+            ?? (derivedDuplicateTradesIgnored > 0 ? derivedDuplicateTradesIgnored : undefined);
         const coverageBase = Math.max(0, scoredTrades + unscoredTrades);
         const coverage = coverageBase > 0 ? scoredTrades / coverageBase : 0;
         const bestBaselineWinRate = isSignalExit ? 0 : computePolymarketBestBaselineWinRate(result.trades);
@@ -1110,6 +1158,7 @@ class QuickViewManager {
 
         return {
             wins, losses, neutralTrades, scoredTrades, missingTrades, unscoredTrades, coverage,
+            duplicateTradesIgnored,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
             expectancy: isSignalExit
                 ? (summary?.expectancy ?? payoutSummary?.expectancy ?? null)
@@ -1133,6 +1182,7 @@ class QuickViewManager {
             exitReasonWinRates, afterTakeProfitExpectancy,
             entrySelectionMode: summary?.entrySelectionMode,
             entryOffset: summary?.entryOffset,
+            outcomeInterval: summary?.outcomeInterval,
             timingProfile, bestTimingProfile,
             evaluationMode: isSignalExit ? "signal_exit_same_event" : undefined,
             missingPriceTrades: isSignalExit ? (summary?.missingPriceTrades ?? 0) : undefined,

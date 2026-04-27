@@ -12,21 +12,43 @@ describe("polymarket sync outcomes CLI", () => {
         const targets = resolveOutcomeSyncTargets(config);
         assert.deepEqual(targets, [{
             symbol: undefined,
+            outcomeInterval: "5m",
             seriesId: "10684",
         }]);
     });
 
-    it("expands --all into every supported Polymarket 5m symbol", () => {
+    it("expands --all into every supported Polymarket native session target", () => {
         const config = parseArgs(["--all"]);
         assert.ok(config);
         assert.equal(config.allSymbols, true);
 
         const targets = resolveOutcomeSyncTargets(config);
         assert.deepEqual(targets, [
-            { symbol: "BTCUSDT", seriesId: "10684" },
-            { symbol: "ETHUSDT", seriesId: "10683" },
-            { symbol: "SOLUSDT", seriesId: "10686" },
-            { symbol: "XRPUSDT", seriesId: "10685" },
+            { symbol: "BTCUSDT", outcomeInterval: "5m", seriesId: "10684" },
+            { symbol: "ETHUSDT", outcomeInterval: "5m", seriesId: "10683" },
+            { symbol: "SOLUSDT", outcomeInterval: "5m", seriesId: "10686" },
+            { symbol: "XRPUSDT", outcomeInterval: "5m", seriesId: "10685" },
+            { symbol: "BTCUSDT", outcomeInterval: "15m", seriesId: "10192" },
+            { symbol: "ETHUSDT", outcomeInterval: "15m", seriesId: "10191" },
+            { symbol: "SOLUSDT", outcomeInterval: "15m", seriesId: "10423" },
+            { symbol: "XRPUSDT", outcomeInterval: "15m", seriesId: "10422" },
+            { symbol: "BTCUSDT", outcomeInterval: "1h", seriesId: "10114" },
+            { symbol: "ETHUSDT", outcomeInterval: "1h", seriesId: "10117" },
+            { symbol: "SOLUSDT", outcomeInterval: "1h", seriesId: "10122" },
+            { symbol: "XRPUSDT", outcomeInterval: "1h", seriesId: "10123" },
+        ]);
+    });
+
+    it("keeps --all inside the requested native session when --interval is explicit", () => {
+        const config = parseArgs(["--all", "--interval", "15m"]);
+        assert.ok(config);
+
+        const targets = resolveOutcomeSyncTargets(config);
+        assert.deepEqual(targets, [
+            { symbol: "BTCUSDT", outcomeInterval: "15m", seriesId: "10192" },
+            { symbol: "ETHUSDT", outcomeInterval: "15m", seriesId: "10191" },
+            { symbol: "SOLUSDT", outcomeInterval: "15m", seriesId: "10423" },
+            { symbol: "XRPUSDT", outcomeInterval: "15m", seriesId: "10422" },
         ]);
     });
 

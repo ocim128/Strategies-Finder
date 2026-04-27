@@ -72,8 +72,21 @@ describe('Backtest settings compatibility', () => {
         expect(coerceBacktestDomSettingValue(contract!, 'anything-else')).to.equal('fixed_offset');
     });
 
+    it('keeps polymarketOutcomeInterval in canonical lowercase form when read from DOM contracts', () => {
+        const contract = getBacktestDomSettingContract('polymarketOutcomeInterval');
+        expect(contract).to.not.equal(undefined);
+        expect(coerceBacktestDomSettingValue(contract!, '15m')).to.equal('15m');
+        expect(coerceBacktestDomSettingValue(contract!, '1H')).to.equal('1h');
+        expect(coerceBacktestDomSettingValue(contract!, 'anything-else')).to.equal('5m');
+    });
+
     it('includes polymarketEntrySelectionMode in the shared DOM setting ids used by manual backtests', () => {
         expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketEntrySelectionMode')).to.equal(true);
+    });
+
+    it('includes polymarketOutcomeInterval in shared defaults and manual-backtest DOM ids', () => {
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketOutcomeInterval).to.equal('5m');
+        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketOutcomeInterval')).to.equal(true);
     });
 
     it('prefers actual entry minute for display when fixed-offset annotations are stale and rows are filtered', () => {
@@ -91,6 +104,7 @@ describe('Backtest settings compatibility', () => {
             atrPeriod: 14,
             tradeFilterMode: 'volume',
             executionModel: 'next_open',
+            polymarketOutcomeInterval: '15m',
             flipAfterConsecutiveLosses: 3,
             flipCooldownTrades: 2,
             minTradesBeforeFirstFlip: 10,
@@ -101,6 +115,7 @@ describe('Backtest settings compatibility', () => {
         expect(sanitized.atrPeriod).to.equal(14);
         expect(sanitized.tradeFilterMode).to.equal('volume');
         expect('executionModel' in sanitized).to.equal(false);
+        expect('polymarketOutcomeInterval' in sanitized).to.equal(false);
         expect('flipAfterConsecutiveLosses' in sanitized).to.equal(false);
         expect('flipCooldownTrades' in sanitized).to.equal(false);
         expect('minTradesBeforeFirstFlip' in sanitized).to.equal(false);

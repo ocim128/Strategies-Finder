@@ -197,11 +197,15 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
   if (!summary) return '';
   const isSignalExit = summary.evaluationMode === "signal_exit_same_event";
   const usesActualEntryMinute = summary.entrySelectionMode === "actual_entry_minute";
+  const outcomeInterval = summary.outcomeInterval ?? "5m";
+  const usesNativeLongSession = outcomeInterval !== "5m";
   const modeLabel = isSignalExit
     ? "Signal Exit (same event)"
     : usesActualEntryMinute
       ? "Entry Selection: Auto (actual trade minute)"
-      : (typeof summary.entryOffset === 'number' ? `Selected Offset: Minute ${summary.entryOffset}` : 'Run Mode: Native 5m scoring');
+      : (!usesNativeLongSession && typeof summary.entryOffset === 'number'
+          ? `Selected Offset: Minute ${summary.entryOffset}`
+          : `Run Mode: Native ${outcomeInterval} scoring`);
   const winCountLabel = isSignalExit ? "Profitable Trades" : "Poly Wins";
   const lossCountLabel = isSignalExit ? "Losing Trades" : "Poly Losses";
   const streakWinLabel = isSignalExit ? "Max Profit Streak" : "Max Win Streak";
@@ -227,7 +231,7 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
   const afterMaxHoldLabel = isSignalExit ? "Entry Profit % | After Max Hold" : "Entry Win % | After Max Hold";
   const afterTakeProfitLabel = isSignalExit ? "Entry Profit % | After TP" : "Entry Win % | After TP";
   const afterSignalLabel = isSignalExit ? "Entry Profit % | After Signal" : "Entry Win % | After Signal";
-  const timingProfileSection = summary.timingProfile && summary.timingProfile.length > 0
+  const timingProfileSection = !usesNativeLongSession && summary.timingProfile && summary.timingProfile.length > 0
     ? buildPolymarketTimingProfileSectionHtml(summary)
     : '';
   const diagnosticsNote = `
@@ -307,7 +311,7 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
           <div class="qv-stat-card">
               <div class="qv-stat-label">Avg Entry Price</div>
               <div class="qv-stat-value">
-                  ${summary.avgEntryPrice === null ? 'n/a' : formatPolymarketCents(summary.avgEntryPrice)}
+                  ${summary.avgEntryPrice === null ? 'n/a' : formatProbabilityCents(summary.avgEntryPrice)}
               </div>
           </div>
           <div class="qv-stat-card">
@@ -350,6 +354,12 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
               <div class="qv-stat-label">Unscored Trades</div>
               <div class="qv-stat-value">${summary.unscoredTrades}</div>
           </div>
+          ${summary.duplicateTradesIgnored && summary.duplicateTradesIgnored > 0 ? `
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Duplicate Trades Ignored</div>
+              <div class="qv-stat-value">${summary.duplicateTradesIgnored}</div>
+          </div>
+          ` : ''}
           ${summary.missingTrades > 0 ? `
           <div class="qv-stat-card">
               <div class="qv-stat-label">Missing Outcome Rows</div>
@@ -443,6 +453,10 @@ export function fmtPrice(price: number): string {
 export function formatPolymarketCents(value: number): string {
   const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
   return `${prefix}${(Math.abs(value) * 100).toFixed(1)}c`;
+}
+
+export function formatProbabilityCents(value: number): string {
+  return `${(Math.abs(value) * 100).toFixed(1)}c`;
 }
 
 export function formatProfitFactor(value: number | null): string {

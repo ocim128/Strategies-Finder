@@ -1,7 +1,7 @@
 import { createPolymarketPanelDom, type PolymarketPanelDom } from "./polymarket-panel-dom";
 import {
     getSupportedPolymarket5mSymbolsLabel,
-    supportsPolymarketOutcomeBridgeRun,
+    isSupportedPolymarketOutcomeRun,
 } from "./polymarket-btc5m";
 import type { PolymarketFillScope } from "./polymarket-fill-analysis";
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -11,6 +11,7 @@ import type { BacktestResult, ExpectancyBreakdownSection } from "./types/strateg
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
 import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
+import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
     analyzePolymarketDeployability,
     extractScoredTrades,
@@ -57,6 +58,7 @@ class PolymarketPanelService {
             readCurrentPolymarketEntrySelectionMode: () => this.readCurrentPolymarketEntrySelectionMode(),
             readCurrentPolymarketExitMode: () => this.readCurrentPolymarketExitMode(),
             readCurrentPolymarketOutcomeSymbol: () => this.readCurrentPolymarketOutcomeSymbol(),
+            readCurrentPolymarketOutcomeInterval: () => this.readCurrentPolymarketOutcomeInterval(),
             isPanelVisible: () => this.isPanelVisible(),
             scheduleRender: (delayMs?: number) => this.scheduleRender(delayMs),
             invalidateDeployabilityCache: () => {
@@ -139,6 +141,10 @@ class PolymarketPanelService {
         return resolvePolymarketDomSettings().outcomeSymbol;
     }
 
+    private readCurrentPolymarketOutcomeInterval(): PolymarketOutcomeInterval {
+        return resolvePolymarketDomSettings().outcomeInterval;
+    }
+
     private render(): void {
         if (!this.isPanelVisible()) {
             return;
@@ -147,13 +153,15 @@ class PolymarketPanelService {
         const loader = this.outcomeLoader!;
         const result = loader.lastResult;
         const resultContext = resolveBacktestResultMarketContext(result);
+        const outcomeInterval = result ? loader.resolveActivePolymarketOutcomeInterval(result) : this.readCurrentPolymarketOutcomeInterval();
         const supportedRun = resultContext
-            ? supportsPolymarketOutcomeBridgeRun(
+            ? isSupportedPolymarketOutcomeRun(
                 resultContext.symbol,
                 resultContext.interval,
+                outcomeInterval,
                 result ? loader.resolveActivePolymarketOutcomeSymbol(result) : this.readCurrentPolymarketOutcomeSymbol()
             )
-            : supportsPolymarketOutcomeBridgeRun(state.currentSymbol, state.currentInterval, this.readCurrentPolymarketOutcomeSymbol());
+            : isSupportedPolymarketOutcomeRun(state.currentSymbol, state.currentInterval, outcomeInterval, this.readCurrentPolymarketOutcomeSymbol());
 
         this.bridgeExport!.renderBridgeControls();
 
@@ -163,7 +171,7 @@ class PolymarketPanelService {
         }
 
         if (!supportedRun) {
-            this.showEmpty(`This tab currently supports ${getSupportedPolymarket5mSymbolsLabel()} on the 5m chart or on 1m via the 5m outcome bridge.`);
+            this.showEmpty(`This tab currently supports ${getSupportedPolymarket5mSymbolsLabel()} with native 5m, 15m, or 1h Polymarket sessions.`);
             return;
         }
 
@@ -213,12 +221,14 @@ class PolymarketPanelService {
         scoredTrades: number;
         missingTrades: number;
         unscoredTrades: number;
+        duplicateTradesIgnored?: number;
         coverage: number;
         winRate: number;
         outcomeRowsLoaded: number;
         baselineDelta: number;
         entrySelectionMode?: PolymarketEntrySelectionMode;
         entryOffset?: number;
+        outcomeInterval?: PolymarketOutcomeInterval;
         bestTimingProfile?: NonNullable<NonNullable<BacktestResult["polymarketTradeSummary"]>["timingProfile"]>[number] | null;
         evaluationMode?: "resolve_hold" | "signal_exit_same_event";
         missingPriceTrades?: number;
@@ -246,6 +256,11 @@ class PolymarketPanelService {
         const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
         const missingTrades = summary?.missingOutcomeTrades ?? Math.max(0, totalTrades - scoredTrades);
         const unscoredTrades = summary?.unscoredTrades ?? Math.max(0, totalTrades - scoredTrades);
+        const derivedDuplicateTradesIgnored = result.trades.filter(
+            (trade) => trade.polymarketOutcome?.marketExitSource === "duplicate"
+        ).length;
+        const duplicateTradesIgnored = summary?.duplicateTradesIgnored
+            ?? (derivedDuplicateTradesIgnored > 0 ? derivedDuplicateTradesIgnored : undefined);
         const coverageBase = Math.max(0, scoredTrades + unscoredTrades);
         const coverage = coverageBase > 0 ? scoredTrades / coverageBase : 0;
         const baselineWinRate = isSignalExit ? 0 : computePolymarketBestBaselineWinRate(result.trades);
@@ -267,12 +282,14 @@ class PolymarketPanelService {
             scoredTrades,
             missingTrades,
             unscoredTrades,
+            duplicateTradesIgnored,
             coverage,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
             outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
             baselineDelta: isSignalExit ? 0 : (scoredTrades > 0 ? wins / scoredTrades : 0) - baselineWinRate,
             entrySelectionMode: summary?.entrySelectionMode,
             entryOffset: summary?.entryOffset,
+            outcomeInterval: summary?.outcomeInterval,
             bestTimingProfile,
             evaluationMode: isSignalExit ? "signal_exit_same_event" : undefined,
             missingPriceTrades: isSignalExit ? (summary?.missingPriceTrades ?? 0) : undefined,
@@ -307,16 +324,18 @@ class PolymarketPanelService {
     private buildPolymarketSummarySection(summary: NonNullable<ReturnType<PolymarketPanelService["getPolymarketSummary"]>>): string {
         const isSignalExit = summary.evaluationMode === "signal_exit_same_event";
         const usesActualEntryMinute = isActualPolymarketEntryMinuteMode(summary.entrySelectionMode);
+        const outcomeInterval = resolvePolymarketOutcomeInterval(summary.outcomeInterval);
+        const usesNativeLongSession = outcomeInterval !== "5m";
         const runModeLabel = isSignalExit ? "Exit Mode" : (
             usesActualEntryMinute
                 ? "Entry Selection"
-                : (typeof summary.entryOffset === "number" ? "Selected Offset" : "Run Mode")
+                : (!usesNativeLongSession && typeof summary.entryOffset === "number" ? "Selected Offset" : "Run Mode")
         );
         const runModeValue = isSignalExit
             ? "Signal Exit (same event)"
             : usesActualEntryMinute
                 ? "Auto (actual trade minute)"
-                : (typeof summary.entryOffset === "number" ? `Minute ${summary.entryOffset}` : "Native 5m scoring");
+                : (!usesNativeLongSession && typeof summary.entryOffset === "number" ? `Minute ${summary.entryOffset}` : `Native ${outcomeInterval} scoring`);
         const winCountLabel = isSignalExit ? "Profitable Trades" : "Poly Wins";
         const lossCountLabel = isSignalExit ? "Losing Trades" : "Poly Losses";
         const profitabilityTone = isSignalExit && summary.wins === 0 && summary.losses === 0
@@ -325,10 +344,10 @@ class PolymarketPanelService {
         const timingContext = summary.bestTimingProfile
             ? `Best minute ${summary.bestTimingProfile.entryOffset} at ${formatPercent(summary.bestTimingProfile.winRate)}`
             : isSignalExit
-                ? "Signal-exit mode: trades exit on chart sell signal inside the same 5m event."
+                ? `Signal-exit mode: trades exit on chart sell signal inside the same ${outcomeInterval} session.`
                 : usesActualEntryMinute
                     ? "Auto mode scores the first eligible trade in each 5m event and uses that trade's actual minute for entry pricing."
-                    : "Full timing profile is available in 1m bridge runs.";
+                    : (usesNativeLongSession ? `Full ${outcomeInterval} session timing diagnostics are available below.` : "Full timing profile is available in 1m bridge runs.");
 
         const signalExitCards = isSignalExit ? `
                     ${this.renderStatCard("Signal Exited", String(summary.signalExitedTrades ?? 0))}
@@ -355,6 +374,7 @@ class PolymarketPanelService {
                     ${signalExitCards}
                     ${this.renderStatCard("Scored Trades", String(summary.scoredTrades))}
                     ${this.renderStatCard("Unscored Trades", String(summary.unscoredTrades))}
+                    ${summary.duplicateTradesIgnored && summary.duplicateTradesIgnored > 0 ? this.renderStatCard("Duplicate Trades Ignored", String(summary.duplicateTradesIgnored)) : ""}
                     ${summary.missingTrades > 0 ? this.renderStatCard("Missing Outcome Rows", String(summary.missingTrades)) : ""}
                     ${this.renderStatCard("Outcome Rows Fetched", String(summary.outcomeRowsLoaded))}
                 </div>

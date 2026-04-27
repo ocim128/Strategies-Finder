@@ -189,25 +189,27 @@ export class FinderManager {
 
 	private initPolymarketUI(): void {
 		const { finderPolymarketToggle: toggle } = this.getDom();
-
-		this.setPolymarketControlsEnabled(toggle.checked);
-		toggle.addEventListener('change', () => {
+		const refreshControls = () => {
 			this.setPolymarketControlsEnabled(toggle.checked);
-		});
+		};
+
+		refreshControls();
+		toggle.addEventListener('change', refreshControls);
+		document.getElementById('polymarketOutcomeInterval')?.addEventListener('change', refreshControls);
+		document.getElementById('polymarketExitMode')?.addEventListener('change', refreshControls);
 	}
 
 	private setPolymarketControlsEnabled(enabled: boolean): void {
 		const dom = this.getDom();
+		const polymarketSettings = resolvePolymarketDomSettings();
+		const lockOffsetRelevant = polymarketSettings.exitMode !== 'signal_exit_same_event'
+			&& polymarketSettings.outcomeInterval === '5m';
+
 		dom.finderPolymarketSettings.classList.toggle('is-disabled', !enabled);
 		dom.finderPolymarketRankMode.disabled = !enabled;
 		dom.finderPolymarketMinScored.disabled = !enabled;
-		dom.finderPolymarketLockOffset.disabled = !enabled;
+		dom.finderPolymarketLockOffset.disabled = !enabled || !lockOffsetRelevant;
 		dom.finderPolymarketAfterTakeProfitOnly.disabled = !enabled;
-
-		const isSignalExit = resolvePolymarketDomSettings().exitMode === 'signal_exit_same_event';
-		if (isSignalExit) {
-			dom.finderPolymarketLockOffset.disabled = true;
-		}
 	}
 
 	private renderStrategySelection(): void {

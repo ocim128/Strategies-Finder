@@ -5,7 +5,12 @@ import {
     loadPolymarketPricePoints,
     resetLocalSqlitePolymarketApiAvailabilityForTests,
 } from "../lib/local-sqlite-polymarket-api";
-import { loadPolymarket5mOutcomesForTimeRange } from "../lib/polymarket-btc5m";
+import {
+    getEffectivePolymarketSeriesId,
+    getPolymarketSeriesIdForSymbol,
+    loadPolymarket5mOutcomesForTimeRange,
+    loadPolymarketOutcomesForTimeRange,
+} from "../lib/polymarket-btc5m";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -14,7 +19,13 @@ afterEach(() => {
     resetLocalSqlitePolymarketApiAvailabilityForTests();
 });
 
-describe("Polymarket 5m outcome loading", () => {
+describe("Polymarket outcome loading", () => {
+    it("resolves native 15m and 1h series ids for supported symbols", () => {
+        expect(getPolymarketSeriesIdForSymbol("BTCUSDT", "15m")).to.equal("10192");
+        expect(getPolymarketSeriesIdForSymbol("SOLUSDT", "1h")).to.equal("10122");
+        expect(getEffectivePolymarketSeriesId("NEARUSDT", "15m", "ETHUSDT")).to.equal("10191");
+    });
+
     it("does not reuse stale sequential rows from an in-memory TTL cache", async () => {
         let loadCalls = 0;
         globalThis.fetch = (async (input) => {
@@ -179,5 +190,61 @@ describe("Polymarket 5m outcome loading", () => {
         expect(outcomes).to.have.length(1);
         expect(pricePoints).to.have.length(1);
         expect(statusCalls).to.equal(1);
+    });
+
+    it("loads native 15m outcomes from the session-specific series id", async () => {
+        const requestedSeriesIds: string[] = [];
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname !== "/api/sqlite/load-polymarket-outcomes") {
+                throw new Error(`Unexpected URL ${url.pathname}`);
+            }
+
+            requestedSeriesIds.push(url.searchParams.get("seriesId") ?? "");
+            return new Response(JSON.stringify({
+                ok: true,
+                rows: [{
+                    series_id: "10192",
+                    event_slug: "btc-15m-1",
+                    market_slug: "btc-15m-1",
+                    interval: "15m",
+                    event_start_ts: 1_700_000_000,
+                    event_end_ts: 1_700_000_900,
+                    yes_token_id: "yes-1",
+                    no_token_id: "no-1",
+                    yes_open_price: 0.5,
+                    yes_entry_minute_1_price: 0.51,
+                    yes_entry_minute_2_price: 0.52,
+                    yes_entry_minute_3_price: 0.53,
+                    yes_entry_minute_4_price: 0.54,
+                    resolved_outcome_up: 1,
+                    resolution_source: "test",
+                    updated_at: 1,
+                }],
+            }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }) as typeof fetch;
+
+        const outcomes = await loadPolymarketOutcomesForTimeRange("BTCUSDT", 1_700_000_300, 1_700_000_600, undefined, "15m");
+
+        expect(requestedSeriesIds).to.deep.equal(["10192"]);
+        expect(outcomes[0]?.interval).to.equal("15m");
     });
 });

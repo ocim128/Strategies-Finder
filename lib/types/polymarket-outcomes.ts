@@ -1,6 +1,7 @@
 import type { CapitalSettings } from "./backtest";
 import type { BacktestSettings } from "./strategies";
 import type { PolymarketEntrySelectionMode } from "../polymarket-entry-selection-mode";
+import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 
 export interface PolymarketOutcomeRow {
     series_id: string;
@@ -32,7 +33,7 @@ export interface PolymarketEvalRow {
     isWin: boolean;
     signalReason: string | undefined;
     strategyKey: string | undefined;
-    /** Entry offset minute within 5m event (0..4), only populated for 1m runs */
+    /** Entry offset minute within the selected Polymarket event session. */
     entryOffset?: number;
 }
 
@@ -50,7 +51,7 @@ export interface TradePolymarketOutcome {
     marketNoPrice?: number | null;
     /** Entry probability paid for this trade (YES for longs, NO for shorts). */
     marketEntryPrice?: number | null;
-    /** Entry offset minute within 5m event (0..4), only populated for 1m runs */
+    /** Entry offset minute within the selected Polymarket event session. */
     entryOffset?: number;
     /** Which evaluation mode produced this outcome annotation */
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
@@ -80,6 +81,7 @@ export interface BacktestPolymarketTimingProfileEntry {
 export interface BacktestPolymarketTradeSummary {
     seriesId: string;
     outcomeSymbol?: string;
+    outcomeInterval?: PolymarketOutcomeInterval;
     outcomeRowsLoaded: number;
     scoredTrades: number;
     missingOutcomeTrades: number;

@@ -20,6 +20,7 @@ import { activateLazyFeature } from "../lazy-feature-init";
 import {
     getPolymarketAnnotationToggle,
     getPolymarketEntrySelectionModeSelect,
+    getPolymarketOutcomeIntervalSelect,
     getPolymarketExitModeSelect,
     getPolymarketSettingsRows,
     getFinderPolymarketRankModeSelect,
@@ -29,13 +30,19 @@ import {
 import type { Time } from "lightweight-charts";
 
 function updatePolymarketEntryOffsetVisibility(interval: string = state.currentInterval): void {
-    const { entrySelectionModeRow, offsetRow, exitModeRow, outcomeSymbolRow } = getPolymarketSettingsRows();
+    const { outcomeIntervalRow, entrySelectionModeRow, offsetRow, exitModeRow, outcomeSymbolRow } = getPolymarketSettingsRows();
     const annotationToggle = getPolymarketAnnotationToggle();
     const annotationEnabled = annotationToggle?.checked ?? false;
     const polymarketSettings = resolvePolymarketDomSettings();
-    const isSignalExit = polymarketSettings.exitMode === 'signal_exit_same_event';
+    const isNative5mSession = polymarketSettings.outcomeInterval === '5m';
+    const supportsSignalExit = interval === '1m';
+    const isSignalExit = supportsSignalExit && polymarketSettings.exitMode === 'signal_exit_same_event';
     const usesActualEntryMinute = polymarketSettings.entrySelectionMode === 'actual_entry_minute';
-    const showsEntryBridgeControls = interval === '1m' && annotationEnabled && !isSignalExit;
+    const showsEntryBridgeControls = interval === '1m' && isNative5mSession && annotationEnabled && !isSignalExit;
+
+    if (outcomeIntervalRow) {
+        outcomeIntervalRow.style.display = annotationEnabled ? 'block' : 'none';
+    }
 
     if (entrySelectionModeRow) {
         entrySelectionModeRow.style.display = showsEntryBridgeControls ? 'block' : 'none';
@@ -49,6 +56,17 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
     }
     if (outcomeSymbolRow) {
         outcomeSymbolRow.style.display = annotationEnabled ? 'block' : 'none';
+    }
+
+    const exitModeSelect = getPolymarketExitModeSelect();
+    const signalExitOption = exitModeSelect
+        ? Array.from(exitModeSelect.options).find((option) => option.value === 'signal_exit_same_event')
+        : undefined;
+    if (signalExitOption) {
+        signalExitOption.disabled = !supportsSignalExit;
+    }
+    if (exitModeSelect && exitModeSelect.value === 'signal_exit_same_event' && !supportsSignalExit) {
+        exitModeSelect.value = 'resolve_hold';
     }
 }
 
@@ -94,6 +112,14 @@ export function setupStateSubscriptions() {
     if (polymarketEntrySelectionModeSelect) {
         polymarketEntrySelectionModeSelect.addEventListener('change', () => {
             updatePolymarketEntryOffsetVisibility();
+        });
+    }
+
+    const polymarketOutcomeIntervalSelect = getPolymarketOutcomeIntervalSelect();
+    if (polymarketOutcomeIntervalSelect) {
+        polymarketOutcomeIntervalSelect.addEventListener('change', () => {
+            updatePolymarketEntryOffsetVisibility();
+            updateFinderRankModeOptions();
         });
     }
 

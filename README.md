@@ -18,7 +18,7 @@ It combines:
 - Batch Finder runs across reusable Hunt profiles and compare survivor candidates across symbols, intervals, and execution settings
 - Validate robustness with walk-forward analysis and latest-OOS checks
 - Stress trade-path robustness with Monte Carlo sequence randomization, bootstrap resampling, and Polymarket bankroll survivability on annotated runs
-- Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics, including same-event signal-exit metrics on supported `1m` runs
+- Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics, including native `15m` / `1h` session summaries and same-event signal-exit metrics on supported `1m` runs
 - Run Portfolio Lab across multiple pairs for context, ranking, and sizing decisions
 - Build live or scheduled alert subscriptions through the Worker API
 

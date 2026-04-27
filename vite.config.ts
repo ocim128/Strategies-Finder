@@ -123,7 +123,6 @@ type PolymarketHistoryPoint = {
 };
 
 const POLYMARKET_PRICE_HISTORY_TIMEOUT_MS = 8000;
-const POLYMARKET_EVENT_DURATION_SEC = 300;
 // First-run signal-exit scoring can touch many distinct 5m events. Fetch in a
 // wider batch so server-side ensure can populate the local cache in one pass.
 const POLYMARKET_PRICE_POINT_BATCH_SIZE = 24;
@@ -164,7 +163,7 @@ async function fetchPolymarketYesHistory(outcome: PolymarketOutcomeDbRow): Promi
     const nearParams = new URLSearchParams({
         market: outcome.yes_token_id,
         startTs: String(Math.max(0, outcome.event_start_ts - 15)),
-        endTs: String(outcome.event_start_ts + POLYMARKET_EVENT_DURATION_SEC),
+        endTs: String(outcome.event_end_ts),
     });
     const nearPoints = normalizePolymarketHistoryPoints(
         await fetchPolymarketHistory(`${POLYMARKET_CLOB_HISTORY_URL}?${nearParams.toString()}`)
@@ -181,7 +180,7 @@ async function fetchPolymarketYesHistory(outcome: PolymarketOutcomeDbRow): Promi
         await fetchPolymarketHistory(`${POLYMARKET_CLOB_HISTORY_URL}?${fallbackParams.toString()}`)
     ).filter((point) => (
         point.t >= outcome.event_start_ts
-        && point.t <= outcome.event_start_ts + POLYMARKET_EVENT_DURATION_SEC
+        && point.t <= outcome.event_end_ts
     ));
 }
 
@@ -294,20 +293,28 @@ async function ensurePolymarketPricePointsInDb(args: {
     }
 
     const existingRows = loadStoredPolymarketPricePoints(args.db, args.seriesId, eventStartTs);
-    const distinctTimestampCountByEvent = new Map<number, Set<number>>();
+    const coverageByEvent = new Map<number, { timestamps: Set<number>; latestTs: number }>();
     for (const row of existingRows) {
-        let timestamps = distinctTimestampCountByEvent.get(row.event_start_ts);
-        if (!timestamps) {
-            timestamps = new Set<number>();
-            distinctTimestampCountByEvent.set(row.event_start_ts, timestamps);
+        let coverage = coverageByEvent.get(row.event_start_ts);
+        if (!coverage) {
+            coverage = {
+                timestamps: new Set<number>(),
+                latestTs: Number.NEGATIVE_INFINITY,
+            };
+            coverageByEvent.set(row.event_start_ts, coverage);
         }
-        timestamps.add(row.ts);
+        coverage.timestamps.add(row.ts);
+        coverage.latestTs = Math.max(coverage.latestTs, row.ts);
     }
 
     const coveredEventStarts = new Set<number>();
     for (const outcome of args.outcomes) {
-        const timestamps = distinctTimestampCountByEvent.get(outcome.event_start_ts);
-        if (timestamps && timestamps.size >= 2) {
+        const coverage = coverageByEvent.get(outcome.event_start_ts);
+        if (
+            coverage
+            && coverage.timestamps.size >= 2
+            && coverage.latestTs >= outcome.event_end_ts - 60
+        ) {
             coveredEventStarts.add(outcome.event_start_ts);
         }
     }

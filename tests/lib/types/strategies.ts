@@ -1,6 +1,7 @@
 import type { Time } from "lightweight-charts";
 import type { BacktestPolymarketTradeSummary, TradePolymarketOutcome } from "./polymarket-outcomes";
 import type { PolymarketEntrySelectionMode } from "../polymarket-entry-selection-mode";
+import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 export type { Time };
 export type { EdgeStatistics, EdgeRatioHorizon, TTestResult, StreakAnalysis } from '../strategies/backtest/edge-statistics';
 
@@ -291,15 +292,17 @@ export interface BacktestSettings {
     strategyTimeframeEnabled?: boolean;
     /** Higher timeframe in minutes for global strategy execution */
     strategyTimeframeMinutes?: number;
-    /** Enable Polymarket outcome annotation for supported symbols (BTCUSDT, ETHUSDT, etc on 5m) */
+    /** Enable Polymarket outcome annotation for supported symbols. */
     polymarketAnnotationEnabled?: boolean;
     /** Optional Polymarket outcome series override. Blank means use the chart symbol. */
     polymarketOutcomeSymbol?: string;
+    /** Native Polymarket outcome session. */
+    polymarketOutcomeInterval?: PolymarketOutcomeInterval;
     /** Entry selection mode for 1m -> 5m Polymarket bridge scoring. */
     polymarketEntrySelectionMode?: PolymarketEntrySelectionMode;
     /** Entry offset minute (0..4) for fixed-offset 1m -> 5m Polymarket bridge scoring */
     polymarketEntryOffset?: number;
-    /** Polymarket exit evaluation mode: resolve_hold scores at final binary outcome, signal_exit_same_event exits on chart sell signal inside the mapped 5m event */
+    /** Polymarket exit evaluation mode: resolve_hold scores at final binary outcome, signal_exit_same_event exits on chart sell signal inside the mapped native outcome session */
     polymarketExitMode?: "resolve_hold" | "signal_exit_same_event";
     /** Resolved secondary symbol for cross-symbol strategies. */
     crossSymbolSecondary?: string;

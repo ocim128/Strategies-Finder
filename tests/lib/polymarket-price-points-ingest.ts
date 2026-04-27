@@ -9,7 +9,6 @@ import { debugLogger } from "./debug-logger";
 
 const POLYMARKET_PROXY_HISTORY_URL = "/api/polymarket-history";
 const POLYMARKET_HISTORY_URL = "https://clob.polymarket.com/prices-history";
-const EVENT_DURATION_SEC = 300;
 const HISTORY_REQUEST_TIMEOUT_MS = 6000;
 // First-run signal-exit scoring can touch hundreds of 5m events on a 1m chart.
 // Keep ingestion parallel enough that the initial backtest finishes before the
@@ -68,12 +67,13 @@ async function fetchJsonWithFallback(urls: string[]): Promise<HistoryResponse> {
 
 async function fetchYesHistory(
     yesTokenId: string,
-    eventStartTs: number
+    eventStartTs: number,
+    eventEndTs: number
 ): Promise<RawHistoryPoint[]> {
     const params = new URLSearchParams({
         market: yesTokenId,
         startTs: String(Math.max(0, eventStartTs - 15)),
-        endTs: String(eventStartTs + EVENT_DURATION_SEC),
+        endTs: String(eventEndTs),
     });
     const urls = [
         `${POLYMARKET_PROXY_HISTORY_URL}?${params.toString()}`,
@@ -93,7 +93,7 @@ async function fetchYesHistory(
         `${POLYMARKET_HISTORY_URL}?${fallbackParams.toString()}`,
     ]));
     return fallbackPoints.filter(
-        (pt) => pt.t >= eventStartTs && pt.t <= eventStartTs + EVENT_DURATION_SEC
+        (pt) => pt.t >= eventStartTs && pt.t <= eventEndTs
     );
 }
 
@@ -104,7 +104,11 @@ async function fetchPricePointsForEvent(
     if (!outcome.yes_token_id) return [];
 
     try {
-        const yesPoints = await fetchYesHistory(outcome.yes_token_id, outcome.event_start_ts);
+        const yesPoints = await fetchYesHistory(
+            outcome.yes_token_id,
+            outcome.event_start_ts,
+            outcome.event_end_ts
+        );
 
         return yesPoints.map((pt) => ({
             series_id: seriesId,
@@ -184,21 +188,29 @@ function buildCoveredEventStartSet(
     outcomes: readonly PolymarketOutcomeRow[],
     points: readonly PolymarketPricePoint[]
 ): Set<number> {
-    const distinctTimestampCountByEvent = new Map<number, Set<number>>();
+    const coverageByEvent = new Map<number, { timestamps: Set<number>; latestTs: number }>();
 
     for (const point of points) {
-        let timestamps = distinctTimestampCountByEvent.get(point.event_start_ts);
-        if (!timestamps) {
-            timestamps = new Set<number>();
-            distinctTimestampCountByEvent.set(point.event_start_ts, timestamps);
+        let coverage = coverageByEvent.get(point.event_start_ts);
+        if (!coverage) {
+            coverage = {
+                timestamps: new Set<number>(),
+                latestTs: Number.NEGATIVE_INFINITY,
+            };
+            coverageByEvent.set(point.event_start_ts, coverage);
         }
-        timestamps.add(point.ts);
+        coverage.timestamps.add(point.ts);
+        coverage.latestTs = Math.max(coverage.latestTs, point.ts);
     }
 
     const coveredEventStarts = new Set<number>();
     for (const outcome of outcomes) {
-        const timestamps = distinctTimestampCountByEvent.get(outcome.event_start_ts);
-        if (timestamps && timestamps.size >= 2) {
+        const coverage = coverageByEvent.get(outcome.event_start_ts);
+        if (
+            coverage
+            && coverage.timestamps.size >= 2
+            && coverage.latestTs >= outcome.event_end_ts - 60
+        ) {
             coveredEventStarts.add(outcome.event_start_ts);
         }
     }

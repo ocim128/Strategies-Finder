@@ -14,6 +14,7 @@ import {
     toFiniteNumber,
 } from "./settings-parse-utils";
 import { resolvePolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
+import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import { ADAPTIVE_TAKE_PROFIT_DEFAULTS, resolveTakeProfitMode } from "./take-profit-settings";
 
 export const CAPITAL_DEFAULTS = Object.freeze({
@@ -75,6 +76,7 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     strategyTimeframeMinutes: 120,
     polymarketAnnotationEnabled: false,
     polymarketOutcomeSymbol: "",
+    polymarketOutcomeInterval: "5m" as const,
     polymarketEntrySelectionMode: "fixed_offset" as const,
     polymarketEntryOffset: 0,
     polymarketExitMode: "resolve_hold" as const,
@@ -357,6 +359,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "strategyTimeframeMinutes",
     "polymarketAnnotationEnabled",
     "polymarketOutcomeSymbol",
+    "polymarketOutcomeInterval",
     "polymarketEntrySelectionMode",
     "polymarketEntryOffset",
     "polymarketExitMode",
@@ -515,6 +518,7 @@ export function resolveBacktestSettingsFromRaw(
         if (typeof coerced.polymarketOutcomeSymbol === "string") {
             coerced.polymarketOutcomeSymbol = coerced.polymarketOutcomeSymbol.trim().toUpperCase();
         }
+        coerced.polymarketOutcomeInterval = resolvePolymarketOutcomeInterval(coerced.polymarketOutcomeInterval);
         return coerced;
     }
 
@@ -593,6 +597,7 @@ export function resolveBacktestSettingsFromRaw(
         executionModel,
         polymarketAnnotationEnabled: readBoolean(raw, "polymarketAnnotationEnabled", EFFECTIVE_BACKTEST_DEFAULTS.polymarketAnnotationEnabled),
         polymarketOutcomeSymbol: readString(raw, "polymarketOutcomeSymbol", EFFECTIVE_BACKTEST_DEFAULTS.polymarketOutcomeSymbol),
+        polymarketOutcomeInterval: resolvePolymarketOutcomeInterval(raw["polymarketOutcomeInterval"]),
         polymarketEntrySelectionMode: resolvePolymarketEntrySelectionMode(raw["polymarketEntrySelectionMode"]),
         polymarketEntryOffset: readNumber(raw, "polymarketEntryOffset", EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryOffset),
         polymarketExitMode: typeof raw["polymarketExitMode"] === "string"

@@ -92,7 +92,7 @@
                             <span class="section-toggle-track"></span>
                         </label>
                     </div>
-                    <div class="param-hint">Score trades against Polymarket crypto 5m outcome events. Use the chart symbol by default, or pick BTCUSDT/ETHUSDT/SOLUSDT/XRPUSDT as the outcome target for cross-symbol evaluation.</div>
+                    <div class="param-hint">Score trades against Polymarket crypto outcome events. Default session stays 5m. Use the chart symbol by default, or pick BTCUSDT/ETHUSDT/SOLUSDT/XRPUSDT for cross-symbol evaluation.</div>
                 </div>
             </div>
             <div class="param-row" id="polymarketOutcomeSymbolRow" style="display: none;">
@@ -106,6 +106,17 @@
                         <option value="XRPUSDT">XRPUSDT</option>
                     </select>
                     <div class="param-hint">Choose which Polymarket crypto series to score against. Blank keeps the current chart symbol.</div>
+                </div>
+            </div>
+            <div class="param-row" id="polymarketOutcomeIntervalRow" style="display: none;">
+                <div class="param-group">
+                    <label class="param-label">Polymarket Outcome Session</label>
+                    <select class="param-input" id="polymarketOutcomeInterval">
+                        <option value="5m" selected>5m</option>
+                        <option value="15m">15m</option>
+                        <option value="1h">1h</option>
+                    </select>
+                    <div class="param-hint">Pick the native Polymarket event session. 5m keeps the current default flow.</div>
                 </div>
             </div>
             <div class="param-row" id="polymarketEntrySelectionModeRow" style="display: none;">
@@ -138,7 +149,7 @@
                         <option value="resolve_hold" selected>Resolve Hold (score at final outcome)</option>
                         <option value="signal_exit_same_event">Signal Exit Same Event (exit on chart sell signal)</option>
                     </select>
-                    <div class="param-hint">Signal Exit mode uses chart strategy timing for entry/exit, scored against Polymarket contract prices within the same 5m event. Requires 1m chart + next_open execution.</div>
+                    <div class="param-hint">Signal Exit mode uses chart strategy timing for entry/exit inside the same 5m Polymarket event. Requires 1m chart, native 5m session, and next_open execution.</div>
                 </div>
             </div>
             <div class="param-hint">Realism settings use the TypeScript engine (Rust skipped for accuracy).</div>

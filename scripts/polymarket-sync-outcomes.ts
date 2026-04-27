@@ -1,7 +1,7 @@
 /**
  * polymarket-sync-outcomes.ts
  *
- * Fetches closed supported 5m Polymarket events and upserts resolved outcome rows
+ * Fetches closed supported Polymarket outcome sessions and upserts resolved outcome rows
  * into the local SQLite DB via the Vite /api/sqlite/store-polymarket-outcomes
  * endpoint.
  *
@@ -16,7 +16,8 @@
  *
  * Options:
  *   --symbol <symbol>      Resolve series id from symbol (BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT)
- *   --all                  Sync all supported 5m symbols in sequence
+ *   --interval <value>     Native outcome session: 5m, 15m, or 1h
+ *   --all                  Sync all supported symbols in sequence
  *   --series-id <id>       Polymarket series id override (default: 10684, BTC up/down 5m)
  *   --start-date <iso>     Inclusive lower bound for event end date
  *   --end-date <iso>       Inclusive upper bound for event end date
@@ -34,11 +35,18 @@ import { fileURLToPath } from "node:url";
 import { planPolymarketEventSync } from "../lib/polymarket-sync-utils";
 import {
     BTC_5M_POLYMARKET_SERIES_ID,
-    getPolymarket5mSeriesIdForSymbol,
+    getPolymarketSeriesIdForSymbol,
     getSupportedPolymarket5mSymbolsLabel,
-    SUPPORTED_POLYMARKET_5M_SYMBOLS,
-    type SupportedPolymarket5mSymbol,
+    SUPPORTED_POLYMARKET_SYMBOLS,
+    type SupportedPolymarketSymbol,
 } from "../lib/polymarket-btc5m";
+import {
+    DEFAULT_POLYMARKET_OUTCOME_INTERVAL,
+    getPolymarketOutcomeIntervalDurationSec,
+    POLYMARKET_OUTCOME_INTERVALS,
+    resolvePolymarketOutcomeInterval,
+    type PolymarketOutcomeInterval,
+} from "../lib/polymarket-outcome-interval";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -46,6 +54,8 @@ type CliConfig = {
     seriesId: string;
     symbol?: string;
     allSymbols: boolean;
+    outcomeInterval: PolymarketOutcomeInterval;
+    hasExplicitOutcomeInterval: boolean;
     startDateMin: string;
     endDateMax?: string;
     maxEvents: number;
@@ -61,6 +71,7 @@ type NpmConfigEnv = {
     symbol?: string;
     seriesId?: string;
     allSymbols?: boolean;
+    outcomeInterval?: string;
     startDate?: string;
     endDate?: string;
     maxEvents?: number;
@@ -121,12 +132,14 @@ type ExistingOutcomeSlugRow = {
 };
 
 export type OutcomeSyncTarget = {
-    symbol?: SupportedPolymarket5mSymbol;
+    symbol?: SupportedPolymarketSymbol;
+    outcomeInterval: PolymarketOutcomeInterval;
     seriesId: string;
 };
 
 type OutcomeSyncSummary = {
     symbol?: string;
+    outcomeInterval: PolymarketOutcomeInterval;
     seriesId: string;
     events: number;
     syncEvents: number;
@@ -143,8 +156,6 @@ type OutcomeSyncSummary = {
 const DEFAULT_SERIES_ID: string = BTC_5M_POLYMARKET_SERIES_ID;
 const GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events";
 const CLOB_HISTORY_URL = "https://clob.polymarket.com/prices-history";
-const INTERVAL = "5m";
-const EVENT_DURATION_SEC = 300; // 5 minutes
 
 // ─── CLI ──────────────────────────────────────────────────────────────────
 
@@ -183,6 +194,7 @@ function readNpmConfigEnv(): NpmConfigEnv {
         symbol: readString("npm_config_symbol"),
         seriesId: readString("npm_config_series_id", "npm_config_seriesid"),
         allSymbols: readBoolean("npm_config_all", "npm_config_all_symbols", "npm_config_allsymbols"),
+        outcomeInterval: readString("npm_config_interval", "npm_config_outcome_interval", "npm_config_outcomeinterval"),
         startDate: readString("npm_config_start_date", "npm_config_startdate"),
         endDate: readString("npm_config_end_date", "npm_config_enddate"),
         maxEvents: parseNumber(readString("npm_config_max_events", "npm_config_maxevents"), Number.NaN),
@@ -205,8 +217,9 @@ function printUsage(): void {
         "  ..\\..\\..\\node_modules\\.bin\\esno scripts\\polymarket-sync-outcomes.ts [options]",
         "",
         "Options:",
-        `  --symbol <symbol>      Resolve the 5m series id from symbol (${getSupportedPolymarket5mSymbolsLabel()})`,
-        "  --all                  Sync all supported 5m symbols in sequence",
+        `  --symbol <symbol>      Resolve the native session series id from symbol (${getSupportedPolymarket5mSymbolsLabel()})`,
+        "  --interval <value>     Native outcome session: 5m, 15m, or 1h (default: 5m)",
+        "  --all                  Sync all supported symbols; expands to 5m/15m/1h unless --interval is explicit",
         "  --series-id <id>       Polymarket series id override (default: 10684, BTC up/down 5m)",
         "  --start-date <iso>     Lower bound for event end date (default: now-30d)",
         "  --end-date <iso>       Upper bound for event end date",
@@ -222,7 +235,7 @@ function printUsage(): void {
         "  Requires the Vite dev server to be running (`npm run dev`) unless --dry-run is used.",
         "  Use the direct `esno` command above when you need named flags like --symbol.",
         "  Existing rows are skipped by default. Use `--refresh-recent <n>` or the `:repair` scripts to rewrite recent checkpoints after sync logic changes.",
-        "  event_start_ts = event_end_ts - 300 (5 minutes).",
+        "  event_start_ts = event_end_ts - session duration.",
         "  YES prices are sampled at: open, +1m, +2m, +3m, +4m.",
         "  resolved_outcome_up = 1 if outcomePrices[YES] >= 0.5 (hard settlement).",
         "  --all cannot be combined with --symbol or --series-id.",
@@ -240,6 +253,8 @@ export function parseArgs(argv: string[]): CliConfig | null {
     let seriesId: string = DEFAULT_SERIES_ID;
     let symbol: string | undefined = undefined;
     let allSymbols = npmConfig.allSymbols ?? false;
+    let outcomeInterval = resolvePolymarketOutcomeInterval(npmConfig.outcomeInterval);
+    let hasExplicitOutcomeInterval = Boolean(npmConfig.outcomeInterval);
     let startDateMin = npmConfig.startDate ?? defaultStartDateIso(30);
     let endDateMax: string | undefined = npmConfig.endDate;
     let maxEvents = Number.isFinite(npmConfig.maxEvents) ? Math.max(1, Math.floor(npmConfig.maxEvents!)) : 10000;
@@ -252,10 +267,29 @@ export function parseArgs(argv: string[]): CliConfig | null {
     let hasExplicitSymbol = false;
     let hasExplicitSeriesId = false;
 
+    const applyOutcomeInterval = (raw: string | undefined): PolymarketOutcomeInterval => {
+        const resolvedInterval = resolvePolymarketOutcomeInterval(raw);
+        outcomeInterval = resolvedInterval;
+        if (!hasExplicitSeriesId) {
+            if (symbol) {
+                const resolvedSeriesId = getPolymarketSeriesIdForSymbol(symbol, outcomeInterval);
+                if (resolvedSeriesId) {
+                    seriesId = resolvedSeriesId;
+                }
+            } else {
+                const defaultSeriesId = getPolymarketSeriesIdForSymbol("BTCUSDT", outcomeInterval);
+                if (defaultSeriesId) {
+                    seriesId = defaultSeriesId;
+                }
+            }
+        }
+        return resolvedInterval;
+    };
+
     const applySymbol = (raw: string | undefined): boolean => {
         const resolvedSymbol = String(raw ?? "").trim().toUpperCase();
         if (!resolvedSymbol) return false;
-        const resolvedSeriesId = getPolymarket5mSeriesIdForSymbol(resolvedSymbol);
+        const resolvedSeriesId = getPolymarketSeriesIdForSymbol(resolvedSymbol, outcomeInterval);
         if (!resolvedSeriesId) return false;
         symbol = resolvedSymbol;
         seriesId = resolvedSeriesId;
@@ -266,6 +300,9 @@ export function parseArgs(argv: string[]): CliConfig | null {
 
     if (npmConfig.symbol) {
         hasExplicitSymbol = applySymbol(npmConfig.symbol);
+    }
+    if (npmConfig.outcomeInterval) {
+        applyOutcomeInterval(npmConfig.outcomeInterval);
     }
     if (!hasExplicitSymbol && npmConfig.seriesId) {
         seriesId = npmConfig.seriesId;
@@ -278,13 +315,19 @@ export function parseArgs(argv: string[]): CliConfig | null {
         if (arg === "--symbol") {
             const resolvedSymbol = String(next ?? "").trim().toUpperCase();
             if (!applySymbol(resolvedSymbol)) {
-                throw new Error(`Unsupported Polymarket 5m symbol "${resolvedSymbol}". Use ${getSupportedPolymarket5mSymbolsLabel()}.`);
+                throw new Error(`Unsupported Polymarket symbol "${resolvedSymbol}" for ${outcomeInterval}. Use ${getSupportedPolymarket5mSymbolsLabel()}.`);
             }
             hasExplicitSymbol = true;
             i++;
             continue;
         }
         if (arg === "--all") { allSymbols = true; continue; }
+        if (arg === "--interval") {
+            applyOutcomeInterval(String(next ?? ""));
+            hasExplicitOutcomeInterval = true;
+            i++;
+            continue;
+        }
         if (arg === "--series-id") { seriesId = String(next ?? "").trim() || seriesId; hasExplicitSeriesId = true; i++; continue; }
         if (arg === "--start-date") { startDateMin = String(next ?? "").trim() || startDateMin; i++; continue; }
         if (arg === "--end-date") { endDateMax = String(next ?? "").trim() || undefined; i++; continue; }
@@ -314,19 +357,39 @@ export function parseArgs(argv: string[]): CliConfig | null {
         throw new Error("--all cannot be combined with --symbol or --series-id.");
     }
 
-    return { seriesId, symbol, allSymbols, startDateMin, endDateMax, maxEvents, pageSize, concurrency, refreshRecent, viteOrigin, outPath, dryRun };
+    return {
+        seriesId,
+        symbol,
+        allSymbols,
+        outcomeInterval,
+        hasExplicitOutcomeInterval,
+        startDateMin,
+        endDateMax,
+        maxEvents,
+        pageSize,
+        concurrency,
+        refreshRecent,
+        viteOrigin,
+        outPath,
+        dryRun,
+    };
 }
 
-export function resolveOutcomeSyncTargets(config: Pick<CliConfig, "allSymbols" | "seriesId" | "symbol">): OutcomeSyncTarget[] {
+export function resolveOutcomeSyncTargets(config: Pick<CliConfig, "allSymbols" | "seriesId" | "symbol" | "outcomeInterval" | "hasExplicitOutcomeInterval">): OutcomeSyncTarget[] {
     if (config.allSymbols) {
-        return SUPPORTED_POLYMARKET_5M_SYMBOLS.map((symbol) => ({
+        const intervals = config.hasExplicitOutcomeInterval
+            ? [config.outcomeInterval]
+            : [...POLYMARKET_OUTCOME_INTERVALS];
+        return intervals.flatMap((outcomeInterval) => SUPPORTED_POLYMARKET_SYMBOLS.map((symbol) => ({
             symbol,
-            seriesId: getPolymarket5mSeriesIdForSymbol(symbol)!,
-        }));
+            outcomeInterval,
+            seriesId: getPolymarketSeriesIdForSymbol(symbol, outcomeInterval)!,
+        })));
     }
 
     return [{
-        symbol: config.symbol as SupportedPolymarket5mSymbol | undefined,
+        symbol: config.symbol as SupportedPolymarketSymbol | undefined,
+        outcomeInterval: config.outcomeInterval,
         seriesId: config.seriesId,
     }];
 }
@@ -540,8 +603,14 @@ function resolveCheckpointPrice(points: HistoryPoint[], checkpointTs: number): n
 
 // ─── Row builder ──────────────────────────────────────────────────────────
 
-export function buildOutcomeRow(ev: SeriesEvent, points: HistoryPoint[], seriesId: string): OutcomeRow | null {
-    const eventStartTs = ev.endTs - EVENT_DURATION_SEC;
+export function buildOutcomeRow(
+    ev: SeriesEvent,
+    points: HistoryPoint[],
+    seriesId: string,
+    outcomeInterval: PolymarketOutcomeInterval = DEFAULT_POLYMARKET_OUTCOME_INTERVAL
+): OutcomeRow | null {
+    const eventDurationSec = getPolymarketOutcomeIntervalDurationSec(outcomeInterval);
+    const eventStartTs = ev.endTs - eventDurationSec;
 
     // Match bucketed chart/open-entry semantics by preferring the first trade inside
     // each minute window instead of the last trade before the window starts.
@@ -559,7 +628,7 @@ export function buildOutcomeRow(ev: SeriesEvent, points: HistoryPoint[], seriesI
         series_id: seriesId,
         event_slug: ev.slug,
         market_slug: ev.marketSlug,
-        interval: INTERVAL,
+        interval: outcomeInterval,
         event_start_ts: eventStartTs,
         event_end_ts: ev.endTs,
         yes_token_id: ev.upTokenId,
@@ -658,14 +727,15 @@ function resolveTargetOutPath(
 
     const ext = path.extname(baseOutPath);
     const stem = ext ? baseOutPath.slice(0, -ext.length) : baseOutPath;
-    return `${stem}.${target.symbol.toLowerCase()}${ext}`;
+    return `${stem}.${target.symbol.toLowerCase()}.${target.outcomeInterval}${ext}`;
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────
 
 async function runSingleSeriesSync(cfg: CliConfig): Promise<OutcomeSyncSummary> {
+    const eventDurationSec = getPolymarketOutcomeIntervalDurationSec(cfg.outcomeInterval);
     console.log("[poly:sync-outcomes] Fetching closed events...");
-    console.log(`  series_id=${cfg.seriesId}${cfg.symbol ? ` (${cfg.symbol})` : ""}  start=${cfg.startDateMin}  max_events=${cfg.maxEvents}`);
+    console.log(`  series_id=${cfg.seriesId}${cfg.symbol ? ` (${cfg.symbol})` : ""}  interval=${cfg.outcomeInterval}  start=${cfg.startDateMin}  max_events=${cfg.maxEvents}`);
 
     const events = await fetchSeriesEvents(cfg);
     console.log(`[poly:sync-outcomes] Got ${events.length} unique events`);
@@ -679,8 +749,8 @@ async function runSingleSeriesSync(cfg: CliConfig): Promise<OutcomeSyncSummary> 
     let missingEvents = events.length;
 
     if (!cfg.dryRun) {
-        const firstStartTs = events[0]!.endTs - EVENT_DURATION_SEC;
-        const lastStartTs = events[events.length - 1]!.endTs - EVENT_DURATION_SEC;
+        const firstStartTs = events[0]!.endTs - eventDurationSec;
+        const lastStartTs = events[events.length - 1]!.endTs - eventDurationSec;
         const existingSlugs = await loadExistingOutcomeSlugs(
             cfg.viteOrigin,
             cfg.seriesId,
@@ -708,9 +778,9 @@ async function runSingleSeriesSync(cfg: CliConfig): Promise<OutcomeSyncSummary> 
 
     await runPool(syncEvents, cfg.concurrency, async (ev, i) => {
         try {
-            const eventStartTs = ev.endTs - EVENT_DURATION_SEC;
+            const eventStartTs = ev.endTs - eventDurationSec;
             const points = await fetchHistoryWindow(ev.upTokenId, eventStartTs, ev.endTs);
-            const row = buildOutcomeRow(ev, points, cfg.seriesId);
+            const row = buildOutcomeRow(ev, points, cfg.seriesId, cfg.outcomeInterval);
             buckets[i] = row;
             if (row) withHistory++;
         } catch {
@@ -733,6 +803,7 @@ async function runSingleSeriesSync(cfg: CliConfig): Promise<OutcomeSyncSummary> 
         if (syncEvents.length === 0) {
             return {
                 symbol: cfg.symbol,
+                outcomeInterval: cfg.outcomeInterval,
                 seriesId: cfg.seriesId,
                 events: events.length,
                 syncEvents: 0,
@@ -779,6 +850,7 @@ async function runSingleSeriesSync(cfg: CliConfig): Promise<OutcomeSyncSummary> 
 
     return {
         symbol: cfg.symbol,
+        outcomeInterval: cfg.outcomeInterval,
         seriesId: cfg.seriesId,
         events: events.length,
         syncEvents: syncEvents.length,
@@ -803,13 +875,14 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         const targetCfg: CliConfig = {
             ...cfg,
             symbol: target.symbol,
+            outcomeInterval: target.outcomeInterval,
             seriesId: target.seriesId,
             outPath: resolveTargetOutPath(cfg.outPath, target, targets.length),
         };
 
         if (targets.length > 1) {
             console.log(
-                `[poly:sync-outcomes] Target ${index + 1}/${targets.length}: ${target.symbol} (series ${target.seriesId})`
+                `[poly:sync-outcomes] Target ${index + 1}/${targets.length}: ${target.symbol} ${target.outcomeInterval} (series ${target.seriesId})`
             );
         }
 

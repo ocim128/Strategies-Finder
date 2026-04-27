@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import {
     countDistinctPolymarketOutcomeRows,
     computePolymarketBestBaselineWinRate,
@@ -12,7 +12,12 @@ import {
     summarizePolymarketStreaks,
     summarizeRecentPolymarketForm,
 } from "../lib/quick-view";
+import { resetLocalSqlitePolymarketApiAvailabilityForTests } from "../lib/local-sqlite-polymarket-api";
 import type { BacktestResult, Trade } from "../lib/strategies/index";
+
+const ORIGINAL_FETCH = globalThis.fetch;
+const ORIGINAL_DOCUMENT = (globalThis as { document?: Document }).document;
+const ORIGINAL_HTML_SELECT_ELEMENT = (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement;
 
 function makeTrade(id: number, isWin: boolean | null, overrides: Partial<Trade> = {}): Trade {
     return {
@@ -39,6 +44,21 @@ function makeTrade(id: number, isWin: boolean | null, overrides: Partial<Trade> 
         ...overrides,
     };
 }
+
+afterEach(() => {
+    globalThis.fetch = ORIGINAL_FETCH;
+    resetLocalSqlitePolymarketApiAvailabilityForTests();
+    if (typeof ORIGINAL_HTML_SELECT_ELEMENT === "undefined") {
+        delete (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement;
+    } else {
+        (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement = ORIGINAL_HTML_SELECT_ELEMENT;
+    }
+    if (typeof ORIGINAL_DOCUMENT === "undefined") {
+        delete (globalThis as { document?: Document }).document;
+        return;
+    }
+    (globalThis as { document?: Document }).document = ORIGINAL_DOCUMENT;
+});
 
 describe("Quick View Polymarket streak summary", () => {
     it("counts longest win and loss streaks and breaks on missing outcomes", () => {
@@ -403,7 +423,146 @@ describe("Quick View Polymarket streak summary", () => {
         const [minuteSection] = getQuickViewDiagnosticSections(result);
 
         expect(minuteSection?.title).to.equal("Observed 5m Session Minute");
-        expect(minuteSection?.hint).to.contain("native 5m chart");
+        expect(minuteSection?.hint).to.contain("native 5m Polymarket session scoring");
+    });
+
+    it("labels native 15m runs as native session scoring in Quick View", () => {
+        const html = (quickViewManager as any).buildPolymarketSection({
+            trades: [
+                makeTrade(1, true, {
+                    polymarketOutcome: {
+                        ...makeTrade(1, true).polymarketOutcome!,
+                        entryOffset: 10,
+                        marketEntryPrice: 0.41,
+                    },
+                }),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            polymarketTradeSummary: {
+                seriesId: "btc-15m",
+                outcomeInterval: "15m",
+                outcomeRowsLoaded: 1,
+                scoredTrades: 1,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 0,
+            },
+        } satisfies BacktestResult);
+
+        expect(html).to.contain("Run Mode: Native 15m scoring");
+        expect(html).to.not.contain("Selected Offset: Minute 10");
+    });
+
+    it("rebuilds native 15m polymarket outcomes before rendering Quick View", async () => {
+        const eventStartTs = 1_700_000_000;
+        const entryTime = eventStartTs + 600;
+        (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement = class {} as typeof HTMLSelectElement;
+        (globalThis as { document?: Document }).document = {
+            getElementById: () => null,
+        } as Document;
+
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [{
+                        series_id: "10422",
+                        event_slug: "xrp-15m-1",
+                        market_slug: "xrp-15m-1",
+                        interval: "15m",
+                        event_start_ts: eventStartTs,
+                        event_end_ts: eventStartTs + 900,
+                        yes_token_id: "yes-1",
+                        no_token_id: "no-1",
+                        yes_open_price: 0.48,
+                        yes_entry_minute_1_price: 0.49,
+                        yes_entry_minute_2_price: 0.5,
+                        yes_entry_minute_3_price: 0.51,
+                        yes_entry_minute_4_price: 0.52,
+                        resolved_outcome_up: 1,
+                        resolution_source: "test",
+                        updated_at: 1,
+                    }],
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            throw new Error(`Unexpected URL ${url.pathname}`);
+        }) as typeof fetch;
+
+        const enriched = await (quickViewManager as any).ensurePolymarketOutcomes({
+            trades: [
+                makeTrade(1, true, {
+                    entryTime,
+                    exitTime: entryTime + 60,
+                    polymarketOutcome: undefined,
+                }),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            marketContext: {
+                symbol: "XRPUSDT",
+                interval: "1m",
+            },
+            polymarketTradeSummary: {
+                seriesId: "10422",
+                outcomeInterval: "15m",
+                outcomeRowsLoaded: 1,
+                scoredTrades: 1,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 0,
+            },
+        } satisfies BacktestResult);
+
+        const html = (quickViewManager as any).buildPolymarketSection(enriched);
+
+        expect(enriched.trades[0]?.polymarketOutcome?.marketSlug).to.equal("xrp-15m-1");
+        expect(enriched.trades[0]?.polymarketOutcome?.isWin).to.equal(true);
+        expect(html).to.contain("Run Mode: Native 15m scoring");
     });
 
     it("compares polymarket payout against realized binance execution", () => {
@@ -630,6 +789,7 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.contain("-50.0c");
         expect(html).to.contain("Avg Entry Price");
         expect(html).to.contain("40.0c");
+        expect(html).to.not.contain("+40.0c");
         expect(html).to.contain("Max Win Streak");
         expect(html).to.contain("Max Loss Streak");
         expect(html).to.contain("Last 50 W/L");
@@ -690,7 +850,8 @@ describe("Quick View Polymarket streak summary", () => {
                 outcomeRowsLoaded: 2,
                 scoredTrades: 2,
                 missingOutcomeTrades: 0,
-                unscoredTrades: 0,
+                unscoredTrades: 7,
+                duplicateTradesIgnored: 7,
                 evaluationMode: "signal_exit_same_event",
                 profitableTrades: 1,
                 losingTrades: 1,
@@ -709,6 +870,7 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.contain("1.80");
         expect(html).to.contain("Signal Exited");
         expect(html).to.contain("Resolved (Held)");
+        expect(html).to.contain("Duplicate Trades Ignored");
         expect(html).to.contain("Last 50 P/L/F");
         expect(html).to.contain("Entry Profit % | After Max Hold");
         expect(html).to.contain("Entry Profit % | After TP");

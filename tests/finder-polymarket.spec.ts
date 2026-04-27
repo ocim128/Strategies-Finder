@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { afterEach, describe, it } from 'node:test';
 import { runPolymarketFinder } from '../lib/finder/finder-runner-polymarket';
 import { resetLocalSqlitePolymarketApiAvailabilityForTests } from '../lib/local-sqlite-polymarket-api';
+import type { PolymarketPricePoint } from '../lib/local-sqlite-polymarket-api';
 import type { FinderRunCallbacks, FinderRunInput } from '../lib/finder/finder-runner';
 import type { CapitalSettings } from '../lib/types/backtest';
 import type { FinderOptions } from '../lib/types/finder';
@@ -33,15 +34,23 @@ function makeOutcomeRow(
         | 'yes_entry_minute_2_price'
         | 'yes_entry_minute_3_price'
         | 'yes_entry_minute_4_price'
-    >> = {}
+    >> = {},
+    options: {
+        interval?: string;
+        durationSec?: number;
+        slugPrefix?: string;
+    } = {}
 ): PolymarketOutcomeRow {
+    const interval = options.interval ?? '5m';
+    const durationSec = options.durationSec ?? (interval === '15m' ? 900 : interval === '1h' ? 3600 : 300);
+    const slugPrefix = options.slugPrefix ?? `poly-${interval}`;
     return {
         series_id: seriesId,
-        event_slug: `btc-5m-${eventStartTs}`,
-        market_slug: `btc-5m-${eventStartTs}`,
-        interval: '5m',
+        event_slug: `${slugPrefix}-${eventStartTs}`,
+        market_slug: `${slugPrefix}-${eventStartTs}`,
+        interval,
         event_start_ts: eventStartTs,
-        event_end_ts: eventStartTs + 300,
+        event_end_ts: eventStartTs + durationSec,
         yes_token_id: 'yes-token',
         no_token_id: 'no-token',
         yes_open_price: prices.yes_open_price ?? 0.5,
@@ -51,6 +60,25 @@ function makeOutcomeRow(
         yes_entry_minute_4_price: prices.yes_entry_minute_4_price ?? 0.54,
         resolved_outcome_up: resolvedUp,
         resolution_source: 'outcomePrices',
+        updated_at: 1_700_100_000,
+    };
+}
+
+function makePricePoint(
+    outcome: PolymarketOutcomeRow,
+    ts: number,
+    yesPrice: number
+): PolymarketPricePoint {
+    return {
+        series_id: outcome.series_id,
+        event_start_ts: outcome.event_start_ts,
+        event_end_ts: outcome.event_end_ts,
+        market_slug: outcome.market_slug,
+        yes_token_id: outcome.yes_token_id,
+        no_token_id: outcome.no_token_id,
+        ts,
+        yes_price: yesPrice,
+        no_price: 1 - yesPrice,
         updated_at: 1_700_100_000,
     };
 }
@@ -217,6 +245,30 @@ function installOutcomeFetch(
         onRequest?.(url);
         expect(url.pathname).to.equal('/api/sqlite/load-polymarket-outcomes');
         return jsonResponse({ ok: true, rows });
+    }) as typeof fetch;
+}
+
+function installOutcomeAndPricePointFetch(
+    rows: PolymarketOutcomeRow[],
+    pricePoints: PolymarketPricePoint[],
+    onRequest?: (url: URL) => void
+): void {
+    globalThis.fetch = (async (input) => {
+        const url = toUrl(input);
+        if (url.pathname === '/api/sqlite/status') {
+            return jsonResponse({ ok: true });
+        }
+        onRequest?.(url);
+        if (url.pathname === '/api/sqlite/load-polymarket-outcomes') {
+            return jsonResponse({ ok: true, rows });
+        }
+        if (url.pathname === '/api/sqlite/load-polymarket-price-points') {
+            return jsonResponse({ ok: true, rows: pricePoints });
+        }
+        if (url.pathname === '/api/sqlite/ensure-polymarket-price-points') {
+            return jsonResponse({ ok: true, rows: pricePoints, upserted: 0, fetchedEvents: rows.length });
+        }
+        throw new Error(`Unexpected fetch: ${url.pathname}`);
     }) as typeof fetch;
 }
 
@@ -964,6 +1016,41 @@ describe('Finder Polymarket runner', () => {
         expect(output.results[0]?.polymarketEval?.evaluationMode).to.equal('signal_exit_same_event');
         expect(statuses.some((status) => status.includes('Failed to ensure Polymarket price points'))).to.equal(false);
         expect(statusCalls).to.be.at.most(1);
+    });
+
+    it('uses native 15m outcome rows when polymarketOutcomeInterval is 15m', async () => {
+        const bars = makeBars(4, 1_700_000_000, 900);
+        const requestedSeriesIds: string[] = [];
+        const outcomes = [
+            makeOutcomeRow(1_700_000_900, 1, '10192', {}, { interval: '15m', durationSec: 900 }),
+            makeOutcomeRow(1_700_001_800, 0, '10192', {}, { interval: '15m', durationSec: 900 }),
+        ];
+        const pricePoints = [
+            makePricePoint(outcomes[0], outcomes[0].event_start_ts + 60, 0.42),
+            makePricePoint(outcomes[0], outcomes[0].event_end_ts - 60, 0.46),
+            makePricePoint(outcomes[1], outcomes[1].event_start_ts + 60, 0.58),
+            makePricePoint(outcomes[1], outcomes[1].event_end_ts - 60, 0.52),
+        ];
+        installOutcomeAndPricePointFetch(outcomes, pricePoints, (url) => {
+            if (url.pathname === '/api/sqlite/load-polymarket-outcomes') {
+                requestedSeriesIds.push(url.searchParams.get('seriesId') ?? '');
+            }
+        });
+
+        const input = makeInput(bars, [{ variant: 1 }, { variant: 2 }], {}, '15m');
+        input.settings = {
+            ...input.settings,
+            polymarketOutcomeInterval: '15m',
+        };
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(input, callbacks);
+
+        expect(requestedSeriesIds).to.deep.equal(['10192']);
+        expect(output.results).to.have.length(2);
+        expect(output.results.every((result) => result.params.polymarketEntryOffset === undefined)).to.equal(true);
+        expect(output.results.some((result) => (result.polymarketEval?.avgEntryPrice ?? 0) > 0)).to.equal(true);
+        expect(output.results.every((result) => result.polymarketEval?.evaluationMode === 'resolve_hold')).to.equal(true);
     });
 
     it('scores non-zero offsets for multi-interval Polymarket runs', async () => {

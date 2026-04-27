@@ -2,6 +2,11 @@ import type { OHLCVData } from "./strategies";
 import { loadPolymarketOutcomes } from "./local-sqlite-polymarket-api";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
+import {
+    DEFAULT_POLYMARKET_OUTCOME_INTERVAL,
+    getPolymarketOutcomeIntervalDurationSec,
+    type PolymarketOutcomeInterval,
+} from "./polymarket-outcome-interval";
 
 // Deduplicate only concurrent identical requests.
 // Persisting time-based rows across sequential calls can serve stale checkpoint
@@ -15,8 +20,26 @@ export const POLYMARKET_5M_SERIES_BY_SYMBOL = {
     XRPUSDT: "10685",
 } as const;
 
-export type SupportedPolymarket5mSymbol = keyof typeof POLYMARKET_5M_SERIES_BY_SYMBOL;
+export const POLYMARKET_SERIES_BY_INTERVAL_AND_SYMBOL = {
+    "5m": POLYMARKET_5M_SERIES_BY_SYMBOL,
+    "15m": {
+        BTCUSDT: "10192",
+        ETHUSDT: "10191",
+        SOLUSDT: "10423",
+        XRPUSDT: "10422",
+    },
+    "1h": {
+        BTCUSDT: "10114",
+        ETHUSDT: "10117",
+        SOLUSDT: "10122",
+        XRPUSDT: "10123",
+    },
+} as const satisfies Record<PolymarketOutcomeInterval, Record<string, string>>;
+
+export type SupportedPolymarketSymbol = keyof typeof POLYMARKET_SERIES_BY_INTERVAL_AND_SYMBOL["5m"];
+export type SupportedPolymarket5mSymbol = SupportedPolymarketSymbol;
 export const SUPPORTED_POLYMARKET_5M_SYMBOLS = Object.keys(POLYMARKET_5M_SERIES_BY_SYMBOL) as SupportedPolymarket5mSymbol[];
+export const SUPPORTED_POLYMARKET_SYMBOLS = Object.keys(POLYMARKET_SERIES_BY_INTERVAL_AND_SYMBOL["5m"]) as SupportedPolymarketSymbol[];
 
 export const BTC_5M_POLYMARKET_SERIES_ID = POLYMARKET_5M_SERIES_BY_SYMBOL.BTCUSDT;
 
@@ -26,8 +49,8 @@ export function getSupportedPolymarket5mSymbolsLabel(): string {
 
 export function normalizeSupportedPolymarket5mSymbol(symbol: string): SupportedPolymarket5mSymbol | null {
     const normalized = symbol.trim().toUpperCase();
-    return normalized in POLYMARKET_5M_SERIES_BY_SYMBOL
-        ? normalized as SupportedPolymarket5mSymbol
+    return normalized in POLYMARKET_SERIES_BY_INTERVAL_AND_SYMBOL["5m"]
+        ? normalized as SupportedPolymarketSymbol
         : null;
 }
 
@@ -42,17 +65,35 @@ export function resolvePolymarketOutcomeSymbol(
     return normalizeSupportedPolymarket5mSymbol(chartSymbol);
 }
 
-export function getPolymarket5mSeriesIdForSymbol(symbol: string): string | null {
+export function getPolymarketSeriesIdForSymbol(
+    symbol: string,
+    outcomeInterval: PolymarketOutcomeInterval = DEFAULT_POLYMARKET_OUTCOME_INTERVAL
+): string | null {
     const normalizedSymbol = normalizeSupportedPolymarket5mSymbol(symbol);
-    return normalizedSymbol ? POLYMARKET_5M_SERIES_BY_SYMBOL[normalizedSymbol] : null;
+    if (!normalizedSymbol) {
+        return null;
+    }
+    return POLYMARKET_SERIES_BY_INTERVAL_AND_SYMBOL[outcomeInterval][normalizedSymbol] ?? null;
+}
+
+export function getPolymarket5mSeriesIdForSymbol(symbol: string): string | null {
+    return getPolymarketSeriesIdForSymbol(symbol, "5m");
+}
+
+export function getEffectivePolymarketSeriesId(
+    chartSymbol: string,
+    outcomeInterval: PolymarketOutcomeInterval = DEFAULT_POLYMARKET_OUTCOME_INTERVAL,
+    overrideSymbol?: string | null
+): string | null {
+    const outcomeSymbol = resolvePolymarketOutcomeSymbol(chartSymbol, overrideSymbol);
+    return outcomeSymbol ? POLYMARKET_SERIES_BY_INTERVAL_AND_SYMBOL[outcomeInterval][outcomeSymbol] : null;
 }
 
 export function getEffectivePolymarket5mSeriesId(
     chartSymbol: string,
     overrideSymbol?: string | null
 ): string | null {
-    const outcomeSymbol = resolvePolymarketOutcomeSymbol(chartSymbol, overrideSymbol);
-    return outcomeSymbol ? POLYMARKET_5M_SERIES_BY_SYMBOL[outcomeSymbol] : null;
+    return getEffectivePolymarketSeriesId(chartSymbol, "5m", overrideSymbol);
 }
 
 export function isSupportedPolymarket5mRun(symbol: string, interval: string, outcomeSymbol?: string | null): boolean {
@@ -61,6 +102,17 @@ export function isSupportedPolymarket5mRun(symbol: string, interval: string, out
 
 export function supportsPolymarketOutcomeBridgeRun(symbol: string, interval: string, outcomeSymbol?: string | null): boolean {
     return (interval === "5m" || interval === "1m") && getEffectivePolymarket5mSeriesId(symbol, outcomeSymbol) !== null;
+}
+
+export function isSupportedPolymarketOutcomeRun(
+    symbol: string,
+    interval: string,
+    outcomeInterval: PolymarketOutcomeInterval = DEFAULT_POLYMARKET_OUTCOME_INTERVAL,
+    outcomeSymbol?: string | null
+): boolean {
+    const supportedChartIntervals = ["1m", "5m", "15m", "1h", "4h"];
+    return supportedChartIntervals.includes(interval)
+        && getEffectivePolymarketSeriesId(symbol, outcomeInterval, outcomeSymbol) !== null;
 }
 
 /**
@@ -81,9 +133,18 @@ export async function loadPolymarket5mOutcomesForChart(
     chartData: OHLCVData[],
     outcomeSymbol?: string | null
 ): Promise<PolymarketOutcomeRow[]> {
+    return loadPolymarketOutcomesForChart(symbol, chartData, outcomeSymbol, "5m");
+}
+
+export async function loadPolymarketOutcomesForChart(
+    symbol: string,
+    chartData: OHLCVData[],
+    outcomeSymbol?: string | null,
+    outcomeInterval: PolymarketOutcomeInterval = DEFAULT_POLYMARKET_OUTCOME_INTERVAL
+): Promise<PolymarketOutcomeRow[]> {
     if (chartData.length < 2) return [];
 
-    const seriesId = getEffectivePolymarket5mSeriesId(symbol, outcomeSymbol);
+    const seriesId = getEffectivePolymarketSeriesId(symbol, outcomeInterval, outcomeSymbol);
     if (!seriesId) {
         return [];
     }
@@ -92,7 +153,8 @@ export async function loadPolymarket5mOutcomesForChart(
     const lastTs = parseTimeToUnixSeconds(chartData[chartData.length - 1].time);
     if (firstTs === null || lastTs === null) return [];
 
-    return loadPolymarketOutcomesForExpandedRange(seriesId, firstTs - 300, lastTs + 600);
+    const outcomeDurationSec = getPolymarketOutcomeIntervalDurationSec(outcomeInterval);
+    return loadPolymarketOutcomesForExpandedRange(seriesId, firstTs - outcomeDurationSec, lastTs + (outcomeDurationSec * 2));
 }
 
 export async function loadPolymarket5mOutcomesForTimeRange(
@@ -101,14 +163,25 @@ export async function loadPolymarket5mOutcomesForTimeRange(
     endTs: number,
     outcomeSymbol?: string | null
 ): Promise<PolymarketOutcomeRow[]> {
-    const seriesId = getEffectivePolymarket5mSeriesId(symbol, outcomeSymbol);
+    return loadPolymarketOutcomesForTimeRange(symbol, startTs, endTs, outcomeSymbol, "5m");
+}
+
+export async function loadPolymarketOutcomesForTimeRange(
+    symbol: string,
+    startTs: number,
+    endTs: number,
+    outcomeSymbol?: string | null,
+    outcomeInterval: PolymarketOutcomeInterval = DEFAULT_POLYMARKET_OUTCOME_INTERVAL
+): Promise<PolymarketOutcomeRow[]> {
+    const seriesId = getEffectivePolymarketSeriesId(symbol, outcomeInterval, outcomeSymbol);
     if (!seriesId) {
         return [];
     }
 
     // Expand the time range slightly to provide buffer
-    const expandedStartTs = startTs - 300;
-    const expandedEndTs = endTs + 600;
+    const outcomeDurationSec = getPolymarketOutcomeIntervalDurationSec(outcomeInterval);
+    const expandedStartTs = startTs - outcomeDurationSec;
+    const expandedEndTs = endTs + (outcomeDurationSec * 2);
 
     return loadPolymarketOutcomesForExpandedRange(seriesId, expandedStartTs, expandedEndTs);
 }

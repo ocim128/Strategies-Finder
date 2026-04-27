@@ -5,30 +5,34 @@
  * outcome accuracy for those executed trades.
  *
  * Supports:
- * - 5m chart runs: exact timestamp matching (legacy behavior)
+ * - native 5m / 15m / 1h outcome-session runs: direct session scoring
  * - 1m signal-exit runs: same-event Polymarket entry/exit pricing
- * - 1m chart runs: 1m -> 5m bridge with minute entry offset (0..4) scoring
- * - 15m chart runs: groups 3x 5m events, entry offset (0..2)
- * - 1h chart runs: groups 12x 5m events, entry offset (0..11)
- * - 4h chart runs: groups 48x 5m events, entry offset (0..47)
+ * - default 5m bridge runs: 1m -> 5m offset scoring
+ * - default 5m multi-interval bridge runs: 15m / 1h / 4h group 5m events by offset
  */
 import { applySignalPolarity, precomputeIndicators, runBacktest } from "../strategies/index";
 import { debugLogger } from "../debug-logger";
 import type { FinderResult } from "../types/finder";
 import {
+    getEffectivePolymarketSeriesId,
     getEffectivePolymarket5mSeriesId,
     getSupportedPolymarket5mSymbolsLabel,
+    isSupportedPolymarketOutcomeRun,
     isSupportedPolymarketMultiIntervalRun,
+    loadPolymarketOutcomesForChart,
     loadPolymarket5mOutcomesForChart,
     resolvePolymarketOutcomeSymbol,
 } from "../polymarket-btc5m";
 import {
+    annotateTradesWithPolymarketOutcomesForRun,
     createPolymarketBridgeEvaluationContext,
     createPolymarketTradeEvaluationContext,
     evaluatePolymarketBacktestTrades,
     evaluateMappedPolymarketBacktestTrades1mBridge,
     filterTradesByPreviousClosedTradeExitReason,
     getTradeMarketEntryPrice,
+    summarizePolymarketTradesForRun,
+    type PolymarketTradeEvaluationContext,
 } from "../polymarket-trade-annotations";
 import { mapTradesToEvents as mapTradesToLegacyEvents, type MappedPolymarketTrade as LegacyMappedPolymarketTrade } from "../polymarket-1m-5m-bridge";
 import {
@@ -58,6 +62,132 @@ import type { PolymarketPricePoint } from "../local-sqlite-polymarket-api";
 import { ensurePricePointsForOutcomes } from "../polymarket-price-points-ingest";
 import { indexPricePointsByEvent, type EventPriceIndex } from "../polymarket-price-points";
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import {
+    DEFAULT_POLYMARKET_OUTCOME_INTERVAL,
+    getPolymarketOutcomeIntervalDurationSec,
+    resolvePolymarketOutcomeInterval,
+} from "../polymarket-outcome-interval";
+import type { Trade } from "../types/strategies";
+
+function getProfitFactorFromTotals(grossProfit: number, grossLoss: number): number {
+    if (!Number.isFinite(grossProfit) || grossProfit <= 0) {
+        return 0;
+    }
+    if (!Number.isFinite(grossLoss) || grossLoss <= 0) {
+        return Infinity;
+    }
+    return grossProfit / grossLoss;
+}
+
+function buildNativeSessionResolveHoldEvalResult(args: {
+    trades: readonly Trade[];
+    annotatedTrades: readonly Trade[];
+    summary: ReturnType<typeof summarizePolymarketTradesForRun>;
+    context: PolymarketTradeEvaluationContext;
+}): import("../types/polymarket-outcomes").PolymarketEvalResult {
+    const { trades, annotatedTrades, summary, context } = args;
+    let wins = 0;
+    let losses = 0;
+    let longPredictions = 0;
+    let shortPredictions = 0;
+    let scoredLongPredictions = 0;
+    let scoredShortPredictions = 0;
+    let longWins = 0;
+    let shortWins = 0;
+    let pricedPredictions = 0;
+    let totalEntryPrice = 0;
+    let totalPayout = 0;
+    let grossProfit = 0;
+    let grossLoss = 0;
+    let missingPriceTrades = 0;
+
+    for (let index = 0; index < annotatedTrades.length; index += 1) {
+        const trade = trades[index];
+        const annotatedTrade = annotatedTrades[index];
+        if (trade?.type === "long") {
+            longPredictions++;
+        } else {
+            shortPredictions++;
+        }
+
+        const outcome = annotatedTrade?.polymarketOutcome;
+        if (!outcome || outcome.isWin === null) {
+            continue;
+        }
+
+        if (trade?.type === "long") {
+            scoredLongPredictions++;
+        } else {
+            scoredShortPredictions++;
+        }
+
+        if (outcome.isWin) {
+            wins++;
+            if (trade?.type === "long") {
+                longWins++;
+            } else {
+                shortWins++;
+            }
+        } else {
+            losses++;
+        }
+
+        const marketEntryPrice = typeof outcome.marketEntryPrice === "number" && Number.isFinite(outcome.marketEntryPrice)
+            ? outcome.marketEntryPrice
+            : null;
+        if (marketEntryPrice === null) {
+            missingPriceTrades++;
+            continue;
+        }
+
+        pricedPredictions++;
+        totalEntryPrice += marketEntryPrice;
+        const payout = outcome.isWin ? (1 - marketEntryPrice) : -marketEntryPrice;
+        totalPayout += payout;
+        if (payout > 0) {
+            grossProfit += payout;
+        } else if (payout < 0) {
+            grossLoss += Math.abs(payout);
+        }
+    }
+
+    const scoredPredictions = summary.scoredTrades;
+    const avgEntryPrice = pricedPredictions > 0 ? totalEntryPrice / pricedPredictions : 0;
+    const breakEvenWinRate = avgEntryPrice;
+
+    return {
+        evaluatedEvents: context.evaluatedEvents,
+        predictionsTaken: trades.length,
+        scoredPredictions,
+        pricedPredictions,
+        profitFactor: getProfitFactorFromTotals(grossProfit, grossLoss),
+        grossProfit,
+        grossLoss,
+        wins,
+        losses,
+        skips: summary.unscoredTrades ?? Math.max(0, trades.length - scoredPredictions),
+        winRate: scoredPredictions > 0 ? wins / scoredPredictions : 0,
+        coverage: context.evaluatedEvents > 0 ? scoredPredictions / context.evaluatedEvents : 0,
+        longPredictions,
+        shortPredictions,
+        longWins,
+        shortWins,
+        longWinRate: scoredLongPredictions > 0 ? longWins / scoredLongPredictions : 0,
+        shortWinRate: scoredShortPredictions > 0 ? shortWins / scoredShortPredictions : 0,
+        alwaysYesBaselineWinRate: context.evaluatedEvents > 0 ? context.resolvedUpCount / context.evaluatedEvents : 0,
+        alwaysNoBaselineWinRate: context.evaluatedEvents > 0 ? (context.evaluatedEvents - context.resolvedUpCount) / context.evaluatedEvents : 0,
+        avgEntryPrice,
+        breakEvenWinRate,
+        expectancy: pricedPredictions > 0 ? totalPayout / pricedPredictions : 0,
+        edgeVsBreakEven: (scoredPredictions > 0 ? wins / scoredPredictions : 0) - breakEvenWinRate,
+        missingOutcomeRows: summary.missingOutcomeTrades,
+        ignoredSignals: 0,
+        duplicateTradesIgnored: summary.duplicateTradesIgnored ?? 0,
+        missingPriceTrades: missingPriceTrades > 0 ? missingPriceTrades : undefined,
+        evaluationMode: "resolve_hold",
+        rows: [],
+    };
+}
 
 /**
  * Evaluate mapped trades for multi-interval Polymarket runs (15m, 1h, 4h).
@@ -195,48 +325,14 @@ export async function runPolymarketFinder(
     const interval = input.interval as PolymarketInterval;
     const intervalConfig = getIntervalConfig(interval);
     const outcomeSymbol = resolvePolymarketOutcomeSymbol(input.symbol, settings.polymarketOutcomeSymbol);
+    const resolvedOutcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
+    const isNativeOutcomeSession = resolvedOutcomeInterval !== DEFAULT_POLYMARKET_OUTCOME_INTERVAL;
 
     // Validate interval
     if (!intervalConfig) {
         callbacks.setStatus("Polymarket scoring requires 1m, 5m, 15m, 1h, or 4h interval.");
         return { results: [] };
     }
-
-    // Validate symbol support
-    if (!isSupportedPolymarketMultiIntervalRun(input.symbol, interval, outcomeSymbol)) {
-        callbacks.setStatus(`Polymarket scoring currently supports ${getSupportedPolymarket5mSymbolsLabel()} on 1m, 5m, 15m, 1h, 4h.`);
-        return { results: [] };
-    }
-
-    const is5mRun = interval === "5m";
-    const isMultiSubEventRun = !is5mRun && !isSignalExitSameEventMode(
-        resolveEffectivePolymarketExitMode({
-            requestedMode: options.polymarketExitMode,
-            interval,
-            executionModel: settings.executionModel,
-            polymarketAnnotationEnabled: true,
-        })
-    );
-
-    // Determine offsets to evaluate
-    const lockedOffset = (
-        isMultiSubEventRun
-        && options.mode === "random"
-        && options.polymarketLockOffset
-    )
-        ? Math.max(
-              intervalConfig.minOffset,
-              Math.min(intervalConfig.maxOffset, Math.round(Number(settings.polymarketEntryOffset ?? 0)))
-          )
-        : null;
-
-    const bridgeOffsetsToEvaluate = isMultiSubEventRun
-        ? (lockedOffset === null
-              ? Array.from({ length: intervalConfig.maxOffset - intervalConfig.minOffset + 1 }, (_, i) => i + intervalConfig.minOffset)
-              : [lockedOffset])
-        : [];
-
-    const evaluationCountPerParamSet = isMultiSubEventRun ? bridgeOffsetsToEvaluate.length : 1;
 
     if (options.multiTimeframeEnabled) {
         callbacks.setStatus("Multi-timeframe is not supported in Polymarket mode.");
@@ -259,8 +355,39 @@ export async function runPolymarketFinder(
         executionModel: settings.executionModel,
         polymarketAnnotationEnabled: true,
     });
-
     const isSignalExitMode = isSignalExitSameEventMode(effectiveExitMode);
+    const is5mRun = interval === "5m";
+    const isMultiSubEventRun = !isNativeOutcomeSession && !is5mRun && !isSignalExitMode;
+
+    // Validate symbol support
+    if (
+        isNativeOutcomeSession
+            ? !isSupportedPolymarketOutcomeRun(input.symbol, interval, resolvedOutcomeInterval, outcomeSymbol)
+            : !isSupportedPolymarketMultiIntervalRun(input.symbol, interval, outcomeSymbol)
+    ) {
+        callbacks.setStatus(`Polymarket scoring currently supports ${getSupportedPolymarket5mSymbolsLabel()} on 1m, 5m, 15m, 1h, 4h.`);
+        return { results: [] };
+    }
+
+    // Determine offsets to evaluate
+    const lockedOffset = (
+        isMultiSubEventRun
+        && options.mode === "random"
+        && options.polymarketLockOffset
+    )
+        ? Math.max(
+              intervalConfig.minOffset,
+              Math.min(intervalConfig.maxOffset, Math.round(Number(settings.polymarketEntryOffset ?? 0)))
+          )
+        : null;
+
+    const bridgeOffsetsToEvaluate = isMultiSubEventRun
+        ? (lockedOffset === null
+              ? Array.from({ length: intervalConfig.maxOffset - intervalConfig.minOffset + 1 }, (_, i) => i + intervalConfig.minOffset)
+              : [lockedOffset])
+        : [];
+
+    const evaluationCountPerParamSet = isMultiSubEventRun ? bridgeOffsetsToEvaluate.length : 1;
 
     if (isSignalExitMode) {
         if (interval !== "1m") {
@@ -287,15 +414,19 @@ export async function runPolymarketFinder(
         return { results: [] };
     }
 
-    const seriesId = getEffectivePolymarket5mSeriesId(input.symbol, outcomeSymbol);
+    const seriesId = isNativeOutcomeSession
+        ? getEffectivePolymarketSeriesId(input.symbol, resolvedOutcomeInterval, outcomeSymbol)
+        : getEffectivePolymarket5mSeriesId(input.symbol, outcomeSymbol);
     if (!seriesId) {
-        callbacks.setStatus(`Polymarket scoring currently supports ${getSupportedPolymarket5mSymbolsLabel()} on 5m.`);
+        callbacks.setStatus(`Polymarket scoring currently supports ${getSupportedPolymarket5mSymbolsLabel()} on ${resolvedOutcomeInterval}.`);
         return { results: [] };
     }
 
-    let outcomes: Awaited<ReturnType<typeof loadPolymarket5mOutcomesForChart>>;
+    let outcomes: Awaited<ReturnType<typeof loadPolymarketOutcomesForChart>>;
     try {
-        outcomes = await loadPolymarket5mOutcomesForChart(input.symbol, closedData, outcomeSymbol);
+        outcomes = isNativeOutcomeSession
+            ? await loadPolymarketOutcomesForChart(input.symbol, closedData, outcomeSymbol, resolvedOutcomeInterval)
+            : await loadPolymarket5mOutcomesForChart(input.symbol, closedData, outcomeSymbol);
     } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         callbacks.setStatus(`Failed to load Polymarket outcomes from SQLite. ${detail}`);
@@ -314,16 +445,17 @@ export async function runPolymarketFinder(
     let pricePoints: PolymarketPricePoint[] = [];
     let priceIndex: EventPriceIndex | undefined;
     let outcomeByEntryTs: ReadonlyMap<number, import("../types/polymarket-outcomes").PolymarketOutcomeRow | null> | undefined;
-    if (isSignalExitMode) {
+    if (isSignalExitMode || isNativeOutcomeSession) {
         try {
             const rawFirst = closedData.length > 0 ? closedData[0].time : 0;
             const rawLast = closedData.length > 0 ? closedData[closedData.length - 1].time : 0;
             const firstTs = typeof rawFirst === 'number' ? rawFirst : 0;
             const lastTs = typeof rawLast === 'number' ? rawLast : 0;
+            const paddingSec = getPolymarketOutcomeIntervalDurationSec(resolvedOutcomeInterval);
             callbacks.setStatus(`Ensuring Polymarket price points for ${outcomes.length} events...`);
             pricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId, {
-                startTs: firstTs > 0 ? firstTs - 300 : undefined,
-                endTs: lastTs > 0 ? lastTs + 300 : undefined,
+                startTs: firstTs > 0 ? firstTs - paddingSec : undefined,
+                endTs: lastTs > 0 ? lastTs + paddingSec : undefined,
             });
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
@@ -334,13 +466,15 @@ export async function runPolymarketFinder(
             callbacks.setStatus(`No Polymarket price points available for series ${seriesId} after ingestion.`);
             return { results: [] };
         }
-        priceIndex = indexPricePointsByEvent(pricePoints);
-        outcomeByEntryTs = indexSignalExitOutcomesByEntryTs(
-            closedData
-                .map((bar) => parseTimeToUnixSeconds(bar.time))
-                .filter((value): value is number => value !== null),
-            outcomes
-        );
+        if (isSignalExitMode) {
+            priceIndex = indexPricePointsByEvent(pricePoints);
+            outcomeByEntryTs = indexSignalExitOutcomesByEntryTs(
+                closedData
+                    .map((bar) => parseTimeToUnixSeconds(bar.time))
+                    .filter((value): value is number => value !== null),
+                outcomes
+            );
+        }
     }
 
     // Build strategy plans from selections
@@ -540,47 +674,78 @@ export async function runPolymarketFinder(
                         await callbacks.yieldControl();
                     }
                 } else {
-                    const legacyMappedTrades: readonly LegacyMappedPolymarketTrade[] | undefined = isMultiSubEventRun && interval === "1m"
-                        ? mapTradesToLegacyEvents(tradesForPolymarketEvaluation, outcomes)
-                        : undefined;
-                    const superMappedTrades: readonly MappedPolymarketTrade[] | undefined = isMultiSubEventRun && interval !== "1m"
-                        ? mapTradesToSuperEvents(tradesForPolymarketEvaluation, outcomes, interval)
-                        : undefined;
-
-                    const evaluations = isMultiSubEventRun
-                        ? bridgeOffsetsToEvaluate.map((offset) => ({
-                            offset,
-                            evalResult: interval === "1m"
-                                ? evaluateMappedPolymarketBacktestTrades1mBridge({
-                                    chartData: closedData,
-                                    mappedTrades: legacyMappedTrades ?? [],
-                                    outcomes,
-                                    strategyKey: plan.key,
-                                    selectedOffset: offset,
-                                    includeRows: false,
-                                    predictionsTaken: tradesForPolymarketEvaluation.length,
-                                    context: polymarketBridgeContext,
-                                })
-                                : evaluateMultiIntervalPolymarketTrades({
-                                    mappedTrades: superMappedTrades ?? [],
-                                    strategyKey: plan.key,
-                                    selectedOffset: offset,
-                                    includeRows: false,
-                                    predictionsTaken: tradesForPolymarketEvaluation.length,
-                                    context: polymarketBridgeContext!,
-                                }),
-                        }))
-                        : [{
-                            offset: undefined,
-                            evalResult: evaluatePolymarketBacktestTrades({
-                                chartData: closedData,
-                                trades: tradesForPolymarketEvaluation,
+                    const evaluations = isNativeOutcomeSession
+                        ? (() => {
+                            const annotatedTrades = annotateTradesWithPolymarketOutcomesForRun(
+                                tradesForPolymarketEvaluation,
                                 outcomes,
-                                strategyKey: plan.key,
-                                context: polymarketContext,
-                                includeRows: false,
-                            }),
-                        }];
+                                interval,
+                                undefined,
+                                "fixed_offset",
+                                {
+                                    outcomeInterval: resolvedOutcomeInterval,
+                                    pricePoints,
+                                }
+                            );
+                            const summary = summarizePolymarketTradesForRun({
+                                trades: annotatedTrades,
+                                outcomes,
+                                interval,
+                                outcomeInterval: resolvedOutcomeInterval,
+                            });
+                            return [{
+                                offset: undefined,
+                                evalResult: buildNativeSessionResolveHoldEvalResult({
+                                    trades: tradesForPolymarketEvaluation,
+                                    annotatedTrades,
+                                    summary,
+                                    context: polymarketContext,
+                                }),
+                            }];
+                        })()
+                        : (() => {
+                            const legacyMappedTrades: readonly LegacyMappedPolymarketTrade[] | undefined = isMultiSubEventRun && interval === "1m"
+                                ? mapTradesToLegacyEvents(tradesForPolymarketEvaluation, outcomes)
+                                : undefined;
+                            const superMappedTrades: readonly MappedPolymarketTrade[] | undefined = isMultiSubEventRun && interval !== "1m"
+                                ? mapTradesToSuperEvents(tradesForPolymarketEvaluation, outcomes, interval)
+                                : undefined;
+
+                            return isMultiSubEventRun
+                                ? bridgeOffsetsToEvaluate.map((offset) => ({
+                                    offset,
+                                    evalResult: interval === "1m"
+                                        ? evaluateMappedPolymarketBacktestTrades1mBridge({
+                                            chartData: closedData,
+                                            mappedTrades: legacyMappedTrades ?? [],
+                                            outcomes,
+                                            strategyKey: plan.key,
+                                            selectedOffset: offset,
+                                            includeRows: false,
+                                            predictionsTaken: tradesForPolymarketEvaluation.length,
+                                            context: polymarketBridgeContext,
+                                        })
+                                        : evaluateMultiIntervalPolymarketTrades({
+                                            mappedTrades: superMappedTrades ?? [],
+                                            strategyKey: plan.key,
+                                            selectedOffset: offset,
+                                            includeRows: false,
+                                            predictionsTaken: tradesForPolymarketEvaluation.length,
+                                            context: polymarketBridgeContext!,
+                                        }),
+                                }))
+                                : [{
+                                    offset: undefined,
+                                    evalResult: evaluatePolymarketBacktestTrades({
+                                        chartData: closedData,
+                                        trades: tradesForPolymarketEvaluation,
+                                        outcomes,
+                                        strategyKey: plan.key,
+                                        context: polymarketContext,
+                                        includeRows: false,
+                                    }),
+                                }];
+                        })();
 
                     for (const evaluation of evaluations) {
                         processedCount++;

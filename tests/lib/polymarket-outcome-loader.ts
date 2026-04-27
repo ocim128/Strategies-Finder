@@ -2,10 +2,10 @@ import type { PolymarketPanelDom } from "./polymarket-panel-dom";
 import type { PolymarketFillHistorySummary } from "./polymarket-fill-history";
 import { loadPolymarketFillHistorySummary } from "./polymarket-fill-history";
 import {
-    getEffectivePolymarket5mSeriesId,
-    loadPolymarket5mOutcomesForTimeRange,
+    getEffectivePolymarketSeriesId,
+    isSupportedPolymarketOutcomeRun,
+    loadPolymarketOutcomesForTimeRange,
     resolvePolymarketOutcomeSymbol,
-    supportsPolymarketOutcomeBridgeRun,
 } from "./polymarket-btc5m";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { state } from "./state";
@@ -22,6 +22,7 @@ import { evaluateSignalExitTrades, buildTradeAnnotationFromSignalExitResult } fr
 import { ensurePricePointsForOutcomes } from "./polymarket-price-points-ingest";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
 import { findContainingEvent } from "./polymarket-1m-5m-bridge";
+import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
     annotateTradesWithPolymarketOutcomesForRun,
     summarizePolymarketTradesForRun,
@@ -34,6 +35,7 @@ export interface PolymarketOutcomeLoaderDeps {
     readCurrentPolymarketEntrySelectionMode: () => PolymarketEntrySelectionMode;
     readCurrentPolymarketExitMode: () => "resolve_hold" | "signal_exit_same_event" | undefined;
     readCurrentPolymarketOutcomeSymbol: () => string | null;
+    readCurrentPolymarketOutcomeInterval: () => PolymarketOutcomeInterval;
     isPanelVisible: () => boolean;
     scheduleRender: (delayMs?: number) => void;
     invalidateDeployabilityCache: () => void;
@@ -57,8 +59,9 @@ export class PolymarketOutcomeLoader {
         this.loadError = null;
         const resultContext = resolveBacktestResultMarketContext(result);
         const outcomeSymbol = result ? this.resolveActivePolymarketOutcomeSymbol(result) : this.deps.readCurrentPolymarketOutcomeSymbol();
+        const outcomeInterval = result ? this.resolveActivePolymarketOutcomeInterval(result) : this.deps.readCurrentPolymarketOutcomeInterval();
 
-        if (!result || !resultContext || !supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval, outcomeSymbol) || result.trades.length === 0) {
+        if (!result || !resultContext || !isSupportedPolymarketOutcomeRun(resultContext.symbol, resultContext.interval, outcomeInterval, outcomeSymbol) || result.trades.length === 0) {
             this.resetLoadedRows(false);
             this.deps.scheduleRender();
             return;
@@ -76,7 +79,8 @@ export class PolymarketOutcomeLoader {
         const result = this.lastResult;
         const resultContext = resolveBacktestResultMarketContext(result);
         const outcomeSymbol = result ? this.resolveActivePolymarketOutcomeSymbol(result) : this.deps.readCurrentPolymarketOutcomeSymbol();
-        if (!result || !resultContext || !supportsPolymarketOutcomeBridgeRun(resultContext.symbol, resultContext.interval, outcomeSymbol) || result.trades.length === 0) {
+        const outcomeInterval = result ? this.resolveActivePolymarketOutcomeInterval(result) : this.deps.readCurrentPolymarketOutcomeInterval();
+        if (!result || !resultContext || !isSupportedPolymarketOutcomeRun(resultContext.symbol, resultContext.interval, outcomeInterval, outcomeSymbol) || result.trades.length === 0) {
             this.resetLoadedRows(false);
             this.deps.scheduleRender();
             return;
@@ -107,11 +111,12 @@ export class PolymarketOutcomeLoader {
         this.deps.scheduleRender();
 
         try {
-            const rows = await loadPolymarket5mOutcomesForTimeRange(
+            const rows = await loadPolymarketOutcomesForTimeRange(
                 resultContext.symbol,
                 Math.min(...targetTimes),
                 Math.max(...targetTimes),
-                outcomeSymbol
+                outcomeSymbol,
+                outcomeInterval
             );
             if (requestId !== this.loadNonce) {
                 return;
@@ -141,11 +146,12 @@ export class PolymarketOutcomeLoader {
         }
 
         const existingSummary = result.polymarketTradeSummary;
+        const outcomeInterval = this.resolveActivePolymarketOutcomeInterval(result);
         const resolvedOutcomeSymbol = resolvePolymarketOutcomeSymbol(
             resultContext.symbol,
             existingSummary?.outcomeSymbol ?? this.deps.readCurrentPolymarketOutcomeSymbol()
         );
-        const seriesId = existingSummary?.seriesId || getEffectivePolymarket5mSeriesId(resultContext.symbol, resolvedOutcomeSymbol) || outcomes[0]?.series_id || "";
+        const seriesId = existingSummary?.seriesId || getEffectivePolymarketSeriesId(resultContext.symbol, outcomeInterval, resolvedOutcomeSymbol) || outcomes[0]?.series_id || "";
 
         const effectiveExitMode = existingSummary?.evaluationMode ?? resolveEffectivePolymarketExitMode({
             requestedMode: this.deps.readCurrentPolymarketExitMode(),
@@ -196,6 +202,7 @@ export class PolymarketOutcomeLoader {
                         polymarketTradeSummary: {
                             seriesId,
                             outcomeSymbol: existingSummary?.outcomeSymbol ?? resolvedOutcomeSymbol ?? undefined,
+                            outcomeInterval,
                             outcomeRowsLoaded: outcomes.length,
                             scoredTrades: exitSummary.scoredTrades,
                             missingOutcomeTrades: exitSummary.missingOutcomeTrades,
@@ -225,10 +232,10 @@ export class PolymarketOutcomeLoader {
             }
         }
 
-        const entrySelectionMode = resultContext.interval === "1m"
+        const entrySelectionMode = resultContext.interval === "1m" && outcomeInterval === "5m"
             ? this.resolveSelectedPolymarketEntrySelectionMode(result)
             : undefined;
-        const selectedOffset = resultContext.interval === "1m" && !isActualPolymarketEntryMinuteMode(entrySelectionMode)
+        const selectedOffset = resultContext.interval === "1m" && outcomeInterval === "5m" && !isActualPolymarketEntryMinuteMode(entrySelectionMode)
             ? this.resolveSelectedPolymarketEntryOffset(result)
             : undefined;
         const annotatedTrades = annotateTradesWithPolymarketOutcomesForRun(
@@ -236,15 +243,17 @@ export class PolymarketOutcomeLoader {
             outcomes,
             resultContext.interval,
             selectedOffset,
-            entrySelectionMode ?? "fixed_offset"
+            entrySelectionMode ?? "fixed_offset",
+            { outcomeInterval }
         );
         const summary = summarizePolymarketTradesForRun({
-            trades: result.trades,
+            trades: annotatedTrades,
             outcomes,
             interval: resultContext.interval,
             selectedOffset,
             entrySelectionMode,
             timingProfile: existingSummary?.timingProfile,
+            outcomeInterval,
         });
         const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
 
@@ -254,6 +263,7 @@ export class PolymarketOutcomeLoader {
             polymarketTradeSummary: {
                 seriesId,
                 outcomeSymbol: existingSummary?.outcomeSymbol ?? resolvedOutcomeSymbol ?? undefined,
+                outcomeInterval,
                 outcomeRowsLoaded: existingSummary?.outcomeRowsLoaded && existingSummary.outcomeRowsLoaded > 0
                     ? existingSummary.outcomeRowsLoaded
                     : outcomes.length,
@@ -331,6 +341,7 @@ export class PolymarketOutcomeLoader {
     getResultSignature(result: BacktestResult): string {
         const resultContext = resolveBacktestResultMarketContext(result);
         const outcomeSymbol = this.resolveActivePolymarketOutcomeSymbol(result);
+        const outcomeInterval = this.resolveActivePolymarketOutcomeInterval(result);
         const firstTrade = result.trades[0];
         const lastTrade = result.trades[result.trades.length - 1];
         const entrySelectionMode = this.resolveSelectedPolymarketEntrySelectionMode(result);
@@ -341,6 +352,7 @@ export class PolymarketOutcomeLoader {
             resultContext?.symbol ?? state.currentSymbol,
             resultContext?.interval ?? state.currentInterval,
             outcomeSymbol ?? "same",
+            outcomeInterval,
             entrySelectionMode,
             selectedOffset,
             result.trades.length,
@@ -355,6 +367,12 @@ export class PolymarketOutcomeLoader {
             return summarySymbol.trim().toUpperCase();
         }
         return this.deps.readCurrentPolymarketOutcomeSymbol();
+    }
+
+    resolveActivePolymarketOutcomeInterval(result: BacktestResult): PolymarketOutcomeInterval {
+        return resolvePolymarketOutcomeInterval(
+            result.polymarketTradeSummary?.outcomeInterval ?? this.deps.readCurrentPolymarketOutcomeInterval()
+        );
     }
 
     private resolveSelectedPolymarketEntryOffset(_result: BacktestResult): number {

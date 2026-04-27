@@ -50,6 +50,7 @@ import { annotateBacktestResultWithPolymarketOutcomes } from "./polymarket-trade
 import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "./polymarket-exit-mode";
 import type { PolymarketPricePoint } from "./local-sqlite-polymarket-api";
 import { ensurePricePointsForOutcomes } from "./polymarket-price-points-ingest";
+import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import { executeBacktest, executeBacktestFromSignals } from "./backtest-executor";
 import {
     getCapitalSettings as readCapitalSettings,
@@ -614,6 +615,7 @@ export class BacktestService {
         chartData: OHLCVData[]
     ): Promise<BacktestResult> {
         try {
+            const outcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
             const effectiveExitMode = resolveEffectivePolymarketExitMode({
                 requestedMode: settings.polymarketExitMode,
                 interval: state.currentInterval,
@@ -623,9 +625,9 @@ export class BacktestService {
 
             let pricePoints: PolymarketPricePoint[] | undefined;
             if (isSignalExitSameEventMode(effectiveExitMode) && state.currentInterval === "1m") {
-                const { getEffectivePolymarket5mSeriesId, resolvePolymarketOutcomeSymbol, loadPolymarket5mOutcomesForTimeRange } = await import("./polymarket-btc5m");
+                const { getEffectivePolymarketSeriesId, resolvePolymarketOutcomeSymbol, loadPolymarketOutcomesForTimeRange } = await import("./polymarket-btc5m");
                 const outcomeSymbol = resolvePolymarketOutcomeSymbol(state.currentSymbol, settings.polymarketOutcomeSymbol);
-                const seriesId = getEffectivePolymarket5mSeriesId(state.currentSymbol, outcomeSymbol);
+                const seriesId = getEffectivePolymarketSeriesId(state.currentSymbol, outcomeInterval, outcomeSymbol);
                 if (seriesId) {
                     try {
                         const targetTimes = result.trades
@@ -640,8 +642,12 @@ export class BacktestService {
                             ? Math.max(...targetTimes) + 300
                             : (lastChartTs !== null ? lastChartTs + 300 : undefined);
 
-                        const outcomes = await loadPolymarket5mOutcomesForTimeRange(
-                            state.currentSymbol, startTs ?? 0, endTs ?? Math.floor(Date.now() / 1000), outcomeSymbol
+                        const outcomes = await loadPolymarketOutcomesForTimeRange(
+                            state.currentSymbol,
+                            startTs ?? 0,
+                            endTs ?? Math.floor(Date.now() / 1000),
+                            outcomeSymbol,
+                            outcomeInterval
                         );
                         const relevantOutcomeByStart = new Map<number, (typeof outcomes)[number]>();
                         for (const trade of result.trades) {
@@ -673,6 +679,7 @@ export class BacktestService {
                 executionModel: settings.executionModel,
                 chartData,
                 outcomeSymbol: settings.polymarketOutcomeSymbol,
+                outcomeInterval,
                 polymarketExitMode: effectiveExitMode,
             }, settings.polymarketEntryOffset, pricePoints, settings.polymarketEntrySelectionMode);
         } catch (error) {

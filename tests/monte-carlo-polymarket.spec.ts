@@ -171,6 +171,32 @@ describe("polymarket monte carlo input", () => {
         );
         expect(fromSummary.evaluationMode).to.equal("resolve_hold");
     });
+
+    it("accepts native-session trade annotations without any 5m-specific contract", async () => {
+        const trades = [
+            createTrade(1, createOutcome({ eventEndTs: 900, marketExitTs: 900, marketEntryPrice: 0.4, marketPnl: 0.6 })),
+            createTrade(2, createOutcome({ eventEndTs: 900, marketExitTs: 900, marketEntryPrice: 0.55, marketPnl: -0.55, isWin: false })),
+            createTrade(3, createOutcome({ eventEndTs: 900, marketExitTs: 900, marketEntryPrice: 0.35, marketPnl: 0.65 })),
+            createTrade(4, createOutcome({ eventEndTs: 900, marketExitTs: 900, marketEntryPrice: 0.5, marketPnl: -0.5, isWin: false })),
+            createTrade(5, createOutcome({ eventEndTs: 900, marketExitTs: 900, marketEntryPrice: 0.45, marketPnl: 0.55 })),
+        ];
+        const result = createBacktestResult(trades, {
+            outcomeInterval: "15m",
+            evaluationMode: "resolve_hold",
+        });
+
+        const input = buildPolymarketMonteCarloInput(result);
+        expect(input.trades).to.have.length(5);
+        expect(input.coverageSummary.usableTrades).to.equal(5);
+
+        const simulation = await runPolymarketMonteCarloSimulation(
+            input,
+            createMonteCarloSettings({ simulations: 1, seed: 21 }),
+        );
+
+        expect(simulation.status).to.equal("success");
+        expect(simulation.inputSource).to.equal("polymarket");
+    });
 });
 
 describe("polymarket monte carlo engine", () => {

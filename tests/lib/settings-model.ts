@@ -11,6 +11,7 @@ import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import { ADVANCED_SIZING_DEFAULTS, coerceAdvancedSizingFieldValue } from "./advanced-sizing-settings";
 import { coerceAdaptiveTakeProfitFieldValue, resolveTakeProfitMode } from "./take-profit-settings";
 import type { PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
+import type { PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 
 import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, TradeDirection, TradeFilterMode } from "./types/strategies";
 import { isTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from "./types/backtest";
@@ -116,6 +117,7 @@ export interface BacktestSettingsData {
     strategyTimeframeMinutes: number;
     polymarketAnnotationEnabled: boolean;
     polymarketOutcomeSymbol: string;
+    polymarketOutcomeInterval: PolymarketOutcomeInterval;
     polymarketEntrySelectionMode: PolymarketEntrySelectionMode;
     polymarketEntryOffset: number;
     polymarketExitMode: "resolve_hold" | "signal_exit_same_event";

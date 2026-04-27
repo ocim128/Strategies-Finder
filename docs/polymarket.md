@@ -22,11 +22,14 @@ If you want to score a strategy against resolved Polymarket crypto events:
 
 - enable `Polymarket Annotation`
 - use `executionModel = next_open`
+- choose `Polymarket Outcome Session`:
+  - `5m` stays the default
+  - `15m` and `1h` use native Polymarket session rows instead of the old `5m` bridge
 - sync local outcome rows first with `npm run poly:sync-outcomes:all`
 - optionally set `Polymarket Outcome Symbol` if the chart symbol is different from the outcome target
 - choose `Polymarket Exit Mode`:
   - `resolve_hold` scores at final event resolution
-  - `signal_exit_same_event` is `1m` + `next_open` only and uses locally cached Polymarket price points for same-event entry and exit pricing
+  - `signal_exit_same_event` is `1m` + `next_open` only and uses locally cached Polymarket price points for same-session entry and exit pricing on the selected native outcome session
 
 If you want to manually paper-trade the latest still-open backtest trade:
 
@@ -76,10 +79,13 @@ Important behavior:
 
 - scores executed trades, not raw signals
 - uses local SQLite outcome rows, not live outcome fetches during evaluation
+- `polymarketOutcomeInterval` selects which native outcome session rows to load; default is `5m`
+- native `15m` and `1h` runs match each trade to the containing Polymarket session event
 - `signal_exit_same_event` also uses local SQLite price points for intra-event pricing
 - `lib/polymarket-outcome-evaluator.ts` remains the headless resolve-hold helper when the caller only supplies outcome rows
 - stores the resolved target on `BacktestResult.polymarketTradeSummary.outcomeSymbol` so later UI reloads do not drift
 - stores the applied evaluation mode on `BacktestResult.polymarketTradeSummary.evaluationMode`
+- stores the applied native session on `BacktestResult.polymarketTradeSummary.outcomeInterval`
 
 Core files:
 
@@ -148,10 +154,11 @@ This is the default mode.
 Behavior:
 
 - keeps the existing final-outcome scoring path
-- `5m` uses direct event matching
+- native `5m`, `15m`, and `1h` use direct session rows
 - `1m` uses the `1m -> 5m` bridge with two entry-selection modes:
   - `fixed_offset` keeps the existing `polymarketEntryOffset` filter
   - `actual_entry_minute` scores the first eligible trade per `5m` event and uses that trade's real minute for entry pricing while still holding to final resolution
+- native `15m` and `1h` use the first local price point at or after the chart trade entry when payout diagnostics need an entry price
 - the Trades panel now keeps row-level skip context on `1m` resolve-hold runs:
   - `Poly skip mN` means the trade was filtered out by the active fixed minute selection because it entered on minute `N`
   - `Poly dup` means another trade in that same scored event already claimed the Polymarket slot
@@ -230,11 +237,11 @@ If you add another target, update:
 | Surface | `resolve_hold` | `signal_exit_same_event` | Important notes |
 | --- | --- | --- | --- |
 | Direct Polymarket charting | not applicable | not applicable | provider path only |
-| Manual backtest annotation | current shared scoring path | `1m` + `next_open` only | same chart backtest, Polymarket post-pass |
+| Manual backtest annotation | native `5m` / `15m` / `1h`, plus existing `1m` / `15m` / `1h` / `4h` bridge paths where applicable | `1m` + `next_open` on the selected native outcome session | same chart backtest, Polymarket post-pass |
 | Headless `evaluatePolymarketOutcomes(...)` | resolve-hold only | not supported | caller supplies outcome rows only; no price-point input surface |
 | Finder Polymarket mode | `1m`, `5m`, `15m`, `1h`, `4h` | `1m` + `next_open` only | `grid` and `random` only; no combo; no multi-timeframe |
 | Hunt | same as Finder | same as Finder | preserves `polymarketExitMode` in profiles |
-| Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly | `1m` only when price points are available or can be ensured | active consumers, not passive renderers |
+| Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly; native `15m` / `1h` show summary and payout cards | `1m` only when price points are available or can be ensured | active consumers, not passive renderers |
 | Endpoint Preview / Copy / HTTP execution | `resolve_hold` only | not supported | `polymarketExitMode` is stripped |
 | Strategy Ensemble Polymarket | `resolve_hold` only | not supported | explicit fence in the ensemble path |
 | Bridge export | separate contract | separate contract | ignores `polymarketExitMode`; still chart-symbol `5m` entry-signal export |
@@ -296,7 +303,7 @@ Relevant Vite SQLite routes:
 Important behavior:
 
 - price points are event-keyed, not treated as one continuous market series
-- `ensurePricePointsForOutcomes(...)` loads existing local rows by event start, fetches missing event histories, then stores the missing rows locally
+- `ensurePricePointsForOutcomes(...)` loads existing local rows by event start, treats a session as covered only when local quotes reach near `event_end_ts`, then fetches missing event histories and stores the missing rows locally
 - first-run `1m` signal-exit backtests or Finder runs may trigger on-demand price-point ingestion
 - there is no separate manual sync command required for price points
 - outcome rows still require the normal `poly:sync-outcomes` flow
@@ -334,7 +341,8 @@ Direct single-symbol sync:
 Useful notes:
 
 - default `npm run poly:sync-outcomes` syncs the default BTC series
-- `--all` walks all supported symbols
+- `--interval 5m|15m|1h` selects one native outcome session
+- `--all` walks all supported symbols; without `--interval` it expands across `5m`, `15m`, and `1h`
 - existing rows are skipped by default
 - `--refresh-recent <n>` or the `:repair` scripts rewrite recent rows after sync logic changes
 - the sync script fetches remote Polymarket outcome data, normalizes it, then writes through the local Vite SQLite endpoint
@@ -352,7 +360,9 @@ Current behavior:
 
 - file: `lib/finder/finder-runner-polymarket.ts`
 - loads outcome rows once per run
-- in `signal_exit_same_event`, ensures price points once per run
+- native `15m` and `1h` Finder runs load the selected native session rows, not grouped `5m` rows
+- native `15m` and `1h`, plus `signal_exit_same_event`, ensure price points once per run
+- default `5m` keeps the older bridge fan-out for `1m`, `15m`, `1h`, and `4h` resolve-hold runs
 - supports cross-symbol outcome scoring through `backtestSettings.polymarketOutcomeSymbol`
 - reuses normal strategy execution and backtest machinery
 - applies signal-exit evaluation through the shared evaluator, not a Finder-only pricing path
@@ -380,6 +390,11 @@ Important signal-exit differences versus the old `1m` bridge mode:
 - signal-exit results are still per-event, not per-chart-trade; when a config produces multiple chart trades inside one `5m` event, only the first trade is scored and the rest contribute to `duplicateTradesIgnored`
 - applying a Finder result preserves `polymarketExitMode` and only writes `polymarketEntryOffset` back when the effective mode is still `resolve_hold`
 
+Native-session resolve-hold note:
+
+- Finder also does not fan out offset variants when `polymarketOutcomeInterval` is `15m` or `1h`
+- native-session resolve-hold ranks the actual selected session annotations and payout metrics
+
 Hunt behavior:
 
 - Hunt exposes its own `Polymarket Exit Mode` selector and preserves `polymarketExitMode` in run settings and saved profiles
@@ -392,6 +407,7 @@ User-facing controls live in the Backtest Realism section:
 
 - `polymarketAnnotationEnabled`
 - `polymarketOutcomeSymbol`
+- `polymarketOutcomeInterval`
 - `polymarketEntrySelectionMode`
 - `polymarketEntryOffset`
 - `polymarketExitMode`
@@ -399,9 +415,10 @@ User-facing controls live in the Backtest Realism section:
 Current UI rules:
 
 - `polymarketOutcomeSymbol` shows when annotation is enabled
+- `polymarketOutcomeInterval` shows when annotation is enabled
 - `polymarketExitMode` shows when annotation is enabled
-- `polymarketEntrySelectionMode` only shows when annotation is enabled, interval is `1m`, and the selected exit mode is not `signal_exit_same_event`
-- `polymarketEntryOffset` only shows when annotation is enabled, interval is `1m`, the selected exit mode is not `signal_exit_same_event`, and entry selection is `fixed_offset`
+- `polymarketEntrySelectionMode` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, and the selected exit mode is not `signal_exit_same_event`
+- `polymarketEntryOffset` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, the selected exit mode is not `signal_exit_same_event`, and entry selection is `fixed_offset`
 - Finder and Hunt rank-mode dropdowns disable unsupported rank modes when signal-exit mode is selected
 
 Persistence and compatibility:
@@ -410,6 +427,8 @@ Persistence and compatibility:
 - invalid persisted values normalize back to `resolve_hold`
 - Hunt uses the same default and normalization behavior
 - `polymarketOutcomeSymbol` is normalized to uppercase
+- `polymarketOutcomeInterval` defaults to `5m`
+- invalid persisted values normalize back to `5m`
 - `polymarketEntrySelectionMode` defaults to `fixed_offset`
 - invalid persisted values normalize back to `fixed_offset`
 - `polymarketEntryOffset` stays persisted for backward compatibility even when ignored by signal-exit mode
