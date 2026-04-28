@@ -4,7 +4,6 @@ import {
 	createSellSignal,
 	createSignalLoop,
 	ensureCleanData,
-	getCloses,
 } from "../strategy-helpers";
 import { buildRateOfChange, buildRollingZScore } from "./price-action-statistics-core";
 import { calculateVWAP } from "../indicators";

@@ -1,6 +1,6 @@
 import { getRequiredElement, setVisible } from "../dom-utils";
-import type { FinderMode, FinderRandomBenchmark, FinderResult } from "../types/finder";
-import type { BacktestResult, StrategyParams } from "../types/strategies";
+import type { FinderMode, FinderRandomBenchmark, FinderResult, FinderUniverseCandidate } from "../types/finder";
+import type { BacktestResult, StrategyParams, Time } from "../types/strategies";
 import { getFinderSelectionResult } from "./finder-engine";
 
 export function getFinderDisplayResult(item: FinderResult): BacktestResult {
@@ -175,6 +175,88 @@ export class FinderUI {
         list.appendChild(fragment);
     }
 
+    public renderUniverseResults(results: FinderUniverseCandidate[]): void {
+        const list = this.getListElement();
+        const copyButton = this.getCopyButton();
+        list.innerHTML = "";
+
+        if (results.length === 0) {
+            setVisible("finderEmpty", true);
+            if (copyButton) copyButton.disabled = true;
+            return;
+        }
+
+        setVisible("finderEmpty", false);
+        if (copyButton) copyButton.disabled = false;
+
+        const fragment = document.createDocumentFragment();
+        results.forEach((item, index) => {
+            const row = document.createElement("div");
+            row.className = "finder-row";
+
+            const rank = document.createElement("div");
+            rank.className = "finder-rank";
+            rank.textContent = `${index + 1}`;
+
+            const main = document.createElement("div");
+            main.className = "finder-main";
+
+            const title = document.createElement("div");
+            title.className = "finder-title";
+            title.textContent = item.strategyName;
+
+            const sub = document.createElement("div");
+            sub.className = "finder-sub";
+            sub.textContent = `${item.strategyKey} | ${item.profitableSymbols}/${item.activeSymbols} profitable active symbols`;
+
+            const params = document.createElement("div");
+            params.className = "finder-params";
+            params.textContent = this.formatParams(item.params);
+
+            const metrics = document.createElement("div");
+            metrics.className = "finder-metrics";
+            metrics.appendChild(this.createMetricChip(`Ratio ${(item.profitableActiveRatio * 100).toFixed(1)}%`));
+            metrics.appendChild(this.createMetricChip(`Active ${item.activeSymbols}`));
+            metrics.appendChild(this.createMetricChip(`No Trade ${item.noTradeSymbols}`));
+            metrics.appendChild(this.createMetricChip(`Med Exp ${item.medianExpectancy.toFixed(2)}`));
+            metrics.appendChild(this.createMetricChip(`Worst ${this.formatCurrency(item.worstNetProfit)}`));
+            metrics.appendChild(this.createMetricChip(`Trades ${item.totalTrades}`));
+
+            const details = document.createElement("details");
+            const summary = document.createElement("summary");
+            summary.textContent = `Symbol Breakdown (${item.symbols.length})`;
+            details.appendChild(summary);
+
+            item.symbols.forEach((symbolResult) => {
+                const line = document.createElement("div");
+                line.className = "finder-sub";
+                const metricsText = symbolResult.result
+                    ? ` | Net ${this.formatCurrency(symbolResult.result.netProfit)} | Exp ${symbolResult.result.expectancy.toFixed(2)} | Trades ${symbolResult.result.totalTrades}`
+                    : "";
+                const errorText = symbolResult.error ? ` | ${symbolResult.error}` : "";
+                line.textContent = `${symbolResult.symbol} | ${this.formatUniverseStatus(symbolResult.status)} | Bars ${symbolResult.barCount}${metricsText}${errorText}${this.formatUniverseTimeRange(symbolResult.firstTime, symbolResult.lastTime)}`;
+                details.appendChild(line);
+            });
+
+            main.appendChild(title);
+            main.appendChild(sub);
+            main.appendChild(params);
+            main.appendChild(metrics);
+            main.appendChild(details);
+
+            const button = document.createElement("button");
+            button.className = "btn btn-secondary finder-apply";
+            button.textContent = "Apply";
+            button.dataset.index = index.toString();
+
+            row.appendChild(rank);
+            row.appendChild(main);
+            row.appendChild(button);
+            fragment.appendChild(row);
+        });
+        list.appendChild(fragment);
+    }
+
     public setProgress(active: boolean, percent: number, text: string): void {
         const normalizedPercent = Math.min(100, Math.max(0, percent));
         if (
@@ -244,6 +326,50 @@ export class FinderUI {
     private formatCurrency(value: number): string {
         const sign = value >= 0 ? "+" : "";
         return `${sign}$${value.toFixed(2)}`;
+    }
+
+    private formatUniverseStatus(status: string): string {
+        switch (status) {
+            case "profitable":
+                return "Profitable";
+            case "losing":
+                return "Losing";
+            case "flat":
+                return "Flat";
+            case "no_trades":
+                return "No Trades";
+            case "load_failed":
+                return "Load Failed";
+            case "run_failed":
+                return "Run Failed";
+            default:
+                return status;
+        }
+    }
+
+    private formatUniverseTimeRange(firstTime?: Time, lastTime?: Time): string {
+        if (!firstTime && !lastTime) {
+            return "";
+        }
+        const firstLabel = firstTime ? this.formatTime(firstTime) : "?";
+        const lastLabel = lastTime ? this.formatTime(lastTime) : "?";
+        return ` | ${firstLabel} -> ${lastLabel}`;
+    }
+
+    private formatTime(time: Time): string {
+        if (typeof time === "string") {
+            return time;
+        }
+        if (typeof time === "number") {
+            const timestampMs = time > 1_000_000_000_000 ? time : time * 1000;
+            return new Date(timestampMs).toISOString().slice(0, 10);
+        }
+        if (time && typeof time === "object" && "year" in time && "month" in time && "day" in time) {
+            const month = String(time.month).padStart(2, "0");
+            const day = String(time.day).padStart(2, "0");
+            return `${time.year}-${month}-${day}`;
+        }
+        return String(time);
     }
 
     private formatProfitFactor(value: number): string {

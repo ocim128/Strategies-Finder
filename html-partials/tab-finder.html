@@ -2,36 +2,64 @@
 <div id="finderTab">
     <div class="section-title">Strategy Finder</div>
 
-    <div class="section-header">
-        <div class="section-title">Sorting</div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-            <span class="finder-advanced-badge">Advanced</span>
-            <label class="section-toggle" aria-label="Toggle advanced sort">
-                <input type="checkbox" id="finderAdvancedToggle">
-                <span class="section-toggle-track"></span>
-            </label>
-        </div>
-    </div>
-
-    <!-- Simple Sort Mode -->
-    <div class="param-row" id="finderSimpleSort">
+    <div class="param-row">
         <div class="param-group">
-            <label class="param-label">Sort By</label>
-            <select class="param-input" id="finderSort">
-                <!-- Populated by JS -->
-            </select>
-        </div>
-        <div class="param-group">
-            <label class="param-label">Then By</label>
-            <select class="param-input" id="finderSortSecondary">
-                <!-- Populated by JS -->
+            <label class="param-label" for="finderScope">Scope</label>
+            <select class="param-input" id="finderScope">
+                <option value="current_chart" selected>Current Chart</option>
+                <option value="symbol_universe">Symbol Universe</option>
             </select>
         </div>
     </div>
 
-    <!-- Advanced Sort Mode -->
-    <div class="finder-sort-list" id="finderSortList" style="display: none;">
-        <!-- Sort Items injected by JS -->
+    <div id="finderChartSortSection">
+        <div class="section-header">
+            <div class="section-title">Sorting</div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="finder-advanced-badge">Advanced</span>
+                <label class="section-toggle" aria-label="Toggle advanced sort">
+                    <input type="checkbox" id="finderAdvancedToggle">
+                    <span class="section-toggle-track"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="param-row" id="finderSimpleSort">
+            <div class="param-group">
+                <label class="param-label">Sort By</label>
+                <select class="param-input" id="finderSort">
+                    <!-- Populated by JS -->
+                </select>
+            </div>
+            <div class="param-group">
+                <label class="param-label">Then By</label>
+                <select class="param-input" id="finderSortSecondary">
+                    <!-- Populated by JS -->
+                </select>
+            </div>
+        </div>
+
+        <div class="finder-sort-list" id="finderSortList" style="display: none;">
+            <!-- Sort Items injected by JS -->
+        </div>
+    </div>
+
+    <div id="finderUniverseSortSection" style="display:none;">
+        <div class="section-header">
+            <div class="section-title">Universe Ranking</div>
+        </div>
+        <div class="section-body">
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label" for="finderUniverseSort">Sort By</label>
+                    <select class="param-input" id="finderUniverseSort"></select>
+                </div>
+                <div class="param-group">
+                    <label class="param-label" for="finderUniverseSortSecondary">Then By</label>
+                    <select class="param-input" id="finderUniverseSortSecondary"></select>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="param-row">
@@ -45,7 +73,7 @@
         </div>
     </div>
 
-    <div class="param-row">
+    <div class="param-row" id="finderModeRow">
         <div class="param-group">
             <label class="param-label">Search Mode</label>
             <select class="param-input" id="finderMode">
@@ -60,51 +88,86 @@
         </div>
     </div>
 
-    <div class="param-row">
+    <div class="param-row" id="finderStepsRow">
         <div class="param-group">
             <label class="param-label">Steps / Param</label>
             <input type="number" class="param-input" id="finderSteps" value="3" min="2" max="7">
         </div>
     </div>
 
-    <div class="section-header">
-        <div class="section-title">Polymarket Scoring</div>
-        <label class="section-toggle" aria-label="Toggle Polymarket outcome scoring">
-            <input type="checkbox" id="finderPolymarketToggle">
-            <span class="section-toggle-track"></span>
-        </label>
+    <div class="section-header" id="finderUniverseSectionHeader" style="display:none;">
+        <div class="section-title">Symbol Universe</div>
     </div>
-    <div class="section-body" id="finderPolymarketSettings">
-        <div class="param-row">
+    <div class="section-body" id="finderUniverseSection" style="display:none;">
+        <div class="finder-strategy-actions" role="group" aria-label="Universe helpers">
+            <button class="btn btn-secondary btn-compact" id="finderUniverseUseCurrent" type="button">Use Current</button>
+            <button class="btn btn-secondary btn-compact" id="finderUniverseUseCurrentMajors" type="button">Current + Majors</button>
+            <button class="btn btn-secondary btn-compact" id="finderUniverseClear" type="button">Clear</button>
+        </div>
+        <div class="param-group" style="margin-top: 12px;">
+            <label class="param-label" for="finderUniverseSymbols">Symbols</label>
+            <textarea class="param-input" id="finderUniverseSymbols" rows="6" placeholder="BTCUSDT&#10;ETHUSDT&#10;SOLUSDT"></textarea>
+        </div>
+        <div class="param-hint">One symbol per line or comma-separated. Universe mode reuses the current interval and current backtest settings for every symbol.</div>
+        <div class="finder-strategy-summary" id="finderUniverseSummary">0 symbols</div>
+        <div class="param-row" style="margin-top: 12px;">
             <div class="param-group">
-                <label class="param-label" for="finderPolymarketRankMode">Rank Mode</label>
-                <select class="param-input" id="finderPolymarketRankMode">
-                    <option value="balanced" selected>Balanced</option>
-                    <option value="accuracy">Accuracy</option>
-                    <option value="expectancy">Expectancy</option>
-                    <option value="expectancyTrades">Expectancy + Trades</option>
-                    <option value="profitFactor">Profit Factor</option>
-                    <option value="profitFactorTrades">Profit Factor + Trades</option>
-                    <option value="volume">Volume</option>
-                </select>
+                <label class="param-label" for="finderUniverseMinActiveSymbols">Min Active Symbols</label>
+                <input type="number" class="param-input" id="finderUniverseMinActiveSymbols" value="2" min="1" max="100">
             </div>
             <div class="param-group">
-                <label class="param-label" for="finderPolymarketMinScored">Min Scored</label>
-                <input type="number" class="param-input" id="finderPolymarketMinScored" value="0" min="0" step="1">
+                <label class="param-label" for="finderUniverseMinTotalTrades">Min Total Trades</label>
+                <input type="number" class="param-input" id="finderUniverseMinTotalTrades" value="40" min="0" max="100000">
             </div>
         </div>
         <div class="param-row">
             <div class="param-group">
-                <label class="param-label" for="finderPolymarketLockOffset">Lock Offset in Random 1m</label>
-                <input type="checkbox" id="finderPolymarketLockOffset">
-            </div>
-            <div class="param-group">
-                <label class="param-label" for="finderPolymarketAfterTakeProfitOnly">After TP Only</label>
-                <input type="checkbox" id="finderPolymarketAfterTakeProfitOnly">
+                <label class="param-label" for="finderUniverseMinProfitableActiveRatio">Min Profitable Ratio</label>
+                <input type="number" class="param-input" id="finderUniverseMinProfitableActiveRatio" value="0.5" min="0" max="1" step="0.05">
             </div>
         </div>
-        <div class="param-hint">After TP Only scores only entries whose previous closed trade exited via take profit.</div>
-        <div class="param-hint">Classification-only · 5m BTC/ETH/SOL/XRP · next-open alignment. Balanced mode uses a confidence-weighted score so tiny-sample win rates do not dominate. Lock Offset limits random 1m Polymarket Finder to the currently selected backtest offset instead of testing all 5 offsets.</div>
+    </div>
+
+    <div id="finderPolymarketSection">
+        <div class="section-header">
+            <div class="section-title">Polymarket Scoring</div>
+            <label class="section-toggle" aria-label="Toggle Polymarket outcome scoring">
+                <input type="checkbox" id="finderPolymarketToggle">
+                <span class="section-toggle-track"></span>
+            </label>
+        </div>
+        <div class="section-body" id="finderPolymarketSettings">
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label" for="finderPolymarketRankMode">Rank Mode</label>
+                    <select class="param-input" id="finderPolymarketRankMode">
+                        <option value="balanced" selected>Balanced</option>
+                        <option value="accuracy">Accuracy</option>
+                        <option value="expectancy">Expectancy</option>
+                        <option value="expectancyTrades">Expectancy + Trades</option>
+                        <option value="profitFactor">Profit Factor</option>
+                        <option value="profitFactorTrades">Profit Factor + Trades</option>
+                        <option value="volume">Volume</option>
+                    </select>
+                </div>
+                <div class="param-group">
+                    <label class="param-label" for="finderPolymarketMinScored">Min Scored</label>
+                    <input type="number" class="param-input" id="finderPolymarketMinScored" value="0" min="0" step="1">
+                </div>
+            </div>
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label" for="finderPolymarketLockOffset">Lock Offset in Random 1m</label>
+                    <input type="checkbox" id="finderPolymarketLockOffset">
+                </div>
+                <div class="param-group">
+                    <label class="param-label" for="finderPolymarketAfterTakeProfitOnly">After TP Only</label>
+                    <input type="checkbox" id="finderPolymarketAfterTakeProfitOnly">
+                </div>
+            </div>
+            <div class="param-hint">After TP Only scores only entries whose previous closed trade exited via take profit.</div>
+            <div class="param-hint">Classification-only. Balanced mode uses a confidence-weighted score so tiny-sample win rates do not dominate. Lock Offset limits random 1m Polymarket Finder to the currently selected backtest offset instead of testing all 5 offsets.</div>
+        </div>
     </div>
 
     <div class="section-header">
@@ -130,7 +193,7 @@
             <label class="param-label" for="finderStrategySearch">Search</label>
             <input type="text" class="param-input" id="finderStrategySearch" placeholder="Filter strategies by name">
         </div>
-        <div class="finder-strategy-actions" role="group" aria-label="Bulk strategy selection actions">
+        <div class="finder-strategy-actions" role="group" aria-label="Bulk strategy selection actions" id="finderStrategyActions">
             <button class="btn btn-secondary btn-compact" id="finderStrategySelectAll" type="button">All</button>
             <button class="btn btn-secondary btn-compact" id="finderStrategySelectNone" type="button">None</button>
             <button class="btn btn-secondary btn-compact" id="finderStrategyInvertVisible" type="button">Invert</button>
@@ -142,36 +205,35 @@
         <!-- Strategies will be injected here -->
     </div>
 
-    <div class="section-header">
-
-        <div class="section-title">Trade Count Filter</div>
-        <label class="section-toggle" aria-label="Toggle trade count filter">
-            <input type="checkbox" id="finderTradesToggle" checked>
-            <span class="section-toggle-track"></span>
-        </label>
-    </div>
-    <div class="section-body" id="finderTradeFilters">
-        <div class="param-row">
-            <div class="param-group">
-                <label class="param-label">Min Trades</label>
-                <input type="number" class="param-input" id="finderTradesMin" value="40" min="0">
-            </div>
-            <div class="param-group">
-                <label class="param-label">Max Trades</label>
-                <input type="number" class="param-input" id="finderTradesMax" placeholder="No max" min="0">
+    <div id="finderTradeFilterSection">
+        <div class="section-header">
+            <div class="section-title">Trade Count Filter</div>
+            <label class="section-toggle" aria-label="Toggle trade count filter">
+                <input type="checkbox" id="finderTradesToggle" checked>
+                <span class="section-toggle-track"></span>
+            </label>
+        </div>
+        <div class="section-body" id="finderTradeFilters">
+            <div class="param-row">
+                <div class="param-group">
+                    <label class="param-label">Min Trades</label>
+                    <input type="number" class="param-input" id="finderTradesMin" value="40" min="0">
+                </div>
+                <div class="param-group">
+                    <label class="param-label">Max Trades</label>
+                    <input type="number" class="param-input" id="finderTradesMax" placeholder="No max" min="0">
+                </div>
             </div>
         </div>
     </div>
 
-
-
-    <!-- Block mode indicator — shown when a date block is active -->
+    <!-- Block mode indicator - shown when a date block is active -->
     <div class="finder-block-badge" id="finderBlockBadge" style="display:none">
         <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
             <path
                 d="M17 12h-5v5h5v-5zM16 1v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-1V1h-2zm3 18H5V8h14v11z" />
         </svg>
-        Block Mode Active — Finder will use selected date range only
+        Block Mode Active - Finder will use selected date range only
     </div>
 
     <div class="finder-actions">
@@ -223,7 +285,7 @@
             </div>
             <h3 class="empty-state-title">Find Your Best Strategy</h3>
             <p class="empty-state-description">
-                Run the Strategy Finder to test thousands of parameter combinations and discover optimal settings.
+                Run the Strategy Finder to test parameter combinations and discover stronger settings.
             </p>
             <div class="tip-card tip-keyboard" style="margin-top: var(--space-4); text-align: left;">
                 <div class="tip-card-icon">

@@ -2,8 +2,10 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
     buildFinderOptions,
+    buildFinderUniverseOptions,
     resolveFinderPolymarketExitMode,
     resolveFinderSortPriority,
+    resolveFinderUniverseSortPriority,
 } from "./lib/finder/finder-manager-logic";
 
 describe("Finder manager logic", () => {
@@ -113,5 +115,45 @@ describe("Finder manager logic", () => {
             executionModel: "next_open",
             polymarketAnnotationEnabled: true,
         })).to.equal("signal_exit_same_event");
+    });
+
+    it("builds symbol-universe sort priority with deterministic fallbacks", () => {
+        expect(resolveFinderUniverseSortPriority({
+            primarySort: "profitableActiveRatio",
+            secondarySort: "medianExpectancy",
+        })).to.deep.equal([
+            "profitableActiveRatio",
+            "medianExpectancy",
+            "worstNetProfit",
+            "totalTrades",
+        ]);
+
+        expect(resolveFinderUniverseSortPriority({
+            primarySort: "worstNetProfit",
+            secondarySort: "worstNetProfit",
+        })).to.deep.equal([
+            "worstNetProfit",
+            "totalTrades",
+        ]);
+    });
+
+    it("clamps symbol-universe filters to valid ranges", () => {
+        const universe = buildFinderUniverseOptions({
+            symbols: ["BTCUSDT", "ETHUSDT"],
+            minActiveSymbols: 0,
+            minTotalTrades: -5,
+            minProfitableActiveRatio: 2,
+            primarySort: "profitableActiveRatio",
+            secondarySort: "totalTrades",
+        });
+
+        expect(universe.minActiveSymbols).to.equal(1);
+        expect(universe.minTotalTrades).to.equal(0);
+        expect(universe.minProfitableActiveRatio).to.equal(1);
+        expect(universe.sortPriority).to.deep.equal([
+            "profitableActiveRatio",
+            "totalTrades",
+            "worstNetProfit",
+        ]);
     });
 });

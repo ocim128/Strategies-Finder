@@ -1,9 +1,10 @@
-import type { BacktestResult, StrategyParams } from "../types/strategies";
+import type { BacktestResult, StrategyParams, Time } from "../types/strategies";
 import type { PolymarketEvalResult } from "../types/polymarket-outcomes";
 import type { PolymarketExitMode } from "../polymarket-exit-mode";
 
 export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
 export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'volume' | 'expectancy' | 'expectancyTrades' | 'profitFactor' | 'profitFactorTrades';
+export type FinderScope = 'current_chart' | 'symbol_universe';
 export type FinderMetric =
     | 'netProfit'
     | 'profitFactor'
@@ -24,11 +25,26 @@ export type FinderMetric =
     | 'polyExpectancyBalance'
     | 'polyProfitFactor'
     | 'polyProfitFactorBalance';
+export type FinderUniverseMetric =
+    | 'profitableActiveRatio'
+    | 'activeSymbols'
+    | 'medianExpectancy'
+    | 'worstNetProfit'
+    | 'totalTrades';
+
+export interface FinderUniverseOptions {
+    symbols: string[];
+    minActiveSymbols: number;
+    minTotalTrades: number;
+    minProfitableActiveRatio: number;
+    sortPriority: FinderUniverseMetric[];
+}
 
 export interface FinderOptions {
     mode: FinderMode;
     sortPriority: FinderMetric[];
     useAdvancedSort: boolean;
+    scope?: FinderScope;
     randomSeed?: number;
     multiTimeframeEnabled?: boolean;
     timeframes?: string[];
@@ -48,6 +64,7 @@ export interface FinderOptions {
     polymarketLockOffset?: boolean;
     polymarketAfterTakeProfitOnly?: boolean;
     polymarketExitMode?: PolymarketExitMode;
+    universe?: FinderUniverseOptions;
 }
 
 export interface EndpointSelectionAdjustment {
@@ -73,6 +90,53 @@ export interface FinderResult {
     endpointRemovedTrades: number;
     polymarketEval?: PolymarketEvalResult;
 }
+
+export type FinderUniverseSymbolStatus =
+    | 'profitable'
+    | 'losing'
+    | 'flat'
+    | 'no_trades'
+    | 'load_failed'
+    | 'run_failed';
+
+export type FinderUniverseEarlyStopReason =
+    | 'unreachable_profitable_ratio'
+    | 'unreachable_active_symbols'
+    | 'unreachable_total_trades';
+
+export interface FinderUniverseSymbolResult {
+    symbol: string;
+    status: FinderUniverseSymbolStatus;
+    barCount: number;
+    firstTime?: Time;
+    lastTime?: Time;
+    result?: BacktestResult;
+    error?: string;
+}
+
+export interface FinderUniverseCandidate {
+    strategyKey: string;
+    strategyName: string;
+    params: StrategyParams;
+    symbols: FinderUniverseSymbolResult[];
+    activeSymbols: number;
+    profitableSymbols: number;
+    losingSymbols: number;
+    flatSymbols: number;
+    noTradeSymbols: number;
+    totalTrades: number;
+    profitableActiveRatio: number;
+    medianExpectancy: number;
+    medianNetProfit: number;
+    worstNetProfit: number;
+    bestNetProfit: number;
+    evaluationStoppedEarly?: boolean;
+    stoppedReason?: FinderUniverseEarlyStopReason;
+}
+
+export type FinderLatestResults =
+    | { scope: 'current_chart'; results: FinderResult[] }
+    | { scope: 'symbol_universe'; results: FinderUniverseCandidate[] };
 
 export interface FinderRandomBenchmark {
     pipeline: 'standard' | 'rust_native' | 'ts_funnel' | 'rust_funnel';

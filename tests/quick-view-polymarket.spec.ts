@@ -13,6 +13,7 @@ import {
     summarizeRecentPolymarketForm,
 } from "../lib/quick-view";
 import { resetLocalSqlitePolymarketApiAvailabilityForTests } from "../lib/local-sqlite-polymarket-api";
+import { state } from "../lib/state";
 import type { BacktestResult, Trade } from "../lib/strategies/index";
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -48,6 +49,7 @@ function makeTrade(id: number, isWin: boolean | null, overrides: Partial<Trade> 
 afterEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;
     resetLocalSqlitePolymarketApiAvailabilityForTests();
+    state.currentBacktestResult = null;
     if (typeof ORIGINAL_HTML_SELECT_ELEMENT === "undefined") {
         delete (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement;
     } else {
@@ -875,6 +877,164 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.contain("Entry Profit % | After Max Hold");
         expect(html).to.contain("Entry Profit % | After TP");
         expect(html).to.contain("Entry Profit % | After Signal");
+    });
+
+    it("preserves native 15m signal-exit outcome intervals when Quick View rebuilds outcomes", async () => {
+        const eventStartTs = 1_700_000_000;
+        const tradeEntryTs = eventStartTs + 600;
+        class FakeSelectElement {
+            value: string;
+
+            constructor(value = "") {
+                this.value = value;
+            }
+        }
+        (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement = FakeSelectElement as unknown as typeof HTMLSelectElement;
+        const executionModelSelect = new FakeSelectElement("next_open");
+        (globalThis as { document?: Document }).document = {
+            getElementById: (id: string) => id === "executionModel"
+                ? (executionModelSelect as unknown as HTMLElement)
+                : null,
+        } as Document;
+
+        globalThis.fetch = (async (input, init) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [{
+                        series_id: "10422",
+                        event_slug: "xrp-15m-signal",
+                        market_slug: "xrp-15m-signal",
+                        interval: "15m",
+                        event_start_ts: eventStartTs,
+                        event_end_ts: eventStartTs + 900,
+                        yes_token_id: "yes-1",
+                        no_token_id: "no-1",
+                        yes_open_price: 0.5,
+                        yes_entry_minute_1_price: 0.51,
+                        yes_entry_minute_2_price: 0.52,
+                        yes_entry_minute_3_price: 0.53,
+                        yes_entry_minute_4_price: 0.54,
+                        resolved_outcome_up: 1,
+                        resolution_source: "test",
+                        updated_at: 1,
+                    }],
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-price-points") {
+                return new Response(JSON.stringify({ ok: true, rows: [] }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/ensure-polymarket-price-points") {
+                const body = JSON.parse(String(init?.body ?? "{}")) as { seriesId?: string };
+                expect(body.seriesId).to.equal("10422");
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [
+                        {
+                            series_id: "10422",
+                            event_start_ts: eventStartTs,
+                            event_end_ts: eventStartTs + 900,
+                            market_slug: "xrp-15m-signal",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            ts: tradeEntryTs,
+                            yes_price: 0.55,
+                            no_price: 0.45,
+                            updated_at: 1,
+                        },
+                        {
+                            series_id: "10422",
+                            event_start_ts: eventStartTs,
+                            event_end_ts: eventStartTs + 900,
+                            market_slug: "xrp-15m-signal",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            ts: tradeEntryTs + 120,
+                            yes_price: 0.63,
+                            no_price: 0.37,
+                            updated_at: 1,
+                        },
+                    ],
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            throw new Error(`Unexpected URL ${url.pathname}`);
+        }) as typeof fetch;
+
+        const result = {
+            trades: [
+                makeTrade(1, true, {
+                    entryTime: tradeEntryTs,
+                    exitTime: tradeEntryTs + 120,
+                    exitReason: "signal",
+                    polymarketOutcome: undefined,
+                }),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            marketContext: {
+                symbol: "XRPUSDT",
+                interval: "1m",
+            },
+            polymarketTradeSummary: {
+                seriesId: "10422",
+                outcomeInterval: "15m",
+                outcomeRowsLoaded: 1,
+                scoredTrades: 0,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 1,
+                evaluationMode: "signal_exit_same_event",
+            },
+        } satisfies BacktestResult;
+        state.currentBacktestResult = result;
+
+        const enriched = await (quickViewManager as any).ensurePolymarketOutcomes(result);
+
+        expect(enriched.polymarketTradeSummary?.outcomeInterval).to.equal("15m");
+        expect(enriched.polymarketTradeSummary?.evaluationMode).to.equal("signal_exit_same_event");
+        expect(enriched.trades[0]?.polymarketOutcome?.marketExitSource).to.equal("signal");
+        expect(enriched.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.55);
+        expect(enriched.trades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.63);
     });
 
     it("does not render an empty signal-exit section when no trades were actually priced", () => {

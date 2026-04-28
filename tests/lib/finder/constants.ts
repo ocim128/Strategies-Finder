@@ -1,4 +1,4 @@
-import type { FinderMetric, PolymarketFinderRankMode } from '../types/index';
+import type { FinderMetric, FinderUniverseMetric, PolymarketFinderRankMode } from '../types/index';
 
 export const DEFAULT_SORT_PRIORITY: FinderMetric[] = [
 	'expectancy',
@@ -65,6 +65,14 @@ export const POLYMARKET_RANK_MODE_LABELS: Record<PolymarketFinderRankMode, strin
 	expectancyTrades: 'Expectancy + Trades',
 	profitFactor: 'Profit Factor',
 	profitFactorTrades: 'Profit Factor + Trades',
+};
+
+export const UNIVERSE_METRIC_FULL_LABELS: Record<FinderUniverseMetric, string> = {
+	profitableActiveRatio: 'Profitable Active Ratio',
+	activeSymbols: 'Active Symbols',
+	medianExpectancy: 'Median Expectancy',
+	worstNetProfit: 'Worst Net Profit',
+	totalTrades: 'Total Trades',
 };
 
 export function getPolymarketSortPriority(mode: PolymarketFinderRankMode = 'balanced'): FinderMetric[] {

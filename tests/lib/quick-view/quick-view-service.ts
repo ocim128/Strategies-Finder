@@ -835,6 +835,7 @@ class QuickViewManager {
                     polymarketTradeSummary: {
                         seriesId,
                         outcomeSymbol: resolvedOutcomeSymbol ?? undefined,
+                        outcomeInterval,
                         outcomeRowsLoaded: outcomes.length,
                         scoredTrades: exitSummary.scoredTrades,
                         missingOutcomeTrades: exitSummary.missingOutcomeTrades,

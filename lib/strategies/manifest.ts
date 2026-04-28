@@ -50,37 +50,19 @@ import { correlation_flash_gamma_trigger } from "./lib/correlation_flash_gamma_t
 import { volatility_ratio_overextension } from "./lib/volatility_ratio_overextension";
 import { rolling_vwap_center } from "./lib/rolling_vwap_center";
 import { initiative_pressure_side } from "./lib/initiative_pressure_side";
-import { roc_percentile_regime } from "./lib/roc_percentile_regime";
-import { close_distribution_percentile } from "./lib/close_distribution_percentile";
-import { close_median_zscore_alignment } from "./lib/close_median_zscore_alignment";
-import { cmf_direction_alignment } from "./lib/cmf_direction_alignment";
-import { cross_symbol_correlation_trend } from "./lib/cross_symbol_correlation_trend";
 import { decay_momentum_alignment } from "./lib/decay_momentum_alignment";
-import { donchian_midpoint_centerline } from "./lib/donchian_midpoint_centerline";
-import { efficiency_gated_mean_alignment } from "./lib/efficiency_gated_mean_alignment";
-import { efficiency_gated_median } from "./lib/efficiency_gated_median";
 import { initiative_pressure_gated_median } from "./lib/initiative_pressure_gated_median";
-import { kurtosis_regime_range_position } from "./lib/kurtosis_regime_range_position";
-import { pair_spread_zscore_alignment } from "./lib/pair_spread_zscore_alignment";
-import { percentile_rank_close_alignment } from "./lib/percentile_rank_close_alignment";
-import { price_volume_rank_agreement } from "./lib/price_volume_rank_agreement";
-import { rolling_median_centerline } from "./lib/rolling_median_centerline";
-import { session_vwap_anchor } from "./lib/session_vwap_anchor";
-import { session_vwap_deviation_alignment } from "./lib/session_vwap_deviation_alignment";
-import { skewness_regime_median_alignment } from "./lib/skewness_regime_median_alignment";
-import { trailing_range_position } from "./lib/trailing_range_position";
-import { trailing_span_position_alignment } from "./lib/trailing_span_position_alignment";
-import { volume_roc_momentum_agreement } from "./lib/volume_roc_momentum_agreement";
-import { body_mid_delta_decay_momentum } from "./lib/body_mid_delta_decay_momentum";
-import { close_location_zscore_alignment } from "./lib/close_location_zscore_alignment";
-import { close_midpoint_deviation_decay } from "./lib/close_midpoint_deviation_decay";
-import { cross_volume_relative_zscore } from "./lib/cross_volume_relative_zscore";
-import { entropy_regime_sweep_alignment } from "./lib/entropy_regime_sweep_alignment";
-import { gap_pct_reversal_alignment } from "./lib/gap_pct_reversal_alignment";
-import { kurtosis_clamp_mean_reversion } from "./lib/kurtosis_clamp_mean_reversion";
-import { range_autocorr_compaction_break } from "./lib/range_autocorr_compaction_break";
-import { span_ratio_boundary_alignment } from "./lib/span_ratio_boundary_alignment";
-import { volume_close_location_disagreement } from "./lib/volume_close_location_disagreement";
+import { session_vwap_deviation_zscore } from "./lib/session_vwap_deviation_zscore";
+import { vwap_climax_reversion } from "./lib/vwap_climax_reversion";
+import { vwap_crossover_body_conviction } from "./lib/vwap_crossover_body_conviction";
+import { vwap_deviation_entropy_squeeze } from "./lib/vwap_deviation_entropy_squeeze";
+import { vwap_deviation_momentum_ratio } from "./lib/vwap_deviation_momentum_ratio";
+import { vwap_deviation_percentile } from "./lib/vwap_deviation_percentile";
+import { vwap_deviation_streak } from "./lib/vwap_deviation_streak";
+import { vwap_deviation_zscore } from "./lib/vwap_deviation_zscore";
+import { vwap_initiative_accumulation } from "./lib/vwap_initiative_accumulation";
+import { vwap_slope_zscore } from "./lib/vwap_slope_zscore";
+import { roc_percentile_regime } from "./lib/roc_percentile_regime";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -136,37 +118,19 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "volatility_ratio_overextension", strategy: volatility_ratio_overextension },
     { key: "rolling_vwap_center", strategy: rolling_vwap_center },
     { key: "initiative_pressure_side", strategy: initiative_pressure_side },
-    { key: "roc_percentile_regime", strategy: roc_percentile_regime },
-    { key: "close_distribution_percentile", strategy: close_distribution_percentile },
-    { key: "close_median_zscore_alignment", strategy: close_median_zscore_alignment },
-    { key: "cmf_direction_alignment", strategy: cmf_direction_alignment },
-    { key: "cross_symbol_correlation_trend", strategy: cross_symbol_correlation_trend },
     { key: "decay_momentum_alignment", strategy: decay_momentum_alignment },
-    { key: "donchian_midpoint_centerline", strategy: donchian_midpoint_centerline },
-    { key: "efficiency_gated_mean_alignment", strategy: efficiency_gated_mean_alignment },
-    { key: "efficiency_gated_median", strategy: efficiency_gated_median },
     { key: "initiative_pressure_gated_median", strategy: initiative_pressure_gated_median },
-    { key: "kurtosis_regime_range_position", strategy: kurtosis_regime_range_position },
-    { key: "pair_spread_zscore_alignment", strategy: pair_spread_zscore_alignment },
-    { key: "percentile_rank_close_alignment", strategy: percentile_rank_close_alignment },
-    { key: "price_volume_rank_agreement", strategy: price_volume_rank_agreement },
-    { key: "rolling_median_centerline", strategy: rolling_median_centerline },
-    { key: "session_vwap_anchor", strategy: session_vwap_anchor },
-    { key: "session_vwap_deviation_alignment", strategy: session_vwap_deviation_alignment },
-    { key: "skewness_regime_median_alignment", strategy: skewness_regime_median_alignment },
-    { key: "trailing_range_position", strategy: trailing_range_position },
-    { key: "trailing_span_position_alignment", strategy: trailing_span_position_alignment },
-    { key: "volume_roc_momentum_agreement", strategy: volume_roc_momentum_agreement },
-    { key: "body_mid_delta_decay_momentum", strategy: body_mid_delta_decay_momentum },
-    { key: "close_location_zscore_alignment", strategy: close_location_zscore_alignment },
-    { key: "close_midpoint_deviation_decay", strategy: close_midpoint_deviation_decay },
-    { key: "cross_volume_relative_zscore", strategy: cross_volume_relative_zscore },
-    { key: "entropy_regime_sweep_alignment", strategy: entropy_regime_sweep_alignment },
-    { key: "gap_pct_reversal_alignment", strategy: gap_pct_reversal_alignment },
-    { key: "kurtosis_clamp_mean_reversion", strategy: kurtosis_clamp_mean_reversion },
-    { key: "range_autocorr_compaction_break", strategy: range_autocorr_compaction_break },
-    { key: "span_ratio_boundary_alignment", strategy: span_ratio_boundary_alignment },
-    { key: "volume_close_location_disagreement", strategy: volume_close_location_disagreement },
+    { key: "session_vwap_deviation_zscore", strategy: session_vwap_deviation_zscore },
+    { key: "vwap_climax_reversion", strategy: vwap_climax_reversion },
+    { key: "vwap_crossover_body_conviction", strategy: vwap_crossover_body_conviction },
+    { key: "vwap_deviation_entropy_squeeze", strategy: vwap_deviation_entropy_squeeze },
+    { key: "vwap_deviation_momentum_ratio", strategy: vwap_deviation_momentum_ratio },
+    { key: "vwap_deviation_percentile", strategy: vwap_deviation_percentile },
+    { key: "vwap_deviation_streak", strategy: vwap_deviation_streak },
+    { key: "vwap_deviation_zscore", strategy: vwap_deviation_zscore },
+    { key: "vwap_initiative_accumulation", strategy: vwap_initiative_accumulation },
+    { key: "vwap_slope_zscore", strategy: vwap_slope_zscore },
+    { key: "roc_percentile_regime", strategy: roc_percentile_regime },
 ];
 
 export function createStrategiesRecordFromManifest(

@@ -811,98 +811,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 	},
     },
     {
-        key: "roc_percentile_regime",
-        name: "ROC Percentile Regime",
-        description: "Percentile rank of the current rate of change measures how extreme momentum is relative to recent history. High-percentile ROC indicates unusually strong upward momentum.",
-        defaultParams: {
-		roc_period: 5,
-		lookback: 50,
-		upper_pct: 0.7,
-		lower_pct: 0.3,
-	} as Record<string, number>,
-        paramLabels: {
-		roc_period: "ROC Period",
-		lookback: "Lookback",
-		upper_pct: "Upper Percentile",
-		lower_pct: "Lower Percentile",
-	} as Record<string, string>,
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["roc_period", "lookback", "upper_pct", "lower_pct"],
-	},
-    },
-    {
-        key: "close_distribution_percentile",
-        name: "Close Distribution Percentile",
-        description: "The percentile rank of the current close inside its trailing close distribution measures where price resides within recent history. High ranks indicate upper-tail occupancy; low ranks indicate lower-tail occupancy.",
-        defaultParams: {
-        lookback: 50,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback"],
-    },
-    },
-    {
-        key: "close_median_zscore_alignment",
-        name: "Close Median Z-Score Alignment",
-        description: "The z-score of the close relative to its rolling median and standard deviation measures how far price has displaced from its robust causal center. Positive displacement means price has shifted above the distribution center; negative means below.",
-        defaultParams: {
-        lookback: 30,
-        threshold: 1.0,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-        threshold: "Threshold",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "threshold"],
-    },
-    },
-    {
-        key: "cmf_direction_alignment",
-        name: "CMF Direction Alignment",
-        description: "Chaikin Money Flow captures the direction of volume-weighted accumulation or distribution. When CMF sign agrees with price relative to a rolling median, both flow and price point the same way.",
-        defaultParams: {
-        cmf_lookback: 20,
-        median_lookback: 20,
-    } as Record<string, number>,
-        paramLabels: {
-        cmf_lookback: "CMF Lookback",
-        median_lookback: "Median Lookback",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["cmf_lookback", "median_lookback"],
-    },
-    },
-    {
-        key: "cross_symbol_correlation_trend",
-        name: "Cross-Symbol Correlation Trend",
-        description: "When two symbols are co-moving and the primary's relative strength ratio is above its own rolling median, the primary is leading the pair. The same logic in reverse defines downside leadership.",
-        defaultParams: {
-        lookback: 30,
-        correlation_threshold: 0.5,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-        correlation_threshold: "Correlation Threshold",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "correlation_threshold"],
-    },
-    },
-    {
         key: "decay_momentum_alignment",
         name: "Decay Momentum Alignment",
         description: "An exponentially decayed cumulative sum of signed bar-to-bar returns creates a smooth, lag-aware momentum reference frame. The decay sum is positive when recent net directional pressure is bullish; negative when bearish. Its sign directly drives entries.",
@@ -918,58 +826,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         role: "entry",
         direction: "both",
         walkForwardParams: ["decay", "roc_period"],
-    },
-    },
-    {
-        key: "donchian_midpoint_centerline",
-        name: "Donchian Midpoint Centerline",
-        description: "The Donchian midpoint is a structural centerline derived from recent extremes instead of averages. Closes above it place price in the upper structural half of the recent range; closes below it place price in the lower half.",
-        defaultParams: {
-        lookback: 20,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback"],
-    },
-    },
-    {
-        key: "efficiency_gated_mean_alignment",
-        name: "Efficiency Gated Mean Alignment",
-        description: "The efficiency ratio measures how net-directional recent price movement has been relative to total path length. When efficiency is high, the market is trending coherently and close alignment with the rolling mean is a valid directional entry.",
-        defaultParams: {
-        lookback: 20,
-        efficiency_threshold: 0.3,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-        efficiency_threshold: "Efficiency Threshold",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "efficiency_threshold"],
-    },
-    },
-    {
-        key: "efficiency_gated_median",
-        name: "Efficiency Gated Median",
-        description: "When path efficiency is high, the market is behaving directionally rather than chop-like. In that regime, alignment relative to the rolling median acts as a simple continuation anchor.",
-        defaultParams: {
-        lookback: 20,
-        efficiency_threshold: 0.3,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-        efficiency_threshold: "Efficiency Threshold",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "efficiency_threshold"],
     },
     },
     {
@@ -991,217 +847,9 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
     },
     },
     {
-        key: "kurtosis_regime_range_position",
-        name: "Kurtosis Regime Range Position",
-        description: "Low rolling kurtosis flags a flatter, more compressed distribution. Within that compression regime, where the close sits inside the trailing range indicates which side of value is being accepted before resolution.",
-        defaultParams: {
-        lookback: 50,
-        kurtosis_threshold: 3.0,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-        kurtosis_threshold: "Kurtosis Threshold",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "kurtosis_threshold"],
-    },
-    },
-    {
-        key: "pair_spread_zscore_alignment",
-        name: "Pair Spread Z-Score Alignment",
-        description: "The spread between primary and secondary closes measures relative value divergence. Z-scoring this spread normalizes it across regimes. Positive z-score means the primary is trading rich relative to the secondary; negative means cheap.",
-        defaultParams: {
-        lookback: 20,
-        threshold: 1.5,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-        threshold: "Threshold",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "threshold"],
-    },
-    },
-    {
-        key: "percentile_rank_close_alignment",
-        name: "Percentile Rank Close Alignment",
-        description: "The percentile rank of the current close within its trailing distribution directly measures positional extremity. High percentile means price sits in the upper tail of recent closes, indicating bullish distribution alignment; low percentile indicates bearish alignment.",
-        defaultParams: {
-        lookback: 20,
-        threshold: 0.7,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-        threshold: "Threshold",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "threshold"],
-    },
-    },
-    {
-        key: "price_volume_rank_agreement",
-        name: "Price-Volume Rank Agreement",
-        description: "When close and volume simultaneously occupy the same distribution tail, the move shows participation conviction instead of low-participation drift. Elevated volume confirms whether price-state occupancy matters.",
-        defaultParams: {
-        lookback: 30,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback"],
-    },
-    },
-    {
-        key: "rolling_median_centerline",
-        name: "Rolling Median Centerline",
-        description: "The rolling median is the causal 50th-percentile consensus price. Closes above it imply buyers are accepting progressively higher value; closes below imply sellers are controlling value acceptance.",
-        defaultParams: {
-        lookback: 20,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback"],
-    },
-    },
-    {
-        key: "session_vwap_anchor",
-        name: "Session VWAP Anchor",
-        description: "Session VWAP resets at each session boundary and represents the current session's volume-weighted consensus value. Closes above it imply session flow is accepting higher prices; closes below imply the opposite.",
-        defaultParams: {
-        distance_pct: 0.0,
-    } as Record<string, number>,
-        paramLabels: {
-        distance_pct: "Distance %",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["distance_pct"],
-    },
-    },
-    {
-        key: "session_vwap_deviation_alignment",
-        name: "Session VWAP Deviation Alignment",
-        description: "Session VWAP is the volume-weighted fair value anchor for the current session. Close above session VWAP, normalized by ATR, means price has meaningfully disconnected above institutional value; below means disconnection below value.",
-        defaultParams: {
-        atr_multiplier: 0.5,
-        atr_lookback: 14,
-    } as Record<string, number>,
-        paramLabels: {
-        atr_multiplier: "ATR Multiplier",
-        atr_lookback: "ATR Lookback",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["atr_multiplier", "atr_lookback"],
-    },
-    },
-    {
-        key: "skewness_regime_median_alignment",
-        name: "Skewness Regime Median Alignment",
-        description: "Rolling skewness of typical prices reveals distribution shape: positive skew means the right tail dominates (bullish regime), negative means the left tail dominates (bearish). Align close direction with the skewness-defined regime relative to the rolling median.",
-        defaultParams: {
-        lookback: 20,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback"],
-    },
-    },
-    {
-        key: "trailing_range_position",
-        name: "Trailing Range Position",
-        description: "Where the close sits inside the trailing high-low span reveals directional acceptance. Upper-half closes imply buyers are defending higher territory; lower-half closes imply the opposite.",
-        defaultParams: {
-        lookback: 20,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback"],
-    },
-    },
-    {
-        key: "trailing_span_position_alignment",
-        name: "Trailing Span Position Alignment",
-        description: "Where the close sits within its trailing min-to-max span is a normalized boundary position. Close near the trailing high means price is pressing the upper boundary; near the trailing low means pressing the lower boundary.",
-        defaultParams: {
-        lookback: 20,
-        upper_pct: 0.7,
-        lower_pct: 0.3,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-        upper_pct: "Upper %",
-        lower_pct: "Lower %",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback", "upper_pct", "lower_pct"],
-    },
-    },
-    {
-        key: "volume_roc_momentum_agreement",
-        name: "Volume ROC Momentum Agreement",
-        description: "When price rate of change and volume rate of change agree in direction, momentum is confirmed by increasing participation. Both positive signals that buyers are both pushing price up and increasing activity; both negative signals seller conviction.",
-        defaultParams: {
-        lookback: 3,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "ROC Period",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback"],
-    },
-    },
-    {
-        key: "body_mid_delta_decay_momentum",
-        name: "Body-Mid Delta Decay Momentum",
-        description: "Body midpoint delta measures where the body center sits relative to the bar midpoint. A cumulative decay sum of body-mid delta creates a smoothed initiative pressure reference. The sign of this decayed pressure directly gives the directional bias.",
-        defaultParams: {
-		decay: 0.88,
-		z_lookback: 30,
-		z_threshold: 1.2,
-	} as Record<string, number>,
-        paramLabels: {
-		decay: "Decay Factor",
-		z_lookback: "Z-Score Lookback",
-		z_threshold: "Z-Score Threshold",
-	} as Record<string, string>,
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["decay", "z_lookback", "z_threshold"],
-	},
-    },
-    {
-        key: "close_location_zscore_alignment",
-        name: "Close Location Z-Score Alignment",
-        description: "Close location (where close sits within the bar's high-low range) is a microstructural proxy for intrabar taker aggression. The z-score of close location relative to its trailing distribution measures whether takers are consistently pressing one side.",
+        key: "session_vwap_deviation_zscore",
+        name: "Session VWAP Deviation Z-Score",
+        description: "Session VWAP resets each trading day, providing the intraday volume-weighted value consensus. The z-score of session-VWAP deviation is the gold standard intraday value reference — it resets daily, eliminating stale multi-day cumulative influence.",
         defaultParams: {
 		lookback: 30,
 		threshold: 1.5,
@@ -1217,29 +865,119 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 	},
     },
     {
-        key: "close_midpoint_deviation_decay",
-        name: "Close-Midpoint Deviation Decay",
-        description: "The signed deviation of close from bar midpoint measures intrabar directional pressure. A cumulative decay sum of this deviation creates a smoothed, lag-aware pressure score. The sign of the decay sum directly gives the directional bias.",
+        key: "vwap_climax_reversion",
+        name: "VWAP Climax Reversion",
+        description: "When price is at an unusual VWAP deviation AND volume spikes to an extreme percentile, a capitulation event is occurring. Volume percentile is the single gate that transforms a VWAP deviation from noise into a climax signal.",
         defaultParams: {
-		decay: 0.85,
-		z_lookback: 30,
-		z_threshold: 1.0,
+		lookback: 20,
+		z_threshold: 1.5,
+		vol_min: 0.7,
 	} as Record<string, number>,
         paramLabels: {
-		decay: "Decay Factor",
-		z_lookback: "Z-Score Lookback",
+		lookback: "Lookback",
 		z_threshold: "Z-Score Threshold",
+		vol_min: "Min Volume Percentile",
 	} as Record<string, string>,
         metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["decay", "z_lookback", "z_threshold"],
+		walkForwardParams: ["lookback", "z_threshold", "vol_min"],
 	},
     },
     {
-        key: "cross_volume_relative_zscore",
-        name: "Cross-Volume Relative Z-Score",
-        description: "Relative volume strength computes the ratio of primary to secondary volume participation. When z-scored, extremes reveal capital rotation between correlated assets. Positive z-score means the primary is attracting disproportionate participation.",
+        key: "vwap_crossover_body_conviction",
+        name: "VWAP Crossover Body Conviction",
+        description: "When price crosses through VWAP, the value consensus has been breached. On 1m, this structural break happens frequently — requiring minimum body pct filters out noise from accidental grazes. A genuine VWAP crossover with directional body is one of the highest-conviction intraday signals available.",
+        defaultParams: {
+		body_pct_min: 0.5,
+	} as Record<string, number>,
+        paramLabels: {
+		body_pct_min: "Min Body %",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["body_pct_min"],
+	},
+    },
+    {
+        key: "vwap_deviation_entropy_squeeze",
+        name: "VWAP Deviation Entropy Squeeze",
+        description: "The Shannon entropy of the close-to-VWAP deviation series measures how disordered the value-deviation behavior has been. When entropy drops to an extreme low, price has locked into a narrow band around VWAP — a value squeeze that resolves directionally.",
+        defaultParams: {
+		entropy_window: 10,
+		squeeze_pct: 20,
+	} as Record<string, number>,
+        paramLabels: {
+		entropy_window: "Entropy Window",
+		squeeze_pct: "Squeeze Percentile Max",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["entropy_window", "squeeze_pct"],
+	},
+    },
+    {
+        key: "vwap_deviation_momentum_ratio",
+        name: "VWAP Deviation Momentum Ratio",
+        description: "The dual-timeframe ratio of the VWAP deviation — fast rolling average divided by slow rolling average — measures whether the recent value deviation is accelerating or decelerating relative to the baseline. Captures the turning point where VWAP deviation shifts.",
+        defaultParams: {
+		fast_window: 5,
+		slow_window: 20,
+		spread: 0.2,
+	} as Record<string, number>,
+        paramLabels: {
+		fast_window: "Fast Window",
+		slow_window: "Slow Window",
+		spread: "Spread",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["fast_window", "slow_window", "spread"],
+	},
+    },
+    {
+        key: "vwap_deviation_percentile",
+        name: "VWAP Deviation Percentile",
+        description: "The percentile rank of the signed close-to-VWAP deviation within its trailing window directly measures distributional extremity. Percentile rank handles non-normal, fat-tailed deviation distributions better than z-score.",
+        defaultParams: {
+		lookback: 30,
+		upper_pct: 0.85,
+		lower_pct: 0.15,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		upper_pct: "Upper Percentile",
+		lower_pct: "Lower Percentile",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "upper_pct", "lower_pct"],
+	},
+    },
+    {
+        key: "vwap_deviation_streak",
+        name: "VWAP Deviation Streak",
+        description: "Consecutive bars on the same side of VWAP measure directional persistence relative to value, not magnitude. When streak reaches threshold, the one-sided value positioning is exhausted. This measures TIME spent away from value, not distance.",
+        defaultParams: {
+		streak_threshold: 5,
+	} as Record<string, number>,
+        paramLabels: {
+		streak_threshold: "Streak Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["streak_threshold"],
+	},
+    },
+    {
+        key: "vwap_deviation_zscore",
+        name: "VWAP Deviation Z-Score",
+        description: "The z-score of close-to-VWAP deviation measures how many standard deviations price has displaced from the volume-weighted consensus value. Positive z-score = premium, negative = discount. The rolling standard deviation self-normalizes across volatility regimes.",
         defaultParams: {
 		lookback: 20,
 		threshold: 1.5,
@@ -1255,115 +993,61 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 	},
     },
     {
-        key: "entropy_regime_sweep_alignment",
-        name: "Entropy Regime Sweep Alignment",
-        description: "Sweep-reclaim detects when price sweeps a trailing level and reclaims it — a structural defense signal. Gating sweep-reclaim by rolling entropy ensures the sweep occurs during a low-disorder (trending) regime where the reclaim is meaningful, not during random noise.",
+        key: "vwap_initiative_accumulation",
+        name: "VWAP Initiative Accumulation",
+        description: "Initiative pressure reveals which side is aggressively trading. When initiative pressure is bullish but price is below VWAP, aggressive buyers are accumulating below value. When bearish but price is above VWAP, sellers are distributing above value. Smart-money-below-value detection.",
         defaultParams: {
-		sweep_lookback: 10,
-		entropy_window: 20,
-		entropy_percentile_max: 40,
+		pressure_lookback: 10,
 	} as Record<string, number>,
         paramLabels: {
-		sweep_lookback: "Sweep Lookback",
-		entropy_window: "Entropy Window",
-		entropy_percentile_max: "Entropy Percentile Max",
+		pressure_lookback: "Pressure Lookback",
 	} as Record<string, string>,
         metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["sweep_lookback", "entropy_window", "entropy_percentile_max"],
+		walkForwardParams: ["pressure_lookback"],
 	},
     },
     {
-        key: "gap_pct_reversal_alignment",
-        name: "Gap Percentile Reversal Alignment",
-        description: "The gap percentage between consecutive bars is a direct measure of interbar price jump. When the absolute gap percentile reaches an extreme, a gap-fade entry captures the mean-reversion of excessive gaps.",
+        key: "vwap_slope_zscore",
+        name: "VWAP Slope Z-Score",
+        description: "The rate of change of VWAP measures how fast the volume-weighted consensus value itself is being repriced. Z-scoring this slope identifies when value is shifting unusually fast relative to recent history.",
         defaultParams: {
-		lookback: 60,
-		percentile_threshold: 0.9,
+		roc_period: 5,
+		z_lookback: 30,
+		z_threshold: 1.0,
 	} as Record<string, number>,
         paramLabels: {
+		roc_period: "ROC Period",
+		z_lookback: "Z-Score Lookback",
+		z_threshold: "Z-Score Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["roc_period", "z_lookback", "z_threshold"],
+	},
+    },
+    {
+        key: "roc_percentile_regime",
+        name: "ROC Percentile Regime",
+        description: "Percentile rank of the current rate of change measures how extreme momentum is relative to recent history. High-percentile ROC indicates unusually strong upward momentum.",
+        defaultParams: {
+		roc_period: 5,
+		lookback: 50,
+		upper_pct: 0.7,
+		lower_pct: 0.3,
+	} as Record<string, number>,
+        paramLabels: {
+		roc_period: "ROC Period",
 		lookback: "Lookback",
-		percentile_threshold: "Percentile Threshold",
+		upper_pct: "Upper Percentile",
+		lower_pct: "Lower Percentile",
 	} as Record<string, string>,
         metadata: {
 		role: "entry",
 		direction: "both",
-		walkForwardParams: ["lookback", "percentile_threshold"],
-	},
-    },
-    {
-        key: "kurtosis_clamp_mean_reversion",
-        name: "Kurtosis Clamp Mean Reversion",
-        description: "Excess kurtosis measures how fat-tailed the return distribution has become. A sharp drop in kurtosis means the distribution has clamped to normal — the fat-tail event is over. Fade the directional exhaustion by entering against the trailing return direction.",
-        defaultParams: {
-		kurtosis_window: 20,
-		roc_threshold: -0.3,
-	} as Record<string, number>,
-        paramLabels: {
-		kurtosis_window: "Kurtosis Window",
-		roc_threshold: "Kurtosis ROC Threshold",
-	} as Record<string, string>,
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["kurtosis_window", "roc_threshold"],
-	},
-    },
-    {
-        key: "range_autocorr_compaction_break",
-        name: "Range Autocorrelation Compaction Break",
-        description: "When range autocorrelation drops sharply (volatility clustering breaking down), the market is transitioning from a compressed regime to a directional breakout. The current bar's body direction gives the entry side.",
-        defaultParams: {
-		autocorr_window: 20,
-		break_threshold: -0.2,
-	} as Record<string, number>,
-        paramLabels: {
-		autocorr_window: "Autocorrelation Window",
-		break_threshold: "Break Threshold",
-	} as Record<string, string>,
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["autocorr_window", "break_threshold"],
-	},
-    },
-    {
-        key: "span_ratio_boundary_alignment",
-        name: "Span Ratio Boundary Alignment",
-        description: "The ratio of current bar's range to the trailing window span measures how much of the recent range the current bar is consuming. When a single bar consumes a large fraction of the trailing span, it indicates a boundary breach with participation. The body direction gives the trade side.",
-        defaultParams: {
-		span_lookback: 20,
-		consumption_threshold: 0.4,
-	} as Record<string, number>,
-        paramLabels: {
-		span_lookback: "Span Lookback",
-		consumption_threshold: "Consumption Threshold",
-	} as Record<string, string>,
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["span_lookback", "consumption_threshold"],
-	},
-    },
-    {
-        key: "volume_close_location_disagreement",
-        name: "Volume Close-Location Disagreement",
-        description: "When close location is bullish (close near bar high) but volume is declining relative to its trailing average, the buying pressure lacks participation — a divergence that often precedes reversal. The divergence directly gives the hedge direction.",
-        defaultParams: {
-		location_threshold: 0.7,
-		volume_lookback: 20,
-		volume_decline_pct: -0.1,
-	} as Record<string, number>,
-        paramLabels: {
-		location_threshold: "Location Threshold",
-		volume_lookback: "Volume Lookback",
-		volume_decline_pct: "Volume Decline %",
-	} as Record<string, string>,
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["location_threshold", "volume_lookback", "volume_decline_pct"],
+		walkForwardParams: ["roc_period", "lookback", "upper_pct", "lower_pct"],
 	},
     },
 ];

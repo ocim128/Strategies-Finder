@@ -1,5 +1,12 @@
 import { DEFAULT_SORT_PRIORITY, getPolymarketSortPriority } from "./constants";
-import type { FinderMetric, FinderMode, FinderOptions, PolymarketFinderRankMode } from "../types/finder";
+import type {
+    FinderMetric,
+    FinderMode,
+    FinderOptions,
+    FinderUniverseMetric,
+    FinderUniverseOptions,
+    PolymarketFinderRankMode,
+} from "../types/finder";
 import { resolveEffectivePolymarketExitMode, type PolymarketExitMode } from "../polymarket-exit-mode";
 
 export interface FinderOptionsInput {
@@ -22,6 +29,15 @@ export interface FinderOptionsInput {
     polymarketLockOffset: boolean;
     polymarketAfterTakeProfitOnly: boolean;
     polymarketExitMode: PolymarketExitMode;
+}
+
+export interface FinderUniverseOptionsInput {
+    symbols: string[];
+    minActiveSymbols: number;
+    minTotalTrades: number;
+    minProfitableActiveRatio: number;
+    primarySort: FinderUniverseMetric;
+    secondarySort: FinderUniverseMetric;
 }
 
 export function resolveFinderSortPriority(input: {
@@ -58,6 +74,36 @@ export function resolveFinderPolymarketExitMode(input: {
     polymarketAnnotationEnabled: boolean;
 }): PolymarketExitMode {
     return resolveEffectivePolymarketExitMode(input);
+}
+
+export function resolveFinderUniverseSortPriority(input: {
+    primarySort: FinderUniverseMetric;
+    secondarySort: FinderUniverseMetric;
+}): FinderUniverseMetric[] {
+    const sortPriority: FinderUniverseMetric[] = [input.primarySort];
+    if (input.secondarySort !== input.primarySort) {
+        sortPriority.push(input.secondarySort);
+    }
+    for (const fallback of ["worstNetProfit", "totalTrades"] as const) {
+        if (!sortPriority.includes(fallback)) {
+            sortPriority.push(fallback);
+        }
+    }
+    return sortPriority;
+}
+
+export function buildFinderUniverseOptions(input: FinderUniverseOptionsInput): FinderUniverseOptions {
+    const minActiveSymbols = Math.max(1, Math.round(input.minActiveSymbols));
+    const minTotalTrades = Math.max(0, Math.round(input.minTotalTrades));
+    const minProfitableActiveRatio = Math.max(0, Math.min(1, input.minProfitableActiveRatio));
+
+    return {
+        symbols: input.symbols,
+        minActiveSymbols,
+        minTotalTrades,
+        minProfitableActiveRatio,
+        sortPriority: resolveFinderUniverseSortPriority(input),
+    };
 }
 
 export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
