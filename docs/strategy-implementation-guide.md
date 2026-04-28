@@ -2,7 +2,7 @@
 
 This guide is for turning a strategy idea into a valid built-in strategy under `lib/strategies/lib/*`.
 
-If the idea came from `archive/prompt.txt` or `archive/prompt-cs.txt`, treat those prompts as idea-generation input only. They do not guarantee a compilable implementation. Before writing code, confirm every helper, indicator, and type assumption against the real codebase.
+If the idea came from an archive prompt, treat it as idea-generation input only. It does not guarantee a compilable implementation. Before writing code, confirm every helper, indicator, duplicate-avoidance assumption, and type assumption against the real codebase.
 
 For repo-level orientation, read [`README.md`](../README.md) first. For the operational checklist, use [`AGENTS.md`](../AGENTS.md). For the higher-level authoring workflow, use [`strategy-authoring.md`](./strategy-authoring.md).
 
@@ -32,6 +32,26 @@ For repo-level orientation, read [`README.md`](../README.md) first. For the oper
 6. Use `createSignalLoop(...)` and return `createBuySignal(...)`, `createSellSignal(...)`, or `null`.
 7. Add `metadata.walkForwardParams` only for params that genuinely affect entries.
 8. Run `npm run strategies:sync-manifest` and `npm run typecheck`.
+
+## Using Prompt JSON
+
+When a prompt returns a strategy idea as JSON, translate it into code deliberately instead of copying fields straight into a file.
+
+- `key` -> file name and exported `const` name. Keep them aligned.
+- `name` -> strategy `name`.
+- `core_thesis` -> short `description`, then trim it to one implementation-focused sentence if needed.
+- `helpers` and `indicators` -> candidate imports only. Verify each one exists and that the data shape matches your usage before writing code.
+- `params` -> `defaultParams`, `paramLabels`, and usually `metadata.walkForwardParams`. Reject decorative params that do not materially change entries.
+- `buy_logic` and `sell_logic` -> the causal conditions inside `createSignalLoop(...)`.
+- `closest_existing_keys` -> review-only duplicate check. Do not copy it into the strategy object.
+- `why_test_this` -> review-only note for PR or test planning, not runtime code.
+
+Collapse or reject the idea before coding if:
+
+- the JSON depends on a helper or indicator that does not exist
+- the same thesis can be expressed with fewer params or fewer transforms
+- `buy_logic` and `sell_logic` are not truly symmetric
+- the edge disappears once you remove decorative filters
 
 ## Minimal Template
 
