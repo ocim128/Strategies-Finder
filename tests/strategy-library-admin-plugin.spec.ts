@@ -70,6 +70,31 @@ describe("Strategy library admin plugin", () => {
         }
     });
 
+    it("accepts a strategy display name for single-strategy deletion", () => {
+        const repoRoot = createTempRepo();
+        try {
+            const alphaPath = writeStrategyFile(repoRoot, "alpha_strategy.ts", "alpha_strategy", "Alpha Strategy");
+            writeStrategyFile(repoRoot, "beta_strategy.ts", "beta_strategy");
+
+            syncStrategyManifestForRepo(repoRoot);
+
+            const result = archiveAndDeleteBuiltInStrategy("Alpha Strategy", {
+                repoRoot,
+                backupDate: new Date("2026-04-09T12:00:00Z"),
+            });
+
+            expect(result.key).to.equal("alpha_strategy");
+            expect(existsSync(alphaPath)).to.equal(false);
+            expect(existsSync(path.join(repoRoot, result.backupRelativePath))).to.equal(true);
+
+            const manifestSource = readFileSync(path.join(repoRoot, "lib", "strategies", "manifest.ts"), "utf8");
+            expect(manifestSource.includes('key: "alpha_strategy"')).to.equal(false);
+            expect(manifestSource.includes('key: "beta_strategy"')).to.equal(true);
+        } finally {
+            rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it("archives and deletes multiple built-in strategies in one batch", () => {
         const repoRoot = createTempRepo();
         try {

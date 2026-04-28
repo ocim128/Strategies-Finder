@@ -5,6 +5,7 @@ export const STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS = [
     "strategyLibraryMenuStatus",
     "strategyLibraryBulkKeys",
     "useCurrentStrategyKeyBtn",
+    "useCurrentStrategyNameBtn",
     "deleteBuiltInStrategyBtn",
     "deleteBulkBuiltInStrategiesBtn",
 ] as const;
@@ -15,6 +16,7 @@ export function createStrategyLibraryAdminDom() {
         strategyLibraryMenuStatus: getRequiredElement("strategyLibraryMenuStatus"),
         strategyLibraryBulkKeys: getRequiredElement<HTMLTextAreaElement>("strategyLibraryBulkKeys"),
         useCurrentStrategyKeyBtn: getRequiredElement<HTMLButtonElement>("useCurrentStrategyKeyBtn"),
+        useCurrentStrategyNameBtn: getRequiredElement<HTMLButtonElement>("useCurrentStrategyNameBtn"),
         deleteBuiltInStrategyBtn: getRequiredElement<HTMLButtonElement>("deleteBuiltInStrategyBtn"),
         deleteBulkBuiltInStrategiesBtn: getRequiredElement<HTMLButtonElement>("deleteBulkBuiltInStrategiesBtn"),
     };

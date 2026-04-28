@@ -42,6 +42,7 @@ class StrategyLibraryAdminService {
             deleteBuiltInStrategyBtn,
             strategyLibraryBulkKeys,
             useCurrentStrategyKeyBtn,
+            useCurrentStrategyNameBtn,
             deleteBulkBuiltInStrategiesBtn,
         } = this.getDom();
 
@@ -52,6 +53,9 @@ class StrategyLibraryAdminService {
         useCurrentStrategyKeyBtn.addEventListener("click", () => {
             this.appendCurrentKeyToBulkList();
         });
+        useCurrentStrategyNameBtn.addEventListener("click", () => {
+            this.appendCurrentNameToBulkList();
+        });
         deleteBulkBuiltInStrategiesBtn.addEventListener("click", () => {
             void this.handleDeleteBulkStrategies();
         });
@@ -59,11 +63,15 @@ class StrategyLibraryAdminService {
 
     private describeCurrentStrategy(): StrategyLibraryStatus {
         const key = state.currentStrategyKey;
+        const strategyName = strategyRegistry.get(key)?.name?.trim();
+        const strategyLabel = strategyName && strategyName !== key
+            ? `"${strategyName}" (${key})`
+            : `"${key}"`;
 
         if (this.deleteBusy) {
             return {
                 canDelete: false,
-                message: `Deleting "${key}" and syncing the manifest...`,
+                message: `Deleting ${strategyLabel} and syncing the manifest...`,
                 tone: "busy",
             };
         }
@@ -94,7 +102,7 @@ class StrategyLibraryAdminService {
 
         return {
             canDelete: true,
-            message: `Archive + delete "${key}". The source file is backed up to archive/strategy and lib/strategies/manifest.ts is resynced automatically.`,
+            message: `Archive + delete ${strategyLabel}. The source file is backed up to archive/strategy and lib/strategies/manifest.ts is resynced automatically.`,
             tone: "ready",
         };
     }
@@ -105,26 +113,29 @@ class StrategyLibraryAdminService {
             deleteBuiltInStrategyBtn,
             deleteBulkBuiltInStrategiesBtn,
             useCurrentStrategyKeyBtn,
+            useCurrentStrategyNameBtn,
         } = this.getDom();
         const status = this.describeCurrentStrategy();
-        const bulkKeys = this.getParsedBulkKeys();
+        const bulkEntries = this.getParsedBulkEntries();
+        const currentStrategyName = this.getCurrentStrategyName();
         strategyLibraryMenuStatus.textContent = status.message;
         strategyLibraryMenuStatus.dataset.state = status.tone;
         deleteBuiltInStrategyBtn.disabled = !status.canDelete;
         deleteBuiltInStrategyBtn.classList.toggle("is-loading", this.deleteBusy);
-        deleteBulkBuiltInStrategiesBtn.disabled = this.deleteBusy || bulkKeys.length === 0;
+        deleteBulkBuiltInStrategiesBtn.disabled = this.deleteBusy || bulkEntries.length === 0;
         deleteBulkBuiltInStrategiesBtn.classList.toggle("is-loading", this.deleteBusy);
         useCurrentStrategyKeyBtn.disabled = this.deleteBusy || !state.currentStrategyKey.trim();
+        useCurrentStrategyNameBtn.disabled = this.deleteBusy || currentStrategyName.length === 0;
     }
 
-    private getParsedBulkKeys(): string[] {
+    private getParsedBulkEntries(): string[] {
         const { strategyLibraryBulkKeys } = this.getDom();
         return parseStrategyLibraryBulkEntries(strategyLibraryBulkKeys.value);
     }
 
-    private setBulkKeys(keys: readonly string[]): void {
+    private setBulkEntries(entries: readonly string[]): void {
         const { strategyLibraryBulkKeys } = this.getDom();
-        strategyLibraryBulkKeys.value = keys.join("\n");
+        strategyLibraryBulkKeys.value = entries.join("\n");
         this.syncUi();
     }
 
@@ -134,10 +145,30 @@ class StrategyLibraryAdminService {
             return;
         }
 
-        const keys = this.getParsedBulkKeys();
-        if (!keys.includes(key)) {
-            keys.push(key);
-            this.setBulkKeys(keys);
+        const entries = this.getParsedBulkEntries();
+        if (!entries.includes(key)) {
+            entries.push(key);
+            this.setBulkEntries(entries);
+        } else {
+            this.syncUi();
+        }
+    }
+
+    private getCurrentStrategyName(): string {
+        const strategy = strategyRegistry.get(state.currentStrategyKey);
+        return strategy?.name?.trim() ?? "";
+    }
+
+    private appendCurrentNameToBulkList(): void {
+        const strategyName = this.getCurrentStrategyName();
+        if (!strategyName) {
+            return;
+        }
+
+        const entries = this.getParsedBulkEntries();
+        if (!entries.includes(strategyName)) {
+            entries.push(strategyName);
+            this.setBulkEntries(entries);
         } else {
             this.syncUi();
         }
@@ -197,17 +228,17 @@ class StrategyLibraryAdminService {
     }
 
     private async handleDeleteBulkStrategies(): Promise<void> {
-        const keys = this.getParsedBulkKeys();
-        if (keys.length === 0) {
-            uiManager.showToast("Enter at least one built-in strategy key to delete.", "error");
+        const entries = this.getParsedBulkEntries();
+        if (entries.length === 0) {
+            uiManager.showToast("Enter at least one built-in strategy key, name, or filename to delete.", "error");
             return;
         }
 
-        const preview = keys.slice(0, 8).join(", ");
-        const moreCount = keys.length > 8 ? `, +${keys.length - 8} more` : "";
+        const preview = entries.slice(0, 8).join(", ");
+        const moreCount = entries.length > 8 ? `, +${entries.length - 8} more` : "";
         const confirmed = window.confirm(
-            `Archive and delete ${keys.length} built-in strategies?\n\n` +
-            `Keys: ${preview}${moreCount}\n` +
+            `Archive and delete ${entries.length} built-in strategies?\n\n` +
+            `Entries: ${preview}${moreCount}\n` +
             `Backup folder: archive/strategy\n` +
             `Manifest sync: automatic\n` +
             `The current browser session keeps running, but deleted strategies are removed from the dropdown.`
@@ -221,16 +252,16 @@ class StrategyLibraryAdminService {
         this.syncUi();
 
         try {
-            const result = await deleteBuiltInStrategyLibraryEntries(keys);
+            const result = await deleteBuiltInStrategyLibraryEntries(entries);
             for (const item of result.deleted) {
                 strategyRegistry.unregister(item.key);
             }
 
             this.getDom().strategyLibraryMenu.open = false;
-            this.setBulkKeys([]);
+            this.setBulkEntries([]);
 
             debugLogger.event("strategy_library.delete_batch", {
-                requested: keys,
+                requested: entries,
                 deleted: result.deleted.map((item) => item.key),
                 manifestStrategies: result.manifestStrategyCount,
             });
@@ -242,7 +273,7 @@ class StrategyLibraryAdminService {
         } catch (error) {
             const message = error instanceof Error ? error.message : "Failed to delete built-in strategies.";
             debugLogger.error("strategy_library.delete_batch_failed", {
-                requested: keys,
+                requested: entries,
                 error: message,
             });
             uiManager.showToast(message, "error");

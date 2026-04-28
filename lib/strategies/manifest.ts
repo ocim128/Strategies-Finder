@@ -52,16 +52,6 @@ import { rolling_vwap_center } from "./lib/rolling_vwap_center";
 import { initiative_pressure_side } from "./lib/initiative_pressure_side";
 import { decay_momentum_alignment } from "./lib/decay_momentum_alignment";
 import { initiative_pressure_gated_median } from "./lib/initiative_pressure_gated_median";
-import { session_vwap_deviation_zscore } from "./lib/session_vwap_deviation_zscore";
-import { vwap_climax_reversion } from "./lib/vwap_climax_reversion";
-import { vwap_crossover_body_conviction } from "./lib/vwap_crossover_body_conviction";
-import { vwap_deviation_entropy_squeeze } from "./lib/vwap_deviation_entropy_squeeze";
-import { vwap_deviation_momentum_ratio } from "./lib/vwap_deviation_momentum_ratio";
-import { vwap_deviation_percentile } from "./lib/vwap_deviation_percentile";
-import { vwap_deviation_streak } from "./lib/vwap_deviation_streak";
-import { vwap_deviation_zscore } from "./lib/vwap_deviation_zscore";
-import { vwap_initiative_accumulation } from "./lib/vwap_initiative_accumulation";
-import { vwap_slope_zscore } from "./lib/vwap_slope_zscore";
 import { roc_percentile_regime } from "./lib/roc_percentile_regime";
 
 export interface StrategyManifestEntry {
@@ -120,16 +110,6 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "initiative_pressure_side", strategy: initiative_pressure_side },
     { key: "decay_momentum_alignment", strategy: decay_momentum_alignment },
     { key: "initiative_pressure_gated_median", strategy: initiative_pressure_gated_median },
-    { key: "session_vwap_deviation_zscore", strategy: session_vwap_deviation_zscore },
-    { key: "vwap_climax_reversion", strategy: vwap_climax_reversion },
-    { key: "vwap_crossover_body_conviction", strategy: vwap_crossover_body_conviction },
-    { key: "vwap_deviation_entropy_squeeze", strategy: vwap_deviation_entropy_squeeze },
-    { key: "vwap_deviation_momentum_ratio", strategy: vwap_deviation_momentum_ratio },
-    { key: "vwap_deviation_percentile", strategy: vwap_deviation_percentile },
-    { key: "vwap_deviation_streak", strategy: vwap_deviation_streak },
-    { key: "vwap_deviation_zscore", strategy: vwap_deviation_zscore },
-    { key: "vwap_initiative_accumulation", strategy: vwap_initiative_accumulation },
-    { key: "vwap_slope_zscore", strategy: vwap_slope_zscore },
     { key: "roc_percentile_regime", strategy: roc_percentile_regime },
 ];
 

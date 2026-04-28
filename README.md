@@ -215,7 +215,7 @@ The short version:
 3. Run `npm run strategies:sync-manifest`.
 4. Keep `normalizeParams(...)` aligned with `execute(...)`.
 5. Run `npm run typecheck` and confirm the strategy appears in the UI.
-6. To remove built-in strategies from disk, use `Library Tools` in the Settings tab. It can delete the current strategy or a pasted bulk list of keys, archives each file to `archive/strategy/*`, and re-syncs `lib/strategies/manifest.ts` automatically.
+6. To remove built-in strategies from disk, use `Library Tools` in the Settings tab. It can delete the current strategy or a pasted bulk list of keys, names, or filenames, archives each file to `archive/strategy/*`, and re-syncs `lib/strategies/manifest.ts` automatically.
 
 Dev note:
 - `npm run dev` ignores `lib/strategies/**` changes by default so Finder/Hunt work is not interrupted while you author or edit strategies.
