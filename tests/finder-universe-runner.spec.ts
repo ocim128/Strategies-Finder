@@ -22,11 +22,12 @@ const testStrategy: Strategy = {
     defaultParams: { threshold: 1 },
     paramLabels: { threshold: "Threshold" },
     execute(data, params) {
-        if (params.threshold > 5 || data.length < 2) {
+        if (params.threshold > 5 || data.length < 3) {
             return [];
         }
+        const entryIndex = Math.max(0, Math.min(data.length - 2, Math.round(params.threshold) - 1));
         return [
-            { time: data[0]!.time, type: "buy", price: data[0]!.close },
+            { time: data[entryIndex]!.time, type: "buy", price: data[entryIndex]!.close },
             { time: data[data.length - 1]!.time, type: "sell", price: data[data.length - 1]!.close },
         ];
     },
@@ -115,6 +116,60 @@ describe("Finder universe runner", () => {
         expect(output.results[0]!.profitableSymbols).to.equal(1);
         expect(output.results[0]!.losingSymbols).to.equal(1);
         expect(output.results[0]!.symbols.find((item) => item.symbol === "MISSING")?.status).to.equal("load_failed");
+        expect((output.results[0]!.symbols.find((item) => item.symbol === "UP")?.result as any)?.trades).to.equal(undefined);
+        expect((output.results[0]!.symbols.find((item) => item.symbol === "UP")?.result as any)?.equityCurve).to.equal(undefined);
         expect(partialUpdates.length).to.be.greaterThan(0);
+    });
+
+    it("keeps only the ranked top N survivors in memory and output", async () => {
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP_A", makeCandles([100, 104, 108, 112, 116])],
+            ["UP_B", makeCandles([120, 123, 126, 129, 132])],
+        ]);
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 1,
+            steps: 3,
+            rangePercent: 35,
+            maxRuns: 20,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols: ["UP_A", "UP_B"],
+                minActiveSymbols: 2,
+                minTotalTrades: 2,
+                minProfitableActiveRatio: 1,
+                sortPriority: ["profitableActiveRatio", "medianExpectancy", "worstNetProfit"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "5m",
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategy: {
+                    key: "universe_test",
+                    name: testStrategy.name,
+                    strategy: testStrategy,
+                },
+                loadDataset: async (symbol) => datasets.get(symbol) ?? [],
+                generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }],
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                yieldControl: async () => {},
+                isCancelled: () => false,
+            }
+        );
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.params.threshold).to.equal(1);
     });
 });

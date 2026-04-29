@@ -1,4 +1,4 @@
-import { OHLCVData, StrategyParams } from "./strategies/index";
+import { StrategyParams } from "./strategies/index";
 import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtest-service";
@@ -916,17 +916,6 @@ export class FinderManager {
 		let maxLoadedSymbols = 0;
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
-		const datasetCache = new Map<string, Promise<OHLCVData[]>>();
-		const loadDataset = (symbol: string, interval: string, signal?: AbortSignal) => {
-			const key = `${symbol.trim().toUpperCase()}|${interval.trim().toLowerCase()}`;
-			const cached = datasetCache.get(key);
-			if (cached) {
-				return cached;
-			}
-			const promise = dataManager.fetchDataDetached(symbol, interval, signal);
-			datasetCache.set(key, promise);
-			return promise;
-		};
 
 		for (let strategyIndex = 0; strategyIndex < selectedStrategies.length; strategyIndex += 1) {
 			const selectedStrategy = selectedStrategies[strategyIndex]!;
@@ -937,7 +926,7 @@ export class FinderManager {
 					settings,
 					capitalSettings,
 					selectedStrategy,
-					loadDataset,
+					loadDataset: (symbol, interval, signal) => dataManager.fetchDataDetached(symbol, interval, signal),
 					generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
 				},
 				{

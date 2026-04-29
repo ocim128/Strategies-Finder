@@ -104,13 +104,29 @@ export type FinderUniverseEarlyStopReason =
     | 'unreachable_active_symbols'
     | 'unreachable_total_trades';
 
+export interface FinderUniverseSymbolMetrics {
+    netProfit: number;
+    netProfitPercent: number;
+    expectancy: number;
+    avgTrade: number;
+    winRate: number;
+    profitFactor: number;
+    totalTrades: number;
+    maxDrawdownPercent: number;
+    winningTrades: number;
+    losingTrades: number;
+    avgWin: number;
+    avgLoss: number;
+    sharpeRatio: number;
+}
+
 export interface FinderUniverseSymbolResult {
     symbol: string;
     status: FinderUniverseSymbolStatus;
     barCount: number;
     firstTime?: Time;
     lastTime?: Time;
-    result?: BacktestResult;
+    result?: FinderUniverseSymbolMetrics;
     error?: string;
 }
 

@@ -11,6 +11,7 @@ import type {
 } from "../types/finder";
 import type {
     BacktestSettings,
+    BacktestResult,
     OHLCVData,
     Strategy,
     Time,
@@ -65,6 +66,12 @@ type FinderUniverseTimingSummary = {
     loadedSymbolCount: number;
     candidateCount: number;
     keptCandidateCount: number;
+};
+
+type FinderUniversePartialCounts = {
+    activeSymbols: number;
+    profitableSymbols: number;
+    totalTrades: number;
 };
 
 function createPreparedStrategy(
@@ -124,6 +131,24 @@ function buildRunFailedResult(symbol: FinderUniverseLoadedSymbol, error: string)
     };
 }
 
+function buildUniverseSymbolMetrics(result: BacktestResult): NonNullable<FinderUniverseSymbolResult["result"]> {
+    return {
+        netProfit: result.netProfit,
+        netProfitPercent: result.netProfitPercent,
+        expectancy: result.expectancy,
+        avgTrade: result.avgTrade,
+        winRate: result.winRate,
+        profitFactor: result.profitFactor,
+        totalTrades: result.totalTrades,
+        maxDrawdownPercent: result.maxDrawdownPercent,
+        winningTrades: result.winningTrades,
+        losingTrades: result.losingTrades,
+        avgWin: result.avgWin,
+        avgLoss: result.avgLoss,
+        sharpeRatio: result.sharpeRatio,
+    };
+}
+
 function buildSymbolResult(symbol: FinderUniverseLoadedSymbol, result: Awaited<ReturnType<typeof executeBacktest>>["result"]): FinderUniverseSymbolResult {
     let status: FinderUniverseSymbolResult["status"];
     if (result.totalTrades <= 0) {
@@ -142,33 +167,62 @@ function buildSymbolResult(symbol: FinderUniverseLoadedSymbol, result: Awaited<R
         barCount: symbol.barCount,
         firstTime: symbol.firstTime,
         lastTime: symbol.lastTime,
-        result,
+        result: buildUniverseSymbolMetrics(result),
     };
 }
 
 function resolveEarlyStopReason(args: {
-    candidate: FinderUniverseCandidate;
+    counts: FinderUniversePartialCounts;
     remainingSymbols: number;
     remainingMaxTrades: number;
     universe: FinderUniverseOptions;
 }): FinderUniverseEarlyStopReason | null {
-    const { candidate, remainingSymbols, remainingMaxTrades, universe } = args;
+    const { counts, remainingSymbols, remainingMaxTrades, universe } = args;
 
-    if ((candidate.activeSymbols + remainingSymbols) < universe.minActiveSymbols) {
+    if ((counts.activeSymbols + remainingSymbols) < universe.minActiveSymbols) {
         return "unreachable_active_symbols";
     }
 
-    if ((candidate.totalTrades + remainingMaxTrades) < universe.minTotalTrades) {
+    if ((counts.totalTrades + remainingMaxTrades) < universe.minTotalTrades) {
         return "unreachable_total_trades";
     }
 
-    const maxProfitableRatio = (candidate.profitableSymbols + remainingSymbols)
-        / Math.max(1, candidate.activeSymbols + remainingSymbols);
+    const maxProfitableRatio = (counts.profitableSymbols + remainingSymbols)
+        / Math.max(1, counts.activeSymbols + remainingSymbols);
     if (maxProfitableRatio + 0.0001 < universe.minProfitableActiveRatio) {
         return "unreachable_profitable_ratio";
     }
 
     return null;
+}
+
+function accumulatePartialCounts(counts: FinderUniversePartialCounts, result: FinderUniverseSymbolResult): void {
+    if (!result.result || result.result.totalTrades <= 0) {
+        return;
+    }
+
+    counts.activeSymbols += 1;
+    counts.totalTrades += result.result.totalTrades;
+
+    if (result.result.netProfit > 0.0001) {
+        counts.profitableSymbols += 1;
+    }
+}
+
+function passesUniverseFiltersFromCounts(
+    counts: FinderUniversePartialCounts,
+    universe: FinderUniverseOptions
+): boolean {
+    if (counts.activeSymbols < universe.minActiveSymbols) {
+        return false;
+    }
+    if (counts.totalTrades < universe.minTotalTrades) {
+        return false;
+    }
+    const profitableActiveRatio = counts.activeSymbols > 0
+        ? counts.profitableSymbols / counts.activeSymbols
+        : 0;
+    return profitableActiveRatio >= universe.minProfitableActiveRatio;
 }
 
 function assertUniverseRunSupported(input: FinderUniverseRunInput): FinderUniverseOptions {
@@ -291,9 +345,23 @@ export async function runFinderUniverseExecution(
 
     const evaluationStart = performance.now();
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
+    const maxStoredSurvivors = Math.max(input.options.topN, 50);
     const survivors: FinderUniverseCandidate[] = [];
-    const sortedPartialResults = (): FinderUniverseCandidate[] =>
-        sortFinderUniverseCandidates(survivors, universe.sortPriority).slice(0, input.options.topN);
+    let keptCandidateCount = 0;
+    const getSortedSurvivors = (limit: number): FinderUniverseCandidate[] =>
+        sortFinderUniverseCandidates(survivors, universe.sortPriority)
+            .slice(0, Math.max(1, limit));
+    const offerSurvivor = (candidate: FinderUniverseCandidate): void => {
+        survivors.push(candidate);
+        keptCandidateCount += 1;
+        if (survivors.length <= maxStoredSurvivors) {
+            return;
+        }
+        const trimmed = getSortedSurvivors(maxStoredSurvivors);
+        survivors.length = 0;
+        survivors.push(...trimmed);
+    };
+    const totalPossibleTrades = loadedSymbols.reduce((sum, item) => sum + item.maxPossibleTrades, 0);
 
     for (let candidateIndex = 0; candidateIndex < paramSets.length; candidateIndex += 1) {
         if (callbacks.isCancelled()) {
@@ -312,8 +380,13 @@ export async function runFinderUniverseExecution(
         const symbolResults = new Map<string, FinderUniverseSymbolResult>();
         let evaluationStoppedEarly = false;
         let stoppedReason: FinderUniverseEarlyStopReason | undefined;
+        const partialCounts: FinderUniversePartialCounts = {
+            activeSymbols: 0,
+            profitableSymbols: 0,
+            totalTrades: 0,
+        };
         let remainingSymbols = loadedSymbols.length;
-        let remainingMaxTrades = loadedSymbols.reduce((sum, item) => sum + item.maxPossibleTrades, 0);
+        let remainingMaxTrades = totalPossibleTrades;
 
         for (let symbolIndex = 0; symbolIndex < loadedSymbols.length; symbolIndex += 1) {
             if (callbacks.isCancelled()) {
@@ -345,7 +418,9 @@ export async function runFinderUniverseExecution(
                         nowSec: Math.floor(Date.now() / 1000),
                     },
                 });
-                symbolResults.set(symbol.symbol, buildSymbolResult(symbol, output.result));
+                const symbolResult = buildSymbolResult(symbol, output.result);
+                symbolResults.set(symbol.symbol, symbolResult);
+                accumulatePartialCounts(partialCounts, symbolResult);
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 symbolResults.set(symbol.symbol, buildRunFailedResult(symbol, message));
@@ -354,17 +429,8 @@ export async function runFinderUniverseExecution(
             remainingSymbols -= 1;
             remainingMaxTrades -= symbol.maxPossibleTrades;
 
-            const partialSymbols = normalizedSymbols
-                .map((universeSymbol) => symbolResults.get(universeSymbol) ?? loadFailures.get(universeSymbol))
-                .filter((entry): entry is FinderUniverseSymbolResult => Boolean(entry));
-            const partialCandidate = buildFinderUniverseCandidate({
-                strategyKey: input.selectedStrategy.key,
-                strategyName: input.selectedStrategy.name,
-                params,
-                symbols: partialSymbols,
-            });
             const earlyStopReason = resolveEarlyStopReason({
-                candidate: partialCandidate,
+                counts: partialCounts,
                 remainingSymbols,
                 remainingMaxTrades,
                 universe,
@@ -387,6 +453,11 @@ export async function runFinderUniverseExecution(
             continue;
         }
 
+        if (!passesUniverseFiltersFromCounts(partialCounts, universe)) {
+            await callbacks.yieldControl();
+            continue;
+        }
+
         const mergedSymbols: FinderUniverseSymbolResult[] = normalizedSymbols
             .map((symbol) => symbolResults.get(symbol) ?? loadFailures.get(symbol))
             .filter((entry): entry is FinderUniverseSymbolResult => Boolean(entry));
@@ -401,14 +472,14 @@ export async function runFinderUniverseExecution(
         });
 
         if (passesFinderUniverseFilters(candidate, universe)) {
-            survivors.push(candidate);
-            callbacks.onResultsUpdate?.(sortedPartialResults());
+            offerSurvivor(candidate);
+            callbacks.onResultsUpdate?.(getSortedSurvivors(input.options.topN));
         }
 
         await callbacks.yieldControl();
     }
 
-    const results = sortFinderUniverseCandidates(survivors, universe.sortPriority);
+    const results = getSortedSurvivors(input.options.topN);
     const evaluationMs = performance.now() - evaluationStart;
     const timingSummary: FinderUniverseTimingSummary = {
         totalRunMs: performance.now() - totalRunStart,
@@ -417,7 +488,7 @@ export async function runFinderUniverseExecution(
         symbolCount: normalizedSymbols.length,
         loadedSymbolCount: loadedSymbols.length,
         candidateCount: paramSets.length,
-        keptCandidateCount: results.length,
+        keptCandidateCount,
     };
     debugLogger.event("finder.universe.timing", timingSummary);
 

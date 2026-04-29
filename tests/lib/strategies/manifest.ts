@@ -53,6 +53,11 @@ import { initiative_pressure_side } from "./lib/initiative_pressure_side";
 import { decay_momentum_alignment } from "./lib/decay_momentum_alignment";
 import { initiative_pressure_gated_median } from "./lib/initiative_pressure_gated_median";
 import { roc_percentile_regime } from "./lib/roc_percentile_regime";
+import { accumulation_persistence_streak_gate } from "./lib/accumulation_persistence_streak_gate";
+import { keltner_halfband_acceptance } from "./lib/keltner_halfband_acceptance";
+import { kurtosis_distribution_alignment } from "./lib/kurtosis_distribution_alignment";
+import { mfi_median_participation_alignment } from "./lib/mfi_median_participation_alignment";
+import { skewness_distribution_alignment } from "./lib/skewness_distribution_alignment";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -111,6 +116,11 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "decay_momentum_alignment", strategy: decay_momentum_alignment },
     { key: "initiative_pressure_gated_median", strategy: initiative_pressure_gated_median },
     { key: "roc_percentile_regime", strategy: roc_percentile_regime },
+    { key: "accumulation_persistence_streak_gate", strategy: accumulation_persistence_streak_gate },
+    { key: "keltner_halfband_acceptance", strategy: keltner_halfband_acceptance },
+    { key: "kurtosis_distribution_alignment", strategy: kurtosis_distribution_alignment },
+    { key: "mfi_median_participation_alignment", strategy: mfi_median_participation_alignment },
+    { key: "skewness_distribution_alignment", strategy: skewness_distribution_alignment },
 ];
 
 export function createStrategiesRecordFromManifest(

@@ -52,4 +52,9 @@ export const builtInStrategyKeys: readonly string[] = [
     "decay_momentum_alignment",
     "initiative_pressure_gated_median",
     "roc_percentile_regime",
+    "accumulation_persistence_streak_gate",
+    "keltner_halfband_acceptance",
+    "kurtosis_distribution_alignment",
+    "mfi_median_participation_alignment",
+    "skewness_distribution_alignment",
 ];

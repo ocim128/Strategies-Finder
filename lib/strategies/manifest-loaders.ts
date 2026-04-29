@@ -54,4 +54,9 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "decay_momentum_alignment": () => import("./lib/decay_momentum_alignment").then(m => m.decay_momentum_alignment),
     "initiative_pressure_gated_median": () => import("./lib/initiative_pressure_gated_median").then(m => m.initiative_pressure_gated_median),
     "roc_percentile_regime": () => import("./lib/roc_percentile_regime").then(m => m.roc_percentile_regime),
+    "accumulation_persistence_streak_gate": () => import("./lib/accumulation_persistence_streak_gate").then(m => m.accumulation_persistence_streak_gate),
+    "keltner_halfband_acceptance": () => import("./lib/keltner_halfband_acceptance").then(m => m.keltner_halfband_acceptance),
+    "kurtosis_distribution_alignment": () => import("./lib/kurtosis_distribution_alignment").then(m => m.kurtosis_distribution_alignment),
+    "mfi_median_participation_alignment": () => import("./lib/mfi_median_participation_alignment").then(m => m.mfi_median_participation_alignment),
+    "skewness_distribution_alignment": () => import("./lib/skewness_distribution_alignment").then(m => m.skewness_distribution_alignment),
 };

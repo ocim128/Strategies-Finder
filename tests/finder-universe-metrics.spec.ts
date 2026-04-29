@@ -1,19 +1,16 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { buildFinderUniverseCandidate, passesFinderUniverseFilters, sortFinderUniverseCandidates } from "../lib/finder/finder-universe-metrics";
-import type { FinderUniverseSymbolResult } from "../lib/types/finder";
-import type { BacktestResult } from "../lib/types/strategies";
+import type { FinderUniverseSymbolMetrics, FinderUniverseSymbolResult } from "../lib/types/finder";
 
-function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: number): BacktestResult {
+function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: number): FinderUniverseSymbolMetrics {
     return {
-        trades: [],
         netProfit,
         netProfitPercent: 0,
-        winRate: 0,
         expectancy,
         avgTrade: 0,
+        winRate: 0,
         profitFactor: 0,
-        maxDrawdown: 0,
         maxDrawdownPercent: 0,
         totalTrades,
         winningTrades: 0,
@@ -21,7 +18,6 @@ function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: 
         avgWin: 0,
         avgLoss: 0,
         sharpeRatio: 0,
-        equityCurve: [],
     };
 }
 

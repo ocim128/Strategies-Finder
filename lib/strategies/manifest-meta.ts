@@ -868,4 +868,90 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		walkForwardParams: ["roc_period", "lookback", "upper_pct", "lower_pct"],
 	},
     },
+    {
+        key: "accumulation_persistence_streak_gate",
+        name: "Accumulation Persistence Streak Gate",
+        description: "Requires sustained positive or negative Chaikin money flow before allowing price to align with a rolling median, filtering out one-bar accumulation noise.",
+        defaultParams: {
+        streakReq: 5,
+        medianLookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        streakReq: "CMF Streak Requirement",
+        medianLookback: "Median Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["streakReq", "medianLookback"],
+    },
+    },
+    {
+        key: "keltner_halfband_acceptance",
+        name: "Keltner Halfband Acceptance",
+        description: "Uses a Keltner envelope as a volatility-adjusted value band and enters when settlement is accepted in the outer bullish or bearish half of that same-bar channel.",
+        defaultParams: {
+        period: 30,
+        multiplier: 1.5,
+        halfband_frac: 0.5,
+    } as Record<string, number>,
+        paramLabels: {
+        period: "Period",
+        multiplier: "Multiplier",
+        halfband_frac: "Halfband Fraction",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["period", "multiplier", "halfband_frac"],
+    },
+    },
+    {
+        key: "kurtosis_distribution_alignment",
+        name: "Kurtosis Distribution Alignment",
+        description: "Uses excess kurtosis of daily closes as a higher-moment regime filter and aligns entries with the side of a trailing rolling median only when tails are elevated.",
+        defaultParams: {
+        lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "mfi_median_participation_alignment",
+        name: "MFI Median Participation Alignment",
+        description: "Uses Money Flow Index as a volume-weighted participation gate and pairs it with a trailing rolling median so daily entries stay anchored to a robust centerline.",
+        defaultParams: {
+        lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "skewness_distribution_alignment",
+        name: "Skewness Distribution Alignment",
+        description: "Pairs rolling skewness of daily closes with a trailing median so directional entries reflect both distribution asymmetry and settlement relative to a causal center.",
+        defaultParams: {
+        lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
 ];
