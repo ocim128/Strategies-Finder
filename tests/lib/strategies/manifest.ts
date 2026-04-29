@@ -58,6 +58,57 @@ import { keltner_halfband_acceptance } from "./lib/keltner_halfband_acceptance";
 import { kurtosis_distribution_alignment } from "./lib/kurtosis_distribution_alignment";
 import { mfi_median_participation_alignment } from "./lib/mfi_median_participation_alignment";
 import { skewness_distribution_alignment } from "./lib/skewness_distribution_alignment";
+import { bollinger_tail_reversion } from "./lib/bollinger_tail_reversion";
+import { consecutive_streak_reversion } from "./lib/consecutive_streak_reversion";
+import { donchian_extreme_rejection_fade } from "./lib/donchian_extreme_rejection_fade";
+import { efficiency_ratio_peak_fade } from "./lib/efficiency_ratio_peak_fade";
+import { extreme_zscore_tail_fade } from "./lib/extreme_zscore_tail_fade";
+import { gap_displacement_reversal_fade } from "./lib/gap_displacement_reversal_fade";
+import { keltner_extension_reversal } from "./lib/keltner_extension_reversal";
+import { overextended_rsi_structural_fade } from "./lib/overextended_rsi_structural_fade";
+import { typical_price_deviation_fade } from "./lib/typical_price_deviation_fade";
+import { volume_blowoff_reversion } from "./lib/volume_blowoff_reversion";
+import { cmf_momentum_vector_alignment } from "./lib/cmf_momentum_vector_alignment";
+import { decaying_boundary_momentum_capture } from "./lib/decaying_boundary_momentum_capture";
+import { hvn_value_migration_rebound } from "./lib/hvn_value_migration_rebound";
+import { initiative_pressure_accumulation_streak } from "./lib/initiative_pressure_accumulation_streak";
+import { kurtosis_tail_persistence_alignment } from "./lib/kurtosis_tail_persistence_alignment";
+import { low_entropy_ordered_breakout } from "./lib/low_entropy_ordered_breakout";
+import { low_volatility_efficiency_lead } from "./lib/low_volatility_efficiency_lead";
+import { skewness_divergence_regime_anchor } from "./lib/skewness_divergence_regime_anchor";
+import { typical_price_acceleration_anchor } from "./lib/typical_price_acceleration_anchor";
+import { volume_autocorrelation_participation_gate } from "./lib/volume_autocorrelation_participation_gate";
+import { adx_gated_median_alignment } from "./lib/adx_gated_median_alignment";
+import { close_percentile_alignment } from "./lib/close_percentile_alignment";
+import { cmf_median_alignment } from "./lib/cmf_median_alignment";
+import { donchian_midpoint_alignment } from "./lib/donchian_midpoint_alignment";
+import { efficiency_gated_median_alignment } from "./lib/efficiency_gated_median_alignment";
+import { keltner_midpoint_alignment } from "./lib/keltner_midpoint_alignment";
+import { rolling_mean_alignment } from "./lib/rolling_mean_alignment";
+import { rolling_median_alignment } from "./lib/rolling_median_alignment";
+import { trailing_range_position_alignment } from "./lib/trailing_range_position_alignment";
+import { volatility_regime_median_alignment } from "./lib/volatility_regime_median_alignment";
+import { atr_gated_median_alignment } from "./lib/atr_gated_median_alignment";
+import { autocorrelation_gated_median_alignment } from "./lib/autocorrelation_gated_median_alignment";
+import { close_location_median_alignment } from "./lib/close_location_median_alignment";
+import { momentum_percentile_alignment } from "./lib/momentum_percentile_alignment";
+import { parabolic_sar_anchor_alignment } from "./lib/parabolic_sar_anchor_alignment";
+import { rolling_gap_zscore_alignment } from "./lib/rolling_gap_zscore_alignment";
+import { trailing_hilo_midpoint_alignment } from "./lib/trailing_hilo_midpoint_alignment";
+import { typical_price_percentile_alignment } from "./lib/typical_price_percentile_alignment";
+import { volume_percentile_gated_median_alignment } from "./lib/volume_percentile_gated_median_alignment";
+import { weighted_close_median_alignment } from "./lib/weighted_close_median_alignment";
+import { directional_index_regime_alignment } from "./lib/directional_index_regime_alignment";
+import { displacement_gap_zone_alignment } from "./lib/displacement_gap_zone_alignment";
+import { distribution_rank_state_alignment } from "./lib/distribution_rank_state_alignment";
+import { keltner_midpoint_volatility_gated_alignment } from "./lib/keltner_midpoint_volatility_gated_alignment";
+import { mfi_accumulation_zone_alignment } from "./lib/mfi_accumulation_zone_alignment";
+import { range_extreme_acceptance_persistence } from "./lib/range_extreme_acceptance_persistence";
+import { rolling_median_velocity_alignment } from "./lib/rolling_median_velocity_alignment";
+import { rolling_poc_displacement_alignment } from "./lib/rolling_poc_displacement_alignment";
+import { typical_price_zscore_alignment } from "./lib/typical_price_zscore_alignment";
+import { typical_price_percentile_gap_exit_hybrid } from "./lib/typical_price_percentile_gap_exit_hybrid";
+import { initiative_pressure_low_volatility_exit_hybrid } from "./lib/initiative_pressure_low_volatility_exit_hybrid";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -121,6 +172,57 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "kurtosis_distribution_alignment", strategy: kurtosis_distribution_alignment },
     { key: "mfi_median_participation_alignment", strategy: mfi_median_participation_alignment },
     { key: "skewness_distribution_alignment", strategy: skewness_distribution_alignment },
+    { key: "bollinger_tail_reversion", strategy: bollinger_tail_reversion },
+    { key: "consecutive_streak_reversion", strategy: consecutive_streak_reversion },
+    { key: "donchian_extreme_rejection_fade", strategy: donchian_extreme_rejection_fade },
+    { key: "efficiency_ratio_peak_fade", strategy: efficiency_ratio_peak_fade },
+    { key: "extreme_zscore_tail_fade", strategy: extreme_zscore_tail_fade },
+    { key: "gap_displacement_reversal_fade", strategy: gap_displacement_reversal_fade },
+    { key: "keltner_extension_reversal", strategy: keltner_extension_reversal },
+    { key: "overextended_rsi_structural_fade", strategy: overextended_rsi_structural_fade },
+    { key: "typical_price_deviation_fade", strategy: typical_price_deviation_fade },
+    { key: "volume_blowoff_reversion", strategy: volume_blowoff_reversion },
+    { key: "cmf_momentum_vector_alignment", strategy: cmf_momentum_vector_alignment },
+    { key: "decaying_boundary_momentum_capture", strategy: decaying_boundary_momentum_capture },
+    { key: "hvn_value_migration_rebound", strategy: hvn_value_migration_rebound },
+    { key: "initiative_pressure_accumulation_streak", strategy: initiative_pressure_accumulation_streak },
+    { key: "kurtosis_tail_persistence_alignment", strategy: kurtosis_tail_persistence_alignment },
+    { key: "low_entropy_ordered_breakout", strategy: low_entropy_ordered_breakout },
+    { key: "low_volatility_efficiency_lead", strategy: low_volatility_efficiency_lead },
+    { key: "skewness_divergence_regime_anchor", strategy: skewness_divergence_regime_anchor },
+    { key: "typical_price_acceleration_anchor", strategy: typical_price_acceleration_anchor },
+    { key: "volume_autocorrelation_participation_gate", strategy: volume_autocorrelation_participation_gate },
+    { key: "adx_gated_median_alignment", strategy: adx_gated_median_alignment },
+    { key: "close_percentile_alignment", strategy: close_percentile_alignment },
+    { key: "cmf_median_alignment", strategy: cmf_median_alignment },
+    { key: "donchian_midpoint_alignment", strategy: donchian_midpoint_alignment },
+    { key: "efficiency_gated_median_alignment", strategy: efficiency_gated_median_alignment },
+    { key: "keltner_midpoint_alignment", strategy: keltner_midpoint_alignment },
+    { key: "rolling_mean_alignment", strategy: rolling_mean_alignment },
+    { key: "rolling_median_alignment", strategy: rolling_median_alignment },
+    { key: "trailing_range_position_alignment", strategy: trailing_range_position_alignment },
+    { key: "volatility_regime_median_alignment", strategy: volatility_regime_median_alignment },
+    { key: "atr_gated_median_alignment", strategy: atr_gated_median_alignment },
+    { key: "autocorrelation_gated_median_alignment", strategy: autocorrelation_gated_median_alignment },
+    { key: "close_location_median_alignment", strategy: close_location_median_alignment },
+    { key: "momentum_percentile_alignment", strategy: momentum_percentile_alignment },
+    { key: "parabolic_sar_anchor_alignment", strategy: parabolic_sar_anchor_alignment },
+    { key: "rolling_gap_zscore_alignment", strategy: rolling_gap_zscore_alignment },
+    { key: "trailing_hilo_midpoint_alignment", strategy: trailing_hilo_midpoint_alignment },
+    { key: "typical_price_percentile_alignment", strategy: typical_price_percentile_alignment },
+    { key: "volume_percentile_gated_median_alignment", strategy: volume_percentile_gated_median_alignment },
+    { key: "weighted_close_median_alignment", strategy: weighted_close_median_alignment },
+    { key: "directional_index_regime_alignment", strategy: directional_index_regime_alignment },
+    { key: "displacement_gap_zone_alignment", strategy: displacement_gap_zone_alignment },
+    { key: "distribution_rank_state_alignment", strategy: distribution_rank_state_alignment },
+    { key: "keltner_midpoint_volatility_gated_alignment", strategy: keltner_midpoint_volatility_gated_alignment },
+    { key: "mfi_accumulation_zone_alignment", strategy: mfi_accumulation_zone_alignment },
+    { key: "range_extreme_acceptance_persistence", strategy: range_extreme_acceptance_persistence },
+    { key: "rolling_median_velocity_alignment", strategy: rolling_median_velocity_alignment },
+    { key: "rolling_poc_displacement_alignment", strategy: rolling_poc_displacement_alignment },
+    { key: "typical_price_zscore_alignment", strategy: typical_price_zscore_alignment },
+    { key: "typical_price_percentile_gap_exit_hybrid", strategy: typical_price_percentile_gap_exit_hybrid },
+    { key: "initiative_pressure_low_volatility_exit_hybrid", strategy: initiative_pressure_low_volatility_exit_hybrid },
 ];
 
 export function createStrategiesRecordFromManifest(

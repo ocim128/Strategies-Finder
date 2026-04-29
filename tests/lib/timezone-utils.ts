@@ -1,6 +1,13 @@
-import { TickMarkType, Time } from "lightweight-charts";
+import type { TickMarkType, Time } from "lightweight-charts";
 
 export const JAKARTA_TIMEZONE = "Asia/Jakarta";
+const TICK_MARK_TYPE = {
+    Year: 0,
+    Month: 1,
+    DayOfMonth: 2,
+    Time: 3,
+    TimeWithSeconds: 4,
+} as const satisfies Record<string, TickMarkType>;
 
 function parseTimeToDate(time: Time): Date | null {
     if (typeof time === "number") {
@@ -39,19 +46,19 @@ export function formatJakartaTickMark(
     locale: string
 ): string | null {
     switch (tickMarkType) {
-        case TickMarkType.Year:
+        case TICK_MARK_TYPE.Year:
             return formatJakartaTime(time, { year: "numeric" }, locale);
-        case TickMarkType.Month:
+        case TICK_MARK_TYPE.Month:
             return formatJakartaTime(time, { month: "short" }, locale);
-        case TickMarkType.DayOfMonth:
+        case TICK_MARK_TYPE.DayOfMonth:
             return formatJakartaTime(time, { day: "2-digit" }, locale);
-        case TickMarkType.Time:
+        case TICK_MARK_TYPE.Time:
             return formatJakartaTime(
                 time,
                 { hour: "2-digit", minute: "2-digit", hour12: false },
                 locale
             );
-        case TickMarkType.TimeWithSeconds:
+        case TICK_MARK_TYPE.TimeWithSeconds:
             return formatJakartaTime(
                 time,
                 { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false },

@@ -18,6 +18,7 @@ import {
     shouldUseRustCachedMode,
     resolveFinderRiskOverrides,
 } from "./finder-runner-core";
+import { finderSortRequiresTradeTimingQuality } from "../trade-timing-quality";
 import type { FinderDataset } from "./finder-timeframe-loader";
 import type { CapitalSettings } from "../types/backtest";
 import type { FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
@@ -80,6 +81,11 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     }
 
     if (options.mode === "genetic") {
+        if (finderSortRequiresTradeTimingQuality(options.sortPriority)) {
+            callbacks.setStatus("Entry Score and Exit Score sorting are supported in grid and random modes only.");
+            callbacks.setProgress(100, "Unsupported timing-score sort");
+            return { results: [] };
+        }
         const { runGeneticFinder } = await import("./finder-runner-genetic");
         return runGeneticFinder({
             input,

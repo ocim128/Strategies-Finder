@@ -16,13 +16,12 @@ import {
     getLatestActionableAlertSignal,
     getPersistedAlertSignalEntryPrice,
 } from './alert-signal-utils';
-import { backtestService } from './backtest-service';
-import { dataManager } from './data-manager';
 import { fetchBybitTradFiLatest } from './dataProviders/bybit';
 import { parseIntervalSeconds } from './interval-utils';
 import { parseTimeToUnixSeconds } from './time-normalization';
 import { state } from './state';
 import type { BacktestSettings, Trade } from './strategies/index';
+import type { DataProvider } from './types/data-providers';
 import { resolveSubscriptionExecutionBacktestSettings } from './alert-subscription-utils';
 import { debugLogger } from './debug-logger';
 import {
@@ -311,7 +310,7 @@ class LivePositionsService {
         const strategyParams = this.safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
         const backtestSettings = this.resolveBacktestSettings(sub);
         const configName = parseAlertConfigNameFromStreamId(sub.stream_id);
-        const provider = this.resolveProviderForSymbol(sub.symbol, backtestSettings);
+        const provider = await this.resolveProviderForSymbol(sub.symbol, backtestSettings);
         const localComparisonCompatible = isAlertWorkerProviderCompatible(provider);
 
         const [signals, workerState, localTrades] = await Promise.all([
@@ -630,7 +629,8 @@ class LivePositionsService {
         return parsed;
     }
 
-    private resolveProviderForSymbol(symbol: string, backtestSettings?: BacktestSettings): ReturnType<typeof dataManager.getProvider> {
+    private async resolveProviderForSymbol(symbol: string, backtestSettings?: BacktestSettings): Promise<DataProvider> {
+        const { dataManager } = await import('./data-manager');
         const provider = dataManager.getProvider(symbol);
         if (!isBinanceDataProvider(provider)) {
             return provider;
@@ -684,6 +684,7 @@ class LivePositionsService {
                 return cached.trades;
             }
 
+            const { dataManager } = await import('./data-manager');
             const ohlcvData = await dataManager.fetchDataWithLimit(
                 sub.symbol,
                 sub.interval,
@@ -720,6 +721,7 @@ class LivePositionsService {
                 return [];
             }
 
+            const { backtestService } = await import('./backtest-service');
             const result = await backtestService.runBacktestForSubscription(
                 evaluationCandles,
                 sub.interval,
@@ -744,7 +746,7 @@ class LivePositionsService {
         }
     }
 
-    private async fetchCurrentPrice(symbol: string, interval: string, providerOverride?: ReturnType<typeof dataManager.getProvider>): Promise<number | null> {
+    private async fetchCurrentPrice(symbol: string, interval: string, providerOverride?: DataProvider): Promise<number | null> {
         const normalizedSymbol = symbol.trim().toUpperCase();
         const activeChartPrice = this.getActiveChartPrice(normalizedSymbol, interval);
         if (activeChartPrice !== null) {
@@ -762,7 +764,7 @@ class LivePositionsService {
         }
 
         const request = (async () => {
-            const provider = providerOverride ?? dataManager.getProvider(normalizedSymbol);
+            const provider = providerOverride ?? (await import('./data-manager')).dataManager.getProvider(normalizedSymbol);
 
             try {
                 if (provider === 'bybit-tradfi') {

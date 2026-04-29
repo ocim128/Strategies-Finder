@@ -1,4 +1,4 @@
-import { BacktestResult, PostEntryPathStats } from "../strategies/index";
+import { BacktestResult, PostEntryPathStats, TradeTimingQuality } from "../strategies/index";
 import { getRequiredElement, updateTextContent, setVisible } from "../dom-utils";
 import { createResultsRendererDom, type ResultsRendererDom } from "./results-renderer-dom";
 import {
@@ -52,6 +52,7 @@ export class ResultsRenderer {
         updateTextContent('sharpeRatio', result.sharpeRatio.toFixed(2), `stat-value ${sharpeClass}`);
 
         this.renderAdvancedAnalytics(result.performanceAnalytics);
+        this.renderTradeTimingQuality(result.tradeTimingQuality);
         this.renderEdgeAnalysis(result);
         this.renderPostEntryPath(result.postEntryPath);
 
@@ -173,6 +174,92 @@ export class ResultsRenderer {
             <div class="stat-card">
                 <div class="stat-label">${label}</div>
                 <div class="stat-value ${valueClass}">${value}</div>
+            </div>
+        `;
+    }
+
+    private renderTradeTimingQuality(quality: TradeTimingQuality | undefined): void {
+        const hasQuality = !!quality && (quality.entryScore !== null || quality.exitScore !== null);
+        setVisible('tradeTimingQualityTitle', hasQuality);
+        setVisible('tradeTimingQualityContainer', hasQuality);
+        const dom = this.getDom();
+        if (!hasQuality || !quality) {
+            dom.tradeTimingQualityContainer.innerHTML = '';
+            return;
+        }
+
+        const entryRows = quality.entry.horizons.map((horizon) => `
+            <div class="edge-ratio-cell value">${horizon.bars} bars</div>
+            <div class="edge-ratio-cell value right ${this.scoreClass(horizon.score)}">${this.formatScore(horizon.score)}</div>
+            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.avgMfePct, 2)}</div>
+            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.avgMaePct, 2)}</div>
+            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.positiveForwardRatePct, 1)}</div>
+            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.movementConfidencePct, 1)}</div>
+            <div class="edge-ratio-cell value right">${horizon.sampleSize}</div>
+        `).join('');
+        const exitRows = quality.exit.horizons.map((horizon) => `
+            <div class="edge-ratio-cell value">${horizon.bars} bars</div>
+            <div class="edge-ratio-cell value right ${this.scoreClass(horizon.score)}">${this.formatScore(horizon.score)}</div>
+            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.avgAvoidedAdversePct, 2)}</div>
+            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.avgMissedContinuationPct, 2)}</div>
+            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.adverseAfterExitRatePct, 1)}</div>
+            <div class="edge-ratio-cell value right">${this.formatPercent(horizon.movementConfidencePct, 1)}</div>
+            <div class="edge-ratio-cell value right">${horizon.sampleSize}</div>
+        `).join('');
+
+        dom.tradeTimingQualityContainer.innerHTML = `
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Entry Score</div>
+                    <div class="stat-value ${this.scoreClass(quality.entryScore)}">${this.formatScore(quality.entryScore)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Exit Score</div>
+                    <div class="stat-value ${this.scoreClass(quality.exitScore)}">${this.formatScore(quality.exitScore)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Capture Score</div>
+                    <div class="stat-value ${this.scoreClass(quality.exit.captureScore)}">${this.formatScore(quality.exit.captureScore)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Avg Giveback</div>
+                    <div class="stat-value">${this.formatPercent(quality.exit.averageGivebackPct, 2)}</div>
+                </div>
+            </div>
+
+            <div class="edge-subsection">
+                <div class="edge-subsection-title">Entry Timing</div>
+                <div class="edge-subsection-desc">Post-entry movement from the candle after entry.</div>
+                <div class="edge-ratio-grid-shell">
+                    <div class="edge-ratio-grid timing-quality-grid">
+                        <div class="edge-ratio-cell header">Horizon</div>
+                        <div class="edge-ratio-cell header right">Score</div>
+                        <div class="edge-ratio-cell header right">Avg MFE %</div>
+                        <div class="edge-ratio-cell header right">Avg MAE %</div>
+                        <div class="edge-ratio-cell header right">Forward +%</div>
+                        <div class="edge-ratio-cell header right">Confidence</div>
+                        <div class="edge-ratio-cell header right">Samples</div>
+                        ${entryRows}
+                    </div>
+                </div>
+            </div>
+
+            <div class="edge-subsection">
+                <div class="edge-subsection-title">Exit Timing</div>
+                <div class="edge-subsection-desc">Post-exit movement from the candle after exit.</div>
+                <div class="edge-ratio-grid-shell">
+                    <div class="edge-ratio-grid timing-quality-grid">
+                        <div class="edge-ratio-cell header">Horizon</div>
+                        <div class="edge-ratio-cell header right">Score</div>
+                        <div class="edge-ratio-cell header right">Avoided %</div>
+                        <div class="edge-ratio-cell header right">Missed %</div>
+                        <div class="edge-ratio-cell header right">Adverse +%</div>
+                        <div class="edge-ratio-cell header right">Confidence</div>
+                        <div class="edge-ratio-cell header right">Samples</div>
+                        ${exitRows}
+                    </div>
+                </div>
+                <div class="edge-composite">Capture: <span class="${this.scoreClass(quality.exit.captureScore)}">${this.formatScore(quality.exit.captureScore)}</span> <span class="edge-composite-hint">| Avg Giveback ${this.formatPercent(quality.exit.averageGivebackPct, 2)} | ${quality.exit.captureSampleSize} samples</span></div>
             </div>
         `;
     }
@@ -458,6 +545,18 @@ export class ResultsRenderer {
         return `${value.toFixed(decimals)}${suffix}`;
     }
 
+    private formatScore(value: number | null | undefined): string {
+        if (typeof value !== 'number' || !Number.isFinite(value)) return '--';
+        return value.toFixed(1);
+    }
+
+    private scoreClass(value: number | null | undefined): string {
+        if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+        if (value >= 60) return 'positive';
+        if (value < 40) return 'negative';
+        return '';
+    }
+
     public clear() {
         const dom = this.getDom();
         this.lastRenderedResult = null;
@@ -469,6 +568,9 @@ export class ResultsRenderer {
         setVisible('advancedAnalyticsHint', false);
         dom.advancedAnalyticsContainer.innerHTML = '';
         dom.advancedAnalyticsHint.textContent = '';
+        setVisible('tradeTimingQualityTitle', false);
+        setVisible('tradeTimingQualityContainer', false);
+        dom.tradeTimingQualityContainer.innerHTML = '';
         setVisible('postEntryPathTitle', false);
         setVisible('postEntryPathContainer', false);
         setVisible('postEntryPathHint', false);

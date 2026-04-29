@@ -22,6 +22,50 @@ describe("Finder manager logic", () => {
         expect(sortPriority).to.deep.equal(["expectancy", "profitFactor", "netProfit"]);
     });
 
+    it("supports simple timing-score sort priority with stable netProfit fallback", () => {
+        const sortPriority = resolveFinderSortPriority({
+            useAdvancedSort: false,
+            advancedSortValues: [],
+            primarySort: "entryScore",
+            secondarySort: "exitScore",
+            polymarketScoringEnabled: false,
+            polymarketRankMode: "balanced",
+        });
+
+        expect(sortPriority).to.deep.equal(["entryScore", "exitScore", "netProfit"]);
+    });
+
+    it("keeps advanced default priority unchanged unless timing scores are selected", () => {
+        expect(resolveFinderSortPriority({
+            useAdvancedSort: true,
+            advancedSortValues: [],
+            primarySort: "entryScore",
+            secondarySort: "exitScore",
+            polymarketScoringEnabled: false,
+            polymarketRankMode: "balanced",
+        })).to.deep.equal([
+            "expectancy",
+            "compositeEdgeRatio",
+            "profitFactor",
+            "totalTrades",
+            "maxDrawdownPercent",
+            "sharpeRatio",
+            "averageGain",
+            "winRate",
+            "netProfitPercent",
+            "netProfit",
+        ]);
+
+        expect(resolveFinderSortPriority({
+            useAdvancedSort: true,
+            advancedSortValues: ["entryScore", "exitScore", "expectancy"],
+            primarySort: "profitFactor",
+            secondarySort: "totalTrades",
+            polymarketScoringEnabled: false,
+            polymarketRankMode: "balanced",
+        })).to.deep.equal(["entryScore", "exitScore", "expectancy"]);
+    });
+
     it("forces polymarket sort priority and freezes risk settings for scored runs", () => {
         const options = buildFinderOptions({
             useAdvancedSort: true,

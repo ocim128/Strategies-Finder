@@ -13,14 +13,16 @@ It combines:
 - Load market data from local SQLite, IndexedDB, bundled price files, or remote providers
 - Run backtests with realistic execution settings and risk controls
 - Switch between fixed, percent, Kelly, volatility-targeted, risk-parity, martingale, and Optimal f sizing models from the settings panel
-- Compare strategies, inspect trades, and review backtest result diagnostics
-- Search parameter spaces with Finder, including random and genetic modes
+- Compare strategies, inspect trades, and review backtest result diagnostics, including entry and exit timing quality
+- Search parameter spaces with Finder, including random and genetic modes, and rank current-chart grid/random runs by Entry Score or Exit Score
 - Batch Finder runs across reusable Hunt profiles and compare survivor candidates across symbols, intervals, and execution settings
 - Validate robustness with walk-forward analysis and latest-OOS checks
 - Stress trade-path robustness with Monte Carlo sequence randomization, bootstrap resampling, and Polymarket bankroll survivability on annotated runs
 - Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics, including native `15m` / `1h` session summaries and same-event signal-exit metrics on supported `1m` runs
 - Run Portfolio Lab across multiple pairs for context, ranking, and sizing decisions
 - Build live or scheduled alert subscriptions through the Worker API
+
+Trade timing quality scores are descriptive diagnostics. Exit Score is measured on each strategy's own trades; it is not an isolated exit-rule benchmark.
 
 ## Quick Start
 

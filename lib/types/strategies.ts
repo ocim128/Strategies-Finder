@@ -115,9 +115,46 @@ export interface BacktestResult {
     expectancyBreakdown?: BacktestExpectancyBreakdown;
     entryStats?: EntryStats;
     postEntryPath?: PostEntryPathStats;
+    tradeTimingQuality?: TradeTimingQuality;
     edgeStatistics?: import('../strategies/backtest/edge-statistics').EdgeStatistics;
     polymarketTradeSummary?: BacktestPolymarketTradeSummary;
     marketContext?: BacktestResultMarketContext;
+}
+
+export interface TradeTimingEntryHorizon {
+    bars: number;
+    score: number | null;
+    avgMfePct: number | null;
+    avgMaePct: number | null;
+    positiveForwardRatePct: number | null;
+    movementFloorPct: number | null;
+    movementConfidencePct: number | null;
+    sampleSize: number;
+}
+
+export interface TradeTimingExitHorizon {
+    bars: number;
+    score: number | null;
+    avgAvoidedAdversePct: number | null;
+    avgMissedContinuationPct: number | null;
+    adverseAfterExitRatePct: number | null;
+    movementFloorPct: number | null;
+    movementConfidencePct: number | null;
+    sampleSize: number;
+}
+
+export interface TradeTimingQuality {
+    entryScore: number | null;
+    exitScore: number | null;
+    entry: {
+        horizons: TradeTimingEntryHorizon[];
+    };
+    exit: {
+        horizons: TradeTimingExitHorizon[];
+        captureScore: number | null;
+        averageGivebackPct: number | null;
+        captureSampleSize: number;
+    };
 }
 
 export interface PostEntryPathBucketStats {

@@ -149,6 +149,12 @@ export class FinderUI {
                 if (Number.isFinite(item.compositeEdgeRatio)) {
                     metrics.appendChild(this.createMetricChip(`ER ${item.compositeEdgeRatio!.toFixed(2)}`));
                 }
+                if (typeof result.tradeTimingQuality?.entryScore === "number") {
+                    metrics.appendChild(this.createMetricChip(`Entry ${this.formatScore(result.tradeTimingQuality.entryScore)}`));
+                }
+                if (typeof result.tradeTimingQuality?.exitScore === "number") {
+                    metrics.appendChild(this.createMetricChip(`Exit ${this.formatScore(result.tradeTimingQuality.exitScore)}`));
+                }
                 metrics.appendChild(this.createMetricChip(`DD ${result.maxDrawdownPercent.toFixed(2)}%`));
                 metrics.appendChild(this.createMetricChip(`Trades ${result.totalTrades}`));
                 if (item.endpointAdjusted) {
@@ -374,6 +380,10 @@ export class FinderUI {
 
     private formatProfitFactor(value: number): string {
         return value === Infinity ? "Inf" : value.toFixed(2);
+    }
+
+    private formatScore(value: number): string {
+        return Number.isInteger(value) ? value.toString() : value.toFixed(1);
     }
 
     private formatOptionalProfitFactor(value: number | undefined): string {

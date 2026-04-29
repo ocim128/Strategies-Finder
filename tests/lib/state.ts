@@ -1,8 +1,8 @@
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, Time } from "lightweight-charts";
-import { BacktestResult, OHLCVData } from "./strategies/index";
+import type { BacktestResult, OHLCVData } from "./strategies/index";
 import type { BinanceMarketType } from "./binance-market";
 
-import { Indicator } from './types/index';
+import type { Indicator } from './types/index';
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 
 type NonFunctionPropertyKeys<T> = {

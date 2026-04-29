@@ -136,6 +136,10 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
                 ?? item.result.edgeStatistics?.compositeEdgeRatio
                 ?? result.edgeStatistics?.compositeEdgeRatio
                 ?? 0;
+        case "entryScore":
+            return result.tradeTimingQuality?.entryScore ?? 0;
+        case "exitScore":
+            return result.tradeTimingQuality?.exitScore ?? 0;
         case "averageGain":
             return result.avgWin;
         case "totalTrades":

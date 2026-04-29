@@ -56,6 +56,7 @@ import {
     registerBacktestEdgeAnalysisInput,
     transferBacktestEdgeAnalysisInput,
 } from "./backtest-edge-analysis";
+import { attachTradeTimingQuality } from "./trade-timing-quality";
 
 // ============================================================================
 // Executor request / response
@@ -413,6 +414,7 @@ function finalizeResult(
         result.sharpeRatio = recomputeSharpeRatio(result);
         result.performanceAnalytics = recomputePerformanceAnalytics(result);
     }
+    attachTradeTimingQuality(result, backtestData);
 }
 
 async function annotatePolymarketResult(

@@ -1,5 +1,5 @@
-﻿import { Time } from "lightweight-charts";
-import { OHLCVData, BacktestResult, Trade } from "./strategies/index";
+﻿import type { Time } from "lightweight-charts";
+import type { OHLCVData, BacktestResult, Trade } from "./strategies/index";
 import { state } from "./state";
 import { setCurrentStrategyKey } from "./state-actions";
 import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey } from "../strategyRegistry";

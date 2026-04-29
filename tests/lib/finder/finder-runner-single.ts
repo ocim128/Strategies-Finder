@@ -32,6 +32,10 @@ import { selectExecutionAwareClosedCandles } from "../alert-evaluation-window";
 import { mergeStrategySignals } from "../signal-merge";
 import { runGeneticOptimization } from "./genetic-optimizer";
 import {
+    attachTradeTimingQuality,
+    finderSortRequiresTradeTimingQuality,
+} from "../trade-timing-quality";
+import {
     buildFinderSearchBaseParams,
     buildComparableFinderResult,
     compactSignalsForRust,
@@ -1046,7 +1050,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
 
     const ranker = new FinderResultRanker(Math.max(input.options.topN, 50), input.options.sortPriority);
     const requiresCompositeEdgeRatioSort = finderSortRequiresCompositeEdgeRatio(input.options.sortPriority);
-    const usingCompactBacktest = !requiresCompositeEdgeRatioSort && flags.shouldUseCompactBacktest;
+    const requiresTradeTimingQualitySort = finderSortRequiresTradeTimingQuality(input.options.sortPriority);
+    const usingCompactBacktest = !requiresCompositeEdgeRatioSort && !requiresTradeTimingQualitySort && flags.shouldUseCompactBacktest;
     let processedCount = 0;
     let filteredCount = 0;
     let endpointAdjustedCount = 0;
@@ -1063,6 +1068,13 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             closedData,
             requiresCompositeEdgeRatioSort,
         });
+    if (requiresTradeTimingQualitySort && useRustForFinder) {
+        useRustForFinder = false;
+        canTryNativeFinder = false;
+        cacheId = null;
+        cacheRequested = false;
+        callbacks.setStatus("Using TypeScript engine (timing-score sort requires full trades)...");
+    }
 
     const insertResult = (candidate: CandidateResult): void => {
         if (input.options.tradeFilterEnabled) {
@@ -1073,8 +1085,15 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             }
         }
 
+        const candidateData = crossSymbolContextMap.get(candidate.key)?.data ?? closedData;
         const normalizedResult = normalizeResultSharpe(candidate.result, effectiveInitialCapital);
+        if (requiresTradeTimingQualitySort) {
+            attachTradeTimingQuality(normalizedResult, candidateData);
+        }
         const adjustment = buildSelection(normalizedResult, lastDataTime, effectiveInitialCapital);
+        if (requiresTradeTimingQualitySort) {
+            attachTradeTimingQuality(adjustment.result, candidateData);
+        }
         const enriched: FinderResult = buildFinderResult({
             ...candidate,
             comboMode: Boolean(input.comboPrimarySignals),
@@ -1082,7 +1101,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             result: normalizedResult,
             selectionResult: adjustment.result,
             compositeEdgeRatio: requiresCompositeEdgeRatioSort
-                ? computeFinderCompositeEdgeRatio(normalizedResult, closedData)
+                ? computeFinderCompositeEdgeRatio(normalizedResult, candidateData)
                 : undefined,
             endpointAdjusted: adjustment.adjusted,
             endpointRemovedTrades: adjustment.removedTrades,
@@ -1251,6 +1270,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
 
     const useRandomFunnel =
         !requiresCompositeEdgeRatioSort &&
+        !requiresTradeTimingQualitySort &&
         input.options.mode === "random" &&
         !input.options.multiTimeframeEnabled &&
         (
@@ -1683,6 +1703,7 @@ async function reconcileSingleTimeframeTopResults(
     const { initialCapital } = capitalSettings;
     const strategyByKey = new Map(input.selectedStrategies.map((item) => [item.key, item.strategy]));
     const requiresCompositeEdgeRatioSort = finderSortRequiresCompositeEdgeRatio(input.options.sortPriority);
+    const requiresTradeTimingQualitySort = finderSortRequiresTradeTimingQuality(input.options.sortPriority);
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
     const rustSettings = sanitizeBacktestSettingsForRust(input.settings);
     const comboActive = Boolean(input.comboPrimarySignals);
@@ -1728,7 +1749,13 @@ async function reconcileSingleTimeframeTopResults(
                 precomputed: jobPrecomputed,
             });
             const normalizedResult = normalizeResultSharpe(rawResult, initialCapital);
+            if (requiresTradeTimingQualitySort) {
+                attachTradeTimingQuality(normalizedResult, jobData);
+            }
             const adjustment = buildSelection(normalizedResult, lastDataTime, initialCapital);
+            if (requiresTradeTimingQualitySort) {
+                attachTradeTimingQuality(adjustment.result, jobData);
+            }
 
             reconciled.push(buildFinderResult({
                 ...candidate,

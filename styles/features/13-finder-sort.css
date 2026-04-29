@@ -54,6 +54,32 @@
 
 }
 
+.finder-sort-item.is-disabled {
+
+    opacity: 0.55;
+
+}
+
+.finder-sort-label {
+
+    display: inline-flex;
+
+    align-items: center;
+
+    gap: var(--space-1-5);
+
+    min-width: 0;
+
+    flex: 1;
+
+}
+
+.finder-sort-enabled {
+
+    flex: 0 0 auto;
+
+}
+
 
 
 .finder-sort-item .sort-label {

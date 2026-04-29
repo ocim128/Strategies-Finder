@@ -13,6 +13,21 @@ export const DEFAULT_SORT_PRIORITY: FinderMetric[] = [
 	'netProfit'
 ];
 
+export const FINDER_SORT_OPTIONS: FinderMetric[] = [
+	'expectancy',
+	'compositeEdgeRatio',
+	'entryScore',
+	'exitScore',
+	'profitFactor',
+	'totalTrades',
+	'maxDrawdownPercent',
+	'sharpeRatio',
+	'averageGain',
+	'winRate',
+	'netProfitPercent',
+	'netProfit'
+];
+
 export const METRIC_LABELS: Record<FinderMetric, string> = {
 	netProfit: 'Net',
 	profitFactor: 'PF',
@@ -22,6 +37,8 @@ export const METRIC_LABELS: Record<FinderMetric, string> = {
 	maxDrawdownPercent: 'DD %',
 	expectancy: 'Exp',
 	compositeEdgeRatio: 'Comp ER',
+	entryScore: 'Entry',
+	exitScore: 'Exit',
 	averageGain: 'Avg Gain',
 	totalTrades: 'Trades',
 	polyScore: 'Poly Score',
@@ -44,6 +61,8 @@ export const METRIC_FULL_LABELS: Record<FinderMetric, string> = {
 	maxDrawdownPercent: 'Max Drawdown %',
 	expectancy: 'Expectancy',
 	compositeEdgeRatio: 'Composite Edge Ratio',
+	entryScore: 'Entry Score',
+	exitScore: 'Exit Score',
 	averageGain: 'Average Gain',
 	totalTrades: 'Total Trades',
 	polyScore: 'Polymarket Balanced Score',

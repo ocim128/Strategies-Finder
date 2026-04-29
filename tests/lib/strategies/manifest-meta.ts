@@ -954,4 +954,874 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         walkForwardParams: ["lookback"],
     },
     },
+    {
+        key: "bollinger_tail_reversion",
+        name: "Bollinger Tail Reversion",
+        description: "Fades closes outside a Bollinger envelope, assuming volatility-band breaches will snap back toward the rolling mean.",
+        defaultParams: {
+        std_dev: 2,
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        std_dev: "Std Dev",
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["std_dev", "lookback"],
+    },
+    },
+    {
+        key: "consecutive_streak_reversion",
+        name: "Consecutive Streak Reversion",
+        description: "Fades extended runs of same-direction daily bodies, betting that a prolonged close-to-close streak is due for a short mean-reversion pullback.",
+        defaultParams: {
+        streak_len: 6,
+    } as Record<string, number>,
+        paramLabels: {
+        streak_len: "Streak Length",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["streak_len"],
+    },
+    },
+    {
+        key: "donchian_extreme_rejection_fade",
+        name: "Donchian Extreme Rejection Fade",
+        description: "Fades failed breaks of the prior Donchian boundary when price tags a multi-bar extreme but settles back inside the previous channel.",
+        defaultParams: {
+        lookback: 55,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "efficiency_ratio_peak_fade",
+        name: "Efficiency Ratio Peak Fade",
+        description: "Fades highly efficient directional runs once the current bar still closes with the dominant trend body color, assuming the move is overextended.",
+        defaultParams: {
+        er_lookback: 14,
+        er_threshold: 0.8,
+    } as Record<string, number>,
+        paramLabels: {
+        er_lookback: "ER Lookback",
+        er_threshold: "ER Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["er_lookback", "er_threshold"],
+    },
+    },
+    {
+        key: "extreme_zscore_tail_fade",
+        name: "Extreme Z-Score Tail Fade",
+        description: "Fades extreme rolling close-price z-scores on the assumption that statistical tails snap back toward their trailing mean.",
+        defaultParams: {
+        lookback: 63,
+        z_threshold: 2.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        z_threshold: "Z Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "z_threshold"],
+    },
+    },
+    {
+        key: "gap_displacement_reversal_fade",
+        name: "Gap Displacement Reversal Fade",
+        description: "Fades outsized overnight gaps, assuming extreme open-to-previous-close displacement is prone to short-horizon settlement back toward value.",
+        defaultParams: {
+        gap_threshold: 0.02,
+    } as Record<string, number>,
+        paramLabels: {
+        gap_threshold: "Gap Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["gap_threshold"],
+    },
+    },
+    {
+        key: "keltner_extension_reversal",
+        name: "Keltner Extension Reversal",
+        description: "Fades price when an ATR-based Keltner envelope is breached by the daily tail, treating rare volatility extensions as mean-reversion candidates.",
+        defaultParams: {
+        lookback: 20,
+        multiplier: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        multiplier: "Multiplier",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "multiplier"],
+    },
+    },
+    {
+        key: "overextended_rsi_structural_fade",
+        name: "Overextended RSI Structural Fade",
+        description: "Fades RSI extremes only when price is simultaneously pressing an inclusive trailing range boundary, targeting local structural overextension.",
+        defaultParams: {
+        lookback: 20,
+        rsi_threshold: 80,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        rsi_threshold: "RSI Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "rsi_threshold"],
+    },
+    },
+    {
+        key: "typical_price_deviation_fade",
+        name: "Typical Price Deviation Fade",
+        description: "Fades typical-price deviations that stretch multiple standard deviations away from their rolling center of gravity.",
+        defaultParams: {
+        lookback: 20,
+        dev_threshold: 2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        dev_threshold: "Deviation Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "dev_threshold"],
+    },
+    },
+    {
+        key: "volume_blowoff_reversion",
+        name: "Volume Blowoff Reversion",
+        description: "Fades climactic volume spikes only when the close is simultaneously printing an inclusive rolling close extreme.",
+        defaultParams: {
+        vol_mult: 3,
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        vol_mult: "Volume Multiplier",
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["vol_mult", "lookback"],
+    },
+    },
+    {
+        key: "cmf_momentum_vector_alignment",
+        name: "CMF Momentum Vector Alignment",
+        description: "Requires Chaikin Money Flow to be directionally aligned and still accelerating before price is allowed to follow through relative to a longer median anchor.",
+        defaultParams: {
+        cmf_lookback: 20,
+        vector_lookback: 10,
+    } as Record<string, number>,
+        paramLabels: {
+        cmf_lookback: "CMF Lookback",
+        vector_lookback: "Vector Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["cmf_lookback", "vector_lookback"],
+    },
+    },
+    {
+        key: "decaying_boundary_momentum_capture",
+        name: "Decaying Boundary Momentum Capture",
+        description: "Builds a decaying extreme-to-median boundary that tightens over time and triggers when price reclaims momentum through that shrinking threshold.",
+        defaultParams: {
+        lookback: 20,
+        decay: 0.95,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        decay: "Decay",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "decay"],
+    },
+    },
+    {
+        key: "hvn_value_migration_rebound",
+        name: "HVN Value Migration Rebound",
+        description: "Compares shorter and longer volume-profile POCs so entries only occur once value has clearly migrated and price is already holding on the same side of both anchors.",
+        defaultParams: {
+        profile_lookback: 63,
+        poc_lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        profile_lookback: "Profile Lookback",
+        poc_lookback: "POC Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["profile_lookback", "poc_lookback"],
+    },
+    },
+    {
+        key: "initiative_pressure_accumulation_streak",
+        name: "Initiative Pressure Accumulation Streak",
+        description: "Looks for consecutive days of same-sided initiative pressure and only aligns with that participation streak when price is already on the same side of a longer median anchor.",
+        defaultParams: {
+        streak_threshold: 3,
+        median_lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        streak_threshold: "Streak Threshold",
+        median_lookback: "Median Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["streak_threshold", "median_lookback"],
+    },
+    },
+    {
+        key: "kurtosis_tail_persistence_alignment",
+        name: "Kurtosis Tail Persistence Alignment",
+        description: "Uses elevated rolling kurtosis as a fat-tail regime filter and aligns entries with the side of a trailing median only when outlier persistence is already present.",
+        defaultParams: {
+        kurtosis_lookback: 63,
+        kurtosis_threshold: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        kurtosis_lookback: "Kurtosis Lookback",
+        kurtosis_threshold: "Kurtosis Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["kurtosis_lookback", "kurtosis_threshold"],
+    },
+    },
+    {
+        key: "low_entropy_ordered_breakout",
+        name: "Low-Entropy Ordered Breakout",
+        description: "Measures how ordered the recent return stream has become and only accepts range breaks when entropy is sitting near the bottom of its own longer history.",
+        defaultParams: {
+        entropy_lookback: 30,
+        breakout_lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        entropy_lookback: "Entropy Lookback",
+        breakout_lookback: "Breakout Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["entropy_lookback", "breakout_lookback"],
+    },
+    },
+    {
+        key: "low_volatility_efficiency_lead",
+        name: "Low-Volatility Efficiency Lead",
+        description: "Looks for efficient directional migration while ATR remains statistically muted, targeting the quieter part of trend formation instead of late volatility expansion.",
+        defaultParams: {
+        er_threshold: 0.6,
+        vol_z_max: 0,
+    } as Record<string, number>,
+        paramLabels: {
+        er_threshold: "ER Threshold",
+        vol_z_max: "ATR Z Max",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["er_threshold", "vol_z_max"],
+    },
+    },
+    {
+        key: "skewness_divergence_regime_anchor",
+        name: "Skewness Divergence Regime Anchor",
+        description: "Treats skewness as a regime descriptor and only aligns with long-term median direction when the asymmetry of the recent distribution leans against the obvious price move.",
+        defaultParams: {
+        skew_lookback: 63,
+        median_lookback: 126,
+    } as Record<string, number>,
+        paramLabels: {
+        skew_lookback: "Skew Lookback",
+        median_lookback: "Median Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["skew_lookback", "median_lookback"],
+    },
+    },
+    {
+        key: "typical_price_acceleration_anchor",
+        name: "Typical Price Acceleration Anchor",
+        description: "Tracks the slope of a smoothed typical-price anchor and enters only when that slope is itself accelerating in the same direction.",
+        defaultParams: {
+        avg_lookback: 55,
+        accel_lookback: 5,
+    } as Record<string, number>,
+        paramLabels: {
+        avg_lookback: "Average Lookback",
+        accel_lookback: "Acceleration Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["avg_lookback", "accel_lookback"],
+    },
+    },
+    {
+        key: "volume_autocorrelation_participation_gate",
+        name: "Volume Autocorrelation Participation Gate",
+        description: "Uses persistent serial correlation in volume as a participation gate and only accepts breakouts once settlement clears the prior trailing range.",
+        defaultParams: {
+        vol_corr_lookback: 20,
+        price_lookback: 55,
+    } as Record<string, number>,
+        paramLabels: {
+        vol_corr_lookback: "Volume Corr Lookback",
+        price_lookback: "Price Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["vol_corr_lookback", "price_lookback"],
+    },
+    },
+    {
+        key: "adx_gated_median_alignment",
+        name: "ADX Gated Median Alignment",
+        description: "Activates median centerline alignment only during periods of strong trend persistence as measured by ADX, creating regime-gated daily directional signals.",
+        defaultParams: {
+		median_lookback: 63,
+		adx_period: 21,
+		adx_threshold: 25 } as Record<string, number>,
+        paramLabels: {
+		median_lookback: "Median Lookback",
+		adx_period: "ADX Period",
+		adx_threshold: "ADX Threshold" } as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["median_lookback", "adx_period", "adx_threshold"] },
+    },
+    {
+        key: "close_percentile_alignment",
+        name: "Close Percentile Alignment",
+        description: "Measures the percentile rank of the current close inside the trailing distribution of past closes to detect when price occupies the upper or lower tail of its recent multi-month history.",
+        defaultParams: {
+		lookback: 126,
+		threshold: 70 } as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		threshold: "Percentile Threshold" } as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"] },
+    },
+    {
+        key: "cmf_median_alignment",
+        name: "CMF Median Alignment",
+        description: "Combines Chaikin Money Flow participation state with the rolling median centerline to generate alignment signals only when volume supports the price reference.",
+        defaultParams: {
+		lookback: 63 } as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback" } as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"] },
+    },
+    {
+        key: "donchian_midpoint_alignment",
+        name: "Donchian Midpoint Alignment",
+        description: "Uses the midpoint of the trailing Donchian channel as the daily value anchor and aligns positions when the close accepts above or below this reference.",
+        defaultParams: {
+		lookback: 55 } as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback" } as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"] },
+    },
+    {
+        key: "efficiency_gated_median_alignment",
+        name: "Efficiency Gated Median Alignment",
+        description: "Only permits median alignment signals when the efficiency ratio indicates sufficient directional persistence, otherwise staying flat.",
+        defaultParams: {
+		lookback: 63,
+		efficiency_threshold: 0.45 } as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		efficiency_threshold: "Efficiency Threshold" } as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "efficiency_threshold"] },
+    },
+    {
+        key: "keltner_midpoint_alignment",
+        name: "Keltner Midpoint Alignment",
+        description: "Aligns daily close relative to the Keltner channel midline as the volatility-adjusted value reference, producing symmetric long/short signals on acceptance above or below the anchor.",
+        defaultParams: {
+		lookback: 55 } as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback" } as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"] },
+    },
+    {
+        key: "rolling_mean_alignment",
+        name: "Rolling Mean Alignment",
+        description: "Uses the trailing rolling mean of closes as the central anchor, producing long/short signals when the daily close aligns above or below this average price level over multi-month horizons.",
+        defaultParams: {
+		lookback: 63 } as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback" } as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"] },
+    },
+    {
+        key: "rolling_median_alignment",
+        name: "Rolling Median Alignment",
+        description: "Compares the daily close to a trailing rolling median of closes, generating alignment signals when price deviates from the recent multi-week to multi-month central tendency.",
+        defaultParams: {
+		lookback: 63 } as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback" } as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"] },
+    },
+    {
+        key: "trailing_range_position_alignment",
+        name: "Trailing Range Position Alignment",
+        description: "Computes the current close position as a fraction inside the trailing high-low range and signals when price is in the upper or lower portion of its recent multi-month envelope.",
+        defaultParams: {
+		lookback: 55,
+		position_threshold: 0.65 } as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		position_threshold: "Position Threshold" } as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "position_threshold"] },
+    },
+    {
+        key: "volatility_regime_median_alignment",
+        name: "Volatility Regime Median Alignment",
+        description: "Defines volatility regime via percentile rank of trailing standard deviation, then applies median centerline alignment only within the high-volatility regime.",
+        defaultParams: {
+		lookback: 63,
+		vol_threshold: 70 } as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		vol_threshold: "Vol Percentile Threshold" } as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "vol_threshold"] },
+    },
+    {
+        key: "atr_gated_median_alignment",
+        name: "ATR Gated Median Alignment",
+        description: "Uses a quiet-volatility ATR gate before allowing the close to align with the rolling median, filtering entries to calmer regimes.",
+        defaultParams: {
+        lookback: 63,
+        atr_threshold: 1.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        atr_threshold: "ATR Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "atr_threshold"],
+    },
+    },
+    {
+        key: "autocorrelation_gated_median_alignment",
+        name: "Autocorrelation Gated Median Alignment",
+        description: "Uses positive autocorrelation of daily returns as a persistence gate and only aligns entries with a rolling median once serial dependence is strong enough.",
+        defaultParams: {
+        median_lookback: 55,
+        corr_threshold: 0.5,
+    } as Record<string, number>,
+        paramLabels: {
+        median_lookback: "Median Lookback",
+        corr_threshold: "Corr Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["median_lookback", "corr_threshold"],
+    },
+    },
+    {
+        key: "close_location_median_alignment",
+        name: "Close Location Median Alignment",
+        description: "Combines intrabar close location with a trailing rolling median so entries only align when both same-bar acceptance and multi-week centerline position agree.",
+        defaultParams: {
+        lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "momentum_percentile_alignment",
+        name: "Momentum Percentile Alignment",
+        description: "Ranks current one-bar momentum against its own trailing distribution and aligns entries only when that momentum state is already statistically strong or weak.",
+        defaultParams: {
+        lookback: 63,
+        threshold: 70,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        threshold: "Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "threshold"],
+    },
+    },
+    {
+        key: "parabolic_sar_anchor_alignment",
+        name: "Parabolic SAR Anchor Alignment",
+        description: "Uses Parabolic SAR as a dynamic acceleration-based anchor and aligns entries by whether the daily close is holding above or below the current SAR value.",
+        defaultParams: {
+        lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "rolling_gap_zscore_alignment",
+        name: "Rolling Gap Z-Score Alignment",
+        description: "Measures the current daily gap against its own trailing gap distribution and aligns entries once displacement is already statistically positive or negative.",
+        defaultParams: {
+        lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "trailing_hilo_midpoint_alignment",
+        name: "Trailing Hilo Midpoint Alignment",
+        description: "Uses the midpoint of the trailing highest high and lowest low as a pure range-derived value anchor and aligns entries by whether the daily close settles above or below it.",
+        defaultParams: {
+        lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "typical_price_percentile_alignment",
+        name: "Typical Price Percentile Alignment",
+        description: "Measures where the current typical price sits inside its own trailing distribution and aligns entries only when that state is already meaningfully high or low.",
+        defaultParams: {
+        lookback: 63,
+        threshold: 65,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        threshold: "Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "threshold"],
+    },
+    },
+    {
+        key: "volume_percentile_gated_median_alignment",
+        name: "Volume Percentile Gated Median Alignment",
+        description: "Uses trailing volume percentile as a participation gate and only aligns entries with the rolling median once relative activity is already elevated.",
+        defaultParams: {
+        lookback: 63,
+        volume_threshold: 70,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        volume_threshold: "Volume Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "volume_threshold"],
+    },
+    },
+    {
+        key: "weighted_close_median_alignment",
+        name: "Weighted Close Median Alignment",
+        description: "Uses the rolling median of weighted close prices as a participation-aware centerline and aligns entries by whether the daily close is holding above or below it.",
+        defaultParams: {
+        lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "directional_index_regime_alignment",
+        name: "Directional Index Regime Alignment",
+        description: "Uses ADX as a trend-strength gate, DI dominance for direction, and a rolling median for structural price alignment.",
+        defaultParams: {
+        adx_threshold: 25,
+        median_lookback: 55,
+    } as Record<string, number>,
+        paramLabels: {
+        adx_threshold: "ADX Threshold",
+        median_lookback: "Median Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["adx_threshold", "median_lookback"],
+    },
+    },
+    {
+        key: "displacement_gap_zone_alignment",
+        name: "Displacement Gap Zone Alignment",
+        description: "Tracks significant runaway gaps at fresh 20-day extremes and only confirms them once price has defended the gap zone for several sessions.",
+        defaultParams: {
+        gap_size_pct: 0.01,
+        hold_lookback: 5,
+    } as Record<string, number>,
+        paramLabels: {
+        gap_size_pct: "Gap Size %",
+        hold_lookback: "Hold Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["gap_size_pct", "hold_lookback"],
+    },
+    },
+    {
+        key: "distribution_rank_state_alignment",
+        name: "Distribution Rank State Alignment",
+        description: "Treats the trailing close distribution as a state map and aligns entries once price is persistently living in the upper or lower tail of that range.",
+        defaultParams: {
+        lookback: 126,
+        threshold: 0.8,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        threshold: "Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "threshold"],
+    },
+    },
+    {
+        key: "keltner_midpoint_volatility_gated_alignment",
+        name: "Keltner Midpoint Volatility Gated Alignment",
+        description: "Uses ATR compression as a volatility gate and only triggers when the close crosses the Keltner midpoint during that subdued regime.",
+        defaultParams: {
+        lookback: 20,
+        vol_z_threshold: 0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        vol_z_threshold: "Vol Z Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "vol_z_threshold"],
+    },
+    },
+    {
+        key: "mfi_accumulation_zone_alignment",
+        name: "MFI Accumulation Zone Alignment",
+        description: "Requires a volume-backed MFI conviction zone before allowing price to align with a longer-term SMA trend baseline.",
+        defaultParams: {
+        mfi_threshold: 60,
+        avg_lookback: 100,
+    } as Record<string, number>,
+        paramLabels: {
+        mfi_threshold: "MFI Threshold",
+        avg_lookback: "Average Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["mfi_threshold", "avg_lookback"],
+    },
+    },
+    {
+        key: "range_extreme_acceptance_persistence",
+        name: "Range Extreme Acceptance Persistence",
+        description: "Requires repeated daily closes outside the prior trailing range before accepting a breakout as real, filtering single-bar fake-outs.",
+        defaultParams: {
+        lookback: 63,
+        streak_required: 5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        streak_required: "Streak Required",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "streak_required"],
+    },
+    },
+    {
+        key: "rolling_median_velocity_alignment",
+        name: "Rolling Median Velocity Alignment",
+        description: "Requires the daily close to align with a trailing median that is itself migrating in the same direction, filtering out flat centerlines.",
+        defaultParams: {
+        median_lookback: 55,
+        velocity_lookback: 10,
+    } as Record<string, number>,
+        paramLabels: {
+        median_lookback: "Median Lookback",
+        velocity_lookback: "Velocity Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["median_lookback", "velocity_lookback"],
+    },
+    },
+    {
+        key: "rolling_poc_displacement_alignment",
+        name: "Rolling POC Displacement Alignment",
+        description: "Uses migration of the rolling volume-profile point of control as a value-anchor trend filter and aligns entries with both price and POC direction.",
+        defaultParams: {
+        poc_lookback: 63,
+        migration_lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        poc_lookback: "POC Lookback",
+        migration_lookback: "Migration Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["poc_lookback", "migration_lookback"],
+    },
+    },
+    {
+        key: "typical_price_zscore_alignment",
+        name: "Typical Price Z-Score Alignment",
+        description: "Treats large positive or negative typical-price z-scores as continuation states, assuming statistically expensive daily bars can keep extending.",
+        defaultParams: {
+        lookback: 126,
+        z_threshold: 1.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        z_threshold: "Z Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "z_threshold"],
+    },
+    },
+    {
+        key: "typical_price_percentile_gap_exit_hybrid",
+        name: "Typical Price Percentile Gap Exit Hybrid",
+        description: "Uses Typical Price Percentile Alignment for new entries and a Rolling Gap Z-Score state change as the exit overlay, with opposite percentile entries taking priority over the exit leg.",
+        defaultParams: {
+        entryLookback: 23,
+        entryThreshold: 50,
+        exitLookback: 2,
+    } as Record<string, number>,
+        paramLabels: {
+        entryLookback: "Entry Lookback",
+        entryThreshold: "Entry Threshold",
+        exitLookback: "Exit Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["entryLookback", "entryThreshold", "exitLookback"],
+    },
+    },
+    {
+        key: "initiative_pressure_low_volatility_exit_hybrid",
+        name: "Initiative Pressure Low-Volatility Exit Hybrid",
+        description: "Uses Initiative Pressure Accumulation Streak for entries and Low-Volatility Efficiency Lead as the exit overlay, with opposite entry signals taking priority over the exit leg.",
+        defaultParams: {
+        streakThreshold: 2,
+        entryMedianLookback: 2,
+        exitErThreshold: 0.2025,
+        exitVolZMax: 1,
+    } as Record<string, number>,
+        paramLabels: {
+        streakThreshold: "Streak Threshold",
+        entryMedianLookback: "Entry Median Lookback",
+        exitErThreshold: "Exit ER Threshold",
+        exitVolZMax: "Exit ATR Z Max",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["streakThreshold", "entryMedianLookback", "exitErThreshold", "exitVolZMax"],
+    },
+    },
 ];

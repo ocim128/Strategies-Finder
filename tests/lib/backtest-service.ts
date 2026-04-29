@@ -72,6 +72,7 @@ import {
     registerBacktestEdgeAnalysisInput,
     transferBacktestEdgeAnalysisInput,
 } from "./backtest-edge-analysis";
+import { attachTradeTimingQuality } from "./trade-timing-quality";
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
@@ -606,6 +607,7 @@ export class BacktestService {
             result.sharpeRatio = this.recomputeSharpeRatio(result, initialCapital);
             result.performanceAnalytics = this.recomputePerformanceAnalytics(result);
         }
+        attachTradeTimingQuality(result, backtestData);
         registerBacktestEdgeAnalysisInput(result, backtestData);
     }
 

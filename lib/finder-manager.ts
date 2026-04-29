@@ -10,7 +10,7 @@ import { settingsManager } from "./settings-manager";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import { MAJOR_SYMBOLS } from "./portfolioLab/portfolio-lab-types";
 
-import { DEFAULT_SORT_PRIORITY, METRIC_FULL_LABELS, UNIVERSE_METRIC_FULL_LABELS } from "./finder/constants";
+import { FINDER_SORT_OPTIONS, METRIC_FULL_LABELS, UNIVERSE_METRIC_FULL_LABELS } from "./finder/constants";
 import { runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
 import { runFinderUniverseExecution } from "./finder/finder-runner-universe";
 import { FinderParamSpace } from "./finder/finder-param-space";
@@ -47,6 +47,7 @@ import type {
 import { isSmartTradeSizingMode } from "./types/backtest";
 import { isSignalExitSameEventMode } from "./polymarket-exit-mode";
 import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
+import { finderSortRequiresTradeTimingQuality } from "./trade-timing-quality";
 
 type FinderPersistedUiState = {
 	scope: FinderScope;
@@ -85,6 +86,11 @@ const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
 	"totalTrades",
 	"activeSymbols",
 ] as const;
+const TIMING_SORT_METRICS: readonly FinderMetric[] = ["entryScore", "exitScore"];
+
+function isTimingSortMetric(value: unknown): value is FinderMetric {
+	return TIMING_SORT_METRICS.includes(value as FinderMetric);
+}
 
 function normalizeStringArray(value: unknown): string[] {
 	if (!Array.isArray(value)) {
@@ -289,7 +295,7 @@ export class FinderManager {
 			finderUniverseSortSecondary,
 		} = this.getDom();
 
-		const optionsHtml = DEFAULT_SORT_PRIORITY.map(key =>
+		const optionsHtml = FINDER_SORT_OPTIONS.map(key =>
 			`<option value="${key}">${METRIC_FULL_LABELS[key]}</option>`
 		).join('');
 		const universeOptionsHtml = UNIVERSE_SORT_OPTIONS.map((key) =>
@@ -306,15 +312,20 @@ export class FinderManager {
 		sortSecondary.value = 'profitFactor';
 		finderUniverseSort.value = this.uiState.universeSort;
 		finderUniverseSortSecondary.value = this.uiState.universeSortSecondary;
+		this.updateTimingSortControlState();
 
 		// Advanced Toggle Logic
 		toggle.addEventListener('change', () => {
 			setVisible(simpleSection, !toggle.checked);
 			setVisible(advancedSection, toggle.checked);
 		});
+		sortPrimary.addEventListener('change', () => this.updateTimingSortControlState());
+		sortSecondary.addEventListener('change', () => this.updateTimingSortControlState());
+		this.getDom().finderMode.addEventListener('change', () => this.updateTimingSortControlState());
 
 		// Initialize Advanced List
 		this.initSortList();
+		this.updateTimingSortControlState();
 	}
 
 	private initSortList(): void {
@@ -347,12 +358,16 @@ export class FinderManager {
 		const { finderSortList: container } = this.getDom();
 		container.innerHTML = '';
 
-		DEFAULT_SORT_PRIORITY.forEach(metric => {
+		FINDER_SORT_OPTIONS.forEach(metric => {
+			const isTimingMetric = isTimingSortMetric(metric);
 			const div = document.createElement('div');
-			div.className = 'finder-sort-item';
+			div.className = isTimingMetric ? 'finder-sort-item finder-sort-item--optional' : 'finder-sort-item';
 			div.dataset.value = metric;
 			div.innerHTML = `
-				<span class="sort-label">${METRIC_FULL_LABELS[metric]}</span>
+				<label class="finder-sort-label">
+					${isTimingMetric ? `<input type="checkbox" class="finder-sort-enabled" aria-label="Enable ${METRIC_FULL_LABELS[metric]}">` : ''}
+					<span class="sort-label">${METRIC_FULL_LABELS[metric]}</span>
+				</label>
 				<div class="finder-sort-actions">
 					<button class="finder-sort-btn sort-up" title="Move Up">▲</button>
 					<button class="finder-sort-btn sort-down" title="Move Down">▼</button>
@@ -480,6 +495,7 @@ export class FinderManager {
 			modeInput.value = "random";
 		}
 		setVisible("finderBlockBadge", !universeScope && Boolean(state.blockRange));
+		this.updateTimingSortControlState();
 	}
 
 	private initPolymarketUI(): void {
@@ -505,6 +521,34 @@ export class FinderManager {
 		dom.finderPolymarketMinScored.disabled = !enabled;
 		dom.finderPolymarketLockOffset.disabled = !enabled || !lockOffsetRelevant;
 		dom.finderPolymarketAfterTakeProfitOnly.disabled = !enabled;
+		this.updateTimingSortControlState();
+	}
+
+	private updateTimingSortControlState(): void {
+		const dom = this.getDom();
+		const timingSortDisabled = this.isUniverseScope()
+			|| dom.finderPolymarketToggle.checked
+			|| dom.finderMode.value === "genetic";
+
+		for (const select of [dom.finderSort, dom.finderSortSecondary]) {
+			for (const option of Array.from(select.options)) {
+				if (isTimingSortMetric(option.value)) {
+					option.disabled = timingSortDisabled;
+				}
+			}
+		}
+
+		for (const item of Array.from(dom.finderSortList.querySelectorAll<HTMLElement>(".finder-sort-item"))) {
+			const isTimingMetric = isTimingSortMetric(item.dataset.value);
+			if (!isTimingMetric) continue;
+			item.classList.toggle("is-disabled", timingSortDisabled);
+			item.querySelectorAll<HTMLInputElement>(".finder-sort-enabled").forEach((checkbox) => {
+				checkbox.disabled = timingSortDisabled;
+			});
+			item.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
+				button.disabled = timingSortDisabled;
+			});
+		}
 	}
 
 	private getCurrentChartSelectedStrategyKeys(): Set<string> {
@@ -850,6 +894,10 @@ export class FinderManager {
 			this.setStatus('No strategies selected.');
 			return false;
 		}
+		if (options.mode === "genetic" && finderSortRequiresTradeTimingQuality(options.sortPriority)) {
+			this.setStatus("Entry Score and Exit Score sorting are supported in grid and random modes only.");
+			return false;
+		}
 
 		const capitalSettings = backtestService.getCapitalSettings();
 		const settings = backtestService.getBacktestSettings();
@@ -990,6 +1038,14 @@ export class FinderManager {
 		const useAdvancedSort = dom.finderAdvancedToggle.checked;
 		const sortItems = dom.finderSortList.querySelectorAll('.finder-sort-item');
 		const advancedSortValues = Array.from(sortItems)
+			.filter((el) => {
+				const item = el as HTMLElement;
+				const metric = item.dataset.value as FinderMetric | undefined;
+				if (!isTimingSortMetric(metric)) {
+					return true;
+				}
+				return item.querySelector<HTMLInputElement>(".finder-sort-enabled")?.checked === true;
+			})
 			.map(el => (el as HTMLElement).dataset.value as FinderMetric | undefined);
 		const mode = scope === 'symbol_universe' ? 'random' : dom.finderMode.value as FinderMode;
 		const topN = Math.round(this.readFinderNumberInput(dom.finderTopN, 10, 1));

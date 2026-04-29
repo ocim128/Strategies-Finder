@@ -18,6 +18,11 @@ import {
     type FinderPreparedDataCache,
 } from "./finder-runner-core";
 import {
+    attachTradeTimingQuality,
+    averageTradeTimingQuality,
+    finderSortRequiresTradeTimingQuality,
+} from "../trade-timing-quality";
+import {
     buildFinderResult,
     buildFinderEvaluationData,
     generateSignalsForJob,
@@ -123,6 +128,7 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
     const ranker = new FinderResultRanker(Math.max(input.options.topN, 50), input.options.sortPriority);
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
     const requiresCompositeEdgeRatioSort = finderSortRequiresCompositeEdgeRatio(input.options.sortPriority);
+    const requiresTradeTimingQualitySort = finderSortRequiresTradeTimingQuality(input.options.sortPriority);
     let processedCount = 0;
     let filteredCount = 0;
     let endpointAdjustedCount = 0;
@@ -154,7 +160,9 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
                     if (tfPrimarySignals) {
                         signals = mergeStrategySignals(tfPrimarySignals, signals, "and") as Signal[];
                     }
-                    const datasetUseCompact = !requiresCompositeEdgeRatioSort && dataset.data.length >= flags.compactBacktestThreshold;
+                    const datasetUseCompact = !requiresCompositeEdgeRatioSort
+                        && !requiresTradeTimingQualitySort
+                        && dataset.data.length >= flags.compactBacktestThreshold;
                     const timeframeBacktestFn = datasetUseCompact ? runBacktestCompact : runBacktest;
                     const result = runStrategyBacktest({
                         strategy: job.strategy,
@@ -166,6 +174,9 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
                         backtestFn: timeframeBacktestFn,
                         precomputed: precomputedByInterval.get(dataset.interval),
                     });
+                    if (requiresTradeTimingQualitySort) {
+                        attachTradeTimingQuality(result, dataset.data);
+                    }
 
                     timeframeResults.push({ result, data: dataset.data });
                     signals.length = 0;
@@ -191,6 +202,11 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
                     ? activeDatasets[0].data[activeDatasets[0].data.length - 1]?.time ?? null
                     : null;
                 const adjustment = buildSelectionResult(aggregatedResult, lastDataTime, effectiveInitialCapital);
+                if (requiresTradeTimingQualitySort) {
+                    const averagedTimingQuality = averageTradeTimingQuality(timeframeResults.map((entry) => entry.result));
+                    aggregatedResult.tradeTimingQuality = averagedTimingQuality;
+                    adjustment.result.tradeTimingQuality = averagedTimingQuality;
+                }
                 const enriched: FinderResult = buildFinderResult({
                     key: job.key,
                     name: job.name,

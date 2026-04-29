@@ -14,6 +14,8 @@ export type FinderMetric =
     | 'maxDrawdownPercent'
     | 'expectancy'
     | 'compositeEdgeRatio'
+    | 'entryScore'
+    | 'exitScore'
     | 'averageGain'
     | 'totalTrades'
     | 'polyScore'

@@ -69,6 +69,21 @@ export function resolveCurrentAlertSubscriptionContext(): CurrentAlertSubscripti
         return null;
     }
 
+    if (typeof document === "undefined") {
+        const backtestSettings: Record<string, unknown> = {
+            binanceMarketType: state.binanceMarketType,
+        };
+        return {
+            symbol,
+            interval,
+            strategyKey,
+            strategyParams: {},
+            backtestSettings,
+            configName: null,
+            streamId: buildAlertStreamId(symbol, interval, strategyKey),
+        };
+    }
+
     const strategyParams = collectCurrentAlertStrategyParams();
     const backtestSettings = collectCurrentAlertSubscriptionBacktestSettings();
     const configName = resolveCurrentConfigName(strategyKey, strategyParams, backtestSettings);
