@@ -62,6 +62,72 @@ import { typical_price_acceleration_anchor } from "./lib/typical_price_accelerat
 import { close_location_median_alignment } from "./lib/close_location_median_alignment";
 import { volume_percentile_gated_median_alignment } from "./lib/volume_percentile_gated_median_alignment";
 import { directional_index_regime_alignment } from "./lib/directional_index_regime_alignment";
+import { adx_gated_median_alignment } from "./lib/adx_gated_median_alignment__20260429T162454Z";
+import { adx_span_bias_alignment } from "./lib/adx_span_bias_alignment__20260429T021133Z";
+import { atr_gated_median_alignment } from "./lib/atr_gated_median_alignment__20260429T162454Z";
+import { autocorrelation_gated_median_alignment } from "./lib/autocorrelation_gated_median_alignment__20260429T162454Z";
+import { bollinger_tail_reversion } from "./lib/bollinger_tail_reversion__20260429T162454Z";
+import { close_acceptance_state_alignment } from "./lib/close_acceptance_state_alignment__20260429T021133Z";
+import { close_percentile_alignment } from "./lib/close_percentile_alignment__20260429T162454Z";
+import { close_percentile_state } from "./lib/close_percentile_state__20260429T021133Z";
+import { cmf_median_alignment } from "./lib/cmf_median_alignment__20260429T021133Z";
+import { consecutive_streak_reversion } from "./lib/consecutive_streak_reversion__20260429T162454Z";
+import { cumulative_gap_bias_alignment } from "./lib/cumulative_gap_bias_alignment__20260429T021133Z";
+import { decaying_boundary_momentum_capture } from "./lib/decaying_boundary_momentum_capture__20260429T162454Z";
+import { displacement_gap_zone_alignment } from "./lib/displacement_gap_zone_alignment__20260429T162454Z";
+import { donchian_extreme_rejection_fade } from "./lib/donchian_extreme_rejection_fade__20260429T162454Z";
+import { donchian_midpoint_alignment } from "./lib/donchian_midpoint_alignment__20260429T162454Z";
+import { dynamic_value_anchor_migration } from "./lib/dynamic_value_anchor_migration__20260429T021133Z";
+import { efficiency_gated_median_alignment } from "./lib/efficiency_gated_median_alignment__20260429T021133Z";
+import { efficiency_ratio_peak_fade } from "./lib/efficiency_ratio_peak_fade__20260429T162454Z";
+import { extreme_zscore_tail_fade } from "./lib/extreme_zscore_tail_fade__20260429T162454Z";
+import { fractal_efficiency_regime_alignment } from "./lib/fractal_efficiency_regime_alignment__20260429T021133Z";
+import { gap_displacement_reversal_fade } from "./lib/gap_displacement_reversal_fade__20260429T162454Z";
+import { hvn_value_migration_rebound } from "./lib/hvn_value_migration_rebound__20260429T162454Z";
+import { initiative_pressure_accumulation_streak } from "./lib/initiative_pressure_accumulation_streak__20260429T162454Z";
+import { initiative_pressure_gated_alignment } from "./lib/initiative_pressure_gated_alignment__20260429T021133Z";
+import { initiative_pressure_low_volatility_exit_hybrid } from "./lib/initiative_pressure_low_volatility_exit_hybrid__20260429T162454Z";
+import { keltner_extension_reversal } from "./lib/keltner_extension_reversal__20260429T162454Z";
+import { keltner_midpoint_alignment } from "./lib/keltner_midpoint_alignment__20260429T021133Z";
+import { keltner_midpoint_volatility_gated_alignment } from "./lib/keltner_midpoint_volatility_gated_alignment__20260429T162454Z";
+import { kurtosis_stability_displacement_entry } from "./lib/kurtosis_stability_displacement_entry__20260429T021133Z";
+import { kurtosis_tail_persistence_alignment } from "./lib/kurtosis_tail_persistence_alignment__20260429T162454Z";
+import { low_entropy_ordered_breakout } from "./lib/low_entropy_ordered_breakout__20260429T162454Z";
+import { low_volatility_efficiency_lead } from "./lib/low_volatility_efficiency_lead__20260429T162454Z";
+import { mfi_accumulation_zone_alignment } from "./lib/mfi_accumulation_zone_alignment__20260429T162454Z";
+import { mfi_span_alignment } from "./lib/mfi_span_alignment__20260429T021133Z";
+import { momentum_percentile_alignment } from "./lib/momentum_percentile_alignment__20260429T162454Z";
+import { multi_cycle_median_alignment } from "./lib/multi_cycle_median_alignment__20260429T021133Z";
+import { overextended_rsi_structural_fade } from "./lib/overextended_rsi_structural_fade__20260429T162454Z";
+import { parabolic_sar_anchor_alignment } from "./lib/parabolic_sar_anchor_alignment__20260429T162454Z";
+import { poc_drift_alignment } from "./lib/poc_drift_alignment__20260429T021133Z";
+import { price_velocity_zscore_regime } from "./lib/price_velocity_zscore_regime__20260429T021133Z";
+import { range_extreme_acceptance_persistence } from "./lib/range_extreme_acceptance_persistence__20260429T162454Z";
+import { relative_body_displacement_alignment } from "./lib/relative_body_displacement_alignment__20260429T021133Z";
+import { roc_percentile_alignment } from "./lib/roc_percentile_alignment__20260429T021133Z";
+import { rolling_gap_zscore_alignment } from "./lib/rolling_gap_zscore_alignment__20260429T162454Z";
+import { rolling_mean_alignment } from "./lib/rolling_mean_alignment__20260429T162454Z";
+import { rolling_median_acceptance } from "./lib/rolling_median_acceptance__20260429T021133Z";
+import { rolling_median_alignment } from "./lib/rolling_median_alignment__20260429T162454Z";
+import { rolling_median_velocity_alignment } from "./lib/rolling_median_velocity_alignment__20260429T162454Z";
+import { rolling_poc_displacement_alignment } from "./lib/rolling_poc_displacement_alignment__20260429T162454Z";
+import { skewness_distribution_alignment } from "./lib/skewness_distribution_alignment__20260429T162454Z";
+import { skewness_divergence_regime_anchor } from "./lib/skewness_divergence_regime_anchor__20260429T162454Z";
+import { stddev_gated_median_alignment } from "./lib/stddev_gated_median_alignment__20260429T021133Z";
+import { supertrend_anchor_alignment } from "./lib/supertrend_anchor_alignment__20260429T021133Z";
+import { time_at_value_migration_anchor } from "./lib/time_at_value_migration_anchor__20260429T021133Z";
+import { trailing_hilo_midpoint_alignment } from "./lib/trailing_hilo_midpoint_alignment__20260429T162454Z";
+import { trailing_range_position_alignment } from "./lib/trailing_range_position_alignment__20260429T162454Z";
+import { trailing_span_zone_acceptance } from "./lib/trailing_span_zone_acceptance__20260429T021133Z";
+import { typical_price_deviation_fade } from "./lib/typical_price_deviation_fade__20260429T162454Z";
+import { typical_price_percentile_alignment } from "./lib/typical_price_percentile_alignment__20260429T162454Z";
+import { typical_price_percentile_gap_exit_hybrid } from "./lib/typical_price_percentile_gap_exit_hybrid__20260429T162454Z";
+import { typical_price_zscore_alignment } from "./lib/typical_price_zscore_alignment__20260429T162454Z";
+import { value_area_migration_acceptance } from "./lib/value_area_migration_acceptance__20260429T021133Z";
+import { volatility_regime_median_alignment } from "./lib/volatility_regime_median_alignment__20260429T162454Z";
+import { volume_autocorrelation_participation_gate } from "./lib/volume_autocorrelation_participation_gate__20260429T162454Z";
+import { volume_blowoff_reversion } from "./lib/volume_blowoff_reversion__20260429T162454Z";
+import { weighted_close_median_alignment } from "./lib/weighted_close_median_alignment__20260429T162454Z";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -129,6 +195,72 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "close_location_median_alignment", strategy: close_location_median_alignment },
     { key: "volume_percentile_gated_median_alignment", strategy: volume_percentile_gated_median_alignment },
     { key: "directional_index_regime_alignment", strategy: directional_index_regime_alignment },
+    { key: "adx_gated_median_alignment", strategy: adx_gated_median_alignment },
+    { key: "adx_span_bias_alignment", strategy: adx_span_bias_alignment },
+    { key: "atr_gated_median_alignment", strategy: atr_gated_median_alignment },
+    { key: "autocorrelation_gated_median_alignment", strategy: autocorrelation_gated_median_alignment },
+    { key: "bollinger_tail_reversion", strategy: bollinger_tail_reversion },
+    { key: "close_acceptance_state_alignment", strategy: close_acceptance_state_alignment },
+    { key: "close_percentile_alignment", strategy: close_percentile_alignment },
+    { key: "close_percentile_state", strategy: close_percentile_state },
+    { key: "cmf_median_alignment", strategy: cmf_median_alignment },
+    { key: "consecutive_streak_reversion", strategy: consecutive_streak_reversion },
+    { key: "cumulative_gap_bias_alignment", strategy: cumulative_gap_bias_alignment },
+    { key: "decaying_boundary_momentum_capture", strategy: decaying_boundary_momentum_capture },
+    { key: "displacement_gap_zone_alignment", strategy: displacement_gap_zone_alignment },
+    { key: "donchian_extreme_rejection_fade", strategy: donchian_extreme_rejection_fade },
+    { key: "donchian_midpoint_alignment", strategy: donchian_midpoint_alignment },
+    { key: "dynamic_value_anchor_migration", strategy: dynamic_value_anchor_migration },
+    { key: "efficiency_gated_median_alignment", strategy: efficiency_gated_median_alignment },
+    { key: "efficiency_ratio_peak_fade", strategy: efficiency_ratio_peak_fade },
+    { key: "extreme_zscore_tail_fade", strategy: extreme_zscore_tail_fade },
+    { key: "fractal_efficiency_regime_alignment", strategy: fractal_efficiency_regime_alignment },
+    { key: "gap_displacement_reversal_fade", strategy: gap_displacement_reversal_fade },
+    { key: "hvn_value_migration_rebound", strategy: hvn_value_migration_rebound },
+    { key: "initiative_pressure_accumulation_streak", strategy: initiative_pressure_accumulation_streak },
+    { key: "initiative_pressure_gated_alignment", strategy: initiative_pressure_gated_alignment },
+    { key: "initiative_pressure_low_volatility_exit_hybrid", strategy: initiative_pressure_low_volatility_exit_hybrid },
+    { key: "keltner_extension_reversal", strategy: keltner_extension_reversal },
+    { key: "keltner_midpoint_alignment", strategy: keltner_midpoint_alignment },
+    { key: "keltner_midpoint_volatility_gated_alignment", strategy: keltner_midpoint_volatility_gated_alignment },
+    { key: "kurtosis_stability_displacement_entry", strategy: kurtosis_stability_displacement_entry },
+    { key: "kurtosis_tail_persistence_alignment", strategy: kurtosis_tail_persistence_alignment },
+    { key: "low_entropy_ordered_breakout", strategy: low_entropy_ordered_breakout },
+    { key: "low_volatility_efficiency_lead", strategy: low_volatility_efficiency_lead },
+    { key: "mfi_accumulation_zone_alignment", strategy: mfi_accumulation_zone_alignment },
+    { key: "mfi_span_alignment", strategy: mfi_span_alignment },
+    { key: "momentum_percentile_alignment", strategy: momentum_percentile_alignment },
+    { key: "multi_cycle_median_alignment", strategy: multi_cycle_median_alignment },
+    { key: "overextended_rsi_structural_fade", strategy: overextended_rsi_structural_fade },
+    { key: "parabolic_sar_anchor_alignment", strategy: parabolic_sar_anchor_alignment },
+    { key: "poc_drift_alignment", strategy: poc_drift_alignment },
+    { key: "price_velocity_zscore_regime", strategy: price_velocity_zscore_regime },
+    { key: "range_extreme_acceptance_persistence", strategy: range_extreme_acceptance_persistence },
+    { key: "relative_body_displacement_alignment", strategy: relative_body_displacement_alignment },
+    { key: "roc_percentile_alignment", strategy: roc_percentile_alignment },
+    { key: "rolling_gap_zscore_alignment", strategy: rolling_gap_zscore_alignment },
+    { key: "rolling_mean_alignment", strategy: rolling_mean_alignment },
+    { key: "rolling_median_acceptance", strategy: rolling_median_acceptance },
+    { key: "rolling_median_alignment", strategy: rolling_median_alignment },
+    { key: "rolling_median_velocity_alignment", strategy: rolling_median_velocity_alignment },
+    { key: "rolling_poc_displacement_alignment", strategy: rolling_poc_displacement_alignment },
+    { key: "skewness_distribution_alignment", strategy: skewness_distribution_alignment },
+    { key: "skewness_divergence_regime_anchor", strategy: skewness_divergence_regime_anchor },
+    { key: "stddev_gated_median_alignment", strategy: stddev_gated_median_alignment },
+    { key: "supertrend_anchor_alignment", strategy: supertrend_anchor_alignment },
+    { key: "time_at_value_migration_anchor", strategy: time_at_value_migration_anchor },
+    { key: "trailing_hilo_midpoint_alignment", strategy: trailing_hilo_midpoint_alignment },
+    { key: "trailing_range_position_alignment", strategy: trailing_range_position_alignment },
+    { key: "trailing_span_zone_acceptance", strategy: trailing_span_zone_acceptance },
+    { key: "typical_price_deviation_fade", strategy: typical_price_deviation_fade },
+    { key: "typical_price_percentile_alignment", strategy: typical_price_percentile_alignment },
+    { key: "typical_price_percentile_gap_exit_hybrid", strategy: typical_price_percentile_gap_exit_hybrid },
+    { key: "typical_price_zscore_alignment", strategy: typical_price_zscore_alignment },
+    { key: "value_area_migration_acceptance", strategy: value_area_migration_acceptance },
+    { key: "volatility_regime_median_alignment", strategy: volatility_regime_median_alignment },
+    { key: "volume_autocorrelation_participation_gate", strategy: volume_autocorrelation_participation_gate },
+    { key: "volume_blowoff_reversion", strategy: volume_blowoff_reversion },
+    { key: "weighted_close_median_alignment", strategy: weighted_close_median_alignment },
 ];
 
 export function createStrategiesRecordFromManifest(
