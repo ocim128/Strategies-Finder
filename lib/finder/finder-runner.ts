@@ -14,6 +14,7 @@ import {
 } from "./finder-runner-shared";
 import {
     buildFinderSearchBaseParams,
+    normalizeFinderCandidateParamSets,
     resolveFinderCandidateBacktestSettings,
     shouldUseRustCachedMode,
     resolveFinderRiskOverrides,
@@ -100,7 +101,10 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     let totalRuns = 0;
     for (const selection of selectedStrategies) {
         const extendedDefaults = buildFinderSearchBaseParams(selection.strategy, settings, options);
-        const paramSets = input.generateParamSets(extendedDefaults, options);
+        const paramSets = normalizeFinderCandidateParamSets(
+            selection.strategy,
+            input.generateParamSets(extendedDefaults, options)
+        );
         if (paramSets.length === 0) continue;
         totalRuns += paramSets.length;
         strategyPlans.push({

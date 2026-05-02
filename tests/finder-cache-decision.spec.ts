@@ -15,6 +15,7 @@ import {
 import {
     buildFinderSearchBaseParams,
     mergeFinderRiskParamsIntoBacktestSettings,
+    normalizeFinderCandidateParamSets,
     resolveFinderRiskOverrides,
 } from './lib/finder/finder-runner-core';
 
@@ -124,6 +125,32 @@ describe('Finder candidate backtest settings resolution', () => {
         expect(resolved).to.equal(primarySettings);
         expect(resolved.executionModel).to.equal('next_close');
         expect(resolved.stopLossPercent).to.equal(9);
+    });
+});
+
+describe('Finder candidate parameter normalization', () => {
+    it('normalizes strategy params, preserves Finder risk params, and dedupes effective candidates', () => {
+        const strategy = {
+            defaultParams: {
+                entropy_window: 10,
+                implosion_threshold: -0.4,
+            },
+            normalizeParams: (params: Record<string, number>) => ({
+                entropy_window: Math.max(3, Math.round(params.entropy_window ?? 10)),
+                implosion_threshold: Math.max(-5, Math.min(-0.01, Number(params.implosion_threshold ?? -0.4))),
+            }),
+        } as any;
+
+        const normalized = normalizeFinderCandidateParamSets(strategy, [
+            { entropy_window: -45, implosion_threshold: 1.82, stopLossPercent: 3 },
+            { entropy_window: 3, implosion_threshold: -0.01, stopLossPercent: 3 },
+            { entropy_window: 3, implosion_threshold: -0.01, stopLossPercent: 4 },
+        ]);
+
+        expect(normalized).to.deep.equal([
+            { entropy_window: 3, implosion_threshold: -0.01, stopLossPercent: 3 },
+            { entropy_window: 3, implosion_threshold: -0.01, stopLossPercent: 4 },
+        ]);
     });
 });
 

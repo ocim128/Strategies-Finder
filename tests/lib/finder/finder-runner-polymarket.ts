@@ -51,6 +51,7 @@ import {
 import {
     buildFinderSearchBaseParams,
     getPreparedFinderData,
+    normalizeFinderCandidateParamSets,
     type FinderPreparedDataCache,
 } from "./finder-runner-core";
 import type { FinderRunInput, FinderRunCallbacks, FinderRunOutput } from "./finder-runner";
@@ -481,7 +482,10 @@ export async function runPolymarketFinder(
     const baseStrategyPlans: StrategyPlan[] = [];
     for (const selection of selectedStrategies) {
         const extendedDefaults = buildFinderSearchBaseParams(selection.strategy, settings, options);
-        const paramSets = input.generateParamSets(extendedDefaults, options);
+        const paramSets = normalizeFinderCandidateParamSets(
+            selection.strategy,
+            input.generateParamSets(extendedDefaults, options)
+        );
         if (paramSets.length === 0) continue;
         baseStrategyPlans.push({
             key: selection.key,

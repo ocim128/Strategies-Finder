@@ -44,6 +44,8 @@ import {
     extractRustFinderCandidates,
     finderSortRequiresCompositeEdgeRatio,
     getPreparedFinderData,
+    normalizeFinderCandidateParams,
+    normalizeFinderCandidateParamSets,
     resolveFinderCandidateBacktestSettings,
     resolveFinderRiskOverrides,
     resolveQuickFunnelShortlistCount,
@@ -203,7 +205,10 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     let totalRuns = 0;
     for (const selection of selectedStrategies) {
         const extendedDefaults = buildFinderSearchBaseParams(selection.strategy, settings, options);
-        const paramSets = input.generateParamSets(extendedDefaults, options);
+        const paramSets = normalizeFinderCandidateParamSets(
+            selection.strategy,
+            input.generateParamSets(extendedDefaults, options)
+        );
         if (paramSets.length === 0) continue;
         totalRuns += paramSets.length;
         strategyPlans.push({
@@ -623,7 +628,7 @@ async function runGeneticFinder(params: GeneticFinderRunParams): Promise<FinderR
         const candidate: FinderResult = buildFinderResult({
             key: selection.key,
             name: selection.name,
-            params: optimization.bestGenome.params,
+            params: normalizeFinderCandidateParams(selection.strategy, optimization.bestGenome.params),
             result: normalizedResult,
             selectionResult: adjustment.result,
             compositeEdgeRatio: finderSortRequiresCompositeEdgeRatio(input.options.sortPriority)
@@ -1724,7 +1729,8 @@ async function reconcileSingleTimeframeTopResults(
             const jobData = csEntry?.data ?? closedData;
             const jobCtx = csEntry?.ctx;
             const jobPrecomputed = csEntry?.precomputed ?? precomputed;
-            const { backtestSettings } = resolveFinderRiskOverrides(input.settings, rustSettings, candidate.params, input.options);
+            const normalizedParams = normalizeFinderCandidateParams(strategy, candidate.params);
+            const { backtestSettings } = resolveFinderRiskOverrides(input.settings, rustSettings, normalizedParams, input.options);
             const preparedFinderData = getPreparedFinderData(
                 preparedDataCache,
                 candidate.key,
@@ -1734,15 +1740,15 @@ async function reconcileSingleTimeframeTopResults(
                 jobCtx
             );
             const rawSignals = strategy.executePrepared
-                ? strategy.executePrepared(preparedFinderData, candidate.params, jobData, jobCtx)
-                : strategy.execute(jobData, candidate.params, jobCtx);
+                ? strategy.executePrepared(preparedFinderData, normalizedParams, jobData, jobCtx)
+                : strategy.execute(jobData, normalizedParams, jobCtx);
             const signals = applySignalPolarity(rawSignals, backtestSettings);
             const mergedSignals = comboActive ? applyComboMerge(signals, input) : signals;
             const rawResult = runStrategyBacktest({
                 strategy,
                 data: jobData,
                 signals: mergedSignals,
-                params: candidate.params,
+                params: normalizedParams,
                 capitalSettings,
                 backtestSettings: resolveFinderCandidateBacktestSettings(backtestSettings, input.comboPrimarySettings),
                 backtestFn: runBacktest,
@@ -1759,6 +1765,7 @@ async function reconcileSingleTimeframeTopResults(
 
             reconciled.push(buildFinderResult({
                 ...candidate,
+                params: normalizedParams,
                 result: normalizedResult,
                 selectionResult: adjustment.result,
                 compositeEdgeRatio: requiresCompositeEdgeRatioSort

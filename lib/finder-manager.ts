@@ -279,6 +279,7 @@ export class FinderManager {
 
 		this.initSortingUI();
 		this.initUniverseUI();
+		this.initTradeFilterUI();
 		this.initPolymarketUI();
 		this.applyScopeUi();
 	}
@@ -495,7 +496,28 @@ export class FinderManager {
 			modeInput.value = "random";
 		}
 		setVisible("finderBlockBadge", !universeScope && Boolean(state.blockRange));
+		this.setTradeFilterControlsEnabled(this.isTradeFilterControlsEnabled());
 		this.updateTimingSortControlState();
+	}
+
+	private initTradeFilterUI(): void {
+		const { finderTradesToggle } = this.getDom();
+		finderTradesToggle.addEventListener("change", () => {
+			this.setTradeFilterControlsEnabled(this.isTradeFilterControlsEnabled());
+		});
+		this.setTradeFilterControlsEnabled(this.isTradeFilterControlsEnabled());
+	}
+
+	private isTradeFilterControlsEnabled(): boolean {
+		const dom = this.getDom();
+		return !this.isUniverseScope() && dom.finderTradesToggle.checked;
+	}
+
+	private setTradeFilterControlsEnabled(enabled: boolean): void {
+		const dom = this.getDom();
+		dom.finderTradeFilters.classList.toggle("is-disabled", !enabled);
+		dom.finderTradesMin.disabled = !enabled;
+		dom.finderTradesMax.disabled = !enabled;
 	}
 
 	private initPolymarketUI(): void {

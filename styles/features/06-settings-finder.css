@@ -439,7 +439,8 @@
 
 }
 
-#finderPolymarketSettings.is-disabled {
+#finderPolymarketSettings.is-disabled,
+#finderTradeFilters.is-disabled {
 
     opacity: 0.55;
 

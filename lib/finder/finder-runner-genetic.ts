@@ -8,7 +8,11 @@ import {
     deriveStrategySeed,
     normalizeResultSharpe,
 } from "./finder-runner-shared";
-import { computeFinderCompositeEdgeRatio, finderSortRequiresCompositeEdgeRatio } from "./finder-runner-core";
+import {
+    computeFinderCompositeEdgeRatio,
+    finderSortRequiresCompositeEdgeRatio,
+    normalizeFinderCandidateParams,
+} from "./finder-runner-core";
 import type { CapitalSettings } from "../types/backtest";
 import type { StrategyExecutionContext } from "../types/strategies";
 import type { FinderResult } from "../types/finder";
@@ -141,7 +145,7 @@ export async function runGeneticFinder(params: GeneticFinderRunParams): Promise<
         const candidate: FinderResult = buildFinderResult({
             key: selection.key,
             name: selection.name,
-            params: optimization.bestGenome.params,
+            params: normalizeFinderCandidateParams(selection.strategy, optimization.bestGenome.params),
             result: normalizedResult,
             selectionResult: adjustment.result,
             compositeEdgeRatio: finderSortRequiresCompositeEdgeRatio(input.options.sortPriority)

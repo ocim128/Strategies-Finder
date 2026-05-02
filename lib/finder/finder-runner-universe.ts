@@ -19,6 +19,7 @@ import type {
 import {
     buildFinderSearchBaseParams,
     getPreparedFinderData,
+    normalizeFinderCandidateParamSets,
     resolveFinderRiskOverrides,
     type FinderPreparedDataCache,
 } from "./finder-runner-core";
@@ -333,7 +334,10 @@ export async function runFinderUniverseExecution(
 
     const rustSettings = sanitizeBacktestSettingsForRust(input.settings);
     const baseParams = buildFinderSearchBaseParams(input.selectedStrategy.strategy, input.settings, input.options);
-    const paramSets = input.generateParamSets(baseParams, input.options);
+    const paramSets = normalizeFinderCandidateParamSets(
+        input.selectedStrategy.strategy,
+        input.generateParamSets(baseParams, input.options)
+    );
     if (paramSets.length === 0) {
         callbacks.setStatus("No valid parameter combinations generated.");
         return {

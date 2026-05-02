@@ -240,6 +240,57 @@ export function buildFinderSearchBaseParams(
     return baseParams;
 }
 
+function serializeCandidateParams(params: StrategyParams): string {
+    return Object.keys(params)
+        .sort()
+        .map((key) => `${key}:${params[key]}`)
+        .join("|");
+}
+
+export function normalizeFinderCandidateParams(strategy: Strategy, params: StrategyParams): StrategyParams {
+    if (!strategy.normalizeParams) {
+        return { ...params };
+    }
+
+    const strategyParamKeys = new Set(Object.keys(strategy.defaultParams));
+    const strategyParams: StrategyParams = {};
+    const passthroughParams: StrategyParams = {};
+
+    for (const [key, value] of Object.entries(params)) {
+        if (strategyParamKeys.has(key)) {
+            strategyParams[key] = value;
+        } else {
+            passthroughParams[key] = value;
+        }
+    }
+
+    const normalizedStrategyParams = strategy.normalizeParams({
+        ...strategy.defaultParams,
+        ...strategyParams,
+    });
+    return {
+        ...normalizedStrategyParams,
+        ...passthroughParams,
+    };
+}
+
+export function normalizeFinderCandidateParamSets(strategy: Strategy, paramSets: StrategyParams[]): StrategyParams[] {
+    const normalized: StrategyParams[] = [];
+    const seen = new Set<string>();
+
+    for (const params of paramSets) {
+        const candidate = normalizeFinderCandidateParams(strategy, params);
+        const key = serializeCandidateParams(candidate);
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        normalized.push(candidate);
+    }
+
+    return normalized;
+}
+
 export function resolveFinderRiskOverrides(
     settings: BacktestSettings,
     rustSettings: BacktestSettings,
